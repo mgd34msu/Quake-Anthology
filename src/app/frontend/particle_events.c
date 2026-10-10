@@ -134,7 +134,7 @@ typedef struct frontend_visual_sample {
     frontend_particle_owner *q2_owners[4];
     frontend_q2_animation animation;
     qa_actor_owner animation_provider;
-    const char *animation_models[4];
+    qa_string_id animation_models[4];
     qa_vec3 animation_origin;
     uint64_t animation_source_frame, animation_sample_frame;
     double animation_server_ms, animation_client_ms, animation_tick_ms;
@@ -893,8 +893,8 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
     }
     frontend_q2_entity_pose pose={.actor=view->actor,.model_index=model,.effects=view->effects,
         .event=event,.frame=view->frame,.origin=view->body.origin,.angles=view->body.angles,
-        .model_present=view->has_inline_model || (view->models[0] && *view->models[0]),
-        .model_identity=(uint64_t)(uintptr_t)view->models[0]};
+        .model_present=view->has_inline_model || qa_strings_text(qa_session_strings(qa_application_session(frontend->application)), view->models[0]).size,
+        .model_identity=view->models[0]};
     if (!q2_entity_admit(frontend,owner,&pose,world,controls,owner->entity_events,error)) return false;
     *out=owner;return true;
 }
@@ -933,7 +933,7 @@ static bool entity_effects_prepare(qa_frontend *frontend,uint32_t seat,qa_actor_
         qa_application_visual_view view;bool found;
         if (!frontend_particle_visual_read(frontend,record->id,&view,&found,error)) return false;
         if (!found) continue;
-        const char *path = view.models[0];
+        const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view.models[0]);
         size_t length = path ? strlen(path) : 0;
         bool mdl = length >= 4 && !strcmp(path + length - 4, ".mdl");
         if (view.family==QA_GAME_Q1 || view.q1_effects || mdl) {

@@ -1431,7 +1431,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         }
         frontend_visual_owner *owner = NULL;
         for (unsigned part = view.has_inline_model ? 1 : 0; part < 4; ++part) {
-            const char *path = view.models[part];
+            const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view.models[part]);
             if (!path || !*path) continue;
             if (!owner && !visual_owner(frontend, &view, &owner, error)) return false;
             if (owner->shader_movies && !frontend_material_movies_frame(owner->shader_movies, frame, error)) return false;

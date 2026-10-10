@@ -102,9 +102,7 @@ static bool entity(application_native_q1_wire_source *source,qa_actor_id actor,
     qa_application_visual_view visual;
     if (!qa_q1_wire_actor_slot(&source->receipt,actor,&slot) || !slot ||
         !qa_application_visual_read(app,actor,&visual,error)) return false;
-    const char *model=visual.models[0];
-    qa_string_id resource=model?qa_strings_find(qa_session_strings(app->session),
-        (qa_bytes){(const uint8_t *)model,strlen(model)}):0;
+    qa_string_id resource=visual.models[0];
     if (!qa_q1_wire_index(&source->receipt,true,resource,&index))
         return application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld entity model leaves its ordered source precache");
     if (index && slot>=512)

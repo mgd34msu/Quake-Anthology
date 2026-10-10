@@ -74,12 +74,12 @@ bool application_qc_visual(application_provider *provider, qa_actor_id actor,
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC appearance model has no retained source precache");
         if (model_index && resource->value.index != (uint32_t)model_index)
             return application_fail(error, QA_ERROR_FORMAT, "QC appearance model differs from its source precache index");
-        out->models[0] = qa_strings_cstr(qa_session_strings(engine->services.session), resource->name);
+        out->models[0] = resource->name;
         out->model_resources[0] = resource->source;
         out->model_openings[0] = resource->source ? &resource->acquisition : NULL;
         out->has_inline_model = out->visible && resource->has_inline_model;
         out->inline_model = resource->inline_model;
-        if (out->models[0][0] != '*' && !resource->source)
+        if (source.model[0] != '*' && !resource->source)
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC appearance precache has no retained model resource");
     }
     return source_colors(engine, out->colormap, out, error);

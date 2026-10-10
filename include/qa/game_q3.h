@@ -691,7 +691,7 @@ typedef struct qa_q3_entity_view {
     qa_q3_weapon weapon;
     int32_t legs_animation, torso_animation, time_ms, expire_ms, source_number, source_client;
     qa_string_id loop_sound;
-    const char *model, *secondary_model;
+    qa_string_id model, secondary_model;
     float alpha;
     qa_q3_entity source_entity;
     uint32_t inline_model;

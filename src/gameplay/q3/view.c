@@ -7,12 +7,11 @@ static qa_trajectory source_trajectory(const qa_q3_trajectory *source) {
         .delta = qa_v3(source->delta[0], source->delta[1], source->delta[2])};
 }
 
-static bool source_model(const qa_q3_game *game, int32_t index, const char **out,
+static bool source_model(const qa_q3_game *game, int32_t index, qa_string_id *out,
                            qa_error *error) {
     if (index < 0 || index >= 256)
         return q3_fail(error, "Q3 Source presentation model index is out of range");
-    *out = index ? qa_strings_cstr(qa_session_strings(game->options.services.session),
-        game->configstrings[32 + index]) : NULL;
+    *out = index ? game->configstrings[32 + index] : 0;
     return true;
 }
 
@@ -138,8 +137,7 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.position = source_trajectory(&s->pos);
         view.angular = source_trajectory(&s->apos);
         if (entry->kind == Q3_ACTOR_PODIUM && s->modelindex > 0 && s->modelindex <= 255)
-            view.model = qa_strings_cstr(qa_session_strings(game->options.services.session),
-                game->configstrings[32 + s->modelindex]);
+            view.model = game->configstrings[32 + s->modelindex];
         uint32_t client;
         if (q3_source_client_pointer(game, actor, &client)) {
             view.source_client = s->clientNum;
@@ -192,10 +190,10 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.position = item->trajectory;
         view.expire_ms = item->expire_at;
         size_t count;
-        const qa_q3_item *table = qa_q3_items(game->options.product, &count);
+        qa_q3_items(game->options.product, &count);
         if (view.item_index < count) {
-            view.model = table[view.item_index].model;
-            view.secondary_model = table[view.item_index].secondary_model;
+            view.model = game->model_names.items[view.item_index][0];
+            view.secondary_model = game->model_names.items[view.item_index][1];
         }
         break;
     }
@@ -212,8 +210,7 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.owner = entry->state.portal.owner;
         view.attachment = entry->state.portal.destination;
         view.expire_ms = entry->state.portal.expire_at;
-        view.model = entry->state.portal.source ? "models/powerups/teleporter/tele_enter.md3"
-                                                : "models/powerups/teleporter/tele_exit.md3";
+        view.model = game->model_names.portals[entry->state.portal.source ? 1 : 0];
         break;
     case Q3_ACTOR_CORPSE:
         view.flags = entry->state.corpse.flags;

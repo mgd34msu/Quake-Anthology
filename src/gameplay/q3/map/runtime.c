@@ -627,13 +627,13 @@ void q3_map_actor_released(qa_q3_game *game, qa_actor_record record) {
 }
 
 void q3_map_mover_presentation(const qa_q3_game *game, qa_actor_id actor,
-                               const char **model, const char **secondary,
+                               qa_string_id *model, qa_string_id *secondary,
                                uint32_t *constant_light) {
     const qa_q3_map_actor_state *state = q3_map_const(game, actor);
     if (model)
-        *model = state ? q3_map_cstr(game, state->model) : NULL;
+        *model = state ? state->model : 0;
     if (secondary)
-        *secondary = state ? q3_map_cstr(game, state->model2) : NULL;
+        *secondary = state ? state->model2 : 0;
     if (constant_light)
         *constant_light = 0;
     if (!state || (!state->has_light && !state->has_color) || !constant_light)

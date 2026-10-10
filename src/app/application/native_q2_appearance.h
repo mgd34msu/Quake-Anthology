@@ -9,11 +9,11 @@ typedef struct application_native_q2_appearance {
     qa_native_host_q2_entity entity;
     uint64_t config_revision;
     uint32_t source_slot;
-    char *models[4], *skin_path;
+    qa_string_id models[4], skin_path;
     uint32_t skin;
 } application_native_q2_appearance;
 
-/* Owns resolved paths; the completed physical Source and its configstring
+/* Paths use the common session string IDs; the completed Source and configstring
  * revision are borrowed. No asset is opened or client state reconstructed. */
 bool application_native_q2_appearance_read(qa_application *,
     const qa_application_native_q2_presentation *, uint32_t,

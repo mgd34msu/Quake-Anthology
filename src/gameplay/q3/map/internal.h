@@ -98,7 +98,4 @@ bool q3_map_mover_action(qa_q3_game *, qa_q3_mover_action, qa_actor_id, qa_actor
 bool q3_map_mover_used(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);
 bool q3_map_mover_sync_state(qa_q3_game *, qa_q3_map_actor_state *, qa_error *);
 bool q3_map_mover_sync_admission(qa_q3_game *, qa_q3_map_actor_state *, qa_error *);
-void q3_map_mover_presentation(const qa_q3_game *, qa_actor_id, const char **,
-                               const char **, uint32_t *);
-
 #endif

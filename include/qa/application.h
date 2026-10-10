@@ -56,7 +56,8 @@ typedef struct qa_application_visual_view {
     qa_game_family family;
     qa_body_state body;
     qa_vec3 previous_origin;
-    const char *models[4], *skin_path;
+    qa_string_id models[4];
+    const char *skin_path;
     const qa_resource *model_resources[4];
     /* Borrowed acquired-source receipts share the retained precache lifetime. */
     const qa_vfs_acquisition *model_openings[4];

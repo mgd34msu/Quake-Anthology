@@ -195,7 +195,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     vector(value.angles, source->body.angles);
     uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
     for (unsigned i = 0; !flare && i < 4; ++i) {
-        const char *path = selected_visual ? selected.models[i] : text(owner, visual.models[i]);
+        const char *path = text(owner, selected_visual ? selected.models[i] : visual.models[i]);
         if (!(selected_visual ? application_network_q2_visual_resource(owner, &selected, i, models[i], error) :
             application_network_q2_resource(owner, 0, path, models[i], error))) return false;
     }

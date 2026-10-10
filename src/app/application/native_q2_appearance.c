@@ -18,15 +18,6 @@ static struct application_native_q2 *engine_read(qa_application *app,
         !engine->calls && engine->configstrings ? engine : NULL;
 }
 
-static bool copy(char **out, const char *text, qa_error *error)
-{
-    size_t size = strlen(text) + 1;
-    *out = malloc(size);
-    if (!*out) return application_fail(error, QA_ERROR_MEMORY, "Copying original Q2 appearance path");
-    memcpy(*out, text, size);
-    return true;
-}
-
 static const char *resource(const struct application_native_q2 *engine, uint32_t index)
 {
     if (!index || engine->resource_base[0] >= engine->configstring_count || index >= engine->resource_limit[0] ||
@@ -35,7 +26,7 @@ static const char *resource(const struct application_native_q2 *engine, uint32_t
     return value ? value : "";
 }
 
-static bool player_path(char **out, const char *model, size_t model_size,
+static bool player_path(qa_strings *strings, qa_string_id *out, const char *model, size_t model_size,
     const char *name, const char *suffix, qa_error *error)
 {
     size_t name_size = strlen(name), suffix_size = strlen(suffix);
@@ -49,8 +40,9 @@ static bool player_path(char **out, const char *model, size_t model_size,
     path[8 + model_size] = '/';
     memcpy(path + 9 + model_size, name, name_size);
     memcpy(path + 9 + model_size + name_size, suffix, suffix_size + 1);
-    *out = path;
-    return true;
+    bool ok = qa_strings_intern_cstr(strings, path, out, error);
+    free(path);
+    return ok;
 }
 
 static const char *weapon(const struct application_native_q2 *engine,
@@ -85,6 +77,7 @@ bool application_native_q2_appearance_read(qa_application *app,
     bool custom = false;
     for (unsigned i = 0; i < 4; ++i) custom |= indexes[i] == Q2_CLIENT_MODEL;
     bool ok = true;
+    qa_strings *strings = qa_session_strings(app->session);
     const char *model = "male", *skin = "grunt", *held = "weapon.md2";
     size_t model_size = 4;
     if (custom) {
@@ -104,12 +97,15 @@ bool application_native_q2_appearance_read(qa_application *app,
     }
     for (unsigned i = 0; ok && i < 4; ++i) {
         if (indexes[i] == Q2_CLIENT_MODEL) {
-            ok = player_path(value.models + i, model, model_size, i ? held : "tris.md2", "", error);
+            ok = player_path(strings, value.models + i, model, model_size, i ? held : "tris.md2", "", error);
             if (ok && !i) {
                 value.skin = 0;
-                ok = player_path(&value.skin_path, model, model_size, skin, ".pcx", error);
+                ok = player_path(strings, &value.skin_path, model, model_size, skin, ".pcx", error);
             }
-        } else ok = copy(value.models + i, resource(engine, indexes[i]), error);
+        } else if (indexes[i] && indexes[i] < engine->resource_limit[0] &&
+            engine->resource_base[0] < engine->configstring_count &&
+            indexes[i] < engine->configstring_count - engine->resource_base[0])
+            value.models[i] = engine->configstrings[engine->resource_base[0] + indexes[i]];
     }
     if (ok && !application_native_q2_appearance_current(app, &value))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 appearance changed its physical Source or configstrings");
@@ -139,7 +135,5 @@ bool application_native_q2_appearance_current(qa_application *app,
 void application_native_q2_appearance_dispose(application_native_q2_appearance *view)
 {
     if (!view) return;
-    for (unsigned i = 0; i < 4; ++i) free(view->models[i]);
-    free(view->skin_path);
     *view = (application_native_q2_appearance){0};
 }

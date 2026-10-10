@@ -647,7 +647,7 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
 {
     if (!visual || model > 3 || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 model acquisition requires its real BODY visual receipt");
-    const char *path = visual->models[model];
+    const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), visual->models[model]);
     if (!path || !*path || *path == '*' || *path == '#' || visual->provider == owner->host.source.source_owner)
         return application_network_q2_resource(owner, 0, path, out, error);
     application_provider *provider = provider_at(owner, visual->provider);

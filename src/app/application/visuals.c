@@ -28,7 +28,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         qa_q1_character_view character;
         bool found = qa_q1_game_presentation(provider->state.q1, actor, &source);
         if (found) {
-            out->models[0] = resource_text(application, source.model);
+            out->models[0] = source.model;
             out->frame = source.frame;
             out->skin = source.skin;
             out->colormap = source.color_map;
@@ -41,7 +41,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         }
         if (out->character == provider->owner &&
             qa_q1_character_read(provider->state.q1, actor, &character)) {
-            out->models[0] = resource_text(application, character.model);
+            out->models[0] = character.model;
             out->frame = character.frame;
             out->visible = character.model != QA_STRING_NONE;
             out->has_inline_model = false;
@@ -67,7 +67,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         if (!qa_q2_presentation_read(provider->state.q2, actor, &source))
             return false;
         for (unsigned i = 0; i < 4; ++i)
-            out->models[i] = resource_text(application, source.models[i]);
+            out->models[i] = source.models[i];
         out->frame = source.frame;
         out->old_frame = source.old_frame;
         out->skin = source.skin;
@@ -330,10 +330,10 @@ static bool q2_visual_visible(const qa_application_visual_visibility *v, qa_acto
          * including when their procedural presentation has no asset path. */
         state.modelindex = appearance->q2_flare.present || (appearance->render_flags & 128u) ||
             appearance->has_inline_model ||
-            (appearance->models[0] && appearance->models[0][0]) ||
-            (appearance->models[1] && appearance->models[1][0]) ||
-            (appearance->models[2] && appearance->models[2][0]) ||
-            (appearance->models[3] && appearance->models[3][0]);
+            qa_strings_text(qa_session_strings(app->session), appearance->models[0]).size ||
+            qa_strings_text(qa_session_strings(app->session), appearance->models[1]).size ||
+            qa_strings_text(qa_session_strings(app->session), appearance->models[2]).size ||
+            qa_strings_text(qa_session_strings(app->session), appearance->models[3]).size;
         state.origin[0] = appearance->body.origin.x;
         state.origin[1] = appearance->body.origin.y;
         state.origin[2] = appearance->body.origin.z;
@@ -389,7 +389,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         qa_application_visual_view view = {.actor = actor, .provider = source->owner,
             .content = source->product->id, .old_frame = -1, .alpha = 1, .scale = 1,
             .source_number = -1, .source_client = -1,
-            .models = {resource_text(application, object.model)}, .frame = object.frame,
+            .models = {object.model}, .frame = object.frame,
             .skin = object.skin, .effects = object.effects, .visible = object.visible,
             .family = mode.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                 : mode.rules.source < QA_MODE_Q3 ? QA_GAME_Q2 : QA_GAME_Q3};

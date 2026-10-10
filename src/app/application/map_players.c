@@ -2518,10 +2518,7 @@ bool application_players_native_q1_respawn(qa_application *app,
             return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 body copy lost its actual Source character");
         physics.motion = pose.motion;
     }
-    qa_string_id model = visual.models[0] ? qa_strings_find(qa_session_strings(app->session),
-        (qa_bytes){(const uint8_t *)visual.models[0], strlen(visual.models[0])}) : 0;
-    if (visual.models[0] && !model)
-        return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 body copy model lost its real content identity");
+    qa_string_id model = visual.models[0];
     qa_q1_presentation corpse = {.actor = actor, .model = model,
         .frame = visual.frame, .skin = visual.skin, .color_map = visual.colormap};
     if (!qa_q1_source_copy_body(source->state.q1, actor, &corpse, physics.motion, error) ||

@@ -41,7 +41,7 @@ static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
         .has_previous_origin = true, .has_alpha = true, .visible = true, .native_held_weapon = held};
     return application_unified_frame_string(lease, &row->content, content, error) &&
         application_unified_frame_string(lease, &row->path, path, error) &&
-        application_unified_frame_string(lease, &row->skin_path, index || !*path ? NULL : view->skin_path, error);
+        application_unified_frame_string(lease, &row->skin_path, index || !*path ? NULL : qa_strings_cstr(qa_session_strings(view->source.session), view->skin_path), error);
 }
 
 bool application_unified_native_q2_models(qa_application *app,
@@ -101,9 +101,11 @@ bool application_unified_native_q2_models(qa_application *app,
                     appearance.entity.state.modelindex > 1);
             if (ok && flat_beam)
                 ok = model(target->lease, out, &appearance, 0, product->identity, "", false, error);
-            else for (unsigned i = 0; ok && i < 4; ++i)
-                if (appearance.models[i] && appearance.models[i][0])
-                    ok = model(target->lease, out, &appearance, i, product->identity, appearance.models[i], i == 1 && replacement, error);
+            else for (unsigned i = 0; ok && i < 4; ++i) {
+                const char *path = qa_strings_cstr(qa_session_strings(app->session), appearance.models[i]);
+                if (path && *path)
+                    ok = model(target->lease, out, &appearance, i, product->identity, path, i == 1 && replacement, error);
+            }
             if (ok && !application_native_q2_appearance_current(app, &appearance))
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 appearance changed while serializing");
             application_native_q2_appearance_dispose(&appearance);

@@ -610,8 +610,7 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 entity has no physical source edict");
     qa_application_visual_view visual;
     if (!qa_application_visual_read(app, actor, &visual, error)) return false;
-    qa_string_id resource = visual.models[0] ? qa_strings_find(qa_session_strings(app->session),
-        (qa_bytes){(const uint8_t *)visual.models[0], strlen(visual.models[0])}) : 0;
+    qa_string_id resource = visual.models[0];
     uint32_t model;
     if (!qa_q1_wire_index(&source->receipt, true, resource, &model))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 entity model was not precached by the source");
