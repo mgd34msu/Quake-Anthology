@@ -1,3 +1,0 @@
-6a0841062ab305b7c7edb59b37fe6e8423ee7380c708a20eac65c6f04bd9b00c  include/qa/vfs_save.h
-3ebcc064fb17d93c5f2d6cb249ef29145bc952f9f441b698116c3652c1c60ec2  src/content/vfs_save_io.h
-39ff7328574b8b41313527678e187568ea7cf72e74dc59855e7701193ccd2486  src/content/resource_pool_save.c

@@ -1,4 +1,0 @@
-39e2b177ac0485a28fa8416b92738661af556f97b72216be7271155346bb7b8a  include/qa/network_q1_peer_save.h
-07a609669cbffeb3a99526fc832c4e4f4a6e6639524b8b4ed4a282ee68dff95e  src/network/q1/peer_save.c
-b2413036aca40584087be8bc3bbfc761af8937aaa6d1df375778b1515a427a29  src/network/q1/channels.c
-1aef9b3f23998c38864d442f309c8849b1146caded637a729eb8cee30e0b5b11  docs/implementation/network-20260930.md

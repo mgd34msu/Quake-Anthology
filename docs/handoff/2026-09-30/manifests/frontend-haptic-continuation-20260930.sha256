@@ -1,4 +1,0 @@
-6814fb407d8bc5195fe54016c1b383b79caedca8f06c0432885557d57eb40b85  src/input/haptics.c
-bd5f2d4a2f869135fc21dfe20f61d897bb66a5e22bacaccb89ce0650c3be079e  src/input/haptics_private.h
-8ad2f784f81ee5e931b5a67aa5b65bdfe126d8b04b4fcde5f86e148bd4857959  src/input/haptics_save.c
-b40709a21a3fe1fc7a049883f707b30d06c02ce04f257bb58643b68bc69a0531  include/qa/input_haptic_save.h

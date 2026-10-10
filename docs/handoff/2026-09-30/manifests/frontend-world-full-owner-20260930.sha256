@@ -1,4 +1,0 @@
-f4f2e315b9e9217e9967bb5dadd1ccf1307cb30e74cd4ac7b17791325a62c94b  include/qa/scene_world_save.h
-9823d642fef7e69c6cf70b20b9489c24513211ac747e7a308459721eeb676e21  src/render/scene/world/owner_save.c
-d2ef49aff7465393d036d303defd43059a2cd4dafed4bfd82c730a09d2e8092b  src/render/scene/world/q3.c
-9b72fe1339579bcefdaff50a63d1ab52ddd555b4ee406ad4503d8c7b25a91f01  src/render/scene/world/q3/internal.h

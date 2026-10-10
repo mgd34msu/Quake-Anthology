@@ -1,4 +1,0 @@
-2d6a95c2bc42e227897b0b7bc1320dfdcda1b9ab0a705952b08e6630e25bffa3  include/qa/q3_presentation_media_save.h
-51eddc6949c764c7b4864fe5e2cbd59ff637d7c51cf3312ffc1942fb2637b41e  src/presentation/q3/media_save.c
-9082fc6ffbec1e4591eef096ab7e663c974813f57e5fb30486609b13c3fd9db2  src/presentation/q3/cinematics.c
-5f00c16742ddb5807a20c89cf9a73393b5e367fec20671f3d201a31e08bab22a  src/presentation/q3/internal.h

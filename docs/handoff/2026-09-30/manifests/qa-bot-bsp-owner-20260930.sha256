@@ -1,4 +1,0 @@
-1959f48c37e9e3cf3e524683a42e06e5149d5639928179f5eea4caf2ef5acc5d  include/qa/bot_bsp_save.h
-15ed12f939f38f16b84b6313b7ee1216f62608f8496aad7039322b1b099e8665  src/bots/library/bsp_private.h
-143ebfae6a49d7f19aafe357647e98e1936c4bcbc871457334568118c5b5f9c7  src/bots/library/bsp.c
-9de6ca7dfaefe6e2063d490a5f577800afff2b68f3863e5825cd316c7a2bf9b1  src/bots/library/bsp_save.c

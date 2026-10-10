@@ -6,7 +6,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(QA_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(QA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 
 add_library(qa_compile_options INTERFACE)
@@ -16,12 +15,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         -ffp-contract=off)
     if(QA_WARNINGS_AS_ERRORS)
         target_compile_options(qa_compile_options INTERFACE -Werror)
-    endif()
-    if(QA_SANITIZERS)
-        target_compile_options(qa_compile_options INTERFACE
-            -fsanitize=address,undefined -fno-omit-frame-pointer)
-        target_link_options(qa_compile_options INTERFACE
-            -fsanitize=address,undefined)
     endif()
 endif()
 

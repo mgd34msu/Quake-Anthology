@@ -1,5 +1,0 @@
-8e5e9fb5ad85f48489552620a586c9ef3606924ea49a87c90c8f3f5384976c2a  include/qa/scene.h
-2c19503c92776cb9caac7aa580cfda9fd2a44547bf984ba341c3bfd231342be7  src/render/scene/resources.c
-ae06ec87db008b575122eea61daad61e5b8a0404d5f861611802a2072cca1025  src/render/scene/world.c
-1521eef32b518d17efd03024ea43e803457b37605338c5bda427ffb87e581f26  src/render/scene/world/q3/patch.c
-8533e964d70481adb399cb4eec906012416b79323eb2efb8b5595721b4740925  src/render/scene/models/topology.c

@@ -1,4 +1,0 @@
-2df2859a4e8530d41a277f433eb767b88d0aa87124fd9358e017a2e9367ffa37  include/qa/scene_resource_save.h
-99bab160232667816757fcee9702702d775b0be5f83675617ec8f5fbe07d219b  src/render/scene/resources_internal.h
-a57a647a9bcac2937985bb0dc0924a96a06c38f9b90af9094f45fff08ada16eb  src/render/scene/resources.c
-d82cb35c3160cba34b0d2d3d64b566dc3cd150d11f13b7d391e7c0c2596c6784  src/render/scene/resources_state_save.c

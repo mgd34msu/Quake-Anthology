@@ -1,4 +1,0 @@
-4535b98c95118d97ba646fe23f1cabb2246bd66f169c9e90fad406eeb3d39bb5  include/qa/bot_movement_save.h
-01c7ee697352875e31488d9256f35143ecad8e1f6dadd4ac15c0ef8bc29636d1  src/bots/movement/save.c
-340bf8c622a26956a76126443c10ae50a08a903dc16b67efbb09ebd590cbac21  src/bots/movement/state.c
-88eb17582f05eb8041ee65f7e7c588d8c6f73cab59e3b50500205af34bbce4e1  src/bots/movement/internal.h

@@ -1,4 +1,0 @@
-e4f18fef96f50ff93ae171e0a951d7c061a2f820d3deefd07a0ec580975d1653  include/qa/bot_assets_save.h
-126d59ceeb30329cf19ac4ab59380802e50d41f8336d42a238d43ed405871391  src/bots/save_fields.h
-76f4cd7be9cacc91f33b097ed47e129ca085a97694cbc9dadeb24623508e3aba  src/bots/library/assets_save.c
-642d40bc04281bd6d2d33a10c484b0849c62647f60675557cffb60bc085e03a3  docs/implementation/persistence-20260930.md
