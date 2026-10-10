@@ -14,7 +14,7 @@ bool application_unified_q3_sources_build(qa_application *, const application_un
 bool application_unified_q3_sources_current(const application_unified_q3_sources *);
 bool application_unified_q3_sources_metadata_current(const application_unified_q3_sources *,
     const qa_unified_document *committed);
-bool application_unified_q3_sources_metadata(const application_unified_q3_sources *,
+bool application_unified_q3_sources_metadata(const application_unified_q3_sources *, qa_unified_frame_lease *,
     qa_unified_frame_metadata *empty, qa_error *);
 const qa_unified_frame_q3 *application_unified_q3_sources_value(const application_unified_q3_sources *);
 qa_unified_frame_q3 *application_unified_q3_sources_take(application_unified_q3_sources *);

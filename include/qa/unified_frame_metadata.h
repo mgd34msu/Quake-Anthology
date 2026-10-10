@@ -34,7 +34,7 @@ typedef struct qa_unified_frame_metadata {
 } qa_unified_frame_metadata;
 
 void qa_unified_frame_metadata_destroy(qa_unified_frame_metadata *);
-bool qa_unified_document_create_metadata(qa_unified_frame_metadata **owned,
+bool qa_unified_document_create_metadata(qa_unified_frame_metadata **owned, qa_unified_frame_lease *,
     qa_unified_document **out, qa_error *);
 const qa_unified_frame_metadata *qa_unified_document_metadata(const qa_unified_document *);
 /* Merge real revision-keyed replacement domains into one retained complete

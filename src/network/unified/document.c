@@ -434,13 +434,14 @@ bool qa_unified_document_create_events(qa_unified_frame_events **owned, qa_event
     if (!d) return false;
     d->events=*owned; *owned=NULL; *out=d; return true;
 }
-bool qa_unified_document_create_metadata(qa_unified_frame_metadata **owned, qa_unified_document **out, qa_error *error)
+bool qa_unified_document_create_metadata(qa_unified_frame_metadata **owned, qa_unified_frame_lease *lease, qa_unified_document **out, qa_error *error)
 {
     size_t bytes;
     if (!owned || !*owned || !out || *out || !qa_unified_metadata_check(*owned,&bytes,error)) return false;
-    qa_unified_document *d=typed_document(QA_UNIFIED_CONTROL_DOCUMENT,bytes,NULL, NULL,error);
+    qa_unified_document *d=typed_document(QA_UNIFIED_CONTROL_DOCUMENT,bytes,lease, NULL,error);
     if (!d) return false;
-    d->metadata=*owned; *owned=NULL; *out=d; return true;
+    if (lease && !qa_unified_frame_lease_retain(lease,error)) return false;
+    d->lease=lease; d->metadata=*owned; *owned=NULL; *out=d; return true;
 }
 bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_unified_document *update,
     qa_unified_document **out, qa_error *error)

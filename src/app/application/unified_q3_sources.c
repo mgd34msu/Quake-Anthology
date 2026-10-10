@@ -115,9 +115,9 @@ static bool binding_current(const application_unified_q3_sources *v, const compi
 }
 
 static bool game_state(qa_unified_q3_configuration *out, const application_unified_q3_sources *v,
-    const compiled_source *r, qa_error *e)
+    const compiled_source *r, qa_unified_frame_lease *lease, qa_error *e)
 {
-    out->game_state = calloc(1, sizeof(*out->game_state));
+    out->game_state = application_unified_frame_alloc(lease, 1, sizeof(*out->game_state), e);
     if (!out->game_state) return application_fail(e, QA_ERROR_MEMORY, "Retaining compiled Q3 configstrings");
     qa_q3_gamestate_init(out->game_state);
     for (uint32_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i) {
@@ -387,13 +387,13 @@ bool application_unified_q3_sources_metadata_current(const application_unified_q
     return true;
 }
 
-bool application_unified_q3_sources_metadata(const application_unified_q3_sources *v,
+bool application_unified_q3_sources_metadata(const application_unified_q3_sources *v, qa_unified_frame_lease *lease,
     qa_unified_frame_metadata *out, qa_error *e)
 {
     if (!v || !v->value || !out || out->q3_configurations || out->q3_configuration_count ||
         !application_unified_q3_sources_current(v))
         return application_fail(e, QA_ERROR_ARGUMENT, "Compiled Q3 metadata requires its captured Source table");
-    out->q3_configurations = v->count ? calloc(v->count, sizeof(*out->q3_configurations)) : NULL;
+    out->q3_configurations = v->count ? application_unified_frame_alloc(lease, v->count, sizeof(*out->q3_configurations), e) : NULL;
     if (v->count && !out->q3_configurations)
         return application_fail(e, QA_ERROR_MEMORY, "Retaining changed compiled Q3 configuration tables");
     out->q3_configuration_count = v->count;
@@ -402,10 +402,10 @@ bool application_unified_q3_sources_metadata(const application_unified_q3_source
         qa_unified_q3_configuration *row = out->q3_configurations + i;
         row->publication = source->publication; row->map_revision = source->map_revision;
         row->configuration_revision = source->configuration_revision;
-        if (!application_unified_frame_string(NULL, &row->provider_name, source->provider_name, e) ||
-            !application_unified_frame_string(NULL, &row->instance, source->instance, e) ||
-            !application_unified_frame_string(NULL, &row->content, source->content, e) ||
-            !game_state(row, v, v->rows + i, e)) return false;
+        if (!application_unified_frame_string(lease, &row->provider_name, source->provider_name, e) ||
+            !application_unified_frame_string(lease, &row->instance, source->instance, e) ||
+            !application_unified_frame_string(lease, &row->content, source->content, e) ||
+            !game_state(row, v, v->rows + i, lease, e)) return false;
     }
     return application_unified_q3_sources_current(v) ||
         application_fail(e, QA_ERROR_ARGUMENT, "Compiled Q3 configuration changed during reliable capture");

@@ -247,7 +247,7 @@ static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,
     qa_unified_frame_metadata *owned)
 {
     qa_error error={0};qa_buffer wire={0};qa_unified_document *source=NULL,*decoded=NULL;
-    CHECK(qa_unified_document_create_metadata(&owned,&source,&error));
+    CHECK(qa_unified_document_create_metadata(&owned,NULL,&source,&error));
     CHECK(qa_unified_document_encode(source,&wire,&error));
     qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error);CHECK(lease);
     CHECK(qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,
@@ -258,11 +258,15 @@ static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,
 static void test_metadata_retention(void)
 {
     qa_error error={0};qa_unified_frame_pool *pool=qa_unified_frame_pool_create(256*1024,4,&error);CHECK(pool);
-    qa_unified_frame_metadata *value=calloc(1,sizeof(*value));CHECK(value);
+    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error);CHECK(lease);
+    qa_unified_frame_metadata *value=qa_unified_frame_lease_alloc(lease,1,sizeof(*value),_Alignof(qa_unified_frame_metadata),&error);CHECK(value);
     *value=(qa_unified_frame_metadata){.epoch=1,.q1_revision=1,.replace_configurations=true,
         .replace_styles=true,.replace_q3=true,.replace_q1=true};
-    value->q1=calloc(1,sizeof(*value->q1));CHECK(value->q1);value->q1->level=strdup("start");CHECK(value->q1->level);
-    qa_unified_document *current=metadata_decode(pool,value);
+    value->q1=qa_unified_frame_lease_alloc(lease,1,sizeof(*value->q1),_Alignof(qa_unified_q1_world_state),&error);CHECK(value->q1);
+    value->q1->level=qa_unified_frame_lease_alloc(lease,6,1,1,&error);CHECK(value->q1->level);memcpy(value->q1->level,"start",6);
+    qa_unified_document *current=NULL;
+    CHECK(qa_unified_document_create_metadata(&value,lease,&current,&error));CHECK(!value);
+    qa_unified_frame_lease_release(lease);
     for (uint64_t i=1;i<=64;++i) {
         value=calloc(1,sizeof(*value));CHECK(value);
         *value=(qa_unified_frame_metadata){.epoch=1,.frame=i,.q1_revision=1,.style_revision=i,.replace_styles=true,.style_count=1};
