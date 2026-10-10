@@ -191,6 +191,18 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
     frontend_legacy_cvars_bind(registry,&row->cvar_handles.legacy);
     frontend_remote_q2_effects_cvars_bind(registry,&row->cvar_handles.effects);
 }
+static bool effect_storage_prepare(frontend_remote_q2 *row,qa_error *error)
+{
+    size_t capacity=(size_t)UINT16_MAX+1;
+    size_t poses=capacity*sizeof(*row->effect_poses),animations=capacity*sizeof(*row->entity_animations);
+    if (!qa_arena_reserve(&row->effect_storage,poses+animations+128,error)) return false;
+    row->effect_poses=qa_arena_alloc(&row->effect_storage,poses,_Alignof(frontend_remote_q2_effects_pose),error);
+    row->entity_animations=qa_arena_alloc(&row->effect_storage,animations,_Alignof(remote_q2_entity_animation),error);
+    if (!row->effect_poses || !row->entity_animations) return false;
+    memset(row->entity_animations,0,animations);
+    row->effect_pose_capacity=row->entity_animation_capacity=capacity;
+    qa_arena_seal(&row->effect_storage);return true;
+}
 bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options *options,
     frontend_remote_q2 **out, qa_error *error)
 {
@@ -208,8 +220,8 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     row->frontend = f; row->options = *options; row->layout = remote_q2_layout_read(d->protocol);
     remote_q2_cvars_bind(row);
     row->configs = calloc(row->layout.max_configs, sizeof(*row->configs));
-    if (!row->configs || !frontend_source_identity_allocate(f, &row->identity, error)) {
-        free(row->configs); free(row); return false;
+    if (!row->configs || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
+        qa_arena_destroy(&row->effect_storage);free(row->configs); free(row); return false;
     }
     qa_catalog_retain(d->catalog); row->frame_ms = 100; row->fraction = 1;
     row->next = f->remote_q2; f->remote_q2 = row; *out = row; return true;
@@ -348,22 +360,6 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
             previous->gunindex==player->gunindex && player->gunframe!=0;
         frontend_q2_animation_commit(&row->gun_animation,player->gunframe,previous->gunframe,0,
             (double)row->frame.server_frame*row->frame_ms,continuous);
-        size_t extent=0;
-        for (size_t i=0;i<row->frame.entity_count;++i)
-            if ((size_t)row->frame.entities[i].number>=extent) extent=(size_t)row->frame.entities[i].number+1;
-        if (extent>row->entity_animation_capacity) {
-            size_t capacity=row->entity_animation_capacity?row->entity_animation_capacity:128;
-            while (capacity<extent) {
-                if (capacity>SIZE_MAX/2) return remote_q2_fail(error,QA_ERROR_MEMORY,"Q2 animation table overflow");
-                capacity*=2;
-            }
-            if (capacity>SIZE_MAX/sizeof(*row->entity_animations))
-                return remote_q2_fail(error,QA_ERROR_MEMORY,"Q2 animation table overflow");
-            remote_q2_entity_animation *rows=realloc(row->entity_animations,capacity*sizeof(*rows));
-            if (!rows) return remote_q2_fail(error,QA_ERROR_MEMORY,"Retaining Q2 animation frames");
-            memset(rows+row->entity_animation_capacity,0,(capacity-row->entity_animation_capacity)*sizeof(*rows));
-            row->entity_animations=rows;row->entity_animation_capacity=capacity;
-        }
         size_t previous_index=0;
         for (size_t i=0;i<row->frame.entity_count;++i) {
             const qa_q2_entity *entity=&row->frame.entities[i];
@@ -682,7 +678,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
         qa_network_connections(row->options.domain.runtime), row->options.domain.client))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
-    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->effect_poses); free(row->entity_animations);
+    qa_catalog_release(row->options.domain.catalog); free(row->configs); qa_arena_destroy(&row->effect_storage);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
     *link = row->next; qa_movement_result_free(&row->prediction_scratch); free(row); *owned = NULL; return true;

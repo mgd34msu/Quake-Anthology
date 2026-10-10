@@ -103,6 +103,7 @@ struct frontend_remote_q2 {
     qa_q2_entity *baselines;
     size_t baseline_count;
     qa_q2_wire_frame frame, previous;
+    qa_arena effect_storage;
     struct frontend_q2_entity_pose *effect_poses;
     size_t effect_pose_capacity;
     float fraction, frame_ms, height_previous, height_current;

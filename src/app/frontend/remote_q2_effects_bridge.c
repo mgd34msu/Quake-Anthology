@@ -275,25 +275,10 @@ bool frontend_remote_q2_effects_records(frontend_remote_q2 *row,
     }
     return remote_q2_live(row, error);
 }
-static bool effect_poses_reserve(frontend_remote_q2 *row,qa_error *error)
-{
-    if (row->frame.entity_count<=row->effect_pose_capacity) return true;
-    size_t capacity=row->effect_pose_capacity?row->effect_pose_capacity:128;
-    while (capacity<row->frame.entity_count) {
-        if (capacity>SIZE_MAX/2) { capacity=row->frame.entity_count;break; }
-        capacity*=2;
-    }
-    if (capacity>SIZE_MAX/sizeof(*row->effect_poses))
-        return remote_q2_fail(error,QA_ERROR_MEMORY,"Q2 effect pose extent overflows");
-    frontend_remote_q2_effects_pose *poses=realloc(row->effect_poses,capacity*sizeof(*poses));
-    if (!poses) return remote_q2_fail(error,QA_ERROR_MEMORY,"Retaining Q2 effect pose capacity");
-    row->effect_poses=poses;row->effect_pose_capacity=capacity;return true;
-}
 bool remote_q2_effects_frame(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || !row->effects || !row->frame.valid || !remote_q2_live(row, error) ||
         row->frame.entity_count > SIZE_MAX / sizeof(frontend_remote_q2_effects_pose)) return false;
-    if (!effect_poses_reserve(row,error)) return false;
     frontend_remote_q2_effects_pose *poses=row->effect_poses;
     bool ok = true;
     for (size_t i = 0; ok && i < row->frame.entity_count; ++i) ok = actor(row, row->frame.entities[i].number, poses + i, error);
@@ -312,7 +297,6 @@ bool remote_q2_effects_sample_prepare(frontend_remote_q2 *row, const qa_scene_vi
 {
     if (!row || !row->effects || !view || !isfinite(player_fov) || player_fov <= 0 || player_fov >= 180 ||
         !qa_vec_finite(viewer_origin) || !sample || !lights || !count) return false;
-    if (!effect_poses_reserve(row,error)) return false;
     frontend_remote_q2_effects_pose *poses=row->effect_poses;
     bool ok = true;size_t previous_cursor=0;
     for (size_t i = 0; ok && i < row->frame.entity_count; ++i) {
