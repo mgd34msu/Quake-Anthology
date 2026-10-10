@@ -90,7 +90,7 @@ typedef struct frontend_q1_fog {
     double duration;
 } frontend_q1_fog;
 typedef struct frontend_event_view {
-    char *q1_patterns[FRONTEND_STYLES], *q2_patterns[FRONTEND_STYLES];
+    qa_string_id q1_patterns[FRONTEND_STYLES], q2_patterns[FRONTEND_STYLES];
     qa_actor_owner q1_style_owners[FRONTEND_STYLES], q2_style_owners[FRONTEND_STYLES];
     float q1_styles[FRONTEND_STYLES];
     qa_vec3 q2_styles[FRONTEND_STYLES];
@@ -100,7 +100,7 @@ typedef struct frontend_event_view {
     bool fog_received, sky_received;
     frontend_q1_fog q1_fog;
     const qa_scene_image *sky[6];
-    char *sky_name;
+    qa_string_id sky_name;
     qa_actor_owner sky_owner;
     qa_vec3 sky_axis;
     float sky_rotation;
@@ -460,10 +460,6 @@ bool frontend_event_retire_checked(qa_frontend *frontend, qa_error *error)
     }
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         for (unsigned face = 0; face < 6; ++face) qa_scene_image_release(state->views[i].sky[face]);
-        free(state->views[i].sky_name);
-        for (unsigned j = 0; j < FRONTEND_STYLES; ++j) {
-            free(state->views[i].q1_patterns[j]); free(state->views[i].q2_patterns[j]);
-        }
     }
     while (state->resources) {
         frontend_event_resources *entry = state->resources; state->resources = entry->next;
@@ -486,14 +482,6 @@ static bool seat_receives(qa_frontend *frontend, unsigned seat, qa_actor_id reci
     return !frontend_network_local_input_owned(frontend,seat) &&
         (!recipient.registry || (frontend_seat_actor_read(frontend,seat,&actor) &&
             qa_actor_id_equal(actor, recipient)));
-}
-static bool pattern_set(char **out, const char *pattern, qa_error *error)
-{
-    if (!pattern) return frontend_fail(error, QA_ERROR_ARGUMENT, "lightstyle has no session pattern");
-    if (*out && !strcmp(*out, pattern)) return true;
-    char *copy = malloc(strlen(pattern) + 1);
-    if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "retaining source lightstyle");
-    strcpy(copy, pattern); free(*out); *out = copy; return true;
 }
 static float fog_fraction(float value)
 {
@@ -581,7 +569,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         for (unsigned seat = 0; seat < frontend->options.seats; ++seat) {
             if (frontend_network_local_input_owned(frontend,seat)) continue;
             frontend_event_view *view=&state->views[seat];
-            if (!pattern_set(&view->q1_patterns[event.code], qa_strings_cstr(strings, event.resource), error)) return false;
+            view->q1_patterns[event.code] = event.resource;
             view->q1_style_owners[event.code]=event.provider;
         }
     }
@@ -646,7 +634,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             switch (event->kind) {
             case QA_Q2_MAP_LIGHTSTYLE:
                 if (event->style >= 0 && event->style < FRONTEND_STYLES) {
-                    if (!pattern_set(&view->q2_patterns[event->style], qa_strings_cstr(strings, event->text), error)) return false;
+                    view->q2_patterns[event->style] = event->text;
                     view->q2_style_owners[event->style]=source.provider;
                 }
                 break;
@@ -655,10 +643,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                 view->fog_target = fog_source(event->fog); view->fog_duration = event->duration;
                 view->fog_received = true; break;
             case QA_Q2_MAP_SKY:
-                if (!pattern_set(&view->sky_name, qa_strings_cstr(strings, event->resource), error)) {
-                    for (unsigned face = 0; face < 6; ++face) qa_scene_image_release(sky[face]);
-                    return false;
-                }
+                view->sky_name = event->resource;
                 for (unsigned face = 0; face < 6; ++face) {
                     qa_scene_image_release(view->sky[face]);
                     view->sky[face] = sky[face]; qa_scene_image_retain(sky[face]);
@@ -712,8 +697,10 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
     qa_actor_owner q1_owner=0,q2_owner=0;
     double q1_seconds=0,q2_seconds=0;
+    const qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     for (unsigned i = 0; i < FRONTEND_STYLES; ++i) {
-        const char *q1 = view->q1_patterns[i], *q2 = view->q2_patterns[i];
+        const char *q1 = qa_strings_cstr(strings, view->q1_patterns[i]);
+        const char *q2 = qa_strings_cstr(strings, view->q2_patterns[i]);
         if (q1 && *q1 && view->q1_style_owners[i]!=q1_owner) {
             q1_owner=view->q1_style_owners[i];
             if (!lightstyle_source(frontend,q1_owner,QA_GAME_Q1,&q1_seconds,error)) return false;
@@ -1271,7 +1258,7 @@ bool frontend_event_images(qa_frontend *frontend, qa_actor_owner owner, qa_game_
 
 typedef struct event_policy_view {
     qa_actor_owner owner;
-    const char *name;
+    qa_string_id name;
     bool received;
     const qa_scene_image *original[6], *prepared[6];
     qa_scene_resource_policy *bank;
@@ -1336,7 +1323,8 @@ bool frontend_event_image_policy_prepare(qa_frontend *f, qa_scene_resource_polic
         for (size_t i = 0; i < count; ++i)
             if (qa_scene_resource_policy_source(banks[i]) == resources->images) saved->bank = banks[i];
         qa_scene_resources *destination = qa_scene_resource_policy_destination(saved->bank);
-        size_t length = strlen(view->sky_name);
+        const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(f->application)), view->sky_name);
+        size_t length = strlen(name);
         if (!destination || length > SIZE_MAX - 7) goto invalid;
         char *path = malloc(length + 7);
         if (!path) { frontend_fail(error, QA_ERROR_MEMORY, "Preparing authored sky requests"); goto failed; }
@@ -1345,7 +1333,7 @@ bool frontend_event_image_policy_prepare(qa_frontend *f, qa_scene_resource_polic
         bool ok = true;
         for (unsigned face = 0; ok && face < 6; ++face) {
             qa_scene_image *image = NULL; qa_error observed = {0};
-            snprintf(path, length + 7, "env/%s%s", view->sky_name, suffixes[face]);
+            snprintf(path, length + 7, "env/%s%s", name, suffixes[face]);
             ok = qa_scene_image_load(destination, path, &options, &image, &observed);
             if (!ok && observed.code == QA_ERROR_NOT_FOUND) {
                 saved->prepared[face] = qa_scene_missing(destination);
