@@ -384,3 +384,20 @@ bool qa_input_command_build(qa_input_command_builder *builder, const qa_input_co
     *builder = next;
     return true;
 }
+
+bool qa_usercmd_equal(const qa_usercmd *left, const qa_usercmd *right)
+{
+    return left->kind == right->kind && left->sequence == right->sequence &&
+        left->milliseconds == right->milliseconds && left->duration_ns == right->duration_ns && left->server_time_ms == right->server_time_ms &&
+        left->server_frame == right->server_frame &&
+        !memcmp(&left->acknowledged_server_seconds, &right->acknowledged_server_seconds, sizeof(double)) &&
+        !memcmp(&left->angles.x, &right->angles.x, sizeof(float)) &&
+        !memcmp(&left->angles.y, &right->angles.y, sizeof(float)) &&
+        !memcmp(&left->angles.z, &right->angles.z, sizeof(float)) &&
+        !memcmp(left->angle_words, right->angle_words, sizeof(left->angle_words)) &&
+        !memcmp(&left->forward_move, &right->forward_move, sizeof(float)) &&
+        !memcmp(&left->side_move, &right->side_move, sizeof(float)) &&
+        !memcmp(&left->up_move, &right->up_move, sizeof(float)) &&
+        left->buttons == right->buttons && left->impulse == right->impulse &&
+        left->light_level == right->light_level && left->weapon == right->weapon;
+}

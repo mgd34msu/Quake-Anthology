@@ -64,7 +64,7 @@ struct unified_presentation {
     bool clock_started;
     const frontend_unified_q3_video *video;
 };
-static bool input(void *,frontend_remote_unified *,const qa_unified_input *,double,qa_error *);
+static bool input(void *,frontend_remote_unified *,const qa_usercmd *,double,qa_error *);
 static bool q3_row_source(const unified_q3_client_row *,bool,frontend_unified_q3_source_view *,qa_error *);
 static unified_q3_client_row *q3_roster_at(const unified_presentation *p,size_t index)
 {
@@ -934,7 +934,7 @@ static bool publish(void *context, frontend_remote_unified *replica, const qa_un
     p->render = p->candidate_render; p->candidate_render = NULL;
     p->frame_prepared = false; p->received = true; return true;
 }
-static bool input(void *context, frontend_remote_unified *replica, const qa_unified_input *command,
+static bool input(void *context, frontend_remote_unified *replica, const qa_usercmd *command,
     double time, qa_error *error)
 {
     unified_presentation *p = context;

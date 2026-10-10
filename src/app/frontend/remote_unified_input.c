@@ -109,7 +109,7 @@ static bool frame_read(frontend_unified_input *p,double time,
     if(!received || !received->world || !received->player || !predicted || !predicted->prediction)
         return fail(e,"Unified input lost its actual received frame");
     const qa_unified_player_view *view=&received->player->view;
-    frontend_unified_command_frame frame={.kind=snapshot->state.kind,
+    frontend_unified_command_frame frame={.kind=snapshot->state.kind,.sequence=p->retained_sequence,
         .acknowledged_server_seconds=snapshot->command_time_ms/1000,.server_time_ms=trunc(time),
         .weapon=2,.sensitivity=1,.light_level=128,.attack_allowed=true};
     if(frame.kind==QA_RULESET_Q2_RERELEASE)
@@ -166,9 +166,9 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
     double time=fmax(acknowledged?baseline:p->command_time,baseline)+duration;
     frontend_unified_command_frame frame;
     frontend_unified_command_builder next=p->builder;
-    qa_unified_input input={.sequence=p->retained_sequence};
+    qa_usercmd input={.sequence=p->retained_sequence};
     if(!isfinite(time) || !frame_read(p,time,&snapshot,&frame,e) ||
-        !frontend_unified_command_build(&next,&tuning,sample,&frame,p->retained_elapsed,&input.command,e) ||
+        !frontend_unified_command_build(&next,&tuning,sample,&frame,p->retained_elapsed,&input,e) ||
         !current(p,e)) return false;
     input.has_arsenal=true;
     input.arsenal=(qa_usercmd_arsenal){
@@ -177,9 +177,9 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
         .use_holdable=sample->game_focus &&
             (sample->buttons[QA_INPUT_USE].active || sample->buttons[QA_INPUT_USE].pressed ||
              sample->buttons[QA_INPUT_BUTTON2].active || sample->buttons[QA_INPUT_BUTTON2].pressed)};
-    if(input.command.kind==QA_RULESET_Q3) {
+    if(input.kind==QA_RULESET_Q3) {
         qa_usercmd actual;
-        if(!qa_application_control_project_unified(&input.command,&snapshot.state,input.sequence,&actual,e)) return false;
+        if(!qa_application_control_project_unified(&input,&snapshot.state,input.sequence,&actual,e)) return false;
         if(p->q3_command_count==64) {
             memmove(p->q3_commands,p->q3_commands+1,63*sizeof(*p->q3_commands));
             --p->q3_command_count;

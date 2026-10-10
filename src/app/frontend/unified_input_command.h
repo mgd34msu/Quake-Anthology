@@ -9,5 +9,5 @@ typedef qa_input_command_frame frontend_unified_command_frame;
 bool frontend_unified_command_build(frontend_unified_command_builder *,
     const qa_input_command_tuning *, const qa_seat_input_sample *,
     const frontend_unified_command_frame *, double elapsed_ms,
-    qa_unified_movement *, qa_error *);
+    qa_usercmd *, qa_error *);
 #endif

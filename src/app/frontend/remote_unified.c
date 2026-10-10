@@ -562,7 +562,7 @@ qa_unified_session_hooks frontend_remote_unified_hooks(frontend_remote_unified *
 { return (qa_unified_session_hooks){.strings=owner->strings,.context = owner, .player = transport_player,
     .prepare = prepare, .control = control, .frame = frame, .closed = closed}; }
 
-bool frontend_remote_unified_submit(frontend_remote_unified *owner, const qa_unified_input *input,
+bool frontend_remote_unified_submit(frontend_remote_unified *owner, const qa_usercmd *input,
     double command_time_ms, qa_error *error)
 {
     if (!owner || owner->busy || !input || !isfinite(command_time_ms) || !owner->admitted || !owner->frame || !owner->session ||

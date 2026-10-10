@@ -443,7 +443,7 @@ static bool unified_client_disconnected(void *context,const qa_application_clien
     frontend_console_print(n->frontend,&source->context.command,reason); return true;
 }
 static bool unified_source_input(void *context,qa_net_client_id client,qa_net_seat_id seat,
-    qa_actor_id actor,uint64_t epoch,const qa_unified_input *input,qa_error *error)
+    qa_actor_id actor,uint64_t epoch,const qa_usercmd *input,qa_error *error)
 {
     qa_frontend_network *n=context;
     return n && n->runtime && n->unified && epoch==qa_network_epoch(n->runtime,client) &&

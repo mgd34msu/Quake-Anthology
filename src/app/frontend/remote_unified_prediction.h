@@ -41,7 +41,7 @@ bool frontend_remote_unified_prediction_receive(frontend_remote_unified_predicti
 /* Raw input stays absolute and unmodified. Time is the input producer's actual
  * accumulated source clock, independent of NQ acknowledged_server_seconds. */
 bool frontend_remote_unified_prediction_input(frontend_remote_unified_prediction *,
-    const qa_unified_input *, double command_time_ms, qa_error *);
+    const qa_usercmd *, double command_time_ms, qa_error *);
 bool frontend_remote_unified_prediction_read(frontend_remote_unified_prediction *,
     frontend_unified_prediction_view *, qa_error *);
 /* Matches the real prior PPS command clock at an actually consumed Q3 replay

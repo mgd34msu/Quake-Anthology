@@ -15,7 +15,7 @@ struct frontend_unified_input {
     frontend_unified_command_builder builder, pending_builder;
     qa_usercmd q3_commands[64];
     size_t q3_command_count;
-    qa_unified_input pending;
+    qa_usercmd pending;
     qa_seat_input_sample retained_sample;
     uint64_t retained_sequence, last_sequence;
     double command_time, pending_time, retained_elapsed;

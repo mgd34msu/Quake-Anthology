@@ -1815,69 +1815,6 @@ void qa_unified_frame_events_destroy(qa_unified_frame_events *value)
     else { qa_unified_record_dispose(&qa_unified_events_layout, value); free(value); }
 }
 
-static const qa_unified_field unified_vec_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_vec3, x, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_vec3, y, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_vec3, z, QA_UNIFIED_FIELD_F64),
-};
-static const qa_unified_record_layout unified_vec_layout = QA_UNIFIED_LAYOUT(qa_unified_vec3, unified_vec_fields);
-static const qa_unified_field input_nq_fields[] = {
-    MEMBER_FIELD(qa_unified_movement, data.nq, acknowledged_seconds, QA_UNIFIED_FIELD_F64),
-    MEMBER_RECORD(qa_unified_movement, data.nq, angles, unified_vec_layout),
-    MEMBER_FIELD(qa_unified_movement, data.nq, forward, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.nq, side, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.nq, up, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.nq, buttons, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.nq, impulse, QA_UNIFIED_FIELD_F64),
-};
-static const qa_unified_record_layout input_nq_layout = MEMBER_LAYOUT(qa_unified_movement, data.nq, input_nq_fields);
-static const qa_unified_field input_qw_fields[] = {
-    MEMBER_FIELD(qa_unified_movement, data.qw, milliseconds, QA_UNIFIED_FIELD_F64),
-    MEMBER_RECORD(qa_unified_movement, data.qw, angles, unified_vec_layout),
-    MEMBER_FIELD(qa_unified_movement, data.qw, forward, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.qw, side, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.qw, up, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.qw, buttons, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.qw, impulse, QA_UNIFIED_FIELD_F64),
-};
-static const qa_unified_record_layout input_qw_layout = MEMBER_LAYOUT(qa_unified_movement, data.qw, input_qw_fields);
-static const qa_unified_field input_q2_fields[] = {
-    MEMBER_FIELD(qa_unified_movement, data.q2, milliseconds, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIXED(qa_unified_movement, data.q2, angle_shorts, double_layout, 3),
-    MEMBER_FIELD(qa_unified_movement, data.q2, forward, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2, side, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2, up, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2, buttons, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2, impulse, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2, light_level, QA_UNIFIED_FIELD_F64),
-};
-static const qa_unified_record_layout input_q2_layout = MEMBER_LAYOUT(qa_unified_movement, data.q2, input_q2_fields);
-static const qa_unified_field input_q2r_fields[] = {
-    MEMBER_FIELD(qa_unified_movement, data.q2r, milliseconds, QA_UNIFIED_FIELD_F64),
-    MEMBER_RECORD(qa_unified_movement, data.q2r, angles, unified_vec_layout),
-    MEMBER_FIELD(qa_unified_movement, data.q2r, forward, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2r, side, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2r, buttons, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q2r, server_frame, QA_UNIFIED_FIELD_F64),
-};
-static const qa_unified_record_layout input_q2r_layout = MEMBER_LAYOUT(qa_unified_movement, data.q2r, input_q2r_fields);
-static const qa_unified_field input_q3_fields[] = {
-    MEMBER_FIELD(qa_unified_movement, data.q3, server_time_ms, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIXED(qa_unified_movement, data.q3, angle_words, double_layout, 3),
-    MEMBER_FIELD(qa_unified_movement, data.q3, buttons, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q3, weapon, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q3, forward, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q3, right, QA_UNIFIED_FIELD_F64),
-    MEMBER_FIELD(qa_unified_movement, data.q3, up, QA_UNIFIED_FIELD_F64),
-};
-static const qa_unified_record_layout input_q3_layout = MEMBER_LAYOUT(qa_unified_movement, data.q3, input_q3_fields);
-static const qa_unified_record_layout *const input_movement_variants[] = {
-    &input_nq_layout, &input_qw_layout, &input_q2_layout, &input_q2r_layout, &input_q3_layout};
-static const qa_unified_field input_movement_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_movement, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_VARIANT(qa_unified_movement, data, kind, input_movement_variants),
-};
-static const qa_unified_record_layout input_movement_layout = QA_UNIFIED_LAYOUT(qa_unified_movement, input_movement_fields);
 static const qa_unified_field input_arsenal_fields[] = {
     QA_UNIFIED_FIELD(qa_usercmd_arsenal, use_holdable, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_usercmd_arsenal, has_impulse, QA_UNIFIED_FIELD_BOOL),
@@ -1885,12 +1822,26 @@ static const qa_unified_field input_arsenal_fields[] = {
 };
 static const qa_unified_record_layout input_arsenal_layout = QA_UNIFIED_LAYOUT(qa_usercmd_arsenal, input_arsenal_fields);
 static const qa_unified_field input_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_input, sequence, QA_UNIFIED_FIELD_U64),
-    QA_UNIFIED_RECORD(qa_unified_input, command, input_movement_layout),
-    QA_UNIFIED_FIELD(qa_unified_input, has_arsenal, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_RECORD(qa_unified_input, arsenal, input_arsenal_layout),
+    QA_UNIFIED_FIELD(qa_usercmd, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_usercmd, sequence, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_usercmd, milliseconds, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_usercmd, duration_ns, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_usercmd, server_time_ms, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_usercmd, server_frame, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_usercmd, acknowledged_server_seconds, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_RECORD(qa_usercmd, angles, qa_unified_vector_layout),
+    QA_UNIFIED_FIXED(qa_usercmd, angle_words, int32_t_layout, 3),
+    QA_UNIFIED_FIELD(qa_usercmd, forward_move, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_usercmd, side_move, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_usercmd, up_move, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_usercmd, buttons, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_usercmd, impulse, QA_UNIFIED_FIELD_U8),
+    QA_UNIFIED_FIELD(qa_usercmd, light_level, QA_UNIFIED_FIELD_U8),
+    QA_UNIFIED_FIELD(qa_usercmd, weapon, QA_UNIFIED_FIELD_U8),
+    QA_UNIFIED_FIELD(qa_usercmd, has_arsenal, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_RECORD(qa_usercmd, arsenal, input_arsenal_layout),
 };
-static const qa_unified_record_layout input_layout = QA_UNIFIED_LAYOUT(qa_unified_input, input_fields);
+static const qa_unified_record_layout input_layout = QA_UNIFIED_LAYOUT(qa_usercmd, input_fields);
 static const qa_unified_field buffer_fields[] = {{QA_UNIFIED_FIELD_BYTES, 0, NULL, 0, 8192, NULL}};
 static const qa_unified_record_layout buffer_layout = {sizeof(qa_buffer), buffer_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE};
 static const qa_unified_field input_batch_fields[] = {

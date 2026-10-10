@@ -2,6 +2,7 @@
 #define QA_SOURCE_SAVE_H
 #include "qa/session.h"
 #include "qa/math.h"
+#include "qa/usercmd.h"
 
 typedef enum qa_source_save_direction { QA_SOURCE_SAVE_WRITE, QA_SOURCE_SAVE_READ, QA_SOURCE_SAVE_FINISHED } qa_source_save_direction;
 typedef struct qa_source_save_io {
@@ -50,6 +51,7 @@ bool qa_source_save_i32(qa_source_save_io *, int32_t *);
 bool qa_source_save_i64(qa_source_save_io *, int64_t *);
 bool qa_source_save_f32(qa_source_save_io *, float *);
 bool qa_source_save_f64(qa_source_save_io *, double *);
+bool qa_source_save_usercmd(qa_source_save_io *, qa_usercmd *);
 bool qa_source_save_vec3(qa_source_save_io *, qa_vec3 *);
 bool qa_source_save_count(qa_source_save_io *, size_t *, size_t maximum);
 /* Counted values distinguish absent and empty strings. Text decode borrows

@@ -119,7 +119,7 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained timeout is not the actual local closure continuation");
     }
     for (size_t i = 0; i < s->inputs.count; ++i) {
-        const qa_unified_input *input = s->inputs.commands + i;
+        const qa_usercmd *input = s->inputs.commands + i;
         if (input->sequence > QA_UNIFIED_SAFE_INTEGER ||
             (s->acknowledged >= 0 && input->sequence <= (uint64_t)s->acknowledged))
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained production input is already acknowledged or exceeds its source domain");

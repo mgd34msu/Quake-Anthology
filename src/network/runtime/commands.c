@@ -84,18 +84,18 @@ bool qa_network_accept(qa_network_runtime *runtime, const qa_usercmd *command, q
     return ok;
 }
 bool qa_network_accept_unified_input(qa_network_runtime *runtime,qa_net_client_id client,
-    qa_net_seat_id seat_id,qa_actor_id actor,uint64_t epoch,const qa_unified_input *input,qa_error *error)
+    qa_net_seat_id seat_id,qa_actor_id actor,uint64_t epoch,const qa_usercmd *input,qa_error *error)
 {
     if(!runtime || !input || !runtime->options.hooks.unified_input ||
-        (unsigned)input->command.kind>QA_RULESET_Q3 ||
+        (unsigned)input->kind>QA_RULESET_Q3 ||
         (input->has_arsenal && (!input->arsenal.provider.data || !input->arsenal.provider.size ||
             (input->arsenal.weapon.size && !input->arsenal.weapon.data))))
-        return qa_network_fail(error,"Anthology input requires its actual binary64 source consumer");
+        return qa_network_fail(error,"Anthology input requires its actual command consumer");
     const qa_net_client *connection=qa_net_connections_get(runtime->connections,client);
     if(!connection || connection->protocol.kind!=QA_NET_UNIFIED_1)
         return qa_network_fail(error,"Anthology input changes its admitted source protocol");
     qa_network_peer *peer; qa_network_seat *seat;
-    if(!authority_identity(runtime,client,seat_id,actor,epoch,input->command.kind,
+    if(!authority_identity(runtime,client,seat_id,actor,epoch,input->kind,
         input->has_arsenal?input->arsenal.provider:(qa_bytes){0},&peer,&seat,error)) return false;
     if(seat->has_accepted && input->sequence<=seat->accepted) return true;
     bool previous=runtime->callback; runtime->callback=true; seat->applying=true;

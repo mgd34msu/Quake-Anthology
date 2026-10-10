@@ -157,12 +157,12 @@ bool application_unified_inputs_queue(application_unified_inputs *owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input batch belongs to a retired Source peer");
     size_t added = 0;
     int64_t sequence = owner->queued;
-    const qa_unified_input *accepted[64];
+    const qa_usercmd *accepted[64];
     for (size_t i = 0; i < batch->count; ++i) {
-        const qa_unified_input *input = batch->commands + i;
+        const qa_usercmd *input = batch->commands + i;
         if (input->sequence > INT64_MAX) goto invalid;
         if ((int64_t)input->sequence <= sequence) continue;
-        if (input->command.kind != player.movement) goto invalid;
+        if (input->kind != player.movement) goto invalid;
         if (input->has_arsenal && (input->arsenal.provider.size != player.arsenal.size ||
             !input->arsenal.provider.data || memcmp(input->arsenal.provider.data,
                 player.arsenal.data, player.arsenal.size))) goto invalid;
@@ -175,13 +175,13 @@ bool application_unified_inputs_queue(application_unified_inputs *owner,
     }
     if (!inputs_reserve(owner, owner->count + added, error)) return false;
     for (size_t i = 0; i < added; ++i) {
-        const qa_unified_input *input = accepted[i];
+        const qa_usercmd *input = accepted[i];
         retained_input *candidate = owner->commands + owner->count + i;
         candidate->value = *input;
         if (input->has_arsenal) {
             if (!bytes_retain(input->arsenal.provider, &candidate->provider, &candidate->provider_capacity, error) ||
                 !bytes_retain(input->arsenal.weapon, &candidate->weapon, &candidate->weapon_capacity, error)) {
-                for (size_t j = 0; j <= i; ++j) owner->commands[owner->count + j].value = (qa_unified_input){0};
+                for (size_t j = 0; j <= i; ++j) owner->commands[owner->count + j].value = (qa_usercmd){0};
                 return false;
             }
             candidate->value.arsenal.provider = (qa_bytes){candidate->provider.data, candidate->provider.size};
@@ -210,11 +210,11 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
     owner->advancing = true;
     bool okay = true;
     if (player.movement == QA_RULESET_NETQUAKE) {
-        qa_unified_input selected = owner->commands[owner->cursor].value;
+        qa_usercmd selected = owner->commands[owner->cursor].value;
         for (size_t i = owner->cursor + 1; i < owner->count; ++i) {
-            qa_unified_input next = owner->commands[i].value;
-            if (next.command.data.nq.impulse == 0)
-                next.command.data.nq.impulse = selected.command.data.nq.impulse;
+            qa_usercmd next = owner->commands[i].value;
+            if (next.impulse == 0)
+                next.impulse = selected.impulse;
             if (selected.has_arsenal && (!next.has_arsenal ||
                 same_bytes(next.arsenal.provider, selected.arsenal.provider))) {
                 if (!next.has_arsenal) { next.has_arsenal = true; next.arsenal = selected.arsenal; }
@@ -234,7 +234,7 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
         if (okay) { owner->submitted = (int64_t)selected.sequence; owner->cursor = owner->count; }
     } else {
         while (okay && owner->cursor < owner->count) {
-            const qa_unified_input *input = &owner->commands[owner->cursor].value;
+            const qa_usercmd *input = &owner->commands[owner->cursor].value;
             okay = qa_network_accept_unified_input(owner->runtime, owner->client, owner->seat,
                 owner->actor, owner->runtime_epoch, input, error);
             if (okay) { owner->submitted = (int64_t)input->sequence; ++owner->cursor; }
@@ -242,7 +242,7 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
     }
     owner->advancing = false;
     if (okay) {
-        for (size_t i = 0; i < owner->count; ++i) owner->commands[i].value = (qa_unified_input){0};
+        for (size_t i = 0; i < owner->count; ++i) owner->commands[i].value = (qa_usercmd){0};
         owner->cursor = owner->count = 0;
     }
     return okay;
@@ -463,11 +463,11 @@ bool application_unified_player_checkpoint_current(qa_application *app, qa_net_c
 }
 
 bool application_unified_player_input(qa_application *app, qa_net_client_id client,
-    qa_net_seat_id seat, qa_actor_id actor, const qa_unified_input *input, qa_error *error)
+    qa_net_seat_id seat, qa_actor_id actor, const qa_usercmd *input, qa_error *error)
 {
     qa_unified_session_player actual;
     if (!input || !application_unified_player_read(app, client, seat, &actual, error) ||
-        !qa_actor_id_equal(actor, actual.actor) || input->command.kind != actual.movement ||
+        !qa_actor_id_equal(actor, actual.actor) || input->kind != actual.movement ||
         (input->has_arsenal && !same_bytes(input->arsenal.provider, actual.arsenal)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input lost its admitted full Source player");
     return qa_application_control_unified_command(app, actor, input, error);

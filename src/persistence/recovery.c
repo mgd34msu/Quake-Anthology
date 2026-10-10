@@ -10,31 +10,7 @@ struct qa_recovery {
 
 static bool input_fields(qa_source_save_io *io, qa_recovery_input *input)
 {
-    qa_usercmd *command = &input->command;
-    uint32_t kind = command->kind;
-    bool ok = qa_source_save_u32(io, &input->seat) &&
-        qa_source_save_u32(io, &kind) && kind <= QA_RULESET_Q3 &&
-        qa_source_save_u64(io, &command->sequence) &&
-        qa_source_save_u32(io, &command->milliseconds) &&
-        qa_source_save_i32(io, &command->server_time_ms) &&
-        qa_source_save_i32(io, &command->server_frame) &&
-        qa_source_save_f64(io, &command->acknowledged_server_seconds) &&
-        qa_source_save_vec3(io, &command->angles);
-    for (unsigned i = 0; ok && i < 3; ++i)
-        ok = qa_source_save_i32(io, &command->angle_words[i]);
-    ok = ok && qa_source_save_f32(io, &command->forward_move) &&
-        qa_source_save_f32(io, &command->side_move) &&
-        qa_source_save_f32(io, &command->up_move) &&
-        qa_source_save_u32(io, &command->buttons) &&
-        qa_source_save_u8(io, &command->impulse) &&
-        qa_source_save_u8(io, &command->light_level) &&
-        qa_source_save_u8(io, &command->weapon);
-    if (ok && (!isfinite(command->acknowledged_server_seconds) ||
-        !qa_vec_finite(command->angles) || !isfinite(command->forward_move) ||
-        !isfinite(command->side_move) || !isfinite(command->up_move)))
-        ok = persistence_io_fail(io, QA_ERROR_FORMAT, "Recovery input contains nonfinite movement");
-    if (ok) command->kind = (qa_ruleset_id)kind;
-    return ok || persistence_io_fail(io, QA_ERROR_FORMAT, "Invalid recovery input fields");
+    return qa_source_save_u32(io, &input->seat) && qa_source_save_usercmd(io, &input->command);
 }
 
 bool qa_recovery_input_decode(qa_bytes bytes, qa_recovery_input *out, qa_error *error)

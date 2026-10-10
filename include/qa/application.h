@@ -524,12 +524,10 @@ bool qa_application_control_nq_command(qa_application *, qa_actor_id,
 /* Retain literal physical Q2 input independently of selected movement. */
 bool qa_application_control_q2_command(qa_application *, qa_actor_id,
     uint64_t transport_sequence, const qa_usercmd *, qa_error *);
-struct qa_unified_input;
-struct qa_unified_movement;
-bool qa_application_control_project_unified(const struct qa_unified_movement *,
+bool qa_application_control_project_unified(const qa_usercmd *,
     const qa_movement_state *, uint64_t sequence, qa_usercmd *, qa_error *);
 bool qa_application_control_unified_command(qa_application *, qa_actor_id,
-    const struct qa_unified_input *, qa_error *);
+    const qa_usercmd *, qa_error *);
 /* Preserve the received Q3 words independently of the transport sequence and
  * the actor's selected movement profile. */
 bool qa_application_control_q3_command(qa_application *, qa_actor_id,

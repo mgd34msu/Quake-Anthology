@@ -53,7 +53,7 @@ static void remove_input(qa_unified_input_batch *b, size_t at)
         memmove(b->provider_capacity + at, b->provider_capacity + at + 1, tail * sizeof(b->provider_capacity[0]));
         memmove(b->weapon_capacity + at, b->weapon_capacity + at + 1, tail * sizeof(b->weapon_capacity[0]));
     }
-    b->commands[b->count] = (qa_unified_input){0};
+    b->commands[b->count] = (qa_usercmd){0};
     b->providers[b->count] = provider; b->weapons[b->count] = weapon;
     b->provider_capacity[b->count] = provider_capacity; b->weapon_capacity[b->count] = weapon_capacity;
 }
@@ -66,7 +66,7 @@ void qa_unified_session_ack(qa_unified_session *s, int64_t acknowledged)
     size_t retained = 0;
     for (size_t i = 0; i < b->count; ++i) {
         if (b->commands[i].sequence <= (uint64_t)acknowledged) {
-            b->commands[i] = (qa_unified_input){0};
+            b->commands[i] = (qa_usercmd){0};
         } else {
             if (retained != i) {
                 qa_buffer provider = b->providers[retained], weapon = b->weapons[retained];
@@ -83,7 +83,7 @@ void qa_unified_session_ack(qa_unified_session *s, int64_t acknowledged)
         }
     }
     for (size_t i = retained; i < b->count; ++i) {
-        b->commands[i] = (qa_unified_input){0};
+        b->commands[i] = (qa_usercmd){0};
     }
     b->count = retained;
 }
@@ -105,7 +105,7 @@ static void selection_copy(qa_buffer *buffer, qa_bytes source)
     buffer->size = source.size;
 }
 
-static bool retain_input(qa_unified_session *s, const qa_unified_input *input, qa_error *e)
+static bool retain_input(qa_unified_session *s, const qa_usercmd *input, qa_error *e)
 {
     if (!input || !s->bound_source || s->server || s->disconnected || s->closing || !s->admitted || !s->epoch)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production input lacks its admitted local player");
@@ -117,7 +117,7 @@ static bool retain_input(qa_unified_session *s, const qa_unified_input *input, q
         if (s->inputs.commands[i].sequence == input->sequence) return true;
     qa_unified_session_player player;
     if (!qa_unified_session_player_read(s, &player, e)) return false;
-    if (input->command.kind != player.movement ||
+    if (input->kind != player.movement ||
         (input->has_arsenal && !bytes_equal(input->arsenal.provider, player.arsenal)))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production input changes the player's selected providers");
     qa_unified_input_batch view = {.epoch = s->epoch, .count = 1};
@@ -149,7 +149,7 @@ static bool retain_input(qa_unified_session *s, const qa_unified_input *input, q
     return true;
 }
 
-bool qa_unified_session_input(qa_unified_session *s, const qa_unified_input *input, qa_error *e)
+bool qa_unified_session_input(qa_unified_session *s, const qa_usercmd *input, qa_error *e)
 {
     if (!qa_unified_session_idle(s))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production input producer is not idle");
@@ -163,47 +163,6 @@ bool qa_unified_session_queue_inputs(qa_unified_session *s, qa_error *e)
         qa_unified_channel_frame(s->channel,(qa_bytes){s->frame_wire.data,s->frame_wire.size},0,e);
 }
 
-static qa_unified_movement command_movement(const qa_usercmd *command)
-{
-    qa_unified_movement movement = {.kind = command->kind};
-    qa_unified_vec3 angles = {command->angles.x, command->angles.y, command->angles.z};
-    switch (command->kind) {
-    case QA_RULESET_NETQUAKE:
-        movement.data.nq.acknowledged_seconds = command->acknowledged_server_seconds;
-        movement.data.nq.angles = angles;
-        movement.data.nq.forward = command->forward_move; movement.data.nq.side = command->side_move;
-        movement.data.nq.up = command->up_move; movement.data.nq.buttons = command->buttons;
-        movement.data.nq.impulse = command->impulse;
-        break;
-    case QA_RULESET_QUAKEWORLD:
-        movement.data.qw.milliseconds = command->milliseconds; movement.data.qw.angles = angles;
-        movement.data.qw.forward = command->forward_move; movement.data.qw.side = command->side_move;
-        movement.data.qw.up = command->up_move; movement.data.qw.buttons = command->buttons;
-        movement.data.qw.impulse = command->impulse;
-        break;
-    case QA_RULESET_Q2_CLASSIC:
-        movement.data.q2.milliseconds = command->milliseconds;
-        for (size_t i = 0; i < 3; ++i) movement.data.q2.angle_shorts[i] = command->angle_words[i];
-        movement.data.q2.forward = command->forward_move; movement.data.q2.side = command->side_move;
-        movement.data.q2.up = command->up_move; movement.data.q2.buttons = command->buttons;
-        movement.data.q2.impulse = command->impulse; movement.data.q2.light_level = command->light_level;
-        break;
-    case QA_RULESET_Q2_RERELEASE:
-        movement.data.q2r.milliseconds = command->milliseconds; movement.data.q2r.angles = angles;
-        movement.data.q2r.forward = command->forward_move; movement.data.q2r.side = command->side_move;
-        movement.data.q2r.buttons = command->buttons; movement.data.q2r.server_frame = command->server_frame;
-        break;
-    case QA_RULESET_Q3:
-        movement.data.q3.server_time_ms = command->server_time_ms;
-        for (size_t i = 0; i < 3; ++i) movement.data.q3.angle_words[i] = command->angle_words[i];
-        movement.data.q3.forward = command->forward_move; movement.data.q3.right = command->side_move;
-        movement.data.q3.up = command->up_move; movement.data.q3.buttons = command->buttons;
-        movement.data.q3.weapon = command->weapon;
-        break;
-    }
-    return movement;
-}
-
 bool qa_unified_session_command(void *state, const qa_usercmd *command, qa_error *e)
 {
     qa_unified_session *s = state;
@@ -215,7 +174,5 @@ bool qa_unified_session_command(void *state, const qa_usercmd *command, qa_error
     if (!qa_unified_session_player_read(s, &player, e)) return false;
     if (!qa_actor_id_equal(player.actor, command->actor))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production native command changes its actual canonical actor");
-    qa_unified_input input = {.sequence = command->sequence, .command = command_movement(command),
-        .has_arsenal = command->has_arsenal, .arsenal = command->arsenal};
-    return retain_input(s, &input, e);
+    return retain_input(s, command, e);
 }

@@ -42,4 +42,6 @@ typedef struct qa_usercmd {
     qa_usercmd_arsenal arsenal;
 } qa_usercmd;
 
+bool qa_usercmd_equal(const qa_usercmd *, const qa_usercmd *);
+
 #endif

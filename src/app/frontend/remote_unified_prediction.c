@@ -174,46 +174,22 @@ bool frontend_remote_unified_prediction_receive(frontend_remote_unified_predicti
 }
 static bool same_number(double a, double b)
 { return a==b && (a!=0 || signbit(a)==signbit(b)); }
-static bool same_command(const qa_unified_movement *a, const qa_unified_movement *b)
-{
-    if(a->kind!=b->kind) return false;
-#define EQ(field) same_number(a->data.field,b->data.field)
-    switch(a->kind) {
-    case QA_RULESET_NETQUAKE:
-        return EQ(nq.acknowledged_seconds) && EQ(nq.angles.x) && EQ(nq.angles.y) && EQ(nq.angles.z) &&
-            EQ(nq.forward) && EQ(nq.side) && EQ(nq.up) && EQ(nq.buttons) && EQ(nq.impulse);
-    case QA_RULESET_QUAKEWORLD:
-        return EQ(qw.milliseconds) && EQ(qw.angles.x) && EQ(qw.angles.y) && EQ(qw.angles.z) &&
-            EQ(qw.forward) && EQ(qw.side) && EQ(qw.up) && EQ(qw.buttons) && EQ(qw.impulse);
-    case QA_RULESET_Q2_CLASSIC:
-        return EQ(q2.milliseconds) && EQ(q2.angle_shorts[0]) && EQ(q2.angle_shorts[1]) && EQ(q2.angle_shorts[2]) &&
-            EQ(q2.forward) && EQ(q2.side) && EQ(q2.up) && EQ(q2.buttons) && EQ(q2.impulse) && EQ(q2.light_level);
-    case QA_RULESET_Q2_RERELEASE:
-        return EQ(q2r.milliseconds) && EQ(q2r.angles.x) && EQ(q2r.angles.y) && EQ(q2r.angles.z) &&
-            EQ(q2r.forward) && EQ(q2r.side) && EQ(q2r.buttons) && EQ(q2r.server_frame);
-    case QA_RULESET_Q3:
-        return EQ(q3.server_time_ms) && EQ(q3.angle_words[0]) && EQ(q3.angle_words[1]) && EQ(q3.angle_words[2]) &&
-            EQ(q3.buttons) && EQ(q3.weapon) && EQ(q3.forward) && EQ(q3.right) && EQ(q3.up);
-    }
-#undef EQ
-    return false;
-}
 bool frontend_remote_unified_prediction_input(frontend_remote_unified_prediction *p,
-    const qa_unified_input *input, double time_ms, qa_error *e)
+    const qa_usercmd *input, double time_ms, qa_error *e)
 {
     if(!p || p->busy || !p->received || !input || !isfinite(time_ms) || input->sequence>QA_UNIFIED_SAFE_INTEGER ||
-        input->command.kind!=p->snapshot.input.state.kind || !current(p,e)) return false;
+        input->kind!=p->snapshot.input.state.kind || !current(p,e)) return false;
     qa_usercmd probe;
-    if(!qa_application_control_project_unified(&input->command,&p->snapshot.input.state,input->sequence,&probe,e)) return false;
+    if(!qa_application_control_project_unified(input,&p->snapshot.input.state,input->sequence,&probe,e)) return false;
     for(size_t i=0;i<p->command_count;++i) if(input->sequence==p->commands[i].sequence)
-        return (same_number(time_ms,p->commands[i].time_ms) && same_command(&input->command,&p->commands[i].raw)) ||
+        return (same_number(time_ms,p->commands[i].time_ms) && qa_usercmd_equal(input,&p->commands[i].raw)) ||
             fail(e,QA_ERROR_ARGUMENT,"Prediction retry changes its retained command or source time");
     if((int64_t)input->sequence<=p->snapshot.sequence || (p->command_count && input->sequence<=p->commands[p->command_count-1].sequence)) return true;
     if(p->command_count==64) {
         p->discarded=(int64_t)p->commands[0].sequence;
         memmove(p->commands,p->commands+1,63*sizeof(*p->commands)); --p->command_count;
     }
-    p->commands[p->command_count++]=(prediction_command){input->command,input->sequence,time_ms};
+    p->commands[p->command_count++]=(prediction_command){*input,input->sequence,time_ms};
     return true;
 }
 static bool trace(void *context, const qa_trace_query *q, qa_trace_result *out, qa_error *e)

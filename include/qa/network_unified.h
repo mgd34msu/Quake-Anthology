@@ -70,23 +70,6 @@ bool qa_unified_channel_receive(qa_unified_channel *, qa_bytes, uint64_t now_ns,
 bool qa_unified_channel_flush(qa_unified_channel *, uint64_t now_ns,
                                qa_unified_send_fn, void *, size_t *sent, qa_error *);
 
-/* Retain binary64 command values until the selected provider rounds them. */
-typedef struct qa_unified_vec3 { double x, y, z; } qa_unified_vec3;
-typedef struct qa_unified_movement {
-    qa_ruleset_id kind;
-    union {
-        struct { double acknowledged_seconds; qa_unified_vec3 angles;
-                 double forward, side, up, buttons, impulse; } nq;
-        struct { double milliseconds; qa_unified_vec3 angles;
-                 double forward, side, up, buttons, impulse; } qw;
-        struct { double milliseconds, angle_shorts[3];
-                 double forward, side, up, buttons, impulse, light_level; } q2;
-        struct { double milliseconds; qa_unified_vec3 angles;
-                 double forward, side, buttons, server_frame; } q2r;
-        struct { double server_time_ms, angle_words[3], buttons, weapon;
-                 double forward, right, up; } q3;
-    } data;
-} qa_unified_movement;
 typedef struct qa_unified_composition {
     qa_buffer canonical;
 } qa_unified_composition;

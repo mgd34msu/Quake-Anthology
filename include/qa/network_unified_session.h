@@ -4,21 +4,15 @@
 #include "qa/network_runtime.h"
 #include "qa/strings.h"
 
-typedef struct qa_unified_input {
-    uint64_t sequence;
-    qa_unified_movement command;
-    bool has_arsenal;
-    qa_usercmd_arsenal arsenal;
-} qa_unified_input;
 typedef struct qa_unified_input_batch {
     uint32_t epoch;
-    qa_unified_input commands[64];
+    qa_usercmd commands[64];
     size_t count;
     qa_buffer providers[64], weapons[64];
     size_t provider_capacity[64], weapon_capacity[64];
 } qa_unified_input_batch;
 bool qa_unified_inputs_read(const qa_unified_document *, qa_unified_input_batch *, qa_error *);
-bool qa_unified_inputs_document(uint32_t epoch, const qa_unified_input *, size_t,
+bool qa_unified_inputs_document(uint32_t epoch, const qa_usercmd *, size_t,
     qa_unified_document **, qa_error *);
 void qa_unified_inputs_free(qa_unified_input_batch *);
 const qa_unified_input_batch *qa_unified_document_inputs(const qa_unified_document *);
@@ -108,7 +102,7 @@ typedef struct qa_module_console_call {
 } qa_module_console_call;
 bool qa_unified_session_source_command(qa_unified_session *, const qa_module_console_call *, qa_error *);
 bool qa_unified_session_frame(qa_unified_session *, const qa_unified_document *, qa_error *);
-bool qa_unified_session_input(qa_unified_session *, const qa_unified_input *, qa_error *);
+bool qa_unified_session_input(qa_unified_session *, const qa_usercmd *, qa_error *);
 /* Retains a real local close request, including from the actual Source
  * callback. Source retirement and the signed reply run at the next returned
  * process boundary; retries preserve the original reason. */

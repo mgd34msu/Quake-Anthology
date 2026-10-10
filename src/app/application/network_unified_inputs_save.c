@@ -4,50 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool vector(qa_source_save_io *io, qa_unified_vec3 *v)
-{ return qa_source_save_f64(io, &v->x) && qa_source_save_f64(io, &v->y) && qa_source_save_f64(io, &v->z); }
-static bool words(qa_source_save_io *io, double v[3])
-{ return qa_source_save_f64(io, v) && qa_source_save_f64(io, v + 1) && qa_source_save_f64(io, v + 2); }
-static bool movement(qa_source_save_io *io, qa_unified_movement *m)
-{
-    uint32_t kind = (uint32_t)m->kind;
-    if (!qa_source_save_u32(io, &kind) || kind > QA_RULESET_Q3) return false;
-    m->kind = (qa_ruleset_id)kind;
-    switch (m->kind) {
-    case QA_RULESET_NETQUAKE:
-        return qa_source_save_f64(io, &m->data.nq.acknowledged_seconds) && vector(io, &m->data.nq.angles) &&
-            qa_source_save_f64(io, &m->data.nq.forward) && qa_source_save_f64(io, &m->data.nq.side) &&
-            qa_source_save_f64(io, &m->data.nq.up) && qa_source_save_f64(io, &m->data.nq.buttons) &&
-            qa_source_save_f64(io, &m->data.nq.impulse);
-    case QA_RULESET_QUAKEWORLD:
-        return qa_source_save_f64(io, &m->data.qw.milliseconds) && vector(io, &m->data.qw.angles) &&
-            qa_source_save_f64(io, &m->data.qw.forward) && qa_source_save_f64(io, &m->data.qw.side) &&
-            qa_source_save_f64(io, &m->data.qw.up) && qa_source_save_f64(io, &m->data.qw.buttons) &&
-            qa_source_save_f64(io, &m->data.qw.impulse);
-    case QA_RULESET_Q2_CLASSIC:
-        return qa_source_save_f64(io, &m->data.q2.milliseconds) && words(io, m->data.q2.angle_shorts) &&
-            qa_source_save_f64(io, &m->data.q2.forward) && qa_source_save_f64(io, &m->data.q2.side) &&
-            qa_source_save_f64(io, &m->data.q2.up) && qa_source_save_f64(io, &m->data.q2.buttons) &&
-            qa_source_save_f64(io, &m->data.q2.impulse) && qa_source_save_f64(io, &m->data.q2.light_level);
-    case QA_RULESET_Q2_RERELEASE:
-        return qa_source_save_f64(io, &m->data.q2r.milliseconds) && vector(io, &m->data.q2r.angles) &&
-            qa_source_save_f64(io, &m->data.q2r.forward) && qa_source_save_f64(io, &m->data.q2r.side) &&
-            qa_source_save_f64(io, &m->data.q2r.buttons) && qa_source_save_f64(io, &m->data.q2r.server_frame);
-    case QA_RULESET_Q3:
-        return qa_source_save_f64(io, &m->data.q3.server_time_ms) && words(io, m->data.q3.angle_words) &&
-            qa_source_save_f64(io, &m->data.q3.buttons) && qa_source_save_f64(io, &m->data.q3.weapon) &&
-            qa_source_save_f64(io, &m->data.q3.forward) && qa_source_save_f64(io, &m->data.q3.right) &&
-            qa_source_save_f64(io, &m->data.q3.up);
-    }
-    return false;
-}
 static bool input(qa_source_save_io *io, retained_input *row, uint32_t epoch,
     const qa_unified_session_player *player)
 {
-    qa_unified_input *value = &row->value;
+    qa_usercmd *value = &row->value;
     bool writing = io->direction == QA_SOURCE_SAVE_WRITE;
-    if (!qa_source_save_u64(io, &value->sequence) || value->sequence > QA_UNIFIED_SAFE_INTEGER ||
-        !movement(io, &value->command) || value->command.kind != player->movement ||
+    if (!qa_source_save_usercmd(io, value) || value->sequence > QA_UNIFIED_SAFE_INTEGER ||
+        value->kind != player->movement ||
         !qa_source_save_bool(io, &value->has_arsenal)) return false;
     if (value->has_arsenal) {
         if (writing && (value->arsenal.provider.data != row->provider.data ||
@@ -67,8 +30,7 @@ static bool input(qa_source_save_io *io, retained_input *row, uint32_t epoch,
         value->arsenal.provider = (qa_bytes){row->provider.data, row->provider.size};
         value->arsenal.weapon = (qa_bytes){row->weapon.data, row->weapon.size};
     }
-    /* Reuse the actual public wire schema for value qualification while the
-     * saved representation above retains each original binary64 bit. */
+    /* Apply the same command schema at the save boundary. */
     qa_unified_document *document = NULL;
     bool okay = qa_unified_inputs_document(epoch, value, 1, &document, io->error);
     qa_unified_document_destroy(document);
@@ -111,7 +73,7 @@ bool application_unified_inputs_save(qa_source_save_io *io, application_unified_
         size_t capacity = owner->count > 64 ? owner->count : 64;
         owner->commands = calloc(capacity, sizeof(*owner->commands));
         if (!owner->commands)
-            return application_fail(io->error, QA_ERROR_MEMORY, "Restoring ordered binary64 Source commands");
+            return application_fail(io->error, QA_ERROR_MEMORY, "Restoring ordered Source commands");
         owner->capacity = capacity;
     }
     if (owner->count && !owner->commands) return false;

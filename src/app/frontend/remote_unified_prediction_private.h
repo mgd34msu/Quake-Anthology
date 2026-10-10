@@ -2,7 +2,7 @@
 #define QA_FRONTEND_REMOTE_UNIFIED_PREDICTION_PRIVATE_H
 #include "remote_unified_prediction.h"
 typedef struct prediction_command {
-    qa_unified_movement raw;
+    qa_usercmd raw;
     uint64_t sequence;
     double time_ms;
 } prediction_command;

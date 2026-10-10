@@ -47,7 +47,7 @@ typedef struct frontend_remote_unified_consumers {
     bool (*frame)(void *, frontend_remote_unified *, const qa_unified_document *,
         frontend_unified_frame_preparation *, qa_error *);
     bool (*publish)(void *, frontend_remote_unified *, const qa_unified_document *, qa_error *);
-    bool (*input)(void *, frontend_remote_unified *, const qa_unified_input *, double command_time_ms, qa_error *);
+    bool (*input)(void *, frontend_remote_unified *, const qa_usercmd *, double command_time_ms, qa_error *);
     bool (*physical_ready)(void *, frontend_remote_unified *, uint64_t *completed_sequence,
         bool *sample_needed, qa_error *);
     bool (*physical_input)(void *, frontend_remote_unified *, const qa_seat_input_sample *,
@@ -127,7 +127,7 @@ bool frontend_remote_unified_wire_actor(const frontend_remote_unified *, qa_acto
 bool frontend_remote_unified_player(const frontend_remote_unified *, qa_actor_id *, uint32_t *source_entity);
 /* The input producer supplies Source-timed binary64 values. Prediction runs
  * before this exact receipt is submitted to the genuine channel. */
-bool frontend_remote_unified_submit(frontend_remote_unified *, const qa_unified_input *,
+bool frontend_remote_unified_submit(frontend_remote_unified *, const qa_usercmd *,
     double command_time_ms, qa_error *);
 bool frontend_remote_unified_command(frontend_remote_unified *, const char *,
     const char *const *, size_t, qa_error *);

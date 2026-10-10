@@ -3,6 +3,7 @@
 #include "qa/text.h"
 
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 void qa_unified_inputs_free(qa_unified_input_batch *batch)
@@ -19,8 +20,11 @@ bool qa_unified_inputs_check(qa_unified_input_batch *batch, size_t *bytes, qa_er
     if (!batch || !batch->epoch || batch->count > 64 ||
         !qa_unified_record_measure(&qa_unified_inputs_layout, batch, bytes, error)) return false;
     for (size_t i = 0; i < batch->count; ++i) {
-        qa_unified_input *input = batch->commands + i;
-        if (input->sequence > QA_UNIFIED_SAFE_INTEGER || (i && input->sequence <= batch->commands[i - 1].sequence)) {
+        qa_usercmd *input = batch->commands + i;
+        if ((unsigned)input->kind > QA_RULESET_Q3 || !qa_vec_finite(input->angles) ||
+            !isfinite(input->acknowledged_server_seconds) || !isfinite(input->forward_move) ||
+            !isfinite(input->side_move) || !isfinite(input->up_move) ||
+            input->sequence > QA_UNIFIED_SAFE_INTEGER || (i && input->sequence <= batch->commands[i - 1].sequence)) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Unified input sequence is outside its actual ordered Source domain"); return false;
         }
         qa_buffer provider = batch->providers[i], weapon = batch->weapons[i];
@@ -60,7 +64,7 @@ static bool copy_bytes(qa_bytes source, qa_buffer *out, qa_error *error)
     if (!out->data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Copying actual Unified input selection"); return false; }
     memcpy(out->data, source.data, source.size); out->size = source.size; return true;
 }
-bool qa_unified_inputs_copy(uint32_t epoch, const qa_unified_input *inputs, size_t count,
+bool qa_unified_inputs_copy(uint32_t epoch, const qa_usercmd *inputs, size_t count,
     qa_unified_input_batch *out, qa_error *error)
 {
     if (!out || !epoch || count > 64 || (count && !inputs)) {
@@ -80,7 +84,7 @@ bool qa_unified_inputs_copy(uint32_t epoch, const qa_unified_input *inputs, size
     if (okay) *out=batch; else qa_unified_inputs_free(&batch);
     return okay;
 }
-bool qa_unified_inputs_document(uint32_t epoch, const qa_unified_input *inputs, size_t count,
+bool qa_unified_inputs_document(uint32_t epoch, const qa_usercmd *inputs, size_t count,
     qa_unified_document **out, qa_error *error)
 {
     if (!out || *out) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid Unified input document output"); return false; }

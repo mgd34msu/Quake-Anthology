@@ -20,7 +20,7 @@ bool qa_unified_document_create_inputs(qa_unified_input_batch **, qa_unified_doc
 size_t qa_unified_document_memory(const qa_unified_document *);
 bool qa_unified_document_equal(const qa_unified_document *, const qa_unified_document *);
 bool qa_unified_inputs_check(qa_unified_input_batch *, size_t *, qa_error *);
-bool qa_unified_inputs_copy(uint32_t, const qa_unified_input *, size_t, qa_unified_input_batch *, qa_error *);
+bool qa_unified_inputs_copy(uint32_t, const qa_usercmd *, size_t, qa_unified_input_batch *, qa_error *);
 bool qa_unified_inputs_write(const qa_unified_input_batch *, size_t, qa_unified_builder *, qa_error *);
 
 #endif
