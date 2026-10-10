@@ -281,3 +281,83 @@ Normal builds and all seven existing core suites passed for `53067776`,
 `/tmp/qa-normal-{signon-commit,output-capacity,map-output-admission}-20261010/`.
 These are implementation and component checks. No installation, live combined
 mode, legacy-server round trip or measured speedup is claimed for this slice.
+
+## System intake: THE-864
+
+`qa_sys_event` in `include/qa/platform_events.h:43` is the one timestamped
+system record. `src/platform/events.c:55` admits it into fixed common event
+pages; `src/platform/events.c:138` visits pending records in admission order.
+Consumers retire their own leases, so a deferred packet does not block key
+releases. The old platform byte allocator and head-only consumer API are
+deleted. Packet admission reserves input and clock capacity; destructive
+reads happen only after admission.
+
+SDL input enters at `src/platform/input.c:2494`, stdin at
+`src/platform/console.c:22`, and datagrams at
+`src/platform/network_events.c:5`. `src/app/frontend/network.c:6220` collects
+every current runtime and discovery source. OS game-socket reads live in the
+transport boundary, including native IPX and KEX discovery. Child-module IPC
+and the optional OAuth callback are separate service protocols. One dispatcher
+at `src/app/frontend/frame.c:410` handles input, console, packets and host time;
+recovery supplies records to that dispatcher. No direct gameplay intake bypass
+was found among these callers. Loopback send admission remains THE-2864.
+
+The existing core suite checks retained packet bytes across 4,096 independently
+retired key releases, FIFO dispatch, and input/time admission under pressure.
+Normal builds and seven existing core suites passed for `d4310588` and
+`057908b4`; logs are in `/tmp/qa-normal-independent-input-retirement-20261010/`
+and `/tmp/qa-normal-queued-host-clock-20261010/`. This report covers current
+implementation and component checks, not a new installed-game qualification.
+
+## Host phases: THE-865
+
+`src/app/frontend/frame.c:785` owns the host frame: physical intake and event
+drain, commands, server advance, another physical intake and event/command
+drain, then client command construction, prediction, scene, audio and
+completion. Both intakes are nonblocking and remain active during constructor,
+settings and restart waits; unavailable input consumers defer their records.
+The sole frontend call to `qa_application_advance` is at `frame.c:917`.
+`frontend_replay_frame` at `frame.c:1072` feeds the same phases using recorded
+timing without physical intake. Its separate simulation loop is deleted.
+Q2 final-ACK retirement at `src/app/frontend/network_q2_host.c:807` consumes
+queued packets without another physical receive. No second frontend server
+advance or physical receive in that retirement path remains.
+
+`7c42f439` and `057908b4` passed one normal build and the seven existing core
+suites each. Logs are in `/tmp/qa-normal-two-physical-drains-20261010/` and
+`/tmp/qa-normal-queued-host-clock-20261010/`. Combined gameplay, installed
+startup and original-protocol interoperability were not rerun in this slice.
+
+## Platform services: THE-866
+
+`src/platform/services.c:41` owns performance and clock reads, `:207` entropy,
+and `:294` calendar conversion. Audio, render, frontend, gameplay and module
+service adapters call these APIs; SDL event timestamps stay inside platform.
+The campaign's unused result counter/frequency fields are deleted. Current
+source inspection found no actual OS clock, entropy or calendar read outside
+platform; guest import symbol tables and injected gameplay clocks are module
+boundaries, not duplicate OS implementations. Native process services use the
+same APIs in `src/platform/native_process.c`. IPX and KEX game reads enter the
+shared event queue through the transport collector described under THE-864.
+
+The existing `platform_services` suite checks clock bounds, calendar conversion
+and entropy writes. It passes with the other six core suites on `057908b4`.
+No Windows/native-IPX runtime, installed gameplay or timing claim is made by
+this current-source close-out.
+
+## Output retirement between ticks: THE-909
+
+`src/app/application/unified_events.c:526` retires the common output ring only
+through the minimum local and network cursor. The network minimum at
+`src/app/frontend/network.c:6538` includes Unified, NQ, QW and Q2 peers.
+`src/app/application/network_unified_server.c:576` uses actual reliable
+receipts for peer retirement. Host turns without a source tick no longer clear
+an unsent inventory, sound or message record. The former independent Unified
+journal and wholesale per-host clear are deleted by the THE-870 migration.
+
+`src/app/frontend/network_unified.c:381` releases the shared publication
+boundary after capture even when a peer retains its own pending output; peer
+pressure does not wait for every recipient before another source frame.
+No separate wholesale-clear bypass was found in current output retirement.
+Current normal/core checks pass; prior installed inventory proof belongs to
+THE-909's existing Linear record and was not rerun for this close-out.
