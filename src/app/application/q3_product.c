@@ -858,4 +858,7 @@ void application_q3_cvar_controls_bind(qa_cvars *cvars,
     controls[APPLICATION_Q3_CVAR_PURE] = qa_cvars_resolve(cvars, "sv_pure");
     controls[APPLICATION_Q3_CVAR_FLOOD_PROTECT] = qa_cvars_resolve(cvars, "sv_floodProtect");
     controls[APPLICATION_Q3_CVAR_BOT_OBSTACLE_DEBUG] = qa_cvars_resolve(cvars, "com_botObstacleDebug");
+    controls[APPLICATION_Q3_CVAR_BOT_ENABLE] = qa_cvars_resolve(cvars, "bot_enable");
+    controls[APPLICATION_Q3_CVAR_GAME_TYPE] = qa_cvars_resolve(cvars, "g_gametype");
+    controls[APPLICATION_Q3_CVAR_MAX_CLIENTS] = qa_cvars_resolve(cvars, "sv_maxclients");
 }

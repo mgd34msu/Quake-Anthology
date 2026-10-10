@@ -11,6 +11,9 @@ typedef enum application_q3_cvar_control {
     APPLICATION_Q3_CVAR_PURE,
     APPLICATION_Q3_CVAR_FLOOD_PROTECT,
     APPLICATION_Q3_CVAR_BOT_OBSTACLE_DEBUG,
+    APPLICATION_Q3_CVAR_BOT_ENABLE,
+    APPLICATION_Q3_CVAR_GAME_TYPE,
+    APPLICATION_Q3_CVAR_MAX_CLIENTS,
     APPLICATION_Q3_CVAR_CONTROL_COUNT
 } application_q3_cvar_control;
 void application_q3_cvar_controls_bind(qa_cvars *, qa_cvar_handle [APPLICATION_Q3_CVAR_CONTROL_COUNT]);

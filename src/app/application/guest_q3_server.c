@@ -2,6 +2,7 @@
 #include "guest_projection_private.h"
 #include "native_q3_wire_state.h"
 #include "guest_q3_combat.h"
+#include "guest_q3_console.h"
 
 char *q3g_copy_text(const char *text, qa_error *error)
 {
@@ -147,8 +148,8 @@ bool q3g_set_configstring(q3g_role *role, uint32_t index, const char *text, qa_e
 
 bool q3g_publish_information(q3g_role *role, bool force, qa_error *error)
 {
-    qa_cvars *cvars = NULL;
-    if (!qa_q3_host_console(role->host, &cvars, NULL) || !cvars)
+    qa_cvars *cvars = application_guest_q3_console_registry(role->engine->provider);
+    if (!cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server information requires its GAME registry");
     const uint32_t masks[] = {QA_CVAR_SERVERINFO, QA_CVAR_SYSTEMINFO};
     const uint32_t information = masks[0] | masks[1];

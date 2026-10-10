@@ -11,6 +11,7 @@ struct frontend_network_predictor {
     qa_frontend *frontend;
     qa_application *application;
     qa_application_q3_client_context receiver;
+    qa_cvar_handle pmove_msec;
     frontend_remote_prediction *prediction;
 };
 static bool fail(qa_error *error, const char *message)
@@ -309,7 +310,7 @@ static bool set_pmove_msec(void *context, const frontend_remote_prediction_sourc
     if(!source_current_observe(owner,source,&network)) return false;
     char text[16]; snprintf(text,sizeof(text),"%d",value);
     if(!qa_cvars_set(network.receiver.cvars,"pmove_msec",text,true,error)) return false;
-    const qa_cvar_view *actual=qa_cvars_find(network.receiver.cvars,"pmove_msec");
+    const qa_cvar_view *actual=qa_cvars_read(network.receiver.cvars,owner->pmove_msec);
     return actual && actual->integer==value && !strcmp(actual->value,text) &&
         (source_current(owner,source) || fail(error,"Prediction clamp changed its actual cached source receipt"));
 }
@@ -336,6 +337,7 @@ bool frontend_network_predictor_create(qa_frontend *f, const qa_application_q3_c
     frontend_network_predictor *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the Network prediction bindings");
     owner->frontend=f; owner->application=f->application; owner->receiver=*receiver;
+    owner->pmove_msec=qa_cvars_resolve(receiver->cvars,"pmove_msec");
     frontend_remote_prediction_options actual=options(owner); actual.initial_configuration=*initial;
     if(!frontend_remote_prediction_create(&actual,&owner->prediction,error)) { free(owner); return false; }
     *out=owner; return true;
@@ -347,6 +349,7 @@ bool frontend_network_predictor_restore(qa_frontend *f, const qa_application_q3_
     frontend_network_predictor *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining restored Network prediction bindings");
     owner->frontend=f; owner->application=f->application; owner->receiver=*receiver;
+    owner->pmove_msec=qa_cvars_resolve(receiver->cvars,"pmove_msec");
     frontend_remote_prediction_options actual=options(owner);
     if(!frontend_remote_prediction_restore_new(&actual,bytes,&owner->prediction,error)) { free(owner); return false; }
     *out=owner; return true;

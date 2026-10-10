@@ -226,6 +226,8 @@ struct qa_frontend_network {
     frontend_q3_pending q3_pending[32];
     size_t q3_pending_count;
     uint64_t q3_generation;
+    uint64_t server_cvar_view;
+    qa_cvar_handle timeout, sv_fps, sv_maxRate, sv_allowDownload;
     int32_t q3_server_id, q3_restarted_server_id, q3_checksum_feed;
     uint8_t q3_server_bit;
     uint64_t composition;
@@ -345,6 +347,14 @@ static bool q2_host_protocol(qa_net_protocol_id protocol)
 {
     return q2_raw_protocol(protocol) || protocol.kind==QA_NET_Q2KEX_2023;
 }
+static void server_cvars_bind(qa_frontend_network *n,const qa_cvars *cvars)
+{
+    n->timeout=qa_cvars_resolve(cvars,"timeout");
+    n->sv_fps=qa_cvars_resolve(cvars,"sv_fps");
+    n->sv_maxRate=qa_cvars_resolve(cvars,"sv_maxRate");
+    n->sv_allowDownload=qa_cvars_resolve(cvars,"sv_allowDownload");
+    n->server_cvar_view=qa_cvars_view_identity(cvars);
+}
 static bool q2_timeout_sync(qa_frontend_network *n,qa_error *error)
 {
     qa_frontend *f=n->frontend;
@@ -355,7 +365,8 @@ static bool q2_timeout_sync(qa_frontend_network *n,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 host timeout requires its actual primary Source registry");
     qa_ruleset_id dialect=qa_cvars_dialect(source.cvars);
     if(dialect!=QA_RULESET_Q2_CLASSIC && dialect!=QA_RULESET_Q2_RERELEASE) return true;
-    const qa_cvar_view *timeout=qa_cvars_find(source.cvars,"timeout");
+    if (n->server_cvar_view!=qa_cvars_view_identity(source.cvars)) server_cvars_bind(n,source.cvars);
+    const qa_cvar_view *timeout=qa_cvars_read(source.cvars,n->timeout);
     if(!timeout)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 host timeout lacks its Source declaration");
     return qa_network_q2_server_timeout_policy(n->runtime,timeout->number,error);
@@ -1582,8 +1593,8 @@ static bool q3_rate(frontend_q3_peer *peer, qa_q3_server_rate *out, bool *downlo
         !q3_actor(peer, &actor, error) || !qa_application_network_q3_userinfo_read(n->frontend->application, actor, &userinfo, error)) return false;
     qa_cvars *cvars = qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
     if (!cvars) return false;
-    const qa_cvar_view *fps = qa_cvars_find(cvars, "sv_fps"), *maximum = qa_cvars_find(cvars, "sv_maxRate"),
-        *enabled = qa_cvars_find(cvars, "sv_allowDownload");
+    const qa_cvar_view *fps = qa_cvars_read(cvars, n->sv_fps), *maximum = qa_cvars_read(cvars, n->sv_maxRate),
+        *enabled = qa_cvars_read(cvars, n->sv_allowDownload);
     if (!fps || !maximum || !enabled || !isfinite(fps->number) || !isfinite(maximum->number) || !isfinite(enabled->number))
         return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source rate/download policy lacks its actual finite cvar producer");
     char rate_text[1024], snaps_text[1024], ip[1024];
@@ -2048,6 +2059,7 @@ static bool q3_prepare(qa_frontend_network *n, qa_error *error)
     qa_actor_owner source_owner; qa_q3_product source_product;
     if (!qa_application_network_q3_owner(n->frontend->application, &source_owner, &source_product, error)) return false;
     if (!n->q3_packages || changed) {
+        server_cvars_bind(n,qa_application_network_q3_host_cvars(n->frontend->application,source_owner,error));
         frontend_q3_packages *packages = NULL;
         if (!frontend_q3_packages_create(n->frontend->application, source_owner, (uint32_t)n->q3_checksum_feed, &packages, error)) return false;
         if (changed) for (size_t i = 0; i < 64; ++i) {

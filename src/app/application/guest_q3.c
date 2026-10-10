@@ -128,9 +128,9 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
     engine->milliseconds = (int32_t)(uint32_t)(frame->time_ns / UINT64_C(1000000));
     if (!engine->map_ready || !engine->game || !engine->game->initialized) return true;
     int32_t result;
-    qa_cvars *cvars = NULL;
-    qa_q3_host_console(engine->game->host, &cvars, NULL);
-    const qa_cvar_view *bots = cvars ? qa_cvars_find(cvars, "bot_enable") : NULL;
+    qa_cvars *cvars = application_guest_q3_console_registry(engine->provider);
+    const qa_cvar_view *bots = qa_cvars_read(cvars,
+        application_guest_q3_console_control(engine->provider, APPLICATION_Q3_CVAR_BOT_ENABLE));
     if (!q3g_publish_information(engine->game, false, error)) return false;
     if (bots && bots->integer && application_bots_guest_runtime(engine->provider->application, engine->provider) &&
         !q3g_call(engine->game, 10, &engine->milliseconds, 1, &result, error)) return false;
@@ -467,10 +467,11 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     if (ok) ok = q3g_publish_information(engine->game, true, error);
     if (ok) ok = application_guest_clients_drain(provider, error);
     if (ok) {
-        qa_cvars *cvars = NULL;
-        qa_q3_host_console(engine->game->host, &cvars, NULL);
-        const qa_cvar_view *game_type = cvars ? qa_cvars_find(cvars, "g_gametype") : NULL;
-        const qa_cvar_view *clients = cvars ? qa_cvars_find(cvars, "sv_maxclients") : NULL;
+        qa_cvars *cvars = application_guest_q3_console_registry(engine->provider);
+        const qa_cvar_view *game_type = qa_cvars_read(cvars,
+            application_guest_q3_console_control(engine->provider, APPLICATION_Q3_CVAR_GAME_TYPE));
+        const qa_cvar_view *clients = qa_cvars_read(cvars,
+            application_guest_q3_console_control(engine->provider, APPLICATION_Q3_CVAR_MAX_CLIENTS));
         if (game_type && clients && clients->integer >= 1 && clients->integer <= 64) {
             engine->loaded_game_type = game_type->integer;
             engine->loaded_max_clients = clients->integer;
