@@ -4,6 +4,7 @@
 #include "qa/network_unified_control.h"
 #include "qa/network_unified_frame_pool.h"
 #include "value_internal.h"
+#include "qa/arena.h"
 
 #define QA_UNIFIED_FRAME_BACKUP 32u
 #define QA_UNIFIED_FRAME_HISTORY_BYTES (64u * 1024u * 1024u)
@@ -28,6 +29,7 @@ struct qa_unified_session {
     qa_unified_held *timeout_delivery;
     size_t held_bytes, held_count;
     qa_unified_input_batch inputs;
+    qa_arena input_storage;
     qa_unified_frame_receipt frames[QA_UNIFIED_FRAME_BACKUP];
     size_t frame_bytes;
     uint32_t epoch, required;
@@ -47,6 +49,7 @@ bool qa_unified_session_frame_decode(const qa_unified_session *, qa_bytes, qa_un
 bool qa_unified_session_queue_control(qa_unified_session *, const qa_unified_document *, qa_error *);
 bool qa_unified_session_command(void *, const qa_usercmd *, qa_error *);
 bool qa_unified_session_queue_inputs(qa_unified_session *, qa_error *);
+bool qa_unified_session_prepare_inputs(qa_unified_session *, qa_error *);
 bool qa_unified_session_receive_resume(qa_unified_session *, qa_error *);
 void qa_unified_session_ack(qa_unified_session *, int64_t);
 bool qa_unified_session_player_read(const qa_unified_session *, qa_unified_session_player *, qa_error *);

@@ -106,6 +106,7 @@ void qa_unified_session_release(qa_unified_session *s)
     qa_unified_session_delivery_free(s->timeout_delivery);
     qa_unified_session_frames_clear(s);
     qa_unified_inputs_free(&s->inputs);
+    qa_arena_destroy(&s->input_storage);
     qa_unified_channel_destroy(s->channel);
     free(s->frame_wire.data);
     qa_unified_frame_pool_destroy(&s->frame_pool);
@@ -261,7 +262,7 @@ static bool restart_peer(void *state, uint64_t epoch, const uint64_t *compositio
         if (s->entered || !epoch || qa_unified_channel_closed(s->channel))
             return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production client restart lost its retained channel");
         s->admitted = false; s->acknowledged = -1;
-        qa_unified_inputs_free(&s->inputs);
+        qa_unified_inputs_reset(&s->inputs);
         return true;
     }
     if (s->entered || s->processing || s->closing || s->disconnected || s->timeout_pending ||
@@ -323,8 +324,9 @@ bool qa_unified_session_attach(qa_network_runtime *runtime, const qa_net_connect
     if (s->limits.queued_reliable_bytes > SIZE_MAX - s->limits.message_bytes) {
         qa_strings_destroy(s->strings); free(s); return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production holding capacity exceeds storage");
     }
-    s->frame_pool=qa_unified_frame_pool_create(0,0,e);
-    if (!s->frame_pool || !qa_unified_channel_create(token, &s->limits, &s->channel, e)) {
+    s->frame_pool=qa_unified_frame_pool_create(0,(size_t)s->limits.reliable_window_messages+QA_UNIFIED_FRAME_BACKUP+4,e);
+    if (!s->frame_pool || !qa_unified_channel_create(token, &s->limits, &s->channel, e) ||
+        !qa_unified_session_prepare_inputs(s,e)) {
         qa_unified_session_release(s); return false;
     }
     const qa_network_peer_ops ops = qa_unified_session_operations();

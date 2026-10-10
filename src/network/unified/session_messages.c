@@ -102,7 +102,7 @@ bool qa_unified_session_queue_control(qa_unified_session *s, const qa_unified_do
     if (offer) {
         s->epoch = epoch; s->admitted = false; s->acknowledged = -1;
         qa_unified_session_frames_clear(s);
-        qa_unified_inputs_free(&s->inputs);
+        qa_unified_inputs_reset(&s->inputs);
     }
     if (disconnect) { s->closing = true; s->admitted = false; s->closing_ns = s->now_ns; }
     return true;
@@ -235,7 +235,7 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *
         if (commit.applied && offer) {
             s->epoch = epoch; s->admitted = false; s->acknowledged = -1;
             qa_unified_session_frames_clear(s);
-            qa_unified_inputs_free(&s->inputs);
+            qa_unified_inputs_reset(&s->inputs);
         }
         if (commit.applied && disconnect) s->admitted = false;
     }

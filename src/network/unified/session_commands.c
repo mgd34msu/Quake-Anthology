@@ -1,6 +1,7 @@
 #include "session_internal.h"
 #include "value_internal.h"
 #include "qa/network_unified_control.h"
+#include "qa/allocation_gate.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -88,14 +89,40 @@ void qa_unified_session_ack(qa_unified_session *s, int64_t acknowledged)
     b->count = retained;
 }
 
-static bool selection_reserve(qa_buffer *buffer, size_t *capacity, size_t size, qa_error *e)
+bool qa_unified_session_prepare_inputs(qa_unified_session *s,qa_error *e)
 {
-    if (size <= *capacity) return true;
-    size_t next = *capacity ? *capacity : 16;
-    while (next < size) next *= 2;
-    uint8_t *data = realloc(buffer->data, next);
-    if (!data) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining actual Unified input selection");
-    buffer->data = data; *capacity = next; return true;
+    enum { NAME_BYTES=8192, SLOTS=64 };
+    size_t bytes=2u*SLOTS*NAME_BYTES;
+    if(!qa_arena_reserve(&s->input_storage,bytes,e)) return false;
+    uint8_t *storage=qa_arena_alloc(&s->input_storage,bytes,1,e);
+    if(!storage) return false;
+    qa_unified_input_batch previous=s->inputs,prepared=previous;
+    for(size_t i=0;i<SLOTS;++i) {
+        if(previous.providers[i].size>NAME_BYTES || previous.weapons[i].size>NAME_BYTES)
+            return qa_unified_session_fail(e,QA_ERROR_FORMAT,"Input selection exceeds its external name limit");
+        prepared.providers[i].data=storage+(2*i)*NAME_BYTES;
+        prepared.weapons[i].data=storage+(2*i+1)*NAME_BYTES;
+        if(previous.providers[i].size) memcpy(prepared.providers[i].data,previous.providers[i].data,previous.providers[i].size);
+        if(previous.weapons[i].size) memcpy(prepared.weapons[i].data,previous.weapons[i].data,previous.weapons[i].size);
+        prepared.provider_capacity[i]=prepared.weapon_capacity[i]=NAME_BYTES;
+        prepared.commands[i].arsenal.provider=(qa_bytes){prepared.providers[i].data,prepared.providers[i].size};
+        prepared.commands[i].arsenal.weapon=(qa_bytes){prepared.weapons[i].data,prepared.weapons[i].size};
+    }
+    prepared.borrowed=true;
+    qa_unified_inputs_free(&previous);
+    s->inputs=prepared;
+    qa_arena_seal(&s->input_storage);
+    s->frame_wire.data=malloc(s->limits.message_bytes);
+    if(!s->frame_wire.data) return qa_unified_session_fail(e,QA_ERROR_MEMORY,"Reserving session wire storage");
+    s->frame_wire.capacity=s->limits.message_bytes;
+    return true;
+}
+
+static bool selection_reserve(size_t capacity,size_t size,qa_error *e)
+{
+    if(size<=capacity) return true;
+    qa_allocation_gate_capacity_exhausted();
+    return qa_unified_session_fail(e,QA_ERROR_MEMORY,"Input selection storage exhausted");
 }
 
 static void selection_copy(qa_buffer *buffer, qa_bytes source)
@@ -129,9 +156,9 @@ static bool retain_input(qa_unified_session *s, const qa_usercmd *input, qa_erro
     size_t measured;
     if (!qa_unified_inputs_check(&view, &measured, e)) return false;
     size_t reusable = s->inputs.count == 64 ? 0 : s->inputs.count;
-    bool ok = selection_reserve(s->inputs.providers + reusable, s->inputs.provider_capacity + reusable,
+    bool ok = selection_reserve(s->inputs.provider_capacity[reusable],
         view.providers[0].size, e) &&
-        selection_reserve(s->inputs.weapons + reusable, s->inputs.weapon_capacity + reusable,
+        selection_reserve(s->inputs.weapon_capacity[reusable],
         view.weapons[0].size, e);
     if (reusable < s->inputs.count) {
         s->inputs.commands[reusable].arsenal.provider = (qa_bytes){s->inputs.providers[reusable].data, s->inputs.providers[reusable].size};

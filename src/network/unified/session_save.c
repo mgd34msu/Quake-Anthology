@@ -254,8 +254,6 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restore lacks its actual candidate connection");
     qa_unified_session *s = calloc(1, sizeof(*s));
     if (!s) return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Restoring complete production session");
-    s->frame_pool=qa_unified_frame_pool_create(0,0,e);
-    if (!s->frame_pool) { qa_unified_session_release(s); return false; }
     s->runtime = runtime; s->id = client->id; s->seat = client->seats[0].seat; s->hooks = *hooks;
     s->strings=hooks->strings; qa_strings_retain(s->strings);
     qa_net_reader r; qa_net_reader_init(&r, bytes, e);
@@ -274,6 +272,10 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     qa_bytes channel = {0}, inputs = {0};
     ok = ok && blob(&r, &channel) && qa_unified_channel_restore(channel, &s->channel, e) &&
         qa_unified_channel_descriptor(s->channel, &s->token, &s->limits, e) && blob(&r, &inputs);
+    if(ok) {
+        s->frame_pool=qa_unified_frame_pool_create(0,(size_t)s->limits.reliable_window_messages+QA_UNIFIED_FRAME_BACKUP+4,e);
+        ok=s->frame_pool!=NULL;
+    }
     if (ok && ((s->epoch != 0) != (inputs.size != 0)))
         ok = qa_net_reader_fail(&r, "Production input continuation changes its retained epoch presence");
     if (ok && inputs.size) {
@@ -350,7 +352,8 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
                 qa_unified_session_continuation_read(&r, held, s->strings);
         }
     }
-    ok = ok && qa_net_reader_finish(&r) && qa_unified_session_qualified(s, client, e);
+    ok = ok && qa_net_reader_finish(&r) && qa_unified_session_qualified(s, client, e) &&
+        qa_unified_session_prepare_inputs(s,e);
     if (!ok) { qa_unified_session_release(s); return false; }
     *out = s; *ops = qa_unified_session_operations(); return true;
 }

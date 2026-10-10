@@ -9,11 +9,17 @@
 void qa_unified_inputs_free(qa_unified_input_batch *batch)
 {
     if (!batch) return;
-    for (size_t i = 0; i < 64; ++i) {
+    for (size_t i = 0; !batch->borrowed && i < 64; ++i) {
         qa_buffer_free(batch->providers + i);
         qa_buffer_free(batch->weapons + i);
     }
     *batch = (qa_unified_input_batch){0};
+}
+void qa_unified_inputs_reset(qa_unified_input_batch *batch)
+{
+    batch->count=0;batch->epoch=0;
+    memset(batch->commands,0,sizeof(batch->commands));
+    for(size_t i=0;i<64;++i) batch->providers[i].size=batch->weapons[i].size=0;
 }
 bool qa_unified_inputs_check(qa_unified_input_batch *batch, size_t *bytes, qa_error *error)
 {
