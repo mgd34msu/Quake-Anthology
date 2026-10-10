@@ -13,6 +13,7 @@
 #include "guest_native_q2_private.h"
 #include "network_q2_private.h"
 #include "qa/application_q3_round.h"
+#include "qa/qc_observation.h"
 #include "guest_qc_internal.h"
 #include "map_players_private.h"
 
@@ -296,39 +297,72 @@ static uint16_t protocol_channels(const application_provider *provider)
     return 0;
 }
 
+bool application_q1_multicast_receives(application_provider *provider,
+    const qa_application_protocol_event *event, qa_actor_id actor, uint32_t slot,
+    bool *out, qa_error *error)
+{
+    int32_t mode = event->destination % 3;
+    if (!mode) { *out = true; return true; }
+    qa_application *app = provider->application;
+    qa_vec3 point;
+    if (provider->kind == APPLICATION_PROVIDER_QC) {
+        const qa_qc_definition *field = qa_qc_program_find_field(provider->state.qc.program, "origin");
+        if (!field || field->type != QA_QC_VECTOR ||
+            !qa_qc_actor_observation_vector(provider->state.qc.instance, slot, actor, field->offset, &point, error))
+            return false;
+    } else {
+        qa_body_state body;
+        if (!qa_world_body_read(app->world, actor, &body, error)) return false;
+        point = body.origin;
+    }
+    qa_vec3 delta = qa_vec_sub(point, event->origin);
+    if (mode == 1 && qa_vec_dot(delta, delta) <= 1024.0f * 1024.0f) { *out = true; return true; }
+    qa_collision_leaf from, to;
+    qa_collision_geometry *geometry = qa_world_geometry(app->world);
+    return qa_collision_point_leaf(geometry, event->origin, QA_LEAF_Q1, &from, error) &&
+        qa_collision_point_leaf(geometry, point, QA_LEAF_Q1, &to, error) &&
+        qa_collision_cluster_visible(geometry, (int32_t)from.cluster, (int32_t)to.cluster, mode == 1, out, error);
+}
+
 static bool protocol_capacity(application_provider *provider,
     const qa_application_protocol_event *event,
     const qa_application_q2_protocol_delivery *delivery,
     const application_event_write *write, qa_error *error)
 {
     qa_application *app = provider->application;
-    if (!event->reliable || event->signon || !write->transaction.blocked ||
-        app->state != QA_APPLICATION_RUNNING) return false;
+    if (event->signon) return false;
+    if (!event->reliable) return application_event_stream_decline(app, write, true, error);
+    if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING) return false;
     uint16_t channels = protocol_channels(provider);
     if (event->recipient.registry || (delivery && delivery->audience.captured))
         return application_event_stream_close_recipients(app, write,
             event->recipient, delivery ? &delivery->audience : NULL, channels, error);
-    if (event->multicast || event->destination != 2 ||
+    bool qw = provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD;
+    if ((event->multicast ? !qw || event->destination < 3 || event->destination > 5 : event->destination != 2) ||
         (provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_QC))
         return false;
     for (size_t i = 0; app->players && i < app->players->count; ++i) {
         application_player_record *player = app->players->records + i;
         bool receives = false;
+        uint32_t source_slot = 0;
         if (provider->kind == APPLICATION_PROVIDER_QC) {
             const struct application_qc_state *engine = provider->state.qc.engine;
             for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
                 const application_qc_client *client = engine->clients + slot;
                 if (client->connected && qa_actor_id_equal(client->actor, player->actor) &&
-                    (provider->launch->selection.clock.kind != QA_RULESET_QUAKEWORLD || client->spawned)) {
+                    (!qw || client->spawned)) {
                     receives = true;
+                    source_slot = slot;
                     break;
                 }
             }
         } else {
-            uint32_t slot;
-            receives = qa_q1_native_client_slot_prepared(provider->state.q1, player->actor, &slot, NULL) &&
-                (provider->launch->selection.clock.kind != QA_RULESET_QUAKEWORLD || !player->source_begin_pending);
+            receives = qa_q1_native_client_slot_prepared(provider->state.q1, player->actor, &source_slot, NULL) &&
+                (!qw || !player->source_begin_pending);
         }
+        if (receives && event->multicast &&
+            !application_q1_multicast_receives(provider, event, player->actor, source_slot, &receives, error))
+            return false;
         if (receives) player->output_incomplete |= channels;
     }
     return reliable_capacity_report(app, error);

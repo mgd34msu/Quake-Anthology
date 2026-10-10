@@ -61,6 +61,9 @@ bool application_event_stream_decline(qa_application *, const application_event_
 bool application_event_stream_close_recipients(qa_application *, const application_event_write *,
     qa_actor_id recipient, const qa_application_q2_audience *, uint16_t channels, qa_error *);
 bool application_event_stream_close_subscribers(qa_application *, const application_event_write *, qa_error *);
+struct application_provider;
+bool application_q1_multicast_receives(struct application_provider *, const qa_application_protocol_event *,
+    qa_actor_id, uint32_t source_slot, bool *, qa_error *);
 const application_event_envelope *application_event_stream_at(const qa_application *, uint64_t);
 bool application_unified_persistent_prepare(qa_application *, application_event_envelope *, qa_error *);
 void application_unified_persistent_publish(qa_application *, application_event_envelope *);

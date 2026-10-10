@@ -3,6 +3,7 @@
 #include "network_q1_signon.h"
 #include "qa/qc_observation.h"
 #include "unified_q1_events.h"
+#include "event_stream.h"
 #include <limits.h>
 
 static bool source_returned(const application_provider *p)
@@ -230,18 +231,7 @@ bool qa_application_qc_message_receives(qa_application *app,const qa_application
     }
     if(!qw || event->destination<0 || event->destination>5 || !qa_vec_finite(event->origin))
         return application_fail(error,QA_ERROR_FORMAT,"QC source multicast has an invalid destination");
-    int32_t mode=event->destination%3;
-    if(!mode) { *out=true; return true; }
-    const qa_qc_definition *field=qa_qc_program_find_field(view->program,"origin"); qa_vec3 point;
-    if(!field || field->type!=QA_QC_VECTOR ||
-        !qa_qc_actor_observation_vector(view->instance,slot,recipient,field->offset,&point,error))return false;
-    if(!qa_vec_finite(point))return application_fail(error,QA_ERROR_FORMAT,"QC multicast recipient origin is nonfinite");
-    qa_vec3 delta=qa_vec_sub(point,event->origin);
-    if(mode==1 && qa_vec_dot(delta,delta)<=1024.0f*1024.0f) { *out=true; return true; }
-    qa_collision_leaf from,to; qa_collision_geometry *geometry=qa_world_geometry(app->world);
-    return qa_collision_point_leaf(geometry,event->origin, QA_LEAF_Q1,&from,error) &&
-        qa_collision_point_leaf(geometry,point, QA_LEAF_Q1,&to,error) &&
-        qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,mode==1,out,error) &&
+    return application_q1_multicast_receives(owner(app,view->provider),event,recipient,slot,out,error) &&
         qa_application_qc_message_source_current(app,view);
 }
 size_t qa_application_qc_message_source_count(const qa_application *app)

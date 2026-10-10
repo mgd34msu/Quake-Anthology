@@ -3,6 +3,7 @@
 #include "map_players_private.h"
 #include "control_frame.h"
 #include "network_q1_signon.h"
+#include "event_stream.h"
 #include "qa/application_equipment.h"
 #include "qa/game_q1_weapons.h"
 #include "qa/network_q1_channel.h"
@@ -289,21 +290,7 @@ bool application_native_q1_qw_receives(qa_application *app,qa_actor_id actor,
             else *out=!event->recipient.registry || qa_actor_id_equal(event->recipient,actor);
         } else if (event->destination<0 || event->destination>5 || !qa_vec_finite(event->origin))
             okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld multicast destination is invalid");
-        else {
-            int32_t mode=event->destination%3;qa_body_state body;
-            if (!mode) *out=true;
-            else if (!(okay=qa_world_body_read(app->world,actor,&body,error))) { }
-            else {
-                qa_vec3 delta=qa_vec_sub(body.origin,event->origin);
-                if (mode==1 && qa_vec_dot(delta,delta)<=1024.0f*1024.0f) *out=true;
-                else {
-                    qa_collision_leaf from,to;qa_collision_geometry *geometry=qa_world_geometry(app->world);
-                    okay=qa_collision_point_leaf(geometry,event->origin, QA_LEAF_Q1,&from,error) &&
-                        qa_collision_point_leaf(geometry,body.origin, QA_LEAF_Q1,&to,error) &&
-                        qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,mode==1,out,error);
-                }
-            }
-        }
+        else okay=application_q1_multicast_receives(source.provider,event,actor,slot,out,error);
     }
     application_native_q1_wire_end(&source);return okay;
 }
