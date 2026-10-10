@@ -99,9 +99,10 @@ bool qa_unified_record_clone(const qa_unified_record_layout *, const void *, voi
 typedef void *(*qa_unified_clone_alloc_fn)(void *, size_t, size_t, qa_error *);
 /* Caller supplies zeroed output. The callback returns aligned storage, which this
  * traversal zeroes. NULL selects heap storage. Failure leaves a partial output;
- * custom owners rewind their allocation and clear it, never call dispose. */
+ * custom owners rewind their allocation and clear it, never call dispose.
+ * Strings/bytes within retained_payload are borrowed from that same owner. */
 bool qa_unified_record_clone_alloc(const qa_unified_record_layout *, const void *,
-    void *zeroed_output, qa_unified_clone_alloc_fn, void *, qa_error *);
+    void *zeroed_output, qa_unified_clone_alloc_fn, void *, qa_bytes retained_payload, qa_error *);
 bool qa_unified_record_delta_encode(const qa_unified_record_layout *, const void *,
     const void *baseline, size_t maximum, qa_buffer *, const qa_strings *, qa_error *);
 bool qa_unified_record_delta_write(const qa_unified_record_layout *, const void *,

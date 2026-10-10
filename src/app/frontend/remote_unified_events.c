@@ -387,7 +387,7 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
         if (copy) {
             memset(copy,0,sizeof(*copy));
             copied=qa_unified_record_clone_alloc(&qa_unified_events_layout,events,copy,
-                qa_event_ring_alloc,&transaction,e);
+                qa_event_ring_alloc,&transaction,(qa_bytes){0},e);
             copy->strings=o->strings; copy->page_owned=true; qa_strings_retain(o->strings);
             copied=copied && qa_unified_document_create_events(&copy,&transaction,&document,e) &&
                 record_finish(o,&transaction,record,document,e);

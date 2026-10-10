@@ -902,9 +902,9 @@ static bool emit_protocol(application_provider *provider,
                 &record.q2.audience, error)) goto abort;
         if (delivery->audience.captured) record.event.time_ns = delivery->audience.source_time_ns;
     }
+    write.envelope->raw.protocol = record;
     if (!application_unified_q2_protocol_event(provider, &record.event,
             delivery ? &record.q2 : NULL, error)) goto abort;
-    write.envelope->raw.protocol = record;
     if (!application_event_stream_commit(application, &write, error))
         return protocol_capacity(provider, event, delivery, &write, error);
     return !copied.signon || application_q1_signon_retain(provider, &copied, error);

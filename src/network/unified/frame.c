@@ -18,6 +18,7 @@ typedef struct record_reader {
     const qa_strings *baseline_strings;
     qa_unified_clone_alloc_fn clone_allocate;
     void *clone_context;
+    qa_bytes retained_payload;
 } record_reader;
 
 static bool fail(qa_error *e, const char *message)
@@ -493,6 +494,12 @@ static bool field_decode(record_reader *r, const qa_unified_field *f, const void
     default: return fail(r->error, "Unknown typed Unified field layout");
     }
 }
+static bool retained_payload(const record_reader *r, const void *value, size_t size)
+{
+    uintptr_t base = (uintptr_t)r->retained_payload.data, address = (uintptr_t)value;
+    return r->retained_payload.data && address >= base &&
+        address - base <= r->retained_payload.size && size <= r->retained_payload.size - (address - base);
+}
 static bool field_clone(record_reader *r, const qa_unified_field *f, const void *source, void *value, unsigned depth)
 {
     if (depth > RECORD_DEPTH) return fail(r->error, "Typed Unified clone exceeds its fixed record depth");
@@ -509,13 +516,16 @@ static bool field_clone(record_reader *r, const qa_unified_field *f, const void 
     case QA_UNIFIED_FIELD_STRING: {
         const char *text = *(char *const *)p;
         if (!text) return true;
-        size_t count = strlen(text) + 1; char *copy = allocate(r, count, 1);
+        size_t count = strlen(text) + 1;
+        if (retained_payload(r, text, count)) { *(char **)out = (char *)text; return true; }
+        char *copy = allocate(r, count, 1);
         if (!copy) return false;
         memcpy(copy, text, count); *(char **)out = copy; return true;
     }
     case QA_UNIFIED_FIELD_BYTES: {
         const qa_buffer *bytes = p; qa_buffer *copy = out;
         if (!bytes->size) return true;
+        if (retained_payload(r, bytes->data, bytes->size)) { *copy = *bytes; return true; }
         copy->data = allocate(r, bytes->size, 1);
         if (!copy->data) return false;
         copy->size = bytes->size; memcpy(copy->data, bytes->data, bytes->size); return true;
@@ -566,10 +576,11 @@ static bool field_clone(record_reader *r, const qa_unified_field *f, const void 
     }
 }
 bool qa_unified_record_clone_alloc(const qa_unified_record_layout *layout, const void *source,
-    void *out, qa_unified_clone_alloc_fn allocator, void *context, qa_error *error)
+    void *out, qa_unified_clone_alloc_fn allocator, void *context, qa_bytes payload, qa_error *error)
 {
     if (!layout || !source || !out) return fail(error, "Typed Unified clone requires its fixed record owner");
-    record_reader reader = {.error = error, .clone_allocate = allocator, .clone_context = context};
+    record_reader reader = {.error = error, .clone_allocate = allocator, .clone_context = context,
+        .retained_payload = payload};
     for (size_t i = 0; i < layout->field_count; ++i)
         if (!field_clone(&reader, layout->fields + i, source, out, 0)) return false;
     return true;
@@ -577,7 +588,7 @@ bool qa_unified_record_clone_alloc(const qa_unified_record_layout *layout, const
 bool qa_unified_record_clone(const qa_unified_record_layout *layout, const void *source,
     void *out, qa_error *error)
 {
-    if (qa_unified_record_clone_alloc(layout, source, out, NULL, NULL, error)) return true;
+    if (qa_unified_record_clone_alloc(layout, source, out, NULL, NULL, (qa_bytes){0}, error)) return true;
     if (layout && source && out) {
         qa_unified_record_dispose(layout, out); memset(out, 0, layout->size);
     }

@@ -520,6 +520,8 @@ bool application_unified_event_append(qa_application *app,
     const application_unified_event_record *source, qa_error *error)
 {
     application_event_write *write = app->event_write;
+    qa_bytes payload = write->envelope->kind == QA_APPLICATION_EVENT_PROTOCOL ?
+        write->envelope->raw.protocol.event.payload : (qa_bytes){0};
     application_event_view *view = application_event_stream_alloc(app, sizeof(*view),
         _Alignof(application_event_view), error);
     if (!view) return false;
@@ -535,7 +537,7 @@ bool application_unified_event_append(qa_application *app,
         *record->presentation = (qa_unified_presentation_payload){0};
         if (!qa_unified_record_clone_alloc(&qa_unified_presentation_payload_layout,
             source->presentation, record->presentation, qa_event_ring_alloc,
-            &write->transaction, error)) return false;
+            &write->transaction, payload, error)) return false;
         record->presentation_sequence = app->presentation_event_sequence++;
     } else record->presentation_sequence = 0;
     if (source->simulation) {
@@ -545,7 +547,7 @@ bool application_unified_event_append(qa_application *app,
         *record->simulation = (qa_unified_simulation_payload){0};
         if (!qa_unified_record_clone_alloc(&qa_unified_simulation_payload_layout,
             source->simulation, record->simulation, qa_event_ring_alloc,
-            &write->transaction, error)) return false;
+            &write->transaction, payload, error)) return false;
         record->simulation_sequence = app->simulation_event_sequence++;
     } else record->simulation_sequence = 0;
     if (write->envelope->last_view) write->envelope->last_view->next = view;
