@@ -961,8 +961,9 @@ static bool emit_text(qa_application *app, application_provider *wire,
     if (event->argument_count > SIZE_MAX / (sizeof(*arguments) + 32))
         return application_fail(error, QA_ERROR_MEMORY, "Q1 wire source text tuple exceeds its extent");
     if (event->argument_count) {
-        arguments = malloc(event->argument_count * (sizeof(*arguments) + 32));
-        if (!arguments) return application_fail(error, QA_ERROR_MEMORY, "Reading Q1 wire source text tuple");
+        arguments = application_event_stream_alloc(app,
+            event->argument_count * (sizeof(*arguments) + 32), _Alignof(const char *), error);
+        if (!arguments) return false;
     }
     char *numbers = arguments ? (char *)(arguments + event->argument_count) : NULL;
     bool okay = true;
@@ -1008,7 +1009,7 @@ static bool emit_text(qa_application *app, application_provider *wire,
         qa_nq_message message = {.op = op, .data.text = value};
         if (okay) okay = emit_message(wire, event, &message, actor, true, false, NULL, error);
     }
-    qa_q1_game_operation_end(&operation); free(arguments);
+    qa_q1_game_operation_end(&operation);
     return okay;
 }
 bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event *event,

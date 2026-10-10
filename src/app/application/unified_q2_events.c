@@ -1,4 +1,5 @@
 #include "unified_q2_events.h"
+#include "event_stream.h"
 #include "unified_events.h"
 #include "guest_native_q2_private.h"
 #include "map_players_private.h"
@@ -235,8 +236,8 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
             if (ok && a.registry) {
                 const char *value = event->data.config.value, *split = strchr(value, '\\');
                 size_t length = split ? (size_t)(split - value) : strlen(value);
-                name = malloc(length + 1);
-                if (!name) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining Q2 player name projection");
+                name = application_event_stream_alloc(p->provider->application, length + 1, 1, e);
+                if (!name) ok = false;
                 else {
                     memcpy(name, value, length); name[length] = 0;
                     presentation.kind = QA_UNIFIED_PRESENTATION_Q2_PLAYER;
@@ -348,7 +349,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
     }
     if (ok && (pres || sim)) ok = application_unified_event_emit(p->provider->application, p->provider->owner,
         pres, sim, target, target, p->time_ns, (int32_t)source, has_source, link, e);
-    free(name); return ok;
+    return ok;
 }
 static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *e)
 {
