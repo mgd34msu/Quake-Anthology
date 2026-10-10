@@ -1118,23 +1118,12 @@ bool qa_q3_presentation_supplement(qa_q3_presentation *p,qa_q3_source_scene_bank
     bool okay=submit_queued_surfaces(p,&admitted_options,admitted,bank,error);
     return q3p_end(p,okay);
 }
-struct qa_q3_supplement {
-    qa_q3_presentation *presentation;
-    qa_q3_source_scene_bank *bank;
-    qa_scene_frame *frame;
-    uint64_t sequence,cycle;
-    const qa_q3_ref_entity *entities;
-    const q3p_polygon *polygons;
-    const qa_scene_vertex *vertices;
-    size_t entity_count,polygon_count,vertex_count,admitted,polygons_done;
-    uint32_t first,*polygon_ordinals;
-    bool entities_started,entities_done,ready;
-};
+
 void qa_q3_presentation_supplement_release(qa_q3_supplement **slot)
 {
     if(!slot || !*slot)return;
     qa_q3_supplement *r=*slot;
-    --r->presentation->supplements;free(r->polygon_ordinals);free(r);*slot=NULL;
+    --r->presentation->supplements;*slot=NULL;
 }
 bool qa_q3_presentation_supplement_current(const qa_q3_supplement *r,const qa_scene_frame *frame)
 {
@@ -1152,14 +1141,15 @@ bool qa_q3_presentation_supplement_prepare(qa_q3_presentation *p,qa_q3_source_sc
     if(!*slot){
         if(p->supplements==UINT_MAX || p->polygon_count>SIZE_MAX/sizeof(uint32_t))
             return q3p_fail(error,QA_ERROR_MEMORY,"Supplement receipt extent exceeds native storage");
-        qa_q3_supplement *r=calloc(1,sizeof(*r));
-        if(!r)return q3p_fail(error,QA_ERROR_MEMORY,"Retaining actual supplemental admission");
-        r->polygon_ordinals=p->polygon_count?malloc(p->polygon_count*sizeof(*r->polygon_ordinals)):NULL;
-        if(p->polygon_count && !r->polygon_ordinals){free(r);return q3p_fail(error,QA_ERROR_MEMORY,"Retaining polygon admission ordinals");}
-        for(size_t i=0;i<p->polygon_count;++i)r->polygon_ordinals[i]=UINT32_MAX;
-        *r=(qa_q3_supplement){.presentation=p,.bank=bank,.frame=frame,.sequence=frame->sequence,.cycle=cycle,
-            .entities=p->entities,.polygons=p->polygons,.vertices=p->vertices,.entity_count=p->entity_count,
-            .polygon_count=p->polygon_count,.vertex_count=p->vertex_count,.polygon_ordinals=r->polygon_ordinals};
+        qa_q3_supplement *r=&p->supplement;
+        if(!p->supplements) {
+            uint32_t *ordinals=p->polygon_count?qa_arena_alloc(&frame->storage,p->polygon_count*sizeof(*ordinals),_Alignof(uint32_t),error):NULL;
+            if(p->polygon_count && !ordinals)return false;
+            for(size_t i=0;i<p->polygon_count;++i)ordinals[i]=UINT32_MAX;
+            *r=(qa_q3_supplement){.presentation=p,.bank=bank,.frame=frame,.sequence=frame->sequence,.cycle=cycle,
+                .entities=p->entities,.polygons=p->polygons,.vertices=p->vertices,.entity_count=p->entity_count,
+                .polygon_count=p->polygon_count,.vertex_count=p->vertex_count,.polygon_ordinals=ordinals};
+        }
         ++p->supplements;*slot=r;
     }
     qa_q3_supplement *r=*slot;
@@ -1190,7 +1180,7 @@ bool qa_q3_presentation_supplement_prepare(qa_q3_presentation *p,qa_q3_source_sc
         if(polygon->first>p->vertex_count || polygon->count>p->vertex_count-polygon->first ||
             polygon->count>SIZE_MAX/sizeof(qa_q3_poly_vertex))
             return q3p_fail(error,QA_ERROR_FORMAT,"Queued supplemental polygon leaves its actual vertex span");
-        qa_q3_poly_vertex *raw=malloc(polygon->count*sizeof(*raw));
+        qa_q3_poly_vertex *raw=qa_arena_alloc(&frame->storage,polygon->count*sizeof(*raw),_Alignof(qa_q3_poly_vertex),error);
         if(!raw)return q3p_fail(error,QA_ERROR_MEMORY,"Retaining actual supplemental polygon values");
         for(size_t i=0;i<polygon->count;++i){const qa_scene_vertex *v=p->vertices+polygon->first+i;
             raw[i]=(qa_q3_poly_vertex){.position=v->position,.texcoord=v->texcoord,
@@ -1200,7 +1190,7 @@ bool qa_q3_presentation_supplement_prepare(qa_q3_presentation *p,qa_q3_source_sc
         qa_q3_source_scene_membership membership;bool admitted=false;
         bool okay=qa_q3_source_scene_bank_membership(bank,&membership) &&
             qa_q3_source_scene_bank_poly(bank,p->options.assets,polygon->shader,raw,polygon->count,&polygon->fog,&admitted,error);
-        free(raw);if(!okay)return false;
+        if(!okay)return false;
         if(admitted)r->polygon_ordinals[r->polygons_done]=membership.polygons;
         ++r->polygons_done;
     }

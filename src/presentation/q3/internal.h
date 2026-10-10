@@ -95,6 +95,18 @@ typedef struct q3p_movie {
     char *path;
     uint32_t flags;
 } q3p_movie;
+struct qa_q3_supplement {
+    qa_q3_presentation *presentation;
+    struct qa_q3_source_scene_bank *bank;
+    qa_scene_frame *frame;
+    uint64_t sequence,cycle;
+    const qa_q3_ref_entity *entities;
+    const q3p_polygon *polygons;
+    const qa_scene_vertex *vertices;
+    size_t entity_count,polygon_count,vertex_count,admitted,polygons_done;
+    uint32_t first,*polygon_ordinals;
+    bool entities_started,entities_done,ready;
+};
 struct qa_q3_presentation {
     qa_q3_presentation_options options;
     qa_scene_frame *frame;
@@ -125,6 +137,7 @@ struct qa_q3_presentation {
     q3p_movie_source *movie_sources;
     unsigned busy;
     unsigned supplements;
+    qa_q3_supplement supplement;
     bool world_loaded, material_view_valid;
 };
 bool q3p_fail(qa_error *, qa_status, const char *);
