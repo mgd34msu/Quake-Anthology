@@ -1700,25 +1700,25 @@ static bool movement_provider(qa_application *application, qa_actor_id actor,
 }
 
 static bool movement_numeric(qa_application *app, application_provider *provider,
-    qa_ruleset_id kind, bool prediction, qa_application_movement_numeric *out, qa_error *error)
+    qa_ruleset_id kind, bool prediction, qa_movement_numeric *out, qa_error *error)
 {
-    *out = (qa_application_movement_numeric){0};
+    *out = (qa_movement_numeric){0};
     if (!prediction && provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_Q2 &&
         provider->kind != APPLICATION_PROVIDER_Q3 && provider->kind != APPLICATION_PROVIDER_QC) return true;
 #if !defined(__GNUC__) && !defined(__clang__)
     return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement has no declared C contraction policy");
 #else
-    qa_application_numeric_rounding rounding;
+    qa_numeric_rounding rounding;
     switch (fegetround()) {
-    case FE_TONEAREST: rounding = QA_APPLICATION_ROUND_NEAREST; break;
-    case FE_DOWNWARD: rounding = QA_APPLICATION_ROUND_DOWN; break;
-    case FE_UPWARD: rounding = QA_APPLICATION_ROUND_UP; break;
-    case FE_TOWARDZERO: rounding = QA_APPLICATION_ROUND_ZERO; break;
+    case FE_TONEAREST: rounding = QA_ROUND_NEAREST; break;
+    case FE_DOWNWARD: rounding = QA_ROUND_DOWN; break;
+    case FE_UPWARD: rounding = QA_ROUND_UP; break;
+    case FE_TOWARDZERO: rounding = QA_ROUND_ZERO; break;
     default: return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement has an unknown rounding environment");
     }
     qa_string_id id;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), "qa:numeric/movement-c", &id, error)) return false;
-    *out = (qa_application_movement_numeric){.id = id, .radix = FLT_RADIX,
+    *out = (qa_movement_numeric){.id = id, .radix = FLT_RADIX,
         .scalar_mantissa_bits = FLT_MANT_DIG, .double_mantissa_bits = DBL_MANT_DIG,
         .evaluation_method = FLT_EVAL_METHOD, .rounding = rounding, .native_c = true,
         .qw_origin_binary64 = kind == QA_RULESET_QUAKEWORLD};
@@ -1727,7 +1727,7 @@ static bool movement_numeric(qa_application *app, application_provider *provider
 }
 
 static bool control_numeric_current(qa_application *app, qa_actor_id actor,
-    const qa_application_movement_numeric *numeric, bool prediction, qa_error *error)
+    const qa_movement_numeric *numeric, bool prediction, qa_error *error)
 {
     application_provider *provider;
     if (!app || !numeric || !live(app, actor) || !movement_provider(app, actor, &provider, error)) return false;
@@ -1737,12 +1737,12 @@ static bool control_numeric_current(qa_application *app, qa_actor_id actor,
         !numeric->scalar_mantissa_bits && !numeric->double_mantissa_bits &&
         !numeric->evaluation_method && !numeric->rounding && !numeric->qw_origin_binary64) ||
         application_fail(error, QA_ERROR_FORMAT, "External movement cannot claim native C arithmetic");
-    qa_application_numeric_rounding rounding;
+    qa_numeric_rounding rounding;
     switch (fegetround()) {
-    case FE_TONEAREST: rounding = QA_APPLICATION_ROUND_NEAREST; break;
-    case FE_DOWNWARD: rounding = QA_APPLICATION_ROUND_DOWN; break;
-    case FE_UPWARD: rounding = QA_APPLICATION_ROUND_UP; break;
-    case FE_TOWARDZERO: rounding = QA_APPLICATION_ROUND_ZERO; break;
+    case FE_TONEAREST: rounding = QA_ROUND_NEAREST; break;
+    case FE_DOWNWARD: rounding = QA_ROUND_DOWN; break;
+    case FE_UPWARD: rounding = QA_ROUND_UP; break;
+    case FE_TOWARDZERO: rounding = QA_ROUND_ZERO; break;
     default: return application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement lost its rounding environment");
     }
     const char *id = qa_strings_cstr(qa_session_strings(app->session), numeric->id);
@@ -1755,11 +1755,11 @@ static bool control_numeric_current(qa_application *app, qa_actor_id actor,
 }
 
 bool application_control_numeric_current(qa_application *app, qa_actor_id actor,
-    const qa_application_movement_numeric *numeric, qa_error *error)
+    const qa_movement_numeric *numeric, qa_error *error)
 { return control_numeric_current(app, actor, numeric, false, error); }
 
 bool application_control_prediction_numeric_current(qa_application *app, qa_actor_id actor,
-    const qa_application_movement_numeric *numeric, qa_error *error)
+    const qa_movement_numeric *numeric, qa_error *error)
 { return control_numeric_current(app, actor, numeric, true, error); }
 
 bool application_control_ensure(qa_application *application, qa_actor_id actor,
@@ -1794,7 +1794,7 @@ bool application_control_ensure(qa_application *application, qa_actor_id actor,
         return false;
 
     qa_ruleset_id kind = (provider->component.clock.kind);
-    qa_application_movement_numeric numeric, prediction_numeric;
+    qa_movement_numeric numeric, prediction_numeric;
     if (!movement_numeric(application, provider, kind, false, &numeric, error) ||
         !movement_numeric(application, provider, kind, true, &prediction_numeric, error)) return false;
     qa_movement_input defaults = qa_movement_input_default(kind, actor);

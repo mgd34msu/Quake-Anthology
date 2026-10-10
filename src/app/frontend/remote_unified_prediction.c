@@ -40,12 +40,12 @@ static bool profile_read(const frontend_remote_unified_prediction *p,const qa_un
     if (actual->kind!=clock->kind || actual->interval_ns!=clock->interval_ns ||
         actual->minimum_frame_ns!=clock->minimum_frame_ns || actual->maximum_frame_ns!=clock->maximum_frame_ns)
         return fail(e,QA_ERROR_FORMAT,"Prediction clock differs from its admitted provider clock");
-    const qa_unified_movement_numeric *numeric=&received->numeric;
+    const qa_movement_numeric *numeric=&received->numeric;
     if (!numeric->native_c || numeric->radix!=FLT_RADIX || numeric->scalar_mantissa_bits!=FLT_MANT_DIG ||
         numeric->double_mantissa_bits!=DBL_MANT_DIG || numeric->evaluation_method!=FLT_EVAL_METHOD ||
         numeric->qw_origin_binary64!=(received->profile.kind==QA_RULESET_QUAKEWORLD))
         return fail(e,QA_ERROR_UNSUPPORTED,"Received movement arithmetic differs from the actual native kernel");
-    if (numeric->rounding!=fegetround()) return fail(e,QA_ERROR_UNSUPPORTED,"Private prediction has a different rounding environment");
+    if ((int)numeric->rounding!=fegetround()) return fail(e,QA_ERROR_UNSUPPORTED,"Private prediction has a different rounding environment");
     *rounding=numeric->rounding; return true;
 }
 static bool scene_prepare(frontend_remote_unified_prediction *p,const qa_unified_frame *frame,qa_error *e)

@@ -4,13 +4,6 @@
 #include "qa/network_unified_frame.h"
 #include "qa/movement.h"
 
-typedef struct qa_unified_movement_numeric {
-    qa_string_id id;
-    uint32_t radix, scalar_mantissa_bits, double_mantissa_bits;
-    int32_t evaluation_method, rounding;
-    bool native_c, qw_origin_binary64;
-} qa_unified_movement_numeric;
-
 typedef struct qa_unified_weapon_state {
     qa_game_family kind;
     double frame, attack_finished_seconds, source_weapon;
@@ -33,7 +26,7 @@ struct qa_unified_frame_prediction {
     double command_time_ms;
     qa_string_id profile_id;
     qa_clock_config clock;
-    qa_unified_movement_numeric numeric;
+    qa_movement_numeric numeric;
     qa_movement_profile profile;
     qa_movement_state state;
     char *arsenal_provider, *character_provider;

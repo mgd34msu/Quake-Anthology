@@ -1352,12 +1352,12 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         !qa_source_save_u32(io, &v->numeric.radix) || !qa_source_save_u32(io, &v->numeric.scalar_mantissa_bits) ||
         !qa_source_save_u32(io, &v->numeric.double_mantissa_bits) ||
         !qa_source_save_i32(io, &v->numeric.evaluation_method) || !qa_source_save_u32(io, &rounding) ||
-        rounding > QA_APPLICATION_ROUND_ZERO || !qa_source_save_bool(io, &v->numeric.qw_origin_binary64) ||
+        rounding > QA_ROUND_ZERO || !qa_source_save_bool(io, &v->numeric.qw_origin_binary64) ||
         !qa_source_save_string(io, &v->prediction_numeric.id) || !qa_source_save_bool(io, &v->prediction_numeric.native_c) ||
         !qa_source_save_u32(io, &v->prediction_numeric.radix) || !qa_source_save_u32(io, &v->prediction_numeric.scalar_mantissa_bits) ||
         !qa_source_save_u32(io, &v->prediction_numeric.double_mantissa_bits) ||
         !qa_source_save_i32(io, &v->prediction_numeric.evaluation_method) || !qa_source_save_u32(io, &prediction_rounding) ||
-        prediction_rounding > QA_APPLICATION_ROUND_ZERO || !qa_source_save_bool(io, &v->prediction_numeric.qw_origin_binary64) ||
+        prediction_rounding > QA_ROUND_ZERO || !qa_source_save_bool(io, &v->prediction_numeric.qw_origin_binary64) ||
         !qa_source_save_actor(io, &in->actor) || !qa_persistence_movement(io, &in->state) ||
         !command_fields(io, &in->command) || !qa_persistence_movement_profile(io, &in->profile) ||
         !qa_source_save_u32(io, &shape) || shape > QA_SHAPE_CAPSULE ||
@@ -1388,8 +1388,8 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
         !qa_source_save_u32(io, &v->external_weapon_slot) || !qa_source_save_i32(io, &v->requested_weapon) ||
         !qa_source_save_bool(io, &v->has_client_view_offset) || !qa_source_save_vec3(io, &v->client_view_offset)) return false;
     v->clock.kind = (qa_ruleset_id)clock;
-    v->numeric.rounding = (qa_application_numeric_rounding)rounding;
-    v->prediction_numeric.rounding = (qa_application_numeric_rounding)prediction_rounding;
+    v->numeric.rounding = (qa_numeric_rounding)rounding;
+    v->prediction_numeric.rounding = (qa_numeric_rounding)prediction_rounding;
     in->shape.kind = (qa_shape_kind)shape; in->q1_solid = (qa_q1_solid)solid;
     in->trace_policy.family = (qa_collision_family)family;
     in->trace_policy.q1_move = (qa_q1_move_kind)move;

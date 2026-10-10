@@ -208,15 +208,12 @@ bool application_unified_prediction_build(qa_application *app,
     if (!out) return application_fail(e, QA_ERROR_MEMORY, "Retaining Unified prediction state");
     frame->prediction = out;
     const qa_movement_input *input = &configuration.input;
-    const qa_application_movement_numeric *numeric = &configuration.prediction_numeric;
+    const qa_movement_numeric *numeric = &configuration.prediction_numeric;
     out->actor = player->actor; out->sequence = acknowledged_input;
     out->command_time_ms = input->state.kind == QA_RULESET_Q3 ? input->state.data.q3.command_time_ms :
         (double)source->frame.time_ns / 1e6;
     out->clock = configuration.clock; out->profile = input->profile; out->state = input->state;
-    out->numeric = (qa_unified_movement_numeric){.radix = numeric->radix,
-        .scalar_mantissa_bits = numeric->scalar_mantissa_bits, .double_mantissa_bits = numeric->double_mantissa_bits,
-        .evaluation_method = numeric->evaluation_method, .rounding = (int32_t)numeric->rounding,
-        .native_c = numeric->native_c, .qw_origin_binary64 = numeric->qw_origin_binary64};
+    out->numeric = *numeric;
     if (!numeric->native_c) return application_fail(e, QA_ERROR_UNSUPPORTED, "Unified prediction has no genuine native C arithmetic recipe");
     out->standing = input->standing; out->crouched = input->crouched; out->dead = input->dead;
     out->invulnerability_bounds = input->invulnerability_bounds; out->bounds = input->current_bounds;
@@ -228,7 +225,7 @@ bool application_unified_prediction_build(qa_application *app,
     out->water_type = configuration.water_type;
     out->has_rerelease_origin = input->state.kind == QA_RULESET_Q2_RERELEASE;
     if (out->has_rerelease_origin) out->rerelease_origin = configuration.q2r_pml_origin;
-    out->profile_id=configuration.profile_id; out->numeric.id=numeric->id;
+    out->profile_id=configuration.profile_id;
     bool ok = weapon(app, a, player->actor, out, lease, entries, entry_count, e) &&
         animation(app, c, player->actor, out, lease, e);
     if (ok) {

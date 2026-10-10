@@ -159,8 +159,8 @@ typedef struct application_control_record {
     struct qa_application *application;
     application_provider *cutscene_character;
     qa_player_state player;
-    qa_application_movement_numeric numeric;
-    qa_application_movement_numeric prediction_numeric;
+    qa_movement_numeric numeric;
+    qa_movement_numeric prediction_numeric;
     qa_movement_result result;
     qa_vec3 saved_view_offset;
     qa_vec3 q2r_pml_origin;
@@ -649,9 +649,9 @@ bool application_control_gravity(qa_application *, qa_actor_id, float scale, qa_
 bool application_control_water_read(const qa_application *, qa_actor_id,
     int32_t *water_type, int32_t *water_level, qa_error *);
 bool application_control_numeric_current(qa_application *, qa_actor_id,
-    const qa_application_movement_numeric *, qa_error *);
+    const qa_movement_numeric *, qa_error *);
 bool application_control_prediction_numeric_current(qa_application *, qa_actor_id,
-    const qa_application_movement_numeric *, qa_error *);
+    const qa_movement_numeric *, qa_error *);
 bool application_controlled(const qa_application *, qa_actor_id);
 bool application_control_intermission(const qa_movement_state *);
 bool application_source_intermission_read(application_provider *, bool *, qa_error *);

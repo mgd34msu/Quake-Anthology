@@ -5,6 +5,24 @@
 #include "qa/usercmd.h"
 #include "qa/world.h"
 
+typedef enum qa_numeric_rounding {
+    QA_ROUND_NEAREST,
+    QA_ROUND_DOWN,
+    QA_ROUND_UP,
+    QA_ROUND_ZERO
+} qa_numeric_rounding;
+
+/* Facts from the native C movement constructor. External Source execution
+ * leaves its recipe absent; the independent copied prediction kernel retains
+ * its own C recipe. This describes storage and evaluation, not each operation. */
+typedef struct qa_movement_numeric {
+    qa_string_id id;
+    uint32_t radix, scalar_mantissa_bits, double_mantissa_bits;
+    int32_t evaluation_method;
+    qa_numeric_rounding rounding;
+    bool native_c, qw_origin_binary64;
+} qa_movement_numeric;
+
 typedef enum qa_q1_edition { QA_Q1_CLASSIC, QA_Q1_RERELEASE, QA_Q1_QUAKE64 } qa_q1_edition;
 typedef struct qa_q1_water_transition_result {
     int32_t water_type, water_level;

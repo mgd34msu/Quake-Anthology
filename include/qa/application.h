@@ -170,30 +170,12 @@ typedef struct qa_application_protocol_event {
 /* A copied selected-player seed for private client prediction. Provider IDs
  * identify the actual admitted roles. No command, source call or world write
  * is performed; the prediction owner supplies its own scratch and clock. */
-typedef enum qa_application_numeric_rounding {
-    QA_APPLICATION_ROUND_NEAREST,
-    QA_APPLICATION_ROUND_DOWN,
-    QA_APPLICATION_ROUND_UP,
-    QA_APPLICATION_ROUND_ZERO
-} qa_application_numeric_rounding;
-
-/* Facts from the native C movement constructor. External Source execution
- * leaves its recipe absent; the independent copied prediction kernel retains
- * its own C recipe. This describes storage and evaluation, not each operation. */
-typedef struct qa_application_movement_numeric {
-    qa_string_id id;
-    uint32_t radix, scalar_mantissa_bits, double_mantissa_bits;
-    int32_t evaluation_method;
-    qa_application_numeric_rounding rounding;
-    bool native_c, qw_origin_binary64;
-} qa_application_movement_numeric;
-
 typedef struct qa_application_control_prediction_configuration {
     qa_actor_owner movement, character, arsenal;
     qa_actor_owner profile_id;
     qa_clock_config clock;
-    qa_application_movement_numeric numeric; /* Actual Source movement executor. */
-    qa_application_movement_numeric prediction_numeric; /* Independently copied C movement kernel. */
+    qa_movement_numeric numeric; /* Actual Source movement executor. */
+    qa_movement_numeric prediction_numeric; /* Independently copied C movement kernel. */
     qa_movement_input input;
     qa_vec3 q2r_pml_origin;
     qa_vec3 view_angles, command_angles;

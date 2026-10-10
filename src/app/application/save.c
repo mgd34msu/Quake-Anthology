@@ -66,12 +66,12 @@ static bool controls_fields(qa_source_save_io *io, qa_application *app,
         !qa_source_save_u32(io, &record->numeric.radix) || !qa_source_save_u32(io, &record->numeric.scalar_mantissa_bits) ||
         !qa_source_save_u32(io, &record->numeric.double_mantissa_bits) ||
         !qa_source_save_i32(io, &record->numeric.evaluation_method) || !qa_source_save_u32(io, &rounding) ||
-        rounding > QA_APPLICATION_ROUND_ZERO || !qa_source_save_bool(io, &record->numeric.qw_origin_binary64) ||
+        rounding > QA_ROUND_ZERO || !qa_source_save_bool(io, &record->numeric.qw_origin_binary64) ||
         !qa_source_save_string(io, &record->prediction_numeric.id) || !qa_source_save_bool(io, &record->prediction_numeric.native_c) ||
         !qa_source_save_u32(io, &record->prediction_numeric.radix) || !qa_source_save_u32(io, &record->prediction_numeric.scalar_mantissa_bits) ||
         !qa_source_save_u32(io, &record->prediction_numeric.double_mantissa_bits) ||
         !qa_source_save_i32(io, &record->prediction_numeric.evaluation_method) || !qa_source_save_u32(io, &prediction_rounding) ||
-        prediction_rounding > QA_APPLICATION_ROUND_ZERO || !qa_source_save_bool(io, &record->prediction_numeric.qw_origin_binary64) ||
+        prediction_rounding > QA_ROUND_ZERO || !qa_source_save_bool(io, &record->prediction_numeric.qw_origin_binary64) ||
         !qa_persistence_movement_result(io, &record->result) ||
         !qa_persistence_bounds(io, &record->player.standing_bounds) || !qa_persistence_bounds(io, &record->player.bounds) ||
         !qa_persistence_ground(io, &record->player.ground) ||
@@ -87,8 +87,8 @@ static bool controls_fields(qa_source_save_io *io, qa_application *app,
         !qa_source_save_bool(io, &record->saved_mode_valid) || !qa_source_save_bool(io, &record->command_seen) ||
         !qa_source_save_bool(io, &record->guest_mode_valid) || !qa_source_save_bool(io, &record->player.player_mode_set) ||
         !qa_source_save_i32(io, &record->guest_mode)) return false;
-    record->numeric.rounding = (qa_application_numeric_rounding)rounding;
-    record->prediction_numeric.rounding = (qa_application_numeric_rounding)prediction_rounding;
+    record->numeric.rounding = (qa_numeric_rounding)rounding;
+    record->prediction_numeric.rounding = (qa_numeric_rounding)prediction_rounding;
     if (!application_control_numeric_current(app, record->player.actor, &record->numeric, io->error) ||
         !application_control_prediction_numeric_current(app, record->player.actor, &record->prediction_numeric, io->error)) return false;
     if (!qa_vec_finite(record->player.view_angles) || !qa_vec_finite(record->player.command_angles) ||

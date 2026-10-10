@@ -31,8 +31,8 @@ static bool clock_equal(const qa_clock_config *a,const qa_clock_config *b)
         a->maximum_frame_ns==b->maximum_frame_ns && a->initial_lead_ns==b->initial_lead_ns &&
         a->maximum_steps==b->maximum_steps;
 }
-static bool numeric_equal(const qa_application_movement_numeric *a,
-    const qa_application_movement_numeric *b)
+static bool numeric_equal(const qa_movement_numeric *a,
+    const qa_movement_numeric *b)
 {
     return a->id==b->id && a->radix==b->radix && a->scalar_mantissa_bits==b->scalar_mantissa_bits &&
         a->double_mantissa_bits==b->double_mantissa_bits && a->evaluation_method==b->evaluation_method &&

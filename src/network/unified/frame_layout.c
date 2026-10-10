@@ -91,7 +91,7 @@ static const qa_unified_record_layout qa_unified_animation_state_layout;
 static const qa_unified_record_layout qa_unified_weapon_state_layout;
 static const qa_unified_record_layout qa_movement_state_layout;
 static const qa_unified_record_layout qa_movement_profile_layout;
-static const qa_unified_record_layout qa_unified_movement_numeric_layout;
+static const qa_unified_record_layout qa_movement_numeric_layout;
 static const qa_unified_record_layout qa_clock_config_layout;
 static const qa_unified_record_layout qa_unified_world_frame_layout;
 static const qa_unified_record_layout qa_unified_resource_state_layout;
@@ -698,7 +698,7 @@ static const qa_unified_field qa_unified_frame_prediction_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_frame_prediction, command_time_ms, QA_UNIFIED_FIELD_F64),
     QA_UNIFIED_FIELD(qa_unified_frame_prediction, profile_id, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, clock, qa_clock_config_layout),
-    QA_UNIFIED_RECORD(qa_unified_frame_prediction, numeric, qa_unified_movement_numeric_layout),
+    QA_UNIFIED_RECORD(qa_unified_frame_prediction, numeric, qa_movement_numeric_layout),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, profile, qa_movement_profile_layout),
     QA_UNIFIED_RECORD(qa_unified_frame_prediction, state, qa_movement_state_layout),
     QA_UNIFIED_FIELD(qa_unified_frame_prediction, arsenal_provider, QA_UNIFIED_FIELD_STRING),
@@ -852,17 +852,17 @@ static const qa_unified_field qa_unified_weapon_state_fields[] = {
 };
 static const qa_unified_record_layout qa_unified_weapon_state_layout = QA_UNIFIED_LAYOUT(qa_unified_weapon_state, qa_unified_weapon_state_fields);
 
-static const qa_unified_field qa_unified_movement_numeric_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, id, QA_UNIFIED_FIELD_NAME),
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, radix, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, scalar_mantissa_bits, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, double_mantissa_bits, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, evaluation_method, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, rounding, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, native_c, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_movement_numeric, qw_origin_binary64, QA_UNIFIED_FIELD_BOOL),
+static const qa_unified_field qa_movement_numeric_fields[] = {
+    QA_UNIFIED_FIELD(qa_movement_numeric, id, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_movement_numeric, radix, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_movement_numeric, scalar_mantissa_bits, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_movement_numeric, double_mantissa_bits, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_movement_numeric, evaluation_method, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_movement_numeric, rounding, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_movement_numeric, native_c, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_movement_numeric, qw_origin_binary64, QA_UNIFIED_FIELD_BOOL),
 };
-static const qa_unified_record_layout qa_unified_movement_numeric_layout = QA_UNIFIED_LAYOUT(qa_unified_movement_numeric, qa_unified_movement_numeric_fields);
+static const qa_unified_record_layout qa_movement_numeric_layout = QA_UNIFIED_LAYOUT(qa_movement_numeric, qa_movement_numeric_fields);
 
 static const qa_unified_field qa_clock_config_fields[] = {
     QA_UNIFIED_FIELD(qa_clock_config, kind, QA_UNIFIED_FIELD_I32),
