@@ -15,6 +15,7 @@
 #include "qa/platform_events.h"
 #include "qa/network_q3.h"
 #include "qa/network_q1_channel.h"
+#include "qa/network_q2_kex.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -724,6 +725,75 @@ static void test_platform_event_retirement(void)
     qa_platform_events_destroy(events);
 }
 
+typedef struct kex_delivery {
+    bool occupied, blocked;
+    unsigned accepted;
+    size_t size;
+    uint8_t bytes[QA_KEX_DATAGRAM_BYTES];
+} kex_delivery;
+static qa_net_send_result kex_capture(void *context, qa_bytes bytes, qa_error *error)
+{
+    (void)error;
+    kex_delivery *out = context;
+    if (out->occupied || out->blocked) return QA_NET_SEND_FULL;
+    CHECK(bytes.size <= sizeof(out->bytes));
+    memcpy(out->bytes, bytes.data, bytes.size);
+    out->size = bytes.size;
+    out->occupied = true;
+    ++out->accepted;
+    return QA_NET_SEND_ACCEPTED;
+}
+static void test_kex_send_admission(void)
+{
+    qa_error error = {0};
+    kex_delivery wire = {.blocked = true}, acknowledgements = {.blocked = true};
+    qa_kex_channel *sender, *receiver;
+    CHECK(qa_kex_channel_create(kex_capture, &wire, &sender, &error));
+    CHECK(qa_kex_channel_create(kex_capture, &acknowledgements, &receiver, &error));
+    uint8_t message[5000];
+    for (size_t i = 0; i < sizeof(message); ++i) message[i] = (uint8_t)i;
+    CHECK(qa_kex_channel_send(sender, 128, (qa_bytes){message, sizeof(message)}, QA_KEX_SEQUENCED,
+        1, &error) == QA_NET_SEND_ACCEPTED);
+    CHECK(wire.accepted == 0);
+    wire.blocked = false;
+    unsigned deliveries = 0;
+    for (unsigned fragment = 0; fragment < 4; ++fragment) {
+        CHECK(qa_kex_channel_tick(sender, fragment + 2, &error) && wire.occupied);
+        bool present;
+        qa_kex_message received;
+        CHECK(qa_kex_channel_receive(receiver, (qa_bytes){wire.bytes, wire.size}, fragment + 2,
+            &received, &present, &error));
+        if (present) {
+            ++deliveries;
+            CHECK(received.kind == 128 && received.payload.size == sizeof(message));
+            CHECK(!memcmp(received.payload.data, message, sizeof(message)));
+        }
+        wire.occupied = false;
+    }
+    CHECK(deliveries == 1 && wire.accepted == 4);
+    wire.blocked = true;
+    CHECK(qa_kex_channel_send(sender, 128, (qa_bytes){message, 32}, QA_KEX_RELIABLE,
+        10, &error) == QA_NET_SEND_ACCEPTED);
+    for (unsigned retry = 0; retry < 50; ++retry)
+        CHECK(qa_kex_channel_tick(sender, UINT64_C(500000000) * retry, &error));
+    CHECK(wire.accepted == 4 && qa_kex_channel_reliable_receipt(sender).acknowledged == 0);
+    wire.blocked = false;
+    CHECK(qa_kex_channel_tick(sender, UINT64_C(25000000000), &error) && wire.occupied);
+    bool present;
+    qa_kex_message received;
+    CHECK(qa_kex_channel_receive(receiver, (qa_bytes){wire.bytes, wire.size}, UINT64_C(25000000000),
+        &received, &present, &error) && present);
+    CHECK(qa_kex_channel_tick(receiver, UINT64_C(25000000001), &error));
+    CHECK(!acknowledgements.occupied);
+    acknowledgements.blocked = false;
+    CHECK(qa_kex_channel_tick(receiver, UINT64_C(25000000002), &error) && acknowledgements.occupied);
+    CHECK(qa_kex_channel_receive(sender, (qa_bytes){acknowledgements.bytes, acknowledgements.size},
+        UINT64_C(25000000003), &received, &present, &error));
+    CHECK(qa_kex_channel_reliable_receipt(sender).acknowledged == 1);
+    qa_kex_channel_destroy(sender);
+    qa_kex_channel_destroy(receiver);
+}
+
 static void test_nq_send_admission(void)
 {
     qa_error error = {0};
@@ -808,6 +878,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_platform_event_retirement();
+    test_kex_send_admission();
     test_nq_send_admission();
     test_q3_send_admission();
     test_shared_cvar_archive();

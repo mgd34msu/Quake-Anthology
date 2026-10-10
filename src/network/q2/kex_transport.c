@@ -85,7 +85,7 @@ static qa_net_send_result game_send(void *context, const qa_net_address *to, qa_
 {
     qa_kex_transport *o = context;
     if (!enter(o, e)) return false;
-    bool ok = qa_kex_lan_send(o->lobby, to, bytes, e);
+    qa_net_send_result ok = qa_kex_lan_send(o->lobby, to, bytes, e);
     o->entered = false;
     return ok;
 }

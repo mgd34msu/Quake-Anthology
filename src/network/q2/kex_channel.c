@@ -36,10 +36,47 @@ void qa_kex_channel_destroy(qa_kex_channel*c) {
         free(c);
     }
 }
-static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode mode,uint64_t now,qa_error*e) {
+static bool reliable_packet(const struct pending *p) {
+    return (p->bytes[1] & 3u) == QA_KEX_RELIABLE;
+}
+static void refresh_inflight(qa_kex_channel *c) {
+    struct pending *p = c->head;
+    while (p && !reliable_packet(p)) p = p->next;
+    c->receipt.inflight = p ? p->serial : 0;
+}
+static void remove_pending(qa_kex_channel *c, struct pending **link, struct pending *previous) {
+    struct pending *p = *link;
+    *link = p->next;
+    if (c->tail == p) c->tail = previous;
+    c->pending_bytes -= p->size;
+    --c->pending_count;
+    free(p);
+}
+static bool flush_pending(qa_kex_channel *c, uint64_t now, qa_error *e) {
+    struct pending **link = &c->head, *previous = NULL;
+    bool first_reliable = true;
+    while (*link) {
+        struct pending *p = *link;
+        bool reliable = reliable_packet(p);
+        if (!p->sent) {
+            qa_net_send_result result = c->emit(c->user, (qa_bytes){p->bytes, p->size}, e);
+            if (result == QA_NET_SEND_FULL) return true;
+            if (result == QA_NET_SEND_FAILED) return false;
+            if (reliable) {
+                p->sent = true;
+                if (first_reliable) { c->retry_at = now; c->retries = 0; }
+            } else { remove_pending(c, link, previous); continue; }
+        }
+        if (reliable) first_reliable = false;
+        previous = p;
+        link = &p->next;
+    }
+    return true;
+}
+static qa_net_send_result send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode mode,uint64_t now,qa_error*e) {
     if(!c||(payload.size&&!payload.data)||payload.size>QA_KEX_MESSAGE_BYTES||(mode!=QA_KEX_UNSEQUENCED&&mode!=QA_KEX_SEQUENCED&&mode!=QA_KEX_RELIABLE)) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX send");
-        return false;
+        return QA_NET_SEND_FAILED;
     }
     qa_bytes data=payload;
     uint8_t*compressed=NULL;
@@ -48,41 +85,36 @@ static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode
         compressed=malloc((size_t)size+1);
         if(!compressed) {
             qa_error_set(e,QA_ERROR_MEMORY,0,"KEX compression allocation failed");
-            return false;
+            return QA_NET_SEND_FAILED;
         }
         int status=compress2(compressed+1,&size,payload.data,(uLong)payload.size,Z_DEFAULT_COMPRESSION);
         if(status!=Z_OK) {
             free(compressed);
             qa_error_set(e,QA_ERROR_FORMAT,0,"KEX compression failed");
-            return false;
+            return QA_NET_SEND_FAILED;
         }
         if(size+1<payload.size) {
             compressed[0]=kind;
             kind=127;
-            data=(qa_bytes) {
-                compressed,(size_t)size+1
-            };
+            data=(qa_bytes){compressed,(size_t)size+1};
         }
     }
     bool fragmented=data.size+(mode==QA_KEX_UNSEQUENCED?3u:7u)>QA_KEX_DATAGRAM_BYTES;
     if(fragmented&&mode==QA_KEX_UNSEQUENCED) {
         free(compressed);
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Unsequenced KEX message cannot fragment");
-        return false;
+        return QA_NET_SEND_FAILED;
     }
     size_t packet_count=data.size<=1393?1:1+(data.size-1393+1393)/1394;
-    size_t queued_bytes=data.size+packet_count*6+1;
-    if(mode==QA_KEX_RELIABLE&&
-       (queued_bytes>QA_KEX_MESSAGE_BYTES*2-c->pending_bytes||
-        packet_count>32767u-c->pending_count)) {
+    size_t queued_bytes=data.size+packet_count*(mode==QA_KEX_UNSEQUENCED?2u:6u)+1;
+    if(queued_bytes>QA_KEX_MESSAGE_BYTES*2-c->pending_bytes || packet_count>32767u-c->pending_count) {
         free(compressed);
-        qa_error_set(e,QA_ERROR_CAPACITY,0,"KEX reliable queue full");
-        return false;
+        return QA_NET_SEND_FULL;
     }
     struct pending *staged_head=NULL,*staged_tail=NULL;
     uint16_t sequence=c->sequence,reliable=c->reliable;
     size_t at=0;
-    bool first=true,accepted=true;
+    bool first=true;
     do {
         size_t capacity=QA_KEX_DATAGRAM_BYTES-(mode==QA_KEX_UNSEQUENCED?2u:6u)-(first?1u:0u),count=data.size-at;
         if(count>capacity)count=capacity;
@@ -90,71 +122,37 @@ static bool send_body(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_mode
         uint8_t flags=(uint8_t)mode;
         if(fragmented)flags|=first?4:final?12:8;
         uint16_t seq=(uint16_t)(sequence+(mode!=QA_KEX_UNSEQUENCED?1:0)),rel=(uint16_t)(reliable+(mode==QA_KEX_RELIABLE?1:0));
-        uint8_t bytes[QA_KEX_DATAGRAM_BYTES];
+        struct pending *pending=malloc(sizeof(*pending));
+        if(!pending) {
+            free_pending(staged_head); free(compressed);
+            qa_error_set(e,QA_ERROR_MEMORY,0,"KEX packet allocation failed");
+            return QA_NET_SEND_FAILED;
+        }
+        *pending=(struct pending){.reliable=rel,.serial=mode==QA_KEX_RELIABLE?c->receipt.queued+1:0,.final=final};
         qa_net_writer w;
-        qa_net_writer_init(&w,bytes,sizeof(bytes),e);
-        qa_kex_packet p= {
-            .flags=flags,.sequence=seq,.reliable=rel,.kind=kind,.has_kind=first,.payload= {
-                data.data?data.data+at:NULL,count
-            }
-        };
-        if(!qa_kex_packet_write(&w,&p)) {
-            free_pending(staged_head);
-            free(compressed);
-            return false;
+        qa_net_writer_init(&w,pending->bytes,sizeof(pending->bytes),e);
+        qa_kex_packet packet={.flags=flags,.sequence=seq,.reliable=rel,.kind=kind,.has_kind=first,
+            .payload={data.data?data.data+at:NULL,count}};
+        if(!qa_kex_packet_write(&w,&packet)) {
+            free(pending); free_pending(staged_head); free(compressed);
+            return QA_NET_SEND_FAILED;
         }
-        size_t size=qa_net_writer_size(&w);
-        struct pending*pending=NULL;
-        if(mode==QA_KEX_RELIABLE) {
-            pending=malloc(sizeof(*pending));
-            if(!pending) {
-                free_pending(staged_head);
-                free(compressed);
-                qa_error_set(e,QA_ERROR_MEMORY,0,"KEX reliable packet allocation failed");
-                return false;
-            }
-            pending->next=NULL;
-            pending->reliable=rel;
-            pending->serial=c->receipt.queued+1;
-            pending->final=final;
-            pending->sent=false;
-            pending->size=size;
-            memcpy(pending->bytes,bytes,size);
-            if(staged_tail)staged_tail->next=pending;
-            else staged_head=pending;
-            staged_tail=pending;
-        } else {
-            c->sequence=seq;
-            if(!c->emit(c->user,(qa_bytes){bytes,size},e))accepted=false;
-        }
-        sequence=seq;
-        reliable=rel;
-        at+=count;
-        first=false;
-    }
-    while(at<data.size);
+        pending->size=qa_net_writer_size(&w);
+        if(staged_tail)staged_tail->next=pending; else staged_head=pending;
+        staged_tail=pending;
+        sequence=seq; reliable=rel; at+=count; first=false;
+    } while(at<data.size);
     free(compressed);
-    if(mode==QA_KEX_RELIABLE) {
-        ++c->receipt.queued;
-        if(c->tail)c->tail->next=staged_head;
-        else {
-            c->head=staged_head;
-            c->retry_at=now;
-            c->retries=0;
-        }
-        c->tail=staged_tail;
-        c->pending_bytes+=queued_bytes;
-        c->pending_count+=packet_count;
-        c->sequence=sequence;
-        c->reliable=reliable;
-        c->receipt.inflight=c->head->serial;
-        for(struct pending *p=staged_head;p;p=p->next) {
-            qa_error ignored={0};
-            if(!c->emit(c->user,(qa_bytes){p->bytes,p->size},&ignored))break;
-            p->sent=true;
-        }
-    }
-    return accepted;
+    if(mode==QA_KEX_RELIABLE) ++c->receipt.queued;
+    if(c->tail)c->tail->next=staged_head; else c->head=staged_head;
+    c->tail=staged_tail;
+    c->pending_bytes+=queued_bytes;
+    c->pending_count+=packet_count;
+    c->sequence=sequence; c->reliable=reliable;
+    refresh_inflight(c);
+    qa_error ignored={0};
+    (void)flush_pending(c,now,&ignored);
+    return QA_NET_SEND_ACCEPTED;
 }
 static bool reserve(uint8_t**data,size_t*capacity,size_t required,qa_error*e) {
     if(required<=*capacity)return true;
@@ -242,18 +240,16 @@ static bool receive_body(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_mes
         }
         uint16_t ack=(uint16_t)(((uint16_t)p.payload.data[1]<<8)|p.payload.data[2]);
         /* Retail uses the ordinary unsigned comparison, including at wrap. */
-        while(c->head&&c->head->reliable<=ack) {
-            struct pending*remove=c->head;
-            c->head=remove->next;
-            c->pending_bytes-=remove->size;
-            c->pending_count--;
-            if(remove->final)c->receipt.acknowledged=remove->serial;
-            free(remove);
-            c->retry_at=now;
-            c->retries=0;
+        struct pending **link=&c->head,*previous=NULL;
+        while(*link) {
+            struct pending *pending=*link;
+            if(reliable_packet(pending)&&pending->sent&&pending->reliable<=ack) {
+                if(pending->final)c->receipt.acknowledged=pending->serial;
+                remove_pending(c,link,previous);
+                c->retry_at=now; c->retries=0;
+            } else { previous=pending; link=&pending->next; }
         }
-        if(!c->head)c->tail=NULL;
-        c->receipt.inflight=c->head?c->head->serial:0;
+        refresh_inflight(c);
         c->received_at=now;
         return true;
     }
@@ -334,27 +330,28 @@ static bool tick_body(qa_kex_channel*c,uint64_t now,bool *expired,qa_error*e) {
                 payload,sizeof(payload)
             }
         };
-        if(!qa_kex_packet_write(&w,&p)||!c->emit(c->user,(qa_bytes) {
-            bytes,qa_net_writer_size(&w)
-        },e))return false;
+        if(!qa_kex_packet_write(&w,&p))return false;
+        qa_net_send_result result=c->emit(c->user,(qa_bytes){bytes,qa_net_writer_size(&w)},e);
+        if(result==QA_NET_SEND_FULL)return true;
+        if(result==QA_NET_SEND_FAILED)return false;
         c->ack=0;
     }
-    if(c->head&&now>=c->retry_at&&now-c->retry_at>=UINT64_C(500000000)) {
+    if(!flush_pending(c,now,e))return false;
+    struct pending *retry=c->head;
+    while(retry&&!reliable_packet(retry))retry=retry->next;
+    if(retry&&retry->sent&&now>=c->retry_at&&now-c->retry_at>=UINT64_C(500000000)) {
+        qa_net_send_result result=c->emit(c->user,(qa_bytes){retry->bytes,retry->size},e);
+        if(result==QA_NET_SEND_FULL)return true;
+        if(result==QA_NET_SEND_FAILED)return false;
+        c->retry_at=now;
         if(++c->retries>=40) {
             *expired=true;
             qa_error_set(e,QA_ERROR_IO,0,"KEX LAN peer timed out");
             return false;
         }
-        c->retry_at=now;
-        if(!c->emit(c->user,(qa_bytes) {
-            c->head->bytes,c->head->size
-        },e))return false;
-        c->head->sent=true;
     }
     if(!c->head&&now>=c->received_at&&now-c->received_at>=UINT64_C(5000000000)) {
-        if(!send_body(c,129,(qa_bytes) {
-            0
-        },QA_KEX_RELIABLE,now,e))return false;
+        if(send_body(c,129,(qa_bytes){0},QA_KEX_RELIABLE,now,e)==QA_NET_SEND_FAILED)return false;
         c->received_at=now;
     }
     return true;
@@ -370,11 +367,11 @@ static bool enter(qa_kex_channel *c, qa_error *e)
     return true;
 }
 
-bool qa_kex_channel_send(qa_kex_channel *c, uint8_t kind, qa_bytes bytes,
+qa_net_send_result qa_kex_channel_send(qa_kex_channel *c, uint8_t kind, qa_bytes bytes,
                          qa_kex_mode mode, uint64_t now, qa_error *e)
 {
     if (!enter(c, e)) return false;
-    bool ok = send_body(c, kind, bytes, mode, now, e);
+    qa_net_send_result ok = send_body(c, kind, bytes, mode, now, e);
     c->entered = false;
     return ok;
 }

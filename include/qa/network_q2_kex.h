@@ -18,15 +18,15 @@ uint64_t qa_kex_read_varint(qa_net_reader *);
 bool qa_kex_write_varint(qa_net_writer *, uint64_t);
 bool qa_kex_read_string(qa_net_reader *, char *, size_t);
 bool qa_kex_write_string(qa_net_writer *, const char *);
-typedef bool (*qa_kex_emit_fn)(void *, qa_bytes, qa_error *);
+typedef qa_net_send_result (*qa_kex_emit_fn)(void *, qa_bytes, qa_error *);
 typedef struct qa_kex_channel qa_kex_channel;
 typedef enum qa_kex_mode { QA_KEX_UNSEQUENCED=0, QA_KEX_SEQUENCED=2, QA_KEX_RELIABLE=3 } qa_kex_mode;
 typedef struct qa_kex_message { uint8_t kind; qa_bytes payload; } qa_kex_message;
 bool qa_kex_channel_create(qa_kex_emit_fn, void *, qa_kex_channel **, qa_error *);
 void qa_kex_channel_destroy(qa_kex_channel *);
-/* Reliable success means the complete message was accepted into the retry
- * queue. A failed initial emission is retried by tick without requeueing. */
-bool qa_kex_channel_send(qa_kex_channel *, uint8_t kind, qa_bytes, qa_kex_mode, uint64_t now_ns, qa_error *);
+/* Acceptance transfers the complete message to the channel. Unsent packets
+ * remain here until transport admission; reliable packets then await ACK. */
+qa_net_send_result qa_kex_channel_send(qa_kex_channel *, uint8_t kind, qa_bytes, qa_kex_mode, uint64_t now_ns, qa_error *);
 /* Message payload remains borrowed until the next receive or channel destruction. */
 bool qa_kex_channel_receive(qa_kex_channel *, qa_bytes, uint64_t now_ns, qa_kex_message *, bool *present, qa_error *);
 bool qa_kex_channel_tick(qa_kex_channel *, uint64_t now_ns, qa_error *);
@@ -56,7 +56,7 @@ typedef struct qa_kex_lan_options { bool host; uint8_t max_players, local_player
 bool qa_kex_lan_open(qa_net_transport *, const qa_kex_lan_options *, qa_kex_lan **, qa_error *);
 void qa_kex_lan_close(qa_kex_lan *);
 bool qa_kex_lan_tick(qa_kex_lan *, uint64_t now_ns, qa_error *);
-bool qa_kex_lan_send(qa_kex_lan *, const qa_net_address *, qa_bytes, qa_error *);
+qa_net_send_result qa_kex_lan_send(qa_kex_lan *, const qa_net_address *, qa_bytes, qa_error *);
 bool qa_kex_lan_receive(qa_kex_lan *, qa_net_datagram *, qa_error *);
 bool qa_kex_lan_admitted(const qa_kex_lan *, const qa_net_address *);
 bool qa_kex_lan_ready(const qa_kex_lan *);

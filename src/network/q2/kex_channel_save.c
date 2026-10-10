@@ -13,19 +13,19 @@ bool qa_kex_channel_valid(const qa_kex_channel *c)
         (!!c->fragment_capacity != !!c->fragments) || (!!c->expanded_capacity != !!c->expanded) ||
         (c->ack != 0 && c->ack != 4 && c->ack != 6)) return false;
     size_t count = 0, bytes = 0;
-    const struct pending *last = NULL;
+    const struct pending *last = NULL, *last_sequenced = NULL;
     for (const struct pending *p = c->head; p; p = p->next) {
         if (++count > c->pending_count || p->size > QA_KEX_DATAGRAM_BYTES) return false;
         qa_kex_packet packet;
         qa_error invalid = {0};
         if (!qa_kex_packet_read((qa_bytes){p->bytes, p->size}, &packet, &invalid) ||
-            (packet.flags & 3u) != QA_KEX_RELIABLE || packet.reliable != p->reliable ||
-            (last && p->reliable != (uint16_t)(last->reliable + 1))) return false;
+            ((packet.flags & 2u) && packet.reliable != p->reliable)) return false;
+        if (packet.flags & 2u) last_sequenced = p;
         bytes += p->size;
         last = p;
     }
     return count == c->pending_count && bytes == c->pending_bytes && last == c->tail &&
-        (!last || last->reliable == c->reliable);
+        (!last_sequenced || last_sequenced->reliable == c->reliable);
 }
 
 bool qa_kex_channel_checkpoint(const qa_kex_channel *c, qa_buffer *out, qa_error *e)
@@ -124,13 +124,15 @@ bool qa_kex_channel_restore(qa_bytes bytes, qa_kex_emit_fn emit, void *user,
     bool first = true;
     uint64_t serial = 0;
     for (struct pending *p = c->head; p; p = p->next) {
+        if ((p->bytes[1] & 3u) != QA_KEX_RELIABLE) continue;
         if (first) serial = ++c->receipt.queued;
         p->serial = serial;
         uint8_t fragment = p->bytes[1] & 12u;
         p->final = fragment == 0 || fragment == 12;
         first = p->final;
     }
-    c->receipt.inflight = c->head ? c->head->serial : 0;
+    for (struct pending *p = c->head; p; p = p->next)
+        if ((p->bytes[1] & 3u) == QA_KEX_RELIABLE) { c->receipt.inflight = p->serial; break; }
     *out = c;
     return true;
 }

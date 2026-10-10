@@ -81,9 +81,9 @@ static bool text_attribute(struct attributes*a,qa_bytes b,bool player,qa_error*e
     value[valuesize]=0;
     return attrs_set(a,key,value,player,e);
 }
-bool qa_kex_lan_emit(void*user,qa_bytes b,qa_error*e) {
+qa_net_send_result qa_kex_lan_emit(void*user,qa_bytes b,qa_error*e) {
     struct peer*p=user;
-    return qa_net_transport_send(p->owner->transport,&p->address,b,e) == QA_NET_SEND_ACCEPTED;
+    return qa_net_transport_send(p->owner->transport,&p->address,b,e);
 }
 static struct peer*find_peer(const qa_kex_lan*l,const qa_net_address*a) {
     for(size_t i=0;i<l->peer_count;i++)if(qa_net_address_equal(&l->peers[i]->address,a,true))return l->peers[i];
@@ -111,7 +111,7 @@ static struct peer*add_peer(qa_kex_lan*l,const qa_net_address*a,qa_error*e) {
     return p;
 }
 static bool peer_send(struct peer*p,uint8_t kind,qa_bytes b,qa_kex_mode mode,qa_error*e) {
-    return qa_kex_channel_send(p->channel,kind,b,mode,p->owner->clock,e);
+    return qa_kex_channel_send(p->channel,kind,b,mode,p->owner->clock,e) == QA_NET_SEND_ACCEPTED;
 }
 static bool broadcast(qa_kex_lan*l,const struct peer*exclude,uint8_t kind,qa_bytes b,qa_error*e) {
     bool ok=true;
@@ -233,7 +233,7 @@ bool qa_kex_lan_reliable_receipt(const qa_kex_lan *l,const qa_net_address *a,
 bool qa_kex_lan_ready(const qa_kex_lan*l) {
     return l&&qa_net_transport_ready(l->transport)&&l->joined&&!strcmp(attrs_get(&l->attributes,"ingame"),"1");
 }
-static bool send_body(qa_kex_lan*l,const qa_net_address*to,qa_bytes b,qa_error*e) {
+static qa_net_send_result send_body(qa_kex_lan*l,const qa_net_address*to,qa_bytes b,qa_error*e) {
     if(!l||!to||(b.size&&!b.data)||b.size>65535) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX LAN send");
         return false;
@@ -242,7 +242,7 @@ static bool send_body(qa_kex_lan*l,const qa_net_address*to,qa_bytes b,qa_error*e
     struct peer*p=add_peer(l,to,e);
     if(!p)return false;
     bool reliable=b.size>=8&&b.data[0]==0&&b.data[1]==0&&b.data[2]==0&&b.data[3]==128&&b.data[4]==0&&b.data[5]==0&&b.data[6]==0&&b.data[7]==128;
-    return peer_send(p,0,b,reliable?QA_KEX_RELIABLE:QA_KEX_SEQUENCED,e);
+    return qa_kex_channel_send(p->channel,0,b,reliable?QA_KEX_RELIABLE:QA_KEX_SEQUENCED,l->clock,e);
 }
 static bool queue(qa_kex_lan*l,const qa_net_address*a,qa_bytes b,qa_error*e) {
     if(b.size>65535) {
@@ -588,10 +588,10 @@ static bool enter(qa_kex_lan *l, qa_error *e)
     l->entered = true;
     return true;
 }
-bool qa_kex_lan_send(qa_kex_lan *l, const qa_net_address *to, qa_bytes bytes, qa_error *e)
+qa_net_send_result qa_kex_lan_send(qa_kex_lan *l, const qa_net_address *to, qa_bytes bytes, qa_error *e)
 {
     if (!enter(l, e)) return false;
-    bool ok = send_body(l, to, bytes, e);
+    qa_net_send_result ok = send_body(l, to, bytes, e);
     l->entered = false;
     return ok;
 }
