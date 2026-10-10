@@ -1,4 +1,3 @@
-#include "qa/application_native_q2_presentation.h"
 #include "remote_unified_private.h"
 #include "ui_features.h"
 #include "remote_unified_media_private.h"
@@ -34,15 +33,6 @@ static qa_scene_world_options world_options(qa_game_family family)
     return (qa_scene_world_options){.images = image_options(family, QA_IMAGE_USAGE_WALL),
         .subdivisions = 64, .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
 }
-typedef struct source_audio_preparation {
-    qa_frontend *frontend;
-    qa_audio_bank *bank;
-} source_audio_preparation;
-static bool prepare_source_sound(void *context, const char *path, qa_error *error)
-{
-    source_audio_preparation *preparation = context;
-    return frontend_ui_audio_prepare_sound(preparation->frontend, preparation->bank, path, QA_GAME_Q2, error);
-}
 static bool bank(frontend_unified_media *owner, const char *content, unified_media_bank **out, qa_error *error)
 {
     if (!owner || owner->importing || owner->busy || !content || !out || !frontend_unified_media_current(owner))
@@ -70,13 +60,11 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
         okay = row->materials && row->fonts && qa_audio_bank_create(row->files, &row->sounds, error);
     }
     if (okay && row->product->family == QA_GAME_Q2) {
-        okay = frontend_ui_audio_prepare_q2_source(owner->frontend, row->sounds, error);
-        source_audio_preparation preparation = {owner->frontend, row->sounds};
+        okay = frontend_ui_audio_prepare_q2_source(owner->frontend, row->sounds, 0, error);
         for (size_t i = 0; okay && i < qa_executable_recipe_provider_count(owner->recipe); ++i) {
             const qa_recipe_provider *provider = qa_executable_recipe_provider(owner->recipe, i);
             if (provider->selection.product == row->product->id && provider->source_owner)
-                okay = qa_application_native_q2_sound_resources(owner->frontend->application,
-                    provider->source_owner, prepare_source_sound, &preparation, error);
+                okay = frontend_ui_audio_prepare_q2_source(owner->frontend, row->sounds, provider->source_owner, error);
         }
     }
     if (okay && row->product->family == QA_GAME_Q3)

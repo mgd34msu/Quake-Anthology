@@ -1,3 +1,4 @@
+#include "qa/application_native_q2_presentation.h"
 #include "qa/q2_sound.h"
 #include "ui_features_private.h"
 #include "accessibility.h"
@@ -122,11 +123,21 @@ bool frontend_ui_audio_prepare_sound(qa_frontend *f, qa_audio_bank *bank,
     qa_audio_asset_release(asset);
     return okay;
 }
-bool frontend_ui_audio_prepare_q2_source(qa_frontend *f, qa_audio_bank *bank, qa_error *error)
+typedef struct source_audio_preparation {
+    qa_frontend *frontend;
+    qa_audio_bank *bank;
+} source_audio_preparation;
+static bool prepare_source_sound(void *context, const char *path, qa_error *error)
+{
+    source_audio_preparation *preparation = context;
+    return frontend_ui_audio_prepare_sound(preparation->frontend, preparation->bank, path, QA_GAME_Q2, error);
+}
+bool frontend_ui_audio_prepare_q2_source(qa_frontend *f, qa_audio_bank *bank, qa_actor_owner owner, qa_error *error)
 {
     for (size_t i = 0; i < qa_q2_sound_count(); ++i)
         if (!frontend_ui_audio_prepare_sound(f, bank, qa_q2_sound_path(i), QA_GAME_Q2, error)) return false;
-    return true;
+    source_audio_preparation preparation = {f, bank};
+    return !owner || qa_application_native_q2_sound_resources(f->application, owner, prepare_source_sound, &preparation, error);
 }
 void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)
 {

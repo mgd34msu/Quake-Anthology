@@ -1,3 +1,4 @@
+#include "ui_features.h"
 #include "internal.h"
 #include "qa/pool.h"
 #include "qc_rerelease_events.h"
@@ -395,7 +396,8 @@ static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_ga
     entry->images = entry->files ? qa_scene_resources_create(entry->files, error) : NULL;
     bool ok = entry->files && entry->images &&
         frontend_image_policy_initialize(frontend, entry->images, error) &&
-        (!frontend->audio || qa_audio_bank_create(entry->files, &entry->sounds, error)) &&
+        (!frontend->audio || (qa_audio_bank_create(entry->files, &entry->sounds, error) &&
+            (family != QA_GAME_Q2 || frontend_ui_audio_prepare_q2_source(frontend, entry->sounds, provider, error)))) &&
         (!gear || gear_resources_bind(frontend->application, entry, error));
     if (!ok) {
         qa_audio_bank_destroy(entry->sounds); qa_scene_resources_destroy(entry->images);
@@ -403,6 +405,21 @@ static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_ga
         qa_launch_instance_lease_release(entry->descriptor); free(entry); return false;
     }
     entry->next = state->resources; state->resources = entry; *out = entry; return true;
+}
+bool frontend_event_resources_prepare(qa_frontend *frontend, qa_error *error)
+{
+    const qa_launch_snapshot *snapshot = qa_application_launch(frontend->application);
+    for (size_t i = 0; i < qa_launch_snapshot_instance_count(snapshot); ++i) {
+        const qa_launch_instance *instance = qa_launch_snapshot_instance(snapshot, i);
+        const qa_product *product = qa_catalog_product(qa_launch_snapshot_catalog(snapshot), instance->selection.product);
+        qa_actor_owner owner;
+        frontend_event_resources *resources;
+        if (!product || !qa_application_provider_owner(frontend->application, instance->selection.instance, &owner)) continue;
+        if (!resources_read(frontend, owner, product->family, &resources, error) ||
+            (frontend->audio && product->family == QA_GAME_Q2 &&
+             !frontend_ui_audio_prepare_q2_source(frontend, resources->sounds, owner, error))) return false;
+    }
+    return true;
 }
 bool frontend_event_qc_resources(qa_frontend *frontend,qa_actor_owner owner,
     qa_scene_resources **images,qa_audio_bank **sounds,qa_error *error)
