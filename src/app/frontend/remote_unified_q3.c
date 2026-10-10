@@ -90,7 +90,7 @@ struct frontend_unified_q3 {
     qa_q3_source_scene_bank *scene_bank;
     unified_q3_character *characters;
     unified_q3_character **character_order;
-    size_t character_count, character_capacity;
+    size_t character_count;
     unified_q3_ballistic *ballistics;
     qa_unified_document *frame, *candidate;
     const qa_unified_document *candidate_input;
@@ -104,8 +104,8 @@ struct frontend_unified_q3 {
     const qa_scene_view *view;
     const qa_scene_world_input *world;
     qa_scene_frame *scene;
-    qa_scene_light *lights;
-    size_t light_count, light_capacity;
+    qa_scene_light lights[QA_Q3_SOURCE_LIGHT_CAPACITY];
+    size_t light_count;
     qa_scene_view sampled_view;
     qa_scene_frame *sampled_scene;
     uint64_t sampled_frame_number;
@@ -877,15 +877,9 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
     const qa_unified_frame_visuals *visuals=received->visuals;
     size_t character_count=visuals?visuals->character_count:0;
     o->character_count=0;
-    if(okay && character_count>o->character_capacity) {
-        if(character_count>SIZE_MAX/sizeof(*o->character_order))
-            okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Q3 character order exceeds native storage");
-        else {
-            unified_q3_character **order=realloc(o->character_order,character_count*sizeof(*order));
-            if(!order)okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual FRAME character order");
-            else { o->character_order=order; o->character_capacity=character_count; }
-        }
-    }
+    o->character_order=okay && character_count?qa_arena_alloc(&scene->storage,
+        character_count*sizeof(*o->character_order),_Alignof(unified_q3_character *),e):NULL;
+    if(okay && character_count && !o->character_order)okay=false;
     for (size_t i=0;okay && i<character_count;++i) {
         unified_q3_character *c;
         okay=character_read(o,visuals->characters+i,&c,e);
@@ -911,14 +905,6 @@ static bool sample(frontend_unified_q3 *o,const qa_scene_view *view,const qa_sce
         if(okay){frame.refdef.origin=qa_vec_add(bounds.maxs,qa_v3(65536,65536,65536));okay=q3n_local_submit(&frame,e);}
         const qa_scene_light *lights=NULL; size_t count=0;
         if (okay) okay=qa_q3_presentation_lights_read(b->backend,&lights,&count,e);
-        if (okay && count>SIZE_MAX-o->light_count) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Q3 light count overflow");
-        size_t needed=o->light_count+count;
-        if (okay && needed>o->light_capacity) {
-            if (needed>SIZE_MAX/sizeof(*o->lights)) okay=false;
-            else { qa_scene_light *next=realloc(o->lights,needed*sizeof(*next));
-                if (!next) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q3 private CLIENT lights");
-                else { o->lights=next; o->light_capacity=needed; } }
-        }
         for(size_t i=0;okay && i<count;++i){
             bool admitted=false;
             okay=qa_q3_source_scene_bank_light(o->scene_bank,b->assets,lights+i,&admitted,e) && current(o,e);
@@ -1162,7 +1148,7 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         free(c); }
     while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v->attachments);free(v);}
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
-    free(o->character_order); free(o->lights); free(o); *address=NULL; return true;
+    free(o); *address=NULL; return true;
 }
 bool frontend_unified_q3_visit(const frontend_unified_q3 *o,const qa_application_content_visitor *visitor,qa_error *e)
 {
