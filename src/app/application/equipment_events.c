@@ -1,16 +1,11 @@
 #include "equipment_events.h"
 #include "equipment_runtime.h"
+#include "event_stream.h"
+#include "qa/application_network.h"
 #include "qa/source_save.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
-struct application_equipment_events {
-    qa_session *session;
-    qa_application_equipment_event *rows;
-    size_t count, capacity;
-    uint64_t generation;
-};
 
 static bool valid(const application_equipment_events *queue,
     const qa_application_equipment_event *event, qa_error *error)
@@ -36,82 +31,58 @@ static bool valid(const application_equipment_events *queue,
     return application_fail(error, QA_ERROR_FORMAT, "Gear event has an invalid source destination");
 }
 
-bool application_equipment_events_create(qa_session *session, application_equipment_events **out,
-    qa_error *error)
+bool application_equipment_events_create(qa_application *application, qa_session *session,
+    application_equipment_events **out, qa_error *error)
 {
-    if (!session || !out) return application_fail(error, QA_ERROR_ARGUMENT, "Gear event queue lacks its session");
+    if (!application || !session || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Gear events lack their session");
     application_equipment_events *queue = calloc(1, sizeof(*queue));
-    if (!queue) return application_fail(error, QA_ERROR_MEMORY, "Allocating gear event queue");
-    queue->session = session; *out = queue; return true;
-}
-
-static void discard(application_equipment_events *queue)
-{
-    for (size_t i = 0; i < queue->count; ++i) free((void *)queue->rows[i].text);
-    queue->count = 0;
+    if (!queue) return application_fail(error, QA_ERROR_MEMORY, "Allocating gear event custody");
+    queue->application = application; queue->session = session;
+    queue->identity = ++application->equipment_event_owner_next;
+    *out = queue; return true;
 }
 
 void application_equipment_events_destroy(application_equipment_events *queue)
+{ free(queue); }
+
+static bool capacity(application_equipment_events *queue, const application_event_write *write,
+    const qa_application_equipment_event *event, qa_error *error)
 {
-    if (!queue) return;
-    discard(queue); free(queue->rows); free(queue);
+    return event->recipient.registry ? application_event_stream_close_recipients(queue->application,
+        write, event->recipient, NULL, QA_APPLICATION_OUTPUT_UNIFIED, error) :
+        application_event_stream_close_subscribers(queue->application, write, error);
 }
 
-bool application_equipment_events_publish(void *context,
-    const application_equipment_source_event *source, qa_error *error)
+bool application_equipment_events_publish(application_equipment_events *queue,
+    const qa_application_equipment_event *event, qa_error *error)
 {
-    application_equipment_events *queue = context;
-    if (!queue || !source) return application_fail(error, QA_ERROR_ARGUMENT, "Gear event producer is absent");
-    qa_application_equipment_event event = {.provider = source->provider,
-        .selected_provider = source->selected_provider, .service_owner = source->service_owner,
-        .time_ns = source->time_ns, .index = source->index, .recipient = source->recipient, .text = source->text};
-    switch (source->kind) {
-    case APPLICATION_EQUIPMENT_CONFIGSTRING: event.kind = QA_APPLICATION_EQUIPMENT_CONFIGSTRING; break;
-    case APPLICATION_EQUIPMENT_SERVER_COMMAND: event.kind = QA_APPLICATION_EQUIPMENT_SERVER_COMMAND; break;
-    default: return application_fail(error, QA_ERROR_ARGUMENT, "Unknown gear source event");
-    }
-    if (!valid(queue, &event, error)) return false;
-    if (event.recipient.registry && !qa_actors_get(qa_session_actors(queue->session), event.recipient))
+    if (!queue || !valid(queue, event, error)) return false;
+    if (event->recipient.registry && !qa_actors_get(qa_session_actors(queue->session), event->recipient))
         return application_fail(error, QA_ERROR_ARGUMENT, "Gear command recipient retired before publication");
-    size_t length = strlen(event.text);
-    if (length == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Gear event text overflows");
-    char *text = malloc(length + 1);
-    if (!text) return application_fail(error, QA_ERROR_MEMORY, "Retaining gear event text");
-    memcpy(text, event.text, length + 1);
-    if (queue->count == queue->capacity) {
-        size_t capacity = queue->capacity ? queue->capacity : 32;
-        if (queue->capacity > SIZE_MAX / 2) {
-            free(text); return application_fail(error, QA_ERROR_MEMORY, "Gear event queue extent overflows");
-        }
-        if (queue->capacity) capacity *= 2;
-        if (capacity > SIZE_MAX / sizeof(*queue->rows)) {
-            free(text); return application_fail(error, QA_ERROR_MEMORY, "Gear event queue extent overflows");
-        }
-        void *rows = realloc(queue->rows, capacity * sizeof(*queue->rows));
-        if (!rows) { free(text); return application_fail(error, QA_ERROR_MEMORY, "Growing gear event queue"); }
-        queue->rows = rows; queue->capacity = capacity;
-    }
-    event.text = text; queue->rows[queue->count++] = event; return true;
-}
-
-size_t application_equipment_events_count(const application_equipment_events *queue)
-{ return queue ? queue->count : 0; }
-uint64_t application_equipment_events_generation(const application_equipment_events *queue)
-{ return queue ? queue->generation : 0; }
-bool application_equipment_events_at(const application_equipment_events *queue, size_t index,
-    qa_application_equipment_event *out)
-{
-    if (!queue || !out || index >= queue->count) return false;
-    *out = queue->rows[index]; return true;
-}
-bool application_equipment_events_clear_ready(const application_equipment_events *queue, qa_error *error)
-{
-    return !queue || queue->generation != UINT64_MAX ||
-        application_fail(error, QA_ERROR_ARGUMENT, "Gear event consumption generation exhausted");
-}
-void application_equipment_events_clear(application_equipment_events *queue)
-{
-    if (queue) { discard(queue); ++queue->generation; }
+    qa_application *app = queue->application;
+    application_event_write own_write;
+    bool own = app->event_write == NULL;
+    if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_EQUIPMENT, &own_write, error))
+        return capacity(queue, &own_write, event, error);
+    application_event_write *write = app->event_write;
+    application_equipment_event_record *record = own ? &write->envelope->raw.equipment :
+        application_event_stream_alloc(app, sizeof(*record), _Alignof(application_equipment_event_record), error);
+    if (!record) goto abort;
+    size_t length = strlen(event->text);
+    char *text = application_event_stream_alloc(app, length + 1, 1, error);
+    if (!text) goto abort;
+    memcpy(text, event->text, length + 1);
+    *record = (application_equipment_event_record){.event = *event, .owner = queue->identity};
+    record->event.text = text;
+    if (write->envelope->last_equipment) write->envelope->last_equipment->next = record;
+    else write->envelope->equipment = record;
+    write->envelope->last_equipment = record;
+    return !own || application_event_stream_commit(app, write, error) || capacity(queue, write, event, error);
+abort:
+    if (!own) return false;
+    application_event_stream_abort(app, write, error);
+    return capacity(queue, write, event, error);
 }
 
 static bool header(qa_source_save_io *io, uint64_t *generation, size_t *count)
@@ -151,11 +122,23 @@ bool application_equipment_events_capture(const application_equipment_events *qu
 {
     if (!queue || !out || out->data || out->size || !qa_session_safe(queue->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "Gear event capture requires its idle owner and empty output");
-    qa_source_save_io io = {0}; uint64_t generation = queue->generation; size_t count = queue->count;
+    const qa_application *app = queue->application;
+    uint64_t first = qa_application_events_local_first(app), next = qa_application_events_next(app);
+    size_t count = 0;
+    for (uint64_t id = first; id < next; ++id) {
+        qa_application_event_view output;
+        for (size_t projection = 0; qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection)
+            if (output.equipment_owner == queue->identity) ++count;
+    }
+    qa_source_save_io io = {0}; uint64_t generation = qa_application_protocol_events_generation(app);
     bool okay = qa_source_save_writer(&io, queue->session, error) && header(&io, &generation, &count);
-    for (size_t i = 0; okay && i < count; ++i) {
-        qa_application_equipment_event event = queue->rows[i];
-        okay = valid(queue, &event, error) && fields(&io, queue, &event);
+    for (uint64_t id = first; okay && id < next; ++id) {
+        qa_application_event_view output;
+        for (size_t projection = 0; okay && qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection) {
+            if (output.equipment_owner != queue->identity) continue;
+            qa_application_equipment_event event = *output.equipment;
+            okay = fields(&io, queue, &event);
+        }
     }
     if (okay) okay = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -165,32 +148,21 @@ bool application_equipment_events_capture(const application_equipment_events *qu
 
 bool application_equipment_events_restore(application_equipment_events *queue, qa_bytes bytes, qa_error *error)
 {
-    if (!queue || queue->count || !qa_session_safe(queue->session))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Gear event import requires its empty isolated owner");
-    application_equipment_events candidate = {.session = queue->session}; qa_source_save_io io = {0};
-    size_t count = 0;
-    bool okay = qa_source_save_reader(&io, queue->session, bytes, error) && header(&io, &candidate.generation, &count);
-    if (okay && count > (bytes.size - io.offset) / 64) okay = false;
-    if (okay && count) {
-        candidate.rows = calloc(count, sizeof(*candidate.rows)); candidate.capacity = count;
-        if (!candidate.rows) okay = application_fail(error, QA_ERROR_MEMORY, "Allocating restored gear events");
-    }
+    if (!queue || !qa_session_safe(queue->session))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Gear event import requires its isolated owner");
+    qa_source_save_io io = {0}; size_t count = 0; uint64_t generation = 0;
+    bool okay = qa_source_save_reader(&io, queue->session, bytes, error) && header(&io, &generation, &count);
     for (size_t i = 0; okay && i < count; ++i) {
-        candidate.count = i + 1;
-        okay = fields(&io, &candidate, &candidate.rows[i]);
+        qa_application_equipment_event event = {0};
+        okay = fields(&io, queue, &event) && application_equipment_events_publish(queue, &event, error);
+        free((void *)event.text);
     }
     if (okay) okay = qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
-    if (okay) { free(queue->rows); *queue = candidate; }
-    else { discard(&candidate); free(candidate.rows); }
     if (!okay && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "Invalid gear event import");
     return okay;
 }
 
-size_t qa_application_equipment_event_count(const qa_application *application)
-{ return application ? application_equipment_events_count(application_equipment_runtime_events(application->equipment_runtime)) : 0; }
-uint64_t qa_application_equipment_events_generation(const qa_application *application)
-{ return application ? application_equipment_events_generation(application_equipment_runtime_events(application->equipment_runtime)) : 0; }
 qa_actor_owner qa_application_equipment_events_owner(const qa_application *application)
 {
     size_t count = application ? application_equipment_runtime_source_count(application->equipment_runtime) : 0;
@@ -207,15 +179,4 @@ bool qa_application_equipment_event_source_current(const qa_application *applica
 {
     qa_application_equipment_event event = {.provider = provider, .selected_provider = selected, .service_owner = service};
     return application && application_equipment_runtime_event_current(application->equipment_runtime, &event);
-}
-bool qa_application_equipment_event_at(const qa_application *application, size_t index,
-    qa_application_equipment_event *out, qa_error *error)
-{
-    qa_application_equipment_event event;
-    if (!application || !out || !application_equipment_events_at(
-        application_equipment_runtime_events(application->equipment_runtime), index, &event))
-        return application_fail(error, QA_ERROR_NOT_FOUND, "Gear event index is outside its current runtime");
-    if (!application_equipment_runtime_event_current(application->equipment_runtime, &event))
-        return application_fail(error, QA_ERROR_FORMAT, "Gear event namespace differs from its retained source");
-    *out = event; return true;
 }

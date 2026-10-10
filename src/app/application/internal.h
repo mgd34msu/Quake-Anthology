@@ -346,6 +346,7 @@ struct qa_application {
     application_event_write *event_write;
     uint64_t event_transient_declines;
     uint64_t event_reliable_declines;
+    uint64_t equipment_event_owner_next;
     uint64_t event_local_cursor, event_peer_cursor;
     uint64_t protocol_events_generation;
     uint64_t simulation_event_sequence;

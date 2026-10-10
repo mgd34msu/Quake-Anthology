@@ -13,7 +13,8 @@ struct frontend_equipment_events {
     equipment_namespace *sources;
     qa_actor_owner queue_owner;
     uint64_t generation;
-    size_t cursor;
+    uint64_t cursor;
+    size_t projection;
     uint32_t hud_delivered, console_delivered;
     bool printed, busy;
 };
@@ -116,7 +117,8 @@ static bool command(frontend_equipment_events *owner, const qa_application_equip
     qa_command_tokens_free(&tokens); return okay;
 }
 static void clear_delivery(frontend_equipment_events *owner)
-{ owner->cursor = 0; owner->hud_delivered = owner->console_delivered = 0; owner->printed = false; }
+{ owner->cursor = qa_application_events_local_first(owner->frontend->application);
+  owner->projection = 0; owner->hud_delivered = owner->console_delivered = 0; owner->printed = false; }
 
 bool frontend_equipment_events_drain(frontend_equipment_events *owner, qa_error *error)
 {
@@ -125,31 +127,33 @@ bool frontend_equipment_events_drain(frontend_equipment_events *owner, qa_error 
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear event delivery lacks its actual idle recipient owners");
     qa_application *application = owner->frontend->application;
     qa_actor_owner queue_owner = qa_application_equipment_events_owner(application);
-    uint64_t generation = qa_application_equipment_events_generation(application);
+    uint64_t generation = qa_application_protocol_events_generation(application);
     if (owner->queue_owner != queue_owner) {
         dispose_namespaces(owner); clear_delivery(owner); owner->queue_owner = queue_owner;
         owner->generation = generation;
     } else if (owner->generation != generation) {
         clear_delivery(owner); owner->generation = generation;
     }
-    size_t count = qa_application_equipment_event_count(application);
-    if (owner->cursor > count) return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear delivery cursor exceeds its actual pending queue");
+    uint64_t first = qa_application_events_local_first(application), next = qa_application_events_next(application);
+    if (owner->cursor < first) { clear_delivery(owner); owner->cursor = first; }
     owner->busy = true; bool okay = true;
-    while (okay && owner->cursor < count) {
-        qa_application_equipment_event event;
-        okay = qa_application_equipment_event_at(application, owner->cursor, &event, error);
-        if (!okay) break;
-        switch (event.kind) {
-        case QA_APPLICATION_EQUIPMENT_CONFIGSTRING: okay = configstring(owner, &event, error); break;
-        case QA_APPLICATION_EQUIPMENT_SERVER_COMMAND: okay = command(owner, &event, error); break;
+    while (okay && owner->cursor < next) {
+        qa_application_event_view output;
+        if (!qa_application_event_at(application, owner->cursor, owner->projection, &output) || !output.equipment) {
+            ++owner->cursor; owner->projection = 0;
+            owner->hud_delivered = owner->console_delivered = 0; owner->printed = false;
+            continue;
         }
-        if (okay && (owner->frontend->application != application ||
-            qa_application_equipment_events_owner(application) != queue_owner ||
-            qa_application_equipment_events_generation(application) != generation ||
-            qa_application_equipment_event_count(application) != count))
-            okay = frontend_fail(error, QA_ERROR_ARGUMENT, "Gear pending queue changed during recipient delivery");
+        const qa_application_equipment_event *event = output.equipment;
+        if (qa_application_equipment_event_source_current(application, event->provider,
+            event->selected_provider, event->service_owner)) {
+            switch (event->kind) {
+            case QA_APPLICATION_EQUIPMENT_CONFIGSTRING: okay = configstring(owner, event, error); break;
+            case QA_APPLICATION_EQUIPMENT_SERVER_COMMAND: okay = command(owner, event, error); break;
+            }
+        }
         if (okay) {
-            ++owner->cursor; owner->hud_delivered = owner->console_delivered = 0; owner->printed = false;
+            ++owner->projection; owner->hud_delivered = owner->console_delivered = 0; owner->printed = false;
         }
     }
     owner->busy = false; return okay;

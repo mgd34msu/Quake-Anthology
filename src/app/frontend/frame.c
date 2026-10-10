@@ -596,8 +596,7 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
             (queued && !frontend_music_sources_flush(frontend->music_sources,error))) return false;
     }
     if (qa_application_launch(frontend->application) &&
-        (qa_application_events_local_first(frontend->application) != qa_application_events_next(frontend->application) ||
-         qa_application_equipment_event_count(frontend->application)) &&
+        qa_application_events_local_first(frontend->application) != qa_application_events_next(frontend->application) &&
         !frontend_events_flush(frontend,error)) return false;
     frontend->preparing=true;
     bool prepared=qa_application_startup_advance(frontend->application,complete,error);

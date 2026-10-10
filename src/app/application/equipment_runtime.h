@@ -7,19 +7,6 @@
 #include "equipment_events.h"
 
 typedef struct application_equipment_runtime application_equipment_runtime;
-typedef enum application_equipment_source_event_kind {
-    APPLICATION_EQUIPMENT_CONFIGSTRING,
-    APPLICATION_EQUIPMENT_SERVER_COMMAND
-} application_equipment_source_event_kind;
-typedef struct application_equipment_source_event {
-    application_equipment_source_event_kind kind;
-    qa_actor_owner provider, selected_provider;
-    qa_string_id service_owner;
-    qa_actor_id recipient;
-    uint64_t time_ns;
-    int32_t index;
-    const char *text;
-} application_equipment_source_event;
 typedef struct application_equipment_runtime_options {
     qa_application *application;
     const qa_launch_snapshot *snapshot;

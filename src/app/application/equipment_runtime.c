@@ -169,15 +169,15 @@ static bool velocity(void *context, qa_actor_id actor, qa_vec3 value, qa_error *
     return source_current(source) || application_fail(error, QA_ERROR_ARGUMENT, "Gear velocity source retired during its write");
 }
 
-static bool event(equipment_source *source, application_equipment_source_event_kind kind,
+static bool event(equipment_source *source, qa_application_equipment_event_kind kind,
     int32_t index, const char *text, qa_error *error)
 {
     application_equipment_runtime *runtime = source->runtime;
-    application_equipment_source_event value = {.kind = kind, .provider = source->view.gear_owner,
+    qa_application_equipment_event value = {.kind = kind, .provider = source->view.gear_owner,
         .selected_provider = source->view.selected_owner, .service_owner = source->view.service_owner,
         .time_ns = (uint64_t)source->milliseconds*1000000, .index = index, .text = text};
     if (!source_current(source)) return application_fail(error, QA_ERROR_ARGUMENT, "Gear event source retired");
-    if (kind == APPLICATION_EQUIPMENT_SERVER_COMMAND && index >= 0) {
+    if (kind == QA_APPLICATION_EQUIPMENT_SERVER_COMMAND && index >= 0) {
         application_q3_gear *gear = source->view.gear;
         if (!gear || index >= 64)
             return application_fail(error, QA_ERROR_ARGUMENT, "Gear command has no actual physical client");
@@ -196,9 +196,9 @@ static bool event(equipment_source *source, application_equipment_source_event_k
     return source_current(source) || application_fail(error, QA_ERROR_ARGUMENT, "Gear event source retired during publication");
 }
 static bool configstring(void *context, uint32_t index, const char *text, qa_error *error)
-{ return event(context, APPLICATION_EQUIPMENT_CONFIGSTRING, (int32_t)index, text, error); }
+{ return event(context, QA_APPLICATION_EQUIPMENT_CONFIGSTRING, (int32_t)index, text, error); }
 static bool server_command(void *context, int32_t index, const char *text, qa_error *error)
-{ return event(context, APPLICATION_EQUIPMENT_SERVER_COMMAND, index, text, error); }
+{ return event(context, QA_APPLICATION_EQUIPMENT_SERVER_COMMAND, index, text, error); }
 static void print(void *context, const char *text)
 {
     equipment_source *source = context;
@@ -494,14 +494,19 @@ static bool decode_roster(application_equipment_runtime *runtime, qa_bytes bytes
 static bool saved_events_match(application_equipment_runtime *runtime,
     const saved_source *saved, qa_error *error)
 {
-    for (size_t i = 0; i < application_equipment_events_count(runtime->events); ++i) {
-        qa_application_equipment_event event; bool found = false;
-        if (!application_equipment_events_at(runtime->events, i, &event)) return false;
-        for (size_t j = 0; j < runtime->count; ++j)
-            if (saved[j].gear && event.provider == saved[j].owner &&
-                event.selected_provider == saved[j].selected && event.service_owner == saved[j].service_owner &&
-                event.time_ns <= (uint64_t)saved[j].milliseconds*1000000) { found = true; break; }
-        if (!found) return application_fail(error, QA_ERROR_FORMAT, "Saved gear event leaves its actual source namespace or clock");
+    qa_application *app = runtime->options.application;
+    for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app); id < next; ++id) {
+        qa_application_event_view output;
+        for (size_t projection = 0; qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection) {
+            if (output.equipment_owner != runtime->events->identity) continue;
+            const qa_application_equipment_event *event = output.equipment;
+            bool found = false;
+            for (size_t j = 0; j < runtime->count; ++j)
+                if (saved[j].gear && event->provider == saved[j].owner &&
+                    event->selected_provider == saved[j].selected && event->service_owner == saved[j].service_owner &&
+                    event->time_ns <= (uint64_t)saved[j].milliseconds*1000000) { found = true; break; }
+            if (!found) return application_fail(error, QA_ERROR_FORMAT, "Saved gear event leaves its actual source namespace or clock");
+        }
     }
     return true;
 }
@@ -676,10 +681,12 @@ static bool source_capture(void *context, qa_buffer *out, qa_error *error)
         qa_buffer_free(&executor);
     }
     qa_buffer events = {0};
-    for (size_t i = 0; okay && i < application_equipment_events_count(runtime->events); ++i) {
-        qa_application_equipment_event event;
-        okay = application_equipment_events_at(runtime->events, i, &event) &&
-            application_equipment_runtime_event_current(runtime, &event);
+    qa_application *app = runtime->options.application;
+    for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app); okay && id < next; ++id) {
+        qa_application_event_view output;
+        for (size_t projection = 0; okay && qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection)
+            if (output.equipment_owner == runtime->events->identity)
+                okay = application_equipment_runtime_event_current(runtime, output.equipment);
     }
     if (okay) okay = application_equipment_events_capture(runtime->events, &events, error);
     qa_bytes event_bytes = {events.data, events.size};
@@ -723,11 +730,7 @@ static bool source_restore(void *context, qa_bytes bytes, qa_error *error)
     application_equipment_runtime *runtime = context; saved_source *saved = NULL; qa_bytes events = {0};
     if (!runtime || !runtime->restoring || runtime->closing || !application_equipment_runtime_idle(runtime) ||
         !decode_roster(runtime, bytes, &saved, &events, error)) return false;
-    qa_buffer current_events = {0};
-    bool okay = application_equipment_events_capture(runtime->events, &current_events, error) &&
-        current_events.size == events.size && (!events.size || !memcmp(current_events.data, events.data, events.size)) &&
-        saved_events_match(runtime, saved, error);
-    qa_buffer_free(&current_events);
+    bool okay = saved_events_match(runtime, saved, error);
     for (size_t i = 0; i < runtime->count && okay; ++i) {
         equipment_source *source = &runtime->sources[i]; application_q3_gear *gear = source->view.gear;
         okay = saved[i].gear == (gear != NULL);
@@ -822,7 +825,7 @@ bool application_equipment_runtime_create(const application_equipment_runtime_op
     runtime->options = *options; runtime->options.providers = NULL; runtime->options.provider_count = 0;
     runtime->restoring = saved_roster.size != 0; qa_launch_snapshot_retain(options->snapshot);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(options->snapshot);
-    bool okay = application_equipment_events_create(options->services.session, &runtime->events, error) &&
+    bool okay = application_equipment_events_create(options->application, options->services.session, &runtime->events, error) &&
         qualify_roster(runtime, options, choices, error);
     for (size_t i = 0; okay && i < options->provider_count; ++i) {
         application_provider *provider = options->providers[i]; bool grapple;

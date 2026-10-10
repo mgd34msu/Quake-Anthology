@@ -8,6 +8,7 @@
 #include "qa/application_network_q2.h"
 #include "native_q1_wire.h"
 #include "guest_native_q2_private.h"
+#include "equipment_runtime.h"
 #include "../../network/unified/frame_internal.h"
 
 #include <math.h>
@@ -899,7 +900,7 @@ bool application_events_save_content_visit(qa_application *app,
     return ok;
 }
 
-static void install_store(qa_application *app, event_store *store)
+static void install_store(qa_application *app, event_store *store, uint64_t pending_first)
 {
     application_unified_persistent_dispose(app);
     qa_event_ring_destroy(&app->event_ring);
@@ -908,7 +909,7 @@ static void install_store(qa_application *app, event_store *store)
     free(app->unified_world_text);
     app->event_ring = store->pages;
     app->event_write = NULL;
-    app->event_local_cursor = qa_event_ring_next(store->pages);
+    app->event_local_cursor = pending_first;
     app->event_peer_cursor = UINT64_MAX;
     qa_event_ring_retire(store->pages, app->event_local_cursor);
     ++app->protocol_events_generation;
@@ -949,7 +950,19 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     qa_source_save_dispose(&io);
     qa_buffer_free(&normalized);
     if (ok) ok = resource_bindings(&store, app, error);
-    if (ok) install_store(app, &store);
+    uint64_t pending_first = ok ? qa_event_ring_next(store.pages) : 0;
+    application_equipment_events *gear = application_equipment_runtime_events(app->equipment_runtime);
+    for (uint64_t id = qa_application_events_local_first(app), next = qa_application_events_next(app);
+         ok && gear && id < next; ++id) {
+        qa_application_event_view output;
+        for (size_t projection = 0; ok && qa_application_event_at(app, id, projection, &output) && output.equipment; ++projection) {
+            if (output.equipment_owner != gear->identity) continue;
+            application_equipment_events moved = {.application = &staging,
+                .session = staging.session, .identity = gear->identity};
+            ok = application_equipment_events_publish(&moved, output.equipment, error);
+        }
+    }
+    if (ok) install_store(app, &store, pending_first);
     dispose_store(&store);
     return ok;
 }

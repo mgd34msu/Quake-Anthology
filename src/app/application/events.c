@@ -1111,10 +1111,15 @@ bool qa_application_event_at(const qa_application *app, uint64_t id, size_t proj
     const application_protocol_record *protocol = record->protocols;
     size_t index = projection;
     while (protocol && index--) protocol = protocol->next;
-    if (projection && !protocol) return false;
+    const application_equipment_event_record *equipment = record->equipment;
+    index = projection;
+    while (equipment && index--) equipment = equipment->next;
+    if (projection && !protocol && !equipment) return false;
     *out = (qa_application_event_view){.kind = record->kind,
         .protocol = protocol ? &protocol->event : NULL,
-        .q2_delivery = protocol ? &protocol->q2 : NULL};
+        .q2_delivery = protocol ? &protocol->q2 : NULL,
+        .equipment = equipment ? &equipment->event : NULL,
+        .equipment_owner = equipment ? equipment->owner : 0};
     switch (record->kind) {
     case QA_APPLICATION_EVENT_BUILTIN:
         out->value.builtin = &record->raw.builtin.event;
@@ -1126,7 +1131,8 @@ bool qa_application_event_at(const qa_application *app, uint64_t id, size_t proj
         break;
     case QA_APPLICATION_EVENT_Q3_MAP: out->value.q3_map = &record->raw.q3_map; break;
     case QA_APPLICATION_EVENT_Q2_PLAYER: out->value.q2_player = &record->raw.q2_player; break;
-    case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL: break;
+    case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
+    case QA_APPLICATION_EVENT_EQUIPMENT: break;
     }
     return true;
 }
@@ -1139,14 +1145,11 @@ static bool clear_events(qa_application *application, qa_error *error)
     if ((application->equipment && !qa_equipment_idle(application->equipment)) ||
         !application_equipment_runtime_idle(application->equipment_runtime))
         return application_fail(error, QA_ERROR_ARGUMENT, "gear event consumption retains a source operation");
-    application_equipment_events *gear = application_equipment_runtime_events(application->equipment_runtime);
-    if (!application_equipment_events_clear_ready(gear, error)) return false;
     ++application->protocol_events_generation;
     application->event_local_cursor = qa_application_events_next(application);
     uint64_t next = application->event_local_cursor < application->event_peer_cursor ?
         application->event_local_cursor : application->event_peer_cursor;
     qa_event_ring_retire(application->event_ring, next);
-    application_equipment_events_clear(gear);
     return true;
 }
 

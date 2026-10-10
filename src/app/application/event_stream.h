@@ -5,6 +5,7 @@
 #include "qa/application_native_q2_delivery.h"
 #include "qa/event_ring.h"
 #include "unified_events.h"
+#include "qa/application_equipment_events.h"
 
 typedef struct application_event_record {
     qa_builtin_event event;
@@ -33,6 +34,12 @@ typedef struct application_event_view {
     struct application_event_view *next;
 } application_event_view;
 
+typedef struct application_equipment_event_record {
+    qa_application_equipment_event event;
+    uint64_t owner;
+    struct application_equipment_event_record *next;
+} application_equipment_event_record;
+
 typedef struct application_event_envelope {
     uint64_t id;
     qa_application_event_kind kind;
@@ -42,8 +49,10 @@ typedef struct application_event_envelope {
         qa_application_q3_map_event q3_map;
         qa_application_q2_player_event q2_player;
         application_protocol_record protocol;
+        application_equipment_event_record equipment;
     } raw;
     application_protocol_record *protocols, *last_protocol;
+    application_equipment_event_record *equipment, *last_equipment;
     application_event_view *views, *last_view;
 } application_event_envelope;
 
