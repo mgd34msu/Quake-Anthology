@@ -286,11 +286,8 @@ bool qa_q1_drop_backpack(qa_q1_game *, qa_actor_id, qa_item_id selected_weapon,
                          qa_actor_id *dropped, qa_error *);
 typedef struct qa_q1_presentation {
     qa_actor_id actor;
-    qa_string_id classname, model, targetname;
-    int32_t frame, skin, color_map;
-    uint32_t effects, inline_model;
-    float alpha, scale;
-    bool has_inline_model;
+    qa_string_id classname, targetname;
+    qa_entity_visual visual;
 } qa_q1_presentation;
 typedef struct qa_q1_player_view {
     qa_q1_weapon weapon;

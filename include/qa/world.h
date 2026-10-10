@@ -9,6 +9,15 @@ typedef struct qa_body_state {
     qa_bounds bounds;
     qa_actor_reference ground;
 } qa_body_state;
+typedef struct qa_entity_visual {
+    qa_string_id models[4];
+    int32_t frame, old_frame, skin, colormap;
+    uint64_t effects;
+    uint32_t render_flags, inline_model;
+    float scale, alpha;
+    uint8_t player_colors;
+    bool visible, has_inline_model, has_player_colors;
+} qa_entity_visual;
 typedef enum qa_body_vector_kind {
     QA_BODY_ORIGIN = offsetof(qa_body_state, origin),
     QA_BODY_VELOCITY = offsetof(qa_body_state, velocity),

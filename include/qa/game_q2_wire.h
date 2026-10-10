@@ -44,7 +44,7 @@ typedef struct qa_q2_wire_lifetime {
 } qa_q2_wire_lifetime;
 typedef struct qa_q2_wire_source_entity {
     qa_q2_wire_binding binding;
-    qa_q2_visual visual;
+    qa_entity_visual visual;
     qa_body_state body;
     qa_vec3 previous_origin;
     qa_actor_id owner;

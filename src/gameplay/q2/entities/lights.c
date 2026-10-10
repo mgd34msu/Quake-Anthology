@@ -103,7 +103,7 @@ bool q2_light_think(qa_q2_game *g, q2_actor *a, bool flicker_only, qa_error *e) 
             return false;
         const char *pattern = qa_strings_cstr(qa_session_strings(g->services.session), style);
         size_t length = strlen(pattern);
-        qa_q2_visual target;
+        qa_entity_visual target;
         if (!length || !q2_actor_live(g, s->goal)) {
             qa_error_set(e, QA_ERROR_FORMAT, 0,
                          "Q2 target_light lost its color target or lightstyle");

@@ -588,7 +588,7 @@ static bool q1_alpha_read(void *opaque, qa_actor_id actor, float *out,
         if (!qa_q1_game_presentation(selected->state.q1, actor, &source))
             return application_fail(error, QA_ERROR_NOT_FOUND,
                                     "Selected Q1 actor has no source alpha owner");
-        *out = source.alpha;
+        *out = source.visual.alpha;
         return true;
     }
     case APPLICATION_PROVIDER_Q2:
@@ -2104,7 +2104,7 @@ static bool q1_spawn_map(application_provider *provider,
 }
 
 static bool q2_visual(void *opaque, qa_actor_id actor,
-                      const qa_q2_visual *visual, qa_error *error)
+                      const qa_entity_visual *visual, qa_error *error)
 {
     application_provider *provider = opaque;
     qa_application *application = provider->application;
@@ -2131,7 +2131,7 @@ static bool q2_visual(void *opaque, qa_actor_id actor,
 }
 
 static bool q2_read_visual(void *opaque, qa_actor_id actor,
-                           qa_q2_visual *out, qa_error *error)
+                           qa_entity_visual *out, qa_error *error)
 {
     application_provider *provider = opaque;
     qa_application *application = provider->application;

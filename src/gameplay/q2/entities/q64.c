@@ -343,7 +343,7 @@ bool q2_q64_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) 
         return true;
     if (player) {
         qa_body_state body;
-        qa_q2_visual visual;
+        qa_entity_visual visual;
         if (!qa_world_body_read(g->services.world, activator, &body, e) ||
             !qa_q2_entity_visual(g, activator, &visual, e))
             return false;

@@ -313,7 +313,7 @@ static bool original_player_model(qa_q2_game *game, q2_original_record_io *io,
 }
 
 static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
-    q2_actor *actor, const qa_q2_save_level *engine, qa_q2_visual *visual)
+    q2_actor *actor, const qa_q2_save_level *engine, qa_entity_visual *visual)
 {
     static const char *names[] = {"s.modelindex", "s.modelindex2", "s.modelindex3", "s.modelindex4"};
     q2_actor *player = appearance_player(game, actor);
@@ -388,7 +388,7 @@ bool q2_original_edict_visual(qa_q2_game *game, q2_original_record_io *io,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Original Q2 final visual join requires decoded Source state");
         return false;
     }
-    qa_q2_visual visual = {.alpha = 1, .scale = 1};
+    qa_entity_visual visual = {.alpha = 1, .scale = 1};
     (void)qa_q2_presentation_read(game, actor->id, &visual);
     if (!visual_record(game, io, actor, engine, &visual)) return false;
     uint32_t flags = 0;
@@ -492,7 +492,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         (actor->physics.flags & QA_PHYSICS_TEAM_SLAVE ? 1024u : 0) |
         (combat.no_knockback ? 2048u : 0) | (combat.armor.powered.kind ? 4096u : 0) |
         (actor->environment_flags & 200u) | (actor->client && actor->client->rule.sphere_camera.registry ? 16384u : 0);
-    qa_q2_visual visual = {.alpha = 1, .scale = 1};
+    qa_entity_visual visual = {.alpha = 1, .scale = 1};
     if (!io->reading) (void)qa_q2_presentation_read(game, actor->id, &visual);
     uint32_t svflags = io->reading ? 0 : (!visual.visible ? 1u : 0) |
         (actor->physics.flags & QA_PHYSICS_MONSTER ? 4u : 0) |

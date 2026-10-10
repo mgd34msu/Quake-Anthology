@@ -30,7 +30,7 @@ bool q2_save_ref(q2_save_io *, qa_q2_saved_reference *);
 bool q2_save_actor_pointer(q2_save_io *, qa_actor_reference *);
 bool q2_save_count(q2_save_io *, size_t *, size_t minimum, size_t element_size, void **);
 bool q2_save_attack(q2_save_io *, qa_attack *);
-bool q2_save_visual(q2_save_io *, qa_q2_visual *);
+bool q2_save_visual(q2_save_io *, qa_entity_visual *);
 bool q2_save_fog(q2_save_io *, qa_q2_fog *);
 bool q2_save_landmark(q2_save_io *, qa_q2_landmark *);
 bool q2_save_inventory(q2_save_io *, qa_inventory_entry **, size_t *);

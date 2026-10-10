@@ -34,8 +34,8 @@ static bool original_visual(application_provider *source, qa_actor_id actor,
         if (!application_source_intermission_read(source, &source_intermission, error)) return false;
         *intermission |= source_intermission;
         if (qa_q1_game_presentation(source->state.q1, actor, &visual)) {
-            *scale = visual.scale == 0 ? 1 : visual.scale;
-            *opacity = visual.alpha == 0 ? 1 : fmaxf(0, fminf(1, visual.alpha));
+            *scale = visual.visual.scale == 0 ? 1 : visual.visual.scale;
+            *opacity = visual.visual.alpha == 0 ? 1 : fmaxf(0, fminf(1, visual.visual.alpha));
         }
     } else if (source->kind == APPLICATION_PROVIDER_Q2 || source->kind == APPLICATION_PROVIDER_Q3) {
         bool source_intermission;

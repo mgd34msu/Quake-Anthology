@@ -671,7 +671,7 @@ bool application_native_mode_character_frame(void *opaque, qa_actor_id actor, in
         *frame = view.frame; return true;
     }
     if (p->kind == APPLICATION_PROVIDER_Q2) {
-        qa_q2_visual view;
+        qa_entity_visual view;
         if (!qa_q2_presentation_read(p->state.q2, actor, &view)) return false;
         *frame = view.frame; return true;
     }

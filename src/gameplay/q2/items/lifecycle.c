@@ -246,7 +246,7 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
     }
     item->think = Q2_ITEM_FLOOR;
     item->due_ns = q2_deadline(q2_deadline(g->now_ns, g->frame_ns), g->frame_ns);
-    item->visual = (qa_q2_visual){
+    item->visual = (qa_entity_visual){
         .scale = rr ? q2_actor_field_float(g, id, "scale", 0) : 1, .alpha = 1, .old_frame = -1, .effects = d->rotate ? 1 : 0, .render_flags = 512};
     if (!strcmp(d->classname, "key_commander_head"))
         item->visual.effects |= 2;

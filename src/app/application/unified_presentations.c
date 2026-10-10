@@ -52,13 +52,13 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
     }
     qa_unified_model_state *row = out->models + out->model_count++;
     *row = (qa_unified_model_state){.actor = v->actor, .family = v->family,
-        .frame = v->frame, .old_frame = v->old_frame < 0 ? v->frame : v->old_frame,
-        .skin = v->skin, .effects = v->effects, .render_flags = v->render_flags, .q1_effects = v->q1_effects,
-        .origin = v->body.origin, .angles = v->body.angles, .scale = v->scale,
-        .visible = v->visible, .view_weapon = view_weapon,
-        .has_previous_origin = (v->render_flags & 128u) && v->family == QA_GAME_Q2,
+        .frame = v->visual.frame, .old_frame = v->visual.old_frame < 0 ? v->visual.frame : v->visual.old_frame,
+        .skin = v->visual.skin, .effects = v->visual.effects, .render_flags = v->visual.render_flags, .q1_effects = v->q1_effects,
+        .origin = v->body.origin, .angles = v->body.angles, .scale = v->visual.scale,
+        .visible = v->visual.visible, .view_weapon = view_weapon,
+        .has_previous_origin = (v->visual.render_flags & 128u) && v->family == QA_GAME_Q2,
         .previous_origin = v->previous_origin, .has_alpha = v->family != QA_GAME_Q3 && !view_weapon,
-        .alpha = v->alpha, .has_player_colors = v->has_player_colors, .player_colors = v->player_colors};
+        .alpha = v->visual.alpha, .has_player_colors = v->visual.has_player_colors, .player_colors = v->visual.player_colors};
     if (!application_unified_frame_string(frame->lease, &row->content, content, error) ||
         !application_unified_frame_string(frame->lease, &row->path, path, error) ||
         !application_unified_frame_string(frame->lease, &row->skin_path, v->skin_path, error)) return false;
@@ -79,7 +79,7 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
         row->flare = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->flare), error);
         if (!row->flare) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 flare");
         *row->flare = (qa_unified_q2_flare){.fade_start = f->fade_start, .fade_end = f->fade_end,
-            .scale = v->scale, .color = f->color, .rim_color = f->rim_color,
+            .scale = v->visual.scale, .color = f->color, .rim_color = f->rim_color,
             .has_rim_color = f->has_rim_color, .lock_angle = f->lock_angle};
         if (!application_unified_frame_string(frame->lease, &row->flare->image, f->image, error)) return false;
     }
@@ -161,8 +161,8 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
             }
         }
         qa_application_visual_view v = {.actor = row.binding.actor, .family = QA_GAME_Q3,
-            .frame = row.state.frame, .old_frame = row.state.frame, .effects = (uint32_t)row.state.eFlags,
-            .scale = 1, .alpha = 1, .visible = true};
+            .visual.frame = row.state.frame, .visual.old_frame = row.state.frame, .visual.effects = (uint32_t)row.state.eFlags,
+            .visual.scale = 1, .visual.alpha = 1, .visual.visible = true};
         qa_trajectory position = trajectory(&row.state.pos), angular = trajectory(&row.state.apos);
         if (!qa_trajectory_position(&position, time, 800, &v.body.origin, error) ||
             !qa_trajectory_position(&angular, time, 800, &v.body.angles, error) ||
@@ -235,10 +235,10 @@ static bool equipment(qa_application *app, const application_unified_source *sou
     if (camera.cutscene || intermission) return true;
     bool local = qa_actor_id_equal(actor, recipient);
     qa_application_visual_view v = {.actor = actor, .family = e.family,
-        .frame = local && e.has_frame ? e.frame : 0, .old_frame = local && e.has_frame ? e.frame : 0,
-        .skin = local && e.has_skin ? e.skin : 0, .scale = 1, .alpha = 1,
-        .render_flags = local && e.family == QA_GAME_Q2 && provider && provider->kind != APPLICATION_PROVIDER_NATIVE ? 21u : 0u,
-        .visible = local && e.visible};
+        .visual.frame = local && e.has_frame ? e.frame : 0, .visual.old_frame = local && e.has_frame ? e.frame : 0,
+        .visual.skin = local && e.has_skin ? e.skin : 0, .visual.scale = 1, .visual.alpha = 1,
+        .visual.render_flags = local && e.family == QA_GAME_Q2 && provider && provider->kind != APPLICATION_PROVIDER_NATIVE ? 21u : 0u,
+        .visual.visible = local && e.visible};
     if (local) {
         v.body.origin = qa_vec_add(camera.origin, camera.view_offset);
         v.body.origin = qa_vec_add(v.body.origin, e.has_source_gun_pose ? e.gun_origin : e.kick_origin);
@@ -377,10 +377,10 @@ bool application_unified_presentations_build(qa_application *app, const applicat
                 if (!content) { ok = application_fail(error, QA_ERROR_NOT_FOUND, "Unified model lost its actual content product"); break; }
                 qa_application_map_view map;
                 if (!qa_application_map_read(app, &map)) { ok = false; break; }
-                if (v.family == QA_GAME_Q2 && (v.render_flags & 128u) && !v.model_beam)
+                if (v.family == QA_GAME_Q2 && (v.visual.render_flags & 128u) && !v.model_beam)
                     ok = model(frame, &model_capacity, &v, "", content->identity, NULL, false,NULL,NULL,error);
                 else for (unsigned i = 0; ok && i < 4; ++i) {
-                    const char *path = qa_strings_cstr(qa_session_strings(app->session), v.models[i]);
+                    const char *path = qa_strings_cstr(qa_session_strings(app->session), v.visual.models[i]);
                     if (path && *path && strcmp(path, qa_resource_path(map.resource)))
                         ok = model(frame, &model_capacity, &v, path, content->identity, NULL, false,NULL,NULL,error);
                 }

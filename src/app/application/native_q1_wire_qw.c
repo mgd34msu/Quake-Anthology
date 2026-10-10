@@ -102,7 +102,7 @@ static bool entity(application_native_q1_wire_source *source,qa_actor_id actor,
     qa_application_visual_view visual;
     if (!qa_q1_wire_actor_slot(&source->receipt,actor,&slot) || !slot ||
         !qa_application_visual_read(app,actor,&visual,error)) return false;
-    qa_string_id resource=visual.models[0];
+    qa_string_id resource=visual.visual.models[0];
     if (!qa_q1_wire_index(&source->receipt,true,resource,&index))
         return application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld entity model leaves its ordered source precache");
     if (index && slot>=512)
@@ -110,8 +110,8 @@ static bool entity(application_native_q1_wire_source *source,qa_actor_id actor,
             "Native QuakeWorld modeled Source edict exceeds the actual QW28 packet entity field");
     uint32_t client_slot;
     bool player=qa_q1_native_client_slot(source->provider->state.q1,actor,&client_slot,NULL);
-    qa_application_network_qw_entity value={.number=slot,.model=index,.frame=trunc((double)visual.frame),
-        .colormap=player?slot:(double)visual.colormap,.skin=trunc((double)visual.skin),.effects=trunc((double)visual.effects)};
+    qa_application_network_qw_entity value={.number=slot,.model=index,.frame=trunc((double)visual.visual.frame),
+        .colormap=player?slot:(double)visual.visual.colormap,.skin=trunc((double)visual.visual.skin),.effects=trunc((double)visual.visual.effects)};
     vector(value.origin,visual.body.origin); vector(value.angles,visual.body.angles);
     uint32_t current;
     if (!qa_q1_wire_receipt_current(&source->receipt) ||

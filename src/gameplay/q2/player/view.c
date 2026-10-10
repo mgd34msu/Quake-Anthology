@@ -92,7 +92,7 @@ static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
     s->rule.damage_blood = s->rule.damage_armor = s->rule.damage_power = s->rule.damage_knockback = 0;
     return true;
 }
-static void animation(qa_q2_game *g, q2_client_state *s, qa_q2_visual *visual,
+static void animation(qa_q2_game *g, q2_client_state *s, qa_entity_visual *visual,
                       const qa_q2_player_movement *m, float speed) {
     if (!m->animate_q2 || s->rule.gibbed)
         return;
@@ -146,7 +146,7 @@ static void animation(qa_q2_game *g, q2_client_state *s, qa_q2_visual *visual,
     }
 }
 bool q2_player_animate_reference(qa_q2_game *g, qa_actor_id owner, const qa_body_state *body,
-                                 qa_q2_visual *visual, qa_error *e) {
+                                 qa_entity_visual *visual, qa_error *e) {
     q2_actor *a = q2_client(g, owner, e);
     if (!a)
         return false;

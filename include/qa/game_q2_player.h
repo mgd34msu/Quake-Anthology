@@ -203,7 +203,7 @@ typedef struct qa_q2_player_noise_record {
     bool present;
 } qa_q2_player_noise_record;
 typedef struct qa_q2_player_rule_tail {
-    qa_q2_visual visual;
+    qa_entity_visual visual;
     qa_q2_player_carry coop;
     qa_inventory_entry *spawn_inventory;
     size_t spawn_count;

@@ -355,7 +355,7 @@ static bool flag_frame(void *context, qa_actor_id actor, double *out, qa_error *
         break;
     }
     case APPLICATION_PROVIDER_Q2: {
-        qa_q2_visual view;
+        qa_entity_visual view;
         okay = qa_q2_presentation_read(character->state.q2, actor, &view);
         if (okay) frame = view.frame;
         break;

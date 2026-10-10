@@ -196,7 +196,7 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
 
 bool qa_q2_bot_entity_read(qa_q2_game *game,qa_actor_id actor,qa_q2_bot_entity *out,qa_error *error) {
     if(!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 bot entity requires its source owner and output");return false;}
-    qa_q2_visual visual;qa_builtin_actor_traits traits;
+    qa_entity_visual visual;qa_builtin_actor_traits traits;
     *out=(qa_q2_bot_entity){0};
     if(!qa_q2_presentation_read(game,actor,&visual)) return true;
     if(!qa_q2_actor_traits(game,actor,&traits)) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q2 source bot entity lost its native traits");return false;}

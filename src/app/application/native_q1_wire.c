@@ -610,20 +610,20 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 entity has no physical source edict");
     qa_application_visual_view visual;
     if (!qa_application_visual_read(app, actor, &visual, error)) return false;
-    qa_string_id resource = visual.models[0];
+    qa_string_id resource = visual.visual.models[0];
     uint32_t model;
     if (!qa_q1_wire_index(&source->receipt, true, resource, &model))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 entity model was not precached by the source");
     qa_q1_entity value; qa_q1_entity_init(&value);
-    uint32_t frame = (uint32_t)visual.frame;
+    uint32_t frame = (uint32_t)visual.visual.frame;
     value.number = slot; value.model = model;
     value.frame = baseline && (frame & UINT32_C(0xff00)) ? 0 : (uint8_t)frame;
-    value.skin = (uint8_t)visual.skin; value.effects = (uint8_t)visual.effects;
+    value.skin = (uint8_t)visual.visual.skin; value.effects = (uint8_t)visual.visual.effects;
     uint32_t client_slot;
     bool player = qa_q1_native_client_slot(source->provider->state.q1, actor, &client_slot, NULL);
     qa_q1_presentation presentation;
     value.colormap = player ? slot : qa_q1_game_presentation(source->provider->state.q1, actor,
-        &presentation) ? (uint8_t)presentation.color_map : 0;
+        &presentation) ? (uint8_t)presentation.visual.colormap : 0;
     qa_physics_properties physics;
     value.step = !player && qa_q1_game_physics_read(source->provider->state.q1, actor, &physics) &&
                  physics.motion == QA_PHYSICS_STEP;

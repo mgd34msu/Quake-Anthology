@@ -470,7 +470,7 @@ bool frontend_particle_q2_entity_sample(qa_frontend *frontend, qa_application_vi
                 state->source_edition==QA_Q2_RERELEASE,false,sample.frame,
                 sample.render_flags&(UINT32_C(1)<<22)?sample.old_frame:old_frame,sample.render_flags,
                 (double)state->client_ns/1000000.0,(double)state->client_interval_ns/1000000.0,100,*back_lerp);
-            view->frame=(int32_t)animation.frame;view->old_frame=(int32_t)animation.old_frame;
+            view->visual.frame=(int32_t)animation.frame;view->visual.old_frame=(int32_t)animation.old_frame;
             *back_lerp=animation.back_lerp;
             return true;
         }
@@ -482,11 +482,11 @@ bool frontend_particle_q2_entity_sample(qa_frontend *frontend, qa_application_vi
             held->animation_sample_frame==frontend->frame_number && held->animation_provider==view->provider) {
             frontend_q2_animation_sample animation=frontend_q2_animation_lerp(&held->animation,
                 held->animation_edition==QA_Q2_RERELEASE,false,
-                view->frame>=0?(uint32_t)view->frame:0,
-                view->render_flags&(UINT32_C(1)<<22)?(view->old_frame>=0?(uint32_t)view->old_frame:0):held->animation_previous_frame,
-                view->render_flags,held->animation_client_ms,held->animation_tick_ms,100,
+                view->visual.frame>=0?(uint32_t)view->visual.frame:0,
+                view->visual.render_flags&(UINT32_C(1)<<22)?(view->visual.old_frame>=0?(uint32_t)view->visual.old_frame:0):held->animation_previous_frame,
+                view->visual.render_flags,held->animation_client_ms,held->animation_tick_ms,100,
                 (float)((held->animation_server_ms-held->animation_client_ms)/held->animation_tick_ms));
-            view->frame=(int32_t)animation.frame;view->old_frame=(int32_t)animation.old_frame;
+            view->visual.frame=(int32_t)animation.frame;view->visual.old_frame=(int32_t)animation.old_frame;
             *back_lerp=animation.back_lerp;
         }
     }
@@ -866,23 +866,23 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
         bool continuous=visual->animation.ready && visual->animation_provider==raw->provider &&
             (visual->animation_source_frame==owner->entity_server_frame ||
              visual->animation_source_frame+1==owner->entity_server_frame) &&
-            !memcmp(visual->animation_models,raw->models,sizeof(raw->models)) &&
+            !memcmp(visual->animation_models,raw->visual.models,sizeof(raw->visual.models)) &&
             frontend_q2_lerp_near(visual->animation_origin,raw->body.origin,512);
         if (!continuous || visual->animation_source_frame!=owner->entity_server_frame) {
-            visual->animation_previous_frame=continuous?visual->animation.frame:(raw->frame>=0?(uint32_t)raw->frame:0);
-            frontend_q2_animation_commit(&visual->animation,raw->frame>=0?(uint32_t)raw->frame:0,
-                raw->render_flags&(UINT32_C(1)<<22)?(raw->old_frame>=0?(uint32_t)raw->old_frame:0):visual->animation.frame,
-                raw->render_flags,owner->animation_server_ms,continuous);
+            visual->animation_previous_frame=continuous?visual->animation.frame:(raw->visual.frame>=0?(uint32_t)raw->visual.frame:0);
+            frontend_q2_animation_commit(&visual->animation,raw->visual.frame>=0?(uint32_t)raw->visual.frame:0,
+                raw->visual.render_flags&(UINT32_C(1)<<22)?(raw->visual.old_frame>=0?(uint32_t)raw->visual.old_frame:0):visual->animation.frame,
+                raw->visual.render_flags,owner->animation_server_ms,continuous);
         }
         visual->animation_provider=raw->provider;visual->animation_source_frame=owner->entity_server_frame;
-        memcpy(visual->animation_models,raw->models,sizeof(raw->models));
+        memcpy(visual->animation_models,raw->visual.models,sizeof(raw->visual.models));
         visual->animation_origin=raw->body.origin;visual->animation_server_ms=owner->animation_server_ms;
         visual->animation_client_ms=owner->animation_client_ms;
         visual->animation_tick_ms=(double)owner->q2_interval_ns/1000000.0;
         visual->animation_edition=owner->q2_edition;visual->animation_sample_frame=frontend->frame_number;
     }
     *out=owner;
-    if (!view->effects && !(view->render_flags&128u)) return true;
+    if (!view->visual.effects && !(view->visual.render_flags&128u)) return true;
     uint32_t model=0,event=0;
     const qa_actor_record *record=qa_actors_get(qa_world_actors(qa_application_world(frontend->application)),view->actor);
     if (state->source_ready && record && record->owner==state->clock_source && record->has_source &&
@@ -891,10 +891,10 @@ static bool q2_visual_entity_admit(qa_frontend *frontend,uint32_t seat,
         model=state->source_entities[record->source_slot].current.models[0];
         event=state->source_entities[record->source_slot].current.event;
     }
-    frontend_q2_entity_pose pose={.actor=view->actor,.model_index=model,.effects=view->effects,
-        .event=event,.frame=view->frame,.origin=view->body.origin,.angles=view->body.angles,
-        .model_present=view->has_inline_model || qa_strings_text(qa_session_strings(qa_application_session(frontend->application)), view->models[0]).size,
-        .model_identity=view->models[0]};
+    frontend_q2_entity_pose pose={.actor=view->actor,.model_index=model,.effects=view->visual.effects,
+        .event=event,.frame=view->visual.frame,.origin=view->body.origin,.angles=view->body.angles,
+        .model_present=view->visual.has_inline_model || qa_strings_text(qa_session_strings(qa_application_session(frontend->application)), view->visual.models[0]).size,
+        .model_identity=view->visual.models[0]};
     if (!q2_entity_admit(frontend,owner,&pose,world,controls,owner->entity_events,error)) return false;
     *out=owner;return true;
 }
@@ -933,12 +933,12 @@ static bool entity_effects_prepare(qa_frontend *frontend,uint32_t seat,qa_actor_
         qa_application_visual_view view;bool found;
         if (!frontend_particle_visual_read(frontend,record->id,&view,&found,error)) return false;
         if (!found) continue;
-        const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view.models[0]);
+        const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view.visual.models[0]);
         size_t length = path ? strlen(path) : 0;
         bool mdl = length >= 4 && !strcmp(path + length - 4, ".mdl");
         if (view.family==QA_GAME_Q1 || view.q1_effects || mdl) {
             const qa_model *source = NULL;
-            if (!view.has_inline_model && path && *path && path[0] != '*' &&
+            if (!view.visual.has_inline_model && path && *path && path[0] != '*' &&
                 !(length >= 4 && !strcmp(path + length - 4, ".bsp"))) {
                 frontend_visual_model_view model;
                 if (!frontend_visual_model_acquire(frontend,view.provider,view.family,path,
@@ -962,15 +962,15 @@ bool frontend_particle_q2_entity(qa_frontend *frontend,uint32_t seat,
     qa_scene_frame *frame,bool *beam,qa_error *error)
 {
     *beam=false;
-    if (view->family!=QA_GAME_Q2 || !(view->render_flags&128u) || view->model_beam) return true;
+    if (view->family!=QA_GAME_Q2 || !(view->visual.render_flags&128u) || view->model_beam) return true;
     frontend_particle_owner *owner=frontend->particles->visual_samples[view->actor.slot].q2_owners[seat];
     if (!owner) return true;
-    if ((view->render_flags&128u) && !view->model_beam) {
+    if ((view->visual.render_flags&128u) && !view->model_beam) {
         qa_bytes palette;
         if (!qa_scene_resources_palette(owner->images,QA_GAME_Q2,&palette,error) ||
             !frontend_q2_entity_beam(&owner->random,palette,qa_scene_white(owner->images),
-                &world->view,view->body.origin,view->previous_origin,(uint32_t)view->skin,
-                view->frame,frame,error)) return false;
+                &world->view,view->body.origin,view->previous_origin,(uint32_t)view->visual.skin,
+                view->visual.frame,frame,error)) return false;
         *beam=true;
     }
     return true;
@@ -1267,7 +1267,7 @@ bool frontend_particle_q1_temporary(qa_frontend *frontend, qa_actor_owner provid
 bool frontend_particle_q1_entity(qa_frontend *frontend, const qa_application_visual_view *view,
     const qa_model *model, qa_error *error)
 {
-    uint32_t effects = view->q1_effects | (view->family == QA_GAME_Q1 ? (uint32_t)view->effects : 0);
+    uint32_t effects = view->q1_effects | (view->family == QA_GAME_Q1 ? (uint32_t)view->visual.effects : 0);
     uint32_t flags = model && model->format == QA_MODEL_MDL ? (uint32_t)model->flags : 0;
     if (!(effects & UINT32_C(0xff)) && !(flags & UINT32_C(0xf7))) return true;
     if (!particle_state(frontend, error)) return false;

@@ -39,7 +39,7 @@ bool q2_player_info(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
 bool q2_player_score_read(qa_q2_game *, qa_actor_id, int32_t *, qa_error *);
 q2_player_list *q2_player_list_acquire(qa_q2_game *, bool scores, qa_error *);
 bool q2_map_camera_player(qa_q2_game *, qa_actor_id, qa_vec3, qa_vec3, bool, qa_error *);
-bool q2_player_animate_reference(qa_q2_game *, qa_actor_id, const qa_body_state *, qa_q2_visual *,
+bool q2_player_animate_reference(qa_q2_game *, qa_actor_id, const qa_body_state *, qa_entity_visual *,
                                  qa_error *);
 bool q2_player_emit(qa_q2_game *, const qa_q2_player_event *, qa_error *);
 bool q2_player_print(qa_q2_game *, qa_actor_id, int, const char *, qa_error *);

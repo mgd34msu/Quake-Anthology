@@ -29,7 +29,7 @@ typedef struct q2_item_state {
     bool targets_used, retained, visible, touchable, temporary, dispatching;
     uint32_t *picked_slots;
     size_t picked_count, picked_capacity;
-    qa_q2_visual visual;
+    qa_entity_visual visual;
     struct q2_companion *companion;
     qa_pickups *observations;
     qa_pickup_lease observation;
@@ -98,7 +98,7 @@ bool q2_client_item_action(qa_q2_game *, qa_actor_id, bool flashlight, bool *, q
 bool q2_client_item_received(qa_q2_game *, qa_actor_id, const qa_q2_item_definition *, qa_error *);
 bool q2_client_slot(qa_q2_game *, qa_actor_id, uint32_t *);
 bool q2_client_sphere_camera(qa_q2_game *, qa_actor_id, qa_actor_id, qa_vec3, qa_vec3, qa_error *);
-bool q2_publish_visual(qa_q2_game *, qa_actor_id, const qa_q2_visual *, qa_error *);
+bool q2_publish_visual(qa_q2_game *, qa_actor_id, const qa_entity_visual *, qa_error *);
 bool q2_map_event(qa_q2_game *, const qa_q2_map_event *, qa_error *);
 static inline uint64_t q2_item_seconds(float seconds) {
     double nanoseconds = (double)seconds * Q2_NS;

@@ -56,19 +56,14 @@ typedef struct qa_application_visual_view {
     qa_game_family family;
     qa_body_state body;
     qa_vec3 previous_origin;
-    qa_string_id models[4];
     const char *skin_path;
     const qa_resource *model_resources[4];
     /* Borrowed acquired-source receipts share the retained precache lifetime. */
     const qa_vfs_acquisition *model_openings[4];
-    int32_t colormap;
-    uint8_t player_colors;
-    bool has_player_colors;
-    int32_t frame, old_frame, skin, legs_animation, torso_animation;
-    uint64_t effects;
-    uint32_t render_flags, source_flags, powerups, inline_model, q1_effects;
-    float alpha, scale;
-    bool visible, has_inline_model, model_beam;
+    qa_entity_visual visual;
+    int32_t legs_animation, torso_animation;
+    uint32_t source_flags, powerups, q1_effects;
+    bool model_beam;
     qa_q3_entity source_entity;
     int32_t source_number, source_client;
     bool has_source_entity;
@@ -117,7 +112,7 @@ typedef struct qa_application_shader_remap_view {
 } qa_application_shader_remap_view;
 typedef struct qa_application_q2_visual_view {
     qa_actor_id actor;
-    qa_q2_visual visual;
+    qa_entity_visual visual;
     uint64_t revision;
 } qa_application_q2_visual_view;
 typedef struct qa_application_q2_map_event {

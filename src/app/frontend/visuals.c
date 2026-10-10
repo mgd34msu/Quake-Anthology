@@ -1049,7 +1049,7 @@ static bool entity_angles(qa_frontend *frontend, const qa_application_visual_vie
     const qa_model *model, qa_vec3 *angles, qa_error *error)
 {
     *angles = view->body.angles;
-    bool rotates = view->family == QA_GAME_Q2 ? (view->effects & 1) != 0 :
+    bool rotates = view->family == QA_GAME_Q2 ? (view->visual.effects & 1) != 0 :
         view->family == QA_GAME_Q1 && model && model->format == QA_MODEL_MDL && (model->flags & 8);
     if (!rotates) return true;
     qa_application_selected_effects source;
@@ -1064,7 +1064,7 @@ static bool entity_angles(qa_frontend *frontend, const qa_application_visual_vie
         if (found) milliseconds = llround(seconds * 1000);
     }
     *angles = frontend_legacy_entity_angles(view->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q1,
-        product->edition, model, view->effects, *angles, seconds, milliseconds);
+        product->edition, model, view->visual.effects, *angles, seconds, milliseconds);
     return true;
 }
 
@@ -1076,7 +1076,7 @@ static qa_model_transform transform(const qa_application_visual_view *view, qa_v
     value.origin[0] = view->body.origin.x; value.origin[1] = view->body.origin.y; value.origin[2] = view->body.origin.z;
     for (unsigned i = 0; i < 3; ++i) {
         value.axes[i][0] = axes[i].x; value.axes[i][1] = axes[i].y; value.axes[i][2] = axes[i].z;
-        value.scale[i] = view->scale;
+        value.scale[i] = view->visual.scale;
     }
     return value;
 }
@@ -1117,7 +1117,7 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
     }
     if (!image) return true;
     qa_scene_flare_options options = {.color = view->q2_flare.color,
-        .rim_color = view->q2_flare.rim_color, .scale = view->scale != 0 ? view->scale : 1,
+        .rim_color = view->q2_flare.rim_color, .scale = view->visual.scale != 0 ? view->visual.scale : 1,
         .fade_start = view->q2_flare.fade_start, .fade_end = view->q2_flare.fade_end,
         .separate_rim = view->q2_flare.has_rim_color, .lock_angle = view->q2_flare.lock_angle,
         .standard_image = flare_standard_image(path)};
@@ -1404,7 +1404,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         qa_application_visual_view view;bool found;
         if (!frontend_particle_visual_read(frontend,actor,&view,&found,error)) return false;
         if (!found) continue;
-        if (!view.visible) continue;
+        if (!view.visual.visible) continue;
         if (exclude && view.provider == exclude) continue;
         bool recipient_visible;
         if (!qa_application_visual_visibility_actor(visibility, actor, &view,
@@ -1419,19 +1419,19 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!visual_flare(frontend, &view, world, frame, error)) return false;
             continue;
         }
-        if (view.family == QA_GAME_Q2 && view.scale == 0) view.scale = 1;
-        if (view.alpha <= 0 || view.scale == 0) continue;
+        if (view.family == QA_GAME_Q2 && view.visual.scale == 0) view.visual.scale = 1;
+        if (view.visual.alpha <= 0 || view.visual.scale == 0) continue;
         qa_vec3 angles;
         if (!entity_angles(frontend, &view, NULL, &angles, error)) return false;
         qa_model_transform placement = transform(&view, angles);
-        qa_vec4 color = {1, 1, 1, view.alpha};
-        if (view.has_inline_model) {
-            if (!qa_scene_world_submit_model(frontend->scene_world, view.inline_model,
+        qa_vec4 color = {1, 1, 1, view.visual.alpha};
+        if (view.visual.has_inline_model) {
+            if (!qa_scene_world_submit_model(frontend->scene_world, view.visual.inline_model,
                 &placement, world, actor.slot, color, frame, error)) return false;
         }
         frontend_visual_owner *owner = NULL;
-        for (unsigned part = view.has_inline_model ? 1 : 0; part < 4; ++part) {
-            const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view.models[part]);
+        for (unsigned part = view.visual.has_inline_model ? 1 : 0; part < 4; ++part) {
+            const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view.visual.models[part]);
             if (!path || !*path) continue;
             if (!owner && !visual_owner(frontend, &view, &owner, error)) return false;
             if (owner->shader_movies && !frontend_material_movies_frame(owner->shader_movies, frame, error)) return false;
@@ -1443,7 +1443,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             }
             frontend_model *model;
             if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
-                view.family == QA_GAME_Q1 && view.has_player_colors, view.player_colors, &model, error)) return false;
+                view.family == QA_GAME_Q1 && view.visual.has_player_colors, view.visual.player_colors, &model, error)) return false;
             if (part == 0 && (view.family == QA_GAME_Q1 || view.q1_effects || model->model->format == QA_MODEL_MDL) &&
                 !frontend_particle_q1_entity(frontend, &view, model->model, error)) return false;
             qa_model_transform model_placement = placement;
@@ -1453,10 +1453,10 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             }
             qa_scene_model_input input = {.view = world->view, .transform = model_placement,
                 .previous_origin = view.previous_origin, .color = color, .family = owner->family,
-                .model_beam = view.model_beam, .beam_segment_length = (float)view.frame,
-                .frame = view.frame >= 0 ? (uint32_t)view.frame : 0,
-                .old_frame = view.old_frame >= 0 ? (uint32_t)view.old_frame : view.frame >= 0 ? (uint32_t)view.frame : 0,
-                .skin = view.skin >= 0 ? (uint32_t)view.skin : 0, .flags = view.render_flags,
+                .model_beam = view.model_beam, .beam_segment_length = (float)view.visual.frame,
+                .frame = view.visual.frame >= 0 ? (uint32_t)view.visual.frame : 0,
+                .old_frame = view.visual.old_frame >= 0 ? (uint32_t)view.visual.old_frame : view.visual.frame >= 0 ? (uint32_t)view.visual.frame : 0,
+                .skin = view.visual.skin >= 0 ? (uint32_t)view.visual.skin : 0, .flags = view.visual.render_flags,
                 .back_lerp=q2_back_lerp,
                 .entity = actor.slot, .identity_light = world->identity_light, .seconds = world->seconds,
                 .ambient = {1, 1, 1}, .fog = world->fog, .source_path = path,

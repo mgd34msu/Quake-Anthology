@@ -78,7 +78,7 @@ bool q2m_parasite_interrupt(q2m_context *context, bool death, qa_error *error) {
 
 static bool show(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     q2_projectile *p = &actor->projectile;
-    qa_q2_visual visual = {.models = {p->model}, .render_flags = p->render_flags,
+    qa_entity_visual visual = {.models = {p->model}, .render_flags = p->render_flags,
                            .scale = p->scale, .alpha = 1, .visible = true};
     return q2_publish_visual(game, actor->id, &visual, error);
 }

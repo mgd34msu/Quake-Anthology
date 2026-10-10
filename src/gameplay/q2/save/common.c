@@ -19,7 +19,7 @@ bool q2_save_attack(q2_save_io *io, qa_attack *s) {
     }
     return true;
 }
-bool q2_save_visual(q2_save_io *io, qa_q2_visual *s) {
+bool q2_save_visual(q2_save_io *io, qa_entity_visual *s) {
     for (size_t i = 0; i < 4; ++i) Q2N(models[i]);
     Q2I(frame); Q2I(old_frame); Q2I(skin); Q2T(effects); Q2U(render_flags);
     Q2F(scale); Q2F(alpha); Q2B(visible); return true;

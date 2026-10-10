@@ -87,10 +87,10 @@ bool qa_q1_source_copy_body(qa_q1_game *g, qa_actor_id actor,
         !qa_world_body_read(g->services.world, corpse->id, &body, error)) {
         okay = false; goto finish;
     }
-    corpse->model = visual->model;
-    corpse->frame = visual->frame;
-    corpse->state.body.color_map = visual->color_map;
-    if (g->options.program == QA_Q1_ROGUE) corpse->skin = visual->skin;
+    corpse->model = visual->visual.models[0];
+    corpse->frame = visual->visual.frame;
+    corpse->state.body.color_map = visual->visual.colormap;
+    if (g->options.program == QA_Q1_ROGUE) corpse->skin = visual->visual.skin;
     corpse->physics.motion = motion;
     corpse->physics.flags = 0;
     corpse->source_movement_flags = 0;

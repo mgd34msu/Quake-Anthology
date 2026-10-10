@@ -11,7 +11,7 @@ bool application_unified_q2_native_map(application_provider *, const qa_q2_map_e
 bool application_unified_q2_native_player(application_provider *, const qa_q2_player_event *,
     qa_error *);
 bool application_unified_q2_native_visual(application_provider *, qa_actor_id,
-    const qa_q2_visual *, qa_error *);
+    const qa_entity_visual *, qa_error *);
 bool application_unified_q2_native_item_visibility(void *, qa_actor_id, qa_actor_id,
     bool, qa_error *);
 

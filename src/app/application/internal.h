@@ -177,7 +177,7 @@ typedef struct application_shader_remap {
 
 typedef struct application_q2_visual_record {
     qa_actor_id actor;
-    qa_q2_visual visual;
+    qa_entity_visual visual;
     uint64_t revision;
     bool active;
 } application_q2_visual_record;

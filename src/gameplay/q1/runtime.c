@@ -1798,19 +1798,16 @@ bool qa_q1_game_presentation(const qa_q1_game *g, qa_actor_id actor, qa_q1_prese
     if (!entity || !out)
         return false;
     *out = (qa_q1_presentation){.actor = actor,
-                                .classname = entity->classname,
-                                .model = entity->model,
-                                .targetname = entity->targetname,
-                                .frame = entity->frame,
-                                .skin = entity->skin,
-                                .color_map = entity->map ? entity->map->color_map :
-                                    entity->kind == Q1_BODY ? entity->state.body.color_map : 0,
-                                .effects = entity->effects,
-                                .alpha = entity->alpha,
-                                .scale = entity->scale,
-                                .has_inline_model = entity->map && entity->map->has_inline_model &&
-                                    entity->model != QA_STRING_NONE && entity->model == entity->map->original_model,
-                                .inline_model = entity->map ? entity->map->inline_model : 0};
+        .classname = entity->classname, .targetname = entity->targetname,
+        .visual = {.models = {entity->model}, .frame = entity->frame, .old_frame = -1,
+            .skin = entity->skin,
+            .colormap = entity->map ? entity->map->color_map :
+                entity->kind == Q1_BODY ? entity->state.body.color_map : 0,
+            .effects = entity->effects, .alpha = entity->alpha, .scale = entity->scale,
+            .visible = entity->model != QA_STRING_NONE,
+            .has_inline_model = entity->map && entity->map->has_inline_model &&
+                entity->model != QA_STRING_NONE && entity->model == entity->map->original_model,
+            .inline_model = entity->map ? entity->map->inline_model : 0}};
     return true;
 }
 static uint64_t hostile_deadline_ns(double seconds) {

@@ -170,7 +170,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     if (!prefix) return false;
     const qa_q2_wire_source_entity *source = &prefix->source.builtin;
     if (!source->binding.in_use || (source->server_flags & 1)) return true;
-    qa_q2_visual visual = source->visual;
+    qa_entity_visual visual = source->visual;
     qa_application_visual_view selected;
     qa_error observation = {0};
     bool selected_visual = qa_application_visual_read(owner->app, source->binding.actor, &selected, &observation);
@@ -178,16 +178,16 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
         if (error) *error = observation;
         return false;
     }
-    if (!(selected_visual ? selected.visible : source->has_visual && visual.visible)) return true;
-    int32_t old_frame = selected_visual ? selected.old_frame : visual.old_frame;
+    if (!(selected_visual ? selected.visual.visible : source->has_visual && visual.visible)) return true;
+    int32_t old_frame = selected_visual ? selected.visual.old_frame : visual.old_frame;
     bool flare = selected_visual ? selected.q2_flare.present : source->flare;
-    qa_q2_entity value = {.number = slot, .frame = (uint32_t)(selected_visual ? selected.frame : visual.frame),
+    qa_q2_entity value = {.number = slot, .frame = (uint32_t)(selected_visual ? selected.visual.frame : visual.frame),
         .old_frame = old_frame >= 0 ? (uint32_t)old_frame : 0,
-        .skinnum = (uint32_t)(selected_visual ? selected.skin : visual.skin),
-        .effects = selected_visual ? selected.effects : visual.effects,
-        .renderfx = selected_visual ? selected.render_flags : visual.render_flags,
-        .alpha = selected_visual ? selected.alpha : visual.alpha,
-        .scale = selected_visual ? selected.scale : visual.scale,
+        .skinnum = (uint32_t)(selected_visual ? selected.visual.skin : visual.skin),
+        .effects = selected_visual ? selected.visual.effects : visual.effects,
+        .renderfx = selected_visual ? selected.visual.render_flags : visual.render_flags,
+        .alpha = selected_visual ? selected.visual.alpha : visual.alpha,
+        .scale = selected_visual ? selected.visual.scale : visual.scale,
         .loop_volume = source->volume, .loop_attenuation = source->attenuation, .event = source->event};
     vector(value.origin, source->body.origin); vector(value.old_origin, source->body.origin);
     if (value.renderfx & 128u)
@@ -195,7 +195,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     vector(value.angles, source->body.angles);
     uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
     for (unsigned i = 0; !flare && i < 4; ++i) {
-        const char *path = text(owner, selected_visual ? selected.models[i] : visual.models[i]);
+        const char *path = text(owner, selected_visual ? selected.visual.models[i] : visual.models[i]);
         if (!(selected_visual ? application_network_q2_visual_resource(owner, &selected, i, models[i], error) :
             application_network_q2_resource(owner, 0, path, models[i], error))) return false;
     }
@@ -305,13 +305,13 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
         return false;
     }
     if (selected && visual.provider != owner->host.source.source_owner) {
-        if (!visual.visible) return true;
+        if (!visual.visual.visible) return true;
         vector(value.origin, visual.body.origin); vector(value.old_origin, visual.body.origin);
-        if (visual.render_flags & 128u) vector(value.old_origin, visual.previous_origin);
+        if (visual.visual.render_flags & 128u) vector(value.old_origin, visual.previous_origin);
         vector(value.angles, visual.body.angles);
-        value.frame = (uint32_t)visual.frame; value.old_frame = visual.old_frame >= 0 ? (uint32_t)visual.old_frame : 0;
-        value.skinnum = (uint32_t)visual.skin; value.effects = visual.effects;
-        value.renderfx = visual.render_flags; value.alpha = visual.alpha; value.scale = visual.scale == 1 ? 0 : visual.scale;
+        value.frame = (uint32_t)visual.visual.frame; value.old_frame = visual.visual.old_frame >= 0 ? (uint32_t)visual.visual.old_frame : 0;
+        value.skinnum = (uint32_t)visual.visual.skin; value.effects = visual.visual.effects;
+        value.renderfx = visual.visual.render_flags; value.alpha = visual.visual.alpha; value.scale = visual.visual.scale == 1 ? 0 : visual.visual.scale;
         uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
         for (unsigned i = 0; i < 4; ++i)
             if (!application_network_q2_visual_resource(owner, &visual, i, models[i], error)) return false;

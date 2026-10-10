@@ -143,7 +143,7 @@ typedef struct qa_q2_item_checkpoint {
     bool targets_used, retained, visible, touchable, temporary;
     uint32_t *picked_slots;
     size_t picked_count;
-    qa_q2_visual visual;
+    qa_entity_visual visual;
     qa_q2_companion_checkpoint companion;
     qa_q2_powerups powers;
     float maximum_health;

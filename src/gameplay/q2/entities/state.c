@@ -282,13 +282,13 @@ qa_vec3 q2_field_vec(qa_q2_game *g, const q2_entity_state *s, const char *key, q
     text += strspn(text, " \t\r\n\v\f");
     return *text ? fallback : qa_v3(values[0], values[1], values[2]);
 }
-bool q2_publish_visual(qa_q2_game *g, qa_actor_id id, const qa_q2_visual *v, qa_error *e) {
+bool q2_publish_visual(qa_q2_game *g, qa_actor_id id, const qa_entity_visual *v, qa_error *e) {
     qa_q2_entity_services *s = &g->entity_runtime->services;
     if (!s->visual) {
         qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 presentation service is not installed");
         return false;
     }
-    qa_q2_visual visual = *v;
+    qa_entity_visual visual = *v;
     visual.effects |= qa_q2_actor_extra_effects(g, id);
     return s->visual(s->context, id, &visual, e);
 }
@@ -322,20 +322,20 @@ bool q2_map_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *e) {
 bool q2_entity_show(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_publish_visual(g, a->id, &a->entity->visual, e);
 }
-bool qa_q2_presentation_read(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out) {
+bool qa_q2_presentation_read(qa_q2_game *g, qa_actor_id id, qa_entity_visual *out) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
     if (!a || !out || !q2_actor_live(g, id))
         return false;
-    qa_q2_visual view = {0};
+    qa_entity_visual view = {0};
     qa_q2_projectile_view projectile;
     qa_q2_monster_view monster;
     if (qa_q2_projectile_read(g, id, &projectile)) {
-        view = (qa_q2_visual){.models = {projectile.model}, .frame = projectile.frame,
+        view = (qa_entity_visual){.models = {projectile.model}, .frame = projectile.frame,
             .old_frame = -1, .skin = projectile.skin, .effects = projectile.effects,
             .render_flags = projectile.render_flags, .scale = projectile.scale,
             .alpha = projectile.alpha, .visible = projectile.visible};
     } else if (qa_q2_monster_read(g, id, &monster)) {
-        view = (qa_q2_visual){.models = {monster.model}, .frame = monster.frame,
+        view = (qa_entity_visual){.models = {monster.model}, .frame = monster.frame,
             .old_frame = monster.old_frame, .skin = monster.skin, .effects = monster.effects,
             .render_flags = monster.render_flags, .scale = monster.scale,
             .alpha = a->alpha, .visible = monster.visible};
@@ -353,7 +353,7 @@ bool qa_q2_presentation_read(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out) {
     *out = view;
     return true;
 }
-bool qa_q2_entity_visual(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out, qa_error *e) {
+bool qa_q2_entity_visual(qa_q2_game *g, qa_actor_id id, qa_entity_visual *out, qa_error *e) {
     if (!out || !g || !q2_actor_live(g, id)) {
         qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 visual actor is missing");
         return false;

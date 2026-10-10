@@ -158,7 +158,7 @@ bool application_unified_q2_native_map(application_provider *p, const qa_q2_map_
     return ok;
 }
 
-static bool model(application_provider *p, qa_actor_id id, const qa_q2_visual *v,
+static bool model(application_provider *p, qa_actor_id id, const qa_entity_visual *v,
     uint64_t time, const qa_application_q2_audience *audience, qa_error *e)
 {
     qa_unified_model_attachment attachments[3] = {0}; size_t count = 0;
@@ -173,7 +173,7 @@ static bool model(application_provider *p, qa_actor_id id, const qa_q2_visual *v
     return emit(p, &payload, NULL, id, (qa_actor_id){0}, time, audience, e);
 }
 bool application_unified_q2_native_visual(application_provider *p, qa_actor_id id,
-    const qa_q2_visual *v, qa_error *e)
+    const qa_entity_visual *v, qa_error *e)
 {
     qa_clock_state clock;
     if (!v || !source(p, &clock, e)) return false;
@@ -204,7 +204,7 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
     application_provider *p = provider(app, v->provider); qa_clock_state clock;
     if (!source(p, &clock, e)) return false;
     if (v->kind == QA_BUILTIN_ANIMATION) {
-        qa_q2_visual visual;
+        qa_entity_visual visual;
         return p->kind != APPLICATION_PROVIDER_Q2 || !qa_q2_presentation_read(p->state.q2, v->actor, &visual) ||
             model(p, v->actor, &visual, v->time_ns, audience, e);
     }

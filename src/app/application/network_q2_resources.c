@@ -531,10 +531,10 @@ static bool model_colors_current(const application_q2_held_resource *held,
     const qa_application_visual_view *visual)
 {
     qa_bytes bytes = qa_resource_bytes(held->resource);
-    bool translated = bytes.size >= 4 && !memcmp(bytes.data, "IDPO", 4) && visual->has_player_colors;
+    bool translated = bytes.size >= 4 && !memcmp(bytes.data, "IDPO", 4) && visual->visual.has_player_colors;
     if (held->image_translation.size != (translated ? 256u : 0u)) return false;
     if (!translated) return true;
-    uint8_t table[256]; model_translation(visual->player_colors, table);
+    uint8_t table[256]; model_translation(visual->visual.player_colors, table);
     return !memcmp(table, held->image_translation.data, sizeof(table));
 }
 
@@ -647,7 +647,7 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
 {
     if (!visual || model > 3 || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 model acquisition requires its real BODY visual receipt");
-    const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), visual->models[model]);
+    const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), visual->visual.models[model]);
     if (!path || !*path || *path == '*' || *path == '#' || visual->provider == owner->host.source.source_owner)
         return application_network_q2_resource(owner, 0, path, out, error);
     application_provider *provider = provider_at(owner, visual->provider);
@@ -687,7 +687,7 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
     size_t dependency_start = owner->held_resource_count;
     if (ok) ok = held_serial(owner, &held, error);
     if (ok) ok = model_derivation(owner, &held, visual->family,
-        visual->has_player_colors, visual->player_colors, error);
+        visual->visual.has_player_colors, visual->visual.player_colors, error);
     if (ok) {
         char alias[64];
         ok = qualified_name(&held, alias, error);

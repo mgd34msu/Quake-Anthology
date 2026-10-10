@@ -6,7 +6,7 @@
 static inline bool q2_saved_resource(qa_q2_game *g, qa_string_id id) {
     return id == 0 || qa_strings_cstr(qa_session_strings(g->services.session), id) != NULL;
 }
-static inline bool q2_saved_visual(qa_q2_game *g, const qa_q2_visual *v) {
+static inline bool q2_saved_visual(qa_q2_game *g, const qa_entity_visual *v) {
     if (!isfinite(v->scale) || !isfinite(v->alpha))
         return false;
     for (size_t i = 0; i < 4; i++)

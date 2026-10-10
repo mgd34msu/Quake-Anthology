@@ -353,7 +353,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
 static bool source_strings(qa_q2_game *g, q2_original_record_io *io, q2_actor *actor)
 {
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), actor->id);
-    qa_q2_visual visual = {0};
+    qa_entity_visual visual = {0};
     (void)qa_q2_presentation_read(g, actor->id, &visual);
     for (size_t i = 0; i < sizeof(q2_original_edict_strings) / sizeof(q2_original_edict_strings[0]); ++i) {
         const q2_original_string_field *field = q2_original_edict_strings + i;
@@ -743,7 +743,7 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
             .monster = (actor->physics.flags & QA_PHYSICS_MONSTER) != 0,
             .dead_monster = (actor->physics.flags & QA_PHYSICS_DEAD) != 0};
         if (actor->physics.solid == QA_PHYSICS_BRUSH) {
-            qa_q2_visual visual = {0};
+            qa_entity_visual visual = {0};
             (void)qa_q2_presentation_read(g, actor->id, &visual);
             const char *model = qa_strings_cstr(qa_session_strings(g->services.session), visual.models[0]);
             uint32_t number = 0;
@@ -776,7 +776,7 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
         if (!qa_world_restore_link_state(g->services.world, actor->id, &link, error) ||
             !qa_world_link(g->services.world, actor->id, NULL, error)) return false;
         if ((actor->entity || actor->item) && !q2_entity_bind(g, actor, error)) return false;
-        qa_q2_visual visual;
+        qa_entity_visual visual;
         if (qa_q2_presentation_read(g, actor->id, &visual) &&
             !q2_publish_visual(g, actor->id, &visual, error)) return false;
         if (actor->entity && (actor->entity->kind == Q2E_CROSS_TARGET ||

@@ -280,8 +280,8 @@ static void dormant_trigger_activation(void)
     qa_body_state body;
     qa_actor_collision collision;
     GAME_CHECK(qa_q1_game_presentation(fixture.game, trigger, &visible));
-    GAME_CHECK(visible.model == QA_STRING_NONE);
-    GAME_CHECK(!visible.has_inline_model);
+    GAME_CHECK(visible.visual.models[0] == QA_STRING_NONE);
+    GAME_CHECK(!visible.visual.has_inline_model);
     GAME_CHECK(qa_q1_game_physics_read(fixture.game, trigger, &physics));
     GAME_CHECK(physics.solid == QA_PHYSICS_NOT_SOLID);
     GAME_CHECK(!qa_world_get_collision(fixture.world, trigger, &collision, &error));
@@ -291,8 +291,8 @@ static void dormant_trigger_activation(void)
     GAME_CHECK(body.bounds.mins.x == -1025 && body.bounds.maxs.x == 1025);
     GAME_CHECK(qa_q1_game_use(fixture.game, trigger, (qa_actor_id){0}, &error));
     GAME_CHECK(qa_q1_game_presentation(fixture.game, trigger, &visible));
-    GAME_CHECK(visible.model == QA_STRING_NONE);
-    GAME_CHECK(!visible.has_inline_model);
+    GAME_CHECK(visible.visual.models[0] == QA_STRING_NONE);
+    GAME_CHECK(!visible.visual.has_inline_model);
     GAME_CHECK(qa_q1_game_physics_read(fixture.game, trigger, &physics));
     GAME_CHECK(physics.solid == QA_PHYSICS_TRIGGER && physics.motion == QA_PHYSICS_STATIONARY);
     GAME_CHECK(qa_world_get_collision(fixture.world, trigger, &collision, &error));
@@ -317,14 +317,14 @@ static void nonsolid_inline_appearance(void)
     qa_physics_properties physics;
     qa_actor_collision collision;
     GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
-    GAME_CHECK(visual.model != QA_STRING_NONE && visual.has_inline_model && visual.inline_model == 0);
+    GAME_CHECK(visual.visual.models[0] != QA_STRING_NONE && visual.visual.has_inline_model && visual.visual.inline_model == 0);
     GAME_CHECK(qa_q1_game_physics_read(fixture.game, actor, &physics));
     GAME_CHECK(physics.solid == QA_PHYSICS_NOT_SOLID);
     GAME_CHECK(!qa_world_get_collision(fixture.world, actor, &collision, &error));
     GAME_CHECK(error.code == QA_OK);
     GAME_CHECK(qa_q1_game_use(fixture.game, actor, (qa_actor_id){0}, &error));
     GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
-    GAME_CHECK(visual.model != QA_STRING_NONE && visual.has_inline_model && visual.inline_model == 0);
+    GAME_CHECK(visual.visual.models[0] != QA_STRING_NONE && visual.visual.has_inline_model && visual.visual.inline_model == 0);
     GAME_CHECK(!qa_world_get_collision(fixture.world, actor, &collision, &error));
     GAME_CHECK(error.code == QA_OK);
     fixture_destroy(&fixture);
@@ -342,10 +342,10 @@ static void relay_template_unpublished(void)
         .map_fields = &(qa_q1_map_fields){.model = "*0"}}, &actor, &error));
     qa_q1_presentation visual;
     GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
-    GAME_CHECK(visual.model == QA_STRING_NONE && !visual.has_inline_model);
+    GAME_CHECK(visual.visual.models[0] == QA_STRING_NONE && !visual.visual.has_inline_model);
     GAME_CHECK(qa_q1_game_use(fixture.game, actor, (qa_actor_id){0}, &error));
     GAME_CHECK(qa_q1_game_presentation(fixture.game, actor, &visual));
-    GAME_CHECK(visual.model == QA_STRING_NONE && !visual.has_inline_model);
+    GAME_CHECK(visual.visual.models[0] == QA_STRING_NONE && !visual.visual.has_inline_model);
     fixture_destroy(&fixture);
 }
 

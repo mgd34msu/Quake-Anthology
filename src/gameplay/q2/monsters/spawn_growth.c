@@ -3,7 +3,7 @@
 
 static bool show_growth(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     q2_projectile *p = &actor->projectile;
-    qa_q2_visual visual = {.models = {p->model},
+    qa_entity_visual visual = {.models = {p->model},
                            .frame = p->frame,
                            .skin = p->skin,
                            .render_flags = p->render_flags,
@@ -15,7 +15,7 @@ static bool show_growth(qa_q2_game *game, q2_actor *actor, qa_error *error) {
 
 static bool beam_tick(qa_q2_game *game, q2_actor *beam, qa_error *error) {
     qa_actor_id id = beam->id;
-    qa_q2_visual owner = {0};
+    qa_entity_visual owner = {0};
     (void)qa_q2_presentation_read(game, qa_actor_reference_resolve(
         qa_session_actors(game->services.session), beam->projectile.owner), &owner);
     qa_body_state body;

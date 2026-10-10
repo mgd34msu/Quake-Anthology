@@ -44,7 +44,7 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
         bool changed = projectile->projectile.scale != rocket_scale;
         projectile->projectile.scale = rocket_scale;
         if (changed) {
-            qa_q2_visual visual;
+            qa_entity_visual visual;
             if (!qa_q2_presentation_read(g, rocket, &visual) || !q2_publish_visual(g, rocket, &visual, e))
                 return false;
         }

@@ -4,14 +4,6 @@
 #include "qa/targets.h"
 #include "qa/navigation.h"
 
-typedef struct qa_q2_visual {
-    qa_string_id models[4];
-    int frame, old_frame, skin;
-    uint64_t effects;
-    uint32_t render_flags, inline_model;
-    float scale, alpha;
-    bool visible, has_inline_model;
-} qa_q2_visual;
 typedef struct qa_q2_map_fields {
     const qa_entity_property *properties;
     size_t count;
@@ -90,8 +82,8 @@ typedef struct qa_q2_entity_services {
     void *context;
     qa_targets *targets;
     bool ctf_map_rules;
-    bool (*visual)(void *, qa_actor_id, const qa_q2_visual *, qa_error *);
-    bool (*read_visual)(void *, qa_actor_id, qa_q2_visual *, qa_error *);
+    bool (*visual)(void *, qa_actor_id, const qa_entity_visual *, qa_error *);
+    bool (*read_visual)(void *, qa_actor_id, qa_entity_visual *, qa_error *);
     bool (*event)(void *, const qa_q2_map_event *, qa_error *);
     bool (*area_portal)(void *, uint32_t portal, bool open, qa_error *);
     bool (*spawn)(void *, const char *classname, qa_vec3 origin, qa_vec3 angles, qa_vec3 velocity,
@@ -124,7 +116,7 @@ typedef struct qa_q2_entity_services {
     bool (*holds_healthbar)(void *, qa_actor_id);
     bool (*camera_player)(void *, qa_actor_id, qa_vec3 origin, qa_vec3 angles, bool entering,
                           qa_error *);
-    bool (*animate_reference)(void *, qa_actor_id owner, const qa_body_state *, qa_q2_visual *,
+    bool (*animate_reference)(void *, qa_actor_id owner, const qa_body_state *, qa_entity_visual *,
                               qa_error *);
 } qa_q2_entity_services;
 typedef enum q2_entity_kind {
@@ -335,7 +327,7 @@ typedef struct qa_q2_entity_state {
     q2_field *fields;
     size_t field_count;
     uint32_t ordinal, spawnflags;
-    qa_q2_visual visual;
+    qa_entity_visual visual;
     qa_actor_collision collision;
     qa_actor_id activator, owner, enemy, goal;
     qa_actor_reference team_master, team_next;
@@ -426,9 +418,9 @@ bool qa_q2_entity_use_targets(qa_q2_game *, qa_actor_id, qa_actor_id activator, 
                               qa_error *);
 /* Shared target delay dispatch creates a native DelayedUse actor. */
 bool qa_q2_entity_defer_targets(qa_q2_game *, const qa_target_use *, qa_error *);
-bool qa_q2_entity_visual(qa_q2_game *, qa_actor_id, qa_q2_visual *, qa_error *);
+bool qa_q2_entity_visual(qa_q2_game *, qa_actor_id, qa_entity_visual *, qa_error *);
 /* Native source state only; no selected-owner callbacks or fallback publication. */
-bool qa_q2_presentation_read(qa_q2_game *, qa_actor_id, qa_q2_visual *);
+bool qa_q2_presentation_read(qa_q2_game *, qa_actor_id, qa_entity_visual *);
 /* The actual force-wall spawn retains its multicast center independently of
  * its two beam endpoints. This query invokes no body or GAME callbacks. */
 bool qa_q2_force_wall_multicast_origin(qa_q2_game *, qa_actor_id, qa_vec3 *);

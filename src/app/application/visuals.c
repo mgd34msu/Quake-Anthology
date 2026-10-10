@@ -27,57 +27,35 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         qa_q1_presentation source;
         qa_q1_character_view character;
         bool found = qa_q1_game_presentation(provider->state.q1, actor, &source);
-        if (found) {
-            out->models[0] = source.model;
-            out->frame = source.frame;
-            out->skin = source.skin;
-            out->colormap = source.color_map;
-            out->effects = source.effects;
-            out->alpha = source.alpha;
-            out->scale = source.scale;
-            out->visible = source.model != QA_STRING_NONE;
-            out->has_inline_model = source.has_inline_model;
-            out->inline_model = source.inline_model;
-        }
+        if (found) out->visual = source.visual;
         if (out->character == provider->owner &&
             qa_q1_character_read(provider->state.q1, actor, &character)) {
-            out->models[0] = character.model;
-            out->frame = character.frame;
-            out->visible = character.model != QA_STRING_NONE;
-            out->has_inline_model = false;
+            out->visual.models[0] = character.model;
+            out->visual.frame = character.frame;
+            out->visual.visible = character.model != QA_STRING_NONE;
+            out->visual.has_inline_model = false;
             found = true;
         }
         qa_q1_source_client_view client;
         qa_actor_id colored;
         if (qa_q1_source_client_read(provider->state.q1, actor, &client)) {
-            out->colormap = (int32_t)client.slot + 1;
-            out->player_colors = (uint8_t)((client.shirt << 4) | client.pants);
-            out->has_player_colors = true;
-        } else if (out->colormap > 0 && qa_q1_source_client_actor(provider->state.q1,
-            (uint32_t)out->colormap - 1, &colored) &&
+            out->visual.colormap = (int32_t)client.slot + 1;
+            out->visual.player_colors = (uint8_t)((client.shirt << 4) | client.pants);
+            out->visual.has_player_colors = true;
+        } else if (out->visual.colormap > 0 && qa_q1_source_client_actor(provider->state.q1,
+            (uint32_t)out->visual.colormap - 1, &colored) &&
             qa_q1_source_client_read(provider->state.q1, colored, &client)) {
-            out->player_colors = (uint8_t)((client.shirt << 4) | client.pants);
-            out->has_player_colors = true;
+            out->visual.player_colors = (uint8_t)((client.shirt << 4) | client.pants);
+            out->visual.has_player_colors = true;
         }
         return found;
     }
     case APPLICATION_PROVIDER_Q2: {
         out->family = QA_GAME_Q2;
-        qa_q2_visual source;
+        qa_entity_visual source;
         if (!qa_q2_presentation_read(provider->state.q2, actor, &source))
             return false;
-        for (unsigned i = 0; i < 4; ++i)
-            out->models[i] = source.models[i];
-        out->frame = source.frame;
-        out->old_frame = source.old_frame;
-        out->skin = source.skin;
-        out->effects = source.effects;
-        out->render_flags = source.render_flags;
-        out->alpha = source.alpha;
-        out->scale = source.scale;
-        out->visible = source.visible;
-        out->has_inline_model = source.has_inline_model;
-        out->inline_model = source.inline_model;
+        out->visual = source;
         if (source.render_flags & (0x200000u | 128u)) {
             qa_q2_wire_binding binding;
             qa_q2_wire_source_entity entity;
@@ -99,7 +77,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
                     (float)((skin >> 16) & 255) / 255, (float)((skin >> 8) & 255) / 255) : qa_v3(1, 1, 1),
                 .rim_color = qa_v3((shell & 0x400) ? 1.f : 0.f, (shell & 0x800) ? 1.f : 0.f, (shell & 0x1000) ? 1.f : 0.f),
                 .present = true, .has_rim_color = shell != 0, .lock_angle = (source.render_flags & 1) != 0};
-            memset(out->models, 0, sizeof(out->models));
+            memset(out->visual.models, 0, sizeof(out->visual.models));
         }
         return true;
     }
@@ -108,21 +86,21 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         qa_q3_entity_view source;
         if (!qa_q3_entity_read(provider->state.q3, actor, &source, error))
             return false;
-        out->models[0] = source.model;
-        out->models[1] = source.secondary_model;
+        out->visual.models[0] = source.model;
+        out->visual.models[1] = source.secondary_model;
         out->legs_animation = source.legs_animation;
         out->torso_animation = source.torso_animation;
         out->source_flags = source.flags;
         out->powerups = source.powerups;
-        out->alpha = source.alpha;
+        out->visual.alpha = source.alpha;
         out->source_entity = source.source_entity;
         out->has_source_entity = source.has_source_entity;
-        out->has_inline_model = source.has_inline_model;
-        out->inline_model = source.inline_model;
+        out->visual.has_inline_model = source.has_inline_model;
+        out->visual.inline_model = source.inline_model;
         out->source_number = source.has_source_entity ? source.source_number : -1;
         out->source_client = source.has_source_entity ? source.source_client : -1;
-        if (source.has_source_entity) out->frame = source.source_entity.frame;
-        out->visible = source.kind != QA_Q3_ENTITY_HIDDEN;
+        if (source.has_source_entity) out->visual.frame = source.source_entity.frame;
+        out->visual.visible = source.kind != QA_Q3_ENTITY_HIDDEN;
         return true;
     }
     case APPLICATION_PROVIDER_QC:
@@ -325,15 +303,15 @@ static bool q2_visual_visible(const qa_application_visual_visibility *v, qa_acto
         state.modelindex = 1;
     }
     if (appearance) {
-        state.renderfx = appearance->render_flags;
+        state.renderfx = appearance->visual.render_flags;
         /* Source lasers and flares use modelindex 1 as a drawable marker,
          * including when their procedural presentation has no asset path. */
-        state.modelindex = appearance->q2_flare.present || (appearance->render_flags & 128u) ||
-            appearance->has_inline_model ||
-            qa_strings_text(qa_session_strings(app->session), appearance->models[0]).size ||
-            qa_strings_text(qa_session_strings(app->session), appearance->models[1]).size ||
-            qa_strings_text(qa_session_strings(app->session), appearance->models[2]).size ||
-            qa_strings_text(qa_session_strings(app->session), appearance->models[3]).size;
+        state.modelindex = appearance->q2_flare.present || (appearance->visual.render_flags & 128u) ||
+            appearance->visual.has_inline_model ||
+            qa_strings_text(qa_session_strings(app->session), appearance->visual.models[0]).size ||
+            qa_strings_text(qa_session_strings(app->session), appearance->visual.models[1]).size ||
+            qa_strings_text(qa_session_strings(app->session), appearance->visual.models[2]).size ||
+            qa_strings_text(qa_session_strings(app->session), appearance->visual.models[3]).size;
         state.origin[0] = appearance->body.origin.x;
         state.origin[1] = appearance->body.origin.y;
         state.origin[2] = appearance->body.origin.z;
@@ -357,7 +335,7 @@ bool qa_application_visual_visibility_actor(const qa_application_visual_visibili
     /* A foreign beam/flare has no primary Source PHS classification. Its
      * origin or collision box cannot conservatively classify its draw. */
     if (appearance && (appearance->model_beam || appearance->q2_flare.present ||
-        (appearance->family == QA_GAME_Q2 && (appearance->render_flags & 128u)))) return true;
+        (appearance->family == QA_GAME_Q2 && (appearance->visual.render_flags & 128u)))) return true;
     if (qa_actor_id_equal(actor, v->recipient) || qa_actor_id_equal(actor, v->tracked)) return true;
     if (v->no_vis) return true;
     if (v->q3) {
@@ -387,10 +365,10 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
             return application_fail(error, QA_ERROR_NOT_FOUND,
                                     "Mode object has no live source content owner");
         qa_application_visual_view view = {.actor = actor, .provider = source->owner,
-            .content = source->product->id, .old_frame = -1, .alpha = 1, .scale = 1,
+            .content = source->product->id, .visual.old_frame = -1, .visual.alpha = 1, .visual.scale = 1,
             .source_number = -1, .source_client = -1,
-            .models = {object.model}, .frame = object.frame,
-            .skin = object.skin, .effects = object.effects, .visible = object.visible,
+            .visual.models = {object.model}, .visual.frame = object.frame,
+            .visual.skin = object.skin, .visual.effects = object.effects, .visual.visible = object.visible,
             .family = mode.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                 : mode.rules.source < QA_MODE_Q3 ? QA_GAME_Q2 : QA_GAME_Q3};
         if (!qa_world_body_read(application->world, actor, &view.body, error))
@@ -412,7 +390,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         .character = character ? character->owner : 0,
         .content = body->product->id,
         .character_content = character ? character->product->id : 0,
-        .old_frame = -1, .alpha = 1, .scale = 1, .source_number = -1, .source_client = -1};
+        .visual.old_frame = -1, .visual.alpha = 1, .visual.scale = 1, .source_number = -1, .source_client = -1};
     if (!qa_world_body_read(application->world, actor, &view.body, error))
         return false;
     view.previous_origin = view.body.origin;
