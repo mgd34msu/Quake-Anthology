@@ -16,6 +16,8 @@ typedef struct frontend_network_prediction_source {
     const qa_resource *map;
     qa_actor_id viewer;
 } frontend_network_prediction_source;
+bool frontend_network_prediction_geometry_prepare(qa_frontend *, qa_actor_owner, uint32_t,
+    qa_collision_geometry *, qa_trace_scratch **, qa_error *);
 struct frontend_remote_snapshots_view;
 struct frontend_remote_prediction;
 struct frontend_remote_prediction_source;

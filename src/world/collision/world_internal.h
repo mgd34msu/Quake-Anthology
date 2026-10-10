@@ -110,11 +110,15 @@ static inline bool qa_world_body_sample(qa_world_body *body,qa_entity_pose pose,
             return false;
         }
         if(components==QA_ENTITY_BODY_ALL) body->state=*selected;
-    } else if(components==QA_ENTITY_BODY_ALL) state=body->state;
-    else {
-        selected->origin=body->state.origin;
-        selected->angles=body->state.angles;
-        selected->bounds=body->state.bounds;
+    } else {
+        if(components==QA_ENTITY_BODY_ALL) state=body->state;
+        else {
+            selected->origin=body->state.origin;
+            selected->angles=body->state.angles;
+            selected->bounds=body->state.bounds;
+        }
+        if(pose!=QA_ENTITY_CONTROL_POSE && body->spatial_fields!=NULL &&
+            !qa_entity_body_read(body->spatial_fields,pose,QA_ENTITY_BODY_SPATIAL,selected,error)) return false;
     }
     if(components==QA_ENTITY_BODY_ALL) *out=*selected;
     return true;

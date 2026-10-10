@@ -1,5 +1,56 @@
 #include "internal.h"
 
+const qa_collision_role_rules qa_collision_roles[QA_RULESET_Q3 + 1] = {
+    [QA_RULESET_NETQUAKE] = {false, false, false},
+    [QA_RULESET_QUAKEWORLD] = {false, false, false},
+    [QA_RULESET_Q2_CLASSIC] = {true, true, false},
+    [QA_RULESET_Q2_RERELEASE] = {true, true, false},
+    [QA_RULESET_Q3] = {true, false, true}
+};
+
+qa_ruleset_id qa_collision_source_rules(qa_collision_family family)
+{
+    static const qa_ruleset_id source_rules[] = {
+        QA_RULESET_NETQUAKE, QA_RULESET_NETQUAKE, QA_RULESET_Q2_CLASSIC, QA_RULESET_Q3
+    };
+    return source_rules[family];
+}
+
+void qa_collision_pose_basis(const qa_collision_target *target, bool transformed, qa_vec3 basis[3])
+{
+    qa_collision_basis(transformed && qa_collision_roles[target->pose_rules].rotates
+        ? target->angles : qa_v3(0, 0, 0), basis);
+}
+
+qa_vec3 qa_collision_pose_normal(qa_vec3 normal, const qa_collision_target *target, bool transformed, const qa_vec3 basis[3])
+{
+    if (transformed && qa_collision_roles[target->pose_rules].inverse_normal) {
+        qa_vec3 inverse[3];
+        qa_collision_basis(qa_vec_scale(target->angles, -1), inverse);
+        return qa_collision_to_local(normal, inverse);
+    }
+    return qa_collision_from_local(normal, basis);
+}
+
+qa_bounds qa_collision_link_bounds(qa_bounds bounds, qa_vec3 origin, qa_vec3 angles,
+    bool rotated_brush, qa_vec3 padding, qa_ruleset_id rules)
+{
+    const qa_collision_role_rules *role = &qa_collision_roles[rules];
+    if (rotated_brush && role->rotates &&
+        (angles.x != 0 || angles.y != 0 || angles.z != 0)) {
+        qa_vec3 extent = qa_v3(fmaxf(fabsf(bounds.mins.x), fabsf(bounds.maxs.x)),
+            fmaxf(fabsf(bounds.mins.y), fabsf(bounds.maxs.y)),
+            fmaxf(fabsf(bounds.mins.z), fabsf(bounds.maxs.z)));
+        float radius = role->sphere_bounds ? qa_vec_length(extent)
+            : fmaxf(extent.x, fmaxf(extent.y, extent.z));
+        qa_vec3 offset = qa_v3(radius, radius, radius);
+        bounds = (qa_bounds){qa_vec_sub(origin, offset), qa_vec_add(origin, offset)};
+    } else bounds = qa_bounds_translate(bounds, origin);
+    bounds.mins = qa_vec_sub(bounds.mins, padding);
+    bounds.maxs = qa_vec_add(bounds.maxs, padding);
+    return bounds;
+}
+
 qa_trace_policy qa_collision_default_policy(qa_collision_family family)
 {
     return (qa_trace_policy){.family=family,

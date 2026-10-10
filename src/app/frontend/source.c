@@ -32,6 +32,7 @@
 #include "qa/application_q3_client.h"
 #include "qa/application_network_q3_status.h"
 #include "network_presentation.h"
+#include "network_prediction.h"
 #include "qa/application_character_selection.h"
 #include "qa/console_cvar_observer.h"
 #include "save_private.h"
@@ -1089,7 +1090,6 @@ static bool source_free(frontend_source *source)
     qa_q3_presentation_assets_destroy(source->assets); source->assets=NULL;
     frontend_world_scratch_destroy(&source->world_scratch);
     qa_scene_world_destroy(source->world);
-    qa_trace_scratch_destroy(source->trace_scratch);
     qa_collision_destroy(source->geometry);
     qa_resource_release(source->map_resource);
     qa_q3_key_destroy(source->keys);
@@ -1336,7 +1336,8 @@ static bool source_map_prepare(frontend_source *source,const qa_resource *map,bo
     source->map_resource=(qa_resource *)map; qa_resource_retain(source->map_resource);
     if (!qa_collision_create(&bsp,&source->geometry,error) ||
         !qa_collision_bind_resource(source->geometry,source->map_resource,error) ||
-        !qa_trace_scratch_create(source->geometry,&source->trace_scratch,error)) return false;
+        !frontend_network_prediction_geometry_prepare(source->frontend,source->owner,source->launch_seat,
+            source->geometry,&source->trace_scratch,error)) return false;
     if (!world) return true;
     qa_scene_world_options options={.images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
@@ -1469,6 +1470,9 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         const qa_resource *map=NULL; bool present=false;
         bool ok=frontend_network_client_map_read(frontend,application,owner,role,seat,host->mounts,&map,&present,error) &&
             (!present || !source->private_map || source_map_prepare(source,map,true,error));
+        if (ok && present && !source->private_map)
+            ok=frontend_network_prediction_geometry_prepare(frontend,owner,seat,
+                qa_world_geometry(qa_application_world(application)),&source->trace_scratch,error);
         if (ok && !present && source->private_map && source->map_resource)
             ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Private source constructor lost its prepared map receipt");
         if (!ok) {
@@ -2736,8 +2740,10 @@ bool frontend_source_role_geometry_read(const qa_frontend *frontend,qa_actor_own
     if (!qa_application_q3_scene_world_read(frontend->application,&actual,&world,error)) return false;
     if (selected->private_map && world!=selected->world)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Private collision host retains a different source world");
-    *out=selected->geometry; *scratch=selected->trace_scratch;
-    *map=selected->map_resource; *present=selected->geometry!=NULL; return true;
+    *out=selected->private_map?selected->geometry:qa_world_geometry(qa_application_world(frontend->application));
+    *scratch=selected->trace_scratch;
+    *map=selected->private_map?selected->map_resource:qa_collision_resource(*out);
+    *present=*out!=NULL; return true;
 }
 bool frontend_source_world_adopt_ready(qa_frontend *frontend,size_t index,qa_scene_world *world,qa_error *error)
 {

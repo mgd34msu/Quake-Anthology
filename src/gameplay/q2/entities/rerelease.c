@@ -855,8 +855,8 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                 return false;
             qa_collision_leaf from, to;
             qa_collision_geometry *geometry = qa_world_geometry(g->services.world);
-            if (!qa_collision_point_leaf(geometry, one.origin, &from, e) ||
-                !qa_collision_point_leaf(geometry, two.origin, &to, e) ||
+            if (!qa_collision_point_leaf(geometry, one.origin, QA_LEAF_COLLISION, &from, e) ||
+                !qa_collision_point_leaf(geometry, two.origin, QA_LEAF_COLLISION, &to, e) ||
                 !qa_collision_cluster_visible(geometry, (int32_t)from.cluster, (int32_t)to.cluster,
                                               false, &event.visible, e))
                 return false;

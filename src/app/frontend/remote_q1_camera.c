@@ -189,7 +189,7 @@ bool frontend_remote_q1_chase_camera(frontend_remote_q1 *row,const frontend_q1_v
         !isfinite(settings->right) || !isfinite(settings->up)) return false;
     qa_collision_geometry *geometry;
     return remote_q1_collision_acquire(row,&geometry,error) &&
-        frontend_view_q1_chase(settings,geometry,row->collision_scratch,eye,aim_angles,origin,out_angles,error) &&
+        frontend_view_q1_chase(settings,geometry,qa_world_trace_scratch(row->collision_world,geometry),eye,aim_angles,origin,out_angles,error) &&
         remote_q1_live(row,error);
 }
 bool remote_q1_camera_take_teleport(frontend_remote_q1 *row, qa_vec3 *out, bool *present, qa_error *error)
@@ -220,8 +220,9 @@ bool remote_q1_camera_contents_blend(frontend_remote_q1 *row,const qa_scene_view
 {
     if (!row || !view || !out || !row->world || view->seat!=row->options.domain.physical_seat ||
         !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
-    int32_t contents;
-    if (!qa_scene_world_q1_contents(row->world,view->origin,&contents,error)) return false;
+    qa_collision_leaf leaf;
+    if (!qa_collision_point_leaf(row->collision,view->origin,QA_LEAF_Q1,&leaf,error)) return false;
+    int32_t contents=qa_collision_contents_export(leaf.contents,QA_COLLISION_Q1,leaf.q1_opaque_token);
     bool quakeworld=qa_q1_is_qw(row->options.domain.protocol);
     frontend_q1_motion_settings settings;
     if (!frontend_view_settings_q1_motion_sample(&row->motion_refs,quakeworld,&settings,error)) return false;

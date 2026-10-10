@@ -238,8 +238,8 @@ bool qa_application_qc_message_receives(qa_application *app,const qa_application
     qa_vec3 delta=qa_vec_sub(point,event->origin);
     if(mode==1 && qa_vec_dot(delta,delta)<=1024.0f*1024.0f) { *out=true; return true; }
     qa_collision_leaf from,to; qa_collision_geometry *geometry=qa_world_geometry(app->world);
-    return qa_collision_point_leaf(geometry,event->origin,&from,error) &&
-        qa_collision_point_leaf(geometry,point,&to,error) &&
+    return qa_collision_point_leaf(geometry,event->origin, QA_LEAF_Q1,&from,error) &&
+        qa_collision_point_leaf(geometry,point, QA_LEAF_Q1,&to,error) &&
         qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,mode==1,out,error) &&
         qa_application_qc_message_source_current(app,view);
 }

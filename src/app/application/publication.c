@@ -571,19 +571,10 @@ static bool absolute_body_bounds(void *opaque, qa_actor_id actor,
     uint32_t flags = 0;
     bool found = false;
     if (!body_source(application, record, &source, &flags, &found, error)) return false;
-    qa_bounds bounds = qa_bounds_translate(state->bounds, state->origin);
-    if (has_collision && collision.family != QA_COLLISION_Q1 && collision.inline_model && collision.role != QA_COLLISION_TRIGGER &&
-        (state->angles.x != 0 || state->angles.y != 0 || state->angles.z != 0)) {
-        qa_vec3 extent = {fmaxf(fabsf(state->bounds.mins.x), fabsf(state->bounds.maxs.x)),
-            fmaxf(fabsf(state->bounds.mins.y), fabsf(state->bounds.maxs.y)),
-            fmaxf(fabsf(state->bounds.mins.z), fabsf(state->bounds.maxs.z))};
-        float radius = collision.family == QA_COLLISION_Q2 ? fmaxf(extent.x, fmaxf(extent.y, extent.z)) : qa_vec_length(extent);
-        qa_vec3 offset = {radius, radius, radius};
-        bounds = (qa_bounds){qa_vec_sub(state->origin, offset), qa_vec_add(state->origin, offset)};
-    }
     qa_vec3 pad = found && (flags & UINT32_C(256)) ? (qa_vec3){15, 15, 0} : (qa_vec3){1, 1, 1};
-    bounds.mins = qa_vec_sub(bounds.mins, pad);
-    bounds.maxs = qa_vec_add(bounds.maxs, pad);
+    qa_bounds bounds = qa_collision_link_bounds(state->bounds, state->origin, state->angles,
+        has_collision && collision.inline_model && collision.role != QA_COLLISION_TRIGGER,
+        pad, qa_collision_source_rules(has_collision ? collision.family : QA_COLLISION_Q1));
     if (!qa_vec_finite(bounds.mins) || !qa_vec_finite(bounds.maxs) ||
         bounds.mins.x > bounds.maxs.x || bounds.mins.y > bounds.maxs.y ||
         bounds.mins.z > bounds.maxs.z)

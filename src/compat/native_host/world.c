@@ -648,28 +648,6 @@ static uint32_t pack_rerelease_solid(qa_bounds bounds)
     return packed == 31u ? 0u : packed;
 }
 
-static qa_bounds source_absolute_bounds(qa_vec3 origin, qa_vec3 angles, qa_bounds bounds,
-                                        bool brush)
-{
-    qa_bounds absolute;
-    if (brush && (angles.x != 0.0f || angles.y != 0.0f || angles.z != 0.0f)) {
-        float radius = fabsf(bounds.mins.x);
-        float values[] = {fabsf(bounds.mins.y), fabsf(bounds.mins.z), fabsf(bounds.maxs.x),
-                          fabsf(bounds.maxs.y), fabsf(bounds.maxs.z)};
-        for (size_t index = 0; index < sizeof(values) / sizeof(values[0]); ++index)
-            if (values[index] > radius)
-                radius = values[index];
-        absolute.mins = qa_vec_sub(origin, (qa_vec3){radius, radius, radius});
-        absolute.maxs = qa_vec_add(origin, (qa_vec3){radius, radius, radius});
-    } else {
-        absolute.mins = qa_vec_add(origin, bounds.mins);
-        absolute.maxs = qa_vec_add(origin, bounds.maxs);
-    }
-    absolute.mins = qa_vec_sub(absolute.mins, (qa_vec3){1.0f, 1.0f, 1.0f});
-    absolute.maxs = qa_vec_add(absolute.maxs, (qa_vec3){1.0f, 1.0f, 1.0f});
-    return absolute;
-}
-
 static bool source_link_metadata(qa_native_host *host, qa_actor_id actor, qa_bounds bounds,
                                  qa_native_host_link_metadata *metadata,
                                  qa_error *error)
@@ -780,8 +758,8 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
         return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
                                 "shared world did not retain a native link");
     qa_bounds absolute = !borrowed && solid ? linked.absolute_bounds
-                               : source_absolute_bounds(origin, angles,
-                                                        (qa_bounds){minimum, maximum}, solid == 3);
+                               : qa_collision_link_bounds((qa_bounds){minimum, maximum}, origin, angles,
+                                   solid == 3, qa_v3(1, 1, 1), QA_RULESET_Q2_CLASSIC);
     qa_vec3 dimensions = {maximum.x - minimum.x, maximum.y - minimum.y,
                           maximum.z - minimum.z};
     qa_native_host_link_metadata metadata = {0};
@@ -1166,7 +1144,7 @@ bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
             }
             if (collision.inline_model) {
                 query.target = (qa_collision_target){true, collision.model, body.origin,
-                                                      body.angles};
+                                                      body.angles, qa_collision_source_rules(collision.family)};
                 if (!qa_collision_trace(qa_world_geometry(host->world.world),
                                         qa_world_trace_scratch(host->world.world,qa_world_geometry(host->world.world)), &query,
                                         &trace, error))

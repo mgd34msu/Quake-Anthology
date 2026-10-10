@@ -240,7 +240,7 @@ static bool wire_point(void *context, const float origin[3], int32_t *area,
     q3_wire_visibility *owner = context;
     qa_collision_leaf leaf;
     if (!qa_collision_point_leaf(owner->geometry,
-            qa_v3(origin[0], origin[1], origin[2]), &leaf, error)) return false;
+            qa_v3(origin[0], origin[1], origin[2]), QA_LEAF_COLLISION, &leaf, error)) return false;
     if (leaf.area < INT32_MIN || leaf.area > INT32_MAX ||
         leaf.cluster < INT32_MIN || leaf.cluster > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT,

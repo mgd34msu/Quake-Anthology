@@ -5,6 +5,7 @@
 #include "qa/bsp.h"
 #include "qa/math.h"
 #include "qa/collision_bits.h"
+#include "qa/ruleset.h"
 
 typedef enum qa_shape_kind { QA_SHAPE_POINT, QA_SHAPE_BOX, QA_SHAPE_CAPSULE } qa_shape_kind;
 typedef struct qa_trace_shape { qa_shape_kind kind; qa_bounds bounds; } qa_trace_shape;
@@ -21,6 +22,7 @@ typedef struct qa_collision_target {
     bool inline_model;
     uint32_t model;
     qa_vec3 origin, angles;
+    qa_ruleset_id pose_rules; /* Linked entity role; independent of geometry and caller trace rules. */
 } qa_collision_target;
 typedef struct qa_trace_query {
     qa_vec3 start, end;
@@ -28,6 +30,7 @@ typedef struct qa_trace_query {
     qa_trace_policy policy;
     qa_collision_target target;
     qa_actor_id pass_actor; /* Zero registry means no actor. */
+    qa_actor_reference pass_source; /* Optional literal CLIENT source number. */
 } qa_trace_query;
 typedef struct qa_collision_plane { qa_vec3 normal; float distance; int32_t type; uint8_t signbits; } qa_collision_plane;
 typedef struct qa_collision_surface { char name[64]; qa_collision_bits flags; int32_t value; char material[16]; } qa_collision_surface;
@@ -55,6 +58,7 @@ typedef struct qa_point_query {
     qa_collision_target target;
     qa_trace_policy policy;
     qa_actor_id pass_actor;
+    qa_actor_reference pass_source;
     /* Q3 server traps query temporary Q3 brushes as BODY (capsule handles
      * rotate the point); ordinary shared queries use actor contents. */
     bool q3_server_entities;
@@ -118,7 +122,10 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *, qa_trace_scratch
 bool qa_collision_trace_q3_box(const qa_trace_query *, qa_bounds, bool transformed,
                                qa_trace_result *, qa_error *);
 bool qa_collision_point_contents(const qa_collision_geometry *, qa_trace_scratch *, const qa_point_query *, qa_point_contents *, qa_error *);
-bool qa_collision_point_leaf(const qa_collision_geometry *, qa_vec3, qa_collision_leaf *, qa_error *);
+typedef enum qa_leaf_query_rule { QA_LEAF_COLLISION, QA_LEAF_Q1 } qa_leaf_query_rule;
+/* Mod_PointInLeaf starts node0 and uses float d > 0; collision keeps the
+ * authored world root and ties front. */
+bool qa_collision_point_leaf(const qa_collision_geometry *, qa_vec3, qa_leaf_query_rule, qa_collision_leaf *, qa_error *);
 bool qa_collision_leaf_at(const qa_collision_geometry *, uint32_t, qa_collision_leaf *, qa_error *);
 bool qa_collision_box_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds, uint32_t *leaves, size_t capacity, qa_leaf_list *, qa_error *);
 bool qa_collision_cluster_visible(const qa_collision_geometry *, int32_t from, int32_t to, bool phs, bool *, qa_error *);
@@ -167,5 +174,9 @@ bool qa_collision_restore_portals(qa_collision_geometry *, const qa_collision_po
 /* Applies source contact conventions without converting canonical fields. */
 void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
 qa_trace_policy qa_collision_default_policy(qa_collision_family);
+qa_ruleset_id qa_collision_source_rules(qa_collision_family);
+/* Source link expansion only; loaded BSP model bounds and explicit host bounds stay separate. */
+qa_bounds qa_collision_link_bounds(qa_bounds, qa_vec3 origin, qa_vec3 angles,
+    bool rotated_brush, qa_vec3 padding, qa_ruleset_id);
 
 #endif

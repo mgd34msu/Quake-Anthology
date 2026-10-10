@@ -176,7 +176,7 @@ static void native_result(const qa_trace_query *query,const native_trace *trace,
     result.end=trace->fraction==1?query->end:qa_vec_add(qa_collision_from_local(trace->end,basis),origin);
     result.start_solid=trace->start_solid; result.all_solid=trace->all_solid;
     result.in_open=trace->in_open; result.in_water=trace->in_water;
-    result.plane=qa_collision_make_plane(qa_collision_from_local(trace->plane.normal,basis),trace->plane.distance,trace->plane.type);
+    result.plane=qa_collision_make_plane(qa_collision_pose_normal(trace->plane.normal,&query->target,query->target.inline_model,basis),trace->plane.distance,trace->plane.type);
     result.contact_plane=result.plane;
     result.contact_plane.distance+=qa_vec_dot(result.contact_plane.normal,origin);
     result.contents=trace->contents.bits; result.q1_opaque_token=trace->contents.opaque_token; result.contact=trace->fraction<1;
@@ -191,7 +191,7 @@ static bool select_model(const q1state *state,const qa_collision_target *target,
     *model=target->inline_model?target->model:0;
     if(*model>=state->model_count) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Unknown Quake collision model"); return false; }
     *origin=target->inline_model?target->origin:qa_v3(0,0,0);
-    qa_collision_basis(target->inline_model?target->angles:qa_v3(0,0,0),basis); return true;
+    qa_collision_pose_basis(target,target->inline_model,basis); return true;
 }
 static q1p derived_plane(qa_collision_plane p) { return (q1p){qfrom(p.normal),p.distance}; }
 
@@ -464,7 +464,7 @@ static bool arbitrary_trace(const q1state *state,q1scratch *scratch,q1work *w,co
     result.fraction=(float)fraction; result.end=fraction==1?query->end:reached;
     result.start_solid=start_solid; result.all_solid=all_solid;
     result.in_open=environment.in_open; result.in_water=environment.in_water;
-    result.plane=qa_collision_make_plane(qa_collision_from_local(qto(plane.normal),basis),(float)plane.distance,3);
+    result.plane=qa_collision_make_plane(qa_collision_pose_normal(qto(plane.normal),&query->target,query->target.inline_model,basis),(float)plane.distance,3);
     result.contact_plane=result.plane; result.contact_plane.distance+=qa_vec_dot(result.plane.normal,origin);
     result.contact=fraction<1 && (query->policy.family==QA_COLLISION_Q1 || !all_solid);
     result.hit=fraction<1||start_solid?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE;

@@ -1,4 +1,5 @@
 #include "remote_q1_private.h"
+#include "remote_q1_prediction.h"
 #include "internal.h"
 #include "shared_resource_policy.h"
 #include "visual_access.h"
@@ -39,8 +40,8 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
     if (!row->map || !qa_bsp_open(qa_resource_bytes(row->map), &bsp, error) || bsp.family != QA_BSP_Q1 || !qa_bsp_validate(&bsp, error))
         return remote_q1_fail(error, QA_ERROR_FORMAT, "Remote Q1 requires its actually received Quake BSP world");
     if (!qa_collision_create(&bsp,&row->collision,error) ||
-        !qa_collision_bind_resource(row->collision,row->map,error) ||
-        !qa_trace_scratch_create(row->collision,&row->collision_scratch,error)) return false;
+        !qa_collision_bind_resource(row->collision,row->map,error)) return false;
+    if(!remote_q1_prediction_prepare(row,error)) return false;
     row->images = qa_scene_resources_create(row->content.mounts, error);
     if (!row->images || !frontend_image_policy_initialize(row->frontend, row->images, error)) return false;
     row->materials = qa_material_library_create(row->images, row->frontend->order, error);

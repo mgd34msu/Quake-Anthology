@@ -781,11 +781,11 @@ bool qa_q3_map_team_location_read(qa_q3_game *game, qa_actor_id actor,
             qa_collision_leaf to;
             bool visible, connected;
             if (!have_from) {
-                if (!qa_collision_point_leaf(geometry, client.origin, &from, error) ||
+                if (!qa_collision_point_leaf(geometry, client.origin, QA_LEAF_COLLISION, &from, error) ||
                     !team_location_current(game, actor, slot, next, error)) goto done;
                 have_from = true;
             }
-            if (!qa_collision_point_leaf(geometry, body.origin, &to, error) ||
+            if (!qa_collision_point_leaf(geometry, body.origin, QA_LEAF_COLLISION, &to, error) ||
                 !team_location_current(game, actor, slot, next, error)) goto done;
             if (from.cluster < INT32_MIN || from.cluster > INT32_MAX ||
                 to.cluster < INT32_MIN || to.cluster > INT32_MAX ||

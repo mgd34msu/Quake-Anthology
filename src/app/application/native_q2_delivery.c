@@ -66,7 +66,7 @@ static bool positional_point(qa_collision_geometry *geometry, const qa_collision
 {
     qa_collision_leaf leaf; bool visible;
     *out=false;
-    if (!qa_collision_point_leaf(geometry,point,&leaf,error) ||
+    if (!qa_collision_point_leaf(geometry,point, QA_LEAF_COLLISION,&leaf,error) ||
         !qa_collision_cluster_visible(geometry,(int32_t)viewer->cluster,
             (int32_t)leaf.cluster,true,&visible,error)) return false;
     return !visible || qa_collision_areas_connected(geometry,(int32_t)viewer->area,
@@ -88,7 +88,7 @@ static bool positional_visible(qa_collision_geometry *geometry, qa_vec3 eye,
     qa_vec3 start, qa_vec3 end, bool *out, qa_error *error)
 {
     qa_collision_leaf viewer;
-    if (!qa_collision_point_leaf(geometry,eye,&viewer,error)) return false;
+    if (!qa_collision_point_leaf(geometry,eye, QA_LEAF_COLLISION,&viewer,error)) return false;
     if (!positional_point(geometry,&viewer,start,out,error)) return false;
     if (*out) return true;
     if (!positional_point(geometry,&viewer,end,out,error)) return false;
@@ -183,7 +183,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         physical_rerelease=physical_rules.edition==QA_Q2_RERELEASE;
     }
     qa_collision_leaf from={0};
-    if (positioned && !qa_collision_point_leaf(geometry,origin,&from,error)) return false;
+    if (positioned && !qa_collision_point_leaf(geometry,origin, QA_LEAF_COLLISION,&from,error)) return false;
     bool masked=delivery==QA_APPLICATION_Q2_PVS || delivery==QA_APPLICATION_Q2_PHS;
     bool before_begin=original && (message->reliable || delivery==QA_APPLICATION_Q2_UNICAST);
     size_t count=roster->count;
@@ -264,7 +264,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
             break;
         }
         qa_collision_leaf to; bool pvs=false,connected=true;
-        if (!qa_collision_point_leaf(geometry,body.origin,&to,error) ||
+        if (!qa_collision_point_leaf(geometry,body.origin, QA_LEAF_COLLISION,&to,error) ||
             (positional && !positional_visible(geometry,eye,origin,line_end,&pvs,error)) ||
             (!positional && masked &&
                 (!qa_collision_areas_connected(geometry,(int32_t)from.area,(int32_t)to.area,&connected,error) ||

@@ -281,8 +281,10 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         scene->origin,input.angles,
         &scene->origin,&angles,error)) return false;
     frontend_camera_axes(angles, scene->axis);
-    int32_t contents;
-    if (!qa_scene_world_q1_contents(f->scene_world,scene->origin,&contents,error)) return false;
+    qa_collision_leaf leaf;
+    if (!qa_collision_point_leaf(qa_world_geometry(qa_application_world(f->application)),
+        scene->origin,QA_LEAF_Q1,&leaf,error)) return false;
+    int32_t contents=qa_collision_contents_export(leaf.contents,QA_COLLISION_Q1,leaf.q1_opaque_token);
     seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw,items);
     return true;
 }

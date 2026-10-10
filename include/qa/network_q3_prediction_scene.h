@@ -2,7 +2,7 @@
 #define QA_NETWORK_Q3_PREDICTION_SCENE_H
 
 #include "qa/network_q3.h"
-#include "qa/collision.h"
+#include "qa/world.h"
 
 typedef struct qa_q3_prediction_scene qa_q3_prediction_scene;
 typedef struct qa_q3_prediction_scene_view {
@@ -11,13 +11,6 @@ typedef struct qa_q3_prediction_scene_view {
     bool this_frame_teleport, next_frame_teleport;
     uint64_t revision;
 } qa_q3_prediction_scene_view;
-typedef struct qa_q3_prediction_scene_collision {
-    qa_collision_geometry *geometry;
-    void *context;
-    bool (*actor_at)(void *, uint32_t number, qa_actor_id *, bool *, qa_error *);
-    bool (*number_of)(void *, qa_actor_id, uint32_t *, bool *, qa_error *);
-    qa_trace_scratch *scratch;
-} qa_q3_prediction_scene_collision;
 typedef struct qa_q3_prediction_scene_entity_view {
     const qa_q3_entity *entity;
     uint32_t source_number;
@@ -27,6 +20,15 @@ typedef struct qa_q3_prediction_scene_entity_view {
 
 bool qa_q3_prediction_scene_create(qa_q3_product, qa_q3_prediction_scene **, qa_error *);
 void qa_q3_prediction_scene_destroy(qa_q3_prediction_scene *);
+/* Cold map admission. The scene borrows the session registry, retains geometry,
+ * and owns its one common world's load-sized query scratch. */
+bool qa_q3_prediction_scene_prepare(qa_q3_prediction_scene *, qa_actor_registry *, qa_collision_geometry *, qa_error *);
+qa_world *qa_q3_prediction_scene_world(const qa_q3_prediction_scene *);
+/* Borrow the actual application projection; this publishes ordered membership
+ * and spatial views over retained centity fields, never another actor store. */
+bool qa_q3_prediction_scene_project(qa_q3_prediction_scene *, qa_actor_owner, const qa_actor_id *, qa_error *);
+bool qa_q3_prediction_scene_number_of(const qa_q3_prediction_scene *, qa_actor_id, uint32_t *, bool *, qa_error *);
+
 /* Clear-active creates a cold decoded scene. A fast map_restart preserves
  * current/next entity rows and marks the genuine teleport transition. */
 void qa_q3_prediction_scene_clear(qa_q3_prediction_scene *);
@@ -65,15 +67,15 @@ bool qa_q3_prediction_scene_trigger_overlap(const qa_q3_prediction_scene *, cons
 bool qa_q3_prediction_scene_item_position(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
     const qa_q3_prediction_scene_entity_view *, qa_vec3 *, qa_error *);
 bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
-    const qa_q3_prediction_scene_collision *, const qa_trace_query *, qa_trace_result *, qa_error *);
+    const qa_trace_query *, qa_trace_result *, qa_error *);
 /* Returns the literal winning currentState.number from this same query,
  * including cold row zero, WORLD and NONE, before actor adaptation. */
 bool qa_q3_prediction_scene_trace_with_number(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
-    const qa_q3_prediction_scene_collision *, const qa_trace_query *, qa_trace_result *, int32_t *, qa_error *);
+    const qa_trace_query *, qa_trace_result *, int32_t *, qa_error *);
 bool qa_q3_prediction_scene_point_contents(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
-    const qa_q3_prediction_scene_collision *, const qa_point_query *, qa_point_contents *, qa_error *);
+    const qa_point_query *, qa_point_contents *, qa_error *);
 bool qa_q3_prediction_scene_is_bsp(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
-    const qa_q3_prediction_scene_collision *, const qa_trace_result *, bool *, qa_error *);
+    const qa_trace_result *, bool *, qa_error *);
 bool qa_q3_prediction_scene_checkpoint(const qa_q3_prediction_scene *, qa_buffer *, qa_error *);
 bool qa_q3_prediction_scene_restore(qa_bytes, qa_q3_product, qa_q3_prediction_scene **, qa_error *);
 

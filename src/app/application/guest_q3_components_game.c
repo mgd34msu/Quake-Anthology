@@ -22,7 +22,7 @@ static bool load_map(void *context,const char *path,qa_error *e)
 static bool point(void *context,const float origin[3],int32_t *area,int32_t *cluster,qa_error *e)
 {
     qa_collision_leaf leaf;
-    if(!qa_collision_point_leaf(geometry(context),qa_v3(origin[0],origin[1],origin[2]),&leaf,e)) return false;
+    if(!qa_collision_point_leaf(geometry(context),qa_v3(origin[0],origin[1],origin[2]), QA_LEAF_COLLISION,&leaf,e)) return false;
     if(leaf.area<INT32_MIN||leaf.area>INT32_MAX||leaf.cluster<INT32_MIN||leaf.cluster>INT32_MAX) return application_fail(e,QA_ERROR_FORMAT,"Component PVS leaf exceeds its real Q3 ABI");
     *area=(int32_t)leaf.area; *cluster=(int32_t)leaf.cluster; return true;
 }

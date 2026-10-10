@@ -249,8 +249,8 @@ static bool visibility(qa_native_host *host, const qa_native_import_call *call,
         return false;
     qa_collision_geometry *geometry = qa_world_geometry(host->world.world);
     qa_collision_leaf from, to;
-    if (!qa_collision_point_leaf(geometry, first, &from, error) ||
-        !qa_collision_point_leaf(geometry, second, &to, error) ||
+    if (!qa_collision_point_leaf(geometry, first, QA_LEAF_COLLISION, &from, error) ||
+        !qa_collision_point_leaf(geometry, second, QA_LEAF_COLLISION, &to, error) ||
         !qa_collision_cluster_visible(geometry, (int32_t)from.cluster,
                                       (int32_t)to.cluster, phs, out, error))
         return false;

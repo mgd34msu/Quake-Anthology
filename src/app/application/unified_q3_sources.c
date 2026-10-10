@@ -146,7 +146,7 @@ static bool visibility_point(void *context, const float point[3], int32_t *area,
 {
     source_visibility_world *w = context;
     qa_collision_leaf leaf;
-    if (!qa_collision_point_leaf(w->geometry, qa_v3(point[0],point[1],point[2]), &leaf, e)) return false;
+    if (!qa_collision_point_leaf(w->geometry, qa_v3(point[0],point[1],point[2]), QA_LEAF_COLLISION, &leaf, e)) return false;
     if (leaf.area < -1 || leaf.area > INT32_MAX || leaf.cluster < -1 || leaf.cluster > INT32_MAX)
         return application_fail(e,QA_ERROR_FORMAT,"Compiled Q3 visibility exceeds its Source indices");
     *area = (int32_t)leaf.area; *cluster = (int32_t)leaf.cluster; return true;

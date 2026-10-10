@@ -7,12 +7,19 @@
 
 typedef struct prediction_entity {
     qa_q3_entity current, next;
-    qa_vec3 origin, angles;
-    int32_t publication_message;
-    bool valid, interpolate, published;
+    qa_vec3 origin, angles, clip_origin;
+    qa_bounds clip_bounds;
+    qa_entity_body_fields fields;
+    int32_t publication_message, clip_physics_time, clip_publication, clip_type;
+    bool valid, interpolate, published, clip_ready;
 } prediction_entity;
 struct qa_q3_prediction_scene {
     qa_q3_product product;
+    qa_world *world;
+    qa_collision_geometry *geometry;
+    const qa_actor_id *projected;
+    qa_actor_owner owner;
+    qa_actor_id solid_actors[256];
     qa_q3_snapshot_slot snap, next;
     prediction_entity entities[QA_Q3_ENTITIES];
     uint16_t solids[256], triggers[256];
@@ -47,15 +54,111 @@ bool qa_q3_prediction_scene_create(qa_q3_product product, qa_q3_prediction_scene
     if (!s) return fail(error, QA_ERROR_MEMORY, "Allocating Q3 prediction scene");
     s->product = product; s->revision = 1; *out = s; return true;
 }
+static void dispose_world(qa_q3_prediction_scene *s)
+{
+    qa_error ignored={0};
+    (void)qa_world_destroy(s->world,&ignored);
+    qa_collision_destroy(s->geometry);
+    s->world=NULL; s->geometry=NULL; s->projected=NULL; s->owner=0;
+}
 void qa_q3_prediction_scene_destroy(qa_q3_prediction_scene *s)
-{ if (s) { free(s->snap.entities); free(s->next.entities); free(s); } }
+{ if (s) { dispose_world(s); free(s->snap.entities); free(s->next.entities); free(s); } }
 void qa_q3_prediction_scene_clear(qa_q3_prediction_scene *s)
 {
     if (!s) return;
     qa_q3_product product = s->product;
     uint64_t revision = s->revision == UINT64_MAX ? UINT64_MAX : s->revision + 1;
+    dispose_world(s);
     free(s->snap.entities); free(s->next.entities); memset(s, 0, sizeof(*s));
     s->product = product; s->revision = revision;
+}
+bool qa_q3_prediction_scene_prepare(qa_q3_prediction_scene *s, qa_actor_registry *actors,
+    qa_collision_geometry *geometry, qa_error *error)
+{
+    if (!s || !actors || !geometry) return fail(error,QA_ERROR_ARGUMENT,"Q3 scene requires its admitted map and actors");
+    if (s->world) return s->geometry==geometry && qa_world_actors(s->world)==actors;
+    if (!qa_collision_retain(geometry,error)) return false;
+    if (!qa_world_create(actors,geometry,NULL,0,&s->world,error)) {
+        qa_collision_destroy(geometry); return false;
+    }
+    s->geometry=geometry;
+    return true;
+}
+qa_world *qa_q3_prediction_scene_world(const qa_q3_prediction_scene *s)
+{ return s?s->world:NULL; }
+bool qa_q3_prediction_scene_number_of(const qa_q3_prediction_scene *s, qa_actor_id actor,
+    uint32_t *number, bool *present, qa_error *error)
+{
+    (void)error; *number=QA_Q3_ENTITY_NONE; *present=false;
+    if (!s || !s->world || !s->projected) return true;
+    const qa_entity_body_fields *fields=qa_world_body_spatial_fields(s->world,actor);
+    if (!fields) return true;
+    uintptr_t first=(uintptr_t)&s->entities[0].fields, address=(uintptr_t)fields;
+    if (address<first || address-first>=sizeof(s->entities) ||
+        (address-first)%sizeof(s->entities[0])) return true;
+    uint32_t slot=(uint32_t)((address-first)/sizeof(s->entities[0]));
+    if (slot>=QA_Q3_ENTITY_NONE || !qa_actor_id_equal(s->projected[slot],actor)) return true;
+    *number=slot; *present=true; return true;
+}
+bool qa_q3_prediction_scene_project(qa_q3_prediction_scene *s, qa_actor_owner owner,
+    const qa_actor_id *projected, qa_error *error)
+{
+    static const qa_vec3 zero={0};
+    if (!s || !s->world || !projected) return fail(error,QA_ERROR_ARGUMENT,"Q3 scene publication requires its loaded world");
+    s->projected=projected; s->owner=owner;
+    /* Bind every admitted physical slot once; fields retain actual currentState
+     * storage and presentation poses through cold next-only list selection. */
+    for (uint32_t i=0;i<QA_Q3_ENTITY_NONE;++i) {
+        qa_actor_id actor=projected[i];
+        if (!actor.registry) continue;
+        prediction_entity *e=&s->entities[i];
+        if (qa_world_body_spatial_fields(s->world,actor)==&e->fields) continue;
+        e->fields.pose[QA_ENTITY_CONTROL_POSE].origin=qa_entity_vector_bytes(e->current.origin);
+        e->fields.pose[QA_ENTITY_CONTROL_POSE].angles=qa_entity_vector_bytes(e->current.angles);
+        e->fields.pose[QA_ENTITY_CLIP_POSE].origin=qa_entity_vector_bytes(&e->origin);
+        e->fields.pose[QA_ENTITY_CLIP_POSE].angles=qa_entity_vector_bytes(&zero);
+        e->fields.pose[QA_ENTITY_CONTENTS_POSE].origin=qa_entity_vector_bytes(e->current.origin);
+        e->fields.pose[QA_ENTITY_CONTENTS_POSE].angles=qa_entity_vector_bytes(e->current.angles);
+        e->fields.minimum=qa_entity_vector_bytes(&e->clip_bounds.mins);
+        e->fields.maximum=qa_entity_vector_bytes(&e->clip_bounds.maxs);
+        qa_entity_body_fields_prepare(&e->fields);
+        if (!qa_world_body_spatial_bind(s->world,actor,&e->fields,error)) return false;
+    }
+    for (size_t i=0;i<s->solid_count;++i) {
+        prediction_entity *e=&s->entities[s->solids[i]];
+        const qa_q3_entity *row=&e->current;
+        qa_actor_id actor=projected[s->solids[i]];
+        bool brush=row->solid==0xffffff;
+        if (brush) {
+            if (row->modelindex<0) return false;
+            if (!e->clip_ready || e->clip_physics_time!=s->physics_time ||
+                e->clip_publication!=e->publication_message || e->clip_type!=row->pos.type) {
+                if (!position(&row->pos,s->physics_time,&e->clip_origin,error)) return false;
+                e->clip_physics_time=s->physics_time; e->clip_publication=e->publication_message;
+                e->clip_type=row->pos.type; e->clip_ready=true;
+            }
+            e->fields.pose[QA_ENTITY_CLIP_POSE].origin=qa_entity_vector_bytes(&e->clip_origin);
+            e->fields.pose[QA_ENTITY_CLIP_POSE].angles=qa_entity_vector_bytes(&e->angles);
+            e->clip_bounds=(qa_bounds){0};
+        } else {
+            int32_t x=row->solid&255, down=(row->solid>>8)&255, up=((row->solid>>16)&255)-32;
+            e->clip_bounds=(qa_bounds){qa_v3(-(float)x,-(float)x,-(float)down),qa_v3((float)x,(float)x,(float)up)};
+            e->fields.pose[QA_ENTITY_CLIP_POSE].origin=qa_entity_vector_bytes(&e->origin);
+            e->fields.pose[QA_ENTITY_CLIP_POSE].angles=qa_entity_vector_bytes(&zero);
+        }
+        qa_actor_collision collision={.family=QA_COLLISION_Q3,.shape=QA_SHAPE_BOX,
+            .inline_model=brush,.model=brush?(uint32_t)row->modelindex:0,
+            .contents=brush?(qa_collision_bits){UINT64_MAX,UINT64_MAX}:qa_collision_bit(QA_CONTENT_BODY),
+            .role=QA_COLLISION_SOLID,.has_q3_owner=true,.q3_entity_number=row->number,.q3_owner_number=QA_Q3_ENTITY_NONE};
+        if (!qa_world_set_collision(s->world,actor,&collision,error)) return false;
+        qa_linked_body linked;
+        if (!qa_world_linked(s->world,actor,&linked) && !qa_world_link(s->world,actor,NULL,error)) return false;
+        s->solid_actors[i]=actor;
+    }
+    qa_world_query_rules rules={.actors=s->solid_actors,.count=s->solid_count,.brush_contents_only=true,
+        .merge=QA_WORLD_MERGE_Q3_CLIENT};
+    qa_world_set_query_rules(s->world,&rules);
+    return true;
 }
 bool qa_q3_prediction_scene_restart(qa_q3_prediction_scene *s, qa_error *error)
 {
@@ -265,7 +368,7 @@ bool qa_q3_prediction_scene_publish_poses(qa_q3_prediction_scene *s, bool smooth
         prediction_entity *e = &s->entities[s->snap.value.entities[i].number];
         if (e->current.eType < 13 && !pose(s, e, smooth, error)) return false;
     }
-    return true;
+    return !s->projected || qa_q3_prediction_scene_project(s,s->owner,s->projected,error);
 }
 bool qa_q3_prediction_scene_consume_teleport(qa_q3_prediction_scene *s, qa_error *error)
 {
@@ -282,7 +385,7 @@ bool qa_q3_prediction_scene_mark_teleport(qa_q3_prediction_scene *s,
     s->this_teleport = true;
     s->physics_next = false;
     s->physics_time = s->snap.value.server_time;
-    return true;
+    return !s->projected || qa_q3_prediction_scene_project(s,s->owner,s->projected,error);
 }
 static bool entity_at(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
     const uint16_t *list, size_t count, size_t ordinal, qa_q3_prediction_scene_entity_view *out,
@@ -347,107 +450,55 @@ bool qa_q3_prediction_scene_item_position(const qa_q3_prediction_scene *s,
         return fail(error, QA_ERROR_ARGUMENT, "Q3 item query lost its actual current item");
     return position(&retained->entity->pos, v->time, out, error);
 }
-static bool collision_valid(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
-    const qa_q3_prediction_scene_collision *c, qa_error *error)
+static qa_actor_reference pass_source(const qa_q3_prediction_scene *s,
+    qa_actor_id actor, qa_actor_reference source)
 {
-    return (qa_q3_prediction_scene_current(s, v) && c && c->geometry && c->actor_at && c->number_of &&
-        qa_collision_geometry_family(c->geometry) == QA_COLLISION_Q3) ||
-        fail(error, QA_ERROR_ARGUMENT, "Q3 prediction collision lost its actual scene and map owner");
-}
-static bool pass_number(const qa_q3_prediction_scene_collision *c, qa_actor_id actor,
-    uint32_t *number, bool *present, qa_error *error)
-{
-    *present = false; *number = QA_Q3_ENTITY_NONE;
-    return !actor.registry || c->number_of(c->context, actor, number, present, error);
+    if (source.kind!=QA_ACTOR_REFERENCE_NONE) return source;
+    uint32_t number; bool present; qa_error ignored={0};
+    if (!qa_q3_prediction_scene_number_of(s,actor,&number,&present,&ignored) || !present) return (qa_actor_reference){0};
+    return qa_actor_reference_source(s->owner,number);
 }
 static bool scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
-    const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out,
-    int32_t *number, qa_error *error)
+    const qa_trace_query *query, qa_trace_result *out, int32_t *number, qa_error *error)
 {
-    if (!query || !out || !collision_valid(s, v, c, error)) return false;
-    qa_trace_query q = *query; q.target = (qa_collision_target){0};
-    q.policy.family = QA_COLLISION_Q3;
-    uint32_t skip; bool has_skip;
-    if (!pass_number(c, q.pass_actor, &skip, &has_skip, error) ||
-        !qa_collision_trace_q3_model(c->geometry, c->scratch, &q, 0, false, out, error)) return false;
-    out->hit = out->fraction != 1 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
-    *number = out->hit == QA_TRACE_HIT_WORLD ? QA_Q3_ENTITY_WORLD : QA_Q3_ENTITY_NONE;
-    out->actor = (qa_actor_id){0};
-    for (size_t i = 0; i < s->solid_count; ++i) {
-        const prediction_entity *e = &s->entities[s->solids[i]];
-        const qa_q3_entity *row = &e->current;
-        if (has_skip && (uint32_t)row->number == skip) continue;
-        qa_trace_result result;
-        if (row->solid == 0xffffff) {
-            if (row->modelindex < 0 || !position(&row->pos, v->physics_time, &q.target.origin, error)) return false;
-            q.target.angles = e->angles;
-            if (!qa_collision_trace_q3_model(c->geometry, c->scratch, &q, (uint32_t)row->modelindex, true, &result, error)) return false;
-        } else {
-            int32_t x = row->solid & 255, zd = (row->solid >> 8) & 255, zu = ((row->solid >> 16) & 255) - 32;
-            qa_bounds bounds = {qa_v3(-(float)x, -(float)x, -(float)zd), qa_v3((float)x, (float)x, (float)zu)};
-            q.target.origin = e->origin; q.target.angles = qa_v3(0, 0, 0);
-            if (!qa_collision_trace_q3_box(&q, bounds, true, &result, error)) return false;
-        }
-        if (result.all_solid || result.fraction < out->fraction) {
-            qa_actor_id actor = {0}; bool present = false;
-            if (row->number != QA_Q3_ENTITY_WORLD) {
-                if (!c->actor_at(c->context, (uint32_t)row->number, &actor, &present, error)) return false;
-                if (!present) return fail(error, QA_ERROR_ARGUMENT, "Q3 collision hit lost its actual projected actor");
-            }
-            *out = result; out->hit = row->number == QA_Q3_ENTITY_WORLD ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR;
-            *number = row->number;
-            out->actor = actor;
-            out->model = row->solid == 0xffffff ? (uint32_t)row->modelindex : 0;
-        } else if (result.start_solid) out->start_solid = true;
-        if (out->all_solid) break;
-    }
-    qa_collision_adapt_trace(out, &query->policy);
-    return qa_q3_prediction_scene_current(s, v) || fail(error, QA_ERROR_ARGUMENT, "Q3 scene changed during trace");
+    if (!query || !out || !s || !s->world || !qa_q3_prediction_scene_current(s,v)) return false;
+    qa_trace_query q=*query; q.target=(qa_collision_target){0}; q.policy.family=QA_COLLISION_Q3;
+    q.pass_source=pass_source(s,q.pass_actor,q.pass_source);
+    if (!qa_world_trace(s->world,&q,out,error)) return false;
+    *number=out->fraction!=1?QA_Q3_ENTITY_WORLD:QA_Q3_ENTITY_NONE;
+    if (out->hit==QA_TRACE_HIT_ACTOR) {
+        uint32_t slot; bool present;
+        if (!qa_q3_prediction_scene_number_of(s,out->actor,&slot,&present,error) || !present) return false;
+        *number=s->entities[slot].current.number;
+        out->hit=*number==QA_Q3_ENTITY_WORLD?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_ACTOR;
+        out->actor=*number==QA_Q3_ENTITY_WORLD?(qa_actor_id){0}:s->projected[*number];
+    } else { out->actor=(qa_actor_id){0}; out->hit=*number==QA_Q3_ENTITY_WORLD?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE; }
+    qa_collision_adapt_trace(out,&query->policy);
+    return true;
 }
 bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
-    const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out, qa_error *error)
-{
-    int32_t number;
-    return scene_trace(s, v, c, query, out, &number, error);
-}
+    const qa_trace_query *query, qa_trace_result *out, qa_error *error)
+{ int32_t number; return scene_trace(s,v,query,out,&number,error); }
 bool qa_q3_prediction_scene_trace_with_number(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
-    const qa_q3_prediction_scene_collision *c, const qa_trace_query *query, qa_trace_result *out,
-    int32_t *number, qa_error *error)
-{
-    if (!number) return fail(error, QA_ERROR_ARGUMENT, "Q3 trace requires its actual source-number output");
-    return scene_trace(s, v, c, query, out, number, error);
-}
+    const qa_trace_query *query, qa_trace_result *out, int32_t *number, qa_error *error)
+{ return number && scene_trace(s,v,query,out,number,error); }
 bool qa_q3_prediction_scene_point_contents(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
-    const qa_q3_prediction_scene_collision *c, const qa_point_query *query, qa_point_contents *out, qa_error *error)
+    const qa_point_query *query, qa_point_contents *out, qa_error *error)
 {
-    if (!query || !out || !collision_valid(s, v, c, error)) return false;
-    qa_point_query q = *query; q.target = (qa_collision_target){0};
-    uint32_t skip; bool has_skip;
-    if (!pass_number(c, q.pass_actor, &skip, &has_skip, error) ||
-        !qa_collision_point_contents(c->geometry, c->scratch, &q, out, error)) return false;
-    for (size_t i = 0; i < s->solid_count; ++i) {
-        const qa_q3_entity *row = &s->entities[s->solids[i]].current;
-        if ((has_skip && (uint32_t)row->number == skip) || row->solid != 0xffffff || !row->modelindex) continue;
-        if (row->modelindex < 0) return fail(error, QA_ERROR_FORMAT, "Negative Q3 collision inline model");
-        q.target = (qa_collision_target){true, (uint32_t)row->modelindex, vector(row->origin), vector(row->angles)};
-        qa_point_contents result;
-        if (!qa_collision_point_contents(c->geometry, c->scratch, &q, &result, error)) return false;
-        out->contents = qa_collision_bits_union(out->contents, result.contents);
-        out->stored = qa_collision_bits_union(out->stored, result.stored);
-        out->merged = qa_collision_bits_union(out->merged, result.merged);
-    }
-    return qa_q3_prediction_scene_current(s, v) || fail(error, QA_ERROR_ARGUMENT, "Q3 scene changed during contents query");
+    if (!query || !out || !s || !s->world || !qa_q3_prediction_scene_current(s,v)) return false;
+    qa_point_query q=*query; q.target=(qa_collision_target){0};
+    q.pass_source=pass_source(s,q.pass_actor,q.pass_source);
+    return qa_world_point_contents(s->world,&q,out,error);
 }
 bool qa_q3_prediction_scene_is_bsp(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
-    const qa_q3_prediction_scene_collision *c, const qa_trace_result *trace, bool *out, qa_error *error)
+    const qa_trace_result *trace, bool *out, qa_error *error)
 {
-    if (!trace || !out || !collision_valid(s, v, c, error)) return false;
-    *out = trace->hit == QA_TRACE_HIT_WORLD;
-    if (trace->hit == QA_TRACE_HIT_ACTOR) {
-        uint32_t number; bool present;
-        if (!c->number_of(c->context, trace->actor, &number, &present, error)) return false;
-        if (!present || number >= QA_Q3_ENTITY_NONE) return fail(error, QA_ERROR_ARGUMENT, "Q3 BSP hit lost its actual source entity");
-        *out = s->entities[number].current.solid == 0xffffff;
+    if (!trace || !out || !qa_q3_prediction_scene_current(s,v)) return false;
+    *out=trace->hit==QA_TRACE_HIT_WORLD;
+    if (trace->hit==QA_TRACE_HIT_ACTOR) {
+        uint32_t slot; bool present;
+        if (!qa_q3_prediction_scene_number_of(s,trace->actor,&slot,&present,error) || !present) return false;
+        *out=s->entities[slot].current.solid==0xffffff;
     }
     return true;
 }
