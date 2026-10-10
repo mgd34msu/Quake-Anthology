@@ -62,7 +62,7 @@ bool application_q3_mod_items_request_status(application_q3_mod_items *,const ap
 bool application_q3_mod_items_request_cancel(application_q3_mod_items *,const application_q3_item_request *,qa_error *);
 bool application_q3_mod_items_requested(application_q3_mod_items *,qa_actor_id,int32_t *,bool *,qa_error *);
 bool application_q3_mod_items_open(application_q3_mod_items *,qa_actor_id,
-    application_q3_mod_application *,application_q3_mod_items_application **,qa_error *);
+    application_q3_mod_application *,qa_unified_frame_lease *,application_q3_mod_items_application **,qa_error *);
 bool application_q3_mod_items_close(application_q3_mod_items_application **,qa_error *);
 bool application_q3_mod_items_apply(application_q3_mod_items_application *,uint32_t entry,
     const application_q3_mod_inputs *,qa_error *);

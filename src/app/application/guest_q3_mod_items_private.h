@@ -73,6 +73,7 @@ struct application_q3_mod_items_application {
 };
 struct application_q3_mod_items_entry {
     application_q3_mod_items *owner;
+    qa_unified_frame_lease *storage;
     struct application_q3_mod_items_entry *previous;
     qa_qvm_call call;
     application_q3_mod_items_application *application;

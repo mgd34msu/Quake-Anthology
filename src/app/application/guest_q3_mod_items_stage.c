@@ -1,4 +1,5 @@
 #include "guest_q3_mod_items_private.h"
+#include "control_frame.h"
 static bool word_write(item_actor *a,item_field f,int32_t value,qa_error *e)
 {uint32_t address;uint8_t bytes[4];qa_store_u32le(bytes,(uint32_t)value);return q3items_address(a,f,&address,e)&&qa_qvm_write(a->owner->mod->vm,address,(qa_bytes){bytes,4},e);}
 static bool pointer(application_q3_mod_items *o,const mod_pointer *p,const qa_qvm_call *call,uint32_t *out,qa_error *e)
@@ -47,10 +48,11 @@ static bool decision(void *context,const qa_qvm_call *call,bool original,bool *t
     return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon branch is outside its actual declared scope");
 }
 bool application_q3_mod_items_open(application_q3_mod_items *o,qa_actor_id actor,application_q3_mod_application *source,
-    application_q3_mod_items_application **out,qa_error *e)
+    qa_unified_frame_lease *storage,application_q3_mod_items_application **out,qa_error *e)
 {
     if(!o||!source||!out||*out||!application_q3_mod_application_current(o->mod,source,actor)||!q3items_current(q3items_actor(o,actor),e))return false;
-    application_q3_mod_items_application *a=calloc(1,sizeof(*a));if(!a)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining source weapon input application");
+    application_q3_mod_items_application *a=qa_unified_frame_lease_alloc(storage,1,sizeof(*a),
+        _Alignof(application_q3_mod_items_application),e);if(!a)return false;
     a->owner=o;a->source=source;a->actor=actor;a->previous=o->application;o->application=a;*out=a;return true;
 }
 bool application_q3_mod_items_close(application_q3_mod_items_application **in,qa_error *e)
@@ -61,7 +63,7 @@ bool application_q3_mod_items_close(application_q3_mod_items_application **in,qa
     if(a->owner->application!=a)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon application retains a nested application");
     for(application_q3_mod_items_entry *entry=a->owner->entries;entry;entry=entry->previous)
         if(entry->application==a)return q3mod_fail(e,QA_ERROR_ARGUMENT,"Weapon application retains its original call");
-    a->owner->application=a->previous;free(a);*in=NULL;return true;
+    a->owner->application=a->previous;*in=NULL;return true;
 }
 bool application_q3_mod_items_apply(application_q3_mod_items_application *a,uint32_t entry,
     const application_q3_mod_inputs *values,qa_error *e)
@@ -101,7 +103,12 @@ bool application_q3_mod_items_entry_begin(application_q3_mod_items *o,const qa_q
     }
     else if(request){for(application_q3_mod_items_entry *p=o->entries;p;p=p->previous)if(p->dispatcher){a=q3items_actor(o,p->actor);break;}}
     if(!a)return true;
-    application_q3_mod_items_entry *entry=calloc(1,sizeof(*entry));if(!entry)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original source weapon entry");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->services.application,e);
+    if(!storage)return false;
+    application_q3_mod_items_entry *entry=qa_unified_frame_lease_alloc(storage,1,sizeof(*entry),
+        _Alignof(application_q3_mod_items_entry),e);
+    if(!entry){qa_unified_frame_lease_release(storage);return false;}
+    entry->storage=storage;
     entry->owner=o;entry->call=*call;entry->application=o->application;entry->actor=a->actor;entry->dispatcher=dispatch;entry->continuation=continuation;entry->request=request;entry->input=input;
     entry->previous=o->entries;o->entries=entry;*out=entry;
     if(!q3items_current(a,e))return cancel(entry,call,e);
@@ -115,7 +122,8 @@ bool application_q3_mod_items_entry_begin(application_q3_mod_items *o,const qa_q
             !qa_qvm_read(o->mod->vm,entry->movement+s->movement_length-1,&last,1,e))return false;
     }
     size_t count=continuation?s->continue_predicate_count+1:dispatch?s->predicate_count:0;
-    if(count){entry->branches=calloc(count,sizeof(*entry->branches));if(!entry->branches)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining genuine weapon branch decisions");
+    if(count){entry->branches=qa_unified_frame_lease_alloc(storage,count,sizeof(*entry->branches),
+            _Alignof(qa_qvm_branch_binding),e);if(!entry->branches)return false;
         for(size_t i=0;i<count;++i){uint32_t instruction=continuation?(i==s->continue_predicate_count?s->continue_branch:s->continue_predicates[i].instruction):s->predicates[i].instruction;
             entry->branches[i]=(qa_qvm_branch_binding){instruction,decision,entry};}
         if(!qa_qvm_bind_branches(call,entry->branches,count,e))return false;
@@ -151,7 +159,7 @@ bool application_q3_mod_items_entry_end(application_q3_mod_items_entry **in,bool
             }
         }
     }
-    o->entries=entry->previous;free(entry->branches);free(entry);*in=NULL;return ok;
+    o->entries=entry->previous;qa_unified_frame_lease_release(entry->storage);*in=NULL;return ok;
 }
 bool application_q3_mod_items_hook_run(application_q3_mod_items *o,const qa_qvm_call *call,
     application_q3_mod_items_proceed proceed,void *context,int32_t *result,qa_error *e)

@@ -80,7 +80,7 @@ bool application_q3_component_input_begin(application_q3_component *component,qa
     if(!application_q3_mod_open(mod,actor,&current,storage,&scope->application,e)) return false;
     *out=scope;
     if(!application_q3_mod_input_source(scope->application,values,context,e)) return false;
-    if(scope->items&&!application_q3_mod_items_open(scope->items,actor,scope->application,
+    if(scope->items&&!application_q3_mod_items_open(scope->items,actor,scope->application,storage,
         &scope->item_application,e)) return false;
     scope->running=true;
     bool ok=bindings(scope,true,values,output,context,e);
