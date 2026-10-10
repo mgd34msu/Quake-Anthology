@@ -39,7 +39,7 @@ typedef struct equipment_companion_ref {
 
 typedef struct equipment_companion_polygon {
     qa_q3_scene_polygon polygon;
-    qa_scene_vertex *vertices;
+    const qa_scene_vertex *vertices;
     qa_q3_refdef definition;
     bool view;
 } equipment_companion_polygon;
@@ -109,6 +109,19 @@ static bool current_owner(const frontend_equipment_source *owner)
         (!owner->companion_selected || frontend_source_companion_current(owner->options.frontend, &owner->companion));
 }
 
+static bool companion_ref_owned(const frontend_equipment_source *owner,
+    const qa_application_q3_weapon_models *models,bool registered,
+    const frontend_source_companion_packet *packet,size_t ordinal,bool *view)
+{
+    const qa_q3_ref_entity *ref=packet->entities+ordinal;
+    bool owned=packet->entity_actors && qa_actor_id_equal(packet->entity_actors[ordinal],owner->selection.actor);
+    *view=owned && packet->entity_views && packet->entity_views[ordinal];
+    if (!owned && registered && (ref->flags&4) && ref->kind==QA_Q3_REF_MODEL && ref->model>0 &&
+        (ref->model==models->gun || ref->model==models->hands || ref->model==models->barrel || ref->model==models->flash))
+        owned=*view=true;
+    return owned;
+}
+
 static bool companion_prepare(frontend_equipment_source *owner, bool *present, qa_error *error)
 {
     *present = false;
@@ -122,25 +135,53 @@ static bool companion_prepare(frontend_equipment_source *owner, bool *present, q
     qa_application_q3_weapon_models models = {0}; bool registered;
     if (!qa_application_equipment_q3_models_read(owner->options.frontend->application, &owner->selection,
             client->receiver, client->seat, &models, &registered, error)) return false;
+    size_t refs=0,polygons=0,lights=0,weapons=0;
+    for (size_t i=0;i<captured.packet_count;++i) {
+        frontend_source_companion_packet packet;
+        if (!frontend_source_companion_packet_read(owner->options.frontend,&captured,i,&packet,error)) return false;
+        if (packet.definition.flags&1) continue;
+        for (size_t j=0;j<packet.entity_count;++j) {
+            bool view;
+            if (!companion_ref_owned(owner,&models,registered,&packet,j,&view)) continue;
+            if (refs>=1021) return frontend_fail(error,QA_ERROR_FORMAT,"Selected Source weapon refs exceed the real scene extent");
+            ++refs;
+        }
+        for (size_t j=0;j<packet.polygon_count;++j) {
+            if (!packet.polygon_actors || !qa_actor_id_equal(packet.polygon_actors[j],owner->selection.actor)) continue;
+            if (polygons==SIZE_MAX/sizeof(*owner->companion_polygons))
+                return frontend_fail(error,QA_ERROR_FORMAT,"Selected Source polygon leaves its genuine captured vertex span");
+            ++polygons;
+        }
+        for (size_t j=0;j<packet.light_count;++j) {
+            if (!packet.light_actors || !qa_actor_id_equal(packet.light_actors[j],owner->selection.actor)) continue;
+            if (lights==SIZE_MAX/sizeof(*owner->companion_lights))
+                return frontend_fail(error,QA_ERROR_MEMORY,"Selected Source weapon lights exceed native extent");
+            ++lights;
+        }
+        for (size_t j=0;j<packet.weapon_count;++j) {
+            if (!qa_actor_id_equal(packet.weapons[j].actor,owner->selection.actor)) continue;
+            if (weapons==SIZE_MAX/sizeof(*owner->companion_weapons))
+                return frontend_fail(error,QA_ERROR_MEMORY,"Selected Source weapon completions exceed native extent");
+            ++weapons;
+        }
+    }
+    qa_arena *storage=&owner->options.frontend->frame.storage;
+    owner->companion_refs=refs?qa_arena_alloc(storage,refs*sizeof(*owner->companion_refs),_Alignof(equipment_companion_ref),error):NULL;
+    owner->companion_polygons=polygons?qa_arena_alloc(storage,polygons*sizeof(*owner->companion_polygons),_Alignof(equipment_companion_polygon),error):NULL;
+    owner->companion_lights=lights?qa_arena_alloc(storage,lights*sizeof(*owner->companion_lights),_Alignof(equipment_companion_light),error):NULL;
+    owner->companion_weapons=weapons?qa_arena_alloc(storage,weapons*sizeof(*owner->companion_weapons),_Alignof(qa_application_q3_equipment_source_weapon),error):NULL;
+    if ((refs && !owner->companion_refs) || (polygons && !owner->companion_polygons) ||
+        (lights && !owner->companion_lights) || (weapons && !owner->companion_weapons))
+        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed Source weapon selection");
     for (size_t i = 0; i < captured.packet_count; ++i) {
         frontend_source_companion_packet packet;
         if (!frontend_source_companion_packet_read(owner->options.frontend, &captured, i, &packet, error)) return false;
         if (packet.definition.flags & 1) continue;
         for (size_t j = 0; j < packet.entity_count; ++j) {
             const qa_q3_ref_entity *ref = packet.entities + j;
-            bool owned = packet.entity_actors && qa_actor_id_equal(packet.entity_actors[j], owner->selection.actor);
-            bool view = owned && packet.entity_views && packet.entity_views[j];
-            if (!owned && registered && (ref->flags & 4) && ref->kind == QA_Q3_REF_MODEL && ref->model > 0 &&
-                (ref->model == models.gun || ref->model == models.hands ||
-                    ref->model == models.barrel || ref->model == models.flash)) owned = view = true;
-            if (!owned) continue;
-            if (owner->companion_ref_count >= 1021)
-                return frontend_fail(error, QA_ERROR_FORMAT, "Selected Source weapon refs exceed the real scene extent");
-            equipment_companion_ref *refs = realloc(owner->companion_refs,
-                (owner->companion_ref_count + 1) * sizeof(*refs));
-            if (!refs) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed Source weapon refs");
-            owner->companion_refs = refs;
-            refs[owner->companion_ref_count++] = (equipment_companion_ref){*ref, packet.definition, view};
+            bool view;
+            if (!companion_ref_owned(owner,&models,registered,&packet,j,&view)) continue;
+            owner->companion_refs[owner->companion_ref_count++]=(equipment_companion_ref){*ref,packet.definition,view};
         }
         for (size_t j = 0; j < packet.polygon_count; ++j) {
             if (!packet.polygon_actors || !qa_actor_id_equal(packet.polygon_actors[j], owner->selection.actor)) continue;
@@ -149,41 +190,20 @@ static bool companion_prepare(frontend_equipment_source *owner, bool *present, q
                 polygon->count > SIZE_MAX / sizeof(*packet.vertices) ||
                 owner->companion_polygon_count == SIZE_MAX / sizeof(*owner->companion_polygons))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Selected Source polygon leaves its genuine captured vertex span");
-            equipment_companion_polygon *polygons = realloc(owner->companion_polygons,
-                (owner->companion_polygon_count + 1) * sizeof(*polygons));
-            if (!polygons) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed Source weapon polygons");
-            owner->companion_polygons = polygons;
-            equipment_companion_polygon *row = polygons + owner->companion_polygon_count;
-            *row = (equipment_companion_polygon){.polygon = *polygon, .definition = packet.definition,
-                .view = packet.polygon_views && packet.polygon_views[j]};
-            ++owner->companion_polygon_count;
-            if (polygon->count) {
-                row->vertices = malloc(polygon->count * sizeof(*row->vertices));
-                if (!row->vertices) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Source weapon polygon vertices");
-                memcpy(row->vertices, packet.vertices + polygon->first, polygon->count * sizeof(*row->vertices));
-            }
+            equipment_companion_polygon *row=owner->companion_polygons+owner->companion_polygon_count++;
+            *row=(equipment_companion_polygon){.polygon=*polygon,.definition=packet.definition,
+                .view=packet.polygon_views && packet.polygon_views[j],
+                .vertices=polygon->count?packet.vertices+polygon->first:NULL};
             row->polygon.first = 0;
         }
         for (size_t j = 0; j < packet.light_count; ++j) {
             if (!packet.light_actors || !qa_actor_id_equal(packet.light_actors[j], owner->selection.actor)) continue;
-            if (owner->companion_light_count == SIZE_MAX / sizeof(*owner->companion_lights))
-                return frontend_fail(error, QA_ERROR_MEMORY, "Selected Source weapon lights exceed native extent");
-            equipment_companion_light *lights = realloc(owner->companion_lights,
-                (owner->companion_light_count + 1) * sizeof(*lights));
-            if (!lights) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed Source weapon lights");
-            owner->companion_lights = lights;
-            lights[owner->companion_light_count++] = (equipment_companion_light){packet.lights[j],
-                packet.definition, packet.light_views && packet.light_views[j]};
+            owner->companion_lights[owner->companion_light_count++]=(equipment_companion_light){packet.lights[j],
+                packet.definition,packet.light_views && packet.light_views[j]};
         }
         for (size_t j = 0; j < packet.weapon_count; ++j) {
             if (!qa_actor_id_equal(packet.weapons[j].actor, owner->selection.actor)) continue;
-            if (owner->companion_weapon_count == SIZE_MAX / sizeof(*owner->companion_weapons))
-                return frontend_fail(error, QA_ERROR_MEMORY, "Selected Source weapon completions exceed native extent");
-            qa_application_q3_equipment_source_weapon *weapons = realloc(owner->companion_weapons,
-                (owner->companion_weapon_count + 1) * sizeof(*weapons));
-            if (!weapons) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed empty Source weapon recipe");
-            owner->companion_weapons = weapons;
-            weapons[owner->companion_weapon_count++] = packet.weapons[j];
+            owner->companion_weapons[owner->companion_weapon_count++]=packet.weapons[j];
         }
     }
     owner->companion = captured; owner->companion_selected = true;
@@ -445,11 +465,10 @@ static void release_draw(void *context)
     frontend_equipment_gear_release(owner->gear_presenter); owner->gear_presenter = NULL;
     owner->selection = owner->hud;
     owner->drawing = false; owner->original_q3_view = false;
-    free(owner->companion_refs); owner->companion_refs = NULL; owner->companion_ref_count = 0;
-    for (size_t i = 0; i < owner->companion_polygon_count; ++i) free(owner->companion_polygons[i].vertices);
-    free(owner->companion_polygons); owner->companion_polygons = NULL; owner->companion_polygon_count = 0;
-    free(owner->companion_lights); owner->companion_lights = NULL; owner->companion_light_count = 0;
-    free(owner->companion_weapons); owner->companion_weapons = NULL; owner->companion_weapon_count = 0;
+    owner->companion_refs = NULL; owner->companion_ref_count = 0;
+    owner->companion_polygons = NULL; owner->companion_polygon_count = 0;
+    owner->companion_lights = NULL; owner->companion_light_count = 0;
+    owner->companion_weapons = NULL; owner->companion_weapon_count = 0;
     owner->companion_selected = false; owner->companion = (frontend_source_companion_view){0};
     owner->companion_view_requested = false;
     if (owner->borrowed) {
@@ -843,8 +862,8 @@ bool frontend_equipment_source_destroy(frontend_equipment_source *owner, qa_erro
     if (!owner) return true;
     if (!frontend_equipment_source_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment receiver retains actual draw or submission scopes");
-    free(owner->companion_refs); free(owner->source_actors); free(owner->source_polygons);
-    free(owner->source_lights); free(owner->companion_lights); free(owner->companion_polygons);
+    free(owner->source_actors); free(owner->source_polygons);
+    free(owner->source_lights); free(owner->companion_polygons);
     free(owner->source_weapons); free(owner->companion_weapons);
     free(owner);
     return true;
@@ -1121,7 +1140,7 @@ static bool companion_submit(frontend_equipment_source *owner,
     for (size_t i = 0; i < owner->companion_polygon_count; ++i) {
         const equipment_companion_polygon *captured = owner->companion_polygons + i;
         if (captured->view && !owner->companion_view_requested) continue;
-        qa_scene_vertex *vertices = captured->vertices, *transformed = NULL;
+        const qa_scene_vertex *vertices=captured->vertices;qa_scene_vertex *transformed=NULL;
         if (captured->view && captured->polygon.count) {
             transformed=qa_arena_alloc(&frame->storage,captured->polygon.count*sizeof(*transformed),
                 _Alignof(qa_scene_vertex),error);
