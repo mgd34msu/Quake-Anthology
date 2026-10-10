@@ -8,6 +8,9 @@
 #include "qa/console.h"
 #include "q2_entity_effects.h"
 
+/* The same sound metadata drives effects and load-time registration. */
+size_t frontend_q2_effect_sound_count(void);
+const char *frontend_q2_effect_sound_path(size_t);
 typedef struct frontend_remote_q2_effects frontend_remote_q2_effects;
 typedef struct frontend_remote_q2_effects_policy frontend_remote_q2_effects_policy;
 typedef enum frontend_remote_q2_effects_profile {

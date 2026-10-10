@@ -1,3 +1,4 @@
+#include "ui_features.h"
 #include "remote_q2_private.h"
 #include "shared_resource_policy.h"
 #include "visual_access.h"
@@ -263,7 +264,8 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     row->materials = qa_material_library_create(row->images, row->frontend->order, error);
     row->fonts = qa_font_library_create(row->content.mounts, row->images, error);
     if (!row->materials || !row->fonts || !qa_audio_bank_create(row->content.mounts, &row->sounds, error)) return false;
-    if (!remote_q2_material_movies_create(row, error)) return false;
+    if (!frontend_ui_audio_prepare_q2_effects(row->frontend, row->sounds, error) ||
+        !remote_q2_material_movies_create(row, error)) return false;
     const uint8_t pixel[4] = {255, 255, 255, 255};
     qa_scene_image_level level = {1, 1, pixel, sizeof(pixel)};
     qa_scene_image *white = NULL;
@@ -298,9 +300,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     for (size_t i = 1; i < row->layout.max_sounds; ++i) {
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + i));
         if (!*name || name[0] == '*') continue;
-        qa_audio_asset *asset = NULL;
-        if (!qa_audio_bank_register(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
-        qa_audio_asset_release(asset);
+        if (!frontend_ui_audio_prepare_sound(row->frontend, row->sounds, name, QA_GAME_Q2, error)) return false;
     }
     qa_error issue = {0};
     if (!remote_q2_clientinfo_prepare(row, error)) return false;

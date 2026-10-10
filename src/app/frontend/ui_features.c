@@ -1,3 +1,4 @@
+#include "remote_q2_effects.h"
 #include "ui_features_private.h"
 #include "accessibility.h"
 #include "source_restore.h"
@@ -104,6 +105,25 @@ bool frontend_ui_audio_prepare_asset(qa_frontend *f, qa_audio_asset *asset, qa_e
                 qa_application_ui_preference_handles(f->application), i, &preferences, error) ||
             !qa_sound_captions_prepare_asset(f->ui_features->seats[i].captions, asset, preferences.language, error)) return false;
     }
+    return true;
+}
+bool frontend_ui_audio_prepare_sound(qa_frontend *f, qa_audio_bank *bank,
+    const char *name, qa_game_family family, qa_error *error)
+{
+    if (!f->audio) return true;
+    qa_audio_asset *asset = NULL;
+    qa_audio_sample *sample = NULL;
+    bool okay = qa_audio_bank_register(bank, name, family, &asset, error);
+    if (okay && asset) okay = qa_audio_asset_resample(asset, qa_audio_engine_rate(f->audio), family, &sample, error) &&
+        frontend_ui_audio_prepare_asset(f, asset, error);
+    qa_audio_sample_release(sample);
+    qa_audio_asset_release(asset);
+    return okay;
+}
+bool frontend_ui_audio_prepare_q2_effects(qa_frontend *f, qa_audio_bank *bank, qa_error *error)
+{
+    for (size_t i = 0; i < frontend_q2_effect_sound_count(); ++i)
+        if (!frontend_ui_audio_prepare_sound(f, bank, frontend_q2_effect_sound_path(i), QA_GAME_Q2, error)) return false;
     return true;
 }
 void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)

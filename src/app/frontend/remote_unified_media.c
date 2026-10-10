@@ -59,6 +59,8 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
         row->fonts = qa_font_library_create(row->files, row->images, error);
         okay = row->materials && row->fonts && qa_audio_bank_create(row->files, &row->sounds, error);
     }
+    if (okay && row->product->family == QA_GAME_Q2)
+        okay = frontend_ui_audio_prepare_q2_effects(owner->frontend, row->sounds, error);
     if (okay && row->product->family == QA_GAME_Q3)
         okay = frontend_source_identity_allocate(owner->frontend, &row->cinematic_audio_owner, error) &&
             frontend_q3_material_profile_initialize(owner->frontend, row->materials, error);
@@ -158,12 +160,8 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
             !resource.path || strncmp(resource.path, "sound/", 6)) continue;
         const qa_product *content = qa_catalog_product(qa_executable_recipe_catalog(recipe), resource.product);
         unified_media_bank *row = NULL;
-        qa_audio_asset *asset = NULL; qa_audio_sample *pcm = NULL;
         okay = content && bank(owner, content->identity, &row, error) &&
-            qa_audio_bank_register(row->sounds, resource.path, content->family, &asset, error);
-        if (okay && asset) okay = qa_audio_asset_resample(asset, rate, content->family, &pcm, error);
-        if (okay && asset) okay = frontend_ui_audio_prepare_asset(frontend, asset, error);
-        qa_audio_sample_release(pcm); qa_audio_asset_release(asset);
+            frontend_ui_audio_prepare_sound(frontend, row->sounds, resource.path, content->family, error);
     }
     if (!okay) {
         if (!frontend_unified_media_destroy(owner, NULL)) *out = owner;
