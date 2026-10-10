@@ -160,14 +160,9 @@ static bool q2_range_valid(qa_bsp_range range, size_t count)
     return (size_t)range.first <= count && (size_t)range.count <= count - (size_t)range.first;
 }
 
-static size_t q2_leaf_index(int32_t child)
-{
-    return (size_t)(-(int64_t)child - 1);
-}
-
 static bool q2_child_valid(const q2_collision *collision, int32_t child)
 {
-    return child < 0 ? q2_leaf_index(child) < collision->leaf_count
+    return child < 0 ? qa_collision_leaf_index(child) < collision->leaf_count
                      : (size_t)child < collision->node_count;
 }
 
@@ -292,13 +287,9 @@ static bool q2_point_contents(const void *opaque, void *opaque_scratch, const qa
     (void)error;
     (void)opaque_scratch;
     qa_vec3 point = q2_local(query->point, &query->target, basis);
-    int32_t child = collision->headnodes[model];
-    while (child >= 0) {
-        const qa_collision_node *node = &collision->nodes[(size_t)child];
-        float distance = qa_collision_plane_distance(point, &collision->planes[node->plane]);
-        child = node->children[distance < 0 ? 1 : 0];
-    }
-    const q2_leaf *leaf = &collision->leaves[q2_leaf_index(child)];
+    int32_t child = qa_collision_tree_point(collision->planes, collision->nodes,
+        collision->headnodes[model], point, true, true);
+    const q2_leaf *leaf = &collision->leaves[qa_collision_leaf_index(child)];
     *out = (qa_point_contents){.family = QA_GAME_Q2,
         .contents = query->policy.behavior->contents_format != QA_GAME_Q2 || query->policy.behavior->merged_contents ? leaf->merged : leaf->stored,
         .stored = leaf->stored, .merged = leaf->merged};
@@ -388,7 +379,7 @@ static void q2_position_test(q2_work *work, int32_t headnode)
         int32_t child = work->scratch->node_stack[--depth];
         if (child < 0) {
             ++leaves;
-            q2_trace_leaf(work, q2_leaf_index(child));
+            q2_trace_leaf(work, qa_collision_leaf_index(child));
             if (work->result.all_solid) return;
         } else {
             q2_box_children(collision, work->scratch, &collision->nodes[(size_t)child], bounds, &depth);
@@ -491,7 +482,7 @@ static void q2_trace_media(q2_work *work, int32_t headnode)
         int32_t child = work->scratch->node_stack[--depth];
         if (child < 0) {
             ++leaves;
-            const q2_leaf *leaf = &collision->leaves[q2_leaf_index(child)];
+            const q2_leaf *leaf = &collision->leaves[qa_collision_leaf_index(child)];
             for (size_t i = 0; i < (size_t)leaf->brushes.count; ++i)
                 q2_brush_medium(work, collision->leaf_brushes[(size_t)leaf->brushes.first + i], &count);
         } else {

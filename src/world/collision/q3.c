@@ -442,12 +442,9 @@ static bool q3_point_contents(const void *state, void *scratch, const qa_point_q
         const q3_model *members = &map->models[model];
         for (size_t i = 0; i < members->brush_count; ++i) contents = qa_collision_bits_union(contents, q3_brush_point(map, members->brushes[i], point));
     } else {
-        int32_t index = map->node_count != 0 ? 0 : -1;
-        while (index >= 0) {
-            const qa_collision_node *node = &map->nodes[index];
-            index = node->children[qa_collision_plane_distance(point, &map->planes[node->plane]) < 0 ? 1 : 0];
-        }
-        const q3_leaf *leaf = &map->leaves[-1 - index];
+        int32_t index = qa_collision_tree_point(map->planes, map->nodes,
+            map->node_count != 0 ? 0 : -1, point, true, true);
+        const q3_leaf *leaf = &map->leaves[qa_collision_leaf_index(index)];
         for (uint32_t i = 0; i < leaf->brushes.count; ++i)
             contents = qa_collision_bits_union(contents, q3_brush_point(map, map->leaf_brushes[leaf->brushes.first + i], point));
     }

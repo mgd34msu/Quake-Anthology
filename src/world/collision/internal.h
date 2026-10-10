@@ -21,6 +21,10 @@ typedef struct qa_collision_ops {
 } qa_collision_ops;
 typedef struct qa_collision_kernel { void *state; const qa_collision_ops *ops; } qa_collision_kernel;
 typedef struct qa_collision_node { uint32_t plane; int32_t children[2]; } qa_collision_node;
+int32_t qa_collision_tree_point(const qa_collision_plane *, const qa_collision_node *,
+    int32_t root, qa_vec3 point, bool axial_planes, bool front_on_plane);
+static inline size_t qa_collision_leaf_index(int32_t child)
+{ return (size_t)(-1 - (int64_t)child); }
 /* Geometry owns these immutable tables for the lifetime of its kernel. */
 typedef struct qa_collision_topology {
     const qa_collision_plane *planes;

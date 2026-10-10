@@ -102,11 +102,6 @@ void qa_trace_scratch_destroy(qa_trace_scratch *scratch)
     free(scratch);
 }
 
-static size_t leaf_index(int32_t child)
-{
-    return (size_t)(-(int64_t)child - 1);
-}
-
 static size_t bit_bytes(uint32_t count)
 {
     return (size_t)(((uint64_t)count + 7u) / 8u);
@@ -490,15 +485,9 @@ bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 poin
     if (geometry == NULL || out == NULL || !qa_vec_finite(point))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid point-leaf query");
     int32_t child = rule == QA_LEAF_Q1 ? (geometry->node_count == 0 ? -1 : 0) : geometry->root;
-    while (child >= 0) {
-        const qa_collision_node *node = &geometry->nodes[(size_t)child];
-        const qa_collision_plane *plane = &geometry->planes[node->plane];
-        float projection = rule == QA_LEAF_COLLISION && geometry->family == QA_GAME_Q3 && plane->type < 3
-            ? qa_vec_component(point, (unsigned)plane->type) : qa_vec_dot(point, plane->normal);
-        float distance = projection - plane->distance;
-        child = node->children[rule == QA_LEAF_Q1 ? (distance > 0 ? 0 : 1) : (distance < 0 ? 1 : 0)];
-    }
-    *out = geometry->leaves[leaf_index(child)];
+    child = qa_collision_tree_point(geometry->planes, geometry->nodes, child, point,
+        rule == QA_LEAF_COLLISION && geometry->family == QA_GAME_Q3, rule != QA_LEAF_Q1);
+    *out = geometry->leaves[qa_collision_leaf_index(child)];
     return true;
 }
 
@@ -539,7 +528,7 @@ bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_sc
     while (count != 0) {
         int32_t child = scratch->nodes[--count];
         if (child < 0) {
-            size_t leaf = leaf_index(child);
+            size_t leaf = qa_collision_leaf_index(child);
             if (q1_touched) {
                 if (qa_collision_bits_overlap(geometry->leaves[leaf].contents, qa_collision_bit(QA_CONTENT_SOLID))) continue;
             } else if (geometry->family == QA_GAME_Q1) {
@@ -666,7 +655,7 @@ bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_trace_scr
     while (count) {
         int32_t child = scratch->nodes[--count];
         if (child < 0) {
-            size_t leaf = leaf_index(child);
+            size_t leaf = qa_collision_leaf_index(child);
             if (qa_collision_bits_overlap(geometry->leaves[leaf].contents, qa_collision_bit(QA_CONTENT_SOLID))) continue;
             qa_bytes row;
             if (!visibility_row(geometry, leaf, false, &row, error)) return false;

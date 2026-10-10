@@ -1,5 +1,18 @@
 #include "internal.h"
 
+int32_t qa_collision_tree_point(const qa_collision_plane *planes, const qa_collision_node *nodes,
+    int32_t child, qa_vec3 point, bool axial_planes, bool front_on_plane)
+{
+    while (child >= 0) {
+        const qa_collision_node *node = &nodes[(size_t)child];
+        const qa_collision_plane *plane = &planes[node->plane];
+        float distance = axial_planes ? qa_collision_plane_distance(point, plane)
+            : qa_vec_dot(point, plane->normal) - plane->distance;
+        child = node->children[front_on_plane ? (distance < 0 ? 1 : 0) : (distance > 0 ? 0 : 1)];
+    }
+    return child;
+}
+
 const qa_trace_behavior qa_trace_behaviors[QA_RULESET_Q3 + 1] = {
     [QA_RULESET_NETQUAKE] = {QA_GAME_Q1, {{.03125f, false, false, false, false}, {.03125f, 0, true}, false}, true, false, false, true, false},
     [QA_RULESET_QUAKEWORLD] = {QA_GAME_Q1, {{.03125f, false, false, false, false}, {.03125f, 0, true}, false}, true, false, false, true, false},
