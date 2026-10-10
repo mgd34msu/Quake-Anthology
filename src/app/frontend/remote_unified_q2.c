@@ -1152,11 +1152,13 @@ static qa_scene_fog fog_sample(frontend_unified_q2 *o,double seconds)
     result.height_falloff=(float)(a.height_falloff*back+b.height_falloff*front);
     result.height_density=(float)(a.height_density*back+b.height_density*front); return result;
 }
-static bool sky_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const qa_unified_q2_map_event *event,qa_error *e)
+static bool sky_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const qa_q2_map_event *event,qa_error *e)
 {
     q2_activation *owner=NULL;q2_bank *b=NULL;qa_scene_image *images[6]={0};
     bool okay=activation(o,&row->owner,&owner,e) && !(owner && owner->retired) && bank(o,row->content,NULL,NULL,0,false,&b,e);
-    const char *name=event->resource?event->resource:"";size_t n=strlen(name);
+    const char *name=qa_strings_cstr(o->replica->strings,event->resource);
+    if (!name) name="";
+    size_t n=strlen(name);
     char *path=okay?malloc(n+7):NULL;if (okay && !path)return false;
     static const char *const suffixes[]={"rt","lf","bk","ft","up","dn"};
     qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_SKY,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR,.transparent_index=-1};
@@ -1218,12 +1220,13 @@ static bool fog_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
 }
 static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool *mirrored,qa_error *e)
 {
-    const qa_unified_q2_map_event *v=&row->payload.value.q2_map;q2_bank *b=NULL;q2_activation *owner=NULL;
+    const qa_q2_map_event *v=&row->payload.value.q2_map;q2_bank *b=NULL;q2_activation *owner=NULL;
+    const char *event_text=qa_strings_cstr(o->replica->strings,v->text), *resource=qa_strings_cstr(o->replica->strings,v->resource);
     switch (v->kind){
-    case QA_Q2_MAP_MUSIC:return music_receive(o,row,v->resource?v->resource:v->text,e);
-    case QA_Q2_MAP_ACHIEVEMENT:return achievement(o,row,v->text,true,e);
+    case QA_Q2_MAP_MUSIC:return music_receive(o,row,resource?resource:event_text,e);
+    case QA_Q2_MAP_ACHIEVEMENT:return achievement(o,row,event_text,true,e);
     case QA_Q2_MAP_LIGHTSTYLE:{if (v->style<0 || v->style>=256 || !source_bank(o,row,false,&b,e))return false;
-        char *text=text_copy(v->text?v->text:"");if (!text)return false;free(b->styles[v->style]);b->styles[v->style]=text;b->style_sequences[v->style]=row->sequence;return true;}
+        char *text=text_copy(event_text?event_text:"");if (!text)return false;free(b->styles[v->style]);b->styles[v->style]=text;b->style_sequences[v->style]=row->sequence;return true;}
     case QA_Q2_MAP_SKY:return sky_receive(o,row,v,e);
     case QA_Q2_MAP_STORY:{qa_unified_presentation_event *copy=NULL;
         if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired) || !record_copy(row,&copy,e))return false;
@@ -1231,7 +1234,7 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
     case QA_Q2_MAP_FOG:return fog_receive(o,row,v->recipient,&v->fog,(double)v->duration*1000,e);
     case QA_Q2_MAP_HELP:{qa_buffer text={0};
         if (v->slot<1 || v->slot>2 || !activation(o,&row->owner,&owner,e) || (owner && owner->retired) ||
-            !localized(o,row,v->text,v->arguments,v->argument_count,&text,e))return false;
+            !localized(o,row,event_text,v->arguments,v->argument_count,&text,e))return false;
         char *print=malloc(text.size+2);if (!print){qa_buffer_free(&text);return false;}
         memcpy(print,text.data,text.size);print[text.size]='\n';print[text.size+1]=0;
         free(o->help_text[v->slot-1]);o->help_text[v->slot-1]=(char *)text.data;o->help_owner[v->slot-1]=owner;
@@ -1345,7 +1348,7 @@ bool frontend_unified_q2_presentation_validate(frontend_unified_q2 *o,const qa_u
     case QA_UNIFIED_PRESENTATION_Q2_PLAYER:{const qa_q2_player_event *v=&row->payload.value.q2_player;
         if (v->kind==QA_Q2_PLAYER_USERINFO)return userinfo(o,v,false,e);
         qa_actor_id a;return !v->actor.registry || source_actor(o,v->actor,&a,e);}
-    case QA_UNIFIED_PRESENTATION_Q2_MAP:if (row->payload.value.q2_map.kind==QA_Q2_MAP_ACHIEVEMENT)return achievement(o,row,row->payload.value.q2_map.text,false,e);return true;
+    case QA_UNIFIED_PRESENTATION_Q2_MAP:if (row->payload.value.q2_map.kind==QA_Q2_MAP_ACHIEVEMENT)return achievement(o,row,qa_strings_cstr(o->replica->strings,row->payload.value.q2_map.text),false,e);return true;
     case QA_UNIFIED_PRESENTATION_Q2_PROTOCOL:return true;
     case QA_UNIFIED_PRESENTATION_BUILTIN:{qa_actor_id a;return !row->payload.value.builtin.actor.registry || source_actor(o,row->payload.value.builtin.actor,&a,e);}
     case QA_UNIFIED_PRESENTATION_OWNER:return frontend_unified_q2_owner_validate(o,row,e);
@@ -1739,8 +1742,8 @@ static bool overlay_text(qa_ui *ui,qa_scene_rect target,qa_scene_frame *frame,co
 static bool story_draw(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     if (!o->story) return true;
-    const qa_unified_q2_map_event *story=&o->story->payload.value.q2_map;qa_buffer text={0};
-    if (!localized(o,o->story,story->text,story->arguments,story->argument_count,&text,e))return false;
+    const qa_q2_map_event *story=&o->story->payload.value.q2_map;qa_buffer text={0};
+    if (!localized(o,o->story,qa_strings_cstr(o->replica->strings,story->text),story->arguments,story->argument_count,&text,e))return false;
     qa_ui_presentation presentation; qa_font_layout layout;
     bool okay=qa_ui_presentation_read(ui,&presentation,e);
     qa_font_layout_options opts={.text={text.data,text.size},.color={1,1,1,1},

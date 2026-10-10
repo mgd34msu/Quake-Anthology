@@ -583,7 +583,7 @@ bool application_unified_persistent_key(qa_application *app, const application_u
                 (resource && (!strcmp(resource, "cutscene") || !strcmp(resource, "sell-screen")))) key.domain = PERSIST_FINALE;
         }
     } else if (p->kind == QA_UNIFIED_PRESENTATION_Q2_MAP) {
-        const qa_unified_q2_map_event *v = &p->value.q2_map;
+        const qa_q2_map_event *v = &p->value.q2_map;
         if (v->kind == QA_Q2_MAP_LIGHTSTYLE) { key.domain = PERSIST_STYLE; key.selector = (uint32_t)v->style; }
         else if (v->kind == QA_Q2_MAP_MUSIC) key.domain = PERSIST_MUSIC;
     }
@@ -948,7 +948,7 @@ static bool presentation_for(qa_application *app, const application_unified_even
         if (v->kind == QA_Q2_PLAYER_USERINFO || v->kind == QA_Q2_PLAYER_FLASHLIGHT || v->kind == QA_Q2_PLAYER_DOGTAG || v->kind == QA_Q2_PLAYER_ALPHA) return true;
         return own(v->actor, player);
     } else if (p->kind == QA_UNIFIED_PRESENTATION_Q2_MAP) {
-        const qa_unified_q2_map_event *v = &p->value.q2_map;
+        const qa_q2_map_event *v = &p->value.q2_map;
         if (v->kind == QA_Q2_MAP_AUTOSAVE) return false;
         return own(v->recipient, player);
     } else if (p->kind == QA_UNIFIED_PRESENTATION_Q3) {

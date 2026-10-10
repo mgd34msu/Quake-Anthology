@@ -13,28 +13,6 @@
 
 /* Names stay interned until the wire codec resolves them. Payload pointers are
  * owned by the event record or its retained source page leases. */
-typedef struct qa_unified_q2_campaign_level {
-    char *map, *name;
-    uint32_t visit_order, total_secrets, found_secrets, total_monsters, killed_monsters;
-    double time_seconds;
-} qa_unified_q2_campaign_level;
-typedef struct qa_unified_q2_map_event {
-    qa_q2_map_event_kind kind;
-    qa_actor_id actor, recipient, target;
-    char *text, *resource;
-    qa_vec3 origin, direction, color;
-    qa_q2_fog fog;
-    float value, duration, radius, alpha, intensity, fade_start, fade_end, cone_cosine;
-    int32_t count, style, slot;
-    uint32_t flags, resolution;
-    bool visible;
-    const qa_builtin_message_arg *arguments;
-    size_t argument_count;
-    qa_unified_q2_campaign_level *levels;
-    size_t level_count;
-    uint64_t button_time_ns;
-} qa_unified_q2_map_event;
-
 /* Decoded foreign temporary fields keep their real protocol discriminator.
  * Entity fields have full Source actor receipts as well as original numbers. */
 typedef struct qa_unified_q2_temp_field {
@@ -155,7 +133,7 @@ typedef struct qa_unified_presentation_payload {
     union {
         qa_builtin_event builtin;
         qa_q2_player_event q2_player;
-        qa_unified_q2_map_event q2_map;
+        qa_q2_map_event q2_map;
         qa_unified_q2_protocol_event q2_protocol;
         qa_unified_q2_temporary q2_temporary;
         qa_unified_model_state model;

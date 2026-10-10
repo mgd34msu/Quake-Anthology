@@ -17,7 +17,7 @@ typedef enum rr_kind {
 } rr_kind;
 static const char *const coop_keys[] = {"", "$g_coop_respawn_in_combat", "$g_coop_respawn_bad_area",
     "$g_coop_respawn_blocked", "$g_coop_respawn_waiting", "$g_coop_respawn_no_lives"};
-typedef qa_unified_q2_campaign_level rr_level;
+typedef qa_q2_campaign_level rr_level;
 typedef struct rr_record {
     qa_unified_presentation_event *event;
     rr_kind kind;
@@ -28,16 +28,16 @@ typedef struct rr_record {
     qa_scene_image *image;
     char *localized, *secondary_localized;
     union {
-        struct { int32_t key, flags, color; qa_vec3 origin; double duration; char *path; qa_vec4 tint; } poi;
+        struct { int32_t key, flags, color; qa_vec3 origin; double duration; const char *path; qa_vec4 tint; } poi;
         struct { int32_t key; } remove;
-        struct { int32_t slot; char *name; double fraction; bool visible; } bar;
+        struct { int32_t slot; const char *name; double fraction; bool visible; } bar;
         struct { qa_vec3 direction; double amount; bool health, armor, shield; } damage;
         struct { qa_vec3 origin, direction; bool first; } path;
         struct { uint32_t state; double lives; } coop;
-        struct { rr_level *levels; size_t count; double ready; } report;
-        struct { char *text; char **args; size_t count; bool talk; } objective;
+        struct { const rr_level *levels; size_t count; double ready; } report;
+        struct { const char *text; char **args; size_t count; bool talk; } objective;
         struct { bool visible; } mission;
-        struct { char *primary, *secondary; bool visible, slow; } help;
+        struct { const char *primary, *secondary; bool visible, slow; } help;
     } value;
 } rr_record;
 typedef struct rr_bar { struct rr_bar *next; rr_record row; } rr_bar;
@@ -143,7 +143,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
     r->content=row->content; r->source_provider=row->provider;
     r->owner_provider=row->owner.provider; r->owner_generation=row->owner.generation;
     r->seconds=row->seconds;
-    const qa_unified_q2_map_event *map=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_MAP?&row->payload.value.q2_map:NULL;
+    const qa_q2_map_event *map=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_MAP?&row->payload.value.q2_map:NULL;
     const qa_q2_player_event *player=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PLAYER?&row->payload.value.q2_player:NULL;
     const qa_unified_q2_protocol_event *protocol=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PROTOCOL?&row->payload.value.q2_protocol:NULL;
     qa_actor_id actor=map?map->recipient:player?player->actor:protocol->actor;
@@ -153,7 +153,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
         r->value.poi.key=map?1:protocol->poi.key;
         r->value.poi.flags=map?1:protocol->poi.flags;
         r->value.poi.origin=map?map->origin:protocol->poi.position;
-        r->value.poi.path=map?map->resource:protocol->resource;
+        r->value.poi.path=map?qa_strings_cstr(o->replica->strings,map->resource):protocol->resource;
         r->value.poi.duration=map?map->duration:protocol->poi.duration;
         r->value.poi.color=map?map->count:protocol->poi.color;
         r->value.poi.tint=(qa_vec4){1,1,1,1};
@@ -161,7 +161,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
             isfinite(r->value.poi.duration) && isfinite(r->seconds*1000+r->value.poi.duration); break;
     case RR_REMOVE_POI: r->value.remove.key=map?map->slot:protocol->poi.key; break;
     case RR_HEALTHBAR:
-        r->value.bar.slot=map->slot; r->value.bar.name=map->text;
+        r->value.bar.slot=map->slot; r->value.bar.name=qa_strings_cstr(o->replica->strings,map->text);
         r->value.bar.fraction=map->value; r->value.bar.visible=map->visible;
         okay=okay && actor_read(o,map->target,retained,resolve,&r->target,e) &&
             r->value.bar.name && isfinite(r->value.bar.fraction); break;
@@ -188,7 +188,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
             okay=map->levels[i].map && map->levels[i].name && isfinite(map->levels[i].time_seconds);
         break;
     case RR_OBJECTIVE:
-        r->value.objective.text=map->text; r->value.objective.talk=(map->flags&1u)!=0;
+        r->value.objective.text=qa_strings_cstr(o->replica->strings,map->text); r->value.objective.talk=(map->flags&1u)!=0;
         okay=okay && map->text && map->argument_count<=65536 && (!map->argument_count || map->arguments);
         if (okay && map->argument_count) {
             r->value.objective.args=calloc(map->argument_count,sizeof(char *));
@@ -202,7 +202,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
         break;
     case RR_MISSION: r->value.mission.visible=map->visible; break;
     case RR_HELP:
-        r->value.help.primary=map->text; r->value.help.secondary=map->resource;
+        r->value.help.primary=qa_strings_cstr(o->replica->strings,map->text); r->value.help.secondary=qa_strings_cstr(o->replica->strings,map->resource);
         r->value.help.visible=map->visible; r->value.help.slow=(map->flags&1u)!=0;
         okay=okay && map->text && map->resource; break;
     case RR_UNKNOWN: break;
@@ -727,7 +727,8 @@ static bool draw_report(frontend_unified_q2_rr_hud *o, rr_draw *draw, qa_error *
     for (size_t i=0; i<count; ++i) order[i]=(rr_level_order){o->report.value.report.levels+i,i};
     if (count) qsort(order,count,sizeof(*order),level_compare);
     for (size_t i=0; i<count; ++i) {
-        const rr_level *level=order[i].level; const char *name=*level->name?level->name:level->map;
+        const rr_level *level=order[i].level; const char *name=qa_strings_cstr(o->replica->strings,level->name);
+        if (!name || !*name) name=qa_strings_cstr(o->replica->strings,level->map);
         char killed[32],monsters[32],secrets[32],total[32],minutes[32],seconds[32];
         if (!qa_format_number(level->killed_monsters,killed,e) ||
             !qa_format_number(level->total_monsters,monsters,e) ||

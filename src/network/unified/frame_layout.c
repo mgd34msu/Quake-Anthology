@@ -1418,47 +1418,47 @@ static const qa_unified_field qa_q2_fog_fields[] = {
 static const qa_unified_record_layout qa_q2_fog_layout = QA_UNIFIED_LAYOUT(qa_q2_fog, qa_q2_fog_fields);
 
 static const qa_unified_field qa_unified_q2_campaign_level_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, map, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, name, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, visit_order, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, total_secrets, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, found_secrets, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, total_monsters, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, killed_monsters, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_campaign_level, time_seconds, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, map, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, name, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, visit_order, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, total_secrets, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, found_secrets, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, total_monsters, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, killed_monsters, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_campaign_level, time_seconds, QA_UNIFIED_FIELD_F64),
 };
-static const qa_unified_record_layout qa_unified_q2_campaign_level_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_campaign_level, qa_unified_q2_campaign_level_fields);
+static const qa_unified_record_layout qa_unified_q2_campaign_level_layout = QA_UNIFIED_LAYOUT(qa_q2_campaign_level, qa_unified_q2_campaign_level_fields);
 
 static const qa_unified_field qa_unified_q2_map_event_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_RECORD(qa_unified_q2_map_event, actor, qa_unified_actor_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_map_event, recipient, qa_unified_actor_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_map_event, target, qa_unified_actor_layout),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, text, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, resource, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_RECORD(qa_unified_q2_map_event, origin, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_map_event, direction, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_map_event, color, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_map_event, fog, qa_q2_fog_layout),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, value, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, duration, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, radius, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, alpha, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, intensity, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, fade_start, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, fade_end, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, cone_cosine, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, count, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, style, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, slot, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, flags, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, resolution, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, visible, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_ARRAY(qa_unified_q2_map_event, arguments, argument_count, qa_builtin_message_arg_layout, 65536),
-    QA_UNIFIED_ARRAY(qa_unified_q2_map_event, levels, level_count, qa_unified_q2_campaign_level_layout, 65536),
-    QA_UNIFIED_FIELD(qa_unified_q2_map_event, button_time_ns, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_FIELD(qa_q2_map_event, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_RECORD(qa_q2_map_event, actor, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_q2_map_event, recipient, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_q2_map_event, target, qa_unified_actor_layout),
+    QA_UNIFIED_FIELD(qa_q2_map_event, text, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_map_event, resource, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_RECORD(qa_q2_map_event, origin, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_map_event, direction, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_map_event, color, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_map_event, fog, qa_q2_fog_layout),
+    QA_UNIFIED_FIELD(qa_q2_map_event, value, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, duration, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, radius, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, alpha, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, intensity, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, fade_start, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, fade_end, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, cone_cosine, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, count, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, style, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, slot, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, flags, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, resolution, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_map_event, visible, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_ARRAY(qa_q2_map_event, arguments, argument_count, qa_builtin_message_arg_layout, 65536),
+    QA_UNIFIED_ARRAY(qa_q2_map_event, levels, level_count, qa_unified_q2_campaign_level_layout, QA_Q2_CAMPAIGN_LEVEL_LIMIT),
+    QA_UNIFIED_FIELD(qa_q2_map_event, button_time_ns, QA_UNIFIED_FIELD_U64),
 };
-static const qa_unified_record_layout qa_unified_q2_map_event_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_map_event, qa_unified_q2_map_event_fields);
+static const qa_unified_record_layout qa_unified_q2_map_event_layout = QA_UNIFIED_LAYOUT(qa_q2_map_event, qa_unified_q2_map_event_fields);
 
 static const qa_unified_field qa_unified_q2_temp_field_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q2_temp_field, kind, QA_UNIFIED_FIELD_I32),
@@ -2054,7 +2054,7 @@ static bool presentation_check(const qa_unified_presentation_event *row, qa_erro
         break;
     }
     case QA_UNIFIED_PRESENTATION_Q2_MAP: {
-        const qa_unified_q2_map_event *event=&payload->value.q2_map;
+        const qa_q2_map_event *event=&payload->value.q2_map;
         okay=event->kind>=QA_Q2_MAP_HELP && event->kind<=QA_Q2_MAP_HELP_COMPUTER &&
             message_arguments_check(event->arguments,event->argument_count);
         break;

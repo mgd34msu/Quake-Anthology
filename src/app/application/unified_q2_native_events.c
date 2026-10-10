@@ -81,35 +81,9 @@ bool application_unified_q2_native_map(application_provider *p, const qa_q2_map_
     qa_clock_state clock;
     if (!v || !source(p, &clock, e)) return false;
     if (v->kind == QA_Q2_MAP_WORLD_TEXT || v->kind == QA_Q2_MAP_GOAL || v->kind == QA_Q2_MAP_SECRET) return true;
-    qa_application *app = p->application;
-    qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q2_MAP};
-    qa_unified_q2_map_event *r = &payload.value.q2_map;
-    *r = (qa_unified_q2_map_event){.kind = v->kind, .actor = v->actor, .recipient = v->recipient,
-        .target = v->target, .text = alias(app, v->text), .resource = alias(app, v->resource),
-        .origin = v->origin, .direction = v->direction, .color = v->color, .fog = v->fog,
-        .value = v->value, .duration = v->duration, .radius = v->radius, .alpha = v->alpha,
-        .intensity = v->intensity, .fade_start = v->fade_start, .fade_end = v->fade_end,
-        .cone_cosine = v->cone_cosine, .count = v->count, .style = v->style, .slot = v->slot,
-        .flags = v->flags, .resolution = v->resolution, .visible = v->visible,
-        .argument_count = v->argument_count, .level_count = v->level_count, .button_time_ns = v->button_time_ns};
-    r->arguments = v->arguments;
-    bool ok = true;
-    if (ok && v->level_count) {
-        if (v->level_count > QA_Q2_CAMPAIGN_LEVEL_LIMIT || !v->levels)
-            ok = application_fail(e, QA_ERROR_ARGUMENT, "Q2 unit report lost its actual campaign rows");
-        else {
-            r->levels = application_event_stream_alloc(app, v->level_count * sizeof(*r->levels), _Alignof(qa_unified_q2_campaign_level), e);
-            if (!r->levels) ok = false;
-            for (size_t i = 0; ok && i < v->level_count; ++i) {
-                const qa_q2_campaign_level *a = v->levels + i;
-                r->levels[i] = (qa_unified_q2_campaign_level){.map = alias(app, a->map), .name = alias(app, a->name),
-                    .visit_order = a->visit_order, .total_secrets = a->total_secrets, .found_secrets = a->found_secrets,
-                    .total_monsters = a->total_monsters, .killed_monsters = a->killed_monsters, .time_seconds = a->time_seconds};
-            }
-        }
-    }
-    if (ok) ok = emit(p, &payload, NULL, v->actor, v->recipient, clock.frame.time_ns, audience, e);
-    return ok;
+    qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q2_MAP,
+        .value.q2_map = *v};
+    return emit(p, &payload, NULL, v->actor, v->recipient, clock.frame.time_ns, audience, e);
 }
 
 static bool model(application_provider *p, qa_actor_id id, const qa_entity_visual *v,
