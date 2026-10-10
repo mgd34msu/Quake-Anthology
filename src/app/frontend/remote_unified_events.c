@@ -8,11 +8,6 @@
 
 #include <math.h>
 
-typedef struct unified_event_batch {
-    struct unified_event_batch *next;
-    qa_unified_document *document;
-    size_t presentation_at, simulation_at;
-} unified_event_batch;
 typedef struct unified_event_resource {
     struct unified_event_resource *next;
     qa_string_id id, content, path;
@@ -30,13 +25,23 @@ typedef struct unified_component_owner {
     uint64_t generation;
     bool retired, cancelled;
 } unified_component_owner;
+typedef struct unified_received_event {
+    struct unified_received_event *next_retained;
+    qa_event_lease *lease;
+    qa_unified_document *document;
+    unified_component_owner component;
+} unified_received_event;
 struct frontend_unified_events {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
     frontend_unified_media *media;
     frontend_unified_event_options options;
     qa_strings *strings;
-    unified_event_batch *pending, **tail;
+    qa_event_ring *records;
+    unified_received_event *retained;
+    uint64_t presentation_cursor, simulation_cursor;
+    size_t presentation_at, simulation_at;
+    const qa_unified_frame_events *delivery;
     unified_event_resource *resources;
     unified_component_owner *components;
     unified_event_link *links;
@@ -50,6 +55,39 @@ struct frontend_unified_events {
     bool has_presentation_sequence, has_simulation_sequence;
     bool has_frame, prepared, busy, owns_audio, families_ready;
 };
+
+static unified_received_event *record_begin(frontend_unified_events *o,
+    qa_event_transaction *transaction,qa_error *error)
+{
+    if (!qa_event_ring_begin(o->records,transaction)) {
+        frontend_unified_fail(error,QA_ERROR_MEMORY,"Received event storage is full"); return NULL;
+    }
+    unified_received_event *record=qa_event_ring_alloc(transaction,sizeof(*record),
+        _Alignof(unified_received_event),error);
+    if (!record) {
+        qa_event_ring_abort(transaction);
+        frontend_unified_fail(error,QA_ERROR_MEMORY,"Received event storage is full"); return NULL;
+    }
+    *record=(unified_received_event){0}; return record;
+}
+static void metadata_retire(frontend_unified_events *o)
+{
+    uint64_t first=qa_event_ring_first(o->records),next=qa_event_ring_next(o->records);
+    while (first<next) {
+        const unified_received_event *record=qa_event_ring_at(o->records,first);
+        if (record->document) break;
+        o->presentation_cursor=o->simulation_cursor=++first;
+        qa_event_ring_retire(o->records,first);
+    }
+}
+static void metadata_commit(frontend_unified_events *o,qa_event_transaction *transaction,
+    unified_received_event *record)
+{
+    uint64_t id=qa_event_ring_commit(transaction,record);
+    record->lease=qa_event_ring_retain(o->records,id);
+    record->next_retained=o->retained; o->retained=record;
+    metadata_retire(o);
+}
 
 static bool current(frontend_unified_events *o, qa_error *e)
 {
@@ -80,8 +118,6 @@ static unified_component_owner *component_find(const frontend_unified_events *o,
         if (c->generation==generation && c->provider==id) return c;
     return NULL;
 }
-static void component_free(unified_component_owner *c)
-{ free(c); }
 static bool component_read(frontend_unified_events *o,const qa_unified_component_owner *owner,const char *content,
     unified_component_owner *out,qa_error *e)
 {
@@ -121,9 +157,12 @@ bool frontend_unified_events_component_admit_created(frontend_unified_events *o,
         if (okay && c->cancelled) { c->cancelled=false; *created=true; }
         return okay;
     }
-    c=malloc(sizeof(*c));
-    if (!c) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining reliable component presentation identity");
-    *c=candidate; c->next=o->components; o->components=c; *created=true; return true;
+    qa_event_transaction transaction;
+    unified_received_event *record=record_begin(o,&transaction,e);
+    if (!record) return false;
+    record->component=candidate; c=&record->component;
+    metadata_commit(o,&transaction,record);
+    c->next=o->components; o->components=c; *created=true; return true;
 }
 bool frontend_unified_events_component_cancel(frontend_unified_events *o,const qa_unified_component_owner *owner,qa_error *e)
 {
@@ -157,9 +196,14 @@ static frontend_unified_events *allocate(qa_frontend *f,frontend_remote_unified 
     if (!o) { frontend_unified_fail(e,QA_ERROR_MEMORY,"Allocating private unified event ledger"); return NULL; }
     o->frontend=f; o->replica=r; o->media=m; o->options=*opts;
     o->strings=r->strings;
+    const qa_unified_limits *limits=qa_unified_session_limits(r->session);
+    o->records=qa_event_ring_create(limits->queued_reliable_bytes,16384,
+        r->options.identity_capacity, e);
+    if (!o->records) { free(o); return NULL; }
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
     o->hud=f->seats[domain->physical_seat].hud;
-    o->epoch=frontend_remote_unified_epoch(r); o->tail=&o->pending;
+    o->epoch=frontend_remote_unified_epoch(r);
+    o->presentation_cursor=o->simulation_cursor=qa_event_ring_first(o->records);
     o->families_ready=true;
     return o;
 }
@@ -169,16 +213,11 @@ bool frontend_unified_events_create(qa_frontend *f,frontend_remote_unified *r,
     if (!out || *out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event output must be empty");
     frontend_unified_events *o=allocate(f,r,m,opts,e);
     if (!o) return false;
-    if (!current(o,e)) { free(o); return false; }
+    if (!current(o,e)) { qa_event_ring_destroy(&o->records); free(o); return false; }
     o->owns_audio=true; *out=o; return true;
 }
-static void batch_free(unified_event_batch *b)
-{ qa_unified_document_destroy(b->document); free(b); }
-static void resource_free(unified_event_resource *r)
-{ qa_audio_asset_release(r->asset); free(r); }
-
 static bool resource_read_typed(frontend_unified_events *o, const qa_unified_resource_declaration *row,
-    unified_event_resource **out, qa_error *e)
+    unified_event_resource *r, qa_error *e)
 {
     const qa_unified_resource_state *key=&row->resource;
     qa_launch_resource held; qa_vfs *files; const qa_vfs_acquisition *opening;
@@ -186,8 +225,6 @@ static bool resource_read_typed(frontend_unified_events *o, const qa_unified_res
     qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
     bool okay=qa_executable_recipe_find_resource(recipe,key->content,key->path,key->byte_length,&held,&files,&opening) &&
         qa_executable_recipe_content_read(recipe,key->content,&actual,&product) && actual==files;
-    unified_event_resource *r=okay?calloc(1,sizeof(*r)):NULL;
-    if (okay && !r) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining declared Source resource");
     if (okay) {
         okay=qa_strings_intern_cstr(o->strings,key->content,&r->content,e) &&
             qa_strings_intern_cstr(o->strings,key->path,&r->path,e) &&
@@ -195,35 +232,45 @@ static bool resource_read_typed(frontend_unified_events *o, const qa_unified_res
         if (okay) {
             r->resource=held.resource;
             r->family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
-            *out=r;
         }
     }
-    if (!okay) { if (r) resource_free(r); if (!e || e->code==QA_OK)
+    if (!okay) { if (!e || e->code==QA_OK)
         frontend_unified_fail(e,QA_ERROR_FORMAT,"Declared Source resource is outside its actual admitted recipe"); }
     return okay;
 }
 static bool declare_resources(frontend_unified_events *o, const qa_unified_resources_control *resources, qa_error *e)
 {
+    qa_event_transaction transaction={0};
+    unified_received_event *record=NULL;
     unified_event_resource *head=NULL,**tail=&head;
     bool okay=true;
     for (size_t i=0;okay && i<resources->count;++i) {
-        unified_event_resource *r=NULL;
-        okay=resource_read_typed(o,resources->values+i,&r,e);
-        if (okay) { *tail=r; tail=&r->next; }
-    }
-    if (!okay) { while (head) { unified_event_resource *r=head; head=r->next; resource_free(r); } return false; }
-    while (head) {
-        unified_event_resource *r=head; head=r->next; unified_event_resource *same=o->resources;
-        while (same && same->id!=r->id) same=same->next;
+        unified_event_resource value={0};
+        okay=resource_read_typed(o,resources->values+i,&value,e);
+        if (!okay) break;
+        unified_event_resource *same=o->resources;
+        while (same && same->id!=value.id) same=same->next;
+        if (!same) {
+            same=head;
+            while (same && same->id!=value.id) same=same->next;
+        }
         if (same) {
-            bool equal=same->resource==r->resource && same->content==r->content && same->path==r->path;
-            resource_free(r);
-            if (!equal) {
-                while (head) { r=head; head=r->next; resource_free(r); }
-                return frontend_unified_fail(e,QA_ERROR_FORMAT,"Source resource reference changed its admitted declaration");
-            }
-        } else { r->next=o->resources; o->resources=r; }
+            okay=(same->resource==value.resource && same->content==value.content && same->path==value.path) ||
+                frontend_unified_fail(e,QA_ERROR_FORMAT,"Source resource reference changed its admitted declaration");
+            continue;
+        }
+        if (!record) {
+            record=record_begin(o,&transaction,e);
+            if (!record) { okay=false; break; }
+        }
+        unified_event_resource *r=qa_event_ring_alloc(&transaction,sizeof(*r),
+            _Alignof(unified_event_resource),e);
+        if (!r) { okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Received resource storage is full"); break; }
+        *r=value; *tail=r; tail=&r->next;
     }
+    if (!okay || !head) { qa_event_ring_abort(&transaction); return okay; }
+    metadata_commit(o,&transaction,record);
+    *tail=o->resources; o->resources=head;
     return true;
 }
 static unified_event_resource *resource_find(frontend_unified_events *o,const char *id)
@@ -281,10 +328,13 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
         /* Reliable events precede their FRAME. Source actor aliases and family
          * owners are qualified when that actual committed frame releases them. */
         if (!rows_valid(o,events,false,e) || !current(o,e)) return false;
-        unified_event_batch *batch=calloc(1,sizeof(*batch));
-        if (!batch) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining reliable pre-frame unified events");
-        if (!qa_unified_document_retain(doc,&batch->document,e)) { free(batch); return false; }
-        *o->tail=batch; o->tail=&batch->next; return true;
+        qa_event_transaction transaction;
+        unified_received_event *record=record_begin(o,&transaction,e);
+        if (!record) return false;
+        if (!qa_unified_document_retain(doc,&record->document,e)) {
+            qa_event_ring_abort(&transaction); return false;
+        }
+        qa_event_ring_commit(&transaction,record); return true;
     }
     const qa_unified_control *control=qa_unified_document_control(doc);
     if (control) {
@@ -429,34 +479,47 @@ static bool apply_simulation(frontend_unified_events *o,const qa_unified_simulat
 bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !execution_current(o,e)) return false;
-    if (!o->has_frame) return true;
     o->busy=true; bool okay=true;
-    while (okay && !o->replica->retired && o->pending) {
-        unified_event_batch *batch=o->pending;
-        const qa_unified_frame_events *events=qa_unified_document_events(batch->document);
-        if (events->frame>o->frame) break;
+    while (okay && !o->replica->retired) {
+        metadata_retire(o);
+        uint64_t id=qa_event_ring_first(o->records);
+        if (id==qa_event_ring_next(o->records)) break;
+        unified_received_event *record=(unified_received_event *)qa_event_ring_at(o->records,id);
+        const qa_unified_frame_events *events=qa_unified_document_events(record->document);
+        if (!o->has_frame || events->frame>o->frame) break;
         if (!rows_valid(o,events,true,e)) { okay=false; break; }
-        while (okay && !o->replica->retired && batch->presentation_at<events->presentation_count) {
-            const qa_unified_presentation_event *row=events->presentation+batch->presentation_at;
+        o->delivery=events;
+        while (okay && !o->replica->retired && o->presentation_cursor==id &&
+            o->presentation_at<events->presentation_count) {
+            const qa_unified_presentation_event *row=events->presentation+o->presentation_at;
             if (!o->has_presentation_sequence || row->sequence>o->presentation_sequence) {
                 bool mirrors;
                 okay=link_reserve(o,e) && current(o,e) && apply_presentation(o,row,&mirrors,e);
                 if (okay) { o->links[o->link_count++]=(unified_event_link){row->sequence,mirrors};
                     o->presentation_sequence=row->sequence; o->has_presentation_sequence=true; }
             }
-            if (okay) ++batch->presentation_at;
+            if (okay) ++o->presentation_at;
         }
-        bool presentation_done=batch->presentation_at==events->presentation_count;
-        while (okay && !o->replica->retired && batch->simulation_at<events->simulation_count) {
-            const qa_unified_simulation_event *row=events->simulation+batch->simulation_at;
+        if (o->presentation_cursor==id && o->presentation_at==events->presentation_count) {
+            ++o->presentation_cursor; o->presentation_at=0;
+        }
+        while (okay && !o->replica->retired && o->simulation_cursor==id &&
+            o->simulation_at<events->simulation_count) {
+            const qa_unified_simulation_event *row=events->simulation+o->simulation_at;
             if (!o->has_simulation_sequence || row->sequence>o->simulation_sequence) {
                 okay=current(o,e) && apply_simulation(o,row,e);
                 if (okay) { o->simulation_sequence=row->sequence; o->has_simulation_sequence=true; }
             }
-            if (okay) ++batch->simulation_at;
+            if (okay) ++o->simulation_at;
         }
-        if (okay && presentation_done && batch->simulation_at==events->simulation_count) {
-            o->pending=batch->next; batch_free(batch); if (!o->pending) o->tail=&o->pending;
+        if (o->simulation_cursor==id && o->simulation_at==events->simulation_count) {
+            ++o->simulation_cursor; o->simulation_at=0;
+        }
+        o->delivery=NULL;
+        if (o->presentation_cursor>id && o->simulation_cursor>id) {
+            qa_unified_document_destroy(record->document);
+            qa_event_ring_retire(o->records,o->presentation_cursor<o->simulation_cursor?
+                o->presentation_cursor:o->simulation_cursor);
         }
     }
     if (okay && o->link_count>4096) {
@@ -466,7 +529,7 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
             if (o->links[i].sequence>=oldest) o->links[n++]=o->links[i];
         o->link_count=n;
     }
-    o->busy=false; return okay;
+    o->delivery=NULL; o->busy=false; return okay;
 }
 bool frontend_unified_events_draw(frontend_unified_events *o,qa_scene_rect viewport,bool center_owned,qa_scene_frame *frame,qa_error *e)
 {
@@ -491,9 +554,16 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
     if (!frontend_unified_events_idle(o)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event owner still has a live callback");
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (o->owns_audio && o->frontend->audio && !qa_audio_engine_stop_owner(o->frontend->audio,o->options.audio_owner,d->physical_seat,e)) return false;
-    while (o->pending) { unified_event_batch *b=o->pending; o->pending=b->next; batch_free(b); }
-    while (o->resources) { unified_event_resource *r=o->resources; o->resources=r->next; resource_free(r); }
-    while (o->components) { unified_component_owner *c=o->components; o->components=c->next; component_free(c); }
+    for (uint64_t id=qa_event_ring_first(o->records);id<qa_event_ring_next(o->records);++id) {
+        const unified_received_event *record=qa_event_ring_at(o->records,id);
+        qa_unified_document_destroy(record->document);
+    }
+    for (unified_event_resource *r=o->resources;r;r=r->next) qa_audio_asset_release(r->asset);
+    while (o->retained) {
+        unified_received_event *record=o->retained; o->retained=record->next_retained;
+        qa_event_lease_release(record->lease);
+    }
+    qa_event_ring_destroy(&o->records);
     free(o->links); free(o); *slot=NULL; return true;
 }
 
@@ -569,10 +639,9 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     }
     default: return true;
     }
-    unified_event_batch *batch=o->pending;
-    const qa_unified_frame_events *events=batch?qa_unified_document_events(batch->document):NULL;
-    if (!o->busy || !events || batch->presentation_at>=events->presentation_count ||
-        events->presentation+batch->presentation_at!=row)
+    const qa_unified_frame_events *events=o->delivery;
+    if (!o->busy || !events || o->presentation_at>=events->presentation_count ||
+        events->presentation+o->presentation_at!=row)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Sound linkage is outside its actual retained presentation delivery");
     for (size_t i=0;i<events->simulation_count;++i) {
         const qa_unified_simulation_event *simulation=events->simulation+i;
