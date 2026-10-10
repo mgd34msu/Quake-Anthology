@@ -153,7 +153,8 @@ struct frontend_source_lease {
     source_body_draw *body_draw;
     qa_application_q3_client_context time_context;
     size_t time_busy;
-    char *system_info;
+    qa_strings *names;
+    const char *system_info;
     char *disconnect_reason;
     const qa_q3_host *status_host;
     bool status_visible;
@@ -249,7 +250,7 @@ static bool lease_dispose(frontend_source_lease *lease)
     lease->equipment=NULL;
     if (!frontend_client_registry_release(&lease->registry,&error)) return false;
     *link=lease->next;
-    free(lease->system_info); free(lease->disconnect_reason); free(lease); return true;
+    qa_strings_destroy(lease->names); free(lease->disconnect_reason); free(lease); return true;
 }
 static bool time_context_read(qa_frontend *f,qa_actor_owner owner,uint32_t seat,
     qa_application_q3_client_context *out,qa_error *error)
@@ -336,10 +337,14 @@ bool frontend_source_system_info(qa_frontend *f,const qa_application_q3_client_c
         return frontend_fail(error,QA_ERROR_ARGUMENT,"SystemInfo lacks its actual linked frontend client role");
     lease->time_context=*view;
     if (!time_enter(lease,error)) return false;
-    size_t length=strlen(info); char *retained=length<SIZE_MAX?malloc(length+1):NULL;
-    bool ok=retained!=NULL;
-    if (!ok) frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual client SystemInfo continuation");
-    if (ok) memcpy(retained,info,length+1);
+    bool unchanged=lease->system_info && !strcmp(info,lease->system_info);
+    const char *retained=lease->system_info;
+    bool ok=true;
+    if (!unchanged) {
+        qa_string_id id;
+        ok=qa_strings_intern_cstr(lease->names,info,&id,error);
+        if (ok) retained=qa_strings_cstr(lease->names,id);
+    }
     const char *names[6]; size_t name_count=view->client_time_cvars?time_names(qa_cvars_dialect(view->client_time_cvars),names,false):0;
     const char *cursor=info+(*info=='\\');
     while (ok && *cursor) {
@@ -348,22 +353,20 @@ bool frontend_source_system_info(qa_frontend *f,const qa_application_q3_client_c
         size_t name_length=(size_t)(separator-cursor),value_length=(size_t)(end-value);
         bool skip=!name_length || equal_ascii(cursor,name_length,"cl_allowdownload");
         for (size_t i=0;i<name_count;++i) if (equal_ascii(cursor,name_length,names[i])) skip=true;
-        if (!skip && equal_ascii(cursor,name_length,"timescale") && lease->system_info && !strcmp(info,lease->system_info)) skip=true;
+        if (!skip && equal_ascii(cursor,name_length,"timescale") && unchanged) skip=true;
         if (!skip) {
-            char *name=malloc(name_length+1),*copy=malloc(value_length+1);
-            if (!name || !copy) ok=frontend_fail(error,QA_ERROR_MEMORY,"Retaining source SystemInfo field publication");
+            char *name=qa_arena_alloc(&f->frame.storage,name_length+1,1,error);
+            char *copy=name?qa_arena_alloc(&f->frame.storage,value_length+1,1,error):NULL;
+            if (!name || !copy) ok=false;
             else {
                 memcpy(name,cursor,name_length); name[name_length]=0; memcpy(copy,value,value_length); copy[value_length]=0;
                 ok=time_write(lease,view->cvars,name,copy,error);
             }
-            free(name); free(copy);
         }
         cursor=*end?end+1:end;
     }
-    if (ok) {
-        free(lease->system_info); lease->system_info=retained; retained=NULL;
-    }
-    free(retained); time_leave(lease); return ok;
+    if (ok) lease->system_info=retained;
+    time_leave(lease); return ok;
 }
 bool frontend_source_effect(void *context,qa_application *application,qa_actor_owner receiver,uint32_t seat,
     qa_application_q3_client_effect effect,const char *text,qa_error *error)
@@ -1493,6 +1496,8 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     }
     *lease = (frontend_source_lease){.source = source,.role=role,.service_owner=host->service_owner,.common = host->common,
         .console = host->console,.cvars=host->cvars, .command = host->command_context,.status_visible=true};
+    lease->names=qa_session_strings(qa_application_session(frontend->application));
+    qa_strings_retain(lease->names);
     frontend_source_lease **link = &source->lease_list;
     if (frontend->source_restoring) {
         size_t rank = 0;
