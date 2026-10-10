@@ -14,6 +14,7 @@
 #include "network_q2_private.h"
 #include "qa/application_q3_round.h"
 #include "guest_qc_internal.h"
+#include "map_players_private.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -232,6 +233,46 @@ bool application_event_stream_decline(qa_application *app,const application_even
             .code=QA_ERROR_MEMORY,.message="Output event storage is full; new transient effects are omitted"});
     if (app->event_transient_declines != UINT64_MAX) ++app->event_transient_declines;
     return true;
+}
+
+bool application_event_stream_close_recipients(qa_application *app,
+    const application_event_write *write, qa_actor_id recipient,
+    const qa_application_q2_audience *audience, qa_error *error)
+{
+    bool captured = audience && audience->captured;
+    if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING ||
+        (!recipient.registry && !captured)) return false;
+    bool addressed = captured;
+    for (size_t i = 0; app->players && i < app->players->count; ++i) {
+        application_player_record *player = app->players->records + i;
+        bool receives = !captured && qa_actor_id_equal(player->actor, recipient);
+        for (size_t j = 0; captured && !receives && j < audience->count; ++j) {
+            const qa_application_q2_recipient *target = audience->recipients + j;
+            receives = qa_actor_id_equal(player->actor, target->actor) &&
+                (!target->has_connection || qa_net_client_id_equal(player->remote_client, target->connection));
+        }
+        if (receives) {
+            player->output_incomplete = true;
+            addressed = true;
+        }
+    }
+    if (!addressed) return false;
+    if (error) *error = (qa_error){0};
+    if (!app->event_reliable_declines)
+        qa_application_feature_report(app, "reliable output", &(qa_error){
+            .code = QA_ERROR_MEMORY, .message = "Output event storage is full; affected client channels will close"});
+    if (app->event_reliable_declines != UINT64_MAX) ++app->event_reliable_declines;
+    return true;
+}
+
+static bool protocol_capacity(application_provider *provider,
+    const qa_application_protocol_event *event,
+    const qa_application_q2_protocol_delivery *delivery,
+    const application_event_write *write, qa_error *error)
+{
+    return event->reliable && !event->signon &&
+        application_event_stream_close_recipients(provider->application, write,
+            event->recipient, delivery ? &delivery->audience : NULL, error);
 }
 
 const application_event_envelope *application_event_stream_at(const qa_application *app,
@@ -683,7 +724,8 @@ static bool emit_protocol(application_provider *provider,
         }
     }
     application_event_write write;
-    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_PROTOCOL, &write, error)) return false;
+    if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_PROTOCOL, &write, error))
+        return protocol_capacity(provider, event, delivery, &write, error);
     uint8_t *payload = event->payload.size ? application_event_stream_alloc(application,
         event->payload.size, 1, error) : NULL;
     if (event->payload.size && !payload) goto abort;
@@ -739,11 +781,12 @@ static bool emit_protocol(application_provider *provider,
     if (!application_unified_q2_protocol_event(provider, &record.event,
             delivery ? &record.q2 : NULL, error)) goto abort;
     write.envelope->raw.protocol = record;
-    if (!application_event_stream_commit(application, &write, error)) return false;
+    if (!application_event_stream_commit(application, &write, error))
+        return protocol_capacity(provider, event, delivery, &write, error);
     return !copied.signon || application_q1_signon_retain(provider, &copied, error);
 abort:
     application_event_stream_abort(application, &write, error);
-    return false;
+    return protocol_capacity(provider, event, delivery, &write, error);
 }
 
 bool application_emit_protocol(application_provider *provider,

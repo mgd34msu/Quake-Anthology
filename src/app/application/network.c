@@ -49,7 +49,8 @@ bool qa_application_network_player_next(const qa_application *application, size_
             .seat = record->remote_seat, .actor = record->actor,
             .application_seat = record->seat, .client_slot = record->client_slot,
             .source_slot = record->source_slot, .retiring = record->retiring,
-            .deferred = record->deferred, .source_begin_pending = record->source_begin_pending};
+            .deferred = record->deferred, .source_begin_pending = record->source_begin_pending,
+            .output_incomplete = record->output_incomplete};
         return true;
     }
     return false;

@@ -6158,6 +6158,21 @@ bool frontend_network_admin_resume(qa_frontend *f,qa_error *error)
     }
     return frontend_network_create(f,error);
 }
+static bool incomplete_output_close(qa_frontend_network *network, qa_error *error)
+{
+    uint32_t cursor = 0;
+    const qa_net_client *client;
+    while (qa_net_connections_next(qa_network_connections(network->runtime), &cursor, &client)) {
+        size_t player_cursor = 0;
+        qa_application_network_player player;
+        while (qa_application_network_player_next(network->frontend->application, &player_cursor, &player)) {
+            if (!player.output_incomplete || !qa_net_client_id_equal(player.client, client->id)) continue;
+            if (!qa_network_detach(network->runtime, client->id, "Reliable output overflow", error)) return false;
+            break;
+        }
+    }
+    return true;
+}
 bool frontend_network_prepare(qa_frontend *f, qa_error *error)
 {
     if(!frontend_network_admin_resume(f,error)) return false;
@@ -6165,6 +6180,7 @@ bool frontend_network_prepare(qa_frontend *f, qa_error *error)
     /* Console connection transitions retire their old wire owner before the
      * collector can poll or maintenance can flush that attempt. */
     if (!client_attempts_drain(n, error)) return false;
+    if (!incomplete_output_close(n, error)) return false;
     if(!q2_local_groups_prepare(n,error) || !q2_timeout_sync(n,error)) return false;
     if(!q2_client_tick_returned(n,error)) return false;
     if(!q1_client_tick_returned(n,error)) return false;
@@ -6538,6 +6554,7 @@ void frontend_network_events_consume(qa_frontend *f)
 bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {
     if(f->qc_messages && !frontend_qc_messages_drain(f->qc_messages,error))return false;
+    if (f->network && !incomplete_output_close(f->network, error)) return false;
     if(!frontend_demo_dispatch_publish(f->demos,error))return false;
     if (!f->network) return true;
     qa_frontend_network *n = f->network;
