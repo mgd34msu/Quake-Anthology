@@ -7707,12 +7707,12 @@ static bool menu_resolve(const char *text, uint16_t port, qa_net_address *out, q
     return qa_net_address_resolve(text,port,4,out,error);
 }
 bool frontend_network_menu_rows(const qa_frontend *f, const frontend_network_menu_view *view,
-    qa_net_protocol_id protocol, qa_server_entry *rows, size_t capacity, size_t *count, qa_error *error)
+    qa_net_protocol_id protocol, qa_server_entry *rows, size_t capacity, size_t *count, qa_arena *scratch, qa_error *error)
 {
     if(!count || (capacity && !rows) || !menu_admitted(f,view,error) || !qa_net_protocol_valid(protocol,error))
         return false;
     size_t total=qa_server_browser_count(view->browser), listed=0;
-    uint32_t *indices=total?malloc(total*sizeof(*indices)):NULL;
+    uint32_t *indices=total?qa_arena_alloc(scratch,total*sizeof(*indices),_Alignof(uint32_t),error):NULL;
     if(total && !indices) return frontend_fail(error,QA_ERROR_MEMORY,"Reading retained startup browser rows");
     qa_browser_filter filter={.sort=QA_BROWSER_NAME};
     bool ok=qa_server_browser_list(view->browser,&filter,indices,total,&listed,error);
@@ -7726,7 +7726,6 @@ bool frontend_network_menu_rows(const qa_frontend *f, const frontend_network_men
             ++used;
         }
     }
-    free(indices);
     if(!ok) return frontend_fail(error,QA_ERROR_ARGUMENT,"Retained startup browser row changed during observation");
     *count=used; return menu_admitted(f,view,error);
 }
@@ -7785,7 +7784,7 @@ bool frontend_network_menu_favorite(qa_frontend *f, const frontend_network_menu_
     qa_frontend_network *n=f->network;
     bool removing=false; qa_net_protocol_id memberships[QA_NET_UNIFIED_1+1]; size_t membership_count=0;
     size_t count=qa_server_browser_count(n->browser);
-    uint32_t *indices=count?malloc(count*sizeof(*indices)):NULL;
+    uint32_t *indices=count?qa_arena_alloc(&f->frame.storage,count*sizeof(*indices),_Alignof(uint32_t),error):NULL;
     if(count && !indices) return frontend_fail(error,QA_ERROR_MEMORY,"Reading actual favorite membership");
     qa_browser_filter filter={.sort=QA_BROWSER_NAME}; size_t listed=0;
     bool ok=qa_server_browser_list(n->browser,&filter,indices,count,&listed,error);
@@ -7797,7 +7796,6 @@ bool frontend_network_menu_favorite(qa_frontend *f, const frontend_network_menu_
             memberships[membership_count++]=existing.protocol; removing=true;
         }
     }
-    free(indices);
     if(!ok || !qa_server_browser_save(n->browser,&before,error)) return false;
     if(removing) for(size_t i=0;ok && i<membership_count;++i)
         ok=qa_server_browser_remove_source(n->browser,&address,memberships[i],QA_SERVER_FAVORITE,error);

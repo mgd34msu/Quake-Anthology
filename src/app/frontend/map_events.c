@@ -603,7 +603,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
             if (!resources_read(frontend, source.provider, QA_GAME_Q2, &resources, error)) return false;
             size_t length = strlen(name);
             if (length > SIZE_MAX - 7) return frontend_fail(error, QA_ERROR_MEMORY, "sky path exceeds native storage");
-            char *path = malloc(length + 7);
+            char *path = qa_arena_alloc(&frontend->frame.storage,length + 7,1,error);
             if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "allocating authored sky path");
             static const char *const suffixes[6] = {"rt", "lf", "bk", "ft", "up", "dn"};
             qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
@@ -622,7 +622,6 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                     sky[face] = image;
                 }
             }
-            free(path);
             if (!ok) {
                 for (unsigned face = 0; face < 6; ++face) qa_scene_image_release(sky[face]);
                 return false;

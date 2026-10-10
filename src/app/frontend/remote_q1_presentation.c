@@ -210,7 +210,8 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
     remote_scene scene={.row=row,.count=frontend_remote_q1_entity_count(row),.revision=row->revision,
         .viewer_origin=player.origin};
     if(scene.count>SIZE_MAX/sizeof(*scene.entities)) return false;
-    scene.entities=scene.count?malloc(scene.count*sizeof(*scene.entities)):NULL;
+    scene.entities=scene.count?qa_arena_alloc(&row->frontend->frame.storage,
+        scene.count*sizeof(*scene.entities),_Alignof(frontend_remote_q1_entity_view),error):NULL;
     if(scene.count && !scene.entities) return remote_q1_fail(error,QA_ERROR_MEMORY,"Retaining actual remote Q1 scene rows");
     bool ok=true;
     for(size_t i=0;ok && i<scene.count;++i) {
@@ -233,6 +234,5 @@ bool frontend_remote_q1_draw(frontend_remote_q1 *row, const qa_scene_view *view,
                 &row->frontend->frame,&services,error);
         --row->busy;
     }
-    free(scene.entities);
     return ok && remote_q1_live(row, error);
 }

@@ -405,7 +405,8 @@ static bool refresh(frontend_startup_server_browser *o,const frontend_network_me
     qa_net_protocol_id protocols[2]={family_protocol(o->draft.family),{.kind=QA_NET_Q2KEX_2023}};
     size_t counts[2]={0},total=0,lanes=o->draft.family==BROWSER_Q2?2:1;
     for(size_t lane=0;lane<lanes;++lane) {
-        if(!frontend_network_menu_rows(o->seat->frontend,view,protocols[lane],NULL,0,counts+lane,e))return false;
+        if(!frontend_network_menu_rows(o->seat->frontend,view,protocols[lane],NULL,0,counts+lane,
+            &o->seat->frontend->frame.storage,e))return false;
         if(counts[lane]>SIZE_MAX-total)return fail(e,QA_ERROR_MEMORY,"Server inventory exceeds its retained extent");
         total+=counts[lane];
     }
@@ -421,7 +422,8 @@ static bool refresh(frontend_startup_server_browser *o,const frontend_network_me
     for(size_t lane=0;lane<lanes;++lane) {
         qa_server_entry *entries=counts[lane]?malloc(counts[lane]*sizeof(*entries)):NULL;
         if(counts[lane] && !entries)return fail(e,QA_ERROR_MEMORY,"Reading actual protocol server rows");
-        size_t count=0; bool okay=frontend_network_menu_rows(o->seat->frontend,view,protocols[lane],entries,counts[lane],&count,e);
+        size_t count=0; bool okay=frontend_network_menu_rows(o->seat->frontend,view,protocols[lane],entries,counts[lane],&count,
+            &o->seat->frontend->frame.storage,e);
         if(okay && count>counts[lane])okay=fail(e,QA_ERROR_ARGUMENT,"Server inventory changed during observation");
         for(size_t i=0;okay && i<count;++i) {
             size_t target=0;

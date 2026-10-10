@@ -43,7 +43,7 @@ typedef struct frontend_network_menu_status {
 bool frontend_network_menu_status_read(const qa_frontend *,const frontend_network_menu_view *,
     qa_net_protocol_id,frontend_network_menu_status *,qa_error *);
 bool frontend_network_menu_rows(const qa_frontend *, const frontend_network_menu_view *,
-    qa_net_protocol_id, qa_server_entry *, size_t capacity, size_t *count, qa_error *);
+    qa_net_protocol_id, qa_server_entry *, size_t capacity, size_t *count, qa_arena *, qa_error *);
 bool frontend_network_menu_details_read(const qa_frontend *, const frontend_network_menu_view *,
     const qa_server_entry *, qa_server_browser_details *, qa_error *);
 bool frontend_network_menu_details_current(const qa_frontend *, const frontend_network_menu_view *,
