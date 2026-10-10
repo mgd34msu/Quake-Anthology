@@ -1,13 +1,22 @@
 #include "internal.h"
 #include "qa/hud.h"
 #include "qa/application_q1_composition.h"
+#include "qa/pool.h"
 #include <stdio.h>
 
-typedef struct hud_message { char *text; uint64_t starts, until; bool chat; } hud_message;
+typedef struct hud_message {
+    struct hud_message *next;
+    qa_arena storage;
+    char *text;
+    size_t slot;
+    uint64_t starts, until;
+    bool chat;
+} hud_message;
 struct qa_hud {
     qa_hud_options options;
-    hud_message *notices;
-    size_t notice_count, notice_capacity;
+    qa_arena notice_storage;
+    qa_pool notice_records, notice_pages;
+    hud_message *notices, *notice_tail;
     qa_hud_center_state center;
     qa_cvar_handle center_time;
     qa_hud_pickup_state pickup;
@@ -29,13 +38,9 @@ static uint64_t after(uint64_t now, uint64_t duration);
 static uint64_t after(uint64_t now, uint64_t duration) {
     return UINT64_MAX - now < duration ? UINT64_MAX : now + duration;
 }
-static char *copy_text(const char *text, qa_error *error) {
-    if (!text) { ui_fail(error, "missing HUD text"); return NULL; }
-    size_t length = strlen(text);
-    char *copy = malloc(length + 1);
-    if (!copy) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating HUD text"); return NULL; }
-    memcpy(copy, text, length + 1);
-    return copy;
+static void message_release(qa_hud *hud, hud_message *message) {
+    qa_arena_destroy(&message->storage);
+    qa_pool_release(&hud->notice_records, message->slot);
 }
 bool qa_hud_create(const qa_hud_options *options, qa_hud **out, qa_error *error) {
     if (!options || !out || !options->ui || !options->application ||
@@ -44,6 +49,13 @@ bool qa_hud_create(const qa_hud_options *options, qa_hud **out, qa_error *error)
     qa_hud *hud = calloc(1, sizeof(*hud));
     if (!hud) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating seat HUD"); return false; }
     hud->options = *options;
+    if (!qa_pool_prepare(&hud->notice_records, &hud->notice_storage, 256,
+            sizeof(hud_message), _Alignof(hud_message), error) ||
+        !qa_pool_prepare(&hud->notice_pages, &hud->notice_storage, 256,
+            4096, _Alignof(max_align_t), error)) {
+        qa_arena_destroy(&hud->notice_storage); free(hud); return false;
+    }
+    qa_arena_seal(&hud->notice_storage);
     hud->center_time = qa_cvars_resolve(qa_application_cvars(options->application), "cg_centertime");
     *out = hud;
     return true;
@@ -51,8 +63,11 @@ bool qa_hud_create(const qa_hud_options *options, qa_hud **out, qa_error *error)
 bool qa_hud_clear_notify(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
     if (hud->drawing) return ui_fail(error, "HUD callback is active");
-    for (size_t i = 0; i < hud->notice_count; ++i) free(hud->notices[i].text);
-    hud->notice_count = 0;
+    while (hud->notices) {
+        hud_message *message = hud->notices;
+        hud->notices = message->next; message_release(hud, message);
+    }
+    hud->notice_tail = NULL;
     return true;
 }
 bool qa_hud_clear_center(qa_hud *hud, qa_error *error) {
@@ -65,18 +80,29 @@ bool qa_hud_destroy(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
     if (hud->drawing) return ui_fail(error, "HUD callback is active");
     qa_hud_clear_notify(hud, NULL); qa_hud_clear_center(hud, NULL);
-    free(hud->notices); qa_scene_image_release(hud->pickup.icon); free(hud);
+    qa_arena_destroy(&hud->notice_storage);
+    qa_scene_image_release(hud->pickup.icon); free(hud);
     return true;
 }
 bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
                     uint64_t duration, qa_error *error) {
     if (!hud || hud->drawing) return ui_fail(error, "HUD message callback is active");
-    char *copy = copy_text(text, error);
-    if (!copy) return false;
-    if (!ui_reserve((void **)&hud->notices, &hud->notice_capacity, hud->notice_count + 1,
-                     sizeof(*hud->notices), error)) { free(copy); return false; }
-    hud->notices[hud->notice_count++] = (hud_message){.text = copy, .starts = starts,
+    if (!text) return ui_fail(error, "missing HUD text");
+    size_t slot;
+    hud_message *message = qa_pool_take(&hud->notice_records, &slot);
+    if (!message) {
+        qa_error_set(error, QA_ERROR_CAPACITY, 0, "HUD notification storage is full"); return false;
+    }
+    *message = (hud_message){.slot = slot, .starts = starts,
         .until = after(starts, duration), .chat = chat};
+    qa_arena_init_pool(&message->storage, &hud->notice_pages);
+    size_t length = strlen(text) + 1;
+    message->text = qa_arena_alloc(&message->storage, length, 1, error);
+    if (!message->text) { message_release(hud, message); return false; }
+    memcpy(message->text, text, length);
+    if (hud->notice_tail) hud->notice_tail->next = message;
+    else hud->notices = message;
+    hud->notice_tail = message;
     return true;
 }
 bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_t duration,
@@ -184,13 +210,17 @@ bool qa_hud_ctf_capture(qa_hud *hud, const qa_builtin_event *event,
     hud->ctf_capture_present = true;
     return true;
 }
-static void expire(hud_message *messages, size_t *count, uint64_t now) {
-    size_t retained = 0;
-    for (size_t i = 0; i < *count; ++i) {
-        if (messages[i].until <= now) free(messages[i].text);
-        else messages[retained++] = messages[i];
+static void expire(qa_hud *hud, uint64_t now) {
+    hud_message **link = &hud->notices;
+    hud->notice_tail = NULL;
+    while (*link) {
+        hud_message *message = *link;
+        if (message->until <= now) {
+            *link = message->next; message_release(hud, message);
+        } else {
+            hud->notice_tail = message; link = &message->next;
+        }
     }
-    *count = retained;
 }
 static bool text(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, float x, float y,
                   const char *value, qa_vec4 color, float scale, qa_font_alignment align,
@@ -1078,8 +1108,8 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
         }
     }
     if (messages && !frame->weapon_only) {
-        for (size_t i = 0; i < hud->notice_count; ++i) {
-            const hud_message *notice = &hud->notices[i];
+        size_t i = 0;
+        for (const hud_message *notice = hud->notices; notice; notice = notice->next, ++i) {
             if (notice->starts > frame->time_ns) continue;
             if (!ui_draw_source_text(ui, scene, target, 16, 20 + (float)i * 16, notice->text,
                 notice->chat ? (qa_vec4){.6f, 1, .6f, 1} : (qa_vec4){1, 1, 1, 1},
@@ -1115,7 +1145,7 @@ static bool draw_frame(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *s
         (double)frame->safe_area.y + frame->safe_area.height > INT32_MAX)
         return ui_fail(error, "invalid or reentrant seat HUD draw");
     if (messages) {
-        expire(hud->notices, &hud->notice_count, frame->time_ns);
+        expire(hud, frame->time_ns);
     }
     if (!frame->visible) return true;
     qa_ui *ui = hud->options.ui;
