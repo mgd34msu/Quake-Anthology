@@ -60,8 +60,7 @@ static bool new_client(q2_session *session, qa_error *error)
         state.view.data.clientnum = state.view.data.clientnums[0];
     }
     qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
-    uint8_t *bytes = malloc(status.capacity);
-    if (!bytes) { q2_game_state_free(&state); return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 initial signon"); }
+    uint8_t *bytes = session->encode;
     qa_net_writer writer; qa_net_writer_init(&writer, bytes, status.capacity, error);
     qa_q2_codec codec = session->codec;
     codec.server_clientnum = state.view.data.clientnum;
@@ -70,7 +69,6 @@ static bool new_client(q2_session *session, qa_error *error)
     bool ok = qa_q2_server_event_write(&codec, &writer, &event) &&
         stuff_write(&codec, &writer, server->policy.server_count, "configstrings", 0, true) &&
         q2_queue_bytes(session, (qa_bytes){bytes, qa_net_writer_size(&writer)}, 0, true, error);
-    free(bytes);
     if (!ok) { q2_game_state_free(&state); return false; }
     if (restart) {
         qa_net_connections_restart_commit(session->runtime->connections, session->id, &composition);
@@ -94,8 +92,7 @@ static bool page(q2_session *session, bool configs, int64_t start, qa_error *err
     qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
     if (status.capacity <= 96) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 signon channel cannot hold its continuation");
     size_t limit = status.capacity - 96;
-    uint8_t *bytes = malloc(status.capacity * 2);
-    if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 signon page");
+    uint8_t *bytes = session->encode;
     qa_net_writer packet; qa_net_writer_init(&packet, bytes, status.capacity, error);
     qa_q2_codec codec = session->codec;
     size_t count = configs ? server->signon.view.config_count : server->signon.view.baselines.count;
@@ -122,7 +119,6 @@ static bool page(q2_session *session, bool configs, int64_t start, qa_error *err
     } else if (ok) ok = stuff_write(&codec, &packet, server->policy.server_count,
         configs ? "baselines" : "precache", 0, configs);
     if (ok) ok = q2_queue_bytes(session, (qa_bytes){bytes, qa_net_writer_size(&packet)}, 0, true, error);
-    free(bytes);
     if (ok) session->codec = codec;
     return ok;
 }
@@ -283,14 +279,12 @@ bool qa_network_q2_server_frame(qa_network_runtime *runtime, qa_net_client_id id
     if (!q2_server_projection(session, frame, old, motion, &wire, error)) return false;
     if (session->codec.protocol.kind == QA_NET_Q2PRO_36) wire.server_frame = wire_frame;
     qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
-    uint8_t *data = malloc(status.capacity);
-    if (!data) { qa_q2_frame_free(&wire); return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 physical frame encoding"); }
+    uint8_t *data = session->encode;
     qa_net_writer writer; qa_net_writer_init(&writer, data, status.capacity, error);
     bool ok = qa_q2_frame_write(&session->codec, &writer, &wire, old, server->signon.view.baselines,
         server->policy.max_clients) && qa_net_write_data(&writer, server->datagram.data, server->datagram.size);
     bool included = false;
     if (ok) ok = q2_send(session, (qa_bytes){data, qa_net_writer_size(&writer)}, now, &included, error);
-    free(data);
     if (ok && included) {
         qa_buffer_free(&server->datagram);
         qa_q2_frame_history_store_owned(server->frames, &wire);
@@ -308,8 +302,8 @@ bool q2_server_drop_progress(q2_session *session, uint64_t now, bool *complete, 
         size_t length = strlen(server->drop_reason);
         if (length > SIZE_MAX - 2) return q2_fail(error, QA_ERROR_MEMORY, "Q2 disconnect text extent overflows");
         char *text = malloc(length + 2);
-        uint8_t *bytes = malloc(session->channel->capacity);
-        if (!text || !bytes) { free(text); free(bytes); return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server disconnect packet"); }
+        uint8_t *bytes = session->encode;
+        if (!text) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server disconnect packet");
         memcpy(text, server->drop_reason, length); text[length] = '\n'; text[length + 1] = 0;
         qa_q2_server_event print = {.kind = QA_Q2_SVC_PRINT, .data.print = {.level = 2, .text = text}};
         qa_q2_server_event disconnect = {.kind = QA_Q2_SVC_DISCONNECT};
@@ -317,7 +311,7 @@ bool q2_server_drop_progress(q2_session *session, uint64_t now, bool *complete, 
         bool ok = qa_q2_server_event_write(&session->codec, &writer, &print) &&
             qa_q2_server_event_write(&session->codec, &writer, &disconnect) &&
             q2_queue_bytes(session, (qa_bytes){bytes, qa_net_writer_size(&writer)}, 0, true, error);
-        free(text); free(bytes);
+        free(text);
         if (!ok) return false;
         server->drop_queued = true;
     }

@@ -68,13 +68,12 @@ static bool retire_client(q2_session *session, const char *reason, bool notice, 
         client->drop_sent = true;
     }
     if (client->drop_notice && !classic && !client->drop_queued) {
-        uint8_t *bytes = malloc(session->channel->capacity);
-        if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 CLIENT disconnect command");
+        uint8_t *bytes = session->encode;
         qa_q2_client_event disconnect = {.kind = QA_Q2_CLC_COMMAND, .data.text = "disconnect"};
         qa_net_writer writer; qa_net_writer_init(&writer, bytes, session->channel->capacity, error);
         bool ok = qa_q2_client_event_write(&session->codec, &writer, &disconnect, 0) &&
             qa_q2_channel_queue(session->channel, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
-        free(bytes); if (!ok) return false;
+        if (!ok) return false;
         client->drop_queued = true;
     }
     if (client->drop_notice && !classic && !client->drop_sent) {
@@ -124,12 +123,11 @@ bool qa_network_q2_client_control(qa_network_runtime *runtime, qa_net_client_id 
     if (!session || !event || seat >= session->seats) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 control lacks its admitted seat");
     if (session->state.client.policy.messages.demo) return true;
     qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
-    uint8_t *data = malloc(status.capacity);
-    if (!data) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 client control");
+    uint8_t *data = session->encode;
     qa_net_writer writer; qa_net_writer_init(&writer, data, status.capacity, error);
     bool ok = qa_q2_client_event_write(&session->codec, &writer, event, seat) &&
         qa_q2_channel_queue(session->channel, (qa_bytes){data, qa_net_writer_size(&writer)}, error);
-    free(data); return ok;
+    return ok;
 }
 bool qa_network_q2_client_command(qa_network_runtime *runtime, qa_net_client_id id,
     const char *text, uint8_t seat, qa_error *error)
@@ -394,8 +392,7 @@ bool q2_client_send(q2_session *session, uint64_t now, qa_error *error)
             q2_send(session, (qa_bytes){0}, now, NULL, error);
     if (client->command_count) {
         qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
-        uint8_t *bytes = malloc(status.capacity);
-        if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 command encoding");
+        uint8_t *bytes = session->encode;
         bool ok = true; size_t consumed = 0;
         while (ok && consumed < client->command_count) {
             uint32_t sequence = qa_q2_channel_outgoing(session->channel);
@@ -413,7 +410,6 @@ bool q2_client_send(q2_session *session, uint64_t now, qa_error *error)
             client->sent_ns = now; client->sent_cursor = 0; client->sent_pending = true;
             ok = sent_continue(session, error);
         }
-        free(bytes);
         client->command_count -= consumed;
         if (client->command_count && consumed)
             memmove(client->commands, client->commands + consumed, client->command_count * sizeof(*client->commands));

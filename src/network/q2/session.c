@@ -113,29 +113,27 @@ bool q2_queue_bytes(q2_session *session, qa_bytes bytes, uint8_t seat, bool reli
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 service does not belong to an admitted wire seat");
     qa_q2_channel_status status;
     qa_q2_channel_get_status(session->channel, &status);
-    qa_buffer framed = {0};
     bool ok = true;
     if (seat) {
         const uint8_t prefix[2] = {21, (uint8_t)(seat + 1)}, suffix[2] = {21, 1};
-        ok = q2_buffer_append(&framed, (qa_bytes){prefix, sizeof(prefix)}, status.capacity, error) &&
-            q2_buffer_append(&framed, bytes, status.capacity, error) &&
-            q2_buffer_append(&framed, (qa_bytes){suffix, sizeof(suffix)}, status.capacity, error);
-        bytes = (qa_bytes){framed.data, framed.size};
+        qa_net_writer writer;qa_net_writer_init(&writer,session->framed,status.capacity,error);
+        ok=qa_net_write_data(&writer,prefix,sizeof(prefix)) && qa_net_write_data(&writer,bytes.data,bytes.size) &&
+            qa_net_write_data(&writer,suffix,sizeof(suffix));
+        bytes=(qa_bytes){session->framed,qa_net_writer_size(&writer)};
     }
     if (ok) ok = reliable ? qa_q2_channel_queue(session->channel, bytes, error) :
         q2_buffer_append(&session->state.server.datagram, bytes, status.capacity, error);
-    qa_buffer_free(&framed); return ok;
+    return ok;
 }
 
 bool q2_queue_event(q2_session *session, const qa_q2_server_event *event, uint8_t seat, bool reliable, qa_error *error)
 {
     qa_q2_channel_status status; qa_q2_channel_get_status(session->channel, &status);
-    uint8_t *data = malloc(status.capacity);
-    if (!data) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 service encoding");
+    uint8_t *data = session->encode;
     qa_net_writer writer; qa_net_writer_init(&writer, data, status.capacity, error);
     bool ok = qa_q2_server_event_write(&session->codec, &writer, event) &&
         q2_queue_bytes(session, (qa_bytes){data, qa_net_writer_size(&writer)}, seat, reliable, error);
-    free(data); return ok;
+    return ok;
 }
 
 static bool receive(void *state, qa_network_runtime *runtime, qa_net_client_id id, const qa_net_datagram *packet, qa_error *error)
@@ -210,13 +208,25 @@ static void close_session(void *state)
     q2_session *session = state;
     if (session->server) q2_server_clear(&session->state.server);
     else q2_client_clear(&session->state.client);
-    qa_q2_channel_destroy(session->channel); free(session);
+    qa_q2_channel_destroy(session->channel);qa_arena_destroy(&session->encode_storage); free(session);
 }
 const qa_network_peer_ops qa_network_q2_peer_ops = {
     .receive = receive, .flush = flush, .command = command, .restart = restart,
     .rebind = rebind, .close = close_session, .receive_pending = pending
 };
 
+bool q2_session_storage_prepare(q2_session *session,qa_error *error)
+{
+    if (!session->channel) return true;
+    qa_q2_channel_status status;qa_q2_channel_get_status(session->channel,&status);
+    if (status.capacity>(SIZE_MAX-128)/3)
+        return q2_fail(error,QA_ERROR_MEMORY,"Q2 channel encoding extent overflows");
+    if (!qa_arena_reserve(&session->encode_storage,status.capacity*3+128,error)) return false;
+    session->encode=qa_arena_alloc(&session->encode_storage,status.capacity*2,1,error);
+    session->framed=qa_arena_alloc(&session->encode_storage,status.capacity,1,error);
+    if (!session->encode || !session->framed) return false;
+    qa_arena_seal(&session->encode_storage);return true;
+}
 static bool attach(qa_network_runtime *runtime, const qa_net_connect *request, q2_session *session,
     const qa_q2_channel_options *channel, uint64_t now, qa_net_client_id *out, qa_error *error)
 {
@@ -229,7 +239,8 @@ static bool attach(qa_network_runtime *runtime, const qa_net_connect *request, q
     session->runtime = runtime; session->seats = request->seat_count;
     if (!qa_q2_codec_init(&session->codec, request->protocol, error) ||
         ((session->server || !session->state.client.policy.messages.demo) &&
-            !qa_q2_channel_create(channel, &session->channel, error))) return false;
+            !qa_q2_channel_create(channel, &session->channel, error)) ||
+        !q2_session_storage_prepare(session,error)) return false;
     if (!qa_network_attach(runtime, request, &qa_network_q2_peer_ops, session, now, out, error)) return false;
     session->id = *out; return true;
 }

@@ -413,6 +413,7 @@ bool qa_network_q2_restore_peer(qa_network_runtime *runtime, const qa_net_client
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, session, client, refs) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
+    if (ok) ok=q2_session_storage_prepare(session,error);
     if (!ok) { qa_network_q2_peer_ops.close(session); return false; }
     *peer = (qa_network_peer){.id = client->id, .ops = qa_network_q2_peer_ops, .state = session}; return true;
 }

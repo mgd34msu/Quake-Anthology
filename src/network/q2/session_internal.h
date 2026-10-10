@@ -3,6 +3,7 @@
 
 #include "../runtime/internal.h"
 #include "qa/network_q2_session.h"
+#include "qa/arena.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -80,6 +81,8 @@ typedef struct q2_session {
     qa_network_runtime *runtime;
     qa_net_client_id id;
     qa_q2_channel *channel;
+    qa_arena encode_storage;
+    uint8_t *encode, *framed;
     qa_q2_codec codec;
     size_t seats;
     bool server, active, retiring, busy;
@@ -87,6 +90,7 @@ typedef struct q2_session {
 } q2_session;
 
 bool q2_fail(qa_error *, qa_status, const char *);
+bool q2_session_storage_prepare(q2_session *,qa_error *);
 bool q2_buffer_copy(qa_bytes, qa_buffer *, qa_error *);
 bool q2_buffer_append(qa_buffer *, qa_bytes, size_t maximum, qa_error *);
 void q2_game_state_free(q2_game_state *);
