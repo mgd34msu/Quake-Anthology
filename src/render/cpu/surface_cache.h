@@ -2,6 +2,7 @@
 #define QA_CPU_SURFACE_CACHE_H
 
 #include "qa/render_cpu.h"
+enum { CPU_SURFACE_MIPS = 32 };
 
 typedef struct cpu_surface_mip {
   const uint8_t *pixels;

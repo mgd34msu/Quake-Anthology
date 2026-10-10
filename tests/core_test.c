@@ -1010,6 +1010,20 @@ static void test_cached_world_surface(void)
         QA_SCENE_REPEAT, QA_SCENE_NEAREST, (qa_vec4){0}, &base, &error));
     CHECK(qa_scene_image_create(resources, "cached-light", QA_SCENE_RGBA8, &light_level, 1,
         QA_SCENE_CLAMP, QA_SCENE_LINEAR, (qa_vec4){0}, &light, &error));
+    uint8_t mip_pixels[1364]; qa_scene_image_level levels[5];
+    size_t offset = 0;
+    for (unsigned mip = 0; mip < 5; ++mip) {
+        uint32_t width = 16u >> mip; size_t bytes = (size_t)width * width * 4;
+        levels[mip] = (qa_scene_image_level){width, width, mip_pixels + offset, bytes};
+        for (size_t i = 0; i < bytes / 4; ++i) {
+            memset(mip_pixels + offset + i * 4, mip == 4 ? 200 : 64, 3);
+            mip_pixels[offset + i * 4 + 3] = 255;
+        }
+        offset += bytes;
+    }
+    qa_scene_image *mipped = NULL;
+    CHECK(qa_scene_image_create(resources, "cached-mips", QA_SCENE_RGBA8, levels, 5,
+        QA_SCENE_REPEAT, QA_SCENE_NEAREST_MIPMAP_NEAREST, (qa_vec4){0}, &mipped, &error));
     qa_scene_vertex *vertices = calloc(4, sizeof(*vertices));
     uint32_t *indices = malloc(6 * sizeof(*indices));
     CHECK(vertices && indices);
@@ -1054,37 +1068,45 @@ static void test_cached_world_surface(void)
     context.view.projection = identity; context.view.axis[0] = (qa_vec3){0,0,-1};
     context.view.axis[1] = (qa_vec3){-1,0,0}; context.view.axis[2] = (qa_vec3){0,1,0};
     uint8_t reference[64 * 64 * 4];
-    for (unsigned pass = 0; pass < 3; ++pass) {
+    for (unsigned pass = 0; pass < 5; ++pass) {
         qa_scene_frame_reset(&frame, pass + 1);
         qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = {
             .viewport = {0,0,64,64}, .projection = identity,
             .clear_color = true, .clear_depth = true, .depth = 1}};
         CHECK(qa_scene_frame_emit(&frame, &view, &error));
-        if (!pass) CHECK(qa_scene_frame_draw(&frame, &draw, &error));
+        if (pass >= 3) {
+            draw.textures[0] = mipped;
+            draw.mvp.m[0] = draw.mvp.m[5] = 1.0f / 48;
+            draw.mvp.m[12] = 1.0f / 64; draw.mvp.m[13] = -1.0f / 64;
+            if (pass == 4) draw.brush = brush.draw;
+        }
+        if (!pass || pass >= 3) CHECK(qa_scene_frame_draw(&frame, &draw, &error));
         else {
             CHECK(qa_material_submit(&material, &mesh, &context, &frame, &error));
             CHECK(frame.command_count == 2 && frame.commands[1].data.draw.brush.present);
         }
-        if (pass == 2) {
+        if (pass == 4) {
             qa_scene_geometry_release(geometry); geometry = NULL;
             qaw_brush_destroy(&brush);
         }
         CHECK(qa_cpu_execute(renderer, &frame, &error));
         qa_bytes pixels = qa_cpu_pixels(renderer);
         CHECK(pixels.size == sizeof(reference));
-        if (!pass) memcpy(reference, pixels.data, sizeof(reference));
+        if (!pass || pass == 3) {
+            memcpy(reference, pixels.data, sizeof(reference));
+            CHECK(reference[(32 * 64 + 32) * 4] == (pass == 3 ? 100 : 32));
+        }
         else for (size_t i = 0; i < sizeof(reference); ++i)
             CHECK(abs((int)pixels.data[i] - reference[i]) <= 1);
     }
-    CHECK(reference[(32 * 64 + 32) * 4] == 32);
     qa_cpu_statistics statistics;
     CHECK(qa_cpu_statistics_read(renderer, &statistics, &error));
-    CHECK(statistics.brush_written && statistics.surface_builds == 1);
+    CHECK(statistics.brush_written && statistics.surface_builds == 2);
     qa_scene_frame_destroy(&frame);
     qaw_brush_destroy(&brush);
     qa_cpu_destroy(renderer);
     qa_scene_geometry_release(geometry);
-    qa_scene_image_release(base); qa_scene_image_release(light);
+    qa_scene_image_release(base); qa_scene_image_release(light); qa_scene_image_release(mipped);
     qa_scene_resources_destroy(resources);
 }
 

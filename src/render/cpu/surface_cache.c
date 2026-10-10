@@ -8,7 +8,6 @@
  * retirement record, and never keeps an old map or asset pixels alive. */
 #define CPU_SURFACE_CACHE_BYTES (32u * 1024u * 1024u)
 #define CPU_SURFACE_CACHE_ENTRIES 8192u
-#define CPU_SURFACE_MIPS 4u
 
 typedef struct cpu_surface_stamp {
   uint64_t image[2], revision[2], light_revision;
@@ -44,7 +43,7 @@ typedef struct cpu_surface_entry {
   struct cpu_surface_entry *previous, *next;
   const qa_scene_geometry *geometry;
   uint64_t identity, revision;
-  cpu_surface_slot mips[CPU_SURFACE_MIPS];
+  cpu_surface_slot mip;
 } cpu_surface_entry;
 
 struct cpu_surface_cache {
@@ -159,23 +158,19 @@ static void entry_touch(struct cpu_surface_cache *cache,
 
 static bool entry_pinned(const struct cpu_surface_cache *cache,
                            const cpu_surface_entry *entry) {
-  for (unsigned mip = 0; mip < CPU_SURFACE_MIPS; ++mip)
-    if (entry->mips[mip].block && block_pinned(cache, entry->mips[mip].block))
-      return true;
-  return false;
+  return entry->mip.block && block_pinned(cache, entry->mip.block);
 }
 
 static void entry_clear(struct cpu_surface_cache *cache,
                          cpu_surface_entry *entry) {
   render_resource_remove(&cache->index, entry->identity, entry->revision,
                          entry->geometry);
-  for (unsigned mip = 0; mip < CPU_SURFACE_MIPS; ++mip)
-    if (entry->mips[mip].block) block_clear(cache, entry->mips[mip].block);
+  if (entry->mip.block) block_clear(cache, entry->mip.block);
   qa_scene_geometry_cache_release(entry->geometry);
 }
 
 static cpu_surface_entry *entry_admit(struct cpu_surface_cache *cache,
-    const qa_scene_mesh *mesh, uint64_t identity) {
+    const qa_scene_mesh *mesh, uint64_t identity, unsigned mip) {
   cpu_surface_entry *entry = cache->last;
   if (entry && !qa_scene_geometry_active(entry->geometry) &&
       !entry_pinned(cache, entry)) {
@@ -194,7 +189,7 @@ static cpu_surface_entry *entry_admit(struct cpu_surface_cache *cache,
   }
   entry->geometry = mesh->geometry;
   entry->identity = identity;
-  entry->revision = mesh->revision;
+  entry->revision = mip;
   qa_scene_geometry_cache_retain(entry->geometry);
   render_resource_put(&cache->index, entry->identity, entry->revision,
                        entry->geometry, entry);
@@ -379,8 +374,9 @@ static void surface_build(const qa_scene_draw *draw, unsigned mip,
 bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
     const qa_scene_draw *draw, unsigned mip, cpu_surface_mip *out) {
   if (!surface_supported(renderer, draw, mip)) return false;
-  uint32_t width = draw->brush.texture_extents[0] >> mip;
-  uint32_t height = draw->brush.texture_extents[1] >> mip;
+  uint64_t step = UINT64_C(1) << mip;
+  uint32_t width = (uint32_t)(((uint64_t)draw->brush.texture_extents[0] + step - 1) >> mip);
+  uint32_t height = (uint32_t)(((uint64_t)draw->brush.texture_extents[1] + step - 1) >> mip);
   if (!width || !height ||
       (size_t)width > (CPU_SURFACE_CACHE_BYTES - sizeof(cpu_surface_block)) /
                           4 / height)
@@ -409,11 +405,11 @@ bool cpu_surface_cache_prepare(qa_cpu_renderer *renderer,
   }
   uint64_t identity = draw->brush.identity ? draw->brush.identity : draw->mesh.identity;
   cpu_surface_entry *entry = render_resource_get(&cache->index,
-      identity, draw->mesh.revision, draw->mesh.geometry);
-  if (!entry) entry = entry_admit(cache, &draw->mesh, identity);
+      identity, mip, draw->mesh.geometry);
+  if (!entry) entry = entry_admit(cache, &draw->mesh, identity, mip);
   if (!entry) return false;
   entry_touch(cache, entry);
-  cpu_surface_slot *slot = entry->mips + mip;
+  cpu_surface_slot *slot = &entry->mip;
   cpu_surface_stamp stamp = surface_stamp(draw, &base, &light);
   if (slot->block && stamp_equal(&slot->stamp, &stamp)) {
     ++cache->hits;

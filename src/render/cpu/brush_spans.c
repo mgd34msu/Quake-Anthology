@@ -294,7 +294,7 @@ static bool prepare_mips(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
   bool magnification = !(rho > sampler.magnification_limit);
   bool blend = sampler.blend;
   surface->linear = magnification ? sampler.magnification_linear : sampler.linear;
-  unsigned maximum = sampler.level_count > 4 ? 3u : (unsigned)(sampler.level_count - 1);
+  unsigned maximum = sampler.level_count > CPU_SURFACE_MIPS ? CPU_SURFACE_MIPS - 1u : (unsigned)(sampler.level_count - 1);
   double lod = !magnification && maximum && rho > 1 ? log2(rho) : 0;
   lod = fmin((double)maximum, fmax(0, lod));
   unsigned first = (unsigned)floor(blend ? lod : lod + 0.5);
