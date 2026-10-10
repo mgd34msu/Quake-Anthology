@@ -211,3 +211,18 @@ consumers use it, deleting three equivalent local switches. Their existing
 invalid-input defaults and independently selected role clocks are preserved.
 This does not merge authored Q1/Q2/Q3 policy or close the remaining per-role
 selection audit.
+
+## Q1/QC and native cvar adoption: THE-2859
+
+Compiled Q1 binds 25 common handles before spawn in
+`src/gameplay/q1/runtime.c`. Q1/QW limits, movement, pause, chat and addon
+rules read those handles. The named application callback, its context and
+exported admission-limit bridge are deleted. Original QC policy/developer
+output uses its existing handle owner. Native cvars are derived ABI objects;
+unchanged polls skip guest rewrites. Owning/borrowed string reads share one
+scanner, and repeated existing Cvar_Get inputs borrow contiguous backing.
+
+Proof is in `docs/playtests/2026-10-09-common-cvar-adoption.md`. Fixed Q3
+source/loading/authored HUD readers remain open. New declarations, setters,
+split strings and other native text imports still allocate. Whole-frame
+zero allocation is not established.
