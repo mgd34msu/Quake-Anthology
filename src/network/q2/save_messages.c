@@ -83,12 +83,11 @@ bool qa_q2_save_messages(qa_source_save_io *io, const qa_q2_message_options *can
         qa_q2_config_layout layout;
         ok = qa_q2_config_layout_read(&codec, &layout, io->error) && configs == layout.max_configs;
     }
-    if (ok && reading && configs != messages->config_capacity) {
-        char **values = calloc(configs, sizeof(*values));
-        if (!values) ok = invalid(io, "Cannot restore actual SERVERDATA config namespace");
-        else { free(messages->configs); messages->configs = values; messages->config_capacity = configs; }
+    if (ok && reading) ok = qa_q2_messages_config_capacity(messages, configs, io->error);
+    for (size_t i = 0; ok && i < configs; ++i) {
+        ok = text(io, &messages->configs[i]);
+        if (reading && messages->configs[i]) messages->config_slots[messages->config_count++] = (uint16_t)i;
     }
-    for (size_t i = 0; ok && i < configs; ++i) ok = text(io, &messages->configs[i]);
     if (ok) ok = qa_source_save_count(io, &messages->baseline_capacity, UINT16_MAX) &&
         qa_source_save_count(io, &messages->baseline_count, messages->baseline_capacity);
     if (ok && reading && messages->baseline_capacity) {

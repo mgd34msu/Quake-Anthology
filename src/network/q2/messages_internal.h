@@ -11,8 +11,9 @@ struct qa_q2_messages {
     qa_q2_codec codec;
     qa_q2_message_options options;
     char **configs;
+    uint16_t *config_slots;
     int16_t *inventory;
-    size_t config_capacity;
+    size_t config_capacity, config_count;
     qa_q2_entity *baselines;
     size_t baseline_count, baseline_capacity;
     qa_q2_frame_history *histories[QA_Q2_MAX_SEATS];
@@ -23,6 +24,7 @@ struct qa_q2_messages {
     qa_q2_inflate_segment *download_first, *download_last;
     size_t inflated_this_read;
 };
+bool qa_q2_messages_config_capacity(qa_q2_messages *, size_t, qa_error *);
 /* Restores codec-private deflate state from the genuinely accepted compressed
  * segment receipts. It emits no service record or application callback. */
 bool qa_q2_messages_restore_download_segment(qa_q2_messages *, qa_bytes, size_t output_size, qa_error *);

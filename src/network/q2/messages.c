@@ -50,7 +50,11 @@ static void download_reset(qa_q2_messages *m) {
 
 void qa_q2_messages_reset(qa_q2_messages *m) {
     if (!m) return;
-    for (size_t i = 0; i < m->config_capacity; ++i) { free(m->configs[i]); m->configs[i] = NULL; }
+    for (size_t i = 0; i < m->config_count; ++i) {
+        uint16_t slot = m->config_slots[i];
+        free(m->configs[slot]); m->configs[slot] = NULL;
+    }
+    m->config_count = 0;
     for (size_t i = 0; i < QA_Q2_MAX_SEATS; ++i) qa_q2_frame_history_clear(m->histories[i]);
     m->baseline_count = 0;
     m->seat = 0;
@@ -66,9 +70,25 @@ void qa_q2_messages_destroy(qa_q2_messages *m) {
     qa_q2_messages_reset(m);
     for (size_t i = 0; i < QA_Q2_MAX_SEATS; ++i) qa_q2_frame_history_destroy(m->histories[i]);
     free(m->configs);
+    free(m->config_slots);
     free(m->inventory);
     free(m->baselines);
     free(m);
+}
+
+bool qa_q2_messages_config_capacity(qa_q2_messages *m, size_t capacity, qa_error *error) {
+    if (m->config_capacity == capacity) return true;
+    char **values = calloc(capacity, sizeof(*values));
+    uint16_t *slots = malloc(capacity * sizeof(*slots));
+    if (!values || !slots) {
+        free(values); free(slots);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot retain Q2 config namespace"); return false;
+    }
+    for (size_t i = 0; i < m->config_count; ++i) free(m->configs[m->config_slots[i]]);
+    free(m->configs); free(m->config_slots);
+    m->configs = values; m->config_slots = slots;
+    m->config_capacity = capacity; m->config_count = 0;
+    return true;
 }
 
 bool qa_q2_messages_create(qa_net_protocol_id protocol, const qa_q2_message_options *options,
@@ -83,12 +103,11 @@ bool qa_q2_messages_create(qa_net_protocol_id protocol, const qa_q2_message_opti
     m->options = *options;
     if (!m->options.history_capacity) m->options.history_capacity = 16;
     if (!m->options.max_inflated_bytes) m->options.max_inflated_bytes = 64u * 1024u * 1024u;
-    m->configs = calloc(options->config_strings, sizeof(*m->configs));
     m->inventory = malloc(options->inventory_slots * sizeof(*m->inventory));
-    m->config_capacity = options->config_strings;
-    if (!m->configs || !m->inventory || !qa_q2_codec_init(&m->codec, protocol, error)) {
-        if (!m->configs || !m->inventory) qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate Q2 decoder buffers");
-        free(m->configs); free(m->inventory); free(m); return false;
+    if (!m->inventory || !qa_q2_messages_config_capacity(m, options->config_strings, error) ||
+        !qa_q2_codec_init(&m->codec, protocol, error)) {
+        if (!m->inventory) qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate Q2 inventory buffer");
+        qa_q2_messages_destroy(m); return false;
     }
     *out = m;
     return true;
@@ -124,6 +143,7 @@ static bool set_config(qa_q2_messages *m, uint16_t index, const char *value, qa_
     char *copy = malloc(length + 1);
     if (!copy) { qa_error_set(error, QA_ERROR_MEMORY, index, "Cannot retain Q2 config string"); return false; }
     memcpy(copy, value, length + 1);
+    if (!m->configs[index]) m->config_slots[m->config_count++] = index;
     free(m->configs[index]); m->configs[index] = copy;
     return true;
 }
@@ -158,10 +178,7 @@ static qa_q2_frame_history *history(qa_q2_messages *m, uint8_t seat, qa_error *e
 static bool serverdata_layout(qa_q2_messages *m, qa_error *error) {
     qa_q2_config_layout layout;
     if (!qa_q2_config_layout_read(&m->codec, &layout, error)) return false;
-    if (m->config_capacity == layout.max_configs) return true;
-    char **values = calloc(layout.max_configs, sizeof(*values));
-    if (!values) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining genuine SERVERDATA config namespace"); return false; }
-    free(m->configs); m->configs = values; m->config_capacity = layout.max_configs; return true;
+    return qa_q2_messages_config_capacity(m, layout.max_configs, error);
 }
 
 bool qa_q2_messages_accept(qa_q2_messages *m, const qa_q2_server_record *record, qa_error *error) {
