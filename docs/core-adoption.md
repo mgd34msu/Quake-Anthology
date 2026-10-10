@@ -89,7 +89,7 @@ receive allocation.
 
 | Reported caller | Adopted storage or read path |
 | --- | --- |
-| `src/render/cpu/raster.c:220,811` | Worker creation reserves an 8,192-triangle batch. The triangle append no longer reallocates. Overflow uses the existing flush/direct raster path and preserves drawing. |
+| `src/render/cpu/raster.c:220,813` | Worker creation reserves an 8,192-triangle batch. The triangle append no longer reallocates. Overflow uses the existing flush/direct raster path and preserves drawing. |
 | `src/gameplay/q2/entities/state.c:67` | Authored fields belong to the common map arena. Spawn, checkpoint restore and original-save import use that ownership. Map entry resets it and source preparation seals it; entity-slot reuse no longer frees an individual field array. |
 | `src/network/admin/owner.c:450` | Master refresh compares current names with retained names before copying. Unchanged frames allocate and free nothing. |
 | `src/network/dosbox.c:71,225` | Socket creation owns 256 fixed packet slots and a borrowed receive buffer. Delivery, queue overflow and receive no longer allocate or free packets. |
@@ -211,29 +211,33 @@ button arithmetic, audio looping and structure/protocol/save numeric values
 remain unchanged. Component evidence and exact remaining scope are in
 `docs/playtests/2026-10-09-common-family-types.md`.
 
-## Q1/QC and native cvar adoption: THE-2859
+## Cvar handles: THE-2859
 
-Compiled Q1 binds 25 common handles before spawn in
-`src/gameplay/q1/runtime.c`. Q1/QW limits, movement, pause, chat and addon
-rules read those handles. The named application callback, its context and
-exported admission-limit bridge are deleted. Original QC policy/developer
-output uses its existing handle owner. Native cvars are derived ABI objects;
-unchanged polls skip guest rewrites. Owning/borrowed string reads share one
-scanner, and repeated existing Cvar_Get inputs borrow contiguous backing.
+The one handle implementation is `include/qa/console.h:213` and
+`src/console/cvars.c:1134`. Resolve at bind or registration, then read the common
+value table by handle. The table owns alias and dialect conversion; callers do
+not retain copied values or introduce lookup context checks.
 
-Proof is in `docs/playtests/2026-10-09-common-cvar-adoption.md`. Fixed Q3
-source/loading/authored HUD readers remain open. New declarations, setters,
-split strings and other native text imports still allocate. Whole-frame
-zero allocation is not established.
+| Caller | Adoption |
+| --- | --- |
+| Compiled Q1 and original QC policy | `src/gameplay/q1/runtime.c` binds common handles before spawn; Q1/QW movement, limits, pause, chat and addon rules read them. The named application callback/context is deleted. |
+| Q2 source settings | `src/gameplay/q2/source.c:20` binds the source handles; `qa_q2_source_value` reads them. |
+| Q3 source controls/settings | `src/app/application/native_q3_console.c:65` and `native_q3_settings.c:353,522,681` retain common references instead of fixed-name polling. |
+| Q3 loading and authored HUD | `src/presentation/q3_native/loading.c:77,382` retains `sv_running`; `mission_hud.c:308` and `mission_hud_menu.c:49` retain `cg_hudFiles`. Authored menu references refresh on declaration revision. These migrations are in e61f9d5f and c1537cff. |
+| Master refresh and rerelease RCON | `src/network/admin/owner.c:275,465` binds the fixed policy handles when the source registry changes. Administration adoption invalidates the bindings. |
+| Early source administration | `src/app/frontend/source_admin.c:150` binds password, filter, publication and dedicated handles for ordinary binding and restore. Policy/authentication readers use those handles. |
+| QuakeWorld host | `src/app/frontend/network_qw.c:20` binds download, authentication and spectator-limit handles at creation and when the source view changes. Pump and admission use indexed reads; the cold declaration checks remain named. |
+| Native Q3 receiver | `src/app/application/native_q3_remote_role.c:58,242` binds the cheat setting before constructor callbacks and uses it for policy reads. |
 
-The shared CLIENT query and explicit pose slice passes all three builds and
-seven core checks each. Current native candidate medians are classic
-9.460/9.300 us and rerelease 9.230/9.220 us, all below 9.6 us; this paired
-baseline is faster, so no native speedup is claimed. Current public geometry
-serial/two-scratch output and archived bytes agree in all 18 runs. Query
-components improve Q1/Q3 medians about 26%/51%; whole-frame allocation,
-renderer leaf admission and full gameplay/interop remain open. See
-`docs/playtests/2026-10-09-shared-client-query.md`.
+Native ABI cvars remain derived module objects; unchanged polls skip guest
+rewrites. Name reads remain for declarations, typed console text, external
+module string syscalls and cold persistence. Remaining fixed packet-policy
+readers in `src/app/frontend/network.c` are covered by the deferred THE-3177
+caller audit; this section does not claim that those have migrated.
+
+The current administration/QuakeWorld slice passes the normal production build
+and seven existing core suites. No new timing, profiler census, install or
+standalone evidence document was added.
 
 ## Output event ring: THE-870
 

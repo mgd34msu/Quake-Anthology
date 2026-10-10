@@ -20,10 +20,14 @@ struct qa_server_admin {
     qa_net_address *masters[4];
     size_t master_count[4];
     qa_buffer master_names;
+    qa_cvars *master_registry;
+    qa_cvar_handle master_cvars[5];
     uint64_t heartbeat_time, rcon_time;
     uint32_t heartbeat_sequence;
     bool heartbeat_sent, rcon_sent, shuffle, callback, executing;
     qa_cvars *rate_registry;
+    qa_cvars *rate_bind_registry;
+    qa_cvar_handle rate_setting;
     char *rate_text;
     uint64_t rate_revision;
     uint32_t rate_time, credit, credit_cap, credit_cost;
@@ -92,6 +96,8 @@ bool qa_server_admin_adopt(qa_server_admin *destination,qa_server_admin **source
     qa_server_admin previous=*destination;
     *destination=*held; destination->options=previous.options;
     destination->rate_registry=NULL;
+    destination->rate_bind_registry=NULL;
+    destination->master_registry=NULL;
     *held=previous; qa_server_admin_destroy(held); *source=NULL; return true;
 }
 void qa_server_admin_destroy(qa_server_admin *admin) {
@@ -266,7 +272,11 @@ static bool rerelease_allow(qa_server_admin *admin,uint64_t now,qa_error *error)
     bool outer=admin->callback; admin->callback=true;
     qa_cvars *registry=admin->options.hooks.rate_registry(admin->options.hooks.context);
     admin->callback=outer;
-    const qa_cvar_view *setting=registry?qa_cvars_find(registry,"sv_rcon_limit"):NULL;
+    if (admin->rate_bind_registry!=registry) {
+        admin->rate_setting=qa_cvars_resolve(registry,"sv_rcon_limit");
+        admin->rate_bind_registry=registry;
+    }
+    const qa_cvar_view *setting=qa_cvars_read(registry,admin->rate_setting);
     if (!setting || qa_cvars_dialect(registry)!=QA_RULESET_Q2_RERELEASE)
         return fail(error,"Rerelease RCON requires its actual Source rate declaration");
     uint32_t time=(uint32_t)(now/UINT64_C(1000000));
@@ -452,10 +462,16 @@ bool qa_server_admin_refresh_masters(qa_server_admin *admin,qa_cvars *registry,q
     if (!admin || admin->callback || !registry || admin->options.dialect!=QA_RULESET_Q3 ||
         qa_cvars_dialect(registry)!=QA_RULESET_Q3)
         return fail(error,"Q3 master refresh requires its returned Source registry");
+    if (admin->master_registry!=registry) {
+        for (unsigned i=0;i<5;++i) {
+            char name[16]; snprintf(name,sizeof(name),"sv_master%u",i+1);
+            admin->master_cvars[i]=qa_cvars_resolve(registry,name);
+        }
+        admin->master_registry=registry;
+    }
     const char *values[5]; size_t size=0;
     for (unsigned i=0;i<5;++i) {
-        char name[16]; snprintf(name,sizeof(name),"sv_master%u",i+1);
-        const qa_cvar_view *v=qa_cvars_find(registry,name);
+        const qa_cvar_view *v=qa_cvars_read(registry,admin->master_cvars[i]);
         if (!v) return fail(error,"Q3 master refresh has no actual Source declaration");
         values[i]=v->value; size_t length=strlen(v->value)+1;
         if (length>65536-size) return fail(error,"Q3 master names exceed their retained extent");

@@ -14,6 +14,20 @@
 #include <string.h>
 
 static const qa_net_protocol_id protocol = {.kind = QA_NET_QW28};
+static const char *const download_names[] = {"allow_download", "allow_download_skins",
+    "allow_download_models", "allow_download_sounds", "allow_download_maps"};
+static void source_cvars_bind(frontend_qw_host *host,const qa_cvars *cvars)
+{
+    uint64_t view=qa_cvars_view_identity(cvars);
+    if (host->cvar_view==view) return;
+    for (size_t i=0;i<5;++i) host->downloads[i]=qa_cvars_resolve(cvars,download_names[i]);
+    host->password=qa_cvars_resolve(cvars,"password");
+    host->spectator_password=qa_cvars_resolve(cvars,"spectator_password");
+    host->high_chars=qa_cvars_resolve(cvars,"sv_highchars");
+    host->maxspectators=qa_cvars_resolve(cvars,"maxspectators");
+    host->rcon_password=qa_cvars_resolve(qa_application_cvars(host->frontend->application),"rcon_password");
+    host->cvar_view=view;
+}
 static uint32_t peer_ping(const qw_frontend_peer *);
 static bool source_status(void *, const char **, qa_error *);
 static bool source_drop(void *, qa_net_client_id, const char *, qa_error *);
@@ -41,10 +55,12 @@ static uint32_t source_random(void *context)
 }
 static bool source_world(frontend_qw_host *host, qa_application_network_qw_world *out, qa_error *error)
 {
-    return qa_application_network_qw_world_read(host->frontend->application, out, error) &&
+    bool ok=qa_application_network_qw_world_read(host->frontend->application, out, error) &&
         ((out->source.owner == host->owner && host->generation ==
           qa_application_configuration_generation(host->frontend->application)) ||
          frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld source factory belongs to a replaced physical owner"));
+    if (ok) source_cvars_bind(host,out->source.cvars);
+    return ok;
 }
 static bool peer_actor(qw_frontend_peer *peer, qa_actor_id *out, qa_error *error)
 {
@@ -183,16 +199,15 @@ static bool open_download(void *context, const char *name, bool *found, qa_qw_do
     qw_frontend_peer *peer = context; qa_application_network_qw_world world;
     if (!source_world(peer->host, &world, error)) return false;
     *found = false; *out = (qa_qw_download){0};
-    const qa_cvar_view *allowed = qa_cvars_find(world.source.cvars, "allow_download");
+    const qa_cvar_view *allowed = qa_cvars_read(world.source.cvars, peer->host->downloads[0]);
     if (!allowed || allowed->number == 0 || !qa_qw_download_path_valid(name)) return true;
     size_t size = strlen(name); char *path = malloc(size + 1);
     if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Qualifying QuakeWorld mounted download path");
     for (size_t i = 0; i <= size; ++i) path[i] = name[i] >= 'A' && name[i] <= 'Z' ? (char)(name[i] + ('a' - 'A')) : name[i];
     static const char *const prefixes[] = {"skins/", "progs/", "sound/", "maps/"};
-    static const char *const settings[] = {"allow_download_skins", "allow_download_models", "allow_download_sounds", "allow_download_maps"};
     bool permit = strchr(path, '/') && path[0] != '.' && !strstr(path, "..");
     for (size_t i = 0; permit && i < 4; ++i) if (!strncmp(path, prefixes[i], strlen(prefixes[i]))) {
-        const qa_cvar_view *value = qa_cvars_find(world.source.cvars, settings[i]);
+        const qa_cvar_view *value = qa_cvars_read(world.source.cvars, peer->host->downloads[i+1]);
         permit = value && value->number != 0;
     }
     qa_qw_download_admission admission = {.maximum_bytes = INT32_MAX,
@@ -489,10 +504,10 @@ bool frontend_qw_create(qa_frontend *frontend, qa_network_runtime *runtime, qa_s
     }
     host->active_limit = (uint32_t)maximum->number;
     host->previous_pause = qa_application_q1_paused(frontend->application);
-    static const char *const downloads[] = {"allow_download", "allow_download_skins", "allow_download_models", "allow_download_sounds", "allow_download_maps"};
     bool ok = true;
-    for (size_t i = 0; ok && i < sizeof(downloads) / sizeof(*downloads); ++i)
-        if (!qa_cvars_find(source.cvars, downloads[i])) ok = qa_cvars_register(source.cvars, downloads[i], "1", 0, host->owner, "QuakeWorld source download policy", error);
+    for (size_t i = 0; ok && i < sizeof(download_names) / sizeof(*download_names); ++i)
+        if (!qa_cvars_find(source.cvars, download_names[i])) ok = qa_cvars_register(source.cvars, download_names[i], "1", 0, host->owner, "QuakeWorld source download policy", error);
+    if (ok) source_cvars_bind(host,source.cvars);
     if (ok) ok = qa_qw_challenges_create(1024, source_random, host, &host->challenges, error) && capture_factory(host, error);
     if (!ok) { frontend_qw_destroy(host); return false; }
     *out = host; return true;
@@ -553,7 +568,7 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
             !qa_application_network_qw_client_read(host->frontend->application, actor, &source, error)) return false;
         index = source.source_slot - 1; spectator = source.spectator;
     }
-    const qa_cvar_view *maximum = qa_cvars_find(world.source.cvars, "maxspectators");
+    const qa_cvar_view *maximum = qa_cvars_read(world.source.cvars, host->maxspectators);
     if (!local_player && request->spectator && (!maximum || !isfinite(maximum->number)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld admission requires its actual source player-limit policy");
     if (!local_player) {
@@ -788,10 +803,10 @@ bool frontend_qw_pump(frontend_qw_host *host, qa_error *error)
         (double)host->frontend->wall_time_ns / 1000000000.0, &log_present, error)) return false;
     qa_application_network_qw_world world;
     if (!source_world(host, &world, error)) return false;
-    const qa_cvar_view *password = qa_cvars_find(world.source.cvars, "password"),
-        *spectator = qa_cvars_find(world.source.cvars, "spectator_password"),
-        *high = qa_cvars_find(world.source.cvars, "sv_highchars"),
-        *rcon = qa_cvars_find(qa_application_cvars(host->frontend->application), "rcon_password");
+    const qa_cvar_view *password = qa_cvars_read(world.source.cvars, host->password),
+        *spectator = qa_cvars_read(world.source.cvars, host->spectator_password),
+        *high = qa_cvars_read(world.source.cvars, host->high_chars),
+        *rcon = qa_cvars_read(qa_application_cvars(host->frontend->application), host->rcon_password);
     if (!password || !spectator || !high || !rcon)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld authentication lacks its actual constructor policies");
     qa_qw_connection_host hooks = {.context = host, .password = password->value,

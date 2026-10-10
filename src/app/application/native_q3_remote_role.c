@@ -55,7 +55,7 @@ static void cvar_print(void *context, const char *text)
 static bool cheats(void *context)
 {
     struct application_native_q3_remote_role *row = context;
-    const qa_cvar_view *value = row->retiring ? NULL : qa_cvars_find(row->cvars, "sv_cheats");
+    const qa_cvar_view *value = row->retiring ? NULL : qa_cvars_read(row->cvars, row->cheats);
     return value && value->integer != 0;
 }
 static bool read_script(void *context, const qa_command_context *command, const char *path,
@@ -239,6 +239,7 @@ static bool prepare_seat(application_provider *provider, const qa_launch_choices
     qa_cvar_options cvars = {.dialect = QA_RULESET_Q3,
         .side = QA_CVAR_SIDE_CLIENT, .role = QA_CVAR_ROLE_CGAME, .seat = row->seat, .user = row, .print = cvar_print, .cheats_allowed = cheats};
     row->cvars = qa_cvars_create_view(provider->application->cvars, &cvars, error);
+    row->cheats = qa_cvars_resolve(row->cvars, "sv_cheats");
     qa_console_options options = {.context = {.owner = provider->owner, .seat = seat->id,
         .dialect = QA_RULESET_Q3, .origin = QA_COMMAND_SEAT}, .cvars = row->cvars, .user = row,
         .print = print, .capture_context = capture, .context_active = active, .read_script = read_script,

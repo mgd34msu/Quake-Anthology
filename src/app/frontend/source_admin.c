@@ -19,6 +19,7 @@ struct frontend_source_admin {
     qa_application *application;
     qa_console *console;
     qa_cvars *cvars;
+    qa_cvar_handle passwords[2], filterban, published, dedicated;
     qa_command_context command;
     qa_server_admin *admin;
     qa_fs_root *preferences;
@@ -59,8 +60,7 @@ static bool send_packet(void *context,const qa_net_address *address,qa_bytes byt
 static const char *password(void *context,bool limited)
 {
     frontend_source_admin *owner=context;
-    const qa_cvar_view *value=qa_cvars_find(owner->cvars,limited?"lrcon_password":
-        qa_cvars_dialect(owner->cvars)==QA_RULESET_Q3?"rconPassword":"rcon_password");
+    const qa_cvar_view *value=qa_cvars_read(owner->cvars,owner->passwords[limited?1:0]);
     return value?value->value:"";
 }
 static qa_cvars *rate_registry(void *context)
@@ -133,8 +133,8 @@ static bool persist_filters(void *context,qa_error *error)
 static bool policy(frontend_source_admin *owner,qa_error *error)
 {
     qa_ruleset_id dialect=qa_cvars_dialect(owner->cvars);
-    const qa_cvar_view *filter=qa_cvars_find(owner->cvars,"filterban"),
-        *published=qa_cvars_find(owner->cvars,"public"),*dedicated=qa_cvars_find(owner->cvars,"dedicated");
+    const qa_cvar_view *filter=qa_cvars_read(owner->cvars,owner->filterban),
+        *published=qa_cvars_read(owner->cvars,owner->published),*dedicated=qa_cvars_read(owner->cvars,owner->dedicated);
     bool q2=dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE;
     return qa_server_admin_policy(owner->admin,dialect,!filter || filter->integer!=0,
         owner->frontend->options.network_host && owner->frontend->options.dedicated &&
@@ -147,13 +147,26 @@ static qa_admin_options admin_options(frontend_source_admin *owner,qa_ruleset_id
         .hooks={.context=owner,.password=password,.execute=execute,.send=send_packet,.travel=travel,
             .players=players,.random=random_rotation,.rate_registry=rate_registry,.print=print}};
 }
+static void cvars_bind(frontend_source_admin *owner,qa_cvars *cvars)
+{
+    if (owner->cvars!=cvars) {
+        owner->passwords[0]=qa_cvars_resolve(cvars,
+            qa_cvars_dialect(cvars)==QA_RULESET_Q3?"rconPassword":"rcon_password");
+        owner->passwords[1]=qa_cvars_resolve(cvars,"lrcon_password");
+        owner->filterban=qa_cvars_resolve(cvars,"filterban");
+        owner->published=qa_cvars_resolve(cvars,"public");
+        owner->dedicated=qa_cvars_resolve(cvars,"dedicated");
+    }
+    owner->cvars=cvars;
+}
 bool frontend_source_admin_bind(frontend_source_admin *owner,qa_application *application,
     qa_console *console,qa_cvars *cvars,const qa_command_context *command,qa_error *error)
 {
     if (!owner || owner->busy || owner->restoring || !owner->admin || !application ||
         !source_view(console,cvars,command))
         return fail(error,QA_ERROR_ARGUMENT,"Early administration requires its actual returned Source namespace");
-    owner->application=application; owner->console=console; owner->cvars=cvars;
+    cvars_bind(owner,cvars);
+    owner->application=application; owner->console=console;
     owner->command=*command;
     owner->command.script=NULL;
     return policy(owner,error);
@@ -352,6 +365,7 @@ bool frontend_source_admin_finish_restore(frontend_source_admin *owner,qa_applic
         !root || !root_matches(store,&owner->saved_preferences))
         return fail(error,QA_ERROR_FORMAT,"Saved Source administration differs from its actual reconstructed Source and directory lineage");
     qa_fs_root_retain(root); owner->preferences=root;
-    owner->application=application; owner->console=console; owner->cvars=cvars; owner->command=*command;
+    cvars_bind(owner,cvars);
+    owner->application=application; owner->console=console; owner->command=*command;
     owner->command.script=NULL; owner->restoring=false; return true;
 }

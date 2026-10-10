@@ -14,6 +14,7 @@ struct application_native_q3_remote_role {
     uint32_t seat;
     qa_console *console;
     qa_cvars *cvars;
+    qa_cvar_handle cheats;
     qa_string_id service_owner;
     qa_launch_instance_lease *descriptor;
     uint64_t connection_epoch, configuration_generation;

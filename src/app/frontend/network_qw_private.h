@@ -42,6 +42,8 @@ struct frontend_qw_host {
     qa_network_runtime *runtime;
     qa_server_admin *admin;
     qa_actor_owner owner;
+    uint64_t cvar_view;
+    qa_cvar_handle downloads[5], password, spectator_password, high_chars, rcon_password, maxspectators;
     uint64_t generation, event_cursor, reliable_cursor, event_generation, reliable_generation, published_time_ns;
     uint64_t action_time_ns;
     qa_actor_id action_actor;
