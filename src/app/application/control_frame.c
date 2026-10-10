@@ -1839,9 +1839,10 @@ static bool native_q2_command_move(void *context, const qa_movement_input *input
     call->outcome = moved;
     if (moved != APPLICATION_CONTROL_COMPLETED) return false;
     if (!qa_actors_get(qa_session_actors(call->app->session), input->actor)) {
-        qa_movement_result_free(out);
+        qa_movement_result_clear(out);
         *out = (qa_movement_result){.status = QA_MOVEMENT_ACTOR_REMOVED,
-            .actor = input->actor, .command_sequence = selected.sequence};
+            .actor = input->actor, .command_sequence = selected.sequence,
+            .contacts = out->contacts, .contact_capacity = out->contact_capacity};
         return true;
     }
     application_control_record *record = &call->app->controls[input->actor.slot];

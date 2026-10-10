@@ -116,6 +116,7 @@ bool application_composition_create(qa_application *application,
     application->actor_route_capacity = actor_capacity;
     application->control_capacity = actor_capacity;
     application->q2_visual_capacity = actor_capacity;
+    if (!application_control_records_prepare(application->controls, actor_capacity, error)) return false;
     if (!application_event_stream_create(application, actor_capacity, error)) return false;
     if (!application_native_q2_delivery_create(application, actor_capacity, error)) return false;
 

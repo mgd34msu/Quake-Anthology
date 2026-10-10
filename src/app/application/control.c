@@ -1755,6 +1755,20 @@ static bool control_numeric_current(qa_application *app, qa_actor_id actor,
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native movement numeric recipe differs from its execution environment");
 }
 
+bool application_control_records_prepare(application_control_record *records, size_t count, qa_error *error)
+{
+    /* Q2/Q3 retain up to 32 source touches; this also covers QW command splits. */
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_movement_result_reserve(&records[i].result, 64, error)) return false;
+    return true;
+}
+static void control_record_clear(application_control_record *record)
+{
+    qa_movement_result result = record->result;
+    qa_movement_result_clear(&result);
+    *record = (application_control_record){.result = result};
+}
+
 bool application_control_numeric_current(qa_application *app, qa_actor_id actor,
     const qa_movement_numeric *numeric, qa_error *error)
 { return control_numeric_current(app, actor, numeric, false, error); }
@@ -1783,8 +1797,7 @@ bool application_control_ensure(qa_application *application, qa_actor_id actor,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "control slot is retiring from a nested move");
     if (record->active) {
-        qa_movement_result_free(&record->result);
-        *record = (application_control_record){0};
+        control_record_clear(record);
     }
     application_provider *provider;
     qa_body_state body;
@@ -1800,6 +1813,7 @@ bool application_control_ensure(qa_application *application, qa_actor_id actor,
         !movement_numeric(application, provider, kind, true, &prediction_numeric, error)) return false;
     qa_movement_input defaults = qa_movement_input_default(kind, actor);
     *record = (application_control_record){
+        .result = record->result,
         .application = application,
         .player.actor = actor,
         .player.state = qa_movement_state_default(kind, body.origin),
@@ -1847,8 +1861,7 @@ bool application_control_detach(qa_application *application, qa_actor_id actor,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "control detach cannot interrupt actor movement");
     application_control_frames_release(application, actor);
-    qa_movement_result_free(&record->result);
-    *record = (application_control_record){0};
+    control_record_clear(record);
     return true;
 }
 
@@ -2984,8 +2997,7 @@ static bool control_move(qa_application *application,
         }
     }
     if (record->retired && qa_actor_id_equal(record->player.actor, actor)) {
-        qa_movement_result_free(&record->result);
-        *record = (application_control_record){0};
+        control_record_clear(record);
     } else if (record->active && qa_actor_id_equal(record->player.actor, actor))
         record->moving = false;
     end_q1_operations(&move);
@@ -3392,7 +3404,7 @@ guest_weapons_finished:
     }
     if (stage) return ok && (!live(application, actor) || external_stage_current(stage));
     if (record->retired && qa_actor_id_equal(record->player.actor, actor)) {
-        qa_movement_result_free(&record->result); *record = (application_control_record){0};
+        control_record_clear(record);
     } else if (record->active && qa_actor_id_equal(record->player.actor, actor)) record->moving = false;
     end_q1_operations(&move);
     return ok;

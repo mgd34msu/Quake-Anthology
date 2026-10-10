@@ -688,6 +688,7 @@ void application_actor_routes_clear(qa_application *);
 void application_actor_routes_invalidate(qa_application *, qa_actor_id);
 void application_actor_routes_bind(qa_application *, qa_actor_id);
 bool application_composition_create(qa_application *, qa_error *);
+bool application_control_records_prepare(application_control_record *, size_t, qa_error *);
 bool application_composition_destroy(qa_application *, qa_error *);
 bool application_apply(qa_application *, const qa_launch_draft *, qa_error *);
 bool application_q1_pause_set(qa_application *, application_provider *, bool, qa_error *);

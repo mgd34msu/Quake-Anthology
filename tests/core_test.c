@@ -434,6 +434,9 @@ static void test_retained_movement_result(void)
     CHECK(qa_movement_result_copy(&source, &out, &error));
     CHECK(out.contacts == storage && out.contact_count == 0 && out.contact_capacity >= 32);
     CHECK(qa_movement_result_copy(&out, &out, &error) && out.contacts == storage);
+    qa_movement_result_clear(&out);
+    CHECK(out.contacts == storage && !out.command_sequence && !out.contact_count);
+    CHECK(qa_movement_result_copy(&source, &out, &error) && out.contacts == storage);
     qa_movement_result_free(&out); CHECK(!out.contacts && !out.contact_capacity);
 }
 

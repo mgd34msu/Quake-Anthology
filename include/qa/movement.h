@@ -333,9 +333,11 @@ bool qa_movement_move(const qa_movement_input *, const qa_movement_services *, q
  * client-think state; physics runs prethink/think/links/postthink/weapon. */
 bool qa_movement_prepare_netquake(const qa_movement_input *, const qa_movement_services *, qa_movement_result *, qa_error *);
 bool qa_movement_physics_netquake(const qa_movement_input *, const qa_movement_services *, qa_movement_result *, qa_error *);
-/* Results own their contact buffer. Free a previous result before replacing
- * it with a new move result. Empty/zeroed results may be freed. */
+/* Results own their contact buffer and reuse it across moves. Release it when
+ * its owner is destroyed. Empty/zeroed results may be freed. */
 void qa_movement_result_free(qa_movement_result *);
+/* Clear command state while retaining the caller's contact reservation. */
+void qa_movement_result_clear(qa_movement_result *);
 /* Reserve caller-owned contacts during load; subsequent moves reuse them. */
 bool qa_movement_result_reserve(qa_movement_result *, size_t, qa_error *);
 /* Copy state and contacts into a retained destination. Its independent contact

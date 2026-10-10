@@ -351,6 +351,10 @@ bool qa_movement_world_trace(void *world, const qa_trace_query *q, qa_trace_resu
 bool qa_movement_world_contents(void *world, const qa_point_query *q, qa_point_contents *r, qa_error *e) { return qa_world_point_contents(world,q,r,e); }
 void qa_movement_result_free(qa_movement_result *r) { if (r) { free(r->contacts); memset(r,0,sizeof(*r)); } }
 
+void qa_movement_result_clear(qa_movement_result *r) {
+    *r=(qa_movement_result){.contacts=r->contacts,.contact_capacity=r->contact_capacity};
+}
+
 bool qa_movement_result_reserve(qa_movement_result *result, size_t capacity, qa_error *error) {
     if (capacity <= result->contact_capacity) return true;
     if (capacity > SIZE_MAX / sizeof(*result->contacts)) {

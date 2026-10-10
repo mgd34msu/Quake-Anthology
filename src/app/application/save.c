@@ -179,6 +179,7 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
     }
     if (ok) ok = application_control_frames_fields(&io, app, controls, &frames, error);
     if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (ok) ok = application_control_records_prepare(controls, app->control_capacity, error);
     if (ok) {
         application_control_record *old_controls = app->controls; application_motion_record *old_motion = app->motion;
         app->controls = controls; app->motion = motion; controls = old_controls; motion = old_motion;
