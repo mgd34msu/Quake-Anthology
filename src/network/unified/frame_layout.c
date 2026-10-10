@@ -1333,40 +1333,40 @@ static const qa_unified_field qa_unified_vector4_fields[] = {
 static const qa_unified_record_layout qa_unified_vector4_layout = QA_UNIFIED_LAYOUT(qa_vec4, qa_unified_vector4_fields);
 
 static const qa_unified_field qa_unified_q2_player_view_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_q2_player_view, angles, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_view, offset, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_view, kick_angles, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_view, gun_angles, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_view, gun_offset, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_q2_player_view, blend, qa_unified_vector4_layout),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, fov, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, health, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, ammo, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, armor, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, ammo_icon, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, armor_icon, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, selected_item, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, timer_item, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, ammo_count, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, score, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, flashes, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, layouts, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, hit_marker_damage, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, timer_seconds, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, underwater, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_q2_player_view, spectator, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_RECORD(qa_q2_player_view, angles, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_player_view, offset, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_player_view, kick_angles, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_player_view, gun_angles, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_player_view, gun_offset, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_q2_player_view, blend, qa_unified_vector4_layout),
+    QA_UNIFIED_FIELD(qa_q2_player_view, fov, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, health, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, ammo, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, armor, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_q2_player_view, ammo_icon, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, armor_icon, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, selected_item, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, timer_item, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_q2_player_view, ammo_count, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, score, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, flashes, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, layouts, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, hit_marker_damage, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, timer_seconds, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_player_view, underwater, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_player_view, spectator, QA_UNIFIED_FIELD_BOOL),
 };
-static const qa_unified_record_layout qa_unified_q2_player_view_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_player_view, qa_unified_q2_player_view_fields);
+static const qa_unified_record_layout qa_unified_q2_player_view_layout = QA_UNIFIED_LAYOUT(qa_q2_player_view, qa_unified_q2_player_view_fields);
 
 static const qa_unified_field qa_unified_q2_score_row_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q2_score_row, slot, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_score_row, name, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q2_score_row, score, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_score_row, ping, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_score_row, minutes, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_q2_score_row, spectator, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_q2_score_row, slot, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_q2_score_row, name, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_q2_score_row, score, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_score_row, ping, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_score_row, minutes, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_q2_score_row, spectator, QA_UNIFIED_FIELD_BOOL),
 };
-static const qa_unified_record_layout qa_unified_q2_score_row_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_score_row, qa_unified_q2_score_row_fields);
+static const qa_unified_record_layout qa_unified_q2_score_row_layout = QA_UNIFIED_LAYOUT(qa_q2_score_row, qa_unified_q2_score_row_fields);
 
 static const qa_unified_field qa_unified_q2_player_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q2_player_event, kind, QA_UNIFIED_FIELD_I32),

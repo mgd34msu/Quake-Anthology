@@ -1084,10 +1084,14 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
     if (!viewer_matches(o,event->actor,&matches,e))return false;
         if (!matches)return true;
     if (!source_actor(o,event->actor,&a,e) || !activation(o,&row->owner,&owner,e) || (owner && owner->retired))return false;
-    if (event->kind==QA_Q2_PLAYER_VIEW){const qa_unified_q2_player_view *view=&event->view;
+    if (event->kind==QA_Q2_PLAYER_VIEW){const qa_q2_player_view *view=&event->view;
         if (!selected_view_provider(o,row->provider)) return true;
         if (!(view->layouts&2))inventory_clear(o);
-        else for (size_t i=0;i<o->item_count;++i)o->items[i].selected=view->selected_item && !strcmp(o->items[i].item,view->selected_item);
+        else {
+            const char *selected=qa_strings_cstr(o->replica->strings,view->selected_item);
+            for (size_t i=0;i<o->item_count;++i)
+                o->items[i].selected=selected && !strcmp(o->items[i].item,selected);
+        }
         if (!(view->layouts&1)){o->help_visible=false;o->score_visible=false;}
         char *content=text_copy(row->content),*provider=text_copy(row->q2_profile?row->provider:NULL);
         if (!content || (row->q2_profile && !provider)){free(content);free(provider);return false;}
@@ -1113,7 +1117,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
         inventory_clear(o);o->items=items;o->item_count=used;o->inventory_visible=true;o->inventory_owner=owner;o->help_visible=false;return true;
     }
     size_t count=event->score_count;char **scores=count?calloc(count,sizeof(*scores)):NULL;bool okay=!count || scores;
-    for (size_t i=0;okay && i<count;++i){const qa_unified_q2_score_row *from=event->scores+i;size_t length=strlen(from->name)+128;
+    for (size_t i=0;okay && i<count;++i){const qa_q2_score_row *from=event->scores+i;size_t length=strlen(from->name)+128;
         scores[i]=malloc(length);okay=scores[i]!=NULL;
         if (okay)snprintf(scores[i],length,"%d  %s  %dms  %dm%s",from->score,from->name,from->ping,from->minutes,from->spectator?"  Spectator":"");}
     if (!okay){for(size_t i=0;i<count;++i)free(scores[i]);free(scores);return false;}

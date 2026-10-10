@@ -41,27 +41,12 @@ typedef struct qa_unified_builtin_event {
     size_t prompt_choice_count;
 } qa_unified_builtin_event;
 
-typedef struct qa_unified_q2_player_view {
-    qa_vec3 angles, offset, kick_angles, gun_angles, gun_offset;
-    qa_vec4 blend;
-    float fov, health, ammo;
-    double armor;
-    char *ammo_icon, *armor_icon, *selected_item, *timer_item;
-    int32_t ammo_count, score, flashes, layouts, hit_marker_damage, timer_seconds;
-    bool underwater, spectator;
-} qa_unified_q2_player_view;
-typedef struct qa_unified_q2_score_row {
-    uint32_t slot;
-    char *name;
-    int32_t score, ping, minutes;
-    bool spectator;
-} qa_unified_q2_score_row;
 typedef struct qa_unified_q2_player_event {
     qa_q2_player_event_kind kind;
     qa_actor_id actor, target;
     char *text, *skin, *selected_item;
-    qa_unified_q2_player_view view;
-    qa_unified_q2_score_row *scores;
+    qa_q2_player_view view;
+    qa_q2_score_row *scores;
     size_t score_count;
     qa_inventory_entry *inventory;
     size_t inventory_count;

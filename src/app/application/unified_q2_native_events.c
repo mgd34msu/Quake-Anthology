@@ -43,17 +43,6 @@ static bool emit(application_provider *p, const qa_unified_presentation_payload 
     return application_unified_event_emit(p->application, p->owner, presentation, simulation,
         recipient, recipient, time, slot, has_slot, false, e);
 }
-static qa_unified_q2_player_view player_view(qa_application *app, const qa_q2_player_view *v)
-{
-    return (qa_unified_q2_player_view){.angles = v->angles, .offset = v->offset,
-        .kick_angles = v->kick_angles, .gun_angles = v->gun_angles, .gun_offset = v->gun_offset,
-        .blend = v->blend, .fov = v->fov, .health = v->health, .ammo = v->ammo, .armor = v->armor,
-        .ammo_icon = alias(app, v->ammo_icon), .armor_icon = alias(app, v->armor_icon),
-        .selected_item = alias(app, v->selected_item), .timer_item = alias(app, v->timer_item),
-        .ammo_count = v->ammo_count, .score = v->score, .flashes = v->flashes,
-        .layouts = v->layouts, .hit_marker_damage = v->hit_marker_damage,
-        .timer_seconds = v->timer_seconds, .underwater = v->underwater, .spectator = v->spectator};
-}
 bool application_unified_q2_native_player(application_provider *p, const qa_q2_player_event *v, qa_error *e)
 {
     qa_clock_state clock;
@@ -63,19 +52,18 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
     qa_unified_q2_player_event *r = &payload.value.q2_player;
     *r = (qa_unified_q2_player_event){.kind = v->kind, .actor = v->actor, .target = v->target,
         .text = (char *)v->text, .skin = (char *)v->skin, .selected_item = alias(p->application, v->selected_item),
-        .view = player_view(p->application, &v->view), .origin = v->origin, .direction = v->direction,
+        .view = v->view, .origin = v->origin, .direction = v->direction,
         .time_ns = v->time_ns, .slot = v->slot, .level = v->level, .lives = v->lives,
         .damage = v->damage, .alpha = v->alpha, .respawn_status = v->respawn_status, .hand = v->hand,
         .visible = v->visible, .reliable = v->reliable, .health = v->health, .armor = v->armor,
         .shield = v->shield, .first = v->first};
     bool ok = true;
     if (v->kind == QA_Q2_PLAYER_SCOREBOARD && v->count) {
-        r->scores = application_event_stream_alloc(p->application, v->count * sizeof(*r->scores), _Alignof(qa_unified_q2_score_row), e); r->score_count = v->count;
+        r->scores = application_event_stream_alloc(p->application, v->count * sizeof(*r->scores), _Alignof(qa_q2_score_row), e); r->score_count = v->count;
         if (!r->scores) ok = false;
         for (size_t i = 0; ok && i < v->count; ++i) {
             const qa_q2_score_row *a = v->scores + i;
-            r->scores[i] = (qa_unified_q2_score_row){.slot = a->slot, .name = (char *)a->name,
-                .score = a->score, .ping = a->ping, .minutes = a->minutes, .spectator = a->spectator};
+            r->scores[i] = *a;
         }
     } else if (v->kind == QA_Q2_PLAYER_INVENTORY && v->count) {
         r->inventory = application_event_stream_alloc(p->application, v->count * sizeof(*r->inventory), _Alignof(qa_inventory_entry), e); r->inventory_count = v->count;
