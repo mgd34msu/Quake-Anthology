@@ -482,12 +482,12 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
     }
     return true;
 }
-static bool platform_collect(qa_frontend *frontend, qa_error *error)
+static bool platform_collect(qa_frontend *frontend, uint64_t now, qa_error *error)
 {
-    qa_input_platform_collect(frontend->input,frontend->platform_events,frontend->wall_time_ns);
+    qa_input_platform_collect(frontend->input,frontend->platform_events,now);
     if (frontend->terminal && !qa_platform_console_pump(frontend->terminal,frontend->platform_events,
-        0,65536,frontend->wall_time_ns,error)) return false;
-    return frontend_network_intake(frontend,frontend->platform_events,frontend->wall_time_ns,error);
+        0,65536,now,error)) return false;
+    return frontend_network_intake(frontend,frontend->platform_events,now,error);
 }
 static bool platform_events(qa_frontend *frontend, qa_error *error)
 {
@@ -796,12 +796,13 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
         frontend->wall_time_ns=replay->wall_ns;
         frontend->time_ns=replay->time_ns;
         frontend->frame_number=replay->frame_before;
-    } else frontend->wall_time_ns+=elapsed_ns;
-    (void)qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns);
+    }
+    uint64_t frame_time = replay ? replay->wall_ns : frontend->wall_time_ns + elapsed_ns;
+    (void)qa_platform_events_frame(frontend->platform_events,frame_time);
     bool ok=true,ready=false;
     if(replay) ok=frontend_platform_drain(frontend,true,error);
     else {
-        ok=platform_collect(frontend,error);
+        ok=platform_collect(frontend,frame_time,error);
         if(qa_platform_events_quit_requested(frontend->platform_events))
             qa_application_request_stop(frontend->application);
         if (ok) ok=frontend_platform_drain(frontend,false,error);
@@ -927,7 +928,7 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
             }
         }
         if (ok && !qa_application_should_stop(frontend->application)) {
-            if (!replay) ok=platform_collect(frontend,error);
+            if (!replay) ok=platform_collect(frontend,frontend->wall_time_ns,error);
             if (ok) ok=frontend_platform_drain(frontend,ready,error);
             /* Older journal tails retain their recorded command-wait cadence. */
             if (ok && ready && !replay && !qa_application_should_stop(frontend->application))

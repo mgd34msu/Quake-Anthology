@@ -63,10 +63,11 @@ qa_platform_event_result qa_platform_events_admit(qa_platform_events *events,
     if (kind == QA_PLATFORM_EVENT_PACKET) limit -= QA_PLATFORM_EVENT_KIND_COUNT;
     bool records = events->count >= limit;
     bool bytes = false;
-    if (kind == QA_PLATFORM_EVENT_PACKET) {
+    if (kind != QA_PLATFORM_EVENT_TIME) {
         qa_event_capacity capacity;
         qa_event_capacity_read(events->pages, &capacity);
-        bytes = maximum_payload + sizeof(platform_event_record) + 16384 > capacity.available_bytes;
+        size_t reserve = kind == QA_PLATFORM_EVENT_PACKET ? 32768 : 16384;
+        bytes = maximum_payload + sizeof(platform_event_record) + reserve > capacity.available_bytes;
     }
     qa_event_transaction probe;
     if (!records && !bytes) {

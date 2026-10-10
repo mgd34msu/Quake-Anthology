@@ -704,6 +704,21 @@ static void test_platform_event_retirement(void)
     }
     CHECK(packets && releases == 1 && clocks == 1);
     CHECK(qa_platform_events_statistics(events).records == 0);
+    qa_platform_events_reset(events);
+    uint8_t large[65536] = {0};
+    qa_sys_event line = {.kind = QA_PLATFORM_EVENT_CONSOLE_LINE};
+    while (qa_platform_events_push(events, &line, (qa_bytes){large, sizeof(large)},
+        (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED) {}
+    CHECK(qa_platform_events_statistics(events).records > 0);
+    CHECK(qa_platform_events_statistics(events).records < QA_PLATFORM_EVENT_CAPACITY - 1);
+    CHECK(qa_platform_events_frame(events, 10) == QA_PLATFORM_EVENT_ACCEPTED);
+    cursor = (qa_platform_event_cursor){0};
+    clocks = 0;
+    while (qa_platform_events_read(events, &cursor, &event, &bytes)) {
+        if (event.kind == QA_PLATFORM_EVENT_TIME) { ++clocks; CHECK(event.time_ns == 10); }
+        qa_platform_events_consume(events, &cursor);
+    }
+    CHECK(clocks == 1);
     qa_platform_events_destroy(events);
 }
 
