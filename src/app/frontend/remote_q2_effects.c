@@ -218,10 +218,18 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_GAME_Q2, &image, error)) return false;
     owner->particle_image = image;
     if (!qa_scene_resources_palette(source->images, QA_GAME_Q2, &palette, error)) return false;
-    /* Expansion beams/explosions and rerelease muzzle models are admitted by
-     * the effect that actually needs them, in this same retained media cache. */
     for (size_t i = 0; i < Q2FX_LIGHTNING; ++i)
         if (!q2fx_model_admit(owner, (q2fx_model)i, error)) return false;
+    /* Keep optional content optional, but admit installed models before play. */
+    for (size_t i = Q2FX_LIGHTNING; i < Q2FX_MODEL_COUNT; ++i) {
+        qa_resource *resource = NULL;
+        qa_error observed = {0};
+        bool found = qa_vfs_acquire(source->files, q2fx_model_paths[i], &resource, NULL, &observed);
+        bool admitted = found && q2fx_model_admit(owner, (q2fx_model)i, &observed);
+        qa_resource_release(resource);
+        if (!admitted && observed.code != QA_ERROR_NOT_FOUND)
+            fprintf(stderr, "Q2 optional effect model %s: %s\n", q2fx_model_paths[i], observed.message);
+    }
     return q2fx_source_current(owner, error);
 }
 bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_error *error)
