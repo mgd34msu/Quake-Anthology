@@ -297,7 +297,8 @@ struct qa_application {
     struct application_q3_campaign_launch *q3_campaign_launch;
     bool frame_preparing;
     bool source_shutdown_admitted;
-    struct application_q1_signon *q1_signon;
+    struct application_protocol_record *q1_signon, *q1_signon_last;
+    size_t q1_signon_count;
     struct application_portals *portals;
     bool map_force_reload;
     char *content_root;
