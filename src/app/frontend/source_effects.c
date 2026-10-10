@@ -3,7 +3,6 @@
 #include "qa/application_character_selection.h"
 #include "qa/ui_preferences.h"
 #include "qa/world.h"
-#include <stdlib.h>
 
 struct frontend_source_effects {
     qa_frontend *frontend;
@@ -91,8 +90,10 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
      * receipt. Its role bracket remains owned by the caller; no completed
      * world effects sample exists to borrow during that source constructor. */
     if (!client->initialized) return true;
-    frontend_source_effects *scope = calloc(1, sizeof(*scope));
+    qa_arena *storage=&frontend->frame.storage;
+    frontend_source_effects *scope=qa_arena_alloc(storage,sizeof(*scope),_Alignof(frontend_source_effects),error);
     if (!scope) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual source effects render scope");
+    *scope=(frontend_source_effects){0};
     *out = scope;
     scope->frontend = frontend; scope->application = frontend->application;
     scope->host = host; scope->call = call; scope->client = *client;
@@ -134,13 +135,20 @@ bool frontend_source_effects_begin(qa_frontend *frontend, const qa_q3_host *host
         if (!frontend_selected_effects_source_light_read(frontend, scope, i, &lights, &light_count, error)) return false;
         if (light_count > SIZE_MAX / sizeof(*lights) - scope->effect_light_count)
             return frontend_fail(error, QA_ERROR_MEMORY, "Source effect light extent is exhausted");
-        if (!light_count) continue;
-        size_t total = scope->effect_light_count + light_count;
-        qa_scene_light *owned = realloc(scope->effect_lights, total * sizeof(*owned));
-        if (!owned) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual source effect light packet");
-        scope->effect_lights = owned;
-        memcpy(owned + scope->effect_light_count, lights, light_count * sizeof(*lights));
-        scope->effect_light_count = total;
+        scope->effect_light_count+=light_count;
+    }
+    if (scope->effect_light_count) {
+        scope->effect_lights=qa_arena_alloc(storage,scope->effect_light_count*sizeof(*scope->effect_lights),
+            _Alignof(qa_scene_light),error);
+        if (!scope->effect_lights) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source effect light packet");
+        size_t used=0;
+        for (size_t i=0;i<scope->groups;++i) {
+            if (!frontend_selected_effects_source_matches(frontend,scope,i)) continue;
+            const qa_scene_light *lights; size_t count;
+            if (!frontend_selected_effects_source_light_read(frontend,scope,i,&lights,&count,error)) return false;
+            if (count) memcpy(scope->effect_lights+used,lights,count*sizeof(*lights));
+            used+=count;
+        }
     }
     scope->ready = frontend_source_effects_current(scope); return scope->ready;
 }
@@ -160,7 +168,8 @@ bool frontend_source_effects_prepare(frontend_source_effects *scope,
             return frontend_fail(error, QA_ERROR_FORMAT, "Source renderer lights leave their actual span");
         if (scope->effect_light_count) {
             size_t count = options->world.light_count + scope->effect_light_count;
-            scope->lights = malloc(count * sizeof(*scope->lights));
+            scope->lights=qa_arena_alloc(&scope->frontend->frame.storage,count*sizeof(*scope->lights),
+                _Alignof(qa_scene_light),error);
             if (!scope->lights) return frontend_fail(error, QA_ERROR_MEMORY, "Combining scoped source renderer lights");
             if (options->world.light_count)
                 memcpy(scope->lights, options->world.lights, options->world.light_count * sizeof(*scope->lights));
@@ -169,7 +178,8 @@ bool frontend_source_effects_prepare(frontend_source_effects *scope,
             size_t projected = options->world.projected_light_count;
             size_t added = scope->effect_light_count < 32 - projected ? scope->effect_light_count : 32 - projected;
             if (added) {
-                scope->projected_lights = malloc((projected + added) * sizeof(*scope->projected_lights));
+                scope->projected_lights=qa_arena_alloc(&scope->frontend->frame.storage,
+                    (projected+added)*sizeof(*scope->projected_lights),_Alignof(qa_scene_light),error);
                 if (!scope->projected_lights)
                     return frontend_fail(error, QA_ERROR_MEMORY, "Combining scoped source projected lights");
                 if (projected) memcpy(scope->projected_lights, options->world.projected_lights,
@@ -254,4 +264,4 @@ bool frontend_source_effects_submit(frontend_source_effects *scope,
 }
 
 void frontend_source_effects_end(frontend_source_effects *scope)
-{ if (scope) { free(scope->projected_lights); free(scope->lights); free(scope->effect_lights); free(scope); } }
+{ if (scope) *scope=(frontend_source_effects){0}; }
