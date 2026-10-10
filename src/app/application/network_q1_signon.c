@@ -128,11 +128,12 @@ static bool record_fields(qa_source_save_io *io, application_protocol_record *r,
     qa_event_transaction *transaction)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    qa_application_protocol_event encoded = r->event;
     uint8_t encoded_bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES];
     qa_net_writer writer;
     if (!reading) {
         qa_net_writer_init(&writer, encoded_bytes, sizeof(encoded_bytes), io->error);
-        if (!qa_application_protocol_event_encode(&r->event, &writer)) return false;
+        if (!qa_application_protocol_event_encode(&encoded, &writer)) return false;
     }
     uint32_t dialect = reading ? 0 : (uint32_t)r->event.dialect;
     if (!qa_source_save_string(io, &r->event.provider) || !qa_source_save_u32(io, &dialect) ||
@@ -141,7 +142,7 @@ static bool record_fields(qa_source_save_io *io, application_protocol_record *r,
         !qa_source_save_i32(io, &r->event.destination) || !qa_source_save_bool(io, &r->event.reliable) ||
         !qa_source_save_bool(io, &r->event.multicast) || !qa_source_save_bool(io, &r->event.signon)) return false;
     if (reading) r->event.dialect = (qa_ruleset_id)dialect;
-    size_t size = reading ? 0 : r->event.payload.size;
+    size_t size = reading ? 0 : encoded.payload.size;
     size_t maximum = reading ? io->input.size - io->offset : SIZE_MAX;
     if (!qa_source_save_count(io, &size, maximum)) return false;
     if (reading) {
@@ -149,7 +150,7 @@ static bool record_fields(qa_source_save_io *io, application_protocol_record *r,
         if (size && !bytes) return application_fail(io->error, QA_ERROR_MEMORY, "Restoring retained Q1 signon bytes");
         r->event.payload = (qa_bytes){bytes, size};
     }
-    if (!qa_source_save_bytes(io, (void *)r->event.payload.data, size)) return false;
+    if (!qa_source_save_bytes(io, (void *)(reading ? r->event.payload.data : encoded.payload.data), size)) return false;
     size_t count = reading ? 0 : r->event.reference_count;
     maximum = reading ? (io->input.size - io->offset) / 22 : SIZE_MAX / sizeof(*r->event.references);
     if (maximum > SIZE_MAX / sizeof(*r->event.references)) maximum = SIZE_MAX / sizeof(*r->event.references);
