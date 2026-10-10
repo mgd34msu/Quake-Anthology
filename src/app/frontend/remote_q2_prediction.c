@@ -219,8 +219,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
             .server_frame = command->server_frame, .forward_move = command->forwardmove,
             .side_move = command->sidemove, .up_move = command->upmove, .buttons = command->buttons,
             .impulse = command->impulse, .light_level = command->lightlevel};
-        input.command.angles = qa_v3((float)(uint16_t)command->angles[0] * (360.0f / 65536),
-            (float)(uint16_t)command->angles[1] * (360.0f / 65536), (float)(uint16_t)command->angles[2] * (360.0f / 65536));
+        input.command.angles = qa_q2_usercmd_angles(command);
         for (size_t i = 0; i < 3; ++i) input.command.angle_words[i] = command->angles[i];
         ok = qa_movement_move(&input, &services, &result, error) && result.status == QA_MOVEMENT_ACTIVE;
         if (ok) { state = result.state; sent->origin = qa_movement_origin(&state); sent->predicted = true; }

@@ -154,7 +154,12 @@ bool qa_q2_read_usercmd(qa_q2_codec*c,qa_net_reader*r,const qa_q2_usercmd*f,qa_q
     static const qa_q2_usercmd zero;
     if(!t)return qa_net_reader_fail(r,"Missing Q2 user command output");
     if(!f)f=&zero;
-    READ_DISPATCH(read_usercmd,(c,r,f,t));
+    const qa_q2_codec_ops *o=ops(c);
+    if(!o)return qa_net_reader_fail(r,"Invalid Q2 codec");
+    bool ok = o->read_usercmd(c,r,f,t);
+    if (ok && c->protocol.kind != QA_NET_Q2KEX_2023 && c->protocol.kind != QA_NET_Q2KEX_DEMO_2022)
+        t->float_angles = false;
+    return ok;
 }
 bool qa_q2_write_usercmd(qa_q2_codec*c,qa_net_writer*w,const qa_q2_usercmd*f,const qa_q2_usercmd*t) {
     static const qa_q2_usercmd zero;

@@ -726,6 +726,44 @@ static void test_platform_event_retirement(void)
     qa_platform_events_destroy(events);
 }
 
+static void test_q2_command_angles(void)
+{
+    const qa_net_protocol protocols[] = {QA_NET_Q2_34, QA_NET_Q2KEX_2023, QA_NET_Q2KEX_DEMO_2022};
+    for (size_t p = 0; p < sizeof(protocols) / sizeof(*protocols); ++p) {
+        bool floating = protocols[p] != QA_NET_Q2_34;
+        qa_error error = {0}; qa_q2_codec codec;
+        CHECK(qa_q2_codec_init(&codec, (qa_net_protocol_id){.kind = protocols[p]}, &error));
+        qa_usercmd source = {.kind = floating ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC,
+            .angles = {0.1234567f, -17.89123f, 279.65432f}, .angle_words = {-32768, 1, 32767}};
+        qa_q2_usercmd first = {.msec = 25}, previous = {0}, second;
+        qa_q2_usercmd_angles_from_engine(&first, &source);
+        uint8_t bytes[128]; qa_net_writer writer; qa_net_reader reader;
+        qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+        CHECK(qa_q2_write_usercmd(&codec, &writer, NULL, &first));
+        if (floating) CHECK(qa_net_writer_size(&writer) == 14);
+        else CHECK(qa_net_writer_size(&writer) == 9);
+        qa_net_reader_init(&reader, (qa_bytes){bytes, qa_net_writer_size(&writer)}, &error);
+        CHECK(qa_q2_read_usercmd(&codec, &reader, NULL, &previous));
+        CHECK(qa_net_reader_finish(&reader));
+        qa_vec3 actual = qa_q2_usercmd_angles(&previous);
+        if (floating) {
+            CHECK(!memcmp(&actual, &source.angles, sizeof(actual)));
+            source.angles.x += 0.000001f;
+            qa_q2_usercmd_angles_from_engine(&first, &source);
+            CHECK(first.angles[0] == previous.angles[0]);
+        } else CHECK(!memcmp(previous.angles, first.angles, sizeof(first.angles)));
+        qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+        CHECK(qa_q2_write_usercmd(&codec, &writer, &previous, &first));
+        if (floating) CHECK(qa_net_writer_size(&writer) == 6 && bytes[0] == 1);
+        qa_net_reader_init(&reader, (qa_bytes){bytes, qa_net_writer_size(&writer)}, &error);
+        CHECK(qa_q2_read_usercmd(&codec, &reader, &previous, &second));
+        CHECK(qa_net_reader_finish(&reader));
+        actual = qa_q2_usercmd_angles(&second);
+        if (floating) CHECK(!memcmp(&actual, &source.angles, sizeof(actual)));
+        else CHECK(!memcmp(second.angles, first.angles, sizeof(first.angles)));
+    }
+}
+
 static void test_loopback_admission(void)
 {
     qa_error error = {0};
@@ -1003,6 +1041,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_platform_event_retirement();
+    test_q2_command_angles();
     test_loopback_admission();
     test_loopback_nq_signon();
     test_kex_send_admission();

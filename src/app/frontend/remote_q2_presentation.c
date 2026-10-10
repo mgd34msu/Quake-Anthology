@@ -398,13 +398,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
         .msec = command.milliseconds > 255 ? 255 : (uint8_t)command.milliseconds,
         .buttons = (uint8_t)command.buttons, .impulse = command.impulse, .lightlevel = command.light_level,
         .forwardmove = command.forward_move, .sidemove = command.side_move, .upmove = command.up_move};
-    if (kind == QA_RULESET_Q2_RERELEASE) {
-        float values[3] = {command.angles.x, command.angles.y, command.angles.z};
-        for (size_t i = 0; i < 3; ++i) {
-            uint16_t bits = qa_angle_to_word(values[i]);
-            memcpy(out->angles + i, &bits, sizeof(bits));
-        }
-    } else for (size_t i = 0; i < 3; ++i) out->angles[i] = (int16_t)command.angle_words[i];
+    qa_q2_usercmd_angles_from_engine(out, &command);
     if (!remote_q2_live(row, error)) return false;
     row->input_set = true;
     *command_ready = true;

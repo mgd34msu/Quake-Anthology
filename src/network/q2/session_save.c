@@ -327,6 +327,42 @@ static bool client_fields(qa_source_save_io *io, q2_session *session)
         return invalid(io, "Q2 outbound and received codec Source profiles disagree");
     return true;
 }
+static bool command_angles(qa_source_save_io *io, qa_q2_usercmd *command)
+{
+    qa_vec3 value = qa_q2_usercmd_angles(command);
+    float angles[] = {value.x, value.y, value.z};
+    for (size_t i = 0; i < 3; ++i) {
+        if (!qa_source_save_f32(io, angles + i)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            command->angles_f[i] = angles[i];
+            command->angles[i] = (int16_t)qa_angle_to_word(angles[i]);
+        }
+    }
+    if (io->direction == QA_SOURCE_SAVE_READ) command->float_angles = true;
+    return true;
+}
+static bool retained_angles(qa_source_save_io *io, q2_session *session)
+{
+    if (session->codec.protocol.kind != QA_NET_Q2KEX_2023 &&
+        session->codec.protocol.kind != QA_NET_Q2KEX_DEMO_2022) return true;
+    /* Existing checkpoints end after the short-angle projection. New records
+     * retain the exact protocol floats in an optional trailing section. */
+    if (io->direction == QA_SOURCE_SAVE_READ && io->offset == io->input.size) return true;
+    if (session->server) {
+        for (size_t i = 0; i < QA_NETWORK_MAX_SEATS; ++i)
+            if (!command_angles(io, &session->state.server.replay[i].previous)) return false;
+        return true;
+    }
+    q2_client *client = &session->state.client;
+    for (size_t i = 0; i < QA_NETWORK_MAX_SEATS; ++i)
+        if (!command_angles(io, &client->oldest[i]) || !command_angles(io, &client->previous[i])) return false;
+    if (client->sent_pending) for (size_t i = 0; i < QA_NETWORK_MAX_SEATS; ++i)
+        if (!command_angles(io, &client->sent.commands[i])) return false;
+    for (size_t i = 0; i < client->command_capacity; ++i)
+        for (size_t seat = 0; seat < QA_NETWORK_MAX_SEATS; ++seat)
+            if (!command_angles(io, &client->commands[i].commands[seat])) return false;
+    return true;
+}
 static bool fields(qa_source_save_io *io, q2_session *session, const qa_net_client *client,
     const qa_network_q2_checkpoint_refs *refs)
 {
@@ -347,7 +383,7 @@ static bool fields(qa_source_save_io *io, q2_session *session, const qa_net_clie
         (session->active && client->phase != QA_NET_ACTIVE) ||
         (!session->active && !session->retiring && client->phase != QA_NET_CONNECTED))
         return invalid(io, "Saved Q2 channel, Source identity and signon phase disagree");
-    return server ? server_fields(io, session, refs) : client_fields(io, session);
+    return (server ? server_fields(io, session, refs) : client_fields(io, session)) && retained_angles(io, session);
 }
 bool qa_network_q2_checkpoint_peer(const qa_network_peer *peer, const qa_network_q2_checkpoint_refs *refs,
     bool *server, qa_buffer *out, qa_error *error)

@@ -193,8 +193,11 @@ static bool read_usercmd(qa_q2_codec *c,qa_net_reader *r,const qa_q2_usercmd *f,
     if(!f)f=&zero_usercmd;
     (void)c;uint8_t b=qa_net_read_u8(r);*t=*f;t->upmove=0.0f;t->impulse=0;
     if(b&32u)return qa_net_reader_fail(r,"KEX usercmd uses reserved bit 5");
+    qa_vec3 base=qa_q2_usercmd_angles(f);
+    t->angles_f[0]=base.x;t->angles_f[1]=base.y;t->angles_f[2]=base.z;t->float_angles=true;
     for(unsigned i=0;i<3;i++)if(b&(1u<<i)){
-        uint16_t a=qa_angle_to_word(q2_read_float(r));t->angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
+        t->angles_f[i]=q2_read_float(r);
+        uint16_t a=qa_angle_to_word(t->angles_f[i]);t->angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
     }
     if(b&8u)t->forwardmove=q2_read_float(r);
     if(b&16u)t->sidemove=q2_read_float(r);
@@ -208,13 +211,15 @@ static bool write_usercmd(qa_q2_codec *c,qa_net_writer *w,const qa_q2_usercmd *f
     if(!f)f=&zero_usercmd;
     if(t->upmove!=0.0f||t->impulse)return qa_net_writer_fail(w,"KEX usercmd cannot carry upmove or impulse");
     if(!isfinite(t->forwardmove)||!isfinite(t->sidemove))return qa_net_writer_fail(w,"Nonfinite KEX usercmd movement");
-    uint8_t b=0;for(unsigned i=0;i<3;i++)if(t->angles[i]!=f->angles[i])b|=(uint8_t)(1u<<i);
+    qa_vec3 base=qa_q2_usercmd_angles(f),value=qa_q2_usercmd_angles(t);
+    const float previous[]={base.x,base.y,base.z},angles[]={value.x,value.y,value.z};
+    uint8_t b=0;for(unsigned i=0;i<3;i++)if(angles[i]!=previous[i])b|=(uint8_t)(1u<<i);
     if(t->forwardmove!=f->forwardmove)b|=8u;
     if(t->sidemove!=f->sidemove)b|=16u;
     if(t->buttons!=f->buttons)b|=64u;
     if(t->server_frame!=f->server_frame)b|=128u;
     qa_net_write_u8(w,b);
-    for(unsigned i=0;i<3;i++)if(b&(1u<<i))qa_net_write_f32(w,(float)t->angles[i]*(360.0f/65536.0f));
+    for(unsigned i=0;i<3;i++)if(b&(1u<<i))qa_net_write_f32(w,angles[i]);
     if(b&8u)qa_net_write_f32(w,t->forwardmove);
     if(b&16u)qa_net_write_f32(w,t->sidemove);
     if(b&64u)qa_net_write_u8(w,t->buttons);

@@ -167,14 +167,20 @@ control, arsenal, bot source commands and the network client. These are
 boundary adapters; they do not build a second engine command or rescale bot
 intent separately. Legacy protocol records retain their native field widths.
 
-Remaining compatibility limitation: rerelease network input still projects
-angles through the short-angle `qa_q2_usercmd` record at
-`src/app/frontend/remote_q2_presentation.c:403` and
-`include/qa/network_q2.h:15`. This report closes the common command/type/builder
-migration, not that wire precision issue or all original-module gameplay.
+The Q2 packet adapter now retains the rerelease float angles required by
+`qsrc/quake2-rerelease-dll/rerelease/game.h:431`. One angle projection helper in
+`include/qa/network_q2.h` serves sampled and queued input. The KEX codec compares
+and emits the actual floats; received commands, prediction and host delivery
+retain them. Classic packet fields still encode original shorts. Network
+checkpoints accept the existing short-angle record and retain new exact floats
+in an optional trailing section; no user-facing format choice is added.
 
-Verification: `882194e8` passed a normal engine build and the seven existing
-core suites. No new installation or frame-time claim is part of this slice.
+Verification: the normal engine build and seven existing core suites pass.
+The core command-angle check covers classic and both KEX codecs, preserving a
+change smaller than one short-angle step through full and delta packets. Build
+log: `/tmp/qa-normal-q2-float-command-20261010/build.log`. The checkpoint extension
+is source-reviewed, not claimed as a live save/restore round trip. No new
+installation, original-module gameplay or frame-time result is claimed.
 
 ## Interned names and per-role rules
 
@@ -276,7 +282,7 @@ removes its entity only after append. Publication has no sign-on failure path
 after commit. No runtime bypass of the common admitted-output store was found
 in the migrated emitters or thirteen consumers. Foreign raw protocol buffers
 and cold checkpoint adapters remain format boundaries. Transport send pressure
-is separate remaining work under THE-2864.
+now uses the non-overwriting admission described under THE-2864.
 
 Normal builds and all seven existing core suites passed for `53067776`,
 `febb3e12` and `fb0d0d6e`; logs are under

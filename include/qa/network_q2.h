@@ -1,6 +1,7 @@
 #ifndef QA_NETWORK_Q2_H
 #define QA_NETWORK_Q2_H
 #include "qa/network.h"
+#include "qa/usercmd.h"
 #define QA_Q2_MAX_STATS 64
 #define QA_Q2_MAX_SEATS 8
 #define QA_Q2_MAX_AREABITS 8192
@@ -16,8 +17,28 @@ typedef struct qa_q2_usercmd {
     int32_t server_frame;
     uint8_t msec, buttons, impulse, lightlevel;
     int16_t angles[3];
+    float angles_f[3];
+    bool float_angles;
     float forwardmove, sidemove, upmove;
 } qa_q2_usercmd;
+static inline qa_vec3 qa_q2_usercmd_angles(const qa_q2_usercmd *command)
+{
+    if (command->float_angles)
+        return qa_v3(command->angles_f[0], command->angles_f[1], command->angles_f[2]);
+    return qa_v3((float)(uint16_t)command->angles[0] * (360.0f / 65536),
+        (float)(uint16_t)command->angles[1] * (360.0f / 65536),
+        (float)(uint16_t)command->angles[2] * (360.0f / 65536));
+}
+static inline void qa_q2_usercmd_angles_from_engine(qa_q2_usercmd *out, const qa_usercmd *command)
+{
+    out->float_angles = command->kind == QA_RULESET_Q2_RERELEASE;
+    const float values[] = {command->angles.x, command->angles.y, command->angles.z};
+    for (size_t i = 0; i < 3; ++i) {
+        out->angles_f[i] = values[i];
+        out->angles[i] = out->float_angles ? (int16_t)qa_angle_to_word(values[i]) :
+            (int16_t)command->angle_words[i];
+    }
+}
 typedef struct qa_q2_entity {
     uint32_t number;
     float origin[3], angles[3], old_origin[3];

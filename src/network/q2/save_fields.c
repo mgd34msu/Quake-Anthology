@@ -63,6 +63,10 @@ bool qa_q2_save_usercmd(qa_source_save_io *io, qa_q2_usercmd *value)
 {
     I32(value->server_frame); U8(value->msec); U8(value->buttons); U8(value->impulse); U8(value->lightlevel);
     for (size_t i = 0; i < 3; ++i) if (!i16(io, &value->angles[i])) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        value->float_angles = false;
+        memset(value->angles_f, 0, sizeof(value->angles_f));
+    }
     F32(value->forwardmove); F32(value->sidemove); F32(value->upmove); return true;
 }
 bool qa_q2_save_entity(qa_source_save_io *io, qa_q2_entity *value)

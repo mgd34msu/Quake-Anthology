@@ -48,6 +48,7 @@ static bool input(void *context,qa_net_client_id id,qa_net_seat_id seat,
         .forward_move=wire->forwardmove,.side_move=wire->sidemove,.up_move=wire->upmove};
     raw.angles=qa_v3((float)wire->angles[0]*(360.0f/65536.0f),
         (float)wire->angles[1]*(360.0f/65536.0f),(float)wire->angles[2]*(360.0f/65536.0f));
+    if(wire->float_angles) raw.angles=qa_q2_usercmd_angles(wire);
     for(size_t i=0;i<3;++i) raw.angle_words[i]=wire->angles[i];
     if(raw.kind==QA_RULESET_Q2_RERELEASE) {
         if(wire->upmove>0) raw.buttons|=8u;

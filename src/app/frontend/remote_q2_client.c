@@ -468,14 +468,12 @@ static bool hook_command(void *context, const qa_usercmd *source, qa_q2_usercmd 
             qa_v3(player->pmove.delta_angles[0] * (360.0f / 65536),
                 player->pmove.delta_angles[1] * (360.0f / 65536), player->pmove.delta_angles[2] * (360.0f / 65536));
         qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
-        from.relative = to.relative = false; to.words = true;
-        qa_input_command_convert(&converted, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
     } else {
         from.words = to.words = true;
         if (player) for (size_t i = 0; i < 3; ++i) to.delta_words[i] = player->pmove.delta_angles[i];
         qa_input_command_convert(command, NULL, &from, &to, (qa_input_axis_rule){0}, &converted);
     }
-    for (size_t i = 0; i < 3; ++i) out->angles[i] = (int16_t)converted.angle_words[i];
+    qa_q2_usercmd_angles_from_engine(out, &converted);
     return true;
 }
 static bool hook_server_command(void *context, qa_net_client_id id, uint8_t seat, const char *text, qa_error *error)
