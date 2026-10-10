@@ -56,14 +56,16 @@ static bool write_text(void *context, const char *text, qa_error *error)
 static bool read_address(void *context, qa_buffer *out, qa_error *error)
 {
     const browser_memory *memory = context;
-    qa_buffer text = {0};
+    qa_bytes text = {0};
     if (!memory_current(memory, error) ||
         !q3_string(memory->call, memory->address, &text, error)) {
-        qa_buffer_free(&text);
         return false;
     }
-    if (!memory_current(memory, error)) { qa_buffer_free(&text); return false; }
-    *out = text;
+    if (!memory_current(memory, error)) return false;
+    uint8_t *copy = malloc(text.size);
+    if (!copy) return q3_fail(error, QA_ERROR_MEMORY, 0, "Copying Q3 browser address");
+    memcpy(copy, text.data, text.size);
+    *out = (qa_buffer){copy, text.size};
     return true;
 }
 

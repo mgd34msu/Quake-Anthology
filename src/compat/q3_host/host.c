@@ -26,13 +26,7 @@ static bool vm_string(void *context, uint64_t address, size_t maximum,
                         qa_buffer *out, qa_error *error)
 {
     qa_bytes bytes;
-    if (!q3_vm_span(context, address, 0, &bytes, error)) return false;
-    size_t available = qa_qvm_memory_size(context) - (size_t)(address - qa_qvm_memory_size(context));
-    const uint8_t *end = memchr(bytes.data, 0, available);
-    if (!end) return q3_fail(error, QA_ERROR_FORMAT, 0, "unterminated Q3 source string");
-    bytes.size = (size_t)(end - bytes.data);
-    if (bytes.size >= maximum)
-        return q3_fail(error, QA_ERROR_FORMAT, bytes.size, "Q3 string exceeds configured boundary");
+    if (!q3_vm_string_span(context, address, maximum, &bytes, error)) return false;
     qa_buffer copy = {.data = malloc(bytes.size + 1), .size = bytes.size + 1};
     if (!copy.data) return q3_fail(error, QA_ERROR_MEMORY, 0, "copying Q3 source string");
     memcpy(copy.data, bytes.data, bytes.size); copy.data[bytes.size] = 0; *out = copy;
@@ -334,10 +328,15 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
     if (!qa_common_cursor_init(&host->entity_cursor, options->entity_text, QA_COMMON_TERMINATED, error)) {
         free(host->game); free(host); return false;
     }
-    if (!q3_script_namespace_bind(host, options->script_globals, error)) {
-        free(host->game); free(host); return false;
-    }
     qa_arena_init(&host->scratch, 16384);
+    if (host->options.maximum_string_bytes > SIZE_MAX / 16 ||
+        !qa_arena_reserve(&host->scratch, host->options.maximum_string_bytes * 16, error)) {
+        qa_arena_destroy(&host->scratch); free(host->game); free(host); return false;
+    }
+    qa_arena_seal(&host->scratch);
+    if (!q3_script_namespace_bind(host, options->script_globals, error)) {
+        qa_arena_destroy(&host->scratch); free(host->game); free(host); return false;
+    }
     qa_fs_root_retain(write_root); host->options.write_view.root=write_root;
     *out = host; return true;
 }

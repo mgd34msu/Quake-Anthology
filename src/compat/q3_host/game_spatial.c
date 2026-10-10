@@ -214,13 +214,13 @@ bool qa_q3_host_visibility_read(qa_q3_host *host, uint32_t number,
 
 static bool brush_model(q3_call *call, qa_error *error)
 {
-    qa_buffer name = {0};
+    qa_bytes name = {0};
     if (!q3_string(call, call->arguments[1], &name, error)) return false;
     if (name.data[0] != '*') {
-        qa_buffer_free(&name); return q3_fail(error, QA_ERROR_ARGUMENT, 0, "SV_SetBrushModel requires an inline model name");
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "SV_SetBrushModel requires an inline model name");
     }
     uint32_t bits = (uint32_t)(unsigned long)strtol((const char *)name.data + 1, NULL, 10);
-    qa_buffer_free(&name);
+
     uint32_t number; q3_record record; qa_bounds bounds;
     if (!q3_game_pointer_slot(call, call->arguments[0], &number, error) ||
         !qa_collision_model_bounds(qa_world_geometry(call->host->options.world), bits, &bounds, error) ||

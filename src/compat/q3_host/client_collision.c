@@ -120,11 +120,11 @@ q3_service_result q3_client_collision(q3_call *call, int32_t *result, qa_error *
         service != 82 && service != 83 && service != 84) return Q3_UNHANDLED;
     qa_q3_host_collision_services *services = &call->host->options.collision;
     if (service == 18) {
-        qa_buffer name = {0};
+        qa_bytes name = {0};
         if (!q3_string(call, call->arguments[0], &name, error)) return Q3_FAILED;
         bool ok = services->load_map ? services->load_map(services->context, (const char *)name.data, error) :
             q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 client map owner is unbound");
-        qa_buffer_free(&name);
+
         return ok ? Q3_COMPLETED : Q3_FAILED;
     }
     qa_collision_geometry *geometry = services->geometry ? services->geometry(services->context) : NULL;

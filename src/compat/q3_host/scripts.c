@@ -128,7 +128,6 @@ void q3_script_namespace_release(qa_q3_host *host)
     qa_script_defines_release(owner->globals); free(owner);
 }
 
-
 static void diagnostic(void *context, const qa_script_diagnostic *diagnostic)
 {
     qa_q3_host *host = context;
@@ -280,14 +279,14 @@ void q3_script_close(q3_script *script)
 static bool load(q3_call *call, int32_t *result, qa_error *error)
 {
     qa_q3_host *host = call->host;
-    qa_buffer name = {0};
+    qa_bytes name = {0};
     if (!q3_string(call, call->arguments[0], &name, error)) return false;
     size_t slot = 1;
     while (slot < 64 && (host->script_namespace->scripts[slot] || host->script_namespace->pending[slot])) ++slot;
-    if (slot == 64) { qa_buffer_free(&name); return true; }
+    if (slot == 64) { return true; }
     q3_script *script = calloc(1, sizeof(*script));
-    if (!script) { qa_buffer_free(&name); return q3_fail(error, QA_ERROR_MEMORY, 0, "allocating Q3 script handle"); }
-    if (!qa_vfs_retain(host->options.mounts,error)) { free(script); qa_buffer_free(&name); return false; }
+    if (!script) { return q3_fail(error, QA_ERROR_MEMORY, 0, "allocating Q3 script handle"); }
+    if (!qa_vfs_retain(host->options.mounts,error)) { free(script); return false; }
     script->mounts=host->options.mounts;
     host->script_namespace->pending[slot] = true;
     uint64_t generation = host->script_namespace->generation;
@@ -305,7 +304,7 @@ static bool load(q3_call *call, int32_t *result, qa_error *error)
         if (local.code == QA_ERROR_NOT_FOUND) ok = true;
         else if (error) *error = local;
     }
-    qa_buffer_free(&name); return ok;
+    return ok;
 }
 
 static bool publish_token(q3_call *call, const qa_script_token *token, qa_error *error)
@@ -367,10 +366,10 @@ q3_service_result q3_scripts(q3_call *call, int32_t *result, qa_error *error)
         return Q3_FAILED;
     }
     if (!operation) {
-        qa_buffer text = {0};
+        qa_bytes text = {0};
         bool ok = q3_string(call, call->arguments[0], &text, error);
         if (ok) { *result = qa_script_defines_add(host->options.script_globals, (const char *)text.data, error); }
-        qa_buffer_free(&text); return ok ? Q3_COMPLETED : Q3_FAILED;
+        return ok ? Q3_COMPLETED : Q3_FAILED;
     }
     if (operation == 1) return load(call, result, error) ? Q3_COMPLETED : Q3_FAILED;
     int32_t handle = q3_integer(call, 0);

@@ -4,7 +4,7 @@
 
 #include <stdio.h>
 
-typedef struct weight_path { q3_call *call; qa_buffer text; } weight_path;
+typedef struct weight_path { q3_call *call; qa_bytes text; } weight_path;
 
 static bool path_read(void *context, const char **out, qa_error *error)
 {
@@ -51,7 +51,7 @@ q3_service_result q3_bot_weapons(q3_call *call, int32_t *result, qa_error *error
         } else if (call->service == 560) {
             weight_path path = {.call = call};
             ok = qa_bot_runtime_weapon_weights_from(runtime, handle, &path, path_read, result, error);
-            qa_buffer_free(&path.text);
+
         } else if (call->service == 562) ok = qa_bot_runtime_weapon_free(runtime, handle, error);
         else ok = qa_bot_runtime_weapon_reset(runtime, handle, error);
     }

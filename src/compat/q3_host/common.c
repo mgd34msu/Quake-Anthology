@@ -27,7 +27,7 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
     const bool ui = role == QA_QVM_UI, game = role == QA_QVM_GAME;
     int32_t trap = call->service;
     if (trap == (ui ? 1 : 0) || trap == (ui ? 0 : 1)) {
-        qa_buffer text = {0};
+        qa_bytes text = {0};
         if (!q3_string(call, call->arguments[0], &text, error)) return Q3_FAILED;
         bool ok = true;
         if (trap == (ui ? 0 : 1))
@@ -36,7 +36,7 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
             services->print(services->context, (const char *)text.data);
         else
             ok = q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 console output is unbound");
-        qa_buffer_free(&text);
+
         return ok ? Q3_COMPLETED : Q3_FAILED;
     }
     if (trap == 2) {
@@ -116,7 +116,7 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
         return Q3_COMPLETED;
     }
     if (!ui && !game && (trap == 15 || trap == 16 || trap == 72)) {
-        qa_buffer text = {0};
+        qa_bytes text = {0};
         if (!q3_string(call, call->arguments[0], &text, error)) return Q3_FAILED;
         bool ok;
         if (trap == 16) {
@@ -142,7 +142,7 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
                                       host->options.owner, host->options.service_owner);
             ok = true;
         }
-        qa_buffer_free(&text);
+
         return ok ? Q3_COMPLETED : Q3_FAILED;
     }
     if (trap != (ui ? 12 : 14)) return Q3_UNHANDLED;
@@ -156,7 +156,7 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
         q3_fail(error, QA_ERROR_ARGUMENT, 0, "Cbuf_ExecuteText: bad exec_when");
         return Q3_FAILED;
     }
-    qa_buffer text = {0};
+    qa_bytes text = {0};
     if ((when != 0 || pointer) && !q3_string(call, pointer, &text, error)) return Q3_FAILED;
     bool ok;
     if (when == 0 && !pointer) {
@@ -171,6 +171,6 @@ q3_service_result q3_common(q3_call *call, int32_t *result, qa_error *error)
     else
         ok = qa_console_append(host->options.console, &host->options.command_context,
                                 (const char *)text.data, error);
-    qa_buffer_free(&text);
+
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }

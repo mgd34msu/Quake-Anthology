@@ -24,12 +24,36 @@ bool q3_write(const q3_call *call, uint64_t address, qa_bytes bytes, qa_error *e
     return call->memory.write(call->memory.context, address, bytes, error);
 }
 
-bool q3_string(const q3_call *call, uint64_t address, qa_buffer *out, qa_error *error)
+bool q3_vm_string_span(qa_qvm *vm, uint64_t address, size_t maximum, qa_bytes *out, qa_error *error)
+{
+    qa_bytes bytes;
+    if (!q3_vm_span(vm, address, 0, &bytes, error)) return false;
+    size_t available = qa_qvm_memory_size(vm) - (size_t)(address - qa_qvm_memory_size(vm));
+    const uint8_t *end = memchr(bytes.data, 0, available);
+    if (!end) return q3_fail(error, QA_ERROR_FORMAT, 0, "unterminated Q3 source string");
+    bytes.size = (size_t)(end - bytes.data);
+    if (bytes.size >= maximum)
+        return q3_fail(error, QA_ERROR_FORMAT, bytes.size, "Q3 string exceeds configured boundary");
+    *out = bytes; return true;
+}
+
+bool q3_string(const q3_call *call, uint64_t address, qa_bytes *out, qa_error *error)
 {
     if (!address)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source string is null");
-    return call->memory.read_string(call->memory.context, address,
-                                     call->host->options.maximum_string_bytes, out, error);
+    qa_bytes text;
+    size_t maximum = call->host->options.maximum_string_bytes;
+    if (call->vm) {
+        if (!q3_vm_string_span(call->vm, address, maximum, &text, error)) return false;
+    } else {
+        if (!qa_native_string_span(call->native, address, maximum, &text, error)) return false;
+        if (!text.data) {
+            uint8_t *copy = qa_arena_alloc(&call->host->scratch, text.size + 1, 1, error);
+            if (!copy || !q3_read(call, address, copy, text.size + 1, error)) return false;
+            text.data = copy;
+        }
+    }
+    ++text.size; *out = text; return true;
 }
 
 bool q3_write_string(const q3_call *call, uint64_t address, const char *text,

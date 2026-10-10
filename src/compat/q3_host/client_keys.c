@@ -6,13 +6,13 @@ q3_service_result q3_client_keys(q3_call *call, int32_t *result, qa_error *error
     if (call->host->options.role != QA_QVM_UI ||
         (call->service != 53 && call->service != 54 && call->service != 81)) return Q3_UNHANDLED;
     if (call->service == 81) {
-        qa_buffer key = {0}, checksum = {0};
+        qa_bytes key = {0}, checksum = {0};
         bool ok = q3_string(call, call->arguments[0], &key, error);
         if (ok && strlen((const char *)key.data) == 16) {
             if (call->arguments[1]) ok = q3_string(call, call->arguments[1], &checksum, error);
             if (ok) *result = qa_q3_key_valid((const char *)key.data, (const char *)checksum.data);
         }
-        qa_buffer_free(&checksum); qa_buffer_free(&key); return ok ? Q3_COMPLETED : Q3_FAILED;
+        return ok ? Q3_COMPLETED : Q3_FAILED;
     }
     qa_q3_key *keys = call->host->options.keys;
     if (!keys) { q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 product key owner is unbound"); return Q3_FAILED; }

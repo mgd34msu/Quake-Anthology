@@ -92,7 +92,7 @@ q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *erro
         const char *command = binding_command(qa_input_seat_binding(bindings, physical(q3_integer(call, 0))));
         return q3_write_string(call, call->arguments[1], command, q3_integer(call, 2), error) ? Q3_COMPLETED : Q3_FAILED;
     }
-    qa_buffer text = {0}; bool ok;
+    qa_bytes text = {0}; bool ok;
     if (ui && code == 35) {
         ok = q3_string(call, call->arguments[1], &text, error);
         if (ok) {
@@ -114,18 +114,20 @@ q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *erro
         if (!host->options.common.clipboard) {
             q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 clipboard owner is unbound"); return Q3_FAILED;
         }
-        ok = host->options.common.clipboard(host->options.common.context, &text, error);
-        if (ok && (text.size == SIZE_MAX || (text.size && !text.data)))
+        qa_buffer clipboard = {0};
+        ok = host->options.common.clipboard(host->options.common.context, &clipboard, error);
+        if (ok && (clipboard.size == SIZE_MAX || (clipboard.size && !clipboard.data)))
             ok = q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 clipboard returned invalid text");
         if (ok) {
-            char *copy = qa_arena_alloc(&host->scratch, text.size + 1, 1, error);
+            char *copy = qa_arena_alloc(&host->scratch, clipboard.size + 1, 1, error);
             if (!copy) ok = false;
             else {
-                if (text.size) memcpy(copy, text.data, text.size);
-                copy[text.size] = 0;
+                if (clipboard.size) memcpy(copy, clipboard.data, clipboard.size);
+                copy[clipboard.size] = 0;
                 ok = q3_write_string(call, call->arguments[0], copy, q3_integer(call, 1), error);
             }
         }
+        qa_buffer_free(&clipboard);
     }
-    qa_buffer_free(&text); return ok ? Q3_COMPLETED : Q3_FAILED;
+    return ok ? Q3_COMPLETED : Q3_FAILED;
 }

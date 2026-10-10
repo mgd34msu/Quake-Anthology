@@ -24,7 +24,7 @@ q3_service_result q3_information(q3_call *call, int32_t *result, qa_error *error
     const qa_q3_host_server_services *services = &call->host->options.server;
     int32_t index = q3_integer(call, 0), trap = call->service;
     const char *value = NULL;
-    qa_buffer text = {0};
+    qa_bytes text = {0};
     bool ok = false;
     if ((trap == 16 || trap == 17) &&
         !(index == -1 && trap == 17) &&
@@ -84,7 +84,7 @@ q3_service_result q3_information(q3_call *call, int32_t *result, qa_error *error
         if (ok) ok = q3_record_open(call, call->arguments[1], 24, &record, error) &&
                      qa_q3_abi_write_usercmd(&record.abi, 0, false, &command, error);
     }
-    qa_buffer_free(&text);
+
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }
 

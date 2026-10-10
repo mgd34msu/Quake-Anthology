@@ -79,11 +79,11 @@ static bool character(q3_call *call, qa_bot_runtime *runtime, int32_t *result, q
     float value;
     switch (call->service) {
     case 500: {
-        qa_buffer path = {0};
+        qa_bytes path = {0};
         float skill = call->host->options.abi == QA_QVM_Q3_116N ? (float)q3_integer(call, 1) : q3_float(call, 1);
         bool ok = q3_string(call, call->arguments[0], &path, error) &&
             qa_bot_runtime_character_load(runtime, (const char *)path.data, skill, &handle, error);
-        qa_buffer_free(&path);
+
         if (ok) *result = (int32_t)handle;
         return ok;
     }
@@ -164,13 +164,13 @@ q3_service_result q3_bot_library(q3_call *call, int32_t *result, qa_error *error
     if ((call->service == 202 || call->service == 203) && !library) {
         q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 bot resource library is closed"); return Q3_FAILED;
     }
-    qa_buffer name = {0}, value = {0};
+    qa_bytes name = {0}, value = {0};
     if (call->service == 206) {
         if (!qa_bot_runtime_lease_begin(runtime, error)) return Q3_FAILED;
         bool ok = q3_string(call, call->arguments[0], &name, error);
         qa_bot_runtime_lease_end(runtime);
         if (ok) ok = qa_bot_runtime_load_map(runtime, (const char *)name.data, error);
-        qa_buffer_free(&name);
+
         return ok ? Q3_COMPLETED : Q3_FAILED;
     }
     bool ok = q3_string(call, call->arguments[0], &name, error);
@@ -182,6 +182,6 @@ q3_service_result q3_bot_library(q3_call *call, int32_t *result, qa_error *error
         const char *text = variable ? variable->string : "";
         ok = q3_write_string(call, call->arguments[1], text, q3_integer(call, 2), error);
     }
-    qa_buffer_free(&value); qa_buffer_free(&name);
+
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }

@@ -354,10 +354,10 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "FS_FOpenFileRead: NULL filename");
     if (host->options.role != QA_QVM_GAME && destination &&
         !q3_read(call, destination, check, sizeof(check), error)) return false;
-    qa_buffer name = {0};
+    qa_bytes name = {0};
     if (!q3_string(call, call->arguments[0], &name, error)) return false;
     if (!destination && mode) {
-        qa_buffer_free(&name);
+
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "writable Q3 file open needs a handle output");
     }
     const char *path = (const char *)name.data;
@@ -373,7 +373,7 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
                 bool found = false; uint64_t size = 0;
                 ok = qa_vfs_probe(host->options.mounts, path, &found, &size, error);
                 if (ok) *result = found ? 1 : 0;
-                qa_buffer_free(&name); return ok;
+                return ok;
             }
             qa_mount_id mount = 0;
             qa_error local = {0};
@@ -423,7 +423,7 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
         }
     }
     q3_file_close(&file);
-    qa_buffer_free(&name);
+
     return ok;
 }
 
@@ -550,7 +550,7 @@ static bool mod_listing(const char *path)
 
 static bool list_files(q3_call *call, int32_t *result, qa_error *error)
 {
-    qa_buffer path = {0}, extension = {0};
+    qa_bytes path = {0}, extension = {0};
     bool ok = q3_string(call, call->arguments[0], &path, error) &&
               q3_string(call, call->arguments[1], &extension, error);
     int32_t capacity = q3_integer(call, 3);
@@ -597,7 +597,7 @@ static bool list_files(q3_call *call, int32_t *result, qa_error *error)
         }
     }
     qa_vfs_listing_free(&listing);
-    qa_buffer_free(&path); qa_buffer_free(&extension);
+
     return ok;
 }
 

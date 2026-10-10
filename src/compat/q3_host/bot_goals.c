@@ -27,7 +27,7 @@ static bool read_push(void *context, qa_bytes *goal, qa_error *error)
 
 static bool query(q3_call *call, qa_bot_goals *goals, int32_t *result, qa_error *error)
 {
-    qa_buffer text = {0}; qa_bot_goal goal; bool found = false, ok;
+    qa_bytes text = {0}; qa_bot_goal goal; bool found = false, ok;
     uint64_t destination;
     if (call->service == 567) {
         destination = call->arguments[1];
@@ -43,7 +43,7 @@ static bool query(q3_call *call, qa_bot_goals *goals, int32_t *result, qa_error 
             qa_bot_goals_level_item(goals, q3_integer(call, 0), (const char *)text.data, &goal, &found, error);
         if (ok && found) *result = location ? 1 : goal.number;
     }
-    qa_buffer_free(&text);
+
     return ok && (!found || q3_bot_goal_fields(call, destination, &goal,
         call->service == 568 ? Q3_GOAL_LOCATION : call->service == 539 ? Q3_GOAL_LEVEL_ITEM : Q3_GOAL_FULL, error));
 }
@@ -105,10 +105,10 @@ q3_service_result q3_bot_goals(q3_call *call, int32_t *result, qa_error *error)
     case 543: {
         *result = 9;
         if (!state(call, goals, (int32_t)handle, false)) break;
-        qa_buffer path = {0};
+        qa_bytes path = {0};
         ok = q3_string(call, call->arguments[1], &path, error) &&
             qa_bot_runtime_goal_weights(runtime, handle, (const char *)path.data, result, error);
-        qa_buffer_free(&path);
+
         break;
     }
     case 532: {
@@ -134,9 +134,9 @@ q3_service_result q3_bot_goals(q3_call *call, int32_t *result, qa_error *error)
         break;
     }
     case 545: {
-        qa_buffer ignored = {0};
+        qa_bytes ignored = {0};
         ok = q3_string(call, call->arguments[1], &ignored, error);
-        qa_buffer_free(&ignored);
+
         if (ok && state(call, goals, (int32_t)handle, false)) ok = qa_bot_goals_save_weights(goals, handle, error);
         break;
     }

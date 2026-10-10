@@ -602,7 +602,7 @@ bool qa_q3_host_cvar_cache_refresh(qa_q3_host *host,qa_error *error)
 
 static bool register_vm(q3_call *call, qa_error *error)
 {
-    qa_buffer name = {0}, value = {0};
+    qa_bytes name = {0}, value = {0};
     bool ok = q3_string(call, call->arguments[1], &name, error) &&
               q3_string(call, call->arguments[2], &value, error);
     q3_cvar_access access={0}; size_t handle=0;
@@ -636,7 +636,7 @@ static bool register_vm(q3_call *call, qa_error *error)
                  q3_write_word(call, call->arguments[0] + 4, UINT32_MAX, error) &&
                  update(call, call->arguments[0], error);
     }
-    qa_buffer_free(&name); qa_buffer_free(&value);
+
     return ok;
 }
 static void info_print(q3_call *call,const qa_command_context *command,const char *text)
@@ -718,15 +718,15 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
         qa_buffer_free(&info);
         return ok ? Q3_COMPLETED : Q3_FAILED;
     }
-    qa_buffer name = {0}, value = {0};
+    qa_bytes name = {0}, value = {0};
     if (!q3_string(call, call->arguments[0], &name, error)) return Q3_FAILED;
     const char *key = (const char *)name.data;
     q3_cvar_access access;
-    if (!access_name(call,key,&access,error)) { qa_buffer_free(&name); return Q3_FAILED; }
+    if (!access_name(call,key,&access,error)) { return Q3_FAILED; }
     cvars=access.registry;
     const qa_cvar_view *view=NULL;
     bool ok = find(access,key,&view,error) && classify(call,access,key,&view,error);
-    if (!ok) { qa_buffer_free(&name); return Q3_FAILED; }
+    if (!ok) { return Q3_FAILED; }
     if (trap == (ui ? 3 : 5)) {
         ok = call->arguments[1] ?
                  q3_string(call, call->arguments[1], &value, error) &&
@@ -762,7 +762,7 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
              (cvars!=call->host->options.cvars || apply(call,access,
                 &(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RETAIN_SHARED,.name=key},error));
     }
-    qa_buffer_free(&name); qa_buffer_free(&value);
+
     return ok ? Q3_COMPLETED : Q3_FAILED;
 }
 

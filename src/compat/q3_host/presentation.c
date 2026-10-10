@@ -185,13 +185,13 @@ static bool tag(q3_call *call, qa_q3_presentation_assets *assets, bool ui,
         return false;
     qa_model_tag value = {.axes = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
     if (has_tags) {
-        qa_buffer name = {0};
+        qa_bytes name = {0};
         if (!q3_string(call, call->arguments[5], &name, error))
             return false;
         bool ok = qa_q3_presentation_tag(assets, model, (const char *)name.data,
             q3_integer(call, 2), q3_integer(call, 3), q3_float(call, 4),
             &value, &found, error);
-        qa_buffer_free(&name);
+
         if (!ok)
             return false;
     }
@@ -233,14 +233,14 @@ static bool font(q3_call *call, qa_error *error)
     if (!q3_record_open(call, call->arguments[2], QA_Q3_FONT_RECORD_BYTES,
                          &destination, error))
         return false;
-    qa_buffer path = {0};
+    qa_bytes path = {0};
     if (!q3_string(call, call->arguments[0], &path, error))
         return false;
     qa_font_q3_options options = {.point_size = q3_integer(call, 1),
         .truetype_path = (const char *)path.data, .generate_if_missing = true};
     const qa_font *registered;
     bool ok = qa_font_q3_register(services->fonts, &options, &registered, error);
-    qa_buffer_free(&path);
+
     if (!ok)
         return false;
     uint8_t *record = qa_arena_alloc(&call->host->scratch, QA_Q3_FONT_RECORD_BYTES, 1, error);
@@ -256,7 +256,7 @@ static bool font(q3_call *call, qa_error *error)
 
 static bool remap(q3_call *call, qa_q3_presentation *seat, qa_error *error)
 {
-    qa_buffer original = {0}, replacement = {0}, time = {0};
+    qa_bytes original = {0}, replacement = {0}, time = {0};
     bool ok = q3_string(call, call->arguments[0], &original, error) &&
               q3_string(call, call->arguments[1], &replacement, error);
     if (ok && call->arguments[2])
@@ -267,9 +267,7 @@ static bool remap(q3_call *call, qa_q3_presentation *seat, qa_error *error)
             qa_q3_presentation_remap(seat, (const char *)original.data,
                                       (const char *)replacement.data, offset, error);
     }
-    qa_buffer_free(&original);
-    qa_buffer_free(&replacement);
-    qa_buffer_free(&time);
+
     return ok;
 }
 
@@ -354,7 +352,7 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
     if (service == (ui ? 18 : 37) || service == (ui ? 19 : 38) ||
         service == (ui ? 20 : 57) || (!ui && service == 39) ||
         service == (ui ? 31 : 34)) {
-        qa_buffer name = {0};
+        qa_bytes name = {0};
         if (call->arguments[0] && !q3_string(call, call->arguments[0], &name, error))
             return Q3_FAILED;
         const char *text = name.data ? (const char *)name.data : "";
@@ -363,7 +361,7 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
         else if (service == (ui ? 31 : 34)) ok = qa_q3_register_sound(assets, text,
             call->host->options.abi == QA_QVM_Q3_MODERN && q3_integer(call, 1) != 0, result, error);
         else ok = qa_q3_register_shader(assets, text, !ui && service == 39, result, error);
-        qa_buffer_free(&name);
+
     } else if (service == (ui ? 21 : 40)) {
         ok = qa_q3_presentation_clear(seat, error);
     } else if (service == (ui ? 22 : 41)) {
@@ -429,24 +427,24 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
         ok = !qa_q3_presentation_sound_valid(seat, sound) ||
             qa_q3_presentation_sound(seat, sound, NULL, 0, q3_integer(call, 1), true, error);
     } else if (service == (ui ? 63 : 35)) {
-        qa_buffer intro = {0}, loop = {0};
+        qa_bytes intro = {0}, loop = {0};
         ok = (!call->arguments[0] || q3_string(call, call->arguments[0], &intro, error)) &&
              (!call->arguments[1] || q3_string(call, call->arguments[1], &loop, error));
         if (ok) ok = qa_q3_presentation_music(seat, intro.data ? (const char *)intro.data : "",
                                                loop.data ? (const char *)loop.data : "", error);
-        qa_buffer_free(&intro); qa_buffer_free(&loop);
+
     } else if (service == (ui ? 62 : 69)) {
         ok = qa_q3_presentation_music(seat, "", "", error);
     } else if (service >= first_movie && service <= first_movie + 4) {
         if (service == first_movie) {
-            qa_buffer path = {0};
+            qa_bytes path = {0};
             if (!q3_string(call, call->arguments[0], &path, error)) return Q3_FAILED;
             uint32_t flags = (uint32_t)q3_integer(call, 5);
             ok = flags & 1u ? qa_q3_presentation_movie_play_system(seat, (const char *)path.data,
                 flags, system_movie_open, call, result, error) :
                 qa_q3_presentation_movie_play(seat, (const char *)path.data,
                     movie_rect(call), flags, result, error);
-            qa_buffer_free(&path);
+
         } else if (service == first_movie + 1) {
             ok = qa_q3_presentation_movie_stop(seat, q3_integer(call, 0), true, error);
             if (ok) *result = 2;
@@ -459,10 +457,10 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
             ok = true;
         }
     } else if (!ui && service == 36) {
-        qa_buffer path = {0};
+        qa_bytes path = {0};
         if (!q3_string(call, call->arguments[0], &path, error)) return Q3_FAILED;
         ok = qa_q3_presentation_load_world(seat, (const char *)path.data, error);
-        qa_buffer_free(&path);
+
     } else if (!ui && service == 88) {
         qa_vec3 first, second;
         bool visible;

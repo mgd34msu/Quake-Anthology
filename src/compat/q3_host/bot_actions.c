@@ -38,12 +38,12 @@ q3_service_result q3_bot_actions(q3_call *call, int32_t *result, qa_error *error
     if(!q3_bot_client_number(call,q3_integer(call,0),&client,error)) return Q3_FAILED;
     bool ok;
     if (extension || operation <= 402) {
-        qa_buffer text = {0};
+        qa_bytes text = {0};
         qa_bot_text_action kind = extension ? (qa_bot_text_action)(QA_BOT_USE_ITEM + call->source_service - 402) :
                                      operation == 400 ? QA_BOT_SAY : operation == 401 ? QA_BOT_SAY_TEAM : QA_BOT_COMMAND;
         ok = q3_string(call, call->arguments[1], &text, error) &&
              qa_bot_actions_text(actions, client, kind, 0, (const char *)text.data, error);
-        qa_buffer_free(&text);
+
     } else if (operation >= 403 && operation <= 415) {
         static const uint32_t flags[] = {0,QA_BOT_GESTURE,QA_BOT_TALK,QA_BOT_ATTACK,
             QA_BOT_USE,QA_BOT_RESPAWN,QA_BOT_CROUCH,QA_BOT_MOVE_UP,QA_BOT_MOVE_DOWN,

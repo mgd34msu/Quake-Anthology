@@ -197,7 +197,8 @@ bool q3_bot_source_entity(const q3_call *, int32_t canonical, int32_t *, qa_erro
 bool q3_vm_span(qa_qvm *, uint64_t, size_t, qa_bytes *, qa_error *);
 bool q3_read(const q3_call *, uint64_t, void *, size_t, qa_error *);
 bool q3_write(const q3_call *, uint64_t, qa_bytes, qa_error *);
-bool q3_string(const q3_call *, uint64_t, qa_buffer *, qa_error *);
+bool q3_vm_string_span(qa_qvm *, uint64_t, size_t, qa_bytes *, qa_error *);
+bool q3_string(const q3_call *, uint64_t, qa_bytes *, qa_error *);
 bool q3_write_string(const q3_call *, uint64_t, const char *, int32_t, qa_error *);
 bool q3_write_word(const q3_call *, uint64_t, uint32_t, qa_error *);
 bool q3_write_float(const q3_call *, uint64_t, float, qa_error *);
