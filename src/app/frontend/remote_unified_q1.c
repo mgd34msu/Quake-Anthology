@@ -150,6 +150,7 @@ struct frontend_unified_q1 {
     float scene_styles[256];
     qa_hud_score *scores;
     size_t score_capacity,score_count;
+    char localized_text[65538];
 };
 static const char *const powers[Q1_POWERS]={"quad","invulnerability","invisibility","suit",
     "hipnotic:wetsuit","hipnotic:empathy","rogue:shield","rogue:antigrav","mg3:lavasuit"};
@@ -582,7 +583,7 @@ static bool localize_piece(q1_group *g,const qa_builtin_event *value,qa_buffer *
         if (arg->kind==QA_BUILTIN_MESSAGE_STRING) argv[i]=qa_strings_cstr(g->parent->replica->strings,arg->value.text);
         else {if(!qa_format_number(arg->value.number,numeric[i],e))return false;argv[i]=numeric[i];}
     }
-    out->data=malloc(65536); if (!out->data)return false;
+    out->data=(uint8_t *)g->parent->localized_text;
     if (g->product->edition!=QA_EDITION_RERELEASE && (base[0]!='$' || !qa_localization_find(g->localization,base+1))) {
         if (!qa_q1_classic_text(base,argv,count,(char *)out->data,65536,e))return false;
         out->size=strlen((char *)out->data);
@@ -655,10 +656,10 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     case Q1_POWER:for(size_t i=0;i<Q1_POWERS;++i) if(!strcmp((char *)p.name.data,powers[i])) {o->powers[i]=p.a;o->power_activations[i]=owner;}break;
     case Q1_MESSAGE: {qa_buffer message={0};ok=localized(o,g,&p,&message,e);
         if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=40},e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
-        if(ok && !p.flag) {char *copy=realloc(message.data,message.size+2);if(!copy) ok=frontend_unified_fail(e,QA_ERROR_MEMORY,"Emitting Q1 Source print");else {message.data=(uint8_t *)copy;copy[message.size]='\n';copy[message.size+1]=0;
-            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_console_emit(domain->console,&domain->command_context,copy);}}
+        if(ok && !p.flag) {message.data[message.size]='\n';message.data[message.size+1]=0;
+            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);qa_console_emit(domain->console,&domain->command_context,(char *)message.data);}
         if(ok) *mirrored=true;
-        qa_buffer_free(&message);break;}
+        break;}
     case Q1_STOP: {qa_actor_id actor;ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&actor,e);
         if(ok && o->frontend->audio) {uint64_t audio;ok=o->options.audio_actor(o->options.context,actor,&audio,e);
             if(ok) qa_audio_engine_stop_channel(o->frontend->audio,audio,o->options.audio_owner,QA_GAME_Q1,(int32_t)p.a); }break;}
@@ -693,7 +694,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(ok)ok=qa_hud_clear_center(o->hud,e) && qa_hud_center_print(o->hud,(char *)text.data,ns(p.seconds),UINT64_MAX,(qa_hud_center_policy){.instant=false,.character_ns=UINT64_C(125000000),.initial_characters=1,.columns=40},e);
         if(ok){retained_free(o->finale);o->finale=doc;doc=NULL;qa_scene_image_release(o->finale_image);o->finale_image=image;image=NULL;
             o->finale_banner=p.a>=4;o->finale_activation=owner;}
-        qa_scene_image_release(image);retained_free(doc);qa_buffer_free(&text);break;
+        qa_scene_image_release(image);retained_free(doc);break;
     }
     case Q1_ACTION:ok=fail(e,"Q1 action is not a native emitted presentation");break;
     case Q1_MUSIC:ok=music_play(g,p.a,e);break;
