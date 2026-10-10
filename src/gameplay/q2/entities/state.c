@@ -42,7 +42,30 @@ bool q2_entities_init(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 entity state");
         return false;
     }
+    if (!qa_pool_prepare(&g->entity_records, &g->entity_storage,
+            g->actor_records.capacity + 1, sizeof(q2_entity_state),
+            _Alignof(q2_entity_state), e)) return false;
+    qa_arena_seal(&g->entity_storage);
     return true;
+}
+q2_entity_state *q2_entity_state_take(qa_q2_game *g, qa_error *e) {
+    size_t slot;
+    q2_entity_state *s = qa_pool_take(&g->entity_records, &slot);
+    if (!s) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 entity state pool exhausted");
+        return NULL;
+    }
+    *s = (q2_entity_state){0};
+    return s;
+}
+void q2_entity_state_release(qa_q2_game *g, q2_entity_state *s) {
+    free(s->fields);
+    free(s->mover);
+    free(s->turret);
+    free(s->q64);
+    free(s->trail);
+    size_t slot = (size_t)((uint8_t *)s - g->entity_records.values) / g->entity_records.stride;
+    qa_pool_release(&g->entity_records, slot);
 }
 void q2_entities_close(qa_q2_game *g) {
     if (g->entity_runtime) {
@@ -51,18 +74,14 @@ void q2_entities_close(qa_q2_game *g) {
     }
     free(g->entity_runtime);
     g->entity_runtime = NULL;
+    qa_arena_destroy(&g->entity_storage);
 }
 void q2_entity_release_state(q2_actor *a) {
     if (!a->entity)
         return;
     if (!a->item)
         q2_entity_unbind(a->entity_game, a);
-    free(a->entity->fields);
-    free(a->entity->mover);
-    free(a->entity->turret);
-    free(a->entity->q64);
-    free(a->entity->trail);
-    free(a->entity);
+    q2_entity_state_release(a->entity_game, a->entity);
     a->entity = NULL;
     if (!a->item)
         a->entity_game = NULL;
@@ -415,9 +434,8 @@ bool q2_entity_native_spawn(qa_q2_game *g, const char *name, const qa_body_state
         qa_session_release(g->services.session, id, NULL);
         return false;
     }
-    a->entity = calloc(1, sizeof(*a->entity));
+    a->entity = q2_entity_state_take(g, e);
     if (!a->entity) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 helper entity");
         qa_session_release(g->services.session, id, NULL);
         return false;
     }

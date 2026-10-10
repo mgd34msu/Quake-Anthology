@@ -188,11 +188,8 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
     }
     if (!a)
         return false;
-    q2_entity_state *s = malloc(sizeof(*s));
-    if (!s) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 map entity");
-        return false;
-    }
+    q2_entity_state *s = q2_entity_state_take(g, e);
+    if (!s) return false;
     *s = saved->value;
     if (!copy_arrays(&saved->value, s, e))
         goto fail;
@@ -206,27 +203,18 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
     if (s->turret && !q2_resolve_reference(g, saved->turret_breach, &s->turret->breach, e))
         goto fail;
     q2_entity_state *previous = a->entity;
+    qa_q2_game *previous_game = a->entity_game;
     a->entity = s;
+    a->entity_game = g;
     if (!g->restoring_continuation && !q2_entity_bind(g, a, e)) {
         a->entity = previous;
+        a->entity_game = previous_game;
         goto fail;
     }
-    if (previous) {
-        free(previous->fields);
-        free(previous->mover);
-        free(previous->turret);
-        free(previous->q64);
-        free(previous->trail);
-        free(previous);
-    }
+    if (previous) q2_entity_state_release(previous_game, previous);
     return true;
 fail:
-    free(s->fields);
-    free(s->mover);
-    free(s->turret);
-    free(s->q64);
-    free(s->trail);
-    free(s);
+    q2_entity_state_release(g, s);
     return false;
 }
 void qa_q2_entities_checkpoint_free(qa_q2_entities_checkpoint *s) {

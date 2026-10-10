@@ -193,9 +193,8 @@ static bool read_entity(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
                 }
             }
         }
-        a->entity = calloc(1, sizeof(*a->entity));
+        a->entity = q2_entity_state_take(g, io->error);
         if (!a->entity) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring original Q2 entity state");
             return false;
         }
         a->entity_game = g;

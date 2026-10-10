@@ -30,15 +30,12 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
         return false;
     }
     if (fields->ordinal != UINT32_MAX && !q2_wire_bind(g, a, fields->ordinal, e)) return false;
-    q2_entity_state *s = calloc(1, sizeof(*s));
-    if (!s) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 map entity");
-        return false;
-    }
+    q2_entity_state *s = q2_entity_state_take(g, e);
+    if (!s) return false;
     if (fields->count) {
         s->fields = calloc(fields->count, sizeof(*s->fields));
         if (!s->fields) {
-            free(s);
+            q2_entity_state_release(g, s);
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q2 authored fields");
             return false;
         }
@@ -46,8 +43,7 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
         for (size_t i = 0; i < fields->count; i++) {
             if (!qa_strings_intern(strings, fields->properties[i].key, &s->fields[i].key, e) ||
                 !qa_strings_intern(strings, fields->properties[i].value, &s->fields[i].value, e)) {
-                free(s->fields);
-                free(s);
+                q2_entity_state_release(g, s);
                 return false;
             }
         }

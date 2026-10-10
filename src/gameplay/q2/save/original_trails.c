@@ -10,9 +10,8 @@ bool q2_original_trail_record(qa_q2_game *game, q2_original_record_io *io,
     *handled = name && !strcmp(name, "player_trail");
     if (!*handled) return true;
     if (io->reading && !actor->entity) {
-        actor->entity = calloc(1, sizeof(*actor->entity));
+        actor->entity = q2_entity_state_take(game, io->error);
         if (!actor->entity) {
-            qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring original Q2 trail point");
             return false;
         }
         actor->entity_game = game;
