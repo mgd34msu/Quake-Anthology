@@ -164,7 +164,7 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
         char *name = malloc(view.size + 1);
         if (!name) goto memory;
         memcpy(name, view.data, view.size); name[view.size] = 0;
-        bool ok = scene_model_external(model, name, &mesh->shaders[i], error);
+        bool ok = scene_model_external(model, name, NULL, &mesh->shaders[i], error);
         free(name);
         if (!ok) return false;
     }

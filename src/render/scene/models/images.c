@@ -79,12 +79,18 @@ bool scene_model_external_material(qa_scene_model *model, qa_material_library *m
     return qa_material_register(materials, path, &model->options, false, out, error);
 }
 
-bool scene_model_external(qa_scene_model *model, const char *name, scene_model_image **out,
+bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_frame *frame, scene_model_image **out,
                            qa_error *error) {
     char *owned = NULL;
     const char *path = name;
-    if (!qa_material_library_has_source_profile(model->materials))
-        path = owned = qa_scene_model_image_path(name, error);
+    if (!qa_material_library_has_source_profile(model->materials)) {
+        if (frame) {
+            if (!name) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"model image path is absent"); return false; }
+            char *scratch=qa_arena_alloc(&frame->storage,strlen(name)+1,1,error);
+            if (!scratch || !image_path_write(name,scratch,error)) return false;
+            path=scratch;
+        } else path = owned = qa_scene_model_image_path(name, error);
+    }
     if (!path) return false;
     for (scene_model_image *image = model->images; image; image = image->next)
         if (!strcmp(image->name, path)) { free(owned); *out = image; return true; }

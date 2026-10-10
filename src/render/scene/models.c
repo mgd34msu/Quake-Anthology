@@ -148,7 +148,7 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
             snprintf(name, sizeof(name), "*model:%llu:skin:%u", (unsigned long long)model->identity, i);
             if (!scene_model_indexed(model, name, source->skins[i].pixels, source->skin_width,
                                       source->skin_height, false, &model->skins[i], error)) goto fail;
-        } else if (source->skins[i].name[0] && !scene_model_external(model, source->skins[i].name, &model->skins[i], error)) goto fail;
+        } else if (source->skins[i].name[0] && !scene_model_external(model, source->skins[i].name, NULL, &model->skins[i], error)) goto fail;
     }
     if (!model_array(source->sprite_count, sizeof(*model->sprites), &allocation, error)) goto fail;
     model->sprites = allocation;
@@ -159,7 +159,7 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
             snprintf(name, sizeof(name), "*model:%llu:sprite:%u", (unsigned long long)model->identity, i);
             if (!scene_model_indexed(model, name, sprite->pixels, sprite->width, sprite->height,
                                       true, &model->sprites[i], error)) goto fail;
-        } else if (!scene_model_external(model, sprite->image, &model->sprites[i], error)) goto fail;
+        } else if (!scene_model_external(model, sprite->image, NULL, &model->sprites[i], error)) goto fail;
     }
     *out = model;
     return true;
@@ -318,7 +318,7 @@ static bool replacement_build(const qa_model *source, qa_scene_resources *resour
                 char *path = NULL;
                 if (!replacement_skin_path(replacement, mesh, skin, frame, &path, error)) goto fail;
                 if (!path) continue;
-                bool ok = scene_model_external(next, path, &next->replacement_skins[mesh][first + frame], error);
+                bool ok = scene_model_external(next, path, NULL, &next->replacement_skins[mesh][first + frame], error);
                 free(path);
                 if (!ok) goto fail;
             }
@@ -587,7 +587,7 @@ static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resource
                     sprite->width, sprite->height, true, &prepared, error)) return false;
             }
         }
-        if (!indexed && !scene_model_external(&node->images, image->name, &prepared, error)) return false;
+        if (!indexed && !scene_model_external(&node->images, image->name, NULL, &prepared, error)) return false;
         node->bindings[at] = (model_policy_image){image, prepared};
     }
     void *allocation;
@@ -821,7 +821,7 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
                         input->custom_skin->mappings[i].shader, frame, &external->material, error)) return false;
                     *out = external; return true;
                 }
-                return scene_model_external(model, input->custom_skin->mappings[i].shader, out, error);
+                return scene_model_external(model, input->custom_skin->mappings[i].shader, frame, out, error);
             }
         return true;
     }

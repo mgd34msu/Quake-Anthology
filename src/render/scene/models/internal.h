@@ -104,7 +104,7 @@ static inline void model_bounds_add(qa_bounds *b, qa_vec3 p) {
     b->maxs = qa_v3(fmaxf(b->maxs.x, p.x), fmaxf(b->maxs.y, p.y), fmaxf(b->maxs.z, p.z));
 }
 
-bool scene_model_external(qa_scene_model *, const char *, scene_model_image **, qa_error *);
+bool scene_model_external(qa_scene_model *, const char *, qa_scene_frame *, scene_model_image **, qa_error *);
 bool scene_model_external_material(qa_scene_model *, qa_material_library *, const char *,
                                    qa_scene_frame *, const qa_material **, qa_error *);
 bool scene_model_indexed(qa_scene_model *, const char *, qa_bytes, uint32_t, uint32_t,

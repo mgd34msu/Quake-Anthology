@@ -1148,18 +1148,17 @@ bool qa_scene_material_image_policy_world(const qa_scene_material_image_policy *
     qa_material_registration_kind kind = has_lightmap ? QA_MATERIAL_LIGHTMAP :
         lightmap == -3 ? QA_MATERIAL_VERTEX : lightmap == -2 ? QA_MATERIAL_WHITE :
         lightmap == -4 ? QA_MATERIAL_PICTURE : QA_MATERIAL_DYNAMIC;
-    char *key = qa_material_name(name, error);
-    if (!key) return false;
+    char key[MATERIAL_NAME_BYTES];
+    if (!material_name_write(name,key,error)) return false;
     for (size_t i = 0; i < ticket->count; ++i) {
         const material_policy_record *prepared = ticket->records + i;
         const qa_material_record *record = prepared->record;
         if (!record->source_variant_parent && record->kind == kind && record->world_identity == world && record->lightmap_index == lightmap &&
             !record->base_image && !strcmp(record->material.name, key) && same_options(&record->options, &options)) {
             *current = &record->material; *destination = &prepared->material;
-            free(key); return true;
+            return true;
         }
     }
-    free(key);
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "World shader lost its genuine registered material receipt"); return false;
 }
 bool qa_scene_material_image_policy_ready_is(const qa_scene_material_image_policy *ticket)
