@@ -111,6 +111,7 @@ struct frontend_unified_component_frame {
     frontend_unified_components *owner;
     const qa_unified_document *input;
     qa_unified_document *owned_input;
+    qa_unified_frame_lease *lease;
     remote_component_frame **rows;
     size_t count;
 };

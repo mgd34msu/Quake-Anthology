@@ -14,6 +14,7 @@ typedef struct received_source {
     uint16_t visible_entities[256];
     const char *provider_name, *instance, *content;
     qa_unified_document *metadata;
+    qa_unified_frame_lease *lease;
     size_t references;
 } received_source;
 struct frontend_unified_q3_sources {
@@ -23,6 +24,7 @@ struct frontend_unified_q3_sources {
     uint32_t epoch;
     uint64_t revision;
     received_source **rows;
+    qa_unified_frame_lease *lease;
     size_t count;
     qa_unified_document *packet;
     frontend_unified_q3_source_frame *prepared;
@@ -33,12 +35,14 @@ struct frontend_unified_q3_source_retirement {
     frontend_unified_q3_sources *owner;
     received_source *row;
     qa_unified_document *packet;
+    qa_unified_frame_lease *lease;
     size_t index;
     const frontend_unified_q3_client *client;
 };
 struct frontend_unified_q3_source_frame {
     frontend_unified_q3_sources *owner;
     received_source **rows;
+    qa_unified_frame_lease *lease;
     size_t count;
     uint64_t revision;
     qa_unified_document *packet;
@@ -46,9 +50,15 @@ struct frontend_unified_q3_source_frame {
 static bool fail(qa_error *e, qa_status code, const char *message)
 { qa_error_set(e, code, 0, "%s", message); return false; }
 static void source_free(received_source *r)
-{ if (r && --r->references == 0) { qa_unified_document_destroy(r->metadata); free(r->players); free(r); } }
-static void rows_free(received_source **rows, size_t count)
-{ if (rows) for (size_t i = 0; i < count; ++i) source_free(rows[i]); free(rows); }
+{
+    if (!r || --r->references)return;
+    qa_unified_frame_lease *lease=r->lease;
+    qa_unified_document_destroy(r->metadata);
+    if (lease)qa_unified_frame_lease_release(lease);
+    else {free(r->players);free(r);}
+}
+static void rows_free(received_source **rows, size_t count, bool pooled)
+{ if (rows) for (size_t i = 0; i < count; ++i) source_free(rows[i]); if (!pooled)free(rows); }
 
 bool frontend_unified_q3_sources_current(const frontend_unified_q3_sources *o)
 {
@@ -104,9 +114,12 @@ static bool source_configuration(frontend_unified_q3_sources *o, const qa_unifie
 static bool source_read(frontend_unified_q3_sources *o, const qa_unified_frame *frame, const qa_unified_q3_source *source,
     uint64_t revision, bool restoring, bool retired, received_source **out, qa_error *e)
 {
-    received_source *r = calloc(1,sizeof(*r));
+    qa_unified_frame_lease *lease=frame->lease;
+    received_source *r=lease?qa_unified_frame_lease_alloc(lease,1,sizeof(*r),_Alignof(received_source),e):calloc(1,sizeof(*r));
     if (!r) return fail(e, QA_ERROR_MEMORY, "Retaining complete compiled Q3 Source records");
     r->references = 1;
+    if (lease && !qa_unified_frame_lease_retain(lease,e))return false;
+    r->lease=lease;
     r->provider_name = source->provider_name; r->instance = source->instance; r->content = source->content;
     frontend_unified_q3_source_view *v = &r->view;
     *v = (frontend_unified_q3_source_view){.owner=o,.source=r,.revision=revision,.epoch=o->epoch,
@@ -136,7 +149,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_frame *
         ok = frontend_remote_unified_source_actor(o->replica,frame,row->actor,restoring,&entity->actor,e);
         if (ok && row->number + 1 > v->entity_count) v->entity_count = row->number + 1;
     }
-    if (ok && source->client_count) r->players = calloc(source->client_count,sizeof(*r->players));
+    if (ok && source->client_count) r->players=lease?qa_unified_frame_lease_alloc(lease,source->client_count,sizeof(*r->players),_Alignof(frontend_unified_q3_source_player),e):calloc(source->client_count,sizeof(*r->players));
     if (ok && source->client_count && !r->players) ok = fail(e,QA_ERROR_MEMORY,"Retaining actual compiled Q3 player-pointer roster");
     bool viewer_found = false;
     for (size_t i = 0; ok && i < source->client_count; ++i) {
@@ -172,10 +185,12 @@ static bool prepare(frontend_unified_q3_sources *o, const qa_unified_document *d
     size_t count = sources ? sources->source_count : 0;
     if (count > qa_executable_recipe_provider_count(o->recipe))
         return fail(e,QA_ERROR_FORMAT,"Compiled Q3 Source list exceeds its admitted provider roster");
-    frontend_unified_q3_source_frame *t = calloc(1,sizeof(*t));
+    qa_unified_frame_lease *lease=frame->lease;
+    frontend_unified_q3_source_frame *t=lease?qa_unified_frame_lease_alloc(lease,1,sizeof(*t),_Alignof(frontend_unified_q3_source_frame),e):calloc(1,sizeof(*t));
     if (!t) return fail(e,QA_ERROR_MEMORY,"Retaining compiled Q3 Source frame admission");
-    t->owner = o; t->revision = o->revision+1; t->count = count;
-    t->rows = count ? calloc(count,sizeof(*t->rows)) : NULL;
+    if (lease && !qa_unified_frame_lease_retain(lease,e))return false;
+    t->lease=lease;t->owner=o;t->revision=o->revision+1;t->count=count;
+    t->rows=count?(lease?qa_unified_frame_lease_alloc(lease,count,sizeof(*t->rows),_Alignof(received_source *),e):calloc(count,sizeof(*t->rows))):NULL;
     bool ok = (!count || t->rows) && qa_unified_document_retain(d,&t->packet,e);
     o->prepared = t;
     for (size_t i = 0; ok && i < count; ++i) {
@@ -231,16 +246,21 @@ void frontend_unified_q3_sources_commit(frontend_unified_q3_source_frame **out)
 {
     if (!out || !*out) return;
     frontend_unified_q3_source_frame *t = *out; frontend_unified_q3_sources *o = t->owner;
-    rows_free(o->rows,o->count); qa_unified_document_destroy(o->packet);
-    o->rows = t->rows; o->count = t->count; o->packet = t->packet; o->revision = t->revision; o->prepared = NULL;
-    free(t); *out = NULL;
+    rows_free(o->rows,o->count,o->lease!=NULL); qa_unified_document_destroy(o->packet);
+    o->rows=t->rows;o->count=t->count;o->packet=t->packet;o->revision=t->revision;o->prepared=NULL;
+    o->lease=t->lease;
+    if (t->lease)qa_unified_frame_lease_release(t->lease);else free(t);
+    *out=NULL;
 }
 void frontend_unified_q3_sources_abort(frontend_unified_q3_source_frame **out)
 {
     if (!out || !*out) return;
     frontend_unified_q3_source_frame *t = *out;
     if (t->owner->prepared == t) t->owner->prepared = NULL;
-    rows_free(t->rows,t->count); qa_unified_document_destroy(t->packet); free(t); *out = NULL;
+    qa_unified_frame_lease *lease=t->lease;
+    rows_free(t->rows,t->count,lease!=NULL);qa_unified_document_destroy(t->packet);
+    if (lease)qa_unified_frame_lease_release(lease);else free(t);
+    *out=NULL;
 }
 size_t frontend_unified_q3_sources_count(const frontend_unified_q3_sources *o)
 { return o ? (o->prepared ? o->prepared->count : o->count) : 0; }
@@ -311,12 +331,14 @@ bool frontend_unified_q3_source_retirement_prepare(const frontend_unified_q3_sou
     while (index < o->count && o->rows[index] != view->source) ++index;
     if (index == o->count || !o->packet || o->rows[index]->references == SIZE_MAX)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement custody cannot borrow an unpublished or exhausted Source");
-    frontend_unified_q3_source_retirement *t = calloc(1,sizeof(*t));
+    qa_unified_frame_lease *lease=qa_unified_document_frame(o->packet)->lease;
+    frontend_unified_q3_source_retirement *t=lease?qa_unified_frame_lease_alloc(lease,1,sizeof(*t),_Alignof(frontend_unified_q3_source_retirement),e):calloc(1,sizeof(*t));
     if (!t) return fail(e,QA_ERROR_MEMORY,"Retaining actual compiled Source cleanup custody");
     if (!qa_unified_document_retain(o->packet,&t->packet,e)) {
-        free(t); return false;
+        if (!lease)free(t);
+        return false;
     }
-    t->owner = o; t->row = o->rows[index]; t->index = index; ++t->row->references;
+    t->lease=lease;t->owner = o; t->row = o->rows[index]; t->index = index; ++t->row->references;
     t->next = o->retirements; o->retirements = t; *out = t; return true;
 }
 bool frontend_unified_q3_source_retirement_checkpoint_current(const frontend_unified_q3_source_retirement *t)
@@ -350,7 +372,10 @@ bool frontend_unified_q3_source_retirement_return(frontend_unified_q3_source_ret
         return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement release lost its retained resource owners");
     frontend_unified_q3_source_retirement **slot = &t->owner->retirements;
     while (*slot != t) slot = &(*slot)->next;
-    *slot = t->next; source_free(t->row); qa_unified_document_destroy(t->packet); free(t); *out = NULL; return true;
+    qa_unified_frame_lease *lease=t->lease;
+    *slot=t->next;source_free(t->row);qa_unified_document_destroy(t->packet);
+    if (!lease)free(t);
+    *out=NULL;return true;
 }
 
 bool frontend_unified_q3_sources_checkpoint_read(const frontend_unified_q3_sources *o,size_t index,
@@ -388,7 +413,7 @@ bool frontend_unified_q3_sources_destroy(frontend_unified_q3_sources **out, qa_e
     frontend_unified_q3_sources *o = *out;
     if (!frontend_unified_q3_sources_idle(o) || o->retirements)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled Q3 Source retains its prepared frame or checked retirement custody");
-    rows_free(o->rows,o->count); qa_unified_document_destroy(o->packet); free(o); *out = NULL; return true;
+    rows_free(o->rows,o->count,o->lease!=NULL); qa_unified_document_destroy(o->packet); free(o); *out = NULL; return true;
 }
 
 bool frontend_unified_q3_sources_checkpoint_stage_read(const frontend_unified_q3_sources *o,

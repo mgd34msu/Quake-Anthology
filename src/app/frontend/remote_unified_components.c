@@ -205,8 +205,11 @@ void frontend_unified_components_frame_abort(frontend_unified_component_frame **
     frontend_unified_component_frame *candidate=*slot;
     if(candidate->rows) for(size_t i=0;i<candidate->count;++i) q3remote_component_frame_free(candidate->rows[i]);
     if(candidate->owner->prepared==candidate) candidate->owner->prepared=NULL;
+    qa_unified_frame_lease *lease=candidate->lease;
     qa_unified_document_destroy(candidate->owned_input);
-    free(candidate->rows); free(candidate); *slot=NULL;
+    if (lease)qa_unified_frame_lease_release(lease);
+    else {free(candidate->rows);free(candidate);}
+    *slot=NULL;
 }
 bool frontend_unified_components_frame_prepare(frontend_unified_components *o,const qa_unified_document *d,
     frontend_unified_component_frame **out,bool *ready,qa_error *e)
@@ -223,9 +226,12 @@ bool frontend_unified_components_frame_prepare(frontend_unified_components *o,co
     size_t count=frames?frames->source_count:0;
     if(revision!=o->revision||count!=o->count)
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Remote component frame lacks reliable admission");
-    frontend_unified_component_frame *candidate=calloc(1,sizeof(*candidate));
+    qa_unified_frame_lease *lease=frame->lease;
+    frontend_unified_component_frame *candidate=lease?qa_unified_frame_lease_alloc(lease,1,sizeof(*candidate),_Alignof(frontend_unified_component_frame),e):calloc(1,sizeof(*candidate));
     if(!candidate) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining actual component frame candidate");
-    candidate->owner=o; candidate->input=d; candidate->count=count; candidate->rows=count?calloc(count,sizeof(*candidate->rows)):NULL;
+    if (lease && !qa_unified_frame_lease_retain(lease,e))return false;
+    candidate->lease=lease;candidate->owner=o;candidate->input=d;candidate->count=count;
+    candidate->rows=count?(lease?qa_unified_frame_lease_alloc(lease,count,sizeof(*candidate->rows),_Alignof(remote_component_frame *),e):calloc(count,sizeof(*candidate->rows))):NULL;
     o->prepared=candidate; *out=candidate;
     if(count&&!candidate->rows) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining received component frame rows");
     bool ok=true;
