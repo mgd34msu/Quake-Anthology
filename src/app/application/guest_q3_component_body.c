@@ -7,15 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void output_free(component_body_output *output)
-{
-    for (size_t i = 0; i < output->count; ++i) free((void *)output->parts[i].passes);
-    free(output->parts); *output = (component_body_output){0};
-}
 static void outputs_clear(application_q3_component_body *owner)
 {
-    for (size_t i = 0; i < owner->count; ++i) output_free(owner->outputs + i);
-    free(owner->outputs); owner->outputs = NULL; owner->count = 0;
+    owner->outputs = NULL; owner->count = owner->capacity = 0;
+    qa_unified_frame_lease_release(owner->storage); owner->storage = NULL;
 }
 static bool source_current(const application_q3_component_body *owner)
 {
@@ -45,16 +40,25 @@ static bool actor_current(application_q3_component_body *owner, const component_
     return source_current(owner) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Component body scene changed during liveness admission");
 }
-static bool part_append(component_body_output *output, qa_application_q3_body_part part,
+static bool part_append(application_q3_component_body *owner,component_body_output *output, qa_application_q3_body_part part,
     uint32_t helper, size_t *index, qa_error *error)
 {
     if (output->count == SIZE_MAX / sizeof(*output->parts))
         return application_fail(error, QA_ERROR_MEMORY, "Component body helper extent is exhausted");
-    qa_application_q3_component_part *parts = realloc(output->parts,
-        (output->count + 1) * sizeof(*parts));
-    if (!parts) return application_fail(error, QA_ERROR_MEMORY, "Retaining component body helper");
-    output->parts = parts; *index = output->count++;
-    parts[*index] = (qa_application_q3_component_part){.part = part, .helper = helper};
+    if (output->count == output->capacity) {
+        size_t capacity=output->capacity>SIZE_MAX/2?output->count+1:output->capacity?output->capacity*2:8;
+        qa_application_q3_component_part *parts=qa_unified_frame_lease_alloc(owner->storage,capacity,
+            sizeof(*parts),_Alignof(qa_application_q3_component_part),error);
+        size_t *passes=qa_unified_frame_lease_alloc(owner->storage,capacity,sizeof(*passes),_Alignof(size_t),error);
+        if (!parts || !passes) return false;
+        if (output->count) {
+            memcpy(parts,output->parts,output->count*sizeof(*parts));
+            memcpy(passes,output->pass_capacities,output->count*sizeof(*passes));
+        }
+        output->parts=parts; output->pass_capacities=passes; output->capacity=capacity;
+    }
+    *index = output->count++;
+    output->parts[*index] = (qa_application_q3_component_part){.part = part, .helper = helper};
     return true;
 }
 static bool player_hook(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
@@ -83,13 +87,11 @@ static bool player_hook(void *context, const qa_qvm_call *call, int32_t *result,
     if (!source_current(owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Component body lost its reached player scene");
     if (scope.admitted) {
-        scope.pending = calloc(row->call_count, sizeof(*scope.pending));
+        scope.pending = qa_unified_frame_lease_alloc(owner->storage,row->call_count,sizeof(*scope.pending),_Alignof(bool),error);
         if (!scope.pending) return application_fail(error, QA_ERROR_MEMORY, "Retaining pending original body helpers");
         for (size_t i = 0; i < row->call_count; ++i) {
             size_t index;
-            if (!part_append(&scope.output, row->calls[i].part, row->calls[i].instruction, &index, error)) {
-                free(scope.pending); output_free(&scope.output); return false;
-            }
+            if (!part_append(owner,&scope.output, row->calls[i].part, row->calls[i].instruction, &index, error)) return false;
             scope.pending[i] = true;
         }
     }
@@ -105,12 +107,19 @@ static bool player_hook(void *context, const qa_qvm_call *call, int32_t *result,
         if (owner->count == SIZE_MAX / sizeof(*owner->outputs))
             okay = application_fail(error, QA_ERROR_MEMORY, "Component body actor extent is exhausted");
         else {
-            component_body_output *outputs = realloc(owner->outputs, (owner->count + 1) * sizeof(*outputs));
-            if (!outputs) okay = application_fail(error, QA_ERROR_MEMORY, "Retaining completed component body");
-            else { owner->outputs = outputs; outputs[owner->count++] = scope.output; scope.output = (component_body_output){0}; }
+            if (owner->count == owner->capacity) {
+                size_t capacity=owner->capacity>SIZE_MAX/2?owner->count+1:owner->capacity?owner->capacity*2:8;
+                component_body_output *outputs=qa_unified_frame_lease_alloc(owner->storage,capacity,sizeof(*outputs),
+                    _Alignof(component_body_output),error);
+                if (!outputs) okay=false;
+                else {
+                    if (owner->count) memcpy(outputs,owner->outputs,owner->count*sizeof(*outputs));
+                    owner->outputs=outputs;owner->capacity=capacity;
+                }
+            }
+            if (okay) owner->outputs[owner->count++] = scope.output;
         }
     }
-    free(scope.pending); output_free(&scope.output);
     if (!ordered) return application_fail(error, QA_ERROR_ARGUMENT, "Component player scopes unwound out of order");
     return okay;
 }
@@ -137,7 +146,7 @@ static bool mesh_hook(void *context, const qa_qvm_call *call, int32_t *result, q
         if (!qa_qvm_span(call->vm, (int32_t)shader_pointer, 0, 4, &shader, error)) return false;
         scope.shader = qa_load_i32le(shader.data);
         if (player->pending[part_index]) { scope.part = part_index; player->pending[part_index] = false; }
-        else if (!part_append(&player->output, part->part, part->instruction, &scope.part, error)) return false;
+        else if (!part_append(owner,&player->output, part->part, part->instruction, &scope.part, error)) return false;
     }
     owner->mesh = &scope;
     bool okay = qa_qvm_proceed(call, result, error);
@@ -165,9 +174,16 @@ bool application_q3_component_body_source_entity(void *context, const qa_qvm_cal
     else {
         if (part->count == SIZE_MAX / sizeof(*part->passes))
             return application_fail(error, QA_ERROR_MEMORY, "Component body pass extent is exhausted");
-        qa_q3_ref_entity *passes = realloc((void *)part->passes, (part->count + 1) * sizeof(*passes));
-        if (!passes) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual component material pass");
-        part->passes = passes; passes[part->count++] = *entity;
+        size_t *capacity=mesh->player->output.pass_capacities+mesh->part;
+        if (part->count == *capacity) {
+            size_t extent=*capacity>SIZE_MAX/2?part->count+1:*capacity?*capacity*2:4;
+            qa_q3_ref_entity *passes=qa_unified_frame_lease_alloc(owner->storage,extent,sizeof(*passes),
+                _Alignof(qa_q3_ref_entity),error);
+            if (!passes) return false;
+            if (part->count) memcpy(passes,part->passes,part->count*sizeof(*passes));
+            part->passes=passes; *capacity=extent;
+        }
+        ((qa_q3_ref_entity *)part->passes)[part->count++] = *entity;
     }
     *suppress = true; return true;
 }
@@ -214,7 +230,10 @@ bool application_q3_component_body_begin(application_q3_component_body *owner,
     if (!owner->options.source.current(owner->options.source.context, sequence, time_ms))
         return application_fail(error, QA_ERROR_ARGUMENT, "Component body frame has no reached source context");
     outputs_clear(owner); owner->sequence = sequence; owner->time_ms = time_ms; ++owner->generation;
-    owner->completed = false; owner->entered = true; return true;
+    owner->completed = false;
+    owner->storage=qa_unified_frame_lease_acquire(owner->options.storage,error);
+    if (!owner->storage) return false;
+    owner->entered = true; return true;
 }
 bool application_q3_component_body_end(application_q3_component_body *owner, bool success, qa_error *error)
 {
@@ -257,7 +276,8 @@ bool qa_application_q3_component_bodies_borrow(application_q3_component_body *ow
     qa_application_q3_component_bodies actual;
     if (!out || *out || !view || !qa_application_q3_component_bodies_read(owner, &actual))
         return application_fail(error, QA_ERROR_ARGUMENT, "Component body borrow needs its actual completed source output");
-    qa_application_q3_component_body_lease *lease = calloc(1, sizeof(*lease));
+    qa_application_q3_component_body_lease *lease = qa_unified_frame_lease_alloc(owner->storage,1,sizeof(*lease),
+        _Alignof(qa_application_q3_component_body_lease),error);
     if (!lease) return application_fail(error, QA_ERROR_MEMORY, "Retaining component body Draw lease");
     lease->owner = owner; lease->next = owner->leases; owner->leases = lease;
     *out = lease; *view = actual; return true;
@@ -269,7 +289,7 @@ void qa_application_q3_component_bodies_return(qa_application_q3_component_body_
     qa_application_q3_component_body_lease **link = &lease->owner->leases;
     while (*link && *link != lease) link = &(*link)->next;
     if (*link != lease) return;
-    *link = lease->next; *slot = NULL; free(lease);
+    *link = lease->next; *slot = NULL;
 }
 bool application_q3_component_body_descriptors(const application_q3_component_body *owner,
     qa_qvm_saved_function out[2], qa_error *error)

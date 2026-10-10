@@ -4,6 +4,7 @@
 #include "guest_q3_body_profile.h"
 #include "qa/application_q3_component_body.h"
 #include "qa/qvm_save.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct application_q3_component_body_source {
     void *context;
@@ -22,6 +23,7 @@ typedef struct application_q3_component_body_options {
     const application_q3_body_profile *profile;
     qa_actor_owner owner;
     qa_q3_presentation_assets *assets;
+    qa_unified_frame_pool *storage;
     application_q3_component_body_source source;
 } application_q3_component_body_options;
 

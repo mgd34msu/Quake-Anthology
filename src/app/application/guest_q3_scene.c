@@ -165,7 +165,7 @@ bool application_q3_scene_create(const application_q3_scene_options *options,
     if (!qa_qvm_create(options->profile->image, &vm, &s->vm, e) || !qa_q3_host_attach_qvm(s->host, s->vm, e)) return false;
     if(options->profile->player_events) return true;
     application_q3_component_body_options body = {.vm = s->vm, .image = options->profile->image,
-        .profile = &options->profile->body, .owner = host.owner, .assets = options->assets,
+        .profile = &options->profile->body, .owner = host.owner, .assets = options->assets, .storage = s->command_storage,
         .source = {.context = s, .actor = actor, .live = live, .current = body_current}};
     return application_q3_component_body_create(&body, &s->body, e) &&
         qa_qvm_bind_function(s->vm, options->profile->event_entry, true, event_hook, s, &s->event_binding, e);

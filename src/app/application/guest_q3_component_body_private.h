@@ -5,7 +5,8 @@
 typedef struct component_body_output {
     qa_actor_id actor;
     qa_application_q3_component_part *parts;
-    size_t count;
+    size_t count,capacity;
+    size_t *pass_capacities;
 } component_body_output;
 typedef struct component_player_scope {
     struct component_player_scope *previous;
@@ -31,8 +32,9 @@ struct application_q3_component_body {
     component_player_scope *player;
     component_mesh_scope *mesh;
     component_body_output *outputs;
+    qa_unified_frame_lease *storage;
     qa_application_q3_component_body_lease *leases;
-    size_t count;
+    size_t count,capacity;
     uint64_t sequence, generation;
     int32_t time_ms;
     bool entered, completed, busy;
