@@ -1054,12 +1054,11 @@ bool qa_console_insert(qa_console *console, const qa_command_context *context,
 }
 
 static bool expand_macros(qa_console *console, const qa_command_context *context,
-                           const char *input, char **out, qa_error *error)
+                           const char *input, char text[1024], qa_error *error)
 {
     size_t budget = strlen(input);
     if (budget >= 1024) return qac_fail(error, QA_ERROR_FORMAT, "Q2 command line exceeds 1023 bytes");
-    char *text = qac_copy(input, error);
-    if (text == NULL) return false;
+    memcpy(text,input,budget+1);
     bool quoted = false;
     size_t expansions = 0;
     for (size_t offset = 0; text[offset] != '\0'; ++offset) {
@@ -1067,34 +1066,25 @@ static bool expand_macros(qa_console *console, const qa_command_context *context
         if (quoted || text[offset] != '$') continue;
         qac_token token;
         size_t length = strlen(text);
-        if (!qac_parse_token(text, length, offset + 1, QA_RULESET_Q2_CLASSIC, context->console_text, &token, error)) { free(text); return false; }
+        if (!qac_parse_token(text, length, offset + 1, QA_RULESET_Q2_CLASSIC, context->console_text, &token, error)) return false;
         if (!token.found) continue;
-        char *name = qac_copy_n(text + token.start, token.size, error);
-        if (name == NULL) { free(text); return false; }
+        char name[1024];memcpy(name,text+token.start,token.size);name[token.size]='\0';
         qa_cvars *registry = cvars_for(console,context);
         cvar_access access=cvar_access_read(registry);
         const qa_cvar_view *variable=cvar_find(access,name);
-        free(name);
         const char *value = variable == NULL || (qac_q2(qa_cvars_dialect(registry)) &&
             (variable->flags & QA_Q2_CVAR_PRIVATE) != 0) ? "" : variable->value;
         size_t added = strlen(value);
         if (added >= 1024 - budget || ++expansions >= 100) {
-            free(text);
             return qac_fail(error, QA_ERROR_FORMAT, "Q2 macro expansion exceeds length or recursion limit");
         }
         budget += added;
-        qac_text expanded = {0};
-        bool ok = qac_text_add(&expanded, text, offset, error) &&
-                  qac_text_add(&expanded, value, added, error) &&
-                  qac_text_add(&expanded, text + token.end, length - token.end, error);
-        free(text);
-        if (!ok) { free(expanded.data); return false; }
-        text = expanded.data;
+        memmove(text+offset+added,text+token.end,length-token.end+1);
+        memcpy(text+offset,value,added);
         if (offset == 0) offset = SIZE_MAX;
         else --offset;
     }
-    if (quoted) { free(text); return qac_fail(error, QA_ERROR_FORMAT, "Q2 command has unmatched quotes"); }
-    *out = text;
+    if (quoted) return qac_fail(error, QA_ERROR_FORMAT, "Q2 command has unmatched quotes");
     return true;
 }
 
@@ -1107,10 +1097,10 @@ bool qa_console_expand_command(qa_console *console, const qa_command_context *co
     qa_command_context source = *context_for(console, context);
     if (!capture_context(console,&source,&source,error)) return false;
     if (!valid_context(console, &source, error)) return false;
-    char *expanded = NULL;
+    char expansion_text[1024];const char *expanded=input;
     if (qac_q2(source.dialect)) {
         qa_error expansion = {0};
-        if (!expand_macros(console, &source, input, &expanded, &expansion)) {
+        if (!expand_macros(console, &source, input, expansion_text, &expansion)) {
             if (expansion.code == QA_ERROR_FORMAT) {
                 output(console, &source, expansion.message);
                 output(console, &source, ", discarded.\n");
@@ -1119,9 +1109,10 @@ bool qa_console_expand_command(qa_console *console, const qa_command_context *co
             if (error) *error = expansion;
             return false;
         }
-    } else expanded = qac_copy(input, error);
-    if (!expanded) return false;
-    *out = (qa_buffer){.data = (uint8_t *)expanded, .size = strlen(expanded) + 1};
+        expanded=expansion_text;
+    }
+    char *owned=qac_copy(expanded,error);if(!owned)return false;
+    *out = (qa_buffer){.data = (uint8_t *)owned, .size = strlen(owned) + 1};
     return true;
 }
 
@@ -1272,10 +1263,10 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
                             const char *raw, qa_error *error)
 {
     if (!valid_context(console, context, error)) return false;
-    char *expanded = NULL;
+    char expansion_text[1024];const char *expanded=raw;
     if (qac_q2(context->dialect)) {
         qa_error expansion_error = {0};
-        if (!expand_macros(console, context, raw, &expanded, &expansion_error)) {
+        if (!expand_macros(console, context, raw, expansion_text, &expansion_error)) {
             if (expansion_error.code == QA_ERROR_FORMAT) {
                 output(console, context, expansion_error.message);
                 output(console, context, ", discarded.\n");
@@ -1288,13 +1279,10 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
             if (error != NULL) *error = expansion_error;
             return false;
         }
-    } else {
-        expanded = qac_copy(raw, error);
-        if (expanded == NULL) return false;
+        expanded=expansion_text;
     }
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(expanded, context->dialect, context->console_text, &tokens, NULL, NULL, error)) { free(expanded); return false; }
-    free(expanded);
+    if (!qa_command_tokenize(expanded, context->dialect, context->console_text, &tokens, NULL, NULL, error)) return false;
     if (tokens.count == 0) { qa_command_tokens_free(&tokens); return true; }
     qa_command_invocation command = {console, *context, tokens.count,
         (const char *const *)tokens.values, tokens.args_text, raw, 0, 0};

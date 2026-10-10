@@ -970,6 +970,18 @@ static void test_shared_input_menu_defaults(void)
         qa_input_console *commands = qa_input_console_create(&(qa_input_console_options){
             .console = console, .owner = 1, .user = &seat, .seat = shared_input_seat}, &error);
         CHECK(commands);
+        if(dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) {
+            CHECK(qa_cvars_set(cvars,"name","$skin",true,&error));
+            CHECK(qa_cvars_set(cvars,"skin","+showscores 900",true,&error));
+            CHECK(qa_console_execute_now(console,&context,"$name",&error));
+            CHECK(qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+            CHECK(qa_console_execute_now(console,&context,"-showscores 900",&error));
+            CHECK(!qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+            CHECK(qa_console_execute_now(console,&context,"+showscores $hand",&error));
+            CHECK(qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+            CHECK(qa_console_execute_now(console,&context,"-showscores $hand",&error));
+            CHECK(!qa_input_seat_action_active(seat,QA_INPUT_SCORES));
+        }
         const char *aliases[] = {"+scores", "+showscores"};
         double time = 0;
         for (size_t alias = 0; alias < sizeof(aliases) / sizeof(*aliases); ++alias) {
