@@ -524,6 +524,9 @@ typedef struct qa_scene_brush_surface {
     qa_scene_rect lightmap_rect;
     uint64_t light_revision;
 } qa_scene_brush_surface;
+/* Load-time adoption before the geometry is published. Its active references
+ * own the winding and part descriptors alongside the mesh arrays. */
+void qa_scene_geometry_brush_adopt(const qa_scene_geometry *, qa_scene_brush_surface *, uint32_t *);
 /* Final model-space joints are immutable frame storage shared by every draw of
  * one retained model pose slot. Ordinal is its first admission's command count. */
 typedef struct qa_scene_skin_pose {

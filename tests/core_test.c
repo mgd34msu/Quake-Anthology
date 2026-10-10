@@ -1040,6 +1040,19 @@ static void test_cached_world_surface(void)
         .textures = {base, light}, .texture_count = 2, .environment = QA_TEXTURE_MODULATE, .lighting = QA_LIGHT_VERTEX,
         .vertex_inputs = {.constant_color = true, .color = {1,1,1,1}}, .single_coverage = true};
     qa_scene_state_default(&draw.state); draw.state.cull = QA_CULL_NONE;
+    qa_material_stage stages[2] = {{.images = &base, .image_count = 1, .tcgen = QA_TC_TEXTURE,
+        .rgb = QA_COLOR_IDENTITY, .alpha = QA_COLOR_IDENTITY},
+        {.images = &light, .image_count = 1, .lightmap = true, .is_lightmap = true, .tcgen = QA_TC_LIGHTMAP,
+         .rgb = QA_COLOR_IDENTITY, .alpha = QA_COLOR_IDENTITY}};
+    stages[0].state = stages[1].state = draw.state;
+    stages[1].state.blend_source = QA_BLEND_DST_COLOR;
+    stages[1].state.blend_destination = QA_BLEND_ZERO;
+    qa_material material = {.stages = stages, .stage_count = 2, .cull = QA_CULL_NONE,
+        .profile = {.multitexture = true}, .family = QA_GAME_Q3};
+    qa_material_context context = {.model = identity, .lightmap = light, .brush = &brush.draw,
+        .identity_light = 1, .entity_color = {1,1,1,1}};
+    context.view.projection = identity; context.view.axis[0] = (qa_vec3){0,0,-1};
+    context.view.axis[1] = (qa_vec3){-1,0,0}; context.view.axis[2] = (qa_vec3){0,1,0};
     uint8_t reference[64 * 64 * 4];
     for (unsigned pass = 0; pass < 3; ++pass) {
         qa_scene_frame_reset(&frame, pass + 1);
@@ -1047,8 +1060,15 @@ static void test_cached_world_surface(void)
             .viewport = {0,0,64,64}, .projection = identity,
             .clear_color = true, .clear_depth = true, .depth = 1}};
         CHECK(qa_scene_frame_emit(&frame, &view, &error));
-        if (pass) draw.brush = brush.draw;
-        CHECK(qa_scene_frame_draw(&frame, &draw, &error));
+        if (!pass) CHECK(qa_scene_frame_draw(&frame, &draw, &error));
+        else {
+            CHECK(qa_material_submit(&material, &mesh, &context, &frame, &error));
+            CHECK(frame.command_count == 2 && frame.commands[1].data.draw.brush.present);
+        }
+        if (pass == 2) {
+            qa_scene_geometry_release(geometry); geometry = NULL;
+            qaw_brush_destroy(&brush);
+        }
         CHECK(qa_cpu_execute(renderer, &frame, &error));
         qa_bytes pixels = qa_cpu_pixels(renderer);
         CHECK(pixels.size == sizeof(reference));

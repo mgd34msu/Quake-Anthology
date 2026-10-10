@@ -119,7 +119,10 @@ bool qaw_brush_prepare(const qa_scene_mesh *mesh, const qa_scene_image *lightmap
     out->winding = malloc(mesh->index_count * sizeof(*out->winding));
     if (!out->winding) goto memory;
     size_t count = mesh->index_count <= 1536 ? winding(mesh, out->winding) : 0;
-    if (count && polygon(mesh, out->winding, count, lightmap, &out->draw)) return true;
+    if (count && polygon(mesh, out->winding, count, lightmap, &out->draw)) {
+        qa_scene_geometry_brush_adopt(mesh->geometry, NULL, out->winding);
+        return true;
+    }
     free(out->winding); out->winding = NULL;
     count = mesh->index_count / 3;
     out->parts = calloc(count, sizeof(*out->parts));
@@ -130,6 +133,7 @@ bool qaw_brush_prepare(const qa_scene_mesh *mesh, const qa_scene_image *lightmap
         polygon(mesh, mesh->indices + i * 3, 3, lightmap, out->parts + i);
     }
     out->draw = (qa_scene_brush_surface){.present = true, .parts = out->parts, .part_count = count};
+    qa_scene_geometry_brush_adopt(mesh->geometry, out->parts, NULL);
     return true;
 memory:
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating world surface span descriptors");
@@ -138,6 +142,5 @@ memory:
 
 void qaw_brush_destroy(qaw_brush_geometry *brush)
 {
-    free(brush->parts); free(brush->winding);
     *brush = (qaw_brush_geometry){0};
 }

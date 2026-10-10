@@ -17,6 +17,8 @@ struct qa_scene_geometry {
     uint32_t *indices;
     size_t vertex_count, index_count;
     qa_scene_skeletal_view skeletal;
+    qa_scene_brush_surface *brush_parts;
+    uint32_t *brush_winding;
 };
 
 static const char *const format_extensions[] = {".png", ".jpg", ".tga", ".jpeg", ".bmp", ".gif"};
@@ -261,8 +263,18 @@ void qa_scene_geometry_release(const qa_scene_geometry *borrowed)
         free((void *)geometry->skeletal.weights);
         free((void *)geometry->skeletal.ranges);
         free((void *)geometry->skeletal.sources);
+        free(geometry->brush_parts);
+        free(geometry->brush_winding);
     }
     qa_scene_geometry_cache_release(geometry);
+}
+
+void qa_scene_geometry_brush_adopt(const qa_scene_geometry *borrowed,
+                                 qa_scene_brush_surface *parts, uint32_t *winding)
+{
+    qa_scene_geometry *geometry = (qa_scene_geometry *)borrowed;
+    geometry->brush_parts = parts;
+    geometry->brush_winding = winding;
 }
 
 bool qa_scene_geometry_active(const qa_scene_geometry *geometry)
