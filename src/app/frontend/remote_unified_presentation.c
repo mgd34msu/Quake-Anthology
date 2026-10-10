@@ -21,7 +21,6 @@
 #include <math.h>
 
 typedef struct unified_audio_identity {
-    struct unified_audio_identity *next;
     qa_actor_id actor;
     uint64_t audio;
 } unified_audio_identity;
@@ -56,6 +55,7 @@ struct unified_presentation {
     frontend_unified_q3_source_frame *q3_source_frame;
     unified_q3_client_row *q3_clients,*retired_q3;
     unified_audio_identity *audio;
+    size_t audio_capacity;
     qa_scene_light *draw_lights,*reflected_lights;
     size_t q2_light_offset,q2_light_count,draw_light_count;
     uint64_t light_frame;
@@ -103,12 +103,12 @@ static bool audio_actor(void *context, qa_actor_id actor, uint64_t *out, qa_erro
     qa_saved_actor_id wire;
     if (!frontend_remote_unified_wire_actor(p->replica, actor, &wire))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified audio actor has no actual wire identity");
-    for (unified_audio_identity *row = p->audio; row; row = row->next)
-        if (qa_actor_id_equal(row->actor, actor)) { *out = row->audio; return true; }
-    unified_audio_identity *row = calloc(1, sizeof(*row));
-    if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining private unified audio identity");
-    if (!frontend_source_identity_allocate(p->frontend, &row->audio, error)) { free(row); return false; }
-    row->actor = actor; row->next = p->audio; p->audio = row; *out = row->audio; return true;
+    unified_audio_identity *row = p->audio + actor.slot;
+    if (qa_actor_id_equal(row->actor, actor)) { *out = row->audio; return true; }
+    uint64_t audio;
+    if (!frontend_source_identity_allocate(p->frontend, &audio, error)) return false;
+    *row = (unified_audio_identity){.actor = actor, .audio = audio};
+    *out = audio; return true;
 }
 static bool presentation_validate(void *context,const qa_unified_presentation_event *row,qa_error *error)
 {
@@ -334,7 +334,7 @@ static bool close_children(unified_presentation *p, qa_error *error)
     free(p->draw_lights); p->draw_lights=NULL;
     free(p->reflected_lights); p->reflected_lights=NULL;
     p->q2_light_offset=0; p->q2_light_count=0; p->draw_light_count=0;
-    while (p->audio) { unified_audio_identity *row = p->audio; p->audio = row->next; free(row); }
+    memset(p->audio, 0, p->audio_capacity * sizeof(*p->audio));
     p->audio_owner = 0;
     return true;
 }
@@ -1282,6 +1282,7 @@ static void dispose(void *context)
 {
     unified_presentation *p=context;
     qa_unified_frame_pool_destroy(&p->render_storage);
+    free(p->audio);
     free(p);
 }
 static frontend_remote_unified_consumers consumers(unified_presentation *p)
@@ -1300,6 +1301,11 @@ bool frontend_remote_unified_presentation_create(qa_frontend *frontend,
     if (!p) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Allocating readonly unified presentation owner");
     p->render_storage=qa_unified_frame_pool_create(64u*1024u*1024u,3,error);
     if(!p->render_storage) { free(p);return false; }
+    p->audio_capacity = source->identity_capacity;
+    p->audio = calloc(p->audio_capacity, sizeof(*p->audio));
+    if (!p->audio) {
+        dispose(p); return frontend_unified_fail(error, QA_ERROR_MEMORY, "Reserving unified actor audio identities");
+    }
     p->frontend = frontend;
     frontend_remote_unified_options options = *source;
     options.consumers = consumers(p);
