@@ -2,6 +2,11 @@
 #define QA_BOTS_PLAYER_H
 #include "qa/network_q3.h"
 
+typedef struct qa_bot_source_player_state {
+    bool present, has_player;
+    int32_t pm_type, score, last_hurt_client, last_hurt_mod;
+} qa_bot_source_player_state;
+
 /* Borrowed view of the actual 468-byte curPs inside the GAME-owned BotState.
  * The view retains no copy. Its lifetime is the current source callback. */
 typedef struct qa_bot_player_state_view {

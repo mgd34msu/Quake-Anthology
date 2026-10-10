@@ -94,10 +94,6 @@ typedef struct qa_bot_source_player {
     bool present, bot;
     qa_vec3 origin;
 } qa_bot_source_player;
-typedef struct qa_bot_source_player_state {
-    bool present, has_player;
-    int32_t pm_type, score, last_hurt_client, last_hurt_mod;
-} qa_bot_source_player_state;
 typedef struct qa_bot_source_row {
     qa_q3_entity state;
     qa_string_id classname;

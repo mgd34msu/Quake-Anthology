@@ -8,7 +8,7 @@ bool qa_q3_client_team_state_read(const qa_q3_game *, uint32_t,
 bool qa_q3_client_team_state_write(qa_q3_game *, uint32_t,
                                    const qa_q3_source_player_team_state *, qa_error *);
 bool qa_q3_client_bot_state_read(const qa_q3_game *, uint32_t,
-                                 qa_q3_bot_player_state *, qa_error *);
+                                 qa_bot_source_player_state *, qa_error *);
 #include "qa/game_q3_client_types.h"
 #include "qa/game_q3_source.h"
 

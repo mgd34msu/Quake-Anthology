@@ -352,13 +352,10 @@ static bool bot_source_player_state(void *opaque,int32_t client,qa_bot_source_pl
         *out=(qa_bot_source_player_state){.present=actual.present,.has_player=actual.has_player,
             .pm_type=actual.player.pmType,.score=actual.player.persistant[0],.last_hurt_client=0,.last_hurt_mod=0};return true;
     }
-    application_provider *source=bot_source(opaque);qa_q3_bot_player_state actual;
+    application_provider *source=bot_source(opaque);
     if(!out || !source || source->kind!=APPLICATION_PROVIDER_Q3 || client<0 || (uint32_t)client>=QA_Q3_SOURCE_CLIENTS)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot chat requires its real fixed Q3 source client");
-    if(!qa_q3_client_bot_state_read(source->state.q3,(uint32_t)client,&actual,error)) return false;
-    *out=(qa_bot_source_player_state){.present=actual.present,.has_player=actual.has_player,
-        .pm_type=actual.pm_type,.score=actual.score,.last_hurt_client=actual.last_hurt_client,
-        .last_hurt_mod=actual.last_hurt_mod};return true;
+    return qa_q3_client_bot_state_read(source->state.q3,(uint32_t)client,out,error);
 }
 static bool bot_source_row_count(void *opaque,uint32_t *out,qa_error *error) {
     application_bots *bots=opaque;

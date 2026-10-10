@@ -4,6 +4,7 @@
 #include "qa/network_q3.h"
 #include "qa/math.h"
 #include "qa/collision.h"
+#include "qa/bots_player.h"
 
 #define QA_Q3_NATIVE_CLIENTS 64u
 #define QA_Q3_NATIVE_NETNAME 36u
@@ -44,10 +45,6 @@ typedef struct qa_q3_source_player_team_state {
     int32_t captures, base_defense, carrier_defense, flag_recovery, frag_carrier, assists;
     float last_hurt_carrier_ms, last_returned_flag_ms, flag_since_ms, last_fragged_carrier_ms;
 } qa_q3_source_player_team_state;
-typedef struct qa_q3_bot_player_state {
-    bool present, has_player;
-    int32_t pm_type, score, last_hurt_client, last_hurt_mod;
-} qa_q3_bot_player_state;
 
 /* The source pers.cmd is copied from the accepted engine command. Session,
  * movement commandTime, inventory and combat retain their actual owners. */

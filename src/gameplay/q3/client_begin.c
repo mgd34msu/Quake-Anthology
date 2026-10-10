@@ -18,11 +18,11 @@ bool qa_q3_client_team_state_write(qa_q3_game *game, uint32_t slot,
     return true;
 }
 bool qa_q3_client_bot_state_read(const qa_q3_game *game, uint32_t slot,
-                                 qa_q3_bot_player_state *out, qa_error *error) {
+                                 qa_bot_source_player_state *out, qa_error *error) {
     if (!game || !out || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 bot observation exceeds its fixed clients");
     qa_q3_source_binding binding = game->source_entities[slot];
-    qa_q3_bot_player_state value = {.present = binding.in_use,
+    qa_bot_source_player_state value = {.present = binding.in_use,
                                     .has_player = binding.client_slot >= 0};
     if (value.has_player) {
         uint32_t client = (uint32_t)binding.client_slot;

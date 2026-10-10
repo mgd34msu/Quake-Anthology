@@ -81,7 +81,7 @@ static bool client_read(void *context,int32_t number,qa_bot_catalog_client *out,
         *out=(qa_bot_catalog_client){.name=entity.name?entity.name:"",.team=entity.team,
             .has_player=entity.has_player,.connected=entity.connected,.bot=entity.bot};return true;
     }
-    qa_q3_source_binding binding;qa_q3_native_client client;qa_q3_bot_player_state state;
+    qa_q3_source_binding binding;qa_q3_native_client client;qa_bot_source_player_state state;
     if(!qa_q3_source_binding_read(actual->state.q3,(uint32_t)number,&binding,error) ||
        !qa_q3_client_slot_read(actual->state.q3,(uint32_t)number,&client,error) ||
        !qa_q3_client_bot_state_read(actual->state.q3,(uint32_t)number,&state,error)) return false;
