@@ -1069,7 +1069,7 @@ static bool events_project(qa_application *app, const application_unified_source
         }
     }
     if (ok && (events->presentation_count || events->simulation_count)) {
-        ok = qa_unified_document_create_events(&events, result.controls, e);
+        ok = qa_unified_document_create_events(&events, NULL, result.controls, e);
         if (ok) result.control_count = 1;
     }
     if (ok && !application_unified_events_current(&result)) ok = application_fail(e, QA_ERROR_ARGUMENT, "Source event projection changed its actual owner");

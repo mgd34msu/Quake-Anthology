@@ -5,6 +5,7 @@
 #include "qa/json.h"
 #include "qa/strings.h"
 #include "qa/movement.h"
+#include "qa/event_ring.h"
 
 #define QA_UNIFIED_HEADER_BYTES 52u
 #define QA_UNIFIED_MAX_DATAGRAM 65507u
@@ -50,7 +51,7 @@ typedef bool (*qa_unified_send_fn)(void *, qa_bytes, qa_error *);
  * Delivery failure closes it: accepted reliable
  * state cannot be silently discarded and acknowledged. Send failure retains
  * the unsent packet and consumes neither a retry nor an ACK. */
-typedef bool (*qa_unified_deliver_fn)(void *, const qa_unified_delivery *, qa_error *);
+typedef bool (*qa_unified_deliver_fn)(void *, const qa_unified_delivery *, bool *accepted, qa_error *);
 qa_unified_limits qa_unified_limits_default(void);
 bool qa_unified_channel_create(qa_unified_token, const qa_unified_limits *,
                                 qa_unified_channel **, qa_error *);
@@ -92,7 +93,7 @@ typedef enum qa_unified_document_kind {
  * standalone frames use the same delta codec with no retained baseline. */
 bool qa_unified_document_create(qa_unified_document_kind, qa_bytes checkpoint_json,
                                  qa_unified_document **, qa_error *);
-bool qa_unified_document_decode(qa_unified_document_kind, qa_bytes, qa_strings *,
+bool qa_unified_document_decode(qa_unified_document_kind, qa_bytes, qa_strings *, qa_event_transaction *,
                                  qa_unified_document **, qa_error *);
 typedef bool (*qa_unified_document_validator)(void *, const qa_unified_document *, qa_error *);
 bool qa_unified_document_validate(const qa_unified_document *,

@@ -42,6 +42,7 @@ typedef struct qa_unified_session_hooks {
     qa_strings *strings;
     void *context;
     bool (*player)(void *, qa_net_client_id, qa_unified_session_player *, qa_error *);
+    bool (*events_decode)(void *, qa_bytes, qa_unified_document **, bool *ready, qa_error *);
     bool (*control)(void *, qa_network_runtime *, qa_net_client_id, uint32_t epoch,
         const qa_unified_document *, qa_unified_session_commit *, qa_error *);
     bool (*input)(void *, qa_network_runtime *, qa_net_client_id,

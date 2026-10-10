@@ -210,6 +210,8 @@ typedef struct qa_unified_frame_events {
     size_t simulation_count;
     /* Storage custody is not part of the encoded record layout. */
     qa_unified_frame_lease *lease;
+    qa_event_lease *received;
+    bool page_owned;
     qa_event_lease **dependencies;
     size_t dependency_count;
 } qa_unified_frame_events;
@@ -223,7 +225,7 @@ bool qa_unified_simulation_payload_clone(const qa_unified_simulation_payload *, 
 void qa_unified_frame_events_destroy(qa_unified_frame_events *);
 void qa_unified_presentation_event_dispose(qa_unified_presentation_event *);
 bool qa_unified_presentation_event_clone(const qa_unified_presentation_event *, qa_unified_presentation_event *, qa_error *);
-bool qa_unified_document_create_events(qa_unified_frame_events **owned, qa_unified_document **out, qa_error *);
+bool qa_unified_document_create_events(qa_unified_frame_events **owned, qa_event_transaction *, qa_unified_document **out, qa_error *);
 const qa_unified_frame_events *qa_unified_document_events(const qa_unified_document *);
 
 #endif

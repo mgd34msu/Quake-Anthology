@@ -5,6 +5,7 @@
 #include "qa/binary.h"
 #include "qa/network_unified_frame.h"
 #include "qa/network_unified_control.h"
+#include "../../network/unified/frame_internal.h"
 
 #include <math.h>
 
@@ -26,6 +27,7 @@ typedef struct unified_received_event {
     qa_event_lease *lease;
     qa_unified_document *document;
     bool *mirrored;
+    bool published;
     unified_component_owner component;
 } unified_received_event;
 struct frontend_unified_events {
@@ -316,6 +318,42 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_frame_events 
     }
     return true;
 }
+static bool record_finish(frontend_unified_events *o,qa_event_transaction *transaction,
+    unified_received_event *record,qa_unified_document *document,qa_error *error)
+{
+    qa_unified_frame_events *events=(qa_unified_frame_events *)qa_unified_document_events(document);
+    if (events->presentation_count) {
+        record->mirrored=qa_event_ring_alloc(transaction,
+            events->presentation_count*sizeof(*record->mirrored),_Alignof(bool),error);
+        if (!record->mirrored) return false;
+        memset(record->mirrored,0,events->presentation_count*sizeof(*record->mirrored));
+    }
+    if (!qa_unified_document_retain(document,&record->document,error)) return false;
+    uint64_t id=qa_event_ring_commit(transaction,record);
+    events->received=qa_event_ring_retain(o->records,id);
+    return true;
+}
+
+bool frontend_unified_events_decode(frontend_unified_events *o,qa_bytes bytes,
+    qa_unified_document **out,bool *ready,qa_error *error)
+{
+    *ready=false;
+    if (!o) return true;
+    qa_event_transaction transaction;
+    unified_received_event *record=record_begin(o,&transaction,error);
+    qa_unified_document *document=NULL;
+    bool okay=record && qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,bytes,o->strings,
+        &transaction,&document,error) && record_finish(o,&transaction,record,document,error);
+    if (!okay) {
+        qa_unified_document_destroy(document);
+        qa_event_ring_abort(&transaction);
+        if (transaction.blocked) { if (error) *error=(qa_error){0}; return true; }
+        return false;
+    }
+    *out=document; *ready=true;
+    return true;
+}
+
 bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified_document *doc,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !doc || qa_unified_document_type(doc)!=QA_UNIFIED_CONTROL_DOCUMENT ||
@@ -325,22 +363,34 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
         /* Reliable events precede their FRAME. Source actor aliases and family
          * owners are qualified when that actual committed frame releases them. */
         if (!rows_valid(o,events,false,e) || !current(o,e)) return false;
+        if (events->received) {
+            unified_received_event *record=(unified_received_event *)qa_event_lease_record(events->received);
+            record->published=true;
+            return true;
+        }
+        /* Cold restored controls enter the same store before client use. */
         qa_event_transaction transaction;
         unified_received_event *record=record_begin(o,&transaction,e);
-        if (!record) return false;
-        if (events->presentation_count) {
-            record->mirrored=qa_event_ring_alloc(&transaction,
-                events->presentation_count*sizeof(*record->mirrored),_Alignof(bool),e);
-            if (!record->mirrored) {
-                qa_event_ring_abort(&transaction);
-                return frontend_unified_fail(e,QA_ERROR_MEMORY,"Received event storage is full");
-            }
-            memset(record->mirrored,0,events->presentation_count*sizeof(*record->mirrored));
+        qa_unified_frame_events *copy=record ? qa_event_ring_alloc(&transaction,sizeof(*copy),
+            _Alignof(qa_unified_frame_events),e) : NULL;
+        qa_unified_document *document=NULL;
+        bool copied=false;
+        if (copy) {
+            memset(copy,0,sizeof(*copy));
+            copied=qa_unified_record_clone_alloc(&qa_unified_events_layout,events,copy,
+                qa_event_ring_alloc,&transaction,e);
+            copy->strings=o->strings; copy->page_owned=true; qa_strings_retain(o->strings);
+            copied=copied && qa_unified_document_create_events(&copy,&transaction,&document,e) &&
+                record_finish(o,&transaction,record,document,e);
         }
-        if (!qa_unified_document_retain(doc,&record->document,e)) {
-            qa_event_ring_abort(&transaction); return false;
+        if (!copied) {
+            qa_unified_frame_events_destroy(copy);
+            qa_unified_document_destroy(document); qa_event_ring_abort(&transaction);
+            return false;
         }
-        qa_event_ring_commit(&transaction,record); return true;
+        record->published=true;
+        qa_unified_document_destroy(document);
+        return true;
     }
     const qa_unified_control *control=qa_unified_document_control(doc);
     if (control) {
@@ -482,7 +532,7 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
         if (id==qa_event_ring_next(o->records)) break;
         unified_received_event *record=(unified_received_event *)qa_event_ring_at(o->records,id);
         const qa_unified_frame_events *events=qa_unified_document_events(record->document);
-        if (!o->has_frame || events->frame>o->frame) break;
+        if (!record->published || !o->has_frame || events->frame>o->frame) break;
         if (!rows_valid(o,events,true,e)) { okay=false; break; }
         o->delivery=record;
         while (okay && !o->replica->retired && o->presentation_cursor==id &&

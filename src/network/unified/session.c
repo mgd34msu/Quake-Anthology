@@ -132,9 +132,10 @@ static bool admit_delivery(void *context, const qa_unified_delivery *delivery)
     return true;
 }
 
-static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa_error *e)
+static bool hold_delivery(void *context, const qa_unified_delivery *delivery, bool *accepted, qa_error *e)
 {
     qa_unified_session *s = context;
+    *accepted=false;
     if (!admit_delivery(s, delivery))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Production document holding capacity exceeded");
     qa_unified_document_kind kind = delivery->kind == QA_UNIFIED_RELIABLE ? QA_UNIFIED_CONTROL_DOCUMENT :
@@ -142,10 +143,16 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa
     qa_unified_document *document=NULL;
     if (!s->server) {
         bool missing=false;
-        bool okay=kind==QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
-            delivery->payload,&document,&missing,e) : qa_unified_document_decode(kind,delivery->payload, s->strings,&document,e);
+        bool ready=true,okay;
+        if (kind==QA_UNIFIED_CONTROL_DOCUMENT && delivery->payload.size>=4 &&
+            !memcmp(delivery->payload.data,"QUEV",4) && s->hooks.events_decode)
+            okay=s->hooks.events_decode(s->hooks.context,delivery->payload,&document,&ready,e);
+        else okay=kind==QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
+            delivery->payload,&document,&missing,e) : qa_unified_document_decode(kind,delivery->payload, s->strings, NULL,&document,e);
+        if (okay && !ready) return true;
         if (!okay || missing) {
             if (missing) {
+                *accepted=true;
                 s->frame_applied=delivery->sequence;
                 s->channel->frame_ack_pending=s->channel->frame_admitted!=0;
             }
@@ -168,6 +175,7 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, qa
     held->bytes = delivery->payload.size; held->sequence = delivery->sequence; held->required = delivery->required_reliable;
     if (s->tail) s->tail->next = held; else s->held = held;
     s->tail = held; s->held_bytes += held->bytes; ++s->held_count;
+    *accepted=true;
     return true;
 }
 

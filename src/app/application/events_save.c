@@ -220,7 +220,7 @@ static bool payload_field(qa_source_save_io *io, void **owned, const qa_unified_
         ok = qa_source_save_span(io, size, &bytes);
         if (ok) {
             *owned = calloc(1, layout->size);
-            ok = *owned && qa_unified_record_delta_decode(layout, bytes, NULL, *owned, NULL, qa_session_strings(io->session), NULL, io->error);
+            ok = *owned && qa_unified_record_delta_decode(layout, bytes, NULL, *owned, NULL, NULL, NULL, qa_session_strings(io->session), NULL, io->error);
             if (!ok && (!io->error || io->error->code == QA_OK)) event_fail(io, QA_ERROR_MEMORY, "Restoring actual typed Source event");
         }
     } else if (ok && io->direction == QA_SOURCE_SAVE_WRITE) ok = qa_source_save_bytes(io, encoded.data, encoded.size);

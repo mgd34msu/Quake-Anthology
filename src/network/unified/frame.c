@@ -630,15 +630,16 @@ bool qa_unified_record_delta_write(const qa_unified_record_layout *layout, const
     return record_write(out,layout,value,baseline,0,error);
 }
 bool qa_unified_record_delta_decode(const qa_unified_record_layout *layout, qa_bytes bytes,
-    const void *baseline, void *out, qa_unified_frame_lease *lease, qa_strings *strings,
+    const void *baseline, void *out, qa_unified_frame_lease *lease, qa_unified_clone_alloc_fn allocator, void *allocation_context, qa_strings *strings,
     const qa_strings *baseline_strings, qa_error *error)
 {
     if (!out || !bytes.data || !bytes.size) return fail(error, "Typed Unified decoding requires its fixed record output");
     record_reader reader = {.bytes = bytes, .error = error, .lease = lease,
-        .strings = strings, .baseline_strings = baseline_strings};
+        .strings = strings, .baseline_strings = baseline_strings,
+        .clone_allocate = allocator, .clone_context = allocation_context};
     bool okay = record_read(&reader, layout, baseline, out, 0) && reader.at == bytes.size;
     if (!okay) {
-        if (!lease) qa_unified_record_dispose(layout, out);
+        if (!lease && !allocator) qa_unified_record_dispose(layout, out);
         memset(out, 0, layout->size);
         if (error && error->code == QA_OK) fail(error, "Typed Unified record has trailing bytes");
     }

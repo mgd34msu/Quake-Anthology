@@ -1826,7 +1826,9 @@ void qa_unified_frame_events_destroy(qa_unified_frame_events *value)
     for (size_t i = 0; i < value->dependency_count; ++i)
         qa_event_lease_release(value->dependencies[i]);
     qa_strings_destroy(value->strings);
-    if (lease) qa_unified_frame_lease_release(lease);
+    if (value->page_owned) {
+        if (value->received) qa_event_lease_release(value->received);
+    } else if (lease) qa_unified_frame_lease_release(lease);
     else { qa_unified_record_dispose(&qa_unified_events_layout, value); free(value); }
 }
 
@@ -2272,7 +2274,7 @@ bool qa_unified_component_identity_write(const qa_unified_component_identity *va
 { return value && out && !out->data && !out->size &&
     qa_unified_record_delta_encode(&component_identity_layout,value,NULL,32u * 1024u * 1024u,out, NULL,error); }
 bool qa_unified_component_identity_read(qa_bytes bytes,qa_unified_component_identity *out,qa_error *error)
-{ return out && qa_unified_record_delta_decode(&component_identity_layout,bytes,NULL,out,NULL, NULL, NULL,error); }
+{ return out && qa_unified_record_delta_decode(&component_identity_layout,bytes,NULL,out,NULL, NULL, NULL, NULL, NULL,error); }
 
 static const qa_unified_field control_ready_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_ready_control, composition, QA_UNIFIED_FIELD_U64),

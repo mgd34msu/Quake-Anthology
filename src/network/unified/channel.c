@@ -268,7 +268,9 @@ static bool deliver_frame(qa_unified_channel *c, qa_unified_admit_delivery_fn ad
     if (frame->sequence>c->frame_received) {
         qa_unified_delivery value={QA_UNIFIED_FRAME,frame->sequence,frame->required,{frame->payload.data,frame->payload.size}};
         if (admit && !admit(context,&value)) return true;
-        if (!deliver(context,&value,error)) { close_channel(c); return false; }
+        bool accepted=false;
+        if (!deliver(context,&value,&accepted,error)) { close_channel(c); return false; }
+        if (!accepted) return true;
         c->frame_received=frame->sequence;
     }
     c->waiting_frame=NULL; qa_unified_assembly_release(c, frame); return true;
@@ -284,7 +286,9 @@ static bool deliver_ready(qa_unified_channel *c, qa_unified_admit_delivery_fn ad
         if (ready->received_count!=ready->fragments) break;
         qa_unified_delivery value={QA_UNIFIED_RELIABLE,ready->sequence,0,{ready->payload.data,ready->payload.size}};
         if (admit && !admit(context,&value)) break;
-        if (!deliver(context,&value,error)) { close_channel(c); return false; }
+        bool accepted=false;
+        if (!deliver(context,&value,&accepted,error)) { close_channel(c); return false; }
+        if (!accepted) break;
         c->reliable_received=ready->sequence; c->received_bytes-=ready->payload.size;
         cumulative_ack(c,ready->sequence,(uint16_t)(ready->fragments-1));
         *ready_slot=NULL; qa_unified_assembly_release(c, ready);
@@ -329,6 +333,13 @@ static bool receive_frame(qa_unified_channel *c, const qa_unified_packet *p, uin
     }
     if (!append(c->frame_assembly,p)) return true;
     if (c->frame_assembly->received_count==c->frame_assembly->fragments) {
+        /* Keep a frame that can release the accepted reliable prefix instead
+         * of replacing it with one blocked behind a deferred event payload. */
+        if (c->waiting_frame && c->waiting_frame->required<=c->reliable_received &&
+            c->frame_assembly->required>c->reliable_received) {
+            qa_unified_assembly_release(c,c->frame_assembly); c->frame_assembly=NULL;
+            return deliver_frame(c,admit,deliver,context,error);
+        }
         qa_unified_assembly_release(c, c->waiting_frame); c->waiting_frame=c->frame_assembly; c->frame_assembly=NULL;
         return deliver_frame(c,admit,deliver,context,error);
     }

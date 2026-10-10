@@ -107,7 +107,7 @@ bool qa_unified_record_delta_encode(const qa_unified_record_layout *, const void
 bool qa_unified_record_delta_write(const qa_unified_record_layout *, const void *,
     const void *baseline, qa_unified_builder *, qa_error *);
 bool qa_unified_record_delta_decode(const qa_unified_record_layout *, qa_bytes,
-    const void *baseline, void *zeroed_output, qa_unified_frame_lease *, qa_strings *, const qa_strings *, qa_error *);
+    const void *baseline, void *zeroed_output, qa_unified_frame_lease *, qa_unified_clone_alloc_fn, void *, qa_strings *, const qa_strings *, qa_error *);
 bool qa_unified_record_measure(const qa_unified_record_layout *, const void *, size_t *, qa_error *);
 bool qa_unified_world_frame_clock_check(const qa_unified_world_frame *,qa_error *);
 bool qa_unified_frame_check(const qa_unified_frame *, size_t *, qa_error *);

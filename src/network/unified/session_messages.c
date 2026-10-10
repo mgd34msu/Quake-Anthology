@@ -385,7 +385,7 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
         bool skipped = s->closing || (s->server && kind == QA_UNIFIED_INPUT_DOCUMENT && !s->admitted);
         if (!skipped && !held->document) {
             qa_error decode = {0};
-            if (!qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, s->strings, &held->document, &decode)) {
+            if (!qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, s->strings, NULL, &held->document, &decode)) {
                 if (!s->server || decode.code == QA_ERROR_MEMORY) {
                     if (e) *e = decode;
                     ok = false; break;

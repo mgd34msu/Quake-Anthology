@@ -381,6 +381,11 @@ static bool offer_ready(void *context, frontend_remote_unified *replica, qa_exec
         frontend_unified_q3_events(p->q3,p->events,error) &&
         frontend_unified_q3_components(p->q3,p->components,error);
 }
+static bool events_decode(void *context,qa_bytes bytes,qa_unified_document **out,bool *ready,qa_error *error)
+{
+    unified_presentation *p=context;
+    return frontend_unified_events_decode(p->events,bytes,out,ready,error);
+}
 static bool control(void *context, frontend_remote_unified *replica, const qa_unified_document *doc, qa_error *error)
 {
     unified_presentation *p = context;
@@ -1276,7 +1281,7 @@ static void dispose(void *context) { free(context); }
 static frontend_remote_unified_consumers consumers(unified_presentation *p)
 {
     return (frontend_remote_unified_consumers){.context=p,.prepare=prepare,.offer_publish=offer_publish,
-        .offer_ready=offer_ready,.control=control,.frame=frame,.publish=publish,.input=input,
+        .offer_ready=offer_ready,.control=control,.events_decode=events_decode,.frame=frame,.publish=publish,.input=input,
         .physical_ready=physical_ready,.physical_input=physical_input,.begin_frame=begin_frame,.clock_read=clock_read,.sample=sample,.draw=draw,
         .idle=idle,.checkpoint_returned=checkpoint_returned,.close=close,.content_visit=content_visit,.dispose=dispose};
 }
