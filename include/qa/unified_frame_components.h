@@ -5,17 +5,14 @@
 #include "qa/network_q3.h"
 #include "qa/qvm.h"
 
-typedef struct qa_unified_component_owner {
-    char *provider;
-    uint64_t generation;
-} qa_unified_component_owner;
+
 typedef struct qa_unified_component_binding {
     uint32_t slot;
     qa_actor_id actor;
     bool owned;
 } qa_unified_component_binding;
 typedef struct qa_unified_component_source {
-    qa_unified_component_owner owner;
+    qa_source_owner owner;
     qa_qvm_abi abi;
     qa_actor_id viewer;
     int32_t client_number;
@@ -42,7 +39,7 @@ typedef struct qa_unified_native_camera {
     bool position_prediction, angular_prediction, weapon_visible;
 } qa_unified_native_camera;
 typedef struct qa_unified_native_component {
-    qa_unified_component_owner owner;
+    qa_source_owner owner;
     uint64_t generation;
     qa_actor_id viewer;
     qa_unified_native_hud *hud;

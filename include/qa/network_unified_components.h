@@ -21,7 +21,7 @@ typedef struct qa_module_server_command {
     qa_unified_control_arguments arguments;
 } qa_module_server_command;
 typedef struct qa_unified_component_q3 {
-    qa_unified_component_owner owner;
+    qa_source_owner owner;
     qa_unified_component_identity identity;
     uint64_t generation;
     qa_qvm_abi abi;
@@ -41,7 +41,7 @@ typedef struct qa_unified_component_configstring {
     char *value;
 } qa_unified_component_configstring;
 typedef struct qa_unified_component_q2 {
-    qa_unified_component_owner owner;
+    qa_source_owner owner;
     qa_unified_component_identity identity;
     uint64_t generation;
     qa_unified_component_hud hud;

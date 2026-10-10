@@ -44,6 +44,12 @@ qa_actor_id qa_actor_reference_resolve(const qa_actor_registry *, qa_actor_refer
 /* Canonical PLAYER identity lives in its existing actor page. Source slot,
  * admission, userinfo bytes and dialect-specific name projections remain on
  * each module binding. Names are IDs in the host's existing string table. */
+/* Module and presentation snapshots borrow the retained provider name. */
+typedef struct qa_source_owner {
+    char *provider;
+    uint64_t generation;
+} qa_source_owner;
+
 typedef struct qa_actor_player {
     qa_string_id name, team, skin;
     int32_t ping;

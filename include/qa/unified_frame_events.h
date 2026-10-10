@@ -109,14 +109,11 @@ typedef struct qa_unified_q3_ballistic_event {
     bool flesh, rail_surface;
 } qa_unified_q3_ballistic_event;
 
-typedef struct qa_unified_presentation_owner {
-    char *provider;
-    uint64_t generation;
-} qa_unified_presentation_owner;
+
 typedef enum qa_unified_owner_event_kind { QA_UNIFIED_OWNER_RETIRED, QA_UNIFIED_OWNER_REFRESHED } qa_unified_owner_event_kind;
 typedef struct qa_unified_owner_event {
     qa_unified_owner_event_kind kind;
-    qa_unified_presentation_owner owner;
+    qa_source_owner owner;
     qa_actor_id recipient;
 } qa_unified_owner_event;
 typedef struct qa_unified_visibility_event { qa_actor_id actor; bool visible; } qa_unified_visibility_event;
@@ -149,7 +146,7 @@ typedef struct qa_unified_presentation_event {
     double seconds;
     char *content, *provider;
     qa_game_family family;
-    qa_unified_presentation_owner owner;
+    qa_source_owner owner;
     qa_actor_id recipient;
     uint8_t q2_profile;
     uint64_t q2_interval_ns;

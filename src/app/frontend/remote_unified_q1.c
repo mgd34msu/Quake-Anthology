@@ -178,7 +178,7 @@ static uint64_t ns(double value)
 { return value<=0?0:value>=18446744073.709551615?UINT64_MAX:(uint64_t)(value*1e9); }
 static void event_free(q1_event *p)
 { qa_buffer_free(&p->content);qa_buffer_free(&p->text);qa_buffer_free(&p->name);qa_buffer_free(&p->extra);qa_buffer_free(&p->provider); }
-static bool owner_parse(const qa_unified_presentation_owner *owner,q1_event *p,qa_error *e)
+static bool owner_parse(const qa_source_owner *owner,q1_event *p,qa_error *e)
 {
     p->owner_generation=owner->generation;
     return !owner->provider || text_copy(owner->provider,&p->provider,e);

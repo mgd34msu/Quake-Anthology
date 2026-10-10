@@ -300,7 +300,7 @@ static bool candidate_valid(const application_unified_component_capture *v, qa_e
         bad(e, "Sealed component update does not follow its committed cursor");
 }
 
-static bool control_owner(const qa_unified_component_owner *owner,qa_session *session,
+static bool control_owner(const qa_source_owner *owner,qa_session *session,
     qa_actor_owner provider,uint64_t generation)
 {
     const char *name=qa_strings_cstr(qa_session_strings(session),provider);
@@ -338,7 +338,7 @@ static bool roster_control(const qa_unified_components_control *update,
     return true;
 }
 
-static bool frame_owner(const qa_unified_component_owner *owner, qa_session *session,
+static bool frame_owner(const qa_source_owner *owner, qa_session *session,
     qa_actor_owner actor_owner, uint64_t generation)
 {
     const char *name = qa_strings_cstr(qa_session_strings(session), actor_owner);

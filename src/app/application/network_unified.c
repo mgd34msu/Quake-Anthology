@@ -753,7 +753,7 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
 }
 
 bool application_unified_component_command(qa_application *app, qa_net_client_id client,
-    qa_net_seat_id seat, const qa_unified_component_owner *owner,
+    qa_net_seat_id seat, const qa_source_owner *owner,
     const char *const *arguments, size_t count, qa_error *error)
 {
     qa_unified_session_player player;

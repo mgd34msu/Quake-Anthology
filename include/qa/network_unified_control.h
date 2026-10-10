@@ -43,7 +43,7 @@ typedef struct qa_unified_source_command_control {
     qa_unified_control_arguments arguments;
 } qa_unified_source_command_control;
 typedef struct qa_unified_component_command_control {
-    qa_unified_component_owner owner;
+    qa_source_owner owner;
     qa_unified_control_arguments arguments;
 } qa_unified_component_command_control;
 typedef struct qa_unified_control {

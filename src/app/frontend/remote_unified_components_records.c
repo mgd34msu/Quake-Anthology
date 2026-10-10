@@ -34,7 +34,7 @@ bool q3remote_component_state_qualify(frontend_unified_components *owner,remote_
     if(!owner||!s->provider||!s->owner_generation||s->owner_generation!=s->generation||
         (s->abi!=QA_QVM_Q3_MODERN&&s->abi!=QA_QVM_Q3_116N))
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Saved component lacks its actual identity and ABI");
-    s->presentation_owner=(qa_unified_component_owner){s->provider,s->owner_generation};
+    s->presentation_owner=(qa_source_owner){s->provider,s->owner_generation};
     const qa_recipe_choices *choices=qa_executable_recipe_choices(owner->recipe);
     for(size_t i=0;i<choices->mod_count;++i) {
         const qa_launch_mod_selection *selected=choices->mods+i;
@@ -109,7 +109,7 @@ bool q3remote_component_state_read(frontend_unified_components *owner,const qa_u
         .abi=row->abi,.player_events=!row->scene,.game_state_revision=row->game_state_revision};
     s.provider=copy_text(row->owner.provider);
     bool ok=s.provider&&qa_unified_component_identity_clone(&row->identity,&s.identity,e);
-    s.presentation_owner=(qa_unified_component_owner){s.provider,s.owner_generation};
+    s.presentation_owner=(qa_source_owner){s.provider,s.owner_generation};
     if(ok&&previous) {
         ok=s.owner_generation==previous->state.owner_generation&&s.generation==previous->state.generation&&
             s.abi==previous->state.abi&&s.player_events==previous->state.player_events&&

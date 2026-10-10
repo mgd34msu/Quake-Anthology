@@ -42,7 +42,7 @@ bool application_unified_player_userinfo(qa_application *, qa_net_client_id, qa_
 bool application_unified_player_command(qa_application *, qa_net_client_id, qa_net_seat_id,
     const char *name, const char *const *arguments, size_t count, qa_error *);
 bool application_unified_component_command(qa_application *, qa_net_client_id, qa_net_seat_id,
-    const qa_unified_component_owner *owner, const char *const *arguments,
+    const qa_source_owner *owner, const char *const *arguments,
     size_t count, qa_error *);
 bool application_unified_source_command(qa_application *,qa_net_client_id,qa_net_seat_id,
     const qa_module_console_call *,qa_error *);

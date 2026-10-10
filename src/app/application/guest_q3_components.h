@@ -82,7 +82,7 @@ bool application_q3_components_admit(application_q3_components *,qa_actor_id,qa_
 bool application_q3_components_actor_released(application_q3_components *,qa_actor_record,qa_error *);
 application_q3_component *application_q3_components_actor_owner(const qa_application *,qa_actor_id);
 bool application_q3_components_command(qa_application *,qa_actor_id,
-    const qa_unified_component_owner *owner,const qa_command_invocation *,bool *,qa_error *);
+    const qa_source_owner *owner,const qa_command_invocation *,bool *,qa_error *);
 bool application_q3_components_content_visit(const application_q3_components *,const qa_application_content_visitor *,qa_error *);
 bool application_q3_components_scene_prepare(application_q3_components *,size_t,uint32_t,
     qa_actor_id,const qa_vec3 *,const qa_vec3[3],int32_t,int32_t,application_q3_scene **,qa_error *);

@@ -1,7 +1,7 @@
 #include "guest_q3_components_private.h"
 
 bool application_q3_components_command(qa_application *app,qa_actor_id actor,
-    const qa_unified_component_owner *identity,const qa_command_invocation *command,bool *handled,qa_error *e)
+    const qa_source_owner *identity,const qa_command_invocation *command,bool *handled,qa_error *e)
 {
     application_q3_components *owner=app?app->components:NULL;
     if(!owner||owner->closing||!identity||!identity->provider||!identity->generation||!command||!handled||!qa_actors_get(qa_session_actors(app->session),actor))

@@ -36,7 +36,7 @@ static const qa_unified_record_layout qa_q3_trajectory_layout;
 static const qa_unified_record_layout qa_q3_player_layout;
 static const qa_unified_record_layout int32_t_layout;
 static const qa_unified_record_layout message_string_layout;
-static const qa_unified_record_layout qa_unified_component_owner_layout;
+static const qa_unified_record_layout qa_source_owner_layout;
 static const qa_unified_record_layout qa_unified_native_component_layout;
 static const qa_unified_record_layout qa_unified_native_camera_layout;
 static const qa_unified_record_layout double_layout;
@@ -117,7 +117,7 @@ static const qa_unified_field qa_unified_frame_components_fields[] = {
 const qa_unified_record_layout qa_unified_component_frame_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_components, qa_unified_frame_components_fields);
 
 static const qa_unified_field qa_unified_component_source_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_component_source, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_component_source, owner, qa_source_owner_layout),
     QA_UNIFIED_FIELD(qa_unified_component_source, abi, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_RECORD(qa_unified_component_source, viewer, qa_unified_actor_layout),
     QA_UNIFIED_FIELD(qa_unified_component_source, client_number, QA_UNIFIED_FIELD_I32),
@@ -265,14 +265,14 @@ static const qa_unified_field int32_t_fields[] = {
 };
 static const qa_unified_record_layout int32_t_layout = {sizeof(int32_t), int32_t_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE};
 
-static const qa_unified_field qa_unified_component_owner_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_component_owner, provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_component_owner, generation, QA_UNIFIED_FIELD_U64),
+static const qa_unified_field qa_source_owner_fields[] = {
+    QA_UNIFIED_FIELD(qa_source_owner, provider, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_source_owner, generation, QA_UNIFIED_FIELD_U64),
 };
-static const qa_unified_record_layout qa_unified_component_owner_layout = QA_UNIFIED_LAYOUT(qa_unified_component_owner, qa_unified_component_owner_fields);
+static const qa_unified_record_layout qa_source_owner_layout = QA_UNIFIED_LAYOUT(qa_source_owner, qa_source_owner_fields);
 
 static const qa_unified_field qa_unified_native_component_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_native_component, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_native_component, owner, qa_source_owner_layout),
     QA_UNIFIED_FIELD(qa_unified_native_component, generation, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_RECORD(qa_unified_native_component, viewer, qa_unified_actor_layout),
     QA_UNIFIED_POINTER(qa_unified_native_component, hud, qa_unified_native_hud_layout),
@@ -1196,7 +1196,6 @@ void qa_unified_frame_destroy(qa_unified_frame *frame)
 bool qa_unified_frame_equal(const qa_unified_frame *a, const qa_unified_frame *b)
 { return qa_unified_record_equal(&qa_unified_frame_layout, a, b, a ? a->strings : NULL, b ? b->strings : NULL); }
 
-static const qa_unified_record_layout qa_unified_presentation_owner_layout;
 const qa_unified_record_layout qa_unified_presentation_event_layout;
 const qa_unified_record_layout qa_unified_simulation_event_layout;
 const qa_unified_record_layout qa_unified_events_layout;
@@ -1231,11 +1230,6 @@ static const qa_unified_record_layout qa_damage_mutation_layout;
 static const qa_unified_record_layout qa_damage_outcome_layout;
 const qa_unified_record_layout qa_unified_simulation_payload_layout;
 static const qa_unified_record_layout qa_damage_cause_layout;
-static const qa_unified_field qa_unified_presentation_owner_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_presentation_owner, provider, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_presentation_owner, generation, QA_UNIFIED_FIELD_U64),
-};
-static const qa_unified_record_layout qa_unified_presentation_owner_layout = QA_UNIFIED_LAYOUT(qa_unified_presentation_owner, qa_unified_presentation_owner_fields);
 
 static const qa_unified_field qa_unified_presentation_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_presentation_event, sequence, QA_UNIFIED_FIELD_U64),
@@ -1243,7 +1237,7 @@ static const qa_unified_field qa_unified_presentation_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_presentation_event, content, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_presentation_event, provider, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_presentation_event, family, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_RECORD(qa_unified_presentation_event, owner, qa_unified_presentation_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_presentation_event, owner, qa_source_owner_layout),
     QA_UNIFIED_RECORD(qa_unified_presentation_event, recipient, qa_unified_actor_layout),
     QA_UNIFIED_FIELD(qa_unified_presentation_event, q2_profile, QA_UNIFIED_FIELD_U8),
     QA_UNIFIED_FIELD(qa_unified_presentation_event, q2_interval_ns, QA_UNIFIED_FIELD_U64),
@@ -1608,7 +1602,7 @@ static const qa_unified_record_layout qa_unified_q3_ballistic_event_layout = QA_
 
 static const qa_unified_field qa_unified_owner_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_owner_event, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_RECORD(qa_unified_owner_event, owner, qa_unified_presentation_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_owner_event, owner, qa_source_owner_layout),
     QA_UNIFIED_RECORD(qa_unified_owner_event, recipient, qa_unified_actor_layout),
 };
 static const qa_unified_record_layout qa_unified_owner_event_layout = QA_UNIFIED_LAYOUT(qa_unified_owner_event, qa_unified_owner_event_fields);
@@ -2224,7 +2218,7 @@ static const qa_unified_field component_command_fields[] = {
 };
 static const qa_unified_record_layout component_command_layout = QA_UNIFIED_LAYOUT(qa_module_server_command, component_command_fields);
 static const qa_unified_field component_q3_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_component_q3, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_component_q3, owner, qa_source_owner_layout),
     QA_UNIFIED_RECORD(qa_unified_component_q3, identity, component_identity_layout),
     QA_UNIFIED_FIELD(qa_unified_component_q3, generation, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_component_q3, abi, QA_UNIFIED_FIELD_U32),
@@ -2247,7 +2241,7 @@ static const qa_unified_field component_protocol_fields[] = {
 };
 static const qa_unified_record_layout component_protocol_layout = QA_UNIFIED_LAYOUT(qa_net_protocol_id, component_protocol_fields);
 static const qa_unified_field component_q2_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_component_q2, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_component_q2, owner, qa_source_owner_layout),
     QA_UNIFIED_RECORD(qa_unified_component_q2, identity, component_identity_layout),
     QA_UNIFIED_FIELD(qa_unified_component_q2, generation, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_component_q2, hud, QA_UNIFIED_FIELD_U32),
@@ -2318,7 +2312,7 @@ static const qa_unified_field control_source_command_fields[] = {
 };
 static const qa_unified_record_layout control_source_command_layout = QA_UNIFIED_LAYOUT(qa_unified_source_command_control, control_source_command_fields);
 static const qa_unified_field control_component_command_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_component_command_control, owner, qa_unified_component_owner_layout),
+    QA_UNIFIED_RECORD(qa_unified_component_command_control, owner, qa_source_owner_layout),
     QA_UNIFIED_RECORD(qa_unified_component_command_control, arguments, control_arguments_layout),
 };
 static const qa_unified_record_layout control_component_command_layout = QA_UNIFIED_LAYOUT(qa_unified_component_command_control, control_component_command_fields);

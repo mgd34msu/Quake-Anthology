@@ -26,11 +26,11 @@ bool frontend_unified_events_control(frontend_unified_events *, const qa_unified
 bool frontend_unified_events_decode(frontend_unified_events *, qa_bytes, qa_unified_held **, bool *ready, qa_error *);
 /* Literal reliable component metadata is retained independently of the live
  * component VM. Retired tokens remain available to pending historical events. */
-bool frontend_unified_events_component_admit(frontend_unified_events *, const qa_unified_component_owner *, const char *content, qa_error *);
-bool frontend_unified_events_component_admit_created(frontend_unified_events *, const qa_unified_component_owner *, const char *content, bool *created, qa_error *);
-bool frontend_unified_events_component_cancel(frontend_unified_events *, const qa_unified_component_owner *, qa_error *);
-bool frontend_unified_events_component_retire(frontend_unified_events *, const qa_unified_component_owner *, qa_error *);
-bool frontend_unified_events_component_current(const frontend_unified_events *, const qa_unified_component_owner *, const char *content, bool *active, qa_error *);
+bool frontend_unified_events_component_admit(frontend_unified_events *, const qa_source_owner *, const char *content, qa_error *);
+bool frontend_unified_events_component_admit_created(frontend_unified_events *, const qa_source_owner *, const char *content, bool *created, qa_error *);
+bool frontend_unified_events_component_cancel(frontend_unified_events *, const qa_source_owner *, qa_error *);
+bool frontend_unified_events_component_retire(frontend_unified_events *, const qa_source_owner *, qa_error *);
+bool frontend_unified_events_component_current(const frontend_unified_events *, const qa_source_owner *, const char *content, bool *active, qa_error *);
 bool frontend_unified_events_frame_prepare(frontend_unified_events *, const qa_unified_document *, qa_error *);
 bool frontend_unified_events_frame_ready(frontend_unified_events *, const qa_unified_document *, qa_error *);
 void frontend_unified_events_frame_commit(frontend_unified_events *);

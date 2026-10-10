@@ -116,7 +116,7 @@ static unified_component_owner *component_find(const frontend_unified_events *o,
         if (c->generation==generation && c->provider==id) return c;
     return NULL;
 }
-static bool component_read(frontend_unified_events *o,const qa_unified_component_owner *owner,const char *content,
+static bool component_read(frontend_unified_events *o,const qa_source_owner *owner,const char *content,
     unified_component_owner *out,qa_error *e)
 {
     qa_vfs *files; const qa_product *product;
@@ -129,7 +129,7 @@ static bool component_read(frontend_unified_events *o,const qa_unified_component
         frontend_unified_fail(e,QA_ERROR_FORMAT,"Component presentation identity is outside its admitted recipe"); }
     return okay;
 }
-bool frontend_unified_events_component_current(const frontend_unified_events *o,const qa_unified_component_owner *owner,
+bool frontend_unified_events_component_current(const frontend_unified_events *o,const qa_source_owner *owner,
     const char *content,bool *active,qa_error *e)
 {
     if (!o || !owner || !owner->provider || !owner->generation || !content || !active)
@@ -139,9 +139,9 @@ bool frontend_unified_events_component_current(const frontend_unified_events *o,
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Component presentation token has no matching reliable content admission");
     *active=!c->retired && !c->cancelled; return true;
 }
-bool frontend_unified_events_component_admit(frontend_unified_events *o,const qa_unified_component_owner *owner,const char *content,qa_error *e)
+bool frontend_unified_events_component_admit(frontend_unified_events *o,const qa_source_owner *owner,const char *content,qa_error *e)
 { bool created; return frontend_unified_events_component_admit_created(o,owner,content,&created,e); }
-bool frontend_unified_events_component_admit_created(frontend_unified_events *o,const qa_unified_component_owner *owner,const char *content,
+bool frontend_unified_events_component_admit_created(frontend_unified_events *o,const qa_source_owner *owner,const char *content,
     bool *created,qa_error *e)
 {
     if (!o || !created || o->busy || o->prepared || !current(o,e)) return false;
@@ -162,7 +162,7 @@ bool frontend_unified_events_component_admit_created(frontend_unified_events *o,
     metadata_commit(o,&transaction,record);
     c->next=o->components; o->components=c; *created=true; return true;
 }
-bool frontend_unified_events_component_cancel(frontend_unified_events *o,const qa_unified_component_owner *owner,qa_error *e)
+bool frontend_unified_events_component_cancel(frontend_unified_events *o,const qa_source_owner *owner,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !owner || !owner->provider || !owner->generation)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component cancellation needs returned retained event storage");
@@ -170,7 +170,7 @@ bool frontend_unified_events_component_cancel(frontend_unified_events *o,const q
     if (!c || c->retired) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Component cancellation has no unpublished admission");
     c->cancelled=true; return true;
 }
-bool frontend_unified_events_component_retire(frontend_unified_events *o,const qa_unified_component_owner *owner,qa_error *e)
+bool frontend_unified_events_component_retire(frontend_unified_events *o,const qa_source_owner *owner,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !owner || !owner->provider || !owner->generation)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component retirement needs returned retained event storage");

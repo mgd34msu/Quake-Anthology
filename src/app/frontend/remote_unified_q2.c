@@ -104,7 +104,7 @@ struct q2_native_picture {
 typedef struct q2_native {
     q2_bank *bank;
     qa_unified_component_identity identity;
-    qa_unified_component_owner presentation_owner;
+    qa_source_owner presentation_owner;
     char *provider,*layout;
     uint64_t owner_generation,generation;
     qa_net_protocol_id protocol;
@@ -229,7 +229,7 @@ static void sky_clear(frontend_unified_q2 *o)
     free(o->sky_name); free(o->sky_content); o->sky_name=NULL; o->sky_content=NULL;
     o->sky_owner=NULL; o->sky_axis=qa_v3(0,0,0); o->sky_rotation=0; o->sky_auto_rotate=false;
 }
-static bool activation(frontend_unified_q2 *o,const qa_unified_presentation_owner *token,q2_activation **out,qa_error *e)
+static bool activation(frontend_unified_q2 *o,const qa_source_owner *token,q2_activation **out,qa_error *e)
 {
     if (!token->generation) { *out=NULL; return true; }
     q2_activation *a=o->activations;
@@ -823,7 +823,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     bool okay=native_text(row->owner.provider,&v->provider,e) && qa_unified_component_identity_clone(&row->identity,&v->identity,e);
     if (!okay) return false;
     v->owner_generation=row->owner.generation; v->generation=row->generation;
-    v->presentation_owner=(qa_unified_component_owner){v->provider,v->owner_generation};
+    v->presentation_owner=(qa_source_owner){v->provider,v->owner_generation};
     if (old && (old->owner_generation!=v->owner_generation || old->generation!=v->generation)) old=NULL;
     if (old) {
         if (!qa_unified_component_identity_equal(&v->identity,&old->identity))

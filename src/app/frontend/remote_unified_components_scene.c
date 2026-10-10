@@ -171,7 +171,7 @@ static qa_command_result console_command(void *context,const qa_command_invocati
         q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component command changed its actual publication generation");
         return QA_COMMAND_FAILED;
     }
-    qa_unified_component_owner owner={r->state.provider,r->state.owner_generation};
+    qa_source_owner owner={r->state.provider,r->state.owner_generation};
     return frontend_remote_unified_component_command(r->parent->replica,&owner,
         command->argv,command->argc,e)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
 }

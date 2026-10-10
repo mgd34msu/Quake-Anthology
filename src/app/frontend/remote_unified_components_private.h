@@ -10,7 +10,7 @@
 
 typedef struct remote_component_state {
     qa_unified_component_identity identity;
-    qa_unified_component_owner presentation_owner;
+    qa_source_owner presentation_owner;
     char *provider;
     uint64_t owner_generation,generation;
     int64_t game_state_revision;

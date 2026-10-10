@@ -579,7 +579,7 @@ bool frontend_remote_unified_submit(frontend_remote_unified *owner, const qa_use
 }
 
 static bool command_document(frontend_remote_unified *owner, const char *name,
-    const qa_unified_component_owner *component, const char *const *args, size_t count, qa_error *error)
+    const qa_source_owner *component, const char *const *args, size_t count, qa_error *error)
 {
     if (!owner || owner->busy || !owner->admitted || !owner->session || (count && !args) || count > 128 ||
         !qa_unified_session_idle(owner->session) || !frontend_remote_unified_current(owner, error)) return false;
@@ -616,7 +616,7 @@ bool frontend_remote_unified_command(frontend_remote_unified *owner, const char 
     const char *const *args, size_t count, qa_error *error)
 { return command_document(owner, name, NULL, args, count, error); }
 bool frontend_remote_unified_component_command(frontend_remote_unified *owner,
-    const qa_unified_component_owner *component, const char *const *args, size_t count, qa_error *error)
+    const qa_source_owner *component, const char *const *args, size_t count, qa_error *error)
 { return component && command_document(owner, NULL, component, args, count, error); }
 
 bool frontend_remote_unified_begin_frame(qa_frontend *frontend,uint64_t now,uint64_t elapsed,qa_error *error)

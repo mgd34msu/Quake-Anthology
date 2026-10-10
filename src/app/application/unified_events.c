@@ -1114,7 +1114,7 @@ static bool events_project(qa_application *app, const application_unified_source
                 .provider = event_alias(app, r->provider), .family = r->family, .recipient = r->recipient,
                 .q2_profile = r->q2_source_profile, .q2_interval_ns = r->q2_source_interval_ns,
                 .source_entity = r->source_entity, .has_source_entity = r->has_source_entity, .payload = *r->presentation};
-            if (r->owner_generation) borrowed.owner = (qa_unified_presentation_owner){.provider = borrowed.provider, .generation = r->owner_generation};
+            if (r->owner_generation) borrowed.owner = (qa_source_owner){.provider = borrowed.provider, .generation = r->owner_generation};
             qa_unified_presentation_event *target = events->presentation + events->presentation_count++;
             *target = borrowed;
         }
