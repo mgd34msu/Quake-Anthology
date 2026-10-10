@@ -90,9 +90,13 @@ Attachment release now uses one load-sized ticket per actor slot in the existing
 world snapshot arena. The generic heap child array and sorting call are deleted;
 nested releases and slot reuse preserve captured order. Actual-source comparisons
 record 4,239 allocation/free pairs becoming zero. This is release-path proof,
-not whole-frame proof. The unused repository SDK transport operation still
-allocates traversal scratch at `src/world/body.c:903`; its declaration and
-definition are the only current references.
+not whole-frame proof. The SDK attachment-transport operation now borrows a fixed common-pool slot
+reserved at world load in the existing snapshot arena. Its visit arrays and
+captured chain use actor capacity; nested traversal uses the same configured
+depth as spatial snapshots. Runtime allocation and the three heap cleanup
+paths are deleted. Exhaustion counts through the common pool. The operation
+has no current engine caller; this removes the SDK bypass without claiming a
+whole-frame allocation result.
 
 A temporary call-site census of the `73c9ffbe` diagnostic artifact completed
 800-frame private copied-profile runs in all five editions, with 678 measured

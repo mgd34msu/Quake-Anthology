@@ -30,6 +30,10 @@ typedef struct qa_world_actor_snapshot {
     qa_error *error;
     bool failed;
 } qa_world_actor_snapshot;
+typedef struct qa_attachment_transport {
+    qa_actor_id actor;
+    qa_body_attachment attachment;
+} qa_attachment_transport;
 typedef struct qa_world_release_frame {
     uint32_t head, tail;
 } qa_world_release_frame;
@@ -68,7 +72,7 @@ struct qa_world {
     uint8_t *visibility_bits;
     size_t cluster_bytes, area_bytes, visibility_stride;
     qa_arena snapshot_storage;
-    qa_pool snapshot_pool;
+    qa_pool snapshot_pool, attachment_transports;
     qa_world_release_ticket *release_tickets;
     size_t release_pending, release_peak;
     qa_world_query_rules query_rules;

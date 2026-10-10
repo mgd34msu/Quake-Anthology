@@ -91,7 +91,7 @@ static bool prepare_visibility_storage(qa_world *world,qa_collision_geometry *ge
     }
     qa_arena_seal(arena);return true;
 }
-static bool prepare_release_storage(qa_world *world,qa_error *error)
+static bool prepare_release_storage(qa_world *world,size_t depth,qa_error *error)
 {
     size_t bytes=(size_t)world->capacity*sizeof(*world->release_tickets);
     if(bytes/sizeof(*world->release_tickets)!=world->capacity)
@@ -100,7 +100,11 @@ static bool prepare_release_storage(qa_world *world,qa_error *error)
         _Alignof(qa_world_release_ticket),error);
     if(world->release_tickets==NULL) return false;
     memset(world->release_tickets,0,bytes);
-    return true;
+    size_t stride=2*sizeof(qa_actor_id)+sizeof(qa_attachment_transport);
+    if(world->capacity>SIZE_MAX/stride)
+        return fail(error,QA_ERROR_MEMORY,"Attachment traversal size overflow");
+    return qa_pool_prepare(&world->attachment_transports,&world->snapshot_storage,
+        depth,(size_t)world->capacity*stride,_Alignof(qa_attachment_transport),error);
 }
 
 bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
@@ -121,14 +125,14 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     }
     world->visibility_stride=world->cluster_bytes+world->area_bytes;
     if(!qa_trace_scratch_create(geometry,&world->trace_scratch,error)) { qa_arena_destroy(&world->visibility_storage);free(world);return false; }
-    if(!prepare_release_storage(world,error)) {
+    size_t depth=snapshot_frame_capacity?snapshot_frame_capacity:QA_WORLD_SNAPSHOT_DEFAULT_FRAMES;
+    if(!prepare_release_storage(world,depth,error)) {
         qa_arena_destroy(&world->visibility_storage);
         qa_arena_destroy(&world->snapshot_storage);
         qa_trace_scratch_destroy(world->trace_scratch); free(world); return false;
     }
     if(!qa_spatial_initialize(world,bounds,error)
-        || !qa_spatial_prepare_snapshots(world,snapshot_frame_capacity!=0?
-            snapshot_frame_capacity:QA_WORLD_SNAPSHOT_DEFAULT_FRAMES,error)) {
+        || !qa_spatial_prepare_snapshots(world,depth,error)) {
         qa_arena_destroy(&world->visibility_storage);
         qa_arena_destroy(&world->snapshot_storage);
         qa_trace_scratch_destroy(world->trace_scratch); free(world); return false;
@@ -910,19 +914,18 @@ bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body
     return publish_link(world,body,&linked,BODY_LINK_RESTORE,error);
 }
 
-typedef struct attachment_transport { qa_actor_id actor; qa_body_attachment attachment; } attachment_transport;
 static bool same_float(float left,float right)
 { return left==right && (left!=0.0f || signbit(left)==signbit(right)); }
 
 bool qa_world_transport_attachments(qa_world *world,qa_error *error)
 {
     if(world==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing world");
-    size_t capacity=world->capacity;
-    if(capacity>SIZE_MAX/sizeof(attachment_transport)) return fail(error,QA_ERROR_MEMORY,"Attachment traversal too large");
-    qa_actor_id *visited=calloc(capacity,sizeof(*visited));
-    qa_actor_id *visiting=calloc(capacity,sizeof(*visiting));
-    attachment_transport *chain=malloc(capacity*sizeof(*chain));
-    if(visited==NULL || visiting==NULL || chain==NULL) { free(visited); free(visiting); free(chain); return fail(error,QA_ERROR_MEMORY,"Cannot allocate attachment traversal"); }
+    size_t capacity=world->capacity,transport_slot;
+    qa_actor_id *visited=qa_pool_take(&world->attachment_transports,&transport_slot);
+    if(visited==NULL) return fail(error,QA_ERROR_MEMORY,"Attachment traversal capacity exhausted");
+    qa_actor_id *visiting=visited+capacity;
+    qa_attachment_transport *chain=(qa_attachment_transport *)(visiting+capacity);
+    memset(visited,0,2*capacity*sizeof(*visited));
     bool ok=true;
     uint64_t last_order=0;
     while(ok) {
@@ -939,11 +942,11 @@ bool qa_world_transport_attachments(qa_world *world,qa_error *error)
         while(body!=NULL && body->attached && !qa_actor_id_equal(visited[body->actor.slot],body->actor)) {
             if(qa_actor_id_equal(visiting[body->actor.slot],body->actor)) { ok=fail(error,QA_ERROR_ARGUMENT,"Body attachment cycle during transport"); break; }
             visiting[body->actor.slot]=body->actor;
-            chain[depth++]=(attachment_transport){body->actor,body->attachment};
+            chain[depth++]=(qa_attachment_transport){body->actor,body->attachment};
             body=qa_world_find_body(world,body->attachment.anchor);
         }
         while(depth>0 && ok) {
-            attachment_transport entry=chain[--depth];
+            qa_attachment_transport entry=chain[--depth];
             qa_actor_id actor=entry.actor; visited[actor.slot]=actor; visiting[actor.slot]=(qa_actor_id){0};
             body=qa_world_find_body(world,actor);
             if(body==NULL) continue;
@@ -961,5 +964,5 @@ bool qa_world_transport_attachments(qa_world *world,qa_error *error)
             if(!qa_world_body_write(world,actor,&current,error) || !qa_world_link(world,actor,NULL,error)) ok=false;
         }
     }
-    free(visited); free(visiting); free(chain); return ok;
+    qa_pool_release(&world->attachment_transports,transport_slot); return ok;
 }
