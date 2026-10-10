@@ -54,7 +54,10 @@ bool qa_qvm_create(qa_qvm_image *image, const qa_qvm_options *options, qa_qvm **
     vm->data_mask = (uint32_t)image->memory_size - 1;
     vm->next_watch = 1;
     if (image->initialized.size > 0) memcpy(vm->data,image->initialized.data,image->initialized.size);
-    if (!qa_qvm_execution_create(vm,error)) { free(vm->data); free(vm); return false; }
+    vm->transient_storage=qa_unified_frame_pool_create(0,0,error);
+    if (!vm->transient_storage || !qa_qvm_execution_create(vm,error)) {
+        qa_unified_frame_pool_destroy(&vm->transient_storage);free(vm->data);free(vm);return false;
+    }
     qa_qvm_image_retain(image);
     *out = vm;
     return true;
@@ -67,6 +70,7 @@ bool qa_qvm_destroy(qa_qvm *vm, qa_error *error)
     vm->retired = true;
     qa_qvm_memory_close(vm);
     qa_qvm_execution_destroy(vm);
+    qa_unified_frame_pool_destroy(&vm->transient_storage);
     qa_qvm_image_release(vm->image);
     qa_buffer_free(&vm->candidate_inventory_state);
     free(vm->data); free(vm);

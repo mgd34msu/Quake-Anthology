@@ -16,6 +16,7 @@ typedef struct qa_qvm_write_watch {
 } qa_qvm_write_watch;
 typedef struct write_delivery {
     struct write_delivery *next;
+    qa_unified_frame_lease *storage;
     qa_qvm_write_watch *watch;
     qa_qvm_committed_write event;
     qa_qvm_committed_range *ranges;
@@ -227,7 +228,7 @@ static void free_deliveries(write_delivery *head)
 {
     while (head != NULL) {
         write_delivery *next = head->next;
-        free(head->bytes); free(head->ranges); free(head);
+        qa_unified_frame_lease_release(head->storage);
         head = next;
     }
 }
@@ -265,13 +266,16 @@ static bool capture_writes(qa_qvm *vm, const qa_qvm_write_range *ranges,
         if (count > SIZE_MAX / sizeof(qa_qvm_committed_range) || bytes > SIZE_MAX / 2) {
             free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"QVM committed event is too large");
         }
-        write_delivery *delivery = calloc(1,sizeof(*delivery));
-        if (delivery == NULL) { free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM committed event"); }
+        qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(vm->transient_storage,error);
+        if (!storage) { free_deliveries(head); return false; }
+        write_delivery *delivery=qa_unified_frame_lease_alloc(storage,1,sizeof(*delivery),_Alignof(write_delivery),error);
+        if (!delivery) { qa_unified_frame_lease_release(storage);free_deliveries(head);return false; }
+        delivery->storage=storage;
         *tail = delivery; tail = &delivery->next;
-        delivery->ranges = calloc(count,sizeof(*delivery->ranges));
-        delivery->bytes = malloc(bytes * 2);
+        delivery->ranges=qa_unified_frame_lease_alloc(storage,count,sizeof(*delivery->ranges),_Alignof(qa_qvm_committed_range),error);
+        delivery->bytes=qa_unified_frame_lease_alloc(storage,bytes,2,_Alignof(uint8_t),error);
         if (delivery->ranges == NULL || delivery->bytes == NULL) {
-            free_deliveries(head); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM committed bytes");
+            free_deliveries(head); return false;
         }
         delivery->watch = watch;
         delivery->event.ranges = delivery->ranges;
@@ -369,11 +373,13 @@ bool qa_qvm_write_words(qa_qvm *vm, const qa_qvm_source_word *words,
     if (!qa_qvm_mutable(vm, error)) return false;
     if (!words || !count || count > SIZE_MAX / sizeof(*words) || count > SIZE_MAX / sizeof(qa_qvm_write_range))
         return qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "QVM publication requires bounded Source words");
-    qa_qvm_source_word *copied = malloc(count * sizeof(*copied));
-    qa_qvm_write_range *ranges = malloc(count * sizeof(*ranges));
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(vm->transient_storage,error);
+    if(!storage)return false;
+    qa_qvm_source_word *copied=qa_unified_frame_lease_alloc(storage,count,sizeof(*copied),_Alignof(qa_qvm_source_word),error);
+    qa_qvm_write_range *ranges=qa_unified_frame_lease_alloc(storage,count,sizeof(*ranges),_Alignof(qa_qvm_write_range),error);
     if (!copied || !ranges) {
-        free(copied); free(ranges);
-        return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining QVM words before publication");
+        qa_unified_frame_lease_release(storage);
+        return false;
     }
     memcpy(copied, words, count * sizeof(*copied));
     bool ok = true;
@@ -395,7 +401,7 @@ bool qa_qvm_write_words(qa_qvm *vm, const qa_qvm_source_word *words,
             qa_store_u32le(vm->data + copied[i].offset, (uint32_t)copied[i].value);
         ok = publish_writes(vm, deliveries, error);
     }
-    free(copied); free(ranges);
+    qa_unified_frame_lease_release(storage);
     return ok;
 }
 

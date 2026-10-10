@@ -3,6 +3,7 @@
 
 #include "qa/qvm.h"
 #include "qa/binary.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct qvm_code_word {
     int32_t value;
@@ -24,6 +25,7 @@ struct qa_qvm {
     uint8_t *data;
     size_t data_size;
     uint32_t data_mask;
+    qa_unified_frame_pool *transient_storage;
     uint64_t write_sequence, next_watch;
     struct qa_qvm_write_watch *watches;
     unsigned publication_depth, write_delivery_depth, lifecycle_depth;
