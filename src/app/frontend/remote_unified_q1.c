@@ -31,7 +31,7 @@ typedef enum q1_event_kind {
 } q1_event_kind;
 typedef struct q1_event {
     q1_event_kind kind;
-    qa_buffer content,text,name,extra,provider;
+    qa_bytes content,text,name,extra,provider;
     qa_actor_id actor;
     qa_vec3 origin,end,angles;
     double seconds,a,b,c,d,sky_factor;
@@ -61,14 +61,14 @@ typedef struct q1_beam {
 } q1_beam;
 typedef struct q1_static {
     struct q1_static *next;
-    char *path;
+    const char *path;
     qa_vec3 origin,angles;
     uint32_t frame,skin;
     frontend_unified_model model;
 } q1_static;
 typedef struct q1_ambient {
     struct q1_ambient *next;
-    char *path;
+    const char *path;
     qa_audio_asset *asset;
     qa_audio_mixer *mixer;
     qa_vec3 origin;
@@ -101,10 +101,10 @@ typedef struct q1_group {
     q1_beam beams[Q1_BEAMS];
     q1_static *statics;
     q1_ambient *ambient;
-    char *styles[256];
+    const char *styles[256];
     uint64_t style_sequences[256],sky_sequence;
-    struct {char *name,*social,*info;double colors,frags,ping;uint64_t sequences[6];bool fields[6],present,has_ping;} clients[256];
-    char *sky_name;
+    struct {const char *name,*social,*info;double colors,frags,ping;uint64_t sequences[6];bool fields[6],present,has_ping;} clients[256];
+    const char *sky_name;
     qa_scene_image *sky[6];
     bool sky_found;
     double sampled;
@@ -176,12 +176,15 @@ const qa_unified_q1_world_state *frontend_unified_q1_world_read(const frontend_r
 }
 static uint64_t ns(double value)
 { return value<=0?0:value>=18446744073.709551615?UINT64_MAX:(uint64_t)(value*1e9); }
-static void event_free(q1_event *p)
-{ qa_buffer_free(&p->content);qa_buffer_free(&p->text);qa_buffer_free(&p->name);qa_buffer_free(&p->extra);qa_buffer_free(&p->provider); }
+static bool text_view(const char *text,qa_bytes *out,qa_error *e)
+{
+    (void)e; if(!text) text="";
+    *out=(qa_bytes){(const uint8_t *)text,strlen(text)}; return true;
+}
 static bool owner_parse(const qa_source_owner *owner,q1_event *p,qa_error *e)
 {
     p->owner_generation=owner->generation;
-    return !owner->provider || text_copy(owner->provider,&p->provider,e);
+    return !owner->provider || text_view(owner->provider,&p->provider,e);
 }
 bool frontend_unified_q1_current(const frontend_unified_q1 *o)
 {
@@ -209,7 +212,7 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
     p->row=row; p->seconds=row->seconds; p->sequence=row->sequence;
     p->actor=v->actor; p->actor_present=v->actor.registry!=0;
     p->origin=v->origin; p->end=v->end; p->angles=v->muzzle_angles;
-    if (!text_copy(row->content,&p->content,e) || !owner_parse(&row->owner,p,e)) return false;
+    if (!text_view(row->content,&p->content,e) || !owner_parse(&row->owner,p,e)) return false;
     const qa_product *product=qa_catalog_find(qa_executable_recipe_catalog(frontend_remote_unified_recipe(o->replica)),(char *)p->content.data);
     if (!product || product->family!=QA_GAME_Q1) return fail(e,"Q1 event content is absent from its admitted Source");
     const char *effect_name=NULL;
@@ -217,14 +220,14 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
     case QA_BUILTIN_SOUND:
         p->kind=v->flags&1u?Q1_AMBIENT:Q1_SOUND; p->flag=true;
         p->a=v->volume; p->b=v->attenuation; p->c=v->channel;
-        return text_copy(resource,&p->text,e);
+        return text_view(resource,&p->text,e);
     case QA_BUILTIN_STOP_SOUND:p->kind=Q1_STOP; p->a=v->channel; return true;
     case QA_BUILTIN_PARTICLES:p->kind=Q1_PARTICLES; p->end=v->direction; p->a=v->code; p->b=v->count; return true;
-    case QA_BUILTIN_LIGHT:p->kind=Q1_STYLE; p->a=v->code; return text_copy(resource,&p->text,e);
+    case QA_BUILTIN_LIGHT:p->kind=Q1_STYLE; p->a=v->code; return text_view(resource,&p->text,e);
     case QA_BUILTIN_BEAM: {
         static const char *const names[]={"lightning1","lightning2","lightning3","grapple"};
         if (v->code<1 || v->code>4) return fail(e,"Q1 beam has no original Source style");
-        p->kind=Q1_BEAM; return text_copy(names[v->code-1],&p->name,e);
+        p->kind=Q1_BEAM; return text_view(names[v->code-1],&p->name,e);
     }
     case QA_BUILTIN_IMPACT:
         if (v->code==1) {effect_name="blood";p->a=v->value*2;}
@@ -235,18 +238,18 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
     case QA_BUILTIN_TELEPORT:effect_name="teleport";break;
     case QA_BUILTIN_MUZZLE:effect_name="muzzleflash";p->muzzle=v->has_muzzle_pose;p->end=v->origin;break;
     case QA_BUILTIN_ITEM:p->actor=v->other;p->actor_present=v->other.registry!=0;effect_name="pickup";break;
-    case QA_BUILTIN_ANIMATION:p->kind=Q1_WEAPON;p->a=v->frame;p->b=v->value;return text_copy(resource,&p->text,e);
+    case QA_BUILTIN_ANIMATION:p->kind=Q1_WEAPON;p->a=v->frame;p->b=v->value;return text_view(resource,&p->text,e);
     case QA_BUILTIN_MESSAGE:case QA_BUILTIN_CENTERPRINT:
-        p->kind=Q1_MESSAGE;p->flag=v->kind==QA_BUILTIN_CENTERPRINT || !(v->flags&2u);return text_copy(text,&p->text,e);
-    case QA_BUILTIN_ACHIEVEMENT:p->kind=Q1_ACHIEVEMENT;return text_copy(text,&p->text,e);
+        p->kind=Q1_MESSAGE;p->flag=v->kind==QA_BUILTIN_CENTERPRINT || !(v->flags&2u);return text_view(text,&p->text,e);
+    case QA_BUILTIN_ACHIEVEMENT:p->kind=Q1_ACHIEVEMENT;return text_view(text,&p->text,e);
     case QA_BUILTIN_CTF_STATUS:p->kind=Q1_CTF_STATUS;p->a=v->ctf_status.red;p->b=v->ctf_status.blue;p->c=v->ctf_status.flags;p->d=v->ctf_status.rune_items;return true;
-    case QA_BUILTIN_CTF_CAPTURE:p->kind=Q1_CTF_CAPTURE;p->a=v->ctf_capture.total;return text_copy(v->ctf_capture.blue?"blue":"red",&p->name,e);
-    case QA_BUILTIN_SOURCE_LOG:p->kind=Q1_LOG;return text_copy(text,&p->text,e);
-    case QA_BUILTIN_SOURCE_PROMPT:p->kind=Q1_PROMPT;return text_copy(text,&p->text,e);
+    case QA_BUILTIN_CTF_CAPTURE:p->kind=Q1_CTF_CAPTURE;p->a=v->ctf_capture.total;return text_view(v->ctf_capture.blue?"blue":"red",&p->name,e);
+    case QA_BUILTIN_SOURCE_LOG:p->kind=Q1_LOG;return text_view(text,&p->text,e);
+    case QA_BUILTIN_SOURCE_PROMPT:p->kind=Q1_PROMPT;return text_view(text,&p->text,e);
     case QA_BUILTIN_CLEAR_PROMPT:p->kind=Q1_CLEAR_PROMPT;return true;
     case QA_BUILTIN_Q1_POWERUP:
         if (v->q1_powerup.power>=Q1_POWERS) return fail(e,"Q1 power has no Source timer identity");
-        p->kind=Q1_POWER;p->a=v->q1_powerup.expires;return text_copy(powers[v->q1_powerup.power],&p->name,e);
+        p->kind=Q1_POWER;p->a=v->q1_powerup.expires;return text_view(powers[v->q1_powerup.power],&p->name,e);
     case QA_BUILTIN_DEATH:p->kind=Q1_FOUND;p->a=v->count;p->b=v->code;return true;
     case QA_BUILTIN_TARGET:
         if ((v->flags&UINT32_C(0x80000000)) && v->code==1) {p->kind=Q1_COMPLETED;return true;}
@@ -255,17 +258,17 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
         if (resource && !strcmp(resource,"music")) {p->kind=Q1_MUSIC;p->a=v->code;return true;}
         if (resource && !strcmp(resource,"sell-screen")) {p->kind=Q1_SELL_SCREEN;return true;}
         if (v->flags&UINT32_C(0x80000000)) {p->kind=v->code==1?Q1_COMPLETED:Q1_FINALE;p->a=v->code;
-            return text_copy(text,&p->text,e);}
-        if (resource && !strcmp(resource,"cutscene")) {p->kind=Q1_FINALE;p->a=3;return text_copy(text,&p->text,e);}
+            return text_view(text,&p->text,e);}
+        if (resource && !strcmp(resource,"cutscene")) {p->kind=Q1_FINALE;p->a=3;return text_view(text,&p->text,e);}
         if (resource && !strcmp(resource,"colored-explosion")) {p->kind=Q1_COLORS;p->a=v->code;p->b=v->count;return true;}
-        if (resource && !strcmp(resource,"developer-message")) {p->kind=Q1_MESSAGE;p->flag=false;return text_copy(text,&p->text,e);}
-        if (!v->actor.registry && resource) {p->kind=Q1_STATIC;p->a=v->frame;p->b=v->code;p->c=v->channel;p->angles=v->direction;return text_copy(resource,&p->text,e);}
+        if (resource && !strcmp(resource,"developer-message")) {p->kind=Q1_MESSAGE;p->flag=false;return text_view(text,&p->text,e);}
+        if (!v->actor.registry && resource) {p->kind=Q1_STATIC;p->a=v->frame;p->b=v->code;p->c=v->channel;p->angles=v->direction;return text_view(resource,&p->text,e);}
         if (!resource && v->other.registry && v->count>0) {p->kind=Q1_FOUND;p->flag=true;p->a=v->count;p->b=v->code;return true;}
         return fail(e,"Q1 effect has no reached original Source operation");
     default:return fail(e,"Q1 presentation has no installed native consumer");
     }
     if (!effect_name) return fail(e,"Q1 impact has no original effect recipe");
-    p->kind=Q1_EFFECT;return text_copy(effect_name,&p->name,e);
+    p->kind=Q1_EFFECT;return text_view(effect_name,&p->name,e);
 }
 static bool owns(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
 {
@@ -502,7 +505,7 @@ bool frontend_unified_q1_presentation_validate(frontend_unified_q1 *o,const qa_u
         bool local;qa_player_progress *store;const char *value;uint32_t seat;
         ok=progress_target(o,&p,&local,&store,&value,&seat,e);
     }
-    event_free(&p);return ok;
+    return ok;
 }
 bool frontend_unified_q1_simulation_validate(frontend_unified_q1 *o,const qa_unified_simulation_event *row,qa_error *e)
 { (void)o;(void)row;return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 child has no separate native simulation message consumer"); }
@@ -514,11 +517,10 @@ static void group_free(q1_group *g)
     frontend_q1_help_forget_source(g->parent->frontend->seats+domain->physical_seat,g->images);
     while(g->ambient){q1_ambient *a=g->ambient;g->ambient=a->next;
         if(a->mixer)qa_audio_mixer_remove_static(a->mixer,a->identity);
-        qa_audio_asset_release(a->asset);free(a->path);free(a);}
-    while(g->statics){q1_static *s=g->statics;g->statics=s->next;free(s->path);free(s);}
-    for(size_t i=0;i<256;++i){free(g->styles[i]);free(g->clients[i].name);free(g->clients[i].social);free(g->clients[i].info);}
+        qa_audio_asset_release(a->asset);free(a);}
+    while(g->statics){q1_static *s=g->statics;g->statics=s->next;free(s);}
     for(size_t i=0;i<6;++i)qa_scene_image_release(g->sky[i]);
-    free(g->sky_name);qa_scene_image_release(g->particle_image);qa_localization_release(g->localization);free(g->content);free(g);
+    qa_scene_image_release(g->particle_image);qa_localization_release(g->localization);free(g->content);free(g);
 }
 static bool retirement_parse(const qa_unified_presentation_event *row,q1_event *p,bool *retired,qa_error *e)
 {
@@ -530,14 +532,14 @@ static bool retirement_parse(const qa_unified_presentation_event *row,q1_event *
 bool frontend_unified_q1_owner_validate(frontend_unified_q1 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
     if(!frontend_unified_q1_current(o) || !row)return fail(e,"Q1 Source retirement lost its retained replica");
-    q1_event p={0};bool retired;bool ok=retirement_parse(row,&p,&retired,e);event_free(&p);return ok;
+    q1_event p={0};bool retired=false;bool ok=retirement_parse(row,&p,&retired,e);return ok;
 }
 bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
     if(!o || !frontend_unified_q1_idle(o) || !mutable(o,e))return false;
-    q1_event p={0};bool retired;q1_activation *owner=NULL;
+    q1_event p={0};bool retired=false;q1_activation *owner=NULL;
     bool ok=retirement_parse(row,&p,&retired,e) && activation(o,&p,&owner,e);
-    event_free(&p);if(!ok)return false;
+    if(!ok)return false;
     if(!retired || owner->retired)return true;
     for(q1_group *g=o->groups;g;g=g->next)if(g->activation==owner)
         for(q1_ambient *a=g->ambient;a;a=a->next)if(a->mixer && !qa_audio_mixer_callbacks_idle(a->mixer))
@@ -602,26 +604,26 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     if(!o || !mirrored || o->busy || o->prepared || !mutable(o,e)) return false;
     *mirrored=false;
     q1_event p={0};q1_group *g=NULL;q1_activation *owner=NULL;
-    bool ok=parse(o,row,&p,e) && activation(o,&p,&owner,e);if(!ok) {event_free(&p);return false;}
-    if(owner && owner->retired){event_free(&p);return true;}
+    bool ok=parse(o,row,&p,e) && activation(o,&p,&owner,e);if(!ok) {return false;}
+    if(owner && owner->retired){return true;}
     if(p.kind==Q1_COMPLETED){
         ok=progress_record(o,&p,e);
         if(ok){if(!o->intermission)o->completed_seconds=p.seconds;
             o->intermission=true;o->intermission_activation=owner;}
-        event_free(&p);return ok && mutable(o,e);
+        return ok && mutable(o,e);
     }
     if(p.kind==Q1_SELL_SCREEN){const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
         ok=group(o,(char *)p.content.data,owner,&g,e);
         if(ok){frontend_q1_help_bind_source(o->frontend->seats+d->physical_seat,g->images);
             ok=frontend_remote_unified_command_text(o->replica,"help\n",e);}
-        event_free(&p);return ok && mutable(o,e);}
+        return ok && mutable(o,e);}
     bool persistent=p.kind==Q1_BEAM || p.kind==Q1_STYLE || p.kind==Q1_STATIC || p.kind==Q1_AMBIENT || p.kind==Q1_CLIENT || p.kind==Q1_SKY ||
         p.kind==Q1_MUSIC || p.kind==Q1_PAUSE || p.kind==Q1_FINALE;
-    if(!group(o,(char *)p.content.data,persistent?owner:NULL,&g,e)){event_free(&p);return false;}
+    if(!group(o,(char *)p.content.data,persistent?owner:NULL,&g,e)){return false;}
     bool local=true;
     if(p.kind==Q1_WEAPON || p.kind==Q1_POWER || p.kind==Q1_MESSAGE || p.kind==Q1_CTF_STATUS || p.kind==Q1_PROMPT || p.kind==Q1_CLEAR_PROMPT || p.kind==Q1_LOG || p.kind==Q1_ACHIEVEMENT || p.kind==Q1_FOG || p.kind==Q1_FOUND) {
-        local=owns(o,&p,e);if(!local && e && e->code!=QA_OK) {event_free(&p);return false;}}
-    if(!local) {event_free(&p);return true;}
+        local=owns(o,&p,e);if(!local && e && e->code!=QA_OK) {return false;}}
+    if(!local) {return true;}
     switch(p.kind) {
     case Q1_PARTICLES:frontend_fx_q1_particle_event(&g->particles,&o->random,p.origin,p.end,(int32_t)p.a,(int32_t)p.b,p.seconds);break;
     case Q1_EFFECT:case Q1_COLORS: {
@@ -643,11 +645,11 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(i==Q1_BEAMS) i=0;
         uint8_t kind=!strcmp((char *)p.name.data,"lightning1")?0:!strcmp((char *)p.name.data,"lightning2")?1:!strcmp((char *)p.name.data,"lightning3")?2:3;
         g->beams[i]=(q1_beam){.actor=p.actor,.start=p.origin,.end=p.end,.until=p.seconds+.2,.kind=kind,.roll_seed=qa_builtin_random_integer(&o->random)};break;}
-    case Q1_STYLE:free(g->styles[(uint32_t)p.a]);g->styles[(uint32_t)p.a]=(char *)p.text.data;g->style_sequences[(uint32_t)p.a]=p.sequence;p.text=(qa_buffer){0};break;
+    case Q1_STYLE:g->styles[(uint32_t)p.a]=(char *)p.text.data;g->style_sequences[(uint32_t)p.a]=p.sequence;p.text=(qa_bytes){0};break;
     case Q1_STATIC: {if(!p.text.size)break;
         q1_static *s=calloc(1,sizeof(*s));qa_scene_image_options images=model_options();
         ok=s && frontend_unified_media_model(o->media,g->content,(char *)p.text.data,QA_GAME_Q1,&images,&s->model,e);
-        if(ok) {s->path=(char *)p.text.data;p.text=(qa_buffer){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
+        if(ok) {s->path=(char *)p.text.data;p.text=(qa_bytes){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
             q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}else free(s);break;}
     case Q1_WEAPON: {qa_unified_presentation_event *doc=NULL;ok=clone_row(row,&doc,e);if(ok) {retained_free(o->weapon);o->weapon=doc;o->weapon_activation=owner;}break;}
     case Q1_POWER:for(size_t i=0;i<Q1_POWERS;++i) if(!strcmp((char *)p.name.data,powers[i])) {o->powers[i]=p.a;o->power_activations[i]=owner;}break;
@@ -662,7 +664,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
             if(ok) qa_audio_engine_stop_channel(o->frontend->audio,audio,o->options.audio_owner,QA_GAME_Q1,(int32_t)p.a); }break;}
     case Q1_SOUND:ok=frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 sound must be paired with the real declared simulation sound route");break;
     case Q1_AMBIENT: {q1_ambient *a=calloc(1,sizeof(*a));ok=a && qa_audio_bank_register(g->sounds,(char *)p.text.data,QA_GAME_Q1,&a->asset,e);
-        if(ok && a->asset && qa_audio_asset_sample(a->asset)->loop_start!=QA_AUDIO_NO_LOOP) {a->path=(char *)p.text.data;p.text=(qa_buffer){0};a->origin=p.origin;a->volume=(float)p.a;a->attenuation=(float)p.b;a->identity=qa_scene_identity();
+        if(ok && a->asset && qa_audio_asset_sample(a->asset)->loop_start!=QA_AUDIO_NO_LOOP) {a->path=(char *)p.text.data;p.text=(qa_bytes){0};a->origin=p.origin;a->volume=(float)p.a;a->attenuation=(float)p.b;a->identity=qa_scene_identity();
             q1_ambient **tail=&g->ambient;while(*tail) tail=&(*tail)->next;*tail=a;}
         else {if(a) qa_audio_asset_release(a->asset);free(a);}break;}
     case Q1_CTF_STATUS:o->ctf[0].value=p.a;o->ctf[1].value=p.b;o->ctf[2].value=p.c;o->ctf[3].value=p.d;o->ctf_present=true;o->ctf_activation=owner;break;
@@ -703,8 +705,8 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         size_t column=!strcmp(kind,"name")?0:!strcmp(kind,"social")?1:!strcmp(kind,"player-info")?2:!strcmp(kind,"colors")?3:!strcmp(kind,"frags")?4:5;
         g->clients[i].sequences[column]=p.sequence;
         g->clients[i].fields[column]=true;
-        if(!strcmp(kind,"name") || !strcmp(kind,"social") || !strcmp(kind,"player-info")) {char **target=!strcmp(kind,"name")?&g->clients[i].name:!strcmp(kind,"social")?&g->clients[i].social:&g->clients[i].info;
-            free(*target);*target=(char *)p.text.data;p.text=(qa_buffer){0};}
+        if(!strcmp(kind,"name") || !strcmp(kind,"social") || !strcmp(kind,"player-info")) {const char **target=!strcmp(kind,"name")?&g->clients[i].name:!strcmp(kind,"social")?&g->clients[i].social:&g->clients[i].info;
+            *target=(char *)p.text.data;p.text=(qa_bytes){0};}
         else if(!strcmp(kind,"colors"))g->clients[i].colors=p.b;else if(!strcmp(kind,"frags"))g->clients[i].frags=p.b;
         else {g->clients[i].ping=p.b;g->clients[i].has_ping=true;}break;}
     case Q1_SKY: {qa_scene_image *images[6]={0};bool found=false;static const char *const suffixes[]={"rt","bk","lf","ft","up","dn"};qa_scene_image_options options={.family=QA_GAME_Q1,.usage=QA_IMAGE_USAGE_SKY,.wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR};
@@ -712,11 +714,11 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
             snprintf(path,n,"gfx/env/%s%s.tga",(char *)p.text.data,suffixes[i]);ok=qa_scene_image_load_exact(g->images,path,&options,images+i,e);
             if(ok && !images[i]){snprintf(path,n,"gfx/env/%s%s.png",(char *)p.text.data,suffixes[i]);ok=qa_scene_image_load_exact(g->images,path,&options,images+i,e);}free(path);
             if(ok){found|=images[i]!=NULL;if(!images[i]){images[i]=(qa_scene_image *)qa_scene_missing(g->images);qa_scene_image_retain(images[i]);}}}
-        if(ok){for(size_t i=0;i<6;++i){qa_scene_image_release(g->sky[i]);g->sky[i]=images[i];images[i]=NULL;}free(g->sky_name);g->sky_name=(char *)p.text.data;p.text=(qa_buffer){0};g->sky_found=found;g->sky_sequence=p.sequence;}
+        if(ok){for(size_t i=0;i<6;++i){qa_scene_image_release(g->sky[i]);g->sky[i]=images[i];images[i]=NULL;}g->sky_name=(char *)p.text.data;p.text=(qa_bytes){0};g->sky_found=found;g->sky_sequence=p.sequence;}
         for(size_t i=0;i<6;++i)qa_scene_image_release(images[i]);
         break;}
     }
-    event_free(&p);return ok && mutable(o,e);
+    return ok && mutable(o,e);
 }
 bool frontend_unified_q1_sound_presentation(frontend_unified_q1 *o,const qa_unified_presentation_event *row,bool simulation_owned,qa_error *e)
 {
@@ -740,7 +742,7 @@ bool frontend_unified_q1_sound_presentation(frontend_unified_q1 *o,const qa_unif
         }
         qa_audio_asset_release(asset);
     }
-    event_free(&p);return ok && mutable(o,e);
+    return ok && mutable(o,e);
 }
 bool frontend_unified_q1_frame_prepare(frontend_unified_q1 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -863,7 +865,7 @@ bool frontend_unified_q1_model(frontend_unified_q1 *o,qa_actor_id actor,const ch
     q1_event p={0};bool ok=parse(o,o->weapon,&p,e);qa_actor_id received;
     if(ok)ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&received,e);
     if(ok && qa_actor_id_equal(actor,received) && !strcmp(content,(char *)p.content.data) && !strcmp(path,(char *)p.text.data))input->frame=(uint32_t)p.a;
-    event_free(&p);return ok;
+    return ok;
 }
 static void transform(qa_model_transform *out,qa_vec3 origin,qa_vec3 angles)
 {
