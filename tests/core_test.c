@@ -522,6 +522,21 @@ static void test_shared_audio_preparation(void)
         qa_audio_sample_release(first); qa_audio_sample_release(again);
         qa_audio_sample_release(expected); qa_audio_sample_release(changed); qa_audio_asset_release(asset);
     }
+    int16_t doppler_source[2177];
+    for(size_t i=0;i<sizeof(doppler_source)/sizeof(*doppler_source);++i)
+        doppler_source[i]=(int16_t)((i*173)%65001-32500);
+    qa_audio_sample *doppler_raw=NULL,*doppler_pcm=NULL;
+    CHECK(qa_audio_sample_copy(doppler_source,2177,1,44100,QA_AUDIO_NO_LOOP,&doppler_raw,&error));
+    CHECK(qa_audio_resample_source(doppler_raw,44100,QA_GAME_Q3,&doppler_pcm,&error));
+    CHECK(doppler_pcm->doppler_period==3072);
+    size_t ranges[][2]={{0,0},{0,1},{0,64},{1,65},{63,129},{64,128},{17,2049},{2176,2177},{2177,3072},{2000,3072}};
+    for(size_t i=0;i<sizeof(ranges)/sizeof(*ranges);++i){
+        int64_t expected=0;
+        for(size_t j=ranges[i][0];j<ranges[i][1] && j<doppler_pcm->frame_count;++j)
+            expected+=doppler_pcm->samples[j];
+        CHECK(qa_audio_sample_doppler_sum(doppler_pcm,ranges[i][0],ranges[i][1])==(double)expected);
+    }
+    qa_audio_sample_release(doppler_raw);qa_audio_sample_release(doppler_pcm);
     for(size_t i=0;i<sizeof(families)/sizeof(*families);++i){
         qa_audio_asset *absent=NULL;
         CHECK(qa_audio_bank_register(bank,"optional.wav",families[i],&absent,&error) && !absent);

@@ -22,10 +22,14 @@ typedef struct qa_audio_sample {
     unsigned channels, source_bytes_per_sample;
     uint64_t frame_count, loop_start;
     const int16_t *samples;
+    const int64_t *doppler_blocks;
+    size_t doppler_period;
     atomic_uint references;
 } qa_audio_sample;
 qa_audio_sample *qa_audio_sample_retain(qa_audio_sample *sample);
 void qa_audio_sample_release(qa_audio_sample *sample);
+/* Range sum of a prepared Q3 mono sample, including its zero-padded period. */
+double qa_audio_sample_doppler_sum(const qa_audio_sample *,size_t first,size_t last);
 bool qa_audio_sample_copy(const int16_t *samples, uint64_t frames, unsigned channels, uint32_t rate,
                           uint64_t loop_start, qa_audio_sample **out, qa_error *error);
 bool qa_audio_decode_wav(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample **out,

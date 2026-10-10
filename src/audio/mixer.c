@@ -155,7 +155,6 @@ static void prepared_release(qa_audio_mixer *mixer, qa_mixer_prepared *prepared)
         qa_audio_sample_release(prepared->sample);
         qa_audio_sample_release(prepared->pcm);
         qa_audio_asset_release(prepared->asset);
-        free(prepared->doppler_sums);
         qa_pool_release(&mixer->prepared_records, prepared->slot);
     }
 }
@@ -223,25 +222,7 @@ static int16_t effect_sample(const qa_mixer_prepared *prepared, uint64_t frame) 
     return frame < prepared->pcm->frame_count ? prepared->pcm->samples[(size_t)frame] : 0;
 }
 
-bool qa_mixer_prepared_doppler(qa_mixer_prepared *prepared, qa_error *error) {
-    if (prepared->doppler_sums)
-        return true;
-    if (prepared->pcm->frame_count > SIZE_MAX - QA_MIXER_CHUNK_FRAMES)
-        return mixer_error(error, QA_ERROR_MEMORY, "Doppler sample period overflows storage");
-    size_t period = ((size_t)prepared->pcm->frame_count + QA_MIXER_CHUNK_FRAMES - 1) /
-                    QA_MIXER_CHUNK_FRAMES * QA_MIXER_CHUNK_FRAMES;
-    if (period >= SIZE_MAX / sizeof(double))
-        return mixer_error(error, QA_ERROR_MEMORY, "Doppler sample sums overflow storage");
-    double *sums = malloc((period + 1) * sizeof(*sums));
-    if (!sums)
-        return mixer_error(error, QA_ERROR_MEMORY, "Cannot allocate Doppler sample sums");
-    sums[0] = 0;
-    for (size_t i = 0; i < period; i++)
-        sums[i + 1] = sums[i] + (i < prepared->pcm->frame_count ? effect_sample(prepared, i) : 0);
-    prepared->doppler_sums = sums;
-    prepared->doppler_period = period;
-    return true;
-}
+
 
 static qa_vec3 actor_position(const qa_audio_mixer *mixer, uint64_t actor, uint64_t owner,
                               bool scoped) {
@@ -1020,10 +1001,7 @@ bool qa_audio_mixer_loop(qa_audio_mixer *mixer, const qa_audio_loop *request, qa
         if (!isfinite(loop.doppler_scale))
             loop.doppler_scale = 1;
         loop.doppler = loop.doppler_scale > 1;
-        if (loop.doppler_scale > QA_MIXER_CHUNK_FRAMES && !qa_mixer_prepared_doppler(prepared, error)) {
-            prepared_release(mixer, prepared);
-            return false;
-        }
+
     } else if (request->persistent && index < mixer->loop_count) {
         loop.doppler_scale = mixer->loops[index].doppler_scale;
         loop.old_doppler_scale = mixer->loops[index].old_doppler_scale;
@@ -1669,18 +1647,17 @@ static void paint_voice(qa_audio_mixer *mixer, const qa_mixer_voice *voice, size
 static void paint_wide_doppler(qa_audio_mixer *mixer, const qa_mixer_loop_mix *loop, size_t output,
                                size_t count, uint64_t source, double effects, bool integer) {
     const qa_mixer_prepared *prepared = loop->prepared;
-    size_t period = prepared->doppler_period;
-    const double *sums = prepared->doppler_sums;
+    size_t period=prepared->pcm->doppler_period;
     double cycles = floor((double)loop->doppler_scale / (double)period);
     double remainder = fmod(loop->doppler_scale, (double)period);
     double cycle_samples = cycles * (double)period;
-    double cycle_total = cycles * sums[period];
+    double cycle_total=cycles*qa_audio_sample_doppler_sum(prepared->pcm,0,period);
     double offset = (double)(source % period);
     for (size_t frame = 0; frame < count; frame++) {
         double end = offset + remainder;
         size_t first = (size_t)offset, last = (size_t)end;
-        double tail = sums[last < period ? last : period] - sums[first] +
-                      (last > period ? sums[last - period] : 0);
+        double tail=qa_audio_sample_doppler_sum(prepared->pcm,first,last<period?last:period)+
+            (last>period?qa_audio_sample_doppler_sum(prepared->pcm,0,last-period):0);
         double average = (cycle_total + tail) / (cycle_samples + (double)last - (double)first);
         add_paint(mixer, (output + frame) * 2,
                   trunc(average * loop->gain.left * effects / 256), integer);

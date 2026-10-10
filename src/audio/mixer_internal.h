@@ -18,10 +18,7 @@ typedef struct qa_mixer_prepared {
     qa_audio_asset *asset;
     bool q3;
     size_t references, slot;
-    double *doppler_sums;
-    size_t doppler_period;
 } qa_mixer_prepared;
-bool qa_mixer_prepared_doppler(qa_mixer_prepared *, qa_error *);
 
 typedef enum qa_mixer_voice_state {
     QA_MIXER_FREE,

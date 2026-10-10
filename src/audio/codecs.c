@@ -13,15 +13,25 @@ static bool sample_valid(const qa_audio_sample *sample, qa_error *error) {
 }
 
 static qa_audio_sample *sample_allocate(uint64_t frames, unsigned channels, uint32_t rate,
-                                        unsigned source_width, uint64_t loop, qa_error *error) {
+                                        unsigned source_width, uint64_t loop, bool doppler, qa_error *error) {
     size_t size;
     if (!qa_audio_pcm_size(frames, channels, &size, error))
         return NULL;
-    if (size > SIZE_MAX - sizeof(qa_audio_sample)) {
-        qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "PCM resource size overflows");
-        return NULL;
+    size_t period=0,extra=0,padding=0;
+    if(doppler && channels==1){
+        if(frames>SIZE_MAX-1023){qa_audio_codec_fail(error,QA_ERROR_MEMORY,0,"Doppler period overflows storage");return NULL;}
+        period=((size_t)frames+1023)/1024*1024;
+        size_t blocks=period/64+1;
+        padding=(size_t)(-size)&(_Alignof(int64_t)-1);
+        if(blocks>(SIZE_MAX-padding)/sizeof(int64_t)){
+            qa_audio_codec_fail(error,QA_ERROR_MEMORY,0,"Doppler block sums overflow storage");return NULL;
+        }
+        extra=padding+blocks*sizeof(int64_t);
     }
-    qa_audio_sample *sample = malloc(sizeof(*sample) + size);
+    if(size>SIZE_MAX-sizeof(qa_audio_sample) || extra>SIZE_MAX-sizeof(qa_audio_sample)-size){
+        qa_audio_codec_fail(error,QA_ERROR_MEMORY,0,"PCM resource size overflows");return NULL;
+    }
+    qa_audio_sample *sample=malloc(sizeof(*sample)+size+extra);
     if (!sample) {
         qa_audio_codec_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate PCM resource");
         return NULL;
@@ -32,6 +42,8 @@ static qa_audio_sample *sample_allocate(uint64_t frames, unsigned channels, uint
     sample->frame_count = frames;
     sample->loop_start = loop;
     sample->samples = (const int16_t *)(sample + 1);
+    sample->doppler_period=period;
+    sample->doppler_blocks=doppler && channels==1?(const int64_t *)((const uint8_t *)sample->samples+size+padding):NULL;
     atomic_init(&sample->references, 1);
     return sample;
 }
@@ -59,7 +71,7 @@ bool qa_audio_sample_copy(const int16_t *samples, uint64_t frames, unsigned chan
     if (!out || !rate || (!samples && frames) ||
         (loop_start != QA_AUDIO_NO_LOOP && loop_start >= frames))
         return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid PCM copy arguments");
-    qa_audio_sample *sample = sample_allocate(frames, channels, rate, 2, loop_start, error);
+    qa_audio_sample *sample = sample_allocate(frames, channels, rate, 2, loop_start, false, error);
     if (!sample)
         return false;
     if (frames)
@@ -209,7 +221,7 @@ bool qa_audio_decode_wav(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sa
     if (!wav_parse(bytes, policy, &wav, error))
         return false;
     qa_audio_sample *sample =
-        sample_allocate(wav.frames, wav.channels, wav.rate, wav.width, wav.loop, error);
+        sample_allocate(wav.frames, wav.channels, wav.rate, wav.width, wav.loop, false, error);
     if (!sample)
         return false;
     wav_read(&wav, 0, (size_t)wav.frames, (int16_t *)(sample + 1));
@@ -554,7 +566,7 @@ bool qa_audio_decode(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample
     if (!qa_audio_stream_open(bytes, policy, &stream, error))
         return false;
     qa_audio_sample *sample =
-        sample_allocate(stream->frames, stream->channels, stream->rate, 2, QA_AUDIO_NO_LOOP, error);
+        sample_allocate(stream->frames, stream->channels, stream->rate, 2, QA_AUDIO_NO_LOOP, false, error);
     if (!sample) {
         qa_audio_stream_close(stream);
         return false;
@@ -616,7 +628,7 @@ bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rat
         return false;
     qa_audio_sample *result =
         sample_allocate(layout.frames, sample->channels, output_rate,
-                        sample->source_bytes_per_sample, layout.loop_start, error);
+                        sample->source_bytes_per_sample, layout.loop_start, family==QA_GAME_Q3, error);
     if (!result)
         return false;
     int16_t *pcm = (int16_t *)(result + 1);
@@ -628,8 +640,29 @@ bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rat
             pcm[(size_t)frame * sample->channels + channel] =
                 in_bounds ? sample->samples[(size_t)source * sample->channels + channel] : 0;
     }
+    if(result->doppler_blocks){
+        int64_t *blocks=(int64_t *)result->doppler_blocks;int64_t sum=0;blocks[0]=0;
+        for(size_t first=0;first<result->doppler_period;first+=64){
+            size_t last=first+64;
+            if(last>result->frame_count)last=(size_t)result->frame_count;
+            for(size_t i=first;i<last;++i)sum+=pcm[i];
+            blocks[first/64+1]=sum;
+        }
+    }
     *out = result;
     return true;
+}
+
+double qa_audio_sample_doppler_sum(const qa_audio_sample *sample,size_t first,size_t last)
+{
+    size_t begin=(first+63)/64,end=last/64;
+    int64_t sum=0;
+    if(begin<end){sum=sample->doppler_blocks[end]-sample->doppler_blocks[begin];
+        size_t leading=begin*64,trailing=end*64;
+        for(size_t i=first;i<leading && i<sample->frame_count;++i)sum+=sample->samples[i];
+        for(size_t i=trailing;i<last && i<sample->frame_count;++i)sum+=sample->samples[i];
+    }else for(size_t i=first;i<last && i<sample->frame_count;++i)sum+=sample->samples[i];
+    return (double)sum;
 }
 
 static const int adpcm_index[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
