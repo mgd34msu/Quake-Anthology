@@ -2126,9 +2126,9 @@ static bool prepare_input(application_move_call *move,
             !application_native_q3_settings_integer_at(source, APPLICATION_Q3_SETTING_PMOVE_MSEC, &step, error) ||
             !application_native_q3_settings_integer_at(source, APPLICATION_Q3_SETTING_DMFLAGS, &dmflags, error)) return false;
         bool spectator = session.team == 3;
-        if (!spectator && (fixed || client.pmove_fixed) && step <= 0)
+        if (!spectator && (fixed || client.rule.pmove_fixed) && step <= 0)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native fixed Pmove has no positive cached interval");
-        input->profile.data.q3.fixed_ms = !spectator && (fixed || client.pmove_fixed) ? (uint32_t)step : 0;
+        input->profile.data.q3.fixed_ms = !spectator && (fixed || client.rule.pmove_fixed) ? (uint32_t)step : 0;
         input->profile.data.q3.no_footsteps = !spectator && ((uint32_t)dmflags & 32u);
         input->has_trace_policy = true;
         input->trace_policy = qa_collision_default_policy(QA_COLLISION_Q3);
@@ -3579,9 +3579,9 @@ bool qa_application_control_prediction_read(qa_application *application,
                 !application_native_q3_settings_integer_at(physical, APPLICATION_Q3_SETTING_PMOVE_MSEC, &step, error) ||
                 !application_native_q3_settings_integer_at(physical, APPLICATION_Q3_SETTING_DMFLAGS, &dmflags, error)) return false;
             bool spectator = source_session.team == 3;
-            if (!spectator && (fixed || source_client.pmove_fixed) && step <= 0)
+            if (!spectator && (fixed || source_client.rule.pmove_fixed) && step <= 0)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Prediction fixed Pmove lost its genuine cached interval");
-            result.input.profile.data.q3.fixed_ms = !spectator && (fixed || source_client.pmove_fixed) ? (uint32_t)step : 0;
+            result.input.profile.data.q3.fixed_ms = !spectator && (fixed || source_client.rule.pmove_fixed) ? (uint32_t)step : 0;
             result.input.profile.data.q3.no_footsteps = !spectator && ((uint32_t)dmflags & 32u);
         }
     }

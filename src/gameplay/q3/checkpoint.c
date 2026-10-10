@@ -181,17 +181,19 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
     memcpy(saved.body_queue, game->body_queue, sizeof(saved.body_queue));
     memcpy(saved.podium_players, game->podium_players, sizeof(saved.podium_players));
     memcpy(saved.source_entities, game->source_entities, sizeof(saved.source_entities));
-    memcpy(saved.clients, game->clients, sizeof(saved.clients));
+    for (uint32_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i)
+        q3_client_projection(game, &game->clients[i], &saved.clients[i]);
     memcpy(saved.source_clients, game->client_actors, sizeof(saved.source_clients));
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i)
         if (!q3_player_motion_slot_read(game, i, &saved.source_player_motions[i], error)) return false;
     for (size_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i)
-        if (!qa_vec_finite(saved.clients[i].old_origin) ||
-            (saved.clients[i].has_followed_player &&
-             !q3_followed_player_saved_valid(game, &saved.clients[i].followed_player)))
+        if (!qa_vec_finite(saved.clients[i].rule.old_origin) ||
+            (saved.clients[i].rule.has_followed_player &&
+             !q3_followed_player_saved_valid(game, &saved.clients[i].rule.followed_player)))
             return q3_fail(error, "Q3 client checkpoint has invalid retained source PS");
     uint16_t *source_numbers = NULL;
-    if (!q3_source_prepare((qa_q3_game *)game, &saved, &source_numbers, error)) return false;
+    q3_client_names source_names;
+    if (!q3_source_prepare((qa_q3_game *)game, &saved, &source_numbers, &source_names, error)) return false;
     for (uint32_t i = 0; i < game->capacity; ++i) {
         const q3_actor *actor = q3_actor_const(game, game->actors[i].actor);
         if (!actor) continue;
@@ -287,15 +289,16 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
         if (game->player_binding_tokens[i])
             return q3_fail(error, "Q3 checkpoint restore conflicts with player admission");
     for (size_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i)
-        if (!qa_vec_finite(saved->clients[i].old_origin) ||
-            (saved->clients[i].has_followed_player &&
-             !q3_followed_player_saved_valid(game, &saved->clients[i].followed_player)))
+        if (!qa_vec_finite(saved->clients[i].rule.old_origin) ||
+            (saved->clients[i].rule.has_followed_player &&
+             !q3_followed_player_saved_valid(game, &saved->clients[i].rule.followed_player)))
             return q3_fail(error, "Q3 client restore has invalid retained source PS");
     qa_string_id *configstrings = NULL;
     uint16_t *source_numbers = NULL;
+    q3_client_names source_names;
     q3_wire_state *wire = NULL;
     qa_q3_shader_remap_state shader_remaps;
-    if (!q3_source_prepare(game, saved, &source_numbers, error)) return false;
+    if (!q3_source_prepare(game, saved, &source_numbers, &source_names, error)) return false;
     if (!q3_configstrings_prepare(game, saved, &configstrings, error))
         goto invalid_strings;
     if (!q3_shader_remaps_prepare(&saved->shader_remaps, &shader_remaps, error) ||
@@ -388,7 +391,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
     memset(game->memory.pool + saved->memory.allocated_bytes, 0,
            sizeof(game->memory.pool) - saved->memory.allocated_bytes);
     game->options.max_clients = saved->max_clients;
-    q3_source_commit(game, saved, source_numbers);
+    q3_source_commit(game, saved, source_numbers, &source_names);
     game->new_session = saved->new_session;
     game->fry_sound_index = saved->fry_sound_index;
     game->portal_sequence = saved->portal_sequence;

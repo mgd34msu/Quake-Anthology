@@ -127,7 +127,7 @@ bool qa_application_native_q3_presentation_client(qa_application *app,
         !qa_q3_client_slot_read(view->source_game, slot, &value.client, error) ||
         !binding_current(app, view, slot, value.binding.actor, error)) return false;
     value.present = value.binding.in_use && value.binding.actor.registry && value.binding.body_attached &&
-        value.client.connected == QA_Q3_CLIENT_CONNECTED;
+        value.client.rule.connected == QA_Q3_CLIENT_CONNECTED;
     if (value.present && !qa_q3_wire_player_read(view->source_game, slot, &value.player, error)) return false;
     if (!binding_current(app, view, slot, value.binding.actor, error)) return false;
     *out = value;

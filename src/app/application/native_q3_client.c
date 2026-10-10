@@ -53,7 +53,7 @@ bool qa_native_q3_client_service_current(const qa_native_q3_client_service *serv
         qa_q3_source_binding_read(service->source_game,physical,&binding,NULL) &&
         qa_actor_id_equal(actual,binding.actor) && binding.in_use && binding.body_attached &&
         qa_q3_client_slot_read(service->source_game,physical,&client,NULL) &&
-        client.connected==QA_Q3_CLIENT_CONNECTED &&
+        client.rule.connected==QA_Q3_CLIENT_CONNECTED &&
         application_native_q3_wire_client_read(provider,physical,&transport,&admitted,NULL) && admitted &&
         transport.begun && !transport.bot && transport.seat==service->services.client.seat &&
         qa_actor_id_equal(transport.actor,actual);
@@ -88,7 +88,7 @@ bool qa_native_q3_client_source_basis_read(qa_application *app,
         !qa_q3_native_client_slot(provider->state.q3,actor,&slot,error) || slot!=services->client.source_client ||
         !qa_q3_source_binding_read(provider->state.q3,slot,&binding,error) || !binding.in_use || !binding.body_attached ||
         !qa_actor_id_equal(binding.actor,actor) ||
-        !qa_q3_client_slot_read(provider->state.q3,slot,&client,error) || client.connected!=QA_Q3_CLIENT_CONNECTED ||
+        !qa_q3_client_slot_read(provider->state.q3,slot,&client,error) || client.rule.connected!=QA_Q3_CLIENT_CONNECTED ||
         !application_native_q3_wire_client_read(provider,slot,&transport,&admitted,error) || !admitted ||
         !transport.begun || transport.bot || transport.seat!=services->client.seat ||
         !qa_actor_id_equal(transport.actor,actor) ||

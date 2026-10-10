@@ -809,7 +809,7 @@ bool qa_application_network_q3_host_slots(qa_application *app, qa_actor_owner ow
                 !qa_q3_client_slot_read(provider->state.q3, i, &client, error) ||
                 !application_native_q3_wire_client_admission_read(provider, i, &wire, &admitted, error)) return false;
             slots[i] = (qa_application_network_q3_host_slot){
-                .occupied = binding.actor.registry != 0 || client.connected != QA_Q3_CLIENT_DISCONNECTED,
+                .occupied = binding.actor.registry != 0 || client.rule.connected != QA_Q3_CLIENT_DISCONNECTED,
                 .bot = admitted && wire.bot};
         }
         return true;
@@ -900,7 +900,7 @@ bool qa_application_network_q3_source(qa_application *application, qa_actor_id a
             !qa_q3_round_read(primary->state.q3, &world, error) ||
             !qa_q3_native_client_slot(primary->state.q3, actor, &physical, error) ||
             !qa_q3_client_slot_read(primary->state.q3, physical, &client, error) ||
-            client.connected == QA_Q3_CLIENT_DISCONNECTED ||
+            client.rule.connected == QA_Q3_CLIENT_DISCONNECTED ||
             !application_native_q3_wire_client_admission_read(primary, physical, &admitted, &present, error) ||
             !present || !qa_actor_id_equal(admitted.actor, actor) || !admitted.userinfo)
             return application_fail(error, QA_ERROR_ARGUMENT,

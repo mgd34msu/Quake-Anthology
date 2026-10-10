@@ -1,6 +1,8 @@
 #ifndef QA_UNIFIED_FRAME_PLAYER_H
 #define QA_UNIFIED_FRAME_PLAYER_H
 
+#include "qa/inventory.h"
+
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_components.h"
 
@@ -24,18 +26,11 @@ typedef struct qa_unified_client_presentation {
     qa_vec3 origin, angles;
     float view_height;
 } qa_unified_client_presentation;
-typedef enum qa_unified_armor_kind {
-    QA_UNIFIED_ARMOR_NONE, QA_UNIFIED_ARMOR_Q1, QA_UNIFIED_ARMOR_Q2, QA_UNIFIED_ARMOR_Q3,
-    QA_UNIFIED_ARMOR_SOURCE
-} qa_unified_armor_kind;
-typedef enum qa_unified_power_armor_kind {
-    QA_UNIFIED_POWER_ARMOR_NONE, QA_UNIFIED_POWER_ARMOR_SCREEN, QA_UNIFIED_POWER_ARMOR_SHIELD
-} qa_unified_power_armor_kind;
 typedef struct qa_unified_armor_state {
-    qa_unified_armor_kind kind;
+    qa_regular_armor_kind kind;
     char *source, *item;
     double points, absorption, normal, energy, protection;
-    qa_unified_power_armor_kind powered_kind;
+    qa_power_kind powered_kind;
     double cells;
 } qa_unified_armor_state;
 typedef struct qa_unified_powerup_state {
@@ -56,9 +51,6 @@ typedef struct qa_unified_weapon_status {
     bool finite, has_ammo_to_start, low;
     double count;
 } qa_unified_weapon_status;
-typedef enum qa_unified_arsenal_warning {
-    QA_UNIFIED_ARSENAL_NONE, QA_UNIFIED_ARSENAL_LOW, QA_UNIFIED_ARSENAL_EMPTY
-} qa_unified_arsenal_warning;
 typedef struct qa_unified_native_inventory_item { char *item, *label; double count; } qa_unified_native_inventory_item;
 typedef enum qa_unified_inventory_presentation_kind {
     QA_UNIFIED_INVENTORY_PRESENTATION_NONE, QA_UNIFIED_INVENTORY_PRESENTATION_WEAPON,
@@ -91,7 +83,7 @@ typedef struct qa_unified_player_ui {
     qa_unified_ui_item *items;
     size_t item_count;
     qa_unified_weapon_status *weapon_status;
-    qa_unified_arsenal_warning arsenal_warning;
+    qa_ammo_warning arsenal_warning;
     char *active_weapon, *ammo_item;
     bool has_ammo, selected_arsenal;
     double ammo_count;

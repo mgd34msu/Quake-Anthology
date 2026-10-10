@@ -78,20 +78,17 @@ static bool kind_for(const qa_launch_instance *launch,
     case QA_PROGRAM_NATIVE:
         *out = APPLICATION_PROVIDER_NATIVE;
         return true;
-    case QA_PROGRAM_BUILTIN:
-        switch (launch->selection.clock.kind) {
-        case QA_RULESET_NETQUAKE:
-        case QA_RULESET_QUAKEWORLD:
-            *out = APPLICATION_PROVIDER_Q1;
-            return true;
-        case QA_RULESET_Q2_CLASSIC:
-        case QA_RULESET_Q2_RERELEASE:
-            *out = APPLICATION_PROVIDER_Q2;
-            return true;
-        case QA_RULESET_Q3:
-            *out = APPLICATION_PROVIDER_Q3;
-            return true;
+    case QA_PROGRAM_BUILTIN: {
+        const qa_ruleset_descriptor *rules = qa_ruleset_read(launch->selection.clock.kind);
+        if (rules) {
+            switch (rules->family) {
+            case QA_GAME_Q1: *out = APPLICATION_PROVIDER_Q1; return true;
+            case QA_GAME_Q2: *out = APPLICATION_PROVIDER_Q2; return true;
+            case QA_GAME_Q3: *out = APPLICATION_PROVIDER_Q3; return true;
+            }
         }
+        break;
+    }
     }
     return application_fail(error, QA_ERROR_ARGUMENT,
                             "provider has no executable runtime family");

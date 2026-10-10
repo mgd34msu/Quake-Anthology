@@ -280,7 +280,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     for (size_t j = 0; j < ui->powerup_count; ++j) for (size_t i = 0; i < sizeof(powers) / sizeof(*powers); ++i)
         if (ui->powerups[j].seconds > 0 && !strcmp(ui->powerups[j].id, powers[i].id))
             client.items |= UINT32_C(1) << powers[i].bit;
-    if (ui->armor.kind == QA_UNIFIED_ARMOR_Q1 && ui->armor.points > 0) {
+    if (ui->armor.kind == QA_ARMOR_Q1 && ui->armor.points > 0) {
         unsigned grade = ui->armor.absorption >= .8f ? 2u : ui->armor.absorption >= .6f ? 1u : 0u;
         client.items |= UINT32_C(1) << ((variant == QA_HUD_Q1_ROGUE ? 23u : 13u) + grade);
     }
@@ -354,7 +354,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
         const char *label=ui->weapon_status?ui->weapon_status->label:ui->ammo_item;
         okay=copy_text(label,&r->ammo_label,e);
         r->vitals[2]=(qa_hud_value){.label=r->ammo_label,.value=ui->ammo_count,
-            .warning=ui->arsenal_warning==QA_UNIFIED_ARSENAL_EMPTY || ui->arsenal_warning==QA_UNIFIED_ARSENAL_LOW};
+            .warning=ui->arsenal_warning==QA_AMMO_EMPTY || ui->arsenal_warning==QA_AMMO_LOW};
     }
     size_t count=received->visuals->model_count;
     if (okay && count) { r->models=calloc(count,sizeof(*r->models)); okay=r->models!=NULL;

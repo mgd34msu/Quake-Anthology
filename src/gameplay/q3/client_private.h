@@ -9,7 +9,7 @@ static inline bool q3_client_slot(const qa_q3_game *game, qa_actor_id actor,
     return game && out && qa_q3_native_client_slot(game, actor, out, NULL);
 }
 
-static inline qa_q3_native_client *q3_client_actor(qa_q3_game *game,
+static inline q3_client_state *q3_client_actor(qa_q3_game *game,
     qa_actor_id actor, qa_error *error) {
     uint32_t slot;
     if (!game || game->source_restored || !q3_client_slot(game, actor, &slot)) {

@@ -387,7 +387,7 @@ bool application_native_q3_wire_begin(application_provider *provider, uint32_t s
     qa_q3_native_client source;
     if (!client) return false;
     if (!qa_q3_client_slot_read(provider->state.q3, slot, &source, error) ||
-        source.connected != QA_Q3_CLIENT_CONNECTED)
+        source.rule.connected != QA_Q3_CLIENT_CONNECTED)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Native Q3 wire Begin requires completed source ClientBegin");
     client->begun = true;
@@ -1212,7 +1212,7 @@ static native_q3_wire_client *leased_client(application_native_q3_wire_client_le
             !qa_q3_source_binding_read(lease->game, lease->slot, &binding, error) ||
             !binding.in_use || !binding.body_attached ||
             !qa_q3_client_slot_read(lease->game, lease->slot, &source, error) ||
-            source.connected != QA_Q3_CLIENT_CONNECTED) {
+            source.rule.connected != QA_Q3_CLIENT_CONNECTED) {
             application_fail(error, QA_ERROR_ARGUMENT, "Native CGAME reader lost its installed source lifetime");
             return NULL;
         }
@@ -1613,7 +1613,7 @@ bool qa_native_q3_wire_reader_acquire(qa_application *app, qa_actor_owner receiv
         !qa_q3_source_binding_read(provider->state.q3, slot, &binding, error) ||
         !binding.in_use || !binding.body_attached ||
         !qa_q3_client_slot_read(provider->state.q3, slot, &source, error) ||
-        source.connected != QA_Q3_CLIENT_CONNECTED ||
+        source.rule.connected != QA_Q3_CLIENT_CONNECTED ||
         !wire->clients[slot].admitted || !wire->clients[slot].begun ||
         wire->clients[slot].bot || wire->clients[slot].drop_pending || wire->clients[slot].seat != seat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native reader requires its installed sole local GAME client");
@@ -2338,7 +2338,7 @@ bool application_native_q3_wire_finish(application_provider *provider, qa_error 
         qa_q3_native_client source;
         if (!qa_q3_client_slot_read(provider->state.q3, slot, &source, error)) return false;
         if (!client->admitted) {
-            if (source.connected != QA_Q3_CLIENT_DISCONNECTED)
+            if (source.rule.connected != QA_Q3_CLIENT_DISCONNECTED)
                 return application_fail(error, QA_ERROR_FORMAT, "Native Q3 connected source has no retained engine admission");
             continue;
         }
@@ -2346,8 +2346,8 @@ bool application_native_q3_wire_finish(application_provider *provider, qa_error 
             return application_fail(error, QA_ERROR_FORMAT, "Restored native Q3 engine client lost its physical actor generation");
         if (wire->slot_leases[slot] && (client->bot || client->seat != wire->lease_seats[slot]))
             return application_fail(error, QA_ERROR_FORMAT, "Restored native Q3 client role differs from its actual source seat");
-        if (source.connected == QA_Q3_CLIENT_DISCONNECTED ||
-            (client->begun && source.connected != QA_Q3_CLIENT_CONNECTED))
+        if (source.rule.connected == QA_Q3_CLIENT_DISCONNECTED ||
+            (client->begun && source.rule.connected != QA_Q3_CLIENT_CONNECTED))
             return application_fail(error, QA_ERROR_FORMAT, "Restored native Q3 engine admission differs from source gclient");
     }
     for (uint32_t slot = maximum; slot < QA_Q3_SOURCE_CLIENTS; ++slot)

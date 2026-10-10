@@ -149,7 +149,7 @@ static bool client(const match_scope *scope, uint32_t slot, qa_q3_native_client 
     if (!live(scope, error) || slot >= scope->maximum ||
         !qa_q3_client_slot_read(scope->game, slot, out, error) ||
         !qa_q3_source_binding_read(scope->game, slot, binding, error)) return false;
-    if (out->connected == QA_Q3_CLIENT_DISCONNECTED) return true;
+    if (out->rule.connected == QA_Q3_CLIENT_DISCONNECTED) return true;
     uint32_t actual;
     if (!binding->actor.registry ||
         !qa_actors_get(qa_session_actors(scope->application->session), binding->actor) ||
@@ -302,7 +302,7 @@ static bool log_exit(match_scope *scope, const char *reason, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.session.team == 3 || value.connected == QA_Q3_CLIENT_CONNECTING) continue;
+        if (value.rule.session.team == 3 || value.rule.connected == QA_Q3_CLIENT_CONNECTING) continue;
         int32_t points;
         if (!score(scope, slot, &points, error)) return false;
         char score_text[12], ping[12], number[12];
@@ -373,12 +373,12 @@ static bool add_tournament_player(match_scope *scope, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.connected != QA_Q3_CLIENT_CONNECTED || value.session.team != 3 ||
-            value.session.spectator_state == QA_Q3_SPECTATOR_SCOREBOARD ||
-            value.session.spectator_client < 0) continue;
-        if (selected == UINT32_MAX || value.session.spectator_time_ms < oldest) {
+        if (value.rule.connected != QA_Q3_CLIENT_CONNECTED || value.rule.session.team != 3 ||
+            value.rule.session.spectator_state == QA_Q3_SPECTATOR_SCOREBOARD ||
+            value.rule.session.spectator_client < 0) continue;
+        if (selected == UINT32_MAX || value.rule.session.spectator_time_ms < oldest) {
             selected = slot;
-            oldest = value.session.spectator_time_ms;
+            oldest = value.rule.session.spectator_time_ms;
             actor = binding.actor;
         }
     }
@@ -413,9 +413,9 @@ static bool tournament(match_scope *scope, qa_error *error)
                 qa_q3_native_client value;
                 qa_q3_source_binding binding;
                 if (!client(scope, slot, &value, &binding, error)) return false;
-                if (value.connected == QA_Q3_CLIENT_DISCONNECTED) continue;
-                red |= value.session.team == 1;
-                blue |= value.session.team == 2;
+                if (value.rule.connected == QA_Q3_CLIENT_DISCONNECTED) continue;
+                red |= value.rule.session.team == 1;
+                blue |= value.rule.session.team == 2;
             }
             enough = red && blue;
         }
@@ -454,16 +454,16 @@ static bool tournament_scores(match_scope *scope, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.connected != QA_Q3_CLIENT_CONNECTED) continue;
+        if (value.rule.connected != QA_Q3_CLIENT_CONNECTED) continue;
         uint32_t field;
         if (!ordinal) {
-            value.session.wins = signed_bits((uint32_t)value.session.wins + 1u);
+            value.rule.session.wins = signed_bits((uint32_t)value.rule.session.wins + 1u);
             field = QA_Q3_CLIENT_SESSION_WINS;
         } else {
-            value.session.losses = signed_bits((uint32_t)value.session.losses + 1u);
+            value.rule.session.losses = signed_bits((uint32_t)value.rule.session.losses + 1u);
             field = QA_Q3_CLIENT_SESSION_LOSSES;
         }
-        if (!qa_q3_client_session_slot_write(scope->game, slot, field, &value.session, error) ||
+        if (!qa_q3_client_session_slot_write(scope->game, slot, field, &value.rule.session, error) ||
             !application_native_q3_client_userinfo_changed_slot(scope->provider, slot, error) ||
             !client_live(scope, slot, binding.actor, error)) return false;
     }
@@ -476,7 +476,7 @@ static bool scoreboard(match_scope *scope, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.connected != QA_Q3_CLIENT_CONNECTED) continue;
+        if (value.rule.connected != QA_Q3_CLIENT_CONNECTED) continue;
         if (!application_native_q3_client_scoreboard(scope->provider, binding.actor, error) ||
             !client_live(scope, slot, binding.actor, error)) return false;
     }
@@ -489,7 +489,7 @@ static bool move_to_intermission(match_scope *scope, uint32_t slot, qa_error *er
     qa_q3_source_binding binding;
     if (!client(scope, slot, &value, &binding, error)) return false;
     qa_actor_id actor = binding.actor;
-    if (value.session.spectator_state == QA_Q3_SPECTATOR_FOLLOW &&
+    if (value.rule.session.spectator_state == QA_Q3_SPECTATOR_FOLLOW &&
         (!application_native_q3_client_stop_following_slot(scope->provider, slot, error) ||
          !client_live(scope, slot, actor, error))) return false;
     qa_q3_source_match_state match;
@@ -553,7 +553,7 @@ static bool remove_tournament_loser(match_scope *scope, qa_error *error)
     qa_q3_native_client value;
     qa_q3_source_binding binding;
     if (!client(scope, slot, &value, &binding, error)) return false;
-    if (value.connected != QA_Q3_CLIENT_CONNECTED) return true;
+    if (value.rule.connected != QA_Q3_CLIENT_CONNECTED) return true;
     return application_native_q3_client_set_team(scope->provider, binding.actor, "s", error) &&
         client_live(scope, slot, binding.actor, error);
 }
@@ -590,7 +590,7 @@ static bool exit_level(match_scope *scope, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.connected != QA_Q3_CLIENT_CONNECTED) continue;
+        if (value.rule.connected != QA_Q3_CLIENT_CONNECTED) continue;
         if (!qa_modes_set_score(scope->modes, scope->mode, binding.actor, 0, error) ||
             !client_live(scope, slot, binding.actor, error) ||
             !qa_q3_client_score_reset(scope->game, slot, error)) return false;
@@ -601,7 +601,7 @@ static bool exit_level(match_scope *scope, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.connected == QA_Q3_CLIENT_CONNECTED &&
+        if (value.rule.connected == QA_Q3_CLIENT_CONNECTED &&
             !qa_q3_client_connecting(scope->game, slot, error)) return false;
     }
     return phase(scope, QA_MODE_FINISHED, 0, error);
@@ -631,14 +631,14 @@ static bool intermission_exit(match_scope *scope, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.connected != QA_Q3_CLIENT_CONNECTED) continue;
+        if (value.rule.connected != QA_Q3_CLIENT_CONNECTED) continue;
         qa_q3_player_state player;
         if (!qa_q3_player_read(scope->game, binding.actor, &player) || player.client_number < 0 ||
             !qa_q3_source_binding_read(scope->game, (uint32_t)player.client_number, &binding, error))
             return application_fail(error, QA_ERROR_NOT_FOUND,
                                     "Q3 ready state lost its source PS clientNum");
         if (binding.server_flags & 8u) continue;
-        if (value.ready_to_exit) {
+        if (value.rule.ready_to_exit) {
             ++ready;
             if (slot < 16) mask |= (int32_t)(1u << slot);
         } else ++not_ready;
@@ -647,7 +647,7 @@ static bool intermission_exit(match_scope *scope, qa_error *error)
         qa_q3_native_client value;
         qa_q3_source_binding binding;
         if (!client(scope, slot, &value, &binding, error)) return false;
-        if (value.connected == QA_Q3_CLIENT_CONNECTED &&
+        if (value.rule.connected == QA_Q3_CLIENT_CONNECTED &&
             !qa_q3_wire_client_ready(scope->game, slot, mask, error)) return false;
     }
     qa_q3_source_match_state match;
@@ -720,7 +720,7 @@ static bool check_exit(match_scope *scope, qa_error *error)
             qa_q3_native_client value;
             qa_q3_source_binding binding;
             if (!client(scope, slot, &value, &binding, error)) return false;
-            if (value.connected != QA_Q3_CLIENT_CONNECTED || value.session.team != 0) continue;
+            if (value.rule.connected != QA_Q3_CLIENT_CONNECTED || value.rule.session.team != 0) continue;
             int32_t points;
             if (!score(scope, slot, &points, error)) return false;
             if (points >= settings.frag_limit) {

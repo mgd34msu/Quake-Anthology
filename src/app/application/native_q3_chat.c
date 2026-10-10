@@ -207,7 +207,7 @@ static bool say_to(const chat_scope *scope, uint32_t slot, chat_mode mode,
 {
     chat_client target;
     if (!client_read(scope, slot, &target, error)) return false;
-    if (!target.inuse || target.persistent.connected != QA_Q3_CLIENT_CONNECTED)
+    if (!target.inuse || target.persistent.rule.connected != QA_Q3_CLIENT_CONNECTED)
         return true;
     if (mode == CHAT_TEAM || scope->game_type == 1) {
         int32_t sender_team, target_team;

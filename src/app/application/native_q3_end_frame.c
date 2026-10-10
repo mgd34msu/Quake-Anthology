@@ -82,7 +82,7 @@ static bool spectator_end_frame(application_provider *provider, qa_actor_id acto
                 return application_fail(error, QA_ERROR_FORMAT,
                     "native Q3 spectator target exceeds the fixed client records");
             if (!qa_q3_client_slot_read(game, (uint32_t)number, &target, error)) return false;
-            if (target.connected == QA_Q3_CLIENT_CONNECTED && target.session.team != 3) {
+            if (target.rule.connected == QA_Q3_CLIENT_CONNECTED && target.rule.session.team != 3) {
                 qa_q3_player followed;
                 bool live;
                 if (!qa_q3_wire_player_read(game, (uint32_t)number, &followed, error) ||

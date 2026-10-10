@@ -258,8 +258,8 @@ bool application_native_q3_team_check_hurt_carrier(void *opaque, qa_actor_id tar
     bool target_present, attacker_present;
     bool okay = client(&scope, target, &target_slot, &victim, &target_ps, &target_present, error) &&
         client(&scope, attacker, &attacker_slot, &killer, &attacker_ps, &attacker_present, error);
-    if (okay && target_present && attacker_present && victim.session.team != killer.session.team &&
-        (target_ps.powerups[victim.session.team == 1 ? 8 : 7] || target_ps.generic1)) {
+    if (okay && target_present && attacker_present && victim.rule.session.team != killer.rule.session.team &&
+        (target_ps.powerups[victim.rule.session.team == 1 ? 8 : 7] || target_ps.generic1)) {
         qa_q3_source_player_team_state state;
         okay = qa_q3_client_team_state_read(scope.game, attacker_slot, &state, error);
         if (okay) {
@@ -290,7 +290,7 @@ bool application_native_q3_source_death_score(void *opaque, qa_actor_id target,
         qa_actor_id recipient = killer_present ? attacker : target;
         uint32_t slot = killer_present ? killer_slot : victim_slot;
         int32_t amount = !killer_present || qa_actor_id_equal(target, attacker) ||
-            (qa_game_type_has_allies(scope.game_type) && victim.session.team == killer.session.team) ? -1 : 1;
+            (qa_game_type_has_allies(scope.game_type) && victim.rule.session.team == killer.rule.session.team) ? -1 : 1;
         qa_vec3 origin;
         okay = qa_q3_source_current_origin_read(scope.game, target, &origin, error) &&
             score(&scope, recipient, slot, origin, amount, true, error) &&
@@ -309,8 +309,8 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     if (!client(scope, target, &target_slot, &victim, &target_ps, &target_present, error) ||
         !client(scope, attacker, &attacker_slot, &killer, &attacker_ps, &attacker_present, error)) return false;
     if (!target_present || !attacker_present || qa_actor_id_equal(target, attacker) ||
-        (qa_game_type_has_allies(scope->game_type) && victim.session.team == killer.session.team)) return true;
-    int32_t team = victim.session.team, opposing = team == 1 ? 2 : team == 2 ? 1 : team;
+        (qa_game_type_has_allies(scope->game_type) && victim.rule.session.team == killer.rule.session.team)) return true;
+    int32_t team = victim.rule.session.team, opposing = team == 1 ? 2 : team == 2 ? 1 : team;
     int32_t flag = team == 1 ? 7 : 8;
     int32_t enemy_flag = scope->game_type == 5 ? 9 : team == 1 ? 8 : 7;
     int32_t tokens = scope->missionpack && scope->game_type == 7 ? target_ps.generic1 : 0;
@@ -345,7 +345,7 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
             qa_q3_native_client teammate;
             if (!qa_q3_source_binding_read(scope->game, slot, &row, error) ||
                 !qa_q3_client_slot_read(scope->game, slot, &teammate, error)) return false;
-            if (!row.in_use || teammate.session.team != opposing) continue;
+            if (!row.in_use || teammate.rule.session.team != opposing) continue;
             if (!qa_q3_client_team_state_read(scope->game, slot, &state, error)) return false;
             state.last_hurt_carrier_ms = 0;
             if (!qa_q3_client_team_state_write(scope->game, slot, &state, error)) return false;
@@ -374,12 +374,12 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     const char *classname;
     qa_actor_id carrier = {0};
     if (scope->missionpack && scope->game_type == 6) {
-        if (killer.session.team != 1 && killer.session.team != 2) return true;
-        classname = killer.session.team == 1 ? "team_redobelisk" : "team_blueobelisk";
+        if (killer.rule.session.team != 1 && killer.rule.session.team != 2) return true;
+        classname = killer.rule.session.team == 1 ? "team_redobelisk" : "team_blueobelisk";
     } else if (scope->missionpack && scope->game_type == 7) classname = "team_neutralobelisk";
     else {
-        if (killer.session.team != 1 && killer.session.team != 2) return true;
-        classname = killer.session.team == 1 ? "team_CTF_redflag" : "team_CTF_blueflag";
+        if (killer.rule.session.team != 1 && killer.rule.session.team != 2) return true;
+        classname = killer.rule.session.team == 1 ? "team_CTF_redflag" : "team_CTF_blueflag";
         for (uint32_t slot = 0; slot < scope->maximum; ++slot) {
             qa_q3_source_binding row;
             if (!qa_q3_source_binding_read(scope->game, slot, &row, error)) return false;
@@ -402,7 +402,7 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     if (!near_visible(scope, target_distance, base_origin, target_origin, &visible, error)) return false;
     if (!visible && !near_visible(scope, attacker_distance, base_origin, attacker_origin, &visible, error))
         return false;
-    if (visible && killer.session.team != victim.session.team)
+    if (visible && killer.rule.session.team != victim.rule.session.team)
         return points(scope, attacker, attacker_slot, target_origin, scope->missionpack ? 10 : 1, error) &&
             defend(scope, attacker, attacker_slot, true, error);
     if (!carrier.registry || qa_actor_id_equal(carrier, attacker)) return true;
@@ -412,7 +412,7 @@ static bool frag_bonuses(const team_combat_scope *scope, qa_actor_id target,
     if (!near_visible(scope, carrier_distance, carrier_origin, target_origin, &visible, error)) return false;
     if (!visible && !near_visible(scope, attacker_distance, carrier_origin, attacker_origin, &visible, error))
         return false;
-    return !visible || killer.session.team == victim.session.team ||
+    return !visible || killer.rule.session.team == victim.rule.session.team ||
         (points(scope, attacker, attacker_slot, target_origin, scope->missionpack ? 2 : 1, error) &&
          defend(scope, attacker, attacker_slot, false, error));
 }

@@ -199,8 +199,8 @@ bool application_native_q3_mode_rank_client(void *opaque, qa_mode_id mode,
         !qa_q3_client_slot_read(provider->state.q3, slot, &client, error) ||
         !qa_q3_client_server_flags(provider->state.q3, slot, &flags, error) ||
         !qa_q3_client_session_slot_read(provider->state.q3, slot, &sess, error)) return false;
-    *connected = client.connected != QA_Q3_CLIENT_DISCONNECTED;
-    *connecting = client.connected == QA_Q3_CLIENT_CONNECTING;
+    *connected = client.rule.connected != QA_Q3_CLIENT_DISCONNECTED;
+    *connecting = client.rule.connected == QA_Q3_CLIENT_CONNECTING;
     *bot = (flags & 8u) != 0;
     *source_team = sess.team;
     return true;
@@ -222,12 +222,12 @@ bool application_native_q3_mode_rank_counts(void *opaque, qa_mode_id mode,
         qa_q3_client_session sess;
         uint32_t flags;
         if (!qa_q3_client_slot_read(provider->state.q3, slot, &client, error)) return false;
-        if (client.connected == QA_Q3_CLIENT_DISCONNECTED) continue;
+        if (client.rule.connected == QA_Q3_CLIENT_DISCONNECTED) continue;
         ++counts.connected;
         if (!qa_q3_client_session_slot_read(provider->state.q3, slot, &sess, error)) return false;
         if (sess.team == 3) continue;
         ++counts.non_spectator;
-        if (client.connected != QA_Q3_CLIENT_CONNECTED) continue;
+        if (client.rule.connected != QA_Q3_CLIENT_CONNECTED) continue;
         ++counts.playing;
         if (!qa_q3_client_server_flags(provider->state.q3, slot, &flags, error)) return false;
         if (flags & 8u) continue;
@@ -255,7 +255,7 @@ static bool team_counts(application_provider *provider, qa_mode_id mode,
         qa_q3_native_client client;
         qa_q3_client_session row;
         if (!qa_q3_client_slot_read(provider->state.q3, slot, &client, error)) return false;
-        if (client.connected == QA_Q3_CLIENT_DISCONNECTED) continue;
+        if (client.rule.connected == QA_Q3_CLIENT_DISCONNECTED) continue;
         if (!qa_q3_client_session_slot_read(provider->state.q3, slot, &row, error)) return false;
         if (row.team == 1) ++counts[0];
         else if (row.team == 2) ++counts[1];
@@ -307,7 +307,7 @@ bool application_native_q3_mode_vote_calls(void *opaque, qa_mode_id mode,
     uint32_t slot;
     if (!out || !source(provider, actor, &slot, error) ||
         !qa_q3_client_read(provider->state.q3, actor, &client, error)) return false;
-    *out = team_vote ? client.team_vote_count : client.vote_count;
+    *out = team_vote ? client.rule.team_vote_count : client.rule.vote_count;
     return true;
 }
 
@@ -324,8 +324,8 @@ bool application_native_q3_mode_intermission_client(void *opaque, qa_mode_id mod
         !qa_q3_client_read(provider->state.q3, actor, &client, error) ||
         !qa_q3_player_read(provider->state.q3, actor, &player) || player.client_number < 0 ||
         !qa_q3_source_binding_read(provider->state.q3, (uint32_t)player.client_number, &row, error)) return false;
-    *eligible = client.connected == QA_Q3_CLIENT_CONNECTED && !(row.server_flags & 8u);
-    *ready = client.ready_to_exit;
+    *eligible = client.rule.connected == QA_Q3_CLIENT_CONNECTED && !(row.server_flags & 8u);
+    *ready = client.rule.ready_to_exit;
     return true;
 }
 
@@ -342,7 +342,7 @@ bool application_native_q3_mode_ready_publish(void *opaque, qa_mode_id mode,
     for (uint32_t slot = 0; ok && slot < maximum; ++slot) {
         qa_q3_native_client client;
         ok = qa_q3_client_slot_read(provider->state.q3, slot, &client, error);
-        if (ok && client.connected == QA_Q3_CLIENT_CONNECTED)
+        if (ok && client.rule.connected == QA_Q3_CLIENT_CONNECTED)
             ok = qa_q3_wire_client_ready(provider->state.q3, slot, mask, error);
     }
     application_native_q3_console_release(provider);
@@ -419,11 +419,19 @@ static bool userinfo_changed(application_provider *provider,
     memcpy(info, retained, count); info[count] = 0;
     if (strchr(info, '"') || strchr(info, ';'))
         memcpy(info, "\\name\\badinfo", sizeof("\\name\\badinfo"));
+    if (actor.registry && application_provider_for(provider->application, actor, QA_ROLE_CHARACTER, "") == provider) {
+        char requested[1024], accepted[QA_Q3_NATIVE_NETNAME] = {0};
+        qa_q3_client_info_value(info, "name", requested, sizeof(requested));
+        qa_q3_client_clean_name(requested, accepted);
+        qa_actor_player *identity = qa_actors_player(qa_session_actors(provider->application->session), actor);
+        if (!qa_strings_intern_cstr(qa_session_strings(provider->application->session),
+                accepted, &identity->name, error)) return false;
+    }
     if (!qa_q3_client_slot_userinfo(provider->state.q3, slot, info,
             sess.team == 3 && sess.spectator_state == QA_Q3_SPECTATOR_SCOREBOARD, error) ||
         !qa_q3_client_slot_read(provider->state.q3, slot, &client, error)) return false;
-    if (actor.registry && !connection(provider, actor, client.connected, error)) return false;
-    if (client.connected == QA_Q3_CLIENT_CONNECTED && strcmp(before.netname, client.netname)) {
+    if (actor.registry && !connection(provider, actor, client.rule.connected, error)) return false;
+    if (client.rule.connected == QA_Q3_CLIENT_CONNECTED && strcmp(before.netname, client.netname)) {
         char text[128];
         snprintf(text, sizeof(text), "print \"%s^7 renamed to %s\\n\"", before.netname, client.netname);
         if (!application_native_q3_send_command(provider, -1, text, error) ||
@@ -454,7 +462,7 @@ static bool userinfo_changed(application_provider *provider,
     }
     char fields[6][12];
     qa_format_q3_integer(team, fields[0]);
-    qa_format_q3_integer(client.max_health, fields[1]);
+    qa_format_q3_integer(client.rule.max_health, fields[1]);
     qa_format_q3_integer(sess.wins, fields[2]);
     qa_format_q3_integer(sess.losses, fields[3]);
     qa_format_q3_integer(team_task, fields[4]);
@@ -779,7 +787,7 @@ static bool client_disconnect(application_provider *provider,
             ok = application_native_q3_client_stop_following_slot(provider, follower, error) &&
                  source(provider, actor, &slot, error);
     }
-    if (ok && client.connected == QA_Q3_CLIENT_CONNECTED && sess.team != 3) {
+    if (ok && client.rule.connected == QA_Q3_CLIENT_CONNECTED && sess.team != 3) {
         ok = qa_q3_client_teleport_event(provider->state.q3, actor, false, error) &&
             source(provider, actor, &slot, error) &&
             qa_q3_client_disconnect_items(provider->state.q3, actor, error) &&
@@ -913,7 +921,7 @@ bool application_native_q3_client_scoreboard(application_provider *provider,
             !qa_q3_player_read(provider->state.q3, binding.actor, &ps) ||
             !qa_q3_wire_entity_read(provider->state.q3, slot, &entity, &visibility, error) ||
             !qa_q3_wire_player_read(provider->state.q3, slot, &published, error)) return false;
-        int32_t ping = client.connected == QA_Q3_CLIENT_CONNECTING ? -1 : published.ping < 999 ? published.ping : 999;
+        int32_t ping = client.rule.connected == QA_Q3_CLIENT_CONNECTING ? -1 : published.ping < 999 ? published.ping : 999;
         uint32_t bits = (uint32_t)ps.accuracy_hits * 100u;
         int32_t numerator;
         memcpy(&numerator, &bits, sizeof(numerator));
@@ -921,7 +929,7 @@ bool application_native_q3_client_scoreboard(application_provider *provider,
         int32_t accuracy;
         memcpy(&accuracy, &bits, sizeof(accuracy));
         const int32_t values[14] = {(int32_t)slot, published.persistant[0], ping,
-            difference(time, client.enter_time_ms) / 60000, 0, entity.powerups,
+            difference(time, client.rule.enter_time_ms) / 60000, 0, entity.powerups,
             accuracy, published.persistant[9], published.persistant[10],
             published.persistant[13], published.persistant[11], published.persistant[12],
             published.persistant[2] == 0 && published.persistant[8] == 0, published.persistant[14]};
@@ -1058,8 +1066,8 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
         for (uint32_t candidate = 0; candidate < maximum; ++candidate) {
             qa_q3_native_client other;
             if (!qa_q3_client_slot_read(provider->state.q3, candidate, &other, error)) return false;
-            if (other.connected != QA_Q3_CLIENT_DISCONNECTED && other.session.team == team &&
-                other.session.team_leader) { leader = (int32_t)candidate; break; }
+            if (other.rule.connected != QA_Q3_CLIENT_DISCONNECTED && other.rule.session.team == team &&
+                other.rule.session.team_leader) { leader = (int32_t)candidate; break; }
         }
         if (!qa_q3_client_server_flags(provider->state.q3, slot, &own_flags, error) ||
             (leader >= 0 && !qa_q3_client_server_flags(provider->state.q3, (uint32_t)leader, &leader_flags, error))) return false;
@@ -1156,7 +1164,7 @@ static bool stop_following(application_provider *provider, qa_actor_id actor, qa
     return source(provider, actor, &slot, error) &&
         application_native_q3_client_stop_following_slot(provider, slot, error) &&
         qa_q3_client_read(provider->state.q3, actor, &client, error) &&
-        connection(provider, actor, client.connected, error);
+        connection(provider, actor, client.rule.connected, error);
 }
 
 bool application_native_q3_mode_stop_following(void *opaque, qa_mode_id mode,
@@ -1211,7 +1219,7 @@ static bool follow_command(application_provider *provider, qa_actor_id actor,
             }
             qa_q3_native_client other;
             if (!qa_q3_client_slot_read(provider->state.q3, (uint32_t)target, &other, error)) return false;
-            if (other.connected != QA_Q3_CLIENT_CONNECTED) {
+            if (other.rule.connected != QA_Q3_CLIENT_CONNECTED) {
                 char value[12];
                 qa_format_q3_integer(target, value);
                 snprintf(output, sizeof(output), "Client %s is not active\n", value);
@@ -1223,7 +1231,7 @@ static bool follow_command(application_provider *provider, qa_actor_id actor,
                 qa_q3_native_client other;
                 char cleaned[1024];
                 if (!qa_q3_client_slot_read(provider->state.q3, candidate, &other, error)) return false;
-                if (other.connected != QA_Q3_CLIENT_CONNECTED) continue;
+                if (other.rule.connected != QA_Q3_CLIENT_CONNECTED) continue;
                 if (!sanitized(other.netname, cleaned, error)) return false;
                 if (!strcmp(name, cleaned)) { target = (int32_t)candidate; break; }
             }
@@ -1257,7 +1265,7 @@ static bool follow_command(application_provider *provider, qa_actor_id actor,
             qa_q3_client_session other_sess;
             if (!qa_q3_client_slot_read(provider->state.q3, (uint32_t)target, &other, error) ||
                 !qa_q3_client_session_slot_read(provider->state.q3, (uint32_t)target, &other_sess, error)) return false;
-            if (other.connected == QA_Q3_CLIENT_CONNECTED && other_sess.team != 3) {
+            if (other.rule.connected == QA_Q3_CLIENT_CONNECTED && other_sess.team != 3) {
                 found = true; break;
             }
             if (target == original) return true;
@@ -1285,7 +1293,7 @@ static bool team_command(application_provider *provider, qa_actor_id actor,
     if (command->argc != 2)
         return print_client(provider, slot, sess.team == 1 ? "Red team\n" :
             sess.team == 2 ? "Blue team\n" : sess.team == 3 ? "Spectator team\n" : "Free team\n", error);
-    if (client.switch_team_time_ms > time)
+    if (client.rule.switch_team_time_ms > time)
         return print_client(provider, slot, "May not switch teams more than once per 5 seconds.\n", error);
     if (game_type == 1 && sess.team == 0) {
         sess.losses = difference(sess.losses, -1);
@@ -1436,7 +1444,7 @@ bool application_native_q3_client_think_policy(application_provider *provider, q
         !qa_q3_client_command_time(provider->state.q3, actor, &previous, error)) return false;
     *accepted = *received;
     *run = false; *msec = 0;
-    if (client.connected != QA_Q3_CLIENT_CONNECTED) return true;
+    if (client.rule.connected != QA_Q3_CLIENT_CONNECTED) return true;
     int32_t maximum = difference(time, -200), minimum = difference(time, 1000);
     if (accepted->serverTime > maximum) accepted->serverTime = maximum;
     if (accepted->serverTime < minimum) accepted->serverTime = minimum;
@@ -1447,7 +1455,7 @@ bool application_native_q3_client_think_policy(application_provider *provider, q
     int32_t cached, fixed;
     if (!application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_PMOVE_MSEC, &cached, error) ||
         !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_PMOVE_FIXED, &fixed, error)) return false;
-    bool use_fixed = fixed != 0 || client.pmove_fixed;
+    bool use_fixed = fixed != 0 || client.rule.pmove_fixed;
     if ((cached < 8 || cached > 33) &&
         !application_native_q3_settings_force_set(provider, APPLICATION_Q3_SETTING_PMOVE_MSEC, cached < 8 ? "8" : "33", error)) return false;
     if (use_fixed) {
@@ -1598,13 +1606,13 @@ bool application_native_q3_source_client_run(void *opaque, qa_actor_id actor,
         !qa_q3_native_client_slot(provider->state.q3, actor, &slot, error) ||
         !qa_q3_client_slot_read(provider->state.q3, slot, &client, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 G_RunClient has no actual source frame");
-    if (client.connected != QA_Q3_CLIENT_CONNECTED) return true;
+    if (client.rule.connected != QA_Q3_CLIENT_CONNECTED) return true;
     if (!source(provider, actor, &slot, error) ||
         !application_native_q3_console_borrow(provider, error)) return false;
     bool deferred;
     bool ok = application_native_q3_client_deferred(provider, actor, &deferred, error);
     if (ok && deferred) {
-        qa_q3_usercmd command = client.command;
+        qa_q3_usercmd command = client.rule.command;
         ok = qa_q3_source_clock(provider->state.q3, &time, error) &&
             ((uint32_t)time == (uint32_t)(frame->time_ns / UINT64_C(1000000)) ||
              application_fail(error, QA_ERROR_ARGUMENT, "native Q3 G_RunClient clock differs from its ENTRY"));

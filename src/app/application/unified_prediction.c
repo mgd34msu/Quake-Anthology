@@ -78,18 +78,18 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
         qa_q1_player_view v;
         if (!qa_q1_player_read(p->state.q1, id, &v))
             return application_fail(e, QA_ERROR_NOT_FOUND, "Unified prediction lost its actual selected Q1 arsenal");
-        w->kind = QA_UNIFIED_WEAPON_Q1; w->frame = v.weapon_frame;
+        w->kind = QA_GAME_Q1; w->frame = v.weapon_frame;
         w->attack_finished_seconds = v.attack_finished; w->source_weapon = v.source_weapon;
     } else if (p->kind == APPLICATION_PROVIDER_QC) {
         qa_application_qc_animation v;
         if (!qa_application_qc_animation_read(app, id, QA_ROLE_ARSENAL, &v, e)) return false;
-        w->kind = QA_UNIFIED_WEAPON_Q1; w->frame = v.frame;
+        w->kind = QA_GAME_Q1; w->frame = v.frame;
         w->attack_finished_seconds = v.attack_finished_seconds; w->source_weapon = v.source_weapon;
         if (!qa_application_qc_animation_current(app, &v)) return false;
     } else if (p->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon_state v;
         if (!qa_q2_weapon_read(p->state.q2, id, &v, e)) return false;
-        w->kind = QA_UNIFIED_WEAPON_Q2; w->gun_frame = v.frame;
+        w->kind = QA_GAME_Q2; w->gun_frame = v.frame;
         switch (v.phase) {
         case QA_Q2_READY: w->state = 0; break;
         case QA_Q2_ACTIVATING: w->state = 1; break;
@@ -108,7 +108,7 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
         qa_application_native_q2_prediction v; bool found;
         if (!qa_application_native_q2_prediction_read(app, id, QA_ROLE_ARSENAL, &v, &found, e)) return false;
         if (!found) return application_fail(e, QA_ERROR_NOT_FOUND, "Unified prediction lost its original Q2 arsenal");
-        w->kind = QA_UNIFIED_WEAPON_Q2; w->gun_frame = v.gun_frame; w->state = v.weapon_state;
+        w->kind = QA_GAME_Q2; w->gun_frame = v.gun_frame; w->state = v.weapon_state;
         w->pending_weapon=v.pending_weapon;
         w->machinegun_shots = v.machinegun_shots; w->grenade_blew_up = v.grenade_blew_up;
         if (v.grenade_time_kind == QA_NATIVE_Q2_PREDICTION_SECONDS) w->grenade_seconds = v.grenade_time.seconds;
@@ -135,7 +135,7 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
                 v = (application_q3_weapon_prediction){source.weapon, source.weaponState, source.weaponTime};
             }
         }
-        w->kind = QA_UNIFIED_WEAPON_Q3; w->source_weapon = v.source_weapon;
+        w->kind = QA_GAME_Q3; w->source_weapon = v.source_weapon;
         w->state = v.state; w->time_ms = v.time_ms;
     } else return application_fail(e, QA_ERROR_UNSUPPORTED, "Unified prediction has no selected weapon continuation");
     return inventory(app, p, out, lease, entries, count, e);

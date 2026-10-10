@@ -463,7 +463,7 @@ bool application_unified_source_drop_recipient(qa_application *app,qa_actor_owne
         !qa_q3_client_slot_read(source->state.q3,slot,&native,error)) return false;
     if (!pending || !actual_reason || strcmp(actual_reason,reason) || !binding.in_use ||
         binding.client_slot!=(int32_t)slot || !qa_actor_id_equal(binding.actor,actual) ||
-        native.connected==QA_Q3_CLIENT_DISCONNECTED || !qa_actors_get(qa_session_actors(app->session),actual))
+        native.rule.connected==QA_Q3_CLIENT_DISCONNECTED || !qa_actors_get(qa_session_actors(app->session),actual))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source DROP differs from its actual pending native full actor");
     const application_player_record *recipient=NULL;
     for (size_t i=0;i<app->players->count;++i) {
@@ -536,7 +536,7 @@ bool application_unified_server_source_drop_current(const application_unified_se
     if (!qa_q3_source_binding_read(source->state.q3,owner->drop_source_slot,&binding,error) ||
         !qa_q3_client_slot_read(source->state.q3,owner->drop_source_slot,&player,error) ||
         !application_native_q3_wire_client_admission_read(source,owner->drop_source_slot,&wire,&admitted,error)) return false;
-    if (player.connected!=QA_Q3_CLIENT_DISCONNECTED || admitted)
+    if (player.rule.connected!=QA_Q3_CLIENT_DISCONNECTED || admitted)
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP precedes its actual requesting Source completion");
     if (qa_actors_get(qa_session_actors(current.session),receipt->actor)) {
         qa_actor_id actor;

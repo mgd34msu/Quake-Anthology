@@ -55,7 +55,7 @@ static bool admission(void *opaque, const qa_damage_request *request,
         qa_q3_native_client_slot(game, request->attack.attacker, &slot, NULL);
     if (native) {
         int32_t team = entry->spawnflags;
-        int32_t attacker = game->clients[slot].session.team;
+        int32_t attacker = game->clients[slot].rule.session.team;
         if (team == attacker) *handled = true;
         else {
             qa_q3_source_team_state state;
@@ -297,7 +297,7 @@ bool q3_obelisk_touch(qa_q3_game *game, qa_actor_id actor, qa_actor_id other, qa
     uint32_t slot;
     if (!entry || entry->state.obelisk.think != QA_Q3_OBELISK_NONE ||
         !qa_q3_native_client_slot(game, other, &slot, NULL)) return true;
-    int32_t team = game->clients[slot].session.team;
+    int32_t team = game->clients[slot].rule.session.team;
     int32_t opposing = team == 1 ? 2 : team == 2 ? 1 : team;
     if (opposing != entry->spawnflags) return true;
     if (!game->options.hooks.objective_obelisk_touch)

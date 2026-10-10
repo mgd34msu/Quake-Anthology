@@ -5,7 +5,7 @@ bool qa_q3_client_team_state_read(const qa_q3_game *game, uint32_t slot,
                                   qa_q3_source_player_team_state *out, qa_error *error) {
     if (!game || !out || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 TEAM telemetry read exceeds its fixed clients");
-    *out = game->clients[slot].team;
+    *out = game->clients[slot].rule.team;
     return true;
 }
 bool qa_q3_client_team_state_write(qa_q3_game *game, uint32_t slot,
@@ -14,7 +14,7 @@ bool qa_q3_client_team_state_write(qa_q3_game *game, uint32_t slot,
         !isfinite(value->last_hurt_carrier_ms) || !isfinite(value->last_returned_flag_ms) ||
         !isfinite(value->flag_since_ms) || !isfinite(value->last_fragged_carrier_ms))
         return q3_fail(error, "Q3 TEAM telemetry assignment has invalid source state");
-    game->clients[slot].team = *value;
+    game->clients[slot].rule.team = *value;
     return true;
 }
 bool qa_q3_client_bot_state_read(const qa_q3_game *game, uint32_t slot,
@@ -44,10 +44,10 @@ bool qa_q3_client_bot_state_read(const qa_q3_game *game, uint32_t slot,
 
 bool qa_q3_client_slot_read(const qa_q3_game *game, uint32_t slot,
     qa_q3_native_client *out, qa_error *error) {
-    const qa_q3_native_client *client = game ? q3_client_const(game, slot) : NULL;
+    const q3_client_state *client = game ? q3_client_const(game, slot) : NULL;
     if (!client || !out)
         return q3_fail(error, "Q3 client observation exceeds its source slots");
-    *out = *client;
+    q3_client_projection(game, client, out);
     return true;
 }
 
@@ -56,7 +56,7 @@ bool qa_q3_client_read(const qa_q3_game *game, qa_actor_id actor,
     uint32_t slot;
     if (!out || !q3_client_slot(game, actor, &slot))
         return q3_fail(error, "Q3 client observation has no actual source actor");
-    *out = *q3_client_const(game, slot);
+    q3_client_projection(game, q3_client_const(game, slot), out);
     return true;
 }
 
@@ -64,7 +64,7 @@ bool qa_q3_client_session_slot_read(const qa_q3_game *game, uint32_t slot,
                                     qa_q3_client_session *out, qa_error *error) {
     if (!game || !out || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 session observation exceeds its source clients");
-    *out = game->clients[slot].session;
+    *out = game->clients[slot].rule.session;
     return true;
 }
 bool qa_q3_client_session_read(const qa_q3_game *game, qa_actor_id actor,
@@ -78,7 +78,7 @@ bool qa_q3_client_session_slot_write(qa_q3_game *game, uint32_t slot, uint32_t m
     if (!game || !value || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS ||
         (mask & ~(uint32_t)QA_Q3_CLIENT_SESSION_ALL))
         return q3_fail(error, "Q3 session mutation exceeds its source clients");
-    qa_q3_client_session *session = &game->clients[slot].session;
+    qa_q3_client_session *session = &game->clients[slot].rule.session;
     if (mask & QA_Q3_CLIENT_SESSION_TEAM) session->team = value->team;
     if (mask & QA_Q3_CLIENT_SESSION_TIME) session->spectator_time_ms = value->spectator_time_ms;
     if (mask & QA_Q3_CLIENT_SESSION_STATE) session->spectator_state = value->spectator_state;
@@ -86,6 +86,9 @@ bool qa_q3_client_session_slot_write(qa_q3_game *game, uint32_t slot, uint32_t m
     if (mask & QA_Q3_CLIENT_SESSION_WINS) session->wins = value->wins;
     if (mask & QA_Q3_CLIENT_SESSION_LOSSES) session->losses = value->losses;
     if (mask & QA_Q3_CLIENT_SESSION_LEADER) session->team_leader = value->team_leader;
+    qa_actor_player *player = game->clients[slot].player;
+    if (player && !game->options.services.player_info)
+        player->spectator = session->team == 3;
     return true;
 }
 
@@ -102,29 +105,29 @@ bool qa_q3_client_team_location(qa_q3_game *game, uint32_t slot, int32_t value,
                                 qa_error *error) {
     if (!game || game->source_restored || slot >= game->options.max_clients)
         return q3_fail(error, "Q3 team location mutation exceeds its source clients");
-    game->clients[slot].team_location = value;
+    game->clients[slot].rule.team_location = value;
     return true;
 }
 bool qa_q3_client_team_state(qa_q3_game *game, qa_actor_id actor, int32_t value,
                              qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
-    client->team_state = value;
+    client->rule.team_state = value;
     return true;
 }
 bool qa_q3_client_ready(qa_q3_game *game, qa_actor_id actor, bool value,
                         qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
-    client->ready_to_exit = value;
+    client->rule.ready_to_exit = value;
     return true;
 }
 bool qa_q3_client_rank(qa_q3_game *game, uint32_t slot, int32_t value, qa_error *error) {
     if (!game || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 rank mutation exceeds its source player states");
     game->client_actors[slot].state.player.rank = value;
-    if (game->clients[slot].has_followed_player)
-        game->clients[slot].followed_player.persistant[2] = value;
+    if (game->clients[slot].rule.has_followed_player)
+        game->clients[slot].rule.followed_player.persistant[2] = value;
     return true;
 }
 bool qa_q3_client_persistent_team(qa_q3_game *game, uint32_t slot, int32_t value,
@@ -132,8 +135,8 @@ bool qa_q3_client_persistent_team(qa_q3_game *game, uint32_t slot, int32_t value
     if (!game || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 PERS_TEAM mutation exceeds its source player states");
     game->client_actors[slot].state.player.persistent_team = value;
-    if (game->clients[slot].has_followed_player)
-        game->clients[slot].followed_player.persistant[3] = value;
+    if (game->clients[slot].rule.has_followed_player)
+        game->clients[slot].rule.followed_player.persistant[3] = value;
     return true;
 }
 bool qa_q3_client_tokens_read(const qa_q3_game *game, qa_actor_id actor,
@@ -172,27 +175,27 @@ bool q3_followed_player_saved_valid(const qa_q3_game *game, const qa_q3_player *
         player->stats[3 + shift] == 0;
 }
 qa_q3_player *q3_client_follow_player(qa_q3_game *game, uint32_t slot) {
-    return game && slot < QA_Q3_NATIVE_CLIENTS && game->clients[slot].has_followed_player
-        ? &game->clients[slot].followed_player : NULL;
+    return game && slot < QA_Q3_NATIVE_CLIENTS && game->clients[slot].rule.has_followed_player
+        ? &game->clients[slot].rule.followed_player : NULL;
 }
 bool qa_q3_client_follow_read(const qa_q3_game *game, uint32_t slot,
                               qa_q3_player *out, bool *present, qa_error *error) {
     if (!game || !out || !present || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 followed PS observation exceeds its fixed clients");
-    *present = game->clients[slot].has_followed_player;
-    *out = game->clients[slot].followed_player;
+    *present = game->clients[slot].rule.has_followed_player;
+    *out = game->clients[slot].rule.followed_player;
     return true;
 }
 bool qa_q3_client_follow_clear(qa_q3_game *game, uint32_t slot, qa_error *error) {
     if (!game || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 followed PS reset exceeds its fixed clients");
-    game->clients[slot].has_followed_player = false;
-    game->clients[slot].followed_player = (qa_q3_player){0};
+    game->clients[slot].rule.has_followed_player = false;
+    game->clients[slot].rule.followed_player = (qa_q3_player){0};
     return true;
 }
 bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
                               const qa_q3_player *source, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client || !q3_followed_player_valid(game, source))
         return q3_fail(error, "Q3 followed PS copy lacks genuine source values");
     size_t item_count;
@@ -204,8 +207,8 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
         persistent < 0 || (size_t)persistent >= item_count ||
         (persistent && items[persistent].kind != QA_Q3_ITEM_PERSISTENT))
         return q3_fail(error, "Q3 followed PS contains invalid source item references");
-    uint32_t votes = client->has_followed_player
-        ? (uint32_t)client->followed_player.eFlags : q3_actor_get(game, actor)->state.player.flags;
+    uint32_t votes = client->rule.has_followed_player
+        ? (uint32_t)client->rule.followed_player.eFlags : q3_actor_get(game, actor)->state.player.flags;
     qa_q3_player copied = *source;
     memset(copied.origin, 0, sizeof(copied.origin));
     memset(copied.velocity, 0, sizeof(copied.velocity));
@@ -224,8 +227,8 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
     uint32_t slot;
     if (!qa_q3_native_client_slot(game, actor, &slot, error)) return false;
     q3_wire_client_follow_copy(game, slot, &copied);
-    client->followed_player = copied;
-    client->has_followed_player = true;
+    client->rule.followed_player = copied;
+    client->rule.has_followed_player = true;
     qa_q3_player_state *player = &q3_actor_get(game, actor)->state.player;
     qa_q3_player_motion motion = {.command_time_ms = copied.commandTime,
         .delta_pitch_word = copied.deltaAngles[0], .delta_yaw_word = copied.deltaAngles[1],
@@ -262,7 +265,6 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
     player->player_events = copied.persistant[5];
     player->max_health = copied.stats[6 + (copied.product == QA_Q3_TEAM_ARENA ? 1 : 0)];
     player->dead_yaw = copied.stats[4 + (copied.product == QA_Q3_TEAM_ARENA ? 1 : 0)];
-    game->clients[slot].ping = copied.ping;
     player->impressive_count = copied.persistant[9]; player->excellent_count = copied.persistant[10];
     player->defend_count = copied.persistant[11]; player->assist_count = copied.persistant[12];
     player->gauntlet_frag_count = copied.persistant[13]; player->captures = copied.persistant[14];
@@ -270,7 +272,7 @@ bool qa_q3_client_follow_copy(qa_q3_game *game, qa_actor_id actor,
 }
 bool qa_q3_client_follow_scoreboard(qa_q3_game *game, qa_actor_id actor, bool enabled,
                                     qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
     qa_q3_wire_policy policy;
     if (!qa_q3_wire_player_policy_read(game, actor, &policy, error)) return false;
@@ -279,34 +281,35 @@ bool qa_q3_client_follow_scoreboard(qa_q3_game *game, qa_actor_id actor, bool en
     if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_FLAGS, &policy, error)) return false;
     client = q3_client_actor(game, actor, error);
     if (!client) return false;
-    if (client->has_followed_player) client->followed_player.pmFlags = policy.pm_flags;
+    if (client->rule.has_followed_player) client->rule.followed_player.pmFlags = policy.pm_flags;
     return true;
 }
 bool qa_q3_client_inactivity_read(const qa_q3_game *game, qa_actor_id actor,
                                   int32_t *deadline, bool *warned, qa_error *error) {
     uint32_t slot;
     if (!deadline || !warned || !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
-    *deadline = game->clients[slot].inactivity_time_ms;
-    *warned = game->clients[slot].inactivity_warning;
+    *deadline = game->clients[slot].rule.inactivity_time_ms;
+    *warned = game->clients[slot].rule.inactivity_warning;
     return true;
 }
 bool qa_q3_client_inactivity_write(qa_q3_game *game, qa_actor_id actor,
                                    int32_t deadline, bool warned, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
-    client->inactivity_time_ms = deadline;
-    client->inactivity_warning = warned;
+    client->rule.inactivity_time_ms = deadline;
+    client->rule.inactivity_warning = warned;
     return true;
 }
 
 bool qa_q3_client_connect(qa_q3_game *game, qa_actor_id actor, bool bot, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
     uint32_t client_slot;
     if (!q3_client_slot(game, actor, &client_slot)) return false;
     q3_wire_client_clear(game, client_slot);
-    *client = (qa_q3_native_client){.connected = QA_Q3_CLIENT_CONNECTING,
-                                    .source_model_shape = client->source_model_shape};
+    *client = (q3_client_state){.rule = {.connected = QA_Q3_CLIENT_CONNECTING,
+        .source_model_shape = client->rule.source_model_shape}, .player = client->player};
+    if (!client->player->present) client->player->bot = bot;
     q3_actor *entry = q3_actor_get(game, actor);
     uint32_t selections = entry->state.player.selections;
     entry->state.player = (qa_q3_player_state){.selections = selections};
@@ -331,12 +334,12 @@ bool qa_q3_client_connect(qa_q3_game *game, qa_actor_id actor, bool bot, qa_erro
 }
 
 bool qa_q3_client_begin_state(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
-    if (!client || client->connected == QA_Q3_CLIENT_DISCONNECTED)
+    q3_client_state *client = q3_client_actor(game, actor, error);
+    if (!client || client->rule.connected == QA_Q3_CLIENT_DISCONNECTED)
         return client ? q3_fail(error, "Q3 ClientBegin requires a connected source client") : false;
-    client->connected = QA_Q3_CLIENT_CONNECTED;
-    client->enter_time_ms = game->now_ms;
-    client->team_state = 0;
+    client->rule.connected = QA_Q3_CLIENT_CONNECTED;
+    client->rule.enter_time_ms = game->now_ms;
+    client->rule.team_state = 0;
     q3_actor *entry = q3_actor_get(game, actor);
     uint32_t slot;
     if (!q3_client_slot(game, actor, &slot)) return false;
@@ -444,7 +447,7 @@ bool qa_q3_client_taunt_kill_clear(qa_q3_game *game, qa_actor_id actor, qa_error
 }
 
 bool qa_q3_client_disconnect(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
     uint32_t slot;
     qa_string_id classname;
@@ -457,7 +460,7 @@ bool qa_q3_client_disconnect(qa_q3_game *game, qa_actor_id actor, qa_error *erro
     source->model = 0;
     game->source_entities[slot].in_use = false;
     game->source_entities[slot].classname = classname;
-    client->connected = QA_Q3_CLIENT_DISCONNECTED;
+    client->rule.connected = QA_Q3_CLIENT_DISCONNECTED;
     if (!qa_q3_client_persistent_team(game, slot, 0, error)) return false;
     game->source_entities[slot].body_attached = false;
     return true;
@@ -502,18 +505,18 @@ bool qa_q3_client_player_flags_update(qa_q3_game *game, uint32_t slot,
         return q3_fail(error, "Q3 player flags exceed its configured source clients");
     qa_q3_player_state *player = &game->client_actors[slot].state.player;
     player->flags = (player->flags & ~clear_bits) | set_bits;
-    if (game->clients[slot].has_followed_player)
-        game->clients[slot].followed_player.eFlags = (int32_t)(
-            ((uint32_t)game->clients[slot].followed_player.eFlags & ~clear_bits) | set_bits);
+    if (game->clients[slot].rule.has_followed_player)
+        game->clients[slot].rule.followed_player.eFlags = (int32_t)(
+            ((uint32_t)game->clients[slot].rule.followed_player.eFlags & ~clear_bits) | set_bits);
     return true;
 }
 
 bool qa_q3_client_command(qa_q3_game *game, qa_actor_id actor,
     const qa_q3_usercmd *command, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client || !command)
         return client ? q3_fail(error, "Q3 ClientThink lacks its accepted command") : false;
-    client->command = *command;
+    client->rule.command = *command;
     memcpy(q3_actor_get(game, actor)->state.player.last_command_angles,
            command->angles, sizeof(command->angles));
     return true;
@@ -526,22 +529,22 @@ bool qa_q3_client_received_command(qa_q3_game *game, qa_actor_id actor,
 }
 bool qa_q3_client_buttons(qa_q3_game *game, qa_actor_id actor, uint32_t buttons,
                           bool latch, uint32_t *old, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client || !old) return client ? q3_fail(error, "Q3 button producer lacks oldButtons output") : false;
-    client->old_buttons = client->buttons;
-    client->buttons = buttons;
-    if (latch) client->latched_buttons |= buttons & ~client->old_buttons;
-    *old = client->old_buttons;
+    client->rule.old_buttons = client->rule.buttons;
+    client->rule.buttons = buttons;
+    if (latch) client->rule.latched_buttons |= buttons & ~client->rule.old_buttons;
+    *old = client->rule.old_buttons;
     return true;
 }
 bool qa_q3_client_reward_expire(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
     qa_q3_player_state *player = &q3_actor_get(game, actor)->state.player;
     if (game->now_ms > player->reward_until) {
         player->flags &= ~0x38848u;
-        if (client->has_followed_player)
-            client->followed_player.eFlags = (int32_t)((uint32_t)client->followed_player.eFlags & ~0x38848u);
+        if (client->rule.has_followed_player)
+            client->rule.followed_player.eFlags = (int32_t)((uint32_t)client->rule.followed_player.eFlags & ~0x38848u);
     }
     return true;
 }
@@ -571,7 +574,7 @@ bool qa_q3_client_command_time(const qa_q3_game *game, qa_actor_id actor,
     uint32_t slot;
     if (!out || !q3_client_slot(game, actor, &slot))
         return q3_fail(error, "Q3 command time needs its actual source client");
-    if (game->clients[slot].has_followed_player) *out = game->clients[slot].followed_player.commandTime;
+    if (game->clients[slot].rule.has_followed_player) *out = game->clients[slot].rule.followed_player.commandTime;
     else {
         qa_q3_player_motion motion;
         if (!q3_player_motion_read(game, actor, &motion, error)) return false;
@@ -646,23 +649,23 @@ bool qa_q3_client_teleport_event(qa_q3_game *game, qa_actor_id actor,
 }
 
 bool qa_q3_client_ping(qa_q3_game *game, qa_actor_id actor, int32_t ping, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
-    client->ping = ping;
+    client->player->ping = ping;
     return true;
 }
 bool qa_q3_client_initial_spawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
-    client->initial_spawn = true;
+    client->rule.initial_spawn = true;
     return true;
 }
 
 bool qa_q3_client_team_switch_time(qa_q3_game *game, qa_actor_id actor,
     int32_t time_ms, qa_error *error) {
-    qa_q3_native_client *client = q3_client_actor(game, actor, error);
+    q3_client_state *client = q3_client_actor(game, actor, error);
     if (!client) return false;
-    client->switch_team_time_ms = time_ms;
+    client->rule.switch_team_time_ms = time_ms;
     return true;
 }
 
@@ -676,8 +679,8 @@ bool qa_q3_player_begin_command(qa_q3_game *game, qa_actor_id actor,
         return q3_fail(error, "Q3 begin command has no admitted native client slot");
     for (size_t i = 0; i < 3; ++i)
         entry->state.player.last_command_angles[i] = command->angles[i];
-    qa_q3_native_client *client = q3_client_at(game, slot);
-    client->command = *command;
-    client->team_state = 1;
+    q3_client_state *client = q3_client_at(game, slot);
+    client->rule.command = *command;
+    client->rule.team_state = 1;
     return true;
 }

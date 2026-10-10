@@ -122,7 +122,7 @@ static bool frame_read(frontend_unified_input *p,double time,
     }
     if(frame.kind==QA_RULESET_Q3) {
         const qa_unified_weapon_state *weapon=&predicted->prediction->weapon;
-        if(weapon->kind==QA_UNIFIED_WEAPON_Q3) frame.weapon=weapon->source_weapon;
+        if(weapon->kind==QA_GAME_Q3) frame.weapon=weapon->source_weapon;
         if(p->has_q3_values) { frame.weapon=p->q3_weapon; frame.sensitivity=p->q3_sensitivity; }
     }
     *out=frame;return true;

@@ -180,7 +180,7 @@ static bool source_command_current(const application_native_q3_source_command_sc
         qa_q3_native_client_slot(scope->game,scope->actor,&slot,NULL)&&slot==scope->slot&&
         qa_q3_source_binding_read(scope->game,slot,&binding,NULL)&&binding.in_use&&
         binding.client_slot==(int32_t)slot&&qa_actor_id_equal(binding.actor,scope->actor)&&
-        qa_q3_client_read(scope->game,scope->actor,&client,NULL)&&client.connected==QA_Q3_CLIENT_CONNECTED;
+        qa_q3_client_read(scope->game,scope->actor,&client,NULL)&&client.rule.connected==QA_Q3_CLIENT_CONNECTED;
 }
 bool application_native_q3_source_command_entered(const application_provider *provider)
 {
@@ -208,7 +208,7 @@ static bool source_drop_current(const application_native_q3_source_drop_scope *s
         application_native_q3_wire_client_view wire;
         bool admitted;
         return qa_q3_client_slot_read(scope->game,scope->slot,&client,NULL)&&
-            client.connected==QA_Q3_CLIENT_DISCONNECTED&&
+            client.rule.connected==QA_Q3_CLIENT_DISCONNECTED&&
             application_native_q3_wire_client_admission_read(p,scope->slot,&wire,&admitted,NULL)&&!admitted;
     }
     qa_actor_id actor;

@@ -134,8 +134,8 @@ static bool warning(void *context, const qa_qvm_call *call, int32_t *result, qa_
     bool active;
     if (!selected(owner, &active, error)) return false;
     if (!active) return qa_qvm_proceed(call, result, error);
-    int32_t value = owner->draw.warning == QA_APPLICATION_AMMO_EMPTY ? owner->profile->warning_empty :
-        owner->draw.warning == QA_APPLICATION_AMMO_LOW ? owner->profile->warning_low : owner->profile->warning_none;
+    int32_t value = owner->draw.warning == QA_AMMO_EMPTY ? owner->profile->warning_empty :
+        owner->draw.warning == QA_AMMO_LOW ? owner->profile->warning_low : owner->profile->warning_none;
     warning_call request = {result};
     return qa_qvm_source_global_word(call, owner->module.image, owner->profile->warning_state,
         value, warning_proceed, &request, error);
@@ -361,7 +361,7 @@ bool application_q3_equipment_draw_begin(application_q3_equipment *owner, qa_err
         owner->services.release_draw(owner->services.context);
         return false;
     }
-    if ((unsigned)draw.warning > QA_APPLICATION_AMMO_EMPTY ||
+    if ((unsigned)draw.warning > QA_AMMO_EMPTY ||
         ((draw.selected || !draw.view_visible) && !owner->profile->present)) {
         owner->services.release_draw(owner->services.context);
         return application_fail(error, QA_ERROR_FORMAT, "Selected source equipment requires its artifact-declared presentation boundaries");
@@ -417,10 +417,10 @@ bool application_q3_equipment_state_qualify(const application_q3_equipment *owne
     const application_q3_equipment_saved *saved, qa_error *error)
 {
     if (!saved || !application_q3_equipment_idle(owner) ||
-        (unsigned)saved->draw.warning > QA_APPLICATION_AMMO_EMPTY ||
+        (unsigned)saved->draw.warning > QA_AMMO_EMPTY ||
         (saved->draw.selected && (!owner || !owner->profile->present || !saved->draw.actor.registry)) ||
         (!owner && (saved->draw.actor.registry || saved->draw.selected || saved->draw.view_visible ||
-            saved->draw.warning != QA_APPLICATION_AMMO_NONE || saved->hud_requested || saved->view_requested)) ||
+            saved->draw.warning != QA_AMMO_NONE || saved->hud_requested || saved->view_requested)) ||
         (owner && !owner->profile->present && (saved->hud_requested || saved->view_requested)))
         return application_fail(error, QA_ERROR_FORMAT, "Equipment continuation differs from its actual idle declaration owner");
     return true;

@@ -126,7 +126,7 @@ bool qa_q3_client_award(qa_q3_game *game, qa_actor_id actor, qa_q3_source_award 
         return q3_fail(error, "Q3 source award lacks its actual player state");
     qa_q3_player_state *player = &entry->state.player;
     uint32_t slot;
-    qa_q3_native_client *client = qa_q3_native_client_slot(game, actor, &slot, NULL)
+    q3_client_state *client = qa_q3_native_client_slot(game, actor, &slot, NULL)
         ? &game->clients[slot] : NULL;
     int32_t *count;
     switch (award) {
@@ -139,13 +139,13 @@ bool qa_q3_client_award(qa_q3_game *game, qa_actor_id actor, qa_q3_source_award 
     default: return q3_fail(error, "Q3 source award has no actual persistant slot");
     }
     *count = q3_add_time(*count, amount);
-    if (client && client->has_followed_player) client->followed_player.persistant[(uint32_t)award] = *count;
+    if (client && client->rule.has_followed_player) client->rule.followed_player.persistant[(uint32_t)award] = *count;
     return true;
 }
 bool qa_q3_client_connecting(qa_q3_game *game, uint32_t slot, qa_error *error) {
     if (!game || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 connection mutation exceeds its fixed client owner");
-    game->clients[slot].connected = QA_Q3_CLIENT_CONNECTING;
+    game->clients[slot].rule.connected = QA_Q3_CLIENT_CONNECTING;
     return true;
 }
 bool qa_q3_client_score_reset(qa_q3_game *game, uint32_t slot, qa_error *error) {
@@ -153,7 +153,7 @@ bool qa_q3_client_score_reset(qa_q3_game *game, uint32_t slot, qa_error *error) 
         return q3_fail(error, "Q3 source score reset exceeds its fixed client owner");
     qa_q3_player *copied = q3_client_follow_player(game, slot);
     if (copied) copied->persistant[0] = 0;
-    game->clients[slot].retired_score = 0;
+    game->clients[slot].rule.retired_score = 0;
     return true;
 }
 static bool move_intermission(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin,

@@ -546,7 +546,7 @@ static bool native_disconnected(application_provider *source,const component_dro
         return application_fail(e,QA_ERROR_ARGUMENT,"Component native disconnect lost its retained actor/slot");
     if(!qa_q3_client_slot_read(source->state.q3,slot,&client,e)||
         !application_native_q3_wire_client_admission_read(source,slot,&wire,&admitted,e)) return false;
-    *disconnected=client.connected==QA_Q3_CLIENT_DISCONNECTED&&!admitted;
+    *disconnected=client.rule.connected==QA_Q3_CLIENT_DISCONNECTED&&!admitted;
     return true;
 }
 

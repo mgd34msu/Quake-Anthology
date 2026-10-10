@@ -129,7 +129,7 @@ bool qa_application_q3_campaign_local_seat(qa_application *app,
             !qa_q3_client_slot_read(view->source_game, slot, &client, error))
             return application_fail(error, QA_ERROR_ARGUMENT, "Campaign result names an invalid physical client");
         if (!binding.in_use || !binding.actor.registry || (binding.server_flags & 8u) ||
-            client.connected == QA_Q3_CLIENT_DISCONNECTED || !app->players) return true;
+            client.rule.connected == QA_Q3_CLIENT_DISCONNECTED || !app->players) return true;
         source_actor = binding.actor;
         if (!qa_q3_native_client_slot(view->source_game, source_actor, &actual_slot, error) || actual_slot != slot)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign physical client lost its full actor binding");
@@ -169,7 +169,7 @@ bool qa_application_q3_campaign_player_name(qa_application *app,
             !qa_q3_client_slot_read(view->source_game, slot, &client, error))
             return application_fail(error, QA_ERROR_ARGUMENT, "Campaign name lookup names an invalid physical client");
         if (!binding.actor.registry || binding.client_slot != (int32_t)slot ||
-            client.connected == QA_Q3_CLIENT_DISCONNECTED ||
+            client.rule.connected == QA_Q3_CLIENT_DISCONNECTED ||
             !qa_q3_native_client_slot(view->source_game, binding.actor, &actual_slot, error) || actual_slot != slot)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign name has no live physical native client binding");
         if (!memchr(client.netname, 0, sizeof(client.netname)))

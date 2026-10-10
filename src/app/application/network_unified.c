@@ -339,7 +339,7 @@ bool application_unified_source_slot_occupied(qa_application *app, uint32_t slot
         qa_q3_native_client client;
         if (!qa_q3_source_binding_read(source->state.q3, slot, &binding, error) ||
             !qa_q3_client_slot_read(source->state.q3, slot, &client, error)) return false;
-        occupied |= binding.actor.registry != 0 || client.connected != QA_Q3_CLIENT_DISCONNECTED;
+        occupied |= binding.actor.registry != 0 || client.rule.connected != QA_Q3_CLIENT_DISCONNECTED;
     } else if (source->kind == APPLICATION_PROVIDER_QC) {
         const application_qc_client *client = source->state.qc.engine->clients + slot + 1;
         occupied |= client->connected || client->prepared;
@@ -815,7 +815,7 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
     if (!qa_q3_native_client_slot(provider->state.q3,player.actor,&slot,error) ||
         !qa_q3_source_binding_read(provider->state.q3,slot,&binding,error) || !binding.in_use ||
         binding.client_slot!=(int32_t)slot || !qa_actor_id_equal(binding.actor,player.actor) ||
-        !qa_q3_client_read(provider->state.q3,player.actor,&native,error) || native.connected!=QA_Q3_CLIENT_CONNECTED)
+        !qa_q3_client_read(provider->state.q3,player.actor,&native,error) || native.rule.connected!=QA_Q3_CLIENT_CONNECTED)
         return application_fail(error,QA_ERROR_ARGUMENT,"Source command lost its admitted full physical GAME client");
     size_t extent=0;
     for (size_t i=0;i<value->argument_count;++i) {

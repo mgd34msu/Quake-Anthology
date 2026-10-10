@@ -247,7 +247,7 @@ static bool overlay(const team_scope *scope, uint32_t recipient,
             !qa_q3_wire_entity_read(scope->game, slot, &entity, &visibility, error) ||
             !binding_current(scope, slot, &binding, error)) return false;
         unsigned armor = player.product == QA_Q3_TEAM_ARENA ? 4u : 3u;
-        int32_t fields[6] = {(int32_t)slot, client.team_location,
+        int32_t fields[6] = {(int32_t)slot, client.rule.team_location,
             player.stats[0] < 0 ? 0 : player.stats[0],
             player.stats[armor] < 0 ? 0 : player.stats[armor],
             player.weapon, entity.powerups};
@@ -282,7 +282,7 @@ static bool status(team_scope *scope, qa_error *error)
         qa_q3_native_client client;
         int32_t team;
         if (!client_read(scope, slot, &binding, &client, error)) return false;
-        if (client.connected != QA_Q3_CLIENT_CONNECTED || !binding.in_use) continue;
+        if (client.rule.connected != QA_Q3_CLIENT_CONNECTED || !binding.in_use) continue;
         if (!team_of(scope, slot, &team, error)) return false;
         if (team != 1 && team != 2) continue;
         qa_q3_map_team_location location;
@@ -297,9 +297,9 @@ static bool status(team_scope *scope, qa_error *error)
         qa_q3_native_client client;
         int32_t team;
         if (!client_read(scope, slot, &binding, &client, error)) return false;
-        if (client.connected != QA_Q3_CLIENT_CONNECTED || !binding.in_use) continue;
+        if (client.rule.connected != QA_Q3_CLIENT_CONNECTED || !binding.in_use) continue;
         if (!team_of(scope, slot, &team, error)) return false;
-        if ((team == 1 || team == 2) && client.team_info &&
+        if ((team == 1 || team == 2) && client.rule.team_info &&
             !overlay(scope, slot, &binding, team, error)) return false;
     }
     return true;

@@ -51,7 +51,7 @@ typedef struct qa_q3_bot_player_state {
 
 /* The source pers.cmd is copied from the accepted engine command. Session,
  * movement commandTime, inventory and combat retain their actual owners. */
-typedef struct qa_q3_native_client {
+typedef struct qa_q3_client_rule_tail {
     qa_q3_client_connection connected;
     qa_q3_usercmd command;
     qa_q3_client_session session;
@@ -59,16 +59,22 @@ typedef struct qa_q3_native_client {
     int32_t retired_score;
     qa_shape_kind source_model_shape;
     int32_t max_health, enter_time_ms, team_state, team_location;
-    int32_t switch_team_time_ms, ping;
+    int32_t switch_team_time_ms;
     int32_t vote_count, team_vote_count;
     uint32_t old_buttons, buttons, latched_buttons;
     int32_t inactivity_time_ms;
     qa_vec3 old_origin;
     qa_q3_player followed_player;
-    char netname[QA_Q3_NATIVE_NETNAME];
     bool local_client, initial_spawn, predict_item_pickup, pmove_fixed, team_info;
     bool ready_to_exit;
     bool inactivity_warning, has_followed_player;
+} qa_q3_client_rule_tail;
+
+/* Stack/checkpoint projection; current identity belongs to the actor page. */
+typedef struct qa_q3_native_client {
+    qa_q3_client_rule_tail rule;
+    int32_t ping;
+    char netname[QA_Q3_NATIVE_NETNAME];
 } qa_q3_native_client;
 
 #endif

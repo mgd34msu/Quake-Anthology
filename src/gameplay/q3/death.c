@@ -111,11 +111,11 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
         else if (game->options.product == QA_Q3_TEAM_ARENA && method >= 23 && method <= 28)
             name = expansion_methods[method - 23];
         const char *killer_name = killer_number == (int32_t)QA_Q3_SOURCE_WORLD
-            ? "<world>" : game->clients[killer_number].netname;
+            ? "<world>" : q3_client_name(game, &game->clients[killer_number]);
         char line[256];
         snprintf(line, sizeof(line), "Kill: %i %u %i: %s killed %s by %s\n",
                  killer_number, victim_slot, method, killer_name,
-                 game->clients[victim_slot].netname, name);
+                 q3_client_name(game, &game->clients[victim_slot]), name);
         if (!game->options.hooks.source_log(game->options.hooks.context, line, error))
             return false;
         if (!q3_actor_get(game, victim))
@@ -175,9 +175,9 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
         return true;
     uint32_t attacker_slot, receiver_slot;
     int32_t victim_team = qa_q3_native_client_slot(game, victim, &receiver_slot, NULL)
-        ? game->clients[receiver_slot].session.team : (int32_t)vc.team;
+        ? game->clients[receiver_slot].rule.session.team : (int32_t)vc.team;
     int32_t killer_team = qa_q3_native_client_slot(game, attacker, &attacker_slot, NULL)
-        ? game->clients[attacker_slot].session.team : (int32_t)kc.team;
+        ? game->clients[attacker_slot].rule.session.team : (int32_t)kc.team;
     if (qa_game_type_has_allies(game->options.rules.game_type) && victim_team == killer_team)
         return true;
     qa_q3_player_state *player = &killer->state.player;

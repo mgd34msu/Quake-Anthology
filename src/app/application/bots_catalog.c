@@ -86,8 +86,8 @@ static bool client_read(void *context,int32_t number,qa_bot_catalog_client *out,
        !qa_q3_client_slot_read(actual->state.q3,(uint32_t)number,&client,error) ||
        !qa_q3_client_bot_state_read(actual->state.q3,(uint32_t)number,&state,error)) return false;
     memcpy(bots->catalogue_name,client.netname,sizeof(bots->catalogue_name));
-    *out=(qa_bot_catalog_client){.name=bots->catalogue_name,.team=client.session.team,
-        .has_player=state.has_player,.connected=client.connected==QA_Q3_CLIENT_CONNECTED,
+    *out=(qa_bot_catalog_client){.name=bots->catalogue_name,.team=client.rule.session.team,
+        .has_player=state.has_player,.connected=client.rule.connected==QA_Q3_CLIENT_CONNECTED,
         .bot=(binding.server_flags&8u)!=0};return true;
 }
 static bool allocate_client(void *context,int32_t *out,qa_error *error) {

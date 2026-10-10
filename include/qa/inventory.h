@@ -2,6 +2,8 @@
 #define QA_INVENTORY_H
 #include "qa/gameplay.h"
 
+typedef enum qa_ammo_warning { QA_AMMO_NONE, QA_AMMO_LOW, QA_AMMO_EMPTY } qa_ammo_warning;
+
 typedef enum qa_inventory_count_policy { QA_COUNT_STACK, QA_COUNT_SOURCE_FLOAT, QA_COUNT_SOURCE_INT32, QA_COUNT_SOURCE_DOUBLE } qa_inventory_count_policy;
 /* Double API values retain every signed int32 counter exactly. SOURCE_FLOAT
  * stores round to native float; this is not a selectable arithmetic backend. */

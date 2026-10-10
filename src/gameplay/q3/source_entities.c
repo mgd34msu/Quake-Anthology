@@ -1,11 +1,34 @@
 #include "map/internal.h"
 #include "qa/game_q3_source.h"
 
-qa_q3_native_client *q3_client_at(qa_q3_game *game, uint32_t slot) {
+q3_client_state *q3_client_at(qa_q3_game *game, uint32_t slot) {
     return game && slot < QA_Q3_NATIVE_CLIENTS ? &game->clients[slot] : NULL;
 }
-const qa_q3_native_client *q3_client_const(const qa_q3_game *game, uint32_t slot) {
+const q3_client_state *q3_client_const(const qa_q3_game *game, uint32_t slot) {
     return game && slot < QA_Q3_NATIVE_CLIENTS ? &game->clients[slot] : NULL;
+}
+const char *q3_client_name(const qa_q3_game *game, const q3_client_state *client) {
+    return client->source_name ? (const char *)qa_strings_text(
+        qa_session_strings(game->options.services.session), client->source_name).data : "";
+}
+void q3_client_name_bytes(const qa_q3_game *game, const q3_client_state *client,
+    char out[QA_Q3_NATIVE_NETNAME]) {
+    if (client->source_name) memcpy(out, q3_client_name(game, client), QA_Q3_NATIVE_NETNAME);
+    else memset(out, 0, QA_Q3_NATIVE_NETNAME);
+}
+bool q3_client_name_store(qa_q3_game *game, q3_client_state *client,
+    const char name[QA_Q3_NATIVE_NETNAME], qa_error *error) {
+    return qa_strings_intern(qa_session_strings(game->options.services.session),
+        (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME}, &client->source_name, error);
+}
+int32_t q3_client_ping_value(const q3_client_state *client) {
+    return client->rule.has_followed_player ? client->rule.followed_player.ping
+        : client->player ? client->player->ping : 0;
+}
+void q3_client_projection(const qa_q3_game *game, const q3_client_state *client,
+    qa_q3_native_client *out) {
+    *out = (qa_q3_native_client){.rule = client->rule, .ping = q3_client_ping_value(client)};
+    q3_client_name_bytes(game, client, out->netname);
 }
 void q3_source_state_reset(qa_q3_game *game) {
     q3_wire_reset(game);
@@ -24,7 +47,7 @@ void q3_source_state_reset(qa_q3_game *game) {
     memset(game->client_actors, 0, sizeof(game->client_actors));
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i) {
         game->client_actors[i] = (q3_actor){.kind = Q3_ACTOR_PLAYER, .alpha = 1};
-        game->clients[i].source_model_shape = QA_SHAPE_BOX;
+        game->clients[i].rule.source_model_shape = QA_SHAPE_BOX;
     }
     memset(game->source_entities, 0, sizeof(game->source_entities));
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
@@ -144,7 +167,7 @@ bool qa_q3_source_classname_read(const qa_q3_game *game, uint32_t slot,
     if (entry && entry->kind == Q3_ACTOR_VICTORY_MODEL) {
         if (binding->client_slot < 0 || binding->client_slot >= (int32_t)QA_Q3_NATIVE_CLIENTS)
             return q3_fail(error, "Q3 victory classname lost its borrowed client pointer");
-        *out = game->clients[binding->client_slot].netname;
+        *out = q3_client_name(game, &game->clients[binding->client_slot]);
         return true;
     }
     *out = qa_strings_cstr(qa_session_strings(game->options.services.session),
@@ -192,6 +215,9 @@ static bool bind(qa_q3_game *game, uint32_t slot, qa_actor_id actor, qa_error *e
             .client_slot = row->client_slot, .body_attached = true};
     game->source_numbers[actor.slot] = (uint16_t)slot;
     game->source_actor_ran[slot] = false;
+    if (slot < QA_Q3_SOURCE_CLIENTS)
+        game->clients[slot].player = qa_actors_player(
+            qa_session_actors(game->options.services.session), actor);
     q3_wire_bind(game, slot, actor);
     return true;
 }
@@ -205,7 +231,7 @@ bool q3_source_client_pointer(const qa_q3_game *game, qa_actor_id actor, uint32_
 }
 int32_t q3_source_team(qa_q3_game *game, qa_actor_id actor) {
     uint32_t client;
-    if (q3_source_client_pointer(game, actor, &client)) return game->clients[client].session.team;
+    if (q3_source_client_pointer(game, actor, &client)) return game->clients[client].rule.session.team;
     return game->options.hooks.source_team
         ? game->options.hooks.source_team(game->options.hooks.context, actor) : 0;
 }
@@ -345,6 +371,7 @@ void q3_source_actor_released(qa_q3_game *game, qa_actor_id actor) {
     if (slot < QA_Q3_SOURCE_CLIENTS) {
         game->death_continuations[slot] = (q3_death_continuation){0};
         game->current_origins[slot] = (q3_current_origin){0};
+        game->clients[slot].player = NULL;
     }
     game->source_entities[slot] = (qa_q3_source_binding){
         .free_time_ms = slot < QA_Q3_SOURCE_CLIENTS ? 0 : game->now_ms,
@@ -478,7 +505,7 @@ bool q3_spawn_actor(qa_q3_game *game, const qa_builtin_spawn *input,
     return true;
 }
 bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
-    uint16_t **out, qa_error *error) {
+    uint16_t **out, q3_client_names *names, qa_error *error) {
     if (saved->source_count < QA_Q3_SOURCE_CLIENTS || saved->source_count > QA_Q3_SOURCE_WORLD)
         return q3_fail(error, "Invalid Q3 physical entity count");
     uint16_t *numbers = malloc(game->capacity * sizeof(*numbers));
@@ -521,19 +548,29 @@ bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
     for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
         const qa_q3_native_client *client = &saved->clients[slot];
         const q3_actor *actor = &saved->source_clients[slot];
-        if (client->connected < QA_Q3_CLIENT_DISCONNECTED ||
-            client->connected > QA_Q3_CLIENT_CONNECTED ||
-            client->team_state < 0 || client->team_state > 1 ||
+        if (client->rule.connected < QA_Q3_CLIENT_DISCONNECTED ||
+            client->rule.connected > QA_Q3_CLIENT_CONNECTED ||
+            client->rule.team_state < 0 || client->rule.team_state > 1 ||
             !memchr(client->netname, 0, sizeof(client->netname)) ||
-            (client->source_model_shape != QA_SHAPE_BOX &&
-             client->source_model_shape != QA_SHAPE_CAPSULE) ||
-            !isfinite(client->team.last_hurt_carrier_ms) ||
-            !isfinite(client->team.last_returned_flag_ms) ||
-            !isfinite(client->team.flag_since_ms) ||
-            !isfinite(client->team.last_fragged_carrier_ms) ||
+            (client->rule.source_model_shape != QA_SHAPE_BOX &&
+             client->rule.source_model_shape != QA_SHAPE_CAPSULE) ||
+            !isfinite(client->rule.team.last_hurt_carrier_ms) ||
+            !isfinite(client->rule.team.last_returned_flag_ms) ||
+            !isfinite(client->rule.team.flag_since_ms) ||
+            !isfinite(client->rule.team.last_fragged_carrier_ms) ||
             actor->kind != Q3_ACTOR_PLAYER || !isfinite(actor->alpha) ||
             !qa_actor_id_equal(actor->actor, saved->source_entities[slot].actor) ||
-            !q3_player_state_valid_source_client(&actor->state.player, client)) goto invalid;
+            !q3_player_state_valid_source_client(&actor->state.player, &client->rule)) goto invalid;
+    }
+    qa_strings *strings = qa_session_strings(game->options.services.session);
+    for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
+        const char *name = saved->clients[slot].netname;
+        if (!qa_strings_intern(strings, (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME},
+                &names->source[slot], error) ||
+            !qa_strings_intern_cstr(strings, name, &names->player[slot], error)) {
+            free(numbers);
+            return false;
+        }
     }
     *out = numbers;
     return true;
@@ -541,11 +578,24 @@ invalid:
     free(numbers);
     return q3_fail(error, "Invalid Q3 physical entity or retained client continuation");
 }
-void q3_source_commit(qa_q3_game *game, const qa_q3_checkpoint *saved, uint16_t *numbers) {
+void q3_source_commit(qa_q3_game *game, const qa_q3_checkpoint *saved,
+    uint16_t *numbers, const q3_client_names *names) {
     free(game->source_numbers);
     game->source_numbers = numbers;
     game->source_count = saved->source_count;
     memcpy(game->source_entities, saved->source_entities, sizeof(game->source_entities));
-    memcpy(game->clients, saved->clients, sizeof(game->clients));
+    for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
+        qa_actor_player *player = qa_actors_player(qa_session_actors(game->options.services.session),
+            saved->source_entities[slot].actor);
+        game->clients[slot] = (q3_client_state){.rule = saved->clients[slot].rule,
+            .source_name = names->source[slot], .player = player};
+        if (player && !player->present) {
+            player->name = names->player[slot];
+            player->ping = saved->clients[slot].ping;
+            player->bot = (saved->source_entities[slot].server_flags & 8u) != 0;
+            player->spectator = saved->clients[slot].rule.session.team == 3;
+            player->present = true;
+        }
+    }
     memcpy(game->client_actors, saved->source_clients, sizeof(game->client_actors));
 }

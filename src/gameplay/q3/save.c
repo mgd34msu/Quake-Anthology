@@ -334,7 +334,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
         FIELD(u32, binding->server_flags); FIELD(bool, binding->in_use);
         FIELD(bool, binding->never_free);
     }
-    const qa_q3_native_client empty_client = {.source_model_shape = QA_SHAPE_BOX};
+    const qa_q3_native_client empty_client = {.rule = {.source_model_shape = QA_SHAPE_BOX}};
     const q3_actor empty_actor = {.kind = Q3_ACTOR_PLAYER, .alpha = 1};
     for (size_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i) {
         qa_q3_native_client *client = &p->clients[i];
@@ -349,44 +349,44 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
             }
             continue;
         }
-        ENUM(client->connected, QA_Q3_CLIENT_CONNECTED);
-        FIELD(i32, client->command.serverTime);
-        FIELD(i32, client->session.team); FIELD(i32, client->session.spectator_time_ms);
-        FIELD(i32, client->session.spectator_state); FIELD(i32, client->session.spectator_client);
-        FIELD(i32, client->session.wins); FIELD(i32, client->session.losses);
-        FIELD(i32, client->session.team_leader);
-        for (size_t axis = 0; axis < 3; ++axis) FIELD(i32, client->command.angles[axis]);
-        FIELD(i32, client->command.buttons); FIELD(u8, client->command.weapon);
-        uint8_t forward = (uint8_t)client->command.forwardmove;
-        uint8_t right = (uint8_t)client->command.rightmove;
-        uint8_t up = (uint8_t)client->command.upmove;
+        ENUM(client->rule.connected, QA_Q3_CLIENT_CONNECTED);
+        FIELD(i32, client->rule.command.serverTime);
+        FIELD(i32, client->rule.session.team); FIELD(i32, client->rule.session.spectator_time_ms);
+        FIELD(i32, client->rule.session.spectator_state); FIELD(i32, client->rule.session.spectator_client);
+        FIELD(i32, client->rule.session.wins); FIELD(i32, client->rule.session.losses);
+        FIELD(i32, client->rule.session.team_leader);
+        for (size_t axis = 0; axis < 3; ++axis) FIELD(i32, client->rule.command.angles[axis]);
+        FIELD(i32, client->rule.command.buttons); FIELD(u8, client->rule.command.weapon);
+        uint8_t forward = (uint8_t)client->rule.command.forwardmove;
+        uint8_t right = (uint8_t)client->rule.command.rightmove;
+        uint8_t up = (uint8_t)client->rule.command.upmove;
         FIELD(u8, forward); FIELD(u8, right); FIELD(u8, up);
         if (io->direction == QA_SOURCE_SAVE_READ) {
-            memcpy(&client->command.forwardmove, &forward, sizeof(forward));
-            memcpy(&client->command.rightmove, &right, sizeof(right));
-            memcpy(&client->command.upmove, &up, sizeof(up));
+            memcpy(&client->rule.command.forwardmove, &forward, sizeof(forward));
+            memcpy(&client->rule.command.rightmove, &right, sizeof(right));
+            memcpy(&client->rule.command.upmove, &up, sizeof(up));
         }
-        FIELD(i32, client->max_health); FIELD(i32, client->enter_time_ms);
-        FIELD(i32, client->team_state); FIELD(i32, client->team_location);
-        FIELD(i32, client->team.captures); FIELD(i32, client->team.base_defense);
-        FIELD(i32, client->team.carrier_defense); FIELD(i32, client->team.flag_recovery);
-        FIELD(i32, client->team.frag_carrier); FIELD(i32, client->team.assists);
-        FIELD(f32, client->team.last_hurt_carrier_ms); FIELD(f32, client->team.last_returned_flag_ms);
-        FIELD(f32, client->team.flag_since_ms); FIELD(f32, client->team.last_fragged_carrier_ms);
-        FIELD(i32, client->retired_score); ENUM(client->source_model_shape, QA_SHAPE_CAPSULE);
-        FIELD(i32, client->inactivity_time_ms); FIELD(bool, client->inactivity_warning);
-        FIELD(vec3, client->old_origin);
-        FIELD(bool, client->has_followed_player);
-        if (!wire_player(io, &client->followed_player)) return false;
-        FIELD(i32, client->switch_team_time_ms);
-        FIELD(i32, client->ping); FIELD(i32, client->vote_count); FIELD(i32, client->team_vote_count);
-        FIELD(u32, client->old_buttons); FIELD(u32, client->buttons); FIELD(u32, client->latched_buttons);
+        FIELD(i32, client->rule.max_health); FIELD(i32, client->rule.enter_time_ms);
+        FIELD(i32, client->rule.team_state); FIELD(i32, client->rule.team_location);
+        FIELD(i32, client->rule.team.captures); FIELD(i32, client->rule.team.base_defense);
+        FIELD(i32, client->rule.team.carrier_defense); FIELD(i32, client->rule.team.flag_recovery);
+        FIELD(i32, client->rule.team.frag_carrier); FIELD(i32, client->rule.team.assists);
+        FIELD(f32, client->rule.team.last_hurt_carrier_ms); FIELD(f32, client->rule.team.last_returned_flag_ms);
+        FIELD(f32, client->rule.team.flag_since_ms); FIELD(f32, client->rule.team.last_fragged_carrier_ms);
+        FIELD(i32, client->rule.retired_score); ENUM(client->rule.source_model_shape, QA_SHAPE_CAPSULE);
+        FIELD(i32, client->rule.inactivity_time_ms); FIELD(bool, client->rule.inactivity_warning);
+        FIELD(vec3, client->rule.old_origin);
+        FIELD(bool, client->rule.has_followed_player);
+        if (!wire_player(io, &client->rule.followed_player)) return false;
+        FIELD(i32, client->rule.switch_team_time_ms);
+        FIELD(i32, client->ping); FIELD(i32, client->rule.vote_count); FIELD(i32, client->rule.team_vote_count);
+        FIELD(u32, client->rule.old_buttons); FIELD(u32, client->rule.buttons); FIELD(u32, client->rule.latched_buttons);
         if (!qa_source_save_bytes(io, client->netname, sizeof(client->netname)) ||
             !memchr(client->netname, 0, sizeof(client->netname))) return save_fail(io, "invalid Q3 retained netname");
-        FIELD(bool, client->local_client); FIELD(bool, client->initial_spawn);
-        FIELD(bool, client->predict_item_pickup); FIELD(bool, client->pmove_fixed);
-        FIELD(bool, client->team_info);
-        FIELD(bool, client->ready_to_exit);
+        FIELD(bool, client->rule.local_client); FIELD(bool, client->rule.initial_spawn);
+        FIELD(bool, client->rule.predict_item_pickup); FIELD(bool, client->rule.pmove_fixed);
+        FIELD(bool, client->rule.team_info);
+        FIELD(bool, client->rule.ready_to_exit);
         if (!actor_state(io, &p->source_clients[i], &p->source_player_motions[i]) ||
             p->source_clients[i].kind != Q3_ACTOR_PLAYER)
             return save_fail(io, "invalid Q3 retained source client");

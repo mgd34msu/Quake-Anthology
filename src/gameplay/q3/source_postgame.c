@@ -192,7 +192,7 @@ static bool spawn_model(qa_q3_game *game, qa_actor_id podium, uint32_t client,
         return q3_fail(error, "victory model requires its genuine source client pointer");
     qa_string_id classname;
     if (!qa_builtin_resource(&game->options.services,
-            game->clients[source.client_slot].netname, &classname, error) ||
+            q3_client_name(game, &game->clients[source.client_slot]), &classname, error) ||
         !qa_actors_set_metadata(qa_session_actor_registry(game->options.services.session),
             actor, game->options.owner, classname, error))
         return q3_rollback_spawn(game, actor, error);

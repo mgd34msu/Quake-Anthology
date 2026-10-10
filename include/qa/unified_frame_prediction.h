@@ -11,11 +11,8 @@ typedef struct qa_unified_movement_numeric {
     bool native_c, qw_origin_binary64;
 } qa_unified_movement_numeric;
 
-typedef enum qa_unified_weapon_kind {
-    QA_UNIFIED_WEAPON_Q1, QA_UNIFIED_WEAPON_Q2, QA_UNIFIED_WEAPON_Q3
-} qa_unified_weapon_kind;
 typedef struct qa_unified_weapon_state {
-    qa_unified_weapon_kind kind;
+    qa_game_family kind;
     double frame, attack_finished_seconds, source_weapon;
     int32_t gun_frame, state, machinegun_shots, time_ms;
     qa_string_id pending_weapon;

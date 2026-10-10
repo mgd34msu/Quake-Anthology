@@ -59,9 +59,9 @@ static bool state_fields(qa_source_save_io *io, application_q3_equipment_saved *
     bool okay = qa_source_save_actor(io, &state->draw.actor) && qa_source_save_u32(io, &warning) &&
         qa_source_save_bool(io, &state->draw.selected) && qa_source_save_bool(io, &state->draw.view_visible) &&
         qa_source_save_bool(io, &state->hud_requested) && qa_source_save_bool(io, &state->view_requested);
-    if (okay && warning > QA_APPLICATION_AMMO_EMPTY)
+    if (okay && warning > QA_AMMO_EMPTY)
         return application_fail(io->error, QA_ERROR_FORMAT, "CGAME equipment warning leaves its actual enum");
-    if (okay && io->direction == QA_SOURCE_SAVE_READ) state->draw.warning = (qa_application_ammo_warning)warning;
+    if (okay && io->direction == QA_SOURCE_SAVE_READ) state->draw.warning = (qa_ammo_warning)warning;
     return okay;
 }
 

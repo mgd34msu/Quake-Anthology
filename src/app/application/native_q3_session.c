@@ -312,7 +312,7 @@ static bool world_write(const session_source *source, qa_error *error)
     for (uint32_t slot = 0; ok && slot < maximum; ++slot) {
         qa_q3_native_client client;
         ok = qa_q3_client_slot_read(source->game, slot, &client, error);
-        if (ok && client.connected == QA_Q3_CLIENT_CONNECTED)
+        if (ok && client.rule.connected == QA_Q3_CLIENT_CONNECTED)
             ok = session_write(source, slot, error);
     }
     return ok;
@@ -337,7 +337,7 @@ bool application_native_q3_session_capture_carry(application_provider *provider,
     for (uint32_t slot = 0; ok && slot < maximum; ++slot) {
         qa_q3_native_client client;
         ok = qa_q3_client_slot_read(source.game, slot, &client, error);
-        if (ok && client.connected != QA_Q3_CLIENT_DISCONNECTED)
+        if (ok && client.rule.connected != QA_Q3_CLIENT_DISCONNECTED)
             ok = session_write(&source, slot, error);
     }
     application_native_q3_console_release(provider);

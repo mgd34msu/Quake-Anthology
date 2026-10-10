@@ -113,7 +113,7 @@ static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_
         return q3_fail(error, "missing Q3 client end frame");
     uint32_t source_slot;
     bool source_client = qa_q3_native_client_slot(game, actor, &source_slot, NULL);
-    if (source_client ? game->clients[source_slot].session.team == 3
+    if (source_client ? game->clients[source_slot].rule.session.team == 3
                       : entry->state.player.spectator)
         return true;
     qa_q3_player_state *player = &entry->state.player;

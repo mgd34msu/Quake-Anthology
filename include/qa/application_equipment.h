@@ -1,15 +1,12 @@
 #ifndef QA_APPLICATION_EQUIPMENT_H
 #define QA_APPLICATION_EQUIPMENT_H
 
+#include "qa/inventory.h"
+
 #include "qa/application.h"
 #include "qa/application_q3_weapon_models.h"
 #include "qa/equipment_weapon_slot.h"
 
-typedef enum qa_application_ammo_warning {
-    QA_APPLICATION_AMMO_NONE,
-    QA_APPLICATION_AMMO_LOW,
-    QA_APPLICATION_AMMO_EMPTY
-} qa_application_ammo_warning;
 
 typedef struct qa_application_equipment_view {
     qa_actor_id actor;
@@ -32,7 +29,7 @@ typedef struct qa_application_equipment_view {
     qa_q3_player q3_source;
     int32_t q3_time_ms;
     qa_q3_fire_stamp q3_fire;
-    qa_application_ammo_warning warning;
+    qa_ammo_warning warning;
     bool selected, visible, has_frame, has_skin, has_rate, has_source_gun_pose, has_q3_state, has_q3_source;
     bool has_weapon_status, finite_ammo, has_ammo_to_start, low_ammo, has_start_requirement;
     /* A controller-selected EQUIPMENT slot has its own genuine source

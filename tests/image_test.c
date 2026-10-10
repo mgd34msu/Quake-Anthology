@@ -252,7 +252,7 @@ static void transform_and_encode(void) {
     CHECK(qa_image_mip(&in, QA_MIP_Q3_WEIGHTED, &im, &error));
     pixel(&im, 0, 127, 127, 127, 159);
     qa_image_free(&im);
-    qa_gamma_options gamma = {QA_GAMMA_Q2, 1, 2, 0, false};
+    qa_gamma_options gamma = {QA_GAME_Q2, 1, 2, 0, false};
     CHECK(qa_image_apply_gamma(&in, &gamma, &im, &error));
     pixel(&im, 0, 255, 0, 0, 128);
     qa_image_free(&im);

@@ -1756,7 +1756,7 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
     qa_image scaled = {0};
     const qa_image *base = source;
     if (options->family == QA_GAME_Q2 && options->mipmap) {
-        qa_gamma_options gamma = {.profile = QA_GAMMA_Q2, .gamma = 1, .intensity = 2};
+        qa_gamma_options gamma = {.profile = QA_GAME_Q2, .gamma = 1, .intensity = 2};
         if (!qa_image_apply_gamma(source, &gamma, &scaled, error)) return false;
         base = &scaled;
     }

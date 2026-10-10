@@ -864,9 +864,9 @@ static double source_time(uint64_t ns, qa_ruleset_id clock, bool milliseconds)
 }
 static qa_unified_armor_state armor_read(qa_application *app, const qa_armor *a)
 {
-    qa_unified_armor_state result = {.kind = (qa_unified_armor_kind)a->regular.kind,
+    qa_unified_armor_state result = {.kind = a->regular.kind,
         .item = event_alias(app, a->regular.item), .points = a->regular.points,
-        .powered_kind = (qa_unified_power_armor_kind)a->powered.kind, .cells = a->powered.cells};
+        .powered_kind = a->powered.kind, .cells = a->powered.cells};
     if (a->regular.kind == QA_ARMOR_Q1) result.absorption = a->regular.protection.q1_absorption;
     else if (a->regular.kind == QA_ARMOR_Q2) { result.normal = a->regular.protection.q2.normal; result.energy = a->regular.protection.q2.energy; }
     else if (a->regular.kind == QA_ARMOR_Q3) result.protection = a->regular.protection.q3_protection;

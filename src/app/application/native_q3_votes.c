@@ -196,7 +196,7 @@ static bool client(const vote_scope *scope, uint32_t slot, qa_q3_native_client *
     qa_q3_client_session *sess, qa_error *error)
 {
     if (!qa_q3_client_slot_read(scope->game, slot, out, error)) return false;
-    *sess = out->session;
+    *sess = out->rule.session;
     return true;
 }
 
@@ -230,7 +230,7 @@ static bool call_vote(vote_scope *scope, const qa_command_invocation *command, q
         !client(scope, scope->slot, &caller, &sess, error)) return false;
     if (!allowed) return print_client(scope, "Voting not allowed here.\n", error);
     if (vote->time) return print_client(scope, "A vote is already in progress.\n", error);
-    if (caller.vote_count >= 3) return print_client(scope, "You have called the maximum number of votes.\n", error);
+    if (caller.rule.vote_count >= 3) return print_client(scope, "You have called the maximum number of votes.\n", error);
     if (sess.team == 3) return print_client(scope, "Not allowed to call a vote as spectator.\n", error);
     char key[VOTE_BYTES], parameter[VOTE_BYTES];
     argument(command, 1, key, sizeof(key));
@@ -334,7 +334,7 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
     if (!application_native_q3_settings_integer_at(scope->owner->provider, APPLICATION_Q3_SETTING_G_ALLOW_VOTE, &allowed, error)) return false;
     if (!allowed) return print_client(scope, "Voting not allowed here.\n", error);
     if (vote->time) return print_client(scope, "A team vote is already in progress.\n", error);
-    if (caller.team_vote_count >= 3)
+    if (caller.rule.team_vote_count >= 3)
         return print_client(scope, "You have called the maximum number of team votes.\n", error);
     char key[VOTE_BYTES], parameter[VOTE_BYTES];
     argument(command, 1, key, sizeof(key));
@@ -371,7 +371,7 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
                 qa_q3_client_session other_session;
                 char cleaned[36];
                 if (!client(scope, (uint32_t)target, &other, &other_session, error)) return false;
-                if (other.connected == QA_Q3_CLIENT_DISCONNECTED || other_session.team != sess.team) continue;
+                if (other.rule.connected == QA_Q3_CLIENT_DISCONNECTED || other_session.team != sess.team) continue;
                 application_native_q3_name_key(other.netname,cleaned,sizeof(cleaned));
                 if (!strcmp(wanted, cleaned)) break;
             }
@@ -392,7 +392,7 @@ static bool call_team_vote(vote_scope *scope, const qa_command_invocation *comma
         qa_q3_native_client other;
         qa_q3_client_session other_session;
         if (!client(scope, slot, &other, &other_session, error)) return false;
-        if (other.connected != QA_Q3_CLIENT_DISCONNECTED && other_session.team == sess.team &&
+        if (other.rule.connected != QA_Q3_CLIENT_DISCONNECTED && other_session.team == sess.team &&
             !send(scope, (int32_t)slot, announcement, error)) return false;
     }
     if (!qa_q3_source_clock(scope->game, &vote->time, error)) return false;
@@ -488,7 +488,7 @@ static bool leader(const vote_scope *scope, int32_t team, int32_t target, qa_err
     qa_q3_client_session selected_session;
     char message[VOTE_BYTES];
     if (!client(scope, (uint32_t)target, &selected, &selected_session, error)) return false;
-    if (selected.connected == QA_Q3_CLIENT_DISCONNECTED) {
+    if (selected.rule.connected == QA_Q3_CLIENT_DISCONNECTED) {
         snprintf(message, sizeof(message), "print \"%s is not connected\n\"", selected.netname);
         return print_team(scope, team, message, error);
     }

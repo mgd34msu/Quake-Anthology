@@ -112,13 +112,16 @@ bool qa_q3_client_selected_presentation(qa_q3_game *game, qa_actor_id actor,
     qa_q3_client_info_value(source, "color1", color1, sizeof(color1));
     qa_q3_client_info_value(source, "color2", color2, sizeof(color2));
     qa_q3_client_info_value(source, "teamtask", task, sizeof(task));
-    qa_q3_native_client *client = &game->clients[slot];
-    qa_q3_client_clean_name(name, client->netname);
-    qa_q3_client_session session = client->session;
+    q3_client_state *client = &game->clients[slot];
+    char cleaned[QA_Q3_NATIVE_NETNAME];
+    q3_client_name_bytes(game, client, cleaned);
+    qa_q3_client_clean_name(name, cleaned);
+    if (!q3_client_name_store(game, client, cleaned, error)) return false;
+    qa_q3_client_session session = client->rule.session;
     char config[8192];
     snprintf(config, sizeof(config), "n\\%s\\t\\%d\\model\\%s\\hmodel\\%s\\g_redteam\\%s\\g_blueteam\\%s\\c1\\%s\\c2\\%s\\hc\\%d\\w\\%d\\l\\%d\\tt\\%d\\tl\\%d",
-        client->netname, session.team, model, head, red, blue, color1, color2,
-        client->max_health, session.wins, session.losses, source_integer(task), session.team_leader);
+        q3_client_name(game, client), session.team, model, head, red, blue, color1, color2,
+        client->rule.max_health, session.wins, session.losses, source_integer(task), session.team_leader);
     ++game->observation_depth;
     bool okay = qa_q3_configstring_write(game, 544u + slot, config, error);
     uint32_t current;
@@ -132,7 +135,7 @@ bool qa_q3_client_slot_userinfo(qa_q3_game *game, uint32_t slot, const char *sou
                                bool scoreboard, qa_error *error) {
     if (!game || game->source_restored || !source || slot >= game->options.max_clients)
         return q3_fail(error, "Q3 userinfo has no configured fixed source client");
-    qa_q3_native_client *client = &game->clients[slot];
+    q3_client_state *client = &game->clients[slot];
     q3_actor *entry = &game->client_actors[slot];
     char info[1024];
     size_t length = 0;
@@ -145,21 +148,29 @@ bool qa_q3_client_slot_userinfo(qa_q3_game *game, uint32_t slot, const char *sou
         memcpy(info, "\\name\\badinfo", sizeof("\\name\\badinfo"));
     char value[1024];
     qa_q3_client_info_value(info, "ip", value, sizeof(value));
-    if (!strcmp(value, "localhost")) client->local_client = true;
+    if (!strcmp(value, "localhost")) client->rule.local_client = true;
     qa_q3_client_info_value(info, "cg_predictItems", value, sizeof(value));
-    client->predict_item_pickup = source_integer(value) != 0;
+    client->rule.predict_item_pickup = source_integer(value) != 0;
     qa_q3_client_info_value(info, "name", value, sizeof(value));
-    qa_q3_client_clean_name(value, client->netname);
-    if (scoreboard) memcpy(client->netname, "scoreboard", sizeof("scoreboard"));
+    char cleaned[QA_Q3_NATIVE_NETNAME];
+    q3_client_name_bytes(game, client, cleaned);
+    qa_q3_client_clean_name(value, cleaned);
+    if (client->player && (!client->player->present || !game->options.services.player_info)) {
+        if (!qa_strings_intern_cstr(qa_session_strings(game->options.services.session),
+                cleaned, &client->player->name, error)) return false;
+        client->player->present = true;
+    }
+    if (scoreboard) memcpy(cleaned, "scoreboard", sizeof("scoreboard"));
+    if (!q3_client_name_store(game, client, cleaned, error)) return false;
     qa_q3_client_info_value(info, "handicap", value, sizeof(value));
     int32_t health = source_integer(value);
     if (health < 1 || health > 100) health = 100;
     entry->state.player.handicap = health;
     if (game->options.product == QA_Q3_TEAM_ARENA &&
         entry->state.player.powerups[QA_Q3_P_GUARD]) health = 200;
-    client->max_health = entry->state.player.max_health = health;
+    client->rule.max_health = entry->state.player.max_health = health;
     qa_q3_client_info_value(info, "teamoverlay", value, sizeof(value));
-    client->team_info = (game->options.product == QA_Q3_TEAM_ARENA &&
+    client->rule.team_info = (game->options.product == QA_Q3_TEAM_ARENA &&
         qa_game_type_has_allies(game->options.rules.game_type)) || !*value || source_integer(value) != 0;
     return true;
 }

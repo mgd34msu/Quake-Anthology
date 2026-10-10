@@ -534,11 +534,11 @@ bool q3_accuracy(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker) {
     bool native_attacker = q3_source_client_pointer(game, attacker, &attacker_client);
     bool native_target = q3_source_client_pointer(game, target, &target_client);
     if (native_attacker && native_target)
-        return game->clients[attacker_client].session.team != game->clients[target_client].session.team;
+        return game->clients[attacker_client].rule.session.team != game->clients[target_client].rule.session.team;
     if (!native_attacker && !native_target) return ac.team != tc.team;
     char native_team[32];
     snprintf(native_team, sizeof(native_team), "q3-team:%i",
-        game->clients[native_attacker ? attacker_client : target_client].session.team);
+        game->clients[native_attacker ? attacker_client : target_client].rule.session.team);
     const char *foreign_team = qa_strings_cstr(qa_session_strings(game->options.services.session),
                                                 native_attacker ? tc.team : ac.team);
     return !foreign_team || strcmp(native_team, foreign_team) != 0;

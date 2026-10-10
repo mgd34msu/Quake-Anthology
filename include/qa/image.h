@@ -2,6 +2,7 @@
 #define QA_IMAGE_H
 
 #include "qa/common.h"
+#include "qa/ruleset.h"
 
 /* Decoded rows are top-to-bottom. Buffers are owned; free with qa_image_free.
  * Indexed sources retain their original indices (1 byte or little-endian 2 bytes)
@@ -96,9 +97,8 @@ typedef enum qa_resample_filter { QA_RESAMPLE_Q1, QA_RESAMPLE_Q2_Q3 } qa_resampl
 bool qa_image_resample(const qa_image *image, uint32_t width, uint32_t height,
                        qa_resample_filter filter, qa_image *out, qa_error *error);
 
-typedef enum qa_gamma_profile { QA_GAMMA_Q1, QA_GAMMA_Q2, QA_GAMMA_Q3 } qa_gamma_profile;
 typedef struct qa_gamma_options {
-    qa_gamma_profile profile;
+    qa_game_family profile;
     float gamma, intensity;
     unsigned overbright_bits;
     bool only_gamma;

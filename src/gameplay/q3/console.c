@@ -30,7 +30,7 @@ bool qa_q3_player_noclip(qa_q3_game *game, qa_actor_id actor, bool *enabled, qa_
 static bool print(qa_q3_game *game, qa_actor_id actor, const char *text, qa_error *error) {
     uint32_t slot;
     if (qa_q3_native_client_slot(game, actor, &slot, NULL) &&
-        game->clients[slot].connected != QA_Q3_CLIENT_DISCONNECTED) {
+        game->clients[slot].rule.connected != QA_Q3_CLIENT_DISCONNECTED) {
         if (!game->options.hooks.client_print)
             return q3_fail(error, "Q3 client print requires the source reliable command sink");
         return game->options.hooks.client_print(game->options.hooks.context, actor, text, error);
@@ -239,7 +239,7 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
         if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
         uint32_t slot;
         if (qa_q3_native_client_slot(game, actor, &slot, NULL) &&
-            game->clients[slot].connected != QA_Q3_CLIENT_DISCONNECTED) {
+            game->clients[slot].rule.connected != QA_Q3_CLIENT_DISCONNECTED) {
             qa_q3_entity entity;
             qa_q3_wire_visibility visibility;
             if (!qa_q3_wire_entity_read(game, slot, &entity, &visibility, error)) return false;

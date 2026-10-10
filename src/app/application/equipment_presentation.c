@@ -394,9 +394,9 @@ static bool q3_warning(qa_application *app, qa_application_equipment_view *view,
         bool slow = weapon == QA_Q3_W_ROCKET || weapon == QA_Q3_W_GRENADE ||
             weapon == QA_Q3_W_RAIL || weapon == QA_Q3_W_SHOTGUN || weapon == QA_Q3_W_PROX;
         total += (uint32_t)(int32_t)count * (slow ? 1000u : 200u);
-        if (total <= INT32_MAX && total >= 5000) { view->warning = QA_APPLICATION_AMMO_NONE; return true; }
+        if (total <= INT32_MAX && total >= 5000) { view->warning = QA_AMMO_NONE; return true; }
     }
-    view->warning = total == 0 ? QA_APPLICATION_AMMO_EMPTY : QA_APPLICATION_AMMO_LOW;
+    view->warning = total == 0 ? QA_AMMO_EMPTY : QA_AMMO_LOW;
     return true;
 }
 

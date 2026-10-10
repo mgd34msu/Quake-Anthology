@@ -267,7 +267,7 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         return true;
     for (uint32_t i = 0; i < game->options.max_clients; ++i) {
         q3_actor *candidate = &game->client_actors[i];
-        if (game->clients[i].connected == QA_Q3_CLIENT_DISCONNECTED ||
+        if (game->clients[i].rule.connected == QA_Q3_CLIENT_DISCONNECTED ||
             candidate->kind != Q3_ACTOR_PLAYER || qa_actor_id_equal(candidate->actor, recipient) ||
             !q3_actor_get(game, candidate->actor))
             continue;
@@ -282,9 +282,9 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
             continue;
         uint32_t recipient_slot, candidate_slot;
         int32_t receiver_team = qa_q3_native_client_slot(game, recipient, &recipient_slot, NULL)
-            ? game->clients[recipient_slot].session.team : (int32_t)receiver.team;
+            ? game->clients[recipient_slot].rule.session.team : (int32_t)receiver.team;
         int32_t candidate_team = qa_q3_native_client_slot(game, actor, &candidate_slot, NULL)
-            ? game->clients[candidate_slot].session.team : (int32_t)combat.team;
+            ? game->clients[candidate_slot].rule.session.team : (int32_t)combat.team;
         if (combat.health <= 0 ||
             (qa_game_type_has_allies(game->options.rules.game_type) && receiver_team == candidate_team))
             continue;
@@ -982,7 +982,7 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     }
     uint32_t client_slot;
     bool source_client = qa_q3_native_client_slot(game, offer->recipient, &client_slot, NULL);
-    bool predict = !source_client || (game->clients[client_slot].predict_item_pickup &&
+    bool predict = !source_client || (game->clients[client_slot].rule.predict_item_pickup &&
                    items[spawn.item_index].kind != QA_Q3_ITEM_POWERUP);
     if (predict) {
         if (!q3_player_event(game, offer->recipient, 19, (int32_t)spawn.item_index, error))

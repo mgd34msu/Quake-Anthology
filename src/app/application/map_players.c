@@ -3763,7 +3763,7 @@ bool application_players_native_q3_retire(qa_application *app,
         !qa_q3_client_slot_read(provider->state.q3, source_slot, &client, error) ||
         !application_native_q3_wire_client_admission_read(provider, source_slot,
             &wire_client, &admitted, error)) return false;
-    if (client.connected != QA_Q3_CLIENT_DISCONNECTED || admitted)
+    if (client.rule.connected != QA_Q3_CLIENT_DISCONNECTED || admitted)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "native Q3 retirement precedes its actual source and wire disconnect");
     size_t index = 0;

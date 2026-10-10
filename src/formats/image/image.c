@@ -241,22 +241,22 @@ bool qa_image_resample(const qa_image *in, uint32_t w, uint32_t h, qa_resample_f
     return true;
 }
 bool qa_image_gamma_table(const qa_gamma_options *p, uint8_t table[256], qa_error *error) {
-    if (!p || !table || p->profile < QA_GAMMA_Q1 || p->profile > QA_GAMMA_Q3 ||
+    if (!p || !table || p->profile < QA_GAME_Q1 || p->profile > QA_GAME_Q3 ||
         !isfinite(p->gamma) || p->gamma <= 0 ||
-        (p->profile == QA_GAMMA_Q3 && p->overbright_bits > 2))
+        (p->profile == QA_GAME_Q3 && p->overbright_bits > 2))
         return qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid gamma profile");
     for (unsigned i = 0; i < 256; i++) {
         double v;
-        if (p->profile == QA_GAMMA_Q1)
+        if (p->profile == QA_GAME_Q1)
             v = (float)((float)pow((i + 1) / 256.0, p->gamma) * 255.0f + 0.5f);
         else if (p->gamma == 1)
             v = i;
-        else if (p->profile == QA_GAMMA_Q3)
+        else if (p->profile == QA_GAME_Q3)
             v = 255 * pow((float)i / 255, 1.0f / p->gamma) + 0.5;
         else
             v = (float)(255 * pow((i + 0.5) / 255.5, p->gamma) + 0.5);
         v = floor(v);
-        if (p->profile == QA_GAMMA_Q3)
+        if (p->profile == QA_GAME_Q3)
             v *= 1U << p->overbright_bits;
         table[i] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
     }
@@ -267,7 +267,7 @@ bool qa_image_apply_gamma(const qa_image *in, const qa_gamma_options *p, qa_imag
     uint8_t table[256];
     if (!out || !qa_img_rgba(in, error) || !qa_image_gamma_table(p, table, error))
         return false;
-    bool uses_intensity = p->profile != QA_GAMMA_Q1 && !p->only_gamma;
+    bool uses_intensity = p->profile != QA_GAME_Q1 && !p->only_gamma;
     if (uses_intensity && !isfinite(p->intensity))
         return qa_img_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid intensity");
     float intensity = uses_intensity ? fmaxf(1, p->intensity) : 1;

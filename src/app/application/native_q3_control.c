@@ -46,14 +46,14 @@ static bool inactivity(application_provider *provider, qa_actor_id actor,
         !qa_q3_source_clock(game, &now, error) ||
         !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_INACTIVITY, &seconds, error) ||
         !qa_q3_client_inactivity_read(game, actor, &deadline, &warned, error)) return false;
-    const qa_q3_usercmd *command = &client.command;
+    const qa_q3_usercmd *command = &client.rule.command;
     if (!seconds || command->forwardmove || command->rightmove || command->upmove ||
         (command->buttons & 1)) {
         int32_t delay = seconds ? signed_word((uint32_t)seconds * 1000u) : 60000;
         return qa_q3_client_inactivity_write(game, actor,
             signed_word((uint32_t)now + (uint32_t)delay), false, error);
     }
-    if (client.local_client) return true;
+    if (client.rule.local_client) return true;
     if (now > deadline) {
         *allowed = false;
         return application_native_q3_wire_drop(provider, slot, "Dropped due to inactivity", error);

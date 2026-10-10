@@ -132,7 +132,7 @@ static bool tournament_info(postgame_scope *scope, qa_error *error)
         !source_player(scope, player, &client, &state, &score, error)) return false;
     int32_t values[14] = {counts.num_non_spectator, (int32_t)player};
     size_t field_count;
-    if (client.session.team == 3) field_count = scope->product == QA_Q3_TEAM_ARENA ? 13 : 8;
+    if (client.rule.session.team == 3) field_count = scope->product == QA_Q3_TEAM_ARENA ? 13 : 8;
     else {
         int32_t numerator = signed_bits((uint32_t)state.accuracy_hits * 100u);
         int32_t accuracy = state.accuracy_shots
@@ -147,7 +147,7 @@ static bool tournament_info(postgame_scope *scope, qa_error *error)
                 qa_q3_source_team_state team;
                 if (!qa_q3_source_team_state_read(scope->game, &team, error) || !live(scope, error)) return false;
                 score1 = team.team_scores[1]; score2 = team.team_scores[2];
-                won = client.session.team == 1 ? score1 > score2 : score2 > score1;
+                won = client.rule.session.team == 1 ? score1 > score2 : score2 > score1;
             } else {
                 int32_t first, second;
                 if (!qa_q3_wire_client_source_score_read(scope->game, counts.sorted_clients[0], &first, error) ||

@@ -85,8 +85,8 @@ static bool client_read(const rank_scope *scope, uint32_t slot, rank_client *out
         !qa_q3_client_slot_read(scope->game, slot, &client, error) ||
         !qa_q3_client_server_flags(scope->game, slot, &out->server_flags, error)) return false;
     out->actor = binding.actor;
-    out->connected = client.connected;
-    out->session = client.session;
+    out->connected = client.rule.connected;
+    out->session = client.rule.session;
     return true;
 }
 

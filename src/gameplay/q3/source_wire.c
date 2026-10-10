@@ -363,7 +363,7 @@ void q3_wire_client_follow_copy(qa_q3_game *game, uint32_t slot, const qa_q3_pla
 bool qa_q3_wire_client_ready(qa_q3_game *game, uint32_t slot,
                              int32_t ready_mask, qa_error *error) {
     if (!game || !game->wire || game->source_restored || slot >= game->options.max_clients ||
-        game->clients[slot].connected != QA_Q3_CLIENT_CONNECTED ||
+        game->clients[slot].rule.connected != QA_Q3_CLIENT_CONNECTED ||
         !row(game, game->source_entities[slot].actor) || ready_mask < 0 || ready_mask > 65535)
         return q3_fail(error, "Q3 readiness publication requires a CONNECTED source PS row");
     game->wire->clients[slot].clients_ready = ready_mask;
@@ -618,8 +618,8 @@ bool qa_q3_wire_client_detach(qa_q3_game *game, uint32_t slot, qa_error *error) 
         ok = qa_q3_wire_client_source_score_read(game, slot, &score, error) &&
             qa_q3_wire_client_source_body_read(game, slot, &body, error) && current(game, slot, actor);
         if (ok) {
-            game->clients[slot].retired_score = score;
-            game->clients[slot].source_model_shape = body.model_shape;
+            game->clients[slot].rule.retired_score = score;
+            game->clients[slot].rule.source_model_shape = body.model_shape;
             client->movement_detached = true;
         }
     }
@@ -722,7 +722,7 @@ static bool player_read(const qa_q3_game *game, uint32_t slot, qa_q3_player *out
         .damageEvent = source.damage_event, .damageYaw = source.damage_yaw,
         .damagePitch = source.damage_pitch, .damageCount = source.damage_count,
         .generic1 = source.generic1, .jumppadEnt = motion.jumppad_entity,
-        .ping = game->clients[slot].ping, .pmoveFramecount = motion.pmove_frame_count,
+        .ping = q3_client_ping_value(&game->clients[slot]), .pmoveFramecount = motion.pmove_frame_count,
         .jumppadFrame = motion.jumppad_frame,
         .entityEventSequence = word(source.entity_event_sequence)};
     vector(value.viewangles, motion.view_angles); vector(value.grapplePoint, source.grapple_point);
@@ -883,7 +883,7 @@ static void link_write(qa_q3_game *game, uint32_t slot, const qa_body_state *bod
         else record->source.solid = word(solid);
     }
     if (slot < QA_Q3_SOURCE_CLIENTS)
-        game->clients[slot].source_model_shape = collision->shape == QA_SHAPE_CAPSULE
+        game->clients[slot].rule.source_model_shape = collision->shape == QA_SHAPE_CAPSULE
             ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX;
     record->link = (q3_wire_link_state){.written = true,
         .area = membership->area, .area2 = membership->area2,
@@ -1349,7 +1349,7 @@ bool qa_q3_wire_client_source_body_read(const qa_q3_game *game, uint32_t slot,
     if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_CLIENTS ||
         game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "Q3 fixed source body read exceeds its physical clients");
-    qa_q3_wire_client_body value = {.model_shape = game->clients[slot].source_model_shape};
+    qa_q3_wire_client_body value = {.model_shape = game->clients[slot].rule.source_model_shape};
     const qa_q3_source_binding *binding = &game->source_entities[slot];
     if (!binding->body_attached) { *out = value; return true; }
     qa_actor_id actor = binding->actor;
@@ -1374,8 +1374,8 @@ bool qa_q3_wire_client_source_pm_read(const qa_q3_game *game, uint32_t slot,
                                       int32_t *out, qa_error *error) {
     if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_CLIENTS || game->source_restored)
         return q3_fail(error, "Q3 fixed source PM read exceeds its physical clients");
-    if (game->clients[slot].has_followed_player) {
-        *out = game->clients[slot].followed_player.pmType;
+    if (game->clients[slot].rule.has_followed_player) {
+        *out = game->clients[slot].rule.followed_player.pmType;
         return true;
     }
     if (!game->source_entities[slot].body_attached) {
@@ -1394,14 +1394,14 @@ bool qa_q3_wire_client_source_score_read(const qa_q3_game *game, uint32_t slot,
     if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_CLIENTS ||
         game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "Q3 fixed source score read exceeds its physical clients");
-    if (game->clients[slot].has_followed_player) {
-        *out = game->clients[slot].followed_player.persistant[0];
+    if (game->clients[slot].rule.has_followed_player) {
+        *out = game->clients[slot].rule.followed_player.persistant[0];
         return true;
     }
     if (!game->source_entities[slot].body_attached || game->wire->clients[slot].movement_detached ||
         (!game->source_entities[slot].in_use &&
-         game->clients[slot].connected == QA_Q3_CLIENT_DISCONNECTED)) {
-        *out = game->clients[slot].retired_score;
+         game->clients[slot].rule.connected == QA_Q3_CLIENT_DISCONNECTED)) {
+        *out = game->clients[slot].rule.retired_score;
         return true;
     }
     qa_actor_id actor = game->source_entities[slot].actor;
@@ -1434,11 +1434,11 @@ bool qa_q3_wire_borrowed_client_motion_read(const qa_q3_game *game, qa_actor_id 
     uint32_t actual;
     if (ok) ok = q3_source_client_pointer(game, actor, &actual) && actual == client;
     qa_q3_player_motion motion;
-    if (ok && !game->clients[client].has_followed_player)
+    if (ok && !game->clients[client].rule.has_followed_player)
         ok = q3_player_motion_slot_read(game, client, &motion, error);
     if (ok) *out = (qa_q3_source_client_motion){.origin = body.origin,
-        .delta_yaw_word = game->clients[client].has_followed_player
-            ? game->clients[client].followed_player.deltaAngles[1] : motion.delta_yaw_word};
+        .delta_yaw_word = game->clients[client].rule.has_followed_player
+            ? game->clients[client].rule.followed_player.deltaAngles[1] : motion.delta_yaw_word};
     --retained->observation_depth;
     return ok || q3_fail(error, "Q3 borrowed PS motion changed during observation");
 }
@@ -1467,8 +1467,8 @@ bool qa_q3_wire_borrowed_client_motion_write(qa_q3_game *game, qa_actor_id actor
         if (game->wire->clients[client].movement_detached)
             game->wire->foreign_motions[client].delta_yaw_word = value->delta_yaw_word;
         else q3_player_delta_write(game, original, 1, value->delta_yaw_word);
-        if (game->clients[client].has_followed_player)
-            game->clients[client].followed_player.deltaAngles[1] = value->delta_yaw_word;
+        if (game->clients[client].rule.has_followed_player)
+            game->clients[client].rule.followed_player.deltaAngles[1] = value->delta_yaw_word;
         q3_source_origin_written(game, original, value->origin);
     }
     --game->observation_depth;

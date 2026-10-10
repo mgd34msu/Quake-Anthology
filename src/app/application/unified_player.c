@@ -282,17 +282,17 @@ static bool copy_inventory(player_observation *o, qa_error *e)
 static bool armor(qa_unified_armor_state *out, player_observation *o, qa_error *e)
 {
     if (o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 && !o->q3_combat) {
-        out->kind = o->q3.stats[3] ? QA_UNIFIED_ARMOR_Q3 : QA_UNIFIED_ARMOR_NONE;
+        out->kind = o->q3.stats[3] ? QA_ARMOR_Q3 : QA_ARMOR_NONE;
         out->points = o->q3.stats[3]; out->protection = (float).66;
         return true;
     }
     if (o->has_q2) {
-        out->kind = o->q2.stats[5] ? QA_UNIFIED_ARMOR_Q2 : QA_UNIFIED_ARMOR_NONE;
+        out->kind = o->q2.stats[5] ? QA_ARMOR_Q2 : QA_ARMOR_NONE;
         out->points = o->q2.stats[5];
         return !o->q2.stats[5] || application_unified_frame_string(o->lease, &out->item, "q2:remote-armor", e);
     }
     qa_regular_armor r = o->combat.armor.regular;
-    out->kind = (qa_unified_armor_kind)r.kind; out->points = r.points;
+    out->kind = r.kind; out->points = r.points;
     if (r.kind != QA_ARMOR_NONE && !item(&out->item, o, r.item, e)) return false;
     switch (r.kind) {
     case QA_ARMOR_Q1: out->absorption = r.protection.q1_absorption; break;
@@ -300,7 +300,7 @@ static bool armor(qa_unified_armor_state *out, player_observation *o, qa_error *
     case QA_ARMOR_Q3: out->protection = r.protection.q3_protection; break;
     case QA_ARMOR_NONE: case QA_ARMOR_SOURCE: break;
     }
-    out->powered_kind = (qa_unified_power_armor_kind)o->combat.armor.powered.kind;
+    out->powered_kind = o->combat.armor.powered.kind;
     out->cells = o->combat.armor.powered.cells;
     return true;
 }
@@ -881,10 +881,10 @@ static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_er
     }
     return application_fail(e, QA_ERROR_ARGUMENT, "Rogue team face lost its physical Source player");
 }
-static qa_unified_arsenal_warning warning_kind(const char *value)
+static qa_ammo_warning warning_kind(const char *value)
 {
-    return !strcmp(value, "empty") ? QA_UNIFIED_ARSENAL_EMPTY :
-        !strcmp(value, "low") ? QA_UNIFIED_ARSENAL_LOW : QA_UNIFIED_ARSENAL_NONE;
+    return !strcmp(value, "empty") ? QA_AMMO_EMPTY :
+        !strcmp(value, "low") ? QA_AMMO_LOW : QA_AMMO_NONE;
 }
 static bool native_inventory_item(qa_unified_native_inventory *out, player_observation *o,
     qa_item_id id, const char *label, double amount, qa_error *e)
@@ -913,7 +913,7 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
         const qa_application_qc_weapon_ui_binding *w = qc_active(o);
         active = w ? identity(o, w->item) : NULL; ammo = qc_ammo_item(o); out->ammo_count = o->qc_ammo;
     } else {
-        out->arsenal_warning = (qa_unified_arsenal_warning)o->equipment.warning;
+        out->arsenal_warning = o->equipment.warning;
         active = o->equipment.item ? identity(o, o->equipment.item) : NULL;
         ammo = o->equipment.ammo ? identity(o, o->equipment.ammo) : NULL;
         out->ammo_count = o->equipment.ammo_count;

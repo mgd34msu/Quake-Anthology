@@ -131,7 +131,7 @@ static bool engine_fly_client(const engine_fly_call *call, qa_actor_id actor,
         if (source->state.q3 != call->game ||
             !qa_q3_native_client_slot(source->state.q3, actor, &slot, error) ||
             !qa_q3_client_read(source->state.q3, actor, &client, error) ||
-            client.connected != QA_Q3_CLIENT_CONNECTED ||
+            client.rule.connected != QA_Q3_CLIENT_CONNECTED ||
             !qa_q3_player_read(source->state.q3, actor, &player))
             return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE fly requires its actual Q3 client");
         *spectator = player.spectator;

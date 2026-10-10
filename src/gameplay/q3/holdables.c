@@ -69,7 +69,7 @@ static bool teleport_player(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin,
     entry = q3_actor_get(game, actor);
     if (native && (!entry || entry->kind != Q3_ACTOR_PLAYER))
         return true;
-    bool spectator = native ? game->clients[native_slot].session.team == 3 : traits.spectator;
+    bool spectator = native ? game->clients[native_slot].rule.session.team == 3 : traits.spectator;
     if (!spectator) {
         if (!q3_teleport_event_at(game, actor, body.origin, false, error) ||
             !q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_TELEPORT, 43, 0,

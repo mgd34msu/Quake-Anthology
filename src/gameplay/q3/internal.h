@@ -99,6 +99,16 @@ typedef struct q3_current_origin {
     qa_vec3 origin;
     bool active;
 } q3_current_origin;
+typedef struct q3_client_state {
+    qa_q3_client_rule_tail rule;
+    qa_string_id source_name;
+    qa_actor_player *player;
+} q3_client_state;
+typedef struct q3_client_names {
+    qa_string_id source[QA_Q3_NATIVE_CLIENTS];
+    qa_string_id player[QA_Q3_NATIVE_CLIENTS];
+} q3_client_names;
+
 struct qa_q3_game {
     qa_q3_source_memory memory;
     qa_q3_options options;
@@ -128,7 +138,7 @@ struct qa_q3_game {
     qa_string_id configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_revisions[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_table_revision;
-    qa_q3_native_client clients[QA_Q3_NATIVE_CLIENTS];
+    q3_client_state clients[QA_Q3_NATIVE_CLIENTS];
     q3_actor client_actors[QA_Q3_NATIVE_CLIENTS];
     qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
     uint16_t *source_numbers;
@@ -145,8 +155,8 @@ struct qa_q3_game {
     q3_current_origin current_origins[QA_Q3_SOURCE_CLIENTS];
     qa_physics physics;
 };
-qa_q3_native_client *q3_client_at(qa_q3_game *, uint32_t);
-const qa_q3_native_client *q3_client_const(const qa_q3_game *, uint32_t);
+q3_client_state *q3_client_at(qa_q3_game *, uint32_t);
+const q3_client_state *q3_client_const(const qa_q3_game *, uint32_t);
 q3_actor *q3_actor_storage(qa_q3_game *, qa_actor_id);
 q3_actor *q3_actor_at(qa_q3_game *, uint32_t);
 const q3_actor *q3_actor_at_const(const qa_q3_game *, uint32_t);
@@ -158,8 +168,13 @@ bool q3_source_body_read(qa_q3_game *, qa_actor_id, qa_body_state *, qa_error *)
 void q3_source_origin_written(qa_q3_game *, qa_actor_id, qa_vec3);
 bool q3_source_origins_idle(const qa_q3_game *);
 void q3_source_actor_released(qa_q3_game *, qa_actor_id);
-bool q3_source_prepare(qa_q3_game *, const qa_q3_checkpoint *, uint16_t **, qa_error *);
-void q3_source_commit(qa_q3_game *, const qa_q3_checkpoint *, uint16_t *);
+bool q3_source_prepare(qa_q3_game *, const qa_q3_checkpoint *, uint16_t **, q3_client_names *, qa_error *);
+void q3_source_commit(qa_q3_game *, const qa_q3_checkpoint *, uint16_t *, const q3_client_names *);
+const char *q3_client_name(const qa_q3_game *, const q3_client_state *);
+void q3_client_name_bytes(const qa_q3_game *, const q3_client_state *, char[QA_Q3_NATIVE_NETNAME]);
+bool q3_client_name_store(qa_q3_game *, q3_client_state *, const char[QA_Q3_NATIVE_NETNAME], qa_error *);
+int32_t q3_client_ping_value(const q3_client_state *);
+void q3_client_projection(const qa_q3_game *, const q3_client_state *, qa_q3_native_client *);
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
 float q3_initial_alpha(const qa_q3_game *, qa_actor_id);
@@ -180,7 +195,7 @@ bool q3_inventory_holdable_changed(qa_q3_game *, qa_actor_id, qa_q3_holdable bef
                                     qa_q3_holdable after, qa_error *);
 size_t q3_inventory_arsenal_entries(const qa_q3_game *, bool spawn, qa_inventory_entry *);
 bool q3_player_state_valid(const qa_q3_player_state *);
-bool q3_player_state_valid_source_client(const qa_q3_player_state *, const qa_q3_native_client *);
+bool q3_player_state_valid_source_client(const qa_q3_player_state *, const qa_q3_client_rule_tail *);
 bool q3_player_motion_read(const qa_q3_game *, qa_actor_id, qa_q3_player_motion *, qa_error *);
 bool q3_player_motion_slot_read(const qa_q3_game *, uint32_t, qa_q3_player_motion *, qa_error *);
 void q3_player_motion_slots_restore(qa_q3_game *, const qa_q3_player_motion *);

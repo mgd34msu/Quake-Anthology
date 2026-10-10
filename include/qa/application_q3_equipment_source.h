@@ -6,7 +6,7 @@
 
 typedef struct qa_application_q3_equipment_draw {
     qa_actor_id actor;
-    qa_application_ammo_warning warning;
+    qa_ammo_warning warning;
     bool selected, view_visible;
 } qa_application_q3_equipment_draw;
 

@@ -269,8 +269,8 @@ static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_h
         .has_ammo_to_start = equipment.has_ammo_to_start, .low_ammo = equipment.low_ammo,
         .native_status = native_status || frame->weapon_only,
         .suppress_active_warning = provider.size >= 3 && !memcmp(provider.data, "q3:", 3),
-        .aggregate_low = aggregate && equipment.warning == QA_APPLICATION_AMMO_LOW,
-        .aggregate_empty = aggregate && equipment.warning == QA_APPLICATION_AMMO_EMPTY};
+        .aggregate_low = aggregate && equipment.warning == QA_AMMO_LOW,
+        .aggregate_empty = aggregate && equipment.warning == QA_AMMO_EMPTY};
     if (!out->weapon.native_status && out->weapon.finite_ammo &&
         out->source_vitals && out->vital_count == 3)
         out->vital_count = 2;
