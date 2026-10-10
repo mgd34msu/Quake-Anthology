@@ -105,6 +105,7 @@ struct application_native_q2_console {
         qa_cvar_handle infinite_ammo, instant_switch, quick_switch, no_stack_double;
     } weapon_cvars;
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
+    qa_cvar_handle cheats, password, spectator_password;
     application_q2_source_scripts scripts;
     size_t calls;
     qa_cvar_observer_token observers[sizeof(engine_cvars) / sizeof(*engine_cvars) + sizeof(common) / sizeof(*common) + sizeof(rerelease) / sizeof(*rerelease) + sizeof(rogue) / sizeof(*rogue) + sizeof(lmctf) / sizeof(*lmctf) + 2];
@@ -112,6 +113,9 @@ struct application_native_q2_console {
 };
 
 static void source_cvars_bind(struct application_native_q2_console *owner) {
+    owner->cheats = qa_cvars_resolve(owner->cvars, "cheats");
+    owner->password = qa_cvars_resolve(owner->cvars, "password");
+    owner->spectator_password = qa_cvars_resolve(owner->cvars, "spectator_password");
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
     owner->weapon_cvars.instant_switch = qa_cvars_resolve(owner->cvars, "g_instant_weapon_switch");
     owner->weapon_cvars.quick_switch = qa_cvars_resolve(owner->cvars, "g_quick_weapon_switch");
@@ -210,7 +214,7 @@ static void script_complete(void *opaque, const qa_command_context *context,
 }
 static bool cheats(void *opaque) {
     struct application_native_q2_console *owner = opaque;
-    const qa_cvar_view *value = qa_cvars_find(owner->cvars, "cheats");
+    const qa_cvar_view *value = qa_cvars_read(owner->cvars, owner->cheats);
     return value && value->integer != 0;
 }
 static bool allow_command(void *opaque, const qa_command_invocation *invocation) {
@@ -328,8 +332,8 @@ static bool password_required(const char *value) {
 static bool changed(void *opaque, qa_cvars *registry, const char *name, qa_error *error) {
     struct application_native_q2_console *owner = opaque;
     if (!strcmp(name, "password") || !strcmp(name, "spectator_password")) {
-        const qa_cvar_view *password = qa_cvars_find(registry, "password");
-        const qa_cvar_view *spectator = qa_cvars_find(registry, "spectator_password");
+        const qa_cvar_view *password = qa_cvars_read(registry, owner->password);
+        const qa_cvar_view *spectator = qa_cvars_read(registry, owner->spectator_password);
         unsigned required = (password && password_required(password->value) ? 1u : 0u) |
                             (spectator && password_required(spectator->value) ? 2u : 0u);
         char value[2] = {(char)('0' + required), 0};

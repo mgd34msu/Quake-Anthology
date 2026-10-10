@@ -132,7 +132,7 @@ typedef struct frontend_q3_client {
     uint32_t q3_client_launch_seat;
     qa_q3_product q3_client_product;
     qa_q3_client_clock q3_client_clock;
-    qa_cvar_handle cl_maxpackets, cl_packetdup, cl_timeNudge, cg_smoothClients;
+    qa_cvar_handle cl_maxpackets, cl_packetdup, cl_timeNudge, cg_smoothClients, cl_allowDownload;
     frontend_q3_content *q3_client_content;
     qa_q3_client_downloads *q3_client_downloads;
     qa_q3_prediction_scene *q3_prediction_scene;
@@ -176,6 +176,7 @@ static void client_cvars_bind(frontend_q3_client *client, const qa_cvars *cvars)
     client->cl_packetdup = qa_cvars_resolve(cvars, "cl_packetdup");
     client->cl_timeNudge = qa_cvars_resolve(cvars, "cl_timeNudge");
     client->cg_smoothClients = qa_cvars_resolve(cvars, "cg_smoothClients");
+    client->cl_allowDownload = qa_cvars_resolve(cvars, "cl_allowDownload");
 }
 typedef struct frontend_local_client {
     qa_frontend_network *network;
@@ -229,6 +230,7 @@ struct qa_frontend_network {
     uint64_t q3_generation;
     uint64_t server_cvar_view;
     qa_cvar_handle timeout, sv_fps, sv_maxRate, sv_allowDownload;
+    qa_cvar_handle game_type, single_player, private_clients, private_password, reconnect_limit, min_ping, max_ping, hostname, map_name, pure, game_directory, strict_auth, max_clients, rcon_password, limited_password;
     int32_t q3_server_id, q3_restarted_server_id, q3_checksum_feed;
     uint8_t q3_server_bit;
     uint64_t composition;
@@ -350,6 +352,22 @@ static bool q2_host_protocol(qa_net_protocol_id protocol)
 }
 static void server_cvars_bind(qa_frontend_network *n,const qa_cvars *cvars)
 {
+    if (n->server_cvar_view == qa_cvars_view_identity(cvars)) return;
+    n->game_type=qa_cvars_resolve(cvars,"g_gametype");
+    n->single_player=qa_cvars_resolve(cvars,"ui_singlePlayerActive");
+    n->private_clients=qa_cvars_resolve(cvars,"sv_privateClients");
+    n->private_password=qa_cvars_resolve(cvars,"sv_privatePassword");
+    n->reconnect_limit=qa_cvars_resolve(cvars,"sv_reconnectlimit");
+    n->min_ping=qa_cvars_resolve(cvars,"sv_minPing");
+    n->max_ping=qa_cvars_resolve(cvars,"sv_maxPing");
+    n->hostname=qa_cvars_resolve(cvars,"sv_hostname");
+    n->map_name=qa_cvars_resolve(cvars,"mapname");
+    n->pure=qa_cvars_resolve(cvars,"sv_pure");
+    n->game_directory=qa_cvars_resolve(cvars,"fs_game");
+    n->strict_auth=qa_cvars_resolve(cvars,"sv_strictAuth");
+    n->max_clients=qa_cvars_resolve(cvars,"sv_maxclients");
+    n->rcon_password=qa_cvars_resolve(cvars,qa_cvars_dialect(cvars)==QA_RULESET_Q3?"rconPassword":"rcon_password");
+    n->limited_password=qa_cvars_resolve(cvars,"lrcon_password");
     n->timeout=qa_cvars_resolve(cvars,"timeout");
     n->sv_fps=qa_cvars_resolve(cvars,"sv_fps");
     n->sv_maxRate=qa_cvars_resolve(cvars,"sv_maxRate");
@@ -1464,8 +1482,8 @@ static const char *password(void *context, bool limited)
     qa_application_startup_source source; bool present=false;
     if (!n->frontend->options.network_host ||
         !frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,NULL) || !present) return "";
-    const qa_cvar_view *v = qa_cvars_find(source.cvars,
-        limited ? "lrcon_password" : qa_cvars_dialect(source.cvars)==QA_RULESET_Q3?"rconPassword":"rcon_password");
+    server_cvars_bind(n, source.cvars);
+    const qa_cvar_view *v = qa_cvars_read(source.cvars, limited ? n->limited_password : n->rcon_password);
     return v ? v->value : "";
 }
 static qa_cvars *admin_rate_registry(void *context)
@@ -1890,30 +1908,31 @@ static bool q3_query(void *context, const qa_net_address *address, const qa_q3_c
         !qa_application_network_q3_host_status(n->frontend->application, owner, players, &count, error)) return false;
     qa_cvars *cvars = qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
     if (!cvars) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 query source cvars are unavailable");
-    const qa_cvar_view *mode = qa_cvars_find(cvars, "g_gametype"), *single = qa_cvars_find(cvars, "ui_singlePlayerActive");
+    server_cvars_bind(n, cvars);
+    const qa_cvar_view *mode = qa_cvars_read(cvars, n->game_type), *single = qa_cvars_read(cvars, n->single_player);
     if ((mode && mode->number == 2) || (!status && single && single->number != 0)) return true;
     qa_buffer fields = {0}; char info[1024] = {0};
     if (status && !qa_cvars_info(cvars, QA_CVAR_SERVERINFO, 1024, &fields, error)) return false;
     if (fields.data) { memcpy(info, fields.data, fields.size + 1); qa_buffer_free(&fields); }
     uint32_t capacity;
     if (!qa_application_network_q3_host_capacity(n->frontend->application, owner, &capacity, error)) return false;
-    const qa_cvar_view *private_clients = qa_cvars_find(cvars, "sv_privateClients");
+    const qa_cvar_view *private_clients = qa_cvars_read(cvars, n->private_clients);
     int32_t private_count = private_clients ? private_clients->integer : 0;
     size_t public_count = 0;
     for (size_t i = 0; i < count; ++i)
         if ((int64_t)players[i].slot >= private_count && players[i].slot < capacity) ++public_count;
     char clients[32]; snprintf(clients, sizeof(clients), "%zu", public_count);
-    const qa_cvar_view *hostname = qa_cvars_find(cvars, "sv_hostname");
-    const qa_cvar_view *map = qa_cvars_find(cvars, "mapname");
+    const qa_cvar_view *hostname = qa_cvars_read(cvars, n->hostname);
+    const qa_cvar_view *map = qa_cvars_read(cvars, n->map_name);
     if (!q3_query_field(n, info, "challenge", qa_q3_token(&packet->tokens, 1), error)) return false;
     if (!status && (!q3_query_field(n, info, "protocol", "68", error) ||
         !q3_query_field(n, info, "hostname", hostname ? hostname->value : "", error) ||
         !q3_query_field(n, info, "mapname", map ? map->value : "", error) ||
         !q3_query_field(n, info, "clients", clients, error))) return false;
     static const char *const keys[] = {"sv_maxclients", "gametype", "pure", "minPing", "maxPing", "game"};
-    static const char *const sources[] = {"sv_maxclients", "g_gametype", "sv_pure", "sv_minPing", "sv_maxPing", "fs_game"};
+    const qa_cvar_handle sources[] = {n->max_clients, n->game_type, n->pure, n->min_ping, n->max_ping, n->game_directory};
     for (size_t i = 0; !status && i < sizeof(keys) / sizeof(*keys); ++i) {
-        const qa_cvar_view *value = qa_cvars_find(cvars, sources[i]);
+        const qa_cvar_view *value = qa_cvars_read(cvars, sources[i]);
         char numeric[32];
         if (!i) snprintf(numeric, sizeof(numeric), "%" PRId64, (int64_t)capacity - private_count);
         else if (i < 5) snprintf(numeric, sizeof(numeric), "%d", value ? value->integer : 0);
@@ -1963,9 +1982,11 @@ static bool q3_authorization_policy(void *context, bool *enabled, const char **g
 {
     qa_cvars *cvars = q3_authorization_cvars(context, error);
     if (!cvars) return false;
-    const qa_cvar_view *type = qa_cvars_find(cvars, "g_gametype"),
-        *single = qa_cvars_find(cvars, "ui_singlePlayerActive"), *directory = qa_cvars_find(cvars, "fs_game"),
-        *auth = qa_cvars_find(cvars, "sv_strictAuth");
+    qa_frontend_network *n = context;
+    server_cvars_bind(n, cvars);
+    const qa_cvar_view *type = qa_cvars_read(cvars, n->game_type),
+        *single = qa_cvars_read(cvars, n->single_player), *directory = qa_cvars_read(cvars, n->game_directory),
+        *auth = qa_cvars_read(cvars, n->strict_auth);
     if (!type || !single || !directory || !auth)
         return frontend_fail(error, QA_ERROR_FORMAT, "Q3 authorization source lacks its actual admission policy rows");
     *enabled = type->number != 2 && single->number == 0;
@@ -2039,9 +2060,10 @@ static bool q3_drain(qa_frontend_network *n, qa_error *error)
         if (!qa_application_network_q3_owner(n->frontend->application, &owner, &product, error)) return false;
         qa_cvars *cvars = qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
         if (!cvars) return false;
-        const qa_cvar_view *private_clients = qa_cvars_find(cvars, "sv_privateClients"),
-            *private_password = qa_cvars_find(cvars, "sv_privatePassword"), *reconnect = qa_cvars_find(cvars, "sv_reconnectlimit"),
-            *minimum = qa_cvars_find(cvars, "sv_minPing"), *maximum = qa_cvars_find(cvars, "sv_maxPing");
+        server_cvars_bind(n, cvars);
+        const qa_cvar_view *private_clients = qa_cvars_read(cvars, n->private_clients),
+            *private_password = qa_cvars_read(cvars, n->private_password), *reconnect = qa_cvars_read(cvars, n->reconnect_limit),
+            *minimum = qa_cvars_read(cvars, n->min_ping), *maximum = qa_cvars_read(cvars, n->max_ping);
         qa_q3_product_policy policy;
         if (!qa_application_q3_product_policy_read(n->frontend->application, &policy))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 admission lost its retained resolved demo policy");
@@ -2319,7 +2341,7 @@ static bool client_download_permission(void *context, bool *allowed, qa_error *e
     if (!allowed || !client_download_current(n, error) ||
         !qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner,
             n->q3_client_launch_seat, &receiver, error)) return false;
-    const qa_cvar_view *value = qa_cvars_find(receiver.cvars, "cl_allowDownload");
+    const qa_cvar_view *value = qa_cvars_read(receiver.cvars, n->cl_allowDownload);
     if (!value) return frontend_fail(error, QA_ERROR_FORMAT, "Remote Q3 lacks its actual local download permission row");
     *allowed = value->integer != 0; return true;
 }

@@ -231,9 +231,12 @@ not retain copied values or introduce lookup context checks.
 
 Native ABI cvars remain derived module objects; unchanged polls skip guest
 rewrites. Name reads remain for declarations, typed console text, external
-module string syscalls and cold persistence. Remaining fixed packet-policy
-readers in `src/app/frontend/network.c` are covered by the deferred THE-3177
-caller audit; this section does not claim that those have migrated.
+module string syscalls and cold persistence. Fixed packet-policy readers in `src/app/frontend/network.c` now retain
+handles in its server/client binders (THE-3177). Query, admission,
+authorization, RCON and remote download permission read those handles.
+Q2 command permission and password-change callbacks bind their handles in
+`src/app/application/native_q2_console.c:115`. Remaining names in these files
+are registration, configuration, explicit console commands or menu reads.
 
 The existing frame allocation gate now counts `qa_cvars_find` in the same
 `qa_frontend_step` interval (`src/console/cvars.c:1035`,
@@ -248,8 +251,7 @@ The runs used private Xvfb displays, contained dummy audio and fresh copies of
 the owner's profile. Each exited normally, left the source profile unchanged
 and cleaned up its owned processes. Logs and receipts are in
 `/tmp/qa-cvar-gate-{initial,final}-20261010/`. These cases do not exercise every
-external packet-policy branch or guest string syscall; their remaining fixed
-packet readers remain explicitly listed under THE-3177. No timing gain,
+external packet-policy branch or guest string syscall; their packet-policy migration is separately checked under THE-3177. No timing gain,
 audio proof, rerelease census or new installation is claimed.
 
 ## Entity store: THE-2876
@@ -427,3 +429,21 @@ queue in NQ 15, Fitz 666 and RMQ 999, including a blocked ACK (`:762`). Q3 and
 rerelease fragment checks also exercise repeated preparation and blocked retry
 turns. This is native transport/channel proof; the application was not launched
 and no new `qfiles/qa-c` was installed for this slice.
+
+## Collision policy and remaining cvar callers: THE-3177
+
+The packet-policy slice uses retained common handles in
+`src/app/frontend/network.c:173,353` for Q3 query/status, authorization,
+admission, RCON and remote download permission. All client registration,
+restore and rebind paths call the client binder. Server view changes rebind
+its policy handles. Q2 command permission and password-change callbacks use
+`src/app/application/native_q2_console.c:115`; the existing restore binder
+also refreshes those handles. No lookup cache or new failure path was added.
+Remaining name reads in these files are cold declarations/configuration,
+explicit console operations or menus. `src/gameplay/q2/source.c:20` already
+binds its per-tick source handles; its named rule projection helpers are
+called by configuration and cvar-change operations.
+
+The normal build and seven core suites pass for this slice. No live external
+packet round trip or additional census is claimed. The collision-family enum
+in `include/qa/collision_bits.h:6` remains the next implementation step.
