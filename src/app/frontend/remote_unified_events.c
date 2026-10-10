@@ -15,10 +15,6 @@ typedef struct unified_event_resource {
     qa_audio_asset *asset;
     qa_game_family family;
 } unified_event_resource;
-typedef struct unified_event_link {
-    uint64_t sequence;
-    bool mirrored;
-} unified_event_link;
 typedef struct unified_component_owner {
     struct unified_component_owner *next;
     qa_string_id provider, content;
@@ -29,6 +25,7 @@ typedef struct unified_received_event {
     struct unified_received_event *next_retained;
     qa_event_lease *lease;
     qa_unified_document *document;
+    bool *mirrored;
     unified_component_owner component;
 } unified_received_event;
 struct frontend_unified_events {
@@ -41,11 +38,9 @@ struct frontend_unified_events {
     unified_received_event *retained;
     uint64_t presentation_cursor, simulation_cursor;
     size_t presentation_at, simulation_at;
-    const qa_unified_frame_events *delivery;
+    unified_received_event *delivery;
     unified_event_resource *resources;
     unified_component_owner *components;
-    unified_event_link *links;
-    size_t link_count, link_capacity;
     qa_hud *hud;
     uint32_t epoch;
     uint64_t frame, prepared_frame;
@@ -331,6 +326,15 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
         qa_event_transaction transaction;
         unified_received_event *record=record_begin(o,&transaction,e);
         if (!record) return false;
+        if (events->presentation_count) {
+            record->mirrored=qa_event_ring_alloc(&transaction,
+                events->presentation_count*sizeof(*record->mirrored),_Alignof(bool),e);
+            if (!record->mirrored) {
+                qa_event_ring_abort(&transaction);
+                return frontend_unified_fail(e,QA_ERROR_MEMORY,"Received event storage is full");
+            }
+            memset(record->mirrored,0,events->presentation_count*sizeof(*record->mirrored));
+        }
         if (!qa_unified_document_retain(doc,&record->document,e)) {
             qa_event_ring_abort(&transaction); return false;
         }
@@ -388,18 +392,10 @@ void frontend_unified_events_frame_abort(frontend_unified_events *o)
 { if (o && !o->busy) {o->prepared=false;qa_unified_document_destroy(o->prepared_document);o->prepared_document=NULL;} }
 static bool mirrored(frontend_unified_events *o,uint64_t sequence)
 {
-    for (size_t i=0;i<o->link_count;++i) if (o->links[i].sequence==sequence) return o->links[i].mirrored;
+    const qa_unified_frame_events *events=qa_unified_document_events(o->delivery->document);
+    for (size_t i=0;i<events->presentation_count;++i)
+        if (events->presentation[i].sequence==sequence) return o->delivery->mirrored[i];
     return false;
-}
-static bool link_reserve(frontend_unified_events *o,qa_error *e)
-{
-    if (o->link_count<o->link_capacity) return true;
-    size_t n=o->link_capacity?o->link_capacity*2:32;
-    if (n<o->link_capacity || n>SIZE_MAX/sizeof(*o->links))
-        return frontend_unified_fail(e,QA_ERROR_MEMORY,"Unified presentation link table overflow");
-    void *p=realloc(o->links,n*sizeof(*o->links));
-    if (!p) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining unified message sequence links");
-    o->links=p; o->link_capacity=n; return true;
 }
 static bool message(frontend_unified_events *o,const char *text_value,qa_error *e)
 {
@@ -488,14 +484,14 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
         const qa_unified_frame_events *events=qa_unified_document_events(record->document);
         if (!o->has_frame || events->frame>o->frame) break;
         if (!rows_valid(o,events,true,e)) { okay=false; break; }
-        o->delivery=events;
+        o->delivery=record;
         while (okay && !o->replica->retired && o->presentation_cursor==id &&
             o->presentation_at<events->presentation_count) {
             const qa_unified_presentation_event *row=events->presentation+o->presentation_at;
             if (!o->has_presentation_sequence || row->sequence>o->presentation_sequence) {
                 bool mirrors;
-                okay=link_reserve(o,e) && current(o,e) && apply_presentation(o,row,&mirrors,e);
-                if (okay) { o->links[o->link_count++]=(unified_event_link){row->sequence,mirrors};
+                okay=current(o,e) && apply_presentation(o,row,&mirrors,e);
+                if (okay) { record->mirrored[o->presentation_at]=mirrors;
                     o->presentation_sequence=row->sequence; o->has_presentation_sequence=true; }
             }
             if (okay) ++o->presentation_at;
@@ -521,13 +517,6 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
             qa_event_ring_retire(o->records,o->presentation_cursor<o->simulation_cursor?
                 o->presentation_cursor:o->simulation_cursor);
         }
-    }
-    if (okay && o->link_count>4096) {
-        size_t n=0;
-        uint64_t oldest=o->presentation_sequence>2048?o->presentation_sequence-2048:0;
-        for (size_t i=0;i<o->link_count;++i)
-            if (o->links[i].sequence>=oldest) o->links[n++]=o->links[i];
-        o->link_count=n;
     }
     o->delivery=NULL; o->busy=false; return okay;
 }
@@ -564,7 +553,7 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
         qa_event_lease_release(record->lease);
     }
     qa_event_ring_destroy(&o->records);
-    free(o->links); free(o); *slot=NULL; return true;
+    free(o); *slot=NULL; return true;
 }
 
 uint64_t frontend_unified_events_audio_owner(const frontend_unified_events *o)
@@ -639,7 +628,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     }
     default: return true;
     }
-    const qa_unified_frame_events *events=o->delivery;
+    const qa_unified_frame_events *events=o->delivery?qa_unified_document_events(o->delivery->document):NULL;
     if (!o->busy || !events || o->presentation_at>=events->presentation_count ||
         events->presentation+o->presentation_at!=row)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Sound linkage is outside its actual retained presentation delivery");
