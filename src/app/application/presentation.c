@@ -9,6 +9,7 @@
 #include "guest_q3_restart.h"
 #include "qa/application_q3_client.h"
 #include "qa/text.h"
+#include "control_frame.h"
 
 bool application_control_intermission(const qa_movement_state *state)
 {
@@ -92,7 +93,7 @@ static bool client_ready(q3g_role *role)
 }
 
 static bool local_snapshots(application_provider *provider,
-    qa_application_network_q3_frame **owned_frame, qa_error *error)
+    qa_application_network_q3_frame **owned_frame, qa_unified_frame_lease **storage, qa_error *error)
 {
     qa_application *app = provider->application;
     bool native = provider->kind == APPLICATION_PROVIDER_Q3;
@@ -144,9 +145,10 @@ static bool local_snapshots(application_provider *provider,
             return application_fail(error, QA_ERROR_FORMAT, "Local Q3 snapshot message sequence is exhausted");
         if (!native) publication.next_message = client->snapshot_sequence + 1;
         if (native && publication.gamestate_needed) {
-            qa_q3_gamestate *gamestate = malloc(sizeof(*gamestate));
-            if (!gamestate)
-                return application_fail(error, QA_ERROR_MEMORY, "Observing native Q3 local gamestate");
+            if (!*storage) *storage = application_control_storage_acquire(app, error);
+            qa_q3_gamestate *gamestate = *storage ? qa_unified_frame_lease_alloc(*storage,
+                1, sizeof(*gamestate), _Alignof(qa_q3_gamestate), error) : NULL;
+            if (!gamestate) return false;
             qa_q3_gamestate_init(gamestate);
             gamestate->client_number = (int32_t)slot;
             gamestate->command_sequence = publication.reliable_sequence;
@@ -158,14 +160,14 @@ static bool local_snapshots(application_provider *provider,
             }
             if (ok) ok = application_q3_wire_host_baselines(provider, gamestate, error) &&
                 application_native_q3_wire_gamestate(provider, slot, gamestate, error);
-            free(gamestate);
             if (!ok) return false;
         }
         if (!publication.snapshot_needed) continue;
         if (!*owned_frame) {
-            *owned_frame = malloc(sizeof(**owned_frame));
-            if (!*owned_frame)
-                return application_fail(error, QA_ERROR_MEMORY, "Allocating local Q3 snapshot observation");
+            if (!*storage) *storage = application_control_storage_acquire(app, error);
+            *owned_frame = *storage ? qa_unified_frame_lease_alloc(*storage,
+                1, sizeof(**owned_frame), _Alignof(qa_application_network_q3_frame), error) : NULL;
+            if (!*owned_frame) return false;
         }
         qa_q3_native_client source = {0};
         if ((native && !qa_q3_client_slot_read(provider->state.q3, slot, &source, error)) ||
@@ -193,20 +195,21 @@ bool application_q3_publish_local_snapshots(qa_application *app, qa_error *error
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Local Q3 snapshots require the completed source frame");
     qa_application_network_q3_frame *frame = NULL;
+    qa_unified_frame_lease *storage = NULL;
     bool ok = true;
     for (application_provider *provider = app->live_providers;
          provider && ok; provider = provider->next_live) {
         if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3 &&
             provider->attached && provider->constructed && !provider->close_pending) {
-            ok = local_snapshots(provider, &frame, error);
+            ok = local_snapshots(provider, &frame, &storage, error);
             continue;
         }
         struct application_q3_guest *engine = q3g_engine(provider);
         if (!provider->attached || !provider->constructed || !engine ||
             !engine->map_ready || !engine->game || !engine->game->initialized) continue;
-        ok = local_snapshots(provider, &frame, error);
+        ok = local_snapshots(provider, &frame, &storage, error);
     }
-    free(frame);
+    qa_unified_frame_lease_release(storage);
     return ok;
 }
 

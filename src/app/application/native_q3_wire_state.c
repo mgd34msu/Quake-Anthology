@@ -71,6 +71,14 @@ struct application_native_q3_wire_client_lease {
     bool cgame, builtin, has_receipt, receipt_present;
 };
 
+struct application_native_q3_bot_cycle {
+    struct application_native_q3_wire *wire;
+    qa_q3_game *game;
+    qa_world *world;
+    qa_source_frame frame;
+    uint64_t host_ns;
+};
+
 struct application_native_q3_wire {
     application_provider *provider;
     qa_world *world;
@@ -86,16 +94,9 @@ struct application_native_q3_wire {
     uint32_t lease_seats[QA_Q3_SOURCE_CLIENTS];
     uint64_t client_revision[QA_Q3_SOURCE_CLIENTS];
     struct application_native_q3_bot_cycle *bot_cycle;
+    application_native_q3_bot_cycle bot_cycle_storage;
     uint8_t snapshot_bit;
     bool restore_pending, round_pending, replacement_pending, closing;
-};
-
-struct application_native_q3_bot_cycle {
-    struct application_native_q3_wire *wire;
-    qa_q3_game *game;
-    qa_world *world;
-    qa_source_frame frame;
-    uint64_t host_ns;
 };
 
 struct application_native_q3_wire_carry {
@@ -676,9 +677,7 @@ bool application_native_q3_bot_cycle_begin(application_provider *provider, const
         actual.start_ns != frame->start_ns || actual.elapsed_ns != frame->elapsed_ns ||
         actual.time_ns != frame->time_ns)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 bot cycle requires its genuine active source admission");
-    application_native_q3_bot_cycle *cycle = malloc(sizeof(*cycle));
-    if (!cycle)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q3 bot source cycle");
+    application_native_q3_bot_cycle *cycle = &wire->bot_cycle_storage;
     *cycle = (application_native_q3_bot_cycle){.wire = wire, .game = provider->state.q3,
         .world = wire->world, .frame = actual, .host_ns = host_ns};
     for (uint32_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) bot_view_clear(&wire->clients[i]);
@@ -695,7 +694,6 @@ void application_native_q3_bot_cycle_end(application_native_q3_bot_cycle **owned
     cycle->wire->bot_cycle = NULL;
     --cycle->wire->calls;
     *owned = NULL;
-    free(cycle);
 }
 
 bool application_native_q3_bot_snapshot_entity(application_provider *provider, qa_actor_id actor,
