@@ -240,7 +240,7 @@ bool qa_font_kfont_load(qa_font_library *library, const char *path, const qa_fon
         success = false;
     texture_source = NULL;
     if (success &&
-        !qa_font_internal_picture(font, texture_path, QA_SCENE_Q2, QA_SCENE_LINEAR, &image, error))
+        !qa_font_internal_picture(font, texture_path, QA_GAME_Q2, QA_SCENE_LINEAR, &image, error))
         success = false;
     if (success) {
         uint32_t image_width = image->logical_width;

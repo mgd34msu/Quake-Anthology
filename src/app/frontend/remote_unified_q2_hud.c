@@ -254,7 +254,7 @@ static bool localized(frontend_unified_q2_rr_hud *o, const rr_record *r, const c
 static bool picture(frontend_unified_q2_rr_hud *o, rr_record *r, const char *path, qa_error *e)
 {
     frontend_unified_bank_view bank={0};
-    qa_scene_image_options options={.family=QA_SCENE_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
+    qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
         .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
     return media_bank(o,r->content,true,&bank,e) && qa_scene_image_load(bank.images,path,&options,&r->image,e);
 }
@@ -335,7 +335,7 @@ static bool poi_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
     if (okay) okay=media_bank(o,r->content,false,&bank,e);
     if (okay) {
         qa_error issue={0};
-        if (!qa_scene_resources_palette(bank.images,QA_SCENE_Q2,&palette,&issue) && issue.code!=QA_ERROR_NOT_FOUND) {
+        if (!qa_scene_resources_palette(bank.images,QA_GAME_Q2,&palette,&issue) && issue.code!=QA_ERROR_NOT_FOUND) {
             if (e) *e=issue;
             okay=false;
         }

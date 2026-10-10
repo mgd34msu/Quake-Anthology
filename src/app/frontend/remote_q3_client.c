@@ -171,7 +171,7 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
             !frontend_source_cinematics_ensure(f,v->images,error) ||
             !frontend_material_movies_cinematic_attach(row->shader_movies,f->source_cinematics,v->physical_seat,v->identity,error)) return false;
     }
-    qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
+    qa_scene_image_options images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
     qa_bsp_view bsp;
     if(!v->mounts || !v->images || !v->materials || !v->fonts || !v->movies ||
@@ -183,7 +183,7 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
         return frontend_fail(error,QA_ERROR_FORMAT,"Native remote CLIENT requires its actual Q3 BSP map");
     qa_scene_world_options options={.images=images,.subdivisions=64,.q1_water_alpha=1,
         .q2_light_modulate=1,.q3_overbright=1};
-    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_SCENE_Q3},
+    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_GAME_Q3},
         .sounds=v->sounds,.movies=v->movies,.context=row,.model_initialize=model_initialize};
     if (!frontend_q3_world_policy_initialize(f,&options,error)) return false;
     if((!v->geometry && !qa_collision_create(&bsp,&v->geometry,error)) ||

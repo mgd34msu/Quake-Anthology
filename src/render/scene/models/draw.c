@@ -11,14 +11,14 @@ static qa_scene_cull model_cull(const qa_scene_model *model, const qa_scene_mode
 
 static void depth_and_mirror(qa_scene_draw *draw, const qa_scene_model_input *input,
                              bool material_mirror) {
-    if (!material_mirror && input->view.mirror && input->family != QA_SCENE_Q3) {
+    if (!material_mirror && input->view.mirror && input->family != QA_GAME_Q3) {
         if (draw->state.cull == QA_CULL_FRONT) draw->state.cull = QA_CULL_BACK;
         else if (draw->state.cull == QA_CULL_BACK) draw->state.cull = QA_CULL_FRONT;
     }
-    bool hack = input->family == QA_SCENE_Q1 ? input->view_model :
-        (input->flags & (input->family == QA_SCENE_Q2 ? 16u : 8u)) != 0;
+    bool hack = input->family == QA_GAME_Q1 ? input->view_model :
+        (input->flags & (input->family == QA_GAME_Q2 ? 16u : 8u)) != 0;
     if (hack) { draw->state.depth_near = 0; draw->state.depth_far = 0.3f; }
-    if (input->family == QA_SCENE_Q2 && (input->flags & 4) && input->left_hand == 1) {
+    if (input->family == QA_GAME_Q2 && (input->flags & 4) && input->left_hand == 1) {
         for (unsigned column = 0; column < 4; ++column) draw->mvp.m[column * 4] = -draw->mvp.m[column * 4];
         if (draw->state.cull == QA_CULL_FRONT) draw->state.cull = QA_CULL_BACK;
         else if (draw->state.cull == QA_CULL_BACK) draw->state.cull = QA_CULL_FRONT;
@@ -33,7 +33,7 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
     context.source_entity_cell = input->source_entity_cell;
     context.source_recipient_image = input->source_recipient_image;
     context.source_recipient_context = input->source_recipient_context;
-    context.source_depth_hack = input->family == QA_SCENE_Q3 && (input->flags & 8u) != 0;
+    context.source_depth_hack = input->family == QA_GAME_Q3 && (input->flags & 8u) != 0;
     if (world) qa_scene_matrix_identity(&context.model);
     else context.model = qa_scene_model_matrix(&input->transform);
     context.entity_color = input->color;
@@ -62,8 +62,8 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
     context.fog_has_surface = input->fog_has_surface;
     context.fog_surface = input->fog_surface;
     context.mirror = input->view.mirror;
-    context.non_normalized_axis = input->family == QA_SCENE_Q3 && input->non_normalized_axis;
-    context.projection_shadow = input->family == QA_SCENE_Q3 && (input->flags & 256) != 0;
+    context.non_normalized_axis = input->family == QA_GAME_Q3 && input->non_normalized_axis;
+    context.projection_shadow = input->family == QA_GAME_Q3 && (input->flags & 256) != 0;
     context.fog = input->fog;
     context.fog_volume_color = input->fog.color;
     qa_vec3 delta = qa_vec_sub(input->view.origin, model_origin(input));
@@ -73,7 +73,7 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
         for (unsigned i = 0; i < 3; ++i)
             axes[i] = qa_vec_scale(model_vec(input->transform.axes[i]), input->transform.scale[i]);
         float length = qa_vec_length(axes[0]);
-        float scale = input->family == QA_SCENE_Q3 && input->non_normalized_axis ? (length != 0.0f ? 1 / length : 0) : 1;
+        float scale = input->family == QA_GAME_Q3 && input->non_normalized_axis ? (length != 0.0f ? 1 / length : 0) : 1;
         context.local_view_origin = qa_v3(qa_vec_dot(delta, axes[0]) * scale,
             qa_vec_dot(delta, axes[1]) * scale, qa_vec_dot(delta, axes[2]) * scale);
     }
@@ -83,7 +83,7 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
 static bool q3_model_shadow(qa_scene_model *model, const qa_scene_model_input *input,
                              const qa_scene_mesh *mesh, const qa_material *material,
                              qa_material_context *context, qa_scene_frame *frame, qa_error *error) {
-    if (input->family != QA_SCENE_Q3 || input->shadow_only || input->fog_index != 0 ||
+    if (input->family != QA_GAME_Q3 || input->shadow_only || input->fog_index != 0 ||
         (input->shadow_mode != 2 && input->shadow_mode != 3)) return true;
     if (material->sort != 3) return true;
     size_t first = frame->command_count;
@@ -116,7 +116,7 @@ static float light_fraction(float value, float channel) {
 
 static bool apply_shadow_lights(qa_scene_draw *draw, const qa_scene_model_input *input,
                                  qa_scene_frame *frame, qa_error *error) {
-    if (!input->shadow_light_count || !input->shadow_lights || input->family != QA_SCENE_Q2 ||
+    if (!input->shadow_light_count || !input->shadow_lights || input->family != QA_GAME_Q2 ||
         input->view_model || (input->flags & (4u | 8u | 16u | 1024u | 2048u | 4096u | 65536u | 131072u)) ||
         (input->infrared && (input->flags & 32768u))) return true;
     if (input->shadow_light_count > SIZE_MAX / sizeof(qa_scene_shadow_light)) {
@@ -170,11 +170,11 @@ static bool apply_shadow_lights(qa_scene_draw *draw, const qa_scene_model_input 
 static bool planar_shadow(qa_scene_model *model, const qa_scene_model_input *input,
                            const qa_scene_mesh *mesh, qa_scene_frame *frame, qa_error *error) {
     if (!input->planar_shadow || input->view_model ||
-        (input->family != QA_SCENE_Q1 && input->family != QA_SCENE_Q2) ||
-        (input->family == QA_SCENE_Q2 && (input->flags & (4u | 32u))) ||
-        (input->family == QA_SCENE_Q1 && model->source->format != QA_MODEL_MDL &&
+        (input->family != QA_GAME_Q1 && input->family != QA_GAME_Q2) ||
+        (input->family == QA_GAME_Q2 && (input->flags & (4u | 32u))) ||
+        (input->family == QA_GAME_Q1 && model->source->format != QA_MODEL_MDL &&
          model->source->format != QA_MODEL_MD5) ||
-        (input->family == QA_SCENE_Q2 && model->source->format != QA_MODEL_MD2 &&
+        (input->family == QA_GAME_Q2 && model->source->format != QA_MODEL_MD2 &&
          model->source->format != QA_MODEL_MD5)) return true;
     qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage,
         mesh->vertex_count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
@@ -235,7 +235,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     const qa_scene_model_input *original = input;
     qa_scene_model_input eyes;
     qa_model_format format = model->source->format;
-    if (format == QA_MODEL_MDL && input->family == QA_SCENE_Q1 && input->q1_double_eyes &&
+    if (format == QA_MODEL_MDL && input->family == QA_GAME_Q1 && input->q1_double_eyes &&
         input->source_path && !strcmp(input->source_path, "progs/eyes.mdl")) {
         eyes = *input;
         for (unsigned axis = 0; axis < 3; ++axis) {
@@ -252,7 +252,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     bool custom_allowed = !source_md4 && format != QA_MODEL_MDL && format != QA_MODEL_SPR && format != QA_MODEL_SP2;
     const qa_material *material = custom_allowed && input->custom_material ? input->custom_material : image ? image->material : NULL;
     if (shell_image) material = NULL;
-    if (!material && input->family == QA_SCENE_Q3 && !shell_image &&
+    if (!material && input->family == QA_GAME_Q3 && !shell_image &&
         format != QA_MODEL_MDL && format != QA_MODEL_SPR) {
         material = qa_material_find(input->material_library ? input->material_library : model->materials, "*default");
         if (!material) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model library has no canonical default material"); return false; }
@@ -289,7 +289,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
             return qa_scene_frame_draw(frame, &draw, error);
         }
         if (!q3_model_shadow(model, input, mesh, material, &context, frame, error)) return false;
-        if (!source_md4 && input->family == QA_SCENE_Q3 && (input->flags & 2) && !input->view.clip_enabled) return true;
+        if (!source_md4 && input->family == QA_GAME_Q3 && (input->flags & 2) && !input->view.clip_enabled) return true;
         size_t begin = frame->command_count;
         if (!qa_material_submit(material, mesh, &context, frame, error)) return false;
         for (size_t i = begin; i < frame->command_count; ++i) if (frame->commands[i].kind == QA_SCENE_COMMAND_DRAW) {
@@ -303,7 +303,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
             material, material->sort, input->entity, input->fog_index, 0, error);
     }
     if (!mesh->index_count) return true;
-    if (!input->shadow_only && input->family == QA_SCENE_Q3 && (input->flags & 2) && !input->view.clip_enabled) return true;
+    if (!input->shadow_only && input->family == QA_GAME_Q3 && (input->flags & 2) && !input->view.clip_enabled) return true;
     size_t begin = frame->command_count;
     qa_scene_draw draw = {0};
     draw.mesh = *mesh;

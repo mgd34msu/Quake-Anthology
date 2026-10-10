@@ -13,7 +13,7 @@
 #include <string.h>
 
 static qa_scene_image_options image_options(qa_scene_image_usage usage)
-{ return (qa_scene_image_options){.family = QA_SCENE_Q1, .usage = usage, .wrap = QA_SCENE_REPEAT,
+{ return (qa_scene_image_options){.family = QA_GAME_Q1, .usage = usage, .wrap = QA_SCENE_REPEAT,
     .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = 255}; }
 void remote_q1_media_clear(frontend_remote_q1 *row)
 {
@@ -58,7 +58,7 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
     if (row->sound_count && !row->sound_available) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received sound availability");
     for (size_t i = 0; i < row->sound_count; ++i) {
         qa_audio_asset *asset = NULL;
-        if (!qa_audio_bank_register(row->sound_bank, row->sounds[i], QA_AUDIO_Q1, &asset, error)) return false;
+        if (!qa_audio_bank_register(row->sound_bank, row->sounds[i], QA_GAME_Q1, &asset, error)) return false;
         row->sound_available[i] = asset != NULL;
         qa_audio_asset_release(asset);
     }
@@ -76,7 +76,7 @@ bool remote_q1_sky_load(frontend_remote_q1 *row, qa_error *error)
     if (size > SIZE_MAX - 16) return false;
     char *path = malloc(size + 16);
     if (!path) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining remote Q1 sky request");
-    qa_scene_image_options options = {.family = QA_SCENE_Q1, .usage = QA_IMAGE_USAGE_SKY,
+    qa_scene_image_options options = {.family = QA_GAME_Q1, .usage = QA_IMAGE_USAGE_SKY,
         .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_LINEAR, .transparent_index = -1};
     bool ok = true;
     for (unsigned i = 0; ok && i < 6; ++i) {
@@ -132,7 +132,7 @@ bool remote_q1_model_read(frontend_remote_q1 *row, const frontend_remote_q1_enti
     } else if (ok) ok = qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) &&
         qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
         qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&
-        frontend_visual_model_opening_initialize(row->frontend, QA_SCENE_Q1, row->content.mounts,
+        frontend_visual_model_opening_initialize(row->frontend, QA_GAME_Q1, row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);
     if (!ok) {
         qa_scene_world_destroy(m->world); qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); qa_resource_release(m->resource);

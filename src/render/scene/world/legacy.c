@@ -101,7 +101,7 @@ bool qaw_build_legacy(qa_scene_world *world, qa_error *error)
         snprintf(shader_name, size, "textures/%s", name);
         if (qa_material_has_authored(world->materials, shader_name)) {
             qa_scene_image_options options = world->options.images;
-            options.family = q1 ? QA_SCENE_Q1 : QA_SCENE_Q2;
+            options.family = q1 ? QA_GAME_Q1 : QA_GAME_Q2;
             if (legacy->lightmapped && i > INT32_MAX) {
                 free(shader_name); qa_error_set(error, QA_ERROR_FORMAT, i, "Authored brush lightmap index exceeds material range"); return false;
             }
@@ -184,7 +184,7 @@ bool qa_scene_world_remap(qa_scene_world *world, const char *original, const cha
                 free(pending); qa_error_set(error, QA_ERROR_FORMAT, i, "Remapped brush lightmap index exceeds material range"); return false;
             }
             qa_scene_image_options options = world->options.images;
-            options.family = world->bsp.family == QA_BSP_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2;
+            options.family = world->bsp.family == QA_BSP_Q1 ? QA_GAME_Q1 : QA_GAME_Q2;
             if (!qa_material_register_world(world->materials, replacement, &options, world->identity,
                 lightmapped ? (int32_t)i : -1, lightmapped ? QA_MATERIAL_LIGHTMAP : QA_MATERIAL_DYNAMIC,
                 texture, data->textures[surface->legacy->texture].image, &material, error)) { free(pending); return false; }

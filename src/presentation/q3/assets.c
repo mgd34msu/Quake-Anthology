@@ -133,7 +133,7 @@ bool q3p_select(qa_q3_presentation_assets *a, const char *name, qa_q3_asset_kind
 {
     *out = a->options.provider;
     if (a->options.select && !a->options.select(a->options.context, name, kind, out, error)) return false;
-    return out->mounts && out->images && out->materials && out->family >= QA_SCENE_Q1 && out->family <= QA_SCENE_Q3 ?
+    return out->mounts && out->images && out->materials && out->family >= QA_GAME_Q1 && out->family <= QA_GAME_Q3 ?
         qa_q3_assets_provider_hold(a, out, error) :
         q3p_fail(error, QA_ERROR_ARGUMENT, "selected Q3 presentation provider is incomplete");
 }
@@ -142,7 +142,7 @@ bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *op
                                         qa_q3_presentation_assets **out, qa_error *error)
 {
     if (!options || !out || !options->provider.mounts || !options->provider.images ||
-        !options->provider.materials || options->provider.family < QA_SCENE_Q1 || options->provider.family > QA_SCENE_Q3)
+        !options->provider.materials || options->provider.family < QA_GAME_Q1 || options->provider.family > QA_GAME_Q3)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 presentation resource services");
     qa_q3_presentation_assets *a = calloc(1, sizeof(*a));
     if (!a) return q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 presentation resource handles");

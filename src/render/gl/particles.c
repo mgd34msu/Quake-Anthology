@@ -34,21 +34,21 @@ bool gl_particles_prepare(qa_gl_renderer *renderer, const qa_scene_particle_batc
     qa_scene_state_default(&draw->state);
     draw->state.blend_source = QA_BLEND_SRC_ALPHA;
     draw->state.blend_destination = QA_BLEND_ONE_MINUS_SRC_ALPHA;
-    draw->state.depth_write = batch->family == QA_SCENE_Q1;
-    draw->state.alpha_test = batch->family == QA_SCENE_Q1 ? QA_ALPHA_GT666 : QA_ALPHA_NONE;
+    draw->state.depth_write = batch->family == QA_GAME_Q1;
+    draw->state.alpha_test = batch->family == QA_GAME_Q1 ? QA_ALPHA_GT666 : QA_ALPHA_NONE;
     draw->state.cull = QA_CULL_NONE;
     draw->mesh.vertices = renderer->particle_vertices;
     draw->mesh.indices = renderer->particle_indices;
     draw->mesh.vertex_count = draw->mesh.index_count = needed;
     draw->mesh.primitive = QA_SCENE_TRIANGLES;
     qa_vec3 normal = qa_vec_scale(batch->view.axis[0], -1);
-    float uv = batch->family == QA_SCENE_Q2 ? .0625f : 0;
+    float uv = batch->family == QA_GAME_Q2 ? .0625f : 0;
     for (size_t i = 0; i < batch->count; ++i) {
         const qa_scene_particle_sample *sample = batch->samples + i;
         float depth = qa_vec_dot(qa_vec_sub(sample->origin, batch->view.origin), batch->view.axis[0]);
         float scale = depth < 20 ? 1 : 1 + depth * .004f;
         qa_scene_vec4 color = sample->color;
-        color.w = batch->family == QA_SCENE_Q1 ? 1 :
+        color.w = batch->family == QA_GAME_Q1 ? 1 :
             (float)(uint8_t)(uint32_t)qa_source_float_to_i32(color.w * 255.0f) / 255.0f;
         for (unsigned corner = 0; corner < 3; ++corner) {
             qa_scene_vertex *vertex = renderer->particle_vertices + i * 3 + corner;

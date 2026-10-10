@@ -118,7 +118,7 @@ bool qa_q3_assets_provider_hold(qa_q3_presentation_assets *assets,
     const qa_q3_presentation_provider *provider, qa_error *error)
 {
     if (!assets || !provider || !provider->mounts || !provider->images || !provider->materials ||
-        (unsigned)provider->family > QA_SCENE_Q3 || qa_scene_resources_files(provider->images) != provider->mounts ||
+        (unsigned)provider->family > QA_GAME_Q3 || qa_scene_resources_files(provider->images) != provider->mounts ||
         qa_material_library_resource_owner(provider->materials) != provider->images)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Source registry provider lacks its actual bank authority");
     for (q3p_provider_custody *row = assets->providers; row; row = row->next)

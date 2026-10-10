@@ -55,7 +55,7 @@ static bool model_admit(frontend_remote_q2 *row, const char *path, bool *present
 }
 static bool skin_admit(frontend_remote_q2 *row, const char *path, bool *present, qa_error *error)
 {
-    qa_scene_image_options options = {.family = QA_SCENE_Q2, .usage = QA_IMAGE_USAGE_SKIN,
+    qa_scene_image_options options = {.family = QA_GAME_Q2, .usage = QA_IMAGE_USAGE_SKIN,
         .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true,
         .transparent = true, .transparent_index = 255};
     const qa_material *material = NULL;

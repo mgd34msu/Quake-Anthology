@@ -579,15 +579,15 @@ bool qa_audio_decode(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample
 }
 
 bool qa_audio_source_layout_compute(const qa_audio_sample *sample, uint32_t output_rate,
-                                    qa_audio_family family, qa_audio_source_layout *out,
+                                    qa_game_family family, qa_audio_source_layout *out,
                                     qa_error *error) {
     if (!out || !output_rate ||
-        (family != QA_AUDIO_Q1 && family != QA_AUDIO_Q2 && family != QA_AUDIO_Q3))
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2 && family != QA_GAME_Q3))
         return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0,
                                    "Invalid source resampling arguments");
     if (!sample_valid(sample, error))
         return false;
-    bool q3 = family == QA_AUDIO_Q3;
+    bool q3 = family == QA_GAME_Q3;
     float ratio = (float)sample->sample_rate / (float)output_rate;
     double count = truncf((float)sample->frame_count / ratio);
     if (!(count >= 0 && count < 0x1p64))
@@ -608,7 +608,7 @@ bool qa_audio_source_layout_compute(const qa_audio_sample *sample, uint32_t outp
 }
 
 bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rate,
-                              qa_audio_family family, qa_audio_sample **out, qa_error *error) {
+                              qa_game_family family, qa_audio_sample **out, qa_error *error) {
     if (!out)
         return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0, "Missing resampled PCM output");
     qa_audio_source_layout layout;

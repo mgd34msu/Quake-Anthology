@@ -181,13 +181,13 @@ static bool music(void *context,const char *intro_name,const char *loop_name,qa_
                 return fail(e,QA_ERROR_ARGUMENT,"Selecting a different soundtrack retains the old actual player operation");
             qa_audio_music *fresh=NULL;
             qa_audio_music_controls *shared=frontend_music_sources_controls(f->music_sources);
-            if(!shared || !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&fresh,e))return false;
+            if(!shared || !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&fresh,e))return false;
             if(!qa_audio_music_controls_bind(fresh,shared,e)) { qa_audio_music_destroy(fresh); return false; }
             qa_audio_music_release(o->music); o->music=fresh;
             free(o->music_intro); free(o->music_loop); o->music_intro=o->music_loop=NULL; o->music_looping=false;
         }
     }
-    if(!o->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&o->music,e))return false;
+    if(!o->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&o->music,e))return false;
     qa_audio_music_controls *controls=frontend_music_sources_controls(f->music_sources);
     if(!controls || (!qa_audio_music_controls_is(o->music,controls) && !qa_audio_music_controls_bind(o->music,controls,e)))return false;
     frontend_music_origin origin=music_origin(o);
@@ -212,11 +212,11 @@ static bool music(void *context,const char *intro_name,const char *loop_name,qa_
     memcpy(intro,intro_name,a+1); memcpy(loop,tail,b+1); o->music_intro=intro; o->music_loop=loop;
     if(!music_attach(o,e))return false;
     qa_audio_stream *first=NULL,*last=NULL;
-    if(!qa_audio_bank_music_cue(o->services.resources.sounds,intro_name,QA_AUDIO_Q3,NULL,NULL,&first,e))return false;
+    if(!qa_audio_bank_music_cue(o->services.resources.sounds,intro_name,QA_GAME_Q3,NULL,NULL,&first,e))return false;
     if(!first)return music_returned(o,intro_name,tail,false,e);
     last=first;
     if(*tail && strcmp(intro_name,tail) &&
-       !qa_audio_bank_music_cue(o->services.resources.sounds,tail,QA_AUDIO_Q3,NULL,NULL,&last,e)) {
+       !qa_audio_bank_music_cue(o->services.resources.sounds,tail,QA_GAME_Q3,NULL,NULL,&last,e)) {
         qa_audio_stream_close(first); return false;
     }
     o->music_looping=last!=NULL; qa_audio_music_start(o->music,first,last);
@@ -228,7 +228,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
     if(!definition || !options || !o->entered || !current(o,o->entered,e))return false;
     options->world.scratch=o->services.resources.world_scratch.view;
     options->world.child_scratch=o->services.resources.world_scratch.child;
-    options->world_family=QA_SCENE_Q3; options->split_screen=o->frontend->options.seats>1;
+    options->world_family=QA_GAME_Q3; options->split_screen=o->frontend->options.seats>1;
     return frontend_q3_scene_policy_read(o->frontend,options,e) &&
         frontend_q3_shadow_mode_read(o->entered->source.basis.client.cvars,qa_native_q3_remote_client_cvar_refs(o->services.client)->rows[QA_NATIVE_Q3_CVAR_cg_shadows],&options->shadow_mode,e) &&
         current(o,o->entered,e);

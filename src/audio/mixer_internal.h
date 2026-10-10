@@ -68,7 +68,7 @@ typedef struct qa_mixer_loop {
 typedef struct qa_mixer_loop_mix {
     qa_mixer_prepared *prepared;
     qa_mixer_gain gain;
-    qa_audio_family family;
+    qa_game_family family;
     bool doppler;
     float doppler_scale, old_doppler_scale;
 } qa_mixer_loop_mix;

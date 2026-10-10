@@ -9,7 +9,6 @@
 typedef struct qa_input_pair {
     float x, y;
 } qa_input_pair;
-typedef enum qa_button_timing { QA_BUTTON_Q1, QA_BUTTON_Q2, QA_BUTTON_Q3 } qa_button_timing;
 
 /* Zero initializes a button. A source identifies one physical press for this
  * seat. Clear retains storage; destroy releases it. Do not copy live buttons.
@@ -23,7 +22,7 @@ typedef struct qa_input_button {
 bool qa_input_button_down(qa_input_button *, uint64_t source, double time_ms, qa_error *);
 void qa_input_button_up(qa_input_button *, uint64_t source, double time_ms, double missing_ms);
 void qa_input_button_release(qa_input_button *, double time_ms);
-bool qa_input_button_sample(qa_input_button *, qa_button_timing, double now_ms, double frame_ms,
+bool qa_input_button_sample(qa_input_button *, qa_game_family, double now_ms, double frame_ms,
                             float *out, qa_error *);
 void qa_input_button_clear(qa_input_button *);
 void qa_input_button_destroy(qa_input_button *);

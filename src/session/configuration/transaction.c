@@ -1149,9 +1149,7 @@ static bool configuration_prepare(qa_configuration *manager, const qa_launch_dra
         if (!selection->enabled) continue;
         const qa_catalog_mod *mod = qa_catalog_mod_find(s->draft->catalog, selection->component);
         const qa_product *product = qa_catalog_product(s->draft->catalog, mod->product);
-        qa_ruleset_id clock = product->family == QA_GAME_Q3 ? QA_RULESET_Q3 : product->family == QA_GAME_Q2
-            ? (product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)
-            : (product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE);
+        qa_ruleset_id clock = qa_product_ruleset(product, QA_GAME_Q1);
         qa_launch_provider provider = {.instance = selection->instance, .product = mod->product,
             .runtime = mod->runtime, .implementation = mod->key, .artifact = mod->program_path,
             .component = mod->key, .clock = qa_clock_defaults(clock)};

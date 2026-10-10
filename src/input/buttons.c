@@ -56,16 +56,16 @@ void qa_input_button_release(qa_input_button *button, double time) {
     button->released = true;
 }
 
-bool qa_input_button_sample(qa_input_button *button, qa_button_timing timing, double now,
+bool qa_input_button_sample(qa_input_button *button, qa_game_family timing, double now,
                             double frame, float *out, qa_error *error) {
-    if (!button || !out || timing < QA_BUTTON_Q1 || timing > QA_BUTTON_Q3 || !isfinite(now) ||
+    if (!button || !out || timing < QA_GAME_Q1 || timing > QA_GAME_Q3 || !isfinite(now) ||
         now < 0 || !isfinite(frame) || frame <= 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid button sample");
         return false;
     }
     bool active = button->count != 0;
     float value;
-    if (timing == QA_BUTTON_Q1) {
+    if (timing == QA_GAME_Q1) {
         value = button->pressed && button->released ? (active ? 0.75f : 0.25f)
                 : button->pressed                   ? (active ? 0.5f : 0)
                                                     : (active ? 1 : 0);
@@ -74,7 +74,7 @@ bool qa_input_button_sample(qa_input_button *button, qa_button_timing timing, do
             button->held_ms += button->down_ms == 0 ? now : fmax(0, now - button->down_ms);
             button->down_ms = now;
         }
-        value = timing == QA_BUTTON_Q3 ? (float)button->held_ms / (float)frame
+        value = timing == QA_GAME_Q3 ? (float)button->held_ms / (float)frame
                                        : (float)(button->held_ms / frame);
         value = fmaxf(0, fminf(1, value));
     }

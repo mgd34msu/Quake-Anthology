@@ -116,7 +116,7 @@ static bool publish_record(qa_font *font, const char *cache_name, bool load_imag
         qa_q3_glyph_record *record = &font->q3_record.glyphs[code];
         const qa_scene_image *image = NULL;
         if (load_images && code < 255u && record->shader_name[0]) {
-            if (!qa_font_internal_picture(font, record->shader_name, QA_SCENE_Q3, QA_SCENE_LINEAR,
+            if (!qa_font_internal_picture(font, record->shader_name, QA_GAME_Q3, QA_SCENE_LINEAR,
                                           &image, error))
                 return false;
         }

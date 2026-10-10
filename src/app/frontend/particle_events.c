@@ -663,7 +663,7 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
         }
     }
     bool ok = (owner->q1 || owner->q2) && particle_images(frontend, provider, family, &owner->images, error) &&
-        qa_scene_particle_image(owner->images, family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2, &owner->particle_image, error);
+        qa_scene_particle_image(owner->images, family == QA_GAME_Q1 ? QA_GAME_Q1 : QA_GAME_Q2, &owner->particle_image, error);
     if (!ok) {
         if (!owner->q1 && !owner->q2) frontend_fail(error, QA_ERROR_MEMORY, "allocating bounded source particle pool");
         qa_scene_image_release(owner->particle_image); free(owner->entity_trails.rows); free(owner->q1); free(owner->q2_particles); free(owner); return false;
@@ -967,7 +967,7 @@ bool frontend_particle_q2_entity(qa_frontend *frontend,uint32_t seat,
     if (!owner) return true;
     if ((view->render_flags&128u) && !view->model_beam) {
         qa_bytes palette;
-        if (!qa_scene_resources_palette(owner->images,QA_SCENE_Q2,&palette,error) ||
+        if (!qa_scene_resources_palette(owner->images,QA_GAME_Q2,&palette,error) ||
             !frontend_q2_entity_beam(&owner->random,palette,qa_scene_white(owner->images),
                 &world->view,view->body.origin,view->previous_origin,(uint32_t)view->skin,
                 view->frame,frame,error)) return false;
@@ -1008,7 +1008,7 @@ static bool impact_model(qa_frontend *frontend, frontend_particle_owner *owner,
     for (size_t i = 0; i < count; ++i) {
         frontend_visual_owner_view media;
         if (!frontend_visual_owner_read(frontend, i, &media) ||
-            media.owner != owner->provider || media.family != QA_SCENE_Q2) continue;
+            media.owner != owner->provider || media.family != QA_GAME_Q2) continue;
         size_t models = frontend_visual_model_count(frontend, i);
         for (size_t j = 0; j < models; ++j) {
             frontend_visual_model_view model;
@@ -2129,7 +2129,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
                 if (!light->active || light->die<seconds || radius<=0) continue;
                 pending[count++]=(qa_scene_light){.origin=light->origin,.color=light->recipe.color,
                     .radius=radius,.minimum=light->recipe.minimum,.scale=1,.additive=true,
-                    .family=QA_SCENE_Q1,.identity=light->identity};
+                    .family=QA_GAME_Q1,.identity=light->identity};
             }
         } else {
         if (!owner->q2 || !qa_actor_id_equal(owner->recipient,recipient) ||
@@ -2151,7 +2151,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
                     impact->kind==6 ? (qa_vec3){1,1,0} : impact->kind==8 || impact->kind==11 ? (qa_vec3){.19f,.41f,.75f} :
                     impact->kind==9 ? (qa_vec3){0,0,1} : (qa_vec3){1,.5f,.5f},
                 .radius=radius,.scale=1,
-                .additive=true,.family=QA_SCENE_Q2};
+                .additive=true,.family=QA_GAME_Q2};
         }
         for (size_t i=0;i<FRONTEND_Q2_DLIGHT_CAPACITY;++i) {
             const frontend_q2_dlight *light=&owner->lights[i];
@@ -2162,7 +2162,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
             if (radius<=0) continue;
             pending[count++]=(qa_scene_light){.origin=light->origin,
                 .color=light->kind==1 ? (qa_vec3){-1,-1,-1} : (qa_vec3){1,1,1},
-                .radius=radius,.scale=1,.additive=true,.family=QA_SCENE_Q2};
+                .radius=radius,.scale=1,.additive=true,.family=QA_GAME_Q2};
         }
         }
         if (!count) continue;
@@ -2197,7 +2197,7 @@ static bool local_beam_model_draw(void *context,const frontend_q2_beam_draw *dra
         placement.scale[i]=i==0?draw->scale.x:i==1?draw->scale.y:draw->scale.z;
     }
     qa_scene_model_input input={.view=output->world->view,.transform=placement,.previous_origin=draw->origin,
-        .family=QA_SCENE_Q2,.frame=(uint32_t)draw->frame,.old_frame=(uint32_t)draw->old_frame,
+        .family=QA_GAME_Q2,.frame=(uint32_t)draw->frame,.old_frame=(uint32_t)draw->old_frame,
         .skin=(uint32_t)draw->skin,.flags=draw->flags,.back_lerp=draw->back_lerp,.color={1,1,1,draw->alpha},
         .seconds=output->milliseconds*.001,.ambient={1,1,1},.identity_light=output->world->identity_light,
         .source_path=q2fx_model_paths[draw->model],.video_frame=output->world->video_frame,.video_context=output->world->video_context};
@@ -2286,7 +2286,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
                 while (frontend_fx_q1_beam_next(&cursor,&owner->random,&placement)) {
                     qa_vec3 origin=qa_v3(placement.origin[0],placement.origin[1],placement.origin[2]);
                     qa_scene_model_input input={.view=*view,.transform=placement,.previous_origin=origin,
-                        .family=QA_SCENE_Q1,.color={1,1,1,1},.seconds=world->seconds,
+                        .family=QA_GAME_Q1,.color={1,1,1,1},.seconds=world->seconds,
                         .source_path=frontend_fx_q1_beam_model(beam->type),.entity=beam->actor.slot,
                         .identity_light=world->identity_light,.ambient={1,1,1},
                         .video_frame=world->video_frame,.video_context=world->video_context};
@@ -2316,7 +2316,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
             owner->q2_particles->count=retained;
         }
         qa_bytes palette;
-        qa_scene_family family = owner->family == QA_GAME_Q1 ? QA_SCENE_Q1 : QA_SCENE_Q2;
+        qa_game_family family = owner->family == QA_GAME_Q1 ? QA_GAME_Q1 : QA_GAME_Q2;
         if (!qa_scene_resources_palette(owner->images, family, &palette, error)) return false;
         for (size_t i = 0; owner->q2 && i < FRONTEND_Q2_IMPACT_CAPACITY; ++i) {
             const frontend_q2_impact *impact = &owner->impacts[i];
@@ -2339,7 +2339,7 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
                 placement.axes[axis][2]=axes[axis].z*model_scale;
             }
             qa_scene_model_input input = {.view = *view, .transform = placement,
-                .previous_origin = impact->origin, .family = QA_SCENE_Q2,
+                .previous_origin = impact->origin, .family = QA_GAME_Q2,
                 .color = {1, 1, 1, impact_alpha(owner,impact,&sample,fraction,controls.smooth)},
                 .frame = impact->base_frame + current + 1, .old_frame = impact->base_frame + current,
                 .skin=impact->kind>=6 ? (uint32_t)(impact->kind==9 || impact->kind==11 ? 2 : impact->kind-6) :

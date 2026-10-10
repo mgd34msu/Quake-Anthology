@@ -5,7 +5,7 @@
 #include "material_movies.h"
 typedef struct frontend_visual_owner_view {
     qa_actor_owner owner;
-    qa_scene_family family;
+    qa_game_family family;
     qa_vfs *mounts;
     qa_scene_resources *images;
     qa_material_library *materials;

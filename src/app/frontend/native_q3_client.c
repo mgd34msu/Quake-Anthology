@@ -246,13 +246,13 @@ static bool music(void *context,const char *intro,const char *loop,qa_error *e)
     if (attached && attached!=row->view.music)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native bus contains another retained music player");
     row->view.music_attached=attached!=NULL;
-    if(!row->view.music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&row->view.music,e))return false;
+    if(!row->view.music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&row->view.music,e))return false;
     frontend_music_origin origin=music_origin(row);
     if (!frontend_music_sources_explicit_selected(f->music_sources,&origin)) {
         if (attached || !qa_audio_music_idle(row->view.music))
             return frontend_fail(e,QA_ERROR_ARGUMENT,"Native music selection retains its previous playback");
         qa_audio_music *fresh=NULL;
-        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_AUDIO_Q3,true,&fresh,e)) return false;
+        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&fresh,e)) return false;
         qa_audio_music_release(row->view.music); row->view.music=fresh;
         free(row->music_intro); free(row->music_loop); row->music_intro=row->music_loop=NULL;
         row->music_looping=false; origin=music_origin(row);
@@ -271,10 +271,10 @@ static bool music(void *context,const char *intro,const char *loop,qa_error *e)
     if(!row->music_intro || !row->music_loop)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining native source music names");
     strcpy(row->music_intro,intro); strcpy(row->music_loop,tail);
     qa_audio_stream *first=NULL,*last=NULL;
-    if(!qa_audio_bank_music_cue(row->view.sounds,intro,QA_AUDIO_Q3,NULL,NULL,&first,e))return false;
+    if(!qa_audio_bank_music_cue(row->view.sounds,intro,QA_GAME_Q3,NULL,NULL,&first,e))return false;
     if(!first)return frontend_music_sources_explicit(f->music_sources,&origin,row->music_intro,row->music_loop,false,e);
     last=first;
-    if(*tail && strcmp(intro,tail) && !qa_audio_bank_music_cue(row->view.sounds,tail,QA_AUDIO_Q3,NULL,NULL,&last,e)) {
+    if(*tail && strcmp(intro,tail) && !qa_audio_bank_music_cue(row->view.sounds,tail,QA_GAME_Q3,NULL,NULL,&last,e)) {
         qa_audio_stream_close(first); return false;
     }
     row->music_looping=last!=NULL; qa_audio_music_start(row->view.music,first,last);
@@ -344,7 +344,7 @@ static bool select_asset(void *context,const char *name,qa_q3_asset_kind kind,
     frontend_native_q3 *row=context;
     if(!name || !out || !frontend_native_q3_current(row))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native asset selection lost its actual source recipient");
-    *out=(qa_q3_presentation_provider){row->view.mounts,row->view.images,row->view.materials,QA_SCENE_Q3};
+    *out=(qa_q3_presentation_provider){row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3};
     if(kind==QA_Q3_ASSET_SHADER)return true;
     qa_launch_role role;
     if(!strncmp(name,"models/players/",15))role=QA_ROLE_SKIN;
@@ -358,7 +358,7 @@ static bool select_asset(void *context,const char *name,qa_q3_asset_kind kind,
     if(!frontend_visual_media_acquire(row->frontend,selected.provider,QA_GAME_Q3,&media,e) ||
         !qa_application_q3_asset_selection_current(row->frontend->application,&selected) ||
         !frontend_native_q3_current(row))return false;
-    *out=(qa_q3_presentation_provider){media.mounts,media.images,media.materials,QA_SCENE_Q3};
+    *out=(qa_q3_presentation_provider){media.mounts,media.images,media.materials,QA_GAME_Q3};
     return true;
 }
 static bool model_initialize(void *context,const qa_q3_model_opening *opening,
@@ -374,7 +374,7 @@ bool frontend_native_q3_asset_options(frontend_native_q3 *row,qa_q3_presentation
 {
     if(!row || !out || !linked(row) || !row->view.mounts || !row->view.images || !row->view.materials || !row->view.sounds || !row->view.movies)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native assets require their real retained media owners");
-    *out=(qa_q3_presentation_asset_options){.provider={row->view.mounts,row->view.images,row->view.materials,QA_SCENE_Q3},
+    *out=(qa_q3_presentation_asset_options){.provider={row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3},
         .sounds=row->view.sounds,.movies=row->view.movies,.context=row,.select=select_asset,.print=print_row,.model_initialize=model_initialize}; return true;
 }
 static bool prepare_picture(void *context,qa_material_context *material,qa_error *error)
@@ -891,7 +891,7 @@ static bool make_media(frontend_native_q3 *row,qa_error *e)
             !frontend_source_cinematics_ensure(f,v->images,e) ||
             !frontend_material_movies_cinematic_attach(row->shader_movies,f->source_cinematics,v->seat,v->identity,e)) return false;
     }
-    qa_scene_image_options images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,
+    qa_scene_image_options images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,
         .mipmap=true,.transparent_index=-1};
     bool ok=v->mounts && v->images && v->materials && v->fonts && v->movies &&
         qa_material_library_load_scripts(v->materials,v->mounts,&images,e) &&

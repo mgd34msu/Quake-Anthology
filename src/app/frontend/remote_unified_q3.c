@@ -1030,7 +1030,7 @@ bool frontend_unified_q3_equipment_replacement(frontend_unified_q3 *o,const q3n_
         equipment->source_frame!=o->replica->frame_number || equipment->scene_sequence!=binding.frame->sequence ||
         !f->compiled->source.basis.instance)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Selected view equipment changed its registered frame receipt");
-    *consumed=equipment->input->family==QA_SCENE_Q3 || equipment->slot ||
+    *consumed=equipment->input->family==QA_GAME_Q3 || equipment->slot ||
         equipment->provider!=f->compiled->source.basis.provider ||
         strcmp(equipment->instance,f->compiled->source.basis.instance)!=0;
     return true;
@@ -1057,7 +1057,7 @@ bool frontend_unified_q3_world(frontend_unified_q3 *o,const qa_scene_view *view,
         o->sampled_view.origin.x!=view->origin.x || o->sampled_view.origin.y!=view->origin.y ||
         o->sampled_view.origin.z!=view->origin.z || !enter(o,(qa_actor_id){0},e)) return false;
     qa_collision_family family=qa_collision_geometry_family(frontend_remote_unified_geometry(o->replica));
-    qa_q3_scene_options options={.world=*world,.world_family=family==QA_COLLISION_Q1?QA_SCENE_Q1:family==QA_COLLISION_Q2?QA_SCENE_Q2:QA_SCENE_Q3,.lod_scale=5,
+    qa_q3_scene_options options={.world=*world,.world_family=family==QA_COLLISION_Q1?QA_GAME_Q1:family==QA_COLLISION_Q2?QA_GAME_Q2:QA_GAME_Q3,.lod_scale=5,
         .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={.core_width=6,.ring_width=16,.segment_length=32}};
     qa_scene_state_default(&options.state); bool okay=true;
     for (unified_q3_bank *b=o->banks;okay && b;b=b->next)
@@ -1074,7 +1074,7 @@ bool frontend_unified_q3_reflected_world(frontend_unified_q3 *o,const qa_scene_w
         o->sampled_frame_number!=o->frontend->frame_number || scene!=&o->frontend->frame ||
         !qa_scene_world_q1_mirror_scope(frontend_unified_media_world(o->media),world,scene) ||
         !enter(o,(qa_actor_id){0},e))return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 reflection requires its real mirror scope and sampled frame");
-    qa_q3_scene_options options={.world=*world,.world_family=QA_SCENE_Q1,.lod_scale=5,
+    qa_q3_scene_options options={.world=*world,.world_family=QA_GAME_Q1,.lod_scale=5,
         .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.rail={.core_width=6,.ring_width=16,.segment_length=32}};
     qa_scene_state_default(&options.state);bool okay=true;
     for(unified_q3_bank *b=o->banks;okay && b;b=b->next)if(!b->retired)

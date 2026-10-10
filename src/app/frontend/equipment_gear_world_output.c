@@ -150,7 +150,7 @@ bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
     if (okay && definition->presentation.cable_shader) {
         output->start = qa_vec_add(source->player_body.origin, qa_v3(0, 0, source->view_height));
         output->width = definition->presentation.cable_width;
-        qa_scene_image_options images = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
+        qa_scene_image_options images = {.family = QA_GAME_Q3, .wrap = QA_SCENE_REPEAT,
             .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .usage = QA_IMAGE_USAGE_WALL, .transparent_index = -1};
         okay = qa_material_register_kind(owner->view.content.materials, definition->presentation.cable_path,
             &images, QA_MATERIAL_DYNAMIC, &output->beam, error);

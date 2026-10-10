@@ -104,7 +104,7 @@ bool frontend_q2_footsteps_create(const frontend_q2_footstep_source *source,
         footstep_table *table = owner->tables + i;
         for (uint32_t j = 0; j < 16; ++j) {
             char name[128]; path(table, j, name); qa_audio_asset *asset = NULL;
-            if (!qa_audio_bank_register(source->sounds, name, QA_AUDIO_Q2, &asset, error)) return false;
+            if (!qa_audio_bank_register(source->sounds, name, QA_GAME_Q2, &asset, error)) return false;
             if (!asset) break;
             table->resources[table->count++] = qa_resource_id(qa_audio_asset_resource(asset)); qa_audio_asset_release(asset);
         }
@@ -202,7 +202,7 @@ bool frontend_q2_footsteps_emit(frontend_q2_footsteps *owner, const frontend_q2_
     char name[128]; path(table, index, name);
     if (table->resources[index] == owner->last_resource) index = (index + 1) % table->count;
     path(table, index, name);
-    qa_audio_asset *asset = qa_audio_bank_get(source->sounds, table->resources[index], QA_AUDIO_Q2);
+    qa_audio_asset *asset = qa_audio_bank_get(source->sounds, table->resources[index], QA_GAME_Q2);
     if (!asset) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 footstep lost its actual retained sound handle");
     ++owner->calls;
     ok = source->sound(source->context, name, sample->pose.origin, sample->pose.actor, sample->milliseconds,
@@ -227,7 +227,7 @@ bool frontend_q2_footsteps_current(const frontend_q2_footsteps *owner, const fro
         const footstep_table *table = owner->tables + i;
         if (table->count > 16) return false;
         for (uint32_t j = 0; j < table->count; ++j) {
-            qa_audio_asset *asset = qa_audio_bank_get(source->sounds, table->resources[j], QA_AUDIO_Q2);
+            qa_audio_asset *asset = qa_audio_bank_get(source->sounds, table->resources[j], QA_GAME_Q2);
             char name[128]; path(table, j, name); bool observed = false;
             if (!asset || qa_resource_pool_find(qa_vfs_resources(source->files), table->resources[j]) !=
                 qa_audio_asset_resource(asset)) return false;

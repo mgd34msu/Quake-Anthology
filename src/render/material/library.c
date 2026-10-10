@@ -154,7 +154,7 @@ static qa_scene_image_options script_options(const qa_material_script *script,
             (qa_bytes){source->dependency_palette, sizeof(source->dependency_palette)} : (qa_bytes){0};
         /* Foreign authored pixels keep their decoder family. The actual
          * Source recipient maps their completed immutable image at draw. */
-        if (options.family != QA_SCENE_Q3) options.source_q3 = false;
+        if (options.family != QA_GAME_Q3) options.source_q3 = false;
     }
     return options;
 }
@@ -224,7 +224,7 @@ unsigned qa_material_hash(const char *name)
 
 static qa_scene_image_options default_options(void)
 {
-    return (qa_scene_image_options){ .family = QA_SCENE_Q3,
+    return (qa_scene_image_options){ .family = QA_GAME_Q3,
         .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR,
         .mipmap = true, .transparent_index = -1 };
 }
@@ -773,7 +773,7 @@ static bool implicit(qa_material_library *library, qa_material_record *record,
         base->state.depth_write = false;
     }
     /* Q1/Q2 model lighting is prepared by their scene builders. */
-    if (material->family != QA_SCENE_Q3 && kind == QA_MATERIAL_DYNAMIC)
+    if (material->family != QA_GAME_Q3 && kind == QA_MATERIAL_DYNAMIC)
         base->rgb = QA_COLOR_EXACT_VERTEX;
     if (kind == QA_MATERIAL_STENCIL_SHADOW) material->sort = 14;
     qa_material_finish(material, kind == QA_MATERIAL_PICTURE ? -4 : record->lightmap_index, library->source_profile);
@@ -1283,7 +1283,7 @@ static bool registration_resolve(qa_material_library *library, const char *name,
         if (!producer(context, options->mipmap, options->mipmap, &options->source_upload, error)) return false;
         if (library->source_upload != producer || library->source_upload_context != context ||
             !library->source_profile || !qa_q3_image_upload_options_valid(&options->source_upload, error) ||
-            options->source_upload.mipmap != options->mipmap || options->family != QA_SCENE_Q3) {
+            options->source_upload.mipmap != options->mipmap || options->family != QA_GAME_Q3) {
             if (!error || error->code == QA_OK)
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source upload producer lost its actual registration binding");
             return false;
@@ -1343,7 +1343,7 @@ static bool register_material(qa_material_library *library, const char *name,
     qa_scene_image_options options = input ? *input : default_options();
     if ((options.palette_rgb.size && (options.palette_rgb.size != 768 || !options.palette_rgb.data)) ||
         (options.translation.size && (options.translation.size != 256 || !options.translation.data)) ||
-        (unsigned)options.family > QA_SCENE_Q3) {
+        (unsigned)options.family > QA_GAME_Q3) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid material image options");
         return false;
     }
@@ -1804,8 +1804,8 @@ bool qa_material_library_parse(qa_material_library *library, qa_bytes source,
 bool qa_material_library_parse_scoped(qa_material_library *library, qa_bytes source,
     const qa_scene_image_options *scope, qa_error *error)
 {
-    if (!library || !scope || (source.size && !source.data) || scope->family > QA_SCENE_Q3 ||
-        scope->family < QA_SCENE_Q1 || (scope->palette_rgb.size &&
+    if (!library || !scope || (source.size && !source.data) || scope->family > QA_GAME_Q3 ||
+        scope->family < QA_GAME_Q1 || (scope->palette_rgb.size &&
             (scope->palette_rgb.size != 768 || !scope->palette_rgb.data))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Shader dependency scope requires its actual family and RGB palette"); return false;
     }

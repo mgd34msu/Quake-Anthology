@@ -14,7 +14,7 @@ typedef struct qa_q2_material_dependency {
 typedef bool (*qa_q2_material_dependency_fn)(void *, const qa_q2_material_dependency *, qa_error *);
 bool qa_q2_material_dependency_builtin(const qa_q2_material_dependency *);
 typedef struct qa_q2_material_scope {
-    qa_scene_family family;
+    qa_game_family family;
     bool palette_present;
     uint8_t palette[768];
 } qa_q2_material_scope;

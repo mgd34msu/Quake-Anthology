@@ -155,7 +155,7 @@ static bool sound_output(void *context, const q3n_frame *frame, qa_audio_asset *
     qa_resource *resource = qa_audio_asset_resource(asset);
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
         .resource_id = resource ? qa_resource_id(resource) : 0, .name = qa_audio_asset_name(asset),
-        .family = QA_AUDIO_Q3, .actor = QA_AUDIO_NO_ACTOR, .origin_actor = QA_AUDIO_NO_ACTOR,
+        .family = QA_GAME_Q3, .actor = QA_AUDIO_NO_ACTOR, .origin_actor = QA_AUDIO_NO_ACTOR,
         .owner = group->view.identity, .audience = QA_AUDIO_WORLD, .origin_kind = QA_AUDIO_FIXED,
         .origin = *origin, .channel = channel, .volume = 1, .attenuation = 1};
     return qa_audio_engine_play(frontend->audio, &play,
@@ -198,7 +198,7 @@ bool frontend_selected_effects_empty(frontend_selected_effects_group *group,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects need the actual shared audio owner");
     bool okay = qa_audio_bank_create(group->view.content.mounts, &group->view.sounds, error);
     qa_q3_presentation_asset_options assets = {.provider = {group->view.content.mounts,
-        group->view.content.images, group->view.content.materials, QA_SCENE_Q3}, .sounds = group->view.sounds};
+        group->view.content.images, group->view.content.materials, QA_GAME_Q3}, .sounds = group->view.sounds};
     if (okay) okay = qa_q3_presentation_assets_create(&assets, &group->view.assets, error);
     qa_q3_presentation_options backend = binding->options;
     backend.assets = group->view.assets; backend.owner = group->view.identity;
@@ -518,7 +518,7 @@ bool frontend_selected_effects_q3_ready(const qa_frontend *frontend, size_t ordi
         own.world == parent.binding.world && own.geometry == parent.binding.geometry && own.frame == parent.binding.frame &&
         own.entities.data == parent.binding.entities.data && own.entities.size == parent.binding.entities.size &&
         assets->provider.mounts == group->view.content.mounts && assets->provider.images == group->view.content.images &&
-        assets->provider.materials == group->view.content.materials && assets->provider.family == QA_SCENE_Q3 &&
+        assets->provider.materials == group->view.content.materials && assets->provider.family == QA_GAME_Q3 &&
         assets->sounds == group->view.sounds && !assets->movies && !assets->zero_sound &&
         !assets->context && !assets->select && !assets->print ? true :
         frontend_fail(error, QA_ERROR_FORMAT, "Selected effect dictionary differs from its genuine standalone constructor");

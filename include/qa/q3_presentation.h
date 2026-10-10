@@ -21,7 +21,7 @@ typedef struct qa_q3_presentation_provider {
     qa_vfs *mounts;
     qa_scene_resources *images;
     qa_material_library *materials;
-    qa_scene_family family;
+    qa_game_family family;
 } qa_q3_presentation_provider;
 typedef enum qa_q3_asset_kind { QA_Q3_ASSET_MODEL, QA_Q3_ASSET_SKIN, QA_Q3_ASSET_SHADER } qa_q3_asset_kind;
 typedef struct qa_q3_presentation_asset_options {
@@ -134,7 +134,7 @@ bool qa_q3_presentation_movie_play_system(qa_q3_presentation *,const char *path,
     void *context,int32_t *out,qa_error *);
 typedef struct qa_q3_scene_options {
     qa_scene_world_input world;
-    qa_scene_family world_family;
+    qa_game_family world_family;
     qa_scene_state state;
     uint32_t first_entity, shadow_mode;
     float lod_scale, lod_bias, ambient_scale, directed_scale, near_clip;
@@ -262,7 +262,7 @@ bool qa_q3_presentation_selected_model(qa_q3_presentation *, qa_scene_model *,
     const qa_model *, const char *source_path, const qa_model_transform *, const qa_q3_ref_entity *,
     const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
 typedef struct qa_q3_foreign_view_lighting {
-    qa_scene_family content;
+    qa_game_family content;
     uint32_t flags;
 } qa_q3_foreign_view_lighting;
 /* Content flags retain their true family. Q3 authored parent flags remain on

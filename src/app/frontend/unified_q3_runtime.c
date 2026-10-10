@@ -842,7 +842,7 @@ bool frontend_unified_q3_runtime_scene_submit(frontend_unified_q3_runtime *o,
     if(okay) {
         qa_collision_family family=qa_collision_geometry_family(binding.geometry);
         options=(qa_q3_scene_options){.world=*world,
-            .world_family=family==QA_COLLISION_Q1?QA_SCENE_Q1:family==QA_COLLISION_Q2?QA_SCENE_Q2:QA_SCENE_Q3,
+            .world_family=family==QA_COLLISION_Q1?QA_GAME_Q1:family==QA_COLLISION_Q2?QA_GAME_Q2:QA_GAME_Q3,
             .shadow_mode=binding.options.shadow_mode,.lod_scale=binding.options.lod_scale,
             .lod_bias=binding.options.lod_bias,.near_clip=binding.options.near_clip,
             .ambient_scale=.6f,.directed_scale=1,

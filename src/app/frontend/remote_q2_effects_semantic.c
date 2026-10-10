@@ -260,7 +260,7 @@ static bool lights(frontend_remote_q2_effects *o, const frontend_remote_q2_effec
         }
         o->sampled_lights[o->light_count++]=(qa_scene_light){.origin=origin,.color={1,1,1},.direction=forward,
             .radius=512,.scale=2,.cos_half_angle=.92718385f,.additive=true,.spot=true,.casts_shadow=true,
-            .identity=f->identity,.shadow_resolution=512,.family=QA_SCENE_Q2};
+            .identity=f->identity,.shadow_resolution=512,.family=QA_GAME_Q2};
     }
     for (size_t i=0;i<o->source_light_count;++i) {
         const q2fx_source_light *row=o->source_lights+i; const frontend_remote_q2_effects_shadow_light *v=&row->light;
@@ -281,7 +281,7 @@ static bool lights(frontend_remote_q2_effects *o, const frontend_remote_q2_effec
         o->sampled_lights[o->light_count++]=(qa_scene_light){.origin=v->origin,.color=v->color,.direction=v->direction,
             .radius=v->radius,.scale=v->intensity*fade*style,.cos_half_angle=v->cos_half_angle,
             .additive=true,.spot=v->cone,.casts_shadow=row->shadow,.identity=row->identity,.revision=row->revision,
-            .shadow_resolution=(uint32_t)v->resolution,.family=QA_SCENE_Q2};
+            .shadow_resolution=(uint32_t)v->resolution,.family=QA_GAME_Q2};
     }
     return true;
 }

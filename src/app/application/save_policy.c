@@ -15,9 +15,7 @@ static bool stock_provider(const qa_catalog *catalog,const qa_launch_provider *s
 {
     if (!selection || selection->product!=product->id ||
         (selection->component && *selection->component)) return false;
-    qa_ruleset_id clock=product->family==QA_GAME_Q3?QA_RULESET_Q3:product->family==QA_GAME_Q2?
-        (product->edition==QA_EDITION_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC):
-        product->edition==QA_EDITION_QUAKEWORLD?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE;
+    qa_ruleset_id clock=qa_product_ruleset(product,QA_GAME_Q1);
     if (selection->clock.kind!=clock || (selection->options.size &&
         !(product->family==QA_GAME_Q1 && (selection->runtime==QA_PROGRAM_QUAKEC || selection->runtime==QA_PROGRAM_BUILTIN) &&
           selection->options.size==sizeof(application_q1_original_constructor) && selection->options.data &&

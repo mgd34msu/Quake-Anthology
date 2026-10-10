@@ -44,7 +44,7 @@ bool frontend_save_provider(qa_source_save_io *io, qa_application *application, 
     return true;
 }
 bool frontend_save_sound_owner(qa_source_save_io *io, qa_application *application,
-    qa_actor_owner *owner, qa_audio_family *family)
+    qa_actor_owner *owner, qa_game_family *family)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint32_t tag = !reading && *owner ? 1 : 0, kind = *family;
@@ -54,7 +54,7 @@ bool frontend_save_sound_owner(qa_source_save_io *io, qa_application *applicatio
         tag = 2;
     }
     if (!qa_source_save_u32(io, &tag) || tag > 2 || !qa_source_save_u32(io, &kind) ||
-        kind > QA_AUDIO_Q3 || (tag == 2 && kind != QA_AUDIO_Q3)) return false;
+        kind > QA_GAME_Q3 || (tag == 2 && kind != QA_GAME_Q3)) return false;
     if (tag == 1) {
         if (!frontend_save_provider(io, application, owner) || !*owner) return false;
     } else if (tag == 2) {
@@ -69,7 +69,7 @@ bool frontend_save_sound_owner(qa_source_save_io *io, qa_application *applicatio
         if (!ok || !*owner || !qa_application_equipment_content_read(application, *owner, &gear, io->error))
             return false;
     } else *owner = 0;
-    *family = (qa_audio_family)kind;
+    *family = (qa_game_family)kind;
     return true;
 }
 bool frontend_save_random(qa_source_save_io *io, qa_builtin_random *random)

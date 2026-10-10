@@ -106,8 +106,8 @@ bool frontend_music_world_capture(frontend_music_sources *owner, qa_error *e) {
     owner->world.map = map.resource; qa_resource_retain(map.resource); owner->world.map_revision = map.revision;
     return frontend_music_world_current(owner) || fail(e, "WORLD music source changed during actual receipt acquisition");
 }
-static qa_audio_family family(const qa_product *product) {
-    return product->family == QA_GAME_Q1 ? QA_AUDIO_Q1 : product->family == QA_GAME_Q2 ? QA_AUDIO_Q2 : QA_AUDIO_Q3;
+static qa_game_family family(const qa_product *product) {
+    return product->family == QA_GAME_Q1 ? QA_GAME_Q1 : product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
 }
 static bool attach(frontend_music_sources *owner, frontend_music_slot slot, const qa_product *source,
     const frontend_music_content *content, size_t count, const char *cue, qa_error *e) {

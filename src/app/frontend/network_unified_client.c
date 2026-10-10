@@ -354,9 +354,7 @@ bool frontend_network_unified_client_create(const frontend_network_unified_clien
     if (!o) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining Unified CLIENT services");
     *out=o; o->options=*options;
     if (!o->options.selected) o->options.selected=profile->id;
-    qa_ruleset_id clock=profile->family==QA_GAME_Q1?
-        (profile->edition==QA_EDITION_QUAKEWORLD?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE):
-        profile->family==QA_GAME_Q2?(profile->edition==QA_EDITION_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC):QA_RULESET_Q3;
+    qa_ruleset_id clock=qa_product_ruleset(profile,QA_GAME_Q3);
     qa_vfs *prepared=NULL;
     if (!parent(o) || !qa_catalog_open(catalog,o->options.selected,&prepared,e)) return false;
     frontend_client_source_options source=physical_options(o);

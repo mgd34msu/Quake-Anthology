@@ -709,9 +709,7 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
                 frontend_fail(error,QA_ERROR_ARGUMENT,"Initial ENGINE settings lack their selected source product"); goto fail;
             }
             /* The initial preset binds ENGINE_BEHAVIOR to this selected product. */
-            dialect=product->family==QA_GAME_Q3?QA_RULESET_Q3:product->family==QA_GAME_Q2?
-                (product->edition==QA_EDITION_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC):
-                product->edition==QA_EDITION_QUAKEWORLD?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE;
+            dialect=qa_product_ruleset(product,QA_GAME_Q1);
             source=&dialect;
         }
         if(!frontend_shared_register(qa_application_cvars(frontend->application),source,

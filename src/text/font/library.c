@@ -281,7 +281,7 @@ bool qa_font_internal_freetype(qa_font_library *library, FT_Library *out, qa_err
     return true;
 }
 
-bool qa_font_internal_picture(qa_font *font, const char *path, qa_scene_family family,
+bool qa_font_internal_picture(qa_font *font, const char *path, qa_game_family family,
                               qa_scene_filter filter, const qa_scene_image **out, qa_error *error) {
     if (!font || !path || !out)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid font picture request");

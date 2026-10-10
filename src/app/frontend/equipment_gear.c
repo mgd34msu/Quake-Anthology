@@ -69,7 +69,7 @@ bool frontend_equipment_gear_content_create(qa_frontend *frontend,
     equipment_gear_content **out, qa_error *error)
 {
     if (!source || !definition || !content || !out || *out ||
-        source->selected_owner != content->owner || content->family != QA_SCENE_Q3 ||
+        source->selected_owner != content->owner || content->family != QA_GAME_Q3 ||
         !content->mounts || !content->images || !content->materials ||
         !qa_vfs_lookup_equal(content->mounts, source->files) ||
         definition->presentation.attachment_count > SIZE_MAX / sizeof(q3n_selected_authored_attachment))
@@ -80,7 +80,7 @@ bool frontend_equipment_gear_content_create(qa_frontend *frontend,
     owner->view = (frontend_equipment_gear_owner_view){.source = *source,
         .definition = definition, .product = product, .content = *content};
     qa_q3_presentation_asset_options assets = {.provider = {.mounts = content->mounts,
-        .images = content->images, .materials = content->materials, .family = QA_SCENE_Q3}};
+        .images = content->images, .materials = content->materials, .family = QA_GAME_Q3}};
     bool okay = qa_q3_presentation_assets_create(&assets, &owner->view.assets, error);
     size_t count = definition->presentation.attachment_count;
     q3n_selected_authored_attachment *attachments = count ? calloc(count, sizeof(*attachments)) : NULL;

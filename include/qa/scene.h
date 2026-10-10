@@ -1,6 +1,7 @@
 #ifndef QA_SCENE_H
 #define QA_SCENE_H
 
+#include "qa/ruleset.h"
 #include "qa/arena.h"
 #include "qa/bsp.h"
 #include "qa/image.h"
@@ -36,7 +37,6 @@ typedef struct qa_scene_matrix { float m[16]; } qa_scene_matrix;
 typedef struct qa_scene_rect { int32_t x, y; uint32_t width, height; } qa_scene_rect;
 typedef struct qa_scene_rect_f { float x, y, width, height; } qa_scene_rect_f;
 typedef struct qa_scene_plane { qa_vec3 normal; float distance; } qa_scene_plane;
-typedef enum qa_scene_family { QA_SCENE_Q1, QA_SCENE_Q2, QA_SCENE_Q3 } qa_scene_family;
 typedef enum qa_scene_wrap { QA_SCENE_REPEAT, QA_SCENE_CLAMP } qa_scene_wrap;
 typedef enum qa_scene_filter {
     QA_SCENE_NEAREST, QA_SCENE_LINEAR, QA_SCENE_NEAREST_MIPMAP_NEAREST,
@@ -86,7 +86,7 @@ typedef bool (*qa_scene_recipient_image_fn)(void *, const qa_scene_image *,
 typedef enum qa_scene_image_usage { QA_IMAGE_USAGE_DEFAULT, QA_IMAGE_USAGE_SKIN,
     QA_IMAGE_USAGE_SPRITE, QA_IMAGE_USAGE_WALL, QA_IMAGE_USAGE_PICTURE, QA_IMAGE_USAGE_SKY } qa_scene_image_usage;
 typedef struct qa_scene_image_options {
-    qa_scene_family family;
+    qa_game_family family;
     qa_scene_wrap wrap;
     qa_scene_filter filter;
     qa_scene_image_usage usage;
@@ -131,7 +131,7 @@ bool qa_scene_resources_images(const qa_scene_resources *, qa_arena *,
  * and dependent worlds/models when these registration settings change. */
 bool qa_scene_image_policy_controls(int32_t override_level, uint32_t usage_mask,
                                     const char *formats, qa_scene_image_policy *, qa_error *);
-bool qa_scene_resources_set_image_policy(qa_scene_resources *, qa_scene_family,
+bool qa_scene_resources_set_image_policy(qa_scene_resources *, qa_game_family,
                                          const qa_scene_image_policy *, qa_error *);
 bool qa_scene_resources_set_fullbright_first(qa_scene_resources *, unsigned, qa_error *);
 unsigned qa_scene_resources_fullbright_first(const qa_scene_resources *);
@@ -268,16 +268,16 @@ bool qa_scene_model_image_policy_finish(qa_scene_model_image_policy **, qa_error
 bool qa_scene_model_image_policy_abort(qa_scene_model_image_policy **, qa_error *);
 uint64_t qa_scene_identity(void);
 /* Returned palette borrows the resource service and is RGB, 256 entries. */
-bool qa_scene_resources_palette(qa_scene_resources *, qa_scene_family, qa_bytes *, qa_error *);
+bool qa_scene_resources_palette(qa_scene_resources *, qa_game_family, qa_bytes *, qa_error *);
 /* Read the already installed palette without acquisition or cache changes.
  * The borrowed span lasts until resource-owner restoration/destruction. */
-bool qa_scene_resources_palette_read(const qa_scene_resources *, qa_scene_family, qa_bytes *);
+bool qa_scene_resources_palette_read(const qa_scene_resources *, qa_game_family, qa_bytes *);
 typedef struct qa_scene_palette_source {
     const qa_resource *resource;
     const qa_vfs_acquisition *opening;
 } qa_scene_palette_source;
 /* Exact palette admission retained by this bank; no historical-name lookup. */
-bool qa_scene_resources_palette_source_read(const qa_scene_resources *, qa_scene_family,
+bool qa_scene_resources_palette_source_read(const qa_scene_resources *, qa_game_family,
                                            qa_scene_palette_source *);
 /* Borrowed immutable executable assets. The descriptor table, names and PNG
  * spans outlive the resource bank; no asset bytes are copied into checkpoints. */
@@ -486,7 +486,7 @@ typedef struct qa_scene_light {
     bool additive, spot, casts_shadow;
     uint64_t identity, revision;
     uint32_t shadow_resolution;
-    qa_scene_family family;
+    qa_game_family family;
 } qa_scene_light;
 typedef struct qa_scene_shadow_light {
     qa_scene_light light;
@@ -601,7 +601,7 @@ typedef struct qa_scene_particle_sample {
 } qa_scene_particle_sample;
 typedef struct qa_scene_particle_batch {
     qa_scene_view view;
-    qa_scene_family family;
+    qa_game_family family;
     const qa_scene_image *image;
     const qa_scene_particle_sample *samples; /* owned by the frame arena */
     size_t count;
@@ -782,7 +782,7 @@ typedef enum qa_scene_legacy_world_phase {
     QA_LEGACY_WORLD_ALPHA
 } qa_scene_legacy_world_phase;
 typedef struct qa_scene_legacy_policy {
-    qa_scene_family source_family;
+    qa_game_family source_family;
     bool present, fullbright, lightmap, dynamic, saturate, polyblend, cull, clear, flares;
     bool planar_shadows, double_eyes;
     float modulate;
@@ -958,7 +958,7 @@ struct qa_scene_model_input {
     qa_model_transform transform;
     qa_vec3 previous_origin, ambient, directed, light_direction;
     qa_scene_vec4 color;
-    qa_scene_family family;
+    qa_game_family family;
     qa_scene_alias_lighting alias_lighting;
     qa_vec3 alias_light;
     uint32_t frame, old_frame, skin, flags, entity, lod;

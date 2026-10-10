@@ -69,7 +69,7 @@ struct qa_material {
     uint32_t registration, sorted_index;
     int32_t lightmap_index;
     qa_material_order_entry *order_entry;
-    qa_scene_family family;
+    qa_game_family family;
     bool default_shader;
     qa_material_profile profile;
     /* Library-owned procedural images shared by every registered material. */

@@ -53,7 +53,7 @@ bool qa_font_internal_publish(qa_font *, const qa_font **, qa_error *);
 void qa_font_internal_measure_cap_ink(qa_font *);
 bool qa_font_internal_freetype(qa_font_library *, FT_Library *, qa_error *);
 bool qa_font_internal_admission_ready(const qa_font_library *, qa_error *);
-bool qa_font_internal_picture(qa_font *, const char *, qa_scene_family, qa_scene_filter,
+bool qa_font_internal_picture(qa_font *, const char *, qa_game_family, qa_scene_filter,
                               const qa_scene_image **, qa_error *);
 
 #endif

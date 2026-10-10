@@ -69,13 +69,13 @@ bool frontend_menu_charset(qa_frontend *f, const qa_product *product, qa_error *
                 .palette_source = palette, .palette_attempted = true,
                 .offsets = {chars->offset}, .widths = {128}, .heights = {128},
                 .fullbright_first = 256, .fullbright_last = -1, .layer = QA_PALETTE_COMBINED,
-                .options = {.family = QA_SCENE_Q1, .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_NEAREST,
+                .options = {.family = QA_GAME_Q1, .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_NEAREST,
                     .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 0}};
             ok = scene_image_asset_copy(image, &recipe, error);
         }
         qa_image_free(&expanded); qa_wad_free(&wad); qa_resource_release(palette); qa_resource_release(wad_source);
     } else {
-        qa_scene_image_options options = {.family = product->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3,
+        qa_scene_image_options options = {.family = product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3,
             .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_NEAREST, .usage = QA_IMAGE_USAGE_PICTURE,
             .transparent = true, .transparent_index = 255};
         ok = qa_scene_image_load(f->ui_images, product->family == QA_GAME_Q2 ? "pics/conchars.pcx" : "gfx/2d/bigchars", &options, &image, error);
@@ -101,7 +101,7 @@ static const uint16_t prop_end[4][3] = {{153,152,13},{11,181,5},{180,152,13},{79
 static bool proportional(qa_frontend *f, qa_error *error)
 {
     qa_scene_image *image = NULL;
-    qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_CLAMP,
+    qa_scene_image_options options = {.family = QA_GAME_Q3, .wrap = QA_SCENE_CLAMP,
         .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 255};
     if (!qa_scene_image_load(f->ui_images, "menu/art/font1_prop.tga", &options, &image, error)) return false;
     qa_font_glyph glyphs[95];

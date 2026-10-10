@@ -1155,7 +1155,7 @@ bool frontend_equipment_source_submit(frontend_equipment_source *owner,
             else {
                 frontend_equipment_media_view media;
                 qa_q3_foreign_view_lighting lighting={
-                    .content=owner->selection.family==QA_GAME_Q2?QA_SCENE_Q2:QA_SCENE_Q1,
+                    .content=owner->selection.family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q1,
                     .flags=owner->selection.family==QA_GAME_Q2?1u|4u|16u:0};
                 ok = frontend_equipment_media_read(owner->view_media, &media) &&
                     qa_q3_presentation_selected_view_model(owner->options.presentation, media.view.scene,

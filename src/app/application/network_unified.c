@@ -706,11 +706,7 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         .argv = words, .args_text = args, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL,
         .owner = source->owner, .actor = player.actor}};
     command.context.seat = row->seat;
-    command.context.dialect = source->product->family == QA_GAME_Q1 ? QA_RULESET_NETQUAKE : QA_RULESET_Q3;
-    if (source->product->family == QA_GAME_Q1)
-        command.context.dialect = source->product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
-    else if (source->product->family == QA_GAME_Q2)
-        command.context.dialect = source->product->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
+    command.context.dialect = qa_product_ruleset(source->product, QA_GAME_Q3);
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error);
     bool handled = false;
     if (okay && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "name")) {

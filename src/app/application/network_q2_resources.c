@@ -355,7 +355,7 @@ bool application_network_q2_dependency_image_receipt(qa_application_network_q2 *
 
 bool application_network_q2_material_resource(qa_application_network_q2 *owner,
     const application_q2_held_resource *model, const qa_material_script_view *script, qa_bytes derived,
-    qa_scene_family family, qa_bytes palette, const qa_scene_palette_source *palette_source,
+    qa_game_family family, qa_bytes palette, const qa_scene_palette_source *palette_source,
     const size_t *dependencies, size_t count, size_t *out, qa_error *error)
 {
     if (!owner || !model || !model->view || !model->resource || !script || !script->name ||
@@ -551,8 +551,8 @@ static bool model_palette_admission(qa_application_network_q2 *owner,
     qa_scene_model *scene = NULL; qa_model model = {0};
     bool ok = true;
     if (!handled) {
-        qa_scene_image_options images = {.family = family == QA_GAME_Q2 ? QA_SCENE_Q2 :
-            family == QA_GAME_Q3 ? QA_SCENE_Q3 : QA_SCENE_Q1,
+        qa_scene_image_options images = {.family = family == QA_GAME_Q2 ? QA_GAME_Q2 :
+            family == QA_GAME_Q3 ? QA_GAME_Q3 : QA_GAME_Q1,
             .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR,
             .mipmap = true, .usage = QA_IMAGE_USAGE_SKIN,
             .transparent_index = family == QA_GAME_Q1 ? 255 : -1};
@@ -563,13 +563,13 @@ static bool model_palette_admission(qa_application_network_q2 *owner,
             model_translation(colors, translation);
             images.translation = (qa_bytes){translation, sizeof(translation)};
         }
-        if (ok && images.family == QA_SCENE_Q3) {
+        if (ok && images.family == QA_GAME_Q3) {
             materials = qa_material_library_create_detached(bank, error); ok = materials != NULL;
         }
         if (ok) ok = qa_scene_model_create(&model, bank, materials, &images, &scene, error);
         const qa_scene_image_options *actual = ok ? qa_scene_model_image_options(scene) : NULL;
-        if (ok) ok = actual && qa_scene_resources_palette_read(bank, QA_SCENE_Q1, &admission.palette_rgb) &&
-            qa_scene_resources_palette_source_read(bank, QA_SCENE_Q1, &admission.palette_source);
+        if (ok) ok = actual && qa_scene_resources_palette_read(bank, QA_GAME_Q1, &admission.palette_rgb) &&
+            qa_scene_resources_palette_source_read(bank, QA_GAME_Q1, &admission.palette_source);
         if (ok) admission.images = *actual;
         if (ok) admission.palette_view = held->view;
     }
@@ -918,7 +918,7 @@ static bool image_fields(qa_source_save_io *io, application_q2_held_resource *he
     uint32_t filter = (uint32_t)options->filter, usage = (uint32_t)options->usage;
     uint64_t palette = io->direction == QA_SOURCE_SAVE_WRITE && held->image_palette_dependency != SIZE_MAX ?
         (uint64_t)held->image_palette_dependency + 1 : 0;
-    if (!qa_source_save_u32(io, &family) || family > QA_SCENE_Q3 || !qa_source_save_u32(io, &wrap) || wrap > QA_SCENE_CLAMP ||
+    if (!qa_source_save_u32(io, &family) || family > QA_GAME_Q3 || !qa_source_save_u32(io, &wrap) || wrap > QA_SCENE_CLAMP ||
         !qa_source_save_u32(io, &filter) || filter > QA_SCENE_LINEAR_MIPMAP_LINEAR ||
         !qa_source_save_u32(io, &usage) || usage > QA_IMAGE_USAGE_SKY ||
         !qa_source_save_bool(io, &options->mipmap) || !qa_source_save_bool(io, &options->transparent) ||
@@ -928,7 +928,7 @@ static bool image_fields(qa_source_save_io *io, application_q2_held_resource *he
         !buffer_field(io, &held->image_palette, 768) || (held->image_palette.size && held->image_palette.size != 768) ||
         !buffer_field(io, &held->image_translation, 256) || (held->image_translation.size && held->image_translation.size != 256) ||
         !qa_source_save_u64(io, &palette) || palette > UINT32_MAX) return false;
-    options->family = (qa_scene_family)family; options->wrap = (qa_scene_wrap)wrap;
+    options->family = (qa_game_family)family; options->wrap = (qa_scene_wrap)wrap;
     options->filter = (qa_scene_filter)filter; options->usage = (qa_scene_image_usage)usage;
     options->palette_rgb = (qa_bytes){held->image_palette.data, held->image_palette.size};
     options->translation = (qa_bytes){held->image_translation.data, held->image_translation.size};

@@ -351,10 +351,10 @@ bool qa_scene_image_policy_controls(int32_t override_level, uint32_t usage_mask,
     return true;
 }
 
-bool qa_scene_resources_set_image_policy(qa_scene_resources *resources, qa_scene_family family,
+bool qa_scene_resources_set_image_policy(qa_scene_resources *resources, qa_game_family family,
                                          const qa_scene_image_policy *policy, qa_error *error)
 {
-    if (resources == NULL || family < QA_SCENE_Q1 || family > QA_SCENE_Q3 ||
+    if (resources == NULL || family < QA_GAME_Q1 || family > QA_GAME_Q3 ||
         resources->registrations_started || (policy != NULL && policy->format_count > 6)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "image policy must be valid and set before content loads");
         return false;
@@ -371,11 +371,11 @@ bool qa_scene_resources_set_image_policy(qa_scene_resources *resources, qa_scene
             }
             policy_add_format(&copy, policy->formats[i]);
         }
-    } else if (family == QA_SCENE_Q2) {
+    } else if (family == QA_GAME_Q2) {
         if (!qa_scene_image_policy_controls(1, UINT32_MAX, "png jpg tga jpeg bmp gif", &copy, error)) return false;
     }
     resources->policies[family] = copy;
-    resources->has_policy[family] = policy != NULL || family == QA_SCENE_Q2;
+    resources->has_policy[family] = policy != NULL || family == QA_GAME_Q2;
     return true;
 }
 
@@ -846,7 +846,7 @@ qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
     qa_scene_resources *resources = qa_scene_resources_create_detached(vfs, error);
     if (!resources) return NULL;
     resources->fullbright_first = 224;
-    if (!qa_scene_resources_set_image_policy(resources, QA_SCENE_Q2, NULL, error)) {
+    if (!qa_scene_resources_set_image_policy(resources, QA_GAME_Q2, NULL, error)) {
         qa_scene_resources_destroy(resources); return NULL;
     }
     const uint8_t white[4] = {255,255,255,255};
@@ -862,7 +862,7 @@ qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
         pixels[offset] = value; pixels[offset+1] = value; pixels[offset+2] = value; pixels[offset+3] = 255;
     }
     qa_image missing = {.width = 16, .height = 16, .rgba = {pixels,sizeof(pixels)}};
-    qa_scene_image_options missing_options = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
+    qa_scene_image_options missing_options = {.family = QA_GAME_Q3, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_NEAREST, .mipmap = true};
     if (!image_from_rgba(resources, "*default", &missing, &missing_options, &resources->missing, error)) {
         qa_scene_resources_destroy(resources); return NULL;
@@ -1107,7 +1107,7 @@ static bool policy_prepare(qa_scene_resources *owner,
     }
     for (unsigned family = 0; ok && family < 3; ++family) {
         const qa_scene_image_policy *policy = source_upload && !owner->has_policy[family] ? NULL : &policies[family];
-        ok = qa_scene_resources_set_image_policy(destination, (qa_scene_family)family, policy, error);
+        ok = qa_scene_resources_set_image_policy(destination, (qa_game_family)family, policy, error);
         if (ok && owner->palettes[family].size) {
             destination->palettes[family].data = malloc(owner->palettes[family].size);
             if (!destination->palettes[family].data) {
@@ -1541,19 +1541,19 @@ const qa_scene_image *qa_scene_source_q3_fog(const qa_scene_resources *resources
 const qa_scene_image *qa_scene_source_q3_scratch(const qa_scene_resources *resources, size_t index)
 { return resources && index < 32 ? resources->source_scratch[index] : NULL; }
 
-bool qa_scene_resources_palette_read(const qa_scene_resources *resources, qa_scene_family family, qa_bytes *out)
+bool qa_scene_resources_palette_read(const qa_scene_resources *resources, qa_game_family family, qa_bytes *out)
 {
-    if (!resources || !out || family < QA_SCENE_Q1 || family > QA_SCENE_Q3) return false;
+    if (!resources || !out || family < QA_GAME_Q1 || family > QA_GAME_Q3) return false;
     const qa_buffer *stored = &resources->palettes[family];
     if (!stored->data || !stored->size) return false;
     *out = (qa_bytes){stored->data, stored->size};
     return true;
 }
 
-static bool palette_admit(qa_scene_resources *resources, qa_scene_family family,
+static bool palette_admit(qa_scene_resources *resources, qa_game_family family,
     qa_bytes *out, qa_scene_image_load_receipt *observation, qa_error *error)
 {
-    if (resources == NULL || out == NULL || family < QA_SCENE_Q1 || family > QA_SCENE_Q3) {
+    if (resources == NULL || out == NULL || family < QA_GAME_Q1 || family > QA_GAME_Q3) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene palette request"); return false;
     }
     qa_buffer *stored = &resources->palettes[family];
@@ -1571,7 +1571,7 @@ static bool palette_admit(qa_scene_resources *resources, qa_scene_family family,
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "scene has no mounted palette source"); return false;
     }
     qa_resource *resource = NULL; qa_vfs_acquisition opening = {0};
-    if (!qa_vfs_acquire_receipt(resources->vfs, family == QA_SCENE_Q1 ? "gfx/palette.lmp" : "pics/colormap.pcx",
+    if (!qa_vfs_acquire_receipt(resources->vfs, family == QA_GAME_Q1 ? "gfx/palette.lmp" : "pics/colormap.pcx",
                         &resource, &opening, error)) return false;
     if (observation) {
         if (!qa_vfs_acquisition_copy(&opening, &observation->palette_opening, error)) {
@@ -1586,7 +1586,7 @@ static bool palette_admit(qa_scene_resources *resources, qa_scene_family family,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene palette"); return false;
     }
     bool ok = true;
-    if (family == QA_SCENE_Q1) {
+    if (family == QA_GAME_Q1) {
         if (bytes.size != 768) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q1 palette requires exactly 256 RGB colors"); ok = false; }
         else memcpy(palette, bytes.data, 768);
     } else {
@@ -1604,7 +1604,7 @@ static bool palette_admit(qa_scene_resources *resources, qa_scene_family family,
     *out = (qa_bytes){palette,768};
     return true;
 }
-static bool palette_observed(qa_scene_resources *resources, qa_scene_family family,
+static bool palette_observed(qa_scene_resources *resources, qa_game_family family,
     qa_bytes *out, qa_scene_image_load_receipt *observation, qa_error *error)
 {
     qa_error local = {0};
@@ -1613,13 +1613,13 @@ static bool palette_observed(qa_scene_resources *resources, qa_scene_family fami
     if (!ok && error) *error = local;
     return ok;
 }
-bool qa_scene_resources_palette(qa_scene_resources *resources, qa_scene_family family,
+bool qa_scene_resources_palette(qa_scene_resources *resources, qa_game_family family,
     qa_bytes *out, qa_error *error)
 { return palette_observed(resources, family, out, NULL, error); }
 bool qa_scene_resources_palette_source_read(const qa_scene_resources *resources,
-    qa_scene_family family, qa_scene_palette_source *out)
+    qa_game_family family, qa_scene_palette_source *out)
 {
-    if (!resources || !out || family < QA_SCENE_Q1 || family > QA_SCENE_Q3 ||
+    if (!resources || !out || family < QA_GAME_Q1 || family > QA_GAME_Q3 ||
         resources->palettes[family].size != 768 || !resources->palette_resources[family]) return false;
     const qa_vfs_acquisition *opening = &resources->palette_openings[family];
     if (!opening->opening_present || opening->resource_id != qa_resource_id(resources->palette_resources[family])) return false;
@@ -1636,13 +1636,13 @@ static bool suffix_equal(const char *name, const char *suffix)
     return true;
 }
 
-static void alpha_edge_fill(qa_image *image, qa_scene_family family, const uint8_t *fallback)
+static void alpha_edge_fill(qa_image *image, qa_game_family family, const uint8_t *fallback)
 {
     uint8_t *pixels = image->rgba.data;
     size_t width = image->width, height = image->height, count = width * height;
     for (size_t i = 0; i < count; ++i) if (pixels[i * 4 + 3] == 0) {
         uint8_t *destination = pixels + i * 4;
-        if (family == QA_SCENE_Q2) {
+        if (family == QA_GAME_Q2) {
             size_t adjacent[4] = {i > width ? i - width : SIZE_MAX,
                 i < count - width ? i + width : SIZE_MAX, i > 0 ? i - 1 : SIZE_MAX,
                 i + 1 < count ? i + 1 : SIZE_MAX};
@@ -1723,8 +1723,8 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
         }
         for (size_t i = 0; i < uploaded.count; ++i) {
             qa_image *image = uploaded.levels + i;
-            if (options->family == QA_SCENE_Q1 && options->transparent)
-                alpha_edge_fill(image, QA_SCENE_Q1, NULL);
+            if (options->family == QA_GAME_Q1 && options->transparent)
+                alpha_edge_fill(image, QA_GAME_Q1, NULL);
             levels[i] = (qa_scene_image_level){image->width, image->height, image->rgba.data, image->rgba.size};
         }
         qa_scene_image_kind kind = scene_resource_q3_image_kind(format);
@@ -1755,14 +1755,14 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
     }
     qa_image scaled = {0};
     const qa_image *base = source;
-    if (options->family == QA_SCENE_Q2 && options->mipmap) {
+    if (options->family == QA_GAME_Q2 && options->mipmap) {
         qa_gamma_options gamma = {.profile = QA_GAMMA_Q2, .gamma = 1, .intensity = 2};
         if (!qa_image_apply_gamma(source, &gamma, &scaled, error)) return false;
         base = &scaled;
     }
     qa_mip_chain chain = {0};
     if (options->mipmap && !image_mip_chain(base,
-        options->family == QA_SCENE_Q1 && options->transparent, &chain, error)) {
+        options->family == QA_GAME_Q1 && options->transparent, &chain, error)) {
         qa_image_free(&scaled); return false;
     }
     size_t count = chain.count + 1;
@@ -1774,8 +1774,8 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
     levels[0] = (qa_scene_image_level){base->width,base->height,base->rgba.data,base->rgba.size};
     for (size_t i = 0; i < chain.count; ++i) {
         qa_image *image = &chain.levels[i];
-        if (options->family == QA_SCENE_Q1 && options->transparent)
-            alpha_edge_fill(image, QA_SCENE_Q1, NULL);
+        if (options->family == QA_GAME_Q1 && options->transparent)
+            alpha_edge_fill(image, QA_GAME_Q1, NULL);
         levels[i+1] = (qa_scene_image_level){image->width,image->height,image->rgba.data,image->rgba.size};
     }
     bool ok = qa_scene_image_create(resources, name, QA_SCENE_RGBA8, levels, count, options->wrap,
@@ -1800,7 +1800,7 @@ static bool source_builtin(qa_scene_resources *resources, const char *name,
         pixels[at + 3] = missing ? pixel : 255;
     }
     qa_image image = {.width = size, .height = size, .rgba = {pixels, (size_t)size * size * 4}};
-    qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = scratch ? QA_SCENE_CLAMP : QA_SCENE_REPEAT,
+    qa_scene_image_options options = {.family = QA_GAME_Q3, .wrap = scratch ? QA_SCENE_CLAMP : QA_SCENE_REPEAT,
         .filter = missing ? QA_SCENE_LINEAR_MIPMAP_NEAREST : QA_SCENE_LINEAR,
         .mipmap = missing, .source_q3 = true, .source_upload = *profile};
     options.source_upload.mipmap = missing; options.source_upload.allow_picmip = scratch;
@@ -1835,7 +1835,7 @@ bool scene_resource_source_builtin_create(qa_scene_resources *resources, const c
         bool scratch=!strcmp(name,"*scratch");
         return source_builtin(resources,name,profile,scratch?16:8,lighting.identity_light_byte,false,scratch,out,error);
     }
-    qa_scene_image_options options={.family=QA_SCENE_Q3,.wrap=QA_SCENE_CLAMP,
+    qa_scene_image_options options={.family=QA_GAME_Q3,.wrap=QA_SCENE_CLAMP,
         .filter=QA_SCENE_LINEAR,.source_q3=true,.source_upload=*profile};
     options.source_upload.allow_picmip=false; options.source_upload.mipmap=false;
     if (!strcmp(name,"*dlight")) {
@@ -1917,7 +1917,7 @@ typedef struct image_decode_context {
     const qa_resource *source;
     bool generic_upload;
 } image_decode_context;
-static bool decode_palette(qa_scene_resources *resources, qa_scene_family family,
+static bool decode_palette(qa_scene_resources *resources, qa_game_family family,
     const image_decode_context *context, uint8_t *storage, qa_bytes *out, qa_error *error)
 {
     const image_alias *alias = context ? context->alias : NULL;
@@ -1930,7 +1930,7 @@ static bool decode_palette(qa_scene_resources *resources, qa_scene_family family
         qa_error_set(error, alias->palette_error, 0, "Retained source palette lookup failed"); return false;
     }
     qa_bytes bytes = qa_resource_bytes(alias->palette_source);
-    if (family == QA_SCENE_Q1) {
+    if (family == QA_GAME_Q1) {
         if (bytes.size != 768) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "Q1 palette requires exactly 256 RGB colors"); return false;
         }
@@ -1951,7 +1951,7 @@ static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
 {
     qa_bytes palette = options->palette_rgb;
     uint8_t local_palette[768];
-    bool q2_indexed = pcx && options->family == QA_SCENE_Q2 &&
+    bool q2_indexed = pcx && options->family == QA_GAME_Q2 &&
         (options->usage == QA_IMAGE_USAGE_SKIN || options->usage == QA_IMAGE_USAGE_SPRITE);
     if (q2_indexed && palette.size == 0) {
         qa_error local = {0};
@@ -1974,7 +1974,7 @@ static bool indexed_rgba(qa_scene_resources *resources, qa_image *image,
         .fullbright_first = -1, .fullbright_last = -1,
         .translation = options->translation.size == 256 ? options->translation.data : NULL,
         .layer = QA_PALETTE_COMBINED};
-    if (options->family == QA_SCENE_Q2) conversion.transparent_index = 255;
+    if (options->family == QA_GAME_Q2) conversion.transparent_index = 255;
     qa_image expanded = {0};
     qa_indexed_level indexed = {.width = image->width, .height = image->height, .indices = image->indices};
     if (!qa_image_expand_indexed(&indexed, palette, &conversion, &expanded, error)) return false;
@@ -2044,12 +2044,12 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
     }
     qa_image decoded = {0};
     bool ok = false, pcx = suffix_equal(path, ".pcx");
-    qa_image_policy policy = options->family == QA_SCENE_Q3 ? QA_IMAGE_Q3 : QA_IMAGE_FORMAT;
+    qa_image_policy policy = options->family == QA_GAME_Q3 ? QA_IMAGE_Q3 : QA_IMAGE_FORMAT;
     if (suffix_equal(path, ".wal") || suffix_equal(path, ".mip")) {
         qa_mip_texture mip = {0};
         ok = suffix_equal(path, ".wal") ? qa_image_decode_wal(bytes, &mip, error) : qa_image_decode_mip(bytes, &mip, error);
         if (ok && !mip.external) {
-            if (!recipient && !options->source_q3 && (options->family != QA_SCENE_Q2 || !options->mipmap)) {
+            if (!recipient && !options->source_q3 && (options->family != QA_GAME_Q2 || !options->mipmap)) {
                 qa_image images[4] = {0};
                 qa_scene_image_level levels[4];
                 for (size_t i = 0; i < 4 && ok; ++i) {
@@ -2082,9 +2082,9 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
     else qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "unsupported scene image extension: %s", path);
     if (ok && decoded.indices.size != 0 && (pcx || decoded.rgba.size == 0 || options->translation.size != 0 || options->fullbright_only))
         ok = indexed_rgba(resources, &decoded, options, pcx, context, error);
-    if (!recipient && suffix_equal(path, ".lmp") && options->family != QA_SCENE_Q2 && !options->source_q3) upload.mipmap = false;
-    if (ok && options->family == QA_SCENE_Q1 && options->transparent)
-        alpha_edge_fill(&decoded, QA_SCENE_Q1, NULL);
+    if (!recipient && suffix_equal(path, ".lmp") && options->family != QA_GAME_Q2 && !options->source_q3) upload.mipmap = false;
+    if (ok && options->family == QA_GAME_Q1 && options->transparent)
+        alpha_edge_fill(&decoded, QA_GAME_Q1, NULL);
     if (ok) ok = image_from_rgba(resources, image_name, &decoded, &upload, out, error);
     qa_image_free(&decoded);
     return ok;
@@ -2173,14 +2173,14 @@ bool scene_resource_indexed_image(qa_scene_resources *resources, const char *nam
     qa_scene_image_level *generated = NULL;
     if (ok && generate_mips) {
         ok = count == 1 && image_mip_chain(expanded,
-            options->family == QA_SCENE_Q1 && colors->transparent_index >= 0, &chain, error);
+            options->family == QA_GAME_Q1 && colors->transparent_index >= 0, &chain, error);
         if (ok) generated = calloc(chain.count + 1, sizeof(*generated));
         if (ok && !generated) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating model skin mip descriptors"); ok = false; }
         if (ok) {
             generated[0] = levels[0];
             for (size_t i = 0; i < chain.count; ++i) {
-                if (options->family == QA_SCENE_Q1 && colors->transparent_index >= 0)
-                    alpha_edge_fill(chain.levels + i, QA_SCENE_Q1, NULL);
+                if (options->family == QA_GAME_Q1 && colors->transparent_index >= 0)
+                    alpha_edge_fill(chain.levels + i, QA_GAME_Q1, NULL);
                 generated[i + 1] = (qa_scene_image_level){
                     chain.levels[i].width, chain.levels[i].height, chain.levels[i].rgba.data, chain.levels[i].rgba.size};
             }
@@ -2349,7 +2349,7 @@ bool scene_resource_image_decode(qa_scene_resources *resources, const char *name
         qa_scene_image *base = *out, *uploaded = NULL;
         qa_image pixels = {.width = base->levels[0].width, .height = base->levels[0].height,
             .rgba = {(uint8_t *)base->levels[0].pixels, base->levels[0].bytes}};
-        qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = base->wrap,
+        qa_scene_image_options options = {.family = QA_GAME_Q3, .wrap = base->wrap,
             .filter = base->filter, .mipmap = recipe->post_mipmap,
             .source_q3 = recipe->recipient, .source_upload = recipe->recipient_upload};
         ok = image_from_rgba(resources, name, &pixels, &options, &uploaded, error);
@@ -2370,7 +2370,7 @@ bool qa_scene_image_decode_retained(qa_scene_resources *resources, const char *r
     qa_scene_image **out, qa_error *error)
 {
     if (!resources || !request || !path || !options || !out || *out || !bytes.data ||
-        options->family < QA_SCENE_Q1 || options->family > QA_SCENE_Q3 ||
+        options->family < QA_GAME_Q1 || options->family > QA_GAME_Q3 ||
         options->wrap < QA_SCENE_REPEAT || options->wrap > QA_SCENE_CLAMP ||
         options->filter < QA_SCENE_NEAREST || options->filter > QA_SCENE_LINEAR_MIPMAP_LINEAR ||
         options->usage < QA_IMAGE_USAGE_DEFAULT || options->usage > QA_IMAGE_USAGE_SKY ||
@@ -2381,14 +2381,14 @@ bool qa_scene_image_decode_retained(qa_scene_resources *resources, const char *r
     }
     bool external_palette = suffix_equal(path, ".lmp") || suffix_equal(path, ".mip") ||
         suffix_equal(path, ".wal") || (resources->vfs && suffix_equal(path, ".pcx") &&
-        options->family == QA_SCENE_Q2 &&
+        options->family == QA_GAME_Q2 &&
         (options->usage == QA_IMAGE_USAGE_SKIN || options->usage == QA_IMAGE_USAGE_SPRITE));
     if (external_palette && options->palette_rgb.size != 768) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained indexed image decode requires the actual source palette");
         return false;
     }
     if (!admission_ready(resources, error)) return false;
-    if (options->source_q3 && (options->family != QA_SCENE_Q3 ||
+    if (options->source_q3 && (options->family != QA_GAME_Q3 ||
         options->source_upload.mipmap != options->mipmap)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained Source upload requires its actual admission profile");
         return false;
@@ -2741,7 +2741,7 @@ bool qa_scene_image_generic_variant(qa_scene_resources *resources, const qa_scen
             alias ? alias->source_path : retained.source_path, qa_resource_bytes(resource), &options,
             NULL, &context, out, error)) return false;
     } else if (original->recipient_source.rgba.size) {
-        qa_scene_image_options options = {.family = QA_SCENE_Q3, .wrap = source->wrap,
+        qa_scene_image_options options = {.family = QA_GAME_Q3, .wrap = source->wrap,
             .filter = !mipmap && source->filter >= QA_SCENE_NEAREST_MIPMAP_NEAREST ? QA_SCENE_LINEAR : source->filter,
             .mipmap = mipmap};
         if (!image_from_rgba(resources, source->name, &original->recipient_source, &options, out, error)) return false;
@@ -2944,7 +2944,7 @@ bool qa_scene_image_alias_bind(qa_scene_resources *resources, const char *name,
 {
     if (!resources || !name || !source || !source->request || !*source->request ||
         !source->source_path || !*source->source_path || !admission_ready(resources, error) ||
-        source->decode_options.family < QA_SCENE_Q1 || source->decode_options.family > QA_SCENE_Q3 ||
+        source->decode_options.family < QA_GAME_Q1 || source->decode_options.family > QA_GAME_Q3 ||
         source->decode_options.wrap < QA_SCENE_REPEAT || source->decode_options.wrap > QA_SCENE_CLAMP ||
         source->decode_options.filter < QA_SCENE_NEAREST || source->decode_options.filter > QA_SCENE_LINEAR_MIPMAP_LINEAR ||
         source->decode_options.usage < QA_IMAGE_USAGE_DEFAULT || source->decode_options.usage > QA_IMAGE_USAGE_SKY ||
@@ -3071,7 +3071,7 @@ static bool image_load(qa_scene_resources *resources, const char *name,
     qa_scene_image_load_receipt *receipt, qa_error *error)
 {
     if (resources == NULL || name == NULL || options == NULL || out == NULL ||
-        options->family < QA_SCENE_Q1 || options->family > QA_SCENE_Q3 ||
+        options->family < QA_GAME_Q1 || options->family > QA_GAME_Q3 ||
         options->wrap < QA_SCENE_REPEAT || options->wrap > QA_SCENE_CLAMP ||
         options->filter < QA_SCENE_NEAREST || options->filter > QA_SCENE_LINEAR_MIPMAP_LINEAR ||
         options->usage < QA_IMAGE_USAGE_DEFAULT || options->usage > QA_IMAGE_USAGE_SKY ||
@@ -3080,7 +3080,7 @@ static bool image_load(qa_scene_resources *resources, const char *name,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene image load request"); return false;
     }
     if (!admission_ready(resources, error)) return false;
-    if (options->source_q3 && (options->family != QA_SCENE_Q3 ||
+    if (options->source_q3 && (options->family != QA_GAME_Q3 ||
         options->source_upload.mipmap != options->mipmap)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source image upload requires its real Q3 admission and mip policy"); return false;
     }
@@ -3136,8 +3136,8 @@ static bool image_load(qa_scene_resources *resources, const char *name,
     static const char *const q1[] = {".lmp",".tga",".jpg",".png",".jpeg",".pcx",".bmp",".gif"};
     const char *const q2[] = {".png",".jpg",".tga",".jpeg",".bmp",".gif",wall ? ".wal" : ".pcx"};
     static const char *const q3[] = {".tga",".jpg",".png",".jpeg",".pcx",".bmp",".gif"};
-    const char *const *source_extensions = options->family == QA_SCENE_Q1 ? q1 : options->family == QA_SCENE_Q2 ? q2 : q3;
-    size_t source_count = options->family == QA_SCENE_Q1 ? 8 : 7;
+    const char *const *source_extensions = options->family == QA_GAME_Q1 ? q1 : options->family == QA_GAME_Q2 ? q2 : q3;
+    size_t source_count = options->family == QA_GAME_Q1 ? 8 : 7;
     const qa_scene_image_policy *policy = resources->has_policy[options->family] ? &resources->policies[options->family] : NULL;
     const char *overrides[6], *extensions[8], *candidates[15];
     size_t override_count = 0, extension_count = 0, candidate_count = 0;
@@ -3145,8 +3145,8 @@ static bool image_load(qa_scene_resources *resources, const char *name,
         for (size_t i = 0; i < policy->format_count; ++i)
             overrides[override_count++] = format_extensions[policy->formats[i]];
         for (size_t i = 0; i < override_count; ++i) extensions[extension_count++] = overrides[i];
-        if (options->family == QA_SCENE_Q1) extensions[extension_count++] = ".lmp";
-        extensions[extension_count++] = options->family == QA_SCENE_Q2 && wall ? ".wal" : ".pcx";
+        if (options->family == QA_GAME_Q1) extensions[extension_count++] = ".lmp";
+        extensions[extension_count++] = options->family == QA_GAME_Q2 && wall ? ".wal" : ".pcx";
     } else {
         for (size_t i = 0; i < source_count; ++i) {
             const char *extension = source_extensions[i];
@@ -3155,9 +3155,9 @@ static bool image_load(qa_scene_resources *resources, const char *name,
                 overrides[override_count++] = extension;
         }
     }
-    const char *requested = explicit_extension ? dot : options->family == QA_SCENE_Q2 && wall ? ".wal" : NULL;
+    const char *requested = explicit_extension ? dot : options->family == QA_GAME_Q2 && wall ? ".wal" : NULL;
     bool native = requested != NULL && (suffix_equal(requested, ".pcx") || suffix_equal(requested, ".wal") ||
-        (options->family == QA_SCENE_Q1 && suffix_equal(requested, ".lmp")));
+        (options->family == QA_GAME_Q1 && suffix_equal(requested, ".lmp")));
     bool truecolor = false;
     for (size_t i = 0; requested != NULL && i < 6; ++i)
         if (suffix_equal(requested, format_extensions[i])) truecolor = true;
@@ -3191,12 +3191,12 @@ static bool image_load(qa_scene_resources *resources, const char *name,
         qa_mount_id original_mount = 0;
         const char *logical_path = original_path;
         bool native_size = false;
-        if (options->family == QA_SCENE_Q2 && !suffix_equal(path, ".wal") &&
+        if (options->family == QA_GAME_Q2 && !suffix_equal(path, ".wal") &&
             (suffix_equal(name, ".wal") || (!explicit_extension && wall))) {
             memcpy(original_path, name, base_length); strcpy(original_path+base_length, ".wal");
             native_size = true;
-        } else if ((options->family == QA_SCENE_Q2 && suffix_equal(name, ".pcx") && !suffix_equal(path, ".pcx")) ||
-                   (options->family == QA_SCENE_Q1 && requested != NULL && suffix_equal(requested, ".lmp") && !suffix_equal(path, ".lmp"))) {
+        } else if ((options->family == QA_GAME_Q2 && suffix_equal(name, ".pcx") && !suffix_equal(path, ".pcx")) ||
+                   (options->family == QA_GAME_Q1 && requested != NULL && suffix_equal(requested, ".lmp") && !suffix_equal(path, ".lmp"))) {
             memcpy(original_path, name, length+1); native_size = true;
         }
         bool size_ok = exact_file || !native_size || original_image(resources, original_path, NULL, 0, NULL,

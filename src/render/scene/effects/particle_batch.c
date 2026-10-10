@@ -15,7 +15,7 @@ qa_scene_particle_sample *qa_scene_particles_alloc(qa_scene_frame *frame, size_t
 
 bool qa_scene_particles(qa_scene_frame *frame, const qa_scene_particle_batch *batch, qa_error *error)
 {
-    if (!frame || !batch || (batch->family != QA_SCENE_Q1 && batch->family != QA_SCENE_Q2) ||
+    if (!frame || !batch || (batch->family != QA_GAME_Q1 && batch->family != QA_GAME_Q2) ||
         (batch->count && (!batch->samples || !batch->image)) ||
         !batch->view.viewport.width || !batch->view.viewport.height ||
         batch->view.viewport.width > INT_MAX || batch->view.viewport.height > INT_MAX) {

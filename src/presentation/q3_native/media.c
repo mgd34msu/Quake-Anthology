@@ -599,7 +599,7 @@ static bool effect_source_current(q3n_media *m, qa_application *app,
     if (!app || !source || m->options.remote_source || m->options.compiled_source || source->kind != QA_APPLICATION_EFFECTS_Q3 ||
         source->q3_product != m->options.product ||
         !qa_vfs_lookup_equal(m->options.assets->options.provider.mounts, source->content) ||
-        m->options.assets->options.provider.family != QA_SCENE_Q3 ||
+        m->options.assets->options.provider.family != QA_GAME_Q3 ||
         (event ? source != &event->source || !qa_application_effect_event_current(app, event) :
             !qa_application_selected_effects_current(app, source)))
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected effect media lost its actual source, content or clock");
@@ -618,7 +618,7 @@ static bool unified_effect_current(q3n_media *m, const q3n_unified_effect_source
         s->assets != m->options.assets || s->product != m->options.product ||
         m->options.remote_source || m->options.compiled_source ||
         m->options.assets->options.provider.mounts != s->content ||
-        m->options.assets->options.provider.family != QA_SCENE_Q3 || !s->current(s))
+        m->options.assets->options.provider.family != QA_GAME_Q3 || !s->current(s))
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Unified effect media lost its actual CLIENT source and dictionary");
     return true;
 }

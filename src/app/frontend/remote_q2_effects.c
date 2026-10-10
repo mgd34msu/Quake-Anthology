@@ -194,9 +194,9 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     if (!owner->sampled_lights) return q2fx_fail(error,QA_ERROR_MEMORY,"Allocating actual Q2 sampled light rows");
     owner->light_capacity=Q2FX_LIGHT_CAPACITY;
     qa_scene_image *image = NULL; qa_bytes palette;
-    if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_SCENE_Q2, &image, error)) return false;
+    if (!q2fx_source_current(owner, error) || !qa_scene_particle_image(source->images, QA_GAME_Q2, &image, error)) return false;
     owner->particle_image = image;
-    if (!qa_scene_resources_palette(source->images, QA_SCENE_Q2, &palette, error)) return false;
+    if (!qa_scene_resources_palette(source->images, QA_GAME_Q2, &palette, error)) return false;
     /* Expansion beams/explosions and rerelease muzzle models are admitted by
      * the effect that actually needs them, in this same retained media cache. */
     for (size_t i = 0; i < Q2FX_LIGHTNING; ++i)
@@ -890,7 +890,7 @@ bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *o,qa_act
     const qa_scene_model_input *weapon,qa_scene_frame *frame,qa_error *e)
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !weapon || !frame ||
-        !isfinite(weapon->seconds) || weapon->family!=QA_SCENE_Q2 ||
+        !isfinite(weapon->seconds) || weapon->family!=QA_GAME_Q2 ||
         !q2fx_source_current(o,e)) return false;
     q2fx_weapon_muzzle *m=&o->weapon_muzzle;
     if (!m->active || !qa_actor_id_equal(m->actor,viewer)) return true;
@@ -929,7 +929,7 @@ void q2fx_sampled_light(frontend_remote_q2_effects *o, qa_vec3 origin, float rad
 {
     if (radius<=0 || o->light_count==Q2FX_LIGHT_CAPACITY) return;
     o->sampled_lights[o->light_count++]=(qa_scene_light){.origin=origin,.color=color,.radius=radius,.minimum=minimum,
-        .scale=1,.additive=true,.family=QA_SCENE_Q2};
+        .scale=1,.additive=true,.family=QA_GAME_Q2};
 }
 static bool model_draw(frontend_remote_q2_effects *o, q2fx_model model, qa_vec3 origin, qa_vec3 angles,
     int32_t frame, int32_t old_frame, float back_lerp, int32_t skin, uint32_t flags, float alpha, float scale, qa_error *e)
@@ -1076,14 +1076,14 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
             if (!s->world_input->no_world && !qa_scene_world_sample_light_input(o->source.world,s->world_input,row->origin,&ambient,&directed,&direction,e)) { ok=false; break; }
         }
         qa_scene_model_input input={.view=s->view,.transform=transform,.previous_origin=row->origin,.color={1,1,1,row->alpha},
-            .family=QA_SCENE_Q2,.frame=(uint32_t)row->frame,.old_frame=(uint32_t)row->old_frame,.skin=(uint32_t)row->skin,
+            .family=QA_GAME_Q2,.frame=(uint32_t)row->frame,.old_frame=(uint32_t)row->old_frame,.skin=(uint32_t)row->skin,
             .flags=row->flags,.back_lerp=row->back_lerp,.seconds=s->milliseconds*.001,
             .ambient=qa_vec_add(ambient,directed),.light_direction=direction,.source_path=q2fx_model_paths[row->model],
             .video_frame=o->source.video_frame,.video_context=o->source.video_context};
         ok=qa_scene_model_submit(o->models[row->model],&input,frame,e);
     }
     qa_bytes palette={0};
-    if (ok && (particles || entities)) ok=qa_scene_resources_palette_read(o->source.images,QA_SCENE_Q2,&palette) && palette.size>=768;
+    if (ok && (particles || entities)) ok=qa_scene_resources_palette_read(o->source.images,QA_GAME_Q2,&palette) && palette.size>=768;
     if (entities) for (size_t i=0;ok && i<Q2FX_LASER_CAPACITY;++i) {
         const q2fx_laser *row=&o->lasers[i]; if (!row->active || row->die<=s->milliseconds) continue;
         uint32_t index=row->color&255; qa_scene_vec4 color;
@@ -1097,7 +1097,7 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
     }
     qa_scene_particle_sample *particle_samples=ok && particles?qa_scene_particles_alloc(frame,o->particles.count,e):NULL;
     if (ok && particles && o->particles.count && !particle_samples) ok=false;
-    qa_scene_particle_batch batch={.view=s->view,.family=QA_SCENE_Q2,.image=o->particle_image,.samples=particle_samples};
+    qa_scene_particle_batch batch={.view=s->view,.family=QA_GAME_Q2,.image=o->particle_image,.samples=particle_samples};
     if (particles) for (size_t i=o->particles.count;ok && i>0;--i) {
         const frontend_fx_q2_particle *row=&o->particles.values.q2[i-1]; qa_vec3 origin; float alpha;
         if (!frontend_fx_q2_sample(row,s->milliseconds,&origin,&alpha)) continue;
@@ -1117,7 +1117,7 @@ bool frontend_remote_q2_effects_entity_beam(frontend_remote_q2_effects *o,
     if (!o || !frontend_remote_q2_effects_idle(o) || !view || !frame ||
         !qa_vec_finite(start) || !qa_vec_finite(end) || !q2fx_source_current(o,e)) return false;
     qa_bytes palette={0};
-    if (!qa_scene_resources_palette_read(o->source.images,QA_SCENE_Q2,&palette) || palette.size<768) return false;
+    if (!qa_scene_resources_palette_read(o->source.images,QA_GAME_Q2,&palette) || palette.size<768) return false;
     ++o->busy;
     bool ok=frontend_q2_entity_beam(&o->random,palette,o->source.white,
         view,start,end,packed_colors,width,frame,e);

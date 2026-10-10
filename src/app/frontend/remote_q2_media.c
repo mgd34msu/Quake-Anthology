@@ -17,7 +17,7 @@
 
 static qa_scene_image_options image_options(qa_scene_image_usage usage)
 {
-    return (qa_scene_image_options){.family = QA_SCENE_Q2, .usage = usage,
+    return (qa_scene_image_options){.family = QA_GAME_Q2, .usage = usage,
         .wrap = usage == QA_IMAGE_USAGE_PICTURE ? QA_SCENE_CLAMP : QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = usage != QA_IMAGE_USAGE_PICTURE,
         .transparent = true, .transparent_index = 255};
@@ -103,7 +103,7 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
     bool ok = m->path && qa_vfs_acquire_receipt(row->content.mounts, path, &m->resource, &m->opening, error) &&
         qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) && model_materials(row, &m->decoded, error) &&
         model_scope_acquire(row, m, &scope, &options, error);
-    if (ok && m->decoded.format == QA_MODEL_MD3) options.family = QA_SCENE_Q3;
+    if (ok && m->decoded.format == QA_MODEL_MD3) options.family = QA_GAME_Q3;
     if (ok) ok = qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
         qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&
         frontend_visual_model_opening_initialize(row->frontend, options.family, row->content.mounts,
@@ -298,7 +298,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + i));
         if (!*name || name[0] == '*') continue;
         qa_audio_asset *asset = NULL;
-        if (!qa_audio_bank_register(row->sounds, name, QA_AUDIO_Q2, &asset, error)) return false;
+        if (!qa_audio_bank_register(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
         qa_audio_asset_release(asset);
     }
     qa_error issue = {0};

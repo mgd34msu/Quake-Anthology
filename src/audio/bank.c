@@ -48,8 +48,8 @@ const char *qa_audio_asset_name(const qa_audio_asset *asset) {
     return asset != NULL ? asset->name : NULL;
 }
 
-qa_audio_family qa_audio_asset_family(const qa_audio_asset *asset) {
-    return asset != NULL ? asset->family : QA_AUDIO_Q3;
+qa_game_family qa_audio_asset_family(const qa_audio_asset *asset) {
+    return asset != NULL ? asset->family : QA_GAME_Q3;
 }
 const qa_vfs *qa_audio_bank_files(const qa_audio_bank *bank) {
     return bank ? bank->view : NULL;
@@ -72,7 +72,7 @@ bool qa_audio_bank_create(qa_vfs *view, qa_audio_bank **out, qa_error *error) {
     return true;
 }
 
-static uint64_t bank_name_hash(const char *prefix, const char *path, qa_audio_family family) {
+static uint64_t bank_name_hash(const char *prefix, const char *path, qa_game_family family) {
     uint64_t hash = UINT64_C(14695981039346656037) ^ (uint64_t)family;
     while (*prefix) { hash ^= (uint8_t)*prefix++; hash *= UINT64_C(1099511628211); }
     while (*path) { hash ^= (uint8_t)*path++; hash *= UINT64_C(1099511628211); }
@@ -103,7 +103,7 @@ static bool bank_name_reserve(qa_audio_bank *bank, size_t count, qa_error *error
     free(bank->names); bank->names = names; bank->name_capacity = capacity;
     bank_name_rebuild(bank); return true;
 }
-static bank_entry *bank_name_find(qa_audio_bank *bank, const char *name, qa_audio_family family) {
+static bank_entry *bank_name_find(qa_audio_bank *bank, const char *name, qa_game_family family) {
     if (!bank->count) return NULL;
     const char *path = name[0] == '#' ? name + 1 : name;
     const char *prefix = name[0] != '#' && strncmp(name, "sound/", 6) ? "sound/" : "";
@@ -177,7 +177,7 @@ void qa_audio_bank_end(qa_audio_bank *bank) {
 }
 
 static bank_entry *bank_find(const qa_audio_bank *bank, uint64_t resource_id,
-                             qa_audio_family family) {
+                             qa_game_family family) {
     if (bank == NULL)
         return NULL;
     for (size_t i = 0; i < bank->count; ++i) {
@@ -189,7 +189,7 @@ static bank_entry *bank_find(const qa_audio_bank *bank, uint64_t resource_id,
 }
 
 qa_audio_asset *qa_audio_bank_get(const qa_audio_bank *bank, uint64_t resource_id,
-                                  qa_audio_family family) {
+                                  qa_game_family family) {
     const bank_entry *entry = bank_find(bank, resource_id, family);
     return entry != NULL ? entry->asset : NULL;
 }
@@ -227,10 +227,10 @@ static bool bank_acquire(qa_audio_bank *bank, const char *path, qa_resource **ou
     return false;
 }
 
-bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_audio_family family,
+bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_family family,
                             qa_audio_asset **out, qa_error *error) {
     if (bank == NULL || name == NULL || out == NULL ||
-        (family != QA_AUDIO_Q1 && family != QA_AUDIO_Q2 && family != QA_AUDIO_Q3)) {
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2 && family != QA_GAME_Q3)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid sound registration");
         return false;
     }
@@ -318,7 +318,7 @@ bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_audio_fami
     qa_bytes bytes = qa_resource_bytes(resource);
     qa_audio_wav_policy policy = QA_WAV_FORMAT;
     if (bytes.size != 0 && bytes.data[0] == 'R')
-        policy = family == QA_AUDIO_Q3 ? QA_WAV_Q3 : QA_WAV_QUAKE;
+        policy = family == QA_GAME_Q3 ? QA_WAV_Q3 : QA_WAV_QUAKE;
     asset->policy = policy;
     qa_audio_sample *shared = NULL;
     for (size_t i = 0; i < bank->count; ++i) {
@@ -369,7 +369,7 @@ bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *mode
         return false;
     }
     if (base[0] != '*')
-        return qa_audio_bank_register(bank, base, QA_AUDIO_Q2, out, error);
+        return qa_audio_bank_register(bank, base, QA_GAME_Q2, out, error);
     size_t model_length = strcspn(model, "/");
     if (model_length == 0) {
         model = "male";
@@ -398,11 +398,11 @@ bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *mode
     path[9 + model_length] = '/';
     memcpy(path + 10 + model_length, name, name_length + 1);
     qa_audio_asset *asset = NULL;
-    bool result = qa_audio_bank_register(bank, path, QA_AUDIO_Q2, &asset, error);
+    bool result = qa_audio_bank_register(bank, path, QA_GAME_Q2, &asset, error);
     if (result && asset == NULL) {
         memcpy(path, "player/male/", 12);
         memcpy(path + 12, name, name_length + 1);
-        result = qa_audio_bank_register(bank, path, QA_AUDIO_Q2, &asset, error);
+        result = qa_audio_bank_register(bank, path, QA_GAME_Q2, &asset, error);
     }
     free(path);
     if (result)
@@ -449,11 +449,11 @@ static bool music_extension(const char *path, size_t length) {
     return !memcmp(extension, "wav", 3) || !memcmp(extension, "ogg", 3);
 }
 
-bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_audio_family family,
+bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_game_family family,
                              qa_vfs_accept_mount accept, void *context,
                              qa_audio_stream **out, qa_error *error) {
     if (!bank || !name || !*name || !out ||
-        (family != QA_AUDIO_Q1 && family != QA_AUDIO_Q2 && family != QA_AUDIO_Q3)) {
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2 && family != QA_GAME_Q3)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid authored music cue");
         return false;
     }
@@ -477,8 +477,8 @@ bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_audio_fam
         length += 6;
     }
     bool explicit = music_extension(path, length);
-    const char *extensions[2] = {family == QA_AUDIO_Q3 ? ".wav" : ".ogg",
-                                 family == QA_AUDIO_Q3 ? ".ogg" : ".wav"};
+    const char *extensions[2] = {family == QA_GAME_Q3 ? ".wav" : ".ogg",
+                                 family == QA_GAME_Q3 ? ".ogg" : ".wav"};
     bool ok = true;
     qa_audio_stream *stream = NULL;
     for (size_t i = 0; i < (explicit ? 1u : 2u); ++i) {

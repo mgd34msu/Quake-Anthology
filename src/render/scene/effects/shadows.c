@@ -380,7 +380,7 @@ bool qa_scene_shadows_prepare_options(qa_scene_shadows *shadows, const qa_scene_
     }
     size_t light_count = 0;
     for (size_t i = 0; i < source_count && light_count < SHADOW_LIGHTS; ++i)
-        if (source[i].family == QA_SCENE_Q2) ++light_count;
+        if (source[i].family == QA_GAME_Q2) ++light_count;
     qa_scene_shadow_light *lights = NULL;
     if (light_count) {
         lights = qa_arena_alloc(&frame->storage, light_count * sizeof(*lights), _Alignof(qa_scene_shadow_light), error);
@@ -392,7 +392,7 @@ bool qa_scene_shadows_prepare_options(qa_scene_shadows *shadows, const qa_scene_
     bool enabled = !options || options->enabled;
     uint32_t resolution_cap = options ? options->resolution_cap : 1024;
     for (size_t i = 0; i < source_count && cursor < light_count; ++i) {
-        if (source[i].family != QA_SCENE_Q2) continue;
+        if (source[i].family != QA_GAME_Q2) continue;
         const qa_scene_light *light = &source[i];
         lights[cursor].light = *light;
         if (enabled && light->radius > 0 && (light->casts_shadow || light->spot)) {

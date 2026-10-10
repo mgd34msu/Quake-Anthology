@@ -86,9 +86,9 @@ void frontend_ui_sound(void *context, uint32_t physical, qa_ui_sound event)
         event == QA_UI_CHANGE ? "misc/menu3.wav" : "misc/menu2.wav";
     qa_audio_asset *asset = NULL;
     qa_error *error = &f->ui_features->audio_error;
-    if (!qa_audio_bank_register(f->ui_features->sounds, name, QA_AUDIO_Q1, &asset, error) || !asset) return;
+    if (!qa_audio_bank_register(f->ui_features->sounds, name, QA_GAME_Q1, &asset, error) || !asset) return;
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .name = name, .family = QA_AUDIO_Q1, .actor = QA_AUDIO_NO_ACTOR,
+        .name = name, .family = QA_GAME_Q1, .actor = QA_AUDIO_NO_ACTOR,
         .owner = QA_AUDIO_NO_OWNER, .audience = physical, .origin_kind = QA_AUDIO_LOCAL,
         .channel = -1, .volume = 1, .attenuation = 0};
     (void)qa_audio_engine_play(f->audio, &sound,
