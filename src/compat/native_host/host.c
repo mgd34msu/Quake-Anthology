@@ -292,7 +292,8 @@ bool qa_native_host_create_q2_game(qa_native_module *module,
     host->message = malloc(host->message_capacity);
     if (!host->message ||
         !configure_instance(host, module, &options->instance,
-                            error) || !native_host_fields_refresh(host, error)) {
+                            error) || !native_host_call_scratch_prepare(host, error) ||
+        !native_host_fields_refresh(host, error)) {
         return creation_failed(host, out, error);
     }
     *out = host;
@@ -368,6 +369,7 @@ bool qa_native_host_create_q3(qa_native_module *module,
 static void free_records(qa_native_host *host)
 {
     native_host_movement_dispose(host);
+    qa_arena_destroy(&host->call_storage);
     native_host_memory_state memory={host->strings,host->cvar_shadows};
     native_host_memory_dispose(&memory); host->strings=NULL; host->cvar_shadows=NULL;
     while (host->surfaces) {
@@ -942,18 +944,20 @@ bool qa_native_host_client_think(qa_native_host *host, uint32_t slot,
         source_usercmd.size != expected)
         return native_host_fail(error, QA_ERROR_ARGUMENT, source_usercmd.size,
                                 "native Q2 user command has the wrong ABI size");
-    qa_native_address entity, command = 0;
-    if (!qa_native_entity_address(host->instance, slot, &entity, error) ||
-        !qa_native_allocate(host->instance, expected, INT32_MIN + 5, &command, error) ||
-        !native_host_write(host, command, source_usercmd.data, expected, error)) {
-        native_host_temporary_free(host, command);
+    qa_native_address entity;
+    if (!qa_native_entity_address(host->instance, slot, &entity, error)) return false;
+    size_t scratch_slot;
+    qa_native_address command = native_host_call_scratch_take(host, &scratch_slot, error);
+    if (!command) return false;
+    if (!native_host_write(host, command, source_usercmd.data, expected, error)) {
+        native_host_call_scratch_release(host, scratch_slot);
         return false;
     }
     qa_native_value arguments[] = {
         {.type = QA_NATIVE_ADDRESS, .as.address = entity},
         {.type = QA_NATIVE_ADDRESS, .as.address = command}};
     bool ok = qa_native_call(host->instance, "ClientThink", arguments, 2, NULL, error);
-    native_host_temporary_free(host, command);
+    native_host_call_scratch_release(host, scratch_slot);
     return ok && native_host_reconcile(host, error);
 }
 
@@ -966,8 +970,13 @@ bool native_host_import(void *context, qa_native_instance *instance,
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native import belongs to another host instance");
     bool bootstrap = host->instance == NULL;
-    if (bootstrap)
+    if (bootstrap) {
         host->instance = instance;
+        if (host->kind == NATIVE_HOST_Q2_GAME && !native_host_call_scratch_prepare(host, error)) {
+            host->instance = NULL;
+            return false;
+        }
+    }
     ++host->callback_depth;
     bool paired = (host->engine.source_before == NULL) == (host->engine.source_after == NULL);
     bool prepared = paired && (!host->engine.source_before || host->engine.source_before(host->engine.context, error));

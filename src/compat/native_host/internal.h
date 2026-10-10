@@ -109,6 +109,8 @@ struct qa_native_host {
     qa_native_host_movement_services movement;
     qa_arena movement_storage;
     qa_pool movement_results;
+    qa_arena call_storage;
+    qa_pool call_scratch;
     qa_native_host_q2_application_fn q2_application;
     void *q2_application_context;
     uint32_t q2_seat;
@@ -220,6 +222,9 @@ bool native_host_box_edicts(qa_native_host *, const qa_native_import_call *,
 bool native_host_pmove(qa_native_host *, qa_native_address, qa_error *);
 bool native_host_movement_prepare(qa_native_host *, qa_error *);
 void native_host_movement_dispose(qa_native_host *);
+bool native_host_call_scratch_prepare(qa_native_host *, qa_error *);
+qa_native_address native_host_call_scratch_take(qa_native_host *, size_t *, qa_error *);
+void native_host_call_scratch_release(qa_native_host *, size_t);
 
 bool native_host_message_write(qa_native_host *, const qa_native_import_call *, qa_error *);
 bool native_host_message_send(qa_native_host *, const qa_native_import_call *, qa_error *);

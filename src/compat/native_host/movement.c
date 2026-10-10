@@ -1,6 +1,34 @@
 #include "internal.h"
 #include <math.h>
 
+bool native_host_call_scratch_prepare(qa_native_host *host, qa_error *error)
+{
+    if (host->call_scratch.values) return true;
+    qa_native_address base;
+    if (!qa_native_allocate(host->instance, 64 * 64, INT32_MIN + 8, &base, error))
+        return false;
+    if (!qa_pool_prepare(&host->call_scratch, &host->call_storage, 64,
+            sizeof(qa_native_address), _Alignof(qa_native_address), error)) return false;
+    for (size_t i = 0; i < host->call_scratch.capacity; ++i)
+        *(qa_native_address *)qa_pool_at(&host->call_scratch, i) = base + i * 64;
+    qa_arena_seal(&host->call_storage);
+    return true;
+}
+
+qa_native_address native_host_call_scratch_take(qa_native_host *host, size_t *slot,
+    qa_error *error)
+{
+    qa_native_address *address = qa_pool_take(&host->call_scratch, slot);
+    if (!address) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "native call scratch pool exhausted");
+        return 0;
+    }
+    return *address;
+}
+
+void native_host_call_scratch_release(qa_native_host *host, size_t slot)
+{ qa_pool_release(&host->call_scratch, slot); }
+
 bool native_host_movement_prepare(qa_native_host *host, qa_error *error)
 {
     if (!qa_pool_prepare(&host->movement_results, &host->movement_storage, 32,
@@ -287,10 +315,13 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     size_t movement_slot;
     qa_movement_result *movement = qa_native_host_movement_acquire(host, &movement_slot, error);
     if (!movement) return false;
-    if ((bridge.trace || bridge.contents) &&
-        !qa_native_allocate(host->instance, 48, INT32_MIN + 8, &bridge.scratch, error)) {
-        qa_native_host_movement_release(host, movement_slot);
-        return false;
+    size_t scratch_slot = SIZE_MAX;
+    if (bridge.trace || bridge.contents) {
+        bridge.scratch = native_host_call_scratch_take(host, &scratch_slot, error);
+        if (!bridge.scratch) {
+            qa_native_host_movement_release(host, movement_slot);
+            return false;
+        }
     }
     qa_movement_services services = {
         .context = &bridge,
@@ -305,11 +336,7 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
         ? host->movement.execute(host->movement.context, host, address, &input,
             &services, movement, error)
         : qa_movement_move(&input, &services, movement, error);
-    if (bridge.scratch) {
-        qa_error cleanup = {0};
-        bool freed = qa_native_free(host->instance, bridge.scratch, &cleanup);
-        if (!freed && moved) { moved = false; if (error) *error = cleanup; }
-    }
+    if (scratch_slot != SIZE_MAX) native_host_call_scratch_release(host, scratch_slot);
     if (!moved) {
         qa_native_host_movement_release(host, movement_slot);
         return false;
