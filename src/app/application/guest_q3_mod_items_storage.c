@@ -29,16 +29,16 @@ bool q3items_capacity(item_actor *a,const item_capacity *c,const qa_qvm_committe
     *out=code[instruction].operand;return true;
 }
 bool q3items_read(item_actor *a,const item_storage *s,const qa_qvm_committed_write *previous,
-    qa_inventory_entry *out,size_t count,qa_error *e)
+    qa_inventory_entry *out,size_t first,size_t count,qa_error *e)
 {
     int32_t word;if(!q3items_scalar(a,s->field,previous,&word,e))return false;
-    if(!s->bits){int32_t capacity;if(count!=1||!q3items_capacity(a,&s->capacity,previous,&capacity,e))return false;
+    if(!s->bits){int32_t capacity;if(first||count!=1||!q3items_capacity(a,&s->capacity,previous,&capacity,e))return false;
         *out=(qa_inventory_entry){s->item,word,capacity,QA_COUNT_SOURCE_INT32};return true;}
-    if(count!=s->count)return false;
+    if(first>s->count||count>s->count-first)return false;
     uint32_t mask=s->private_mask;
-    for(size_t i=0;i<count;++i)mask|=s->items[i].mask;
+    for(size_t i=0;i<s->count;++i)mask|=s->items[i].mask;
     if((uint32_t)word&~mask)return q3mod_fail(e,QA_ERROR_FORMAT,"Original QVM inventory contains undeclared bits");
-    for(size_t i=0;i<count;++i)out[i]=(qa_inventory_entry){s->items[i].item,((uint32_t)word&s->items[i].mask)?1:0,1,QA_COUNT_STACK};
+    for(size_t i=0;i<count;++i)out[i]=(qa_inventory_entry){s->items[first+i].item,((uint32_t)word&s->items[first+i].mask)?1:0,1,QA_COUNT_STACK};
     return true;
 }
 bool q3items_tests(item_actor *a,const item_test *tests,size_t count,bool *out,qa_error *e)

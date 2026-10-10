@@ -46,6 +46,7 @@ struct application_q3_mod_items_profile {
 typedef struct item_record_address { size_t record; uint32_t address; } item_record_address;
 typedef struct item_pending {
     struct item_pending *next;
+    qa_unified_frame_lease *storage;
     uint64_t sequence;
     qa_inventory_change *changes; size_t count;
 } item_pending;
@@ -98,7 +99,7 @@ bool q3items_address(item_actor *,item_field,uint32_t *,qa_error *);
 bool q3items_scalar(item_actor *,item_field,const qa_qvm_committed_write *,int32_t *,qa_error *);
 bool q3items_capacity(item_actor *,const item_capacity *,const qa_qvm_committed_write *,int32_t *,qa_error *);
 bool q3items_read(item_actor *,const item_storage *,const qa_qvm_committed_write *,
-    qa_inventory_entry *,size_t,qa_error *);
+    qa_inventory_entry *,size_t first,size_t count,qa_error *);
 bool q3items_stage_parse(application_q3_mod_items_profile *,const qa_json_document *,qa_json_id,qa_strings *,qa_error *);
 bool q3items_field_parse(application_q3_mod_items_profile *,const qa_json_document *,qa_json_id,item_field *,bool storage,bool capacity,qa_error *);
 bool q3items_call_parse(application_q3_mod_items_profile *,const qa_json_document *,qa_json_id,application_q3_mod_call **,qa_error *);

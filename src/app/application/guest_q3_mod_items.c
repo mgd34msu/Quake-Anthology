@@ -1,4 +1,5 @@
 #include "guest_q3_mod_items_private.h"
+#include "control_frame.h"
 item_actor *q3items_actor(application_q3_mod_items *o,qa_actor_id actor)
 {for(item_actor *a=o?o->actors:NULL;a;a=a->next)if(qa_actor_id_equal(a->actor,actor))return a;return NULL;}
 bool q3items_current(item_actor *a,qa_error *e)
@@ -40,8 +41,7 @@ static bool at(void *context,size_t index,qa_inventory_entry *out,qa_error *e)
     item_actor *a=context;if(!q3items_current(a,e)||index>=entry_count(a))return false;
     qa_item_id item=a->owner->profile->definitions[index].admission.definition.item;size_t bit;
     const item_storage *s=storage_for(a->owner->profile,item,&bit);if(!s)return false;
-    qa_inventory_entry *rows=calloc(s->bits?s->count:1,sizeof(*rows));if(!rows)return q3mod_fail(e,QA_ERROR_MEMORY,"Reading genuine item storage");
-    bool ok=q3items_read(a,s,NULL,rows,s->bits?s->count:1,e);if(ok)*out=rows[bit];free(rows);return ok&&q3items_current(a,e);
+    return q3items_read(a,s,NULL,out,bit,1,e)&&q3items_current(a,e);
 }
 static bool write_word(item_actor *a,item_field f,int32_t value,qa_error *e)
 {uint32_t address;uint8_t bytes[4];qa_store_u32le(bytes,(uint32_t)value);return q3items_address(a,f,&address,e)&&qa_qvm_write(a->owner->mod->vm,address,(qa_bytes){bytes,4},e);}
@@ -93,25 +93,31 @@ static bool overlaps(uint32_t address,const qa_qvm_committed_write *event)
 static bool publish(void *context,qa_qvm *vm,const qa_qvm_committed_write *event,qa_error *e)
 {
     item_actor *a=context;application_q3_mod_items *o=a->owner;if(vm!=o->mod->vm||a->releasing)return true;
-    item_pending *pending=calloc(1,sizeof(*pending));if(!pending)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining committed item changes");
-    pending->sequence=event->sequence;pending->changes=calloc(o->profile->definition_count,sizeof(*pending->changes));
-    if(!pending->changes){free(pending);return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining committed item values");}
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->services.application,e);
+    if(!storage)return false;
+    item_pending *pending=qa_unified_frame_lease_alloc(storage,1,sizeof(*pending),_Alignof(item_pending),e);
+    if(!pending){qa_unified_frame_lease_release(storage);return false;}
+    pending->storage=storage;pending->sequence=event->sequence;
+    pending->changes=qa_unified_frame_lease_alloc(storage,o->profile->definition_count,sizeof(*pending->changes),_Alignof(qa_inventory_change),e);
+    if(o->profile->definition_count&&!pending->changes){qa_unified_frame_lease_release(storage);return false;}
     bool ok=true;
     for(size_t i=0;ok&&i<o->profile->storage_count;++i){const item_storage *s=o->profile->storage+i;uint32_t address;
         if(!q3items_address(a,s->field,&address,e)){ok=false;break;}bool changed=overlaps(address,event);
         if(!s->bits&&s->capacity.kind==ITEM_CAPACITY_FIELD){if(!q3items_address(a,s->capacity.field,&address,e)){ok=false;break;}changed|=overlaps(address,event);}
         for(size_t j=0;!s->bits&&s->capacity.kind==ITEM_CAPACITY_SOURCE&&j<s->capacity.count;++j)changed|=overlaps(s->capacity.overrides[j].address,event);
         if(!changed)continue;
-        size_t count=s->bits?s->count:1;qa_inventory_entry *before=calloc(count,sizeof(*before)),*after=calloc(count,sizeof(*after));
-        if(!before||!after){free(before);free(after);ok=q3mod_fail(e,QA_ERROR_MEMORY,"Reading committed original items");break;}
-        ok=q3items_read(a,s,event,before,count,e)&&q3items_read(a,s,NULL,after,count,e);
+        size_t count=s->bits?s->count:1;
+        qa_inventory_entry *before=qa_unified_frame_lease_alloc(storage,count,sizeof(*before),_Alignof(qa_inventory_entry),e);
+        qa_inventory_entry *after=qa_unified_frame_lease_alloc(storage,count,sizeof(*after),_Alignof(qa_inventory_entry),e);
+        if(count&&(!before||!after)){ok=false;break;}
+        ok=q3items_read(a,s,event,before,0,count,e)&&q3items_read(a,s,NULL,after,0,count,e);
         for(size_t j=0;ok&&j<count;++j){bool counts=before[j].count!=after[j].count,capacities=before[j].capacity!=after[j].capacity;
             if(!counts&&!capacities)continue;
             if(o->services.pickup_write&&!o->services.pickup_write(o->services.context,a->actor,after[j].item,counts,capacities,e)){ok=false;break;}
             pending->changes[pending->count++]=(qa_inventory_change){true,a->actor,before[j],after[j]};
-        }free(before);free(after);
+        }
     }
-    if(!ok){free(pending->changes);free(pending);return false;}
+    if(!ok){qa_unified_frame_lease_release(storage);return false;}
     item_pending **tail=&a->pending;while(*tail)tail=&(*tail)->next;*tail=pending;return true;
 }
 static bool after(void *context,qa_qvm *vm,const qa_qvm_committed_write *event,qa_error *e)
@@ -131,13 +137,13 @@ static bool after(void *context,qa_qvm *vm,const qa_qvm_committed_write *event,q
             if(stopped)entry->cancelled=true;
             ok=ok&&stopped;break;
         }
-    --a->owner->calls;--a->references;free(pending->changes);free(pending);return ok;
+    --a->owner->calls;--a->references;qa_unified_frame_lease_release(pending->storage);return ok;
 }
 static void dispose(void *context,const qa_qvm_committed_write *event)
 {
     item_actor *a=context;item_pending **link=&a->pending;
     while(*link&&(*link)->sequence!=event->sequence)link=&(*link)->next;
-    if(*link){item_pending *pending=*link;*link=pending->next;free(pending->changes);free(pending);}
+    if(*link){item_pending *pending=*link;*link=pending->next;qa_unified_frame_lease_release(pending->storage);}
 }
 bool q3items_watch_create(item_actor *a,qa_error *e)
 {
@@ -218,7 +224,7 @@ bool application_q3_mod_items_release(application_q3_mod_items *o,qa_actor_id ac
     if(a->watch){if(!qa_qvm_unobserve_writes(o->mod->vm,a->watch,e))return false;a->watch=0;}
     if(a->lease.serial){if(qa_inventory_lease_current(o->inventory,a->lease)&&!qa_inventory_close_items(o->inventory,a->lease,e))return false;a->lease=(qa_inventory_lease){0};}
     item_actor **link=&o->actors;while(*link!=a)link=&(*link)->next;*link=a->next;
-    while(a->pending){item_pending *p=a->pending;a->pending=p->next;free(p->changes);free(p);}free(a->addresses);free(a->definitions);free(a);return true;
+    while(a->pending){item_pending *p=a->pending;a->pending=p->next;qa_unified_frame_lease_release(p->storage);}free(a->addresses);free(a->definitions);free(a);return true;
 }
 bool application_q3_mod_items_destroy(application_q3_mod_items **in,qa_error *e)
 {if(!in)return false;application_q3_mod_items *o=*in;if(!o)return true;if(!application_q3_mod_items_idle(o))return false;while(o->actors)if(!application_q3_mod_items_release(o,o->actors->actor,e))return false;free(o);*in=NULL;return true;}

@@ -22,6 +22,7 @@ typedef struct application_q3_items_weapon_view {
 } application_q3_items_weapon_view;
 typedef struct application_q3_mod_items_services {
     void *context;
+    struct qa_application *application;
     bool (*selected)(void *,qa_actor_id);
     bool (*posture)(void *,qa_actor_id,qa_bounds *,double *view_height,int32_t *ground,qa_error *);
     /* Validate actual original pickup writes before their canonical delivery. */

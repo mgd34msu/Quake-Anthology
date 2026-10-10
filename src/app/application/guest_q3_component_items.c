@@ -114,7 +114,7 @@ bool q3component_items_create(application_q3_component *c,qa_error *e)
     if(!c->items_profile) return true;
     if(!c->options.application)
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Declared component items require their actual application weapon controller");
-    application_q3_mod_items_services services={.context=c,.selected=selected,.posture=posture,.pickup_write=q3component_pickup_write,
+    application_q3_mod_items_services services={.context=c,.application=c->options.application,.selected=selected,.posture=posture,.pickup_write=q3component_pickup_write,
         .weapon_bind=weapon_bind,.weapon_unbind=weapon_unbind,.weapon_current=weapon_bound};
     return application_q3_mod_items_create(c->items_profile,c->mod,c->options.inventory,&services,&c->items,e);
 }
