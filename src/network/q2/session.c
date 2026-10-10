@@ -121,8 +121,14 @@ bool q2_queue_bytes(q2_session *session, qa_bytes bytes, uint8_t seat, bool reli
             qa_net_write_data(&writer,suffix,sizeof(suffix));
         bytes=(qa_bytes){session->framed,qa_net_writer_size(&writer)};
     }
-    if (ok) ok = reliable ? qa_q2_channel_queue(session->channel, bytes, error) :
-        q2_buffer_append(&session->state.server.datagram, bytes, status.capacity, error);
+    if (ok && reliable) ok=qa_q2_channel_queue(session->channel,bytes,error);
+    else if (ok) {
+        qa_buffer *datagram=&session->state.server.datagram;
+        if ((bytes.size && !bytes.data) || datagram->size>status.capacity || bytes.size>status.capacity-datagram->size)
+            return q2_fail(error,QA_ERROR_ARGUMENT,"Q2 connection bytes exceed their admitted extent");
+        if (bytes.size) memcpy(datagram->data+datagram->size,bytes.data,bytes.size);
+        datagram->size+=bytes.size;
+    }
     return ok;
 }
 
@@ -219,12 +225,20 @@ bool q2_session_storage_prepare(q2_session *session,qa_error *error)
 {
     if (!session->channel) return true;
     qa_q2_channel_status status;qa_q2_channel_get_status(session->channel,&status);
-    if (status.capacity>(SIZE_MAX-128)/3)
+    size_t buffers=session->server?4:3;
+    if (status.capacity>(SIZE_MAX-128)/buffers)
         return q2_fail(error,QA_ERROR_MEMORY,"Q2 channel encoding extent overflows");
-    if (!qa_arena_reserve(&session->encode_storage,status.capacity*3+128,error)) return false;
+    if (!qa_arena_reserve(&session->encode_storage,status.capacity*buffers+128,error)) return false;
     session->encode=qa_arena_alloc(&session->encode_storage,status.capacity*2,1,error);
     session->framed=qa_arena_alloc(&session->encode_storage,status.capacity,1,error);
     if (!session->encode || !session->framed) return false;
+    if (session->server) {
+        qa_buffer *previous=&session->state.server.datagram;
+        uint8_t *datagram=qa_arena_alloc(&session->encode_storage,status.capacity,1,error);
+        if (!datagram) return false;
+        if (previous->size) memcpy(datagram,previous->data,previous->size);
+        free(previous->data);previous->data=datagram;session->state.server.datagram_reserved=true;
+    }
     qa_arena_seal(&session->encode_storage);return true;
 }
 static bool attach(qa_network_runtime *runtime, const qa_net_connect *request, q2_session *session,

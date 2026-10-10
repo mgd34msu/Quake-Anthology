@@ -75,7 +75,7 @@ static bool new_client(q2_session *session, qa_error *error)
         qa_network_history_clear(&session->runtime->peers[session->id.slot]);
     }
     q2_download_close(server); session->active = false;
-    qa_q2_frame_history_clear(server->frames); qa_buffer_free(&server->datagram);
+    qa_q2_frame_history_clear(server->frames); server->datagram.size=0;
     server->has_source_frame = false; server->wire_frame = 1;
     for (size_t i = 0; i < session->seats; ++i) qa_q2_command_replay_init(&server->replay[i]);
     q2_game_state_free(&server->signon); server->signon = state; server->signon_started = true;
@@ -286,7 +286,7 @@ bool qa_network_q2_server_frame(qa_network_runtime *runtime, qa_net_client_id id
     bool included = false;
     if (ok) ok = q2_send(session, (qa_bytes){data, qa_net_writer_size(&writer)}, now, &included, error);
     if (ok && included) {
-        qa_buffer_free(&server->datagram);
+        server->datagram.size=0;
         qa_q2_frame_history_store_owned(server->frames, &wire);
         server->has_source_frame = true; server->last_source_frame = source_frame;
         server->wire_frame = wire_frame + 1;
@@ -376,7 +376,7 @@ bool q2_server_restart(q2_session *session, qa_error *error)
     session->codec = codec;
     ++server->policy.server_count; session->active = false; server->signon_started = false;
     q2_download_close(server); q2_game_state_free(&server->signon); qa_q2_frame_history_clear(server->frames);
-    qa_buffer_free(&server->datagram);
+    server->datagram.size=0;
     server->has_source_frame = false; server->wire_frame = 1;
     for (size_t i = 0; i < session->seats; ++i) qa_q2_command_replay_init(&server->replay[i]);
     return true;
@@ -384,6 +384,7 @@ bool q2_server_restart(q2_session *session, qa_error *error)
 void q2_server_clear(q2_server *server)
 {
     q2_download_close(server); q2_game_state_free(&server->signon);
-    qa_q2_frame_history_destroy(server->frames); qa_buffer_free(&server->datagram);
+    qa_q2_frame_history_destroy(server->frames);
+    if (!server->datagram_reserved) qa_buffer_free(&server->datagram);
     free(server->drop_reason);
 }

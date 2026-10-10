@@ -13,17 +13,6 @@ bool q2_buffer_copy(qa_bytes from, qa_buffer *out, qa_error *error)
     memcpy(bytes, from.data, from.size); *out = (qa_buffer){bytes, from.size}; return true;
 }
 
-bool q2_buffer_append(qa_buffer *out, qa_bytes from, size_t maximum, qa_error *error)
-{
-    if (!out || (from.size && !from.data) || out->size > maximum || from.size > maximum - out->size)
-        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 connection bytes exceed their admitted extent");
-    if (!from.size) return true;
-    uint8_t *bytes = realloc(out->data, out->size + from.size);
-    if (!bytes) return q2_fail(error, QA_ERROR_MEMORY, "Growing Q2 connection bytes");
-    memcpy(bytes + out->size, from.data, from.size);
-    out->data = bytes; out->size += from.size; return true;
-}
-
 void q2_game_state_free(q2_game_state *state)
 {
     if (!state) return;

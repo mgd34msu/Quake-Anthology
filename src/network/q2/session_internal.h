@@ -47,6 +47,7 @@ typedef struct q2_server {
     bool download_memory;
     size_t download_offset;
     qa_buffer datagram;
+    bool datagram_reserved;
     uint32_t dropped;
     uint8_t reading_seat;
     bool signon_started;
@@ -92,7 +93,6 @@ typedef struct q2_session {
 bool q2_fail(qa_error *, qa_status, const char *);
 bool q2_session_storage_prepare(q2_session *,qa_error *);
 bool q2_buffer_copy(qa_bytes, qa_buffer *, qa_error *);
-bool q2_buffer_append(qa_buffer *, qa_bytes, size_t maximum, qa_error *);
 void q2_game_state_free(q2_game_state *);
 bool q2_game_state_clone(const qa_q2_game_state *, q2_game_state *, qa_error *);
 void q2_records_free(q2_records *);
