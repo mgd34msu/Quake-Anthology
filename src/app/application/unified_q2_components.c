@@ -249,7 +249,7 @@ bool application_unified_q2_component_state(qa_application *app,
             sizeof(*state->configstrings),_Alignof(qa_unified_component_configstring),e);
         if (native->configstring_count && !state->configstrings) return false;
         for (uint32_t i=0;i<native->configstring_count;++i) if (native->configstrings[i])
-            state->configstrings[state->configstring_count++]=(qa_unified_component_configstring){i,native->configstrings[i]};
+            state->configstrings[state->configstring_count++]=(qa_unified_component_configstring){i,(char *)qa_strings_cstr(qa_session_strings(native->provider->application->session), native->configstrings[i])};
     }
     return application_unified_q2_component_documents_current(app,v);
 }

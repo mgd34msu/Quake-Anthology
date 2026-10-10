@@ -368,7 +368,7 @@ bool application_qc_item_weapons_model_read(struct application_qc_state *engine,
     if(!qa_qc_entity_int(vm,a->reference,p->model->offset,&model,e) || !qa_qc_string(vm,model,&path,e) ||
         !qa_qc_entity_float(vm,a->reference,p->frame->offset,frame,e))return false;
     *out=NULL;
-    for(size_t i=0;*path && i<engine->resource_count;++i)if(engine->resources[i].kind==QA_QC_RESOURCE_MODEL && !strcmp(path,engine->resources[i].name)) {
+    for(size_t i=0;*path && i<engine->resource_count;++i)if(engine->resources[i].kind==QA_QC_RESOURCE_MODEL && !strcmp(path,qa_strings_cstr(qa_session_strings(engine->services.session), engine->resources[i].name))) {
         if(!engine->resources[i].source)return application_fail(e,QA_ERROR_NOT_FOUND,"QC weapon model lost its actual prepared resource");
         *out=engine->resources+i;break;
     }

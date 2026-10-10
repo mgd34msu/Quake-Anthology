@@ -245,7 +245,7 @@ static bool original_weapon_skin(qa_application_network_q2 *owner,
     if (!ordinal) return true;
     const char *weapon = NULL; uint32_t source_ordinal = 0;
     for (uint32_t i = 1; i < engine->resource_limit[0]; ++i) {
-        const char *path = engine->configstrings[engine->resource_base[0] + i];
+        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[0] + i]);
         if (!path || path[0] != '#') continue;
         if (++source_ordinal == ordinal) { weapon = path; break; }
     }

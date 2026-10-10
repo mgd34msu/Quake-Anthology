@@ -93,7 +93,8 @@ typedef struct qa_application_native_q2_hud_source {
     bool deathmatch, cooperative, original;
     const qa_q2_game *game;
     const char *statusbar;
-    const char *const *configstrings;
+    const qa_strings *strings;
+    const qa_string_id *configstrings;
     uint32_t configstring_count;
 } qa_application_native_q2_hud_source;
 /* Selects the actor's actual HUD/data owners without reading mutable player state. */
@@ -110,7 +111,8 @@ typedef struct qa_application_native_q2_hud {
     const qa_q2_game *game;
     qa_q2_player_view view;
     const char *statusbar, *layout;
-    const char *const *configstrings;
+    const qa_strings *strings;
+    const qa_string_id *configstrings;
     uint32_t configstring_count;
     int16_t stats[64];
     int32_t inventory[256];

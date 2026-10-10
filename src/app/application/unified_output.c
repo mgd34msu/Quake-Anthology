@@ -105,9 +105,10 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
         out->configstrings = calloc(hud.configstring_count, sizeof(*out->configstrings));
         if (hud.configstring_count && !out->configstrings)
             return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Original Q2 configstrings");
-        for (uint32_t i = 0; i < hud.configstring_count; ++i)
-            if (hud.configstrings[i] && *hud.configstrings[i] &&
-                !q2_configstring(out, i, hud.configstrings[i], error)) return false;
+        for (uint32_t i = 0; i < hud.configstring_count; ++i) {
+            const char *text = qa_strings_cstr(hud.strings, hud.configstrings[i]);
+            if (text && *text && !q2_configstring(out, i, text, error)) return false;
+        }
         return true;
     }
     qa_q2_config_layout layout; qa_q2_codec codec = {.protocol = out->protocol};
@@ -269,7 +270,7 @@ static bool styles(qa_application *app, const application_unified_source *source
             if (!qa_q2_wire_lightstyle_read(p->state.q2, (uint32_t)i, &id, error)) return false;
             if (id) pattern = qa_strings_cstr(strings, id);
         } else if (qc) pattern = qc->lightstyles[i];
-        else if (native) pattern = native->configstrings[base + i];
+        else if (native) pattern = qa_strings_cstr(qa_session_strings(native->provider->application->session), native->configstrings[base + i]);
         qa_unified_style_pattern *row = out->styles + out->style_count++;
         row->family = source->family; row->index = (uint32_t)i;
         if (!application_unified_frame_string(NULL, &row->pattern, pattern ? pattern : "", error)) return false;

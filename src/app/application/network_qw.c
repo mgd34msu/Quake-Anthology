@@ -354,7 +354,7 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
     if (!qw_string(engine, reference, "weaponmodel", &weapon, error)) return false;
     for (size_t i = 0; i < engine->resource_count; ++i) {
         const application_qc_resource *resource = &engine->resources[i];
-        if (resource->kind == QA_QC_RESOURCE_MODEL && resource->name && !strcmp(resource->name, weapon)) {
+        if (resource->kind == QA_QC_RESOURCE_MODEL && resource->name && !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), resource->name), weapon)) {
             if (!resource->value.index || resource->value.index > 255)
                 return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld weapon model exceeds its byte-indexed source precache");
             value.stats[2] = resource->value.index; break;
@@ -596,9 +596,10 @@ bool qa_application_network_qw_precache(qa_application *app, bool models,
         const application_qc_resource *resource = &engine->resources[i];
         if (resource->kind != kind) continue;
         uint32_t index = resource->value.index;
-        if (!index || index > 255 || !resource->name || !*resource->name || retained[index - 1])
+        const char *name = qa_strings_cstr(qa_session_strings(engine->services.session), resource->name);
+        if (!index || index > 255 || !name || !*name || retained[index - 1])
             return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld precache differs from its actual byte-indexed source owner");
-        retained[index - 1] = resource->name;
+        retained[index - 1] = name;
         if (extent < index) extent = index;
     }
     for (size_t i = 0; i < extent; ++i)

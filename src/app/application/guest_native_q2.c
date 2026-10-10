@@ -584,7 +584,7 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
     if(!application_native_q2_activate(engine,error)||
         !qa_native_host_world_actor_bind(provider->state.native.host,engine->world_actor,error)||
         !application_unified_event_registration_clear(app,provider->owner,error))return false;
-    for(uint32_t i=0;i<engine->configstring_count;++i){free(engine->configstrings[i]);engine->configstrings[i]=NULL;}
+    memset(engine->configstrings, 0, engine->configstring_count * sizeof(*engine->configstrings));
     application_native_q2_wire_destroy(&engine->wire_engine);
     application_native_q2_visibility_destroy(&engine->visibility);
     if(!application_native_q2_combat_load(engine,error))return false;
@@ -641,9 +641,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (!application_native_q2_activate(engine, error)) return false;
     if (!qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
     if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
-    for (uint32_t i = 0; i < engine->configstring_count; ++i) {
-        free(engine->configstrings[i]); engine->configstrings[i] = NULL;
-    }
+    memset(engine->configstrings, 0, engine->configstring_count * sizeof(*engine->configstrings));
     provider->application->physics->world_actor = engine->world_actor;
     for (size_t i = 1; i < 257; ++i) {
         engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
@@ -743,9 +741,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
             .cvars = engine->cvars, .owner_context = engine, .owner_idle = frontend_owner_idle};
         engine->application = NULL; engine->application_context = NULL;
         engine->hud_source_owner = 0;
-        for (uint32_t i = 0; i < engine->configstring_count; ++i) {
-            free(engine->configstrings[i]); engine->configstrings[i] = NULL;
-        }
+        memset(engine->configstrings, 0, engine->configstring_count * sizeof(*engine->configstrings));
     }
     if(!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
     for (uint32_t i = 1; i < 257; ++i)
@@ -826,8 +822,6 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     application_native_q2_visibility_destroy(&engine->visibility);
     qa_native_declaration_destroy(engine->declaration);
     qa_command_tokens_free(&engine->arguments);
-    if (engine->configstrings)
-        for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
     application_network_q2_retire_bindings(engine);
     free(engine->configstrings); free(engine->entity_text); free(engine);
     provider->state.native.q2_engine = NULL;

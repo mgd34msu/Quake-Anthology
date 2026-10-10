@@ -56,7 +56,7 @@ static bool read_text(qa_net_reader *reader, char **out, qa_error *error)
     qa_bytes bytes;
     if (reader->failed || length > 64u * 1024u * 1024u ||
         !qa_net_read_bytes(reader, length, &bytes)) return false;
-    if (memchr(bytes.data, 0, bytes.size))
+    if (bytes.size && memchr(bytes.data, 0, bytes.size))
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation text contains an embedded terminator");
     char *copy = malloc((size_t)length + 1);
     if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 continuation text");
@@ -129,7 +129,7 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         size += strlen(texts[i]);
     }
     for (uint32_t i = 0; i < engine->configstring_count; ++i) {
-        size_t bytes = engine->configstrings[i] ? strlen(engine->configstrings[i]) : 0;
+        size_t bytes = qa_strings_text(qa_session_strings(app->session), engine->configstrings[i]).size;
         if (bytes > 64u * 1024u * 1024u - size)
             return application_fail(error, QA_ERROR_MEMORY, "Native Q2 configstring continuation exceeds its storage budget");
         size += bytes;
@@ -193,7 +193,7 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         qa_net_write_u32(&writer, (uint32_t)engine->frame.phase) &&
         write_text(&writer, map) && write_text(&writer, spawn);
     for (uint32_t i = 0; ok && i < engine->configstring_count; ++i)
-        ok = write_text(&writer, engine->configstrings[i]);
+        ok = write_text(&writer, qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[i]));
     for (uint32_t i = 0; ok && i < 257; ++i) {
         const application_native_q2_client *client = &engine->clients[i];
         uint8_t flags = (uint8_t)(client->reserved | client->connected << 1 | client->begun << 2 |
@@ -269,13 +269,18 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     if (reader.failed || (unsigned)frame.phase > QA_FRAME_EXIT || frame.time_ns < frame.start_ns)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation source clock is invalid");
     char *map = NULL, *spawn = NULL;
-    char **config = calloc(engine->configstring_count, sizeof(*config));
+    qa_string_id *config = calloc(engine->configstring_count, sizeof(*config));
     application_native_q2_client *clients = calloc(257, sizeof(*clients));
     bool ok = config && clients;
     if (!ok) application_fail(error, QA_ERROR_MEMORY, "Preparing native Q2 continuation restore");
     if (ok) ok = read_text(&reader, &map, error) && read_text(&reader, &spawn, error);
-    for (uint32_t i = 0; ok && i < engine->configstring_count; ++i)
-        ok = read_text(&reader, &config[i], error);
+    for (uint32_t i = 0; ok && i < engine->configstring_count; ++i) {
+        char *text = NULL;
+        ok = read_text(&reader, &text, error);
+        if (ok) ok = qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
+            text, &config[i], error);
+        free(text);
+    }
     for (uint32_t i = 0; ok && i < 257; ++i) {
         application_native_q2_client *client = &clients[i]; qa_bytes layout;
         ok = read_actor(&reader, actors, &client->actor, error);
@@ -379,7 +384,6 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         engine->wire_engine = wire; wire = NULL;
         application_native_q2_visibility_destroy(&engine->visibility);
         engine->visibility = visibility; visibility = NULL;
-        for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
         free(engine->configstrings); engine->configstrings = config; config = NULL;
         memcpy(engine->clients, clients, sizeof(engine->clients));
         engine->world_actor = world; engine->frame = frame; engine->map_name = map_id; engine->spawn_point = spawn_id;
@@ -388,7 +392,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         ++engine->config_revision;
         engine->hud_source_owner = 0;
     }
-    if (config) { for (uint32_t i = 0; i < engine->configstring_count; ++i) free(config[i]); free(config); }
+    free(config);
     free(clients); free(map); free(spawn);
     application_native_q2_attack_restore_abort(attack);
     application_native_q2_combat_restore_abort(combat);

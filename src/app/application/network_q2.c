@@ -171,7 +171,7 @@ bool application_network_q2_source_resource(qa_application_network_q2 *owner, un
     if (!engine || !out || kind > 2 || index >= engine->resource_limit[kind])
         return application_fail(error, QA_ERROR_FORMAT, "Q2 resource lost its actual Source API index");
     if (!index) { *out = 0; return true; }
-    const char *path = engine->configstrings[engine->resource_base[kind] + index];
+    const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[kind] + index]);
     if (!path || !*path)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 published resource has no actual Source registration");
     return application_network_q2_resource(owner, kind, path, out, error);
@@ -227,7 +227,7 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
     uint32_t source_air = rr ? 59u : 29u;
     uint32_t shared = source_air < owner->air_index ? source_air : owner->air_index;
     for (uint32_t i = 0; i < shared; ++i)
-        if (!application_network_q2_config(owner, i, engine->configstrings[i] ? engine->configstrings[i] : "", error)) return false;
+        if (!application_network_q2_config(owner, i, engine->configstrings[i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[i]) : "", error)) return false;
     bool ok = true;
     for (uint32_t i = shared; ok && i < owner->air_index; ++i) ok = application_network_q2_config(owner, i, "", error);
     const uint32_t source[] = {rr ? 10814u : 800u, rr ? 11326u : 1056u,
@@ -238,22 +238,22 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
             uint32_t target;
             ok = application_network_q2_source_config(owner, source[range] + i, &target, error) &&
                 application_network_q2_config(owner, target,
-                    engine->configstrings[source[range] + i] ? engine->configstrings[source[range] + i] : "", error);
+                    engine->configstrings[source[range] + i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[source[range] + i]) : "", error);
         }
     }
     if (rr && owner->item_base - owner->light_base >= 512)
         for (uint32_t i = 0; ok && i < 256; ++i)
             ok = application_network_q2_config(owner, owner->light_base + 256 + i,
-                engine->configstrings[11070 + i] ? engine->configstrings[11070 + i] : "", error);
+                engine->configstrings[11070 + i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[11070 + i]) : "", error);
     if (rr && owner->config_count == engine->configstring_count)
         for (uint32_t i = 12350; ok && i < owner->config_count; ++i)
-            ok = application_network_q2_config(owner, i, engine->configstrings[i] ? engine->configstrings[i] : "", error);
+            ok = application_network_q2_config(owner, i, engine->configstrings[i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[i]) : "", error);
     /* The map and vwep declarations establish actual client constructors before frames. */
     uint32_t mapped;
     if (ok && engine->configstrings[engine->resource_base[0] + 1])
         ok = application_network_q2_source_resource(owner, 0, 1, &mapped, error);
     for (uint32_t i = 1; ok && i < engine->resource_limit[0]; ++i) {
-        const char *path = engine->configstrings[engine->resource_base[0] + i];
+        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[0] + i]);
         if (path && path[0] == '#') ok = application_network_q2_source_resource(owner, 0, i, &mapped, error);
     }
     return ok;

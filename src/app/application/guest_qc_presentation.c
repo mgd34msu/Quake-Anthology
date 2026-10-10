@@ -204,9 +204,10 @@ bool qa_application_qc_message_model_read(qa_application *app,const qa_applicati
         if(found) return application_fail(error,QA_ERROR_FORMAT,"QC MODEL index has ambiguous installed resources");
         found=entry;
     }
-    if(!found || !found->name || !*found->name || (!found->has_inline_model && !found->source))
+    const char *name=found ? qa_strings_cstr(qa_session_strings(p->state.qc.engine->services.session),found->name) : NULL;
+    if(!found || !name || !*name || (!found->has_inline_model && !found->source))
         return application_fail(error,QA_ERROR_NOT_FOUND,"QC MODEL index has no retained precache resource");
-    *out=(qa_application_qc_message_model){.path=found->name,.resource=found->source,
+    *out=(qa_application_qc_message_model){.path=name,.resource=found->source,
         .opening=found->source?&found->acquisition:NULL,.inline_model=found->inline_model,
         .has_inline_model=found->has_inline_model};
     return true;

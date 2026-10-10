@@ -14,7 +14,7 @@
 #include <math.h>
 
 typedef struct application_qc_resource {
-    char *name;
+    qa_string_id name;
     qa_resource *source;
     qa_collision_geometry *geometry;
     qa_vfs_acquisition acquisition;
@@ -125,7 +125,7 @@ bool application_qc_write_message(struct application_qc_state *, qa_qc_instance 
 bool application_qc_multicast(struct application_qc_state *, qa_qc_instance *, qa_error *);
 bool application_qc_resource_lookup(void *, qa_qc_resource_kind, const char *, bool,
                                     qa_qc_game_resource *, qa_error *);
-bool application_qc_resource_resolve_model(application_qc_resource *, qa_error *);
+bool application_qc_resource_resolve_model(struct application_qc_state *, application_qc_resource *, qa_error *);
 bool application_qc_model_publish(struct application_qc_state *, const application_qc_resource *, qa_error *);
 void application_qc_resource_dispose(application_qc_resource *);
 const qa_qc_definition *application_qc_field(struct application_qc_state *, const char *, qa_qc_value_type, qa_error *);

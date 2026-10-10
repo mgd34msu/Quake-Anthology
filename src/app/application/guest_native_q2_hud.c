@@ -49,7 +49,7 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         int32_t index = call->import->arguments[0].as.i32;
         if (index < 0 || index >= 256)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD client index is invalid");
-        const char *skin = source->configstrings[11582 + index];
+        const char *skin = qa_strings_cstr(qa_session_strings(source->provider->application->session), source->configstrings[11582 + index]);
         if (!skin) skin = "";
         const char *first = strchr(skin, '\\');
         char text[1024] = {0};
@@ -90,7 +90,7 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
             if (weapon < 0 || weapon >= 32)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 weapon wheel index is invalid");
             /* CS_WHEEL_WEAPONS = CS_PLAYERSKINS + MAX_CLIENTS + MAX_GENERAL. */
-            const char *text = source->configstrings[12350 + weapon];
+            const char *text = qa_strings_cstr(qa_session_strings(source->provider->application->session), source->configstrings[12350 + weapon]);
             if (!text || !*text)
                 return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 ammo warning has no source wheel definition");
             for (size_t i = 0; i < 6; ++i) {
@@ -158,16 +158,13 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
     bool changed = engine->hud_source_owner != source->provider->owner ||
         engine->hud_config_revision != source->config_revision;
     for (uint32_t i = 0; ok && changed && i < engine->configstring_count; ++i) {
-        const char *text = source->configstrings[i] ? source->configstrings[i] : "";
-        const char *prior = engine->configstrings[i] ? engine->configstrings[i] : "";
-        if (!strcmp(text, prior)) continue;
-        size_t bytes = strlen(text) + 1;
-        char *copy = malloc(bytes);
-        if (!copy) { ok = application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 cgame configstring"); break; }
-        memcpy(copy, text, bytes);
+        qa_string_id value = source->configstrings[i], prior = engine->configstrings[i];
+        qa_strings *strings = qa_session_strings(engine->provider->application->session);
+        if (value == prior || (!qa_strings_text(strings, value).size &&
+            !qa_strings_text(strings, prior).size)) continue;
+        const char *text = value ? qa_strings_cstr(strings, value) : "";
         ok = parse_config(engine, (int32_t)i, text, error);
-        if (ok) { free(engine->configstrings[i]); engine->configstrings[i] = copy; }
-        else free(copy);
+        if (ok) engine->configstrings[i] = value;
     }
     if (ok) {
         engine->hud_source_owner = source->provider->owner;

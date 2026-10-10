@@ -77,7 +77,7 @@ static bool config_get(void *opaque, int32_t index, const char **out, qa_error *
     }
     if (!out || index < 0 || (uint32_t)index >= engine->configstring_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 configstring exceeds its original API table");
-    *out = engine->configstrings[index] ? engine->configstrings[index] : "";
+    *out = engine->configstrings[index] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[index]) : "";
     return true;
 }
 
@@ -94,17 +94,17 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
         if ((uint32_t)index > engine->resource_base[kind] &&
             (uint32_t)index - engine->resource_base[kind] < engine->resource_limit[kind] &&
             !register_file(engine, (qa_native_host_resource_kind)kind, value, error)) return false;
-    size_t size = strlen(value);
-    char *copy = malloc(size + 1);
-    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 configstring");
-    memcpy(copy, value, size + 1);
-    free(engine->configstrings[index]); engine->configstrings[index] = copy;
+    qa_string_id name;
+    if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
+        value, &name, error)) return false;
+    engine->configstrings[index] = name;
     ++engine->config_revision;
     uint32_t styles = engine->resource_base[QA_NATIVE_HOST_IMAGE] + engine->resource_limit[QA_NATIVE_HOST_IMAGE];
     if ((uint32_t)index >= styles && (uint32_t)index - styles < 256) ++engine->lightstyle_revision;
     if (!engine->map_ready) return true;
     qa_q2_server_event event = {.kind = QA_Q2_SVC_CONFIGSTRING,
-        .data.config = {.index = (uint16_t)index, .value = copy}};
+        .data.config = {.index = (uint16_t)index, .value = qa_strings_cstr(
+            qa_session_strings(engine->provider->application->session), name)}};
     return protocol(engine, &event, (qa_actor_id){0}, true, error);
 }
 
@@ -156,7 +156,7 @@ bool application_native_q2_resources_reconnect(struct application_native_q2 *eng
     for (unsigned kind = 0; kind <= QA_NATIVE_HOST_IMAGE; ++kind) {
         uint32_t base = engine->resource_base[kind];
         for (uint32_t i = 1; i < engine->resource_limit[kind]; ++i) {
-            const char *name = engine->configstrings[base + i];
+            const char *name = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + i]);
             if (name && *name && !register_file(engine, (qa_native_host_resource_kind)kind, name, error)) return false;
         }
     }
@@ -173,7 +173,7 @@ static bool resource(void *opaque, qa_native_host_resource_kind kind, const char
     if (!*name) return true;
     uint32_t base = engine->resource_base[kind], maximum = engine->resource_limit[kind];
     for (uint32_t i = 1; i < maximum; ++i) {
-        const char *value = engine->configstrings[base + i];
+        const char *value = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + i]);
         if (value && !strcmp(value, name)) {
             if (!register_file(engine, kind, name, error)) return false;
             *out = (int32_t)i; return true;
@@ -246,7 +246,7 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
     struct application_native_q2 *engine = opaque;
     if (source->index <= 0 || (uint32_t)source->index >= engine->resource_limit[QA_NATIVE_HOST_SOUND])
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 sound references an unregistered source index");
-    const char *name = engine->configstrings[engine->resource_base[QA_NATIVE_HOST_SOUND] + (uint32_t)source->index];
+    const char *name = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[QA_NATIVE_HOST_SOUND] + (uint32_t)source->index]);
     if (!name || !*name) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 sound has no admitted source resource");
     qa_native_host_sound named = *source; named.name = name;
     bool rerelease = engine->profile == QA_NATIVE_Q2_GAME_API2023;

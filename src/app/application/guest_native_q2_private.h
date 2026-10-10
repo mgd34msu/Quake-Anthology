@@ -70,7 +70,7 @@ struct application_native_q2 {
     qa_actor_id world_actor;
     qa_actor_definition definition;
     application_native_q2_client clients[257];
-    char **configstrings;
+    qa_string_id *configstrings;
     uint32_t configstring_count, resource_base[3], resource_limit[3];
     qa_source_frame frame;
     qa_string_id map_name, spawn_point;

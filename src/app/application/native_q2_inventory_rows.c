@@ -266,7 +266,7 @@ static bool original_label(application_native_q2_inventory_rows *owner, uint32_t
     uint32_t base = owner->engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
     if (index > UINT32_MAX - base || base + index >= owner->engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Original inventory label leaves its source configstring namespace");
-    const char *raw = owner->engine->configstrings[base + index];
+    const char *raw = qa_strings_cstr(qa_session_strings(owner->engine->provider->application->session), owner->engine->configstrings[base + index]);
     if (!raw) raw = "";
     qa_buffer label = {0};
     if (!source_text(owner, (qa_bytes){(const uint8_t *)raw, strlen(raw)}, &label, error)) return false;

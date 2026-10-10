@@ -331,7 +331,7 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
         if(!isfinite(frame) || frame<INT32_MIN || frame>INT32_MAX)
             return application_fail(error,QA_ERROR_FORMAT,"Declared QC weapon frame exceeds its actual presentation extent");
         out->has_frame=true;out->frame=(int32_t)frame;
-        if(resource) { out->view_model=resource->name;out->view_source=resource->source;out->visible=true; }
+        if(resource) { out->view_model=qa_strings_cstr(qa_session_strings(engine->services.session), resource->name);out->view_source=resource->source;out->visible=true; }
         if(out->item) {
             qa_item_admission admission;bool found;
             if(!application_qc_items_item_read(provider,actor,out->item,&admission,
@@ -363,12 +363,12 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
     const application_qc_resource *resource = NULL;
     for (size_t i = 0; i < engine->resource_count; ++i)
         if (engine->resources[i].kind == QA_QC_RESOURCE_MODEL &&
-            !strcmp(engine->resources[i].name, source.model)) {
+            !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), engine->resources[i].name), source.model)) {
             resource = engine->resources + i; break;
         }
     if (!resource || !resource->source)
         return application_fail(error, QA_ERROR_NOT_FOUND, "QC weaponmodel has no actual retained MODEL precache");
-    out->view_model = resource->name; out->view_source = resource->source; out->visible = true;
+    out->view_model = qa_strings_cstr(qa_session_strings(engine->services.session), resource->name); out->view_source = resource->source; out->visible = true;
     return true;
 }
 

@@ -31,7 +31,7 @@ static const char *resource(const struct application_native_q2 *engine, uint32_t
 {
     if (!index || engine->resource_base[0] >= engine->configstring_count || index >= engine->resource_limit[0] ||
         index >= engine->configstring_count - engine->resource_base[0]) return "";
-    const char *value = engine->configstrings[engine->resource_base[0] + index];
+    const char *value = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[0] + index]);
     return value ? value : "";
 }
 
@@ -93,7 +93,7 @@ bool application_native_q2_appearance_read(qa_application *app,
         if (index >= engine->configstring_count) ok = application_fail(error, QA_ERROR_FORMAT,
             "Original Q2 player skin exceeds its actual configstring table");
         else {
-            const char *info = engine->configstrings[index];
+            const char *info = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[index]);
             if (!info) info = "player\\male/grunt";
             const char *appearance = strchr(info, '\\');
             appearance = appearance ? appearance + 1 : info;

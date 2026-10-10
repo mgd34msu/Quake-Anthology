@@ -174,7 +174,7 @@ static const char *local_q2_config(void *context, int32_t index)
     local_q2_hud *hud = context;
     const qa_application_native_q2_hud *source = hud->source;
     if (source->original)
-        return index >= 0 && (uint32_t)index < source->configstring_count ? source->configstrings[index] : NULL;
+        return index >= 0 && (uint32_t)index < source->configstring_count ? qa_strings_cstr(source->strings, source->configstrings[index]) : NULL;
     if (index == 5) return source->statusbar;
     if (index == (int32_t)hud->config.max_clients) return "1";
     if (index >= (int32_t)hud->config.images &&

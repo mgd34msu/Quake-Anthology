@@ -116,7 +116,7 @@ static bool capture_record(void *context, const qa_q2_server_record *record, qa_
         if (event->kind == QA_Q2_SVC_POI && event->data.poi.time == UINT16_MAX) return true;
         if (index >= capture->engine->resource_limit[kind])
             return application_fail(error, QA_ERROR_FORMAT, "Q2 emitted resource index exceeds its Source namespace");
-        const char *name = capture->engine->configstrings[capture->engine->resource_base[kind] + index];
+        const char *name = qa_strings_cstr(qa_session_strings(capture->engine->provider->application->session), capture->engine->configstrings[capture->engine->resource_base[kind] + index]);
         return retain(capture, ordinal, kind, index, name ? name : "", error);
     }
     if (event->kind == QA_Q2_SVC_CONFIGSTRING) {

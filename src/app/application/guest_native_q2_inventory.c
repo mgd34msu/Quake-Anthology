@@ -429,7 +429,7 @@ bool application_native_q2_weapon_request(application_provider *provider,qa_acto
     uint32_t base = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
     if (index > UINT32_MAX - base || base + index >= engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native weapon label leaves its real source configstring namespace");
-    const char *label = engine->configstrings[base + index];
+    const char *label = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + index]);
     if (!label) label = "";
     /* This is the original source label in its own native byte encoding. The
      * typed command owner copies it before invoking the mutable Source. */
@@ -646,7 +646,7 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
             ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 item label leaves its actual configstring namespace");
             break;
         }
-        const char *label = engine->configstrings[label_base + row->index];
+        const char *label = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[label_base + row->index]);
         if (!label) label = ""; /* An absent slot is the source's empty configstring. */
         size_t length = strlen(label);
         application_native_q2_ui_item *item = &value.items[value.count++];

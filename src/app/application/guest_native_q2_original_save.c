@@ -342,10 +342,8 @@ static bool restore_engine_level(application_provider *provider,const qa_q2_save
             return application_fail(error,QA_ERROR_FORMAT,"Original Q2 level differs from its real engine table");
         for (uint32_t i=0;i<qa_q2_save_configstring_count(level);++i) {
             const char *text=qa_q2_save_configstring(level,i);
-            size_t length=strlen(text);
-            char *copy=malloc(length+1);
-            if (!copy) return application_fail(error,QA_ERROR_MEMORY,"Restoring original Q2 configstring");
-            memcpy(copy,text,length+1); free(engine->configstrings[i]); engine->configstrings[i]=copy;
+            if (!qa_strings_intern_cstr(qa_session_strings(app->session), text,
+                &engine->configstrings[i], error)) return false;
         }
     }
     qa_collision_portal_checkpoint portals={0};

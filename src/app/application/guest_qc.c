@@ -74,23 +74,15 @@ bool application_qc_spectator_callback(struct application_qc_state *engine, cons
     if (!qa_qc_program_find_function(engine->provider->state.qc.program, name, &index) || index == 0) return true;
     return application_qc_named(engine, name, actor, error);
 }
-static char *copy_text(const char *text, qa_error *error)
-{
-    size_t length = strlen(text);
-    char *copy = malloc(length + 1);
-    if (copy != NULL) memcpy(copy, text, length + 1);
-    else application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC resource name");
-    return copy;
-}
 void application_qc_resource_dispose(application_qc_resource *entry)
 {
     qa_collision_destroy(entry->geometry);
     qa_vfs_acquisition_dispose(&entry->acquisition);
     qa_resource_release(entry->source);
-    free(entry->name);
     *entry = (application_qc_resource){0};
 }
-bool application_qc_resource_resolve_model(application_qc_resource *entry, qa_error *error)
+bool application_qc_resource_resolve_model(struct application_qc_state *engine,
+    application_qc_resource *entry, qa_error *error)
 {
     entry->has_inline_model = false; entry->inline_model = 0;
     if (entry->kind != QA_QC_RESOURCE_MODEL) return true;
@@ -107,8 +99,9 @@ bool application_qc_resource_resolve_model(application_qc_resource *entry, qa_er
     }
     if (!entry->world_model) {
         double model;
-        if (!entry->name || *entry->name != '*' ||
-            !qa_parse_number((qa_bytes){(const uint8_t *)entry->name + 1, strlen(entry->name + 1)}, &model, error) ||
+        const char *name = qa_strings_cstr(qa_session_strings(engine->services.session), entry->name);
+        if (!name || *name != '*' ||
+            !qa_parse_number((qa_bytes){(const uint8_t *)name + 1, strlen(name + 1)}, &model, error) ||
             !isfinite(model) || model < 0 || model > UINT32_MAX || trunc(model) != model)
             return application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC inline model number");
         entry->inline_model = (uint32_t)model;
@@ -150,7 +143,7 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
     for (size_t i = 0; i < engine->resource_count; ++i) {
         application_qc_resource *entry = &engine->resources[i];
         if (entry->kind != kind) continue;
-        if (strcmp(entry->name, name) == 0) { *out = entry->value; return true; }
+        if (strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), entry->name), name) == 0) { *out = entry->value; return true; }
         ++index;
     }
     if (!precache || !engine->loading)
@@ -158,11 +151,10 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
     if (index >= (engine->profile == QA_QC_RERELEASE ? 65536u : 256u))
         return application_fail(error, QA_ERROR_MEMORY, "QuakeC source precache table is full");
     application_qc_resource entry = {.kind = kind, .value.index = index};
-    entry.name = copy_text(name, error);
-    if (entry.name == NULL) return false;
+    if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session), name, &entry.name, error)) return false;
     bool ok = true;
     if (kind == QA_QC_RESOURCE_MODEL && *name == '*') {
-        ok = application_qc_resource_resolve_model(&entry, error) &&
+        ok = application_qc_resource_resolve_model(engine, &entry, error) &&
             qa_collision_model_bounds(qa_world_geometry(engine->world), entry.inline_model, &entry.value.bounds, error);
     } else {
         char *sound_path=NULL;
@@ -176,7 +168,7 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
             &entry.source,&entry.acquisition,error);
         free(sound_path);
         if (ok && kind == QA_QC_RESOURCE_MODEL) {
-            ok = application_qc_resource_resolve_model(&entry, error);
+            ok = application_qc_resource_resolve_model(engine, &entry, error);
             if (ok && !entry.geometry) {
                 qa_model model = {0};
                 ok = qa_model_load(qa_resource_bytes(entry.source), &model, error);
@@ -1419,8 +1411,8 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     const char *world_path=choices?choices->world.map:NULL;
     if (!world_path || !*world_path)
         return application_fail(error,QA_ERROR_FORMAT,"Source world model lacks its actual requested map path");
-    char *world_name = copy_text(world_path, error);
-    if (world_name == NULL) return false;
+    qa_string_id world_name;
+    if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session), world_path, &world_name, error)) return false;
     engine->resources[engine->resource_count++] = (application_qc_resource){.name = world_name,
         .kind = QA_QC_RESOURCE_MODEL, .world_model = true, .has_inline_model = true,
         .value = {.index = 1, .bounds = {world_model.bounds.min, world_model.bounds.max}}};
@@ -1587,7 +1579,7 @@ bool application_qc_water_transition(application_provider *provider, qa_actor_id
         const char *path = "misc/h2ohit1.wav";
         bool precached = false;
         for (size_t i = 0; i < engine->resource_count; ++i)
-            if (engine->resources[i].kind == QA_QC_RESOURCE_SOUND && strcmp(engine->resources[i].name, path) == 0) {
+            if (engine->resources[i].kind == QA_QC_RESOURCE_SOUND && strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), engine->resources[i].name), path) == 0) {
                 precached = true; break;
             }
         if (precached) {

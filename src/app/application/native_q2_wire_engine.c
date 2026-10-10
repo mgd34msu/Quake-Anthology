@@ -161,7 +161,7 @@ bool application_native_q2_wire_resource(struct application_native_q2 *engine, u
     uint32_t base = engine->resource_base[kind], maximum = engine->resource_limit[kind];
     uint32_t free_index = 0;
     for (uint32_t i = 1; i < maximum; ++i) {
-        const char *current = engine->configstrings[base + i];
+        const char *current = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + i]);
         if (current && !strcmp(current, path)) { *out = i; return true; }
         if (!free_index && (!current || !*current)) free_index = i;
     }
@@ -169,10 +169,10 @@ bool application_native_q2_wire_resource(struct application_native_q2 *engine, u
     size_t length = strlen(path);
     if (length >= 2048 || engine->config_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine resource leaves its real configstring profile");
-    char *copy = malloc(length + 1);
-    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining Original Q2 Engine resource name");
-    memcpy(copy, path, length + 1);
-    free(engine->configstrings[base + free_index]); engine->configstrings[base + free_index] = copy;
+    qa_string_id name;
+    if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
+        path, &name, error)) return false;
+    engine->configstrings[base + free_index] = name;
     ++engine->config_revision;
     *out = free_index; return true;
 }

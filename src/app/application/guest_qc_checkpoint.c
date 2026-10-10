@@ -44,7 +44,7 @@ static char *read_text(qa_net_reader *reader)
     }
     text[length] = 0; return text;
 }
-static bool resource_path_matches(const application_qc_resource *entry)
+static bool resource_path_matches(const qa_strings *strings, const application_qc_resource *entry)
 {
     const char *path=entry->acquisition.path;
     if (!path) return false;
@@ -52,7 +52,7 @@ static bool resource_path_matches(const application_qc_resource *entry)
         if (strncmp(path,"sound/",6)) return false;
         path+=6;
     }
-    const char *name=entry->name;
+    const char *name=qa_strings_cstr(strings,entry->name);
     while (*name && *path) {
         if ((*name=='\\'?'/':*name)!=*path) return false;
         ++name; ++path;
@@ -63,7 +63,8 @@ static bool resource_ready(struct application_qc_state *engine,const application
     size_t ordinal,qa_error *error)
 {
     qa_bounds b=entry->value.bounds;
-    if (!entry->name || !*entry->name || entry->kind>QA_QC_RESOURCE_SOUND || !entry->value.index ||
+    const char *name=qa_strings_cstr(qa_session_strings(engine->services.session), entry->name);
+    if (!name || !*name || entry->kind>QA_QC_RESOURCE_SOUND || !entry->value.index ||
         entry->value.index>=(engine->profile==QA_QC_RERELEASE?65536u:256u) ||
         !isfinite(b.mins.x) || !isfinite(b.mins.y) || !isfinite(b.mins.z) ||
         !isfinite(b.maxs.x) || !isfinite(b.maxs.y) || !isfinite(b.maxs.z) ||
@@ -71,9 +72,9 @@ static bool resource_ready(struct application_qc_state *engine,const application
         return application_fail(error,QA_ERROR_FORMAT,"Invalid source precache metadata");
     if (entry->source) {
         qa_vfs *files=engine->provider->launch->content;
-        if (entry->world_model || entry->has_inline_model || (entry->kind==QA_QC_RESOURCE_MODEL && *entry->name=='*') ||
+        if (entry->world_model || entry->has_inline_model || (entry->kind==QA_QC_RESOURCE_MODEL && *name=='*') ||
             qa_resource_pool_find(qa_vfs_resources(files),entry->acquisition.resource_id)!=entry->source ||
-            entry->acquisition.resource_id!=qa_resource_id(entry->source) || !resource_path_matches(entry))
+            entry->acquisition.resource_id!=qa_resource_id(entry->source) || !resource_path_matches(qa_session_strings(engine->services.session),entry))
             return application_fail(error,QA_ERROR_FORMAT,"Source precache differs from its immutable resource receipt");
         return qa_vfs_acquisition_retained(files,&entry->acquisition,error);
     }
@@ -85,10 +86,10 @@ static bool resource_ready(struct application_qc_state *engine,const application
         const qa_application *app=engine->provider->application;
         const qa_launch_snapshot *snapshot=app->routing_snapshot?app->routing_snapshot:qa_application_launch(app);
         const qa_launch_choices *choices=snapshot?qa_launch_snapshot_choices(snapshot):NULL;
-        if (model || ordinal || entry->value.index!=1 || !choices || !choices->world.map || strcmp(entry->name,choices->world.map))
+        if (model || ordinal || entry->value.index!=1 || !choices || !choices->world.map || strcmp(name,choices->world.map))
             return application_fail(error,QA_ERROR_FORMAT,"World precache differs from its actual requested map");
     } else {
-        if (*entry->name!='*')
+        if (*name!='*')
             return application_fail(error,QA_ERROR_FORMAT,"Inline precache has no genuine physical model");
     }
     qa_bounds actual;
@@ -142,6 +143,7 @@ static bool opening_restore(qa_net_reader *reader,struct application_qc_state *e
     return ok;
 }
 static bool write_resource(qa_net_writer *writer,const qa_application_content_graph *graph,
+    const qa_strings *strings,
     const application_qc_resource *entry,
     const qa_buffer *opening)
 {
@@ -150,7 +152,7 @@ static bool write_resource(qa_net_writer *writer,const qa_application_content_gr
         return qa_net_writer_fail(writer,"QuakeC precache has no installed content reference");
     qa_bounds b=entry->value.bounds;
     return qa_net_write_u32(writer,entry->kind) && qa_net_write_u32(writer,entry->value.index) &&
-        qa_net_write_u8(writer,entry->world_model) && write_text(writer,entry->name) &&
+        qa_net_write_u8(writer,entry->world_model) && write_text(writer,qa_strings_cstr(strings,entry->name)) &&
         qa_net_write_u64(writer,pool) && qa_net_write_u64(writer,resource) &&
         qa_net_write_f32(writer,b.mins.x) && qa_net_write_f32(writer,b.mins.y) && qa_net_write_f32(writer,b.mins.z) &&
         qa_net_write_f32(writer,b.maxs.x) && qa_net_write_f32(writer,b.maxs.y) && qa_net_write_f32(writer,b.maxs.z) &&
@@ -161,9 +163,11 @@ static bool read_resource(qa_net_reader *reader,struct application_qc_state *eng
 {
     uint32_t kind=qa_net_read_u32(reader); entry->kind=(qa_qc_resource_kind)kind;
     entry->value.index=qa_net_read_u32(reader); uint8_t world=qa_net_read_u8(reader);
-    entry->world_model=world!=0; entry->name=read_text(reader);
+    entry->world_model=world!=0; char *name=read_text(reader);
+    bool named=name && qa_strings_intern_cstr(qa_session_strings(engine->services.session),name,&entry->name,error);
+    free(name);
     uint64_t pool=qa_net_read_u64(reader),resource=qa_net_read_u64(reader);
-    bool ok=kind<=QA_QC_RESOURCE_SOUND && world<=1 && entry->name &&
+    bool ok=kind<=QA_QC_RESOURCE_SOUND && world<=1 && named &&
         ((pool!=0)==(resource!=0));
     entry->value.bounds.mins.x=qa_net_read_f32(reader); entry->value.bounds.mins.y=qa_net_read_f32(reader);
     entry->value.bounds.mins.z=qa_net_read_f32(reader); entry->value.bounds.maxs.x=qa_net_read_f32(reader);
@@ -176,7 +180,7 @@ static bool read_resource(qa_net_reader *reader,struct application_qc_state *eng
     }
     return ok && !reader->failed &&
         opening_restore(reader,engine,entry,error) &&
-        application_qc_resource_resolve_model(entry,error) &&
+        application_qc_resource_resolve_model(engine,entry,error) &&
         resource_ready(engine,entry,ordinal,error);
 }
 static bool write_actor(qa_net_writer *writer, const qa_actor_registry *actors, qa_actor_id actor)
@@ -277,10 +281,10 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         if (entry->value.index!=++indices[entry->kind])
             return application_fail(error,QA_ERROR_FORMAT,"Source precache indices differ from physical table order");
         for (size_t j=0;j<i;++j)
-            if (entry->kind==engine->resources[j].kind && !strcmp(entry->name,engine->resources[j].name))
+            if (entry->kind==engine->resources[j].kind && entry->name==engine->resources[j].name)
                 return application_fail(error,QA_ERROR_FORMAT,"Duplicate source precache name");
         const qa_vfs_acquisition *a=&entry->acquisition;
-        if (!add_size(&capacity,strlen(entry->name)+112,error) ||
+        if (!add_size(&capacity,qa_strings_text(qa_session_strings(engine->services.session),entry->name).size+112,error) ||
             !add_size(&capacity,a->path?strlen(a->path):0,error) ||
             !add_size(&capacity,a->lookup_path?strlen(a->lookup_path):0,error) ||
             !add_size(&capacity,a->link_source?strlen(a->link_source):0,error) ||
@@ -357,7 +361,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     }
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)engine->resource_count);
     const qa_application_content_graph *graph=qa_application_content_graph_read(engine->provider->application);
-    for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,graph,engine->resources+i,openings+i);
+    for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,graph,qa_session_strings(engine->services.session),engine->resources+i,openings+i);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)registry.size) &&
         qa_net_write_data(&writer, registry.data, registry.size);
     for (size_t i = 0; ok && i < 64; ++i) ok = write_text(&writer, engine->lightstyles[i]);
@@ -497,7 +501,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         ok=read_resource(&reader,&candidate,entry,i,error) && entry->value.index==++indices[entry->kind];
         if(ok) ok=application_qc_model_publish(&candidate,entry,error);
         for (uint32_t j=0;ok && j<i;++j)
-            if (entry->kind==candidate.resources[j].kind && !strcmp(entry->name,candidate.resources[j].name))
+            if (entry->kind==candidate.resources[j].kind && entry->name==candidate.resources[j].name)
                 ok=qa_net_reader_fail(&reader,"Duplicate saved source precache name");
     }
     qa_bytes registry = {0};

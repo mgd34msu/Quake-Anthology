@@ -120,7 +120,7 @@ static const char *resource_path(const q2_projection *p, qa_native_host_resource
         !p->engine->configstrings[base + index]) {
         application_fail(e, QA_ERROR_FORMAT, "Q2 service resource has no actual Source configstring"); return NULL;
     }
-    return p->engine->configstrings[base + index];
+    return qa_strings_cstr(qa_session_strings(p->engine->provider->application->session), p->engine->configstrings[base + index]);
 }
 
 static void fog_apply(qa_q2_wire_fog *previous, const qa_q2_wire_fog *value)

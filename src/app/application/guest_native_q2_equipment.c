@@ -71,10 +71,11 @@ bool application_q2_guest_equipment_read(application_provider *provider, qa_acto
     if (!okay) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 equipment public state is invalid");
     if (view.gun_index) {
         uint32_t index = engine->resource_base[QA_NATIVE_HOST_MODEL] + (uint32_t)view.gun_index;
-        if (index >= engine->configstring_count || !engine->configstrings[index] || !engine->configstrings[index][0] ||
+        if (index >= engine->configstring_count || !engine->configstrings[index] ||
+            !qa_strings_text(qa_session_strings(provider->application->session), engine->configstrings[index]).size ||
             !provider->launch->content)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 gunindex has no retained MODEL configstring and content owner");
-        view.view_model = engine->configstrings[index];
+        view.view_model = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[index]);
         view.view_content = provider->launch->content;
         view.visible = true;
     }
