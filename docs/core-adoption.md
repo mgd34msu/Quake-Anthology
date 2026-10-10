@@ -243,3 +243,41 @@ serial/two-scratch output and archived bytes agree in all 18 runs. Query
 components improve Q1/Q3 medians about 26%/51%; whole-frame allocation,
 renderer leaf admission and full gameplay/interop remain open. See
 `docs/playtests/2026-10-09-shared-client-query.md`.
+
+## Output event ring: THE-870
+
+The application owns one load-sized `qa_event_ring` in
+`src/app/application/events.c:158`. Built-in, Q2 map/player, Q3 map, original
+protocol and equipment emitters admit one tagged transaction through that
+file. Unified views append to the same transaction at
+`src/app/application/unified_events.c:538`; they have no second journal.
+Protocol codecs retain original widths and encode at the network consumer.
+QuakeC raw Write buffers are load-sized private construction scratch, not
+another admitted-event store.
+
+All thirteen frontend consumers use `qa_application_event_read` at
+`src/app/application/events.c:1153`: native composition, source effects,
+Q2 messages, player events, equipment, QC messages, map events, audio,
+Q2 host, QW host, particles, frame and NQ host. Per-family arrays, indexed
+accessors and the order-reconstruction journal are deleted. The Unified
+receiver uses the same ring implementation at
+`src/app/frontend/remote_unified_events.c:199`, with independent presentation
+and simulation cursors over one store. Resource and component metadata use
+page leases and interned ids. Persistent events, sign-on and world text retain
+those pages for their actual lifetimes; transient lookup retirement does not
+invalidate them.
+
+Capacity handling in `src/app/application/events.c:244` preserves admitted
+history, omits new transient effects and closes affected reliable channels.
+Omitted baseline output prevents an incomplete new sign-on. QuakeC makestatic
+removes its entity only after append. Publication has no sign-on failure path
+after commit. No runtime bypass of the common admitted-output store was found
+in the migrated emitters or thirteen consumers. Foreign raw protocol buffers
+and cold checkpoint adapters remain format boundaries. Transport send pressure
+is separate remaining work under THE-2864.
+
+Normal builds and all seven existing core suites passed for `53067776`,
+`febb3e12` and `fb0d0d6e`; logs are under
+`/tmp/qa-normal-{signon-commit,output-capacity,map-output-admission}-20261010/`.
+These are implementation and component checks. No installation, live combined
+mode, legacy-server round trip or measured speedup is claimed for this slice.
