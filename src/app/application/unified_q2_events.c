@@ -300,6 +300,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         source = sound->entity; has_source = (sound->flags & 8u) != 0;
         r->actor = a; r->origin = origin; r->resource = (char *)path; r->channel = sound->channel;
         r->volume = sound->volume; r->attenuation = sound->attenuation; r->reliable = p->message->reliable;
+        r->delay_seconds = sound->time_offset; r->positioned = sound->has_position;
         pres = &presentation;
         bool found = false;
         const qa_application_protocol_resource_reference *receipt = resource_receipt(p, QA_NATIVE_HOST_SOUND, sound->index);
@@ -309,6 +310,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
             simulation.kind = QA_UNIFIED_SIMULATION_SOUND;
             simulation.value.sound = (qa_unified_sound_event){.resource = sound_id, .actor = a, .origin = origin,
                 .channel = sound->channel, .volume = sound->volume, .attenuation = sound->attenuation}; sim = &simulation;
+            simulation.value.sound.delay_seconds = sound->time_offset;
         }
         break;
     }

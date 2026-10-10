@@ -455,35 +455,32 @@ void frontend_native_q2_print_event(qa_frontend *frontend, qa_actor_owner owner,
         if (!ok) fprintf(stderr, "native Q2 print: %s\n", error.message);
     }
 }
-static bool platform_sound_body(void *context, const qa_native_host_sound *event, qa_error *error)
+bool frontend_native_q2_sound_event(qa_frontend *frontend, const qa_application_protocol_event *message,
+    const qa_unified_q2_protocol_event *event, qa_actor_id target, qa_error *error)
 {
-    frontend_native_q2 *source = context; qa_frontend *frontend = source->frontend;
     if (!frontend->audio) return true;
-    if (!event || !event->name || !*event->name)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 sound lacks its canonical source resource name");
-    if (!event->audience_captured || !event->recipient_count) return true;
-    if (!event->recipients)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound lost its captured full recipient identities");
+    frontend_native_q2 *source = frontend->native_q2;
+    while (source && source->owner != message->provider) source = source->next;
+    if (!source) return true;
     if (!source_files(source, error)) return false;
     qa_audio_asset *asset = NULL;
-    if (!qa_audio_bank_register(source->sounds, event->name, QA_GAME_Q2, &asset, error)) return false;
+    if (!qa_audio_bank_register(source->sounds, event->resource, QA_GAME_Q2, &asset, error)) return false;
     if (!asset) return true;
-    uint64_t actor = frontend_audio_actor(frontend, event->actor, error);
+    uint64_t actor = event->actor.registry ?
+        frontend_audio_q2_protocol_actor(frontend, message, event->actor, error) : QA_AUDIO_NO_ACTOR;
     if (event->actor.registry && actor == QA_AUDIO_NO_ACTOR) { qa_audio_asset_release(asset); return false; }
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = event->name, .family = QA_GAME_Q2,
+        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = event->resource, .family = QA_GAME_Q2,
         .actor = actor, .owner = source->identity,
         .origin_kind = event->positioned ? QA_AUDIO_FIXED : QA_AUDIO_ACTOR,
         .origin_actor = actor, .origin = event->origin, .channel = event->channel,
-        .volume = event->volume, .attenuation = event->attenuation, .delay_seconds = event->time_offset};
+        .volume = event->volume, .attenuation = event->attenuation, .delay_seconds = event->delay_seconds};
     bool ok = true;
     for (uint32_t seat = 0; ok && seat < frontend->options.seats; ++seat) {
         qa_actor_id recipient;
-        if (!frontend_seat_actor_read(frontend, seat, &recipient)) continue;
-        bool admitted = false;
-        for (size_t i = 0; i < event->recipient_count; ++i)
-            if (qa_actor_id_equal(recipient, event->recipients[i])) { admitted = true; break; }
-        if (!admitted) continue;
+        if (frontend_network_local_input_owned(frontend,seat) ||
+            !frontend_seat_actor_read(frontend, seat, &recipient) ||
+            !qa_actor_id_equal(recipient, target)) continue;
         sound.audience = seat;
         ok = qa_audio_engine_play(frontend->audio, &sound,
             (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error);
@@ -523,14 +520,6 @@ static void platform_print(void *context, const qa_native_host_print *print)
     ++source->active_imports;
     platform_print_body(context, print);
     --source->active_imports;
-}
-static bool platform_sound(void *context, const qa_native_host_sound *event, qa_error *error)
-{
-    frontend_native_q2 *source = context;
-    ++source->active_imports;
-    bool ok = platform_sound_body(context, event, error);
-    --source->active_imports;
-    return ok;
 }
 static bool platform_hud_view(void *context, uint32_t seat,
     qa_native_host_q2_hud_view *out, qa_error *error)
@@ -652,7 +641,7 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     source->cvars = engine->cvars; source->prepared = false;
     qa_hud_cvars_bind(source->cvars,
         QA_HUD_CVAR_LANGUAGE | QA_HUD_CVAR_USE_FONT | QA_HUD_CVAR_CENTER_TIME, &source->hud_cvars);
-    engine->context = source; engine->print = platform_print; engine->sound = platform_sound;
+    engine->context = source; engine->print = platform_print; engine->sound = NULL;
     engine->hud_view = platform_hud_view;
     engine->resource_precache = platform_resource_precache;
     engine->frontend_lifetime = source; engine->release_frontend = release_source;

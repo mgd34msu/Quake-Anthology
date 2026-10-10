@@ -494,6 +494,7 @@ static bool sound(frontend_unified_events *o,const qa_unified_sound_event *event
         .resource_id=qa_resource_id(r->resource),.family=r->family,
         .actor=audio,.owner=o->options.audio_owner,.audience=domain->physical_seat,.origin_kind=QA_AUDIO_FIXED,
         .origin=event->origin,.channel=event->channel,.volume=event->volume,.attenuation=event->attenuation,
+        .delay_seconds=event->delay_seconds,
         .has_server_time=true,.server_milliseconds=ms};
     int32_t signed_tick;
     return qa_audio_source_milliseconds(ms,&signed_tick,e) && current(o,e) &&
@@ -675,7 +676,8 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
         const qa_unified_q2_protocol_event *source=&row->payload.value.q2_protocol;
         if (source->kind!=QA_Q2_SVC_SOUND) return true;
         emitted=(qa_unified_sound_event){.resource=source->resource,.actor=source->actor,.origin=source->origin,
-            .channel=source->channel,.volume=source->volume,.attenuation=source->attenuation};
+            .channel=source->channel,.volume=source->volume,.attenuation=source->attenuation,
+            .delay_seconds=source->delay_seconds};
         break;
     }
     case QA_UNIFIED_PRESENTATION_Q3: {
@@ -705,6 +707,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
         double seconds=simulation->milliseconds?simulation->time/1000:simulation->time;
         if (same_path && seconds==row->seconds && sound_event->channel==emitted.channel &&
             sound_event->volume==emitted.volume && sound_event->attenuation==emitted.attenuation &&
+            sound_event->delay_seconds==emitted.delay_seconds &&
             sound_event->origin.x==emitted.origin.x && sound_event->origin.y==emitted.origin.y &&
             sound_event->origin.z==emitted.origin.z && qa_actor_id_equal(sound_event->actor,emitted.actor)) {
             *out=true; return true;

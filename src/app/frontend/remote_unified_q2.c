@@ -1191,7 +1191,7 @@ static bool muzzle_receive(frontend_unified_q2 *o,const qa_unified_presentation_
     return okay;
 }
 static bool sound_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,
-    const char *path,qa_actor_id source,qa_vec3 origin,int32_t channel,float volume,float attenuation,unsigned loop,qa_error *e)
+    const char *path,qa_actor_id source,qa_vec3 origin,int32_t channel,float volume,float attenuation,unsigned loop,double delay,qa_error *e)
 {
     qa_actor_id a;if (!source_actor(o,source,&a,e))return false;
     bool paired=false,okay=true;q2_loop *retained=NULL;q2_activation *owner=NULL;
@@ -1202,7 +1202,7 @@ static bool sound_receive(frontend_unified_q2 *o,const qa_unified_presentation_e
     if (okay && loop==2)okay=frontend_unified_events_sound_stop_loop(o->events,a,e);
     else if (okay && loop==1){uint32_t raw=(uint32_t)o->frame_number;int32_t frame;memcpy(&frame,&raw,sizeof(frame));
         okay=frontend_unified_events_sound_loop_path(o->events,row->content,path?path:"",a,origin,qa_v3(0,0,0),ms,channel,volume,attenuation,frame,true,e);}
-    else if (okay && !paired)okay=frontend_unified_events_sound_path(o->events,row->content,path?path:"",a,origin,ms,channel,volume,attenuation,0,e);
+    else if (okay && !paired)okay=frontend_unified_events_sound_path(o->events,row->content,path?path:"",a,origin,ms,channel,volume,attenuation,delay,e);
     if (okay && loop){q2_loop **next=&o->loops;while (*next){q2_loop *l=*next;if (qa_actor_id_equal(l->actor,a)){*next=l->next;free(l);}else next=&l->next;}
         if (retained){retained->next=o->loops;o->loops=retained;retained=NULL;}}
     free(retained);return okay;
@@ -1269,7 +1269,7 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
     const char *text=qa_strings_cstr(o->replica->strings,v->text);
     switch (v->kind){
     case QA_BUILTIN_SOUND:case QA_BUILTIN_STOP_SOUND:return sound_receive(o,row,resource,v->actor,v->origin,v->channel,v->volume,v->attenuation,
-        v->kind==QA_BUILTIN_STOP_SOUND?2u:(v->flags&1)?1u:0u,e);
+        v->kind==QA_BUILTIN_STOP_SOUND?2u:(v->flags&1)?1u:0u,0,e);
     case QA_BUILTIN_MUZZLE:{qa_unified_q2_muzzle m={.actor=v->actor,.flash=(uint16_t)v->code,
         .monster=resource && !strcmp(resource,"q2:monster-muzzle"),.silenced=(v->flags&128)!=0,
         .has_pose=v->has_muzzle_pose,.origin=v->origin,.direction=v->direction,.angles=v->muzzle_angles,.scale=v->muzzle_scale,
@@ -1320,7 +1320,7 @@ static bool protocol_receive(frontend_unified_q2 *o,const qa_unified_presentatio
 {
     const qa_unified_q2_protocol_event *v=&row->payload.value.q2_protocol;
     switch(v->kind){
-    case QA_Q2_SVC_SOUND:return sound_receive(o,row,v->resource,v->actor,v->origin,v->channel,v->volume,v->attenuation,0,e);
+    case QA_Q2_SVC_SOUND:return sound_receive(o,row,v->resource,v->actor,v->origin,v->channel,v->volume,v->attenuation,0,v->delay_seconds,e);
     case QA_Q2_SVC_MUZZLEFLASH:return muzzle_receive(o,row,&v->muzzle,e);
     case QA_Q2_SVC_TEMP_ENTITY:return temporary_receive(o,row,&v->temporary,e);
     case QA_Q2_SVC_ACHIEVEMENT:return achievement(o,row,v->text,true,e);

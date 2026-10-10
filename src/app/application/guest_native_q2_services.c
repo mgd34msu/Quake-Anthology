@@ -292,12 +292,13 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
         application_native_q2_delivery_dispose(&delivery.audience); return false;
     }
     if (duplicate) { application_native_q2_delivery_dispose(&delivery.audience); return true; }
-    qa_actor_id *recipients = delivery.audience.count ? malloc(delivery.audience.count * sizeof(*recipients)) : NULL;
-    if (delivery.audience.count && !recipients) {
+    qa_actor_id *recipients = engine->platform.sound && delivery.audience.count ?
+        malloc(delivery.audience.count * sizeof(*recipients)) : NULL;
+    if (engine->platform.sound && delivery.audience.count && !recipients) {
         application_native_q2_delivery_dispose(&delivery.audience);
         return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 sound recipients");
     }
-    for (size_t i = 0; i < delivery.audience.count; ++i) recipients[i] = delivery.audience.recipients[i].actor;
+    for (size_t i = 0; recipients && i < delivery.audience.count; ++i) recipients[i] = delivery.audience.recipients[i].actor;
     named.origin = origin; named.positioned = positioned; named.reliable = reliable;
     named.channel = event.data.sound.channel; named.recipients = recipients;
     named.recipient_count = delivery.audience.count; named.audience_captured = delivery.audience.captured;

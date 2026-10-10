@@ -1531,6 +1531,8 @@ static const qa_unified_field qa_unified_q2_protocol_event_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_q2_protocol_event, direction, qa_unified_vector_layout),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, volume, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, attenuation, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, delay_seconds, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, positioned, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, damage, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, channel, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, health, QA_UNIFIED_FIELD_BOOL),
@@ -1630,6 +1632,7 @@ static const qa_unified_field qa_unified_sound_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_sound_event, channel, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_sound_event, volume, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_unified_sound_event, attenuation, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_unified_sound_event, delay_seconds, QA_UNIFIED_FIELD_F32),
 };
 static const qa_unified_record_layout qa_unified_sound_event_layout = QA_UNIFIED_LAYOUT(qa_unified_sound_event, qa_unified_sound_event_fields);
 

@@ -58,9 +58,9 @@ typedef struct qa_unified_q2_protocol_event {
     qa_unified_q2_muzzle muzzle;
     qa_unified_q2_poi poi;
     qa_vec3 origin, direction;
-    float volume, attenuation, damage;
+    float volume, attenuation, damage, delay_seconds;
     int32_t channel;
-    bool health, armor, shield, first;
+    bool health, armor, shield, first, positioned;
 } qa_unified_q2_protocol_event;
 
 typedef struct qa_unified_mod_identity {
@@ -163,7 +163,7 @@ typedef struct qa_unified_sound_event {
     qa_actor_id actor;
     qa_vec3 origin;
     int32_t channel;
-    float volume, attenuation;
+    float volume, attenuation, delay_seconds;
 } qa_unified_sound_event;
 typedef enum qa_unified_message_kind {
     QA_UNIFIED_MESSAGE_PRINT, QA_UNIFIED_MESSAGE_CENTER_PRINT,
