@@ -44,6 +44,8 @@ struct frontend_remote_unified {
     qa_unified_frame_lease *metadata_lease;
     size_t metadata_count;
     frontend_unified_identity *identities;
+    qa_arena identity_storage;
+    qa_pool identity_records;
     qa_actor_id wire_player;
     qa_saved_actor_id wire_client;
     qa_actor_id player;

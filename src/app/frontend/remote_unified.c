@@ -92,7 +92,13 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
     frontend_legacy_cvars_bind(d->cvars,&owner->legacy_cvars);
     frontend_remote_q2_effects_cvars_bind(d->cvars,&owner->q2_effect_cvars);
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&owner->sky_controls);
-    if (!qa_actors_create(options->identity_capacity, NULL, NULL, &owner->actors, error)) { free(owner); return false; }
+    if (!qa_pool_prepare(&owner->identity_records, &owner->identity_storage,
+            (size_t)options->identity_capacity * 4, sizeof(frontend_unified_identity),
+            _Alignof(frontend_unified_identity), error) ||
+        !qa_actors_create(options->identity_capacity, NULL, NULL, &owner->actors, error)) {
+        qa_arena_destroy(&owner->identity_storage); free(owner); return false;
+    }
+    qa_arena_seal(&owner->identity_storage);
     owner->strings=qa_session_strings(qa_application_session(d->application)); qa_strings_retain(owner->strings);
     qa_catalog_retain(d->catalog);
     owner->next = frontend->remote_unified; frontend->remote_unified = owner; *out = owner; return true;
@@ -205,10 +211,15 @@ bool frontend_remote_unified_actor(frontend_remote_unified *owner, uint32_t slot
         }
     bool historical = (owner->prepared_frame || owner->frame) &&
         !frontend_remote_unified_actor_present(owner, slot, generation);
-    frontend_unified_identity *row = calloc(1, sizeof(*row));
+    size_t identity_slot;
+    frontend_unified_identity *row = qa_pool_take(&owner->identity_records, &identity_slot);
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified wire identity");
-    if (!qa_actors_allocate(owner->actors, 0, 0, &row->actual, error)) { free(row); return false; }
-    if (historical && !qa_actors_release(owner->actors, row->actual, error)) { free(row); return false; }
+    if (!qa_actors_allocate(owner->actors, 0, 0, &row->actual, error)) {
+        qa_pool_release(&owner->identity_records, identity_slot); return false;
+    }
+    if (historical && !qa_actors_release(owner->actors, row->actual, error)) {
+        qa_pool_release(&owner->identity_records, identity_slot); return false;
+    }
     row->wire = (qa_saved_actor_id){.slot = slot, .generation = generation};
     row->next = owner->identities; owner->identities = row; *out = row->actual; return true;
 }
@@ -461,8 +472,10 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
                 qa_unified_document_destroy(owner->prepared_frame); owner->prepared_frame = NULL;
                 staged_metadata_clear(owner);
                 okay = qa_actors_clear(owner->actors, error);
-                if (okay) while (owner->identities) { frontend_unified_identity *row = owner->identities;
-                    owner->identities = row->next; free(row); }
+                if (okay) {
+                    owner->identities = NULL;
+                    qa_pool_reset(&owner->identity_records);
+                }
             }
         }
         if (okay && owner->retiring_recipe) { okay = qa_executable_recipe_close(owner->retiring_recipe, error);
@@ -724,8 +737,7 @@ bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *e
     frontend_remote_unified **row = &owner->frontend->remote_unified;
     while (*row != owner) row = &(*row)->next;
     *row = owner->next;
-    while (owner->identities) { frontend_unified_identity *identity = owner->identities;
-        owner->identities = identity->next; free(identity); }
+    qa_arena_destroy(&owner->identity_storage);
     qa_unified_document_destroy(owner->offer); qa_unified_document_destroy(owner->frame);
     qa_unified_document_destroy(owner->prepared_frame);
     frontend_remote_unified_metadata_clear(owner);
