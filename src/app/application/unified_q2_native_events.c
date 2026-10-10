@@ -97,19 +97,6 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
     return ok;
 }
 
-static bool arguments(qa_application *app, const qa_builtin_message_arg *args, size_t count,
-    qa_unified_message_arg **out, qa_error *e)
-{
-    if (!count) return true;
-    *out = application_event_stream_alloc(app, count * sizeof(**out), _Alignof(qa_unified_message_arg), e);
-    if (!*out) return false;
-    for (size_t i = 0; i < count; ++i) {
-        if (args[i].kind != QA_BUILTIN_MESSAGE_STRING)
-            return application_fail(e, QA_ERROR_UNSUPPORTED, "Q2 localized Source event requires its authored string argument");
-        (*out)[i] = (qa_unified_message_arg){.kind = args[i].kind, .text = alias(app, args[i].value.text)};
-    }
-    return true;
-}
 bool application_unified_q2_native_map(application_provider *p, const qa_q2_map_event *v,
     const qa_application_q2_audience *audience, qa_error *e)
 {
@@ -127,7 +114,8 @@ bool application_unified_q2_native_map(application_provider *p, const qa_q2_map_
         .cone_cosine = v->cone_cosine, .count = v->count, .style = v->style, .slot = v->slot,
         .flags = v->flags, .resolution = v->resolution, .visible = v->visible,
         .argument_count = v->argument_count, .level_count = v->level_count, .button_time_ns = v->button_time_ns};
-    bool ok = arguments(app, v->arguments, v->argument_count, &r->arguments, e);
+    r->arguments = v->arguments;
+    bool ok = true;
     if (ok && v->level_count) {
         if (v->level_count > QA_Q2_CAMPAIGN_LEVEL_LIMIT || !v->levels)
             ok = application_fail(e, QA_ERROR_ARGUMENT, "Q2 unit report lost its actual campaign rows");
@@ -214,12 +202,12 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
             if (v->arguments[i].kind != QA_BUILTIN_MESSAGE_STRING)
                 return application_fail(e, QA_ERROR_UNSUPPORTED, "Q2 localized Source event requires its authored string argument");
     qa_unified_presentation_payload presentation = {.kind = QA_UNIFIED_PRESENTATION_BUILTIN};
-    if (!application_unified_builtin_read(app, v, &presentation.value.builtin, e)) return false;
+    presentation.value.builtin = *v;
     qa_unified_simulation_payload simulation = {0}; const qa_unified_simulation_payload *sim = NULL;
     char key[QA_APPLICATION_RESOURCE_KEY_CAPACITY]; bool ok = true;
     if (v->kind == QA_BUILTIN_SOUND && !(v->flags & 1u)) {
         bool found;
-        ok = application_unified_event_resource_lookup(app, v->provider, presentation.value.builtin.resource, key, &found, e);
+        ok = application_unified_event_resource_lookup(app, v->provider, alias(app, v->resource), key, &found, e);
         if (ok && found) {
             simulation.kind = QA_UNIFIED_SIMULATION_SOUND;
             simulation.value.sound = (qa_unified_sound_event){.resource = key, .actor = v->actor,
@@ -228,7 +216,7 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
         }
     }
     if (ok && v->kind == QA_BUILTIN_BEAM && presentation.value.builtin.resource &&
-        !strcmp(presentation.value.builtin.resource, "q2:lightning")) {
+        !strcmp(alias(app, v->resource), "q2:lightning")) {
         qa_q2_wire_binding from = {0}, to = {0}; qa_q2_combat_rules rules;
         ok = qa_q2_combat_rules_read(p->state.q2, &rules) &&
             qa_q2_wire_actor(p->state.q2, v->actor, &from, e) && qa_q2_wire_actor(p->state.q2, v->other, &to, e);
@@ -248,5 +236,5 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
             (v->kind == QA_BUILTIN_ITEM && v->code == 0) ? v->actor : (qa_actor_id){0};
         ok = emit(p, &presentation, sim, v->actor, recipient, v->time_ns, audience, e);
     }
-    application_unified_builtin_read_dispose(&presentation.value.builtin); return ok;
+    return ok;
 }

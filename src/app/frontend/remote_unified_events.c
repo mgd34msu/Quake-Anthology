@@ -603,11 +603,11 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     qa_unified_sound_event emitted={0};
     switch (row->payload.kind) {
     case QA_UNIFIED_PRESENTATION_BUILTIN: {
-        const qa_unified_builtin_event *source=&row->payload.value.builtin;
+        const qa_builtin_event *source=&row->payload.value.builtin;
         if (source->kind!=QA_BUILTIN_SOUND ||
             (source->family==QA_GAME_Q2 && (source->flags==1 || source->flags==2))) return true;
         bool ambient=source->family==QA_GAME_Q1 && (source->flags & 1u)!=0;
-        emitted=(qa_unified_sound_event){.resource=source->resource,
+        emitted=(qa_unified_sound_event){.resource=(char *)qa_strings_cstr(o->strings,source->resource),
             .actor=ambient?(qa_actor_id){0}:source->actor,.origin=source->origin,
             .channel=ambient?0:source->channel,.volume=source->volume,.attenuation=source->attenuation};
         break;

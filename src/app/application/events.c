@@ -531,9 +531,9 @@ bool application_q1_music_cue(qa_application *application, bool fresh, qa_error 
         const qa_unified_presentation_payload *payload = row->presentation;
         if (row->provider != source->owner || row->recipient.registry ||
             !payload || payload->kind != QA_UNIFIED_PRESENTATION_BUILTIN) continue;
-        const qa_unified_builtin_event *event = &payload->value.builtin;
+        const qa_builtin_event *event = &payload->value.builtin;
         if (event->family == QA_GAME_Q1 && event->kind == QA_BUILTIN_EFFECT &&
-            event->resource && !strcmp(event->resource, "music")) return true;
+            event->resource && !strcmp(qa_strings_cstr(qa_session_strings(application->session), event->resource), "music")) return true;
     }
     uint8_t cd_track;
     if (source->kind == APPLICATION_PROVIDER_Q1) {

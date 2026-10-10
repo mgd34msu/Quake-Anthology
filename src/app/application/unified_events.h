@@ -157,8 +157,6 @@ bool application_unified_event_append(qa_application *,
     const application_unified_event_record *, qa_error *);
 void application_unified_events_consume(qa_application *, uint64_t next);
 void application_unified_events_clear(qa_application *);
-bool application_unified_builtin_read(qa_application *, const qa_builtin_event *, qa_unified_builtin_event *, qa_error *);
-void application_unified_builtin_read_dispose(qa_unified_builtin_event *);
 bool application_unified_world_text_read(qa_application *, const application_unified_source *,
     qa_unified_frame_lease *, qa_unified_frame_visuals *, qa_error *);
 bool application_unified_event_actors_valid(qa_application *, const application_unified_event_record *, qa_error *);

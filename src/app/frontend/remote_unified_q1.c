@@ -203,7 +203,9 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
 {
     if (!row || row->payload.kind!=QA_UNIFIED_PRESENTATION_BUILTIN || row->family!=QA_GAME_Q1)
         return fail(e,"Q1 presentation has no actual builtin Source event");
-    const qa_unified_builtin_event *v=&row->payload.value.builtin;
+    const qa_builtin_event *v=&row->payload.value.builtin;
+    const char *resource=qa_strings_cstr(o->replica->strings,v->resource);
+    const char *text=qa_strings_cstr(o->replica->strings,v->text);
     p->row=row; p->seconds=row->seconds; p->sequence=row->sequence;
     p->actor=v->actor; p->actor_present=v->actor.registry!=0;
     p->origin=v->origin; p->end=v->end; p->angles=v->muzzle_angles;
@@ -215,10 +217,10 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
     case QA_BUILTIN_SOUND:
         p->kind=v->flags&1u?Q1_AMBIENT:Q1_SOUND; p->flag=true;
         p->a=v->volume; p->b=v->attenuation; p->c=v->channel;
-        return text_copy(v->resource,&p->text,e);
+        return text_copy(resource,&p->text,e);
     case QA_BUILTIN_STOP_SOUND:p->kind=Q1_STOP; p->a=v->channel; return true;
     case QA_BUILTIN_PARTICLES:p->kind=Q1_PARTICLES; p->end=v->direction; p->a=v->code; p->b=v->count; return true;
-    case QA_BUILTIN_LIGHT:p->kind=Q1_STYLE; p->a=v->code; return text_copy(v->resource,&p->text,e);
+    case QA_BUILTIN_LIGHT:p->kind=Q1_STYLE; p->a=v->code; return text_copy(resource,&p->text,e);
     case QA_BUILTIN_BEAM: {
         static const char *const names[]={"lightning1","lightning2","lightning3","grapple"};
         if (v->code<1 || v->code>4) return fail(e,"Q1 beam has no original Source style");
@@ -233,32 +235,32 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
     case QA_BUILTIN_TELEPORT:effect_name="teleport";break;
     case QA_BUILTIN_MUZZLE:effect_name="muzzleflash";p->muzzle=v->has_muzzle_pose;p->end=v->origin;break;
     case QA_BUILTIN_ITEM:p->actor=v->other;p->actor_present=v->other.registry!=0;effect_name="pickup";break;
-    case QA_BUILTIN_ANIMATION:p->kind=Q1_WEAPON;p->a=v->frame;p->b=v->value;return text_copy(v->resource,&p->text,e);
+    case QA_BUILTIN_ANIMATION:p->kind=Q1_WEAPON;p->a=v->frame;p->b=v->value;return text_copy(resource,&p->text,e);
     case QA_BUILTIN_MESSAGE:case QA_BUILTIN_CENTERPRINT:
-        p->kind=Q1_MESSAGE;p->flag=v->kind==QA_BUILTIN_CENTERPRINT || !(v->flags&2u);return text_copy(v->text,&p->text,e);
-    case QA_BUILTIN_ACHIEVEMENT:p->kind=Q1_ACHIEVEMENT;return text_copy(v->text,&p->text,e);
-    case QA_BUILTIN_CTF_STATUS:p->kind=Q1_CTF_STATUS;p->a=v->ctf_red;p->b=v->ctf_blue;p->c=v->ctf_flags;p->d=v->ctf_rune_items;return true;
-    case QA_BUILTIN_CTF_CAPTURE:p->kind=Q1_CTF_CAPTURE;p->a=v->ctf_capture_total;return text_copy(v->ctf_capture_blue?"blue":"red",&p->name,e);
-    case QA_BUILTIN_SOURCE_LOG:p->kind=Q1_LOG;return text_copy(v->text,&p->text,e);
-    case QA_BUILTIN_SOURCE_PROMPT:p->kind=Q1_PROMPT;return text_copy(v->text,&p->text,e);
+        p->kind=Q1_MESSAGE;p->flag=v->kind==QA_BUILTIN_CENTERPRINT || !(v->flags&2u);return text_copy(text,&p->text,e);
+    case QA_BUILTIN_ACHIEVEMENT:p->kind=Q1_ACHIEVEMENT;return text_copy(text,&p->text,e);
+    case QA_BUILTIN_CTF_STATUS:p->kind=Q1_CTF_STATUS;p->a=v->ctf_status.red;p->b=v->ctf_status.blue;p->c=v->ctf_status.flags;p->d=v->ctf_status.rune_items;return true;
+    case QA_BUILTIN_CTF_CAPTURE:p->kind=Q1_CTF_CAPTURE;p->a=v->ctf_capture.total;return text_copy(v->ctf_capture.blue?"blue":"red",&p->name,e);
+    case QA_BUILTIN_SOURCE_LOG:p->kind=Q1_LOG;return text_copy(text,&p->text,e);
+    case QA_BUILTIN_SOURCE_PROMPT:p->kind=Q1_PROMPT;return text_copy(text,&p->text,e);
     case QA_BUILTIN_CLEAR_PROMPT:p->kind=Q1_CLEAR_PROMPT;return true;
     case QA_BUILTIN_Q1_POWERUP:
-        if (v->q1_power>=Q1_POWERS) return fail(e,"Q1 power has no Source timer identity");
-        p->kind=Q1_POWER;p->a=v->q1_power_expires;return text_copy(powers[v->q1_power],&p->name,e);
+        if (v->q1_powerup.power>=Q1_POWERS) return fail(e,"Q1 power has no Source timer identity");
+        p->kind=Q1_POWER;p->a=v->q1_powerup.expires;return text_copy(powers[v->q1_powerup.power],&p->name,e);
     case QA_BUILTIN_DEATH:p->kind=Q1_FOUND;p->a=v->count;p->b=v->code;return true;
     case QA_BUILTIN_TARGET:
         if ((v->flags&UINT32_C(0x80000000)) && v->code==1) {p->kind=Q1_COMPLETED;return true;}
         return fail(e,"Q1 target has no native presentation operation");
     case QA_BUILTIN_EFFECT:
-        if (v->resource && !strcmp(v->resource,"music")) {p->kind=Q1_MUSIC;p->a=v->code;return true;}
-        if (v->resource && !strcmp(v->resource,"sell-screen")) {p->kind=Q1_SELL_SCREEN;return true;}
+        if (resource && !strcmp(resource,"music")) {p->kind=Q1_MUSIC;p->a=v->code;return true;}
+        if (resource && !strcmp(resource,"sell-screen")) {p->kind=Q1_SELL_SCREEN;return true;}
         if (v->flags&UINT32_C(0x80000000)) {p->kind=v->code==1?Q1_COMPLETED:Q1_FINALE;p->a=v->code;
-            return text_copy(v->text,&p->text,e);}
-        if (v->resource && !strcmp(v->resource,"cutscene")) {p->kind=Q1_FINALE;p->a=3;return text_copy(v->text,&p->text,e);}
-        if (v->resource && !strcmp(v->resource,"colored-explosion")) {p->kind=Q1_COLORS;p->a=v->code;p->b=v->count;return true;}
-        if (v->resource && !strcmp(v->resource,"developer-message")) {p->kind=Q1_MESSAGE;p->flag=false;return text_copy(v->text,&p->text,e);}
-        if (!v->actor.registry && v->resource) {p->kind=Q1_STATIC;p->a=v->frame;p->b=v->code;p->c=v->channel;p->angles=v->direction;return text_copy(v->resource,&p->text,e);}
-        if (!v->resource && v->other.registry && v->count>0) {p->kind=Q1_FOUND;p->flag=true;p->a=v->count;p->b=v->code;return true;}
+            return text_copy(text,&p->text,e);}
+        if (resource && !strcmp(resource,"cutscene")) {p->kind=Q1_FINALE;p->a=3;return text_copy(text,&p->text,e);}
+        if (resource && !strcmp(resource,"colored-explosion")) {p->kind=Q1_COLORS;p->a=v->code;p->b=v->count;return true;}
+        if (resource && !strcmp(resource,"developer-message")) {p->kind=Q1_MESSAGE;p->flag=false;return text_copy(text,&p->text,e);}
+        if (!v->actor.registry && resource) {p->kind=Q1_STATIC;p->a=v->frame;p->b=v->code;p->c=v->channel;p->angles=v->direction;return text_copy(resource,&p->text,e);}
+        if (!resource && v->other.registry && v->count>0) {p->kind=Q1_FOUND;p->flag=true;p->a=v->count;p->b=v->code;return true;}
         return fail(e,"Q1 effect has no reached original Source operation");
     default:return fail(e,"Q1 presentation has no installed native consumer");
     }
@@ -559,24 +561,24 @@ bool frontend_unified_q1_owner_retire(frontend_unified_q1 *o,const qa_unified_pr
 }
 static bool prompt_set(frontend_unified_q1 *o,const q1_event *p,qa_error *e)
 {
-    const qa_unified_builtin_event *value=&p->row->payload.value.builtin;
+    const qa_builtin_event *value=&p->row->payload.value.builtin;
     size_t count=value->prompt_choice_count; char **lines=calloc(count?count:1,sizeof(*lines));
     qa_unified_presentation_event *doc=NULL;
     if (!lines) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source prompt");
     bool okay=clone_row(p->row,&doc,e);
-    for (size_t i=0;okay && i<count;++i) { qa_buffer label={0};okay=text_copy(value->prompt_choices[i].label,&label,e);lines[i]=(char *)label.data; }
+    for (size_t i=0;okay && i<count;++i) { qa_buffer label={0};okay=text_copy(qa_strings_cstr(o->replica->strings,value->prompt_choices[i].label),&label,e);lines[i]=(char *)label.data; }
     char *title=okay?malloc(p->text.size+1):NULL; if (okay && !title) okay=false;
     if (!okay) {for(size_t i=0;i<count;++i)free(lines[i]);free(lines);retained_free(doc);return false;}
     memcpy(title,p->text.data,p->text.size+1);prompt_clear(o);o->prompt=doc;o->prompt_title=title;o->prompt_lines=lines;o->prompt_count=count;return true;
 }
-static bool localize_piece(q1_group *g,const qa_unified_builtin_event *value,qa_buffer *out,qa_error *e)
+static bool localize_piece(q1_group *g,const qa_builtin_event *value,qa_buffer *out,qa_error *e)
 {
     size_t count=value->argument_count; if (count>8)return fail(e,"Q1 message exceeds its Source arguments");
-    const char *base=value->text?value->text:""; const char *argv[8]={0}; char numeric[8][32];
+    const char *base=qa_strings_cstr(g->parent->replica->strings,value->text); if (!base) base=""; const char *argv[8]={0}; char numeric[8][32];
     for (size_t i=0;i<count;++i) {
-        const qa_unified_message_arg *arg=value->arguments+i;
-        if (arg->kind==QA_BUILTIN_MESSAGE_STRING) argv[i]=arg->text;
-        else {if(!qa_format_number(arg->number,numeric[i],e))return false;argv[i]=numeric[i];}
+        const qa_builtin_message_arg *arg=value->arguments+i;
+        if (arg->kind==QA_BUILTIN_MESSAGE_STRING) argv[i]=qa_strings_cstr(g->parent->replica->strings,arg->value.text);
+        else {if(!qa_format_number(arg->value.number,numeric[i],e))return false;argv[i]=numeric[i];}
     }
     out->data=malloc(65536); if (!out->data)return false;
     if (g->product->edition!=QA_EDITION_RERELEASE && (base[0]!='$' || !qa_localization_find(g->localization,base+1))) {

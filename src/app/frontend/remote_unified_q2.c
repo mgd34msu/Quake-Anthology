@@ -309,7 +309,7 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
     free(v->content);v->content=content;free(v->source_provider);v->source_provider=source;
     if (is_model) { free(v->path);v->path=path;record_free(v->model);v->model=copy;v->effects=m->effects; }
     else if (row->payload.kind==QA_UNIFIED_PRESENTATION_VISIBILITY) v->visible=row->payload.value.visibility.visible;
-    else { const qa_unified_builtin_event *event=&row->payload.value.builtin;
+    else { const qa_builtin_event *event=&row->payload.value.builtin;
         v->event=event->kind==QA_BUILTIN_ITEM?2u:(uint32_t)event->code;v->event_frame=o->frame_number; }
     return true;
 }
@@ -1037,14 +1037,14 @@ static bool userinfo(frontend_unified_q2 *o,const qa_unified_q2_player_event *ev
     char *copy=text_copy(event->text);if (!copy)return false;free(v->name);v->name=copy;return true;
 }
 static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const char *input,
-    const qa_unified_message_arg *args,size_t count,qa_buffer *out,qa_error *e)
+    const qa_builtin_message_arg *args,size_t count,qa_buffer *out,qa_error *e)
 {
     char *text=text_copy(input?input:"");if (!text)return false;
     *out=(qa_buffer){(uint8_t *)text,strlen(text)};
     if (row->q2_profile!=FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE)return true;
     q2_bank *b=NULL;const char **arguments=count?calloc(count,sizeof(*arguments)):NULL;
     bool okay=(!count || arguments) && bank(o,row->content,NULL,NULL,0,false,&b,e);
-    for (size_t i=0;okay && i<count;++i){okay=args[i].kind==QA_BUILTIN_MESSAGE_STRING;arguments[i]=args[i].text?args[i].text:"";}
+    for (size_t i=0;okay && i<count;++i){okay=args[i].kind==QA_BUILTIN_MESSAGE_STRING;arguments[i]=qa_strings_cstr(o->replica->strings,args[i].value.text);if (!arguments[i])arguments[i]="";}
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     qa_ui_preferences preferences;qa_localization *catalog=NULL;qa_localization_options opts={.profile=QA_LOCALIZATION_Q2_RERELEASE};
     okay=okay && qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&preferences,e) &&
@@ -1057,7 +1057,7 @@ static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event
     return okay;
 }
 static bool received_text(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const char *input,
-    const qa_unified_message_arg *args,size_t count,bool center,bool console,bool chat,bool instant,double duration,qa_error *e)
+    const qa_builtin_message_arg *args,size_t count,bool center,bool console,bool chat,bool instant,double duration,qa_error *e)
 {
     qa_buffer text={0};if (!localized(o,row,input,args,count,&text,e))return false;
     bool okay=center?qa_hud_center_print(o->hud,(const char *)text.data,nanoseconds(row->seconds),nanoseconds(duration),(qa_hud_center_policy){.instant=instant,.character_ns=UINT64_C(50000000)},e):
@@ -1262,19 +1262,21 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
 }
 static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool *mirrored,qa_error *e)
 {
-    const qa_unified_builtin_event *v=&row->payload.value.builtin;q2_bank *b=NULL;qa_actor_id a;
+    const qa_builtin_event *v=&row->payload.value.builtin;q2_bank *b=NULL;qa_actor_id a;
+    const char *resource=qa_strings_cstr(o->replica->strings,v->resource);
+    const char *text=qa_strings_cstr(o->replica->strings,v->text);
     switch (v->kind){
-    case QA_BUILTIN_SOUND:case QA_BUILTIN_STOP_SOUND:return sound_receive(o,row,v->resource,v->actor,v->origin,v->channel,v->volume,v->attenuation,
+    case QA_BUILTIN_SOUND:case QA_BUILTIN_STOP_SOUND:return sound_receive(o,row,resource,v->actor,v->origin,v->channel,v->volume,v->attenuation,
         v->kind==QA_BUILTIN_STOP_SOUND?2u:(v->flags&1)?1u:0u,e);
     case QA_BUILTIN_MUZZLE:{qa_unified_q2_muzzle m={.actor=v->actor,.flash=(uint16_t)v->code,
-        .monster=v->resource && !strcmp(v->resource,"q2:monster-muzzle"),.silenced=(v->flags&128)!=0,
+        .monster=resource && !strcmp(resource,"q2:monster-muzzle"),.silenced=(v->flags&128)!=0,
         .has_pose=v->has_muzzle_pose,.origin=v->origin,.direction=v->direction,.angles=v->muzzle_angles,.scale=v->muzzle_scale,
         .entity=row->has_source_entity?(uint16_t)row->source_entity:0};return muzzle_receive(o,row,&m,e);}
     case QA_BUILTIN_MESSAGE:case QA_BUILTIN_CENTERPRINT:{bool matches;
         if (!viewer_matches(o,v->actor,&matches,e))return false;
         if (!matches)return true;
         bool center=v->kind==QA_BUILTIN_CENTERPRINT;*mirrored=center || v->argument_count!=0;
-        return received_text(o,row,v->text,v->arguments,v->argument_count,center,!center,v->code==3,true,3,e);}
+        return received_text(o,row,text,v->arguments,v->argument_count,center,!center,v->code==3,true,3,e);}
     case QA_BUILTIN_Q2_ENTITY_EVENT:return visual_apply(o,row,e);
     case QA_BUILTIN_ITEM:{if (v->code==1)return visual_apply(o,row,e);bool matches;
         if (!viewer_matches(o,v->actor,&matches,e))return false;
@@ -1282,13 +1284,13 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
         qa_scene_image *image=NULL;qa_scene_image_options opts={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
             .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
         bool okay=bank(o,row->content,NULL,NULL,0,false,&b,e);
-        if (okay && v->resource && *v->resource)okay=qa_scene_image_load_exact(b->images,v->resource,&opts,&image,e);
-        if (okay)okay=qa_hud_pickup(o->hud,&(qa_hud_pickup_state){.text=v->text?v->text:"",.icon=image,
+        if (okay && resource && *resource)okay=qa_scene_image_load_exact(b->images,resource,&opts,&image,e);
+        if (okay)okay=qa_hud_pickup(o->hud,&(qa_hud_pickup_state){.text=text?text:"",.icon=image,
             .starts_ns=nanoseconds(row->seconds),.until_ns=nanoseconds(row->seconds+3),
             .blend_ns=nanoseconds(row->seconds),.family=QA_GAME_Q2},e);
         qa_scene_image_release(image);return okay;}
     case QA_BUILTIN_BEAM:{if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
-        const char *name=v->resource;double ms=row->seconds*1000;
+        const char *name=resource;double ms=row->seconds*1000;
         if (!name)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 entity beam requires its received entity state");
         if (!strcmp(name,"q2:parasite") || !strcmp(name,"q2:medic-cable"))return frontend_remote_q2_effects_monster_beam(b->effects,a,v->origin,v->end,ms,e) &&
             effect_replace(o,b,a,FRONTEND_REMOTE_Q2_MONSTER_BEAM,e);
@@ -1300,7 +1302,7 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
             qa_unified_q2_temporary t={.type=QA_Q2_TE_GRAPPLE_CABLE,.rerelease=row->q2_profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,.fields=fields,.field_count=4};return temporary_receive(o,row,&t,e);}
         return frontend_remote_q2_effects_named_beam(b->effects,!strncmp(name,"q2:",3)?name+3:name,a,v->origin,v->end,v->value,ms,e);}
     case QA_BUILTIN_PARTICLES:case QA_BUILTIN_IMPACT:case QA_BUILTIN_EXPLOSION:case QA_BUILTIN_EFFECT:case QA_BUILTIN_TELEPORT:{
-        const char *name=v->resource;if (name && !strncmp(name,"q2:",3))name+=3;
+        const char *name=resource;if (name && !strncmp(name,"q2:",3))name+=3;
         if (v->kind==QA_BUILTIN_EFFECT && name && !strcmp(name,"entity-event"))return visual_apply(o,row,e);
         if (!name && v->kind==QA_BUILTIN_PARTICLES){switch(v->code){case 0:name="gunshot";break;case 1:name="blood";break;case 4:name="shotgun";break;
             case 9:name="sparks";break;case 12:name="screen-sparks";break;case 13:name="shield-sparks";break;case 14:name="bullet-sparks";break;

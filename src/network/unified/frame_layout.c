@@ -1190,9 +1190,9 @@ static const qa_unified_record_layout qa_unified_presentation_owner_layout;
 const qa_unified_record_layout qa_unified_presentation_event_layout;
 const qa_unified_record_layout qa_unified_simulation_event_layout;
 const qa_unified_record_layout qa_unified_events_layout;
-static const qa_unified_record_layout qa_unified_message_arg_layout;
-static const qa_unified_record_layout qa_unified_prompt_choice_layout;
-static const qa_unified_record_layout qa_unified_builtin_event_layout;
+static const qa_unified_record_layout qa_builtin_message_arg_layout;
+static const qa_unified_record_layout qa_builtin_prompt_choice_layout;
+static const qa_unified_record_layout qa_builtin_event_layout;
 static const qa_unified_record_layout qa_unified_vector4_layout;
 static const qa_unified_record_layout qa_unified_q2_player_view_layout;
 static const qa_unified_record_layout qa_unified_q2_score_row_layout;
@@ -1262,53 +1262,69 @@ static const qa_unified_field qa_unified_frame_events_fields[] = {
 };
 const qa_unified_record_layout qa_unified_events_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_events, qa_unified_frame_events_fields);
 
-static const qa_unified_field qa_unified_message_arg_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_message_arg, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_message_arg, text, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_message_arg, number, QA_UNIFIED_FIELD_F64),
+static const qa_unified_field message_string_fields[] = {
+    {QA_UNIFIED_FIELD_NAME, 0, NULL, 0, 0, NULL},
 };
-static const qa_unified_record_layout qa_unified_message_arg_layout = QA_UNIFIED_LAYOUT(qa_unified_message_arg, qa_unified_message_arg_fields);
+static const qa_unified_record_layout message_string_layout = {
+    sizeof(qa_string_id), message_string_fields, 1, SIZE_MAX, QA_UNIFIED_KEY_NONE,
+};
+static const qa_unified_record_layout *const message_argument_variants[] = {
+    &message_string_layout, &double_layout,
+};
+static const qa_unified_field qa_builtin_message_arg_fields[] = {
+    QA_UNIFIED_FIELD(qa_builtin_message_arg, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_VARIANT(qa_builtin_message_arg, value, kind, message_argument_variants),
+};
+static const qa_unified_record_layout qa_builtin_message_arg_layout = QA_UNIFIED_LAYOUT(qa_builtin_message_arg, qa_builtin_message_arg_fields);
 
-static const qa_unified_field qa_unified_prompt_choice_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_prompt_choice, label, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_prompt_choice, impulse, QA_UNIFIED_FIELD_I32),
+static const qa_unified_field qa_builtin_prompt_choice_fields[] = {
+    QA_UNIFIED_FIELD(qa_builtin_prompt_choice, label, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_builtin_prompt_choice, impulse, QA_UNIFIED_FIELD_I32),
 };
-static const qa_unified_record_layout qa_unified_prompt_choice_layout = QA_UNIFIED_LAYOUT(qa_unified_prompt_choice, qa_unified_prompt_choice_fields);
+static const qa_unified_record_layout qa_builtin_prompt_choice_layout = QA_UNIFIED_LAYOUT(qa_builtin_prompt_choice, qa_builtin_prompt_choice_fields);
 
-static const qa_unified_field qa_unified_builtin_event_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, kind, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, family, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_RECORD(qa_unified_builtin_event, actor, qa_unified_actor_layout),
-    QA_UNIFIED_RECORD(qa_unified_builtin_event, other, qa_unified_actor_layout),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, resource, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, text, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, item, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_RECORD(qa_unified_builtin_event, origin, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_builtin_event, end, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_builtin_event, direction, qa_unified_vector_layout),
-    QA_UNIFIED_RECORD(qa_unified_builtin_event, muzzle_angles, qa_unified_vector_layout),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, volume, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, attenuation, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, muzzle_scale, QA_UNIFIED_FIELD_F32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, value, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, code, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, channel, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, count, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, frame, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, flags, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, has_muzzle_pose, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_ARRAY(qa_unified_builtin_event, arguments, argument_count, qa_unified_message_arg_layout, 65536),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, ctf_red, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, ctf_blue, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, ctf_flags, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, ctf_rune_items, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, ctf_capture_total, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, ctf_capture_blue, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, q1_power, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_builtin_event, q1_power_expires, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_ARRAY(qa_unified_builtin_event, prompt_choices, prompt_choice_count, qa_unified_prompt_choice_layout, 65536),
+static const qa_unified_field builtin_multicast_fields[] = {
+    QA_UNIFIED_FIELD(qa_builtin_q2_multicast, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_RECORD(qa_builtin_q2_multicast, origin, qa_unified_vector_layout),
 };
-static const qa_unified_record_layout qa_unified_builtin_event_layout = QA_UNIFIED_LAYOUT(qa_unified_builtin_event, qa_unified_builtin_event_fields);
+static const qa_unified_record_layout builtin_multicast_layout = QA_UNIFIED_LAYOUT(qa_builtin_q2_multicast, builtin_multicast_fields);
+static const qa_unified_field qa_builtin_event_fields[] = {
+    QA_UNIFIED_FIELD(qa_builtin_event, kind, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_builtin_event, family, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_builtin_event, provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_builtin_event, time_ns, QA_UNIFIED_FIELD_U64),
+    QA_UNIFIED_RECORD(qa_builtin_event, actor, qa_unified_actor_layout),
+    QA_UNIFIED_RECORD(qa_builtin_event, other, qa_unified_actor_layout),
+    QA_UNIFIED_FIELD(qa_builtin_event, resource, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_builtin_event, text, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_builtin_event, item, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_RECORD(qa_builtin_event, origin, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_builtin_event, end, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_builtin_event, direction, qa_unified_vector_layout),
+    QA_UNIFIED_RECORD(qa_builtin_event, q2_multicast, builtin_multicast_layout),
+    QA_UNIFIED_RECORD(qa_builtin_event, muzzle_angles, qa_unified_vector_layout),
+    QA_UNIFIED_FIELD(qa_builtin_event, volume, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_builtin_event, attenuation, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_builtin_event, muzzle_scale, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_builtin_event, value, QA_UNIFIED_FIELD_F32),
+    QA_UNIFIED_FIELD(qa_builtin_event, code, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_builtin_event, channel, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_builtin_event, count, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_builtin_event, frame, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_builtin_event, flags, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_builtin_event, has_muzzle_pose, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_ARRAY(qa_builtin_event, arguments, argument_count, qa_builtin_message_arg_layout, 65536),
+    QA_UNIFIED_FIELD(qa_builtin_event, ctf_status.red, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_builtin_event, ctf_status.blue, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_builtin_event, ctf_status.flags, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_builtin_event, ctf_status.rune_items, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_builtin_event, ctf_capture.total, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_builtin_event, ctf_capture.blue, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_builtin_event, q1_powerup.power, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_builtin_event, q1_powerup.expires, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_ARRAY(qa_builtin_event, prompt_choices, prompt_choice_count, qa_builtin_prompt_choice_layout, 65536),
+};
+static const qa_unified_record_layout qa_builtin_event_layout = QA_UNIFIED_LAYOUT(qa_builtin_event, qa_builtin_event_fields);
 
 static const qa_unified_field qa_unified_vector4_fields[] = {
     QA_UNIFIED_FIELD(qa_vec4, x, QA_UNIFIED_FIELD_F32),
@@ -1433,7 +1449,7 @@ static const qa_unified_field qa_unified_q2_map_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q2_map_event, flags, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_q2_map_event, resolution, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_q2_map_event, visible, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_ARRAY(qa_unified_q2_map_event, arguments, argument_count, qa_unified_message_arg_layout, 65536),
+    QA_UNIFIED_ARRAY(qa_unified_q2_map_event, arguments, argument_count, qa_builtin_message_arg_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_q2_map_event, levels, level_count, qa_unified_q2_campaign_level_layout, 65536),
     QA_UNIFIED_FIELD(qa_unified_q2_map_event, button_time_ns, QA_UNIFIED_FIELD_U64),
 };
@@ -1490,7 +1506,7 @@ static const qa_unified_field qa_unified_q2_protocol_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, index, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, instant, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, reliable, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_ARRAY(qa_unified_q2_protocol_event, arguments, argument_count, qa_unified_message_arg_layout, 65536),
+    QA_UNIFIED_ARRAY(qa_unified_q2_protocol_event, arguments, argument_count, qa_builtin_message_arg_layout, 65536),
     QA_UNIFIED_RECORD(qa_unified_q2_protocol_event, temporary, qa_unified_q2_temporary_layout),
     QA_UNIFIED_RECORD(qa_unified_q2_protocol_event, fog, qa_q2_fog_layout),
     QA_UNIFIED_FIELD(qa_unified_q2_protocol_event, transition_ms, QA_UNIFIED_FIELD_F32),
@@ -1585,7 +1601,7 @@ static const qa_unified_field qa_unified_visibility_event_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_visibility_event, visible, QA_UNIFIED_FIELD_BOOL),
 };
 static const qa_unified_record_layout qa_unified_visibility_event_layout = QA_UNIFIED_LAYOUT(qa_unified_visibility_event, qa_unified_visibility_event_fields);
-static const qa_unified_record_layout *const qa_unified_presentation_payload_variants[] = {&qa_unified_builtin_event_layout, &qa_unified_q2_player_event_layout, &qa_unified_q2_map_event_layout, &qa_unified_q2_protocol_event_layout, &qa_unified_q2_temporary_layout, &qa_unified_model_state_layout, &qa_unified_q3_event_layout, &qa_unified_q3_character_event_layout, &qa_unified_q3_ballistic_event_layout, &qa_unified_owner_event_layout, &qa_unified_visibility_event_layout};
+static const qa_unified_record_layout *const qa_unified_presentation_payload_variants[] = {&qa_builtin_event_layout, &qa_unified_q2_player_event_layout, &qa_unified_q2_map_event_layout, &qa_unified_q2_protocol_event_layout, &qa_unified_q2_temporary_layout, &qa_unified_model_state_layout, &qa_unified_q3_event_layout, &qa_unified_q3_character_event_layout, &qa_unified_q3_ballistic_event_layout, &qa_unified_owner_event_layout, &qa_unified_visibility_event_layout};
 static const qa_unified_field qa_unified_presentation_payload_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_presentation_payload, kind, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_VARIANT(qa_unified_presentation_payload, value, kind, qa_unified_presentation_payload_variants),
@@ -2044,7 +2060,7 @@ bool qa_unified_frame_check(const qa_unified_frame *frame, size_t *bytes, qa_err
     return q3_sources_check(frame->q3, registry, error) && components_check(frame->components, registry, error);
 }
 
-static bool message_arguments_check(const qa_unified_message_arg *rows, size_t count)
+static bool message_arguments_check(const qa_builtin_message_arg *rows, size_t count)
 {
     for (size_t i=0;i<count;++i)
         if (rows[i].kind!=QA_BUILTIN_MESSAGE_STRING && rows[i].kind!=QA_BUILTIN_MESSAGE_NUMBER) return false;
@@ -2068,7 +2084,7 @@ static bool presentation_check(const qa_unified_presentation_event *row, qa_erro
     bool okay=true;
     switch (payload->kind) {
     case QA_UNIFIED_PRESENTATION_BUILTIN: {
-        const qa_unified_builtin_event *event=&payload->value.builtin;
+        const qa_builtin_event *event=&payload->value.builtin;
         okay=event->kind>=QA_BUILTIN_SOUND && event->kind<=QA_BUILTIN_Q2_ENTITY_EVENT &&
             event->family>=QA_GAME_Q1 && event->family<=QA_GAME_Q3 &&
             message_arguments_check(event->arguments,event->argument_count);

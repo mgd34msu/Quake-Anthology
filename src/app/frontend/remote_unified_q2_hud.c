@@ -195,8 +195,9 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
             if (!r->value.objective.args) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining RR objective argument view");
         }
         for (size_t i=0; okay && i<map->argument_count; ++i) {
-            okay=map->arguments[i].kind==QA_BUILTIN_MESSAGE_STRING && map->arguments[i].text;
-            if (okay) r->value.objective.args[r->value.objective.count++]=map->arguments[i].text;
+            const char *text=qa_strings_cstr(o->replica->strings,map->arguments[i].value.text);
+            okay=map->arguments[i].kind==QA_BUILTIN_MESSAGE_STRING && text;
+            if (okay) r->value.objective.args[r->value.objective.count++]=(char *)text;
         }
         break;
     case RR_MISSION: r->value.mission.visible=map->visible; break;

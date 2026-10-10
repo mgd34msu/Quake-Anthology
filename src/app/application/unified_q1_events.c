@@ -97,14 +97,14 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
     }
     if (!reached) return true;
     qa_unified_presentation_payload presentation = {.kind = QA_UNIFIED_PRESENTATION_BUILTIN};
-    if (!application_unified_builtin_read(app, event, &presentation.value.builtin, error)) return false;
+    presentation.value.builtin = *event;
     qa_unified_simulation_payload simulation = {0};
     const qa_unified_simulation_payload *sim = NULL;
     char identity[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     bool okay = true;
     if (event->kind == QA_BUILTIN_SOUND) {
         bool found;
-        const char *path = presentation.value.builtin.resource;
+        const char *path = qa_strings_cstr(qa_session_strings(app->session), event->resource);
         okay = application_unified_event_resource_lookup(app, event->provider, path, identity, &found, error);
         if (okay && found) {
             bool ambient = (event->flags & 1u) != 0;
@@ -120,7 +120,7 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
         simulation.kind = QA_UNIFIED_SIMULATION_MESSAGE;
         simulation.value.message = (qa_unified_message_event){
             .kind = center ? QA_UNIFIED_MESSAGE_CENTER_PRINT : QA_UNIFIED_MESSAGE_PRINT,
-            .text = presentation.value.builtin.text,
+            .text = (char *)qa_strings_cstr(qa_session_strings(app->session), event->text),
             .level = event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL ? event->code : 2};
         sim = &simulation; linked = true; simulation_recipient = event->actor;
     }
@@ -132,6 +132,5 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
     }
     if (okay) okay = application_unified_event_emit(app, event->provider, &presentation, sim,
         recipient, simulation_recipient, event->time_ns, slot, has_slot, linked, error);
-    application_unified_builtin_read_dispose(&presentation.value.builtin);
     return okay;
 }

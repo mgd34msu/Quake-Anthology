@@ -204,7 +204,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
     const qa_unified_presentation_payload *pres = NULL; const qa_unified_simulation_payload *sim = NULL;
     uint32_t slot = player_slot(p, target), source = slot;
     bool has_source = slot != 0, link = false, ok = true;
-    qa_unified_q2_temp_field fields[7] = {0}; qa_unified_message_arg args[8] = {0};
+    qa_unified_q2_temp_field fields[7] = {0}; qa_builtin_message_arg args[8] = {0};
     char sound_id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], *name = NULL;
     switch (event->kind) {
     case QA_Q2_SVC_PRINT: case QA_Q2_SVC_CENTERPRINT: {
@@ -328,7 +328,11 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
     case QA_Q2_SVC_LOCALIZED_PRINT:
         r->level = event->data.localized.flags & 7u; r->text = (char *)event->data.localized.base;
         r->arguments = args; r->argument_count = event->data.localized.arg_count;
-        for (size_t i = 0; i < r->argument_count; ++i) args[i] = (qa_unified_message_arg){.kind = QA_BUILTIN_MESSAGE_STRING, .text = (char *)event->data.localized.args[i]};
+        for (size_t i = 0; ok && i < r->argument_count; ++i) {
+            args[i].kind = QA_BUILTIN_MESSAGE_STRING;
+            ok = qa_strings_intern_cstr(qa_session_strings(p->provider->application->session),
+                event->data.localized.args[i], &args[i].value.text, e);
+        }
         pres = &presentation; break;
     case QA_Q2_SVC_DISCONNECT:
         simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_DISCONNECT,

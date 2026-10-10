@@ -500,49 +500,8 @@ bool application_unified_world_text_emit(qa_application *app, qa_actor_owner own
     return true;
 }
 
-static char *event_alias(qa_application *app, qa_string_id id)
+static char *event_alias(const qa_application *app, qa_string_id id)
 { return id ? (char *)qa_strings_cstr(qa_session_strings(app->session), id) : NULL; }
-
-bool application_unified_builtin_read(qa_application *app, const qa_builtin_event *v,
-    qa_unified_builtin_event *out, qa_error *e)
-{
-    *out = (qa_unified_builtin_event){.kind = v->kind, .family = v->family,
-        .actor = v->actor, .other = v->other, .resource = event_alias(app, v->resource),
-        .text = event_alias(app, v->text), .item = event_alias(app, v->item),
-        .origin = v->origin, .end = v->end, .direction = v->direction,
-        .muzzle_angles = v->muzzle_angles, .muzzle_scale = v->muzzle_scale,
-        .has_muzzle_pose = v->has_muzzle_pose, .volume = v->volume,
-        .attenuation = v->attenuation, .value = v->value, .code = v->code,
-        .channel = v->channel, .count = v->count, .frame = v->frame, .flags = v->flags,
-        .ctf_red = v->ctf_status.red, .ctf_blue = v->ctf_status.blue,
-        .ctf_flags = v->ctf_status.flags, .ctf_rune_items = v->ctf_status.rune_items,
-        .ctf_capture_total = v->ctf_capture.total, .ctf_capture_blue = v->ctf_capture.blue,
-        .q1_power = v->q1_powerup.power, .q1_power_expires = v->q1_powerup.expires};
-    if (v->argument_count) {
-        out->arguments = application_event_stream_alloc(app, v->argument_count * sizeof(*out->arguments),
-            _Alignof(qa_unified_message_arg), e);
-        if (!out->arguments) return false;
-        out->argument_count = v->argument_count;
-        for (size_t i = 0; i < v->argument_count; ++i) {
-            const qa_builtin_message_arg *arg = v->arguments + i;
-            out->arguments[i] = (qa_unified_message_arg){.kind = arg->kind};
-            if (arg->kind == QA_BUILTIN_MESSAGE_STRING) out->arguments[i].text = event_alias(app, arg->value.text);
-            else out->arguments[i].number = arg->value.number;
-        }
-    }
-    if (v->prompt_choice_count) {
-        out->prompt_choices = application_event_stream_alloc(app, v->prompt_choice_count * sizeof(*out->prompt_choices),
-            _Alignof(qa_unified_prompt_choice), e);
-        if (!out->prompt_choices) return false;
-        out->prompt_choice_count = v->prompt_choice_count;
-        for (size_t i = 0; i < v->prompt_choice_count; ++i)
-            out->prompt_choices[i] = (qa_unified_prompt_choice){
-                .label = event_alias(app, v->prompt_choices[i].label), .impulse = v->prompt_choices[i].impulse};
-    }
-    return true;
-}
-void application_unified_builtin_read_dispose(qa_unified_builtin_event *v)
-{ *v = (qa_unified_builtin_event){0}; }
 
 void application_unified_events_consume(qa_application *app, uint64_t next)
 {
@@ -603,24 +562,25 @@ bool application_unified_persistent_key(qa_application *app, const application_u
     application_persistent_key key = {0}; const char *path = NULL;
     const qa_unified_presentation_payload *p = row->presentation;
     if (p->kind == QA_UNIFIED_PRESENTATION_BUILTIN) {
-        const qa_unified_builtin_event *v = &p->value.builtin;
+        const qa_builtin_event *v = &p->value.builtin;
+        const char *resource = event_alias(app, v->resource);
         if (v->family == QA_GAME_Q1 && ((v->kind == QA_BUILTIN_SOUND && (v->flags & 1u)) ||
             (v->kind == QA_BUILTIN_EFFECT && !v->actor.registry && !(v->flags & UINT32_C(0x80000000)) &&
-                v->resource && strcmp(v->resource, "colored-explosion") && strcmp(v->resource, "developer-message") &&
-                strcmp(v->resource, "music") && strcmp(v->resource, "cutscene") && strcmp(v->resource, "sell-screen")))) {
+                resource && strcmp(resource, "colored-explosion") && strcmp(resource, "developer-message") &&
+                strcmp(resource, "music") && strcmp(resource, "cutscene") && strcmp(resource, "sell-screen")))) {
             key.domain = PERSIST_UNIQUE; key.selector = row->presentation_sequence;
         } else if (v->family == QA_GAME_Q2 && (v->kind == QA_BUILTIN_STOP_SOUND ||
             (v->kind == QA_BUILTIN_SOUND && (v->flags & 1u)))) {
-            key.domain = PERSIST_SOUND; path = v->resource;
+            key.domain = PERSIST_SOUND; path = resource;
             key.actor_registry = v->actor.registry; key.actor_generation = v->actor.generation;
             key.actor_slot = v->actor.slot; key.channel = v->channel;
             *remove = v->kind == QA_BUILTIN_STOP_SOUND;
         } else if (v->kind == QA_BUILTIN_LIGHT) {
             key.domain = PERSIST_STYLE; key.selector = (uint32_t)v->code;
         } else if (v->family == QA_GAME_Q1 && v->kind == QA_BUILTIN_EFFECT) {
-            if (v->resource && !strcmp(v->resource, "music")) key.domain = PERSIST_MUSIC;
+            if (resource && !strcmp(resource, "music")) key.domain = PERSIST_MUSIC;
             else if ((v->flags & UINT32_C(0x80000000)) ||
-                (v->resource && (!strcmp(v->resource, "cutscene") || !strcmp(v->resource, "sell-screen")))) key.domain = PERSIST_FINALE;
+                (resource && (!strcmp(resource, "cutscene") || !strcmp(resource, "sell-screen")))) key.domain = PERSIST_FINALE;
         }
     } else if (p->kind == QA_UNIFIED_PRESENTATION_Q2_MAP) {
         const qa_unified_q2_map_event *v = &p->value.q2_map;
@@ -970,13 +930,13 @@ static bool simulation_for(const application_unified_event_record *row, qa_net_c
         (qa_actor_id_equal(row->simulation_recipient, player) && row->client.owner == recipient.owner &&
             row->client.slot == recipient.slot && row->client.generation == recipient.generation));
 }
-static bool presentation_for(const application_unified_event_record *row, qa_net_client_id recipient, qa_actor_id player)
+static bool presentation_for(qa_application *app, const application_unified_event_record *row, qa_net_client_id recipient, qa_actor_id player)
 {
     const qa_unified_presentation_payload *p = row->presentation;
     if (p->kind == QA_UNIFIED_PRESENTATION_BUILTIN) {
-        const qa_unified_builtin_event *v = &p->value.builtin;
+        const qa_builtin_event *v = &p->value.builtin;
         if (v->family == QA_GAME_Q1) {
-            if (v->kind == QA_BUILTIN_SOURCE_LOG || (v->kind == QA_BUILTIN_EFFECT && v->resource && !strcmp(v->resource, "developer-message"))) return false;
+            if (v->kind == QA_BUILTIN_SOURCE_LOG || (v->kind == QA_BUILTIN_EFFECT && v->resource && !strcmp(event_alias(app, v->resource), "developer-message"))) return false;
             if (v->kind == QA_BUILTIN_MESSAGE || v->kind == QA_BUILTIN_CENTERPRINT || v->kind == QA_BUILTIN_ANIMATION ||
                 v->kind == QA_BUILTIN_ACHIEVEMENT || v->kind == QA_BUILTIN_Q1_POWERUP || v->kind == QA_BUILTIN_CTF_STATUS ||
                 v->kind == QA_BUILTIN_SOURCE_PROMPT || v->kind == QA_BUILTIN_CLEAR_PROMPT) return own(v->actor, player);
@@ -1049,7 +1009,7 @@ static bool events_project(qa_application *app, const application_unified_source
     size_t presentation_count = 0, simulation_count = 0, dependency_count = 0;
     uint64_t previous_order = 0;
     while ((r = event_iterator_next(&iterator))) {
-        bool presentation = r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor);
+        bool presentation = r->presentation && own(r->recipient, player->actor) && presentation_for(app, r, recipient, player->actor);
         bool simulation = simulation_for(r, recipient, player->actor);
         presentation_count += presentation; simulation_count += simulation;
         if ((presentation || simulation) && (initial || r->order != previous_order)) {
@@ -1074,7 +1034,7 @@ static bool events_project(qa_application *app, const application_unified_source
     if (!ok) application_fail(e, QA_ERROR_MEMORY, "Projecting actual typed Source event arrays");
     iterator = begin; previous_order = 0;
     while (ok && (r = event_iterator_next(&iterator))) {
-        bool presentation = r->presentation && own(r->recipient, player->actor) && presentation_for(r, recipient, player->actor);
+        bool presentation = r->presentation && own(r->recipient, player->actor) && presentation_for(app, r, recipient, player->actor);
         bool simulation = simulation_for(r, recipient, player->actor);
         if ((presentation || simulation) && (initial || r->order != previous_order)) {
             qa_event_lease *dependency;

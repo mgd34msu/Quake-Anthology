@@ -11,36 +11,8 @@
 #include "qa/network_q3.h"
 #include "qa/qvm.h"
 
-/* Source identifiers are resolved at emission. Session string handles never
- * become wire identities. Payload pointers are owned by the event record or
- * its retained source page leases. */
-typedef struct qa_unified_message_arg {
-    qa_builtin_message_arg_kind kind;
-    char *text;
-    double number;
-} qa_unified_message_arg;
-typedef struct qa_unified_prompt_choice { char *label; int32_t impulse; } qa_unified_prompt_choice;
-typedef struct qa_unified_builtin_event {
-    qa_builtin_event_kind kind;
-    qa_game_family family;
-    qa_actor_id actor, other;
-    char *resource, *text, *item;
-    qa_vec3 origin, end, direction, muzzle_angles;
-    float volume, attenuation, muzzle_scale;
-    double value;
-    int32_t code, channel, count, frame;
-    uint32_t flags;
-    bool has_muzzle_pose;
-    qa_unified_message_arg *arguments;
-    size_t argument_count;
-    double ctf_red, ctf_blue, ctf_flags, ctf_rune_items, ctf_capture_total;
-    bool ctf_capture_blue;
-    uint32_t q1_power;
-    double q1_power_expires;
-    qa_unified_prompt_choice *prompt_choices;
-    size_t prompt_choice_count;
-} qa_unified_builtin_event;
-
+/* Names stay interned until the wire codec resolves them. Payload pointers are
+ * owned by the event record or its retained source page leases. */
 typedef struct qa_unified_q2_player_event {
     qa_q2_player_event_kind kind;
     qa_actor_id actor, target;
@@ -74,7 +46,7 @@ typedef struct qa_unified_q2_map_event {
     int32_t count, style, slot;
     uint32_t flags, resolution;
     bool visible;
-    qa_unified_message_arg *arguments;
+    const qa_builtin_message_arg *arguments;
     size_t argument_count;
     qa_unified_q2_campaign_level *levels;
     size_t level_count;
@@ -118,7 +90,7 @@ typedef struct qa_unified_q2_protocol_event {
     int32_t level;
     uint32_t index;
     bool instant, reliable;
-    qa_unified_message_arg *arguments;
+    const qa_builtin_message_arg *arguments;
     size_t argument_count;
     qa_unified_q2_temporary temporary;
     qa_q2_fog fog;
@@ -199,7 +171,7 @@ typedef enum qa_unified_presentation_kind {
 typedef struct qa_unified_presentation_payload {
     qa_unified_presentation_kind kind;
     union {
-        qa_unified_builtin_event builtin;
+        qa_builtin_event builtin;
         qa_unified_q2_player_event q2_player;
         qa_unified_q2_map_event q2_map;
         qa_unified_q2_protocol_event q2_protocol;
