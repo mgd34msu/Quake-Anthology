@@ -134,11 +134,11 @@ bool q3nc_current(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
         return q3nc_fail(e, QA_ERROR_ARGUMENT, "Native CGAME command owner left its physical source, recipient or service generation");
     return true;
 }
-bool q3nc_cvar(q3n_server_commands *o, const char *symbol,
+bool q3nc_cvar(q3n_server_commands *o, qa_native_q3_cvar_id id,
     qa_native_q3_client_cvar *out, qa_error *e)
-{ return o->options.compiled_source?o->options.compiled_cvar_read(o->options.context,symbol,out,e):
-    o->options.remote_client ? qa_native_q3_remote_client_cvar_read(o->options.remote_client,qa_native_q3_cvar_id_for_symbol(symbol), out, e) :
-    qa_native_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(symbol), out, e); }
+{ return o->options.compiled_source?o->options.compiled_cvar_read(o->options.context,id,out,e):
+    o->options.remote_client ? qa_native_q3_remote_client_cvar_read(o->options.remote_client,id, out, e) :
+    qa_native_q3_client_cvar_read(o->options.client,id, out, e); }
 static bool recipient_read(q3n_server_commands *o, qa_application_q3_client_context *out, qa_error *e)
 {
     if (!o->options.remote_client) return qa_native_q3_client_context_read(o->options.client, out, e);
@@ -146,10 +146,10 @@ static bool recipient_read(q3n_server_commands *o, qa_application_q3_client_cont
     if (!qa_native_q3_remote_client_basis_read(o->options.remote_client, &basis, e)) return false;
     *out = basis.client; return true;
 }
-static bool integer_cvar(q3n_server_commands *o, const char *symbol, int32_t *out, qa_error *e)
+static bool integer_cvar(q3n_server_commands *o, qa_native_q3_cvar_id id, int32_t *out, qa_error *e)
 {
     qa_native_q3_client_cvar value;
-    if (!q3nc_cvar(o, symbol, &value, e)) return false;
+    if (!q3nc_cvar(o, id, &value, e)) return false;
     *out = value.integer; return true;
 }
 static bool set(q3n_server_commands *o, const q3n_frame *f, const char *name, const char *value, qa_error *e)
@@ -534,7 +534,7 @@ static bool initialize(q3n_server_commands *o, const q3n_frame *f,
         .compiled=f->compiled?&f->compiled->source:NULL,
         .context = &callbacks, .loading = media_loading, .game_type = o->state.game_type, .inline_models = inline_models};
     int32_t build;
-    if (ok) ok = integer_cvar(o, "cg_buildScript", &build, e);
+    if (ok) ok = integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_buildScript, &build, e);
     if (ok) { load.build_script = build != 0; ok = loading(o, f, "sounds", -1, e); }
     if (ok && mission) ok = q3n_voice_load(o, f, e);
     if (ok) ok = q3n_media_load_sounds(o->options.media, &load, e) && q3nc_current(o, f, e) &&
@@ -577,7 +577,7 @@ bool q3n_server_commands_initialize_video(q3n_server_commands *o,const q3n_frame
 bool q3nc_team_chat(q3n_server_commands *o, const q3n_frame *f, const char *input, qa_error *e)
 {
     int32_t height, duration;
-    if (!integer_cvar(o, "cg_teamChatHeight", &height, e) || !integer_cvar(o, "cg_teamChatTime", &duration, e)) return false;
+    if (!integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_teamChatHeight, &height, e) || !integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_teamChatTime, &duration, e)) return false;
     if (height > 8) height = 8;
     q3n_command_state *s = &o->state;
     if (height <= 0 || duration <= 0) { s->team_chat_position = s->team_chat_last_position = 0; return true; }
@@ -721,7 +721,7 @@ static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t 
 static bool restart(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
     int32_t showmiss;
-    if (!integer_cvar(o, "cg_showmiss", &showmiss, e)) return false;
+    if (!integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_showmiss, &showmiss, e)) return false;
     if (showmiss && !q3nc_message(o, f, Q3N_COMMAND_PRINT, "CG_MapRestart\n", -1, NULL, e)) return false;
     q3n_events_round(o->options.events);
     if (!o->options.clear_particles(o->options.context, f, e) || !q3nc_current(o, f, e)) return false;
@@ -730,10 +730,10 @@ static bool restart(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
     if (o->state.warmup == 0 && (!sound_field(o, f, Q3N_S_FIGHT, 7, e) || !center(o, f, "FIGHT!", 120, 64, e))) return false;
     if (o->options.product == QA_Q3_TEAM_ARENA) {
         int32_t active, record; qa_native_q3_client_cvar demo;
-        if (!integer_cvar(o, "cg_singlePlayerActive", &active, e)) return false;
+        if (!integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_singlePlayerActive, &active, e)) return false;
         if (active) {
-            if (!set_number(o, f, "ui_matchStartTime", f->time, e) || !integer_cvar(o, "cg_recordSPDemo", &record, e) ||
-                !q3nc_cvar(o, "cg_recordSPDemoName", &demo, e)) return false;
+            if (!set_number(o, f, "ui_matchStartTime", f->time, e) || !integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_recordSPDemo, &record, e) ||
+                !q3nc_cvar(o,QA_NATIVE_Q3_CVAR_cg_recordSPDemoName, &demo, e)) return false;
             if (record && demo.value[0]) {
                 char text[320]; snprintf(text, sizeof(text), "set g_synchronousclients 1 ; record %s \n", demo.value);
                 if (!(o->options.compiled_source?o->options.compiled_console(o->options.context,f,text,e):
@@ -777,7 +777,7 @@ static bool dispatch(q3n_server_commands *o, const q3n_frame *f, const qa_comman
     }
     if (!strcmp(name, "chat") || !strcmp(name, "tchat")) {
         bool team = !strcmp(name, "tchat"); int32_t team_only;
-        if (!integer_cvar(o, "cg_teamChatsOnly", &team_only, e)) return false;
+        if (!integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_teamChatsOnly, &team_only, e)) return false;
         if (!team && team_only) return true;
         if (!sound_field(o, f, Q3N_S_TALK, 6, e)) return false;
         char message[151], copied[150]; q3nc_copy(copied, sizeof(copied), text); size_t size = 0;
@@ -790,7 +790,7 @@ static bool dispatch(q3n_server_commands *o, const q3n_frame *f, const qa_comman
     if (!strcmp(name, "vchat") || !strcmp(name, "vtchat") || !strcmp(name, "vtell")) {
         if (o->options.product != QA_Q3_TEAM_ARENA) return true;
         int32_t no_taunt; const char *id = arg(args, 4);
-        if (!integer_cvar(o, "cg_noTaunt", &no_taunt, e)) return false;
+        if (!integer_cvar(o,QA_NATIVE_Q3_CVAR_cg_noTaunt, &no_taunt, e)) return false;
         if (no_taunt && (!strcmp(id, "kill_insult") || !strcmp(id, "taunt") || !strcmp(id, "death_insult") ||
             !strcmp(id, "kill_gauntlet") || !strcmp(id, "praise"))) return true;
         return q3n_voice_local(o, f, !strcmp(name, "vchat") ? 0 : !strcmp(name, "vtchat") ? 1 : 2,

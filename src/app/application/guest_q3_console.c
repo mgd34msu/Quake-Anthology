@@ -12,6 +12,7 @@
 struct application_guest_q3_console {
     struct application_q3_guest *engine;
     qa_cvars *cvars;
+    qa_cvar_handle controls[APPLICATION_Q3_CVAR_CONTROL_COUNT];
     qa_console *console;
     size_t calls;
 };
@@ -28,6 +29,13 @@ qa_cvars *application_guest_q3_console_registry(const application_provider *prov
 {
     struct application_q3_guest *engine = q3g_engine((application_provider *)provider);
     return engine && engine->console ? engine->console->cvars : NULL;
+}
+
+qa_cvar_handle application_guest_q3_console_control(const application_provider *provider,
+    application_q3_cvar_control control)
+{
+    struct application_q3_guest *engine = q3g_engine((application_provider *)provider);
+    return engine && engine->console ? engine->console->controls[control] : (qa_cvar_handle){0};
 }
 
 qa_console *application_guest_q3_console_owner(const application_provider *provider)
@@ -247,6 +255,7 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
         qa_console_unbind_source(owner->console, qa_cvars_view_identity(owner->cvars), error); qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars); free(owner);
         return false;
     }
+    application_q3_cvar_controls_bind(owner->cvars, owner->controls);
     engine->console = owner;
     return true;
 }

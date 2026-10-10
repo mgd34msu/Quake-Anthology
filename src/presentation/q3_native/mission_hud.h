@@ -14,7 +14,7 @@ typedef struct q3n_mission_hud_options {
     qa_cvars *compiled_cvars;
     qa_command_context compiled_context;
     bool (*compiled_current)(void *, const q3n_frame *, qa_cvars *, const qa_command_context *);
-    bool (*compiled_cvar_read)(void *, const char *, qa_native_q3_client_cvar *, qa_error *);
+    bool (*compiled_cvar_read)(void *, qa_native_q3_cvar_id, qa_native_q3_client_cvar *, qa_error *);
     bool (*compiled_console)(void *, const q3n_frame *, const char *, qa_error *);
     qa_application_q3_client_context recipient;
     qa_vfs *content;

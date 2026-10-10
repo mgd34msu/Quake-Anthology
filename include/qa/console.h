@@ -211,6 +211,8 @@ const qa_cvar_view *qa_cvars_edit_read(const struct qa_cvars_edit *, qa_cvar_han
 /* Same-process borrowed row receipt. Zero excludes an entered mutation,
  * observer drain or prepared publication; every live mutation invalidates it. */
 uint64_t qa_cvars_revision(const qa_cvars *registry);
+/* Published name/declaration topology, unchanged by scalar edits. */
+uint64_t qa_cvars_declaration_revision(const qa_cvars *registry);
 size_t qa_cvars_count(const qa_cvars *registry);
 size_t qa_cvars_handle_count(const qa_cvars *registry);
 bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default_value,

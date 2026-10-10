@@ -59,10 +59,10 @@ static bool cut(frontend_unified_q3_runtime_services *o,const q3n_frame *f,qa_er
         f->application==o->options.frontend->application && q3n_frame_current(f) &&
         frontend_unified_q3_runtime_services_current(o) ? true:fail(e,"Compiled CG service lost its actual entered CLIENT");
 }
-static bool cvar(void *context,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
+static bool cvar(void *context,qa_native_q3_cvar_id id,qa_native_q3_client_cvar *out,qa_error *e)
 { frontend_unified_q3_runtime_services *o=context;
     return frontend_unified_q3_runtime_services_current(o) &&
-        frontend_unified_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(name),out,e); }
+        frontend_unified_q3_client_cvar_read(o->options.client,id,out,e); }
 static bool compiled_current(void *context,const q3n_frame *f,qa_cvars *registry,const qa_command_context *origin)
 {
     frontend_unified_q3_runtime_services *o=context;
@@ -114,7 +114,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *refdef,qa_q3_scene_op
     qa_native_q3_client_cvar shadows;
     if(!frontend_unified_q3_runtime_services_current(o) ||
         (actual->prepare_view && !actual->prepare_view(actual->context,refdef,out,e)) ||
-        !frontend_q3_scene_policy_read(o->options.frontend,out,e) || !cvar(o,"cg_shadows",&shadows,e))return false;
+        !frontend_q3_scene_policy_read(o->options.frontend,out,e) || !cvar(o,QA_NATIVE_Q3_CVAR_cg_shadows,&shadows,e))return false;
     out->shadow_mode=(uint32_t)shadows.integer;
     return frontend_unified_q3_runtime_services_current(o);
 }

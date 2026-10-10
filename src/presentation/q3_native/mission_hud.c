@@ -58,12 +58,12 @@ bool q3nm_current(q3n_mission_hud *o, const q3n_frame *f, qa_error *e)
         return q3ne_fail(e, QA_ERROR_ARGUMENT, "Mission HUD left its private CGAME recipient or native source");
     return true;
 }
-bool q3nm_cvar(q3n_mission_hud *o,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
+bool q3nm_cvar(q3n_mission_hud *o,qa_native_q3_cvar_id id,qa_native_q3_client_cvar *out,qa_error *e)
 {
     if(o->options.compiled_source)return q3nm_current(o,o->frame,e)&&
-        o->options.compiled_cvar_read(o->options.context,name,out,e)&&q3nm_current(o,o->frame,e);
-    return o->options.remote_client?qa_native_q3_remote_client_cvar_read(o->options.remote_client,qa_native_q3_cvar_id_for_symbol(name),out,e):
-        qa_native_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(name),out,e);
+        o->options.compiled_cvar_read(o->options.context,id,out,e)&&q3nm_current(o,o->frame,e);
+    return o->options.remote_client?qa_native_q3_remote_client_cvar_read(o->options.remote_client,id,out,e):
+        qa_native_q3_client_cvar_read(o->options.client,id,out,e);
 }
 bool q3nm_integer_set(q3n_mission_hud *o,const char *name,int32_t value,qa_error *e)
 {
@@ -90,10 +90,10 @@ const qa_q3_player *q3nm_require_player(q3n_mission_hud *o)
         "Mission HUD player operation requires its actual reached snapshot"));
     return p;
 }
-int32_t q3nm_integer(q3n_mission_hud *o, const char *symbol)
-{ qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,symbol,&v,o->menus->error)); return v.integer; }
-float q3nm_number(q3n_mission_hud *o, const char *symbol)
-{ qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,symbol,&v,o->menus->error)); return v.number; }
+int32_t q3nm_integer(q3n_mission_hud *o, qa_native_q3_cvar_id id)
+{ qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,id,&v,o->menus->error)); return v.integer; }
+float q3nm_number(q3n_mission_hud *o, qa_native_q3_cvar_id id)
+{ qa_native_q3_client_cvar v = {0}; q3nm_result(q3nm_cvar(o,id,&v,o->menus->error)); return v.number; }
 bool q3nm_set(q3n_mission_hud *o, const char *name, const char *value)
 { return !o->menus->failed && q3nm_current(o,o->frame,o->menus->error) &&
     qa_cvars_set(q3nm_registry(o), name, value, true, o->menus->error) && q3nm_current(o, o->frame, o->menus->error); }
@@ -102,9 +102,9 @@ bool q3nm_begin(q3n_mission_hud *o, const q3n_frame *f, qa_error *e, q3menu_cont
     if (!o || o->busy || !o->hud || !q3nm_current(o, f, e)) return false;
     o->busy = true; o->frame = f; o->commands = f->server_commands ? q3n_server_commands_state(f->server_commands) : NULL;
     o->menus->error = e; o->menus->failed = false; *previous = q3menu_enter(o->menus);
-    o->settings.draw_status = q3nm_integer(o, "cg_drawStatus") != 0;
-    o->settings.draw_icons = q3nm_integer(o, "cg_drawIcons") != 0;
-    o->settings.draw_3d_icons = q3nm_integer(o, "cg_draw3dIcons") != 0;
+    o->settings.draw_status = q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_drawStatus) != 0;
+    o->settings.draw_icons = q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_drawIcons) != 0;
+    o->settings.draw_3d_icons = q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_draw3dIcons) != 0;
     o->draw = (q3n_hud_draw){.owner=o->hud, .frame=f, .settings=&o->settings,
         .commands=f->server_commands, .player=f->player_state, .viewport=f->presentation->options.viewport, .error=e};
     q3nh_anchor(&o->draw,320,240);
@@ -197,9 +197,6 @@ static void font(const char *path,int point_size,fontInfo_t *out)
         unsigned slot=out==&o->display.Assets.smallFont?0:out==&o->display.Assets.bigFont?2:1; o->font_holders[slot]=registered; }
     q3nm_result(ok);
 }
-static void get_cvar(const char *name,char *out,int capacity)
-{ q3n_mission_hud *o=q3nm_active(); const qa_cvar_view *v=qa_cvars_find(q3nm_registry(o),name); q3menu_strncpyz(out,v?v->value:"",capacity); }
-static float cvar(const char *name) { char text[128]; double n=0; get_cvar(name,text,sizeof(text)); q3nm_result(qa_parse_atof(text,&n,q3menu_active()->error)); return (float)n; }
 static void set_cvar(const char *name,const char *value) { q3nm_result(q3nm_set(q3nm_active(),name,value)); }
 static void script(char **text) { (void)text; }
 static void team_color(float (*out)[4]) { const qa_q3_player *p=q3nm_require_player(q3nm_active()); if(!p)return;
@@ -303,12 +300,13 @@ static bool allocate(const q3n_mission_hud_options *options,const qa_native_q3_c
         .drawText=q3nm_text,.textWidth=q3nm_width,.textHeight=q3nm_height,.registerModel=model,.modelBounds=model_bounds,
         .fillRect=fill,.drawRect=rectangle,.drawSides=sides,.drawTopBottom=top_bottom,.clearScene=clear_scene,.addRefEntityToScene=entity,
         .renderScene=render,.registerFont=font,.ownerDrawItem=q3nm_owner,.getValue=q3nm_value,.ownerDrawVisible=q3nm_visible,
-        .runScript=script,.getTeamColor=team_color,.getCVarString=get_cvar,.getCVarValue=cvar,.setCVar=set_cvar,
+        .runScript=script,.getTeamColor=team_color,.setCVar=set_cvar,
         .drawTextWithCursor=cursor_text,.startLocalSound=local_sound,.ownerDrawHandleKey=owner_key,.feederCount=feeder_count,
         .feederItemText=feeder_text,.feederItemImage=feeder_image,.feederSelection=feeder_select,.Error=q3menu_error,.Print=print,
         .ownerDrawWidth=q3nm_owner_width,.registerSound=sound,.startBackgroundTrack=music,.stopBackgroundTrack=music_stop,
         .playCinematic=movie,.stopCinematic=movie_stop,.drawCinematic=movie_draw,.runCinematicFrame=movie_run};
-    o->menus=q3menu_create(&o->display,o,e); if(!o->menus) { free(o); return false; }
+    o->hud_files=qa_cvars_resolve(q3nm_registry(o),"cg_hudFiles");
+    o->menus=q3menu_create(&o->display,o,q3nm_registry(o),e); if(!o->menus) { free(o); return false; }
     o->menus->scripts=(qa_script_services){.context=o,.read=source_read,.release=source_release,.diagnostic=source_diagnostic};
     if(!qa_script_defines_create(&o->menus->global_defines,e)) { q3menu_destroy(o->menus); free(o); return false; }
     o->menus->script_options=(qa_script_options){.lexer_flags=QA_SCRIPT_NO_STRING_ESCAPES,.builtins=true,.globals=o->menus->global_defines};

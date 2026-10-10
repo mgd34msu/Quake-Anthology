@@ -54,6 +54,7 @@ struct application_native_q3_console {
     qa_console *console;
     qa_cvars *cvars;
     qa_cvar_handle no_areas;
+    qa_cvar_handle controls[APPLICATION_Q3_CVAR_CONTROL_COUNT];
     qa_cvar_handle rankings[APPLICATION_Q3_RANKINGS_CONTROL_COUNT];
     size_t calls;
     bool settings_bound;
@@ -63,6 +64,7 @@ struct application_native_q3_console {
 
 static void bind_controls(struct application_native_q3_console *owner)
 {
+    application_q3_cvar_controls_bind(owner->cvars, owner->controls);
     owner->no_areas = qa_cvars_resolve(owner->cvars, "cm_noAreas");
     owner->rankings[APPLICATION_Q3_RANKINGS_ENABLE] = qa_cvars_resolve(owner->cvars, "sv_enableRankings");
     owner->rankings[APPLICATION_Q3_RANKINGS_ACTIVE] = qa_cvars_resolve(owner->cvars, "sv_rankingsActive");
@@ -98,6 +100,13 @@ qa_cvar_handle application_native_q3_console_rankings_handle(const application_p
 {
     return provider && provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_console
         ? provider->native_q3_console->rankings[control] : (qa_cvar_handle){0};
+}
+
+qa_cvar_handle application_native_q3_console_control(const application_provider *provider,
+    application_q3_cvar_control control)
+{
+    return provider && provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_console
+        ? provider->native_q3_console->controls[control] : (qa_cvar_handle){0};
 }
 
 bool application_native_q3_console_capture(application_provider *provider,

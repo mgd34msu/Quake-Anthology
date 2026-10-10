@@ -95,6 +95,7 @@ typedef struct cvar_values {
     cvar_alias *aliases, *last_alias;
     size_t alias_count;
     size_t count, declared_count, next_handle;
+    uint64_t declaration_revision;
     /* The canonical owner alone owns name_buckets. Views address their
      * retained Source declarations by the resolved canonical/alias slot. */
     cvar **rows;

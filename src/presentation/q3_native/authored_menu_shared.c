@@ -1055,7 +1055,7 @@ void Script_ConditionalOpen(itemDef_t *item, char **args) {
 	float           val;
 
 	if ( String_Parse(args, &cvar) && String_Parse(args, &name1) && String_Parse(args, &name2) ) {
-		val = DC->getCVarValue( cvar );
+		val = q3menu_named_cvar_number(cvar);
 		if ( val == 0.f ) {
 			Menus_OpenByName(name2);
 		} else {
@@ -1280,7 +1280,7 @@ qboolean Item_EnableShowViaCvar(itemDef_t *item, int flag) {
   memset(script, 0, sizeof(script));
   if (item && item->enableCvar && *item->enableCvar && item->cvarTest && *item->cvarTest) {
 		char buff[1024];
-	  DC->getCVarString(item->cvarTest, buff, sizeof(buff));
+	  q3menu_cvar_text(item->cvar_test_handle,item->cvarTest, buff, sizeof(buff));
 
     Q_strcat(script, 1024, item->enableCvar);
     p = script;
@@ -1471,7 +1471,7 @@ float Item_Slider_ThumbPosition(itemDef_t *item) {
 		return x;
 	}
 
-	value = DC->getCVarValue(item->cvar);
+	value = q3menu_cvar_number(item->cvar_handle,item->cvar);
 
 	if (value < editDef->minVal) {
 		value = editDef->minVal;
@@ -1903,7 +1903,7 @@ qboolean Item_YesNo_HandleKey(itemDef_t *item, int key) {
 
   if (Rect_ContainsPoint(&item->window.rect, (float)DC->cursorx, (float)DC->cursory) && item->window.flags & WINDOW_HASFOCUS && item->cvar) {
 		if (key == K_MOUSE1 || key == K_ENTER || key == K_MOUSE2 || key == K_MOUSE3) {
-	    DC->setCVar(item->cvar, va("%i", DC->getCVarValue(item->cvar) == 0.0f));
+	    DC->setCVar(item->cvar, va("%i", q3menu_cvar_number(item->cvar_handle,item->cvar) == 0.0f));
 		  return qtrue;
 		}
   }
@@ -1927,9 +1927,9 @@ int Item_Multi_FindCvarByValue(itemDef_t *item) {
 	multiDef_t *multiPtr = (multiDef_t*)item->typeData;
 	if (multiPtr) {
 		if (multiPtr->strDef) {
-	    DC->getCVarString(item->cvar, buff, sizeof(buff));
+	    q3menu_cvar_text(item->cvar_handle,item->cvar, buff, sizeof(buff));
 		} else {
-			value = DC->getCVarValue(item->cvar);
+			value = q3menu_cvar_number(item->cvar_handle,item->cvar);
 		}
 		for (i = 0; i < multiPtr->count; i++) {
 			if (multiPtr->strDef) {
@@ -1953,9 +1953,9 @@ const char *Item_Multi_Setting(itemDef_t *item) {
 	multiDef_t *multiPtr = (multiDef_t*)item->typeData;
 	if (multiPtr) {
 		if (multiPtr->strDef) {
-	    DC->getCVarString(item->cvar, buff, sizeof(buff));
+	    q3menu_cvar_text(item->cvar_handle,item->cvar, buff, sizeof(buff));
 		} else {
-			value = DC->getCVarValue(item->cvar);
+			value = q3menu_cvar_number(item->cvar_handle,item->cvar);
 		}
 		for (i = 0; i < multiPtr->count; i++) {
 			if (multiPtr->strDef) {
@@ -2010,7 +2010,7 @@ qboolean Item_TextField_HandleKey(itemDef_t *item, int key) {
 	if (item->cvar) {
 
 		memset(buff, 0, sizeof(buff));
-		DC->getCVarString(item->cvar, buff, sizeof(buff));
+		q3menu_cvar_text(item->cvar_handle,item->cvar, buff, sizeof(buff));
 		len = (int)strlen(buff);
 		if (editPtr->maxChars && len > editPtr->maxChars) {
 			len = editPtr->maxChars;
@@ -2656,13 +2656,13 @@ void Menu_HandleKey(menuDef_t *menu, int key, qboolean down) {
 	switch ( key ) {
 
 		case K_F11:
-			if (DC->getCVarValue("developer") != 0.0f) {
+			if (q3menu_cvar_number(q3menu_active()->developer,"developer") != 0.0f) {
 				debugMode ^= 1;
 			}
 			break;
 
 		case K_F12:
-			if (DC->getCVarValue("developer") != 0.0f) {
+			if (q3menu_cvar_number(q3menu_active()->developer,"developer") != 0.0f) {
 				if (!DC->executeText) { q3menu_error(0,"executeText is unavailable in the CGAME menu context"); return; }
 				DC->executeText(EXEC_APPEND, "screenshot\n");
 			}
@@ -2779,7 +2779,7 @@ void Item_SetTextExtents(itemDef_t *item, int *width, int *height, const char *t
 			originalWidth = (int)((float)originalWidth + (float)DC->ownerDrawWidth(item->window.ownerDraw, item->textscale));
 		} else if (item->type == ITEM_TYPE_EDITFIELD && item->textalignment == ITEM_ALIGN_CENTER && item->cvar) {
 			char buff[256];
-			DC->getCVarString(item->cvar, buff, 256);
+			q3menu_cvar_text(item->cvar_handle,item->cvar, buff, 256);
 			originalWidth += DC->textWidth(buff, item->textscale, 0);
 		}
 
@@ -2845,7 +2845,7 @@ void Item_Text_AutoWrapped_Paint(itemDef_t *item) {
 			return;
 		}
 		else {
-			DC->getCVarString(item->cvar, text, sizeof(text));
+			q3menu_cvar_text(item->cvar_handle,item->cvar, text, sizeof(text));
 			textPtr = text;
 		}
 	}
@@ -2918,7 +2918,7 @@ void Item_Text_Wrapped_Paint(itemDef_t *item) {
 			return;
 		}
 		else {
-			DC->getCVarString(item->cvar, text, sizeof(text));
+			q3menu_cvar_text(item->cvar_handle,item->cvar, text, sizeof(text));
 			textPtr = text;
 		}
 	}
@@ -2967,7 +2967,7 @@ void Item_Text_Paint(itemDef_t *item) {
 			return;
 		}
 		else {
-			DC->getCVarString(item->cvar, text, sizeof(text));
+			q3menu_cvar_text(item->cvar_handle,item->cvar, text, sizeof(text));
 			textPtr = text;
 		}
 	}
@@ -3034,7 +3034,7 @@ void Item_TextField_Paint(itemDef_t *item) {
 	buff[0] = '\0';
 
 	if (item->cvar) {
-		DC->getCVarString(item->cvar, buff, sizeof(buff));
+		q3menu_cvar_text(item->cvar_handle,item->cvar, buff, sizeof(buff));
 	} 
 
 	parent = (menuDef_t*)item->parent;
@@ -3065,7 +3065,7 @@ void Item_YesNo_Paint(itemDef_t *item) {
 	float value;
 	menuDef_t *parent = (menuDef_t*)item->parent;
 
-	value = (item->cvar) ? DC->getCVarValue(item->cvar) : 0;
+	value = (item->cvar) ? q3menu_cvar_number(item->cvar_handle,item->cvar) : 0;
 
 	if (item->window.flags & WINDOW_HASFOCUS) {
 		lowLight[0] = (float)(0.8 * parent->focusColor[0]); 
@@ -3380,7 +3380,7 @@ void Item_Slider_Paint(itemDef_t *item) {
 	float x, y;
 	menuDef_t *parent = (menuDef_t*)item->parent;
 
-	if (item->cvar) (void)DC->getCVarValue(item->cvar);
+	if (item->cvar) (void)q3menu_cvar_number(item->cvar_handle,item->cvar);
 
 	if (item->window.flags & WINDOW_HASFOCUS) {
 		lowLight[0] = (float)(0.8 * parent->focusColor[0]); 
@@ -3417,7 +3417,7 @@ void Item_Bind_Paint(itemDef_t *item) {
 		maxChars = editPtr->maxPaintChars;
 	}
 
-	value = (item->cvar) ? DC->getCVarValue(item->cvar) : 0;
+	value = (item->cvar) ? q3menu_cvar_number(item->cvar_handle,item->cvar) : 0;
 
 	if (item->window.flags & WINDOW_HASFOCUS) {
 		if (g_bindItem == item) {
@@ -5499,6 +5499,7 @@ qboolean MenuParse_itemDef( itemDef_t *item, int handle ) {
 		if (!Item_Parse(handle, menu->items[menu->itemCount])) {
 			return qfalse;
 		}
+		q3menu_bind_item(q3menu_active(),menu->items[menu->itemCount]);
 		Item_InitControls(menu->items[menu->itemCount]);
 		menu->items[menu->itemCount++]->parent = menu;
 	}
@@ -5783,11 +5784,11 @@ static qboolean Menu_OverActiveItem(menuDef_t *menu, float x, float y) {
 	return qfalse;
 }
 
-q3menu_context *q3menu_create(displayContextDef_t *display, void *owner, qa_error *error)
+q3menu_context *q3menu_create(displayContextDef_t *display, void *owner, qa_cvars *cvars, qa_error *error)
 {
     q3menu_context *context = calloc(1, sizeof(*context));
     if (!context) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating authored menu context"); return NULL; }
-    context->display = display; context->owner = owner;
+    context->display = display; context->owner = owner; context->cvars=cvars;
     memcpy(context->bindings, binding_defaults, sizeof(binding_defaults));
     memcpy(context->item_keywords, item_keyword_defaults, sizeof(item_keyword_defaults));
     memcpy(context->menu_keywords, menu_keyword_defaults, sizeof(menu_keyword_defaults));

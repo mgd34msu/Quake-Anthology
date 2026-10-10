@@ -523,7 +523,8 @@ bool qac_cvars_values_clone(qa_cvars *registry, const cvar_values *source,
     *out = (cvar_values){.canonical_values = canonical_values, .changed_flags = source->changed_flags,
         .userinfo_modified = source->userinfo_modified, .server_active = source->server_active,
         .high_characters = source->high_characters, .cheats = source->cheats,
-        .next_handle = source->next_handle, .declared_count = source->declared_count};
+        .next_handle = source->next_handle, .declared_count = source->declared_count,
+        .declaration_revision = source->declaration_revision};
     if (!qac_cvars_rows_reserve(out, canonical_values?canonical_values->row_capacity:source->row_capacity,
         canonical_values?canonical_values->alias_capacity:source->alias_capacity, error) ||
         (canonical_values && !qac_cvars_handles_reserve(out,source->next_handle,error))) goto failed;
@@ -793,6 +794,7 @@ static bool admit_player(qa_cvars *registry,cvar_values *values,uint32_t player,
     *end=first;
     for (cvar *entry=first;entry;entry=entry->next) qac_cvars_index_entry(registry,values,entry);
     values->count+=count;
+    ++values->declaration_revision;
     return true;
 failed:
     while (first) { cvar *entry=first; first=entry->next; qac_cvars_entry_free(entry); }
@@ -815,6 +817,7 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
     registry->options = *options; registry->canonical_root=true;
     registry->store = store; registry->values.cheats = true;
     store->active_dialect = options->dialect; store->references = 1;
+    store->values.declaration_revision = 1;
     store->views = store->last_view = registry;
     if (!qac_cvars_index_reserve(registry, &store->values, qa_cvar_catalog_binding_count, error) ||
         !qac_cvars_rows_reserve(&store->values, qa_cvar_catalog_binding_count, qa_cvar_catalog_binding_count, error)) goto failed;

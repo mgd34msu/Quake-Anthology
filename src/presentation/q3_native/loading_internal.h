@@ -16,6 +16,8 @@ typedef struct q3n_loading_state {
 struct q3n_loading {
     q3n_loading_options options;
     qa_q3_product product;
+    qa_cvars *cvars;
+    qa_cvar_handle sv_running;
     q3n_loading_state state;
     const q3n_frame *active_frame;
     int32_t active_sequence;

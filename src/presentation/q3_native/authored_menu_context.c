@@ -6,13 +6,63 @@
 #include "qa/platform_services.h"
 #include "authored_menu_context.h"
 #include "qa/text.h"
+#include "qa/console_cvars_prepare.h"
 
 static _Thread_local q3menu_context *active_context;
 q3menu_context *q3menu_active(void) { return active_context; }
+void q3menu_bind_item(q3menu_context *context, itemDef_t *item)
+{
+    if (qa_cvars_prepared_edit(context->cvars)) return;
+    item->cvar_handle=qa_cvars_resolve(context->cvars,item->cvar);
+    item->cvar_test_handle=qa_cvars_resolve(context->cvars,item->cvarTest);
+}
+static void refresh_cvar_handles(q3menu_context *context)
+{
+    if (qa_cvars_prepared_edit(context->cvars)) return;
+    uint64_t revision=qa_cvars_declaration_revision(context->cvars);
+    if (revision==context->declaration_revision) return;
+    if (!context->developer.slot) context->developer=qa_cvars_resolve(context->cvars,"developer");
+    for (int i=0;i<context->menu_count;++i)
+        for (int j=0;j<context->menus[i].itemCount;++j) {
+            itemDef_t *item=context->menus[i].items[j];
+            if (!item->cvar_handle.slot) item->cvar_handle=qa_cvars_resolve(context->cvars,item->cvar);
+            if (!item->cvar_test_handle.slot) item->cvar_test_handle=qa_cvars_resolve(context->cvars,item->cvarTest);
+        }
+    context->declaration_revision=revision;
+}
 q3menu_context *q3menu_enter(q3menu_context *context)
-{ q3menu_context *previous = active_context; active_context = context; return previous; }
+{
+    q3menu_context *previous=active_context; active_context=context;
+    if (context) refresh_cvar_handles(context);
+    return previous;
+}
 void q3menu_leave(q3menu_context *previous) { active_context = previous; }
 
+void q3menu_cvar_text(qa_cvar_handle handle,const char *name,char *out,int capacity)
+{
+    q3menu_context *context=q3menu_active();
+    if (qa_cvars_prepared_edit(context->cvars)) handle=qa_cvars_resolve(context->cvars,name);
+    else if (!handle.slot && context->declaration_revision!=qa_cvars_declaration_revision(context->cvars)) {
+        refresh_cvar_handles(context);
+        handle=qa_cvars_resolve(context->cvars,name);
+    }
+    const qa_cvar_view *value=qa_cvars_read(context->cvars,handle);
+    q3menu_strncpyz(out,value?value->value:"",capacity);
+}
+float q3menu_cvar_number(qa_cvar_handle handle,const char *name)
+{
+    char text[128]; double number=0;
+    q3menu_cvar_text(handle,name,text,sizeof(text));
+    q3menu_context *context=q3menu_active();
+    if (!qa_parse_atof(text,&number,context->error)) context->failed=true;
+    return (float)number;
+}
+float q3menu_named_cvar_number(const char *name)
+{
+    q3menu_context *context=q3menu_active();
+    qa_cvar_handle handle=qa_cvars_resolve(context->cvars,name);
+    return q3menu_cvar_number(handle,name);
+}
 int q3menu_stricmp(const char *a, const char *b)
 {
     if (!a) return b ? -1 : 0;

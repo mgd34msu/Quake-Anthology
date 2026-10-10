@@ -4,8 +4,8 @@
 static fontInfo_t *selected_font(float scale)
 {
     q3n_mission_hud *o=q3nm_active();
-    return scale<=q3nm_number(o,"cg_smallFont")?&o->display.Assets.smallFont:
-        scale>q3nm_number(o,"cg_bigFont")?&o->display.Assets.bigFont:&o->display.Assets.textFont;
+    return scale<=q3nm_number(o,QA_NATIVE_Q3_CVAR_cg_smallFont)?&o->display.Assets.smallFont:
+        scale>q3nm_number(o,QA_NATIVE_Q3_CVAR_cg_bigFont)?&o->display.Assets.bigFont:&o->display.Assets.textFont;
 }
 static bool escape(const unsigned char *p) { return p[0]=='^' && p[1] && p[1]!='^'; }
 static float line_height(const fontInfo_t *font,float scale)

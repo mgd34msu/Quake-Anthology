@@ -46,7 +46,7 @@ static bool parse_menu(const char *path)
 static bool load_menus(q3n_mission_hud *o,const char *requested)
 {
     qa_resource *root=NULL; qa_buffer compressed={0};
-    const qa_cvar_view *selected=qa_cvars_find(q3nm_registry(o),"cg_hudFiles");
+    const qa_cvar_view *selected=qa_cvars_read(q3nm_registry(o),o->hud_files);
     char path[1024]; q3menu_strncpyz(path,requested?requested:selected?selected->value:"",sizeof(path)); if(!path[0])strcpy(path,"ui/hud.txt");
     int start=o->options.milliseconds(o->options.context);
     if(!q3nm_current(o,o->frame,o->menus->error)||!qa_vfs_acquire(o->options.content,path,&root,NULL,o->menus->error))return false;

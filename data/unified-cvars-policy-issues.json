@@ -1,15 +1,15 @@
 {
   "counts": {
-    "rows": 1260,
+    "rows": 1261,
     "aliases": 237,
-    "bindings": 1530,
-    "defaults": 6363,
+    "bindings": 1531,
+    "defaults": 6368,
     "flag_clauses": 2327,
     "conversions": 235,
     "operands": 42,
     "maps": 67,
-    "pool_bytes": 487297,
-    "issues": 1396
+    "pool_bytes": 487640,
+    "issues": 1399
   },
   "policy_issues": [
     {
@@ -9759,6 +9759,27 @@
     {
       "row": 1259,
       "name": "qa_materials",
+      "field": "owner",
+      "reason": "no native canonical home dialect; Anthology/guest owner decides",
+      "bits": 16
+    },
+    {
+      "row": 1260,
+      "name": "com_botObstacleDebug",
+      "field": "flags",
+      "reason": "unknown dialect section preserved in raw_flags",
+      "bits": 4
+    },
+    {
+      "row": 1260,
+      "name": "com_botObstacleDebug",
+      "field": "type/range_units",
+      "reason": "single-name inferred hints; not runtime validators",
+      "bits": 1
+    },
+    {
+      "row": 1260,
+      "name": "com_botObstacleDebug",
       "field": "owner",
       "reason": "no native canonical home dialect; Anthology/guest owner decides",
       "bits": 16

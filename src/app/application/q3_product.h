@@ -7,6 +7,14 @@
 #include "qa/console.h"
 #include "qa/source_save.h"
 
+typedef enum application_q3_cvar_control {
+    APPLICATION_Q3_CVAR_PURE,
+    APPLICATION_Q3_CVAR_FLOOD_PROTECT,
+    APPLICATION_Q3_CVAR_BOT_OBSTACLE_DEBUG,
+    APPLICATION_Q3_CVAR_CONTROL_COUNT
+} application_q3_cvar_control;
+void application_q3_cvar_controls_bind(qa_cvars *, qa_cvar_handle [APPLICATION_Q3_CVAR_CONTROL_COUNT]);
+
 /* Apply the genuine startup +set rows before registering the three INIT
  * variables. Other commands remain for the ordinary startup owner. */
 bool application_q3_product_initial(qa_cvars *, const char *const *, size_t,

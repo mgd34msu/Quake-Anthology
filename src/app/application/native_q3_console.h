@@ -2,6 +2,7 @@
 #define QA_APPLICATION_NATIVE_Q3_CONSOLE_H
 
 #include "internal.h"
+#include "q3_product.h"
 
 /* map_path is the actual incoming map, before public map metadata is replaced.
  * Engine defaults and genuine startup current/latch values share this owner;
@@ -61,5 +62,7 @@ bool application_native_q3_source_drop_begin(application_provider *,uint32_t,qa_
     application_native_q3_source_drop_scope *,qa_error *);
 bool application_native_q3_source_drop_disconnected(application_native_q3_source_drop_scope *,qa_error *);
 bool application_native_q3_source_drop_end(application_native_q3_source_drop_scope *,qa_error *);
+
+qa_cvar_handle application_native_q3_console_control(const application_provider *, application_q3_cvar_control);
 
 #endif

@@ -91,8 +91,8 @@ static bool receipt_current(void *ctx,const q3n_frame *f,const q3n_server_comman
 static bool compiled_current(void *ctx,const q3n_frame *f,qa_cvars *vars,const qa_command_context *command)
 { frontend_unified_q3_runtime *o=ctx; return cut(o,f,NULL) &&
     o->options.commands.compiled_current(o->options.commands.context,f,vars,command); }
-static bool cvar_read(void *ctx,const char *name,qa_native_q3_client_cvar *out,qa_error *e)
-{ frontend_unified_q3_runtime *o=ctx; return frontend_unified_q3_client_cvar_read(o->options.client,qa_native_q3_cvar_id_for_symbol(name),out,e); }
+static bool cvar_read(void *ctx,qa_native_q3_cvar_id id,qa_native_q3_client_cvar *out,qa_error *e)
+{ frontend_unified_q3_runtime *o=ctx; return frontend_unified_q3_client_cvar_read(o->options.client,id,out,e); }
 static bool register_commands(void *ctx,const q3n_frame *f,qa_error *e)
 { frontend_unified_q3_runtime *o=ctx; return cut(o,f,e) &&
     frontend_unified_q3_client_register(o->options.client,e) &&
@@ -105,7 +105,8 @@ static bool center(void *ctx,const q3n_frame *f,const qa_command_context *c,cons
     frontend_unified_q3_runtime *o=ctx;
     if(!cut(o,f,e))return false;
     (void)c;
-    const qa_cvar_view *duration=qa_cvars_find(frontend_unified_q3_client_cvars(o->options.client),"cg_centertime");
+    const qa_native_q3_cvar_refs *refs=frontend_unified_q3_client_cvar_refs(o->options.client);
+    const qa_cvar_view *duration=qa_cvars_read(frontend_unified_q3_client_cvars(o->options.client),refs->rows[QA_NATIVE_Q3_CVAR_cg_centertime]);
     double seconds=duration?fmax(0,fmin(86400,duration->number)):3;
     return qa_hud_center_print(o->options.hud.messages,text,
         (uint64_t)(uint32_t)f->time*UINT64_C(1000000),(uint64_t)(seconds*1e9),
@@ -245,7 +246,7 @@ static bool transition(void *ctx,const q3n_compiled_frame *r,const qa_q3_player 
 {
     frontend_unified_q3_runtime *o=ctx; q3n_frame f; if(!begin(o,r,&f,e))return false;
     const q3n_command_state *s=q3n_server_commands_state(o->children.commands); qa_native_q3_client_cvar miss;
-    bool okay=s && cvar_read(o,"cg_showmiss",&miss,e);
+    bool okay=s && cvar_read(o,QA_NATIVE_Q3_CVAR_cg_showmiss,&miss,e);
     q3n_player_state_context settings={0};
     if(okay)settings=(q3n_player_state_context){s->warmup,s->timelimit,s->fraglimit,s->scores1,s->intermission_started,miss.integer!=0};
     return end(o,okay && q3n_player_state_transition_compiled(o->children.player_state,&f,p,before,&settings,e),e);
@@ -257,7 +258,7 @@ static bool prediction_finished(void *ctx,const q3n_compiled_frame *r,qa_error *
 {
     frontend_unified_q3_runtime *o=ctx; q3n_frame f; if(!begin(o,r,&f,e))return false;
     qa_native_q3_client_cvar miss;
-    return end(o,cvar_read(o,"cg_showmiss",&miss,e) &&
+    return end(o,cvar_read(o,QA_NATIVE_Q3_CVAR_cg_showmiss,&miss,e) &&
         q3n_player_state_prediction_finish(o->children.player_state,&f,miss.integer!=0,e),e);
 }
 static bool transition_teleport(void *ctx,const q3n_compiled_frame *r,bool *out,qa_error *e)
@@ -432,7 +433,7 @@ bool frontend_unified_q3_runtime_process(frontend_unified_q3_runtime *o,int32_t 
     o->presentation_time=time;
     if(o->information_prepared) { *active=false; return true; }
     qa_native_q3_client_cvar no_predict,synchronous;
-    if(!cvar_read(o,"cg_nopredict",&no_predict,e) || !cvar_read(o,"cg_synchronousClients",&synchronous,e) ||
+    if(!cvar_read(o,QA_NATIVE_Q3_CVAR_cg_nopredict,&no_predict,e) || !cvar_read(o,QA_NATIVE_Q3_CVAR_cg_synchronousClients,&synchronous,e) ||
        !frontend_unified_q3_snapshots_process(o->children.snapshots,time,no_predict.integer!=0,synchronous.integer!=0,e))return false;
     q3n_compiled_frame frame; bool has_snapshot;
     if(!frontend_unified_q3_snapshots_has_snapshot(o->children.snapshots,&has_snapshot,e))return false;
@@ -459,7 +460,7 @@ bool frontend_unified_q3_runtime_prediction(frontend_unified_q3_runtime *o,const
         return fail(e,"Unified prediction requires its actual paired predictor and CG frame");
     q3n_compiled_frame frame; qa_native_q3_client_cvar no_predict,synchronous;
     if(!frontend_unified_q3_snapshots_read(o->children.snapshots,&frame,e) ||
-       !cvar_read(o,"cg_nopredict",&no_predict,e) || !cvar_read(o,"cg_synchronousClients",&synchronous,e))return false;
+       !cvar_read(o,QA_NATIVE_Q3_CVAR_cg_nopredict,&no_predict,e) || !cvar_read(o,QA_NATIVE_Q3_CVAR_cg_synchronousClients,&synchronous,e))return false;
     frontend_unified_q3_prediction_receipt actual=*receipt;
     if((frame.snapshot->player.pmFlags&4096) || no_predict.integer || synchronous.integer) {
         actual.outcome=FRONTEND_UNIFIED_Q3_INTERPOLATED;actual.teleport_consumed=false;
@@ -724,7 +725,7 @@ static bool draw(frontend_unified_q3_runtime *o,bool gather,bool *rendered,qa_er
     }
     if(okay)okay=q3n_hud_frame(o->children.hud,&f,&o->settings.hud,o->children.commands,o->children.player_state,viewport,e);
     if(okay && !tournament) {
-        qa_native_q3_client_cvar stats; okay=cvar_read(o,"cg_stats",&stats,e);
+        qa_native_q3_client_cvar stats; okay=cvar_read(o,QA_NATIVE_Q3_CVAR_cg_stats,&stats,e);
         if(okay && stats.integer) {
             char text[64]; snprintf(text,sizeof(text),"cg.clientFrame:%d\n",o->client_frame);
             o->options.view.print(o->options.view.context,text); okay=cut(o,&f,e);
@@ -876,7 +877,7 @@ bool frontend_unified_q3_runtime_hud(frontend_unified_q3_runtime *o,bool *render
     const qa_q3_player *snapshot=q3n_frame_snapshot_player(&f);
     bool tournament=snapshot && snapshot->persistant[3]==3 && (snapshot->pmFlags&8192);
     if(okay && !tournament) {
-        qa_native_q3_client_cvar stats;okay=cvar_read(o,"cg_stats",&stats,e);
+        qa_native_q3_client_cvar stats;okay=cvar_read(o,QA_NATIVE_Q3_CVAR_cg_stats,&stats,e);
         if(okay && stats.integer){char text[64];snprintf(text,sizeof(text),"cg.clientFrame:%d\n",o->client_frame);
             o->options.view.print(o->options.view.context,text);okay=cut(o,&f,e);}
     }

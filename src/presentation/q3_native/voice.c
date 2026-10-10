@@ -42,7 +42,7 @@ static bool parse(q3n_server_commands *o, const q3n_frame *f, const char *filena
     uint32_t list_index, qa_error *e)
 {
     qa_native_q3_client_cvar build;
-    if (!q3nc_cvar(o, "cg_buildScript", &build, e)) return false;
+    if (!q3nc_cvar(o,QA_NATIVE_Q3_CVAR_cg_buildScript, &build, e)) return false;
     qa_resource *resource = NULL; bool found;
     if (!file(o, f, filename, true, &resource, &found, e)) { qa_resource_release(resource); return false; }
     if (!found) return true;
@@ -178,7 +178,7 @@ static bool play(q3n_server_commands *o, const q3n_frame *f, q3n_buffered_voice 
 {
     if (o->state.intermission_started) return true;
     qa_native_q3_client_cvar chats, text;
-    if (!q3nc_cvar(o, "cg_noVoiceChats", &chats, e)) return false;
+    if (!q3nc_cvar(o,QA_NATIVE_Q3_CVAR_cg_noVoiceChats, &chats, e)) return false;
     if (!chats.integer) {
         if (!q3nc_sound(o, f, v->sound, 3, e)) return false;
         const qa_q3_player *player = q3n_frame_snapshot_player(f);
@@ -193,7 +193,7 @@ static bool play(q3n_server_commands *o, const q3n_frame *f, q3n_buffered_voice 
             if (!o->options.response_head(o->options.context, f, &o->state, e) || !q3nc_current(o, f, e)) return false;
         }
     }
-    if (!q3nc_cvar(o, "cg_noVoiceText", &text, e)) return false;
+    if (!q3nc_cvar(o,QA_NATIVE_Q3_CVAR_cg_noVoiceText, &text, e)) return false;
     if (!v->voice_only && !text.integer) {
         if (!q3nc_team_chat(o, f, v->message, e)) return false;
         char message[151]; snprintf(message, sizeof(message), "%s\n", v->message);
@@ -234,7 +234,7 @@ bool q3n_voice_local(q3n_server_commands *o, const q3n_frame *f, int32_t mode,
         int32_t index = (int32_t)choice;
         if (index < 0 || index >= 64) return q3nc_fail(e, QA_ERROR_FORMAT, "Voice random choice outside donor sound storage");
         qa_native_q3_client_cvar team_only;
-        if (!q3nc_cvar(o, "cg_teamChatsOnly", &team_only, e)) return false;
+        if (!q3nc_cvar(o,QA_NATIVE_Q3_CVAR_cg_teamChatsOnly, &team_only, e)) return false;
         if (mode != 1 && team_only.integer) return true;
         q3n_buffered_voice voice = {.client = number, .sound = chat->sounds[index], .voice_only = voice_only};
         q3nc_copy(voice.command, sizeof(voice.command), id);

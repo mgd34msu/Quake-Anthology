@@ -458,7 +458,8 @@ static bool activation_construct(const source_activation_call *call,int32_t bloc
             }
         }
     }
-    const qa_cvar_view *debug=qa_cvars_find(application_native_q3_console_registry(call->source),"com_botObstacleDebug");
+    const qa_cvar_view *debug=qa_cvars_read(application_native_q3_console_registry(call->source),
+        application_native_q3_console_control(call->source,APPLICATION_Q3_CVAR_BOT_OBSTACLE_DEBUG));
     if(debug && debug->integer)
         return activation_report(call,false,"^1Error: BotGetActivateGoal: no valid activator for entity with target \"%s\"\n",targets[0],error);
     return true;

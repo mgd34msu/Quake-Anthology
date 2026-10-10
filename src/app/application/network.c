@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "bots_catalog.h"
 #include "guest_q3_private.h"
+#include "guest_q3_console.h"
 #include "guest_q3_restart.h"
 #include "map_players_private.h"
 #include "network_unified_private.h"
@@ -1002,8 +1003,8 @@ static bool q3_native_world(application_provider *provider, int32_t server_id,
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 world requires its actual wire identity and output");
     int32_t milliseconds;
     qa_cvars *cvars = application_native_q3_console_registry(provider);
-    const qa_cvar_view *pure = cvars ? qa_cvars_find(cvars, "sv_pure") : NULL;
-    const qa_cvar_view *flood = cvars ? qa_cvars_find(cvars, "sv_floodProtect") : NULL;
+    const qa_cvar_view *pure = qa_cvars_read(cvars, application_native_q3_console_control(provider, APPLICATION_Q3_CVAR_PURE));
+    const qa_cvar_view *flood = qa_cvars_read(cvars, application_native_q3_console_control(provider, APPLICATION_Q3_CVAR_FLOOD_PROTECT));
     if (!pure || !flood)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q3 engine source policies are not registered");
     if (!application_q3_wire_time(provider, &milliseconds, error)) return false;
@@ -1028,11 +1029,10 @@ bool qa_application_network_q3_world(qa_application *application, qa_actor_id ac
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 wire world requires its retained source identity");
     int32_t milliseconds;
     if (!q3_wire_time(engine, &milliseconds, error)) return false;
-    qa_cvars *cvars = NULL;
-    (void)qa_q3_host_console(engine->game->host, &cvars, NULL);
+    qa_cvars *cvars = application_guest_q3_console_registry(engine->provider);
     if (!cvars) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source cvar owner is unavailable");
-    const qa_cvar_view *pure = qa_cvars_find(cvars, "sv_pure");
-    const qa_cvar_view *flood = qa_cvars_find(cvars, "sv_floodProtect");
+    const qa_cvar_view *pure = qa_cvars_read(cvars, application_guest_q3_console_control(engine->provider, APPLICATION_Q3_CVAR_PURE));
+    const qa_cvar_view *flood = qa_cvars_read(cvars, application_guest_q3_console_control(engine->provider, APPLICATION_Q3_CVAR_FLOOD_PROTECT));
     *out = (qa_q3_server_world){.generation = qa_application_configuration_generation(application),
         .server_id = server_id, .restarted_server_id = restarted_server_id,
         .checksum_feed = feed, .time = milliseconds,
@@ -1041,15 +1041,14 @@ bool qa_application_network_q3_world(qa_application *application, qa_actor_id ac
 }
 qa_cvars *qa_application_network_q3_cvars(qa_application *application, qa_actor_id actor)
 {
-    uint32_t slot; qa_cvars *cvars = NULL;
+    uint32_t slot;
     application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
     if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
         application_provider *provider = q3_native_actor(application, actor, &slot, NULL);
         return provider ? application_native_q3_console_registry(provider) : NULL;
     }
     struct application_q3_guest *engine = source(application, actor, &slot, NULL);
-    if (engine) (void)qa_q3_host_console(engine->game->host, &cvars, NULL);
-    return cvars;
+    return engine ? application_guest_q3_console_registry(engine->provider) : NULL;
 }
 static bool q3_status(struct application_q3_guest *engine,
     qa_application_network_q3_status_player players[64], size_t *count, qa_error *error)
@@ -1218,14 +1217,13 @@ bool qa_application_network_q3_round_world(qa_application *application, qa_actor
     }
     struct application_q3_guest *engine = round_source(application, owner, error);
     if (!engine) return false;
-    int32_t milliseconds; qa_cvars *cvars = NULL;
+    int32_t milliseconds; qa_cvars *cvars = application_guest_q3_console_registry(engine->provider);
     if (!application_q3_guest_round_clock(engine->provider, &milliseconds, error) ||
         !q3_wire_time(engine, &milliseconds, error)) return false;
-    (void)qa_q3_host_console(engine->game->host, &cvars, NULL);
     if (!cvars) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 retained GAME cvar owner is unavailable");
-    const qa_cvar_view *pure = qa_cvars_find(cvars, "sv_pure");
+    const qa_cvar_view *pure = qa_cvars_read(cvars, application_guest_q3_console_control(engine->provider, APPLICATION_Q3_CVAR_PURE));
     if (pure && pure->integer && !q3_packages_valid(application, owner, feed, packages, error)) return false;
-    const qa_cvar_view *flood = qa_cvars_find(cvars, "sv_floodProtect");
+    const qa_cvar_view *flood = qa_cvars_read(cvars, application_guest_q3_console_control(engine->provider, APPLICATION_Q3_CVAR_FLOOD_PROTECT));
     *out = (qa_q3_server_world){.generation = qa_application_configuration_generation(application),
         .server_id = server_id, .restarted_server_id = restarted_server_id, .checksum_feed = feed,
         .time = milliseconds, .pure = pure && pure->integer != 0, .flood_protect = !flood || flood->integer != 0};

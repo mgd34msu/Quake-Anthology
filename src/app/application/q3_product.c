@@ -851,3 +851,11 @@ bool qa_application_q3_product_policy_read(const qa_application *app, qa_q3_prod
     *out = *policy;
     return true;
 }
+
+void application_q3_cvar_controls_bind(qa_cvars *cvars,
+    qa_cvar_handle controls[APPLICATION_Q3_CVAR_CONTROL_COUNT])
+{
+    controls[APPLICATION_Q3_CVAR_PURE] = qa_cvars_resolve(cvars, "sv_pure");
+    controls[APPLICATION_Q3_CVAR_FLOOD_PROTECT] = qa_cvars_resolve(cvars, "sv_floodProtect");
+    controls[APPLICATION_Q3_CVAR_BOT_OBSTACLE_DEBUG] = qa_cvars_resolve(cvars, "com_botObstacleDebug");
+}

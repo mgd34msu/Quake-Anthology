@@ -743,8 +743,8 @@ def main():
         if reader.fieldnames != COLUMNS:
             raise ValueError('unexpected canonical CSV columns')
         rows = list(reader)
-    if len(rows) != 1260 or any(None in row or any(not value for value in row.values()) for row in rows):
-        raise ValueError('expected every nonempty cell of all 1260 owner rows')
+    if not rows or any(None in row or any(not value for value in row.values()) for row in rows):
+        raise ValueError('expected nonempty canonical rows and cells')
     names = [row['canonical'].lower() for row in rows]
     if len(set(names)) != len(names):
         raise ValueError('case-insensitive canonical collision')

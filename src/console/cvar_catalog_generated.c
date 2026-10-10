@@ -9563,6 +9563,12 @@ typedef struct qa_cvar_catalog_string_storage {
     char s9558[33];
     char s9559[35];
     char s9560[69];
+    char s9561[21];
+    char s9562[110];
+    char s9563[100];
+    char s9564[23];
+    char s9565[73];
+    char s9566[16];
 } qa_cvar_catalog_string_storage;
 static const qa_cvar_catalog_string_storage string_storage = {
     "",
@@ -19126,8 +19132,14 @@ static const qa_cvar_catalog_string_storage string_storage = {
     "Anthology: qa_materials:USERINFO",
     "REGISTERED: qa_materials: C=Q2,Q2R",
     "NOT REGISTERED in this port (other port: qa_materials: C=Q2,Q2R R=-)",
+    "com_botObstacleDebug",
+    "Print the native Q3 bot obstacle activation-chain diagnostic when no activator is found; disabled by default.",
+    "C src/app/application/bots_navigation.c:461; port-only debug capability, not an original qsrc cvar.",
+    "Port debug capability.",
+    "Implemented bot obstacle diagnostic; common handle bound at source load.",
+    "Not registered.",
 };
-_Static_assert(sizeof(string_storage) == 487297, "contiguous catalog strings");
+_Static_assert(sizeof(string_storage) == 487640, "contiguous catalog strings");
 const char *const qa_cvar_catalog_strings = (const char *)&string_storage;
 
 const qa_cvar_catalog_default qa_cvar_catalog_defaults[] = {
@@ -25494,8 +25506,13 @@ const qa_cvar_catalog_default qa_cvar_catalog_defaults[] = {
     {486738,7477,0,473835,0,3,0},
     {486738,7477,0,473835,0,3,0},
     {486738,7477,0,473835,0,3,0},
+    {487297,4075,0,4075,0,0,0},
+    {487297,4075,0,4075,0,0,0},
+    {487297,4075,0,4075,0,0,0},
+    {487297,4075,0,4075,0,0,0},
+    {487297,4075,0,4075,0,0,0},
 };
-const size_t qa_cvar_catalog_default_count = 6363;
+const size_t qa_cvar_catalog_default_count = 6368;
 
 const qa_cvar_catalog_flags qa_cvar_catalog_flag_clauses[] = {
     {1,5,0,0,0},
@@ -28543,6 +28560,7 @@ const qa_cvar_catalog_binding qa_cvar_catalog_bindings[] = {
     {173737,198,{173,173,173,173,173},0,1,16,0},
     {175238,199,{176,176,176,176,176},0,1,16,0},
     {235297,337,{196,196,196,196,196},0,1,16,0},
+    {487297,1260,{6,6,6,6,6},0,1,0,0},
     {239628,347,{196,196,196,196,196},0,1,16,0},
     {238123,342,{196,196,196,196,196},0,1,16,0},
     {422362,987,{196,196,196,196,196},0,1,8,0},
@@ -29716,7 +29734,7 @@ const qa_cvar_catalog_binding qa_cvar_catalog_bindings[] = {
     {417933,959,{196,196,196,196,196},0,1,8,0},
     {127563,147,{6,6,6,6,6},0,0,14,0},
 };
-const size_t qa_cvar_catalog_binding_count = 1530;
+const size_t qa_cvar_catalog_binding_count = 1531;
 
 const qa_cvar_catalog_row qa_cvar_catalog_rows[] = {
     {56,821,848,957,579,963,1225,{1345,1832,1973},{{79,5,86,0,0,1,1},{79,5,193,1,1,1,1},{79,10,326,2,2,1,1},{79,39,439,3,3,1,1},{76,63,524,4,4,1,1}},0,1,0,1,0,4,1,0},
@@ -30979,6 +30997,7 @@ const qa_cvar_catalog_row qa_cvar_catalog_rows[] = {
     {486078,5,192544,38747,185038,486179,486234,{29051,486256,486282},{{486087,0,486109,6348,2312,1,1},{486087,0,486109,6349,2313,1,1},{486087,0,486109,6350,2314,1,1},{486087,0,486109,6351,2315,1,1},{486087,0,486109,6352,2316,1,1}},17,0,0,196,0,255,1,0},
     {486342,5,185416,38747,185038,486561,486618,{29051,486648,486676},{{486359,0,486383,6353,2317,1,1},{486359,0,486383,6354,2318,1,1},{486359,0,486383,6355,2319,1,1},{486359,0,486383,6356,2320,1,1},{486359,0,486457,6357,2321,1,1}},17,1,0,196,1,255,1,0},
     {486738,5,185416,3118,185038,487100,487160,{29051,487193,487228},{{473835,0,486751,6358,2322,1,1},{473835,0,486842,6359,2323,1,1},{473835,0,486933,6360,2324,1,1},{473835,0,486933,6361,2325,1,1},{473835,0,487009,6362,2326,1,1}},17,0,0,196,1,255,1,0},
+    {487297,5,4710,111407,7042,487428,5,{487528,487551,487624},{{4075,0,487318,6363,2327,1,0},{4075,0,487318,6364,2327,1,0},{4075,0,487318,6365,2327,1,0},{4075,0,487318,6366,2327,1,0},{4075,0,487318,6367,2327,1,0}},17,0,0,6,2,255,1,0},
 };
-const size_t qa_cvar_catalog_row_count = 1260;
+const size_t qa_cvar_catalog_row_count = 1261;
 

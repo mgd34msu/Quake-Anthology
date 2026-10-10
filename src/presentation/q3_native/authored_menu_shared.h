@@ -21,6 +21,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 #ifndef __UI_SHARED_H
 #define __UI_SHARED_H
+#include "qa/console.h"
 
 
 #include "authored_menu_namespace.h"
@@ -241,6 +242,7 @@ typedef struct itemDef_s {
   const char *leaveFocus;        // select script
   const char *cvar;              // associated cvar 
   const char *cvarTest;          // associated cvar for enable actions
+  qa_cvar_handle cvar_handle, cvar_test_handle;
 	const char *enableCvar;			   // enable, disable, show, or hide based on value, this can contain a list
 	int cvarFlags;								 //	what type of action to take on cvarenables
   sfxHandle_t focusSound;
@@ -339,8 +341,6 @@ typedef struct {
 	qboolean (*ownerDrawVisible) (int flags);
   void (*runScript)(char **p);
   void (*getTeamColor)(vec4_t *color);
-  void (*getCVarString)(const char *cvar, char *buffer, int bufsize);
-  float (*getCVarValue)(const char *cvar);
   void (*setCVar)(const char *cvar, const char *value);
   void (*drawTextWithCursor)(float x, float y, float scale, vec4_t color, const char *text, int cursorPos, char cursor, int limit, int style);
   void (*setOverstrikeMode)(qboolean b);

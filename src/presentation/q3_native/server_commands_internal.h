@@ -20,7 +20,7 @@ struct q3n_server_commands {
 };
 bool q3nc_fail(qa_error *, qa_status, const char *);
 bool q3nc_current(q3n_server_commands *, const q3n_frame *, qa_error *);
-bool q3nc_cvar(q3n_server_commands *, const char *, qa_native_q3_client_cvar *, qa_error *);
+bool q3nc_cvar(q3n_server_commands *, qa_native_q3_cvar_id, qa_native_q3_client_cvar *, qa_error *);
 bool q3nc_message(q3n_server_commands *, const q3n_frame *, q3n_command_message_kind,
     const char *, int32_t sender, const char *voice_command, qa_error *);
 bool q3nc_team_chat(q3n_server_commands *, const q3n_frame *, const char *, qa_error *);

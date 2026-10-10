@@ -218,6 +218,8 @@ uint64_t qa_cvars_revision(const qa_cvars *registry)
 {
     return qa_cvars_observer_idle(registry) ? registry->store->revision : 0;
 }
+uint64_t qa_cvars_declaration_revision(const qa_cvars *registry)
+{ return registry ? registry->store->values.declaration_revision : 0; }
 static void observer_release(qa_cvars *registry, cvar_observer *observer)
 {
     if (observer->active || observer->references) return;
@@ -1236,6 +1238,7 @@ static cvar *create_variable(cvar_target target,const char *name,const char *val
     if (!projection) { qac_cvars_entry_free(entry); return NULL; }
     entry->next=values->first; values->first=entry; ++values->count;
     qac_cvars_index_entry(target.registry,values,entry);
+    ++values->declaration_revision;
     return projection;
 }
 static bool source_handle(cvar_target target,cvar *entry,cvar_alias *alias,qa_error *error)
@@ -1281,6 +1284,7 @@ static bool register_variable(cvar_target target,const char *name,const char *de
         if (!qac_cvars_default_declare(target,entry,converted.value,error)) { free(converted.allocated_value); return false; }
         if (alias) { alias->declared=true; alias->owner=owner; }
         else { entry->view.declared=true; entry->view.owner=owner; ++target.values->declared_count; }
+        ++canonical_values(target)->declaration_revision;
     }
     if (alias) {
         alias->flags=qac_cvars_flags(alias->flags,alias->flags_dialect,dialect)|native_flags;
@@ -2136,17 +2140,20 @@ void qa_cvars_remove_owner(qa_cvars *registry,uint64_t owner)
             event->snapshot->bound=false; event->snapshot->binding=(qa_cvar_binding){0};
         }
     cvar_values *values=qac_cvars_current_values(registry);
+    bool changed=false;
     for (cvar *entry=values->first;entry;entry=entry->next) {
         if (entry->bound && entry->binding.owner==owner) { entry->binding=(qa_cvar_binding){0}; entry->bound=false; entry->binding_order=0; }
         if (!entry->view.declared || entry->view.owner!=owner) continue;
-        entry->view.declared=false; entry->view.owner=0; --values->declared_count;
+        entry->view.declared=false; entry->view.owner=0; --values->declared_count; changed=true;
         values->changed_flags|=entry->view.flags;
         if (entry->view.flags&QA_CVAR_USERINFO) values->userinfo_modified=true;
     }
     for (cvar_alias *alias=values->aliases;alias;alias=alias->next) {
         if (alias->bound && alias->binding.owner==owner) { alias->binding=(qa_cvar_binding){0}; alias->bound=false; alias->binding_order=0; }
-        if (alias->declared && alias->owner==owner) { alias->declared=false; alias->owner=0; }
+        if (alias->declared && alias->owner==owner) { alias->declared=false; alias->owner=0; changed=true; }
     }
+    cvar_values *canonical=edit ? &edit->values : &registry->store->values;
+    if (changed) ++canonical->declaration_revision;
 }
 uint32_t qa_cvars_take_modified_flags(qa_cvars *registry)
 {

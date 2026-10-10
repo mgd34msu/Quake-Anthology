@@ -70,7 +70,12 @@ bool q3n_loading_create_restored(const q3n_loading_options *options,q3n_loading 
     if(!out || *out || !q3nl_checkpoint_basis(options,&product,e))return false;
     q3n_loading *o=calloc(1,sizeof(*o));
     if(!o)return q3nl_fail(e,QA_ERROR_MEMORY,"Allocating native Q3 loading information");
-    o->options=*options; o->product=product; *out=o; return true;
+    o->options=*options; o->product=product;
+    const qa_native_q3_client_services *local=qa_native_q3_client_services_read(options->client);
+    const qa_native_q3_remote_client_services *remote=qa_native_q3_remote_client_services_read(options->remote_client);
+    o->cvars=options->compiled_source?options->compiled_cvars:remote?remote->basis.client.cvars:local?local->client.cvars:NULL;
+    o->sv_running=qa_cvars_resolve(o->cvars,"sv_running");
+    *out=o; return true;
 }
 bool q3n_loading_create(const q3n_loading_options *options,q3n_loading **out,qa_error *e)
 {
@@ -374,10 +379,7 @@ static bool draw_information(loading_draw *d)
     if(o->state.text[0])snprintf(loading,sizeof(loading),"Loading... %s",o->state.text);
     else snprintf(loading,sizeof(loading),"Awaiting snapshot...");
     if(!text(d,96,loading))return false;
-    const qa_native_q3_client_services *services=qa_native_q3_client_services_read(o->options.client);
-    const qa_native_q3_remote_client_services *remote=qa_native_q3_remote_client_services_read(o->options.remote_client);
-    qa_cvars *cvars=f->compiled?o->options.compiled_cvars:remote?remote->basis.client.cvars:services?services->client.cvars:NULL;
-    const qa_cvar_view *running=cvars?qa_cvars_find(cvars,"sv_running"):NULL;
+    const qa_cvar_view *running=qa_cvars_read(o->cvars,o->sv_running);
     int32_t y=148; char running_text[1024]; snprintf(running_text,sizeof(running_text),"%s",running?running->value:"");
     if(integer(running_text)==0) {
         if(!info_text(info,"sv_hostname",buffer,sizeof(buffer),d->error))return false;
