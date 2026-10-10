@@ -6254,7 +6254,7 @@ bool frontend_network_receive_ready(const qa_frontend *f)
 bool frontend_network_event_ready(const qa_frontend *f, const qa_sys_event *event)
 {
     const qa_frontend_network *n = f ? f->network : NULL;
-    if (!n || event->data.packet.destination == 1) return true;
+    if (!n || event->data.packet.source_id != n->input_serial || event->data.packet.destination == 1) return true;
     if (event->data.packet.destination >= 2) {
         uint32_t physical = (uint32_t)(event->data.packet.destination - 2);
         return physical >= f->options.seats || !n->local_clients[physical].runtime ||

@@ -410,7 +410,9 @@ static bool runtime_console(qa_frontend *frontend, qa_console **console,
 bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
 {
     qa_sys_event event; qa_bytes payload;
-    while (qa_platform_events_peek(frontend->platform_events,&event,&payload)) {
+    qa_platform_event_cursor cursor = {0};
+    bool packets_blocked[QA_INPUT_LOCAL_SEATS + 2] = {0};
+    while (qa_platform_events_read(frontend->platform_events,&cursor,&event,&payload)) {
         bool ok=true,consumed=true;
         switch (event.kind) {
         case QA_PLATFORM_EVENT_TIME:
@@ -419,10 +421,17 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
         case QA_PLATFORM_EVENT_QUIT:
             qa_application_request_stop(frontend->application);
             break;
-        case QA_PLATFORM_EVENT_PACKET:
-            if (!frontend_network_event_ready(frontend,&event)) return true;
+        case QA_PLATFORM_EVENT_PACKET: {
+            int32_t destination = event.data.packet.destination;
+            bool tracked = destination >= 0 && (size_t)destination < sizeof(packets_blocked) / sizeof(*packets_blocked);
+            if ((tracked && packets_blocked[destination]) || !frontend_network_event_ready(frontend,&event)) {
+                if (tracked) packets_blocked[destination] = true;
+                continue;
+            }
             ok=frontend_network_receive(frontend,&event,payload,&consumed,error);
+            if (!consumed && tracked) packets_blocked[destination] = true;
             break;
+        }
         case QA_PLATFORM_EVENT_CONSOLE_LINE:
             if (!qa_application_should_stop(frontend->application)) {
                 qa_console *console; qa_command_context context;
@@ -464,7 +473,7 @@ bool frontend_platform_drain(qa_frontend *frontend, qa_error *error)
             }
             break;
         }
-        if(consumed) qa_platform_events_consume(frontend->platform_events);
+        if(consumed) qa_platform_events_consume(frontend->platform_events,&cursor);
         if (!ok) return false;
     }
     return true;

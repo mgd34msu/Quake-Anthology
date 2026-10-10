@@ -60,6 +60,10 @@ typedef struct qa_sys_event {
 } qa_sys_event;
 
 typedef struct qa_platform_events qa_platform_events;
+typedef struct qa_platform_event_cursor {
+    void *next, *current;
+    bool started;
+} qa_platform_event_cursor;
 
 typedef enum qa_platform_event_result {
     QA_PLATFORM_EVENT_ACCEPTED, QA_PLATFORM_EVENT_FULL, QA_PLATFORM_EVENT_OVERSIZE
@@ -81,11 +85,11 @@ qa_platform_event_result qa_platform_events_push(qa_platform_events *, const qa_
     qa_bytes payload, qa_bytes tail);
 bool qa_platform_events_pending(const qa_platform_events *, qa_sys_event_kind, int32_t value);
 qa_platform_event_stats qa_platform_events_statistics(const qa_platform_events *);
-/* False means empty. The head remains queued until consumed, so a decoder
- * waiting for a previous packet can resume without losing this one. Returned
- * bytes remain valid until their own consume, reset or destroy. */
-bool qa_platform_events_peek(const qa_platform_events *, qa_sys_event *, qa_bytes *);
-void qa_platform_events_consume(qa_platform_events *);
+/* A zeroed cursor visits pending events in admission order. An event waiting
+ * for its decoder can stay leased while other consumers retire their records.
+ * Returned bytes remain valid until their own consume, reset or destroy. */
+bool qa_platform_events_read(const qa_platform_events *, qa_platform_event_cursor *, qa_sys_event *, qa_bytes *);
+void qa_platform_events_consume(qa_platform_events *, qa_platform_event_cursor *);
 /* Quit remains observable while a consumer waits for a retained packet or
  * native settings. Reset clears the request. */
 bool qa_platform_events_quit_requested(const qa_platform_events *);

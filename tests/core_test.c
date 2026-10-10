@@ -12,6 +12,7 @@
 #include "qa/scene.h"
 #include "qa/tools.h"
 #include "qa/input.h"
+#include "qa/platform_events.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -656,11 +657,62 @@ static void test_shared_input_menu_defaults(void)
     qa_cvars_destroy(cvars);
 }
 
+static void test_platform_event_retirement(void)
+{
+    qa_error error = {0};
+    qa_platform_events *events = qa_platform_events_create(&error);
+    CHECK(events);
+    const uint8_t packet[] = {1, 2, 3, 4};
+    qa_sys_event pending = {.kind = QA_PLATFORM_EVENT_PACKET, .time_ns = 7};
+    qa_sys_event release = {.kind = QA_PLATFORM_EVENT_KEY, .time_ns = 8,
+        .data.key = {.code = 44, .down = false}};
+    CHECK(qa_platform_events_push(events, &pending, (qa_bytes){packet, sizeof(packet)},
+        (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED);
+    for (size_t i = 0; i < 4096; ++i) {
+        CHECK(qa_platform_events_push(events, &release, (qa_bytes){0}, (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED);
+        qa_platform_event_cursor cursor = {0}; qa_sys_event event; qa_bytes bytes;
+        CHECK(qa_platform_events_read(events, &cursor, &event, &bytes));
+        CHECK(event.kind == QA_PLATFORM_EVENT_PACKET && event.time_ns == 7);
+        CHECK(bytes.size == sizeof(packet) && !memcmp(bytes.data, packet, sizeof(packet)));
+        CHECK(qa_platform_events_read(events, &cursor, &event, &bytes));
+        CHECK(event.kind == QA_PLATFORM_EVENT_KEY && !event.data.key.down && event.data.key.code == 44);
+        qa_platform_events_consume(events, &cursor);
+        CHECK(!qa_platform_events_read(events, &cursor, &event, &bytes));
+        CHECK(qa_platform_events_statistics(events).records == 1);
+    }
+    qa_platform_event_cursor cursor = {0}; qa_sys_event event; qa_bytes bytes;
+    CHECK(qa_platform_events_read(events, &cursor, &event, &bytes));
+    CHECK(bytes.size == sizeof(packet) && !memcmp(bytes.data, packet, sizeof(packet)));
+    qa_platform_events_consume(events, &cursor);
+    CHECK(qa_platform_events_statistics(events).records == 0);
+    CHECK(qa_platform_events_statistics(events).bytes == 0);
+    qa_platform_events_reset(events);
+    while (qa_platform_events_push(events, &pending, (qa_bytes){packet, sizeof(packet)},
+        (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED) {}
+    CHECK(qa_platform_events_statistics(events).records > 0);
+    CHECK(qa_platform_events_push(events, &release, (qa_bytes){0}, (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED);
+    CHECK(qa_platform_events_frame(events, 9) == QA_PLATFORM_EVENT_ACCEPTED);
+    cursor = (qa_platform_event_cursor){0};
+    size_t packets = 0, releases = 0, clocks = 0;
+    while (qa_platform_events_read(events, &cursor, &event, &bytes)) {
+        if (event.kind == QA_PLATFORM_EVENT_PACKET) {
+            ++packets;
+            CHECK(bytes.size == sizeof(packet) && !memcmp(bytes.data, packet, sizeof(packet)));
+        } else if (event.kind == QA_PLATFORM_EVENT_KEY) ++releases;
+        else if (event.kind == QA_PLATFORM_EVENT_TIME) { ++clocks; CHECK(event.time_ns == 9); }
+        qa_platform_events_consume(events, &cursor);
+    }
+    CHECK(packets && releases == 1 && clocks == 1);
+    CHECK(qa_platform_events_statistics(events).records == 0);
+    qa_platform_events_destroy(events);
+}
+
 int main(int argc, char **argv)
 {
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_platform_event_retirement();
     test_shared_cvar_archive();
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
