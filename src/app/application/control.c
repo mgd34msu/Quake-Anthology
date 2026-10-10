@@ -62,6 +62,7 @@ typedef struct application_move_call {
 } application_move_call;
 
 struct application_control_turn {
+    qa_unified_frame_lease *lease;
     application_move_call move;
     qa_movement_input input;
     application_provider **parked_owners;
@@ -2713,8 +2714,14 @@ static bool control_move(qa_application *application,
             error, QA_ERROR_UNSUPPORTED,
             "changing movement family requires a control rebind");
     record->player.profile = profile;
-    struct application_control_turn *prepared = preparing ? calloc(1, sizeof(*prepared)) : physics ? *turn : NULL;
-    if (preparing && !prepared) return application_fail(error, QA_ERROR_MEMORY, "Allocating prepared NQ command");
+    struct application_control_turn *prepared=physics?*turn:NULL;
+    if(preparing) {
+        qa_unified_frame_lease *lease=application_control_storage_acquire(application,error);
+        if(!lease) return false;
+        prepared=qa_unified_frame_lease_alloc(lease,1,sizeof(*prepared),_Alignof(struct application_control_turn),error);
+        if(!prepared) { qa_unified_frame_lease_release(lease); return false; }
+        prepared->lease=lease;
+    }
 
     qa_movement_input input;
     application_move_call move = {
@@ -3000,8 +3007,8 @@ static bool control_move(qa_application *application,
         if (ok && (parked_capacity > SIZE_MAX / sizeof(*prepared->parked_owners) ||
                    parked_capacity > SIZE_MAX / sizeof(*prepared->parked))) ok = false;
         if (ok && parked_capacity) {
-            prepared->parked_owners = calloc(parked_capacity, sizeof(*prepared->parked_owners));
-            prepared->parked = calloc(parked_capacity, sizeof(*prepared->parked));
+            prepared->parked_owners = qa_unified_frame_lease_alloc(prepared->lease,parked_capacity,sizeof(*prepared->parked_owners),_Alignof(application_provider *),error);
+            prepared->parked = qa_unified_frame_lease_alloc(prepared->lease,parked_capacity,sizeof(*prepared->parked),_Alignof(struct application_qc_parked_input *),error);
             ok = prepared->parked_owners && prepared->parked;
         }
         if (!ok) application_fail(error, QA_ERROR_MEMORY, "Allocating parked Source input inventory");
@@ -3026,7 +3033,7 @@ static bool control_move(qa_application *application,
                 cleanup_ok = false;
             }
         }
-    } else free(prepared);
+    } else if(prepared) qa_unified_frame_lease_release(prepared->lease);
     application->operation = previous_operation;
     application_control_frames_state(application, actor, NULL);
     if (!cleanup_ok) application_fault(application, error);
@@ -3174,8 +3181,7 @@ bool application_control_turn_abort(struct application_control_turn *turn, qa_er
         ok = false;
     }
     if (!ok && error) *error = first;
-    free(turn->parked_owners); free(turn->parked);
-    free(turn);
+    qa_unified_frame_lease_release(turn->lease);
     return ok;
 }
 
@@ -3186,8 +3192,8 @@ bool application_control_turn_resume(struct application_control_turn *turn, qa_e
         if (!application_qc_input_resume(turn->parked_owners[i], turn->parked[i], error)) return false;
         turn->parked[i] = NULL;
     }
-    free(turn->parked_owners); turn->parked_owners = NULL;
-    free(turn->parked); turn->parked = NULL;
+    turn->parked_owners = NULL;
+    turn->parked = NULL;
     turn->parked_count = 0;
     return true;
 }

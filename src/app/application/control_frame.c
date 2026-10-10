@@ -12,6 +12,8 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q2_wire.h"
 #include "qa/network_unified_session.h"
+#include "qa/network_unified_frame_pool.h"
+#include "qa/allocation_gate.h"
 #include "qa/text.h"
 #include <float.h>
 #include <math.h>
@@ -68,6 +70,7 @@ typedef struct control_input_slot {
     bool listed;
 } control_input_slot;
 typedef struct control_group {
+    qa_unified_frame_lease *lease;
     struct control_group *next;
     qa_actor_id actor;
     qa_actor_owner provider;
@@ -87,6 +90,7 @@ struct application_control_frames {
     control_input_slot *inputs, *first_input;
     uint32_t capacity;
     control_group *head, *tail;
+    qa_unified_frame_pool *storage;
     const application_control_context *current;
     qa_movement_state *state;
     qa_actor_id state_actor;
@@ -97,6 +101,22 @@ struct application_control_frames {
     size_t touched_count, touched_capacity;
     bool draining;
 };
+
+static control_group *group_take(struct application_control_frames *owner,size_t count,qa_error *error)
+{
+    if(count>(SIZE_MAX-sizeof(control_group))/sizeof(qa_usercmd)) {
+        application_fail(error,QA_ERROR_MEMORY,"Input group is too large"); return NULL;
+    }
+    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(owner->storage,error);
+    if(!lease) return NULL;
+    control_group *group=qa_unified_frame_lease_alloc(lease,1,sizeof(*group)+count*sizeof(*group->commands),_Alignof(control_group),error);
+    if(!group) { qa_unified_frame_lease_release(lease); return NULL; }
+    group->lease=lease; return group;
+}
+static void group_release(control_group *group)
+{ if(group) qa_unified_frame_lease_release(group->lease); }
+qa_unified_frame_lease *application_control_storage_acquire(qa_application *app,qa_error *error)
+{ return qa_unified_frame_lease_acquire(app->control_frames->storage,error); }
 
 static control_input *input_enroll(struct application_control_frames *owner, uint32_t index)
 {
@@ -497,27 +517,38 @@ static bool weapon_owner(qa_application *app, qa_actor_id actor, qa_actor_owner 
         definition.weapon && (definition.actions & QA_ITEM_USE) != 0;
 }
 
+static struct application_control_frames *frames_create(qa_application *app,qa_error *error)
+{
+    struct application_control_frames *frames=calloc(1,sizeof(*frames));
+    if(!frames) { application_fail(error,QA_ERROR_MEMORY,"Allocating source input owner"); return NULL; }
+    frames->application=app; frames->capacity=app->control_capacity;
+    frames->inputs=calloc(frames->capacity,sizeof(*frames->inputs));
+    frames->touched_capacity=frames->capacity;
+    frames->touched=calloc(frames->touched_capacity,sizeof(*frames->touched));
+    frames->storage=qa_unified_frame_pool_create(0,frames->capacity,error);
+    if(!frames->inputs||!frames->touched||!frames->storage) {
+        application_control_frames_free(frames);
+        application_fail(error,QA_ERROR_MEMORY,"Reserving source input storage"); return NULL;
+    }
+    return frames;
+}
 bool application_control_frames_create(qa_application *app, qa_error *error)
 {
     if (!app || app->control_frames || !app->control_capacity)
         return application_fail(error, QA_ERROR_ARGUMENT, "Input owner needs a fresh control table");
-    struct application_control_frames *frames = calloc(1, sizeof(*frames));
-    if (!frames) return application_fail(error, QA_ERROR_MEMORY, "Allocating source input owner");
-    frames->inputs = calloc(app->control_capacity, sizeof(*frames->inputs));
-    if (!frames->inputs) { free(frames); return application_fail(error, QA_ERROR_MEMORY, "Allocating retained source inputs"); }
-    frames->application = app; frames->capacity = app->control_capacity;
-    app->control_frames = frames;
-    return true;
+    app->control_frames=frames_create(app,error);
+    return app->control_frames!=NULL;
 }
 
 void application_control_frames_free(struct application_control_frames *frames)
 {
     if (!frames) return;
     while (frames->head) {
-        control_group *group = frames->head; frames->head = group->next; free(group);
+        control_group *group = frames->head; frames->head = group->next; group_release(group);
     }
     for (control_input_slot *slot = frames->first_input; slot; slot = slot->next)
         (void)application_control_turn_abort(slot->value.turn, NULL);
+    qa_unified_frame_pool_destroy(&frames->storage);
     free(frames->touched); free(frames->inputs); free(frames);
 }
 
@@ -570,12 +601,8 @@ bool application_control_group_touch_once(qa_application *app, qa_actor_id actor
     for (size_t i = 0; i < owner->touched_count; ++i)
         if (qa_actor_id_equal(owner->touched[i], touched)) { *first = false; return true; }
     if (owner->touched_count == owner->touched_capacity) {
-        size_t capacity = owner->touched_capacity ? owner->touched_capacity * 2 : 16;
-        if (capacity < owner->touched_capacity || capacity > SIZE_MAX / sizeof(*owner->touched))
-            return application_fail(error, QA_ERROR_MEMORY, "QW group contact list is too large");
-        qa_actor_id *items = realloc(owner->touched, capacity * sizeof(*items));
-        if (!items) return application_fail(error, QA_ERROR_MEMORY, "Allocating QW group contact list");
-        owner->touched = items; owner->touched_capacity = capacity;
+        qa_allocation_gate_capacity_exhausted();
+        return application_fail(error,QA_ERROR_CAPACITY,"QW group contact capacity exhausted");
     }
     owner->touched[owner->touched_count++] = touched;
     return true;
@@ -596,7 +623,7 @@ void application_control_frames_release(qa_application *app, qa_actor_id actor)
     frames->tail = NULL;
     while (*link) {
         control_group *group = *link;
-        if (qa_actor_id_equal(group->actor, actor)) { *link = group->next; free(group); }
+        if (qa_actor_id_equal(group->actor, actor)) { *link = group->next; group_release(group); }
         else { frames->tail = group; link = &group->next; }
     }
 }
@@ -737,18 +764,18 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q3 intake cannot interrupt a retained input turn");
-    control_group *group = deferred ? NULL : malloc(sizeof(*group) + sizeof(qa_usercmd));
+    control_group *group = deferred ? NULL : group_take(frames,1,error);
     if (!deferred && !group)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating raw Q3 source command");
     qa_usercmd command;
     qa_usercmd_from_q3(raw, sequence, &command);
     application_snapshot_mutated(app);
     if (!qc_receipt(app, actor, ordinal, &command, error)) {
-        free(group); application_fault(app, error); return false;
+        group_release(group); application_fault(app, error); return false;
     }
     qa_q3_usercmd received = q3_source_command(&command, true);
     if (group) {
-        *group = (control_group){.actor = actor, .provider = provider->owner, .count = 1,
+        *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = 1,
             .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q3_SOURCE,
             .source_time_ns = clock.frame.time_ns};
         group->commands[0] = command;
@@ -756,7 +783,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     if (provider->kind == APPLICATION_PROVIDER_Q3 &&
         (!application_native_q3_wire_command(provider, slot, &received, error) ||
          !qa_q3_client_received_command(provider->state.q3, actor, &received, error))) {
-        free(group); application_fault(app, error); return false;
+        group_release(group); application_fault(app, error); return false;
     }
     (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
@@ -766,7 +793,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     if (group && original_q3(provider)) {
         bool ok = execute_original_q3_group(app, group, error);
-        free(group);
+        group_release(group);
         if (!ok) application_fault(app, error);
         return ok;
     }
@@ -824,13 +851,13 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     control_input *input = &frames->inputs[actor.slot].value;
     if ((seen && sequence <= previous) || input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input sequence or retained turn is invalid");
-    control_group *group = malloc(sizeof(*group) + sizeof(qa_usercmd));
+    control_group *group = group_take(frames,1,error);
     if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating physical Q2 input");
     qa_usercmd command = *raw; command.sequence = sequence;
     if (!qc_receipt(app, actor, 0, &command, error)) {
-        free(group); application_fault(app, error); return false;
+        group_release(group); application_fault(app, error); return false;
     }
-    *group = (control_group){.actor = actor, .provider = provider->owner, .count = 1,
+    *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = 1,
         .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q2_SOURCE,
         .source_time_ns = clock.frame.time_ns};
     group->commands[0] = command;
@@ -935,15 +962,15 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw QW intake cannot interrupt a retained turn");
-    control_group *group = malloc(sizeof(*group) + count * sizeof(*commands));
+    control_group *group = group_take(frames,count,error);
     if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating raw QW source group");
-    *group = (control_group){.actor = actor, .provider = provider->owner, .count = count,
+    *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = count,
         .quakeworld = true, .before_source = before_source(provider), .domain = CONTROL_COMMAND_QW_SOURCE,
         .source_time_ns = source_time};
     for (size_t i = 0; i < count; ++i) {
         group->commands[i] = commands[i];
         if (!qc_receipt(app, actor, (uint64_t)i, &group->commands[i], error)) {
-            free(group); application_fault(app, error); return false;
+            group_release(group); application_fault(app, error); return false;
         }
     }
     (void)input_enroll(frames, actor.slot);
@@ -1015,11 +1042,11 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified command has no registered Source clock");
     bool retained = source_client(source) && source->component.clock.kind == QA_RULESET_NETQUAKE &&
         receipt.movement.kind == QA_RULESET_NETQUAKE;
-    control_group *group = retained ? NULL : calloc(1, sizeof(*group) + sizeof(*group->commands));
+    control_group *group = retained ? NULL : group_take(frames,1,error);
     if (!retained && !group) return application_fail(error, QA_ERROR_MEMORY, "Allocating unified command receipt");
     qa_usercmd marker = {.kind = receipt.movement.kind, .sequence = receipt.sequence};
     if (group) {
-        *group = (control_group){.actor = actor, .provider = source->owner, .count = 1,
+        *group = (control_group){.lease = group->lease, .actor = actor, .provider = source->owner, .count = 1,
             .before_source = before_source(source), .domain = CONTROL_COMMAND_UNIFIED, .unified = receipt};
         group->commands[0] = marker;
     }
@@ -1114,18 +1141,18 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
     if (!retained) {
         if (count > (SIZE_MAX - sizeof(*group)) / sizeof(*commands))
             return application_fail(error, QA_ERROR_MEMORY, "Input group is too large");
-        group = malloc(sizeof(*group) + count * sizeof(*commands));
+        group = group_take(frames,count,error);
         if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating pending input group");
-        *group = (control_group){.actor = actor, .provider = provider->owner, .count = count,
+        *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = count,
             .quakeworld = quakeworld, .before_source = before_source(provider)};
     }
     control_input *input = &frames->inputs[actor.slot].value;
-    if (input->turn) { free(group); return application_fail(error, QA_ERROR_ARGUMENT, "Retained input preparation is open"); }
+    if (input->turn) { group_release(group); return application_fail(error, QA_ERROR_ARGUMENT, "Retained input preparation is open"); }
     qa_usercmd latest = {0};
     for (size_t i = 0; i < count; ++i) {
         latest = commands[i];
         if (!qc_receipt(app, actor, (uint64_t)i, &latest, error)) {
-            free(group); application_fault(app, error); return false;
+            group_release(group); application_fault(app, error); return false;
         }
         if (group) group->commands[i] = latest;
     }
@@ -2138,7 +2165,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
             record->player.command_sequence = group->commands[group->count - 1].sequence;
             record->command_seen = true;
         }
-        free(group);
+        group_release(group);
         owner->touched_count = 0;
     }
     owner->tail = NULL;
@@ -2387,11 +2414,8 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
     if (!reading && !application_control_frames_idle(app))
         return application_fail(error, QA_ERROR_ARGUMENT, "Input continuation cannot interrupt a source command");
     if (reading) {
-        owner = calloc(1, sizeof(*owner));
-        if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating saved source input owner");
-        owner->capacity = app->control_capacity; owner->application = app;
-        owner->inputs = calloc(owner->capacity, sizeof(*owner->inputs));
-        if (!owner->inputs) { free(owner); return application_fail(error, QA_ERROR_MEMORY, "Allocating saved retained inputs"); }
+        owner=frames_create(app,error);
+        if(!owner) return false;
     }
     size_t count = 0;
     if (!reading && owner) for (const control_input_slot *slot = owner->first_input; slot; slot = slot->next)
@@ -2474,9 +2498,9 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
             domain_fields(io, &value.domain, &value.source_time_ns) &&
             qa_source_save_count(io, &value.count, (SIZE_MAX - sizeof(control_group)) / sizeof(qa_usercmd)) && value.count != 0;
         if (ok && value.domain == CONTROL_COMMAND_UNIFIED) ok = unified_fields(io, &value.unified);
-        control_group *group = reading && ok ? calloc(1, sizeof(*group) + value.count * sizeof(*group->commands)) : source;
+        control_group *group = reading && ok ? group_take(owner,value.count,error) : source;
         if (ok && !group) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating saved input group");
-        if (reading && ok) { *group = value; if (owner->tail) owner->tail->next = group; else owner->head = group; owner->tail = group; }
+        if (reading && ok) { value.lease=group->lease; *group = value; if (owner->tail) owner->tail->next = group; else owner->head = group; owner->tail = group; }
         application_provider *actor_source = ok ? saved_source_provider(app, value.actor, error) : NULL;
         if (ok && (value.actor.slot >= app->control_capacity || !controls[value.actor.slot].active ||
             !qa_actor_id_equal(controls[value.actor.slot].player.actor, value.actor) ||

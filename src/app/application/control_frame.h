@@ -5,6 +5,9 @@
 #include "qa/source_save.h"
 #include "qa/game_q3_wire.h"
 #include "client_outputs.h"
+#include "qa/network_unified_frame_pool.h"
+
+qa_unified_frame_lease *application_control_storage_acquire(qa_application *,qa_error *);
 
 typedef enum application_control_outcome {
     APPLICATION_CONTROL_FAILED,
