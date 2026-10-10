@@ -370,7 +370,7 @@ static bool receive(void *opaque, const qa_q2_server_record *record, qa_error *e
     return true;
 }
 
-static bool validate(void *opaque, const qa_q2_server_record *record, qa_error *e)
+bool application_unified_q2_protocol_validate(void *opaque, const qa_q2_server_record *record, qa_error *e)
 {
     (void)opaque;
     if (record->event.kind == QA_Q2_SVC_LAYOUT && strlen(record->event.data.print.text) >= 1024)
@@ -406,7 +406,8 @@ bool application_unified_q2_protocol_event(application_provider *provider,
         .time_ns = delivery && delivery->audience.captured ? delivery->audience.source_time_ns : clock.frame.time_ns};
     qa_q2_messages *decoder = engine->event_decoder;
     qa_q2_messages_reset(decoder);
-    bool ok = qa_q2_messages_read(decoder, message->payload, validate, NULL, e);
+    bool ok = delivery || qa_q2_messages_read(decoder, message->payload,
+        application_unified_q2_protocol_validate, NULL, e);
     if (ok) {
         qa_q2_messages_reset(decoder);
         ok = qa_q2_messages_read(decoder, message->payload, receive, &p, e);

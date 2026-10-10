@@ -4,6 +4,7 @@
 #include "qa/native_host_q2_wire.h"
 #include "qa/application_network_q2.h"
 #include "event_stream.h"
+#include "unified_q2_events.h"
 
 typedef struct resource_capture {
     struct application_native_q2 *engine;
@@ -86,6 +87,7 @@ static bool retain(resource_capture *capture, size_t ordinal, qa_native_host_res
 static bool capture_record(void *context, const qa_q2_server_record *record, qa_error *error)
 {
     resource_capture *capture = context;
+    if (capture->counting && !application_unified_q2_protocol_validate(NULL, record, error)) return false;
     size_t ordinal = capture->ordinal++;
     if (!capture_entities(capture, record, error)) return false;
     const qa_q2_server_event *event = &record->event;
