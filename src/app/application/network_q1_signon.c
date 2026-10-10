@@ -25,7 +25,7 @@ static bool event_valid(const qa_application_protocol_event *e, qa_error *error)
         e->destination != 3 || e->multicast || !qa_vec_finite(e->origin) ||
         (e->payload.size && !e->payload.data) || (e->reference_count && !e->references))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid retained Q1 source signon event");
-    for (size_t i = 0; i < e->reference_count; ++i)
+    for (size_t i = 0; !e->nq && i < e->reference_count; ++i)
         if (e->payload.size < 2 || e->references[i].offset > e->payload.size - 2)
             return application_fail(error, QA_ERROR_FORMAT, "Retained Q1 signon reference leaves original bytes");
     return true;
@@ -128,6 +128,12 @@ static bool record_fields(qa_source_save_io *io, application_protocol_record *r,
     qa_event_transaction *transaction)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint8_t encoded_bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES];
+    qa_net_writer writer;
+    if (!reading) {
+        qa_net_writer_init(&writer, encoded_bytes, sizeof(encoded_bytes), io->error);
+        if (!qa_application_protocol_event_encode(&r->event, &writer)) return false;
+    }
     uint32_t dialect = reading ? 0 : (uint32_t)r->event.dialect;
     if (!qa_source_save_string(io, &r->event.provider) || !qa_source_save_u32(io, &dialect) ||
         !qa_source_save_u64(io, &r->signon_source_revision) || !qa_source_save_u64(io, &r->event.time_ns) ||

@@ -819,6 +819,61 @@ abort:
     return application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
 }
 
+static bool retain_protocol_text(qa_application *app, const char **text, qa_error *error)
+{
+    if (!*text) return true;
+    size_t length = strlen(*text);
+    char *copy = application_event_stream_alloc(app, length + 1, 1, error);
+    if (!copy) return false;
+    memcpy(copy, *text, length + 1);
+    *text = copy;
+    return true;
+}
+
+static bool retain_protocol_names(qa_application *app, const char *const **names, size_t count, qa_error *error)
+{
+    if (!count) return true;
+    const char **copy = application_event_stream_alloc(app, count * sizeof(*copy), _Alignof(const char *), error);
+    if (!copy) return false;
+    memcpy(copy, *names, count * sizeof(*copy));
+    for (size_t i = 0; i < count; ++i)
+        if (!retain_protocol_text(app, copy + i, error)) return false;
+    *names = copy;
+    return true;
+}
+
+static bool retain_nq_message(qa_application *app, qa_application_protocol_event *event, qa_error *error)
+{
+    if (!event->nq) return true;
+    qa_nq_message *message = application_event_stream_alloc(app, sizeof(*message), _Alignof(qa_nq_message), error);
+    if (!message) return false;
+    *message = *event->nq;
+    event->nq = message;
+    switch (message->op) {
+    case QA_NQ_PRINT: case QA_NQ_STUFFTEXT: case QA_NQ_CENTERPRINT: case QA_NQ_FINALE: case QA_NQ_CUTSCENE:
+    case QA_NQ_SKYBOX: case QA_NQ_BOTCHAT: case QA_NQ_RAWPRINT: case QA_NQ_SERVERVARS: case QA_NQ_ACHIEVEMENT: case QA_NQ_CHAT:
+        return retain_protocol_text(app, &message->data.text, error);
+    case QA_NQ_LIGHTSTYLE: case QA_NQ_NAME: case QA_NQ_SOCIAL: case QA_NQ_PLAYERINFO:
+        return retain_protocol_text(app, &message->data.indexed_text.text, error);
+    case QA_NQ_PROMPT:
+        return message->data.prompt.operation >= 2 || retain_protocol_text(app, &message->data.prompt.text, error);
+    case QA_NQ_SERVERINFO:
+        return retain_protocol_text(app, &message->data.serverinfo.level, error) &&
+            retain_protocol_names(app, &message->data.serverinfo.models, message->data.serverinfo.model_count, error) &&
+            retain_protocol_names(app, &message->data.serverinfo.sounds, message->data.serverinfo.sound_count, error);
+    default: return true;
+    }
+}
+
+bool qa_application_protocol_event_encode(qa_application_protocol_event *event, qa_net_writer *writer)
+{
+    if (!event->nq) return true;
+    if (!qa_nq_write(writer, event->encoding_protocol, (qa_nq_options){.standard_quake = event->standard_quake},
+            event->nq, NULL, 0)) return false;
+    event->payload = (qa_bytes){writer->data, qa_net_writer_size(writer)};
+    return true;
+}
+
 static bool emit_protocol(application_provider *provider,
     const qa_application_protocol_event *event,
     const qa_application_q2_protocol_delivery *delivery,
@@ -834,7 +889,7 @@ static bool emit_protocol(application_provider *provider,
         (event->resource_count && !event->resources) ||
         event->resource_count > SIZE_MAX / sizeof(*event->resources))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid source protocol event");
-    for (size_t i = 0; i < event->reference_count; ++i)
+    for (size_t i = 0; !event->nq && i < event->reference_count; ++i)
         if (event->payload.size < 2 || event->references[i].offset > event->payload.size - 2)
             return application_fail(error, QA_ERROR_ARGUMENT, "source protocol reference exceeds payload");
     if (source) for (size_t i = 0; i < source->reference_count; ++i)
@@ -890,6 +945,7 @@ static bool emit_protocol(application_provider *provider,
         memcpy(name, resources[i].name, length + 1); resources[i].name = name;
     }
     qa_application_protocol_event copied = *event;
+    if (!retain_nq_message(application, &copied, error)) goto abort;
     copied.event_id = write->envelope->id;
     copied.provider = provider->owner;
     copied.dialect = provider->launch->selection.clock.kind;

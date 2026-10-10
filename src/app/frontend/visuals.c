@@ -1312,6 +1312,9 @@ static bool static_source_submit(qa_frontend *frontend, qa_actor_owner provider,
             if (!(qc ? qa_application_qc_message_signon_at(frontend->application, qc, owner->static_signon, &event, error) :
                 qw ? qa_application_network_qw_signon_at(frontend->application, owner->static_signon, &event, error) :
                 qa_application_network_q1_signon_at(frontend->application, provider, owner->static_signon, &event, error))) return false;
+            uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
+            qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+            if (!qa_application_protocol_event_encode(&event, &writer)) return false;
             qa_net_reader reader; qa_net_reader_init(&reader, event.payload, error);
             while (qa_net_reader_remaining(&reader)) {
                 if (qw) {

@@ -935,8 +935,6 @@ static bool emit_message(application_provider *p, const qa_builtin_event *event,
     const qa_application_protocol_reference *reference, qa_error *error) {
     if (p->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD)
         return application_native_q1_qw_emit(p, event, message, recipient, reliable, signon, reference, error);
-    uint8_t bytes[8192]; qa_net_writer writer;
-    qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     bool standard = true;
     qa_net_protocol_id selected_protocol = protocol();
     if (p->kind == APPLICATION_PROVIDER_QC) selected_protocol = p->state.qc.engine->protocol;
@@ -946,11 +944,9 @@ static bool emit_message(application_provider *p, const qa_builtin_event *event,
         standard = options.program != QA_Q1_HIPNOTIC && options.program != QA_Q1_ROGUE &&
             options.program != QA_Q1_MG3;
     }
-    if (!qa_nq_write(&writer, selected_protocol, (qa_nq_options){.standard_quake = standard},
-                    message, NULL, 0)) return false;
     qa_application_protocol_event record = {.provider = p->owner, .dialect = QA_RULESET_NETQUAKE,
         .time_ns = event->time_ns, .recipient = recipient, .origin = event->origin,
-        .payload = {bytes, qa_net_writer_size(&writer)}, .references = reference,
+        .nq = message, .encoding_protocol = selected_protocol, .standard_quake = standard, .references = reference,
         .reference_count = reference ? 1 : 0, .destination = signon ? 3 : recipient.registry ? 1 : reliable ? 2 : 0,
         .reliable = reliable, .signon = signon};
     return application_emit_protocol(p, &record, error);

@@ -24,6 +24,7 @@
 #include "qa/scene.h"
 
 enum { QA_APPLICATION_RESOURCE_KEY_CAPACITY = sizeof("resource:unified:") + 64 };
+enum { QA_APPLICATION_PROTOCOL_SCRATCH_BYTES = 8192 };
 
 typedef struct qa_application qa_application;
 struct qa_save_image;
@@ -157,6 +158,9 @@ typedef struct qa_application_protocol_event {
     qa_actor_id recipient;
     qa_vec3 origin;
     qa_bytes payload;
+    const struct qa_nq_message *nq;
+    qa_net_protocol_id encoding_protocol;
+    bool standard_quake;
     const qa_application_protocol_reference *references;
     size_t reference_count;
     const qa_application_protocol_resource_reference *resources;
@@ -581,6 +585,9 @@ bool qa_application_q2_player_event_at(const qa_application *, uint64_t,
 uint64_t qa_application_protocol_events_generation(const qa_application *);
 bool qa_application_protocol_event_at(const qa_application *, uint64_t,
                                       size_t projection, qa_application_protocol_event *);
+/* Typed module records encode only at consumption. The writer owns the
+ * resulting bytes; already encoded external records keep their payload. */
+bool qa_application_protocol_event_encode(qa_application_protocol_event *, qa_net_writer *);
 bool qa_application_clear_events(qa_application *, qa_error *);
 
 /* Discovery builds a complete replacement before swapping the catalog.

@@ -316,6 +316,11 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
 static bool packet(frontend_qc_messages *owner,qc_recipient *row,
     const qa_application_protocol_event *event,size_t *offset,qa_error *error)
 {
+    uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
+    qa_application_protocol_event encoded=*event;
+    if(!qa_application_protocol_event_encode(&encoded,&writer)) return false;
+    event=&encoded;
     bool qw=qa_q1_is_qw(row_protocol(row));
     if(event->provider!=row_provider(row) || event->dialect!=(qw?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE) ||
         (event->multicast && !qw) ||
@@ -722,9 +727,13 @@ static bool fields(qa_source_save_io *io,frontend_qc_messages *owner)
             !qa_source_save_count(io,&row->signon_index,signon_count) ||
             !qa_source_save_count(io,&row->signon_offset,SIZE_MAX)) return false;
         qa_application_protocol_event retained;
-        if(row->signon_offset && (row->signon_index==signon_count ||
-            !qa_application_qc_message_signon_at(owner->application,&camera->source,row->signon_index,&retained,io->error) ||
-            row->signon_offset>=retained.payload.size)) return false;
+        if(row->signon_offset) {
+            uint8_t encoded_bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
+            qa_net_writer_init(&writer,encoded_bytes,sizeof(encoded_bytes),io->error);
+            if(row->signon_index==signon_count ||
+                !qa_application_qc_message_signon_at(owner->application,&camera->source,row->signon_index,&retained,io->error) ||
+                !qa_application_protocol_event_encode(&retained,&writer) || row->signon_offset>=retained.payload.size) return false;
+        }
         if(reading) {
             row->generation=qa_application_protocol_events_generation(owner->application);
             row->event_id=qa_application_events_local_first(owner->application);

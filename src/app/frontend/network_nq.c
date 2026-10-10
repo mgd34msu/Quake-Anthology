@@ -165,7 +165,10 @@ static bool signon_payload(frontend_nq_host *host, qa_actor_id actor, uint32_t s
         if (!qa_application_network_q1_signon_count(host->frontend->application, host->owner, &count, error)) return false;
         for (size_t i = 0; i < count; ++i) {
             qa_application_protocol_event event;
+            uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
+            qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
             if (!qa_application_network_q1_signon_at(host->frontend->application, host->owner, i, &event, error) ||
+                !qa_application_protocol_event_encode(&event, &writer) ||
                 !source_convert_values(host, protocol, baselines, baseline_count, event.payload, options, batch_source_emit, &batch, error)) return false;
         }
         for (size_t i = 0; i < baseline_count; ++i) {
@@ -826,6 +829,9 @@ static bool source_event_payload(frontend_nq_host *host, qa_actor_id actor, qa_n
             if (event.dialect != QA_RULESET_NETQUAKE || event.multicast || event.destination < 0 || event.destination > 2)
                 return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake source event lacks its complete native destination contract");
             if (event.recipient.registry && !qa_actor_id_equal(event.recipient, actor)) continue;
+            uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
+            qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+            if (!qa_application_protocol_event_encode(&event, &writer)) return false;
             if (event.reliable) {
                 if (!source_convert_values(host, protocol, baselines, baseline_count, event.payload, options, batch_source_emit, &reliable, error)) return false;
             } else if (!source_full && protocol.kind == QA_NET_NQ15) {
