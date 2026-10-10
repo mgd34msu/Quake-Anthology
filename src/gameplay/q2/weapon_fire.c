@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
@@ -271,10 +272,10 @@ static bool hyperblaster(q2_weapon_call *c, qa_error *e) {
         if (s->frame == 12) {
             if (ammo > 0 && q2_continues(c))
                 s->frame = 6;
-            else if (!q2_sound(c, "weapons/hyprbd1a.wav", 0, 1, e))
+            else if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_HYPRBD1A, 0, 1, e))
                 return false;
         }
-        if (!q2_loop(c, s->frame >= 6 && s->frame <= 11 ? "weapons/hyprbl1a.wav" : "", e))
+        if (!q2_loop(c, s->frame >= 6 && s->frame <= 11 ? QA_Q2_SOUND_WEAPONS_HYPRBL1A : "", e))
             return false;
         if (q2_continues(c) && s->frame >= 6 && s->frame <= 11) {
             if (ammo < 1)
@@ -287,7 +288,7 @@ static bool hyperblaster(q2_weapon_call *c, qa_error *e) {
         }
         return true;
     }
-    if (!q2_loop(c, "weapons/hyprbl1a.wav", e))
+    if (!q2_loop(c, QA_Q2_SOUND_WEAPONS_HYPRBL1A, e))
         return false;
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
@@ -311,7 +312,7 @@ static bool hyperblaster(q2_weapon_call *c, qa_error *e) {
         if (s->frame == 12 && ammo > 0)
             s->frame = 6;
     }
-    return s->frame != 12 || (q2_sound(c, "weapons/hyprbd1a.wav", 0, 1, e) && q2_loop(c, "", e));
+    return s->frame != 12 || (q2_sound(c, QA_Q2_SOUND_WEAPONS_HYPRBD1A, 0, 1, e) && q2_loop(c, "", e));
 }
 static bool machinegun(q2_weapon_call *c, qa_error *e) {
     q2_shot_spec spec;
@@ -374,10 +375,10 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
         return false;
     if (c->rerelease && s->frame > 31) {
         s->frame = 5;
-        if (!q2_sound(c, "weapons/chngnu1a.wav", 0, 2, e))
+        if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_CHNGNU1A, 0, 2, e))
             return false;
     } else {
-        if (!c->rerelease && s->frame == 5 && !q2_sound(c, "weapons/chngnu1a.wav", 0, 2, e))
+        if (!c->rerelease && s->frame == 5 && !q2_sound(c, QA_Q2_SOUND_WEAPONS_CHNGNU1A, 0, 2, e))
             return false;
         if (s->frame == 14 && !q2_continues(c)) {
             s->frame = 32;
@@ -389,13 +390,13 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
             ++s->frame;
     }
     if (s->frame == 22) {
-        if (!q2_loop(c, "", e) || !q2_sound(c, "weapons/chngnd1a.wav", 0, 2, e))
+        if (!q2_loop(c, "", e) || !q2_sound(c, QA_Q2_SOUND_WEAPONS_CHNGND1A, 0, 2, e))
             return false;
-    } else if (!c->rerelease && !q2_loop(c, "weapons/chngnl1a.wav", e))
+    } else if (!c->rerelease && !q2_loop(c, QA_Q2_SOUND_WEAPONS_CHNGNL1A, e))
         return false;
     if (c->rerelease && (s->frame < 5 || s->frame > 21))
         return true;
-    if (c->rerelease && !q2_loop(c, "weapons/chngnl1a.wav", e))
+    if (c->rerelease && !q2_loop(c, QA_Q2_SOUND_WEAPONS_CHNGNL1A, e))
         return false;
     if (!q2_attack_animation(c, s->frame & 1, e))
         return false;
@@ -600,7 +601,7 @@ static bool heatbeam(q2_weapon_call *c, qa_error *e) {
         }
         c->state->frame = c->state->frame > 12 || c->state->frame == 11 ? 8 : c->state->frame + 1;
         c->state->view_skin = 1;
-        if (!q2_loop(c, "weapons/bfg__l1a.wav", e) || !q2_power_sound(c, e))
+        if (!q2_loop(c, QA_Q2_SOUND_WEAPONS_BFG__L1A, e) || !q2_power_sound(c, e))
             return false;
     } else {
         ++c->state->frame;

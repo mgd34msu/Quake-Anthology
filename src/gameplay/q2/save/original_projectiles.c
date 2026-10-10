@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "original_projectiles.h"
 #include "original_edicts.h"
 #include "qa/text.h"
@@ -523,14 +524,14 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
     if (p->kind == Q2_GIB && (p->gib_flags & Q2_GIB_WIDOW_SIZED)) {
         qa_string_id sound = 0;
         if (!io->reading && (p->gib_flags & Q2_GIB_WIDOW_HIT_SOUND) &&
-            !qa_strings_intern_cstr(qa_session_strings(g->services.session), "misc/fhit3.wav",
+            !qa_strings_intern_cstr(qa_session_strings(g->services.session), QA_Q2_SOUND_MISC_FHIT3,
                 &sound, io->error)) return false;
         if (!q2_original_resource(g, io, engine,
             io->edition == QA_Q2_RERELEASE ? "style" : "plat2flags",
             UINT16_MAX, UINT16_MAX, 992, 288, &sound)) return false;
         if (io->reading && sound) {
             const char *path = qa_strings_cstr(qa_session_strings(g->services.session), sound);
-            if (!path || strcmp(path, "misc/fhit3.wav"))
+            if (!path || strcmp(path, QA_Q2_SOUND_MISC_FHIT3))
                 return unsupported(io, 992, "Original Q2 Widow impact sound differs from Source");
             p->gib_flags |= Q2_GIB_WIDOW_HIT_SOUND;
         }

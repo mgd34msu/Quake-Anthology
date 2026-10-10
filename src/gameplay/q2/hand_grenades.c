@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 typedef enum hand_effect_kind {
@@ -410,8 +411,8 @@ static bool dispatch(hand_step *step, uint64_t revision, qa_error *e) {
                 .attenuation = 1,
                 .flags = pending->kind == HAND_COOK_START ? 1u : 0u};
             if (!qa_builtin_resource(&g->services,
-                                     pending->kind == HAND_COCK ? "weapons/hgrena1b.wav"
-                                                                : "weapons/hgrenc1b.wav",
+                                     pending->kind == HAND_COCK ? QA_Q2_SOUND_WEAPONS_HGRENA1B
+                                                                : QA_Q2_SOUND_WEAPONS_HGRENC1B,
                                      &event.resource, e) ||
                 !qa_builtin_emit(&g->services, &event, e))
                 return false;

@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/game_q2_source.h"
 
@@ -119,7 +120,7 @@ static bool explode(qa_q2_game *g, q2_actor *a, bool blow, qa_error *e) {
     if (radius) {
         if (!q2_projectile_noise(g, &p, body.origin, e))
             return false;
-        if (p.damage > (p.kind == Q2_PROX ? 90 : 150) && !sound(g, a, "items/damage3.wav", 3, e))
+        if (p.damage > (p.kind == Q2_PROX ? 90 : 150) && !sound(g, a, QA_Q2_SOUND_ITEMS_DAMAGE3, 3, e))
             return false;
         if (!q2_projectile_radius(g, id, &p, body.origin, p.kind == Q2_PROX ? id : (qa_actor_id){0},
                                   p.damage, p.kind == Q2_PROX ? 192 : p.radius,
@@ -190,7 +191,7 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
                       qa_error *e) {
     q2_projectile *p = &a->projectile;
     if (p->frame != 9) {
-        if (p->frame == 0 && !sound(g, a, "weapons/proxopen.wav", 2, e))
+        if (p->frame == 0 && !sound(g, a, QA_Q2_SOUND_WEAPONS_PROXOPEN, 2, e))
             return false;
         ++p->frame;
         p->next_ns = q2_deadline(g->now_ns,
@@ -239,7 +240,7 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
         if (!visible(g, a->id, body.origin, target, e, &seen))
             return false;
         if (seen)
-            return sound(g, a, "weapons/proxwarn.wav", 2, e) && explode(g, a, false, e);
+            return sound(g, a, QA_Q2_SOUND_WEAPONS_PROXWARN, 2, e) && explode(g, a, false, e);
     }
     p->phase = MINE_ACTIVE;
     qa_actor_id id = a->id;
@@ -350,7 +351,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         if (trace.fraction < 1 &&
             !(trace.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(trace.actor, target)))
             continue;
-        if (p.damage > 3 && !sound(g, a, "items/damage3.wav", 3, e))
+        if (p.damage > 3 && !sound(g, a, QA_Q2_SOUND_ITEMS_DAMAGE3, 3, e))
             return false;
         qa_physics_properties physics;
         bool grounded_monster = !player && is_creature && g->services.physics != NULL &&
@@ -439,7 +440,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         return true;
     if (p->frame > 4) {
         if (p->frame == 5) {
-            if (p->wait == 64 && !mine_sound(g, a, "weapons/trapdown.wav", 2, 2, e))
+            if (p->wait == 64 && !mine_sound(g, a, QA_Q2_SOUND_WEAPONS_TRAPDOWN, 2, 2, e))
                 return false;
             p->wait -= 2;
             p->delay += rerelease ? 2 : (float)((double)g->now_ns / 1e9);
@@ -570,7 +571,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             !qa_world_link(g->services.world, best, NULL, e))
             return false;
         if (rerelease) {
-            if (!q2_projectile_loop(g, a, "weapons/trapsuck.wav", false, e))
+            if (!q2_projectile_loop(g, a, QA_Q2_SOUND_WEAPONS_TRAPSUCK, false, e))
                 return false;
         } else {
             qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
@@ -582,7 +583,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
                                       .channel = 2,
                                       .volume = 1,
                                       .attenuation = 2};
-            if (!qa_builtin_resource(&g->services, "weapons/trapsuck.wav", &event.resource, e) ||
+            if (!qa_builtin_resource(&g->services, QA_Q2_SOUND_WEAPONS_TRAPSUCK, &event.resource, e) ||
                 !qa_builtin_emit(&g->services, &event, e))
                 return false;
         }
@@ -679,7 +680,7 @@ bool q2_mine_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return false;
         if (p->phase == MINE_OPENING)
             return mine_scan(g, a, tesla_activate, e);
-        if (p->frame == 0 && !sound(g, a, "weapons/teslaopen.wav", 2, e))
+        if (p->frame == 0 && !sound(g, a, QA_Q2_SOUND_WEAPONS_TESLAOPEN, 2, e))
             return false;
         ++p->frame;
         p->next_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
@@ -732,7 +733,7 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
             return true;
         mine->projectile.phase = MINE_WARNING;
         mine->projectile.next_ns = q2_deadline(g->now_ns, 500 * Q2_MS);
-        return sound(g, a, "weapons/proxwarn.wav", 2, e);
+        return sound(g, a, QA_Q2_SOUND_WEAPONS_PROXWARN, 2, e);
     }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
@@ -746,7 +747,7 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
             if ((content & 24u) != 0)
                 return explode(g, a, true, e);
         }
-        return sound(g, a, q2_random(g) > 0.5f ? "weapons/hgrenb1a.wav" : "weapons/hgrenb2a.wav", 2,
+        return sound(g, a, q2_random(g) > 0.5f ? QA_Q2_SOUND_WEAPONS_HGRENB1A : QA_Q2_SOUND_WEAPONS_HGRENB2A, 2,
                      e);
     }
     if (p->kind != Q2_PROX || p->phase != MINE_FLIGHT)
@@ -942,7 +943,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
         !qa_world_link(g->services.world, id, NULL, e) ||
         !q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model, 0, body.origin, body.angles, e))
         return false;
-    return kind != Q2_TRAP || q2_projectile_loop(g, a, "weapons/traploop.wav", false, e);
+    return kind != Q2_TRAP || q2_projectile_loop(g, a, QA_Q2_SOUND_WEAPONS_TRAPLOOP, false, e);
 }
 typedef struct projectile_reaction_call {
     qa_q2_game *game;

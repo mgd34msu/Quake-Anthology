@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 float q2_launch_pitch(float pitch) { return fmaxf(-62.5f, pitch); }
@@ -81,7 +82,7 @@ static bool reserve(q2_weapon_call *c, bool *reserved, qa_error *e) {
     c->state->hand_reservation = QA_Q2_HAND_FINITE;
     *reserved = true;
     if (c->rerelease && before > c->definition->warning && before - 1 <= c->definition->warning &&
-        !q2_sound(c, "weapons/lowammo.wav", 0, 1, e))
+        !q2_sound(c, QA_Q2_SOUND_WEAPONS_LOWAMMO, 0, 1, e))
         return false;
     return c->game->hooks.ammo_changed == NULL ||
            c->game->hooks.ammo_changed(c->game->hooks.context, c->actor->id, item, e);
@@ -152,8 +153,8 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
     int idle = d->fire_last + 1, ready = c->rerelease && hand ? d->idle_last + 1 : idle;
     int sound_frame = hand || trap ? 5 : 99, hold_frame = hand || trap ? 11 : 1,
         fire_frame = hand || trap ? 12 : 2;
-    const char *cock = hand ? "weapons/hgrena1b.wav" : "weapons/trapcock.wav";
-    const char *loop = hand ? "weapons/hgrenc1b.wav" : trap ? "weapons/traploop.wav" : "";
+    const char *cock = hand ? QA_Q2_SOUND_WEAPONS_HGRENA1B : QA_Q2_SOUND_WEAPONS_TRAPCOCK;
+    const char *loop = hand ? QA_Q2_SOUND_WEAPONS_HGRENC1B : trap ? QA_Q2_SOUND_WEAPONS_TRAPLOOP : "";
     bool explodes = hand || (trap && !c->rerelease);
     uint64_t now = c->now_ns;
     if (s->handoff == QA_Q2_PRIMARY_HOLSTERING)

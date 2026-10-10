@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 static const char *const meat = "models/objects/gibs/sm_meat/tris.md2";
@@ -244,7 +245,7 @@ static bool sized_touch(void *opaque, qa_actor_id id, qa_error *error) {
   if (!qa_world_set_collision(game->services.world, id, NULL, error)) return false;
   if (!qa_world_link(game->services.world, id, NULL, error)) return false;
   return !q2_actor_live(game, id) || !sound ||
-      q2_projectile_event(game, id, QA_BUILTIN_SOUND, "misc/fhit3.wav", 2, body.origin, body.origin, error);
+      q2_projectile_event(game, id, QA_BUILTIN_SOUND, QA_Q2_SOUND_MISC_FHIT3, 2, body.origin, body.origin, error);
 }
 
 bool q2_widow_gib_touch(qa_q2_game *game, const qa_touch_contact *contact, qa_error *error) {
@@ -316,7 +317,7 @@ bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
           start ? "q2:widowbeamout" : "q2:widowsplash", start ? 20001 + (int)i : 1, error)) return false;
       if (!q2m_alive(context)) return true;
     }
-    if (start) return q2m_sound(context, "misc/bwidowbeamout.wav", 2, 1, error);
+    if (start) return q2m_sound(context, QA_Q2_SOUND_MISC_BWIDOWBEAMOUT, 2, 1, error);
     qa_vec3 point = context->body.origin; point.z += 36;
     if (!effect(context->game, context->actor->id, point, "q2:bosstport", 1, error) ||
         !spawn_legs(context, error)) return false;

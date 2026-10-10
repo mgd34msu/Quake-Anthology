@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 typedef enum q2_anchor {
@@ -192,7 +193,7 @@ bool qa_q2_grapple_reset(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
                 return false;
         }
     } else if (q2_actor_live(g, hook_id)) {
-        if (!sound(g, id, id, "weapons/grapple/grreset.wav", 1, -1,
+        if (!sound(g, id, id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRRESET, 1, -1,
                    g->options.edition == QA_Q2_CLASSIC, e))
             return false;
         if (!q2_actor_live(g, id) || !qa_actor_id_equal(s->hook, hook_id))
@@ -347,16 +348,16 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         if (!attach(g, hook, contact->other, classification, e))
             return false;
         if (g->options.edition == QA_Q2_CLASSIC &&
-            !sound(g, owner_id, owner_id, "weapons/grapple/grpull.wav", 1, -1, true, e))
+            !sound(g, owner_id, owner_id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRPULL, 1, -1, true, e))
             return false;
         if (!q2_actor_live(g, hook_id))
             return true;
-        if (!sound(g, hook_id, owner_id, "weapons/grapple/grhit.wav", 1, -1, false, e))
+        if (!sound(g, hook_id, owner_id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHIT, 1, -1, false, e))
             return false;
         if (!q2_actor_live(g, hook_id))
             return true;
         if (g->options.edition == QA_Q2_RERELEASE &&
-            !loop(g, hook, "weapons/grapple/grpull.wav", e))
+            !loop(g, hook, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRPULL, e))
             return false;
     } else {
         s->hook_state = 2;
@@ -373,11 +374,11 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
                     player = g->hooks.grapple_player_hit(g->hooks.context, contact->other);
                 if (player &&
                     !sound(g, hook_id, owner_id,
-                           repeated ? "weapons/grapple/gkilling.wav" : "weapons/grapple/ghit.wav",
+                           repeated ? QA_Q2_SOUND_WEAPONS_GRAPPLE_GKILLING : QA_Q2_SOUND_WEAPONS_GRAPPLE_GHIT,
                            0, 1, false, e))
                     return false;
                 if (!player && !repeated &&
-                    !sound(g, hook_id, owner_id, "weapons/grapple/ghitwall.wav", 0, 0.8f, false, e))
+                    !sound(g, hook_id, owner_id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GHITWALL, 0, 0.8f, false, e))
                     return false;
                 if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, owner_id))
                     return true;
@@ -511,7 +512,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
            : Q2_SHOT_MASK;
     s->hook = id;
     s->phase = QA_Q2_GRAPPLE_FLY;
-    if (lm && !sound(g, owner->id, owner->id, "weapons/grapple/grfire.wav", 0, 0.8f, false, e))
+    if (lm && !sound(g, owner->id, owner->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFIRE, 0, 0.8f, false, e))
         return false;
     if (!q2_actor_live(g, id) || !q2_actor_live(g, owner->id))
         return true;
@@ -557,7 +558,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
         return q2_grapple_touch(g, &contact, e) && q2_weapon_fired(g, owner->id, weapon, e);
     }
     *launched = true;
-    return (!rr || loop(g, hook, "weapons/grapple/grfly.wav", e)) &&
+    return (!rr || loop(g, hook, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFLY, e)) &&
            q2_weapon_fired(g, owner->id, weapon, e);
 }
 static bool project_pose(q2_weapon_call *call, bool lm, const qa_q2_grapple_pose *p,
@@ -601,7 +602,7 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_vec3 start, direction;
     if (!project_pose(&call, false, &p, &start, &direction, e))
         return false;
-    if (!call.rerelease && !sound(g, a->id, a->id, "weapons/grapple/grfire.wav", 1, -1, true, e))
+    if (!call.rerelease && !sound(g, a->id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFIRE, 1, -1, true, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -611,7 +612,7 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (call.rerelease && launched &&
-        !sound(g, a->id, a->id, "weapons/grapple/grfire.wav", 1, -1, false, e))
+        !sound(g, a->id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFIRE, 1, -1, false, e))
         return false;
     call.now_ns = g->now_ns;
     return !q2_actor_live(g, a->id) || q2_noise(&call, start, e);
@@ -749,7 +750,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
                 return false;
             if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, a->id))
                 return true;
-            if (!sound(g, hook_id, a->id, "weapons/grapple/grhurt.wav", 1, -1, false, e))
+            if (!sound(g, hook_id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHURT, 1, -1, false, e))
                 return false;
         }
         if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, a->id))
@@ -790,12 +791,12 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
     if (s->phase == QA_Q2_GRAPPLE_PULL && qa_vec_length(direction) < 64) {
         s->phase = QA_Q2_GRAPPLE_HANG;
         if (rr) {
-            if (!loop(g, hook, "weapons/grapple/grhang.wav", e))
+            if (!loop(g, hook, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHANG, e))
                 return false;
         } else {
             qa_q2_grapple_motion change = {.set_prediction = true, .prediction_suppressed = true};
             if (!motion(g, a->id, &change, e) ||
-                !sound(g, a->id, a->id, "weapons/grapple/grhang.wav", 1, -1, true, e))
+                !sound(g, a->id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHANG, 1, -1, true, e))
                 return false;
         }
     }
@@ -831,7 +832,7 @@ bool q2_grapple_think(qa_q2_game *g, q2_actor *hook, qa_error *e) {
         return true;
     bool flying = qa_actor_reference_present(hook->projectile.enemy) == 0;
     if (!sound(g, hook->id, owner->id,
-               flying ? "weapons/grapple/gflyair.wav" : "weapons/grapple/gpulling.wav", 0, 1, false,
+               flying ? QA_Q2_SOUND_WEAPONS_GRAPPLE_GFLYAIR : QA_Q2_SOUND_WEAPONS_GRAPPLE_GPULLING, 0, 1, false,
                e))
         return false;
     if (q2_actor_live(g, hook->id))

@@ -86,6 +86,11 @@ bool qa_application_native_q2_source_profile_read(qa_application *, qa_actor_own
 bool qa_application_native_q2_source_clock_read(qa_application *, qa_actor_owner,
     qa_q2_edition *edition, uint64_t *interval_ns, bool *found, qa_error *);
 
+/* Load-time declarations from any actual Q2 provider, including in a mixed
+ * world. Remote-only recipe providers have no local GAME to visit. */
+bool qa_application_native_q2_sound_resources(qa_application *, qa_actor_owner,
+    bool (*visit)(void *, const char *, qa_error *), void *, qa_error *);
+
 typedef struct qa_application_native_q2_hud_source {
     qa_actor_owner provider, data_provider;
     uint64_t config_revision;

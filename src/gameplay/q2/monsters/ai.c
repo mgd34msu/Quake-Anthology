@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "reinforcements.h"
 #include "medic.h"
@@ -2342,8 +2343,8 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
       }
       if (!q2m_sound(context,
                      species == Q2M_GLADB && monster->style == 1
-                         ? "weapons/plasshot.wav"
-                         : "gladiator/railgun.wav",
+                         ? QA_Q2_SOUND_WEAPONS_PLASSHOT
+                         : QA_Q2_SOUND_GLADIATOR_RAILGUN,
                      1, 1.0f, error))
         return false;
     }
@@ -2372,15 +2373,15 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
   case Q2M_JORG:
     if ((context->game->options.edition == QA_Q2_RERELEASE
              ? q2_rerelease_float(context->game, 0, 1) : q2m_random(context->game)) <= 0.75f) {
-      if (!q2m_sound(context, "boss3/bs3atck1.wav",
+      if (!q2m_sound(context, QA_Q2_SOUND_BOSS3_BS3ATCK1,
                        context->game->options.edition == QA_Q2_RERELEASE ? 1 : 2,
                        1.0f, error))
         return false;
       if (!q2m_alive(context)) return true;
-      if (!q2m_weapon_sound(context, "boss3/w_loop.wav", error)) return false;
+      if (!q2m_weapon_sound(context, QA_Q2_SOUND_BOSS3_W_LOOP, error)) return false;
       *move = Q2M_MOVE_jorg_move_start_attack1;
     } else {
-      if (!q2m_sound(context, "boss3/bs3atck2.wav", 2, 1.0f, error))
+      if (!q2m_sound(context, QA_Q2_SOUND_BOSS3_BS3ATCK2, 2, 1.0f, error))
         return false;
       *move = Q2M_MOVE_jorg_move_attack2;
     }
@@ -2529,7 +2530,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
       *move = random < 0.45f ? Q2M_MOVE_carrier_move_attack_pre_mg
                              : Q2M_MOVE_carrier_move_attack_rail;
     if (*move != Q2M_MOVE_NONE && (*move == Q2M_MOVE_carrier_move_attack_rail) &&
-        !q2m_sound(context, "gladiator/railgun.wav", 1, 1.0f, error))
+        !q2m_sound(context, QA_Q2_SOUND_GLADIATOR_RAILGUN, 1, 1.0f, error))
       return false;
     break;
   }

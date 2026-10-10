@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 bool q2_mover_portals(qa_q2_game *g, q2_actor *a, bool open, qa_error *e) {
@@ -29,10 +30,10 @@ static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
     bool water = s->kind == Q2E_WATER, button = s->kind == Q2E_BUTTON;
     int sounds = (int)q2_field_float(g, s, "sounds", 0);
     bool enabled = water ? sounds == 1 || sounds == 2 : sounds != 1;
-    const char *edge = water    ? (start ? "world/mov_watr.wav" : "world/stp_watr.wav")
-                       : button ? (start ? "switches/butn2.wav" : "")
-                                : (start ? "doors/dr1_strt.wav" : "doors/dr1_end.wav");
-    const char *middle = water || button ? "" : "doors/dr1_mid.wav";
+    const char *edge = water    ? (start ? QA_Q2_SOUND_WORLD_MOV_WATR : QA_Q2_SOUND_WORLD_STP_WATR)
+                       : button ? (start ? QA_Q2_SOUND_SWITCHES_BUTN2 : "")
+                                : (start ? QA_Q2_SOUND_DOORS_DR1_STRT : QA_Q2_SOUND_DOORS_DR1_END);
+    const char *middle = water || button ? "" : QA_Q2_SOUND_DOORS_DR1_MID;
     if (!enabled)
         edge = middle = "";
     if (g->options.edition == QA_Q2_RERELEASE) {
@@ -432,7 +433,7 @@ bool q2_door_touch(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     if (!q2_entity_message(g, a, other,
                            qa_strings_cstr(qa_session_strings(g->services.session), s->message), e))
         return false;
-    return !q2_actor_live(g, a->id) || q2_entity_sound(g, a, "misc/talk1.wav", 0, 1, 1, 0, e);
+    return !q2_actor_live(g, a->id) || q2_entity_sound(g, a, QA_Q2_SOUND_MISC_TALK1, 0, 1, 1, 0, e);
 }
 bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);

@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/game_q2_monsters.h"
 #include "qa/text.h"
@@ -85,7 +86,7 @@ static bool flashlight(qa_q2_game *g, qa_actor_id id, bool enabled, qa_error *e)
     qa_string_id sound;
     if (!qa_world_body_read(g->services.world, id, &body, e) ||
         !qa_builtin_resource(&g->services,
-                             enabled ? "items/flashlight_on.wav" : "items/flashlight_off.wav",
+                             enabled ? QA_Q2_SOUND_ITEMS_FLASHLIGHT_ON : QA_Q2_SOUND_ITEMS_FLASHLIGHT_OFF,
                              &sound, e) ||
         !qa_builtin_emit(&g->services,
                          &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,

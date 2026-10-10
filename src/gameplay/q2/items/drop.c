@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "../entities/internal.h"
 #include "internal.h"
 #include <ctype.h>
@@ -210,7 +211,7 @@ bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float 
     a->item->due_ns = 0;
     qa_string_id sound;
     if (!qa_world_body_read(g->services.world, id, &body, e) ||
-        !qa_builtin_resource(&g->services, "misc/fhit3.wav", &sound, e) ||
+        !qa_builtin_resource(&g->services, QA_Q2_SOUND_MISC_FHIT3, &sound, e) ||
         !qa_builtin_emit(&g->services,
                          &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
                                              .family = QA_GAME_Q2,

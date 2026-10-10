@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, const char *path,
@@ -146,9 +147,9 @@ bool q2_power_sound(q2_weapon_call *c, qa_error *e) {
         !c->game->hooks.ctf_strength_sound(c->game->hooks.context, c->actor->id, &handled, e))
         return false;
     bool quad = c->input.quad_until_ns > c->now_ns, twice = c->input.double_until_ns > c->now_ns;
-    const char *path = quad && twice && c->rerelease ? "ctf/tech2x.wav"
-                       : quad                        ? "items/damage3.wav"
-                       : twice                       ? "misc/ddamage3.wav"
+    const char *path = quad && twice && c->rerelease ? QA_Q2_SOUND_CTF_TECH2X
+                       : quad                        ? QA_Q2_SOUND_ITEMS_DAMAGE3
+                       : twice                       ? QA_Q2_SOUND_MISC_DDAMAGE3
                                                      : NULL;
     if (!handled && path != NULL && !q2_sound(c, path, 3, 1, e))
         return false;

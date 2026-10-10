@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 static void schedule(q2m_context *c, q2m_corpse_phase phase, double seconds) {
@@ -30,7 +31,7 @@ static bool flies(q2m_context *c, bool enabled, qa_error *error) {
                               .volume = 1,
                               .attenuation = 1,
                               .flags = enabled ? 1u : 0u};
-    if (!qa_builtin_resource(&c->game->services, "infantry/inflies1.wav",
+    if (!qa_builtin_resource(&c->game->services, QA_Q2_SOUND_INFANTRY_INFLIES1,
                              &event.resource, error))
         return false;
     if (!q2m_alive(c))

@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include <ctype.h>
 #include <stdio.h>
@@ -5,7 +6,7 @@
 #define VIS(c, n, m, i, s, r)                                                                      \
     .classname = c, .name = n, .model = m, .icon = i, .sound = s, .respawn_seconds = r
 #define AMMO(c, n, m, i, q, cap, rot)                                                              \
-    {VIS(c, n, m, i, "misc/am_pkup.wav", 30),                                                      \
+    {VIS(c, n, m, i, QA_Q2_SOUND_MISC_AM_PKUP, 30),                                                      \
      .kind = QA_Q2_ITEM_AMMO,                                                                      \
      .quantity = q,                                                                                \
      .capacity = cap,                                                                              \
@@ -13,7 +14,7 @@
      .rotate = rot,                                                                                \
      .infinite_quantity = true}
 #define KEY(c, n, m, i)                                                                            \
-    {VIS(c, n, m, i, "items/pkup.wav", 0),                                                         \
+    {VIS(c, n, m, i, QA_Q2_SOUND_ITEMS_PKUP, 0),                                                         \
      .kind = QA_Q2_ITEM_KEY,                                                                       \
      .quantity = 1,                                                                                \
      .capacity = 32767,                                                                            \
@@ -21,7 +22,7 @@
      .droppable = true,                                                                            \
      .rotate = true}
 #define POWER(c, n, m, i, t, p)                                                                    \
-    {VIS(c, n, m, i, "items/pkup.wav", t),                                                         \
+    {VIS(c, n, m, i, QA_Q2_SOUND_ITEMS_PKUP, t),                                                         \
      .kind = QA_Q2_ITEM_POWER,                                                                     \
      .powerup = p,                                                                                 \
      .quantity = 1,                                                                                \
@@ -32,7 +33,7 @@
     {VIS(c, "Health", m, "i_health", s, mega ? 20 : 30), .kind = QA_Q2_ITEM_HEALTH, .quantity = q, \
      .ignore_maximum = over, .timed = mega}
 #define ARMOR(c, n, m, i, q, cap, norm, energy)                                                    \
-    {VIS(c, n, m, i, "misc/ar1_pkup.wav", 20),                                                     \
+    {VIS(c, n, m, i, QA_Q2_SOUND_MISC_AR1_PKUP, 20),                                                     \
      .kind = QA_Q2_ITEM_ARMOR,                                                                     \
      .quantity = q,                                                                                \
      .capacity = cap,                                                                              \
@@ -64,17 +65,17 @@ static const qa_q2_item_definition base[] = {
     KEY("key_airstrike_target", "Airstrike Marker", "models/items/keys/target/tris.md2",
         "i_airstrike"),
     {VIS("item_bandolier", "Bandolier", "models/items/band/tris.md2", "p_bandolier",
-         "items/pkup.wav", 60),
+         QA_Q2_SOUND_ITEMS_PKUP, 60),
      .kind = QA_Q2_ITEM_PACK, .rotate = true},
-    {VIS("item_pack", "Ammo Pack", "models/items/pack/tris.md2", "i_pack", "items/pkup.wav", 180),
+    {VIS("item_pack", "Ammo Pack", "models/items/pack/tris.md2", "i_pack", QA_Q2_SOUND_ITEMS_PKUP, 180),
      .kind = QA_Q2_ITEM_PACK, .rotate = true, .full_pack = true},
-    HEALTH("item_health", "models/items/healing/medium/tris.md2", "items/n_health.wav", 10, false,
+    HEALTH("item_health", "models/items/healing/medium/tris.md2", QA_Q2_SOUND_ITEMS_N_HEALTH, 10, false,
            false),
-    HEALTH("item_health_small", "models/items/healing/stimpack/tris.md2", "items/s_health.wav", 2,
+    HEALTH("item_health_small", "models/items/healing/stimpack/tris.md2", QA_Q2_SOUND_ITEMS_S_HEALTH, 2,
            true, false),
-    HEALTH("item_health_large", "models/items/healing/large/tris.md2", "items/l_health.wav", 25,
+    HEALTH("item_health_large", "models/items/healing/large/tris.md2", QA_Q2_SOUND_ITEMS_L_HEALTH, 25,
            false, false),
-    HEALTH("item_health_mega", "models/items/mega_h/tris.md2", "items/m_health.wav", 100, true,
+    HEALTH("item_health_mega", "models/items/mega_h/tris.md2", QA_Q2_SOUND_ITEMS_M_HEALTH, 100, true,
            true),
     ARMOR("item_armor_jacket", "Jacket Armor", "models/items/armor/jacket/tris.md2",
           "i_jacketarmor", 25, 50, .3f, 0),
@@ -83,7 +84,7 @@ static const qa_q2_item_definition base[] = {
     ARMOR("item_armor_body", "Body Armor", "models/items/armor/body/tris.md2", "i_bodyarmor", 100,
           200, .8f, .6f),
     {VIS("item_armor_shard", "Armor Shard", "models/items/armor/shard/tris.md2", "i_jacketarmor",
-         "misc/ar2_pkup.wav", 20),
+         QA_Q2_SOUND_MISC_AR2_PKUP, 20),
      .kind = QA_Q2_ITEM_SHARD, .quantity = 2, .rotate = true},
     POWER("item_quad", "Quad Damage", "models/items/quaddama/tris.md2", "p_quad", 60,
           QA_Q2_POWER_QUAD),
@@ -96,18 +97,18 @@ static const qa_q2_item_definition base[] = {
     POWER("item_enviro", "Environment Suit", "models/items/enviro/tris.md2", "p_envirosuit", 60,
           QA_Q2_POWER_ENVIRO),
     {VIS("item_power_screen", "Power Screen", "models/items/armor/screen/tris.md2", "i_powerscreen",
-         "misc/ar3_pkup.wav", 60),
+         QA_Q2_SOUND_MISC_AR3_PKUP, 60),
      .kind = QA_Q2_ITEM_POWER_ARMOR, .powered_armor = QA_POWER_SCREEN, .capacity = 32767,
      .quantity = 1, .droppable = true, .rotate = true},
     {VIS("item_power_shield", "Power Shield", "models/items/armor/shield/tris.md2", "i_powershield",
-         "misc/ar3_pkup.wav", 60),
+         QA_Q2_SOUND_MISC_AR3_PKUP, 60),
      .kind = QA_Q2_ITEM_POWER_ARMOR, .powered_armor = QA_POWER_SHIELD, .capacity = 32767,
      .quantity = 1, .droppable = true, .rotate = true},
     {VIS("item_adrenaline", "Adrenaline", "models/items/adrenal/tris.md2", "p_adrenaline",
-         "items/pkup.wav", 60),
+         QA_Q2_SOUND_ITEMS_PKUP, 60),
      .kind = QA_Q2_ITEM_MAX_HEALTH, .quantity = 1, .fill = true, .rotate = true},
     {VIS("item_ancient_head", "Ancient Head", "models/items/c_head/tris.md2", "i_fixme",
-         "items/pkup.wav", 60),
+         QA_Q2_SOUND_ITEMS_PKUP, 60),
      .kind = QA_Q2_ITEM_MAX_HEALTH, .quantity = 2, .rotate = true}};
 static const qa_q2_item_definition xatrix[] = {
     AMMO("ammo_magslug", "Mag Slug", "models/objects/ammo/tris.md2", "a_mslugs", 10, 50, false),
@@ -116,7 +117,7 @@ static const qa_q2_item_definition xatrix[] = {
     POWER("item_quadfire", "DualFire Damage", "models/items/quadfire/tris.md2", "p_quadfire", 60,
           QA_Q2_POWER_QUADFIRE),
     {VIS("item_foodcube", "Health", "models/objects/trapfx/tris.md2", "i_health",
-         "items/s_health.wav", 0),
+         QA_Q2_SOUND_ITEMS_S_HEALTH, 0),
      .kind = QA_Q2_ITEM_FOOD}};
 static const qa_q2_item_definition rogue[] = {
     AMMO("ammo_flechettes", "Flechettes", "models/ammo/am_flechette/tris.md2", "a_flechettes", 50,
@@ -131,28 +132,28 @@ static const qa_q2_item_definition rogue[] = {
     POWER("item_ir_goggles", "IR Goggles", "models/items/goggles/tris.md2", "p_ir", 60,
           QA_Q2_POWER_IR),
     {VIS("item_doppleganger", "Doppleganger", "models/items/dopple/tris.md2", "p_doppleganger",
-         "items/pkup.wav", 90),
+         QA_Q2_SOUND_ITEMS_PKUP, 90),
      .kind = QA_Q2_ITEM_DECOY, .quantity = 1, .capacity = 1, .droppable = true, .rotate = true},
-    {VIS("ammo_nuke", "A-M Bomb", "models/weapons/g_nuke/tris.md2", "p_nuke", "misc/am_pkup.wav",
+    {VIS("ammo_nuke", "A-M Bomb", "models/weapons/g_nuke/tris.md2", "p_nuke", QA_Q2_SOUND_MISC_AM_PKUP,
          300),
      .kind = QA_Q2_ITEM_NUKE, .quantity = 1, .capacity = 1, .droppable = true, .rotate = true},
     {VIS("item_sphere_defender", "defender sphere", "models/items/defender/tris.md2", "p_defender",
-         "items/pkup.wav", 60),
+         QA_Q2_SOUND_ITEMS_PKUP, 60),
      .kind = QA_Q2_ITEM_SPHERE, .quantity = 1, .capacity = 32767, .rotate = true},
     {VIS("item_sphere_hunter", "hunter sphere", "models/items/hunter/tris.md2", "p_hunter",
-         "items/pkup.wav", 120),
+         QA_Q2_SOUND_ITEMS_PKUP, 120),
      .kind = QA_Q2_ITEM_SPHERE, .quantity = 1, .capacity = 32767, .rotate = true},
     {VIS("item_sphere_vengeance", "vengeance sphere", "models/items/vengnce/tris.md2",
-         "p_vengeance", "items/pkup.wav", 60),
+         "p_vengeance", QA_Q2_SOUND_ITEMS_PKUP, 60),
      .kind = QA_Q2_ITEM_SPHERE, .quantity = 1, .capacity = 32767, .rotate = true},
-    {VIS("item_compass", "compass", "models/objects/fire/tris.md2", "p_compass", "items/pkup.wav",
+    {VIS("item_compass", "compass", "models/objects/fire/tris.md2", "p_compass", QA_Q2_SOUND_ITEMS_PKUP,
          60),
      .kind = QA_Q2_ITEM_COMPASS, .quantity = 1, .capacity = 32767, .rotate = true}};
 static const qa_q2_item_definition rerelease[] = {
     POWER("item_invisibility", "Invisibility", "models/items/cloaker/tris.md2", "p_cloaker", 300,
           QA_Q2_POWER_INVISIBILITY),
     {VIS("item_flashlight", "Flashlight", "models/items/flashlight/tris.md2", "p_torch",
-         "items/pkup.wav", 0),
+         QA_Q2_SOUND_ITEMS_PKUP, 0),
      .kind = QA_Q2_ITEM_FLASHLIGHT, .quantity = 1, .capacity = 1, .coop_stay = true,
      .rotate = true},
     KEY("key_explosive_charges", "Explosive Charges", "models/items/n64/charge/tris.md2",
@@ -296,7 +297,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             .name = qa_q2_weapon_display_name((qa_q2_weapon)i),
             .icon = icons[i],
             .model = w->world_model,
-            .sound = "misc/w_pkup.wav",
+            .sound = QA_Q2_SOUND_MISC_W_PKUP,
             .kind = QA_Q2_ITEM_WEAPON,
             .weapon = (qa_q2_weapon)i,
             .ammo = g->ammo[i],

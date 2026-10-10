@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 static bool weapon_selected(qa_q2_game *g, q2_actor *a) {
@@ -143,7 +144,7 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return true;
 }
 bool q2_player_jump(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {
-    if (!q2_player_sound(g, id, "*jump1.wav", 2, e)) return false;
+    if (!q2_player_sound(g, id, QA_Q2_SOUND__JUMP1, 2, e)) return false;
     return g->options.edition == QA_Q2_RERELEASE || !q2_actor_live(g, id) ||
         q2_player_noise(g, id, origin, false, e);
 }

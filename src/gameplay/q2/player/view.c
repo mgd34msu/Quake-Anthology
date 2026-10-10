@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "../entities/internal.h"
 
@@ -237,7 +238,7 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         (rr ? s->rule.mission_time_ns < g->now_ns : (g->wire_frame & 63) == 0)) {
         bool beep = !rr || s->rule.mission_changed == 1;
         if (!rr) ++s->rule.mission_changed;
-        if (beep && !q2_entity_sound(g, a, "misc/pc_up.wav", rr ? 0 : 2, 1, 3, 0, e))
+        if (beep && !q2_entity_sound(g, a, QA_Q2_SOUND_MISC_PC_UP, rr ? 0 : 2, 1, 3, 0, e))
             return false;
         if (!q2_actor_live(g, a->id)) return true;
         if (rr) {
@@ -246,9 +247,9 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         }
     }
     qa_string_id loop = weapon->loop_sound;
-    const char *path = m->water_level && (m->water_type & 24) ? "player/fry.wav"
-                       : weapon->q2_weapon == QA_Q2_RAILGUN   ? "weapons/rg_hum.wav"
-                       : weapon->q2_weapon == QA_Q2_BFG       ? "weapons/bfg_hum.wav"
+    const char *path = m->water_level && (m->water_type & 24) ? QA_Q2_SOUND_PLAYER_FRY
+                       : weapon->q2_weapon == QA_Q2_RAILGUN   ? QA_Q2_SOUND_WEAPONS_RG_HUM
+                       : weapon->q2_weapon == QA_Q2_BFG       ? QA_Q2_SOUND_WEAPONS_BFG_HUM
                                                               : NULL;
     if (path && !qa_builtin_resource(&g->services, path, &loop, e))
         return false;
@@ -395,10 +396,10 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         const char *item, *sound;
         qa_vec3 color;
         float alpha;
-    } table[] = {{"item_quad", "items/damage2.wav", {0, 0, 1}, .08f},
-                 {"item_invulnerability", "items/protect2.wav", {1, 1, 0}, .08f},
-                 {"item_enviro", "items/airout.wav", {0, 1, 0}, .08f},
-                 {"item_breather", "items/airout.wav", {.4f, 1, .4f}, .04f}};
+    } table[] = {{"item_quad", QA_Q2_SOUND_ITEMS_DAMAGE2, {0, 0, 1}, .08f},
+                 {"item_invulnerability", QA_Q2_SOUND_ITEMS_PROTECT2, {1, 1, 0}, .08f},
+                 {"item_enviro", QA_Q2_SOUND_ITEMS_AIROUT, {0, 1, 0}, .08f},
+                 {"item_breather", QA_Q2_SOUND_ITEMS_AIROUT, {.4f, 1, .4f}, .04f}};
     uint64_t until[] = {powers.quad_until_ns, powers.invulnerability_until_ns,
                         powers.enviro_until_ns, powers.breather_until_ns};
     for (size_t i = 0; i < 4; i++)

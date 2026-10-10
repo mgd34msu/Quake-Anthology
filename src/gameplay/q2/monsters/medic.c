@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "medic.h"
 #include "reinforcements.h"
 #include "../entities/internal.h"
@@ -649,7 +650,7 @@ static bool cable(q2m_context *c, qa_error *error) {
                 return true;
         }
         const char *path = rogue(c) && c->combat.mass != 400
-                               ? "medic_commander/medatck3a.wav" : "medic/medatck3.wav";
+                               ? QA_Q2_SOUND_MEDIC_COMMANDER_MEDATCK3A : QA_Q2_SOUND_MEDIC_MEDATCK3;
         if (rogue(c)) {
             if (!qa_world_body_read(c->game->services.world, target_id, &target.body, error))
                 return !q2m_alive(c) || !q2m_alive(&target);
@@ -695,7 +696,7 @@ static bool cable(q2m_context *c, qa_error *error) {
         if (!q2m_alive(c) || !q2m_alive(&target))
             return true;
         const char *path = rogue(c) && c->combat.mass != 400
-                               ? "medic_commander/medatck4a.wav" : "medic/medatck4.wav";
+                               ? QA_Q2_SOUND_MEDIC_COMMANDER_MEDATCK4A : QA_Q2_SOUND_MEDIC_MEDATCK4;
         if (!q2m_sound_at(c, path, 1, 1, c->body.origin, error))
             return false;
     }
@@ -890,9 +891,9 @@ bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
     if (name == Q2M_CALLBACK_medic_cable_attack)
         return cable(c, error);
     if (name == Q2M_CALLBACK_medic_hook_launch)
-        return sound(c, "medic/medatck2.wav", "medic_commander/medatck2c.wav", 1, 1, error);
+        return sound(c, QA_Q2_SOUND_MEDIC_MEDATCK2, QA_Q2_SOUND_MEDIC_COMMANDER_MEDATCK2C, 1, 1, error);
     if (name == Q2M_CALLBACK_medic_hook_retract) {
-        bool ok = q2m_sound(c, "medic/medatck5.wav", 1, 1, error);
+        bool ok = q2m_sound(c, QA_Q2_SOUND_MEDIC_MEDATCK5, 1, 1, error);
         if (!ok || !q2m_alive(c))
             return ok;
         if (!rogue(c)) {
@@ -956,8 +957,8 @@ bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
     if (run || search || (name == Q2M_CALLBACK_medic_idle)) {
         if (run && (rogue(c) || c->game->options.product != QA_Q2_XATRIX))
             finish_dodge(c);
-        if (!run && !sound(c, search ? "medic/medsrch1.wav" : "medic/idle.wav",
-                           search ? "medic_commander/medsrch.wav" : "medic_commander/medidle.wav",
+        if (!run && !sound(c, search ? QA_Q2_SOUND_MEDIC_MEDSRCH1 : QA_Q2_SOUND_MEDIC_IDLE,
+                           search ? QA_Q2_SOUND_MEDIC_COMMANDER_MEDSRCH : QA_Q2_SOUND_MEDIC_COMMANDER_MEDIDLE,
                            2, 2, error))
             return false;
         if (!q2m_alive(c))

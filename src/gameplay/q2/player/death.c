@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/game_q2_source.h"
 
@@ -44,7 +45,7 @@ static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     return qa_world_set_collision(g->services.world, a->id, rr ? &collision : NULL, e);
 }
 static bool throw_gibs(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
-    if (!q2_player_sound(g, a->id, "misc/udeath.wav", 4, e))
+    if (!q2_player_sound(g, a->id, QA_Q2_SOUND_MISC_UDEATH, 4, e))
         return false;
     for (int i = 0; i < 4 && q2_actor_live(g, a->id); i++)
         if (!q2_spawn_gib(g, a->id, "models/objects/gibs/sm_meat/tris.md2", damage, 0, 0, 1, e))

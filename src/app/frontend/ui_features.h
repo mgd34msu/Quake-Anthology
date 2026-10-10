@@ -9,7 +9,7 @@ bool frontend_ui_features_destroy(qa_frontend *, qa_error *);
 bool frontend_ui_features_idle(const qa_frontend *);
 bool frontend_ui_features_sync(qa_frontend *, qa_error *);
 bool frontend_ui_audio_prepare_sound(qa_frontend *, qa_audio_bank *, const char *, qa_game_family, qa_error *);
-bool frontend_ui_audio_prepare_q2_effects(qa_frontend *, qa_audio_bank *, qa_error *);
+bool frontend_ui_audio_prepare_q2_source(qa_frontend *, qa_audio_bank *, qa_error *);
 bool frontend_ui_audio_prepare_asset(qa_frontend *, qa_audio_asset *, qa_error *);
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
 void frontend_ui_sound(void *, uint32_t, qa_ui_sound);

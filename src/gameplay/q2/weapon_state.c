@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/game_q2_items.h"
 #include "qa/game_q2_player.h"
@@ -174,7 +175,7 @@ bool q2_no_ammo(q2_weapon_call *c, bool sound, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
     if (sound && c->now_ns >= c->state->empty_sound_ns) {
-        if (!q2_sound(c, "weapons/noammo.wav", c->rerelease ? 1 : 2, 1, e))
+        if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_NOAMMO, c->rerelease ? 1 : 2, 1, e))
             return false;
         c->state->empty_sound_ns = q2_deadline(c->now_ns, Q2_NS);
         if (!q2_actor_live(c->game, c->actor->id))
@@ -278,7 +279,7 @@ bool q2_change_weapon(q2_weapon_call *c, qa_error *e) {
     s->handoff = QA_Q2_PRIMARY_ACTIVE;
     if (s->weapon != QA_Q2_WEAPON_NONE && s->pending != QA_Q2_WEAPON_NONE &&
         s->pending != s->weapon && c->rerelease)
-        if (!q2_sound(c, "weapons/change.wav", 1, 1, e))
+        if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_CHANGE, 1, 1, e))
             return false;
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
@@ -376,9 +377,9 @@ static bool run(q2_weapon_call *c, qa_error *e) {
             else if (!chainfist_smoke(c, e))
                 return false;
             if (!q2_loop(c,
-                         s->phase == QA_Q2_FIRING     ? "weapons/sawhit.wav"
+                         s->phase == QA_Q2_FIRING     ? QA_Q2_SOUND_WEAPONS_SAWHIT
                          : s->phase == QA_Q2_DROPPING ? ""
-                                                      : "weapons/sawidle.wav",
+                                                      : QA_Q2_SOUND_WEAPONS_SAWIDLE,
                          e))
                 return false;
         } else if (w == QA_Q2_ETF_RIFLE && s->phase == QA_Q2_FIRING) {
@@ -390,7 +391,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
         } else if (w == QA_Q2_HEATBEAM) {
             s->view_model = 0;
             if (s->phase == QA_Q2_FIRING) {
-                if (!q2_loop(c, "weapons/bfg__l1a.wav", e))
+                if (!q2_loop(c, QA_Q2_SOUND_WEAPONS_BFG__L1A, e))
                     return false;
                 int ammo;
                 if (!q2_ammo(c, &ammo, e))
@@ -416,9 +417,9 @@ static bool run(q2_weapon_call *c, qa_error *e) {
         if (c->rerelease)
             return chainfist_smoke(c, e) &&
                    q2_loop(c,
-                           s->phase == QA_Q2_FIRING     ? "weapons/sawhit.wav"
+                           s->phase == QA_Q2_FIRING     ? QA_Q2_SOUND_WEAPONS_SAWHIT
                            : s->phase == QA_Q2_DROPPING ? ""
-                                                        : "weapons/sawidle.wav",
+                                                        : QA_Q2_SOUND_WEAPONS_SAWIDLE,
                            e);
         if (q2_continues(c) && (s->frame == 13 || s->frame == 23 || s->frame == 32)) {
             last_sequence = s->frame;
@@ -553,12 +554,12 @@ static bool weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input 
                 return true;
             if (c.input.source_rules == QA_Q2_WEAPON_RULES_LMCTF) {
                 if (c.input.haste) {
-                    if (a->weapon.source_firing && !q2_sound(&c, "player/lava1.wav", 3, 1, e))
+                    if (a->weapon.source_firing && !q2_sound(&c, QA_Q2_SOUND_PLAYER_LAVA1, 3, 1, e))
                         return false;
                     if (a->weapon.frame != 0 && !run(&c, e))
                         return false;
                 } else if (c.input.rune_damage && a->weapon.source_firing &&
-                           !q2_sound(&c, "ctf/strength.wav", 3, 1, e))
+                           !q2_sound(&c, QA_Q2_SOUND_CTF_STRENGTH, 3, 1, e))
                     return false;
                 if (!q2_actor_live(g, id))
                     return true;

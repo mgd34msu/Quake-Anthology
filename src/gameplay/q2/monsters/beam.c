@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "../entities/internal.h"
 #include "qa/game_q2_wire.h"
@@ -377,7 +378,7 @@ static bool source_beam(q2m_context *context, float damage, int channel,
       .provider = game->options.owner, .actor = actor->id,
       .time_ns = game->now_ns, .origin = origin, .volume = 1, .attenuation = 1,
       .flags = rerelease ? 1u : 0u};
-    if (!qa_builtin_resource(&game->services, "misc/lasfly.wav", &sound.resource, error) ||
+    if (!qa_builtin_resource(&game->services, QA_Q2_SOUND_MISC_LASFLY, &sound.resource, error) ||
         !qa_builtin_emit(&game->services, &sound, error))
       return false;
     if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
@@ -397,7 +398,7 @@ bool q2m_soldier_laser_beam(q2m_context *context, int flash, qa_error *error) {
 bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
   if (context->game->options.edition == QA_Q2_CLASSIC &&
       q2m_random(context->game) > .8f &&
-      !q2m_sound(context, "misc/lasfly.wav", 0, 3, error))
+      !q2m_sound(context, QA_Q2_SOUND_MISC_LASFLY, 0, 3, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -407,7 +408,7 @@ bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
 
 bool q2m_fixbot_laser_beam(q2m_context *context, qa_error *error) {
   if (context->game->options.edition == QA_Q2_CLASSIC &&
-      !q2m_sound(context, "misc/lasfly.wav", 0, 3, error))
+      !q2m_sound(context, QA_Q2_SOUND_MISC_LASFLY, 0, 3, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -530,7 +531,7 @@ bool q2m_guardian_beam(q2m_context *context, qa_error *error) {
     if (!actor || !q2m_alive(context)) return true;
     fresh = true;
     qa_string_id sound;
-    if (!qa_builtin_resource(&game->services, "misc/lasfly.wav", &sound, error)) goto failed;
+    if (!qa_builtin_resource(&game->services, QA_Q2_SOUND_MISC_LASFLY, &sound, error)) goto failed;
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
         .provider = game->options.owner, .actor = actor->id, .resource = sound,
         .time_ns = game->now_ns, .origin = context->body.origin,
@@ -857,7 +858,7 @@ bool q2m_shambler_lightning(q2m_context *context, bool windup, qa_error *error) 
   static const qa_vec3 right[] = {{28,-38,25},{31,-7,70},{20,0,80},{16,1.2f,81},{27,-11,83}};
   q2_actor *child = source_child(context, Q2M_CONTROLLER_VISUAL_CHILD, 0);
   if (windup) {
-    if (!q2m_sound(context, "shambler/sattck1.wav", 1, 1, error))
+    if (!q2m_sound(context, QA_Q2_SOUND_SHAMBLER_SATTCK1, 1, 1, error))
       return false;
     if (!q2m_alive(context))
       return true;

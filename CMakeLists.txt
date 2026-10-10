@@ -378,6 +378,7 @@ add_library(qa_game_q1 STATIC
 target_link_libraries(qa_game_q1 PUBLIC qa_builtin qa_campaign qa_persistence qa_qc)
 
 add_library(qa_game_q2 STATIC
+    src/gameplay/q2/sounds.c
     src/gameplay/q2/bot_source.c
     src/gameplay/q2/wire.c
     src/gameplay/q2/save/wire.c

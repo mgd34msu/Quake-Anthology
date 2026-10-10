@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/game_q2_source.h"
 #include "qa/text.h"
@@ -237,7 +238,7 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     p->armed = true;
     if (!contact->has_plane)
         return true;
-    if (!q2_projectile_event(g, a->id, QA_BUILTIN_SOUND, "misc/fhit3.wav", 2, body.origin,
+    if (!q2_projectile_event(g, a->id, QA_BUILTIN_SOUND, QA_Q2_SOUND_MISC_FHIT3, 2, body.origin,
                              body.origin, e))
         return false;
     if (!q2_actor_live(g, a->id))

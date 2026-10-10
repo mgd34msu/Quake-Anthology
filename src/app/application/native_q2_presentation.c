@@ -5,6 +5,35 @@
 #include "qa/game_q2_combat.h"
 #include <math.h>
 
+bool qa_application_native_q2_sound_resources(qa_application *app, qa_actor_owner owner,
+    bool (*visit)(void *, const char *, qa_error *), void *context, qa_error *error)
+{
+    application_provider *provider = app->live_providers;
+    while (provider && provider->owner != owner) provider = provider->next_live;
+    if (!provider || !provider->constructed || provider->close_pending) return true;
+    const qa_strings *strings = qa_session_strings(app->session);
+    if (provider->kind == APPLICATION_PROVIDER_Q2) {
+        uint32_t count;
+        if (!qa_q2_wire_extent(provider->state.q2, &count, error)) return false;
+        for (uint32_t slot = 1; slot < count; ++slot) {
+            qa_q2_wire_source_entity entity;
+            if (!qa_q2_wire_entity_read(provider->state.q2, slot, &entity, error)) return false;
+            if (!entity.binding.in_use) continue;
+            qa_string_id sounds[] = {entity.loop_sound, entity.precache_sound,
+                entity.has_weapon ? entity.weapon.loop_sound : 0};
+            for (size_t i = 0; i < sizeof(sounds)/sizeof(sounds[0]); ++i)
+                if (sounds[i] && !visit(context, qa_strings_cstr(strings, sounds[i]), error)) return false;
+        }
+    } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
+        const struct application_native_q2 *engine = provider->state.native.q2_engine;
+        for (uint32_t i = 1; i < engine->resource_limit[1]; ++i) {
+            qa_string_id sound = engine->configstrings[engine->resource_base[1] + i];
+            if (sound && !visit(context, qa_strings_cstr(strings, sound), error)) return false;
+        }
+    }
+    return true;
+}
+
 typedef struct hud_selection {
     qa_application_native_q2_hud_source source;
     application_provider *hud, *character, *original;

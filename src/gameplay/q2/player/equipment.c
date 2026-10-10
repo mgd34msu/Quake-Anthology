@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 bool q2_client_sphere_camera(qa_q2_game *g, qa_actor_id id, qa_actor_id sphere, qa_vec3 origin,
@@ -18,7 +19,7 @@ bool q2_client_sphere_camera(qa_q2_game *g, qa_actor_id id, qa_actor_id sphere, 
     if (sphere.registry) {
         bool first = !s->rule.sphere_camera.registry;
         if (first) {
-            if (!q2_player_sound(g, id, "misc/udeath.wav", 4, e))
+            if (!q2_player_sound(g, id, QA_Q2_SOUND_MISC_UDEATH, 4, e))
                 return false;
             for (int i = 0; i < 5 && q2_actor_live(g, id); i++)
                 if (!q2_spawn_gib(g, id,
@@ -112,7 +113,7 @@ bool q2_player_compass_update(qa_q2_game *g, q2_actor *a, bool first, qa_error *
     if (!q2_actor_live(g, a->id))
         return true;
     qa_string_id sound;
-    if (!qa_builtin_resource(&g->services, "misc/help_marker.wav", &sound, e))
+    if (!qa_builtin_resource(&g->services, QA_Q2_SOUND_MISC_HELP_MARKER, &sound, e))
         return false;
     return qa_builtin_emit(&g->services,
                            &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
@@ -178,7 +179,7 @@ bool q2_client_item_action(qa_q2_game *g, qa_actor_id id, bool flashlight, bool 
     if (!reachable || !count) {
         if (!send_poi(g, a, e))
             return false;
-        return !q2_actor_live(g, id) || q2_player_sound(g, id, "misc/help_marker.wav", 0, e);
+        return !q2_actor_live(g, id) || q2_player_sound(g, id, QA_Q2_SOUND_MISC_HELP_MARKER, 0, e);
     }
     if (count > 128)
         count = 128;

@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/text.h"
 
@@ -189,7 +190,7 @@ static bool barrel_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (g->now_ns >= s->timestamp_ns) s->stage = Q2_BARREL_EXPLODE;
         s->visual.effects |= UINT64_C(1) << 35;
         s->loop_sound = s->noise;
-        if (!s->loop_sound && !qa_builtin_resource(&g->services, "weapons/bfg__l1a.wav",
+        if (!s->loop_sound && !qa_builtin_resource(&g->services, QA_Q2_SOUND_WEAPONS_BFG__L1A,
             &s->loop_sound, e)) return false;
         return q2_entity_show(g, a, e) && (!q2_actor_live(g, a->id) ||
             q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS));
@@ -489,7 +490,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         a->physics.motion = QA_PHYSICS_STEP;
         s->touchable = true;
         if (g->options.edition == QA_Q2_RERELEASE &&
-            !qa_builtin_resource(&g->services, "weapons/bfg__l1a.wav", &s->noise, e)) return false;
+            !qa_builtin_resource(&g->services, QA_Q2_SOUND_WEAPONS_BFG__L1A, &s->noise, e)) return false;
         q2_entity_schedule(g, a, Q2ET_SCENERY,
             g->options.edition == QA_Q2_RERELEASE ? .05f : 2 * (float)g->frame_ns / Q2_NS);
         return model(g, a, "models/objects/barrels/tris.md2",
@@ -610,7 +611,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        if (!q2_entity_sound(g, a, "world/amb10.wav", 0, 1, 3, 1, e))
+        if (!q2_entity_sound(g, a, QA_Q2_SOUND_WORLD_AMB10, 0, 1, 3, 1, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -750,7 +751,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
     case Q2S_BLACKHOLE:
         return qa_session_release(g->services.session, a->id, e);
     case Q2S_COMMANDER:
-        if (!q2_entity_sound(g, a, "tank/pain.wav", 4, 1, 1, 0, e))
+        if (!q2_entity_sound(g, a, QA_Q2_SOUND_TANK_PAIN, 4, 1, 1, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -884,7 +885,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        if (s->visual.frame == 22 && !q2_entity_sound(g, a, "tank/thud.wav", 4, 1, 1, 0, e))
+        if (s->visual.frame == 22 && !q2_entity_sound(g, a, QA_Q2_SOUND_TANK_THUD, 4, 1, 1, 0, e))
             return false;
         return !q2_actor_live(g, a->id) || s->visual.frame >= 24 ||
                q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
@@ -895,7 +896,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     case Q2S_ROTATING_LIGHT:
         if (s->spawnflags & 1)
             return true;
-        return q2_entity_sound(g, a, "misc/alarm.wav", 10, 1, 3, 0, e) &&
+        return q2_entity_sound(g, a, QA_Q2_SOUND_MISC_ALARM, 10, 1, 3, 0, e) &&
                (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, 1));
     case Q2S_REPAIR: {
         if (s->stage == 1) {
@@ -921,7 +922,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, s->delay);
     }
     case Q2S_AMBIENCE:
-        return q2_entity_sound(g, a, "world/amb4.wav", 2, 1, 0, 0, e) &&
+        return q2_entity_sound(g, a, QA_Q2_SOUND_WORLD_AMB4, 2, 1, 0, 0, e) &&
                (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, 2.7f));
     case Q2S_MAL_LASER:
         if (!q2_laser_think(g, a, e))
@@ -1030,7 +1031,7 @@ bool q2_scenery_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *ou
             return false;
         if (state.health > -80)
             return true;
-        if (!q2_entity_sound(g, a, "misc/udeath.wav", 4, 1, 1, 0, e))
+        if (!q2_entity_sound(g, a, QA_Q2_SOUND_MISC_UDEATH, 4, 1, 1, 0, e))
             return false;
         for (int i = 0; i < 4; i++) {
             if (!q2_actor_live(g, a->id))

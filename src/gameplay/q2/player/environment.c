@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 bool q2_player_environment_damage(qa_q2_game *g, q2_actor *a, float amount, int means,
@@ -38,15 +39,15 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         if (!q2_actor_live(g, a->id))
             return true;
         if (!q2_player_sound(g, a->id,
-                             level == 0            ? "player/watr_out.wav"
-                             : (m->water_type & 8) ? "player/lava_in.wav"
-                                                   : "player/watr_in.wav",
+                             level == 0            ? QA_Q2_SOUND_PLAYER_WATR_OUT
+                             : (m->water_type & 8) ? QA_Q2_SOUND_PLAYER_LAVA_IN
+                                                   : QA_Q2_SOUND_PLAYER_WATR_IN,
                              4, e))
             return false;
     }
     if (!q2_actor_live(g, a->id))
         return true;
-    if (old != 3 && level == 3 && !q2_player_sound(g, a->id, "player/watr_un.wav", 4, e))
+    if (old != 3 && level == 3 && !q2_player_sound(g, a->id, QA_Q2_SOUND_PLAYER_WATR_UN, 4, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -55,12 +56,12 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         return false;
     if (old == 3 && level != 3 && (!rr || combat.health > 0)) {
         if (s->rule.air_ns < now) {
-            if (!q2_player_sound(g, a->id, "player/gasp1.wav", 2, e))
+            if (!q2_player_sound(g, a->id, QA_Q2_SOUND_PLAYER_GASP1, 2, e))
                 return false;
             if (q2_actor_live(g, a->id) && !q2_player_noise(g, a->id, body.origin, false, e))
                 return false;
         } else if (s->rule.air_ns < q2_deadline(now, 11 * Q2_NS) &&
-                   !q2_player_sound(g, a->id, "player/gasp2.wav", 2, e))
+                   !q2_player_sound(g, a->id, QA_Q2_SOUND_PLAYER_GASP2, 2, e))
             return false;
     }
     if (!q2_actor_live(g, a->id))
@@ -78,7 +79,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
             if (remainder % (rr ? 2500u : 25u) == 0) {
                 if (!q2_player_sound(
                         g, a->id,
-                        s->rule.breather_sound ? "player/u_breath2.wav" : "player/u_breath1.wav", 0, e))
+                        s->rule.breather_sound ? QA_Q2_SOUND_PLAYER_U_BREATH2 : QA_Q2_SOUND_PLAYER_U_BREATH1, 0, e))
                     return false;
                 s->rule.breather_sound ^= 1;
                 if (!q2_actor_live(g, a->id))
@@ -93,9 +94,9 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
             s->rule.drown_ns = q2_deadline(now, Q2_NS);
             s->rule.drown_damage = s->rule.drown_damage + 2 > 15 ? 15 : s->rule.drown_damage + 2;
             const char *sound = combat.health <= (float)s->rule.drown_damage
-                                    ? (rr ? "*drown1.wav" : "player/drown1.wav")
-                                : q2_random(g) < .5f ? "*gurp2.wav"
-                                                     : "*gurp1.wav";
+                                    ? (rr ? QA_Q2_SOUND__DROWN1 : QA_Q2_SOUND_PLAYER_DROWN1)
+                                : q2_random(g) < .5f ? QA_Q2_SOUND__GURP2
+                                                     : QA_Q2_SOUND__GURP1;
             if (!q2_player_sound(g, a->id, sound, 2, e))
                 return false;
             if (!q2_actor_live(g, a->id))
@@ -123,7 +124,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
             if (combat.health > 0 && s->rule.pain_ns <= now && powers.invulnerability_until_ns < now) {
                 s->rule.pain_ns = q2_deadline(now, Q2_NS);
                 if (!q2_player_sound(g, a->id,
-                                     q2_random(g) < .5f ? "player/burn2.wav" : "player/burn1.wav",
+                                     q2_random(g) < .5f ? QA_Q2_SOUND_PLAYER_BURN2 : QA_Q2_SOUND_PLAYER_BURN1,
                                      2, e))
                     return false;
             }

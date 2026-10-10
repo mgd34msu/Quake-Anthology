@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/text.h"
 #include "qa/game_q2_monsters.h"
@@ -177,7 +178,7 @@ static bool ramp(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
     if (s->sound_ns < g->now_ns) {
-        if (!q2_entity_sound(g, a, "world/quake.wav", 0, 1, 0, 0, e))
+        if (!q2_entity_sound(g, a, QA_Q2_SOUND_WORLD_QUAKE, 0, 1, 0, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -320,19 +321,19 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
         const char *sound = NULL;
         switch ((int)q2_field_float(g, s, "noise", 0)) {
         case 1:
-            sound = "world/x_alarm.wav";
+            sound = QA_Q2_SOUND_WORLD_X_ALARM;
             break;
         case 2:
-            sound = "world/flyby1.wav";
+            sound = QA_Q2_SOUND_WORLD_FLYBY1;
             break;
         case 4:
-            sound = "world/amb12.wav";
+            sound = QA_Q2_SOUND_WORLD_AMB12;
             break;
         case 5:
-            sound = "world/amb17.wav";
+            sound = QA_Q2_SOUND_WORLD_AMB17;
             break;
         case 7:
-            sound = "world/bigpump2.wav";
+            sound = QA_Q2_SOUND_WORLD_BIGPUMP2;
             break;
         }
         if (s->volume == 0)
@@ -481,7 +482,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
                                 effects, 33, false, e))
             return false;
         return !q2_actor_live(g, a->id) ||
-               q2_entity_sound(g, a, "weapons/laser2.wav", 2, 1, 1, 0, e);
+               q2_entity_sound(g, a, QA_Q2_SOUND_WEAPONS_LASER2, 2, 1, 1, 0, e);
     }
     case Q2E_CROSS_TRIGGER: {
         uint32_t flags;

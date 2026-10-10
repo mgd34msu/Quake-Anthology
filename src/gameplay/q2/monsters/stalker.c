@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "reinforcements.h"
 
@@ -126,7 +127,7 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
     if (c->game->now_ns < m->pain_ns)
         return true;
     m->pain_ns = q2m_after(c->game->now_ns, 3);
-    if (rerelease && !q2m_sound(c, "stalker/pain.wav", 2, 1, error))
+    if (rerelease && !q2m_sound(c, QA_Q2_SOUND_STALKER_PAIN, 2, 1, error))
         return false;
     if (!q2m_alive(c) || (m->pending_damage <= 10 && (!rerelease || !chainfist)))
         return true;
@@ -135,7 +136,7 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
             return false;
     } else if ((!rerelease || reacts) && !q2m_set_move(c, Q2M_MOVE_stalker_move_pain, true, error))
         return false;
-    return rerelease || !q2m_alive(c) || q2m_sound(c, "stalker/pain.wav", 1, 1, error);
+    return rerelease || !q2m_alive(c) || q2m_sound(c, QA_Q2_SOUND_STALKER_PAIN, 1, 1, error);
 }
 static bool jump_straight(q2m_context *c, qa_error *error) {
     if (c->monster->dead)

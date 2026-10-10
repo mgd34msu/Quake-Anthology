@@ -801,10 +801,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
             value.flare_end = q2_field_float(g, a->entity, "fade_end_dist", 384);
         }
     }
-    if (a->entity && (a->entity->kind == Q2E_ROTATING || a->entity->kind == Q2E_SPEAKER ||
-        a->entity->kind == Q2E_SOUND_FX || a->entity->kind == Q2E_EARTHQUAKE ||
-        (a->entity->kind == Q2E_SCENERY && a->entity->scenery == Q2S_EXPLOSIVE)))
-        value.precache_sound = a->entity->noise;
+    if (a->entity) value.precache_sound = a->entity->noise;
     value.lifetime = a->wire_lifetime;
     value.event = a->wire_event_frame == g->wire_frame ? a->wire_event : 0;
     qa_q2_wire_binding after;

@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 static bool short_text(qa_q2_game *g, qa_string_id text, qa_string_id *out, qa_error *e) {
@@ -36,7 +37,7 @@ bool q2_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
                q2_rerelease_poi(g, a, activator, e);
     }
     const char *noise = q2_field_text(g, s, "noise");
-    if (!q2_entity_sound(g, a, *noise ? noise : "misc/secret.wav", 2, 1, 1, 0, e))
+    if (!q2_entity_sound(g, a, *noise ? noise : QA_Q2_SOUND_MISC_SECRET, 2, 1, 1, 0, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;

@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 #include "qa/game_q2_checkpoint.h"
 #include "qa/game_q2_combat.h"
@@ -198,7 +199,7 @@ static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
             return false;
         *used = true;
         return !q2_actor_live(g, id) ||
-               q2_item_sound(g, id, active ? "misc/power2.wav" : "misc/power1.wav", e);
+               q2_item_sound(g, id, active ? QA_Q2_SOUND_MISC_POWER2 : QA_Q2_SOUND_MISC_POWER1, e);
     }
     if (d->kind == QA_Q2_ITEM_SPHERE || d->kind == QA_Q2_ITEM_DECOY)
         return q2_companion_use(g, id, d, used, e);
@@ -238,11 +239,11 @@ static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
     uint64_t *until = timer(p, d->powerup);
     if (until)
         *until = q2_deadline(*until > g->now_ns ? *until : g->now_ns, duration);
-    const char *sound = d->powerup == QA_Q2_POWER_QUAD           ? "items/damage.wav"
-                        : d->powerup == QA_Q2_POWER_QUADFIRE     ? "items/quadfire1.wav"
-                        : d->powerup == QA_Q2_POWER_DOUBLE       ? "misc/ddamage1.wav"
-                        : d->powerup == QA_Q2_POWER_IR           ? "misc/ir_start.wav"
-                        : d->powerup == QA_Q2_POWER_INVISIBILITY ? "items/protect.wav"
+    const char *sound = d->powerup == QA_Q2_POWER_QUAD           ? QA_Q2_SOUND_ITEMS_DAMAGE
+                        : d->powerup == QA_Q2_POWER_QUADFIRE     ? QA_Q2_SOUND_ITEMS_QUADFIRE1
+                        : d->powerup == QA_Q2_POWER_DOUBLE       ? QA_Q2_SOUND_MISC_DDAMAGE1
+                        : d->powerup == QA_Q2_POWER_IR           ? QA_Q2_SOUND_MISC_IR_START
+                        : d->powerup == QA_Q2_POWER_INVISIBILITY ? QA_Q2_SOUND_ITEMS_PROTECT
                                                                  : NULL;
     return !sound || q2_item_sound(g, id, sound, e);
 }

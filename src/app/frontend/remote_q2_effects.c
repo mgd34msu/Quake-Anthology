@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "remote_q2_effects_private.h"
 #include "qa/material.h"
 #include "../../gameplay/q2/monsters/muzzle_data.h"
@@ -8,133 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-
-enum q2_sound_id {
-    Q2FX_SND_WORLD_RIC1,
-    Q2FX_SND_WORLD_RIC2,
-    Q2FX_SND_WORLD_RIC3,
-    Q2FX_SND_WEAPONS_LASHIT,
-    Q2FX_SND_WORLD_SPARK5,
-    Q2FX_SND_WORLD_SPARK6,
-    Q2FX_SND_WORLD_SPARK7,
-    Q2FX_SND_WEAPONS_RAILGF1A,
-    Q2FX_SND_MISC_BIGTELE,
-    Q2FX_SND_WEAPONS_DISRUPTHIT,
-    Q2FX_SND_WEAPONS_TESLA,
-    Q2FX_SND_WEAPONS_XPLD_WAT,
-    Q2FX_SND_WEAPONS_GRENLX1A,
-    Q2FX_SND_WEAPONS_ROCKLX1A,
-    Q2FX_SND_INFANTRY_INFATCK1,
-    Q2FX_SND_SOLDIER_SOLATCK3,
-    Q2FX_SND_GUNNER_GUNATCK2,
-    Q2FX_SND_BOSS3_XFIRE,
-    Q2FX_SND_SOLDIER_SOLATCK2,
-    Q2FX_SND_SOLDIER_SOLATCK1,
-    Q2FX_SND_TANK_TNKATCK3,
-    Q2FX_SND_FLYER_FLYATCK3,
-    Q2FX_SND_MEDIC_MEDATCK1,
-    Q2FX_SND_HOVER_HOVATCK1,
-    Q2FX_SND_FLOATER_FLTATCK1,
-    Q2FX_SND_MAKRON_BLASTER,
-    Q2FX_SND_CHICK_CHKATCK2,
-    Q2FX_SND_TANK_TNKATCK1,
-    Q2FX_SND_TANK_ROCKET,
-    Q2FX_SND_GUNNER_GUNATCK3,
-    Q2FX_SND_WEAPONS_DISINT2,
-    Q2FX_SND_WEAPONS_RIPPFIRE,
-    Q2FX_SND_WEAPONS_HYPRBF1A,
-    Q2FX_SND_GUNCMDR_GCDRATCK2,
-    Q2FX_SND_GUNCMDR_GCDRATCK3,
-    Q2FX_SND_WEAPONS_BLASTF1A,
-    Q2FX_SND_WEAPONS_SHOTGF1B,
-    Q2FX_SND_WEAPONS_SHOTGR1B,
-    Q2FX_SND_WEAPONS_SSHOTF1B,
-    Q2FX_SND_WEAPONS_ROCKLF1A,
-    Q2FX_SND_WEAPONS_ROCKLR1B,
-    Q2FX_SND_WEAPONS_GRENLF1A,
-    Q2FX_SND_WEAPONS_PROXLR1A,
-    Q2FX_SND_WEAPONS_GRENLR1B,
-    Q2FX_SND_WEAPONS_BFG__F1Y,
-    Q2FX_SND_WEAPONS_PLASSHOT,
-    Q2FX_SND_WEAPONS_NAIL1,
-    Q2FX_SND_WEAPONS_SHOTG2,
-    Q2FX_SND_WEAPONS_RAILGR1B,
-    Q2FX_SND_TANK_TNKATK2A,
-    Q2FX_SND_TANK_TNKATK2B,
-    Q2FX_SND_TANK_TNKATK2C,
-    Q2FX_SND_TANK_TNKATK2D,
-    Q2FX_SND_TANK_TNKATK2E,
-    Q2FX_SND_WEAPONS_MACHGF1B,
-    Q2FX_SND_WEAPONS_MACHGF2B,
-    Q2FX_SND_WEAPONS_MACHGF3B,
-    Q2FX_SND_WEAPONS_MACHGF4B,
-    Q2FX_SND_WEAPONS_MACHGF5B,
-    Q2FX_SOUND_COUNT
-};
-static const char *const q2_sound_paths[Q2FX_SOUND_COUNT] = {
-    [Q2FX_SND_WORLD_RIC1] = "world/ric1.wav",
-    [Q2FX_SND_WORLD_RIC2] = "world/ric2.wav",
-    [Q2FX_SND_WORLD_RIC3] = "world/ric3.wav",
-    [Q2FX_SND_WEAPONS_LASHIT] = "weapons/lashit.wav",
-    [Q2FX_SND_WORLD_SPARK5] = "world/spark5.wav",
-    [Q2FX_SND_WORLD_SPARK6] = "world/spark6.wav",
-    [Q2FX_SND_WORLD_SPARK7] = "world/spark7.wav",
-    [Q2FX_SND_WEAPONS_RAILGF1A] = "weapons/railgf1a.wav",
-    [Q2FX_SND_MISC_BIGTELE] = "misc/bigtele.wav",
-    [Q2FX_SND_WEAPONS_DISRUPTHIT] = "weapons/disrupthit.wav",
-    [Q2FX_SND_WEAPONS_TESLA] = "weapons/tesla.wav",
-    [Q2FX_SND_WEAPONS_XPLD_WAT] = "weapons/xpld_wat.wav",
-    [Q2FX_SND_WEAPONS_GRENLX1A] = "weapons/grenlx1a.wav",
-    [Q2FX_SND_WEAPONS_ROCKLX1A] = "weapons/rocklx1a.wav",
-    [Q2FX_SND_INFANTRY_INFATCK1] = "infantry/infatck1.wav",
-    [Q2FX_SND_SOLDIER_SOLATCK3] = "soldier/solatck3.wav",
-    [Q2FX_SND_GUNNER_GUNATCK2] = "gunner/gunatck2.wav",
-    [Q2FX_SND_BOSS3_XFIRE] = "boss3/xfire.wav",
-    [Q2FX_SND_SOLDIER_SOLATCK2] = "soldier/solatck2.wav",
-    [Q2FX_SND_SOLDIER_SOLATCK1] = "soldier/solatck1.wav",
-    [Q2FX_SND_TANK_TNKATCK3] = "tank/tnkatck3.wav",
-    [Q2FX_SND_FLYER_FLYATCK3] = "flyer/flyatck3.wav",
-    [Q2FX_SND_MEDIC_MEDATCK1] = "medic/medatck1.wav",
-    [Q2FX_SND_HOVER_HOVATCK1] = "hover/hovatck1.wav",
-    [Q2FX_SND_FLOATER_FLTATCK1] = "floater/fltatck1.wav",
-    [Q2FX_SND_MAKRON_BLASTER] = "makron/blaster.wav",
-    [Q2FX_SND_CHICK_CHKATCK2] = "chick/chkatck2.wav",
-    [Q2FX_SND_TANK_TNKATCK1] = "tank/tnkatck1.wav",
-    [Q2FX_SND_TANK_ROCKET] = "tank/rocket.wav",
-    [Q2FX_SND_GUNNER_GUNATCK3] = "gunner/gunatck3.wav",
-    [Q2FX_SND_WEAPONS_DISINT2] = "weapons/disint2.wav",
-    [Q2FX_SND_WEAPONS_RIPPFIRE] = "weapons/rippfire.wav",
-    [Q2FX_SND_WEAPONS_HYPRBF1A] = "weapons/hyprbf1a.wav",
-    [Q2FX_SND_GUNCMDR_GCDRATCK2] = "guncmdr/gcdratck2.wav",
-    [Q2FX_SND_GUNCMDR_GCDRATCK3] = "guncmdr/gcdratck3.wav",
-    [Q2FX_SND_WEAPONS_BLASTF1A] = "weapons/blastf1a.wav",
-    [Q2FX_SND_WEAPONS_SHOTGF1B] = "weapons/shotgf1b.wav",
-    [Q2FX_SND_WEAPONS_SHOTGR1B] = "weapons/shotgr1b.wav",
-    [Q2FX_SND_WEAPONS_SSHOTF1B] = "weapons/sshotf1b.wav",
-    [Q2FX_SND_WEAPONS_ROCKLF1A] = "weapons/rocklf1a.wav",
-    [Q2FX_SND_WEAPONS_ROCKLR1B] = "weapons/rocklr1b.wav",
-    [Q2FX_SND_WEAPONS_GRENLF1A] = "weapons/grenlf1a.wav",
-    [Q2FX_SND_WEAPONS_PROXLR1A] = "weapons/proxlr1a.wav",
-    [Q2FX_SND_WEAPONS_GRENLR1B] = "weapons/grenlr1b.wav",
-    [Q2FX_SND_WEAPONS_BFG__F1Y] = "weapons/bfg__f1y.wav",
-    [Q2FX_SND_WEAPONS_PLASSHOT] = "weapons/plasshot.wav",
-    [Q2FX_SND_WEAPONS_NAIL1] = "weapons/nail1.wav",
-    [Q2FX_SND_WEAPONS_SHOTG2] = "weapons/shotg2.wav",
-    [Q2FX_SND_WEAPONS_RAILGR1B] = "weapons/railgr1b.wav",
-    [Q2FX_SND_TANK_TNKATK2A] = "tank/tnkatk2a.wav",
-    [Q2FX_SND_TANK_TNKATK2B] = "tank/tnkatk2b.wav",
-    [Q2FX_SND_TANK_TNKATK2C] = "tank/tnkatk2c.wav",
-    [Q2FX_SND_TANK_TNKATK2D] = "tank/tnkatk2d.wav",
-    [Q2FX_SND_TANK_TNKATK2E] = "tank/tnkatk2e.wav",
-    [Q2FX_SND_WEAPONS_MACHGF1B] = "weapons/machgf1b.wav",
-    [Q2FX_SND_WEAPONS_MACHGF2B] = "weapons/machgf2b.wav",
-    [Q2FX_SND_WEAPONS_MACHGF3B] = "weapons/machgf3b.wav",
-    [Q2FX_SND_WEAPONS_MACHGF4B] = "weapons/machgf4b.wav",
-    [Q2FX_SND_WEAPONS_MACHGF5B] = "weapons/machgf5b.wav",
-};
-size_t frontend_q2_effect_sound_count(void) { return Q2FX_SOUND_COUNT; }
-const char *frontend_q2_effect_sound_path(size_t index)
-{ return index < Q2FX_SOUND_COUNT ? q2_sound_paths[index] : NULL; }
 
 bool q2fx_fail(qa_error *error, qa_status code, const char *message)
 { if (error) { error->code = code; snprintf(error->message, sizeof(error->message), "%s", message); } return false; }
@@ -518,11 +392,11 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         if (t->type != QA_Q2_TE_SPARKS) smoke_flash(o,pos,server,interval);
         if (t->type == QA_Q2_TE_GUNSHOT || t->type == QA_Q2_TE_BULLET_SPARKS) {
             uint32_t n = random_word(o) & 15;
-            if (n >= 1 && n <= 3) { const char *paths[] = {q2_sound_paths[Q2FX_SND_WORLD_RIC1],q2_sound_paths[Q2FX_SND_WORLD_RIC2],q2_sound_paths[Q2FX_SND_WORLD_RIC3]}; return sound(o,paths[n-1],pos,actor,time,0,1,1,0,e); }
+            if (n >= 1 && n <= 3) { const char *paths[] = {QA_Q2_SOUND_WORLD_RIC1,QA_Q2_SOUND_WORLD_RIC2,QA_Q2_SOUND_WORLD_RIC3}; return sound(o,paths[n-1],pos,actor,time,0,1,1,0,e); }
         } break;
     case QA_Q2_TE_SCREEN_SPARKS: case QA_Q2_TE_SHIELD_SPARKS: case QA_Q2_TE_ELECTRIC_SPARKS:
         frontend_fx_q2_impact_particles(p,r,pos,dir,t->type == QA_Q2_TE_SCREEN_SPARKS ? 0xd0 : t->type == QA_Q2_TE_SHIELD_SPARKS ? 0xb0 : 0x75,40,seconds,FRONTEND_FX_Q2_NORMAL);
-        return sound(o,q2_sound_paths[Q2FX_SND_WEAPONS_LASHIT],pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_SPLASH: {
         const uint32_t colors[] = {0,0xe0,0xb0,0x50,0xd0,0xe0,0xe8};
         if (rerelease && color==7) {
@@ -530,7 +404,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
             frontend_fx_q2_impact_particles(p,r,pos,dir,0xb0,count/2+count%2,seconds,FRONTEND_FX_Q2_NORMAL);
             color=1;
         } else frontend_fx_q2_impact_particles(p,r,pos,dir,color >= 0 && color <= 6 ? colors[color] : 0,count,seconds,FRONTEND_FX_Q2_NORMAL);
-        if (color == 1) { uint32_t n = random_word(o) & 3; const char *paths[] = {q2_sound_paths[Q2FX_SND_WORLD_SPARK5],q2_sound_paths[Q2FX_SND_WORLD_SPARK6],q2_sound_paths[Q2FX_SND_WORLD_SPARK7]}; return sound(o,paths[n < 2 ? n : 2],pos,actor,time,0,1,3,0,e); } break;
+        if (color == 1) { uint32_t n = random_word(o) & 3; const char *paths[] = {QA_Q2_SOUND_WORLD_SPARK5,QA_Q2_SOUND_WORLD_SPARK6,QA_Q2_SOUND_WORLD_SPARK7}; return sound(o,paths[n < 2 ? n : 2],pos,actor,time,0,1,3,0,e); } break;
     }
     case QA_Q2_TE_LASER_SPARKS: case QA_Q2_TE_WELDING_SPARKS: case QA_Q2_TE_TUNNEL_SPARKS:
         frontend_fx_q2_impact_particles(p,r,pos,dir,(uint32_t)color,count,seconds,t->type == QA_Q2_TE_TUNNEL_SPARKS ? FRONTEND_FX_Q2_UP : FRONTEND_FX_Q2_FIXED);
@@ -544,27 +418,27 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         frontend_fx_q2_impact_particles(p,r,pos,dir,green?0xd0:blue?0x6f:hyper?0xb0:0xe0,40,seconds,FRONTEND_FX_Q2_BLASTER);
         explosion(o,1,Q2FX_EXPLODE,pos,server-interval,4,0,8|32,green?1:blue || hyper?2:0,rerelease && t->type==QA_Q2_TE_BLASTER?200:150,
             green?qa_v3(0,1,0):blue?qa_v3(.19f,.41f,.75f):hyper?qa_v3(0,0,1):qa_v3(1,1,0),direction_angles(dir),1);
-        return sound(o,q2_sound_paths[Q2FX_SND_WEAPONS_LASHIT],pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     }
     case QA_Q2_TE_RAILTRAIL: case QA_Q2_TE_RAILTRAIL2:
-        rail(o,pos,end,time,t->type==QA_Q2_TE_RAILTRAIL2,&controls); return sound(o,q2_sound_paths[Q2FX_SND_WEAPONS_RAILGF1A],end,actor,time,0,1,1,0,e);
+        rail(o,pos,end,time,t->type==QA_Q2_TE_RAILTRAIL2,&controls); return sound(o,QA_Q2_SOUND_WEAPONS_RAILGF1A,end,actor,time,0,1,1,0,e);
     case QA_Q2_TE_BUBBLETRAIL: frontend_fx_q2_bubbles(p,r,pos,end,seconds); break;
-    case QA_Q2_TE_BUBBLETRAIL2: special_trail(o,pos,end,time,true); return sound(o,q2_sound_paths[Q2FX_SND_WEAPONS_LASHIT],pos,actor,time,0,1,1,0,e);
+    case QA_Q2_TE_BUBBLETRAIL2: special_trail(o,pos,end,time,true); return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_DEBUGTRAIL: special_trail(o,pos,end,time,false); break;
     case QA_Q2_TE_BFG_LASER: case QA_Q2_TE_BFG_ZAP:
         laser(o,pos,end,time); if (t->type == QA_Q2_TE_BFG_ZAP) bfg_explosion(o,end,server,interval); break;
     case QA_Q2_TE_BFG_EXPLOSION: bfg_explosion(o,pos,server,interval); break;
     case QA_Q2_TE_BFG_BIGEXPLOSION: frontend_fx_q2_explosion(p,r,pos,seconds,true); break;
-    case QA_Q2_TE_BOSSTPORT: frontend_fx_q2_big_teleport(p,r,pos,seconds); return sound(o,q2_sound_paths[Q2FX_SND_MISC_BIGTELE],pos,actor,time,0,1,0,0,e);
+    case QA_Q2_TE_BOSSTPORT: frontend_fx_q2_big_teleport(p,r,pos,seconds); return sound(o,QA_Q2_SOUND_MISC_BIGTELE,pos,actor,time,0,1,0,0,e);
     case QA_Q2_TE_TELEPORT_EFFECT: case QA_Q2_TE_DBALL_GOAL: frontend_fx_q2_teleport(p,r,pos,seconds); break;
     case QA_Q2_TE_FORCEWALL: frontend_fx_q2_force_wall(p,r,pos,end,(uint32_t)color,seconds); break;
     case QA_Q2_TE_CHAINFIST_SMOKE: (void)frontend_fx_q2_steam(p,r,pos,qa_v3(0,0,1),0,20,20,seconds,true); break;
     case QA_Q2_TE_HEATBEAM_SPARKS: case QA_Q2_TE_HEATBEAM_STEAM:
         (void)frontend_fx_q2_steam(p,r,pos,dir,t->type == QA_Q2_TE_HEATBEAM_SPARKS ? 8 : 0xe0,t->type == QA_Q2_TE_HEATBEAM_SPARKS ? 50 : 20,60,seconds,false);
-        return sound(o,q2_sound_paths[Q2FX_SND_WEAPONS_LASHIT],pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_TRACKER_EXPLOSION:
         frontend_fx_q2_color_explosion(p,r,pos,seconds,0,1); light(o,actor,pos,time,150,100,qa_v3(-1,-1,-1),0,250);
-        return sound(o,q2_sound_paths[Q2FX_SND_WEAPONS_DISRUPTHIT],pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SOUND_WEAPONS_DISRUPTHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_STEAM:
         if (!integer_field(t,QA_Q2_TEMP_ENTITY1,&id,e) || !integer_field(t,QA_Q2_TEMP_ENTITY2,&magnitude,e)) return false;
         if (id == -1) (void)frontend_fx_q2_steam(p,r,pos,dir,(uint32_t)color,count,(float)magnitude,seconds,false);
@@ -611,7 +485,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         q2fx_beam *retained=frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
             rerelease,&recipe,actor,destination,pos,end,time);
         if (recipe.lightning_sound && frontend_q2_beam_lightning_sound(retained,rerelease,time)) {
-            if (!sound(o,q2_sound_paths[Q2FX_SND_WEAPONS_TESLA],pos,actor,time,1,1,1,0,e)) return false;
+            if (!sound(o,QA_Q2_SOUND_WEAPONS_TESLA,pos,actor,time,1,1,1,0,e)) return false;
         }
         break;
     }
@@ -637,7 +511,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
             !(grenade_weapon && (controls.disable_particles&1)) && !(rocket_weapon && (controls.disable_particles&4)))
             frontend_fx_q2_explosion(p,r,pos,seconds,false);
         if (rerelease && t->type==QA_Q2_TE_PLAIN_EXPLOSION) break;
-        return sound(o,water?q2_sound_paths[Q2FX_SND_WEAPONS_XPLD_WAT]:grenade?q2_sound_paths[Q2FX_SND_WEAPONS_GRENLX1A]:q2_sound_paths[Q2FX_SND_WEAPONS_ROCKLX1A],pos,actor,time,0,1,1,0,e);
+        return sound(o,water?QA_Q2_SOUND_WEAPONS_XPLD_WAT:grenade?QA_Q2_SOUND_WEAPONS_GRENLX1A:QA_Q2_SOUND_WEAPONS_ROCKLX1A,pos,actor,time,0,1,1,0,e);
     }
     default: return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 effect has no admitted source recipe");
     }
@@ -779,37 +653,37 @@ static bool monster_muzzle_read(uint32_t flash, bool rerelease,
     bool particles=false, smoke=false, tank_sound=false, heat=false;
     float attenuation=1;
     if ((profile>=26 && profile<=38) || profile==63 || (profile>=64 && profile<=69) || profile==141) {
-        particles=smoke=true; path=q2_sound_paths[Q2FX_SND_INFANTRY_INFATCK1];
-    } else if (soldier_flash(profile,2)) { particles=smoke=true; path=q2_sound_paths[Q2FX_SND_SOLDIER_SOLATCK3]; }
-    else if (profile>=45 && profile<=52) { particles=smoke=true; path=q2_sound_paths[Q2FX_SND_GUNNER_GUNATCK2]; }
+        particles=smoke=true; path=QA_Q2_SOUND_INFANTRY_INFATCK1;
+    } else if (soldier_flash(profile,2)) { particles=smoke=true; path=QA_Q2_SOUND_SOLDIER_SOLATCK3; }
+    else if (profile>=45 && profile<=52) { particles=smoke=true; path=QA_Q2_SOUND_GUNNER_GUNATCK2; }
     else if ((profile>=73 && profile<=77) || profile==138 || profile==152) {
-        particles=smoke=true; path=q2_sound_paths[Q2FX_SND_INFANTRY_INFATCK1]; attenuation=0;
+        particles=smoke=true; path=QA_Q2_SOUND_INFANTRY_INFATCK1; attenuation=0;
     } else if ((profile>=133 && profile<=137) || profile==139 || profile==153 || (profile>=126 && profile<=131)) particles=smoke=true;
-    else if (profile>=120 && profile<=125) { particles=smoke=true; path=q2_sound_paths[Q2FX_SND_BOSS3_XFIRE]; }
+    else if (profile>=120 && profile<=125) { particles=smoke=true; path=QA_Q2_SOUND_BOSS3_XFIRE; }
     else if (profile>=4 && profile<=22) {
         particles=smoke=tank_sound=true;
-    } else if (soldier_flash(profile,0) || profile==143) path=q2_sound_paths[Q2FX_SND_SOLDIER_SOLATCK2];
-    else if (soldier_flash(profile,1)) { smoke=true; path=q2_sound_paths[Q2FX_SND_SOLDIER_SOLATCK1]; }
-    else if (profile>=1 && profile<=3) path=q2_sound_paths[Q2FX_SND_TANK_TNKATCK3];
-    else if (profile==58 || profile==59) path=q2_sound_paths[Q2FX_SND_FLYER_FLYATCK3];
-    else if (profile==60) path=q2_sound_paths[Q2FX_SND_MEDIC_MEDATCK1];
-    else if (profile==62) path=q2_sound_paths[Q2FX_SND_HOVER_HOVATCK1];
-    else if (profile==82) path=q2_sound_paths[Q2FX_SND_FLOATER_FLTATCK1];
-    else if (profile>=102 && profile<=118) path=q2_sound_paths[Q2FX_SND_MAKRON_BLASTER];
+    } else if (soldier_flash(profile,0) || profile==143) path=QA_Q2_SOUND_SOLDIER_SOLATCK2;
+    else if (soldier_flash(profile,1)) { smoke=true; path=QA_Q2_SOUND_SOLDIER_SOLATCK1; }
+    else if (profile>=1 && profile<=3) path=QA_Q2_SOUND_TANK_TNKATCK3;
+    else if (profile==58 || profile==59) path=QA_Q2_SOUND_FLYER_FLYATCK3;
+    else if (profile==60) path=QA_Q2_SOUND_MEDIC_MEDATCK1;
+    else if (profile==62) path=QA_Q2_SOUND_HOVER_HOVATCK1;
+    else if (profile==82) path=QA_Q2_SOUND_FLOATER_FLTATCK1;
+    else if (profile>=102 && profile<=118) path=QA_Q2_SOUND_MAKRON_BLASTER;
     else if (profile==57 || profile==142 || (profile>=23 && profile<=25) ||
         (profile>=70 && profile<=72) || (profile>=78 && profile<=81) || (profile>=191 && profile<=194)) {
-        color=qa_v3(1,.5f,.2f); path=profile==57 || profile==142?q2_sound_paths[Q2FX_SND_CHICK_CHKATCK2]:profile<=25?q2_sound_paths[Q2FX_SND_TANK_TNKATCK1]:q2_sound_paths[Q2FX_SND_TANK_ROCKET];
-    } else if ((profile>=53 && profile<=56) || profile==140) { color=qa_v3(1,.5f,0); path=q2_sound_paths[Q2FX_SND_GUNNER_GUNATCK3]; }
+        color=qa_v3(1,.5f,.2f); path=profile==57 || profile==142?QA_Q2_SOUND_CHICK_CHKATCK2:profile<=25?QA_Q2_SOUND_TANK_TNKATCK1:QA_Q2_SOUND_TANK_ROCKET;
+    } else if ((profile>=53 && profile<=56) || profile==140) { color=qa_v3(1,.5f,0); path=QA_Q2_SOUND_GUNNER_GUNATCK3; }
     else if (profile==61 || profile==119 || profile==147 || profile==150 || profile==154 || profile==155 || (rerelease && flash>=228 && flash<=231)) color=qa_v3(.5f,.5f,1);
     else if (profile==101 || profile==132) color=qa_v3(.5f,1,.5f);
-    else if ((profile>=144 && profile<=146) || profile==149 || (profile>=156 && profile<=190)) { color=qa_v3(0,1,0); path=q2_sound_paths[Q2FX_SND_TANK_TNKATCK3]; }
-    else if (profile==148) { color=qa_v3(-1,-1,-1); path=q2_sound_paths[Q2FX_SND_WEAPONS_DISINT2]; }
+    else if ((profile>=144 && profile<=146) || profile==149 || (profile>=156 && profile<=190)) { color=qa_v3(0,1,0); path=QA_Q2_SOUND_TANK_TNKATCK3; }
+    else if (profile==148) { color=qa_v3(-1,-1,-1); path=QA_Q2_SOUND_WEAPONS_DISINT2; }
     else if (profile==151 || (profile>=195 && profile<=210)) { heat=true; }
-    else if (rerelease && ((flash>=211 && flash<=218) || flash==254)) { color=qa_v3(1,.5f,.5f); path=q2_sound_paths[Q2FX_SND_WEAPONS_RIPPFIRE]; }
-    else if (rerelease && ((flash>=219 && flash<=226) || flash==255)) { color=qa_v3(0,0,1); path=q2_sound_paths[Q2FX_SND_WEAPONS_HYPRBF1A]; }
-    else if (rerelease && flash==227) path=q2_sound_paths[Q2FX_SND_WEAPONS_HYPRBF1A];
-    else if (rerelease && (flash==240 || flash==241)) { color=qa_v3(0,0,1); path=q2_sound_paths[Q2FX_SND_GUNCMDR_GCDRATCK2]; }
-    else if (rerelease && flash>=242 && flash<=250) { color=qa_v3(1,.5f,0); path=q2_sound_paths[Q2FX_SND_GUNCMDR_GCDRATCK3]; }
+    else if (rerelease && ((flash>=211 && flash<=218) || flash==254)) { color=qa_v3(1,.5f,.5f); path=QA_Q2_SOUND_WEAPONS_RIPPFIRE; }
+    else if (rerelease && ((flash>=219 && flash<=226) || flash==255)) { color=qa_v3(0,0,1); path=QA_Q2_SOUND_WEAPONS_HYPRBF1A; }
+    else if (rerelease && flash==227) path=QA_Q2_SOUND_WEAPONS_HYPRBF1A;
+    else if (rerelease && (flash==240 || flash==241)) { color=qa_v3(0,0,1); path=QA_Q2_SOUND_GUNCMDR_GCDRATCK2; }
+    else if (rerelease && flash>=242 && flash<=250) { color=qa_v3(1,.5f,0); path=QA_Q2_SOUND_GUNCMDR_GCDRATCK3; }
     else return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle lacks its source effect definition");
     *out=(monster_muzzle_definition){profile,color,path,attenuation,particles,smoke,tank_sound,heat};
     return true;
@@ -819,7 +693,7 @@ static bool monster_muzzle_sound(const monster_muzzle_definition *definition,
 {
     const char *path=definition->path;
     if (definition->tank_sound)
-        path=q2_sound_paths[Q2FX_SND_TANK_TNKATK2A+qa_builtin_random_integer(random)%5];
+        path=qa_q2_tank_attack_sounds[qa_builtin_random_integer(random)%5];
     return !path || emit(context,path,1,1,definition->attenuation,0,e);
 }
 bool frontend_q2_monster_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
@@ -934,27 +808,27 @@ bool frontend_q2_player_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
     if (!random || !emit || !((flash<=20 && flash!=15) || (flash>=30 && flash<=39)))
         return q2fx_fail(e,QA_ERROR_FORMAT,"Player muzzle lacks its Source sound definition");
     float volume=silenced?.2f:1; const char *path=NULL; const char *reload=NULL;
-    if (flash==0 || flash==34) path=q2_sound_paths[Q2FX_SND_WEAPONS_BLASTF1A];
-    else if (flash==14 || flash==17) path=q2_sound_paths[Q2FX_SND_WEAPONS_HYPRBF1A];
-    else if (flash==2) { path=q2_sound_paths[Q2FX_SND_WEAPONS_SHOTGF1B]; reload=q2_sound_paths[Q2FX_SND_WEAPONS_SHOTGR1B]; }
-    else if (flash==13) path=q2_sound_paths[Q2FX_SND_WEAPONS_SSHOTF1B];
-    else if (flash==6) path=q2_sound_paths[Q2FX_SND_WEAPONS_RAILGF1A];
-    else if (flash==7) { path=q2_sound_paths[Q2FX_SND_WEAPONS_ROCKLF1A]; reload=q2_sound_paths[Q2FX_SND_WEAPONS_ROCKLR1B]; }
-    else if (flash==8 || flash==31) { path=q2_sound_paths[Q2FX_SND_WEAPONS_GRENLF1A]; reload=flash==31?q2_sound_paths[Q2FX_SND_WEAPONS_PROXLR1A]:q2_sound_paths[Q2FX_SND_WEAPONS_GRENLR1B]; }
-    else if (flash==12) path=q2_sound_paths[Q2FX_SND_WEAPONS_BFG__F1Y];
+    if (flash==0 || flash==34) path=QA_Q2_SOUND_WEAPONS_BLASTF1A;
+    else if (flash==14 || flash==17) path=QA_Q2_SOUND_WEAPONS_HYPRBF1A;
+    else if (flash==2) { path=QA_Q2_SOUND_WEAPONS_SHOTGF1B; reload=QA_Q2_SOUND_WEAPONS_SHOTGR1B; }
+    else if (flash==13) path=QA_Q2_SOUND_WEAPONS_SSHOTF1B;
+    else if (flash==6) path=QA_Q2_SOUND_WEAPONS_RAILGF1A;
+    else if (flash==7) { path=QA_Q2_SOUND_WEAPONS_ROCKLF1A; reload=QA_Q2_SOUND_WEAPONS_ROCKLR1B; }
+    else if (flash==8 || flash==31) { path=QA_Q2_SOUND_WEAPONS_GRENLF1A; reload=flash==31?QA_Q2_SOUND_WEAPONS_PROXLR1A:QA_Q2_SOUND_WEAPONS_GRENLR1B; }
+    else if (flash==12) path=QA_Q2_SOUND_WEAPONS_BFG__F1Y;
     else if (flash>=9 && flash<=11) {
-        path=q2_sound_paths[Q2FX_SND_WEAPONS_GRENLF1A]; volume=1;
-    } else if (flash==16) path=q2_sound_paths[Q2FX_SND_WEAPONS_RIPPFIRE];
-    else if (flash==18) path=q2_sound_paths[Q2FX_SND_WEAPONS_PLASSHOT];
-    else if (flash==30) path=q2_sound_paths[Q2FX_SND_WEAPONS_NAIL1];
+        path=QA_Q2_SOUND_WEAPONS_GRENLF1A; volume=1;
+    } else if (flash==16) path=QA_Q2_SOUND_WEAPONS_RIPPFIRE;
+    else if (flash==18) path=QA_Q2_SOUND_WEAPONS_PLASSHOT;
+    else if (flash==30) path=QA_Q2_SOUND_WEAPONS_NAIL1;
     else if (flash==32) {
-        path=rerelease?q2_sound_paths[Q2FX_SND_WEAPONS_NAIL1]:q2_sound_paths[Q2FX_SND_WEAPONS_SHOTG2];
+        path=rerelease?QA_Q2_SOUND_WEAPONS_NAIL1:QA_Q2_SOUND_WEAPONS_SHOTG2;
     }
-    else if (flash==35) path=q2_sound_paths[Q2FX_SND_WEAPONS_DISINT2];
+    else if (flash==35) path=QA_Q2_SOUND_WEAPONS_DISINT2;
     if (flash==1 || (flash>=3 && flash<=5)) {
         unsigned shots=flash==4?2:flash==5?3:1;
         for (unsigned i=0;i<shots;++i) {
-            const char *name=q2_sound_paths[Q2FX_SND_WEAPONS_MACHGF1B+qa_builtin_random_integer(random)%5];
+            const char *name=qa_q2_machinegun_sounds[qa_builtin_random_integer(random)%5];
             if (!emit(context,name,1,volume,1,flash==4?i*.05:flash==5?i*.033:0,e)) return false;
         }
     }
@@ -962,7 +836,7 @@ bool frontend_q2_player_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
     if (reload && !emit(context,reload,0,volume,1,
         rerelease && rerelease_effects?(flash==2?.35:.15):.1,e)) return false;
     return !(rerelease && rerelease_effects && flash==6) ||
-        emit(context,q2_sound_paths[Q2FX_SND_WEAPONS_RAILGR1B],7,volume,1,.4,e);
+        emit(context,QA_Q2_SOUND_WEAPONS_RAILGR1B,7,volume,1,.4,e);
 }
 static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
     uint32_t flash, bool silenced, double time, double server, qa_error *e)

@@ -1,3 +1,4 @@
+#include "qa/q2_sound.h"
 #include "internal.h"
 
 static bool style(qa_q2_game *g, q2_actor *a, const char *pattern, qa_error *e) {
@@ -65,9 +66,9 @@ static bool key_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error 
         if (!q2_entity_message(g, a, activator, message, e))
             return false;
         return !q2_actor_live(g, activator) ||
-               q2_player_sound(g, activator, "misc/keytry.wav", 0, e);
+               q2_player_sound(g, activator, QA_Q2_SOUND_MISC_KEYTRY, 0, e);
     }
-    if (!q2_player_sound(g, activator, "misc/keyuse.wav", 0, e))
+    if (!q2_player_sound(g, activator, QA_Q2_SOUND_MISC_KEYUSE, 0, e))
         return false;
     if (!q2_actor_live(g, a->id) || !q2_actor_live(g, activator))
         return true;
@@ -380,7 +381,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
                 strcpy(text, "Sequence completed!");
             if (!q2_entity_message(g, a, activator, text, e) ||
                 (q2_actor_live(g, a->id) &&
-                 !q2_entity_sound(g, a, "misc/talk1.wav", 0, 1, 1, 0, e)))
+                 !q2_entity_sound(g, a, QA_Q2_SOUND_MISC_TALK1, 0, 1, 1, 0, e)))
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;
@@ -416,7 +417,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         if (g->options.edition == QA_Q2_RERELEASE)
             return q2_goal_use(g, a, activator, e);
         const char *noise = q2_field_text(g, s, "noise");
-        if (!q2_entity_sound(g, a, *noise ? noise : "misc/secret.wav", 2, 1, 1, 0, e))
+        if (!q2_entity_sound(g, a, *noise ? noise : QA_Q2_SOUND_MISC_SECRET, 2, 1, 1, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
