@@ -4,7 +4,7 @@
 #include "remote_unified_prediction_private.h"
 #include "neutral_config.h"
 #include "config_store.h"
-#include "unified_input_command.h"
+#include "qa/input.h"
 #include "qa/unified_frame_player.h"
 #include "qa/unified_frame_prediction.h"
 #include <math.h>
@@ -88,7 +88,7 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
     p->frontend=f;p->replica=replica;p->prediction=prediction;p->client=client;p->client_view=selected;
     p->configuration=configuration;p->recipe=frontend_remote_unified_recipe(replica);
     p->movement=movement;p->arsenal=arsenal;p->epoch=frontend_remote_unified_epoch(replica);
-    p->builder=(frontend_unified_command_builder){.kind=snapshot.state.kind,
+    p->builder=(qa_input_command_builder){.kind=snapshot.state.kind,
         .angles={(float)snapshot.view_angles.x,(float)snapshot.view_angles.y,(float)snapshot.view_angles.z}};
     p->command_time=snapshot.command_time_ms;
     *out=p;return true;
@@ -100,7 +100,7 @@ bool frontend_input_import_create(qa_frontend *f,frontend_remote_unified *replic
     frontend_remote_unified_prediction *prediction,frontend_unified_input **out,qa_error *e)
 { return frontend_remote_unified_restore_pending(replica) && create(f,replica,prediction,true,out,e); }
 static bool frame_read(frontend_unified_input *p,double time,
-    const frontend_unified_prediction_view *snapshot,frontend_unified_command_frame *out,qa_error *e)
+    const frontend_unified_prediction_view *snapshot,qa_input_command_frame *out,qa_error *e)
 {
     const qa_unified_document *doc=frontend_remote_unified_frame(p->replica);
     const qa_unified_document *prediction=frontend_remote_unified_prediction_document(p->prediction);
@@ -109,7 +109,7 @@ static bool frame_read(frontend_unified_input *p,double time,
     if(!received || !received->world || !received->player || !predicted || !predicted->prediction)
         return fail(e,"Unified input lost its actual received frame");
     const qa_unified_player_view *view=&received->player->view;
-    frontend_unified_command_frame frame={.kind=snapshot->state.kind,.sequence=p->retained_sequence,
+    qa_input_command_frame frame={.kind=snapshot->state.kind,.sequence=p->retained_sequence,
         .acknowledged_server_seconds=snapshot->command_time_ms/1000,.server_time_ms=trunc(time),
         .weapon=2,.sensitivity=1,.light_level=128,.attack_allowed=true};
     if(frame.kind==QA_RULESET_Q2_RERELEASE)
@@ -164,11 +164,11 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
     double duration=p->builder.kind==QA_RULESET_NETQUAKE || p->builder.kind==QA_RULESET_Q3?
         p->retained_elapsed:trunc(p->retained_elapsed>250?100:p->retained_elapsed);
     double time=fmax(acknowledged?baseline:p->command_time,baseline)+duration;
-    frontend_unified_command_frame frame;
-    frontend_unified_command_builder next=p->builder;
+    qa_input_command_frame frame;
+    qa_input_command_builder next=p->builder;
     qa_usercmd input={.sequence=p->retained_sequence};
     if(!isfinite(time) || !frame_read(p,time,&snapshot,&frame,e) ||
-        !frontend_unified_command_build(&next,&tuning,sample,&frame,p->retained_elapsed,&input,e) ||
+        !qa_input_command_build(&next,&tuning,sample,&frame,p->retained_elapsed,&input,e) ||
         !current(p,e)) return false;
     input.has_arsenal=true;
     input.arsenal=(qa_usercmd_arsenal){

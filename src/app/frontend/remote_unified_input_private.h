@@ -2,7 +2,7 @@
 #define QA_FRONTEND_REMOTE_UNIFIED_INPUT_PRIVATE_H
 #include "remote_unified_input.h"
 #include "neutral_config.h"
-#include "unified_input_command.h"
+#include "qa/input.h"
 struct frontend_unified_input {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
@@ -12,7 +12,7 @@ struct frontend_unified_input {
     frontend_neutral_config_view configuration;
     qa_executable_recipe *recipe;
     const qa_recipe_provider *movement, *arsenal;
-    frontend_unified_command_builder builder, pending_builder;
+    qa_input_command_builder builder, pending_builder;
     qa_usercmd q3_commands[64];
     size_t q3_command_count;
     qa_usercmd pending;
