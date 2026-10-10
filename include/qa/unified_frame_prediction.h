@@ -39,7 +39,7 @@ struct qa_unified_frame_prediction {
     char *arsenal_provider, *character_provider;
     qa_string_id active_weapon;
     qa_unified_weapon_state weapon;
-    qa_unified_inventory_entry *ammo;
+    qa_inventory_entry *ammo;
     size_t ammo_count;
     qa_unified_animation_state animation;
     qa_movement_posture standing, crouched, dead;

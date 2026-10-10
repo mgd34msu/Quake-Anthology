@@ -1101,7 +1101,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
         if (!event->visible){inventory_clear(o);return true;}
         q2_inventory_row *items=event->inventory_count?calloc(event->inventory_count,sizeof(*items)):NULL;size_t used=0;
         bool okay=!event->inventory_count || items;
-        for (size_t i=0;okay && i<event->inventory_count;++i){const qa_unified_inventory_entry *from=event->inventory+i;if (from->count<=0)continue;
+        for (size_t i=0;okay && i<event->inventory_count;++i){const qa_inventory_entry *from=event->inventory+i;if (from->count<=0)continue;
             q2_inventory_row *v=items+used++;const char *item_name=qa_strings_cstr(o->replica->strings,from->item);
             v->item=text_copy(item_name);v->count=from->count;
             v->selected=event->selected_item && !strcmp(item_name,event->selected_item);

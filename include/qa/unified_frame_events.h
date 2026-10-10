@@ -63,7 +63,7 @@ typedef struct qa_unified_q2_player_event {
     qa_unified_q2_player_view view;
     qa_unified_q2_score_row *scores;
     size_t score_count;
-    qa_unified_inventory_entry *inventory;
+    qa_inventory_entry *inventory;
     size_t inventory_count;
     qa_vec3 origin, direction;
     uint64_t time_ns;

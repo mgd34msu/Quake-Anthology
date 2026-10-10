@@ -78,12 +78,11 @@ bool application_unified_q2_native_player(application_provider *p, const qa_q2_p
                 .score = a->score, .ping = a->ping, .minutes = a->minutes, .spectator = a->spectator};
         }
     } else if (v->kind == QA_Q2_PLAYER_INVENTORY && v->count) {
-        r->inventory = application_event_stream_alloc(p->application, v->count * sizeof(*r->inventory), _Alignof(qa_unified_inventory_entry), e); r->inventory_count = v->count;
+        r->inventory = application_event_stream_alloc(p->application, v->count * sizeof(*r->inventory), _Alignof(qa_inventory_entry), e); r->inventory_count = v->count;
         if (!r->inventory) ok = false;
         for (size_t i = 0; ok && i < v->count; ++i) {
             const qa_inventory_entry *a = v->inventory + i;
-            r->inventory[i] = (qa_unified_inventory_entry){.item = a->item,
-                .count = a->count, .capacity = a->capacity, .policy = a->policy};
+            r->inventory[i] = *a;
         }
     }
     qa_actor_id recipient = v->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : v->actor;

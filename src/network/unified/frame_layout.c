@@ -650,12 +650,12 @@ static const qa_unified_field qa_unified_powerup_state_fields[] = {
 static const qa_unified_record_layout qa_unified_powerup_state_layout = QA_UNIFIED_LAYOUT(qa_unified_powerup_state, qa_unified_powerup_state_fields);
 
 static const qa_unified_field qa_unified_inventory_entry_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_inventory_entry, item, QA_UNIFIED_FIELD_NAME),
-    QA_UNIFIED_FIELD(qa_unified_inventory_entry, count, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_inventory_entry, capacity, QA_UNIFIED_FIELD_F64),
-    QA_UNIFIED_FIELD(qa_unified_inventory_entry, policy, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_inventory_entry, item, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_inventory_entry, count, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_inventory_entry, capacity, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_FIELD(qa_inventory_entry, policy, QA_UNIFIED_FIELD_I32),
 };
-const qa_unified_record_layout qa_unified_inventory_entry_layout = QA_UNIFIED_LAYOUT(qa_unified_inventory_entry, qa_unified_inventory_entry_fields);
+const qa_unified_record_layout qa_unified_inventory_entry_layout = QA_UNIFIED_LAYOUT(qa_inventory_entry, qa_unified_inventory_entry_fields);
 
 static const qa_unified_field qa_unified_armor_state_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_armor_state, kind, QA_UNIFIED_FIELD_I32),

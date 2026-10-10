@@ -58,9 +58,8 @@ static bool inventory(qa_application *app, application_provider *p,
     for (size_t i = 0; ok && i < count; ++i) {
         const qa_inventory_entry *v = entries + i;
         if (!selected_item(app, p, v->item, original_q3, original_q3_count)) continue;
-        qa_unified_inventory_entry *row = out->ammo + out->ammo_count++;
-        row->count = v->count; row->capacity = v->capacity; row->policy = v->policy;
-        row->item=v->item;
+        qa_inventory_entry *row = out->ammo + out->ammo_count++;
+        *row = *v;
     }
     return ok;
 }

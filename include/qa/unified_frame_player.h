@@ -76,7 +76,7 @@ typedef struct qa_unified_q1_team_face { char *content; uint8_t colors; double f
 typedef struct qa_unified_player_ui {
     double health;
     qa_unified_armor_state armor;
-    qa_unified_inventory_entry *inventory;
+    qa_inventory_entry *inventory;
     size_t inventory_count;
     qa_unified_powerup_state *powerups;
     size_t powerup_count;

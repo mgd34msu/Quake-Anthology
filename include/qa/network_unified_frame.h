@@ -21,15 +21,9 @@ typedef struct qa_unified_body_state {
     qa_actor_id actor;
     qa_body_state body;
 } qa_unified_body_state;
-typedef struct qa_unified_inventory_entry {
-    qa_string_id item;
-    double count;
-    double capacity;
-    qa_inventory_count_policy policy;
-} qa_unified_inventory_entry;
 typedef struct qa_unified_inventory_state {
     qa_actor_id actor;
-    qa_unified_inventory_entry *entries;
+    qa_inventory_entry *entries;
     size_t entry_count;
 } qa_unified_inventory_state;
 typedef struct qa_unified_q2_configstring {

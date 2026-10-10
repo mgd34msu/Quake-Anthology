@@ -461,7 +461,7 @@ bool application_unified_output_inventory(qa_application *app, qa_actor_id actor
         if (count && !out->inventories->entries) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining actual inventory rows");
     }
     for (size_t i = 0; ok && i < count; ++i) {
-        qa_unified_inventory_entry *row = out->inventories->entries + out->inventories->entry_count++;
+        qa_inventory_entry *row = out->inventories->entries + out->inventories->entry_count++;
         row->count = entries[i].count; row->capacity = entries[i].capacity; row->policy = entries[i].policy;
         row->item=entries[i].item;
     }

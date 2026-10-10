@@ -33,7 +33,7 @@ typedef struct player_observation {
     qa_unified_frame_lease *lease;
     const qa_inventory_entry *recipient_inventory;
     size_t recipient_inventory_count;
-    qa_unified_inventory_entry *recipient_ui_inventory;
+    qa_inventory_entry *recipient_ui_inventory;
     const application_unified_source *source;
     const qa_unified_session_player *player;
     const application_unified_player_external *external;
@@ -320,7 +320,7 @@ static bool inventory(qa_unified_player_ui *out, player_observation *o, qa_error
     if (original) {
         for (size_t i = 0; i < o->q3_weapon_count; ++i) {
             const application_q3_catalog_weapon *w = o->q3_weapons + i;
-            qa_unified_inventory_entry *row = out->inventory + out->inventory_count++;
+            qa_inventory_entry *row = out->inventory + out->inventory_count++;
             row->count = count(o, w->item); row->capacity = 1;
             row->item=w->item;
             if (w->ammo) {
@@ -333,9 +333,8 @@ static bool inventory(qa_unified_player_ui *out, player_observation *o, qa_error
     }
     for (size_t i = 0; i < o->inventory_count; ++i) {
         const qa_inventory_entry *v = o->inventory + i;
-        qa_unified_inventory_entry *row = out->inventory + out->inventory_count++;
-        row->count = v->count; row->capacity = v->capacity; row->policy = v->policy;
-        row->item=v->item;
+        qa_inventory_entry *row = out->inventory + out->inventory_count++;
+        *row = *v;
     }
     return true;
 }
