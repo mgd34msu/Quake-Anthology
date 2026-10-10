@@ -1546,26 +1546,27 @@ static bool q2_movement(void *context, qa_actor_id actor,
                         qa_q2_player_movement *out, qa_error *error)
 {
     application_provider *provider = context;
-    application_control_record *control;
+    qa_builtin_player_control borrowed;
     qa_body_state body;
     if (!qa_world_body_read(provider->application->world, actor, &body, error) ||
-        !application_control_ensure(provider->application, actor, body.angles, &control, error))
+        !application_control_borrow(provider->application, provider->owner, actor, &borrowed, error))
         return false;
-    qa_movement_state *state = application_control_frames_state_current(provider->application, actor);
-    if (!state) state = &control->player.state;
-    *out = (qa_q2_player_movement){.state = state, .ground = &control->player.ground,
-        .view_offset = control->player.view_offset, .view_height = control->player.view_height,
-        .source_movement = application_provider_for(provider->application, actor, QA_ROLE_MOVEMENT, "") == provider,
-        .view_angles = control->player.view_angles,
-        .command_angles = control->player.command_angles, .standing_bounds = control->player.standing_bounds,
-        .buttons = control->player.buttons, .water_type = (uint32_t)control->player.water_type,
-        .water_level = control->player.water_level, .grounded = control->player.ground.hit != QA_TRACE_HIT_NONE,
+    qa_player_state *player = borrowed.player;
+    application_control_record *control = &provider->application->controls[actor.slot];
+    qa_movement_state *state = borrowed.state;
+    *out = (qa_q2_player_movement){.state = state, .ground = borrowed.ground,
+        .view_offset = player->view_offset, .view_height = *borrowed.view_height,
+        .source_movement = borrowed.source_movement,
+        .view_angles = *borrowed.view_angles,
+        .command_angles = player->command_angles, .standing_bounds = player->standing_bounds,
+        .buttons = player->buttons, .water_type = (uint32_t)player->water_type,
+        .water_level = player->water_level, .grounded = borrowed.ground->hit != QA_TRACE_HIT_NONE,
         .impact_delta = control->result.impact_delta,
-        .noclip = control->player.player_mode_set && control->player.player_mode == QA_MOVEMENT_MODE_NOCLIP,
+        .noclip = player->player_mode_set && player->player_mode == QA_MOVEMENT_MODE_NOCLIP,
         .on_ladder = state->kind == QA_RULESET_Q2_RERELEASE &&
                      (state->data.q2r.flags & 128u) != 0,
         .grounded_on_world = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(provider->application->session), body.ground), provider->application->physics->world_actor),
-        .ducked = body.bounds.maxs.z < control->player.standing_bounds.maxs.z,
+        .ducked = body.bounds.maxs.z < player->standing_bounds.maxs.z,
         .animate_q2 = application_provider_for(provider->application, actor,
                                                 QA_ROLE_CHARACTER, "") == provider};
     const qa_launch_role grapple_roles[] = {QA_ROLE_ARSENAL, QA_ROLE_EQUIPMENT};

@@ -273,7 +273,7 @@ static const q2_plane_support *q2_endpoint_distances(q2_work *work, uint32_t ind
 static uint32_t q2_target(const qa_collision_target *target, qa_vec3 basis[3])
 {
     if (target->inline_model)
-        qa_collision_basis(target->angles, basis);
+        qa_collision_pose_basis(target, true, basis);
     return target->inline_model ? target->model : 0;
 }
 
@@ -560,11 +560,9 @@ static bool q2_trace(const void *opaque, void *opaque_scratch, const qa_trace_qu
     if (work.stationary) q2_position_test(&work, headnode);
     else q2_sweep(&work, headnode);
     if (query->target.inline_model && work.result.fraction != 1) {
-        /* Q2 rotates by inverse Euler angles; only the primary normal changes.
+        /* Restore only the primary normal using the linked entity role.
          * Plane distance/type/signbits and the secondary plane stay source-native. */
-        qa_vec3 inverse[3];
-        qa_collision_basis(qa_vec_scale(query->target.angles, -1), inverse);
-        work.result.plane.normal = qa_collision_to_local(work.result.plane.normal, inverse);
+        work.result.plane.normal = qa_collision_pose_normal(work.result.plane.normal, &query->target, true, basis);
     }
     work.result.end = !query->target.inline_model && work.result.fraction == 1
         ? query->end : qa_vec_lerp(query->start, query->end, work.result.fraction);

@@ -85,6 +85,7 @@ static bool contact(q3_call *call, bool capsule, int32_t *result, qa_error *erro
     q3_record record; qa_qvm_entity_shared shared;
     if (!source_slot(call, number, &record, &shared, error)) return false;
     query.target.origin = shared.origin; query.target.angles = shared.angles;
+    query.target.pose_rules = QA_RULESET_Q3;
     qa_collision_geometry *geometry = qa_world_geometry(call->host->options.world);
     qa_trace_scratch *scratch = qa_world_trace_scratch(call->host->options.world, geometry);
     qa_trace_result hit; bool ok;
@@ -154,16 +155,8 @@ bool qa_q3_host_link(qa_q3_host *host, uint32_t number, qa_error *error)
         (solid_byte(-shared.local_bounds.mins.z) << 8) | solid_byte(shared.local_bounds.maxs.x);
     if (!actor_word(&call, number, actor, record.address + 176, solid, error) ||
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
-    qa_bounds bounds = shared.local_bounds;
-    if (shared.inline_model && (shared.angles.x != 0 || shared.angles.y != 0 || shared.angles.z != 0)) {
-        qa_vec3 extent = qa_v3(fmaxf(fabsf(bounds.mins.x), fabsf(bounds.maxs.x)),
-                               fmaxf(fabsf(bounds.mins.y), fabsf(bounds.maxs.y)),
-                               fmaxf(fabsf(bounds.mins.z), fabsf(bounds.maxs.z)));
-        float radius = sqrtf(qa_vec_dot(extent, extent));
-        bounds = (qa_bounds){qa_v3(-radius, -radius, -radius), qa_v3(radius, radius, radius)};
-    }
-    bounds.mins = qa_vec_sub(qa_vec_add(shared.origin, bounds.mins), qa_v3(1, 1, 1));
-    bounds.maxs = qa_vec_add(qa_vec_add(shared.origin, bounds.maxs), qa_v3(1, 1, 1));
+    qa_bounds bounds = qa_collision_link_bounds(shared.local_bounds, shared.origin, shared.angles,
+        shared.inline_model, qa_v3(1, 1, 1), QA_RULESET_Q3);
     if (!actor_vector(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 464), bounds.mins, error) ||
         !actor_vector(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 476), bounds.maxs, error) ||
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
@@ -259,7 +252,7 @@ q3_service_result q3_game_spatial(q3_call *call, int32_t *result, qa_error *erro
         qa_vec3 first, second; qa_collision_leaf a, b; bool visible, connected = true;
         ok = q3_vector(call, call->arguments[0], &first, error) &&
             q3_vector(call, call->arguments[1], &second, error) &&
-            qa_collision_point_leaf(geometry, first, &a, error) && qa_collision_point_leaf(geometry, second, &b, error) &&
+            qa_collision_point_leaf(geometry, first, QA_LEAF_COLLISION, &a, error) && qa_collision_point_leaf(geometry, second, QA_LEAF_COLLISION, &b, error) &&
             qa_collision_cluster_visible(geometry, (int32_t)a.cluster, (int32_t)b.cluster, false, &visible, error);
         if (ok && visible && code == 26)
             ok = qa_collision_areas_connected(geometry, (int32_t)a.area, (int32_t)b.area, &connected, error);

@@ -338,6 +338,12 @@ bool qa_native_range_check(const qa_native_instance *, qa_native_address,
  * not validate, copy, synchronize execution, or pin the underlying storage. */
 bool qa_native_borrow(const qa_native_instance *, qa_native_address,
     size_t, qa_bytes *, qa_error *);
+/* Validates a terminated string through current readable mappings. size excludes
+ * the NUL; data borrows contiguous backing under qa_native_borrow's lifetime.
+ * A valid string crossing distinct backing returns data=NULL and its length,
+ * so callers that need custody can use qa_native_read_string without rejecting it. */
+bool qa_native_string_span(const qa_native_instance *, qa_native_address,
+    size_t maximum, qa_bytes *, qa_error *);
 bool qa_native_read_string(const qa_native_instance *instance, qa_native_address source,
                            size_t maximum, qa_buffer *out, qa_error *error);
 bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,

@@ -426,6 +426,20 @@ uint64_t qa_world_body_storage_serial(const qa_world *world,qa_actor_id actor)
     return body==NULL?0:body->storage_serial;
 }
 
+bool qa_world_body_spatial_bind(qa_world *world, qa_actor_id actor,
+    const qa_entity_body_fields *fields, qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || body->external) return fail(error,QA_ERROR_ARGUMENT,"Spatial fields require the actor's stored body");
+    body->spatial_fields=fields;
+    return true;
+}
+const qa_entity_body_fields *qa_world_body_spatial_fields(const qa_world *world, qa_actor_id actor)
+{
+    const qa_world_body *body=qa_world_find_body(world,actor);
+    return body==NULL || body->external?NULL:body->spatial_fields;
+}
+
 bool qa_world_body_read_pose(qa_world *world,qa_actor_id actor,qa_entity_pose pose,
                             qa_body_state *out,qa_error *error)
 {

@@ -441,7 +441,9 @@ bool qa_collision_trace_q3_capsule(const qa_collision_geometry *geometry, qa_tra
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 capsule trace query");
     void *replacement = geometry->family == QA_COLLISION_Q3 && geometry->model_count > 255
                             ? geometry->kernel.state : NULL;
-    return qa_q3_trace_capsule_source(query, bounds, transformed, replacement, scratch->kernel, out, error);
+    qa_trace_query local = *query;
+    local.target.pose_rules = QA_RULESET_Q3;
+    return qa_q3_trace_capsule_source(&local, bounds, transformed, replacement, scratch->kernel, out, error);
 }
 
 bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, const qa_trace_query *query,
@@ -457,6 +459,7 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *geometry, qa_trace
     qa_trace_query local = *query;
     local.target.inline_model = true;
     local.target.model = model;
+    local.target.pose_rules = QA_RULESET_Q3;
     if (!transformed) local.target.origin = local.target.angles = qa_v3(0, 0, 0);
     if (geometry->family != QA_COLLISION_Q3) return qa_collision_trace(geometry, scratch, &local, out, error);
     qa_trace_result result;
@@ -482,17 +485,18 @@ bool qa_collision_leaf_at(const qa_collision_geometry *geometry, uint32_t index,
     return true;
 }
 
-bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 point, qa_collision_leaf *out, qa_error *error)
+bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 point, qa_leaf_query_rule rule, qa_collision_leaf *out, qa_error *error)
 {
     if (geometry == NULL || out == NULL || !qa_vec_finite(point))
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid point-leaf query");
-    int32_t child = geometry->root;
+    int32_t child = rule == QA_LEAF_Q1 ? (geometry->node_count == 0 ? -1 : 0) : geometry->root;
     while (child >= 0) {
         const qa_collision_node *node = &geometry->nodes[(size_t)child];
         const qa_collision_plane *plane = &geometry->planes[node->plane];
-        float projection = geometry->family == QA_COLLISION_Q3 && plane->type < 3
+        float projection = rule == QA_LEAF_COLLISION && geometry->family == QA_COLLISION_Q3 && plane->type < 3
             ? qa_vec_component(point, (unsigned)plane->type) : qa_vec_dot(point, plane->normal);
-        child = node->children[projection - plane->distance < 0 ? 1 : 0];
+        float distance = projection - plane->distance;
+        child = node->children[rule == QA_LEAF_Q1 ? (distance > 0 ? 0 : 1) : (distance < 0 ? 1 : 0)];
     }
     *out = geometry->leaves[leaf_index(child)];
     return true;

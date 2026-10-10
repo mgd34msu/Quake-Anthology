@@ -254,6 +254,7 @@ bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, 
     ++row->busy; bool ok = true; qa_actor_id actor;
     for (size_t i = 0; ok && i < row->current.count; ++i) ok = remote_q1_actor_read(row, row->current.rows[i].number, &actor, error);
     if (ok && row->view_entity) ok = remote_q1_actor_read(row, row->view_entity, &actor, error);
+    if (ok) ok = remote_q1_prediction_publish(row, error);
     if (ok && own_changed) ok = remote_q1_prediction_receive(row, error);
     if (ok) remote_q1_publication_update(row);
     --row->busy; return ok && remote_q1_live(row, error);

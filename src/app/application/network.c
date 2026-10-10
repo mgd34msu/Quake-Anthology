@@ -1355,7 +1355,6 @@ static bool projection_snapshot(const qa_q3_snapshot *snapshot,
         const qa_q3_entity *entity = &snapshot->entities[i];
         if (entity->number < 0 || entity->number >= QA_Q3_ENTITY_NONE)
             return application_fail(error, QA_ERROR_FORMAT, "Remote Q3 projection entity number is invalid");
-        if (entity->number == QA_Q3_ENTITY_WORLD) continue;
         qa_body_state body = {0};
         qa_trajectory trajectory = projection_trajectory(&entity->pos);
         if (!qa_trajectory_position(&trajectory, snapshot->server_time, 800, &body.origin, error) ||
@@ -1383,7 +1382,7 @@ static bool projection_snapshot(const qa_q3_snapshot *snapshot,
 
 bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owner owner, uint32_t seat,
     qa_application_network_q3_projection *projection, const qa_q3_snapshot *current,
-    const qa_q3_snapshot *next, const qa_q3_prediction_scene *scene,
+    const qa_q3_snapshot *next, qa_q3_prediction_scene *scene,
     const qa_q3_prediction_scene_view *view, qa_error *error)
 {
     qa_application_q3_client_context receiver;
@@ -1415,10 +1414,10 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
         if (row->number < 0 || row->number >= QA_Q3_ENTITY_NONE ||
             (cell.published && (uint32_t)row->number != cell.source_number))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 collision projection has an invalid retained source identity");
-        if (row->number == QA_Q3_ENTITY_WORLD) continue;
         /* A next-only cold cell can produce a literal collision hit zero.
          * It demands that identity, without publishing a current pose. */
         identities[row->number] = true;
+        identities[cell.source_number] = true;
         if (!cell.published) continue;
         if (present[row->number]) continue;
         qa_body_state body = {0}; qa_trajectory trajectory = projection_trajectory(&row->pos);
@@ -1445,9 +1444,12 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
         if (!identities[i]) continue;
         if (!projection->actors[i].registry &&
             !qa_session_allocate(app->session, owner, definition, false, 0, &projection->actors[i], error)) return false;
-        if (present[i] && !qa_world_body_write(app->world, projection->actors[i], &bodies[i], error)) return false;
+        qa_world *world=qa_q3_prediction_scene_world(scene);
+        qa_body_state previous; qa_error ignored={0};
+        if ((present[i] || !qa_world_body_read(world,projection->actors[i],&previous,&ignored)) &&
+            !qa_world_body_write(world, projection->actors[i], &bodies[i], error)) return false;
     }
-    return true;
+    return qa_q3_prediction_scene_project(scene,owner,projection->actors,error);
 }
 bool qa_application_network_q3_client_source(qa_application *app, qa_actor_id actor,
     qa_actor_owner *owner, qa_q3_product *product, uint32_t *launch_seat, qa_error *error)

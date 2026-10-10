@@ -156,9 +156,9 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
     float moving_halfheight = shape.extents.z;
     qa_vec3 start = qa_vec_sub(qa_vec_add(query->start, center), origin);
     qa_vec3 end = qa_vec_sub(qa_vec_add(query->end, center), origin);
-    bool rotated = target_kind == QA_SHAPE_CAPSULE && !q3_same_point(query->target.angles, qa_v3(0, 0, 0));
+    bool rotated = target_kind == QA_SHAPE_CAPSULE && qa_collision_pose_rotates(&query->target);
     if (rotated) {
-        qa_collision_basis(query->target.angles, basis);
+        qa_collision_pose_basis(&query->target, true, basis);
         start = qa_collision_to_local(start, basis); end = qa_collision_to_local(end, basis);
         q3_rotate_capsule(&shape, basis);
     }
@@ -213,7 +213,7 @@ static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, 
         }
     }
     if (rotated && result.fraction != 1)
-        result.plane.normal = qa_collision_from_local(result.plane.normal, basis);
+        result.plane.normal = qa_collision_pose_normal(result.plane.normal, &query->target, true, basis);
     if(query->policy.family!=QA_COLLISION_Q3 && result.start_solid) {
         bool blocked=result.all_solid && (rules.zero_all_solid || (stationary && rules.zero_stationary));
         result.fraction=blocked?0.0f:1.0f;
@@ -234,6 +234,7 @@ bool qa_q3_trace_capsule_source(const qa_trace_query *query, qa_bounds bounds, b
                                 const void *replacement_map, void *replacement_scratch, qa_trace_result *out, qa_error *error) {
     qa_trace_query local = *query;
     if (!transformed) local.target = (qa_collision_target){0};
+    local.target.pose_rules = QA_RULESET_Q3;
     return trace_shape(&local, QA_SHAPE_CAPSULE, bounds, local.target.origin, qa_collision_bit(QA_CONTENT_BODY),
                        transformed, replacement_map, replacement_scratch, out, error);
 }
@@ -242,6 +243,7 @@ bool qa_q3_trace_box_source(const qa_trace_query *query, qa_bounds bounds, bool 
                             qa_trace_result *out, qa_error *error) {
     qa_trace_query local = *query;
     if (!transformed) local.target = (qa_collision_target){0};
+    local.target.pose_rules = QA_RULESET_Q3;
     return trace_shape(&local, QA_SHAPE_BOX, bounds, local.target.origin, qa_collision_bit(QA_CONTENT_BODY),
                        transformed, NULL, NULL, out, error);
 }

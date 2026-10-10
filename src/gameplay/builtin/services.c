@@ -15,7 +15,7 @@ bool qa_builtin_services_validate(const qa_builtin_services *s, qa_error *error)
 
 static bool check_client_cluster(qa_world *world, qa_vec3 eye, int32_t *out, qa_error *error) {
     qa_collision_leaf leaf;
-    if (!qa_collision_point_leaf(qa_world_geometry(world), eye, &leaf, error)) return false;
+    if (!qa_collision_point_leaf(qa_world_geometry(world), eye, QA_LEAF_Q1, &leaf, error)) return false;
     if (leaf.cluster < -1 || leaf.cluster > INT32_MAX) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Check-client eye exceeds its Source leaf index");
         return false;

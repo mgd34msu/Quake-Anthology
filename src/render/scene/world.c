@@ -778,15 +778,6 @@ int32_t qa_scene_world_leaf(const qa_scene_world *world, qa_vec3 point)
     return (int32_t)(-1 - (int64_t)child);
 }
 
-bool qa_scene_world_q1_contents(const qa_scene_world *world,qa_vec3 origin,int32_t *out,qa_error *error)
-{
-    if (!world || !out || world->bsp.family!=QA_BSP_Q1 || !qa_vec_finite(origin))
-        return world_error(error,QA_ERROR_ARGUMENT,"Q1 camera contents require its actual BSP world and finite eye");
-    int32_t leaf=qa_scene_world_leaf(world,origin);
-    if (leaf<0 || (size_t)leaf>=world->leaf_count)
-        return world_error(error,QA_ERROR_FORMAT,"Q1 camera eye has no actual BSP leaf");
-    *out=world->leaves[leaf].contents; return true;
-}
 bool qa_scene_world_source_begin_scene(qa_scene_world *world,
     const qa_scene_world_input *input, qa_error *error)
 {

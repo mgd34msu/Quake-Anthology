@@ -98,6 +98,17 @@ static inline float qa_collision_plane_distance(qa_vec3 point, const qa_collisio
 }
 static inline void qa_vec_set_component(qa_vec3 *v, unsigned axis, float value) { if(axis==0)v->x=value;else if(axis==1)v->y=value;else v->z=value; }
 static inline float qa_collision_clamp_fraction(float fraction) { return fmaxf(0, fminf(1, fraction)); }
+typedef struct qa_collision_role_rules {
+    bool rotates, inverse_normal, sphere_bounds;
+} qa_collision_role_rules;
+extern const qa_collision_role_rules qa_collision_roles[QA_RULESET_Q3 + 1];
+static inline bool qa_collision_pose_rotates(const qa_collision_target *target) {
+    return qa_collision_roles[target->pose_rules].rotates &&
+        (target->angles.x != 0 || target->angles.y != 0 || target->angles.z != 0);
+}
+void qa_collision_pose_basis(const qa_collision_target *, bool transformed, qa_vec3 basis[3]);
+qa_vec3 qa_collision_pose_normal(qa_vec3, const qa_collision_target *, bool transformed, const qa_vec3 basis[3]);
+
 /* Quake angle basis: forward, negative-right, up. */
 static inline void qa_collision_basis(qa_vec3 angles, qa_vec3 basis[3]) {
     const float radians=0.017453292519943295769f;

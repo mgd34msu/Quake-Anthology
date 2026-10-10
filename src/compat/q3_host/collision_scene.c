@@ -386,7 +386,7 @@ bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trac
     qa_trace_result result = {0};
     if (ok && !cached.view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_trace_query q = *query;
-    q.target = (qa_collision_target){0};
+    q.target = (qa_collision_target){.pose_rules=QA_RULESET_Q3};
     q.policy.family = QA_COLLISION_Q3;
     if (ok) ok = qa_collision_trace_q3_model(cached.view.geometry, scene->scratch, &q, 0, false, &result, error);
     result.hit = result.fraction != 1 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_NONE;
@@ -449,7 +449,7 @@ bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, cons
     qa_point_contents result = {0};
     if (ok && !cached.view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_point_query q = *query;
-    q.target = (qa_collision_target){0}; q.policy.family = QA_COLLISION_Q3;
+    q.target = (qa_collision_target){.pose_rules=QA_RULESET_Q3}; q.policy.family = QA_COLLISION_Q3;
     if (ok) ok = qa_collision_point_contents(cached.view.geometry, scene->scratch, &q, &result, error);
     for (size_t i = 0; ok && i < cached.view.solid_count; ++i) {
         const collision_row *row = cached.rows + i;
@@ -459,7 +459,7 @@ bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, cons
         if (row->state.modelindex < 0) { ok = q3_fail(error, QA_ERROR_FORMAT, i, "CG contents inline model is negative"); break; }
         q.target = (qa_collision_target){true, (uint32_t)row->state.modelindex,
             qa_v3(row->state.origin[0], row->state.origin[1], row->state.origin[2]),
-            qa_v3(row->state.angles[0], row->state.angles[1], row->state.angles[2])};
+            qa_v3(row->state.angles[0], row->state.angles[1], row->state.angles[2]), QA_RULESET_Q3};
         qa_point_contents hit;
         ok = qa_collision_point_contents(cached.view.geometry, scene->scratch, &q, &hit, error);
         if (ok) { result.contents = qa_collision_bits_union(result.contents, hit.contents);

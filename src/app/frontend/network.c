@@ -4823,8 +4823,6 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
         const qa_actor_registry *actors = qa_session_actors(qa_application_session(app));
         for (size_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
             qa_actor_id id = client->q3_projection.actors[i]; if (!id.registry) continue;
-            if (i == QA_Q3_ENTITY_WORLD)
-                return frontend_fail(error, QA_ERROR_FORMAT, "Remote WORLD identity cannot own a projected actor");
             const qa_actor_record *record = qa_actors_get(actors, id);
             if (!client->q3_projection.owner || !record || record->owner != client->q3_projection.owner ||
                 record->definition != client->q3_projection.definition || record->has_source)
@@ -5354,14 +5352,7 @@ static bool prediction_number_of(void *context, qa_actor_id actor, uint32_t *num
         if (!qa_q3_prediction_scene_read(n->q3_prediction_scene, &scene)) return false;
         *number = (uint32_t)scene.snapshot->player.clientNum; *present = true; return true;
     }
-    for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) if (qa_actor_id_equal(actor, n->q3_projection.actors[i])) {
-        if (i == QA_Q3_ENTITY_WORLD) return true;
-        qa_actor_id qualified;
-        if (!prediction_actor_at(n, i, &qualified, present, error)) return false;
-        if (*present) *number = i;
-        return true;
-    }
-    return true;
+    return qa_q3_prediction_scene_number_of(n->q3_prediction_scene,actor,number,present,error);
 }
 bool frontend_network_prediction_actor_at(const qa_frontend *f,
     const qa_application_q3_client_context *receiver, uint32_t number,
@@ -5377,19 +5368,32 @@ bool frontend_network_prediction_number_of(const qa_frontend *f,
     frontend_q3_client *n = q3_client_receiver(f, receiver);
     return n && prediction_number_of(n, actor, number, present, error);
 }
-static qa_q3_prediction_scene_collision prediction_collision(frontend_q3_client *n,
-    const frontend_network_prediction_source *source)
+bool frontend_network_prediction_geometry_prepare(qa_frontend *f, qa_actor_owner owner,
+    uint32_t seat, qa_collision_geometry *geometry, qa_trace_scratch **scratch, qa_error *error)
 {
-    return (qa_q3_prediction_scene_collision){.geometry=(qa_collision_geometry *)source->geometry,
-        .context=n,.actor_at=prediction_actor_at,.number_of=prediction_number_of,.scratch=source->scratch};
+    frontend_q3_client *n=q3_client_seat(f,owner,seat);
+    if (!n || !n->q3_prediction_scene) return false;
+    if (!qa_q3_prediction_scene_prepare(n->q3_prediction_scene,
+        qa_session_actor_registry(qa_application_session(f->application)),geometry,error)) return false;
+    *scratch=qa_world_trace_scratch(qa_q3_prediction_scene_world(n->q3_prediction_scene),geometry);
+    return true;
+}
+static qa_actor_reference prediction_pass(frontend_q3_client *n, qa_actor_id actor,
+    qa_actor_reference source, const qa_q3_prediction_scene_view *scene)
+{
+    qa_actor_id viewer; qa_error ignored={0};
+    if (source.kind==QA_ACTOR_REFERENCE_NONE && client_player(n,&viewer,&ignored) && qa_actor_id_equal(actor,viewer))
+        return qa_actor_reference_source(n->q3_cgame_owner,(uint32_t)scene->snapshot->player.clientNum);
+    return source;
 }
 bool frontend_network_prediction_trace(qa_frontend *f, const frontend_network_prediction_source *source,
     const qa_trace_query *query, qa_trace_result *out, qa_error *error)
 {
     if (!frontend_network_prediction_source_current(f, source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote prediction trace source is stale");
-    qa_q3_prediction_scene_collision collision = prediction_collision(q3_client_receiver(f, &source->receiver), source);
-    return qa_q3_prediction_scene_trace(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene, &collision, query, out, error) &&
+    qa_trace_query local=*query;
+    local.pass_source=prediction_pass(q3_client_receiver(f,&source->receiver),local.pass_actor,local.pass_source,&source->scene);
+    return qa_q3_prediction_scene_trace(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene, &local, out, error) &&
         (frontend_network_prediction_source_current(f, source) || frontend_fail(error, QA_ERROR_ARGUMENT, "Remote trace source changed"));
 }
 bool frontend_network_prediction_trace_with_number(qa_frontend *f, const frontend_network_prediction_source *source,
@@ -5397,9 +5401,10 @@ bool frontend_network_prediction_trace_with_number(qa_frontend *f, const fronten
 {
     if (!frontend_network_prediction_source_current(f, source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote prediction trace source is stale");
-    qa_q3_prediction_scene_collision collision = prediction_collision(q3_client_receiver(f, &source->receiver), source);
+    qa_trace_query local=*query;
+    local.pass_source=prediction_pass(q3_client_receiver(f,&source->receiver),local.pass_actor,local.pass_source,&source->scene);
     return qa_q3_prediction_scene_trace_with_number(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene,
-        &collision, query, out, number, error) &&
+        &local, out, number, error) &&
         (frontend_network_prediction_source_current(f, source) || frontend_fail(error, QA_ERROR_ARGUMENT, "Remote trace source changed"));
 }
 bool frontend_network_prediction_point_contents(qa_frontend *f, const frontend_network_prediction_source *source,
@@ -5407,8 +5412,9 @@ bool frontend_network_prediction_point_contents(qa_frontend *f, const frontend_n
 {
     if (!frontend_network_prediction_source_current(f, source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote contents source is stale");
-    qa_q3_prediction_scene_collision collision = prediction_collision(q3_client_receiver(f, &source->receiver), source);
-    return qa_q3_prediction_scene_point_contents(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene, &collision, query, out, error) &&
+    qa_point_query local=*query;
+    local.pass_source=prediction_pass(q3_client_receiver(f,&source->receiver),local.pass_actor,local.pass_source,&source->scene);
+    return qa_q3_prediction_scene_point_contents(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene, &local, out, error) &&
         (frontend_network_prediction_source_current(f, source) || frontend_fail(error, QA_ERROR_ARGUMENT, "Remote contents source changed"));
 }
 bool frontend_network_prediction_is_bsp(qa_frontend *f, const frontend_network_prediction_source *source,
@@ -5416,8 +5422,7 @@ bool frontend_network_prediction_is_bsp(qa_frontend *f, const frontend_network_p
 {
     if (!frontend_network_prediction_source_current(f, source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote BSP hit source is stale");
-    qa_q3_prediction_scene_collision collision = prediction_collision(q3_client_receiver(f, &source->receiver), source);
-    return qa_q3_prediction_scene_is_bsp(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene, &collision, trace, out, error) &&
+    return qa_q3_prediction_scene_is_bsp(q3_client_receiver(f, &source->receiver)->q3_prediction_scene, &source->scene, trace, out, error) &&
         (frontend_network_prediction_source_current(f, source) || frontend_fail(error, QA_ERROR_ARGUMENT, "Remote BSP source changed"));
 }
 bool frontend_network_prediction_adjust_mover(qa_frontend *f, const frontend_network_prediction_source *source,

@@ -15,5 +15,7 @@ bool remote_q1_prediction_camera_receive(frontend_remote_q1 *,qa_vec3,qa_error *
 bool remote_q1_prediction_read(const frontend_remote_q1 *,qa_qw_movement_state *,float *,bool *);
 bool remote_q1_collision_acquire(frontend_remote_q1 *,qa_collision_geometry **,qa_error *);
 bool remote_q1_prediction_camera_trace(frontend_remote_q1 *,qa_vec3,qa_vec3,qa_trace_result *,qa_error *);
+bool remote_q1_prediction_prepare(frontend_remote_q1 *,qa_error *);
+bool remote_q1_prediction_publish(frontend_remote_q1 *,qa_error *);
 void remote_q1_prediction_clear(frontend_remote_q1 *);
 #endif

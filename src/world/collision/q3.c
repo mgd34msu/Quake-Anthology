@@ -371,8 +371,8 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
     work.shape = q3_prepare_shape(query->shape, &center);
     work.start = qa_vec_add(query->start, center); work.end = qa_vec_add(query->end, center);
     work.stationary = q3_same_point(query->start, query->end);
-    bool rotated = transformed && !q3_same_point(query->target.angles, qa_v3(0, 0, 0));
-    if (rotated) qa_collision_basis(query->target.angles, basis);
+    bool rotated = transformed && qa_collision_pose_rotates(&query->target);
+    if (rotated) qa_collision_pose_basis(&query->target, true, basis);
     if (transformed) {
         work.start = qa_vec_sub(work.start, query->target.origin);
         work.end = qa_vec_sub(work.end, query->target.origin);
@@ -401,7 +401,7 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
     } else q3_trace_tree(&work);
     if (query->policy.family == QA_COLLISION_Q1) q3_trace_media(&work, model);
     if (rotated && work.result.fraction != 1)
-        work.result.plane.normal = qa_collision_from_local(work.result.plane.normal, basis);
+        work.result.plane.normal = qa_collision_pose_normal(work.result.plane.normal, &query->target, true, basis);
     q3_finish_trace(query, &work.result);
     *out = work.result;
     return true;
@@ -432,8 +432,8 @@ static bool q3_point_contents(const void *state, void *scratch, const qa_point_q
     qa_vec3 point = query->point;
     if (query->target.inline_model) {
         point = qa_vec_sub(point, query->target.origin);
-        if (!q3_same_point(query->target.angles, qa_v3(0, 0, 0))) {
-            qa_vec3 basis[3]; qa_collision_basis(query->target.angles, basis);
+        if (qa_collision_pose_rotates(&query->target)) {
+            qa_vec3 basis[3]; qa_collision_pose_basis(&query->target, true, basis);
             point = qa_collision_to_local(point, basis);
         }
     }

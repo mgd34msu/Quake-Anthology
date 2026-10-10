@@ -111,6 +111,11 @@ typedef struct qa_q3_fire_stamp {
     bool present;
     int32_t time_ms;
 } qa_q3_fire_stamp;
+/* Authored Q3 policy when a different mover owns the player's current motion. */
+typedef struct qa_q3_foreign_movement {
+    int32_t command_time_ms, delta_angle_words[3];
+    int32_t movement_frame, jump_pad_entity, jump_pad_frame;
+} qa_q3_foreign_movement;
 typedef struct qa_q3_player_state {
     uint32_t selections, flags, event_sequence, spawn_count;
     int32_t events[2], event_parameters[2];
@@ -132,29 +137,37 @@ typedef struct qa_q3_player_state {
     int32_t deaths, excellent_count, gauntlet_frag_count, last_kill_ms, dead_yaw;
     int32_t last_killed_client, last_hurt_client, last_hurt_mod;
     int32_t legs_animation, torso_animation, legs_timer_ms, torso_timer_ms;
-    int32_t delta_yaw_word, ground_entity_number;
-    int32_t delta_pitch_word, delta_roll_word, teleport_lock_ms;
+    int32_t teleport_lock_ms;
     uint32_t selected_pm_flags;
     int32_t selected_pm_time_ms;
     uint64_t teleport_revision;
     int32_t damage_event, damage_count, damage_pitch, damage_yaw, last_command_ms;
-    int32_t command_time_ms, client_number;
+    int32_t client_number;
     int32_t portal_id;
     int32_t rank, persistent_team, generic1;
     int32_t defend_count, assist_count, captures;
-    int32_t fly_sound_after, jumppad_entity, jumppad_frame, pmove_frame_count;
+    int32_t fly_sound_after;
     int32_t last_command_angles[3];
+    qa_q3_foreign_movement foreign_movement;
     float damage_blood, damage_armor, damage_knockback;
     qa_vec3 damage_from;
     qa_string_id loop_sound;
-    float fractional_weapon_ms, view_height;
-    qa_vec3 view_angles, grapple_point;
+    float fractional_weapon_ms;
+    qa_vec3 grapple_point;
     qa_q3_cutscene_state cutscene;
     qa_actor_id hook, attached_mine, persistent_item, portal;
     bool spectator, dead, gibbed, respawned, use_item_held, fire_held, grapple_pull;
     bool damage_from_world, noclip, invulnerability_expanded, death_cleanup_done, gauntlet_contact;
     bool no_target;
 } qa_q3_player_state;
+
+/* Source projection, used only by foreign/inactive native PM and immutable saves. */
+typedef struct qa_q3_player_motion {
+    int32_t delta_yaw_word, ground_entity_number, delta_pitch_word, delta_roll_word;
+    int32_t command_time_ms, pmove_frame_count, jumppad_entity, jumppad_frame;
+    float view_height;
+    qa_vec3 view_angles;
+} qa_q3_player_motion;
 
 typedef struct qa_q3_rules {
     int32_t game_type, proximity_timeout_ms, force_respawn_seconds, dmflags;
@@ -170,12 +183,6 @@ typedef enum qa_q3_source_award {
     QA_Q3_AWARD_GAUNTLET = 13,
     QA_Q3_AWARD_CAPTURE = 14
 } qa_q3_source_award;
-enum {
-    QA_Q3_SOURCE_PM_COMMAND = 1, QA_Q3_SOURCE_PM_EVENTS = 2,
-    QA_Q3_SOURCE_PM_FRAME = 4, QA_Q3_SOURCE_PM_JUMPPAD = 8,
-    QA_Q3_SOURCE_PM_DELTAS = 16, QA_Q3_SOURCE_PM_VIEW = 32,
-    QA_Q3_SOURCE_PM_ALL = 63
-};
 typedef enum qa_q3_obelisk_think {
     QA_Q3_OBELISK_NONE, QA_Q3_OBELISK_REGEN, QA_Q3_OBELISK_RESPAWN
 } qa_q3_obelisk_think;
@@ -216,8 +223,6 @@ typedef struct qa_q3_hooks {
     bool (*source_client_run)(void *, qa_actor_id, const qa_source_frame *, qa_error *);
     bool (*source_client_end)(void *, qa_actor_id, const qa_source_frame *, qa_error *);
     bool (*source_end_frame)(void *, const qa_source_frame *, qa_error *);
-    bool (*source_movement_state)(void *, qa_actor_id, const qa_q3_player_state *,
-                                   uint32_t fields, qa_error *);
     /* Match and map owners handle their own obligations; selection does not
      * give this provider authority over the session's mode or target graph. */
     bool (*objective_pickup)(void *, qa_actor_id item, qa_actor_id player, uint32_t item_index,
@@ -338,8 +343,6 @@ bool qa_q3_bind_player_rollback(qa_q3_game *, qa_q3_player_binding *, qa_error *
 bool qa_q3_player_read(const qa_q3_game *, qa_actor_id, qa_q3_player_state *);
 bool qa_q3_player_fire_read(const qa_q3_game *, qa_actor_id, qa_q3_fire_stamp *);
 bool qa_q3_player_notarget(qa_q3_game *, qa_actor_id, bool *enabled, qa_error *);
-bool qa_q3_player_set_view(qa_q3_game *, qa_actor_id, qa_vec3 angles, float view_height,
-                           qa_error *);
 /* Private character presentation and input suppression only. The application
  * mutates the independently selected movement family plus the shared body,
  * combat traits, link and motion discontinuity. A player spawn clears this. */
@@ -622,6 +625,7 @@ typedef struct qa_q3_checkpoint {
     qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
     qa_q3_native_client clients[QA_Q3_NATIVE_CLIENTS];
     qa_q3_actor_state source_clients[QA_Q3_NATIVE_CLIENTS];
+    qa_q3_player_motion source_player_motions[QA_Q3_NATIVE_CLIENTS];
     qa_q3_product product;
     qa_q3_rules rules;
     int32_t previous_ms, now_ms;
@@ -630,6 +634,7 @@ typedef struct qa_q3_checkpoint {
     qa_actor_id body_queue[8];
     uint32_t podium_players[3];
     qa_q3_actor_state *actors;
+    qa_q3_player_motion *actor_player_motions;
     size_t actor_count;
     qa_q3_kamikaze_cooldown *kamikaze_cooldowns;
     size_t cooldown_count;

@@ -400,6 +400,10 @@ bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
                                     NULL, error))
         return false;
     view = qa_cvars_find(host->cvars, name);
+    if (view) name = view->name;
+    if (view && !set && (flags & ~view->flags) &&
+        !qa_cvars_add_flags(host->cvars, name, flags, error))
+        return false;
     if (view && view->save_policy == QA_CVAR_SAVE_UNCLASSIFIED &&
         !qa_cvars_declare_save_policy(host->cvars, name,
             host->kind == NATIVE_HOST_Q2_GAME ||

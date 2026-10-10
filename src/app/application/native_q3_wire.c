@@ -18,20 +18,6 @@ static bool native_source_actor(application_provider *provider, qa_actor_id acto
         application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire capability lost its actual source actor");
 }
 
-static bool native_movement(void *context, qa_actor_id actor, qa_q3_movement_state *out,
-    bool *selected, qa_error *error)
-{
-    application_provider *provider = context;
-    qa_player_state control;
-    uint32_t slot;
-    if (!out || !selected || !native_source_actor(provider, actor, &slot, error) ||
-        !qa_application_control_read(provider->application, actor, &control))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire has no actual selected control holder");
-    *selected = control.state.kind == QA_RULESET_Q3;
-    if (*selected) *out = control.state.data.q3;
-    return true;
-}
-
 static bool native_movement_flags(void *context, qa_actor_id actor, uint32_t clear,
     uint32_t set, qa_error *error)
 {
@@ -82,7 +68,7 @@ bool application_native_q3_wire_bind_sources(application_provider *provider, qa_
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
         !provider->application || provider->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire binding requires its real GAME owner");
-    qa_q3_wire_services services = {.context = provider, .movement = native_movement,
+    qa_q3_wire_services services = {.context = provider,
         .mode = native_mode, .movement_flags = native_movement_flags,
         .movement_policy = native_movement_policy};
     return qa_q3_wire_bind_services(provider->state.q3, &services, error);
@@ -240,7 +226,7 @@ static bool wire_point(void *context, const float origin[3], int32_t *area,
     q3_wire_visibility *owner = context;
     qa_collision_leaf leaf;
     if (!qa_collision_point_leaf(owner->geometry,
-            qa_v3(origin[0], origin[1], origin[2]), &leaf, error)) return false;
+            qa_v3(origin[0], origin[1], origin[2]), QA_LEAF_COLLISION, &leaf, error)) return false;
     if (leaf.area < INT32_MIN || leaf.area > INT32_MAX ||
         leaf.cluster < INT32_MIN || leaf.cluster > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT,

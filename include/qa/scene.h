@@ -883,7 +883,6 @@ void qa_scene_world_destroy(qa_scene_world *);
 bool qa_scene_world_retain(qa_scene_world *, qa_error *);
 void qa_scene_world_release(qa_scene_world *);
 int32_t qa_scene_world_leaf(const qa_scene_world *, qa_vec3);
-bool qa_scene_world_q1_contents(const qa_scene_world *,qa_vec3,int32_t *,qa_error *);
 /* Original Q3 compares its area mask once for the parent scene. Portal views
  * share that result while each view can replace the retained PVS marks. */
 bool qa_scene_world_source_begin_scene(qa_scene_world *, const qa_scene_world_input *, qa_error *);

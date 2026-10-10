@@ -232,7 +232,8 @@ bool qa_application_network_q3_client_native_system_info(qa_application *, qa_ac
     uint32_t seat, const char *actual_info, qa_error *);
 /* Connection-owned projection, initialized to zero. Source numbers are kept
  * here rather than in the local GAME source-slot namespace. Bodies contain
- * authoritative snapshot state, remain unlinked, and grant no input authority.
+ * authoritative CONTROL snapshot state in the scene common world and grant no
+ * input authority. Collision views borrow the retained source centity fields.
  * Retain observed entity identities for the actual connection lifetime, as
  * source centity collision rows can outlive snapshot presence. Release on real
  * clear/epoch retirement before closing the borrowed application. */
@@ -245,7 +246,7 @@ struct qa_q3_prediction_scene;
 struct qa_q3_prediction_scene_view;
 bool qa_application_network_q3_client_project(qa_application *, qa_actor_owner, uint32_t seat,
     qa_application_network_q3_projection *, const qa_q3_snapshot *current,
-    const qa_q3_snapshot *next, const struct qa_q3_prediction_scene *,
+    const qa_q3_snapshot *next, struct qa_q3_prediction_scene *,
     const struct qa_q3_prediction_scene_view *, qa_error *);
 bool qa_application_network_q3_client_unproject(qa_application *,
     qa_application_network_q3_projection *, qa_error *);

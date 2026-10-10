@@ -4,6 +4,7 @@
 #include "model_inventory.h"
 #include "remote_q1_camera.h"
 #include "q1_sky.h"
+#include "qa/world.h"
 
 typedef struct remote_q1_model {
     struct remote_q1_model *next;
@@ -42,11 +43,14 @@ struct frontend_remote_q1 {
     struct frontend_remote_q1_sky_policy *sky_policy;
     remote_q1_camera camera;
     qa_collision_geometry *collision;
-    qa_trace_scratch *collision_scratch;
+    qa_world *collision_world;
+    qa_actor_id *collision_actors;
+    qa_entity_model_field *collision_models;
+    size_t collision_count, collision_capacity;
     frontend_q1_motion_refs motion_refs;
     frontend_q1_sky_controls sky_controls;
     frontend_legacy_cvar_handles legacy_cvars;
-    qa_cvar_handle hightrack, chasecam, noskins, baseskin;
+    qa_cvar_handle hightrack, chasecam, noskins, baseskin, solid_players;
     frontend_q1_view_motion view_motion;
     frontend_q1_view_pose view_pose;
     qa_vec3 view_entity_origin, view_entity_angles;

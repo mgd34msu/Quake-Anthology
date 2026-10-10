@@ -702,8 +702,8 @@ bool q2_map_in_phs(qa_q2_game *g, qa_vec3 from, qa_vec3 to) {
     qa_collision_geometry *geometry = qa_world_geometry(g->services.world);
     qa_collision_leaf a, b;
     bool visible = false;
-    return qa_collision_point_leaf(geometry, from, &a, NULL) &&
-           qa_collision_point_leaf(geometry, to, &b, NULL) &&
+    return qa_collision_point_leaf(geometry, from, QA_LEAF_COLLISION, &a, NULL) &&
+           qa_collision_point_leaf(geometry, to, QA_LEAF_COLLISION, &b, NULL) &&
            qa_collision_cluster_visible(geometry, (int32_t)a.cluster, (int32_t)b.cluster, true,
                                         &visible, NULL) &&
            visible;

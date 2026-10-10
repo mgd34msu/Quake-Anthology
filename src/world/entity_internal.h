@@ -16,6 +16,7 @@ typedef struct qa_world_body {
     bool present, external, has_collision, attached, linked;
     qa_body_state state;
     qa_body_binding binding;
+    const qa_entity_body_fields *spatial_fields;
     qa_actor_collision collision;
     qa_collision_binding collision_binding;
     uint64_t collision_serial;

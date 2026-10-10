@@ -86,7 +86,7 @@ bool application_q2_visibility_recipient_prepare(qa_application *app, qa_actor_i
     uint32_t slot, qa_vec3 origin, application_q2_visibility_recipient *out, qa_error *error)
 {
     application_q2_visibility_recipient value = {.actor = actor, .slot = slot, .origin = origin};
-    if (!qa_collision_point_leaf(app->geometry, origin, &value.leaf, error)) return false;
+    if (!qa_collision_point_leaf(app->geometry, origin, QA_LEAF_COLLISION, &value.leaf, error)) return false;
     uint32_t fat_leaves[64];
     qa_leaf_list fat;
     qa_bounds bounds = {qa_vec_sub(origin, qa_v3(8, 8, 8)), qa_vec_add(origin, qa_v3(8, 8, 8))};

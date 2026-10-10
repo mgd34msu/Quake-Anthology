@@ -7,12 +7,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool qac_cvars_touch(qa_cvars *registry, qa_error *error)
+static bool touch(qa_cvars *registry, bool flags_only, qa_error *error)
 {
-    if (!registry || registry->edit_first || registry->edit_bindings_pending)
+    if (!registry || (!flags_only && (registry->edit_first || registry->edit_bindings_pending)))
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar mutation requires its available owner");
     for (const qa_cvars *view = registry->store->views; view; view = view->next_view)
-        if (view->notifying)
+        if (view->notifying && !flags_only)
             return qac_fail(error, QA_ERROR_ARGUMENT, "cvar callback cannot mutate its shared owner");
     qa_cvars_edit *edit = qac_cvars_current_edit(registry);
     if (edit) {
@@ -25,6 +25,8 @@ bool qac_cvars_touch(qa_cvars *registry, qa_error *error)
     ++registry->store->revision; ++registry->mutation_revision;
     return true;
 }
+bool qac_cvars_touch(qa_cvars *registry, qa_error *error)
+{ return touch(registry, false, error); }
 
 bool qa_cvars_capture_metadata(const qa_cvars *registry,qa_cvar_registry_state *out,
     qa_cvar_record_state *records,size_t capacity,qa_error *error)
@@ -186,21 +188,23 @@ static const qa_cvar_view *alias_view(const qa_cvars *registry,const cvar_values
 
 static cvar_target live_target(qa_cvars *registry)
 { return (cvar_target){registry,qac_cvars_current_values(registry),qac_cvars_current_edit(registry)}; }
-static bool target_touch(cvar_target target, qa_error *error)
+static bool target_touch_as(cvar_target target, bool flags_only, qa_error *error)
 {
     if (!target.edit) {
-        if (!qac_cvars_touch(target.registry,error)) return false;
+        if (!touch(target.registry,flags_only,error)) return false;
         ++target.registry->store->projection_revision;
         return true;
     }
     if (!target.registry || target.registry->store->edit!=target.edit || target.edit->ready ||
         target.edit->fault.code!=QA_OK || target.registry->store->revision!=target.edit->revision ||
-        target.registry->notifying || target.registry->draining || target.registry->post_first ||
-        target.registry->edit_first || target.registry->edit_bindings_pending)
+        (!flags_only && (target.registry->notifying || target.registry->draining || target.registry->post_first ||
+        target.registry->edit_first || target.registry->edit_bindings_pending)))
         return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar values are unavailable or stale");
     ++target.registry->store->projection_revision;
     return true;
 }
+static bool target_touch(cvar_target target, qa_error *error)
+{ return target_touch_as(target, false, error); }
 
 static const char *source_name(const qa_cvars *, const char *);
 
@@ -1649,7 +1653,7 @@ bool qa_cvars_register(qa_cvars *registry, const char *name, const char *value,
 }
 static bool add_flags_variable(cvar_target target,const char *name,uint32_t flags,qa_error *error)
 {
-    if (!target_touch(target,error)) return false;
+    if (!target_touch_as(target,true,error)) return false;
     cvar_alias *alias=find_alias(target.registry,target.values,name);
     cvar *entry=qac_cvars_find_values(target.registry,target.values,alias?alias->target:name);
     if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,"flags need their actual Source declaration");
@@ -1914,10 +1918,11 @@ bool qa_cvars_apply(qa_cvars *registry,const qa_cvars_edit_command *command,qa_e
 {
     if (!command) return qac_fail(error,QA_ERROR_ARGUMENT,"live cvar mutation requires its operation");
     /* Forced assignment admission and unknown packets precede live mutation;
-     * shared-owner retention has no notification drain. */
+     * shared-owner retention and declaration flags have no value notification drain. */
     if ((unsigned)command->kind>(unsigned)QA_CVARS_EDIT_ASSIGN ||
         (command->kind==QA_CVARS_EDIT_ASSIGN && !command->force) ||
-        command->kind==QA_CVARS_EDIT_RETAIN_SHARED)
+        command->kind==QA_CVARS_EDIT_RETAIN_SHARED ||
+        command->kind==QA_CVARS_EDIT_ADD_FLAGS)
         return apply_operation(live_target(registry),command,error);
     if (!mutation_begin(registry,error)) return false;
     return mutation_end(registry,apply_operation(live_target(registry),command,error),error);
@@ -1928,7 +1933,7 @@ bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *comman
         return qac_fail(error,QA_ERROR_ARGUMENT,"prepared cvar mutation requires its ticket and operation");
     cvar_target target={edit->registry,edit_source_values(edit),edit};
     qa_error fault={0};
-    bool ok=target_touch(target,&fault);
+    bool ok=command->kind==QA_CVARS_EDIT_ADD_FLAGS || target_touch(target,&fault);
     if (ok) ok=apply_operation(target,command,&fault);
     ++edit->registry->store->projection_revision;
     if (edit->fault.code!=QA_OK) { if (fault.code==QA_OK) fault=edit->fault; ok=false; }

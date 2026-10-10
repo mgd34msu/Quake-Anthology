@@ -159,7 +159,9 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.legs_animation = player->legs_animation;
         view.torso_animation = player->torso_animation;
         view.loop_sound = player->loop_sound;
-        view.angular.base = player->view_angles;
+        qa_builtin_player_control control;
+        if (!q3_player_control(game, actor, &control, error)) return false;
+        view.angular.base = *control.view_angles;
         view.position.delta = view.body.velocity;
         view.angular.type = view.position.type = QA_TRAJECTORY_INTERPOLATE;
         for (unsigned i = 1; i < QA_Q3_POWERUP_COUNT; ++i)

@@ -198,6 +198,12 @@ void qa_world_geometry_admission_abort(qa_world_geometry_admission *);
 bool qa_world_actor_released(qa_world *, qa_actor_record, qa_error *);
 bool qa_world_body_create(qa_world *, qa_actor_id, const qa_body_state *, qa_error *);
 bool qa_world_body_bind(qa_world *, qa_actor_id, const qa_body_binding *, bool replace, qa_error *);
+/* Optional readonly source spatial views overlay CLIP/CONTENTS on a stored
+ * body. CONTROL, velocity, ground, writes and checkpoints stay canonical.
+ * Fields are borrowed until unbind/release; external writable bindings retain
+ * their existing sampler. NULL removes the spatial view. */
+bool qa_world_body_spatial_bind(qa_world *, qa_actor_id, const qa_entity_body_fields *, qa_error *);
+const qa_entity_body_fields *qa_world_body_spatial_fields(const qa_world *, qa_actor_id);
 uint64_t qa_world_body_storage_serial(const qa_world *, qa_actor_id);
 bool qa_world_body_read(qa_world *, qa_actor_id, qa_body_state *, qa_error *);
 bool qa_world_body_read_pose(qa_world *, qa_actor_id, qa_entity_pose,
@@ -295,10 +301,14 @@ bool qa_world_visit(qa_world *, qa_bounds, qa_collision_role, qa_spatial_visit_f
 bool qa_world_query(qa_world *, qa_bounds, qa_collision_role, qa_actor_id *, size_t capacity, size_t *count, bool *overflow, qa_error *);
 /* CLIENT membership borrows decoded append order over the common linked
  * bodies. NULL actors retains the normal spatial candidate order. */
+typedef enum qa_world_trace_merge {
+    QA_WORLD_MERGE_SERVER, QA_WORLD_MERGE_QW_CLIENT, QA_WORLD_MERGE_Q3_CLIENT
+} qa_world_trace_merge;
 typedef struct qa_world_query_rules {
     const qa_actor_id *actors;
     size_t count;
     bool brush_contents_only, contents_ignore_pass;
+    qa_world_trace_merge merge;
 } qa_world_query_rules;
 void qa_world_set_query_rules(qa_world *, const qa_world_query_rules *);
 

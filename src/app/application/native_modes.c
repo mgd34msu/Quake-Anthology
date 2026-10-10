@@ -867,8 +867,8 @@ bool application_native_mode_visible(void *opaque, qa_actor_id from, qa_actor_id
         qa_collision_geometry *geometry = qa_world_geometry(app->world);
         qa_collision_leaf first, second;
         bool visible, connected;
-        return geometry && qa_collision_point_leaf(geometry, a.origin, &first, NULL) &&
-            qa_collision_point_leaf(geometry, b.origin, &second, NULL) &&
+        return geometry && qa_collision_point_leaf(geometry, a.origin, QA_LEAF_COLLISION, &first, NULL) &&
+            qa_collision_point_leaf(geometry, b.origin, QA_LEAF_COLLISION, &second, NULL) &&
             first.cluster >= INT32_MIN && first.cluster <= INT32_MAX &&
             second.cluster >= INT32_MIN && second.cluster <= INT32_MAX &&
             first.area >= INT32_MIN && first.area <= INT32_MAX &&

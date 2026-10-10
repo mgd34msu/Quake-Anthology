@@ -556,7 +556,7 @@ static bool dispatch(qa_q1_game *g, qa_actor_id actor, const qa_command_invocati
     if (g->services.actor_traits)
         g->services.actor_traits(g->services.context, actor, &traits);
     float flags = (float)g->options.teamplay;
-    if (!q1_source_value(g, QA_Q1_SOURCE_TEAMPLAY, g->options.teamplay, &flags, error))
+    if (!q1_source_value(g, QA_Q1_SOURCE_TEAMPLAY, (float)g->options.teamplay, &flags, error))
         return false;
     if (!q1_alive(g, actor) || traits.spectator || !isfinite(flags) ||
         flags < 0 || flags >= (double)UINT32_MAX || !((uint32_t)flags & 128u))

@@ -384,7 +384,7 @@ bool qa_q3_presentation_in_pvs(qa_q3_presentation *p, qa_vec3 first, qa_vec3 sec
     if (!p || !p->world_loaded || !p->geometry || !visible)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "R_PointInLeaf: bad model");
     qa_collision_leaf a, b;
-    return qa_collision_point_leaf(p->geometry, first, &a, error) &&
-        qa_collision_point_leaf(p->geometry, second, &b, error) &&
+    return qa_collision_point_leaf(p->geometry, first, QA_LEAF_COLLISION, &a, error) &&
+        qa_collision_point_leaf(p->geometry, second, QA_LEAF_COLLISION, &b, error) &&
         qa_collision_cluster_visible(p->geometry, (int32_t)a.cluster, (int32_t)b.cluster, false, visible, error);
 }

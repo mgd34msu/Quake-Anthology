@@ -16,7 +16,7 @@ authoritative engine store; preserve their required fields and numeric rules.
 | Entity identity and lifetime | `include/qa/actors.h:12,43`, `src/world/actors_internal.h:9,16`; created by `src/session/session.c:308`. Q1/Q2/Q3 rule attachments and QC/QVM/native bindings use this registry. Q1 frontend actor lookup at `src/app/frontend/remote_q1_client.c:237` now reads this source index; its separate actor type, array, scans, growth and cleanup are deleted. | Native rule-tail allocations are also allocation-gate work; their original rules remain. CLIENT ownership and saved actor references remain canonical lifecycle data. |
 | Body | `include/qa/world.h:7`, `src/world/entity_internal.h:12`; application controls, QC, owned native Q2/Q3 hosts and Unified prediction use the shared world. Q2 CLIENT publication and prediction now use it at `src/app/frontend/remote_q2_prediction.c:56,173`; their separate scan/merge/contents paths and scratch are deleted. Registry release forwards canonical body cleanup before observer reuse at `src/world/actors.c:317`. | Legacy prediction bypasses remain in `src/app/frontend/remote_q1_prediction.c:60` and `src/network/q3/prediction_scene.c:363`. Migrate received membership/poses and original caller merge rules, then delete both copies. Q2 slice evidence is `docs/playtests/2026-10-09-q2-common-query.md`. |
 | Body field selection | `include/qa/world.h:12` defines one `qa_body_vector_kind` and inline accessor. QVM, native Q2 and declared QC bindings resolve to it at load; their five-way getter/setter chains and seed copies are deleted. `src/world/live_fields.c:96` retains external scalar decoding. | Module encodings and ownership remain boundary rules. The bounded comparison and joint engine-build evidence are in `docs/playtests/2026-10-09-body-field-selector.md`; this is not whole-module gameplay or a frame-time speedup. |
-| Current player movement and view | `include/qa/movement.h:136` is the common movement type. Actor-indexed controls in `src/app/application/internal.h:158` own the selected movement and completed view/bounds/ground/water. | Q2 now borrows selected controls and body state in `src/gameplay/q2/wire.c:543`; its separate movement type, actor store and publication APIs are deleted. Source-only foreign PM policy/receipts remain at `src/gameplay/q2/internal.h:87`. Q3 still duplicates movement/view fields in `include/qa/game_q3.h:135` and bridges them in `src/app/application/control.c:3079` and `src/gameplay/q3/player.c:2083`. Remove duplicate current-state custody, preserving genuinely source-specific mixed-role PM fields and exact ABI projections. A complete common PlayerState owner is still open. |
+| Current player movement and view | `include/qa/player_state.h:9` defines the common current owner, stored once per actor in `src/app/application/internal.h:161`. Selected movement, view, bounds, ground, command/button state and water fields reside there. All callers of the former `qa_application_control_view` type use `qa_player_state`; the old type is deleted. Q2 borrows selected controls and body state at `src/gameplay/q2/wire.c:543`. | Q3 generic current fields remain in `include/qa/game_q3.h:135`, with phase copies in `src/gameplay/q3/player.c:2074` and a bridge in `src/app/application/control.c:3080`. Delete those together while preserving foreign/inactive Q3 PM policy, source clocks and ABI projections. Evidence: `docs/playtests/2026-10-09-common-player-state.md`. Common roster/life custody remains in the next row. |
 | Player roster, life and travel | Common roster is `src/app/application/map_players_private.h:40`; combat and inventory have shared owners. | Generic view/life/connection fields coexist with rule tails in Q1/Q2/Q3 player records. Q2 score mirrors are `src/gameplay/q2/player/state.c:440,498`. Common travel combat is copied alongside Q2 carry health in `map_players_private.h:13` and `include/qa/game_q2_player.h:166`. Move current generic fields to their common owner; retain prior coop/spawn history and original rule tails. |
 | Item identity and inventory | `qa_item_id`, `qa_item_definition`, `qa_inventory_entry` and `qa_item_bit` in `include/qa/inventory.h`; one definition lookup in `src/gameplay/inventory.c:1020`. QC/QVM/native Q2 use the same item-bit type; their three former definitions are deleted. Equipment presentation at `src/app/application/equipment_presentation.c:305` reads the selected item through that lookup. Its catalog copy, scan and allocation are deleted. | No alternate selected-equipment definition lookup remains in this caller. Other current item consumers remain subject to the full custody audit. |
 | Weapon request state | `qa_weapon_request_status` in `include/qa/equipment_weapon_slot.h:10` now serves equipment and QVM requests/status/cancellation/checkpoints. The duplicate QVM enum and identity translation are deleted. | Original game weapon phases and foreign ABI constants remain rule data. Other common weapon custody still needs the full caller audit. |
@@ -204,3 +204,25 @@ movement/console/clock enums and 47 bridges. Each role retains its independent
 selection. Numeric/save/command components preserve 125 role combinations and
 original widths. This proves the type migration, not completion of every
 subsystem's independent rule selection or live combined-mode adoption.
+
+The common game-family type now lives in `include/qa/ruleset.h:4`. The one
+rule-set descriptor supplies family through `src/core/ruleset.c:12`; seven
+consumers use it, deleting three equivalent local switches. Their existing
+invalid-input defaults and independently selected role clocks are preserved.
+This does not merge authored Q1/Q2/Q3 policy or close the remaining per-role
+selection audit.
+
+## Q1/QC and native cvar adoption: THE-2859
+
+Compiled Q1 binds 25 common handles before spawn in
+`src/gameplay/q1/runtime.c`. Q1/QW limits, movement, pause, chat and addon
+rules read those handles. The named application callback, its context and
+exported admission-limit bridge are deleted. Original QC policy/developer
+output uses its existing handle owner. Native cvars are derived ABI objects;
+unchanged polls skip guest rewrites. Owning/borrowed string reads share one
+scanner, and repeated existing Cvar_Get inputs borrow contiguous backing.
+
+Proof is in `docs/playtests/2026-10-09-common-cvar-adoption.md`. Fixed Q3
+source/loading/authored HUD readers remain open. New declarations, setters,
+split strings and other native text imports still allocate. Whole-frame
+zero allocation is not established.

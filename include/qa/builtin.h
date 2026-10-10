@@ -3,6 +3,7 @@
 
 #include "qa/inventory.h"
 #include "qa/physics.h"
+#include "qa/player_state.h"
 #include "qa/session.h"
 #include "qa/world.h"
 
@@ -155,6 +156,16 @@ typedef struct qa_builtin_powerups {
     uint64_t quad_fire_until_ns;
 } qa_builtin_powerups;
 
+/* Borrowed current owner and its existing command-local continuation. */
+typedef struct qa_builtin_player_control {
+    qa_player_state *player;
+    qa_movement_state *state;
+    qa_vec3 *view_angles;
+    float *view_height;
+    qa_movement_ground *ground;
+    bool source_movement;
+} qa_builtin_player_control;
+
 typedef enum qa_builtin_motion_reason {
     QA_BUILTIN_MOTION_TELEPORT,
     QA_BUILTIN_MOTION_LAUNCH,
@@ -165,10 +176,11 @@ typedef struct qa_builtin_motion_change {
     qa_body_state body;
     qa_vec3 view_angles, angular_kick;
     qa_vec3 command_view_angles;
+    int32_t source_command_angle_words[3];
     uint64_t hold_ns;
     bool force_view_angles, apply_angular_kick;
     bool preserve_command_angles;
-    bool has_command_view_angles;
+    bool has_command_view_angles, has_source_command_angle_words;
 } qa_builtin_motion_change;
 
 typedef enum qa_builtin_projectile_role {
@@ -232,6 +244,8 @@ typedef struct qa_builtin_services {
     bool (*players)(void *, qa_actor_id *, size_t capacity, size_t *count, qa_error *);
     /* Read-only; false means this actor has no connected player projection. */
     bool (*player_info)(void *, qa_actor_id, qa_builtin_player_info *);
+    bool (*player_control)(void *, qa_actor_owner observer, qa_actor_id,
+                           qa_builtin_player_control *, qa_error *);
     /* Read-only. Success returns zero deadlines when no selected effect applies. */
     /* Deadlines are translated to the observer's source clock. */
     bool (*powerups)(void *, qa_actor_owner observer, qa_actor_id,

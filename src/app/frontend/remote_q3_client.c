@@ -19,6 +19,7 @@
 #include "material_movie_bindings.h"
 #include "network_restore.h"
 #include "network_q3_restart.h"
+#include "network_prediction.h"
 #include "source_restore.h"
 #include "capture.h"
 #include "qa/application_character_selection.h"
@@ -187,7 +188,8 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
     if (!frontend_q3_world_policy_initialize(f,&options,error)) return false;
     if((!v->geometry && !qa_collision_create(&bsp,&v->geometry,error)) ||
         !qa_collision_bind_resource(v->geometry,row->map,error) ||
-        (!v->trace_scratch && !qa_trace_scratch_create(v->geometry,&v->trace_scratch,error)) ||
+        !frontend_network_prediction_geometry_prepare(f,domain->source.receiver.receiver,
+            domain->source.receiver.seat,v->geometry,&v->trace_scratch,error) ||
         !qa_scene_world_create(&bsp,v->images,v->materials,&options,&v->world,error) ||
         !qa_scene_world_source_resource_bind(v->world,row->map,error) ||
         !frontend_world_scratch_create(v->world,&v->world_scratch,error) ||
@@ -533,7 +535,6 @@ bool frontend_remote_q3_resources_destroy(frontend_remote_q3 **owned,qa_error *e
     qa_q3_presentation_assets_destroy(v->assets);
     frontend_world_scratch_destroy(&v->world_scratch);
     qa_scene_world_destroy(v->world);
-    qa_trace_scratch_destroy(v->trace_scratch);
     qa_collision_destroy(v->geometry); qa_resource_release(row->map);
     qa_media_library_destroy(v->movies); qa_font_library_destroy(v->fonts); qa_audio_bank_destroy(v->sounds);
     qa_material_library_destroy(v->materials); qa_scene_resources_destroy(v->images); qa_vfs_destroy(v->mounts);

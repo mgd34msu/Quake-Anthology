@@ -32,6 +32,7 @@ struct q3_wire_state {
     qa_q3_wire_services services;
     q3_wire_row rows[QA_Q3_SOURCE_ENTITIES];
     q3_wire_client clients[QA_Q3_SOURCE_CLIENTS];
+    qa_q3_player_motion foreign_motions[QA_Q3_SOURCE_CLIENTS];
 };
 
 static bool fields_valid(const q3_wire_row *, uint32_t);
@@ -59,6 +60,163 @@ static q3_wire_row *row(qa_q3_game *game, qa_actor_id actor) {
     return game && game->wire &&
         qa_q3_source_actor_slot(game, actor, &slot, &ignored) && current(game, slot, actor)
         ? &game->wire->rows[slot] : NULL;
+}
+
+static qa_q3_player_motion *retired_motion(qa_q3_game *game, qa_actor_id actor) {
+    uint32_t slot;
+    return game->wire && q3_source_client_pointer(game, actor, &slot)
+        ? &game->wire->foreign_motions[slot] : NULL;
+}
+static qa_q3_foreign_movement *foreign_movement(qa_q3_game *game, qa_actor_id actor) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    return entry && entry->kind == Q3_ACTOR_PLAYER ? &entry->state.player.foreign_movement : NULL;
+}
+static bool movement_control(const qa_q3_game *game, qa_actor_id actor,
+                              qa_builtin_player_control *control, bool *selected,
+                              qa_error *error) {
+    if (!q3_player_control(game, actor, control, error)) return false;
+    uint32_t slot;
+    bool native = q3_source_client_pointer(game, actor, &slot);
+    *selected = control->state->kind == QA_RULESET_Q3 &&
+        (!native || (control->source_movement && !game->wire->clients[slot].movement_detached));
+    return true;
+}
+bool q3_player_motion_read(const qa_q3_game *game, qa_actor_id actor,
+                           qa_q3_player_motion *out, qa_error *error) {
+    uint32_t slot;
+    bool native = q3_source_client_pointer(game, actor, &slot);
+    if (native && game->wire->clients[slot].movement_detached) {
+        *out = game->wire->foreign_motions[slot];
+        return true;
+    }
+    qa_builtin_player_control control;
+    bool selected = false;
+    if (!movement_control(game, actor, &control, &selected, error)) return false;
+    *out = (qa_q3_player_motion){0};
+    if (selected) {
+        const qa_q3_movement_state *state = &control.state->data.q3;
+        out->command_time_ms = state->command_time_ms;
+        out->delta_pitch_word = state->delta_angle_words[0];
+        out->delta_yaw_word = state->delta_angle_words[1];
+        out->delta_roll_word = state->delta_angle_words[2];
+        out->pmove_frame_count = state->movement_frame;
+        out->jumppad_frame = state->jump_pad_frame;
+        out->jumppad_entity = state->jump_pad.registry ? q3_entity_number(game, state->jump_pad) : 0;
+    } else {
+        const qa_q3_foreign_movement *foreign = foreign_movement((qa_q3_game *)game, actor);
+        if (foreign) {
+            out->command_time_ms = foreign->command_time_ms;
+            out->delta_pitch_word = foreign->delta_angle_words[0];
+            out->delta_yaw_word = foreign->delta_angle_words[1];
+            out->delta_roll_word = foreign->delta_angle_words[2];
+            out->pmove_frame_count = foreign->movement_frame;
+            out->jumppad_frame = foreign->jump_pad_frame;
+            out->jumppad_entity = foreign->jump_pad_entity;
+        }
+    }
+    out->view_angles = *control.view_angles;
+    out->view_height = *control.view_height;
+    out->ground_entity_number = control.ground->hit == QA_TRACE_HIT_WORLD ? (int32_t)QA_Q3_SOURCE_WORLD :
+        control.ground->hit == QA_TRACE_HIT_ACTOR ? q3_entity_number(game, control.ground->actor) : (int32_t)QA_Q3_SOURCE_NONE;
+    return true;
+}
+bool q3_player_motion_slot_read(const qa_q3_game *game, uint32_t slot,
+                                qa_q3_player_motion *out, qa_error *error) {
+    qa_actor_id actor = game->source_entities[slot].actor;
+    if (!actor.registry || !game->source_entities[slot].body_attached ||
+        game->wire->clients[slot].movement_detached) {
+        *out = game->wire->foreign_motions[slot];
+        return true;
+    }
+    return q3_player_motion_read(game, actor, out, error);
+}
+void q3_player_motion_slots_restore(qa_q3_game *game, const qa_q3_player_motion *motions) {
+    for (uint32_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
+        qa_actor_id actor = game->source_entities[i].actor;
+        if (actor.registry && game->source_entities[i].body_attached &&
+            !game->wire->clients[i].movement_detached)
+            q3_player_motion_restore(game, actor, &motions[i]);
+        else game->wire->foreign_motions[i] = motions[i];
+    }
+}
+void q3_player_command_time_write(qa_q3_game *game, qa_actor_id actor, int32_t time) {
+    qa_builtin_player_control control;
+    bool selected = false;
+    if (movement_control(game, actor, &control, &selected, NULL) && selected) control.state->data.q3.command_time_ms = time;
+    else {
+        qa_q3_foreign_movement *foreign = foreign_movement(game, actor);
+        if (foreign) foreign->command_time_ms = time;
+    }
+}
+void q3_player_jumppad_write(qa_q3_game *game, qa_actor_id actor, qa_actor_id pad, int32_t frame) {
+    qa_builtin_player_control control;
+    bool selected = false;
+    if (movement_control(game, actor, &control, &selected, NULL) && selected) {
+        control.state->data.q3.jump_pad = pad;
+        control.state->data.q3.jump_pad_frame = frame;
+    } else {
+        qa_q3_foreign_movement *foreign = foreign_movement(game, actor);
+        if (foreign) { foreign->jump_pad_entity = pad.registry ? q3_entity_number(game, pad) : 0;
+            foreign->jump_pad_frame = frame; }
+    }
+}
+void q3_player_delta_write(qa_q3_game *game, qa_actor_id actor, unsigned axis, int32_t word_value) {
+    qa_builtin_player_control control;
+    bool selected = false;
+    if (movement_control(game, actor, &control, &selected, NULL) && selected) control.state->data.q3.delta_angle_words[axis] = word_value;
+    else {
+        qa_q3_foreign_movement *foreign = foreign_movement(game, actor);
+        if (foreign) foreign->delta_angle_words[axis] = word_value;
+    }
+}
+void q3_player_view_write(qa_q3_game *game, qa_actor_id actor, qa_vec3 view) {
+    qa_builtin_player_control control;
+    if (q3_player_control(game, actor, &control, NULL)) {
+        *control.view_angles = view;
+        control.player->view_angles = view;
+    } else {
+        qa_q3_player_motion *retired = retired_motion(game, actor);
+        if (retired) retired->view_angles = view;
+    }
+}
+void q3_player_height_write(qa_q3_game *game, qa_actor_id actor, float height) {
+    qa_builtin_player_control control;
+    if (q3_player_control(game, actor, &control, NULL)) {
+        *control.view_height = height;
+        control.player->view_height = height;
+    } else {
+        qa_q3_player_motion *retired = retired_motion(game, actor);
+        if (retired) retired->view_height = height;
+    }
+}
+void q3_player_motion_restore(qa_q3_game *game, qa_actor_id actor, const qa_q3_player_motion *motion) {
+    qa_builtin_player_control control;
+    bool selected = false;
+    if (movement_control(game, actor, &control, &selected, NULL) && selected) {
+        qa_q3_movement_state *state = &control.state->data.q3;
+        state->command_time_ms = motion->command_time_ms;
+        state->movement_frame = motion->pmove_frame_count;
+        state->jump_pad_frame = motion->jumppad_frame;
+        state->delta_angle_words[0] = motion->delta_pitch_word;
+        state->delta_angle_words[1] = motion->delta_yaw_word;
+        state->delta_angle_words[2] = motion->delta_roll_word;
+        qa_q3_source_binding binding;
+        state->jump_pad = motion->jumppad_entity > 0 &&
+            qa_q3_source_binding_read(game, (uint32_t)motion->jumppad_entity, &binding, NULL)
+            ? binding.actor : (qa_actor_id){0};
+    } else {
+        qa_q3_foreign_movement *foreign = foreign_movement(game, actor);
+        if (foreign) *foreign = (qa_q3_foreign_movement){
+            .command_time_ms = motion->command_time_ms,
+            .delta_angle_words = {motion->delta_pitch_word, motion->delta_yaw_word, motion->delta_roll_word},
+            .movement_frame = motion->pmove_frame_count, .jump_pad_entity = motion->jumppad_entity,
+            .jump_pad_frame = motion->jumppad_frame};
+    }
+    q3_player_view_write(game, actor, motion->view_angles);
+    q3_player_height_write(game, actor, motion->view_height);
+}
+void q3_player_motion_clear(qa_q3_game *game, qa_actor_id actor) {
+    q3_player_motion_restore(game, actor, &(qa_q3_player_motion){0});
 }
 
 bool q3_wire_create(qa_q3_game *game, qa_error *error) {
@@ -166,8 +324,10 @@ bool q3_wire_copy_body(qa_q3_game *game, qa_actor_id player, qa_actor_id corpse,
 }
 
 void q3_wire_client_clear(qa_q3_game *game, uint32_t slot) {
-    if (game && game->wire && slot < QA_Q3_SOURCE_CLIENTS)
+    if (game && game->wire && slot < QA_Q3_SOURCE_CLIENTS) {
         game->wire->clients[slot] = (q3_wire_client){.foreign_policy_written = true};
+        game->wire->foreign_motions[slot] = (qa_q3_player_motion){0};
+    }
 }
 
 void q3_wire_client_spawn_clear(qa_q3_game *game, uint32_t slot) {
@@ -237,7 +397,7 @@ bool qa_q3_wire_player_loop_sound(qa_q3_game *game, qa_actor_id actor,
 
 bool qa_q3_wire_bind_services(qa_q3_game *game, const qa_q3_wire_services *services,
                              qa_error *error) {
-    if (!game || !game->wire || !services || !services->movement || !services->mode ||
+    if (!game || !game->wire || !services || !services->mode ||
         game->observation_depth || game->source_restored)
         return q3_fail(error, "Q3 wire services require idle actual movement and mode owners");
     game->wire->services = *services;
@@ -276,21 +436,21 @@ bool qa_q3_wire_player_policy_read(const qa_q3_game *game, qa_actor_id actor,
                                     qa_q3_wire_policy *out, qa_error *error) {
     uint32_t slot;
     if (!game || !game->wire || !out || game->source_restored ||
-        game->observation_depth == SIZE_MAX || !game->wire->services.movement ||
+        game->observation_depth == SIZE_MAX ||
         !qa_q3_native_client_slot(game, actor, &slot, error) || !row((qa_q3_game *)game, actor))
         return q3_fail(error, "Q3 native PM policy read lacks its actual source client");
     qa_q3_game *retained = (qa_q3_game *)game;
     ++retained->observation_depth;
-    qa_q3_movement_state movement;
-    bool selected;
-    bool ok = game->wire->services.movement(game->wire->services.context, actor,
-                &movement, &selected, error) && current(game, slot, actor);
+    qa_builtin_player_control control;
+    bool selected = false;
+    bool ok = movement_control(game, actor, &control, &selected, error) && current(game, slot, actor);
+    const qa_q3_movement_state *movement = selected ? &control.state->data.q3 : NULL;
     if (ok && !selected && !game->wire->clients[slot].foreign_policy_written)
         ok = q3_fail(error, "Q3 native PM policy read requires its authored foreign movement state");
     if (ok) *out = selected
-        ? (qa_q3_wire_policy){movement.movement_type, movement.bob_cycle,
-            word(movement.movement_flags), movement.movement_time_ms,
-            movement.gravity, movement.speed, movement.movement_direction}
+        ? (qa_q3_wire_policy){movement->movement_type, movement->bob_cycle,
+            word(movement->movement_flags), movement->movement_time_ms,
+            movement->gravity, movement->speed, movement->movement_direction}
         : game->wire->clients[slot].foreign_policy;
     if (!ok && (!error || !error->code))
         q3_fail(error, "Q3 native client retired during its PM policy read");
@@ -313,17 +473,16 @@ bool qa_q3_wire_player_policy_update(qa_q3_game *game, qa_actor_id actor, uint8_
                                       const qa_q3_wire_policy *policy, qa_error *error) {
     uint32_t slot;
     if (!game || !game->wire || !policy || !fields || (fields & 128u) || game->source_restored ||
-        game->observation_depth == SIZE_MAX || !game->wire->services.movement ||
+        game->observation_depth == SIZE_MAX ||
         !qa_q3_native_client_slot(game, actor, &slot, error) || !row(game, actor) ||
         ((fields & QA_Q3_WIRE_PM_TYPE) && (policy->pm_type < 0 || policy->pm_type > 6)) ||
         ((fields & QA_Q3_WIRE_PM_BOB_CYCLE) && (policy->bob_cycle < 0 || policy->bob_cycle > 255)) ||
         ((fields & QA_Q3_WIRE_PM_DIRECTION) && (policy->movement_dir < 0 || policy->movement_dir > 7)))
         return q3_fail(error, "Q3 source PM assignment lacks its actual client or valid field mask");
     ++game->observation_depth;
-    qa_q3_movement_state movement;
-    bool selected;
-    bool ok = game->wire->services.movement(game->wire->services.context, actor,
-                &movement, &selected, error) && current(game, slot, actor);
+    qa_builtin_player_control control;
+    bool selected = false;
+    bool ok = movement_control(game, actor, &control, &selected, error) && current(game, slot, actor);
     if (ok && selected) {
         if (!game->wire->services.movement_policy)
             ok = q3_fail(error, "Q3 source PM assignment lacks its actual selected writer");
@@ -347,15 +506,14 @@ bool qa_q3_wire_player_view_command(qa_q3_game *game, qa_actor_id actor,
                                      qa_error *error) {
     uint32_t slot;
     if (!game || !game->wire || !command || !out || game->source_restored ||
-        game->observation_depth == SIZE_MAX || !game->wire->services.movement ||
+        game->observation_depth == SIZE_MAX ||
         !qa_q3_native_client_slot(game, actor, &slot, error) || !row(game, actor))
         return q3_fail(error, "Q3 source view command lacks its actual native client");
     ++game->observation_depth;
-    qa_q3_movement_state movement;
-    bool selected;
+    qa_builtin_player_control control;
+    bool selected = false;
     qa_combat_state combat;
-    bool ok = game->wire->services.movement(game->wire->services.context, actor,
-                &movement, &selected, error) && current(game, slot, actor);
+    bool ok = movement_control(game, actor, &control, &selected, error) && current(game, slot, actor);
     if (ok && (selected || !game->wire->clients[slot].foreign_policy_written))
         ok = q3_fail(error, "Q3 native view producer requires its authored foreign movement policy");
     if (ok) ok = qa_combat_read(game->options.services.combat, actor, &combat, error) &&
@@ -364,12 +522,13 @@ bool qa_q3_wire_player_view_command(qa_q3_game *game, qa_actor_id actor,
     if (ok && (!entry || entry->kind != Q3_ACTOR_PLAYER))
         ok = q3_fail(error, "Q3 native view producer lost its source player state");
     if (ok) {
-        qa_q3_player_state *player = &entry->state.player;
+        qa_q3_player_motion motion;
+        if (!q3_player_motion_read(game, actor, &motion, error)) { --game->observation_depth; return false; }
         int32_t type = game->wire->clients[slot].foreign_policy.pm_type;
         if (type != 5 && type != 6 &&
             (type == 2 || q3_source_float_to_int(combat.health) > 0)) {
-            int32_t delta[3] = {player->delta_pitch_word, player->delta_yaw_word,
-                                player->delta_roll_word};
+            int32_t delta[3] = {motion.delta_pitch_word, motion.delta_yaw_word,
+                                motion.delta_roll_word};
             int32_t angles[3];
             for (size_t i = 0; i < 3; ++i) {
                 uint32_t value = ((uint32_t)command->angles[i] + (uint32_t)delta[i]) & 65535u;
@@ -377,20 +536,22 @@ bool qa_q3_wire_player_view_command(qa_q3_game *game, qa_actor_id actor,
             }
             if (angles[0] > 16000 || angles[0] < -16000) {
                 angles[0] = angles[0] > 0 ? 16000 : -16000;
-                player->delta_pitch_word = word((uint32_t)angles[0] - (uint32_t)command->angles[0]);
+                motion.delta_pitch_word = word((uint32_t)angles[0] - (uint32_t)command->angles[0]);
             }
-            player->view_angles = qa_v3((float)angles[0] * (360.0f / 65536.0f),
+            motion.view_angles = qa_v3((float)angles[0] * (360.0f / 65536.0f),
                 (float)angles[1] * (360.0f / 65536.0f),
                 (float)angles[2] * (360.0f / 65536.0f));
         }
         qa_q3_player *followed = q3_client_follow_player(game, slot);
         if (followed) {
-            vector(followed->viewangles, player->view_angles);
-            followed->deltaAngles[0] = player->delta_pitch_word;
-            followed->deltaAngles[1] = player->delta_yaw_word;
-            followed->deltaAngles[2] = player->delta_roll_word;
+            vector(followed->viewangles, motion.view_angles);
+            followed->deltaAngles[0] = motion.delta_pitch_word;
+            followed->deltaAngles[1] = motion.delta_yaw_word;
+            followed->deltaAngles[2] = motion.delta_roll_word;
         }
-        *out = player->view_angles;
+        q3_player_delta_write(game, actor, 0, motion.delta_pitch_word);
+        q3_player_view_write(game, actor, motion.view_angles);
+        *out = motion.view_angles;
     }
     if (!ok && (!error || !error->code))
         q3_fail(error, "Q3 native client retired during view command production");
@@ -407,12 +568,9 @@ bool qa_q3_wire_client_stop_following(qa_q3_game *game, uint32_t slot, qa_error 
     bool ok = true;
     if (!game->wire->clients[slot].movement_detached && actor.registry &&
         qa_actors_get(qa_session_actors(game->options.services.session), actor)) {
-        qa_q3_movement_state movement;
-        bool selected;
-        if (!game->wire->services.movement)
-            ok = q3_fail(error, "Q3 StopFollowing lacks its selected movement capability");
-        else ok = game->wire->services.movement(game->wire->services.context, actor,
-                                                 &movement, &selected, error);
+        qa_builtin_player_control control;
+        bool selected = false;
+        ok = movement_control(game, actor, &control, &selected, error);
         if (ok && selected) {
             if (!game->wire->services.movement_flags)
                 ok = q3_fail(error, "Q3 StopFollowing lacks its actual PMF_FOLLOW writer");
@@ -433,7 +591,7 @@ bool qa_q3_wire_client_stop_following(qa_q3_game *game, uint32_t slot, qa_error 
 
 bool qa_q3_wire_client_detach(qa_q3_game *game, uint32_t slot, qa_error *error) {
     if (!game || !game->wire || slot >= game->options.max_clients || game->source_restored ||
-        game->observation_depth == SIZE_MAX || !game->wire->services.movement)
+        game->observation_depth == SIZE_MAX)
         return q3_fail(error, "Q3 PM retirement requires its current movement source capability");
     q3_wire_client *client = &game->wire->clients[slot];
     if (client->movement_detached) return true;
@@ -441,18 +599,19 @@ bool qa_q3_wire_client_detach(qa_q3_game *game, uint32_t slot, qa_error *error) 
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 PM retirement has no current native source client generation");
     ++game->observation_depth;
-    qa_q3_movement_state movement;
-    bool selected;
-    bool ok = game->wire->services.movement(game->wire->services.context, actor,
-                                             &movement, &selected, error);
+    qa_builtin_player_control control;
+    bool selected = false;
+    bool ok = movement_control(game, actor, &control, &selected, error);
+    const qa_q3_movement_state *movement = selected ? &control.state->data.q3 : NULL;
     if (ok && !current(game, slot, actor))
         ok = q3_fail(error, "Q3 PM source client changed while retiring its movement authority");
     if (ok && selected) {
-        client->foreign_policy = (qa_q3_wire_policy){movement.movement_type, movement.bob_cycle,
-            word(movement.movement_flags), movement.movement_time_ms,
-            movement.gravity, movement.speed, movement.movement_direction};
+        client->foreign_policy = (qa_q3_wire_policy){movement->movement_type, movement->bob_cycle,
+            word(movement->movement_flags), movement->movement_time_ms,
+            movement->gravity, movement->speed, movement->movement_direction};
         client->foreign_policy_written = true;
     }
+    if (ok) ok = q3_player_motion_read(game, actor, &game->wire->foreign_motions[slot], error);
     if (ok) {
         int32_t score;
         qa_q3_wire_client_body body;
@@ -528,28 +687,30 @@ static bool player_read(const qa_q3_game *game, uint32_t slot, qa_q3_player *out
         *out = followed;
         return true;
     }
-    if (!game->wire->services.movement || !game->wire->services.mode)
+    if (!game->wire->services.mode)
         return q3_fail(error, "Q3 PS observation lacks its actual movement or match binding");
     qa_q3_player_state source = entry->state.player;
+    qa_q3_player_motion motion;
+    if (!q3_player_motion_read(game, actor, &motion, error)) return false;
     qa_q3_wire_mode mode;
-    qa_q3_movement_state movement;
-    bool selected;
-    if (!game->wire->services.movement(game->wire->services.context, actor,
-            &movement, &selected, error) || !current(game, slot, actor) ||
+    qa_builtin_player_control control;
+    bool selected = false;
+    if (!movement_control(game, actor, &control, &selected, error) || !current(game, slot, actor) ||
         !game->wire->services.mode(game->wire->services.context, actor, &mode, error) ||
         !current(game, slot, actor)) return false;
     if (!selected && !game->wire->clients[slot].foreign_policy_written)
         return q3_fail(error, "Q3 source ClientThink has not produced its native PM policy");
+    const qa_q3_movement_state *movement = selected ? &control.state->data.q3 : NULL;
     qa_q3_wire_policy policy = selected
-        ? (qa_q3_wire_policy){movement.movement_type, movement.bob_cycle,
-              word(movement.movement_flags), movement.movement_time_ms,
-              movement.gravity, movement.speed, movement.movement_direction}
+        ? (qa_q3_wire_policy){movement->movement_type, movement->bob_cycle,
+              word(movement->movement_flags), movement->movement_time_ms,
+              movement->gravity, movement->speed, movement->movement_direction}
         : game->wire->clients[slot].foreign_policy;
     qa_q3_player value = {.product = game->options.product,
-        .commandTime = source.command_time_ms, .pmType = policy.pm_type,
+        .commandTime = motion.command_time_ms, .pmType = policy.pm_type,
         .bobCycle = policy.bob_cycle, .pmFlags = policy.pm_flags, .pmTime = policy.pm_time,
         .weaponTime = source.weapon_time_ms, .gravity = policy.gravity, .speed = policy.speed,
-        .groundEntityNum = source.ground_entity_number,
+        .groundEntityNum = motion.ground_entity_number,
         .legsTimer = source.legs_timer_ms, .legsAnim = source.legs_animation,
         .torsoTimer = source.torso_timer_ms, .torsoAnim = source.torso_animation,
         .movementDir = policy.movement_dir, .eFlags = word(source.flags),
@@ -557,17 +718,17 @@ static bool player_read(const qa_q3_game *game, uint32_t slot, qa_q3_player *out
         .externalEventParm = source.external_event_parameter,
         .externalEventTime = source.external_event_time, .clientNum = source.client_number,
         .weapon = (int32_t)source.weapon, .weaponState = (int32_t)source.weapon_phase,
-        .viewheight = q3_source_float_to_int(source.view_height),
+        .viewheight = q3_source_float_to_int(motion.view_height),
         .damageEvent = source.damage_event, .damageYaw = source.damage_yaw,
         .damagePitch = source.damage_pitch, .damageCount = source.damage_count,
-        .generic1 = source.generic1, .jumppadEnt = source.jumppad_entity,
-        .ping = game->clients[slot].ping, .pmoveFramecount = source.pmove_frame_count,
-        .jumppadFrame = source.jumppad_frame,
+        .generic1 = source.generic1, .jumppadEnt = motion.jumppad_entity,
+        .ping = game->clients[slot].ping, .pmoveFramecount = motion.pmove_frame_count,
+        .jumppadFrame = motion.jumppad_frame,
         .entityEventSequence = word(source.entity_event_sequence)};
-    vector(value.viewangles, source.view_angles); vector(value.grapplePoint, source.grapple_point);
-    value.deltaAngles[0] = source.delta_pitch_word;
-    value.deltaAngles[1] = source.delta_yaw_word;
-    value.deltaAngles[2] = source.delta_roll_word;
+    vector(value.viewangles, motion.view_angles); vector(value.grapplePoint, source.grapple_point);
+    value.deltaAngles[0] = motion.delta_pitch_word;
+    value.deltaAngles[1] = motion.delta_yaw_word;
+    value.deltaAngles[2] = motion.delta_roll_word;
     memcpy(value.events, source.events, sizeof(value.events));
     memcpy(value.eventParms, source.event_parameters, sizeof(value.eventParms));
     unsigned shift = game->options.product == QA_Q3_TEAM_ARENA ? 1u : 0u;
@@ -1272,10 +1433,12 @@ bool qa_q3_wire_borrowed_client_motion_read(const qa_q3_game *game, qa_actor_id 
          current(game, client, original) && game->source_entities[client].body_attached);
     uint32_t actual;
     if (ok) ok = q3_source_client_pointer(game, actor, &actual) && actual == client;
+    qa_q3_player_motion motion;
+    if (ok && !game->clients[client].has_followed_player)
+        ok = q3_player_motion_slot_read(game, client, &motion, error);
     if (ok) *out = (qa_q3_source_client_motion){.origin = body.origin,
         .delta_yaw_word = game->clients[client].has_followed_player
-            ? game->clients[client].followed_player.deltaAngles[1]
-            : game->client_actors[client].state.player.delta_yaw_word};
+            ? game->clients[client].followed_player.deltaAngles[1] : motion.delta_yaw_word};
     --retained->observation_depth;
     return ok || q3_fail(error, "Q3 borrowed PS motion changed during observation");
 }
@@ -1301,17 +1464,12 @@ bool qa_q3_wire_borrowed_client_motion_write(qa_q3_game *game, qa_actor_id actor
             actual == client;
     }
     if (ok) {
-        game->client_actors[client].state.player.delta_yaw_word = value->delta_yaw_word;
+        if (game->wire->clients[client].movement_detached)
+            game->wire->foreign_motions[client].delta_yaw_word = value->delta_yaw_word;
+        else q3_player_delta_write(game, original, 1, value->delta_yaw_word);
         if (game->clients[client].has_followed_player)
             game->clients[client].followed_player.deltaAngles[1] = value->delta_yaw_word;
         q3_source_origin_written(game, original, value->origin);
-        if (!game->wire->clients[client].movement_detached &&
-            game->clients[client].connected != QA_Q3_CLIENT_DISCONNECTED &&
-            game->options.hooks.source_movement_state)
-            ok = game->options.hooks.source_movement_state(game->options.hooks.context,
-                original, &game->client_actors[client].state.player, QA_Q3_SOURCE_PM_DELTAS, error) &&
-                current(game, client, original) && q3_source_client_pointer(game, actor, &actual) &&
-                actual == client;
     }
     --game->observation_depth;
     if (!ok && (!error || error->code == QA_OK))

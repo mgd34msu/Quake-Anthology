@@ -63,23 +63,27 @@ static scene_model_image *image_entry(qa_scene_model *model, const char *name, q
 
 bool scene_model_external_material(qa_scene_model *model, qa_material_library *materials,
     const char *name, const qa_material **out, qa_error *error) {
-    char *path = qa_material_library_has_source_profile(materials) ? copy_name(name, error) :
-        qa_scene_model_image_path(name, error);
+    char *owned = NULL;
+    const char *path = name;
+    if (!qa_material_library_has_source_profile(materials))
+        path = owned = qa_scene_model_image_path(name, error);
     if (!path) return false;
     bool ok = qa_material_register(materials, path, &model->options, false, out, error);
-    free(path);
+    free(owned);
     return ok;
 }
 
 bool scene_model_external(qa_scene_model *model, const char *name, scene_model_image **out,
                            qa_error *error) {
-    char *path = qa_material_library_has_source_profile(model->materials) ? copy_name(name, error) :
-        qa_scene_model_image_path(name, error);
+    char *owned = NULL;
+    const char *path = name;
+    if (!qa_material_library_has_source_profile(model->materials))
+        path = owned = qa_scene_model_image_path(name, error);
     if (!path) return false;
     for (scene_model_image *image = model->images; image; image = image->next)
-        if (!strcmp(image->name, path)) { free(path); *out = image; return true; }
+        if (!strcmp(image->name, path)) { free(owned); *out = image; return true; }
     scene_model_image *image = image_entry(model, path, error);
-    free(path);
+    free(owned);
     if (!image) return false;
     if (model->options.family == QA_SCENE_Q3) {
         if (!qa_material_register(model->materials, image->name, &model->options, false,

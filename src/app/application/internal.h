@@ -631,6 +631,8 @@ void application_provider_release(qa_application *, application_provider *);
 bool application_drain_provider_closes(qa_application *, qa_error *);
 bool application_finalize(qa_application *, qa_error *);
 bool application_acoustics_idle(const qa_application *);
+bool application_control_borrow(qa_application *, qa_actor_owner, qa_actor_id,
+                                qa_builtin_player_control *, qa_error *);
 bool application_control_ensure(qa_application *, qa_actor_id, qa_vec3,
                                 application_control_record **, qa_error *);
 bool application_control_cutscene(qa_application *, qa_actor_id, qa_vec3,

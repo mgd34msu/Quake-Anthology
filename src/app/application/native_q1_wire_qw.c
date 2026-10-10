@@ -300,8 +300,8 @@ bool application_native_q1_qw_receives(qa_application *app,qa_actor_id actor,
                 if (mode==1 && qa_vec_dot(delta,delta)<=1024.0f*1024.0f) *out=true;
                 else {
                     qa_collision_leaf from,to;qa_collision_geometry *geometry=qa_world_geometry(app->world);
-                    okay=qa_collision_point_leaf(geometry,event->origin,&from,error) &&
-                        qa_collision_point_leaf(geometry,body.origin,&to,error) &&
+                    okay=qa_collision_point_leaf(geometry,event->origin, QA_LEAF_Q1,&from,error) &&
+                        qa_collision_point_leaf(geometry,body.origin, QA_LEAF_Q1,&to,error) &&
                         qa_collision_cluster_visible(geometry,(int32_t)from.cluster,(int32_t)to.cluster,mode==1,out,error);
                 }
             }

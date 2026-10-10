@@ -785,8 +785,6 @@ static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uin
     case QA_GRAPPLE_Q3:
         if (p->grapple.fire)
             return !pressed || p->grapple.fire(p->grapple.context, actor, c, e);
-        if (!qa_q3_player_set_view(p->grapple.q3, actor, c->view_angles, c->view_height, e))
-            return false;
         return !pressed || qa_q3_fire_weapon(p->grapple.q3, actor, QA_Q3_W_GRAPPLE, e);
     }
     return mode_fail(e, "invalid grapple mechanic");

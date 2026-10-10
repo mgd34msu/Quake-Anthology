@@ -207,10 +207,38 @@ bool qa_move_contents(qa_move_context *c, qa_vec3 point, int32_t *out) {
     *out=qa_collision_point_contents_export(selected,result.family,result.q1_opaque_token);
     return true;
 }
+qa_vec3 *qa_movement_view(qa_movement_state *state, qa_vec3 *fallback) {
+    switch (state->kind) {
+    case QA_RULESET_NETQUAKE: return &state->data.nq.view_angles;
+    case QA_RULESET_QUAKEWORLD: return &state->data.qw.angles;
+    case QA_RULESET_Q3: return &state->data.q3.view_angles;
+    case QA_RULESET_Q2_CLASSIC: case QA_RULESET_Q2_RERELEASE: return fallback;
+    }
+    return fallback;
+}
+float *qa_movement_height(qa_movement_state *state, float *fallback) {
+    switch (state->kind) {
+    case QA_RULESET_Q2_RERELEASE: return &state->data.q2r.view_height;
+    case QA_RULESET_Q3: return &state->data.q3.view_height;
+    case QA_RULESET_NETQUAKE: case QA_RULESET_QUAKEWORLD: case QA_RULESET_Q2_CLASSIC: return fallback;
+    }
+    return fallback;
+}
+qa_movement_ground *qa_movement_ground_ref(qa_movement_state *state, qa_movement_ground *fallback) {
+    switch (state->kind) {
+    case QA_RULESET_NETQUAKE: return &state->data.nq.ground;
+    case QA_RULESET_QUAKEWORLD: return &state->data.qw.ground;
+    case QA_RULESET_Q3: return &state->data.q3.ground;
+    case QA_RULESET_Q2_CLASSIC: case QA_RULESET_Q2_RERELEASE: return fallback;
+    }
+    return fallback;
+}
 static qa_movement_call call(qa_move_context *c) {
     return (qa_movement_call){.actor=c->input->actor,.state=c->state,.command=&c->command,
-        .bounds=&c->result->bounds,.view_height=c->state->kind==QA_RULESET_Q3?&c->state->data.q3.view_height:
-            c->state->kind==QA_RULESET_Q2_RERELEASE?&c->state->data.q2r.view_height:&c->result->view_height,
+        .bounds=&c->result->bounds,
+        .view_angles=qa_movement_view(c->state,&c->result->view_angles),
+        .ground=qa_movement_ground_ref(c->state,&c->result->ground),
+        .view_height=qa_movement_height(c->state,&c->result->view_height),
         .water_level=&c->result->water_level,.water_type=&c->result->water_type,
         .time_ns=c->time_ns,.milliseconds=c->milliseconds,.substep=c->substep,.elapsed_seconds=c->dt,.prediction=c->input->prediction,
         .source_time_ms=c->command.server_time_ms,.profile=&c->input->profile,.environment=&c->input->environment};
