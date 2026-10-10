@@ -46,7 +46,6 @@ void frontend_equipment_gear_output_destroy(frontend_equipment_gear_output *outp
 {
     if (!output) return;
     frontend_equipment_gear_release(output->presenter);
-    free(output->refs); free(output->passes); free(output);
 }
 
 static bool draw(frontend_equipment_gear_presenter *presenter,
@@ -65,14 +64,16 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
     if ((view && attachments == SIZE_MAX) || capacity > SIZE_MAX / sizeof(qa_q3_ref_entity) ||
         attachments > SIZE_MAX / sizeof(q3n_selected_weapon_attachment))
         return frontend_fail(error, QA_ERROR_MEMORY, "Gear authored output exceeds address space");
-    frontend_equipment_gear_output *output = calloc(1, sizeof(*output));
+    qa_arena *storage=&presenter->owner->frontend->frame.storage;
+    frontend_equipment_gear_output *output=qa_arena_alloc(storage,sizeof(*output),_Alignof(frontend_equipment_gear_output),error);
     if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear output");
-    output->refs = calloc(capacity, sizeof(*output->refs));
+    *output=(frontend_equipment_gear_output){0};
+    output->refs=qa_arena_alloc(storage,capacity*sizeof(*output->refs),_Alignof(qa_q3_ref_entity),error);
     if (!output->refs) {
-        free(output); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear draw references");
+        return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear draw references");
     }
     if (!frontend_equipment_gear_retain(presenter, error)) {
-        free(output->refs); free(output); return false;
+        return false;
     }
     output->presenter = presenter; output->source = *source; output->capacity = capacity; output->view = view != NULL;
     gear_draw_call call = {output, context, current}; q3n_selected_weapon_media media;
@@ -83,7 +84,8 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
         .presentation_weapon = definition->presentation.weapon_index, .time = source->gear.time_ms,
         .firing = source->gear.tether.registry != 0, .reduced_flashes = reduced_flashes,
         .context = &call, .current = call_current, .submit = collect};
-    q3n_selected_weapon_attachment *parts = attachments ? calloc(attachments, sizeof(*parts)) : NULL;
+    q3n_selected_weapon_attachment *parts=attachments?qa_arena_alloc(storage,attachments*sizeof(*parts),
+        _Alignof(q3n_selected_weapon_attachment),error):NULL;
     if (okay && attachments && !parts)
         okay = frontend_fail(error, QA_ERROR_MEMORY, "Reading retained gear attachment handles");
     for (size_t i = 0; okay && i < attachments; ++i) {
@@ -101,7 +103,6 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
             &request, &actual, submitted, error);
     } else if (okay) okay = q3n_weapons_selected_held(presenter->owner->weapons, &media, &presenter->state,
         &request, held, submitted, error);
-    free(parts);
     if (!okay || !*submitted) { frontend_equipment_gear_output_destroy(output); return okay; }
     *out = output; return true;
 }
@@ -160,7 +161,8 @@ bool frontend_equipment_gear_output_source_pass(frontend_equipment_gear_output *
     if (output->pass_count == output->pass_capacity) {
         size_t capacity = output->pass_capacity ? output->pass_capacity * 2 : 4;
         if (capacity > 1022) capacity = 1022;
-        qa_q3_ref_entity *passes = realloc(output->passes, capacity * sizeof(*passes));
+        qa_q3_ref_entity *passes=qa_arena_grow(&output->presenter->owner->frontend->frame.storage,output->passes,
+            output->pass_count*sizeof(*passes),capacity*sizeof(*passes),_Alignof(qa_q3_ref_entity),error);
         if (!passes) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear source passes");
         output->passes = passes; output->pass_capacity = capacity;
     }

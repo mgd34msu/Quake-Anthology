@@ -239,8 +239,15 @@ static void test_arena(void)
     uint8_t *borrowed=qa_arena_alloc(&arena,256,64,&error);
     CHECK(borrowed && (uintptr_t)borrowed%64==0);
     memset(borrowed,0x42,256);
+    uint8_t *arena_grown=qa_arena_grow(&arena,borrowed,256,512,64,&error);
+    CHECK(arena_grown && arena_grown!=borrowed && (uintptr_t)arena_grown%64==0);
+    for (size_t i=0;i<256;++i) CHECK(arena_grown[i]==0x42 && borrowed[i]==0x42);
+    arena_grown[511]=0x73;
+    CHECK(qa_arena_grow(&arena,arena_grown,512,128,64,&error)==arena_grown);
+    CHECK(!qa_arena_grow(&arena,arena_grown,512,1024,64,&error));
+    CHECK(arena.overflow_count==1 && arena_grown[0]==0x42 && arena_grown[511]==0x73);
     CHECK(!qa_arena_alloc(&arena,sizeof(local),1,&error));
-    CHECK(arena.overflow_count==1 && borrowed[255]==0x42);
+    CHECK(arena.overflow_count==2 && borrowed[255]==0x42);
     qa_arena_reset(&arena);
     CHECK(qa_arena_alloc(&arena,256,64,&error)==borrowed);
     qa_arena_destroy(&arena);

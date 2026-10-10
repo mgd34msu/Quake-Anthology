@@ -3,6 +3,7 @@
 #include "qa/pool.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #define QA_ARENA_DEFAULT_BLOCK_SIZE 16384u
 
@@ -138,6 +139,15 @@ void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *e
     if (block == NULL) return NULL;
     arena->current = block;
     return block_alloc(block, size, alignment);
+}
+
+void *qa_arena_grow(qa_arena *arena,void *data,size_t old_size,size_t new_size,
+    size_t alignment,qa_error *error)
+{
+    if (data && new_size<=old_size) return data;
+    void *next=qa_arena_alloc(arena,new_size,alignment,error);
+    if (next && old_size) memcpy(next,data,old_size);
+    return next;
 }
 
 void qa_arena_reset(qa_arena *arena)

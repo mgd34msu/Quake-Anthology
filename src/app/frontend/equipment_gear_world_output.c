@@ -61,7 +61,6 @@ void frontend_equipment_gear_world_destroy(frontend_equipment_gear_world_output 
 {
     if (!output) return;
     if (output->owner) --output->owner->world_users;
-    free(output->segments); free(output);
 }
 
 static bool content_prepare(qa_frontend *frontend, const application_equipment_gear_world_view *source,
@@ -127,9 +126,12 @@ bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
     if (!content_prepare(frontend, source, context, current, &owner, error)) return false;
     if (owner->world_users == SIZE_MAX)
         return frontend_fail(error, QA_ERROR_MEMORY, "World gear outputs exceed their actual owner lifetime");
-    frontend_equipment_gear_world_output *output = calloc(1, sizeof(*output));
+    qa_arena *storage=&frontend->frame.storage;
+    frontend_equipment_gear_world_output *output=qa_arena_alloc(storage,sizeof(*output),
+        _Alignof(frontend_equipment_gear_world_output),error);
     if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining completed world gear output");
-    ++owner->world_users; output->owner = owner; output->source = *source;
+    *output=(frontend_equipment_gear_world_output){.owner=owner,.source=*source};
+    ++owner->world_users;
     output->context = context; output->current = current;
     const application_q3_grapple_definition *definition = owner->view.definition;
     bool okay = true; int32_t handle = 0;
@@ -167,7 +169,8 @@ bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
         if (okay) okay = register_model(output, path, &handle, error);
         if (okay) {
             output->segment_count = (size_t)count + 1;
-            output->segments = calloc(output->segment_count, sizeof(*output->segments));
+            output->segments=qa_arena_alloc(storage,output->segment_count*sizeof(*output->segments),
+                _Alignof(qa_q3_ref_entity),error);
             if (!output->segments) okay = frontend_fail(error, QA_ERROR_MEMORY, "Retaining authored world cable segments");
         }
         if (okay) {

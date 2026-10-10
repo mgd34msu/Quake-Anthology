@@ -205,9 +205,14 @@ static bool draw(frontend_equipment_q3_presenter *presenter, const qa_applicatio
 {
     if (!out || *out)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 draw requires an empty output slot");
-    frontend_equipment_q3_output *output = calloc(1, sizeof(*output));
-    if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected Q3 numeric output");
-    if (!frontend_equipment_q3_retain(presenter, error)) { free(output); return false; }
+    if (!frontend_equipment_q3_retain(presenter,error)) return false;
+    frontend_equipment_q3_output *output=qa_arena_alloc(&presenter->owner->frontend->frame.storage,
+        sizeof(*output),_Alignof(frontend_equipment_q3_output),error);
+    if (!output) {
+        frontend_equipment_q3_release(presenter);
+        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining selected Q3 numeric output");
+    }
+    *output=(frontend_equipment_q3_output){0};
     output->presenter = presenter;
     bool ok = draw_output(presenter, source, view, held, reduced_flashes,
         context, current, output, submitted, error);
@@ -229,7 +234,7 @@ size_t frontend_equipment_q3_output_count(const frontend_equipment_q3_output *ou
         output->base_count * output->pass_count + output->count - output->base_count;
 }
 void frontend_equipment_q3_output_destroy(frontend_equipment_q3_output *output)
-{ if (output) { frontend_equipment_q3_release(output->presenter); free(output->source_passes); free(output); } }
+{ if (output) frontend_equipment_q3_release(output->presenter); }
 
 bool frontend_equipment_q3_output_source_style(frontend_equipment_q3_output *output,
     qa_q3_presentation_assets *assets, const qa_q3_ref_entity *parent, qa_error *error)
@@ -273,7 +278,8 @@ bool frontend_equipment_q3_output_source_pass(frontend_equipment_q3_output *outp
     if (output->pass_count == output->pass_capacity) {
         size_t capacity = output->pass_capacity ? output->pass_capacity * 2 : 4;
         if (capacity > 1022) capacity = 1022;
-        qa_q3_ref_entity *passes = realloc(output->source_passes, capacity * sizeof(*passes));
+        qa_q3_ref_entity *passes=qa_arena_grow(&output->presenter->owner->frontend->frame.storage,
+            output->source_passes,output->pass_count*sizeof(*passes),capacity*sizeof(*passes),_Alignof(qa_q3_ref_entity),error);
         if (!passes) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining primary selected Q3 shader passes");
         output->source_passes = passes; output->pass_capacity = capacity;
     }

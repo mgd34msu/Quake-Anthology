@@ -32,6 +32,9 @@ void qa_arena_seal(qa_arena *arena);
  * and alignment a power of two. Memory is uninitialized. Failures leave existing
  * allocations valid. Arenas are owned by one thread at a time. */
 void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *error);
+/* Grow a caller span, preserving its prefix and previous addresses until reset.
+ * Failure preserves the old span. Uses the arena reservation, never realloc. */
+void *qa_arena_grow(qa_arena *, void *, size_t old_size, size_t new_size, size_t alignment, qa_error *);
 /* Invalidates every allocation but keeps blocks for reuse. */
 void qa_arena_reset(qa_arena *arena);
 /* Invalidates allocations, releases blocks and returns to zero-initialized state. */

@@ -66,12 +66,13 @@ bool frontend_equipment_held_output_create_from(qa_frontend *frontend,
         !qa_vec_finite(parent->axis[1]) || !qa_vec_finite(parent->axis[2]) ||
         !isfinite(parent->back_lerp) || !isfinite(parent->shadow_plane))
         return frontend_fail(error, QA_ERROR_FORMAT, "Held replacement parent is not a finite authored model");
-    frontend_equipment_held_output *output = calloc(1, sizeof(*output));
+    frontend_equipment_held_output *output=qa_arena_alloc(&frontend->frame.storage,sizeof(*output),
+        _Alignof(frontend_equipment_held_output),error);
     if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual held replacement output");
-    output->frontend = frontend; output->source = *source;
+    *output=(frontend_equipment_held_output){.frontend=frontend,.source=*source};
     output->media = retained; output->assets = assets; output->parent = *parent;
     if (!frontend_equipment_media_retain(media, error)) {
-        free(output); return false;
+        return false;
     }
     output->media_owner = media;
     if (retained.declaration->none) { *out = output; return true; }
@@ -123,7 +124,8 @@ bool frontend_equipment_held_output_pass(frontend_equipment_held_output *output,
     if (output->count == output->capacity) {
         size_t capacity = output->capacity ? output->capacity * 2 : 4;
         if (capacity > 1022) capacity = 1022;
-        qa_q3_ref_entity *passes = realloc(output->passes, capacity * sizeof(*passes));
+        qa_q3_ref_entity *passes=qa_arena_grow(&output->frontend->frame.storage,output->passes,
+            output->count*sizeof(*passes),capacity*sizeof(*passes),_Alignof(qa_q3_ref_entity),error);
         if (!passes) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual held shader passes");
         output->passes = passes; output->capacity = capacity;
     }
@@ -165,7 +167,5 @@ bool frontend_equipment_held_output_submit(frontend_equipment_held_output *outpu
 void frontend_equipment_held_output_destroy(frontend_equipment_held_output *output)
 {
     if (!output) return;
-    free(output->passes);
     frontend_equipment_media_release(output->media_owner);
-    free(output);
 }
