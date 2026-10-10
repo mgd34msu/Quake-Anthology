@@ -636,12 +636,7 @@ static bool selection_current(const frontend_shared_music *selection) {
         (!selection->client && console != qa_application_console(owner->application)) ||
         cvars != qa_cvars_edit_registry(selection->edit)) return false;
     const qa_command_context *held = &selection->root_command;
-    if (command.session != held->session || command.owner != held->owner || command.client != held->client ||
-        command.seat != held->seat || command.dialect != held->dialect || command.origin != held->origin ||
-        command.direct != held->direct || command.console_text != held->console_text || command.script != held->script ||
-        command.registry != held->registry || command.generation != held->generation ||
-        command.actor.registry != held->actor.registry || command.actor.generation != held->actor.generation ||
-        command.actor.slot != held->actor.slot) return false;
+    if (!qa_command_context_equal(&command, held, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW)) return false;
     const qa_cvar_view *shuffle = qa_cvars_edit_canonical_record(selection->edit, "music_shuffle"),
         *menu = qa_cvars_edit_canonical_record(selection->edit, "music_menu_track");
     return shuffle && shuffle->value && menu && menu->value &&

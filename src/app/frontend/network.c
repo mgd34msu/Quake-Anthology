@@ -1034,18 +1034,8 @@ bool frontend_network_client_recipient_current(const qa_frontend *f,uint32_t phy
         saved->source.network_seat.owner==now.source.network_seat.owner &&
         saved->source.network_seat.index==now.source.network_seat.index &&
         saved->source.configuration_generation==now.source.configuration_generation &&
-        saved->source.context.command.owner==now.source.context.command.owner &&
-        saved->source.context.command.session==now.source.context.command.session &&
-        saved->source.context.command.client==now.source.context.command.client &&
-        saved->source.context.command.seat==now.source.context.command.seat &&
-        saved->source.context.command.dialect==now.source.context.command.dialect &&
-        saved->source.context.command.origin==now.source.context.command.origin &&
-        saved->source.context.command.direct==now.source.context.command.direct &&
-        saved->source.context.command.console_text==now.source.context.command.console_text &&
-        saved->source.context.command.script==now.source.context.command.script &&
-        qa_actor_id_equal(saved->source.context.command.actor,now.source.context.command.actor) &&
-        saved->source.context.command.registry==now.source.context.command.registry &&
-        saved->source.context.command.generation==now.source.context.command.generation;
+        qa_command_context_equal(&saved->source.context.command, &now.source.context.command,
+            QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 bool frontend_network_client_retirement_current(const qa_frontend *f,
     const qa_application_client_source *source,const qa_console *console,
@@ -3295,13 +3285,7 @@ static bool client_attempt_owner_current(const qa_frontend *f,
         a->source_frame.phase == b->source_frame.phase && a->source_frame.number == b->source_frame.number &&
         a->source_frame.start_ns == b->source_frame.start_ns && a->source_frame.elapsed_ns == b->source_frame.elapsed_ns &&
         a->source_frame.time_ns == b->source_frame.time_ns &&
-        a->command_context.session == b->command_context.session && a->command_context.owner == b->command_context.owner &&
-        a->command_context.client == b->command_context.client && a->command_context.seat == b->command_context.seat &&
-        a->command_context.dialect == b->command_context.dialect && a->command_context.origin == b->command_context.origin &&
-        a->command_context.direct == b->command_context.direct && a->command_context.console_text == b->command_context.console_text &&
-        a->command_context.script == b->command_context.script && a->command_context.registry == b->command_context.registry &&
-        a->command_context.generation == b->command_context.generation &&
-        qa_actor_id_equal(a->command_context.actor, b->command_context.actor) &&
+        qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW) &&
         a->receiver == attempt->configuration.scope.provider && a->seat == attempt->configuration.scope.seat &&
         a->console == attempt->configuration.console && a->cvars == attempt->configuration.cvars &&
         attempt->source.descriptor->storage == actual.source.descriptor->storage &&
@@ -7080,13 +7064,7 @@ static bool client_restore_receiver_same(const qa_application_q3_client_context 
         a->source_frame.phase==b->source_frame.phase && a->source_frame.number==b->source_frame.number &&
         a->source_frame.start_ns==b->source_frame.start_ns && a->source_frame.elapsed_ns==b->source_frame.elapsed_ns &&
         a->source_frame.time_ns==b->source_frame.time_ns &&
-        a->command_context.session==b->command_context.session && a->command_context.owner==b->command_context.owner &&
-        a->command_context.client==b->command_context.client && a->command_context.seat==b->command_context.seat &&
-        a->command_context.dialect==b->command_context.dialect && a->command_context.origin==b->command_context.origin &&
-        a->command_context.direct==b->command_context.direct && a->command_context.console_text==b->command_context.console_text &&
-        a->command_context.script==b->command_context.script && a->command_context.registry==b->command_context.registry &&
-        a->command_context.generation==b->command_context.generation &&
-        qa_actor_id_equal(a->command_context.actor,b->command_context.actor);
+        qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 bool frontend_network_client_restore_domain_current(const qa_frontend *f,
     const frontend_network_client_domain *domain)

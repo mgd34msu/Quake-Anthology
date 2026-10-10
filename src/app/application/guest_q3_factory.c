@@ -187,12 +187,7 @@ bool qa_application_q3_configuration_host_entered(const qa_application *app,
             console == application_guest_q3_console_owner(provider) &&
             cvars == application_guest_q3_console_registry(provider) && qa_cvars_same_store(qa_console_cvars(console), cvars) &&
             source->declaration_owner == role->service_owner &&
-            source->command.cvar_view == command.cvar_view && source->command.owner == command.owner && source->command.seat == command.seat &&
-            source->command.dialect == command.dialect && source->command.origin == command.origin &&
-            source->command.session == command.session && source->command.client == command.client &&
-            source->command.registry == command.registry && source->command.generation == command.generation &&
-            source->command.direct == command.direct && source->command.console_text == command.console_text &&
-            source->command.script == command.script && qa_actor_id_equal(source->command.actor, command.actor);
+            qa_command_context_equal(&source->command, &command, 0);
     }
     return false;
 }

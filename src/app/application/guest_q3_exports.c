@@ -253,15 +253,6 @@ bool qa_application_q3_client_context_current(qa_application *app,
         actual.native_source == retained->native_source;
 }
 
-static bool command_context_equal(const qa_command_context *x, const qa_command_context *y)
-{
-    return x->session == y->session &&
-        x->owner == y->owner && x->client == y->client && x->seat == y->seat &&
-        x->dialect == y->dialect && x->origin == y->origin && x->direct == y->direct &&
-        x->console_text == y->console_text && x->script == y->script &&
-        x->registry == y->registry && x->generation == y->generation && qa_actor_id_equal(x->actor, y->actor);
-}
-
 static bool host_context_equal(const qa_q3_host_client_context *a,
     const qa_q3_host_client_context *b)
 {
@@ -269,7 +260,7 @@ static bool host_context_equal(const qa_q3_host_client_context *a,
         a->service_owner == b->service_owner && a->console == b->console && a->cvars == b->cvars &&
         a->client_time_cvars == b->client_time_cvars && a->client_time_owner == b->client_time_owner &&
         a->frontend_lifetime == b->frontend_lifetime &&
-        command_context_equal(&a->command_context, &b->command_context);
+        qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 
 static bool source_frame_equal(qa_source_frame a, qa_source_frame b)
@@ -400,7 +391,7 @@ bool qa_application_q3_client_host_current(qa_application *app,
     return retained && retained->host && qa_application_q3_client_host_read(app,
         retained->source.receiver, retained->source.seat, &actual, &present, NULL) && present &&
         actual.host == retained->host && host_context_equal(&actual.context, &retained->context) &&
-        command_context_equal(&actual.source.command_context, &retained->source.command_context) &&
+        qa_command_context_equal(&actual.source.command_context, &retained->source.command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW) &&
         qa_application_q3_client_context_current(app, &retained->source);
 }
 

@@ -89,7 +89,6 @@ static bool physical_read(const frontend_neutral_config *row,qa_application_clie
 }
 static bool physical(const frontend_neutral_config *row,qa_application_client_source *out)
 { return physical_read(row,out,true); }
-static bool same_context(const qa_command_context *,const qa_command_context *);
 static bool demo_continuation(const frontend_neutral_config *row)
 {
     qa_frontend *f=row->owner->frontend;
@@ -141,7 +140,7 @@ static bool checkpoint_ready(const frontend_neutral_config *row,qa_error *e)
             qa_input_seat_release_read(row->retirement_input)!=row->retirement_release ||
             !qa_input_seat_recipient_read(row->retirement_input,&console,&cvars,&command) ||
             console!=actual.context.console || cvars!=actual.context.cvars ||
-            !same_context(&command,&actual.context.command) ||
+            !qa_command_context_equal(&command, &actual.context.command, QA_COMMAND_CONTEXT_IGNORE_SCRIPT) ||
             qa_input_release_console(row->retirement_release)!=actual.context.console ||
             !qa_input_release_scope_owned(row->retirement_release,row->retirement_input,&all,e))
             return fail(e,QA_ERROR_ARGUMENT,"Neutral checkpoint lost its retained ALL retirement continuation");
@@ -157,13 +156,6 @@ static bool checkpoint_ready(const frontend_neutral_config *row,qa_error *e)
             return fail(e,QA_ERROR_ARGUMENT,"Neutral checkpoint lost its actual completed recipient transfer");
     }
     return true;
-}
-static bool same_context(const qa_command_context *a,const qa_command_context *b)
-{
-    return a && b && a->owner==b->owner && a->session==b->session && a->seat==b->seat &&
-        a->client==b->client && a->origin==b->origin && a->dialect==b->dialect &&
-        a->registry==b->registry && a->generation==b->generation && a->cvar_view==b->cvar_view &&
-        a->direct==b->direct && a->console_text==b->console_text && qa_actor_id_equal(a->actor,b->actor);
 }
 static bool attach_retirement_release(frontend_neutral_config *row,
     const qa_application_client_source *source,qa_error *e)
@@ -183,7 +175,7 @@ static bool attach_retirement_release(frontend_neutral_config *row,
     qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context command;
     if (!release || !qa_input_seat_recipient_read(input,&console,&cvars,&command) ||
         console!=source->context.console || cvars!=source->context.cvars ||
-        !same_context(&command,&source->context.command) || qa_input_release_console(release)!=console ||
+        !qa_command_context_equal(&command, &source->context.command, QA_COMMAND_CONTEXT_IGNORE_SCRIPT) || qa_input_release_console(release)!=console ||
         !qa_input_release_scope_owned(release,input,&all,e))
         return fail(e,QA_ERROR_FORMAT,"Decoded CLIENT retirement lost its genuine retained ALL programme");
     row->retirement_input=input; row->retirement_release=release;
@@ -205,7 +197,7 @@ static bool active(const frontend_neutral_config *row,const qa_command_context *
         command->cvar_view==qa_cvars_view_identity(qa_application_cvars(application)) &&
         qa_console_context_delivered_view(actual.context.console,command,
             qa_cvars_view_identity(actual.context.cvars),actual.context.receiver,actual.context.receiver);
-    return (same_context(command,&expected) || delivered) &&
+    return (qa_command_context_equal(command, &expected, QA_COMMAND_CONTEXT_IGNORE_SCRIPT) || delivered) &&
         qa_application_command_context_active(row->owner->frontend->application,command);
 }
 static void print(void *context,const qa_command_context *command,const char *text)
@@ -551,7 +543,7 @@ static bool install(void *context,const qa_application_client_source *source,boo
     }
     const qa_launch_instance *held=descriptor(row);
     if (!held || held->storage!=source->descriptor->storage || row->client!=source->context.cvars ||
-        !same_context(&row->command,&source->context.command))
+        !qa_command_context_equal(&row->command, &source->context.command, QA_COMMAND_CONTEXT_IGNORE_SCRIPT))
         return fail(e,QA_ERROR_ARGUMENT,"Neutral install changed its actual registry constructor");
     row->source=*source; row->attached=true;
     if (restoring && row->retiring) return true;
@@ -791,7 +783,7 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
             (row->retirement_input && row->retirement_input!=input))
             return fail(e,QA_ERROR_ARGUMENT,"CLIENT retirement cannot clear another physical recipient");
         if (console!=actual.context.console || registry!=actual.context.cvars ||
-            !same_context(&command,&actual.context.command)) {
+            !qa_command_context_equal(&command, &actual.context.command, QA_COMMAND_CONTEXT_IGNORE_SCRIPT)) {
             if (f->source_restoring && row->owner->restoring && !row->retirement_started &&
                 !row->retirement_release && console==qa_application_console(f->application) &&
                 registry==qa_application_cvars(f->application) && !command.owner &&
@@ -1164,7 +1156,7 @@ static bool published_binding_seat(frontend_neutral_configs *owner,uint32_t logi
         qa_input_seat *input=f->seats[row->physical_seat].input;
         qa_console *console=NULL; qa_cvars *cvars=NULL; qa_command_context command;
         if (!qa_input_seat_recipient_read(input,&console,&cvars,&command) ||
-            console!=row->source.context.console || cvars!=row->client || !same_context(&command,&row->command)) continue;
+            console!=row->source.context.console || cvars!=row->client || !qa_command_context_equal(&command, &row->command, QA_COMMAND_CONTEXT_IGNORE_SCRIPT)) continue;
         if (*out) return fail(e,QA_ERROR_ARGUMENT,"Bindings have multiple actual physical CLIENT recipients");
         *out=row;
     }

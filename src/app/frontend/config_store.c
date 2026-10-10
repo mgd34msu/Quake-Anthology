@@ -264,7 +264,6 @@ static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
         return fail(error,QA_ERROR_ARGUMENT,"Input configuration lacks its actual selected seat movement source");
     *dialect=(selected->selection.clock.kind); return true;
 }
-static bool same_command(const qa_command_context *,const qa_command_context *);
 static bool input_context(void *context,uint32_t ordinal,const qa_command_context *command,qa_error *error)
 {
     (void)ordinal;
@@ -387,14 +386,7 @@ static bool root_current(const frontend_config_store *manager)
     return manager && manager->root_console && manager->shared_application &&
         qa_application_startup_root_read(manager->shared_application,manager->shared_candidate,
             &console,&registry,&command,NULL) && console==manager->root_console && registry==manager->root_cvars &&
-        command.owner==manager->root_command.owner && command.session==manager->root_command.session &&
-        command.client==manager->root_command.client && command.seat==manager->root_command.seat &&
-        command.origin==manager->root_command.origin && command.dialect==manager->root_command.dialect &&
-        command.cvar_view==manager->root_command.cvar_view &&
-        command.registry==manager->root_command.registry && command.generation==manager->root_command.generation &&
-        command.console_text==manager->root_command.console_text && command.script==manager->root_command.script &&
-        command.direct==manager->root_command.direct &&
-        qa_actor_id_equal(command.actor,manager->root_command.actor);
+        qa_command_context_equal(&command, &manager->root_command, 0);
 }
 static bool images_phase(const frontend_config_store *manager)
 { return root_current(manager) && qa_application_startup_root_phase(manager->shared_application,manager->shared_candidate); }
@@ -1557,19 +1549,12 @@ bool frontend_config_host_cvars_set_entry(frontend_config_host_cvars *owner,void
         return fail(error,QA_ERROR_ARGUMENT,"Acquired host entry needs its immutable retained CLIENT lease");
     owner->entry_context=context; owner->entry_read=read; return true;
 }
-static bool same_command(const qa_command_context *a,const qa_command_context *b)
-{
-    return a && b && a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
-        a->dialect==b->dialect && a->origin==b->origin && a->direct==b->direct && a->console_text==b->console_text &&
-        a->script==b->script && a->registry==b->registry && a->generation==b->generation &&
-        a->cvar_view==b->cvar_view && qa_actor_id_equal(a->actor,b->actor);
-}
 static bool host_constructor(const qa_application_startup_source *source,const qa_q3_host *host,
     const qa_console *console,const qa_command_context *command)
 {
     qa_cvars *registry=NULL; qa_command_context actual;
     return source && host && console==source->console &&
-        qa_q3_host_console(host,&registry,&actual)==console && registry==source->cvars && same_command(command,&actual);
+        qa_q3_host_console(host,&registry,&actual)==console && registry==source->cvars && qa_command_context_equal(command, &actual, 0);
 }
 bool frontend_config_host_cvar_entered(void *context,const qa_q3_host *host,const qa_console *console,
     const qa_command_context *command,qa_error *error)
@@ -1621,7 +1606,7 @@ bool frontend_config_source_cvar_entered(void *context,const qa_q3_host *host,co
         entered.descriptor->content==tuple.descriptor->content && entered.descriptor->roles==tuple.descriptor->roles &&
         entered.descriptor->identity==tuple.descriptor->identity &&
         same_scope(entered.scope,tuple.scope) && entered.console==tuple.console && entered.cvars==tuple.cvars &&
-        same_command(command,&entered.command)) ||
+        qa_command_context_equal(command, &entered.command, 0)) ||
         fail(error,QA_ERROR_ARGUMENT,"Named GAME cvar entry differs from its retained physical configuration");
 }
 static bool game_registry_resolve(void *context,qa_q3_host_cvar_namespace reference,qa_cvars **out,qa_error *error)
@@ -3172,13 +3157,8 @@ static bool prepare_root(void *context,qa_application *application,const qa_laun
         manager->frontend->application!=application ||
         !qa_application_startup_root_phase(application,candidate) ||
         !qa_application_startup_root_read(application,candidate,&actual,&values,&captured,error) ||
-        actual!=console || values!=registry || command->owner || command->session!=captured.session ||
-        command->client!=captured.client || command->seat!=captured.seat || command->origin!=captured.origin ||
-        command->cvar_view!=captured.cvar_view ||
-        command->dialect!=captured.dialect || command->registry!=captured.registry ||
-        command->generation!=captured.generation || command->console_text!=captured.console_text ||
-        command->script!=captured.script || command->direct!=captured.direct ||
-        !qa_actor_id_equal(command->actor,captured.actor))
+        actual!=console || values!=registry || command->owner ||
+        !qa_command_context_equal(command, &captured, 0))
         return fail(error,QA_ERROR_ARGUMENT,"Shared root preparation lost its actual retained ENGINE authority");
     bool ok=frontend_shared_settings_begin_root(manager->frontend,manager,application,candidate,&manager->shared,error);
     if (manager->shared) {

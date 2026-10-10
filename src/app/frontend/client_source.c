@@ -44,13 +44,6 @@ bool frontend_client_source_descriptor_equal(const qa_launch_instance *a, const 
 }
 static qa_cvars *registry(const frontend_client_source *s)
 { return s && s->registry ? frontend_client_registry_cvars(s->registry) : s ? s->pending_cvars : NULL; }
-static bool tuple(const qa_command_context *a, const qa_command_context *b, bool script)
-{
-    return a && b && a->session == b->session && a->owner == b->owner && a->client == b->client &&
-        a->seat == b->seat && a->dialect == b->dialect && a->origin == b->origin && a->direct == b->direct &&
-        a->console_text == b->console_text && a->cvar_view == b->cvar_view && a->registry == b->registry && a->generation == b->generation &&
-        qa_actor_id_equal(a->actor, b->actor) && (!script || a->script == b->script);
-}
 static bool console_tuple(const qa_command_context *command,const qa_command_context *physical)
 {
     if(!command||!physical) return false;
@@ -60,7 +53,7 @@ static bool console_tuple(const qa_command_context *command,const qa_command_con
     } else if(command->origin==QA_COMMAND_SEAT&&command->script) {
         expected.direct=false;
     }
-    return tuple(command,&expected,false);
+    return qa_command_context_equal(command, &expected, QA_COMMAND_CONTEXT_IGNORE_SCRIPT);
 }
 static bool physical_current(void *,const qa_launch_instance *,qa_console *,qa_cvars *,const qa_command_context *);
 bool frontend_client_source_retain(frontend_client_source *s, qa_error *error)
@@ -114,7 +107,7 @@ static bool physical_current(void *context, const qa_launch_instance *d, qa_cons
     return linked(s) && !s->closing && actual && d && d->storage == actual->storage &&
         d->content == actual->content && d->identity == actual->identity &&
         s->registry && frontend_client_registry_matches(s->registry, actual, s->options.metadata.seat) &&
-        cvars == registry(s) && console == s->console && tuple(command, &s->command, true);
+        cvars == registry(s) && console == s->console && qa_command_context_equal(command, &s->command, 0);
 }
 static bool physical_idle(void *context)
 { return frontend_client_source_idle(context); }

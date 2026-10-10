@@ -86,15 +86,8 @@ static bool current(const frontend_unified_q3_commands *o,bool checkpoint,q3n_co
         actual.basis.application!=domain->application || actual.basis.registry!=frontend_remote_unified_registry(o->options.replica) ||
         actual.basis.receiver!=o->receiver || actual.basis.product!=o->product ||
         actual.basis.seat!=domain->seat.index || actual.basis.physical_seat!=domain->physical_seat || !origin ||
-        origin->owner!=domain_command->owner || origin->session!=domain_command->session ||
-        origin->client!=domain_command->client || origin->seat!=domain_command->seat ||
-        origin->dialect!=domain_command->dialect || origin->origin!=domain_command->origin ||
-        origin->direct!=domain_command->direct || origin->console_text!=domain_command->console_text ||
         origin->cvar_view!=o->constructor.cvar_view || origin->cvar_view!=qa_cvars_view_identity(domain->cvars) ||
-        origin->cvar_view!=domain_command->cvar_view || origin->registry!=domain_command->registry ||
-        origin->generation!=domain_command->generation || !qa_actor_id_equal(origin->actor,domain_command->actor) ||
-        ((!origin->script)!=(!domain_command->script)) ||
-        (origin->script && strcmp(origin->script,domain_command->script)))
+        !qa_command_context_equal(origin,domain_command,0))
         return fail(e,QA_ERROR_ARGUMENT,"Unified console changed its actual Source receiver namespace");
     if(out)*out=actual;
     return true;

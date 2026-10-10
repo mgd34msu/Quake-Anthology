@@ -216,15 +216,6 @@ static bool fault_fields(qa_source_save_io *io,qa_error *fault)
     fault->message[length]=0; fault->code=(qa_status)code;
     return code!=QA_OK || (!fault->offset && !length);
 }
-static bool release_context_equal(const qa_command_context *a,const qa_command_context *b)
-{
-    return a->session==b->session && a->owner==b->owner && a->client==b->client && a->seat==b->seat &&
-        a->dialect==b->dialect && a->origin==b->origin && a->direct==b->direct &&
-        a->console_text==b->console_text && a->cvar_view==b->cvar_view &&
-        a->registry==b->registry && a->generation==b->generation &&
-        qa_actor_id_equal(a->actor,b->actor) && ((!a->script && !b->script) ||
-            (a->script && b->script && !strcmp(a->script,b->script)));
-}
 static bool releases_fields(qa_source_save_io *io,qa_console *state,const qa_console *candidate,
     const qa_console_save_resolvers *resolve,uint64_t registry)
 {
@@ -259,8 +250,8 @@ static bool releases_fields(qa_source_save_io *io,qa_console *state,const qa_con
         if (owner->prepared) {
             qa_command_context empty={0};
             if (owner->prepared->offset || owner->prepared->completion || owner->prepared->success ||
-                !release_context_equal(&owner->prepared->context,&owner->context) ||
-                !release_context_equal(&owner->prepared->caller,&empty)) return false;
+                !qa_command_context_equal(&owner->prepared->context, &owner->context, 0) ||
+                !qa_command_context_equal(&owner->prepared->caller, &empty, 0)) return false;
         }
         if (owner->started && !owner->complete) {
             if (++active!=1 || !qa_console_pending(state) ||

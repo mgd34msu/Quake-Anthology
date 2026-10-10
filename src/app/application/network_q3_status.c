@@ -73,11 +73,5 @@ bool qa_application_network_q3_cgame_host_current(qa_application *app,
     return a->session == b->session && a->role == b->role && a->owner == b->owner &&
         a->service_owner == b->service_owner && a->console == b->console && a->cvars == b->cvars &&
         a->client_time_cvars == b->client_time_cvars && a->client_time_owner == b->client_time_owner &&
-        a->frontend_lifetime == b->frontend_lifetime && a->command_context.session == b->command_context.session &&
-        a->command_context.owner == b->command_context.owner && a->command_context.client == b->command_context.client &&
-        a->command_context.seat == b->command_context.seat && a->command_context.dialect == b->command_context.dialect &&
-        a->command_context.origin == b->command_context.origin && a->command_context.direct == b->command_context.direct &&
-        a->command_context.console_text == b->command_context.console_text && a->command_context.script == b->command_context.script &&
-        a->command_context.registry == b->command_context.registry && a->command_context.generation == b->command_context.generation &&
-        qa_actor_id_equal(a->command_context.actor, b->command_context.actor);
+        a->frontend_lifetime == b->frontend_lifetime && qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }

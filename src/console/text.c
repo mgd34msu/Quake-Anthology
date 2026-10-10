@@ -5,6 +5,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool qa_command_context_equal(const qa_command_context *a, const qa_command_context *b,
+                              uint32_t ignored_fields)
+{
+    return a && b && a->session == b->session && a->owner == b->owner && a->client == b->client &&
+        a->seat == b->seat && a->origin == b->origin &&
+        ((ignored_fields & QA_COMMAND_CONTEXT_IGNORE_DIALECT) || a->dialect == b->dialect) &&
+        ((ignored_fields & QA_COMMAND_CONTEXT_IGNORE_DIRECT) || a->direct == b->direct) &&
+        ((ignored_fields & QA_COMMAND_CONTEXT_IGNORE_CONSOLE_TEXT) || a->console_text == b->console_text) &&
+        ((ignored_fields & QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW) || a->cvar_view == b->cvar_view) &&
+        a->registry == b->registry && a->generation == b->generation && qa_actor_id_equal(a->actor, b->actor) &&
+        ((ignored_fields & QA_COMMAND_CONTEXT_IGNORE_SCRIPT) || a->script == b->script ||
+            (a->script && b->script && !strcmp(a->script, b->script)));
+}
+
 size_t qa_command_separator(const char *text, size_t length, qa_ruleset_id dialect)
 {
     bool quoted = false;

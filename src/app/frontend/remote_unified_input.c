@@ -14,21 +14,12 @@
 
 static bool fail(qa_error *e,const char *message)
 { return frontend_unified_fail(e,QA_ERROR_ARGUMENT,message); }
-static bool command_equal(const qa_command_context *a,const qa_command_context *b)
-{
-    return a->session==b->session && a->owner==b->owner && a->client==b->client &&
-        a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
-        a->direct==b->direct && a->console_text==b->console_text && a->registry==b->registry &&
-        a->cvar_view==b->cvar_view &&
-        a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) &&
-        ((!a->script && !b->script) || (a->script && b->script && !strcmp(a->script,b->script)));
-}
 static bool domain_source_matches(const frontend_remote_unified_domain *d,const qa_application_client_source *s)
 {
     return d && s->runtime==d->runtime && qa_net_client_id_equal(s->client,d->client) &&
         s->network_seat.owner==d->seat.owner && s->network_seat.index==d->seat.index &&
         s->context.physical_seat==d->physical_seat && s->context.console==d->console &&
-        s->context.cvars==d->cvars && command_equal(&s->context.command,&d->command_context);
+        s->context.cvars==d->cvars && qa_command_context_equal(&s->context.command, &d->command_context, 0);
 }
 static bool domain_matches(const frontend_remote_unified_domain *d,const frontend_client_source_view *v)
 { return v->ready&&domain_source_matches(d,&v->source); }

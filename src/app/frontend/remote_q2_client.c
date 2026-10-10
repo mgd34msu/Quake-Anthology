@@ -36,19 +36,7 @@ bool remote_q2_domain_equal(const frontend_remote_q2_domain *a, const frontend_r
         a->protocol.kind == b->protocol.kind && a->protocol.revision == b->protocol.revision &&
         a->protocol.flags == b->protocol.flags && a->catalog == b->catalog && a->product == b->product &&
         a->console == b->console && a->cvars == b->cvars &&
-        a->command_context.session == b->command_context.session &&
-        a->command_context.owner == b->command_context.owner &&
-        a->command_context.client == b->command_context.client &&
-        a->command_context.seat == b->command_context.seat &&
-        a->command_context.registry == b->command_context.registry &&
-        a->command_context.generation == b->command_context.generation &&
-        a->command_context.cvar_view == b->command_context.cvar_view &&
-        a->command_context.dialect == b->command_context.dialect &&
-        a->command_context.origin == b->command_context.origin &&
-        a->command_context.direct == b->command_context.direct &&
-        a->command_context.console_text == b->command_context.console_text &&
-        qa_actor_id_equal(a->command_context.actor, b->command_context.actor) &&
-        a->command_context.script == b->command_context.script;
+        qa_command_context_equal(&a->command_context, &b->command_context, 0);
 }
 bool remote_q2_live(const frontend_remote_q2 *row, qa_error *error)
 {

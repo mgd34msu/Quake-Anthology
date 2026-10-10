@@ -480,11 +480,7 @@ bool qa_application_startup_images_phase(const qa_application *app,
             actual->console == linked->console && actual->cvars == linked->cvars &&
             actual->scope.provider == linked->scope.provider && actual->scope.kind == linked->scope.kind &&
             actual->scope.seat == linked->scope.seat && actual->declaration_owner == linked->declaration_owner &&
-            a->cvar_view == b->cvar_view && a->owner == b->owner && a->session == b->session && a->client == b->client &&
-            a->seat == b->seat && a->origin == b->origin && a->dialect == b->dialect &&
-            a->registry == b->registry && a->generation == b->generation &&
-            a->console_text == b->console_text && a->script == b->script &&
-            qa_actor_id_equal(a->actor, b->actor)) return true;
+            qa_command_context_equal(a, b, QA_COMMAND_CONTEXT_IGNORE_DIRECT)) return true;
     }
     return false;
 }

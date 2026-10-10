@@ -836,10 +836,7 @@ static bool local_context(const qa_command_context *command, const frontend_seat
 }
 static bool same_recipient_command(const qa_command_context *a,const qa_command_context *b)
 {
-    return a && b && a->owner==b->owner && a->session==b->session && a->client==b->client &&
-        a->seat==b->seat && a->origin==b->origin && a->dialect==b->dialect && a->registry==b->registry &&
-        a->generation==b->generation && a->direct==b->direct && a->console_text==b->console_text &&
-        !a->script && !b->script && qa_actor_id_equal(a->actor,b->actor);
+    return qa_command_context_equal(a,b,QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW) && !a->script && !b->script;
 }
 static bool retired_recipient_services(const frontend_seat *seat,const qa_console *console,
     const qa_cvars *cvars,const qa_command_context *command)

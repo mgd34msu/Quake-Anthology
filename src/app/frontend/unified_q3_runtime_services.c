@@ -68,12 +68,7 @@ static bool compiled_current(void *context,const q3n_frame *f,qa_cvars *registry
     frontend_unified_q3_runtime_services *o=context;
     const qa_command_context *actual=o?frontend_unified_q3_client_context(o->options.client):NULL;
     return actual && origin && registry==frontend_unified_q3_client_cvars(o->options.client) &&
-        origin->owner==actual->owner && origin->session==actual->session && origin->client==actual->client &&
-        origin->seat==actual->seat && origin->dialect==actual->dialect && origin->origin==actual->origin &&
-        origin->direct==actual->direct && origin->console_text==actual->console_text &&
-        origin->registry==actual->registry && origin->generation==actual->generation &&
-        ((!origin->script && !actual->script) || (origin->script && actual->script && !strcmp(origin->script,actual->script))) &&
-        qa_actor_id_equal(origin->actor,actual->actor) && cut(o,f,NULL);
+        qa_command_context_equal(origin,actual,QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW) && cut(o,f,NULL);
 }
 static bool console(void *context,const q3n_frame *f,const char *text,qa_error *e)
 {

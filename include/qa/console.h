@@ -32,6 +32,18 @@ typedef struct qa_command_context {
     qa_actor_id actor;
 } qa_command_context;
 
+enum qa_command_context_ignore {
+    QA_COMMAND_CONTEXT_IGNORE_DIRECT = 1u << 0,
+    QA_COMMAND_CONTEXT_IGNORE_SCRIPT = 1u << 1,
+    QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW = 1u << 2,
+    QA_COMMAND_CONTEXT_IGNORE_DIALECT = 1u << 3,
+    QA_COMMAND_CONTEXT_IGNORE_CONSOLE_TEXT = 1u << 4
+};
+/* Exact nullable script text, with a pointer-equal fast path. Callers specify
+ * only the fields their existing Source comparison intentionally omits. */
+bool qa_command_context_equal(const qa_command_context *, const qa_command_context *,
+                              uint32_t ignored_fields);
+
 typedef struct qa_command_tokens {
     size_t count;
     char **values;

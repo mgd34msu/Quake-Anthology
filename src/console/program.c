@@ -51,16 +51,6 @@ bool qac_console_program_immediate_allowed(const qa_console *console, qa_error *
 static bool text_equal(const char *a, const char *b)
 { return a && b ? !strcmp(a, b) : a == b; }
 
-static bool context_equal(const qa_command_context *a, const qa_command_context *b)
-{
-    return a->session == b->session && a->owner == b->owner && a->client == b->client &&
-        a->seat == b->seat && a->dialect == b->dialect && a->origin == b->origin &&
-        a->direct == b->direct && a->console_text == b->console_text &&
-        text_equal(a->script, b->script) && a->cvar_view == b->cvar_view && a->registry == b->registry &&
-        a->generation == b->generation && a->actor.registry == b->actor.registry &&
-        a->actor.generation == b->actor.generation && a->actor.slot == b->actor.slot;
-}
-
 static bool context_copy(qa_command_context *out, const qa_command_context *source, qa_error *error)
 {
     *out = *source; out->script = NULL;
@@ -178,7 +168,7 @@ static bool state_capture(const qa_console *console, program_state *state, qa_er
 static bool chunks_equal(const command_chunk *a, const command_chunk *b)
 {
     for (; a && b; a = a->next, b = b->next)
-        if (!context_equal(&a->context, &b->context) || !context_equal(&a->caller, &b->caller) ||
+        if (!qa_command_context_equal(&a->context, &b->context, 0) || !qa_command_context_equal(&a->caller, &b->caller, 0) ||
             a->offset != b->offset || a->length != b->length || a->completion != b->completion ||
             a->success != b->success || (a->text == NULL) != (b->text == NULL) ||
             (a->text && memcmp(a->text, b->text, a->length))) return false;
@@ -204,12 +194,12 @@ static bool state_current(const program_state *state, const qa_console *console)
 {
     return qa_console_idle(console) && !console->release_leases && !console->program_revision_exhausted &&
         !state->revision_exhausted && state->revision == console->program_revision &&
-        context_equal(&state->context, &console->options.context) &&
+        qa_command_context_equal(&state->context, &console->options.context, 0) &&
         state->cvars == console->options.cvars && state->maximum_buffer == console->options.maximum_buffer &&
         state->maximum_command == console->options.maximum_command &&
         state->disable_builtins == console->options.disable_builtins &&
         state->queued_bytes == console->queued_bytes && state->deferred_bytes == console->deferred_bytes &&
-        state->wait == console->wait && context_equal(&state->wait_context, &console->wait_context) &&
+        state->wait == console->wait && qa_command_context_equal(&state->wait_context, &console->wait_context, 0) &&
         state->alias_count == console->alias_count && text_equal(state->startup, console->startup) &&
         chunks_equal(state->head, console->head) && chunks_equal(state->deferred, console->deferred) &&
         aliases_equal(state->aliases, console->aliases) && ids_equal(state->owners, console->owners) &&
@@ -290,7 +280,7 @@ qa_console_program *qa_console_program_prepare(qa_console *source, qa_console *c
         source->program_revision_exhausted || candidate->program_revision_exhausted ||
         source->program_unpublished || candidate->program_unpublished ||
         candidate->head || candidate->deferred || candidate->wait || candidate->queued_bytes || candidate->deferred_bytes ||
-        candidate->alias_count || !context_equal(&candidate->wait_context, &(qa_command_context){0}) ||
+        candidate->alias_count || !qa_command_context_equal(&candidate->wait_context, &(qa_command_context){0}, 0) ||
         candidate->aliases || candidate->owners || candidate->clients)
         { qac_fail(error, QA_ERROR_ARGUMENT, "command program preparation requires its idle source and fresh candidate"); return NULL; }
     qa_console_program *program = calloc(1, sizeof(*program));
@@ -346,7 +336,7 @@ qa_console_program *qa_console_program_retain(qa_console *console,
 
 static bool empty_context(const qa_command_context *context)
 {
-    const qa_command_context empty = {0}; return context_equal(context, &empty);
+    const qa_command_context empty = {0}; return qa_command_context_equal(context, &empty, 0);
 }
 
 static bool map_context(qa_console_program *program, qa_command_context *context, qa_error *error)

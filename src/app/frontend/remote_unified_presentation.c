@@ -564,21 +564,13 @@ static bool q3_input_read(void *context,frontend_remote_unified *replica,
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Compiled CG input has no published physical CLIENT builder");
     *out=p->physical; return true;
 }
-static bool command_receipt_equal(const qa_command_context *a,const qa_command_context *b)
-{
-    return a && b && a->session==b->session && a->owner==b->owner && a->client==b->client &&
-        a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
-        a->direct==b->direct && a->console_text==b->console_text && a->cvar_view==b->cvar_view &&
-        a->registry==b->registry && a->generation==b->generation && qa_actor_id_equal(a->actor,b->actor) &&
-        ((!a->script && !b->script) || (a->script && b->script && !strcmp(a->script,b->script)));
-}
 static bool q3_command_current(const unified_q3_client_row *row,const qa_command_context *origin)
 {
     const frontend_remote_unified_domain *domain=row?frontend_remote_unified_domain_read(row->owner->replica):NULL;
     const qa_command_context *actual=row?frontend_unified_q3_client_context(row->client):NULL;
     return domain && actual && frontend_unified_q3_client_cvars(row->client)==domain->cvars &&
         actual->cvar_view==qa_cvars_view_identity(domain->cvars) &&
-        command_receipt_equal(actual,&domain->command_context) && command_receipt_equal(origin,actual);
+        qa_command_context_equal(actual, &domain->command_context, 0) && qa_command_context_equal(origin, actual, 0);
 }
 static bool q3_send_client(void *context,frontend_unified_q3_client *client,
     const qa_command_context *origin,const char *text,qa_error *error)

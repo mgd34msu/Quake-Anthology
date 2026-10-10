@@ -147,10 +147,7 @@ static bool same_host_context(const qa_q3_host_client_context *a, const qa_q3_ho
     return a->session == b->session && a->role == b->role && a->owner == b->owner &&
         a->service_owner == b->service_owner && a->console == b->console && a->cvars == b->cvars &&
         a->client_time_cvars == b->client_time_cvars && a->client_time_owner == b->client_time_owner &&
-        a->frontend_lifetime == b->frontend_lifetime && x->session == y->session && x->owner == y->owner &&
-        x->seat == y->seat && x->client == y->client && x->dialect == y->dialect && x->origin == y->origin &&
-        x->direct == y->direct && x->console_text == y->console_text && x->script == y->script &&
-        x->registry == y->registry && x->generation == y->generation && qa_actor_id_equal(x->actor, y->actor);
+        a->frontend_lifetime == b->frontend_lifetime && qa_command_context_equal(x, y, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 
 static bool browser_current(void *context, const qa_q3_host_client_context *ui, qa_error *error)

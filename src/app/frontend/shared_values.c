@@ -129,15 +129,7 @@ bool frontend_shared_values_root_access(const frontend_shared_values *owner,
         !qa_application_startup_root_read(owner->application,owner->candidate,
             &actual_console,&actual_registry,&actual,error) ||
         actual_console!=console || actual_registry!=owner->registry ||
-        command->session!=actual.session || command->owner!=actual.owner ||
-        command->client!=actual.client || command->seat!=actual.seat ||
-        command->dialect!=actual.dialect || command->origin!=actual.origin ||
-        command->direct!=actual.direct || command->console_text!=actual.console_text ||
-        command->registry!=actual.registry || command->generation!=actual.generation ||
-        command->cvar_view!=actual.cvar_view ||
-        !qa_actor_id_equal(command->actor,actual.actor) ||
-        ((!command->script)!=(!actual.script)) ||
-        (command->script && strcmp(command->script,actual.script)) ||
+        !qa_command_context_equal(command,&actual,0) ||
         !qa_cvars_edit_returned_is(owner->edit,owner->registry))
         return fail(error,"Shared root lookup requires its returned images constructor and exact ENGINE command");
     *registry=owner->registry; *edit=owner->edit; return true;
@@ -155,15 +147,7 @@ bool frontend_shared_values_root_definition_access(const frontend_shared_values 
         !qa_application_startup_root_read(owner->application,owner->candidate,
             &actual_console,&actual_registry,&actual,error) ||
         actual_console!=console || actual_registry!=owner->registry ||
-        command->session!=actual.session || command->owner!=actual.owner ||
-        command->client!=actual.client || command->seat!=actual.seat ||
-        command->dialect!=actual.dialect || command->origin!=actual.origin ||
-        command->direct!=actual.direct || command->console_text!=actual.console_text ||
-        command->registry!=actual.registry || command->generation!=actual.generation ||
-        command->cvar_view!=actual.cvar_view ||
-        !qa_actor_id_equal(command->actor,actual.actor) ||
-        ((!command->script)!=(!actual.script)) ||
-        (command->script && strcmp(command->script,actual.script)) ||
+        !qa_command_context_equal(command,&actual,0) ||
         qa_cvars_prepared_edit(owner->registry)!=owner->edit ||
         qa_cvars_edit_registry(owner->edit)!=owner->registry)
         return fail(error,"Shared root declarations require their entered provider definition and exact ENGINE command");

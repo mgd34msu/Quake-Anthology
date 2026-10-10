@@ -219,6 +219,17 @@ resource handles; do not replace comparisons with per-frame interning or hashes.
 Ordinary provider routing already caches the resolved actor/provider in
 `src/app/application/services.c:268`; selector/reconfiguration text is separate.
 
+TA-3192 migrates command-context equality to `qa_command_context_equal` in
+`src/console/text.c`. Console dispatch/release/persistence, physical input,
+configuration, native/QVM services, and NQ/Q2/Q3/Unified client bindings call
+that implementation. Their copied field-by-field comparisons are deleted.
+Caller masks preserve intentionally omitted fields; recipient policy still
+requires an absent script. Nullable script text has one pointer-equal fast
+path and one fallback comparison. This removes the comparison copy from
+`remote_unified_input.c`; it does not claim that all script names are interned.
+The normal build and seven existing core suites pass. Other listed identity
+and render-leaf adoption gaps remain open under TA-3192.
+
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent
 selection. Numeric/save/command components preserve 125 role combinations and

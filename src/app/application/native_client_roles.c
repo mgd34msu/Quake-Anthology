@@ -103,13 +103,6 @@ bool qa_application_client_provider_command(qa_application *app, qa_actor_owner 
     source.cvar_view = 0;
     *out = source; *generation = qa_application_configuration_generation(app); return true;
 }
-static bool command_equal(const qa_command_context *a, const qa_command_context *b)
-{
-    return a->cvar_view == b->cvar_view && a->session == b->session && a->owner == b->owner && a->client == b->client && a->seat == b->seat &&
-        a->dialect == b->dialect && a->origin == b->origin && a->direct == b->direct &&
-        a->console_text == b->console_text && a->script == b->script && a->registry == b->registry &&
-        a->generation == b->generation && qa_actor_id_equal(a->actor, b->actor);
-}
 static bool source_equal(const qa_application_client_source *a, const qa_application_client_source *b)
 {
     const qa_application_client_context *x = &a->context, *y = &b->context;
@@ -118,7 +111,7 @@ static bool source_equal(const qa_application_client_source *a, const qa_applica
         x->session == y->session && x->receiver == y->receiver && x->entity_owner == y->entity_owner &&
         x->entity_definition == y->entity_definition &&
         x->seat == y->seat && x->physical_seat == y->physical_seat && x->console == y->console && x->cvars == y->cvars &&
-        x->lifetime == y->lifetime && command_equal(&x->command, &y->command) && a->runtime == b->runtime &&
+        x->lifetime == y->lifetime && qa_command_context_equal(&x->command, &y->command, 0) && a->runtime == b->runtime &&
         qa_net_client_id_equal(a->client, b->client) && a->network_seat.owner == b->network_seat.owner &&
         a->network_seat.index == b->network_seat.index && a->connection_epoch == b->connection_epoch &&
         a->configuration_generation == b->configuration_generation;

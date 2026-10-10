@@ -96,18 +96,6 @@ bool qa_console_context_bound(const qa_console *console,const qa_command_context
     return console && context && qac_console_context_view_current(console,context,false,&error);
 }
 
-static bool same_context(const qa_command_context *a, const qa_command_context *b,
-                          bool ignore_direct)
-{
-    return a->session == b->session && a->owner == b->owner && a->client == b->client &&
-           a->registry == b->registry && a->generation == b->generation && a->cvar_view == b->cvar_view &&
-           a->actor.registry == b->actor.registry &&
-           a->actor.generation == b->actor.generation && a->actor.slot == b->actor.slot &&
-           a->seat == b->seat && a->dialect == b->dialect && a->origin == b->origin &&
-           a->console_text == b->console_text && (ignore_direct || a->direct == b->direct) &&
-           ((a->script == NULL && b->script == NULL) ||
-            (a->script != NULL && b->script != NULL && strcmp(a->script, b->script) == 0));
-}
 typedef struct qac_cvar_scope {
     qa_command_context source,constructor;
     qa_console_cvar_entered_fn qualifier;
@@ -118,7 +106,7 @@ static bool cvar_scope_current(const qa_console *console,const qa_command_contex
     qa_error *error)
 {
     const qac_cvar_scope *scope=console->cvar_scope;
-    return scope && same_context(&scope->source,context,false) &&
+    return scope && qa_command_context_equal(&scope->source, context, 0) &&
         (scope->qualifier?
             valid_context_base(console,context,error) &&
                 scope->qualifier(scope->user,console,&scope->source,error):
@@ -349,8 +337,8 @@ bool qa_console_cvar_context(qa_console *console,const qa_command_context *sourc
     if (!console || !source || !out)
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar context requires its actual console and constructor context");
     if (console->cvar_scope &&
-        (same_context(&console->cvar_scope->constructor,source,false) ||
-         same_context(&console->cvar_scope->source,source,false))) {
+        (qa_command_context_equal(&console->cvar_scope->constructor, source, 0) ||
+         qa_command_context_equal(&console->cvar_scope->source, source, 0))) {
         if (!cvar_scope_current(console,&console->cvar_scope->source,error)) return false;
         *out=console->cvar_scope->source; return true;
     }
@@ -388,7 +376,7 @@ bool qa_console_cvar_enter(qa_console *console,const qa_command_context *source,
     }
     /* An inherited entered loan keeps its real qualifier on nested use. */
     if (current && console->cvar_scope && console->cvar_scope->qualifier &&
-        same_context(&console->cvar_scope->source,&captured,false)) {
+        qa_command_context_equal(&console->cvar_scope->source, &captured, 0)) {
         qualifier=console->cvar_scope->qualifier; qualifier_user=console->cvar_scope->user;
     } else if (current) qualifier=NULL;
     qac_cvar_scope scope={.source=captured,.constructor=*source,.qualifier=qualifier,.user=qualifier_user,
@@ -1471,12 +1459,12 @@ static bool command_text(const command_chunk *head, qac_text *text, qa_error *er
     for (const command_chunk *chunk = head; chunk != NULL; chunk = chunk->next) {
         if (chunk->completion) {
             if (!qac_q2(head->context.dialect) || !chunk->success || expected.script == NULL ||
-                !same_context(&expected, &chunk->context, true)) break;
+                !qa_command_context_equal(&expected, &chunk->context, QA_COMMAND_CONTEXT_IGNORE_DIRECT)) break;
             expected = chunk->caller;
             resumed = true;
             continue;
         }
-        if (!same_context(&expected, &chunk->context, resumed)) break;
+        if (!qa_command_context_equal(&expected, &chunk->context, (resumed ? QA_COMMAND_CONTEXT_IGNORE_DIRECT : 0))) break;
         if (!qac_text_add(text, chunk->text + chunk->offset, chunk->length - chunk->offset, error)) return false;
     }
     return true;

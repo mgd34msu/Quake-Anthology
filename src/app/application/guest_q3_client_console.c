@@ -321,13 +321,7 @@ bool application_guest_q3_client_console_entered(struct application_q3_guest *en
         source->scope.provider == actual.scope.provider && source->scope.kind == actual.scope.kind &&
         source->scope.seat == actual.scope.seat && source->console == actual.console && source->cvars == actual.cvars &&
         source->declaration_owner == actual.declaration_owner && qa_cvars_same_store(qa_console_cvars(row->console), row->cvars) &&
-        source->command.cvar_view == actual.command.cvar_view && source->command.owner == actual.command.owner && source->command.seat == actual.command.seat &&
-        source->command.dialect == actual.command.dialect && source->command.origin == actual.command.origin &&
-        source->command.session == actual.command.session && source->command.client == actual.command.client &&
-        source->command.direct == actual.command.direct && source->command.console_text == actual.command.console_text &&
-        source->command.script == actual.command.script &&
-        source->command.registry == actual.command.registry && source->command.generation == actual.command.generation &&
-        qa_actor_id_equal(source->command.actor, actual.command.actor);
+        qa_command_context_equal(&source->command, &actual.command, 0);
 }
 
 bool application_guest_q3_client_console_retirement(application_provider *provider,
@@ -354,13 +348,7 @@ bool application_guest_q3_client_console_retirement(application_provider *provid
         (source->descriptor->identity == held->descriptor->identity) && source->console == held->console &&
         source->cvars == held->cvars && source->scope.provider == held->scope.provider &&
         source->scope.kind == held->scope.kind && source->scope.seat == held->scope.seat &&
-        source->declaration_owner == held->declaration_owner && source->command.cvar_view == held->command.cvar_view && source->command.owner == held->command.owner &&
-        source->command.seat == held->command.seat && source->command.dialect == held->command.dialect &&
-        source->command.session == held->command.session && source->command.client == held->command.client &&
-        source->command.origin == held->command.origin && source->command.direct == held->command.direct &&
-        source->command.console_text == held->command.console_text && source->command.script == held->command.script &&
-        source->command.registry == held->command.registry && source->command.generation == held->command.generation &&
-        qa_actor_id_equal(source->command.actor, held->command.actor);
+        source->declaration_owner == held->declaration_owner && qa_command_context_equal(&source->command, &held->command, 0);
 }
 
 bool application_guest_q3_client_console_retire_finish(struct application_q3_guest *engine,

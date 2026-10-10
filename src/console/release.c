@@ -140,13 +140,6 @@ bool qa_console_release_ready(const qa_console_release *owner,const qa_console *
 bool qa_console_release_active(const qa_console_release *owner)
 { return owner && owner->console->release_owner==owner &&
     owner->console->release_advancing && owner->console->frame; }
-static bool same_source(const qa_command_context *a,const qa_command_context *b)
-{
-    return a->session==b->session && a->owner==b->owner && a->client==b->client &&
-        a->seat==b->seat && a->origin==b->origin && a->cvar_view==b->cvar_view && a->registry==b->registry &&
-        a->generation==b->generation && a->actor.registry==b->actor.registry &&
-        a->actor.generation==b->actor.generation && a->actor.slot==b->actor.slot;
-}
 bool qa_console_release_context_current(const qa_console_release *owner,const qa_console *console,
     const qa_command_context *command)
 {
@@ -154,11 +147,10 @@ bool qa_console_release_context_current(const qa_console_release *owner,const qa
         console->release_owner!=owner || !console->release_leases || !console->release_advancing ||
         !console->release_dispatch_context) return false;
     const qa_command_context *actual=console->release_dispatch_context;
-    return same_source(&owner->context,command) && same_source(actual,command) &&
-        actual->dialect==command->dialect && actual->direct==command->direct &&
-        actual->console_text==command->console_text &&
-        ((!actual->script && !command->script) || (actual->script && command->script &&
-            !strcmp(actual->script,command->script)));
+    return qa_command_context_equal(&owner->context, command,
+        QA_COMMAND_CONTEXT_IGNORE_DIALECT | QA_COMMAND_CONTEXT_IGNORE_DIRECT |
+        QA_COMMAND_CONTEXT_IGNORE_CONSOLE_TEXT | QA_COMMAND_CONTEXT_IGNORE_SCRIPT) &&
+        qa_command_context_equal(actual, command, 0);
 }
 bool qa_console_release_entered(const qa_console_release *owner)
 { return owner && owner->entered; }
@@ -167,10 +159,7 @@ bool qa_console_release_state_read(const qa_console_release *owner,const qa_cons
 {
     if (!owner || !console || !command || !complete || !entered || !fault || owner->console!=console ||
         !console->release_leases || !qa_console_idle(console) || console->release_advancing ||
-        !same_source(&owner->context,command) || owner->context.dialect!=command->dialect ||
-        owner->context.direct!=command->direct || owner->context.console_text!=command->console_text ||
-        ((!owner->context.script)!=(!command->script)) ||
-        (command->script && strcmp(command->script,owner->context.script))) return false;
+        !qa_command_context_equal(&owner->context, command, 0)) return false;
     *complete=owner->complete; *entered=owner->entered; *fault=owner->fault.code; return true;
 }
 bool qa_console_release_abort(qa_console_release *owner,qa_console_release_outcome *out,qa_error *error)

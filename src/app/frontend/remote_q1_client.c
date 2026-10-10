@@ -199,13 +199,7 @@ bool remote_q1_domain_equal(const frontend_remote_q1_domain *a, const frontend_r
         a->protocol.revision == b->protocol.revision && a->protocol.flags == b->protocol.flags &&
         a->catalog == b->catalog && a->product == b->product && a->console == b->console && a->cvars == b->cvars &&
         a->actors == b->actors && a->actor_owner == b->actor_owner && a->actor_definition == b->actor_definition &&
-        a->command_context.session == b->command_context.session && a->command_context.owner == b->command_context.owner &&
-        a->command_context.client == b->command_context.client && a->command_context.seat == b->command_context.seat &&
-        a->command_context.registry == b->command_context.registry && a->command_context.generation == b->command_context.generation &&
-        a->command_context.dialect == b->command_context.dialect &&
-        a->command_context.origin == b->command_context.origin && a->command_context.direct == b->command_context.direct &&
-        a->command_context.console_text == b->command_context.console_text && a->command_context.script == b->command_context.script &&
-        qa_actor_id_equal(a->command_context.actor, b->command_context.actor);
+        qa_command_context_equal(&a->command_context, &b->command_context, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 bool remote_q1_live(const frontend_remote_q1 *row, qa_error *error)
 {

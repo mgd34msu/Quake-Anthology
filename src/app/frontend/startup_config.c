@@ -19,10 +19,8 @@ static bool fail(qa_error *error, qa_status code, const char *text)
 { qa_error_set(error, code, 0, "%s", text); return false; }
 static bool same_owner(const qa_command_context *a, const qa_command_context *b)
 {
-    return a && b && a->session==b->session && a->owner==b->owner && a->client==b->client &&
-        a->seat==b->seat && a->dialect==b->dialect && a->origin==b->origin &&
-        a->registry==b->registry && a->generation==b->generation && a->cvar_view==b->cvar_view &&
-        qa_actor_id_equal(a->actor,b->actor);
+    return qa_command_context_equal(a,b,QA_COMMAND_CONTEXT_IGNORE_DIRECT |
+        QA_COMMAND_CONTEXT_IGNORE_SCRIPT | QA_COMMAND_CONTEXT_IGNORE_CONSOLE_TEXT);
 }
 static void add(frontend_startup_config *owner, const char *name, frontend_script_scope scope)
 { owner->scripts[owner->count++]=(startup_script){name,scope}; }

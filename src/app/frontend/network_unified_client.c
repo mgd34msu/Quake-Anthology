@@ -201,13 +201,6 @@ static frontend_client_source_options physical_options(frontend_network_unified_
     c.retire=retire; c.released=released;
     return c;
 }
-static bool same_command(const qa_command_context *a,const qa_command_context *b)
-{
-    return a->session==b->session && a->owner==b->owner && a->seat==b->seat && a->client==b->client &&
-        a->dialect==b->dialect && a->origin==b->origin && a->direct==b->direct &&
-        a->console_text==b->console_text && a->registry==b->registry && a->generation==b->generation &&
-        qa_actor_id_equal(a->actor,b->actor) && !a->script && !b->script;
-}
 static bool domain_namespace(const frontend_network_unified_client_service *o,
     const frontend_remote_unified_domain *d,const frontend_client_source_view *v)
 {
@@ -215,7 +208,8 @@ static bool domain_namespace(const frontend_network_unified_client_service *o,
         d->seat.owner==o->options.seat.owner&&d->seat.index==o->options.seat.index&&
         d->physical_seat==o->options.physical_seat&&d->catalog==qa_launch_instance_catalog(v->source.descriptor)&&
         d->resources==qa_application_resources(d->application)&&d->console==v->source.context.console&&
-        d->cvars==v->source.context.cvars&&same_command(&d->command_context,&v->source.context.command);
+        d->cvars==v->source.context.cvars&&!d->command_context.script && !v->source.context.command.script &&
+        qa_command_context_equal(&d->command_context, &v->source.context.command, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW);
 }
 static bool domain_current(void *context,const frontend_remote_unified_domain *d,qa_error *e)
 {
@@ -264,7 +258,8 @@ bool frontend_network_unified_client_request_retirement(frontend_network_unified
         source->context.console!=physical.source.context.console||source->context.cvars!=physical.source.context.cvars||
         source->context.physical_seat!=o->options.physical_seat||
         source->network_seat.owner!=o->options.seat.owner||source->network_seat.index!=o->options.seat.index||
-        !same_command(&source->context.command,&physical.source.context.command))
+        source->context.command.script || physical.source.context.command.script ||
+        !qa_command_context_equal(&source->context.command, &physical.source.context.command, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified retirement lost its retained physical CLIENT receipt");
     o->retired=true;return true;
 }
@@ -326,7 +321,8 @@ bool frontend_network_unified_client_restart_adopt(frontend_network_unified_clie
         d->physical_seat!=o->options.physical_seat||d->seat.owner!=o->options.seat.owner||d->seat.index!=o->options.seat.index||
         d->catalog!=qa_launch_instance_catalog(v.source.descriptor)||d->resources!=qa_application_resources(d->application)||
         d->console!=v.source.context.console||d->cvars!=v.source.context.cvars||
-        !same_command(&d->command_context,&v.source.context.command))
+        d->command_context.script || v.source.context.command.script ||
+        !qa_command_context_equal(&d->command_context, &v.source.context.command, QA_COMMAND_CONTEXT_IGNORE_CVAR_VIEW))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT restart lost its actual physical transport namespace");
     uint64_t previous=o->epoch;
     o->epoch=epoch;
