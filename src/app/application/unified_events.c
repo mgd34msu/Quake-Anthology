@@ -758,7 +758,8 @@ static bool unified_capacity(qa_application *app, const application_event_write 
     if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING) return false;
     qa_actor_id recipient = event->presentation ? event->recipient : event->simulation_recipient;
     if (recipient.registry)
-        return application_event_stream_close_recipients(app, write, recipient, NULL, error);
+        return application_event_stream_close_recipients(app, write, recipient, NULL,
+            QA_APPLICATION_OUTPUT_UNIFIED, error);
     application_persistent_key key;
     bool remove;
     if (!application_unified_persistent_key(app, event, &key, &remove, error) || key.domain) return false;

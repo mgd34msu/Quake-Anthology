@@ -247,7 +247,7 @@ static bool reliable_capacity_report(qa_application *app, qa_error *error)
 
 bool application_event_stream_close_recipients(qa_application *app,
     const application_event_write *write, qa_actor_id recipient,
-    const qa_application_q2_audience *audience, qa_error *error)
+    const qa_application_q2_audience *audience, uint8_t channels, qa_error *error)
 {
     bool captured = audience && audience->captured;
     if (!write->transaction.blocked || app->state != QA_APPLICATION_RUNNING ||
@@ -262,7 +262,7 @@ bool application_event_stream_close_recipients(qa_application *app,
                 (!target->has_connection || qa_net_client_id_equal(player->remote_client, target->connection));
         }
         if (receives) {
-            player->output_incomplete |= QA_APPLICATION_OUTPUT_ALL;
+            player->output_incomplete |= channels;
             addressed = true;
         }
     }
@@ -286,7 +286,7 @@ static bool protocol_capacity(application_provider *provider,
 {
     return event->reliable && !event->signon &&
         application_event_stream_close_recipients(provider->application, write,
-            event->recipient, delivery ? &delivery->audience : NULL, error);
+            event->recipient, delivery ? &delivery->audience : NULL, QA_APPLICATION_OUTPUT_ALL, error);
 }
 
 const application_event_envelope *application_event_stream_at(const qa_application *app,
@@ -554,7 +554,8 @@ static bool builtin_capacity(qa_application *app, const qa_builtin_event *event,
     switch (event->kind) {
     case QA_BUILTIN_MESSAGE: case QA_BUILTIN_CENTERPRINT:
     case QA_BUILTIN_SOURCE_PROMPT: case QA_BUILTIN_CLEAR_PROMPT:
-        return application_event_stream_close_recipients(app, write, event->actor, audience, error);
+        return application_event_stream_close_recipients(app, write, event->actor, audience,
+            QA_APPLICATION_OUTPUT_UNIFIED, error);
     default: return false;
     }
 }
@@ -683,8 +684,9 @@ bool application_emit_q2_player(application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q2 player event");
     application_event_write write;
     qa_actor_id recipient = event->kind == QA_Q2_PLAYER_USERINFO ? (qa_actor_id){0} : event->actor;
+    uint8_t channels = event->kind == QA_Q2_PLAYER_PRINT ? QA_APPLICATION_OUTPUT_ALL : QA_APPLICATION_OUTPUT_UNIFIED;
     if (!application_event_stream_begin(application, QA_APPLICATION_EVENT_Q2_PLAYER, &write, error))
-        return application_event_stream_close_recipients(application, &write, recipient, NULL, error);
+        return application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
     const qa_application_network_q2_recipient_view *recipients = NULL;
     size_t recipient_count = 0;
     if (event->kind == QA_Q2_PLAYER_PRINT && provider->q2_recipient_binding &&
@@ -718,10 +720,10 @@ bool application_emit_q2_player(application_provider *provider,
         .provider = provider->owner, .time_ns = qa_session_elapsed(application->session),
         .event = copied, .recipients = recipients, .recipient_count = recipient_count};
     return application_event_stream_commit(application, &write, error) ||
-        application_event_stream_close_recipients(application, &write, recipient, NULL, error);
+        application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
 abort:
     application_event_stream_abort(application, &write, error);
-    return application_event_stream_close_recipients(application, &write, recipient, NULL, error);
+    return application_event_stream_close_recipients(application, &write, recipient, NULL, channels, error);
 }
 
 static bool emit_protocol(application_provider *provider,
