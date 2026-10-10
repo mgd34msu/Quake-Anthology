@@ -70,11 +70,10 @@ static bool control_admission(const qa_unified_session *s, const qa_unified_docu
     bool offer, disconnect; uint32_t epoch;
     if (!ready) return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Missing production control admission output");
     if (!outgoing_control(s, d, &epoch, &offer, &disconnect, e)) return false;
-    qa_buffer wire = {0}; qa_error deferred = {0};
-    bool okay = qa_unified_document_encode(d, &wire, &deferred);
-    qa_bytes payload = {wire.data, wire.size};
+    qa_error deferred = {0}; qa_unified_builder wire=s->frame_wire;
+    bool okay = qa_unified_document_write(d,s->limits.message_bytes,&wire,&deferred);
+    qa_bytes payload = {wire.data,wire.size};
     if (okay) okay = qa_unified_channel_reliable_ready(s->channel, &payload, 1, ready, &deferred);
-    qa_buffer_free(&wire);
     if (!okay && deferred.code == QA_ERROR_MEMORY) { *ready = false; return true; }
     if (!okay && e) *e = deferred;
     return okay;
@@ -171,7 +170,7 @@ static bool commit_queue(qa_unified_session *s, qa_unified_held *held, bool *wai
     if (held->responses_queued) return true;
     if (commit->followup_count > 8)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source control followups exceed their actual return extent");
-    qa_buffer encoded[9] = {0}; qa_bytes payloads[9];
+    qa_bytes *payloads=held->response_payloads;
     size_t count = commit->followup_count + (commit->reply != NULL);
     bool disconnect = false, ok = true;
     qa_error deferred = {0};
@@ -183,15 +182,20 @@ static bool commit_queue(qa_unified_session *s, qa_unified_held *held, bool *wai
             ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its authenticated control direction"); break;
         }
         ok = qa_unified_session_reply_valid(s, d, &deferred);
-        if (ok) ok = qa_unified_document_encode(d, encoded + i, &deferred);
-        payloads[i] = (qa_bytes){encoded[i].data, encoded[i].size};
+        if(ok && !payloads[i].data) {
+            ok=qa_unified_document_write(d,s->limits.message_bytes,&s->frame_wire,&deferred);
+            if(ok && !held->lease) held->lease=qa_unified_frame_lease_acquire(s->frame_pool,&deferred);
+            if(ok) ok=held->lease!=NULL;
+            uint8_t *data=ok?qa_unified_frame_lease_alloc(held->lease,s->frame_wire.size,1,1,&deferred):NULL;
+            if(ok) ok=data!=NULL;
+            if(ok) { memcpy(data,s->frame_wire.data,s->frame_wire.size); payloads[i]=(qa_bytes){data,s->frame_wire.size}; }
+        }
         disconnect = next_disconnect;
     }
     bool ready = false;
     if (ok) ok = qa_unified_channel_reliable_ready(s->channel, payloads, count, &ready, &deferred);
     if (ok && ready) ok = qa_unified_channel_reliable_batch(s->channel, payloads, count,
         &held->response_first, &held->response_last, &deferred);
-    for (size_t i = 0; i < 9; ++i) qa_buffer_free(encoded + i);
     if (!ok && deferred.code == QA_ERROR_MEMORY) { *waiting = true; return true; }
     if (!ok) { if (e && deferred.code != QA_OK) *e = deferred; return false; }
     if (!ready) { *waiting = true; return true; }
@@ -230,9 +234,9 @@ void qa_unified_session_delivery_free(qa_unified_held *held)
     qa_event_lease *event_lease=held->event_lease;
     commit_free(&held->commit);
     qa_unified_document_destroy(held->document);
-    if (event_lease) qa_event_lease_release(event_lease);
-    else if (lease) qa_unified_frame_lease_release(lease);
-    else { qa_buffer_free(&held->wire); free(held); }
+    if(!event_lease && !lease) { qa_buffer_free(&held->wire); free(held); }
+    if(event_lease) qa_event_lease_release(event_lease);
+    if(lease) qa_unified_frame_lease_release(lease);
 }
 
 static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *waiting, qa_error *e)

@@ -48,6 +48,7 @@ typedef struct qa_unified_held {
     size_t bytes;
     uint32_t sequence, required;
     qa_unified_session_commit commit;
+    qa_bytes response_payloads[9];
     uint32_t response_first, response_last;
     bool source_finished, responses_queued;
 } qa_unified_held;
