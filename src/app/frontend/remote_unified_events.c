@@ -349,7 +349,7 @@ bool frontend_unified_events_decode(frontend_unified_events *o,qa_bytes bytes,
             record->delivery.wire.size=bytes.size;
         }
     }
-    bool okay=record && record->delivery.wire.data && qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,bytes,o->strings,
+    bool okay=record && record->delivery.wire.data && qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,bytes,o->strings,NULL,
         &transaction,&document,error) && record_finish(o,&transaction,record,document,error);
     if (!okay) {
         qa_unified_document_destroy(document);

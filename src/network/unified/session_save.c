@@ -278,7 +278,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         ok = qa_net_reader_fail(&r, "Production input continuation changes its retained epoch presence");
     if (ok && inputs.size) {
         qa_unified_document *document = NULL;
-        ok = qa_unified_document_decode(QA_UNIFIED_INPUT_DOCUMENT, inputs, s->strings, NULL, &document, e) &&
+        ok = qa_unified_document_decode(QA_UNIFIED_INPUT_DOCUMENT, inputs, s->strings, NULL, NULL, &document, e) &&
             qa_unified_inputs_read(document, &s->inputs, e);
         if (ok && s->inputs.epoch != s->epoch)
             ok = qa_net_reader_fail(&r, "Production input continuation changes its retained epoch");
@@ -325,7 +325,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
             bool missing = false;
             ok = decoded ? (kind == QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
                 (qa_bytes){held->wire.data, held->wire.size}, &held->document, &missing, e) && !missing :
-                qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, s->strings, NULL, &held->document, e)) : s->server;
+                qa_unified_document_decode(kind, (qa_bytes){held->wire.data, held->wire.size}, s->strings, NULL, NULL, &held->document, e)) : s->server;
             if (ok) ok = qa_unified_session_continuation_read(&r, held, s->strings);
         }
     }
@@ -346,7 +346,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
         if (ok) {
             held->wire.size = held->bytes = wire.size;
             if (wire.size) memcpy(held->wire.data, wire.data, wire.size);
-            ok = qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, s->strings, NULL, &held->document, e) &&
+            ok = qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, s->strings, NULL, NULL, &held->document, e) &&
                 qa_unified_session_continuation_read(&r, held, s->strings);
         }
     }

@@ -125,7 +125,7 @@ static bool document_read(qa_net_reader *r, qa_unified_document **out, qa_string
 {
     qa_bytes wire;
     return qa_net_read_bytes(r, qa_net_read_u32(r), &wire) &&
-        qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, strings, NULL, out, r->error);
+        qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT, wire, strings, NULL, NULL, out, r->error);
 }
 
 bool qa_unified_session_continuation_read(qa_net_reader *r, qa_unified_held *held, qa_strings *strings)

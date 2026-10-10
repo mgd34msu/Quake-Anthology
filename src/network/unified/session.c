@@ -142,14 +142,19 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, bo
         s->server ? QA_UNIFIED_INPUT_DOCUMENT : QA_UNIFIED_FRAME_DOCUMENT;
     qa_unified_document *document=NULL;
     qa_unified_held *held=NULL;
+    qa_unified_frame_lease *lease=NULL;
     if (!s->server) {
         bool missing=false;
         bool ready=true,okay;
         if (kind==QA_UNIFIED_CONTROL_DOCUMENT && delivery->payload.size>=4 &&
             !memcmp(delivery->payload.data,"QUEV",4) && s->hooks.events_decode)
             okay=s->hooks.events_decode(s->hooks.context,delivery->payload,&held,&ready,e);
-        else okay=kind==QA_UNIFIED_FRAME_DOCUMENT ? qa_unified_session_frame_decode(s,
-            delivery->payload,&document,&missing,e) : qa_unified_document_decode(kind,delivery->payload, s->strings, NULL,&document,e);
+        else if(kind==QA_UNIFIED_FRAME_DOCUMENT)
+            okay=qa_unified_session_frame_decode(s,delivery->payload,&document,&missing,e);
+        else {
+            lease=qa_unified_frame_lease_acquire(s->frame_pool,e);
+            okay=lease && qa_unified_document_decode(kind,delivery->payload,s->strings,lease,NULL,&document,e);
+        }
         if (held) document=held->document;
         if (okay && !ready) return true;
         if (!okay || missing) {
@@ -158,20 +163,22 @@ static bool hold_delivery(void *context, const qa_unified_delivery *delivery, bo
                 s->frame_applied=delivery->sequence;
                 s->channel->frame_ack_pending=s->channel->frame_admitted!=0;
             }
-            qa_unified_document_destroy(document); return okay;
+            qa_unified_document_destroy(document); qa_unified_frame_lease_release(lease); return okay;
         }
     }
     const qa_unified_frame *frame=qa_unified_document_frame(document);
-    qa_unified_frame_lease *lease=frame?frame->lease:NULL;
-    if (lease && !qa_unified_frame_lease_retain(lease,e)) { qa_unified_document_destroy(document); return false; }
-    if (!held) held=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*held),_Alignof(qa_unified_held),e) : calloc(1,sizeof(*held));
+    if(frame) {
+        lease=frame->lease;
+        if(!qa_unified_frame_lease_retain(lease,e)) { qa_unified_document_destroy(document);return false; }
+    }
+    if(!held && !lease) lease=qa_unified_frame_lease_acquire(s->frame_pool,e);
+    if(!held && lease) held=qa_unified_frame_lease_alloc(lease,1,sizeof(*held),_Alignof(qa_unified_held),e);
     if (!held) { qa_unified_document_destroy(document); qa_unified_frame_lease_release(lease);
         return qa_unified_session_fail(e,QA_ERROR_MEMORY,"Retaining production document delivery"); }
     held->lease=lease; held->document=document;
     held->kind = kind;
     if (!held->event_lease) {
-        held->wire.data=lease ? qa_unified_frame_lease_alloc(lease,delivery->payload.size?delivery->payload.size:1,1,1,e) :
-            malloc(delivery->payload.size?delivery->payload.size:1);
+        held->wire.data=qa_unified_frame_lease_alloc(lease,delivery->payload.size?delivery->payload.size:1,1,1,e);
         if (!held->wire.data) { qa_unified_session_delivery_free(held); return qa_unified_session_fail(e, QA_ERROR_MEMORY, "Retaining complete production delivery bytes"); }
         held->wire.size = delivery->payload.size;
         if (held->wire.size) memcpy(held->wire.data, delivery->payload.data, held->wire.size);

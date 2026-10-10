@@ -93,7 +93,8 @@ typedef enum qa_unified_document_kind {
  * standalone frames use the same delta codec with no retained baseline. */
 bool qa_unified_document_create(qa_unified_document_kind, qa_bytes checkpoint_json,
                                  qa_unified_document **, qa_error *);
-bool qa_unified_document_decode(qa_unified_document_kind, qa_bytes, qa_strings *, qa_event_transaction *,
+typedef struct qa_unified_frame_lease qa_unified_frame_lease;
+bool qa_unified_document_decode(qa_unified_document_kind, qa_bytes, qa_strings *, qa_unified_frame_lease *, qa_event_transaction *,
                                  qa_unified_document **, qa_error *);
 typedef bool (*qa_unified_document_validator)(void *, const qa_unified_document *, qa_error *);
 bool qa_unified_document_validate(const qa_unified_document *,

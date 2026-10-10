@@ -5,6 +5,7 @@
 #include "qa/arena.h"
 #include "qa/pool.h"
 #include "qa/network_unified_frame_pool.h"
+#include "qa/network_unified_control.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
@@ -220,6 +221,25 @@ static void test_arena(void)
     qa_unified_frame_pool_destroy(&frames);
     CHECK(!frames && held[79999]==0x62);
     qa_unified_frame_lease_release(a);
+
+    qa_unified_control control={.kind=QA_UNIFIED_CONTROL_DISCONNECT,.epoch=7,
+        .value.disconnect="session closed"};
+    qa_unified_document *source=NULL,*decoded=NULL,*retained=NULL;
+    qa_buffer wire={0};
+    CHECK(qa_unified_document_create_control(&control,&source,&error));
+    CHECK(qa_unified_document_encode(source,&wire,&error));
+    frames=qa_unified_frame_pool_create(128*1024,2,&error);
+    a=qa_unified_frame_lease_acquire(frames,&error);
+    CHECK(qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,
+        (qa_bytes){wire.data,wire.size},NULL,a,NULL,&decoded,&error));
+    CHECK(qa_unified_document_retain(decoded,&retained,&error));
+    qa_unified_document_destroy(source);qa_buffer_free(&wire);
+    qa_unified_frame_lease_release(a);qa_unified_frame_pool_destroy(&frames);
+    qa_unified_document_destroy(decoded);
+    const qa_unified_control *read=qa_unified_document_control(retained);
+    CHECK(read && read->kind==control.kind && read->epoch==control.epoch);
+    CHECK(!strcmp(read->value.disconnect,control.value.disconnect));
+    qa_unified_document_destroy(retained);
 }
 
 static void test_files(void)
