@@ -699,7 +699,16 @@ bool frontend_music_policy_update(frontend_music_policy *owner, qa_error *e) {
     if (owner->menu && (!menu || !menu->value)) return fail(e, "Menu music frame lacks its actual canonical preference");
     if (owner->menu && owner->state.menu_track && !strcmp(owner->state.menu_track, menu->value) &&
         frontend_shared_menu_track_valid(menu->value)) return true;
-    bool enabled = shuffle && shuffle->number != 0; music_state next = {0};
+    bool enabled = shuffle && shuffle->number != 0;
+    if (!owner->menu && owner->state.initialized) {
+        qa_audio_music_state player;
+        if (!qa_audio_music_state_read(owner->music, &player)) return fail(e, "Automatic music lost its actual player");
+        if (!owner->state.automatic || !player.enabled || player.paused) return true;
+        const music_source *source = owner->sources + owner->state.source;
+        bool shuffling = family(source) == QA_GAME_Q2 && enabled && source->track_count;
+        if (shuffling == owner->state.shuffle && (!shuffling || owner->state.completed == player.completions)) return true;
+    }
+    music_state next = {0};
     if (!state_copy(&owner->state, &next, e)) return false;
     owner->busy = true; qa_audio_stream *intro = NULL, *loop = NULL; unsigned cd = 0; bool changed = false;
     bool ok = owner->menu ? prepare_menu(owner, &next, menu->value, &intro, &loop, &changed, e) :
