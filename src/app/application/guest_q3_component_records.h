@@ -14,6 +14,7 @@ typedef struct application_q3_component_records_options {
     qa_combat *combat;
     qa_inventory *inventory;
     qa_strings *strings;
+    struct qa_application *application;
     void *context;
     bool (*storage_current)(void *,qa_error *);
     /* The actual selected MATCH player owner implements these operations. */

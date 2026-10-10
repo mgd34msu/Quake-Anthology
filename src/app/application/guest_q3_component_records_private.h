@@ -45,8 +45,10 @@ typedef struct component_observation {
 typedef struct component_frame {
     struct component_frame *outer;
     application_q3_component_records *owner;
-    component_observation *observations,*pending;
+    qa_unified_frame_lease *storage;
+    component_observation *observations,*scratch,*changed,*pending;
     size_t observation_count,pending_count,cursor;
+    size_t observation_capacity,scratch_capacity,changed_capacity,pending_capacity;
     uint32_t entry;
     int32_t words[62];
     size_t word_count;

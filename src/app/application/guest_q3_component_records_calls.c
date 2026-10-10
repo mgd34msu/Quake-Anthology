@@ -1,34 +1,49 @@
 #include "guest_q3_component_records_private.h"
+#include "control_frame.h"
 
 static bool projected(application_q3_component_records *r,qa_actor_id actor)
 { component_actor *row=q3records_actor(r,actor); return row&&row->projected&&!row->retired&&!row->owned&&q3records_live(r,actor); }
 static bool applies(const component_actor *actor,const component_record *record,const component_field *f)
 { return actor->projected&&!actor->retired&&!actor->owned&&(!record->client||actor->client)&&f->kind<=COMPONENT_BODY&&!(actor->admitted&&f->body_output); }
-static bool observations(application_q3_component_records *r,component_observation **out,size_t *count,qa_error *e)
+static bool reserve(component_frame *frame,component_observation **rows,size_t *capacity,size_t count,qa_error *e)
 {
-    component_observation *rows=NULL; size_t used=0;
+    if(count<=*capacity) return true;
+    size_t extent=*capacity?*capacity:16;
+    while(extent<count) {
+        if(extent>SIZE_MAX/2) { extent=count; break; }
+        extent*=2;
+    }
+    component_observation *next=qa_unified_frame_lease_alloc(frame->storage,extent,sizeof(*next),
+        _Alignof(component_observation),e);
+    if(!next) return false;
+    if(*capacity) memcpy(next,*rows,*capacity*sizeof(*next));
+    *rows=next; *capacity=extent; return true;
+}
+static bool observations(application_q3_component_records *r,component_frame *frame,qa_error *e)
+{
+    size_t used=0;
     for(size_t i=0;i<r->actor_count;++i) {
         component_actor actor=r->actors[i];
         for(size_t j=0;j<r->record_count;++j) {
             component_record *record=r->records+j;
             for(size_t k=0;k<record->field_count;++k) {
                 component_field *f=record->fields+k; if(!f->writable||!applies(&actor,record,f)) continue;
-                component_observation *next=realloc(rows,(used+1)*sizeof(*rows));
-                if(!next) { free(rows); return q3records_fail(e,QA_ERROR_MEMORY,"Observing real component canonical fields"); }
-                rows=next; component_observation *row=rows+used++;
+                if(!reserve(frame,&frame->scratch,&frame->scratch_capacity,used+1,e)) return false;
+                component_observation *row=frame->scratch+used++;
                 *row=(component_observation){.actor=actor.actor,.field=f,.address=record->address+actor.slot*record->stride+f->offset};
-                if(!qa_qvm_read(r->options.vm,row->address,row->bytes,f->length,e)) { free(rows); return false; }
+                if(!qa_qvm_read(r->options.vm,row->address,row->bytes,f->length,e)) return false;
             }
         }
     }
-    *out=rows; *count=used; return true;
+    component_observation *previous=frame->observations; size_t capacity=frame->observation_capacity;
+    frame->observations=frame->scratch; frame->observation_capacity=frame->scratch_capacity;
+    frame->scratch=previous; frame->scratch_capacity=capacity; frame->observation_count=used;
+    return true;
 }
 static bool rebase(application_q3_component_records *r,qa_error *e)
 {
     for(component_frame *frame=r->frame;frame;frame=frame->outer) {
-        component_observation *rows=NULL; size_t count=0;
-        if(!observations(r,&rows,&count,e)) return false;
-        free(frame->observations); frame->observations=rows; frame->observation_count=count;
+        if(!observations(r,frame,e)) return false;
     }
     return true;
 }
@@ -69,23 +84,22 @@ bool application_q3_component_records_refresh(application_q3_component_records *
 static bool capture(application_q3_component_records *r,qa_error *e)
 {
     component_frame *frame=r->frame; if(!frame||r->refreshing) return true;
-    component_observation *changed=NULL; size_t count=0;
+    if(!reserve(frame,&frame->changed,&frame->changed_capacity,frame->observation_count,e)) return false;
+    size_t count=0;
     for(size_t i=0;i<frame->observation_count;++i) {
         component_observation row=frame->observations[i]; uint8_t bytes[12];
-        if(!qa_qvm_read(r->options.vm,row.address,bytes,row.field->length,e)) { free(changed); return false; }
+        if(!qa_qvm_read(r->options.vm,row.address,bytes,row.field->length,e)) return false;
         if(!projected(r,row.actor)||!memcmp(row.bytes,bytes,row.field->length)) continue;
-        component_observation *next=realloc(changed,(count+1)*sizeof(*changed)); if(!next) { free(changed); return q3records_fail(e,QA_ERROR_MEMORY,"Retaining reached component writes"); }
-        changed=next; memcpy(row.bytes,bytes,row.field->length); changed[count++]=row;
+        memcpy(row.bytes,bytes,row.field->length); frame->changed[count++]=row;
     }
     /* Rebase every nested scope before any canonical callback can reenter. */
-    if(!rebase(r,e)) { free(changed); return false; }
+    if(!rebase(r,e)) return false;
     if(count) {
-        if(count>SIZE_MAX/sizeof(*changed)-frame->pending_count) { free(changed); return q3records_fail(e,QA_ERROR_MEMORY,"Component write queue overflows"); }
-        component_observation *next=realloc(frame->pending,(frame->pending_count+count)*sizeof(*next));
-        if(!next) { free(changed); return q3records_fail(e,QA_ERROR_MEMORY,"Retaining canonical component commits"); }
-        frame->pending=next; memcpy(next+frame->pending_count,changed,count*sizeof(*changed)); frame->pending_count+=count;
+        if(count>SIZE_MAX/sizeof(*frame->changed)-frame->pending_count) return q3records_fail(e,QA_ERROR_MEMORY,"Component write queue overflows");
+        if(!reserve(frame,&frame->pending,&frame->pending_capacity,frame->pending_count+count,e)) return false;
+        memcpy(frame->pending+frame->pending_count,frame->changed,count*sizeof(*frame->changed)); frame->pending_count+=count;
     }
-    free(changed); return true;
+    return true;
 }
 static bool commit(application_q3_component_records *r,const component_observation *row,qa_error *e)
 {
@@ -143,9 +157,13 @@ bool application_q3_component_records_enter(void *context,uint32_t entry,const i
     if(depth>=64) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component source recursion exceeds 64 calls");
     if(r->options.lifecycle_begin&&!r->options.lifecycle_begin(r->options.context,entry,words,count,e)) return false;
     if(!application_q3_component_records_refresh(r,e)) return false;
-    component_frame *frame=calloc(1,sizeof(*frame)); if(!frame) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining real component source frame");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(r->options.application,e);
+    if(!storage) return false;
+    component_frame *frame=qa_unified_frame_lease_alloc(storage,1,sizeof(*frame),_Alignof(component_frame),e);
+    if(!frame) { qa_unified_frame_lease_release(storage); return false; }
+    frame->storage=storage;
     frame->owner=r; frame->entry=entry; frame->word_count=count; if(count) memcpy(frame->words,words,count*4);
-    if(!observations(r,&frame->observations,&frame->observation_count,e)) { free(frame); return false; }
+    if(!observations(r,frame,e)) { qa_unified_frame_lease_release(storage); return false; }
     frame->outer=r->frame; r->frame=frame; *out=frame; return true;
 }
 bool application_q3_component_records_leave(void *context,void **scope,bool succeeded,int32_t result,qa_error *e)
@@ -160,6 +178,6 @@ bool application_q3_component_records_leave(void *context,void **scope,bool succ
         if(!r->options.lifecycle(r->options.context,frame->entry,frame->words,frame->word_count,result,e)) return false;
     }
     if(!application_q3_component_records_prepare(r,e)) return false;
-    r->frame=frame->outer; free(frame->observations); free(frame->pending); free(frame); *scope=NULL;
+    r->frame=frame->outer; qa_unified_frame_lease_release(frame->storage); *scope=NULL;
     return q3records_finish_retired(r,e);
 }
