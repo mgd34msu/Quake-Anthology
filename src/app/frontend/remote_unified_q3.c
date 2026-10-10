@@ -28,6 +28,7 @@
 #include "qa/unified_frame_visuals.h"
 #include <math.h>
 
+typedef struct unified_q3_ballistic unified_q3_ballistic;
 typedef struct unified_q3_bank {
     struct unified_q3_bank *next;
     struct frontend_unified_q3 *owner;
@@ -50,6 +51,9 @@ typedef struct unified_q3_bank {
     q3n_particles *particles;
     q3n_unified_effect_source source;
     qa_actor_id blood_owners[Q3N_LOCAL_CAPACITY];
+    qa_arena ballistic_storage;
+    qa_pool ballistic_records;
+    unified_q3_ballistic **ballistics_by_slot;
 } unified_q3_bank;
 typedef struct unified_q3_character {
     struct unified_q3_character *next;
@@ -67,7 +71,7 @@ typedef struct unified_q3_character {
     qa_q3_ref_entity submitted_parts[3];
     bool submitted, hidden, weapon_submitted;
 } unified_q3_character;
-typedef struct unified_q3_ballistic {
+struct unified_q3_ballistic {
     struct unified_q3_ballistic *next;
     unified_q3_bank *bank;
     qa_actor_id actor;
@@ -77,7 +81,7 @@ typedef struct unified_q3_ballistic {
     int32_t bolt_weapon;
     bool projectile, flash, bolt, last_fire;
     q3n_selected_weapon_state view_state;
-} unified_q3_ballistic;
+};
 struct frontend_unified_q3 {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
@@ -244,6 +248,20 @@ static bool bank_children(unified_q3_bank *b,qa_q3_product product,qa_error *e)
     b->source=(q3n_unified_effect_source){.context=b,.provider=b->provider,.content=b->files,
         .assets=b->assets,.product=product,.current=effect_current};return true;
 }
+static bool bank_ballistics_prepare(unified_q3_bank *b,qa_error *e)
+{
+    size_t capacity=qa_actors_capacity(frontend_remote_unified_registry(b->owner->replica))+1;
+    size_t stride=sizeof(unified_q3_ballistic)+2*sizeof(size_t);
+    if(capacity>(SIZE_MAX-32)/stride)
+        return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q3 ballistic reservation overflows storage");
+    qa_arena_init(&b->ballistic_storage,0);
+    if(!qa_arena_reserve(&b->ballistic_storage,capacity*stride+32,e) ||
+        !qa_pool_prepare(&b->ballistic_records,&b->ballistic_storage,capacity,sizeof(unified_q3_ballistic),_Alignof(unified_q3_ballistic),e))return false;
+    b->ballistics_by_slot=qa_arena_alloc(&b->ballistic_storage,capacity*sizeof(*b->ballistics_by_slot),_Alignof(unified_q3_ballistic *),e);
+    if(!b->ballistics_by_slot)return false;
+    memset(b->ballistics_by_slot,0,capacity*sizeof(*b->ballistics_by_slot));
+    qa_arena_seal(&b->ballistic_storage);return true;
+}
 static bool bank_read(frontend_unified_q3 *o, const char *content,const char *instance,uint64_t generation,
     unified_q3_bank **out, qa_error *e)
 {
@@ -259,9 +277,10 @@ static bool bank_read(frontend_unified_q3 *o, const char *content,const char *in
     bool okay=b->content && (!instance || b->activation) && b->provider && frontend_unified_media_files(o->media,content,&b->files,&b->product,e) &&
         b->product->family==QA_GAME_Q3 && frontend_unified_media_q3_assets(o->media,content,&b->assets,e);
     qa_q3_product product=okay && b->product->campaign && !strcmp(b->product->campaign,"missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
-    if (okay) okay=bank_children(b,product,e);
+    if (okay) okay=bank_children(b,product,e) && bank_ballistics_prepare(b,e);
     if (!okay) { q3n_weapons_destroy(b->weapons); q3n_particles_destroy(b->particles);
-        q3n_events_destroy(b->effects); q3n_media_destroy(b->media); free(b->content);free(b->activation); free(b); return false; }
+        q3n_events_destroy(b->effects); q3n_media_destroy(b->media); qa_arena_destroy(&b->ballistic_storage);
+        free(b->content);free(b->activation); free(b); return false; }
     unified_q3_bank **tail=&o->banks;while(*tail)tail=&(*tail)->next;*tail=b;*out=b;return true;
 }
 static bool component_submit(void *context,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *e)
@@ -439,7 +458,27 @@ static const q3n_event_settings effect_settings={.blood=true,.gibs=true,.add_mar
 static const q3n_weapon_settings weapon_settings={.rail_trail_time=400,.tracer_length=160,
     .tracer_width=1,.tracer_chance=.4f,.draw_gun=true};
 static unified_q3_ballistic *ballistic_find(frontend_unified_q3 *o,unified_q3_bank *b,qa_actor_id id)
-{ for(unified_q3_ballistic *v=o->ballistics;v;v=v->next)if(v->bank==b && qa_actor_id_equal(v->actor,id))return v;return NULL; }
+{
+    (void)o;
+    if(!b->ballistics_by_slot)return NULL;
+    size_t slot=id.registry?id.slot:b->ballistic_records.capacity-1;
+    unified_q3_ballistic *v=b->ballistics_by_slot[slot];
+    return v && qa_actor_id_equal(v->actor,id)?v:NULL;
+}
+static unified_q3_ballistic *ballistic_acquire(frontend_unified_q3 *o,unified_q3_bank *b,qa_actor_id id,qa_error *e)
+{
+    size_t slot=id.registry?id.slot:b->ballistic_records.capacity-1;
+    unified_q3_ballistic *v=b->ballistics_by_slot[slot];
+    if(!v){
+        size_t lease;v=qa_pool_take(&b->ballistic_records,&lease);
+        if(!v){frontend_unified_fail(e,QA_ERROR_MEMORY,"Loaded Q3 ballistic capacity exhausted");return NULL;}
+        *v=(unified_q3_ballistic){.next=o->ballistics,.bank=b,.actor=id};
+        o->ballistics=v;b->ballistics_by_slot[slot]=v;
+    }else if(!qa_actor_id_equal(v->actor,id)){
+        *v=(unified_q3_ballistic){.next=v->next,.bank=b,.actor=id};
+    }
+    return v;
+}
 typedef struct selected_weapon_call {
     frontend_unified_q3 *owner;
     unified_q3_bank *bank;
@@ -476,12 +515,8 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
         q3n_selected_media_options options={.content=b->files,.assets=b->assets,.product=product};
         okay=q3n_selected_media_create(&options,&b->selected_media,e);
     }
-    unified_q3_ballistic *state=okay?ballistic_find(o,b,id):NULL;
-    if (okay && !state) {
-        state=calloc(1,sizeof(*state));
-        if (!state) okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining selected weapon animation");
-        else {state->actor=id;state->bank=b;state->next=o->ballistics;o->ballistics=state;}
-    }
+    unified_q3_ballistic *state=okay?ballistic_acquire(o,b,id,e):NULL;
+    if(okay)okay=state!=NULL;
     const qa_unified_q3_weapon_view *wire=model->q3_weapon;
     selected_weapon_call call={.owner=o,.bank=b,.frame=scene,.time=wire->time_ms};
     qa_scene_world_options recipient;
@@ -570,9 +605,7 @@ static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_presen
         if(okay)okay=q3n_media_load_unified_effects(b->media,&b->source,e) &&
             q3n_particles_load_unified(b->particles,&f,e) &&
             q3n_media_register_weapon(b->media,(uint32_t)v.weapon,e) && effect_current(&b->source);
-        if(okay && !state){state=calloc(1,sizeof(*state));
-            if(!state)okay=frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q3 full actor ballistics");
-            else{state->actor=v.actor;state->bank=b;state->next=o->ballistics;o->ballistics=state;}}
+        if(okay && !state){state=ballistic_acquire(o,b,v.actor,e);okay=state!=NULL;}
         const q3n_media_view *m=okay?q3n_media_read(b->media):NULL;
         const q3n_weapon_media *w=okay?&m->weapons[v.weapon]:NULL;
         if(okay)switch(v.kind){
@@ -1157,10 +1190,9 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         q3n_weapons_destroy(b->weapons); q3n_particles_destroy(b->particles);
         q3n_selected_media_destroy(b->selected_media);
         q3n_events_destroy(b->effects); q3n_media_destroy(b->media); q3n_clients_destroy(b->clients);
-        o->banks=b->next; free(b->content);free(b->activation); free(b);
+        o->banks=b->next; qa_arena_destroy(&b->ballistic_storage);free(b->content);free(b->activation); free(b);
     }
     qa_arena_destroy(&o->character_storage);
-    while(o->ballistics){unified_q3_ballistic *v=o->ballistics;o->ballistics=v->next;free(v);}
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);
     free(o); *address=NULL; return true;
 }
