@@ -360,12 +360,6 @@ static bool queue_commands(q2_session *session, const qa_q2_usercmd *commands, s
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 command group does not match its active Source seats or queue");
     if (client->command_number == UINT64_MAX)
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 logical command counter is exhausted");
-    if (!client->commands) {
-        if (client->policy.pending_commands > SIZE_MAX / sizeof(*client->commands)) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 command queue extent overflows");
-        client->commands = calloc(client->policy.pending_commands, sizeof(*client->commands));
-        if (!client->commands) return q2_fail(error, QA_ERROR_MEMORY, "Allocating Q2 Source command queue");
-        client->command_capacity = client->policy.pending_commands;
-    }
     q2_command_group *group = client->commands + client->command_count++;
     memcpy(group->commands, commands, seats * sizeof(*commands));
     group->number = ++client->command_number;

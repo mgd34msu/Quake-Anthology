@@ -224,8 +224,16 @@ const qa_network_peer_ops qa_network_q2_peer_ops = {
 bool q2_session_storage_prepare(q2_session *session,qa_error *error)
 {
     if (!session->server) {
-        session->state.client.record_pool=qa_unified_frame_pool_create(0,2,error);
-        if (!session->state.client.record_pool) return false;
+        q2_client *client=&session->state.client;
+        client->record_pool=qa_unified_frame_pool_create(0,2,error);
+        if (!client->record_pool) return false;
+        if (!client->commands) {
+            if (client->policy.pending_commands>SIZE_MAX/sizeof(*client->commands))
+                return q2_fail(error,QA_ERROR_ARGUMENT,"Q2 command queue extent overflows");
+            client->commands=calloc(client->policy.pending_commands,sizeof(*client->commands));
+            if (!client->commands) return q2_fail(error,QA_ERROR_MEMORY,"Allocating Q2 Source command queue");
+            client->command_capacity=client->policy.pending_commands;
+        }
     }
     if (!session->channel) return true;
     qa_q2_channel_status status;qa_q2_channel_get_status(session->channel,&status);
