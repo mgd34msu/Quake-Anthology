@@ -175,7 +175,16 @@ bool application_native_q2_stages_prepare(struct application_native_q2 *n,qa_err
         !qa_native_observe_entry(instance(n),address,&allocate,intercepted,o,&o->allocate,e))) return false;
     if(!o->release&&(!application_native_q2_callbacks_entry(n->callbacks,qa_json_get(d,definition,"release"),&address,e)||
         !qa_native_observe_entry(instance(n),address,&release,intercepted,o,&o->release,e))) return false;
-    return application_native_q2_source_actors_refresh(n,e);
+    if(!application_native_q2_source_actors_refresh(n,e)) return false;
+    qa_native_entity_table table;
+    if(!qa_native_entity_table_get(instance(n),&table,e)) return false;
+    if(o->pending_capacity<table.capacity) {
+        uint32_t *pending=calloc(table.capacity,sizeof(*pending));
+        if(!pending) return application_fail(e,QA_ERROR_MEMORY,"Reserving native actor release queue");
+        if(o->pending_count) memcpy(pending,o->pending,o->pending_count*sizeof(*pending));
+        free(o->pending);o->pending=pending;o->pending_capacity=table.capacity;
+    }
+    return true;
 }
 static bool clock_write(struct application_native_q2_stages *o,qa_error *e)
 {
@@ -342,10 +351,8 @@ void application_native_q2_stages_released(struct application_native_q2 *n,qa_ac
         if(binding.kind!=QA_NATIVE_SLOT_OWNED||!qa_actor_id_equal(binding.actor,actor)) continue;
         for(size_t i=0;i<o->pending_count;++i) if(o->pending[i]==slot) return;
         if(o->pending_count==o->pending_capacity) {
-            size_t capacity=o->pending_capacity?o->pending_capacity*2:16;
-            uint32_t *pending=realloc(o->pending,capacity*sizeof(*pending));
-            if(!pending) {application_fail(&error,QA_ERROR_MEMORY,"Retaining released native source actor");application_fault(n->provider->application,&error);return;}
-            o->pending=pending;o->pending_capacity=capacity;
+            application_fail(&error,QA_ERROR_MEMORY,"Native actor release queue capacity exhausted");
+            application_fault(n->provider->application,&error);return;
         }
         o->pending[o->pending_count++]=slot;return;
     }

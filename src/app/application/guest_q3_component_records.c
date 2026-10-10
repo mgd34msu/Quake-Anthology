@@ -79,6 +79,9 @@ bool application_q3_component_records_create(const application_q3_component_reco
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component projection requires actual retained source and shared owners");
     application_q3_component_records *r=calloc(1,sizeof(*r)); if(!r) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining component actor projection");
     r->options=*o; r->entity_record=r->player_record=SIZE_MAX; *out=r;
+    r->actor_capacity=1022;
+    r->actors=calloc(r->actor_capacity,sizeof(*r->actors));
+    if(!r->actors) return q3records_fail(e,QA_ERROR_MEMORY,"Reserving component actor projections");
     r->record_count=application_q3_mod_record_count(o->profile); r->records=r->record_count?calloc(r->record_count,sizeof(*r->records)):NULL;
     if(r->record_count&&!r->records) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component record roster");
     for(size_t i=0;i<r->record_count;++i) {
@@ -144,12 +147,7 @@ static bool reset(application_q3_component_records *r,uint32_t slot,bool client,
 }
 bool q3records_reserve_actor(application_q3_component_records *r,qa_error *e)
 {
-    if(r->actor_count<r->actor_capacity) return true;
-    if(r->actor_count==SIZE_MAX/sizeof(*r->actors)) return q3records_fail(e,QA_ERROR_MEMORY,"Component actor row extent overflows");
-    size_t capacity=r->actor_count+1;
-    component_actor *rows=realloc(r->actors,capacity*sizeof(*rows));
-    if(!rows) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component actor row");
-    r->actors=rows; r->actor_capacity=capacity; return true;
+    return r->actor_count<r->actor_capacity||q3records_fail(e,QA_ERROR_MEMORY,"Component actor projection capacity exhausted");
 }
 bool application_q3_component_records_bind(application_q3_component_records *r,qa_actor_id actor,uint32_t slot,bool owned,bool client,qa_error *e)
 {

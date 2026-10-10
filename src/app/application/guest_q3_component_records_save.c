@@ -26,8 +26,7 @@ static bool fields(application_q3_component_records *r,qa_source_save_io *io)
     size_t actors=r->actor_count;
     if(!qa_source_save_count(io,&actors,1022)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
-        r->actors=actors?calloc(actors,sizeof(*r->actors)):NULL; r->actor_count=r->actor_capacity=actors;
-        if(actors&&!r->actors) return q3records_fail(io->error,QA_ERROR_MEMORY,"Retaining actual component actor continuation");
+        memset(r->actors,0,r->actor_capacity*sizeof(*r->actors)); r->actor_count=actors;
     }
     for(size_t i=0;i<actors;++i) {
         component_actor *row=r->actors+i;
@@ -58,7 +57,7 @@ bool application_q3_component_records_checkpoint(application_q3_component_record
 }
 bool application_q3_component_records_restore(application_q3_component_records *r,qa_bytes bytes,qa_error *e)
 {
-    if(!r||r->defaults_ready||r->actors||!application_q3_component_records_idle(r))
+    if(!r||r->defaults_ready||r->actor_count||!application_q3_component_records_idle(r))
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Component record import requires its unentered actual constructor");
     qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,r->options.session,bytes,e)&&fields(r,&io)&&qa_source_save_finish(&io,NULL);
