@@ -30,6 +30,7 @@ typedef struct native_q3_wire_snapshot {
     qa_q3_entity *entities;
     size_t capacity;
     int32_t ping;
+    bool reserved;
 } native_q3_wire_snapshot;
 
 typedef struct native_q3_wire_client {
@@ -96,6 +97,7 @@ struct application_native_q3_wire {
     uint64_t client_revision[QA_Q3_SOURCE_CLIENTS];
     struct application_native_q3_bot_cycle *bot_cycle;
     application_native_q3_bot_cycle bot_cycle_storage;
+    qa_arena *snapshot_storage;
     uint8_t snapshot_bit;
     bool restore_pending, round_pending, replacement_pending, closing;
 };
@@ -227,8 +229,10 @@ static void client_world_clear(native_q3_wire_client *client)
     client->initial_server_command = 0;
     memset(client->config_commands, 0, sizeof(client->config_commands));
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i) {
-        free(client->snapshots[i].entities);
-        client->snapshots[i] = (native_q3_wire_snapshot){0};
+        native_q3_wire_snapshot *snapshot=client->snapshots+i;
+        if (!snapshot->reserved) free(snapshot->entities);
+        *snapshot=(native_q3_wire_snapshot){.entities=snapshot->reserved?snapshot->entities:NULL,
+            .capacity=snapshot->reserved?256:0,.reserved=snapshot->reserved};
     }
     client->has_snapshot = false;
     client->snapshot_sequence = 0;
@@ -247,10 +251,34 @@ static void clients_clear(struct application_native_q3_wire *wire)
         free(wire->clients[i].gamestate);
         free(wire->clients[i].big_configstring);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
-            free(wire->clients[i].snapshots[j].entities);
+            if (!wire->clients[i].snapshots[j].reserved) free(wire->clients[i].snapshots[j].entities);
         wire->clients[i] = (native_q3_wire_client){.seat = UINT32_MAX, .sensitivity = 1};
         qa_q3_reliable_init(&wire->clients[i].reliable);
     }
+    qa_arena_destroy(wire->snapshot_storage);free(wire->snapshot_storage);wire->snapshot_storage=NULL;
+}
+
+static bool snapshots_prepare(struct application_native_q3_wire *wire,qa_error *error)
+{
+    qa_arena *storage=calloc(1,sizeof(*storage));
+    if (!storage) return application_fail(error,QA_ERROR_MEMORY,"Creating Q3 snapshot storage");
+    size_t count=(size_t)wire->max_clients*QA_Q3_PACKET_BACKUP*256;
+    size_t bytes=count*sizeof(qa_q3_entity);
+    qa_q3_entity *entities=NULL;
+    if (qa_arena_reserve(storage,bytes+_Alignof(qa_q3_entity),error))
+        entities=qa_arena_alloc(storage,bytes,_Alignof(qa_q3_entity),error);
+    if (!entities) { qa_arena_destroy(storage);free(storage);return false; }
+    for (size_t i=0;i<wire->max_clients;++i)
+        for (size_t j=0;j<QA_Q3_PACKET_BACKUP;++j) {
+            native_q3_wire_snapshot *snapshot=wire->clients[i].snapshots+j;
+            qa_q3_entity *destination=entities+(i*QA_Q3_PACKET_BACKUP+j)*256;
+            if (snapshot->value.entity_count)
+                memcpy(destination,snapshot->entities,snapshot->value.entity_count*sizeof(*destination));
+            if (!snapshot->reserved) free(snapshot->entities);
+            snapshot->entities=destination;snapshot->value.entities=destination;
+            snapshot->capacity=256;snapshot->reserved=true;
+        }
+    qa_arena_seal(storage);wire->snapshot_storage=storage;return true;
 }
 
 bool qa_application_native_q3_wire_preconstruction_current(const qa_application *app,
@@ -290,7 +318,8 @@ bool application_native_q3_wire_create(application_provider *provider, qa_world 
     for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) wire->lease_seats[i] = UINT32_MAX;
     bool ok = application_native_q3_wire_bind_sources(provider, error) &&
         qa_q3_source_max_clients(provider->state.q3, &wire->max_clients, error) &&
-        wire->max_clients >= 1 && wire->max_clients <= QA_Q3_SOURCE_CLIENTS;
+        wire->max_clients >= 1 && wire->max_clients <= QA_Q3_SOURCE_CLIENTS &&
+        snapshots_prepare(wire,error);
     qa_q3_host_options services = {.role = QA_QVM_GAME, .session = provider->application->session,
         .world = source_world, .owner = provider->owner};
     if (ok && provider->application->q3_services) {
@@ -305,6 +334,7 @@ bool application_native_q3_wire_create(application_provider *provider, qa_world 
     if (!ok) {
         provider->native_q3_wire = NULL;
         if (services.release_frontend) services.release_frontend(services.frontend_lifetime);
+        clients_clear(wire);
         free(wire);
         if (!error || !error->code)
             application_fail(error, QA_ERROR_FORMAT, "Native Q3 wire has invalid physical client capacity");
@@ -846,16 +876,6 @@ bool application_native_q3_wire_snapshot(application_provider *provider, uint32_
     }
     native_q3_wire_snapshot *snapshot = &client->snapshots[
         (uint32_t)value->message_number & (QA_Q3_PACKET_BACKUP - 1)];
-    if (snapshot->capacity < value->entity_count) {
-        qa_q3_entity *entities = realloc(snapshot->entities,
-                                         value->entity_count * sizeof(*entities));
-        if (!entities)
-            return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q3 snapshot entities");
-        memset(entities + snapshot->capacity, 0,
-               (value->entity_count - snapshot->capacity) * sizeof(*entities));
-        snapshot->entities = entities;
-        snapshot->capacity = value->entity_count;
-    }
     uint32_t cursor = 0;
     if (client->has_snapshot) {
         const qa_q3_snapshot *latest = &client->snapshots[
@@ -2313,8 +2333,11 @@ bool application_native_q3_wire_restore(application_provider *provider, qa_bytes
     bool ok = qa_source_save_reader(&io, provider->application->session, bytes, error) &&
         wire_fields(&io, candidate, provider->owner, true) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
+    if (ok) ok=snapshots_prepare(candidate,error);
     if (ok) {
+        clients_clear(wire);
         memcpy(wire->clients, candidate->clients, sizeof(wire->clients));
+        wire->snapshot_storage=candidate->snapshot_storage;candidate->snapshot_storage=NULL;
         wire->max_clients = candidate->max_clients;
         wire->snapshot_bit = candidate->snapshot_bit;
         memset(candidate->clients, 0, sizeof(candidate->clients));
@@ -2428,9 +2451,11 @@ static bool carry_apply(application_provider *provider,
         }
         client_world_clear(client);
     }
+    if (ok) { candidate->max_clients=maximum;ok=snapshots_prepare(candidate,error); }
     if (ok) {
         clients_clear(wire);
         memcpy(wire->clients, candidate->clients, sizeof(wire->clients));
+        wire->snapshot_storage=candidate->snapshot_storage;candidate->snapshot_storage=NULL;
         memset(candidate->clients, 0, sizeof(candidate->clients));
         wire->max_clients = maximum;
         wire->snapshot_bit = candidate->snapshot_bit ^ 4;
