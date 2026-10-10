@@ -80,6 +80,7 @@ typedef struct execution {
 } execution;
 struct qa_qvm_word_projection {
     qa_qvm_word_projection *previous;
+    qa_unified_frame_lease *storage;
     qa_qvm *vm;
     qa_qvm_source_word *saved;
     size_t count;
@@ -1425,8 +1426,10 @@ bool qa_qvm_execution_source_scratch(const qa_qvm_call *call, const qa_qvm_image
         return error_at(error, 0, "QVM source scratch differs from its admitted image or source scope");
     if (!healthy(vm, error)) return false;
     if (!scratch_span(vm, length, 0, &offset, &end, error)) return false;
-    uint8_t *saved = malloc(length);
-    if (!saved) return qa_qvm_error(error, QA_ERROR_MEMORY, offset, "Retaining scoped QVM source scratch");
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(vm->transient_storage,error);
+    if(!storage)return false;
+    uint8_t *saved=qa_unified_frame_lease_alloc(storage,length,1,_Alignof(uint8_t),error);
+    if (!saved) {qa_unified_frame_lease_release(storage);return false;}
     memcpy(saved, vm->data + offset, length);
     execution_frame *frame = exec->active;
     uint32_t previous_floor = frame->floor;
@@ -1439,7 +1442,7 @@ bool qa_qvm_execution_source_scratch(const qa_qvm_call *call, const qa_qvm_image
     bool restored = qa_qvm_memory_restore_scratch(vm, offset, (qa_bytes){saved, length}, &cleanup);
     frame->floor = previous_floor;
     --exec->scratch_depth; exec->scratch_floor = previous_scratch;
-    free(saved);
+    qa_unified_frame_lease_release(storage);
     if (exec->failed) { *error = exec->failure; return false; }
     if (!ok) { *error = first; return false; }
     if (!restored) { *error = cleanup; return false; }
@@ -1509,35 +1512,40 @@ bool qa_qvm_execution_words_end(qa_qvm_word_projection **receipt, bool restore, 
         return error_at(error, 0, "QVM write delivery retained a nested projected-word owner");
     }
     exec->projections = lease->previous;
-    free(lease->saved); free(lease); *receipt = NULL;
+    qa_unified_frame_lease_release(lease->storage); *receipt = NULL;
     return ok;
 }
 
 static bool words_begin(qa_qvm *vm, const qa_qvm_image *image,
-    const qa_qvm_source_word *words, size_t count, bool project, bool observed,
+    const qa_qvm_source_word *words, const uint32_t *addresses, size_t count, bool project, bool observed,
     qa_qvm_word_projection **out, qa_error *error)
 {
     qa_error local = {0};
     if (!error) error = &local;
     if (!qa_qvm_execution_reentry(vm, error)) return false;
     execution *exec = state(vm);
-    if (!image || image != vm->image || !out || *out || !words || !count || exec->counter ||
+    if (!image || image != vm->image || !out || *out || (!words&&!addresses) || !count || exec->counter ||
         count > SIZE_MAX / sizeof(*words))
         return error_at(error, 0, "QVM dynamic words require their exact source image and new owner");
     if (exec->active && !healthy(vm, error)) return false;
-    qa_qvm_word_projection *lease = calloc(1, sizeof(*lease));
-    if (!lease) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining actual QVM projected-word owner");
-    lease->saved = malloc(count * sizeof(*lease->saved));
-    qa_qvm_source_word *copied = malloc(count * sizeof(*copied));
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(vm->transient_storage,error);
+    if(!storage)return false;
+    qa_qvm_word_projection *lease=qa_unified_frame_lease_alloc(storage,1,sizeof(*lease),_Alignof(qa_qvm_word_projection),error);
+    if (!lease) {qa_unified_frame_lease_release(storage);return false;}
+    lease->storage=storage;
+    lease->saved=qa_unified_frame_lease_alloc(storage,count,sizeof(*lease->saved),_Alignof(qa_qvm_source_word),error);
+    qa_qvm_source_word *copied=qa_unified_frame_lease_alloc(storage,count,sizeof(*copied),_Alignof(qa_qvm_source_word),error);
     if (!lease->saved || !copied) {
-        free(copied); free(lease->saved); free(lease);
-        return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining QVM projection bytes before effects");
+        qa_unified_frame_lease_release(storage);
+        return false;
     }
-    memcpy(copied, words, count * sizeof(*copied));
+    if(words)memcpy(copied,words,count*sizeof(*copied));
+    else for(size_t i=0;i<count;++i)copied[i].offset=addresses[i];
     for (size_t i = 0; i < count; ++i) {
         if ((copied[i].offset & 3) || !qa_qvm_raw_range(vm, copied[i].offset, 4, error)) {
-            free(copied); free(lease->saved); free(lease);
-            return error_at(error, words[i].offset, "QVM projected word leaves actual source allocation");
+            uint32_t offset=copied[i].offset;
+            qa_unified_frame_lease_release(storage);
+            return error_at(error, offset, "QVM projected word leaves actual source allocation");
         }
         lease->saved[i] = (qa_qvm_source_word){copied[i].offset, qa_load_i32le(vm->data + copied[i].offset)};
     }
@@ -1551,7 +1559,6 @@ static bool words_begin(qa_qvm *vm, const qa_qvm_image *image,
             ok = qa_qvm_write(vm, copied[i].offset, (qa_bytes){bytes, sizeof(bytes)}, error);
         }
     }
-    free(copied);
     return ok;
 }
 
@@ -1569,20 +1576,16 @@ bool qa_qvm_execution_source_returned(const qa_qvm *vm)
 
 bool qa_qvm_execution_words_begin(qa_qvm *vm, const qa_qvm_image *image,
     const qa_qvm_source_word *words, size_t count, qa_qvm_word_projection **out, qa_error *error)
-{ return words_begin(vm, image, words, count, true, false, out, error); }
+{ return words_begin(vm, image, words, NULL, count, true, false, out, error); }
 bool qa_qvm_execution_words_begin_observed(qa_qvm *vm, const qa_qvm_image *image,
     const qa_qvm_source_word *words, size_t count, qa_qvm_word_projection **out, qa_error *error)
-{ return words_begin(vm, image, words, count, true, true, out, error); }
+{ return words_begin(vm, image, words, NULL, count, true, true, out, error); }
 static bool words_capture(qa_qvm *vm, const qa_qvm_image *image,
     const uint32_t *addresses, size_t count, bool observed, qa_qvm_word_projection **out, qa_error *error)
 {
     if (!addresses || !count || count > SIZE_MAX / sizeof(qa_qvm_source_word))
         return error_at(error, 0, "QVM captured words require their actual source addresses");
-    qa_qvm_source_word *words = calloc(count, sizeof(*words));
-    if (!words) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining actual source result addresses");
-    for (size_t i = 0; i < count; ++i) words[i].offset = addresses[i];
-    bool ok = words_begin(vm, image, words, count, false, observed, out, error);
-    free(words); return ok;
+    return words_begin(vm,image,NULL,addresses,count,false,observed,out,error);
 }
 bool qa_qvm_execution_words_capture(qa_qvm *vm, const qa_qvm_image *image,
     const uint32_t *addresses, size_t count, qa_qvm_word_projection **out, qa_error *error)
@@ -1616,8 +1619,10 @@ bool qa_qvm_execution_scratch_run_reserved(qa_qvm *vm, const qa_qvm_image *image
     if (!image || image != vm->image || !run || exec->counter ||
         !scratch_span(vm, length, reservation, &offset, &end, error)) return false;
     if (exec->active && !healthy(vm, error)) return false;
-    uint8_t *saved = malloc(length);
-    if (!saved) return qa_qvm_error(error, QA_ERROR_MEMORY, offset, "Retaining actual host-initiated source scratch");
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(vm->transient_storage,error);
+    if(!storage)return false;
+    uint8_t *saved=qa_unified_frame_lease_alloc(storage,length,1,_Alignof(uint8_t),error);
+    if (!saved) {qa_unified_frame_lease_release(storage);return false;}
     memcpy(saved, vm->data + offset, length);
     uint32_t previous_floor = exec->scratch_floor;
     exec->scratch_floor = end;
@@ -1625,7 +1630,7 @@ bool qa_qvm_execution_scratch_run_reserved(qa_qvm *vm, const qa_qvm_image *image
     bool ok = run(context, vm, offset, error);
     qa_error first = *error, cleanup = {0};
     bool restored = qa_qvm_memory_restore_scratch(vm, offset, (qa_bytes){saved, length}, &cleanup);
-    --exec->scratch_depth; exec->scratch_floor = previous_floor; free(saved);
+    --exec->scratch_depth; exec->scratch_floor = previous_floor; qa_unified_frame_lease_release(storage);
     if (!ok) { *error = first; return false; }
     if (!restored) { *error = cleanup; return false; }
     return true;
@@ -1666,13 +1671,15 @@ bool qa_qvm_evaluate_region(qa_qvm *vm, uint32_t owner, const int32_t *arguments
     if (evaluation->input_count > SIZE_MAX / (sizeof(uint32_t) + sizeof(int32_t)))
         return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "QVM region inputs are too large");
     size_t bytes = evaluation->input_count * sizeof(uint32_t);
-    uint32_t *storage = bytes == 0 ? NULL : malloc(bytes * 2);
-    if (bytes != 0 && storage == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM region live-ins");
+    qa_unified_frame_lease *lease=bytes?qa_unified_frame_lease_acquire(vm->transient_storage,error):NULL;
+    if(bytes&&!lease)return false;
+    uint32_t *storage=bytes?qa_unified_frame_lease_alloc(lease,bytes,2,_Alignof(uint32_t),error):NULL;
+    if (bytes && !storage) {qa_unified_frame_lease_release(lease);return false;}
     int32_t *values = bytes == 0 ? NULL : (int32_t *)(storage + evaluation->input_count);
     if (bytes != 0) { memcpy(storage, evaluation->inputs, bytes); memcpy(values, inputs, bytes); }
     qa_qvm_region_evaluation copied = *evaluation; copied.inputs = storage;
     bool ok = invoke(vm, owner, arguments, argument_count, &copied, values, floor, out, NULL, error);
-    free(storage); return ok;
+    qa_unified_frame_lease_release(lease); return ok;
 }
 bool qa_qvm_evaluate_call_region(const qa_qvm_call *call, const qa_qvm_region_evaluation *evaluation,
                                  const int32_t *inputs, int32_t *out, qa_error *error)
@@ -1691,15 +1698,17 @@ bool qa_qvm_evaluate_call_region(const qa_qvm_call *call, const qa_qvm_region_ev
         return error_at(error, 0, "QVM call region has invalid live-ins");
     if (!healthy(vm, error)) { if (!exec->failed && exec->cancelled != NULL) { *out = 0; return true; } return false; }
     size_t bytes = evaluation->input_count * sizeof(uint32_t);
-    uint32_t *storage = bytes == 0 ? NULL : malloc(bytes * 2);
-    if (bytes != 0 && storage == NULL) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM call region inputs");
+    qa_unified_frame_lease *lease=bytes?qa_unified_frame_lease_acquire(vm->transient_storage,error):NULL;
+    if(bytes&&!lease)return false;
+    uint32_t *storage=bytes?qa_unified_frame_lease_alloc(lease,bytes,2,_Alignof(uint32_t),error):NULL;
+    if (bytes && !storage) {qa_unified_frame_lease_release(lease);return false;}
     int32_t *values = bytes == 0 ? NULL : (int32_t *)(storage + evaluation->input_count);
     if (bytes != 0) { memcpy(storage, evaluation->inputs, bytes); memcpy(values, inputs, bytes); }
     qa_qvm_region_evaluation copied = *evaluation; copied.inputs = storage;
     source->proceeded = true;
     int32_t result;
     bool ok = execute(vm, source->instruction, source->stack, source->operands, source, &copied, values, &result, NULL, error);
-    free(storage);
+    qa_unified_frame_lease_release(lease);
     if (!ok && exec->cancelled != NULL && !exec->failed) { *out = 0; return true; }
     if (!ok) { latch(vm, error); return false; }
     *out = result; return true;
@@ -1723,11 +1732,13 @@ bool qa_qvm_evaluate_counter(qa_qvm *vm, qa_qvm_source_word *words, size_t word_
         for (size_t j = 0; j < i; ++j) if (words[j].offset == words[i].offset)
             return error_at(error, words[i].offset, "QVM counter words overlap");
     }
-    qa_qvm_source_word *values = malloc(word_count * sizeof(*values));
-    if (!values) return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining isolated QVM counter values");
+    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(vm->transient_storage,error);
+    if(!storage)return false;
+    qa_qvm_source_word *values=qa_unified_frame_lease_alloc(storage,word_count,sizeof(*values),_Alignof(qa_qvm_source_word),error);
+    if (!values) {qa_unified_frame_lease_release(storage);return false;}
     memcpy(values, words, word_count * sizeof(*values));
-    uint32_t *ends = malloc(function_count * 2 * sizeof(*ends));
-    if (ends == NULL) { free(values); return qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Allocating QVM counter function bounds"); }
+    uint32_t *ends=qa_unified_frame_lease_alloc(storage,function_count,2*sizeof(*ends),_Alignof(uint32_t),error);
+    if (!ends) {qa_unified_frame_lease_release(storage);return false;}
     uint32_t *admitted_functions = ends + function_count;
     memcpy(admitted_functions, functions, function_count * sizeof(*functions));
     functions = admitted_functions;
@@ -1744,9 +1755,9 @@ bool qa_qvm_evaluate_counter(qa_qvm *vm, qa_qvm_source_word *words, size_t word_
     counter_evaluation counter = {floor, top, values, word_count, functions, ends, function_count, 100000};
     if (ok) {
         size_t stack_size = top > floor ? (size_t)(top - floor) : 0;
-        uint8_t *saved_stack = stack_size ? malloc(stack_size) : NULL;
+        uint8_t *saved_stack=stack_size?qa_unified_frame_lease_alloc(storage,stack_size,1,_Alignof(uint8_t),error):NULL;
         if (stack_size && !saved_stack) {
-            ok = qa_qvm_error(error, QA_ERROR_MEMORY, 0, "Retaining isolated QVM counter stack bytes");
+            ok = false;
         } else {
             if (stack_size) memcpy(saved_stack, vm->data + floor, stack_size);
             exec->counter = &counter;
@@ -1754,11 +1765,9 @@ bool qa_qvm_evaluate_counter(qa_qvm *vm, qa_qvm_source_word *words, size_t word_
             ok = invoke(vm, instruction, arguments, argument_count, NULL, NULL, floor, &result, NULL, error);
             exec->counter = NULL;
             if (stack_size) memcpy(vm->data + floor, saved_stack, stack_size);
-            free(saved_stack);
         }
     }
-    free(ends);
     if (ok) memcpy(words, values, word_count * sizeof(*words));
-    free(values);
+    qa_unified_frame_lease_release(storage);
     return ok;
 }
