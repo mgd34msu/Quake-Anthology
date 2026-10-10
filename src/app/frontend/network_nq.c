@@ -654,7 +654,7 @@ bool frontend_nq_tick(frontend_nq_host *host, uint64_t elapsed, bool retiring_ma
         if (!client || client->phase != QA_NET_ACTIVE) continue;
         qa_actor_id actor;
         if (peer->tick_sequence == UINT64_MAX) { ok = frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source tick sequence exhausted"); break; }
-        qa_application_control_view selected;
+        qa_player_state selected;
         if (!peer_actor(peer, &actor, error)) { ok = false; break; }
         if (!qa_application_control_read(host->frontend->application, actor, &selected)) {
             ok = frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake source peer has no actual selected control state"); break;
@@ -1036,7 +1036,7 @@ static bool nq_demo_current(const void *context)
 }
 static bool nq_demo_angles(nq_demo_source *record,qa_error *error)
 {
-    qa_application_control_view view;
+    qa_player_state view;
     if(!qa_application_control_read(record->source->frontend->application,record->actor,&view))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Local NQ recording lost its actual player view angles");
     record->angles[0]=view.view_angles.x;record->angles[1]=view.view_angles.y;record->angles[2]=view.view_angles.z;return true;

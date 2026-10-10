@@ -187,7 +187,7 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
     *application_ns=remote?*out:supplied; return true;
 }
 static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_id actor,
-    const qa_application_control_view *state,bool remote,qa_error *error)
+    const qa_player_state *state,bool remote,qa_error *error)
 {
     qa_ruleset_id kind = state->profile.kind;
     qa_ruleset_id profile = (kind);
@@ -220,7 +220,7 @@ static bool control_bindings(qa_frontend *frontend,qa_error *error)
         qa_actor_id actor; uint32_t launch_seat;
         if (!frontend_seat_launch_id_read(frontend,ordinal,&launch_seat) ||
             !qa_application_player_actor(frontend->application,launch_seat,&actor)) continue;
-        qa_application_control_view state;
+        qa_player_state state;
         if (!qa_application_control_read(frontend->application,actor,&state))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"local player lacks its application control continuation");
         if (!control_binding(frontend,seat,actor,&state,false,error)) return false;
@@ -282,7 +282,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             qa_actor_id selected_actor; uint32_t selected_seat;
             if (frontend_seat_launch_id_read(frontend,i,&selected_seat) &&
                 qa_application_player_actor(frontend->application,selected_seat,&selected_actor)) {
-                qa_application_control_view selected_control;
+                qa_player_state selected_control;
                 if (qa_application_control_read(frontend->application,selected_actor,&selected_control)) {
                     if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
                 }
@@ -330,7 +330,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             qa_actor_id selected_actor; uint32_t selected_seat;
             if (frontend_seat_launch_id_read(frontend,i,&selected_seat) &&
                 qa_application_player_actor(frontend->application,selected_seat,&selected_actor)) {
-                qa_application_control_view selected_control;
+                qa_player_state selected_control;
                 if (qa_application_control_read(frontend->application,selected_actor,&selected_control)) {
                     if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
                 }
@@ -351,7 +351,7 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
         bool configured=false;
         if (!frontend_network_client_configuration_read(frontend,launch_seat,&configuration,&configured,error)) return false;
         if (!configured) continue;
-        qa_application_control_view state;
+        qa_player_state state;
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
         if (!control_binding(frontend,seat,actor,&state,true,error)) return false;

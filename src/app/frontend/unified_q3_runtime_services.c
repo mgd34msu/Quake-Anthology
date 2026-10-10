@@ -20,7 +20,7 @@ struct frontend_unified_q3_runtime_services {
     qa_q3_presentation_assets *assets;
     qa_vfs *files;
     qa_font_library *fonts;
-    const char *content;
+    const qa_product *content_product;
     qa_actor_owner provider;
     qa_q3_product product;
     q3n_media *media;
@@ -43,7 +43,7 @@ static bool tuple_current(const frontend_unified_q3_runtime_services *o,bool che
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->options.replica);
     q3n_compiled_source_view source;qa_q3_presentation_assets *assets=NULL;
     return d && d->application==o->options.frontend->application && d->physical_seat==o->physical_seat &&
-        frontend_unified_media_q3_assets_read(o->options.media,o->content,&assets) && assets==o->assets &&
+        frontend_unified_media_q3_assets_read(o->options.media,o->content_product,&assets) && assets==o->assets &&
         (checkpoint?q3n_compiled_source_checkpoint_read(o->source,&source,NULL):
         q3n_compiled_source_read(o->source,&source,NULL)) && source.basis.receiver==o->options.receiver &&
         source.basis.application==d->application && source.basis.assets==o->assets && source.basis.content==o->files &&
@@ -426,7 +426,7 @@ bool frontend_unified_q3_runtime_services_create(const frontend_unified_q3_runti
         frontend_unified_bank_view bank;
         if(!frontend_unified_media_bank_read(options->media,i,&bank))break;
         if(!strcmp(bank.content,options->source.content) && bank.q3_assets==o->assets && bank.files==o->files){
-            o->fonts=bank.fonts;o->content=bank.content;bank_found=true;break;}
+            o->fonts=bank.fonts;o->content_product=bank.product;bank_found=true;break;}
     }
     /* Only the admitted constructor observes the received row. Every later
      * operation reads the real retained CLIENT and bank instead. */

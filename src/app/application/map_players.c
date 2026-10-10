@@ -1552,20 +1552,20 @@ static bool q2_movement(void *context, qa_actor_id actor,
         !application_control_ensure(provider->application, actor, body.angles, &control, error))
         return false;
     qa_movement_state *state = application_control_frames_state_current(provider->application, actor);
-    if (!state) state = &control->state;
-    *out = (qa_q2_player_movement){.state = state, .ground = &control->ground,
-        .view_offset = control->view_offset, .view_height = control->view_height,
+    if (!state) state = &control->player.state;
+    *out = (qa_q2_player_movement){.state = state, .ground = &control->player.ground,
+        .view_offset = control->player.view_offset, .view_height = control->player.view_height,
         .source_movement = application_provider_for(provider->application, actor, QA_ROLE_MOVEMENT, "") == provider,
-        .view_angles = control->view_angles,
-        .command_angles = control->command_angles, .standing_bounds = control->standing_bounds,
-        .buttons = control->buttons, .water_type = (uint32_t)control->water_type,
-        .water_level = control->water_level, .grounded = control->ground.hit != QA_TRACE_HIT_NONE,
+        .view_angles = control->player.view_angles,
+        .command_angles = control->player.command_angles, .standing_bounds = control->player.standing_bounds,
+        .buttons = control->player.buttons, .water_type = (uint32_t)control->player.water_type,
+        .water_level = control->player.water_level, .grounded = control->player.ground.hit != QA_TRACE_HIT_NONE,
         .impact_delta = control->result.impact_delta,
-        .noclip = control->player_mode_set && control->player_mode == QA_MOVEMENT_MODE_NOCLIP,
+        .noclip = control->player.player_mode_set && control->player.player_mode == QA_MOVEMENT_MODE_NOCLIP,
         .on_ladder = state->kind == QA_RULESET_Q2_RERELEASE &&
                      (state->data.q2r.flags & 128u) != 0,
         .grounded_on_world = qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(provider->application->session), body.ground), provider->application->physics->world_actor),
-        .ducked = body.bounds.maxs.z < control->standing_bounds.maxs.z,
+        .ducked = body.bounds.maxs.z < control->player.standing_bounds.maxs.z,
         .animate_q2 = application_provider_for(provider->application, actor,
                                                 QA_ROLE_CHARACTER, "") == provider};
     const qa_launch_role grapple_roles[] = {QA_ROLE_ARSENAL, QA_ROLE_EQUIPMENT};
@@ -1615,10 +1615,10 @@ static bool q2_source_motion(void *context, qa_actor_id actor,
     application_control_record *control;
     if (!application_control_ensure(application, actor, motion->angles, &control, error))
         return false;
-    bool relative_angles = control->state.kind == QA_RULESET_Q2_CLASSIC ||
-        control->state.kind == QA_RULESET_Q2_RERELEASE || control->state.kind == QA_RULESET_Q3;
+    bool relative_angles = control->player.state.kind == QA_RULESET_Q2_CLASSIC ||
+        control->player.state.kind == QA_RULESET_Q2_RERELEASE || control->player.state.kind == QA_RULESET_Q3;
     if (relative_angles && !motion->preserve_view_angles)
-        control->command_angles = motion->command_angles;
+        control->player.command_angles = motion->command_angles;
     qa_body_state body;
     if (!qa_world_body_read(application->world, actor, &body, error))
         return false;
@@ -2162,7 +2162,7 @@ static bool q1_selected_q3_pose(void *opaque, qa_actor_id actor,
     qa_q1_weapon physical_weapon;
     qa_q1_auto_switch physical_preference;
     float physical_max_health;
-    qa_application_control_view control;
+    qa_player_state control;
     qa_combat_state combat;
     if (app->destroy_requested || app->finalizing || !app->players ||
         app->players->map_provider != source || !source->constructed ||
@@ -2550,9 +2550,9 @@ bool application_players_native_q1_respawn(qa_application *app,
         if (!qa_q2_character_respawned(character->state.q2, actor, error)) return false;
     } else if (!native_q1_character_spawn(character, source, actor, NULL, 0, error)) return false;
     if (!q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
-    qa_collision_family family = app->controls[actor.slot].state.kind == QA_RULESET_Q3
-        ? QA_COLLISION_Q3 : app->controls[actor.slot].state.kind == QA_RULESET_Q2_CLASSIC ||
-          app->controls[actor.slot].state.kind == QA_RULESET_Q2_RERELEASE ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
+    qa_collision_family family = app->controls[actor.slot].player.state.kind == QA_RULESET_Q3
+        ? QA_COLLISION_Q3 : app->controls[actor.slot].player.state.kind == QA_RULESET_Q2_CLASSIC ||
+          app->controls[actor.slot].player.state.kind == QA_RULESET_Q2_RERELEASE ? QA_COLLISION_Q2 : QA_COLLISION_Q1;
     qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
         .contents = qa_collision_contents_decode(family == QA_COLLISION_Q1 ? -2 : 0x2000000, family),
         .role = QA_COLLISION_SOLID};
@@ -3090,13 +3090,13 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (actor.slot >= application->control_capacity)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 spawn has no admitted control");
             application_control_record *control = application->controls + actor.slot;
-            if (!control->active || control->retired || !qa_actor_id_equal(control->actor, actor) ||
-                control->state.kind != physical.state.kind)
+            if (!control->active || control->retired || !qa_actor_id_equal(control->player.actor, actor) ||
+                control->player.state.kind != physical.state.kind)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 spawn changed its Source control");
             qa_movement_result completed = {.state = physical.state, .bounds = physical.bounds,
                 .ground = physical.ground, .view_angles = physical.view_angles,
                 .view_offset = physical.view_offset, .view_height = physical.view_height,
-                .water_level = control->water_level, .water_type = control->water_type};
+                .water_level = control->player.water_level, .water_type = control->player.water_type};
             application_control_publish_motion(control, &completed);
             return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
                 admit_components(application, actor, error);

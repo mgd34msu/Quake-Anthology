@@ -75,7 +75,7 @@ static bool movement(void *context,qa_actor_id actor,application_bot_world_movem
     bool *found,qa_error *error) {
     application_bot_world_binding *binding=context;
     if(!source_live(binding,error)) return false;
-    qa_application_control_view control;
+    qa_player_state control;
     *found=qa_application_control_read(binding->bots->application,actor,&control);
     if(!*found) return true;
     application_player_record *record=player(binding,actor);
@@ -197,7 +197,7 @@ static bool bot_begin(void *context,uint32_t slot,qa_error *error) {
     application_bot_world_binding *binding=context;qa_actor_id actor=bot_actor(binding,(int32_t)slot);
     if(!source_live(binding,error) || !actor.registry)
         return application_fail(error,QA_ERROR_NOT_FOUND,"shared bot Begin has no actual connected actor");
-    qa_application_control_view actual;
+    qa_player_state actual;
     if(!qa_application_control_read(binding->bots->application,actor,&actual))
         return application_fail(error,QA_ERROR_NOT_FOUND,"shared bot Begin has no actual selected view");
     int32_t weapon,phase;

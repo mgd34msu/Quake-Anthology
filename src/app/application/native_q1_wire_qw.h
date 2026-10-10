@@ -5,8 +5,6 @@
 #include "qa/network_q1_nq.h"
 bool application_native_q1_qw_selected(qa_application *);
 bool application_native_q1_qw_admission(qa_application *, bool spectator, bool *allowed, qa_error *);
-bool application_native_q1_qw_admission_limits(qa_cvars *, uint32_t clients, uint32_t spectators,
-    bool spectator, bool *allowed, qa_error *);
 bool application_native_q1_qw_source(qa_application *, qa_application_network_qw_source *, qa_error *);
 bool application_native_q1_qw_world(qa_application *, qa_application_network_qw_world *, qa_error *);
 bool application_native_q1_qw_client(qa_application *, qa_actor_id, qa_application_network_qw_client *, qa_error *);

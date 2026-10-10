@@ -64,7 +64,7 @@ bool application_q1_native_save_capture(qa_application *app, application_provide
     if (!qa_combat_read(app->combat, player->actor, &combat, error)) return false;
     if (!(combat.health > 0))
         return application_fail(error, QA_ERROR_ARGUMENT, "Cannot save a dead original Quake player");
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_application_control_read(app, player->actor, &control) || control.state.kind != QA_RULESET_NETQUAKE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original native save lost its actual NetQuake movement");
     qa_qc_program *program = NULL;
@@ -90,22 +90,22 @@ bool application_q1_native_save_restore(qa_application *app, application_provide
     qa_qc_program *program = NULL;
     qa_vfs *content = application_native_q1_wire_content(provider, error);
     bool okay = content && qa_qc_program_load_vfs(content, "progs.dat", &program, error) &&
-        qa_q1_game_original_restore(provider->state.q1, program, save, &control->state, error);
+        qa_q1_game_original_restore(provider->state.q1, program, save, &control->player.state, error);
     qa_q1_travel_state *entry = NULL;
     if (okay) okay = qa_q1_travel_original_parameters_restore(provider->state.q1,player->actor,
         save->spawn_parameters,&entry,error);
     if (okay) {
         qa_q1_travel_destroy(player->q1_entry); player->q1_entry = entry;
-        control->view_angles = control->command_angles = control->state.data.nq.view_angles;
+        control->player.view_angles = control->player.command_angles = control->player.state.data.nq.view_angles;
         qa_q1_character_view character;
         okay = qa_q1_character_read(provider->state.q1,player->actor,&character);
         if (!okay) application_fail(error,QA_ERROR_ARGUMENT,"Original restore lost its actual Source character");
-        if (okay) { control->view_offset = character.view_offset; control->view_height = character.view_offset.z; }
-        control->water_level = control->state.data.nq.water_level; control->water_type = control->state.data.nq.water_type;
-        control->ground = control->state.data.nq.ground;
+        if (okay) { control->player.view_offset = character.view_offset; control->player.view_height = character.view_offset.z; }
+        control->player.water_level = control->player.state.data.nq.water_level; control->player.water_type = control->player.state.data.nq.water_type;
+        control->player.ground = control->player.state.data.nq.ground;
         qa_body_state body;
         if (okay) okay = qa_world_body_read(app->world,player->actor,&body,error);
-        if (okay) control->bounds = control->standing_bounds = body.bounds;
+        if (okay) control->player.bounds = control->player.standing_bounds = body.bounds;
     }
     qa_qc_program_destroy(program); return okay;
 }

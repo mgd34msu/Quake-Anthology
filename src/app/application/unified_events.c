@@ -775,9 +775,9 @@ bool application_unified_event_owner_retire(qa_application *app, qa_actor_owner 
     qa_unified_presentation_payload retired = {.kind = QA_UNIFIED_PRESENTATION_OWNER,
         .value.owner = {.kind = QA_UNIFIED_OWNER_RETIRED,
             .owner = {.provider = event_alias(app, owner), .generation = activation->generation}}};
+    const qa_ruleset_descriptor *ruleset = qa_ruleset_read(clock->kind);
     application_unified_event_record first = {.presentation = &retired, .provider = owner,
-        .content = activation->content, .family = clock->kind == QA_RULESET_Q3 ? QA_GAME_Q3 :
-            clock->kind == QA_RULESET_Q2_CLASSIC || clock->kind == QA_RULESET_Q2_RERELEASE ? QA_GAME_Q2 : QA_GAME_Q1,
+        .content = activation->content, .family = ruleset ? ruleset->family : QA_GAME_Q1,
         .clock = clock->kind, .presentation_clock = clock->kind,
         .time_ns = clock->time_ns, .simulation_time_ns = clock->time_ns};
     if (!application_unified_event_append(app, &first, error)) goto abort;

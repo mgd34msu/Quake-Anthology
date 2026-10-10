@@ -107,7 +107,7 @@ static bool player_eye(qa_application *app, application_provider *physical, qa_a
         offset=view.view.offset;
         if (rerelease) offset.z+=player.view_height;
     } else {
-        qa_application_control_view control; application_client_outputs outputs;
+        qa_player_state control; application_client_outputs outputs;
         if (!qa_application_control_read(app,actor,&control))
             return application_fail(error,QA_ERROR_NOT_FOUND,"Q2 rail recipient lost its selected view");
         if (!application_control_outputs(app,actor,&outputs,error)) return false;

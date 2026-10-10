@@ -68,7 +68,7 @@ static bool observation(qa_frontend *f,qa_buffer *source,const char *directory,
     bool record,qa_error *error)
 {
     uint32_t logical;qa_actor_id actor;qa_body_state body;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!frontend_seat_launch_id_read(f,0,&logical) ||
         !qa_application_player_actor(f->application,logical,&actor) ||
         !qa_world_body_read(qa_application_world(f->application),actor,&body,error) ||

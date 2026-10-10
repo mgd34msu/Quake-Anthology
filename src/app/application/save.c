@@ -54,14 +54,14 @@
 static bool controls_fields(qa_source_save_io *io, qa_application *app,
                              application_control_record *record)
 {
-    uint32_t mode = record->player_mode;
+    uint32_t mode = record->player.player_mode;
     uint32_t rounding = record->numeric.rounding;
     uint32_t prediction_rounding = record->prediction_numeric.rounding;
     qa_actor_owner cutscene = record->cutscene_character ? record->cutscene_character->owner : 0;
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    if (!qa_source_save_actor(io, &record->actor) || !qa_actors_get(qa_session_actors(app->session), record->actor) ||
-        !qa_source_save_string(io, &cutscene) || !qa_persistence_movement(io, &record->state) ||
-        !qa_persistence_movement_profile(io, &record->profile) || record->state.kind != record->profile.kind ||
+    if (!qa_source_save_actor(io, &record->player.actor) || !qa_actors_get(qa_session_actors(app->session), record->player.actor) ||
+        !qa_source_save_string(io, &cutscene) || !qa_persistence_movement(io, &record->player.state) ||
+        !qa_persistence_movement_profile(io, &record->player.profile) || record->player.state.kind != record->player.profile.kind ||
         !qa_source_save_string(io, &record->numeric.id) || !qa_source_save_bool(io, &record->numeric.native_c) ||
         !qa_source_save_u32(io, &record->numeric.radix) || !qa_source_save_u32(io, &record->numeric.scalar_mantissa_bits) ||
         !qa_source_save_u32(io, &record->numeric.double_mantissa_bits) ||
@@ -73,32 +73,32 @@ static bool controls_fields(qa_source_save_io *io, qa_application *app,
         !qa_source_save_i32(io, &record->prediction_numeric.evaluation_method) || !qa_source_save_u32(io, &prediction_rounding) ||
         prediction_rounding > QA_APPLICATION_ROUND_ZERO || !qa_source_save_bool(io, &record->prediction_numeric.qw_origin_binary64) ||
         !qa_persistence_movement_result(io, &record->result) ||
-        !qa_persistence_bounds(io, &record->standing_bounds) || !qa_persistence_bounds(io, &record->bounds) ||
-        !qa_persistence_ground(io, &record->ground) ||
-        !qa_source_save_vec3(io, &record->view_angles) || !qa_source_save_vec3(io, &record->command_angles) ||
-        !qa_source_save_vec3(io, &record->view_offset) || !qa_source_save_vec3(io, &record->saved_view_offset) ||
+        !qa_persistence_bounds(io, &record->player.standing_bounds) || !qa_persistence_bounds(io, &record->player.bounds) ||
+        !qa_persistence_ground(io, &record->player.ground) ||
+        !qa_source_save_vec3(io, &record->player.view_angles) || !qa_source_save_vec3(io, &record->player.command_angles) ||
+        !qa_source_save_vec3(io, &record->player.view_offset) || !qa_source_save_vec3(io, &record->saved_view_offset) ||
         !qa_source_save_vec3(io, &record->q2r_pml_origin) ||
-        !qa_source_save_u64(io, &record->command_sequence) || !qa_source_save_u32(io, &record->buttons) ||
-        !qa_source_save_u32(io, &record->previous_buttons) || !qa_source_save_i32(io, &record->water_level) ||
-        !qa_source_save_i32(io, &record->water_type) || !qa_source_save_f32(io, &record->view_height) ||
-        !qa_source_save_f32(io, &record->gravity_multiplier) || !qa_source_save_u32(io, &mode) || mode > QA_MOVEMENT_MODE_FREEZE ||
-        !qa_source_save_i32(io, &record->saved_mode) || !qa_source_save_bool(io, &record->flight) ||
-        !qa_source_save_bool(io, &record->cutscene) || !qa_source_save_bool(io, &record->saved_damageable) ||
+        !qa_source_save_u64(io, &record->player.command_sequence) || !qa_source_save_u32(io, &record->player.buttons) ||
+        !qa_source_save_u32(io, &record->player.previous_buttons) || !qa_source_save_i32(io, &record->player.water_level) ||
+        !qa_source_save_i32(io, &record->player.water_type) || !qa_source_save_f32(io, &record->player.view_height) ||
+        !qa_source_save_f32(io, &record->player.gravity_multiplier) || !qa_source_save_u32(io, &mode) || mode > QA_MOVEMENT_MODE_FREEZE ||
+        !qa_source_save_i32(io, &record->saved_mode) || !qa_source_save_bool(io, &record->player.flight) ||
+        !qa_source_save_bool(io, &record->player.cutscene) || !qa_source_save_bool(io, &record->saved_damageable) ||
         !qa_source_save_bool(io, &record->saved_mode_valid) || !qa_source_save_bool(io, &record->command_seen) ||
-        !qa_source_save_bool(io, &record->guest_mode_valid) || !qa_source_save_bool(io, &record->player_mode_set) ||
+        !qa_source_save_bool(io, &record->guest_mode_valid) || !qa_source_save_bool(io, &record->player.player_mode_set) ||
         !qa_source_save_i32(io, &record->guest_mode)) return false;
     record->numeric.rounding = (qa_application_numeric_rounding)rounding;
     record->prediction_numeric.rounding = (qa_application_numeric_rounding)prediction_rounding;
-    if (!application_control_numeric_current(app, record->actor, &record->numeric, io->error) ||
-        !application_control_prediction_numeric_current(app, record->actor, &record->prediction_numeric, io->error)) return false;
-    if (!qa_vec_finite(record->view_angles) || !qa_vec_finite(record->command_angles) ||
-        !qa_vec_finite(record->view_offset) || !qa_vec_finite(record->saved_view_offset) ||
-        !qa_vec_finite(record->q2r_pml_origin) || !isfinite(record->view_height) ||
-        !isfinite(record->gravity_multiplier) || record->gravity_multiplier < 0 ||
-        (record->result.actor.registry && !qa_actor_id_equal(record->result.actor, record->actor)))
+    if (!application_control_numeric_current(app, record->player.actor, &record->numeric, io->error) ||
+        !application_control_prediction_numeric_current(app, record->player.actor, &record->prediction_numeric, io->error)) return false;
+    if (!qa_vec_finite(record->player.view_angles) || !qa_vec_finite(record->player.command_angles) ||
+        !qa_vec_finite(record->player.view_offset) || !qa_vec_finite(record->saved_view_offset) ||
+        !qa_vec_finite(record->q2r_pml_origin) || !isfinite(record->player.view_height) ||
+        !isfinite(record->player.gravity_multiplier) || record->player.gravity_multiplier < 0 ||
+        (record->result.actor.registry && !qa_actor_id_equal(record->result.actor, record->player.actor)))
         return application_fail(io->error, QA_ERROR_FORMAT, "saved control continuation contains invalid actor or view state");
     if (reading) {
-        record->application = app; record->player_mode = (qa_movement_mode)mode; record->active = true;
+        record->application = app; record->player.player_mode = (qa_movement_mode)mode; record->active = true;
         if (cutscene) {
             for (size_t i = 0; i < app->provider_count; ++i)
                 if (app->providers[i]->owner == cutscene) record->cutscene_character = app->providers[i];
@@ -166,8 +166,8 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
     uint32_t previous = 0;
     for (size_t i = 0; ok && i < count; ++i) {
         application_control_record record = {0};
-        ok = controls_fields(&io, app, &record) && record.actor.slot < app->control_capacity && (!i || record.actor.slot > previous);
-        if (ok) { previous = record.actor.slot; controls[record.actor.slot] = record; }
+        ok = controls_fields(&io, app, &record) && record.player.actor.slot < app->control_capacity && (!i || record.player.actor.slot > previous);
+        if (ok) { previous = record.player.actor.slot; controls[record.player.actor.slot] = record; }
         else qa_movement_result_free(&record.result);
     }
     if (ok) ok = qa_source_save_count(&io, &count, app->motion_capacity);

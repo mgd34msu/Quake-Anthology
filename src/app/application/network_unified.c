@@ -420,7 +420,7 @@ static bool player_read(qa_application *app, qa_net_client_id client, qa_net_sea
     application_unified_source source;
     if (!out || !source_read(app, &source, checkpoint, error)) return false;
     const application_player_record *row = application_players_connection_read(app, client, seat);
-    qa_application_control_view control;
+    qa_player_state control;
     if (!row || row->deferred || row->source_begin_pending || row->client_slot >= source.max_clients ||
         !qa_actors_get(qa_session_actors(app->session), row->actor) ||
         !qa_application_control_read(app, row->actor, &control))

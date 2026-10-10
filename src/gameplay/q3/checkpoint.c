@@ -280,12 +280,12 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
             (saved->clients[i].has_followed_player &&
              !q3_followed_player_saved_valid(game, &saved->clients[i].followed_player)))
             return q3_fail(error, "Q3 client restore has invalid retained source PS");
-    char **configstrings = NULL;
+    qa_string_id *configstrings = NULL;
     uint16_t *source_numbers = NULL;
     q3_wire_state *wire = NULL;
     qa_q3_shader_remap_state shader_remaps;
     if (!q3_source_prepare(game, saved, &source_numbers, error)) return false;
-    if (!q3_configstrings_prepare(saved, &configstrings, error))
+    if (!q3_configstrings_prepare(game, saved, &configstrings, error))
         goto invalid_strings;
     if (!q3_shader_remaps_prepare(&saved->shader_remaps, &shader_remaps, error) ||
         !q3_wire_prepare(game, (qa_bytes){saved->wire_state.data, saved->wire_state.size}, &wire, error) ||

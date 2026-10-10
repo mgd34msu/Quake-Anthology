@@ -3,6 +3,7 @@
 
 #include "qa/actors.h"
 #include "qa/math.h"
+#include "qa/ruleset.h"
 
 typedef uint32_t qa_item_id;
 /* Session-interned identity; zero is unteamed. Original protocol team numbers
@@ -13,7 +14,6 @@ typedef struct qa_combat qa_combat;
 typedef struct qa_inventory qa_inventory;
 typedef struct qa_pickups qa_pickups;
 
-typedef enum qa_game_family { QA_GAME_Q1, QA_GAME_Q2, QA_GAME_Q3 } qa_game_family;
 typedef enum qa_hazard { QA_HAZARD_FALL, QA_HAZARD_DROWN, QA_HAZARD_LAVA, QA_HAZARD_SLIME, QA_HAZARD_CRUSH, QA_HAZARD_TRIGGER } qa_hazard;
 typedef enum qa_cause_kind { QA_CAUSE_Q1, QA_CAUSE_Q2, QA_CAUSE_Q3, QA_CAUSE_ENVIRONMENT } qa_cause_kind;
 typedef enum qa_q1_armor_effect { QA_Q1_ARMOR_NORMAL, QA_Q1_ARMOR_BYPASS, QA_Q1_ARMOR_HALF } qa_q1_armor_effect;

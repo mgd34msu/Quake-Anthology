@@ -626,6 +626,54 @@ static bool command_actor(void *context, qa_session *session, qa_actor_id actor)
         qa_q1_native_client_slot(g, actor, &slot, NULL);
 }
 
+static void source_bind(qa_q1_game *game) {
+    static const char *const names[QA_Q1_SOURCE_SETTING_COUNT] = {
+        [QA_Q1_SOURCE_SKILL] = "skill",
+        [QA_Q1_SOURCE_DEATHMATCH] = "deathmatch",
+        [QA_Q1_SOURCE_COOP] = "coop",
+        [QA_Q1_SOURCE_TEAMPLAY] = "teamplay",
+        [QA_Q1_SOURCE_GAMECFG] = "gamecfg",
+        [QA_Q1_SOURCE_SV_CHEATS] = "sv_cheats",
+        [QA_Q1_SOURCE_HORDE] = "horde",
+        [QA_Q1_SOURCE_NOEXIT] = "noexit",
+        [QA_Q1_SOURCE_SAMELEVEL] = "samelevel",
+        [QA_Q1_SOURCE_TIMELIMIT] = "timelimit",
+        [QA_Q1_SOURCE_FRAGLIMIT] = "fraglimit",
+        [QA_Q1_SOURCE_GRAVITY] = "sv_gravity",
+        [QA_Q1_SOURCE_STOPSPEED] = "sv_stopspeed",
+        [QA_Q1_SOURCE_MAXSPEED] = "sv_maxspeed",
+        [QA_Q1_SOURCE_SPECTATORMAXSPEED] = "sv_spectatormaxspeed",
+        [QA_Q1_SOURCE_ACCELERATE] = "sv_accelerate",
+        [QA_Q1_SOURCE_AIRACCELERATE] = "sv_airaccelerate",
+        [QA_Q1_SOURCE_WATERACCELERATE] = "sv_wateraccelerate",
+        [QA_Q1_SOURCE_FRICTION] = "sv_friction",
+        [QA_Q1_SOURCE_WATERFRICTION] = "sv_waterfriction",
+        [QA_Q1_SOURCE_PAUSABLE] = "pausable",
+        [QA_Q1_SOURCE_MAXCLIENTS] = "maxclients",
+        [QA_Q1_SOURCE_MAXSPECTATORS] = "maxspectators",
+        [QA_Q1_SOURCE_HOSTNAME] = "hostname",
+        [QA_Q1_SOURCE_SPECTALK] = "sv_spectalk",
+    };
+    for (size_t i = 0; i < QA_Q1_SOURCE_SETTING_COUNT; ++i)
+        game->source_settings[i] = qa_cvars_resolve(game->host.cvars, names[i]);
+}
+
+const qa_cvar_view *qa_q1_source_read(const qa_q1_game *game, qa_q1_source_setting setting) {
+    return qa_cvars_read(game->host.cvars, game->source_settings[setting]);
+}
+
+bool q1_source_value(const qa_q1_game *game, qa_q1_source_setting setting,
+                     float fallback, float *out, qa_error *error) {
+    if (!game->host.cvars) { *out = fallback; return true; }
+    const qa_cvar_view *value = qa_q1_source_read(game, setting);
+    if (value && value->owner && value->owner != game->options.provider) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native Q1 cvar belongs to another source");
+        return false;
+    }
+    *out = value ? value->number : 0;
+    return true;
+}
+
 bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options *options,
                        const qa_q1_host *host, qa_q1_game **out, qa_error *error) {
     if (!out || !options || !options->provider || !options->combat_provider || options->skill > 3 ||
@@ -652,6 +700,7 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     g->time = (double)g->time_ns / 1000000000.0;
     if (host)
         g->host = *host;
+    source_bind(g);
     qa_builtin_random_seed(&g->random, options->random_seed);
     for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
         if (!qa_builtin_resource(services, weapon_names[i], &g->weapons[i], error) ||

@@ -29,6 +29,12 @@ typedef struct native_host_cvar_record {
     char *name;
     qa_native_address address;
     uint64_t modification;
+    qa_cvar_handle handle;
+    /* Publication receipt only. Values always come from the common table. */
+    uint8_t published[56];
+    bool published_valid;
+    native_host_string *name_object, *value_object, *latched_object;
+    struct native_host_cvar_record *order_previous, *order_next;
     struct native_host_cvar_record *next;
 } native_host_cvar_record;
 
@@ -112,7 +118,8 @@ struct qa_native_host {
     qa_console *console;
     qa_command_context command_context;
     native_host_string *strings;
-    native_host_cvar_record *cvar_shadows;
+    native_host_cvar_record *cvar_shadows, *cvar_order;
+    uint64_t cvar_view_identity, cvar_revision;
     native_host_surface *surfaces;
     qa_entity_model_fields models;
     qa_entity_model_field *model_entries;
@@ -191,6 +198,7 @@ void native_host_temporary_free(qa_native_host *, qa_native_address);
 bool native_host_cvar(qa_native_host *, const char *, const char *, uint32_t, bool,
                       qa_native_address *, qa_error *);
 bool native_host_refresh_cvars(qa_native_host *, qa_error *);
+bool native_host_restore_cvars(qa_native_host *, qa_error *);
 
 bool native_host_actor_for_address(qa_native_host *, qa_native_address, bool,
                                    qa_actor_id *, uint32_t *, qa_error *);

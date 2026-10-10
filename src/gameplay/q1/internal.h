@@ -448,6 +448,7 @@ struct qa_q1_game {
     qa_builtin_services services;
     qa_q1_options options;
     qa_q1_host host;
+    qa_cvar_handle source_settings[QA_Q1_SOURCE_SETTING_COUNT];
     qa_q1_source_flags_services source_flags;
     qa_q1_source_runes_services source_runes;
     qa_q1_source_rogue_tag_services source_rogue_tag;
@@ -513,9 +514,7 @@ bool q1_source_rogue_rune_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_erro
 bool q1_source_rogue_rune_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 void q1_source_rogue_runes_release(qa_q1_game *, qa_actor_id);
 void q1_source_rogue_runes_free(qa_q1_game *);
-static inline void *q1_cvar_context(const qa_q1_game *game) {
-    return game->services.cvar_context ? game->services.cvar_context : game->services.context;
-}
+bool q1_source_value(const qa_q1_game *, qa_q1_source_setting, float fallback, float *, qa_error *);
 
 extern const q1_frame q1_frames[];
 bool q1_map_spawn(qa_q1_game *, q1_actor *, const qa_q1_spawn *, bool *, qa_error *);

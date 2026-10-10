@@ -7,10 +7,8 @@ static bool horde_enabled(qa_q1_game *g, bool *enabled, qa_error *error) {
         return true;
     }
     float value = 0;
-    if (g->services.cvar) {
-        qa_string_id name;
-        if (!qa_builtin_resource(&g->services, "horde", &name, error) ||
-            !g->services.cvar(q1_cvar_context(g), name, &value, error))
+    if (g->host.cvars) {
+        if (!q1_source_value(g, QA_Q1_SOURCE_HORDE, 0, &value, error))
             return false;
     }
     *enabled = value != 0;

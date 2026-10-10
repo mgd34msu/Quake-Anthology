@@ -74,7 +74,7 @@ bool qa_application_selected_q3_character_read(qa_application *app, qa_actor_id 
     if (!provider_ready(provider) || !provider->state.q3 || !qa_q3_destroy_ready(provider->state.q3))
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 character owner is not idle");
     qa_q3_player_state player;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_q3_player_read(provider->state.q3, actor, &player) ||
         !(player.selections & QA_Q3_CHARACTER) ||
         !qa_application_control_read(app, actor, &control) || app->controls[actor.slot].retired) return true;

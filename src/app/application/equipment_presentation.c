@@ -282,7 +282,7 @@ static bool primary_visibility(qa_application *app, qa_actor_id actor,
             observer.chase_target.registry && qa_q2_player_read(source->state.q2, observer.chase_target, &target) &&
             target.connected && !target.spectator) health_actor = observer.chase_target;
     }
-    qa_combat_state combat; qa_application_control_view control;
+    qa_combat_state combat; qa_player_state control;
     if (!qa_combat_read_traits(app->combat, health_actor, &combat, error)) return false;
     if (!qa_application_control_read(app, actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Gear visibility has no actual primary player traits");

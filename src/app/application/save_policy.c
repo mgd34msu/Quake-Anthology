@@ -122,7 +122,7 @@ static bool native_q2_player(application_provider *source,qa_actor_id actor,floa
 }
 static bool control_intermission(const qa_application *app,qa_actor_id actor)
 {
-    qa_application_control_view view;
+    qa_player_state view;
     if(!qa_application_control_read(app,actor,&view)) return false;
     return application_control_intermission(&view.state);
 }

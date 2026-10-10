@@ -160,9 +160,7 @@ bool q1_map_ctf_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id actor, qa_err
     if (vote)
         return state.observer || vote_touch(g, id, actor, error);
     float noexit = 0;
-    qa_string_id key;
-    if (!qa_builtin_resource(&g->services, "noexit", &key, error) ||
-        (g->services.cvar && !g->services.cvar(q1_cvar_context(g), key, &noexit, error)))
+    if (!q1_source_value(g, QA_Q1_SOURCE_NOEXIT, 0, &noexit, error))
         return false;
     if (!isfinite(noexit))
         return q1_map_fail(error, "nonfinite ThreeWave noexit cvar");

@@ -164,8 +164,8 @@ static bool mode_player_view(void *opaque, qa_actor_id actor, qa_vec3 *angles)
     if (angles != NULL && actor.slot < application->control_capacity) {
         const application_control_record *control =
             &application->controls[actor.slot];
-        if (control->active && qa_actor_id_equal(control->actor, actor)) {
-            *angles = control->view_angles;
+        if (control->active && qa_actor_id_equal(control->player.actor, actor)) {
+            *angles = control->player.view_angles;
             return true;
         }
     }

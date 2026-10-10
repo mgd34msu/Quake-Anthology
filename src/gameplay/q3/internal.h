@@ -126,7 +126,7 @@ struct qa_q3_game {
     q3_map_runtime *map;
     q3_wire_state *wire;
     qa_q3_shader_remap_state shader_remaps;
-    char *configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
+    qa_string_id configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_revisions[QA_Q3_NATIVE_CONFIGSTRINGS];
     uint64_t configstring_table_revision;
     qa_q3_native_client clients[QA_Q3_NATIVE_CLIENTS];
@@ -170,9 +170,9 @@ static inline bool q3_fail(qa_error *error, const char *message) {
 }
 void q3_configstrings_clear(qa_q3_game *);
 bool q3_configstrings_capture(const qa_q3_game *, qa_q3_checkpoint *, qa_error *);
-bool q3_configstrings_prepare(const qa_q3_checkpoint *, char ***, qa_error *);
-void q3_configstrings_discard(char **);
-void q3_configstrings_commit(qa_q3_game *, char **);
+bool q3_configstrings_prepare(qa_q3_game *, const qa_q3_checkpoint *, qa_string_id **, qa_error *);
+void q3_configstrings_discard(qa_string_id *);
+void q3_configstrings_commit(qa_q3_game *, qa_string_id *);
 bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
 qa_builtin_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);
 bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);

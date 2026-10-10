@@ -59,7 +59,7 @@ bool frontend_unified_media_files(frontend_unified_media *, const char *content,
     qa_vfs **, const qa_product **, qa_error *);
 bool frontend_unified_media_q3_assets(frontend_unified_media *, const char *content,
     qa_q3_presentation_assets **, qa_error *);
-bool frontend_unified_media_q3_assets_read(const frontend_unified_media *, const char *content,
+bool frontend_unified_media_q3_assets_read(const frontend_unified_media *, const qa_product *,
     qa_q3_presentation_assets **);
 bool frontend_unified_media_model(frontend_unified_media *, const char *content,
     const char *path, qa_scene_family, const qa_scene_image_options *,

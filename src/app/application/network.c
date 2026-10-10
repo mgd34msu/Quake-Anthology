@@ -284,7 +284,7 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
     struct application_qc_state *engine = application_network_q1_qc_observation(app, owner, error);
     if (!engine) return false;
     qa_application_network_q1_world value = {.protocol = engine->protocol, .max_clients = engine->max_clients};
-    const qa_cvar_view *deathmatch = qa_cvars_find(engine->cvars, "deathmatch");
+    const qa_cvar_view *deathmatch = qa_cvars_read(engine->cvars, engine->cvar_handles.deathmatch);
     const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
     int32_t id; float number;
     if (!deathmatch || !isfinite(deathmatch->number) || !mapname || mapname->type != QA_QC_STRING)
@@ -421,7 +421,7 @@ bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
     if (app->operation != APPLICATION_IDLE || app->state != QA_APPLICATION_RUNNING ||
         !application_qc_input_idle(engine->provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause requires its idle running source owner");
-    const qa_cvar_view *policy = qa_cvars_find(engine->cvars, "pausable");
+    const qa_cvar_view *policy = qa_cvars_read(engine->cvars, engine->cvar_handles.pausable);
     const char *denial = policy && policy->number == 0 ? "Pause not allowed.\n" :
         engine->profile == QA_QC_QUAKEWORLD && engine->clients[slot].spectator ? "Spectators can not pause.\n" : NULL;
     bool paused = !qa_application_q1_paused(app);
@@ -622,7 +622,7 @@ bool qa_application_network_controlled(qa_application *application, qa_net_clien
     qa_net_seat_id seat, qa_actor_id actor, qa_ruleset_id kind, qa_bytes arsenal, qa_error *error)
 {
     qa_actor_id admitted;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!application || !qa_application_remote_player_actor(application, client, seat, &admitted) ||
         !qa_actor_id_equal(actor, admitted) || !qa_application_control_read(application, actor, &control) ||
         control.state.kind != kind)

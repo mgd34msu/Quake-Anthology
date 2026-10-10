@@ -119,19 +119,16 @@ static char *copy_text(const char *text)
     return copy;
 }
 
-bool native_host_string_address(qa_native_host *host, const char *text,
-                                qa_native_address *out, qa_error *error)
+static bool string_object(qa_native_host *host, const char *text,
+                          native_host_string **out, qa_error *error)
 {
-    if (!host || !text || !out)
-        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
-                                "native host string and output are required");
     size_t length = strlen(text);
     if (length >= host->maximum_string_bytes)
         return native_host_fail(error, QA_ERROR_ARGUMENT, length,
                                 "native host string exceeds its source limit");
     for (native_host_string *entry = host->strings; entry; entry = entry->next) {
         if (!strcmp(entry->text, text)) {
-            *out = entry->address;
+            *out = entry;
             return true;
         }
     }
@@ -154,6 +151,19 @@ bool native_host_string_address(qa_native_host *host, const char *text,
     }
     entry->next = host->strings;
     host->strings = entry;
+    *out = entry;
+    return true;
+}
+
+
+bool native_host_string_address(qa_native_host *host, const char *text,
+                                qa_native_address *out, qa_error *error)
+{
+    if (!host || !text || !out)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "native host string and output are required");
+    native_host_string *entry;
+    if (!string_object(host, text, &entry, error)) return false;
     *out = entry->address;
     return true;
 }
@@ -207,84 +217,175 @@ bool native_host_store_pointer(const qa_native_host *host, uint8_t *bytes,
     return true;
 }
 
-static bool write_cvar(qa_native_host *host, native_host_cvar_record *record,
-                       const qa_cvar_view *view, native_host_cvar_record *next, qa_error *error)
+static bool cvar_bytes(qa_native_host *host, native_host_cvar_record *record,
+                       const qa_cvar_view *view, native_host_cvar_record *next,
+                       uint8_t bytes[56], qa_error *error)
 {
-    qa_native_address name, value, latched = 0;
-    if (!native_host_string_address(host, view->name, &name, error) ||
-        !native_host_string_address(host, view->value, &value, error) ||
-        (view->latched_value &&
-         !native_host_string_address(host, view->latched_value, &latched, error)))
-        return false;
+    if ((!record->name_object && !string_object(host, view->name, &record->name_object, error)) ||
+        ((!record->value_object || strcmp(record->value_object->text, view->value)) &&
+         !string_object(host, view->value, &record->value_object, error))) return false;
+    if (!view->latched_value) record->latched_object = NULL;
+    else if ((!record->latched_object || strcmp(record->latched_object->text, view->latched_value)) &&
+             !string_object(host, view->latched_value, &record->latched_object, error)) return false;
+    qa_native_address name = record->name_object->address, value = record->value_object->address;
+    qa_native_address latched = record->latched_object ? record->latched_object->address : 0;
+    memset(bytes, 0, 56);
     if (host->profile == QA_NATIVE_Q2_GAME_API3) {
         const native_host_classic_layout *layout = host->classic;
-        uint8_t bytes[48] = {0};
         if (!native_host_store_pointer(host, bytes, name, error) ||
             !native_host_store_pointer(host, bytes + layout->cvar.string, value, error) ||
             !native_host_store_pointer(host, bytes + layout->cvar.latched, latched, error) ||
             !native_host_store_pointer(host, bytes + layout->cvar.next,
-                                       next ? next->address : 0, error))
-            return false;
+                                       next ? next->address : 0, error)) return false;
         qa_store_u32le(bytes + layout->cvar.flags, view->flags);
         qa_store_u32le(bytes + layout->cvar.modified, view->modified ? 1u : 0u);
         store_f32(bytes + layout->cvar.value, view->number);
-        return native_host_write(host, record->address, bytes, layout->cvar.bytes, error);
+    } else {
+        qa_store_u64le(bytes, name);
+        qa_store_u64le(bytes + 8, value);
+        qa_store_u64le(bytes + 16, latched);
+        qa_store_u32le(bytes + 24, view->flags);
+        qa_store_u32le(bytes + 28, (uint32_t)view->modification_count);
+        store_f32(bytes + 32, view->number);
+        qa_store_u64le(bytes + 40, next ? next->address : 0);
+        qa_store_u32le(bytes + 48, (uint32_t)view->integer);
     }
-    uint8_t bytes[56] = {0};
-    qa_store_u64le(bytes, name);
-    qa_store_u64le(bytes + 8, value);
-    qa_store_u64le(bytes + 16, latched);
-    qa_store_u32le(bytes + 24, view->flags);
-    qa_store_u32le(bytes + 28, (uint32_t)view->modification_count);
-    store_f32(bytes + 32, view->number);
-    qa_store_u64le(bytes + 40, next ? next->address : 0);
-    qa_store_u32le(bytes + 48, (uint32_t)view->integer);
-    return native_host_write(host, record->address, bytes, sizeof(bytes), error);
+    return true;
 }
 
-static bool ensure_cvar_shadow(qa_native_host *host, const qa_cvar_view *view,
-                               native_host_cvar_record **out, qa_error *error)
+static bool publish_cvar(qa_native_host *host, native_host_cvar_record *record,
+                         const qa_cvar_view *view, native_host_cvar_record *next,
+                         bool restore, qa_error *error)
 {
-    native_host_cvar_record *record = find_cvar(host, view->name);
-    if (record) {
-        *out = record;
+    uint8_t bytes[56];
+    if (!cvar_bytes(host, record, view, next, bytes, error)) return false;
+    size_t size = host->classic ? host->classic->cvar.bytes : sizeof(bytes);
+    if (!restore) {
+        if (!record->published_valid) {
+            if (!native_host_write(host, record->address, bytes, size, error)) return false;
+        } else {
+            size_t offsets[8] = {0, 8, 16, 24, 28, 32, 40, 48};
+            size_t lengths[8] = {8, 8, 8, 4, 4, 4, 8, 4};
+            size_t count = 8;
+            if (host->classic) {
+                const native_host_classic_layout *layout = host->classic;
+                offsets[1] = layout->cvar.string; offsets[2] = layout->cvar.latched;
+                offsets[3] = layout->cvar.flags; offsets[4] = layout->cvar.modified;
+                offsets[5] = layout->cvar.value; offsets[6] = layout->cvar.next;
+                lengths[0] = lengths[1] = lengths[2] = lengths[6] = host->pointer_bytes;
+                count = 7;
+            }
+            bool value_changed = memcmp(record->published + offsets[1], bytes + offsets[1], lengths[1]) != 0;
+            for (size_t i = 0; i < count; ++i) {
+                size_t offset = offsets[i], length = lengths[i];
+                bool changed = memcmp(record->published + offset, bytes + offset, length) != 0 ||
+                    (i == 4 && record->modification != view->modification_count) ||
+                    ((i == 5 || i == 7) && value_changed);
+                if (!changed) continue;
+                uint8_t actual[8];
+                if (!native_host_read(host, record->address + offset, actual, length, error)) return false;
+                if (memcmp(actual, bytes + offset, length) &&
+                    !native_host_write(host, record->address + offset, bytes + offset, length, error)) return false;
+            }
+        }
+    }
+    memcpy(record->published, bytes, sizeof(bytes));
+    record->published_valid = true;
+    record->modification = view->modification_count;
+    return true;
+}
+
+static void discard_unallocated_cvars(native_host_cvar_record *first)
+{
+    while (first) {
+        native_host_cvar_record *next = first->order_next;
+        if (!first->address) { free(first->name); free(first); }
+        first = next;
+    }
+}
+
+static bool refresh_cvars(qa_native_host *host, bool restore, qa_error *error)
+{
+    if (!host->cvars)
+        return native_host_fail(error, QA_ERROR_UNSUPPORTED, 0,
+                                "native host has no cvar registry");
+    uint64_t identity = qa_cvars_view_identity(host->cvars), revision = qa_cvars_revision(host->cvars);
+    if (!restore && revision && identity == host->cvar_view_identity && revision == host->cvar_revision)
         return true;
+    if (restore || identity != host->cvar_view_identity) {
+        for (native_host_cvar_record *row = host->cvar_shadows; row; row = row->next) {
+            row->handle = qa_cvars_resolve(host->cvars, row->name);
+            if (!restore) row->published_valid = false;
+        }
     }
-    record = calloc(1, sizeof(*record));
-    if (!record)
-        return native_host_fail(error, QA_ERROR_MEMORY, 0,
-                                "allocating native cvar shadow");
-    record->name = copy_text(view->name);
-    size_t size = host->classic ? host->classic->cvar.bytes : 56u;
-    if (!record->name ||
-        !qa_native_allocate(host->instance, size, INT32_MIN + 3, &record->address, error)) {
-        free(record->name);
-        free(record);
-        return false;
+    native_host_cvar_record *cursor = host->cvar_order, *first = NULL, *last = NULL;
+    for (const qa_cvar_view *view = qa_cvars_next(host->cvars, NULL); view;
+         view = qa_cvars_next(host->cvars, view)) {
+        native_host_cvar_record *record = cursor;
+        while (record && qa_cvars_read(host->cvars, record->handle) != view) record = record->order_next;
+        if (record) cursor = record->order_next;
+        else {
+            record = find_cvar(host, view->name);
+            if (!record) {
+                record = calloc(1, sizeof(*record));
+                if (record) record->name = copy_text(view->name);
+                if (!record || !record->name) {
+                    if (record) free(record);
+                    discard_unallocated_cvars(first);
+                    host->cvar_order = NULL;
+                    return native_host_fail(error, QA_ERROR_MEMORY, 0, "allocating native cvar shadow");
+                }
+            }
+            record->handle = qa_cvars_resolve(host->cvars, view->name);
+        }
+        record->order_previous = last; record->order_next = NULL;
+        if (last) last->order_next = record; else first = record;
+        last = record;
     }
-    record->next = host->cvar_shadows;
-    host->cvar_shadows = record;
-    *out = record;
+    host->cvar_order = first;
+    for (native_host_cvar_record *record = last; record; record = record->order_previous) {
+        bool created = !record->address;
+        if (created) {
+            size_t size = host->classic ? host->classic->cvar.bytes : 56u;
+            if (!qa_native_allocate(host->instance, size, INT32_MIN + 3, &record->address, error)) {
+                discard_unallocated_cvars(first); host->cvar_order = NULL; return false;
+            }
+            record->next = host->cvar_shadows; host->cvar_shadows = record;
+        }
+        const qa_cvar_view *view = qa_cvars_read(host->cvars, record->handle);
+        if (!publish_cvar(host, record, view, record->order_next, restore && !created, error)) {
+            discard_unallocated_cvars(first); host->cvar_order = NULL; return false;
+        }
+    }
+    host->cvar_view_identity = identity; host->cvar_revision = revision;
+    return true;
+}
+
+static bool cvar_guest_modified(qa_native_host *host, native_host_cvar_record *record,
+                                qa_error *error)
+{
+    if (!host->classic || !record->published_valid) return true;
+    const qa_cvar_view *view = qa_cvars_read(host->cvars, record->handle);
+    if (!view || !view->modified || view->modification_count != record->modification) return true;
+    uint32_t modified;
+    if (!native_host_read_u32(host, record->address + host->classic->cvar.modified,
+                             &modified, error)) return false;
+    if (!modified) qa_cvars_clear_modified(host->cvars, view->name);
     return true;
 }
 
 bool native_host_refresh_cvars(qa_native_host *host, qa_error *error)
 {
-    if (!host->cvars)
-        return native_host_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                                "native host has no cvar registry");
-    native_host_cvar_record *previous = NULL;
-    size_t count = qa_cvars_count(host->cvars);
-    for (size_t index = count; index > 0; --index) {
-        const qa_cvar_view *view = qa_cvars_at(host->cvars, index - 1u);
-        native_host_cvar_record *record;
-        if (!view || !ensure_cvar_shadow(host, view, &record, error) ||
-            !write_cvar(host, record, view, previous, error))
-            return false;
-        record->modification = view->modification_count;
-        previous = record;
-    }
-    return true;
+    if (host->cvars && qa_cvars_view_identity(host->cvars) == host->cvar_view_identity)
+        for (native_host_cvar_record *record = host->cvar_shadows; record; record = record->next)
+            if (!cvar_guest_modified(host, record, error)) return false;
+    return refresh_cvars(host, false, error);
+}
+
+bool native_host_restore_cvars(qa_native_host *host, qa_error *error)
+{
+    host->cvar_order = NULL;
+    return !host->cvars || refresh_cvars(host, true, error);
 }
 
 bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
@@ -306,10 +407,13 @@ bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
                 ? QA_CVAR_SAVE_GAMEPLAY : QA_CVAR_SAVE_SETTING, error)) return false;
     if (set && !qa_cvars_set(host->cvars, name, value ? value : "", flags != 0, error))
         return false;
-    if (!native_host_refresh_cvars(host, error))
-        return false;
     view = qa_cvars_find(host->cvars, name);
     native_host_cvar_record *record = view ? find_cvar(host, view->name) : NULL;
+    if (record && qa_cvars_view_identity(host->cvars) == host->cvar_view_identity &&
+        !cvar_guest_modified(host, record, error)) return false;
+    if (!refresh_cvars(host, false, error)) return false;
+    view = qa_cvars_find(host->cvars, name);
+    record = view ? find_cvar(host, view->name) : NULL;
     if (!record)
         return native_host_fail(error, QA_ERROR_NOT_FOUND, 0,
                                 "native cvar registration did not publish a record");

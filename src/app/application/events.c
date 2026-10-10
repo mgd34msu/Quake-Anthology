@@ -152,21 +152,6 @@ static bool valid_event(qa_application *application,
     return true;
 }
 
-static qa_game_family progress_family(const qa_launch_instance *instance)
-{
-    switch (instance->selection.clock.kind) {
-    case QA_RULESET_NETQUAKE:
-    case QA_RULESET_QUAKEWORLD:
-        return QA_GAME_Q1;
-    case QA_RULESET_Q2_CLASSIC:
-    case QA_RULESET_Q2_RERELEASE:
-        return QA_GAME_Q2;
-    case QA_RULESET_Q3:
-        return QA_GAME_Q3;
-    }
-    return QA_GAME_Q3;
-}
-
 bool application_event_stream_create(qa_application *app, size_t actors, qa_error *error)
 {
     if (actors > SIZE_MAX / 4096 || actors > SIZE_MAX / 4 /
@@ -430,6 +415,7 @@ static bool record_progress(application_provider *provider,
     memcpy(event_text + prefix_length + identity_length + 1,
            value_text.data, value_text.size);
 
+    const qa_ruleset_descriptor *ruleset = qa_ruleset_read(instance->selection.clock.kind);
     bool ok = true;
     for (size_t index = 0; index < choices->seat_count; ++index) {
         const qa_launch_seat *seat = &choices->seats[index];
@@ -447,7 +433,7 @@ static bool record_progress(application_provider *provider,
         }
         qa_progress_event progress = {
             .kind = kind,
-            .source = progress_family(instance),
+            .source = ruleset ? ruleset->family : QA_GAME_Q3,
             .participant = {(const uint8_t *)participant, (size_t)length},
             .event = {event_text, event_length},
         };

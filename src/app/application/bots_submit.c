@@ -46,7 +46,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
     for(uint32_t i=0;i<bots->capacity;++i)
         if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=&bots->seats[i];break;}
     if(!seat) return true;
-    qa_application_control_view view;
+    qa_player_state view;
     if(!qa_application_control_read(application,actor,&view)) return true;
     if(!qa_vec_finite(input->direction) || !qa_vec_finite(input->view_angles) || !isfinite(input->speed))
         return application_fail(error,QA_ERROR_ARGUMENT,"bot action contains nonfinite movement");

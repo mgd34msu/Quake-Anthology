@@ -203,7 +203,7 @@ static bool open_download(void *context, const char *name, bool *found, qa_qw_do
 static bool source_input(void *context, qa_net_client_id id, const qa_qw_command *commands,
     size_t count, uint32_t sequence, qa_error *error)
 {
-    qw_frontend_peer *peer = context; qa_actor_id actor; qa_application_control_view selected;
+    qw_frontend_peer *peer = context; qa_actor_id actor; qa_player_state selected;
     if (!qa_net_client_id_equal(id, peer->client) || !commands || !count || count > 20 ||
         !peer_actor(peer, &actor, error) || !qa_application_control_read(peer->host->frontend->application, actor, &selected)) return false;
     qa_movement_command raw[20];

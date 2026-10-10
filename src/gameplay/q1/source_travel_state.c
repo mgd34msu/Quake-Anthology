@@ -381,13 +381,11 @@ bool qa_q1_travel_original_parameters_restore(qa_q1_game *game, qa_actor_id acto
     return okay;
 }
 
-static bool cvar(travel_call *call, const char *name, float *out, qa_error *error) {
+static bool cvar(travel_call *call, qa_q1_source_setting setting, float *out, qa_error *error) {
     qa_q1_game *game = call->operation.game;
-    qa_string_id id;
-    if (!game->services.cvar)
+    if (!game->host.cvars)
         return fail(error, "Q1 source travel requires its actual cvar reader");
-    return item(call, name, &id, error) &&
-        game->services.cvar(q1_cvar_context(game), id, out, error) && current(call, error) &&
+    return q1_source_value(game, setting, 0, out, error) && current(call, error) &&
         (isfinite(*out) || fail(error, "Q1 source travel read a nonfinite cvar"));
 }
 static bool configure(travel_call *call, const qa_inventory_entry *entry, qa_error *error) {
@@ -422,7 +420,7 @@ static bool mg3_restore(travel_call *call, const qa_q1_mg3_progress *progress,
     uint32_t *flags = game->maps->options.server_flags;
     if (*flags & 64u) {
         float skill;
-        if (!cvar(call, "skill", &skill, error)) return false;
+        if (!cvar(call, QA_Q1_SOURCE_SKILL, &skill, error)) return false;
         if (skill != 3) *flags &= ~64u;
         else {
             double hammer;
@@ -500,7 +498,7 @@ bool qa_q1_travel_admit(qa_q1_game *game, qa_actor_id actor, qa_q1_travel_state 
             if (game->options.program == QA_Q1_MG3 && !strcmp(map, "boss2") && game->options.skill == 3)
                 *game->maps->options.server_flags |= 64u | 128u;
             float horde = 0;
-            if (game->options.program != QA_Q1_MG3) ok = cvar(&call, "horde", &horde, error);
+            if (game->options.program != QA_Q1_MG3) ok = cvar(&call, QA_Q1_SOURCE_HORDE, &horde, error);
             replace = start || game->options.world_type == 3 || horde != 0;
         } else if (game->options.program == QA_Q1_CTF) {
             qa_q1_travel_ctf ctf;

@@ -456,7 +456,7 @@ bool application_actor_released(void *opaque, qa_session *session,
         application_control_record *control =
             &application->controls[released.id.slot];
         if (control->active &&
-            qa_actor_id_equal(control->actor, released.id)) {
+            qa_actor_id_equal(control->player.actor, released.id)) {
             if (control->moving) {
                 control->active = false;
                 control->retired = true;
@@ -1180,13 +1180,8 @@ static bool target_message(void *opaque, const qa_target_use *request,
         clock.frame.provider != provider->owner || clock.frame.kind != request->dialect)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Target message lost its actual Source clock owner");
-    qa_game_family family =
-        request->dialect == QA_RULESET_Q3
-            ? QA_GAME_Q3
-            : request->dialect == QA_RULESET_Q2_CLASSIC ||
-                      request->dialect == QA_RULESET_Q2_RERELEASE
-                  ? QA_GAME_Q2
-                  : QA_GAME_Q1;
+    const qa_ruleset_descriptor *ruleset = qa_ruleset_read(request->dialect);
+    qa_game_family family = ruleset ? ruleset->family : QA_GAME_Q1;
     return application_emit(
         opaque,
         &(qa_builtin_event){.kind = QA_BUILTIN_CENTERPRINT,
@@ -1317,7 +1312,7 @@ static bool physics_write(void *opaque, qa_actor_id actor,
     if (actor.slot < application->control_capacity) {
         const application_control_record *control =
             &application->controls[actor.slot];
-        if (control->active && qa_actor_id_equal(control->actor, actor))
+        if (control->active && qa_actor_id_equal(control->player.actor, actor))
             return application_control_physics_write(application, actor, value,
                                                      error);
     }
@@ -1616,7 +1611,7 @@ static bool builtin_motion_changed(void *opaque, qa_actor_id actor,
         return true;
     application_control_record *control =
         &application->controls[actor.slot];
-    return !control->active || !qa_actor_id_equal(control->actor, actor) ||
+    return !control->active || !qa_actor_id_equal(control->player.actor, actor) ||
            application_control_motion_changed(application, actor, change,
                                               error);
 }

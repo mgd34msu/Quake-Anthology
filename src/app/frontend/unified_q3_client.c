@@ -5,6 +5,7 @@
 #include "video_guests.h"
 #include "qa/application_native_q3_cvars.h"
 #include "qa/application_native_q3_client.h"
+#include "qa/pool.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -12,45 +13,34 @@
 #include <string.h>
 
 typedef struct client_snapshot {
+    size_t references, slot;
     qa_q3_snapshot value;
     qa_q3_entity entities[256];
     qa_actor_id actors[256], player_actor;
     qa_actor_id bindings[QA_Q3_ENTITIES];
 } client_snapshot;
 typedef struct client_command {
+    size_t references, slot;
     int32_t sequence;
     qa_command_tokens arguments;
+    char *values[sizeof(((qa_q3_tokens *)0)->offsets)/sizeof(uint16_t)];
+    char storage[sizeof(((qa_q3_tokens *)0)->text)], args_text[sizeof(((qa_q3_tokens *)0)->text)];
 } client_command;
+typedef struct client_gamestate {
+    size_t references, slot;
+    qa_q3_gamestate value;
+} client_gamestate;
 typedef struct client_history {
-    client_snapshot snapshots[32];
-    client_command commands[64];
-    qa_q3_gamestate authority, reached;
+    frontend_unified_q3_client *owner;
+    client_snapshot *snapshots[QA_Q3_PACKET_BACKUP];
+    client_command *commands[QA_Q3_RELIABLE];
+    client_gamestate *authority, *reached;
     uint64_t string_revisions[QA_Q3_CONFIGSTRINGS];
     qa_actor_id actors[QA_Q3_ENTITIES];
     int32_t number, time, reliable, command_sequence;
     uint64_t event_sequence;
     bool has_event_sequence, unsealed_snapshot;
 } client_history;
-struct frontend_unified_q3_client {
-    frontend_remote_unified *replica;
-    frontend_unified_q3_sources *sources;
-    frontend_unified_q3_source_view constructor;
-    const frontend_remote_unified_domain *domain;
-    uint64_t receiver;
-    qa_command_context command_context;
-    char *provider_name, *instance;
-    client_history *history;
-    frontend_unified_q3_client_frame *prepared;
-    frontend_unified_q3_client_video *video;
-    frontend_unified_q3_source_retirement *retirement;
-    q3n_compiled_source *source;
-    uint64_t revision;
-    qa_native_q3_client_cvar *cvar_cache;
-    qa_native_q3_cvar_refs cvar_refs;
-    size_t cvar_count;
-    int32_t local_server;
-    bool busy, registered, initialized;
-};
 struct frontend_unified_q3_client_frame {
     frontend_unified_q3_client *owner;
     frontend_unified_q3_source_view source;
@@ -69,6 +59,28 @@ struct frontend_unified_q3_client_video {
     uint64_t revision;
     int32_t message, time, reliable, reached;
     bool begun;
+};
+struct frontend_unified_q3_client {
+    frontend_remote_unified *replica;
+    frontend_unified_q3_sources *sources;
+    frontend_unified_q3_source_view constructor;
+    const frontend_remote_unified_domain *domain;
+    uint64_t receiver;
+    qa_command_context command_context;
+    char *provider_name, *instance;
+    qa_arena storage;
+    qa_pool snapshots, commands, gamestates;
+    client_history histories[2], *history;
+    frontend_unified_q3_client_frame frame, *prepared;
+    frontend_unified_q3_client_video video_record, *video;
+    frontend_unified_q3_source_retirement *retirement;
+    q3n_compiled_source *source;
+    uint64_t revision;
+    qa_native_q3_client_cvar *cvar_cache;
+    qa_native_q3_cvar_refs cvar_refs;
+    size_t cvar_count;
+    int32_t local_server;
+    bool busy, registered, initialized;
 };
 static bool fail(qa_error *e, qa_status code, const char *s)
 { qa_error_set(e,code,0,"%s",s); return false; }
@@ -177,53 +189,95 @@ bool frontend_unified_q3_client_retirement_unbind(frontend_unified_q3_client *c,
         return fail(e,QA_ERROR_ARGUMENT,"Compiled retirement rollback requires its still-published actual Source");
     c->retirement = NULL; return true;
 }
-static void history_free(client_history *h)
-{ if (h) { for (size_t i = 0; i < 64; ++i) qa_command_tokens_free(&h->commands[i].arguments); free(h); } }
-static bool arguments(const char *const *values, size_t count, qa_command_tokens *out, qa_error *e)
+static bool history_storage(frontend_unified_q3_client *c, qa_error *e)
 {
-    size_t bytes = 1;
+    /* A candidate shares the current cut, then acquires each replacement before
+     * releasing its old slot. Commands can replace the entire reliable ring. */
+    size_t snapshots = QA_Q3_PACKET_BACKUP+1, commands = 2*QA_Q3_RELIABLE+1;
+    size_t bytes = snapshots * (sizeof(client_snapshot) + sizeof(size_t)) +
+        commands * (sizeof(client_command) + sizeof(size_t)) +
+        3 * (sizeof(client_gamestate) + sizeof(size_t)) +
+        _Alignof(client_snapshot) + _Alignof(client_command) + _Alignof(client_gamestate) + 3 * _Alignof(size_t);
+    if (!qa_arena_reserve(&c->storage,bytes,e) ||
+        !qa_pool_prepare(&c->snapshots,&c->storage,snapshots,sizeof(client_snapshot),_Alignof(client_snapshot),e) ||
+        !qa_pool_prepare(&c->commands,&c->storage,commands,sizeof(client_command),_Alignof(client_command),e) ||
+        !qa_pool_prepare(&c->gamestates,&c->storage,3,sizeof(client_gamestate),_Alignof(client_gamestate),e)) return false;
+    qa_arena_seal(&c->storage);
+    c->histories[0].owner = c; c->histories[1].owner = c;
+    c->history = c->histories;
+    return true;
+}
+static void snapshot_release(frontend_unified_q3_client *c, client_snapshot *row)
+{ if (row && !--row->references) qa_pool_release(&c->snapshots,row->slot); }
+static void command_release(frontend_unified_q3_client *c, client_command *row)
+{ if (row && !--row->references) qa_pool_release(&c->commands,row->slot); }
+static void gamestate_release(frontend_unified_q3_client *c, client_gamestate *row)
+{ if (row && !--row->references) qa_pool_release(&c->gamestates,row->slot); }
+static void history_free(client_history *h)
+{
+    if (!h) return;
+    frontend_unified_q3_client *c = h->owner;
+    for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i) snapshot_release(c,h->snapshots[i]);
+    for (size_t i = 0; i < QA_Q3_RELIABLE; ++i) command_release(c,h->commands[i]);
+    gamestate_release(c,h->authority); gamestate_release(c,h->reached);
+    *h = (client_history){.owner=c};
+}
+static client_gamestate *gamestate_copy(frontend_unified_q3_client *c, const qa_q3_gamestate *value, qa_error *e)
+{
+    size_t slot;
+    client_gamestate *row = qa_pool_take(&c->gamestates,&slot);
+    if (!row) { fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT gamestate"); return NULL; }
+    row->references = 1; row->slot = slot; row->value = *value;
+    return row;
+}
+static bool authority_write(client_history *h, qa_error *e)
+{
+    if (h->authority->references == 1) return true;
+    client_gamestate *next = gamestate_copy(h->owner,&h->authority->value,e);
+    if (!next) return false;
+    gamestate_release(h->owner,h->authority); h->authority = next;
+    return true;
+}
+static bool arguments(const char *const *values, size_t count, client_command *row, qa_error *e)
+{
+    size_t bytes = 0;
     for (size_t i = 0; i < count; ++i) {
         size_t n = strlen(values[i])+1;
-        if (n > SIZE_MAX-bytes) return fail(e,QA_ERROR_MEMORY,"Compiled reliable arguments overflow");
+        if (n > sizeof(row->storage)-bytes) return fail(e,QA_ERROR_MEMORY,"Compiled reliable arguments overflow");
         bytes += n;
     }
-    qa_command_tokens t = {.count=count};
-    t.values = count ? calloc(count,sizeof(*t.values)) : NULL;
-    t.storage = malloc(bytes); t.args_text = malloc(bytes);
-    if ((count && !t.values) || !t.storage || !t.args_text) {
-        qa_command_tokens_free(&t); return fail(e,QA_ERROR_MEMORY,"Retaining compiled reliable arguments");
-    }
+    qa_command_tokens t = {.count=count,.values=count?row->values:NULL,
+        .storage=row->storage,.args_text=row->args_text};
     size_t at = 0, joined = 0;
     for (size_t i = 0; i < count; ++i) {
         size_t n = strlen(values[i]); t.values[i] = t.storage+at;
         memcpy(t.storage+at,values[i],n+1); at += n+1;
         if (i) { if (i > 1) t.args_text[joined++] = ' '; memcpy(t.args_text+joined,values[i],n); joined += n; }
     }
-    t.storage[at] = 0; t.args_text[joined] = 0; *out = t; return true;
+    if (!count) t.storage[0] = 0;
+    t.args_text[joined] = 0; row->arguments = t; return true;
 }
-static bool history_clone(const client_history *old, client_history **out, qa_error *e)
+static client_history *history_clone(const client_history *old)
 {
-    client_history *h = malloc(sizeof(*h));
-    if (!h) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT history candidate");
+    client_history *h = old == old->owner->histories ? old->owner->histories+1 : old->owner->histories;
     *h = *old;
-    for (size_t i = 0; i < 64; ++i) h->commands[i].arguments = (qa_command_tokens){0};
-    for (size_t i = 0; i < 32; ++i) h->snapshots[i].value.entities = h->snapshots[i].entities;
-    for (size_t i = 0; i < 64; ++i) {
-        const qa_command_tokens *a = &old->commands[i].arguments;
-        if (!arguments((const char *const *)a->values,a->count,&h->commands[i].arguments,e)) { history_free(h); return false; }
-        free(h->commands[i].arguments.args_text);
-        h->commands[i].arguments.args_text = copy(a->args_text ? a->args_text : "");
-        if (!h->commands[i].arguments.args_text) { history_free(h); return fail(e,QA_ERROR_MEMORY,"Retaining compiled command tail"); }
-    }
-    *out = h; return true;
+    for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i) if (h->snapshots[i]) ++h->snapshots[i]->references;
+    for (size_t i = 0; i < QA_Q3_RELIABLE; ++i) if (h->commands[i]) ++h->commands[i]->references;
+    ++h->authority->references; ++h->reached->references;
+    return h;
 }
 static bool append(client_history *h, const char *const *values, size_t count, qa_error *e)
 {
     if (h->reliable == INT32_MAX) return fail(e,QA_ERROR_FORMAT,"Compiled reliable command history is exhausted");
-    qa_command_tokens t = {0};
-    if (!arguments(values,count,&t,e)) return false;
-    int32_t sequence = h->reliable+1; client_command *row = h->commands+((uint32_t)sequence&63u);
-    qa_command_tokens_free(&row->arguments); *row = (client_command){sequence,t}; h->reliable = sequence; return true;
+    size_t slot;
+    client_command *row = qa_pool_take(&h->owner->commands,&slot);
+    if (!row) return fail(e,QA_ERROR_MEMORY,"Retaining compiled reliable arguments");
+    row->slot = slot; row->references = 1;
+    if (!arguments(values,count,row,e)) { command_release(h->owner,row); return false; }
+    int32_t sequence = h->reliable+1; size_t index = (uint32_t)sequence&(QA_Q3_RELIABLE-1u);
+    row->sequence = sequence;
+    command_release(h->owner,h->commands[index]); h->commands[index] = row;
+    h->reliable = sequence; return true;
 }
 static int32_t source_integer(const char *text)
 {
@@ -243,13 +297,19 @@ static bool receive(client_history *h, const frontend_unified_q3_source_view *v,
     for (size_t i = 0; i < v->player_count; ++i)
         if (v->players[i].source_number == v->client_number && qa_actor_id_equal(v->players[i].actor,v->viewer)) player = v->players+i;
     if (!player) return fail(e,QA_ERROR_FORMAT,"Compiled CLIENT lost its actual physical Source player");
-    if (initial) { h->authority = *v->game_state; h->reached = *v->game_state; }
+    if (initial) {
+        h->authority = gamestate_copy(h->owner,v->game_state,e);
+        if (!h->authority) return false;
+        h->reached = gamestate_copy(h->owner,v->game_state,e);
+        if (!h->reached) return false;
+    }
     else for (uint32_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i) {
         const char *value = qa_q3_configstring(v->game_state,i);
-        if (!strcmp(qa_q3_configstring(&h->authority,i),value)) continue;
+        if (!strcmp(qa_q3_configstring(&h->authority->value,i),value)) continue;
         char index[16]; snprintf(index,sizeof(index),"%u",i);
         const char *argv[] = {"cs",index,value};
-        if (!append(h,argv,3,e) || !qa_q3_configstring_set(&h->authority,i,value,e)) return false;
+        if (!authority_write(h,e) || !append(h,argv,3,e) ||
+            !qa_q3_configstring_set(&h->authority->value,i,value,e)) return false;
     }
     if (round) {
         const char *argv[] = {"map_restart"};
@@ -261,8 +321,13 @@ static bool receive(client_history *h, const frontend_unified_q3_source_view *v,
     for (size_t i = 0; i < v->player_count; ++i) h->actors[v->players[i].source_number] = v->players[i].actor;
     if (h->number && v->time == h->time) return true;
     if (h->number == INT32_MAX) return fail(e,QA_ERROR_FORMAT,"Compiled snapshot history is exhausted");
-    int32_t previous = h->number; client_snapshot *row = h->snapshots+((uint32_t)(previous+1)&31u);
+    size_t slot;
+    client_snapshot *row = qa_pool_take(&h->owner->snapshots,&slot);
+    if (!row) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT snapshot");
     memset(row,0,sizeof(*row));
+    row->references = 1; row->slot = slot;
+    int32_t previous = h->number; size_t index = (uint32_t)(previous+1)&(QA_Q3_PACKET_BACKUP-1u);
+    snapshot_release(h->owner,h->snapshots[index]); h->snapshots[index] = row;
     row->value = (qa_q3_snapshot){.valid=true,.message_number=previous+1,.server_time=v->time,
         .delta_number=previous ? previous : -1,.server_command_number=h->reliable,.area_bytes=32,
         .flags=v->snapshot_bit,
@@ -278,7 +343,7 @@ static bool receive(client_history *h, const frontend_unified_q3_source_view *v,
 static bool source_basis(frontend_unified_q3_client *c,const frontend_unified_q3_source_view *v,
     const client_history *h,uint64_t revision,q3n_compiled_source_basis *out,qa_error *e)
 {
-    char value[8192]; const char *info = qa_q3_configstring(&h->reached,0);
+    char value[8192]; const char *info = qa_q3_configstring(&h->reached->value,0);
     if (!qa_q3_info_value(info,"g_gametype",value,sizeof(value),e)) return false;
     int32_t game_type = source_integer(value);
     if (!qa_q3_info_value(info,"sv_maxclients",value,sizeof(value),e)) return false;
@@ -288,7 +353,7 @@ static bool source_basis(frontend_unified_q3_client *c,const frontend_unified_q3
         .instance=c->instance,.content=v->files,.assets=v->assets,.product=v->product,
         .publication=v->publication,.map_revision=v->map_revision,.serial=revision,.viewer=v->viewer,
         .seat=c->domain->seat.index,.physical_seat=c->domain->physical_seat,.client_number=(int32_t)v->client_number,
-        .time=h->time,.game_type=game_type,.max_clients=max_clients,.level_start_time=source_integer(qa_q3_configstring(&h->reached,21)),
+        .time=h->time,.game_type=game_type,.max_clients=max_clients,.level_start_time=source_integer(qa_q3_configstring(&h->reached->value,21)),
         .snapshot_bit=v->snapshot_bit,
         .initial_command=0,.reached_command=h->command_sequence,.initialized=c->initialized}; return true;
 }
@@ -339,7 +404,7 @@ static bool configstring(void *context, uint32_t index, const char **out, uint64
     frontend_unified_q3_client *c = context;
     if (!out || !revision || index >= QA_Q3_CONFIGSTRINGS || !frontend_unified_q3_client_current(c))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CG configstring lost its actual reached owner");
-    *out = qa_q3_configstring(&c->history->reached,index); *revision = c->history->string_revisions[index]; return true;
+    *out = qa_q3_configstring(&c->history->reached->value,index); *revision = c->history->string_revisions[index]; return true;
 }
 static bool source_idle(void *context) { return frontend_unified_q3_client_idle(context); }
 static bool actor_known(void *context,qa_actor_id actor)
@@ -384,8 +449,8 @@ bool frontend_unified_q3_client_create(frontend_remote_unified *replica, fronten
     c->replica = replica; c->sources = sources; c->constructor = *v; c->receiver = receiver;
     c->domain = domain; c->revision = 1;
     c->command_context=domain->command_context;
-    c->provider_name = copy(v->provider_name); c->instance = copy(v->instance); c->history = calloc(1,sizeof(*c->history));
-    bool ok = c->provider_name && c->instance && c->history &&
+    c->provider_name = copy(v->provider_name); c->instance = copy(v->instance);
+    bool ok = c->provider_name && c->instance && history_storage(c,e) &&
         receive(c->history,v,true,false,e) && create_source(c,e);
     if (!ok) { frontend_unified_q3_client_destroy(&c,NULL); return e && e->code ? false : fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT source declaration"); }
     *out = c; return true;
@@ -396,13 +461,14 @@ bool frontend_unified_q3_client_prepare(frontend_unified_q3_client *c, const fro
     if (!c || !v || !out || *out || c->busy || c->prepared || c->video || c->revision == UINT64_MAX ||
         !frontend_unified_q3_client_matches(c,v))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT frame requires its actual same Source activation");
-    frontend_unified_q3_client_frame *t = calloc(1,sizeof(*t));
-    if (!t) return fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT publication");
+    frontend_unified_q3_client_frame *t = &c->frame;
+    *t = (frontend_unified_q3_client_frame){0};
     t->owner = c; t->source = *v; t->revision = c->revision+1;
     t->command_context = c->domain->command_context;
     bool round = v->snapshot_bit != c->constructor.snapshot_bit;
-    bool ok = history_clone(c->history,&t->history,e) && receive(t->history,v,false,round,e);
-    if (!ok) { history_free(t->history); free(t); return false; }
+    t->history = history_clone(c->history);
+    bool ok = receive(t->history,v,false,round,e);
+    if (!ok) { history_free(t->history); return false; }
     c->prepared = t;
     if (round) {
         q3n_compiled_source_view before;
@@ -432,7 +498,7 @@ void frontend_unified_q3_client_commit(frontend_unified_q3_client_frame **out)
     c->constructor.viewer = t->source.viewer; c->constructor.snapshot_bit = t->source.snapshot_bit;
     c->command_context = t->command_context;
     q3n_compiled_source_rebind_commit(&t->rebind);
-    c->prepared = NULL; free(t); *out = NULL;
+    c->prepared = NULL; *out = NULL;
 }
 void frontend_unified_q3_client_abort(frontend_unified_q3_client_frame **out)
 {
@@ -440,7 +506,7 @@ void frontend_unified_q3_client_abort(frontend_unified_q3_client_frame **out)
     frontend_unified_q3_client_frame *t = *out;
     q3n_compiled_source_rebind_abort(&t->rebind);
     if (t->owner->prepared == t) t->owner->prepared = NULL;
-    history_free(t->history); free(t); *out = NULL;
+    history_free(t->history); *out = NULL;
 }
 bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **out, qa_error *e)
 {
@@ -449,7 +515,8 @@ bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **out, qa_err
     if (!frontend_unified_q3_client_idle(c)) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT retains entered consumers or a candidate frame");
     if (!q3n_compiled_source_destroy(&c->source,e)) return false;
     if (c->retirement && !frontend_unified_q3_source_retirement_client_drop(c->retirement,c,e)) return false;
-    history_free(c->history); free(c->cvar_cache); free(c->provider_name); free(c->instance); free(c); *out = NULL; return true;
+    history_free(c->history); qa_arena_destroy(&c->storage);
+    free(c->cvar_cache); free(c->provider_name); free(c->instance); free(c); *out = NULL; return true;
 }
 bool frontend_unified_q3_client_video_current(const frontend_unified_q3_client_video *t)
 {
@@ -472,8 +539,7 @@ bool frontend_unified_q3_client_video_prepare(frontend_unified_q3_client *c,qa_f
         !c->registered || c->history->unsealed_snapshot || c->revision >= UINT64_MAX-1 || !observation(c,&v) ||
         !frontend_video_guests_parent_is(f,aggregate) || qa_frontend_application(f) != c->domain->application)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT video reset requires its actual returned CG and physical video aggregate");
-    frontend_unified_q3_client_video *t = calloc(1,sizeof(*t));
-    if (!t) return fail(e,QA_ERROR_MEMORY,"Retaining actual compiled CLIENT video baseline");
+    frontend_unified_q3_client_video *t = &c->video_record;
     *t = (frontend_unified_q3_client_video){.owner=c,.frontend=f,.aggregate=aggregate,.source=v,
         .history=c->history,.revision=c->revision,.message=c->history->number,.time=c->history->time,
         .reliable=c->history->reliable,.reached=c->history->command_sequence};
@@ -513,7 +579,7 @@ bool frontend_unified_q3_client_video_finish(frontend_unified_q3_client_video **
     frontend_unified_q3_client_video *t = *out;
     if (!frontend_unified_q3_client_video_current(t) || !t->begun || !t->owner->initialized || !t->owner->registered)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled video retains unfinished actual CG registration and Init");
-    t->owner->video = NULL; free(t); *out = NULL; return true;
+    t->owner->video = NULL; *out = NULL; return true;
 }
 bool frontend_unified_q3_client_video_abort(frontend_unified_q3_client_video **out,qa_error *e)
 {
@@ -521,7 +587,7 @@ bool frontend_unified_q3_client_video_abort(frontend_unified_q3_client_video **o
     frontend_unified_q3_client_video *t = *out;
     if (t->begun) return frontend_unified_q3_client_video_finish(out,e);
     if (!frontend_unified_q3_client_video_current(t)) return fail(e,QA_ERROR_ARGUMENT,"Compiled video cancellation lost its actual CLIENT parent");
-    t->owner->video = NULL; free(t); *out = NULL; return true;
+    t->owner->video = NULL; *out = NULL; return true;
 }
 q3n_compiled_source *frontend_unified_q3_client_source(frontend_unified_q3_client *c) { return c ? c->source : NULL; }
 const qa_command_context *frontend_unified_q3_client_context(const frontend_unified_q3_client *c)
@@ -541,8 +607,8 @@ bool frontend_unified_q3_client_snapshot(const frontend_unified_q3_client *c, in
 {
     if (!out || number < 1 || !frontend_unified_q3_client_current(c) || c->history->unsealed_snapshot)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled snapshot read requires its actual Source events to finish publication");
-    const client_snapshot *row = c->history->snapshots+((uint32_t)number&31u);
-    *out = row->value.valid && row->value.message_number == number ? &row->value : NULL; return true;
+    const client_snapshot *row = c->history->snapshots[(uint32_t)number&(QA_Q3_PACKET_BACKUP-1u)];
+    *out = row && row->value.valid && row->value.message_number == number ? &row->value : NULL; return true;
 }
 bool frontend_unified_q3_client_snapshot_actor(const frontend_unified_q3_client *c,int32_t message,
     uint32_t number,qa_actor_id *actor,bool *present,qa_error *e)
@@ -551,7 +617,7 @@ bool frontend_unified_q3_client_snapshot_actor(const frontend_unified_q3_client 
     if (!actor || !present || number >= QA_Q3_ENTITY_NONE ||
         !frontend_unified_q3_client_snapshot(c,message,&snapshot,e) || !snapshot)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled historical actor requires its genuine retained snapshot");
-    const client_snapshot *row = c->history->snapshots+((uint32_t)message&31u);
+    const client_snapshot *row = c->history->snapshots[(uint32_t)message&(QA_Q3_PACKET_BACKUP-1u)];
     *actor = row->bindings[number]; *present = actor->registry != 0; return true;
 }
 bool frontend_unified_q3_client_snapshot_number(const frontend_unified_q3_client *c,int32_t message,
@@ -561,7 +627,7 @@ bool frontend_unified_q3_client_snapshot_number(const frontend_unified_q3_client
     if (!number || !present || !actor.registry || !frontend_unified_q3_client_idle(c) ||
         !frontend_unified_q3_client_snapshot(c,message,&snapshot,e) || !snapshot)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled Source ownership requires its actual retained snapshot");
-    const client_snapshot *row = c->history->snapshots+((uint32_t)message&31u);
+    const client_snapshot *row = c->history->snapshots[(uint32_t)message&(QA_Q3_PACKET_BACKUP-1u)];
     *number = QA_Q3_ENTITY_NONE; *present = false;
     for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
         if (!qa_actor_id_equal(row->bindings[i],actor)) continue;
@@ -574,15 +640,15 @@ bool frontend_unified_q3_client_command(frontend_unified_q3_client *c, int32_t s
     if (!c || !out || c->busy || c->prepared || c->video || c->revision == UINT64_MAX || sequence < 1 ||
         sequence > c->history->reliable || (int64_t)sequence > (int64_t)c->history->command_sequence+1 ||
         !frontend_unified_q3_client_current(c)) return fail(e,QA_ERROR_ARGUMENT,"Compiled command must reach its actual next retained sequence");
-    client_command *row = c->history->commands+((uint32_t)sequence&63u);
-    if (row->sequence != sequence) return fail(e,QA_ERROR_FORMAT,"Compiled reliable history lost an unreached command");
+    client_command *row = c->history->commands[(uint32_t)sequence&(QA_Q3_RELIABLE-1u)];
+    if (!row || row->sequence != sequence) return fail(e,QA_ERROR_FORMAT,"Compiled reliable history lost an unreached command");
     if (sequence > c->history->command_sequence) {
         qa_command_tokens *a = &row->arguments;
         if (a->count && !strcmp(a->values[0],"cs")) {
             char *end = NULL; unsigned long index = a->count > 1 ? strtoul(a->values[1],&end,10) : ULONG_MAX;
             if (a->count != 3 || !end || *end || index >= QA_Q3_CONFIGSTRINGS || c->history->string_revisions[index] == UINT64_MAX)
                 return fail(e,QA_ERROR_FORMAT,"Compiled reached configstring command has invalid actual arguments");
-            if (!qa_q3_configstring_set(&c->history->reached,(uint32_t)index,a->values[2],e)) return false;
+            if (!qa_q3_configstring_set(&c->history->reached->value,(uint32_t)index,a->values[2],e)) return false;
             ++c->history->string_revisions[index];
         }
         c->history->command_sequence = sequence; ++c->revision;
@@ -592,8 +658,8 @@ bool frontend_unified_q3_client_command(frontend_unified_q3_client *c, int32_t s
 bool frontend_unified_q3_command_current(const frontend_unified_q3_command *r)
 {
     if (!r || !r->present || !frontend_unified_q3_client_current(r->owner) || r->revision != r->owner->revision) return false;
-    const client_command *row = r->owner->history->commands+((uint32_t)r->sequence&63u);
-    return row->sequence == r->sequence && &row->arguments == r->arguments;
+    const client_command *row = r->owner->history->commands[(uint32_t)r->sequence&(QA_Q3_RELIABLE-1u)];
+    return row && row->sequence == r->sequence && &row->arguments == r->arguments;
 }
 bool frontend_unified_q3_client_server_command(frontend_unified_q3_client *c, uint64_t event_sequence,
     int32_t recipient, const char *text, qa_error *e)
@@ -603,10 +669,11 @@ bool frontend_unified_q3_client_server_command(frontend_unified_q3_client *c, ui
     client_history *h = c->history;
     if (h->has_event_sequence && event_sequence <= h->event_sequence) return true;
     if (recipient < 0 || recipient == (int32_t)c->constructor.client_number) {
-        qa_command_tokens args = {0};
-        if (!qa_command_tokenize(text,QA_RULESET_Q3,false,&args,e)) return false;
-        bool ok = append(h,(const char *const *)args.values,args.count,e);
-        qa_command_tokens_free(&args); if (!ok) return false;
+        qa_q3_tokens args;
+        if (!qa_q3_tokenize(text,&args,e)) return false;
+        const char *values[sizeof(args.offsets)/sizeof(*args.offsets)];
+        for (size_t i = 0; i < args.count; ++i) values[i] = qa_q3_token(&args,i);
+        if (!append(h,values,args.count,e)) return false;
     }
     h->event_sequence = event_sequence; h->has_event_sequence = true; ++c->revision; return true;
 }
@@ -616,7 +683,7 @@ bool frontend_unified_q3_client_seal(frontend_unified_q3_client *c, qa_error *e)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled snapshot sealing requires its actual returned FRAME owner");
     if (!c->history->unsealed_snapshot) return true;
     if (c->revision == UINT64_MAX) return fail(e,QA_ERROR_FORMAT,"Compiled CLIENT sealing revision is exhausted");
-    client_snapshot *row = c->history->snapshots+((uint32_t)c->history->number&31u);
+    client_snapshot *row = c->history->snapshots[(uint32_t)c->history->number&(QA_Q3_PACKET_BACKUP-1u)];
     row->value.server_command_number = c->history->reliable;
     c->history->unsealed_snapshot = false; ++c->revision; return true;
 }

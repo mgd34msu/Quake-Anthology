@@ -342,14 +342,8 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_erro
     return !q1_alive(g, other) || changed(g, other, &body, QA_BUILTIN_MOTION_TELEPORT, player,
                                           player ? UINT64_C(700000000) : 0, error);
 }
-static bool cvar(qa_q1_game *g, const char *name, float *value, qa_error *error) {
-    *value = 0;
-    if (!g->services.cvar)
-        return true;
-    qa_string_id key;
-    if (!qa_builtin_resource(&g->services, name, &key, error) ||
-        !g->services.cvar(q1_cvar_context(g), key, value, error))
-        return false;
+static bool cvar(qa_q1_game *g, qa_q1_source_setting setting, float *value, qa_error *error) {
+    if (!q1_source_value(g, setting, 0, value, error)) return false;
     return isfinite(*value) || q1_map_fail(error, "nonfinite Q1 map cvar");
 }
 static bool damage(qa_q1_game *g, q1_actor *entity, qa_actor_id other, float amount,
@@ -363,7 +357,7 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     if (!q1_map_player(g, other))
         return true;
     float no_exit, same_level;
-    if (!cvar(g, "noexit", &no_exit, error) || !cvar(g, "samelevel", &same_level, error))
+    if (!cvar(g, QA_Q1_SOURCE_NOEXIT, &no_exit, error) || !cvar(g, QA_Q1_SOURCE_SAMELEVEL, &same_level, error))
         return false;
     const qa_q1_map_options *options = &g->maps->options;
     const char *current =

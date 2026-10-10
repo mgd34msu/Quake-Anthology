@@ -338,17 +338,17 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
         qa_movement_result physical;
         if (!physical_input_read(provider,actor,&physical,NULL,error)) return false;
         if (actor.slot>=app->control_capacity || !app->controls[actor.slot].active ||
-            !qa_actor_id_equal(app->controls[actor.slot].actor,actor))
+            !qa_actor_id_equal(app->controls[actor.slot].player.actor,actor))
             return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 Source completion lost its selected control generation");
         application_control_record *control=&app->controls[actor.slot];
-        control->state=physical.state; control->bounds=physical.bounds;
-        control->view_angles=physical.view_angles; control->view_offset=physical.view_offset;
-        control->view_height=physical.view_height;
-        control->command_angles=classic?qa_v3((float)command->angle_words[0]*(360.f/65536.f),
+        control->player.state=physical.state; control->player.bounds=physical.bounds;
+        control->player.view_angles=physical.view_angles; control->player.view_offset=physical.view_offset;
+        control->player.view_height=physical.view_height;
+        control->player.command_angles=classic?qa_v3((float)command->angle_words[0]*(360.f/65536.f),
             (float)command->angle_words[1]*(360.f/65536.f),(float)command->angle_words[2]*(360.f/65536.f)):command->angles;
-        control->result.state=control->state; control->result.bounds=control->bounds;
-        control->result.view_angles=control->view_angles; control->result.view_offset=control->view_offset;
-        control->result.view_height=control->view_height;
+        control->result.state=control->player.state; control->result.bounds=control->player.bounds;
+        control->result.view_angles=control->player.view_angles; control->result.view_offset=control->player.view_offset;
+        control->result.view_height=control->player.view_height;
     }
     return ok;
 }
@@ -378,7 +378,7 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
         !isfinite(command->up_move) || !qa_vec_finite(command->angles))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement lacks its source client or encodable command");
     application_control_record *control = &app->controls[actor.slot];
-    if (!control->active || !qa_actor_id_equal(control->actor, actor) ||
+    if (!control->active || !qa_actor_id_equal(control->player.actor, actor) ||
         (stage ? !control->moving || !stage->current(stage) : control->moving))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 movement control is unavailable");
     uint8_t bytes[28] = {0}; bytes[0] = (uint8_t)command->milliseconds; bytes[1] = (uint8_t)command->buttons;
@@ -412,25 +412,25 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
             ok = player_motion_finite(slot, &state, view, offset, error);
             if (ok) ok = qa_world_body_read(engine->world, actor, &body, error);
             if (ok) {
-                control->state = state; control->bounds = body.bounds;
-                control->view_angles = view; control->view_offset = offset;
-                control->command_angles = classic
+                control->player.state = state; control->player.bounds = body.bounds;
+                control->player.view_angles = view; control->player.view_offset = offset;
+                control->player.command_angles = classic
                     ? qa_v3((float)command->angle_words[0] * (360.f / 65536.f),
                             (float)command->angle_words[1] * (360.f / 65536.f),
                             (float)command->angle_words[2] * (360.f / 65536.f))
                     : command->angles;
-                control->view_height = classic ? offset.z : state.data.q2r.view_height;
+                control->player.view_height = classic ? offset.z : state.data.q2r.view_height;
                 if (!stage) {
-                    control->previous_buttons = control->buttons; control->buttons = command->buttons;
-                    control->command_sequence = command->sequence; control->command_seen = true;
+                    control->player.previous_buttons = control->player.buttons; control->player.buttons = command->buttons;
+                    control->player.command_sequence = command->sequence; control->command_seen = true;
                 } else {
                     qa_movement_result *result = &control->result;
                     result->status = QA_MOVEMENT_ACTIVE; result->actor = actor;
-                    result->command_sequence = command->sequence; result->state = control->state;
-                    result->bounds = control->bounds; result->ground = control->ground;
-                    result->view_angles = control->view_angles; result->view_offset = control->view_offset;
-                    result->view_height = control->view_height; result->water_level = control->water_level;
-                    result->water_type = control->water_type; result->contact_count = 0;
+                    result->command_sequence = command->sequence; result->state = control->player.state;
+                    result->bounds = control->player.bounds; result->ground = control->player.ground;
+                    result->view_angles = control->player.view_angles; result->view_offset = control->player.view_offset;
+                    result->view_height = control->player.view_height; result->water_level = control->player.water_level;
+                    result->water_type = control->player.water_type; result->contact_count = 0;
                 }
             }
         }

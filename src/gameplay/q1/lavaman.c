@@ -158,10 +158,8 @@ bool q1_lavaman_awake(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
     entity->physics.ideal_yaw = body.angles.y;
     body.bounds = entity->state.monster.species->bounds;
     float skill = g->options.skill;
-    if (mg3 && g->services.cvar) {
-        qa_string_id name;
-        if (!qa_builtin_resource(&g->services, "skill", &name, error) ||
-            !g->services.cvar(q1_cvar_context(g), name, &skill, error))
+    if (mg3 && g->host.cvars) {
+        if (!q1_source_value(g, QA_Q1_SOURCE_SKILL, 0, &skill, error))
             return false;
     }
     float health = 1250 + 250 * skill;

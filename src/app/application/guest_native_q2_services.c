@@ -434,7 +434,7 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     input->profile.data.q2.air_accelerate = (float)air->number;
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, NULL);
     if (character != engine->provider) {
-        qa_application_control_view control;
+        qa_player_state control;
         if (qa_application_control_read(app, actor, &control)) {
             qa_movement_input postures = application_control_character_postures(character, actor);
             input->standing = postures.standing;
@@ -503,12 +503,12 @@ static bool movement_commit(void *opaque, qa_native_host *host, qa_native_addres
     if (result->actor.slot >= app->control_capacity)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove has no shared control projection");
     application_control_record *control = &app->controls[result->actor.slot];
-    if (!control->active || !qa_actor_id_equal(control->actor, result->actor))
+    if (!control->active || !qa_actor_id_equal(control->player.actor, result->actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove control generation differs");
-    control->state = result->state; control->bounds = result->bounds;
-    control->ground = result->ground; control->water_level = result->water_level;
-    control->water_type = result->water_type; control->view_height = result->view_height;
-    control->view_angles = result->view_angles; control->view_offset = result->view_offset;
+    control->player.state = result->state; control->player.bounds = result->bounds;
+    control->player.ground = result->ground; control->player.water_level = result->water_level;
+    control->player.water_type = result->water_type; control->player.view_height = result->view_height;
+    control->player.view_angles = result->view_angles; control->player.view_offset = result->view_offset;
     if (raw) {
         qa_movement_result copy=*result;
         copy.contacts=NULL;

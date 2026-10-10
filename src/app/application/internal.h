@@ -158,25 +158,15 @@ typedef struct application_actor_routes {
 typedef struct application_control_record {
     struct qa_application *application;
     application_provider *cutscene_character;
-    qa_actor_id actor;
-    qa_movement_state state;
-    qa_movement_profile profile;
+    qa_player_state player;
     qa_application_movement_numeric numeric;
     qa_application_movement_numeric prediction_numeric;
     qa_movement_result result;
-    qa_bounds standing_bounds, bounds;
-    qa_movement_ground ground;
-    qa_vec3 view_angles, command_angles, view_offset, saved_view_offset;
+    qa_vec3 saved_view_offset;
     qa_vec3 q2r_pml_origin;
-    uint64_t command_sequence, command_angle_revision;
-    uint32_t buttons, previous_buttons;
-    int32_t water_level, water_type;
-    float view_height, gravity_multiplier;
-    qa_movement_mode player_mode;
     int32_t saved_mode;
-    bool active, moving, retired, flight, cutscene, saved_damageable;
+    bool active, moving, retired, saved_damageable;
     bool saved_mode_valid, command_seen, guest_mode_valid;
-    bool player_mode_set;
     int32_t guest_mode;
 } application_control_record;
 

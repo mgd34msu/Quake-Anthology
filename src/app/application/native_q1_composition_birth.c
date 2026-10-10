@@ -57,10 +57,9 @@ static bool begin(application_provider *source, qa_actor_id actor,
         application_native_q1_composition_mode(call->app, source, &call->mode, error) && current(call, error);
 }
 
-static bool source_cvar(source_birth *call, const char *name, double *out, qa_error *error) {
+static bool source_cvar(source_birth *call, qa_q1_source_setting setting, double *out, qa_error *error) {
     if (!current(call, error)) return false;
-    qa_cvars *cvars = application_native_q1_console_registry(call->source);
-    const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
+    const qa_cvar_view *value = qa_q1_source_read(call->operation.game, setting);
     if (!value || value->owner != call->source->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 birth lost its actual GAME policy cvar");
     *out = (float)(value->number);
@@ -177,7 +176,7 @@ static bool ctf_birth(source_birth *call, bool first, qa_error *error) {
     qa_mode_view view;
     double teamplay;
     if (!qa_modes_read(call->app->modes, call->mode, &view, error) ||
-        !source_cvar(call, "teamplay", &teamplay, error) ||
+        !source_cvar(call, QA_Q1_SOURCE_TEAMPLAY, &teamplay, error) ||
         !qa_q1_source_ctf_spawn_arsenal(call->operation.game, call->actor, false,
             ((uint32_t)qa_source_float_to_i32((float)(teamplay)) & 2048) != 0, error) || !current(call, error) ||
         !write_number(call, QA_Q1_CTF_LAST_HURT_CARRIER, -10, error) ||
@@ -186,7 +185,7 @@ static bool ctf_birth(source_birth *call, bool first, qa_error *error) {
     if (first) {
         if (!write_number(call, QA_Q1_CTF_KILLED, 0, error) ||
             !write_number(call, QA_Q1_CTF_MOTD, 0, error)) return false;
-        if (!source_cvar(call, "teamplay", &teamplay, error)) return false;
+        if (!source_cvar(call, QA_Q1_SOURCE_TEAMPLAY, &teamplay, error)) return false;
         if (((uint32_t)qa_source_float_to_i32((float)(teamplay)) & 1024) && !view.rules.start_map) {
             if (!observer(call, error)) return false;
         } else if (!check_team(call, error)) return false;
@@ -212,7 +211,7 @@ static bool rogue_birth(source_birth *call, qa_error *error) {
         return false;
     if (!qa_q1_source_client_read(call->operation.game, call->actor, &client))
         return application_fail(error, QA_ERROR_ARGUMENT, "Rogue birth lost its actual source color");
-    if (!source_cvar(call, "teamplay", &mode, error)) return false;
+    if (!source_cvar(call, QA_Q1_SOURCE_TEAMPLAY, &mode, error)) return false;
     if ((team >= 0 || mode < 4) && rogue_legal(mode, client.team))
         return write_number(call, QA_Q1_ROGUE_STEAM, client.team, error);
     size_t red = 0, blue = 0, grey = 0;
@@ -235,7 +234,7 @@ static bool rogue_birth(source_birth *call, qa_error *error) {
         use_blue = random < .5;
     }
     if (use_blue) { team = 14; count = blue; }
-    if (!source_cvar(call, "teamplay", &mode, error)) return false;
+    if (!source_cvar(call, QA_Q1_SOURCE_TEAMPLAY, &mode, error)) return false;
     if (mode == 6 && grey * 2 < count) team = 1;
     double old_flags;
     if (!write_number(call, QA_Q1_ROGUE_STEAM, team, error) ||
@@ -368,7 +367,7 @@ static bool team_lock(source_birth *call, qa_error *error) {
     double policy, last, value, team;
     qa_q1_source_client_view client;
     qa_mode_view view;
-    if (!source_cvar(call, "teamplay", &policy, error)) return false;
+    if (!source_cvar(call, QA_Q1_SOURCE_TEAMPLAY, &policy, error)) return false;
     if (policy < 0) return true;
     if (!qa_q1_source_client_read(call->operation.game, call->actor, &client) ||
         !qa_modes_read(call->app->modes, call->mode, &view, error) ||
@@ -428,7 +427,7 @@ static bool observer_impulse(source_birth *call, const qa_q1_input *input,
     if (!(impulse >= 100 && impulse <= 104) &&
         !(!supported && client.observer && ((impulse >= 1 && impulse <= 3) || input->jump))) return true;
     double policy;
-    if (!source_cvar(call, "teamplay", &policy, error)) return false;
+    if (!source_cvar(call, QA_Q1_SOURCE_TEAMPLAY, &policy, error)) return false;
     if (impulse == 100 && ((uint32_t)qa_source_float_to_i32((float)(policy)) & 64u)) {
         if (!frame_message(call, "$qc_ctf_teams_locked", error) ||
             !qa_q1_source_client_consume_impulse(call->operation.game, call->actor, error) ||
@@ -617,7 +616,7 @@ bool application_native_q1_ctf_impulse(application_provider *source, qa_actor_id
     if (okay && command.impulse) okay = observer_impulse(&call, &command, false, &consumed, error);
     if (okay && command.impulse && !consumed) {
         double policy;
-        okay = source_cvar(&call, "teamplay", &policy, error);
+        okay = source_cvar(&call, QA_Q1_SOURCE_TEAMPLAY, &policy, error);
         application_unified_player_selection selected = {0};
         if (okay && (command.impulse == 1 || command.impulse == 20 || command.impulse == 21))
             okay = application_unified_player_selection_read(call.app, actor, &selected, error) &&

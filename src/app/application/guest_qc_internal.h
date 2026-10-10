@@ -56,7 +56,7 @@ typedef struct application_qc_actor {
     bool collision_bound;
 } application_qc_actor;
 typedef struct application_qc_cvar_handles {
-    qa_cvar_handle qw_movement[9], sv_aim, teamplay;
+    qa_cvar_handle qw_movement[9], sv_aim, teamplay, deathmatch, pausable, hostname;
 } application_qc_cvar_handles;
 struct application_qc_state {
     struct application_qc_items *items;

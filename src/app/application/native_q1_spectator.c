@@ -36,7 +36,7 @@ static bool current(spectator_call *call, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator lost its actual source operation");
     const application_control_record *control = app->controls + call->actor.slot;
     if (!control->active || control->retired || (control->moving && !call->postthink) ||
-        !qa_actor_id_equal(control->actor, call->actor))
+        !qa_actor_id_equal(control->player.actor, call->actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator lost its reserved movement control");
     uint32_t slot;
     if (!qa_q1_native_client_slot(source->state.q1, call->actor, &slot, error)) return false;
@@ -108,8 +108,8 @@ bool application_native_q1_spectator_begin(application_provider *source, qa_acto
     }
     if (okay) {
         application_control_record *control = app->controls + actor.slot;
-        control->view_offset = qa_v3(0, 0, 22);
-        control->view_height = 22;
+        control->player.view_offset = qa_v3(0, 0, 22);
+        control->player.view_height = 22;
         okay = sync_body(&call, &body, error);
     }
     qa_q1_source_entity point;

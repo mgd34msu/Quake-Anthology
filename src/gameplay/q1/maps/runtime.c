@@ -604,7 +604,7 @@ bool q1_map_level_frame(qa_q1_game *game, const qa_source_frame *frame, qa_error
         return true;
     q1_map_runtime *maps = game->maps;
     qa_q1_level *level = maps->options.level;
-    if (!level || !frame || !game->services.cvar ||
+    if (!level || !frame || !game->host.cvars ||
         !level_frame_current(game, maps, level, error))
         return q1_map_fail(error, "Q1 source limits require their real frame and cvar owner");
     double seconds = game->time;
@@ -627,13 +627,10 @@ bool q1_map_level_frame(qa_q1_game *game, const qa_source_frame *frame, qa_error
         if (player && player->source_client && q1_alive(game, player->id))
             scores[written++] = player->source_frags;
     }
-    qa_string_id timelimit, fraglimit;
     float minutes, frags;
-    if (!qa_builtin_resource(&game->services, "timelimit", &timelimit, error) ||
-        !game->services.cvar(q1_cvar_context(game), timelimit, &minutes, error) ||
+    if (!q1_source_value(game, QA_Q1_SOURCE_TIMELIMIT, 0, &minutes, error) ||
         !level_frame_current(game, maps, level, error) ||
-        !qa_builtin_resource(&game->services, "fraglimit", &fraglimit, error) ||
-        !game->services.cvar(q1_cvar_context(game), fraglimit, &frags, error) ||
+        !q1_source_value(game, QA_Q1_SOURCE_FRAGLIMIT, 0, &frags, error) ||
         !level_frame_current(game, maps, level, error)) {
         free(scores);
         return false;
@@ -1106,10 +1103,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
             !strcmp(spawn->classname, "info_player_team2")) kind = Q1_MAP_POINT;
         if (wall || teleport) {
             qa_actor_id actor = entity->id;
-            qa_string_id name;
             float mode;
-            if (!g->services.cvar || !qa_builtin_resource(&g->services, "teamplay", &name, error) ||
-                !g->services.cvar(q1_cvar_context(g), name, &mode, error)) {
+            if (!g->host.cvars || !q1_source_value(g, QA_Q1_SOURCE_TEAMPLAY, 0, &mode, error)) {
                 if (!error || error->code == QA_OK)
                     q1_map_fail(error, "Rogue authored constructor lost its actual source teamplay");
                 return false;

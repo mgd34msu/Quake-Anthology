@@ -34,6 +34,7 @@ struct application_native_q1_console {
     application_provider *provider;
     qa_console *console;
     qa_cvars *cvars;
+    qa_cvar_handle highchars;
     size_t calls;
     /* svs.info and localinfo survive SV_Spawn; reliable_datagram does not. */
     char serverinfo[513], localinfo[32769];
@@ -113,7 +114,7 @@ static bool qc_chat_source(application_provider *provider, qa_actor_id actor,
     qa_qc_instance *vm = provider->state.qc.instance;
     const qa_qc_definition *netname = application_qc_field(engine, "netname", QA_QC_STRING, error);
     if (!netname) return false;
-    const qa_cvar_view *teamplay = qa_cvars_find(engine->cvars, "teamplay");
+    const qa_cvar_view *teamplay = qa_cvars_read(engine->cvars, engine->cvar_handles.teamplay);
     bool filtered = actor.registry && mode == QA_Q1_CHAT_TEAM && teamplay->number != 0;
     float sender_team = 0;
     int32_t reference, name;
@@ -122,7 +123,7 @@ static bool qc_chat_source(application_provider *provider, qa_actor_id actor,
             !qa_qc_entity_int(vm, reference, netname->offset, &name, error) ||
             !qa_qc_string(vm, name, &sender->name, error) ||
             (filtered && !application_qc_float(engine, reference, "team", &sender_team, error))) return false;
-    } else sender->name = qa_cvars_find(engine->cvars, "hostname")->value;
+    } else sender->name = qa_cvars_read(engine->cvars, engine->cvar_handles.hostname)->value;
     for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
         const application_qc_client *client = engine->clients + slot;
         if (!client->connected || !client->spawned) continue;
@@ -473,7 +474,7 @@ static void info_set(struct application_native_q1_console *owner, char *info,
     pair[0] = '\\'; memcpy(pair + 1, key, key_size);
     pair[key_size + 1] = '\\'; memcpy(pair + key_size + 2, value, value_size);
     pair[key_size + value_size + 2] = 0;
-    const qa_cvar_view *highchars = qa_cvars_find(owner->cvars, "sv_highchars");
+    const qa_cvar_view *highchars = qa_cvars_read(owner->cvars, owner->highchars);
     bool high = highchars && highchars->number != 0;
     for (const unsigned char *cursor = (const unsigned char *)pair; *cursor; ++cursor) {
         unsigned char c = *cursor;
@@ -801,6 +802,7 @@ bool application_native_q1_console_create_restored(application_provider *provide
     if (owner->cvars && !application_startup_seed_source(provider, owner->cvars, error)) {
         qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars); free(owner); return false;
     }
+    owner->highchars = qa_cvars_resolve(owner->cvars, "sv_highchars");
     options.context.cvar_view = qa_cvars_view_identity(owner->cvars);
     if (owner->cvars && qa_console_bind_source(provider->application->console, &options, error))
         owner->console = provider->application->console;
@@ -1126,26 +1128,10 @@ bool application_native_q1_console_restore(application_provider *provider, qa_by
     return true;
 }
 
-bool application_native_q1_cvar(void *opaque, qa_string_id name, float *out, qa_error *error)
-{
-    application_provider *provider = opaque;
-    qa_cvars *cvars = application_native_q1_console_registry(provider);
-    const char *text = provider && provider->application && provider->application->session
-        ? qa_strings_cstr(qa_session_strings(provider->application->session), name) : NULL;
-    if (!cvars || !text || !out || !provider->constructed || provider->close_pending ||
-        provider->application->destroy_requested)
-        return application_fail(error, QA_ERROR_NOT_FOUND, "native Q1 cvar source has retired");
-    const qa_cvar_view *value = qa_cvars_find(cvars, text);
-    if (value && value->owner && value->owner != provider->owner)
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 cvar belongs to another source");
-    *out = value ? (float)(float)(value->number) : 0;
-    return true;
-}
-
 bool application_native_q1_client_attack(void *opaque, qa_actor_id actor, bool *out)
 {
     application_provider *provider = opaque;
-    qa_application_control_view control;
+    qa_player_state control;
     uint32_t slot;
     if (!out || !provider || provider->kind != APPLICATION_PROVIDER_Q1 || !provider->constructed ||
         !provider->attached || provider->close_pending || provider->application->destroy_requested ||

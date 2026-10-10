@@ -297,23 +297,23 @@ static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_dat
     qa_body_state body;
     if (!qa_world_body_read(engine->world,actor,&body,error) ||
         !application_control_ensure(app,actor,body.angles,&control,error) ||
-        !application_qc_control_state(engine->provider,actor,&control->state,&control->bounds,NULL,&control->view_angles,error)) return false;
-    control->command_angles=control->view_angles; control->standing_bounds=body.bounds;
-    control->ground=(qa_movement_ground){0};
-    if (control->state.kind==QA_RULESET_NETQUAKE) {
-        if (control->state.data.nq.flags&UINT32_C(512))
-            control->ground=(qa_movement_ground){
+        !application_qc_control_state(engine->provider,actor,&control->player.state,&control->player.bounds,NULL,&control->player.view_angles,error)) return false;
+    control->player.command_angles=control->player.view_angles; control->player.standing_bounds=body.bounds;
+    control->player.ground=(qa_movement_ground){0};
+    if (control->player.state.kind==QA_RULESET_NETQUAKE) {
+        if (control->player.state.data.nq.flags&UINT32_C(512))
+            control->player.ground=(qa_movement_ground){
                 .hit=body.ground.kind==QA_ACTOR_REFERENCE_SOURCE && body.ground.value.source.slot==0 ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR,
                 .actor=qa_actor_reference_resolve(qa_session_actors(app->session),body.ground)};
-        control->state.data.nq.ground=control->ground;
-        control->water_level=control->state.data.nq.water_level;
-        control->water_type=control->state.data.nq.water_type;
+        control->player.state.data.nq.ground=control->player.ground;
+        control->player.water_level=control->player.state.data.nq.water_level;
+        control->player.water_type=control->player.state.data.nq.water_type;
     }
     const qa_qc_definition *offset=qa_qc_program_find_field(engine->provider->state.qc.program,"view_ofs");
     int32_t reference;
     if (offset && (offset->type!=QA_QC_VECTOR || !qa_qc_slot_reference(vm,1,&reference,error) ||
-        !qa_qc_entity_vector(vm,reference,offset->offset,&control->view_offset,error))) return false;
-    control->view_height=control->view_offset.z;
+        !qa_qc_entity_vector(vm,reference,offset->offset,&control->player.view_offset,error))) return false;
+    control->player.view_height=control->player.view_offset.z;
     return (qa_session_safe(app->session) && qa_world_idle(app->world) && application_guests_idle(app)) ||
         application_fail(error,QA_ERROR_ARGUMENT,"Original import did not finish at its actual idle source boundary");
 }

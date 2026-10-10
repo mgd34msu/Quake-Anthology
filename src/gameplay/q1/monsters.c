@@ -1062,11 +1062,9 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
         entity->aimed_damage = false;
         monster->addon.waiting = (entity->spawnflags & 4) != 0;
         if (monster->addon.waiting) {
-            if (g->options.program != QA_Q1_MG3 && g->services.cvar) {
-                qa_string_id name;
+            if (g->options.program != QA_Q1_MG3 && g->host.cvars) {
                 float horde = 0;
-                if (!qa_builtin_resource(&g->services, "horde", &name, error) ||
-                    !g->services.cvar(q1_cvar_context(g), name, &horde, error))
+                if (!q1_source_value(g, QA_Q1_SOURCE_HORDE, 0, &horde, error))
                     return false;
                 if (horde != 0)
                     --g->total_monsters;

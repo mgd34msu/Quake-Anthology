@@ -291,11 +291,9 @@ bool qa_q1_game_map_intermission_input(qa_q1_game *g, qa_actor_id actor, bool pr
         return true;
     *handled = true;
     bool same_level = false;
-    if (g->services.cvar) {
-        qa_string_id name;
+    if (g->host.cvars) {
         float value;
-        if (!qa_builtin_resource(&g->services, "samelevel", &name, error) ||
-            !g->services.cvar(q1_cvar_context(g), name, &value, error))
+        if (!q1_source_value(g, QA_Q1_SOURCE_SAMELEVEL, 0, &value, error))
             return false;
         same_level = value != 0;
     }

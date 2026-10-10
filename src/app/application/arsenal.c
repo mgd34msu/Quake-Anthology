@@ -80,7 +80,7 @@ bool application_q2_weapon_input(void *context, qa_actor_id actor,
     if (provider == NULL || provider->kind != APPLICATION_PROVIDER_Q2 || out == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 input needs a native arsenal");
     qa_application *application = provider->application;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_application_control_read(application, actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 arsenal actor has no controls");
     if (!qa_q2_weapon_controls_read(provider->state.q2, actor, out, error) ||
@@ -100,7 +100,7 @@ bool application_q2_weapon_input(void *context, qa_actor_id actor,
     out->attack = !control.cutscene && (control.buttons & 1u) != 0;
     out->latched_attack = false;
     out->ducked = control.bounds.maxs.z <
-                  application->controls[actor.slot].standing_bounds.maxs.z;
+                  application->controls[actor.slot].player.standing_bounds.maxs.z;
     out->spectator = traits.spectator;
     out->notarget = traits.no_target;
     out->animate_player = application_provider_for(application, actor, QA_ROLE_CHARACTER, "") == provider;
@@ -131,7 +131,7 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
             source->component.command_actor &&
             source->component.command_actor(source->component.state, session, actor) &&
             actor.slot < application->control_capacity && application->controls[actor.slot].active &&
-            qa_actor_id_equal(application->controls[actor.slot].actor, actor)) {
+            qa_actor_id_equal(application->controls[actor.slot].player.actor, actor)) {
             bool handled;
             if (!application_control_frames_actor(application, session, actor, frame, &handled, error)) return false;
         }
@@ -146,7 +146,7 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
     }
     if (arsenal->kind != APPLICATION_PROVIDER_Q2)
         return true;
-    qa_application_control_view control;
+    qa_player_state control;
     if (!qa_application_control_read(application, actor, &control))
         return true;
     qa_actor_owner execution = 0;
@@ -172,12 +172,12 @@ bool application_arsenal_prepare_frame(qa_application *app,
     if (!due) return true;
     for (uint32_t i = 0; i < app->control_capacity; ++i) {
         application_control_record *control = &app->controls[i];
-        if (!control->active || !qa_actors_get(qa_session_actors(app->session), control->actor)) continue;
-        application_provider *arsenal = application_provider_for(app, control->actor, QA_ROLE_ARSENAL, "");
+        if (!control->active || !qa_actors_get(qa_session_actors(app->session), control->player.actor)) continue;
+        application_provider *arsenal = application_provider_for(app, control->player.actor, QA_ROLE_ARSENAL, "");
         if (!arsenal || arsenal == map || arsenal->kind != APPLICATION_PROVIDER_Q1) continue;
         qa_q1_game_operation operation = {0};
         if (!application_control_q1_world_begin(arsenal, &operation, error)) return false;
-        bool okay = qa_q1_player_weapon_frame(arsenal->state.q1, control->actor, error);
+        bool okay = qa_q1_player_weapon_frame(arsenal->state.q1, control->player.actor, error);
         qa_q1_game_operation_end(&operation);
         if (!okay) return false;
     }

@@ -161,7 +161,7 @@ static bool local_inventory(qa_application_q3_round_cut *cut, qa_error *error)
                 if (row) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round repeats a local input seat");
                 row = cut->clients + j;
             }
-        qa_application_control_view control;
+        qa_player_state control;
         uint32_t source_slot;
         if (!row || !qa_actor_id_equal(row->previous_actor, actor) ||
             !qa_application_q3_source_client_slot(f->application, cut->source, actor, &source_slot, error) ||
@@ -355,7 +355,7 @@ static bool admit_client(qa_application_q3_round_cut *cut,
         if (!frontend_seat_ordinal_read(cut->frontend,client->seat,&ordinal))
             return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round local client leaves its installed input seats");
         frontend_round_local *local = cut->locals + ordinal;
-        frontend_seat *seat = local->seat; qa_actor_id actual; qa_application_control_view control;
+        frontend_seat *seat = local->seat; qa_actor_id actual; qa_player_state control;
         if (!qa_application_player_actor(cut->application, client->seat, &actual) ||
             !qa_actor_id_equal(actual, actor) || !qa_application_control_read(cut->application, actor, &control) ||
             control.profile.kind != local->movement)

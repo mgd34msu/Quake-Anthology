@@ -87,7 +87,7 @@ static bool target(void *context, qa_actor_id actor, application_q3_gear_target 
     if (!qa_combat_read_traits(services->combat, actor, &combat, &optional) &&
         optional.code != QA_ERROR_NOT_FOUND) { if (error) *error = optional; return false; }
     result.health = combat.health;
-    qa_application_control_view control;
+    qa_player_state control;
     qa_builtin_player_info player = {0};
     result.player = qa_application_control_read(app, actor, &control);
     if (result.player) {
@@ -164,7 +164,7 @@ static bool velocity(void *context, qa_actor_id actor, qa_vec3 value, qa_error *
     if (active && !qa_movement_set_velocity(active, value, error)) return false;
     if (actor.slot < runtime->options.application->control_capacity) {
         application_control_record *control = &runtime->options.application->controls[actor.slot];
-        if (control->active && qa_actor_id_equal(control->actor, actor)) control->ground = (qa_movement_ground){0};
+        if (control->active && qa_actor_id_equal(control->player.actor, actor)) control->player.ground = (qa_movement_ground){0};
     }
     return source_current(source) || application_fail(error, QA_ERROR_ARGUMENT, "Gear velocity source retired during its write");
 }

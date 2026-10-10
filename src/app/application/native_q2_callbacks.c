@@ -435,7 +435,7 @@ static bool projection_time(void *context,double *out,qa_error *e)
 static bool projection_pose(void *context,qa_actor_id actor,double *height,bool *crouched,qa_error *e)
 {
     application_native_q2_callbacks *o=context; qa_application *app=o->engine->provider->application;
-    qa_application_camera_view camera; qa_application_control_view control; application_client_outputs outputs;
+    qa_application_camera_view camera; qa_player_state control; application_client_outputs outputs;
     if(!current(o,e)||!qa_application_control_camera(app,actor,&camera)||!qa_application_control_read(app,actor,&control)||
         !application_control_outputs(app,actor,&outputs,e))
         return application_fail(e,QA_ERROR_ARGUMENT,"Native client pose lost its actual canonical controls");

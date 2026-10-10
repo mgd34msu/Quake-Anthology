@@ -562,7 +562,7 @@ static application_control_record *control(qa_application *app, qa_actor_id acto
     if (actor.slot >= app->control_capacity) return NULL;
     application_control_record *row = &app->controls[actor.slot];
     return row->active && !row->retired && !row->moving &&
-        row->application == app && qa_actor_id_equal(row->actor, actor) ? row : NULL;
+        row->application == app && qa_actor_id_equal(row->player.actor, actor) ? row : NULL;
 }
 bool application_native_q1_wire_host(qa_application *app, qa_application_network_q1_host *out,
     qa_error *error) {
@@ -720,12 +720,12 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         application_world_provider(app, QA_ROLE_ENTITIES, "") == source.provider &&
         client(&source, actor, &slot, error) && (row = control(app, actor)) != NULL;
     if (okay) {
-        qa_q1_clientdata value = {.viewheight = row->view_height,
-            .idealpitch = row->state.kind == QA_RULESET_NETQUAKE ? row->state.data.nq.ideal_pitch : 0,
+        qa_q1_clientdata value = {.viewheight = row->player.view_height,
+            .idealpitch = row->player.state.kind == QA_RULESET_NETQUAKE ? row->player.state.data.nq.ideal_pitch : 0,
             .items = player.items | (player.items2 << 23) |
                 ((source.receipt.program == QA_Q1_HIPNOTIC || source.receipt.program == QA_Q1_ROGUE)
                     ? 0 : world.server_flags << 28),
-            .onground = row->ground.hit != QA_TRACE_HIT_NONE, .inwater = row->water_level >= 2,
+            .onground = row->player.ground.hit != QA_TRACE_HIT_NONE, .inwater = row->player.water_level >= 2,
             .weapon_frame = (uint32_t)player.weapon_frame, .weapon_model = model,
             .armor = (uint32_t)qa_source_float_to_i32(combat.armor.regular.kind == QA_ARMOR_NONE
                 ? 0 : (float)combat.armor.regular.points),
@@ -735,8 +735,8 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
             .nails = (uint32_t)qa_source_float_to_i32((float)player.nails),
             .rockets = (uint32_t)qa_source_float_to_i32((float)player.rockets),
             .cells = (uint32_t)qa_source_float_to_i32((float)player.cells), .weapon = player.weapon};
-        vector(value.punch, row->state.kind == QA_RULESET_NETQUAKE
-            ? row->state.data.nq.punch_angles : equipment.kick_angles);
+        vector(value.punch, row->player.state.kind == QA_RULESET_NETQUAKE
+            ? row->player.state.data.nq.punch_angles : equipment.kick_angles);
         vector(value.velocity, body.velocity);
         *out = value;
     } else if (error && error->code == QA_OK)
@@ -802,13 +802,13 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     if (okay) {
         qa_application_network_q1_feedback value = {.damage = feedback.armor != 0 || feedback.blood != 0,
             .armor = source_byte(feedback.armor), .blood = source_byte(feedback.blood),
-            .set_angle = row->state.kind == QA_RULESET_NETQUAKE && row->state.data.nq.fix_angle};
+            .set_angle = row->player.state.kind == QA_RULESET_NETQUAKE && row->player.state.data.nq.fix_angle};
         memcpy(value.origin, feedback.origin, sizeof(value.origin));
         if (value.set_angle) {
-            vector(value.angles, row->state.data.nq.angles);
+            vector(value.angles, row->player.state.data.nq.angles);
             okay = application_control_set_angles(app, actor,
                 qa_v3(value.angles[0], value.angles[1], value.angles[2]), error);
-            if (okay) row->state.data.nq.fix_angle = false;
+            if (okay) row->player.state.data.nq.fix_angle = false;
         }
         if (okay) *out = value;
     } else if (error && error->code == QA_OK)
@@ -1416,7 +1416,7 @@ static bool check_client_eye(void *context, qa_actor_id actor, qa_vec3 *out, qa_
         return application_fail(error, QA_ERROR_ARGUMENT, "Check-client eye lost its physical Source roster binding");
     if (row->source_begin_pending || row->deferred)
         return qa_q1_check_client_eye_read(p->state.q1, row->client_slot, out, error);
-    qa_application_control_view movement;
+    qa_player_state movement;
     qa_body_state body;
     uint64_t serial = qa_world_body_storage_serial(app->world, actor);
     if (!qa_application_control_read(app, actor, &movement) || !serial ||
@@ -1453,7 +1453,7 @@ bool application_native_q1_wire_eye(qa_application *app, qa_actor_id recipient, 
         qa_q1_wire_receipt_current(&source.receipt) &&
         application_world_provider(app, QA_ROLE_ENTITIES, "") == source.provider &&
         client(&source, recipient, &slot, error) && (row = control(app, recipient)) != NULL;
-    if (okay) *out = qa_vec_add(body.origin, row->view_offset);
+    if (okay) *out = qa_vec_add(body.origin, row->player.view_offset);
     else if (error && error->code == QA_OK) application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 eye has no selected movement state");
     application_native_q1_wire_end(&source); return okay;
 }
@@ -1483,17 +1483,16 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
     uint32_t slot = 0; qa_q1_source_client_view from = {0};
     bool okay = !sender.registry || (client(source, sender, &slot, error) &&
         qa_q1_source_client_read(source->provider->state.q1, sender, &from));
-    qa_cvars *cvars = application_native_q1_console_registry(source->provider);
-    const qa_cvar_view *hostname = !sender.registry && cvars ? qa_cvars_find(cvars, "hostname") : NULL;
+    const qa_cvar_view *hostname = !sender.registry ? qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_HOSTNAME) : NULL;
     const application_player_record *player = sender.registry ? roster(source->provider->application, sender) : NULL;
     if (okay && sender.registry && (!player || player->deferred || player->source_begin_pending ||
         (qw && !player->userinfo)))
         okay = application_fail(error, QA_ERROR_ARGUMENT, "Chat lost its admitted Source player");
     if (okay && !qw && !sender.registry && !hostname)
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 server chat lost its Source hostname");
-    const qa_cvar_view *teamplay = cvars ? qa_cvars_find(cvars, "teamplay") : NULL;
+    const qa_cvar_view *teamplay = qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_TEAMPLAY);
     bool filtered = sender.registry && team_only && teamplay && teamplay->number != 0;
-    const qa_cvar_view *spectalk = qw && cvars ? qa_cvars_find(cvars, "sv_spectalk") : NULL;
+    const qa_cvar_view *spectalk = qw ? qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_SPECTALK) : NULL;
     if (okay && qw && !spectalk)
         okay = application_fail(error, QA_ERROR_NOT_FOUND, "QuakeWorld chat lost its Source spectator policy");
     bool spectator_only = qw && player && player->spectator && (team_only || (spectalk && spectalk->number == 0));
@@ -1559,8 +1558,7 @@ bool application_native_q1_wire_pause(qa_application *app, qa_actor_id actor,
     uint32_t slot; qa_q1_source_client_view view;
     bool okay = app->operation == APPLICATION_IDLE && client(&source, actor, &slot, error) &&
         qa_q1_source_client_read(source.provider->state.q1, actor, &view);
-    qa_cvars *cvars = application_native_q1_console_registry(source.provider);
-    const qa_cvar_view *policy = cvars ? qa_cvars_find(cvars, "pausable") : NULL;
+    const qa_cvar_view *policy = qa_q1_source_read(source.provider->state.q1, QA_Q1_SOURCE_PAUSABLE);
     const char *denial = policy && policy->number == 0 ? "Pause not allowed.\n" : NULL;
     bool paused = !qa_application_q1_paused(app);
     const char *suffix = paused ? " paused the game\n" : " unpaused the game\n";

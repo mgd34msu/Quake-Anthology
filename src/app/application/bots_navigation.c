@@ -24,7 +24,7 @@ qa_bot_navigation *application_bot_navigation(void *opaque,int32_t client) {
 }
 bool application_bot_movement_input(void *opaque,qa_actor_id actor,qa_movement_input *out,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
-    qa_application_control_view view;
+    qa_player_state view;
     if(!qa_application_control_read(application,actor,&view))
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot prediction actor has no selected movement");
     application_control_record *control=&application->controls[actor.slot];
@@ -33,7 +33,7 @@ bool application_bot_movement_input(void *opaque,qa_actor_id actor,qa_movement_i
        !qa_world_body_read(application->world,actor,&body,error)) return false;
     *out=(qa_movement_input){.actor=actor,.state=view.state,.profile=view.profile,
         .shape={QA_SHAPE_BOX,view.bounds},.current_bounds=view.bounds,.has_current_bounds=true,
-        .standing={control->standing_bounds,view.view_height},
+        .standing={control->player.standing_bounds,view.view_height},
         .crouched={view.bounds,view.view_height},.dead={view.bounds,view.view_height},
         .time_ns=qa_session_elapsed(application->session),.prediction=true,.view_offset=view.view_offset,
         .q2r_pml_origin=&control->q2r_pml_origin,.environment=qa_movement_environment_default()};
@@ -647,7 +647,7 @@ bool application_bot_navigation_prepare(application_bots *bots,qa_error *error) 
                                     &observations,&bots->map_navigation,error);
 }
 bool application_bot_navigation_bind(application_bots *bots,application_bot_seat *seat,qa_error *error) {
-    qa_application *application=bots->application;qa_application_control_view control;
+    qa_application *application=bots->application;qa_player_state control;
     if(!qa_application_control_read(application,seat->actor,&control))
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot has no selected movement control");
     application_provider *movement=application_provider_for(application,seat->actor,QA_ROLE_MOVEMENT,NULL);
@@ -661,7 +661,7 @@ bool application_bots_guest_admit(qa_application *application,qa_actor_id actor,
     if(!bots) return application_fail(error,QA_ERROR_NOT_FOUND,"guest bot shared library is absent");
     for(application_bot_target *target=bots->targets;target;target=target->next)
         if(qa_actor_id_equal(target->actor,actor)) return true;
-    qa_application_control_view control;
+    qa_player_state control;
     if(!qa_application_control_read(application,actor,&control))
         return application_fail(error,QA_ERROR_NOT_FOUND,"guest bot selected movement has not been admitted");
     application_bot_target *target=calloc(1,sizeof(*target));
@@ -676,7 +676,7 @@ bool application_bot_predict_motion(void *opaque,qa_actor_id actor,
                                      const qa_bot_movement_prediction_query *query,
                                      qa_bot_movement_prediction *out,bool *available,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;*available=false;
-    qa_application_control_view control;
+    qa_player_state control;
     if(!qa_application_control_read(application,actor,&control)) return true;
     application_provider *movement=application_provider_for(application,actor,QA_ROLE_MOVEMENT,NULL);
     if(!movement || (movement->kind!=APPLICATION_PROVIDER_Q1 && movement->kind!=APPLICATION_PROVIDER_Q2 &&
