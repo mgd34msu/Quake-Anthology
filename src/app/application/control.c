@@ -1096,7 +1096,7 @@ static bool component_input_boundary(application_move_call *move, qa_movement_st
             continue;
         size_t index = input->native_count++;
         if (!application_native_q2_input_begin(provider->state.native.q2_engine, input->actor, slice,
-            component_input_values, component_input_output, input, input->native_scopes + index, error)) return false;
+            input->storage, component_input_values, component_input_output, input, input->native_scopes + index, error)) return false;
     }
     return true;
 }

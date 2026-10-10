@@ -10,6 +10,7 @@
 #include "qa/console_cvars_prepare.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
+#include "qa/json.h"
 #include "qa/campaign.h"
 #include "qa/recovery.h"
 #include "qa/localization.h"
@@ -43,6 +44,25 @@
     } \
 } while (0)
 
+static void test_json_caller_storage(void)
+{
+    const char source[]="\"A\\u0000B\\ud83d\\ude00\\n\"";
+    const uint8_t expected[]={'A',0,'B',0xf0,0x9f,0x98,0x80,'\n',0};
+    qa_json_document *document=NULL; qa_error error={0};
+    CHECK(qa_json_parse((qa_bytes){(const uint8_t *)source,sizeof(source)-1},&document,&error));
+    uint8_t storage[sizeof(source)]; qa_bytes decoded={0};
+    CHECK(qa_json_string_into(document,qa_json_root(document),storage,sizeof(storage),&decoded,&error));
+    CHECK(decoded.data==storage && decoded.size==sizeof(expected)-1);
+    CHECK(!memcmp(storage,expected,sizeof(expected)));
+    qa_bytes previous=decoded;
+    CHECK(!qa_json_string_into(document,qa_json_root(document),storage,1,&decoded,&error));
+    CHECK(decoded.data==previous.data && decoded.size==previous.size);
+    CHECK(!memcmp(storage,expected,sizeof(expected)));
+    qa_buffer owned={0};
+    CHECK(qa_json_string(document,qa_json_root(document),&owned,&error));
+    CHECK(owned.size==decoded.size && !memcmp(owned.data,expected,sizeof(expected)));
+    qa_buffer_free(&owned); qa_json_destroy(document);
+}
 static void test_errors_and_buffers(void)
 {
     qa_error error;
@@ -1580,6 +1600,7 @@ int main(int argc, char **argv)
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();
+    test_json_caller_storage();
     test_binary();
     test_spans();
     test_arena();

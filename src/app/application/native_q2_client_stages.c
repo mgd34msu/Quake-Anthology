@@ -8,6 +8,7 @@
 #include "qa/native_observe.h"
 #include "qa/network.h"
 #include "qa/native_host_q2_wire.h"
+#include "control_frame.h"
 #include <math.h>
 
 typedef struct native_input_store {
@@ -35,6 +36,7 @@ struct application_native_q2_stages {
 struct application_native_q2_input {
     struct application_native_q2_input *outer;
     struct application_native_q2_stages *owner;
+    qa_unified_frame_lease *storage;
     qa_actor_id actor;
     bool slice,completed,failed;
     unsigned executing;
@@ -62,6 +64,7 @@ struct native_input_output {
 struct native_input_handler {
     native_input_handler *next;
     struct application_native_q2_stages *owner;
+    qa_unified_frame_lease *storage;
     qa_native_address address;
     qa_native_entry_observer *binding;
     native_input_output *subscribers;
@@ -439,7 +442,7 @@ static bool input_values(struct application_native_q2_input *s,application_nativ
             const char *value=s->inputs.values[i].as.string;
             if(!value) return application_fail(e,QA_ERROR_ARGUMENT,"Native input string has no actual parent value");
             size_t bytes=strlen(value);
-            s->strings[i]=malloc(bytes+1);
+            s->strings[i]=qa_unified_frame_lease_alloc(s->storage,bytes+1,1,1,e);
             if(!s->strings[i]) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native input string");
             memcpy(s->strings[i],value,bytes+1);s->inputs.values[i].as.string=s->strings[i];
         }
@@ -535,12 +538,20 @@ static size_t field_size(const qa_json_document *d,qa_json_id value)
     for(size_t i=0;i<10;++i) if(qa_json_string_equal(d,kind,names[i])) return sizes[i];
     return 0;
 }
+static bool input_string(struct application_native_q2_input *s,const qa_json_document *d,
+    qa_json_id id,qa_bytes *out,qa_error *e)
+{
+    qa_bytes source=qa_json_source(d,id);
+    size_t capacity=source.size?source.size-1:0;
+    uint8_t *storage=qa_unified_frame_lease_alloc(s->storage,capacity,1,1,e);
+    return storage&&qa_json_string_into(d,id,storage,capacity,out,e);
+}
 static bool field_address(struct application_native_q2_input *s,qa_json_id field,qa_native_address *address,size_t *size,qa_error *e)
 {
     struct application_native_q2 *n=s->owner->engine;const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
-    qa_buffer name={0};uint64_t offset=0;
-    if(!qa_json_string(d,qa_json_get(d,field,"record"),&name,e)||memchr(name.data,0,name.size)||
-        !qa_json_u64(d,qa_json_get(d,field,"offset"),&offset,e)) {qa_buffer_free(&name);return false;}
+    qa_bytes name={0};uint64_t offset=0;
+    if(!input_string(s,d,qa_json_get(d,field,"record"),&name,e)||memchr(name.data,0,name.size)||
+        !qa_json_u64(d,qa_json_get(d,field,"offset"),&offset,e)) return false;
     qa_json_id rows=qa_json_get(d,qa_json_root(d),"actorRecords"),record=QA_JSON_NONE;
     for(size_t i=0;i<qa_json_size(d,rows);++i) {
         qa_json_id row=qa_json_at(d,rows,i);
@@ -559,7 +570,7 @@ static bool field_address(struct application_native_q2_input *s,qa_json_id field
     if(ok) ok=application_native_q2_callbacks_record(n->callbacks,s->actor,(char *)name.data,address,e)&&
         *address&&offset<=UINT64_MAX-*address;
     if(ok) {*address+=offset;ok=qa_native_range_check(instance(n),*address,*size,QA_NATIVE_MEMORY_READ|QA_NATIVE_MEMORY_WRITE,e);}
-    qa_buffer_free(&name);return ok||application_fail(e,QA_ERROR_FORMAT,"Native input field is outside declared private client storage");
+    return ok||application_fail(e,QA_ERROR_FORMAT,"Native input field is outside declared private client storage");
 }
 static bool output_handler(void *context,qa_native_instance *native,qa_native_entry_observer *binding,
     const qa_native_value *arguments,size_t count,qa_native_value *result,qa_error *e)
@@ -587,8 +598,11 @@ static bool handler_open(native_input_output *output,qa_native_address address,
         for(size_t i=0;i<handler->count;++i) if(handler->parameters[i]!=signature->parameters[i].kind)
             return application_fail(e,QA_ERROR_FORMAT,"Native output handler has conflicting declared ABI values");
     } else {
-        handler=calloc(1,sizeof(*handler));
-        if(!handler) return application_fail(e,QA_ERROR_MEMORY,"Retaining native input handler subscribers");
+        qa_unified_frame_lease *storage=application_control_storage_acquire(owner->engine->provider->application,e);
+        if(!storage) return false;
+        handler=qa_unified_frame_lease_alloc(storage,1,sizeof(*handler),_Alignof(native_input_handler),e);
+        if(!handler) {qa_unified_frame_lease_release(storage);return false;}
+        handler->storage=storage;
         handler->owner=owner;handler->address=address;handler->count=signature->parameter_count;
         for(size_t i=0;i<handler->count;++i) handler->parameters[i]=signature->parameters[i].kind;
         handler->next=owner->handlers;owner->handlers=handler;
@@ -611,10 +625,10 @@ static bool outputs_close(native_input_output **list,qa_error *e)
             if(last) {
                 native_input_handler **link=&handler->owner->handlers;
                 while(*link!=handler) link=&(*link)->next;
-                *link=handler->next;free(handler);
+                *link=handler->next;qa_unified_frame_lease_release(handler->storage);
             }
         }
-        *list=o->next;free(o);
+        *list=o->next;
     }
     return true;
 }
@@ -623,16 +637,16 @@ static bool outputs_open(struct application_native_q2_input *s,qa_json_id bindin
     struct application_native_q2 *n=s->owner->engine;const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
     qa_json_id rows=qa_json_get(d,binding,"outputs"),fields=qa_json_get(d,qa_json_get(d,qa_json_root(d),"clients"),"inputFields");
     for(size_t i=0;i<qa_json_size(d,rows);++i) {
-        qa_json_id row=qa_json_at(d,rows,i);native_input_output *o=calloc(1,sizeof(*o));
+        qa_json_id row=qa_json_at(d,rows,i);native_input_output *o=qa_unified_frame_lease_alloc(s->storage,1,sizeof(*o),_Alignof(native_input_output),e);
         if(!o) return application_fail(e,QA_ERROR_MEMORY,"Retaining native input output observations");
         native_input_output **tail=out;while(*tail) tail=&(*tail)->next;
         *tail=o;o->input=s;o->declaration=row;
         if(qa_json_string_equal(d,qa_json_get(d,row,"kind"),"field")) {
-            qa_buffer record={0};uint64_t offset=0;qa_json_id field=QA_JSON_NONE;
-            bool ok=qa_json_string(d,qa_json_get(d,row,"record"),&record,e)&&qa_json_u64(d,qa_json_get(d,row,"offset"),&offset,e);
+            qa_bytes record={0};uint64_t offset=0;qa_json_id field=QA_JSON_NONE;
+            bool ok=input_string(s,d,qa_json_get(d,row,"record"),&record,e)&&qa_json_u64(d,qa_json_get(d,row,"offset"),&offset,e);
             for(size_t j=0;ok&&j<qa_json_size(d,fields);++j) {qa_json_id f=qa_json_at(d,fields,j);uint64_t at;
                 if(qa_json_string_equal(d,qa_json_get(d,f,"record"),(char *)record.data)&&qa_json_u64(d,qa_json_get(d,f,"offset"),&at,e)&&at==offset) {field=f;break;}}
-            qa_buffer_free(&record);o->declaration=field;
+            o->declaration=field;
             if(!ok||field==QA_JSON_NONE||!field_address(s,field,&o->address,&o->bytes,e)||
                 !qa_native_read(instance(n),o->address,o->before,o->bytes,e)) return false;
         } else if(qa_json_string_equal(d,qa_json_get(d,row,"kind"),"handler")) {
@@ -644,8 +658,8 @@ static bool outputs_open(struct application_native_q2_input *s,qa_json_id bindin
                 for(size_t k=1;k<11;++k) if(qa_json_string_equal(d,kind,names[k])) type=(qa_native_value_type)k;
                 types[j]=(qa_native_type){.kind=type,.count=1};
                 if(qa_json_string_equal(d,kind,"actor")&&qa_json_string_equal(d,qa_json_get(d,arg,"input"),"self")) {
-                    qa_buffer name={0};if(!qa_json_string(d,qa_json_get(d,arg,"record"),&name,e)) return false;
-                    bool ok=application_native_q2_callbacks_record(n->callbacks,s->actor,(char *)name.data,&o->self,e);qa_buffer_free(&name);
+                    qa_bytes name={0};if(!input_string(s,d,qa_json_get(d,arg,"record"),&name,e)) return false;
+                    bool ok=application_native_q2_callbacks_record(n->callbacks,s->actor,(char *)name.data,&o->self,e);
                     if(!ok) return false;
                     o->self_index=j;
                 }
@@ -726,6 +740,7 @@ static bool input_run(struct application_native_q2_input *s,bool before,qa_error
     return true;
 }
 bool application_native_q2_input_begin(struct application_native_q2 *n,qa_actor_id actor,bool slice,
+    qa_unified_frame_lease *storage,
     bool (*values)(void *,application_q3_mod_inputs *,qa_error *),
     bool (*output)(void *,const application_q3_mod_output *,qa_error *),void *context,
     struct application_native_q2_input **out,qa_error *e)
@@ -740,18 +755,20 @@ bool application_native_q2_input_begin(struct application_native_q2 *n,qa_actor_
         !n->clients[i].denied&&!n->clients[i].disconnect_started&&qa_actor_id_equal(n->clients[i].actor,actor);
     if(!admitted) return true;
     if(!values||!output||!application_native_q2_stages_prepare(n,e)) return false;
-    struct application_native_q2_input *s=calloc(1,sizeof(*s));
+    struct application_native_q2_input *s=qa_unified_frame_lease_alloc(storage,1,sizeof(*s),_Alignof(struct application_native_q2_input),e);
     if(!s) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native input application");
-    s->owner=n->stages;s->actor=actor;s->slice=slice;s->values=values;s->output=output;s->context=context;
+    s->storage=storage;s->owner=n->stages;s->actor=actor;s->slice=slice;s->values=values;s->output=output;s->context=context;
     s->outer=n->stages->inputs;n->stages->inputs=s;*out=s;
     application_native_callback_value input[Q3_MOD_VALUE_COUNT];application_native_callback_inputs in;
     bool ok=input_values(s,input,&in,e);qa_json_id fields=qa_json_get(d,clients,"inputFields");
     for(size_t i=0;ok&&i<qa_json_size(d,fields);++i) {
-        native_input_store *store=calloc(1,sizeof(*store));if(!store) {ok=application_fail(e,QA_ERROR_MEMORY,"Retaining native input private bytes");break;}
+        native_input_store *store=qa_unified_frame_lease_alloc(storage,1,sizeof(*store),_Alignof(native_input_store),e);
+        if(!store) {ok=false;break;}
         qa_json_id field=qa_json_at(d,fields,i);
         store->field=field;
         ok=field_address(s,field,&store->address,&store->bytes,e)&&qa_native_read(instance(n),store->address,store->previous,store->bytes,e);
-        if(!ok) {free(store);break;}store->next=s->stores;s->stores=store;
+        if(!ok) break;
+        store->next=s->stores;s->stores=store;
         ok=application_native_q2_callbacks_input_write(n->callbacks,qa_json_get(d,field,"value"),&in,store->address,e);
     }
     if(ok) ok=input_run(s,true,e);
@@ -779,8 +796,7 @@ bool application_native_q2_input_abort(struct application_native_q2_input **slot
                 return application_fail(e,QA_ERROR_ARGUMENT,"Native input private backing changed before restoration");
             if(!qa_native_write(instance(s->owner->engine),address,(qa_bytes){store->previous,bytes},e)) return false;
         }
-        s->stores=store->next;free(store);
+        s->stores=store->next;
     }
-    for(size_t i=0;i<Q3_MOD_VALUE_COUNT;++i) free(s->strings[i]);
-    s->owner->inputs=s->outer;free(s);*slot=NULL;return true;
+    s->owner->inputs=s->outer;*slot=NULL;return true;
 }

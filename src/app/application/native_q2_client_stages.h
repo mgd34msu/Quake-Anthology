@@ -18,6 +18,7 @@ bool application_native_q2_stages_time_read(const struct application_native_q2 *
 bool application_native_q2_stages_capture(struct application_native_q2 *,qa_buffer *,qa_error *);
 bool application_native_q2_stages_restore(struct application_native_q2 *,qa_bytes,qa_error *);
 bool application_native_q2_input_begin(struct application_native_q2 *,qa_actor_id,bool slice,
+    qa_unified_frame_lease *,
     bool (*values)(void *,application_q3_mod_inputs *,qa_error *),
     bool (*output)(void *,const application_q3_mod_output *,qa_error *),void *,
     struct application_native_q2_input **,qa_error *);

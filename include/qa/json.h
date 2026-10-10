@@ -33,6 +33,10 @@ bool qa_json_u64(const qa_json_document *document, qa_json_id id, uint64_t *out,
 /* Decoded strings are owned UTF-8, NUL terminated; size excludes the NUL.
  * Embedded NULs remain in the counted bytes. Release with qa_buffer_free. */
 bool qa_json_string(const qa_json_document *document, qa_json_id id, qa_buffer *out, qa_error *error);
+/* Decode into caller storage. The quoted source size minus one bounds the
+ * required capacity, including the terminator. The result borrows storage. */
+bool qa_json_string_into(const qa_json_document *, qa_json_id, uint8_t *storage,
+    size_t capacity, qa_bytes *out, qa_error *);
 bool qa_json_string_equal(const qa_json_document *document, qa_json_id id, const char *text);
 /* Encode a counted UTF-8 string as a complete quoted JSON value. */
 bool qa_json_quote(qa_bytes text, qa_buffer *out, qa_error *error);

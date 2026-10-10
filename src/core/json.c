@@ -494,26 +494,37 @@ bool qa_json_u64(const qa_json_document *document, qa_json_id id, uint64_t *out,
     if (!require_kind(document,id,QA_JSON_NUMBER,out,error) || !integer(document,id,false,&value,&negative,error)) return false;
     *out=value; return true;
 }
-bool qa_json_string(const qa_json_document *document, qa_json_id id, qa_buffer *out, qa_error *error) {
+bool qa_json_string_into(const qa_json_document *document, qa_json_id id,
+    uint8_t *output, size_t capacity, qa_bytes *out, qa_error *error) {
     if (!require_kind(document,id,QA_JSON_STRING,out,error)) return false;
     qa_bytes source=qa_json_source(document,id);
     if (source.size<2) {
         qa_error_set(error,QA_ERROR_FORMAT,document->nodes[id].start,"JSON string has no quoted source");
         return false;
     }
-    uint8_t *output=malloc(source.size-1);
-    if (!output) { qa_error_set(error,QA_ERROR_MEMORY,document->nodes[id].start,"allocating JSON string"); return false; }
+    if (!output || capacity<source.size-1) {
+        qa_error_set(error,QA_ERROR_MEMORY,document->nodes[id].start,"JSON string storage is too small"); return false;
+    }
     size_t cursor=1, count=0;
     while (cursor<source.size-1) {
         if (source.data[cursor]=='\\') {
             ++cursor;
             uint32_t code;
-            if (!escape(source,&cursor,&code)) { free(output); return false; }
+            if (!escape(source,&cursor,&code)) return false;
             uint8_t bytes[4]; size_t length=encode_utf8(code,bytes);
             memcpy(output+count,bytes,length); count+=length;
         } else output[count++]=source.data[cursor++];
     }
-    output[count]=0; *out=(qa_buffer){output,count}; return true;
+    output[count]=0; *out=(qa_bytes){output,count}; return true;
+}
+bool qa_json_string(const qa_json_document *document, qa_json_id id, qa_buffer *out, qa_error *error) {
+    if (!require_kind(document,id,QA_JSON_STRING,out,error)) return false;
+    qa_bytes source=qa_json_source(document,id);
+    uint8_t *storage=malloc(source.size-1);
+    if (!storage) { qa_error_set(error,QA_ERROR_MEMORY,document->nodes[id].start,"allocating JSON string"); return false; }
+    qa_bytes decoded={0};
+    if (!qa_json_string_into(document,id,storage,source.size-1,&decoded,error)) { free(storage); return false; }
+    *out=(qa_buffer){storage,decoded.size}; return true;
 }
 bool qa_json_quote(qa_bytes source, qa_buffer *out, qa_error *error) {
     if (!out || (!source.data && source.size)) {
