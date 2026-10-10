@@ -58,11 +58,6 @@ typedef struct q2_loop {
     qa_actor_id actor;
     q2_activation *activation;
 } q2_loop;
-typedef struct q2_inventory_row {
-    char *item,*label;
-    double count;
-    bool selected;
-} q2_inventory_row;
 typedef struct q2_player_name {
     struct q2_player_name *next;
     uint32_t slot;
@@ -145,9 +140,11 @@ struct frontend_unified_q2 {
     char *help, *layout, *help_text[2];
     bool help_visible;
     bool inventory_visible,score_visible;
-    q2_inventory_row *items;
+    const qa_inventory_entry *items;
+    qa_string_id selected_item;
+    qa_unified_document *inventory_document,*score_document;
     size_t item_count;
-    char **score_rows;
+    const qa_q2_score_row *score_rows;
     size_t score_count;
     q2_activation *inventory_owner,*score_owner;
     q2_activation *view_owner;
@@ -216,13 +213,14 @@ static bool current(const frontend_unified_q2 *o,qa_error *e)
 }
 static void inventory_clear(frontend_unified_q2 *o)
 {
-    if (o->items) for (size_t i=0;i<o->item_count;++i) { free(o->items[i].item); free(o->items[i].label); }
-    free(o->items); o->items=NULL; o->item_count=0; o->inventory_visible=false; o->inventory_owner=NULL;
+    qa_unified_document_destroy(o->inventory_document);o->inventory_document=NULL;
+    o->items=NULL;o->item_count=0;o->selected_item=QA_STRING_NONE;
+    o->inventory_visible=false;o->inventory_owner=NULL;
 }
 static void scores_clear(frontend_unified_q2 *o)
 {
-    if (o->score_rows) for (size_t i=0;i<o->score_count;++i) free(o->score_rows[i]);
-    free(o->score_rows); o->score_rows=NULL; o->score_count=0; o->score_visible=false; o->score_owner=NULL;
+    qa_unified_document_destroy(o->score_document);o->score_document=NULL;
+    o->score_rows=NULL;o->score_count=0;o->score_visible=false;o->score_owner=NULL;
 }
 static void sky_clear(frontend_unified_q2 *o)
 {
@@ -1110,11 +1108,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
     if (event->kind==QA_Q2_PLAYER_VIEW){const qa_q2_player_view *view=&event->view;
         if (!selected_view_provider(o,row->provider)) return true;
         if (!(view->layouts&2))inventory_clear(o);
-        else {
-            const char *selected=qa_strings_cstr(o->replica->strings,view->selected_item);
-            for (size_t i=0;i<o->item_count;++i)
-                o->items[i].selected=selected && !strcmp(o->items[i].item,selected);
-        }
+        else o->selected_item=view->selected_item;
         if (!(view->layouts&1)){o->help_visible=false;o->score_visible=false;}
         qa_string_id content,provider=QA_STRING_NONE;
         if(!qa_strings_intern_cstr(o->replica->strings,row->content,&content,e) ||
@@ -1128,25 +1122,16 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
     }
     if (event->kind==QA_Q2_PLAYER_INVENTORY){
         if (!event->visible){inventory_clear(o);return true;}
-        q2_inventory_row *items=event->inventory_count?calloc(event->inventory_count,sizeof(*items)):NULL;size_t used=0;
-        bool okay=!event->inventory_count || items;
-        for (size_t i=0;okay && i<event->inventory_count;++i){const qa_inventory_entry *from=event->inventory+i;if (from->count<=0)continue;
-            q2_inventory_row *v=items+used++;const char *item_name=qa_strings_cstr(o->replica->strings,from->item);
-            v->item=text_copy(item_name);v->count=from->count;
-            v->selected=event->selected_item == from->item;
-            const char *label=!strncmp(item_name,"q2:",3)?item_name+3:item_name;
-            v->label=text_copy(label);okay=v->item && v->label;
-            if (v->label)for (char *t=v->label;*t;++t)if (*t=='_')*t=' ';
-        }
-        if (!okay){for(size_t i=0;i<used;++i){free(items[i].item);free(items[i].label);}free(items);return false;}
-        inventory_clear(o);o->items=items;o->item_count=used;o->inventory_visible=true;o->inventory_owner=owner;o->help_visible=false;return true;
+        qa_unified_document *document=NULL;
+        if (!qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e))return false;
+        inventory_clear(o);o->inventory_document=document;o->items=event->inventory;
+        o->item_count=event->inventory_count;o->selected_item=event->selected_item;
+        o->inventory_visible=true;o->inventory_owner=owner;o->help_visible=false;return true;
     }
-    size_t count=event->score_count;char **scores=count?calloc(count,sizeof(*scores)):NULL;bool okay=!count || scores;
-    for (size_t i=0;okay && i<count;++i){const qa_q2_score_row *from=event->scores+i;size_t length=strlen(from->name)+128;
-        scores[i]=malloc(length);okay=scores[i]!=NULL;
-        if (okay)snprintf(scores[i],length,"%d  %s  %dms  %dm%s",from->score,from->name,from->ping,from->minutes,from->spectator?"  Spectator":"");}
-    if (!okay){for(size_t i=0;i<count;++i)free(scores[i]);free(scores);return false;}
-    scores_clear(o);o->score_rows=scores;o->score_count=count;o->score_visible=true;o->score_owner=owner;o->help_visible=false;inventory_clear(o);return true;
+    qa_unified_document *document=NULL;
+    if (!qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e))return false;
+    scores_clear(o);o->score_document=document;o->score_rows=event->scores;o->score_count=event->score_count;
+    o->score_visible=true;o->score_owner=owner;o->help_visible=false;inventory_clear(o);return true;
 }
 static float fog_fraction(float value)
 {
@@ -1859,18 +1844,29 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     if (okay) okay=marker_draw(o,viewport,frame,e);
     if (okay && o->inventory_visible && !o->status.hud && !replacement) {
         okay=overlay_text(ui,viewport,frame,"Inventory",160,80,(qa_vec4){1,1,1,1},e);
+        size_t visible=0;
         for (size_t i=0;okay && i<o->item_count;++i) {
-            char count[32]; if (!qa_format_number(o->items[i].count,count,e)) { okay=false; break; }
-            size_t label_size=strlen(o->items[i].label); if (label_size>SIZE_MAX-64) { okay=false; break; }
-            char *row=qa_arena_alloc(&frame->storage,label_size+64,1,e); if (!row) { okay=false; break; }
-            snprintf(row,label_size+64,"%s  %s",count,o->items[i].label);
-            okay=overlay_text(ui,viewport,frame,row,160,108+(float)i*16,
-                o->items[i].selected?(qa_vec4){1,.8f,.3f,1}:(qa_vec4){1,1,1,1},e);
+            const qa_inventory_entry *item=o->items+i;
+            if (item->count<=0)continue;
+            char count[32];if (!qa_format_number(item->count,count,e)){okay=false;break;}
+            const char *label=qa_strings_cstr(o->replica->strings,item->item);
+            if (!strncmp(label,"q2:",3))label+=3;
+            size_t label_size=strlen(label);if (label_size>SIZE_MAX-64){okay=false;break;}
+            char *row=qa_arena_alloc(&frame->storage,label_size+64,1,e);if (!row){okay=false;break;}
+            snprintf(row,label_size+64,"%s  ",count);size_t offset=strlen(count)+2;
+            for (size_t k=0;k<label_size;++k)row[offset+k]=label[k]=='_'?' ':label[k];
+            row[offset+label_size]=0;
+            okay=overlay_text(ui,viewport,frame,row,160,108+(float)visible++*16,
+                item->item==o->selected_item?(qa_vec4){1,.8f,.3f,1}:(qa_vec4){1,1,1,1},e);
         }
     }
     if (okay && (o->score_visible || qa_input_seat_action_active(o->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)))
-        for (size_t i=0;okay && i<o->score_count;++i)
-            okay=overlay_text(ui,viewport,frame,o->score_rows[i],64,110+(float)i*20,(qa_vec4){1,1,1,1},e);
+        for (size_t i=0;okay && i<o->score_count;++i) {
+            const qa_q2_score_row *score=o->score_rows+i;size_t length=strlen(score->name)+128;
+            char *row=qa_arena_alloc(&frame->storage,length,1,e);if (!row){okay=false;break;}
+            snprintf(row,length,"%d  %s  %dms  %dm%s",score->score,score->name,score->ping,score->minutes,score->spectator?"  Spectator":"");
+            okay=overlay_text(ui,viewport,frame,row,64,110+(float)i*20,(qa_vec4){1,1,1,1},e);
+        }
     if (okay) okay=story_draw(o,ui,viewport,frame,e);
     if (okay) okay=frontend_unified_q2_rr_draw(o->rr_hud,ui,viewport,frame,e);
     return okay;
