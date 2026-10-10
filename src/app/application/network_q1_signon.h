@@ -5,7 +5,7 @@
 /* Retain actual committed Q1 signon emissions by their page lease. Persistent
  * views use event_id zero and survive retirement of the transient lookup. */
 struct application_protocol_record;
-bool application_q1_signon_retain(qa_application *, struct application_protocol_record *, qa_error *);
+void application_q1_signon_retain(qa_application *, struct application_protocol_record *);
 void application_q1_signon_reset(qa_application *);
 void application_q1_signon_drop(qa_application *, qa_actor_owner);
 void application_q1_signon_destroy(qa_application *);

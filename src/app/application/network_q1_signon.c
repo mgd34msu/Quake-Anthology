@@ -69,30 +69,12 @@ void application_q1_signon_drop(qa_application *app, qa_actor_owner provider)
         qa_event_lease_release(record->signon_lease);
     }
 }
-bool application_q1_signon_retain(qa_application *app,
-    application_protocol_record *record, qa_error *error)
+void application_q1_signon_retain(qa_application *app,
+    application_protocol_record *record)
 {
     const qa_application_protocol_event *event = &record->event;
-    if (!event->signon || (event->dialect != QA_RULESET_NETQUAKE && event->dialect != QA_RULESET_QUAKEWORLD)) return true;
-    application_provider *provider = NULL;
-    for (size_t i = 0; i < app->provider_count; ++i)
-        if (app->providers[i] && app->providers[i]->owner == event->provider) { provider = app->providers[i]; break; }
-    if (!provider || !provider->launch ||
-        (provider->kind != APPLICATION_PROVIDER_QC && !native_source(provider)) || provider->owner != event->provider ||
-        provider->launch->selection.clock.kind != event->dialect)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 signon emission lacks its actual primary source owner");
-    qa_event_lease *lease = app->event_ring && event->event_id ?
-        qa_event_ring_retain(app->event_ring, event->event_id) : NULL;
-    if (!lease)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 signon lacks its committed Source event");
-    if (!event_valid(event, error)) {
-        qa_event_lease_release(lease);
-        return false;
-    }
-    record->signon_source_serial = provider->launch->identity;
-    record->signon_source_revision = app->map_revision;
-    append(app, record, lease);
-    return true;
+    if (!event->signon || (event->dialect != QA_RULESET_NETQUAKE && event->dialect != QA_RULESET_QUAKEWORLD)) return;
+    append(app, record, qa_event_ring_retain(app->event_ring, event->event_id));
 }
 size_t application_q1_signon_count(const qa_application *app, qa_actor_owner provider)
 {

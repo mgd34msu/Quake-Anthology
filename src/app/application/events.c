@@ -225,7 +225,7 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
     if (write->envelope->world_text)
         application_unified_world_text_publish(app, write->envelope->world_text, id);
     for (application_protocol_record *record = write->envelope->protocols; record; record = record->next)
-        if (record->event.signon && !application_q1_signon_retain(app, record, error)) return false;
+        application_q1_signon_retain(app, record);
     return true;
 }
 
@@ -1052,7 +1052,9 @@ static bool emit_protocol(application_provider *provider,
         copied.reference_count = captured.reference_count;
         copied.resource_count = captured.count;
     }
-    application_protocol_record record = {.event = copied};
+    application_protocol_record record = {.event = copied,
+        .signon_source_serial = provider->launch->identity,
+        .signon_source_revision = application->map_revision};
     if (delivery) {
         record.q2 = *delivery;
         if (!application_native_q2_delivery_retain(application, &delivery->audience,
