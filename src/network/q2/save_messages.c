@@ -68,7 +68,7 @@ bool qa_q2_save_messages(qa_source_save_io *io, const qa_q2_message_options *can
     uint32_t stream = (uint32_t)messages->stream;
     if (ok) ok = qa_source_save_u32(io, &stream);
     if (ok && (stream > STREAM_GAMESTATE || messages->seat > QA_Q2_MAX_SEATS ||
-        (messages->seat == QA_Q2_MAX_SEATS && codec.protocol.kind != QA_NET_Q2KEX_2023 && codec.protocol.kind != QA_NET_Q2KEX_DEMO_2022)))
+        (messages->seat == QA_Q2_MAX_SEATS && !qa_q2_protocol_kex(codec.protocol))))
         ok = invalid(io, "Saved Q2 stream or recipient marker is invalid");
     if (ok && reading) messages->stream = stream;
     if (ok) ok = qa_source_save_count(io, &messages->inflated_this_read, messages->options.max_inflated_bytes);

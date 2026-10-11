@@ -219,7 +219,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
         !d->runtime || !d->console || !d->cvars || !product || product->family != QA_GAME_Q2 ||
         d->physical_seat >= f->options.seats || !f->seats || !f->seats[d->physical_seat].input ||
         d->client.owner || d->client.generation || d->client.slot || d->epoch ||
-        d->protocol.kind < QA_NET_Q2_34 || d->protocol.kind > QA_NET_Q2PRIVATE_4038)
+        !qa_q2_protocol_valid(d->protocol))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 construction requires its pending real CLIENT registry and physical input");
     frontend_remote_q2 *row = calloc(1, sizeof(*row));
     if (!row) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining remote Q2 CLIENT");

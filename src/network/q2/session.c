@@ -259,8 +259,7 @@ static bool attach(qa_network_runtime *runtime, const qa_net_connect *request, q
     if (!runtime || !request || !out || !qa_network_callbacks_idle(runtime) || !request->seat_count ||
         request->seat_count > QA_NETWORK_MAX_SEATS || request->protocol.kind != channel->protocol.kind ||
         request->protocol.revision != channel->protocol.revision || request->protocol.flags != channel->protocol.flags ||
-        (request->seat_count != 1 && channel->protocol.kind != QA_NET_Q2KEX_2023 &&
-            channel->protocol.kind != QA_NET_Q2KEX_DEMO_2022))
+        (request->seat_count != 1 && !qa_q2_protocol_kex(channel->protocol)))
         return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 attachment does not match the admitted dialect and seats");
     session->runtime = runtime; session->seats = request->seat_count;
     if (!qa_q2_codec_init(&session->codec, request->protocol, error) ||

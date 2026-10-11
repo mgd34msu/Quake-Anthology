@@ -343,8 +343,7 @@ static bool command_angles(qa_source_save_io *io, qa_q2_usercmd *command)
 }
 static bool retained_angles(qa_source_save_io *io, q2_session *session)
 {
-    if (session->codec.protocol.kind != QA_NET_Q2KEX_2023 &&
-        session->codec.protocol.kind != QA_NET_Q2KEX_DEMO_2022) return true;
+    if (!qa_q2_protocol_kex(session->codec.protocol)) return true;
     /* Existing checkpoints end after the short-angle projection. New records
      * retain the exact protocol floats in an optional trailing section. */
     if (io->direction == QA_SOURCE_SAVE_READ && io->offset == io->input.size) return true;

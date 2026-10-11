@@ -9,6 +9,7 @@ enum { QA_Q2_CLASSIC_CONFIGSTRINGS = 2080, QA_Q2_RERELEASE_CONFIGSTRINGS = 12448
     QA_Q2_MAX_CONFIGSTRINGS = 13630 };
 qa_net_protocol_id qa_q2_default_protocol(bool rerelease);
 bool qa_q2_protocol_rerelease(qa_net_protocol_id);
+bool qa_q2_protocol_valid(qa_net_protocol_id);
 bool qa_q2_protocol_kex(qa_net_protocol_id);
 bool qa_q2_protocol_repro(qa_net_protocol_id);
 bool qa_q2_protocol_enhanced(qa_net_protocol_id);

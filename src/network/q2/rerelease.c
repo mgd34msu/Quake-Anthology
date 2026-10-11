@@ -14,7 +14,7 @@ bool qa_q2_wide_read_header(qa_q2_codec *c,qa_net_reader *r,uint32_t *number,uin
     if(b&Q2_U_MORE4)b|=(uint64_t)qa_net_read_u8(r)<<32;
     *number=(b&Q2_U_NUMBER16)?qa_net_read_u16(r):qa_net_read_u8(r);
     *bits=b;
-    bool kex=c->protocol.kind==QA_NET_Q2KEX_2023||c->protocol.kind==QA_NET_Q2KEX_DEMO_2022;
+    bool kex=qa_q2_protocol_kex(c->protocol);
     uint64_t high=b>>32;
     if((kex&&((b&Q2_U_ANGLE16)||(high>15&&high!=255)))||(!kex&&high>3))
         return qa_net_reader_fail(r,"Unknown Q2 rerelease entity flags");
@@ -447,7 +447,7 @@ static bool write_batch_cmd(qa_net_writer *w,const qa_q2_usercmd *previous,const
 }
 bool qa_q2_repro_read_batch(qa_q2_codec *c,qa_net_reader *r,bool nodelta,qa_q2_repro_batch *batch) {
     if(!c||!batch)return qa_net_reader_fail(r,"Missing Q2repro batch codec or output");
-    if(c->protocol.kind!=QA_NET_Q2REPRO_1038&&c->protocol.kind!=QA_NET_Q2PRIVATE_4038)
+    if(!qa_q2_protocol_repro(c->protocol))
         return qa_net_reader_fail(r,"Q2repro batch requires a rerelease protocol");
     memset(batch,0,sizeof(*batch));batch->last_frame=nodelta?-1:qa_net_read_i32(r);
     uint8_t duplicates=qa_net_read_u8(r);
@@ -470,7 +470,7 @@ bool qa_q2_repro_read_batch(qa_q2_codec *c,qa_net_reader *r,bool nodelta,qa_q2_r
 }
 bool qa_q2_repro_write_batch(qa_q2_codec *c,qa_net_writer *w,bool nodelta,const qa_q2_repro_batch *batch) {
     if(!c||!batch)return qa_net_writer_fail(w,"Missing Q2repro batch codec or data");
-    if(c->protocol.kind!=QA_NET_Q2REPRO_1038&&c->protocol.kind!=QA_NET_Q2PRIVATE_4038)
+    if(!qa_q2_protocol_repro(c->protocol))
         return qa_net_writer_fail(w,"Q2repro batch requires a rerelease protocol");
     if(!batch->frame_count||batch->frame_count>QA_Q2_REPRO_BATCH_FRAMES)
         return qa_net_writer_fail(w,"Q2repro batch frame count outside wire range");

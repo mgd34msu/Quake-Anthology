@@ -615,7 +615,7 @@ bool qa_q2_server_event_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_serv
                qa_net_write_u8(w, e->data.download.percent) && (e->data.download.missing ||
                qa_net_write_data(w, e->data.download.bytes.data, e->data.download.bytes.size));
     case QA_Q2_SVC_SETTING:
-        if (!rerelease && c->protocol.kind != QA_NET_R1Q2_35 && c->protocol.kind != QA_NET_Q2PRO_36)
+        if (!qa_q2_protocol_enhanced(c->protocol))
             return qa_net_writer_fail(w, "Selected Q2 wire has no server settings");
         return qa_net_write_u8(w, rerelease ? 37 : 24) && qa_net_write_i32(w, e->data.setting.index) && qa_net_write_i32(w, e->data.setting.value);
     case QA_Q2_SVC_SEAT:

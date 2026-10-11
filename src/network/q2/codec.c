@@ -4,6 +4,9 @@
 qa_net_protocol_id qa_q2_default_protocol(bool rerelease)
 { return (qa_net_protocol_id){.kind = rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34}; }
 
+bool qa_q2_protocol_valid(qa_net_protocol_id protocol)
+{ return qa_q2_protocol_version(protocol) != 0; }
+
 bool qa_q2_protocol_kex(qa_net_protocol_id protocol)
 {
     return protocol.kind == QA_NET_Q2KEX_2023 || protocol.kind == QA_NET_Q2KEX_DEMO_2022;

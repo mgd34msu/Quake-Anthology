@@ -189,7 +189,7 @@ bool qa_q2_frame_history_read(qa_q2_frame_history *history, qa_q2_codec *c, qa_n
     frame.server_frame = header.serverframe;
     frame.delta_frame = header.deltaframe;
     frame.suppressed_count = header.suppress_count;
-    bool kex = c->protocol.kind == QA_NET_Q2KEX_2023 || c->protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+    bool kex = qa_q2_protocol_kex(c->protocol);
     frame.player_count = kex ? c->split_players : 1;
     if (!frame.player_count || frame.player_count > QA_Q2_MAX_SEATS)
         return qa_net_reader_fail(r, "Invalid Q2 split-player count");
@@ -288,7 +288,7 @@ static bool write_entities(void *user, qa_net_writer *w, qa_error *error) {
 bool qa_q2_frame_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_wire_frame *frame,
                         const qa_q2_wire_frame *old, qa_q2_entity_span baselines, uint32_t max_clients) {
     if (!c) return qa_net_writer_fail(w, "Missing Q2 frame codec");
-    bool kex = c->protocol.kind == QA_NET_Q2KEX_2023 || c->protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+    bool kex = qa_q2_protocol_kex(c->protocol);
     if (!frame || !frame->player_count || frame->player_count > QA_Q2_MAX_SEATS ||
         (!kex && frame->player_count != 1) || (kex && frame->player_count != c->split_players))
         return qa_net_writer_fail(w, "Invalid Q2 frame player count");

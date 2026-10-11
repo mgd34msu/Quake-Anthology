@@ -636,10 +636,7 @@ static bool initialize(layout_context *c, const qa_hud_q2_options *options,
     if (!isfinite(c->width) || !isfinite(c->height)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 HUD scale exceeds logical coordinate range"); return false;
     }
-    if (frame->protocol.kind != QA_NET_Q2_34 && frame->protocol.kind != QA_NET_R1Q2_35 &&
-        frame->protocol.kind != QA_NET_Q2PRO_36 && frame->protocol.kind != QA_NET_Q2REPRO_1038 &&
-        frame->protocol.kind != QA_NET_Q2KEX_2023 && frame->protocol.kind != QA_NET_Q2KEX_DEMO_2022 &&
-        frame->protocol.kind != QA_NET_Q2PRIVATE_4038) {
+    if (!qa_q2_protocol_valid(frame->protocol)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 HUD requires a Q2 protocol"); return false;
     }
     c->rerelease = qa_q2_protocol_rerelease(frame->protocol);
