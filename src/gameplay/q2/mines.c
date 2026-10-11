@@ -599,9 +599,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             qa_builtin_actor_traits traits = {0};
             if (g->services.actor_traits != NULL)
                 g->services.actor_traits(g->services.context, best, &traits);
-            const char *classname =
-                qa_strings_cstr(qa_session_strings(g->services.session), traits.classname);
-            p->gekk = classname != NULL && strcmp(classname, "monster_gekk") == 0;
+            p->gekk = traits.classname == g->runtime_names[Q2_NAME_MONSTER_GEKK];
             if (rerelease &&
                 (!disarm(g, id, e) || !qa_world_set_collision(g->services.world, id, NULL, e)))
                 return false;

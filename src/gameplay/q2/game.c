@@ -346,6 +346,17 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
     }
     g->services = *services;
     g->options = *options;
+    static const char *const runtime_names[] = {
+#define Q2_RUNTIME_NAME_TEXT(key, text) text,
+        Q2_RUNTIME_NAME_LIST(Q2_RUNTIME_NAME_TEXT)
+#undef Q2_RUNTIME_NAME_TEXT
+    };
+    for (unsigned i = 0; i < Q2_NAME_COUNT; ++i)
+        if (!qa_strings_intern_cstr(qa_session_strings(services->session), runtime_names[i],
+                                    &g->runtime_names[i], e)) {
+            close_game(g);
+            return false;
+        }
     g->widow_damage_multiplier = 1;
     g->grapple_options = (qa_q2_grapple_options){
         .fly_speed = 650, .pull_speed = 650, .damage = 10, .players_collide = true};

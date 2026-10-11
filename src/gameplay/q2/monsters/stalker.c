@@ -315,9 +315,7 @@ bool q2m_blocked_tesla(q2m_context *c, bool *accepted, qa_error *error) {
     if (!q2m_alive(c) || !q2_actor_live(c->game, target) ||
         !qa_actor_id_equal(c->monster->enemy, target) || !visible)
         return true;
-    const char *classname = qa_strings_cstr(qa_session_strings(c->game->services.session),
-                                           traits.classname);
-    if (!classname || strcmp(classname, "tesla"))
+    if (traits.classname != c->game->runtime_names[Q2_NAME_TESLA])
         return true;
     c->monster->source_blocked = true;
     if (!q2m_source_attack(c, false, error))

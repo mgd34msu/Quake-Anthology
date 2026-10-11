@@ -244,8 +244,7 @@ static bool bfg_target(qa_q2_game *g, qa_actor_id id, bool *eligible, qa_error *
     qa_builtin_actor_traits traits = {0};
     if (g->services.actor_traits != NULL)
         g->services.actor_traits(g->services.context, id, &traits);
-    const char *name = qa_strings_cstr(qa_session_strings(g->services.session), traits.classname);
-    *eligible = live(g, id) && ((name != NULL && strcmp(name, "misc_explobox") == 0) ||
+    *eligible = live(g, id) && (traits.classname == g->runtime_names[Q2_NAME_MISC_EXPLOBOX] ||
            (g->options.edition == QA_Q2_RERELEASE && traits.damageable_target));
     return true;
 }

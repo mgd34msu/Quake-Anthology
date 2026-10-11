@@ -351,6 +351,16 @@ seven core suites pass:
 `/tmp/qa-ta3196-q1-classnames-20261011-{build,core}.log`. Q2, mode, campaign and
 bot-goal classname sites in finding 3 remain; no live gameplay claim.
 
+Names finding 3, Q2 slice: the Q2 constructor binds fourteen runtime classname
+constants in the same session string table. Brush rules, trigger touch, train
+teams, monster routes/attacks, mines, companion touch and bot observations
+compare the existing authored/trait IDs directly. BFG target, strafe, stalker
+and gib predicates use the same bindings. The corresponding text conversion
+and strcmp paths are deleted; original edition rules and classname spellings
+are unchanged. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-q2-classnames-20261011-{build,core}.log`. Mode, campaign and
+bot-goal classname sites plus authored traversal in finding 3 remain.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

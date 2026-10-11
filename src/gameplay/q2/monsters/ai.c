@@ -1931,8 +1931,8 @@ static bool default_attack(q2m_context *context, bool *selected, qa_error *error
       (!rerelease || m->strafe_ns <= game->now_ns)) {
     chance = classic_boss || !rogue ? .3f : species == Q2M_DAEDALUS ? .8f : .6f;
     if (!classic_boss && rogue) {
-      const char *name = qa_strings_cstr(qa_session_strings(game->services.session), traits.classname);
-      if (name && (!strcmp(name, "tesla") || (rerelease && !strcmp(name, "tesla_mine"))))
+      if (traits.classname == game->runtime_names[Q2_NAME_TESLA] ||
+          (rerelease && traits.classname == game->runtime_names[Q2_NAME_TESLA_MINE]))
         chance = 0;
       else if (rerelease)
         chance *= profile.strafe;

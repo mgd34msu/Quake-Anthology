@@ -439,9 +439,7 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
                 if (train->entity->kind != Q2E_TRAIN || !(train->entity->spawnflags & 8) ||
                     !(train->physics.flags & QA_PHYSICS_TEAM_SLAVE))
                     continue;
-                const char *classname = qa_strings_cstr(qa_session_strings(g->services.session),
-                                                        train->entity->classname);
-                if (strcmp(classname, "func_train"))
+                if (train->entity->classname != g->runtime_names[Q2_NAME_FUNC_TRAIN])
                     continue;
                 train->entity->team_master = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, train->id);
                 train->entity->team_next = (qa_actor_reference){0};

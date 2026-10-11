@@ -530,10 +530,7 @@ bool q2_companion_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error
     if (!c->decoy) {
         const qa_actor_record *other =
             qa_actors_get(qa_session_actors(g->services.session), contact->other);
-        const char *classname =
-            other ? qa_strings_cstr(qa_session_strings(g->services.session), other->definition)
-                  : NULL;
-        if (classname && !strcmp(classname, "bodyque"))
+        if (other && other->definition == g->runtime_names[Q2_NAME_BODYQUE])
             return true;
     }
     if (c->kind == Q2_SPHERE_HUNTER &&

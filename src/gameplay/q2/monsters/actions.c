@@ -2854,12 +2854,8 @@ static bool foundational_species_callback(q2m_context *context,
                                            monster->enemy, &enemy_traits);
     if (!q2m_alive(context))
       return true;
-    const char *enemy_classname = qa_strings_cstr(
-        qa_session_strings(context->game->services.session),
-        enemy_traits.classname);
-    const char *tesla_name = rerelease ? "tesla_mine" : "tesla";
-    bool tesla = rogue && enemy_classname != NULL &&
-                 strcmp(enemy_classname, tesla_name) == 0;
+    bool tesla = rogue && enemy_traits.classname ==
+        context->game->runtime_names[rerelease ? Q2_NAME_TESLA_MINE : Q2_NAME_TESLA];
     float damage = tesla ? 3.0f : rerelease && blaster ? 6.0f : 2.0f;
     q2m_attack_kind kind =
         commander ? Q2M_ATTACK_GREEN_BOLT : Q2M_ATTACK_BLASTER;

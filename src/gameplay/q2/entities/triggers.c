@@ -333,14 +333,12 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
             *e = local;
         return false;
     }
-    const char *classname =
-        qa_strings_cstr(qa_session_strings(g->services.session), traits.classname);
     if (s->kind == Q2E_HURT) {
         if (!has || !combat.can_take_damage || s->timestamp_ns > g->now_ns)
             return true;
         if (rr &&
             ((!traits.player && !traits.monster && !traits.damageable_target &&
-              (!classname || strcmp(classname, "misc_explobox"))) ||
+              traits.classname != g->runtime_names[Q2_NAME_MISC_EXPLOBOX]) ||
              (traits.player && (s->spawnflags & 32)) || (traits.monster && (s->spawnflags & 64))))
             return true;
         s->timestamp_ns = q2_deadline(g->now_ns, (s->spawnflags & 16) ? Q2_NS
@@ -358,7 +356,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
         return q2_entity_damage(g, a, id, a->id, s->damage, s->damage, 31,
                                 (s->spawnflags & 8) ? 32 : 0, e);
     }
-    if ((has && combat.health > 0) || (classname && !strcmp(classname, "grenade"))) {
+    if ((has && combat.health > 0) || traits.classname == g->runtime_names[Q2_NAME_GRENADE]) {
         b.velocity = qa_vec_scale(s->direction, s->speed * 10);
         if (!qa_world_body_write(g->services.world, id, &b, e))
             return false;

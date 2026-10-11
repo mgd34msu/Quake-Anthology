@@ -395,9 +395,7 @@ static bool trap_capture_run(qa_q2_game *g, q2_actor *trap,
         qa_builtin_actor_traits traits;
         if (!qa_q2_actor_traits(g, id, &traits))
             continue;
-        const char *name =
-            qa_strings_cstr(qa_session_strings(g->services.session), traits.classname);
-        if (name == NULL || strcmp(name, "gib") != 0)
+        if (traits.classname != g->runtime_names[Q2_NAME_GIB])
             continue;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, e))

@@ -9,6 +9,29 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define Q2_RUNTIME_NAME_LIST(X) \
+    X(FUNC_PLAT2, "func_plat2") \
+    X(FUNC_DOOR_SECRET2, "func_door_secret2") \
+    X(FUNC_DOOR_ROTATING, "func_door_rotating") \
+    X(FUNC_TRAIN, "func_train") \
+    X(MISC_EXPLOBOX, "misc_explobox") \
+    X(GRENADE, "grenade") \
+    X(POINT_COMBAT, "point_combat") \
+    X(PATH_CORNER, "path_corner") \
+    X(TESLA, "tesla") \
+    X(TESLA_MINE, "tesla_mine") \
+    X(MONSTER_GEKK, "monster_gekk") \
+    X(BODYQUE, "bodyque") \
+    X(WORLDSPAWN, "worldspawn") \
+    X(GIB, "gib")
+
+typedef enum q2_runtime_name {
+#define Q2_RUNTIME_NAME_ENUM(key, text) Q2_NAME_##key,
+    Q2_RUNTIME_NAME_LIST(Q2_RUNTIME_NAME_ENUM)
+#undef Q2_RUNTIME_NAME_ENUM
+    Q2_NAME_COUNT
+} q2_runtime_name;
+
 #define Q2_NS UINT64_C(1000000000)
 #define Q2_MS UINT64_C(1000000)
 #define Q2_SHOT_MASK UINT32_C(0x06000003)
@@ -172,6 +195,7 @@ typedef struct q2_push_frame {
 struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
+    qa_string_id runtime_names[Q2_NAME_COUNT];
     const qa_cvars *source_cvars;
     qa_cvar_handle source_settings[QA_Q2_SOURCE_SETTING_COUNT];
     qa_q2_options options;

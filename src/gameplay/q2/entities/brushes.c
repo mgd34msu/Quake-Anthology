@@ -1,12 +1,11 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
 
-static bool is_second(qa_q2_game *g, q2_actor *a, const char *name) {
-    return !strcmp(qa_strings_cstr(qa_session_strings(g->services.session), a->entity->classname),
-                   name);
+static bool is_second(q2_actor *a, qa_string_id name) {
+    return a->entity->classname == name;
 }
 static bool platform_sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
-    bool second = is_second(g, a, "func_plat2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2]);
     if (second && (a->physics.flags & QA_PHYSICS_TEAM_SLAVE))
         return true;
     if (!q2_entity_sound(g, a, start ? QA_Q2_SOUND_PLATS_PT1_STRT : QA_Q2_SOUND_PLATS_PT1_END, second ? 10 : 2,
@@ -23,7 +22,7 @@ static bool platform_move(qa_q2_game *g, q2_actor *a, bool up, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     m->phase = up ? 1 : 3;
-    if (is_second(g, a, "func_plat2")) {
+    if (is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2])) {
         s->style = up ? 2 : 3;
         s->count |= 2;
         if (up) {
@@ -43,7 +42,7 @@ static bool platform_move(qa_q2_game *g, q2_actor *a, bool up, qa_error *e) {
 static bool platform_trigger(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    bool second = is_second(g, a, "func_plat2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2]);
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
@@ -81,7 +80,7 @@ static bool platform_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    bool second = is_second(g, a, "func_plat2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2]);
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
@@ -165,7 +164,7 @@ static bool platform_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e)
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    if (!is_second(g, a, "func_plat2"))
+    if (!is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2]))
         return !top || q2_entity_schedule(g, a, Q2ET_PLAT_DOWN, 3);
     s->style = top ? 0 : 1;
     q2_entity_think returning = top ? Q2ET_PLAT_DOWN : Q2ET_PLAT_UP;
@@ -197,7 +196,7 @@ static bool secret_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    bool second = is_second(g, a, "func_door_secret2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_DOOR_SECRET2]);
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
@@ -267,7 +266,7 @@ static bool secret_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool secret_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
-    bool second = is_second(g, a, "func_door_secret2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_DOOR_SECRET2]);
     if (second && (a->physics.flags & QA_PHYSICS_TEAM_SLAVE))
         return true;
     if (!second) {
@@ -297,7 +296,7 @@ bool q2_brush_finished(qa_q2_game *g, q2_actor *a, q2_move_done done, qa_error *
         return platform_finished(g, a, done == Q2MD_PLAT_TOP, e);
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    bool second = is_second(g, a, "func_door_secret2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_DOOR_SECRET2]);
     switch (m->stage) {
     case 0:
         m->stage = 1;
@@ -439,7 +438,7 @@ bool q2_brush_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id act
     *handled = true;
     switch (s->kind) {
     case Q2E_PLAT:
-        if (!is_second(g, a, "func_plat2"))
+        if (!is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2]))
             return s->think != Q2ET_NONE || platform_move(g, a, false, e);
         if (!s->mover->activated) {
             s->mover->activated = true;
@@ -579,7 +578,7 @@ bool q2_brush_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
         q2_actor *plat = q2_ent(g, s->enemy);
         if (!plat)
             return true;
-        bool second = is_second(g, plat, "func_plat2");
+        bool second = is_second(plat, g->runtime_names[Q2_NAME_FUNC_PLAT2]);
         if (!traits.player && (!second || !traits.monster))
             return true;
         qa_combat_state health;
@@ -595,7 +594,7 @@ bool q2_brush_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
     }
     if (!traits.player)
         return true;
-    bool second = is_second(g, a, "func_door_secret2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_DOOR_SECRET2]);
     if (second) {
         qa_combat_state health;
         if (!qa_combat_read(g->services.combat, contact->other, &health, e))
@@ -621,7 +620,7 @@ bool q2_brush_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    if (s->kind == Q2E_SECRET_DOOR && is_second(g, a, "func_door_secret2"))
+    if (s->kind == Q2E_SECRET_DOOR && is_second(a, g->runtime_names[Q2_NAME_FUNC_DOOR_SECRET2]))
         return (a->physics.flags & QA_PHYSICS_TEAM_SLAVE) || !q2_target_damageable(g, other) ||
                q2_entity_damage(g, a, other, a->id, s->damage, 0, 20, 0, e);
     if (!creature) {
@@ -645,7 +644,7 @@ bool q2_brush_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e
             return true;
         s->debounce_ns = q2_deadline(g->now_ns, 500 * Q2_MS);
     }
-    if (s->kind == Q2E_PLAT && is_second(g, a, "func_plat2")) {
+    if (s->kind == Q2E_PLAT && is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2])) {
         qa_combat_state health;
         if (!qa_combat_read(g->services.combat, other, &health, e))
             return false;
@@ -669,7 +668,7 @@ bool q2_brush_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *o, q
     if (!qa_combat_read_traits(g->services.combat, a->id, &health, e))
         return false;
     health.can_take_damage = false;
-    bool second = is_second(g, a, "func_door_secret2");
+    bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_DOOR_SECRET2]);
     if (second && !qa_combat_set_health(g->services.combat, a->id, a->entity->health, e))
         return false;
     if (!qa_combat_set_traits(g->services.combat, a->id, &health, e))

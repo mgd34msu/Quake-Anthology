@@ -164,9 +164,7 @@ static bool authored_route(q2m_context *context, bool spawn_dead, qa_error *erro
         qa_authored_target target;
         if (!qa_targets_read(targets, id, &target))
             continue;
-        const char *classname =
-            qa_strings_cstr(qa_session_strings(context->game->services.session), target.classname);
-        if (classname && !strcmp(classname, "point_combat")) {
+        if (target.classname == context->game->runtime_names[Q2_NAME_POINT_COMBAT]) {
             context->monster->combat_target = entity->target;
             entity->target = 0;
             return set_route(context, (qa_actor_id){0}, spawn_dead, error);
@@ -177,11 +175,8 @@ static bool authored_route(q2m_context *context, bool spawn_dead, qa_error *erro
         return set_route(context, (qa_actor_id){0}, spawn_dead, error);
     }
     qa_authored_target target;
-    const char *classname = qa_targets_read(targets, id, &target)
-                                ? qa_strings_cstr(qa_session_strings(context->game->services.session),
-                                                  target.classname)
-                                : NULL;
-    if (!classname || strcmp(classname, "path_corner"))
+    if (!qa_targets_read(targets, id, &target) ||
+        target.classname != context->game->runtime_names[Q2_NAME_PATH_CORNER])
         return set_route(context, (qa_actor_id){0}, spawn_dead, error);
     entity->target = 0;
     return set_route(context, id, spawn_dead, error);

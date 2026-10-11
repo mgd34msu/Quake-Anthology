@@ -324,8 +324,7 @@ bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
-    m->angular = !strcmp(qa_strings_cstr(qa_session_strings(g->services.session), s->classname),
-                         "func_door_rotating");
+    m->angular = s->classname == g->runtime_names[Q2_NAME_FUNC_DOOR_ROTATING];
     m->safe_direction =
         m->angular && (s->spawnflags & 0x20000) ? q2_movedir(b.angles) : qa_v3(0, 0, 0);
     m->water_divisor = s->accel != 0 ? s->accel : 20;
