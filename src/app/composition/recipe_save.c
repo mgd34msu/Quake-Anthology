@@ -185,7 +185,7 @@ static bool geometry_restore(qa_executable_recipe *recipe,
             for (size_t j = 0; j < recipe->sidecar_count; ++j)
                 if (recipe->sidecars[j].resource && !strcmp(recipe->sidecars[j].path, path) &&
                     (i > UINT32_MAX || !qa_collision_set_surface_material(recipe->geometry, (uint32_t)i,
-                        qa_map_sidecars_material_input(qa_resource_bytes(recipe->sidecars[j].resource)), error))) return false;
+                        qa_map_sidecars_material_input(qa_resource_bytes(recipe->sidecars[j].resource)), recipe->strings, error))) return false;
         }
     return qa_collision_restore_portals(recipe->geometry, portals, error);
 }

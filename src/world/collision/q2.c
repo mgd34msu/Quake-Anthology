@@ -569,7 +569,7 @@ static const qa_collision_ops q2_ops = {.destroy = q2_destroy, .trace = q2_trace
     .point_contents = q2_point_contents, .create_scratch = q2_create_scratch,
     .destroy_scratch = q2_destroy_scratch};
 
-bool qa_q2_collision_set_material(void *opaque, uint32_t texinfo, qa_bytes bytes, qa_error *error)
+bool qa_q2_collision_set_material(void *opaque, uint32_t texinfo, qa_bytes bytes, qa_strings *strings, qa_error *error)
 {
     q2_collision *collision = opaque;
     if (collision == NULL || (size_t)texinfo >= collision->surface_count || (bytes.size != 0 && bytes.data == NULL)) {
@@ -583,11 +583,22 @@ bool qa_q2_collision_set_material(void *opaque, uint32_t texinfo, qa_bytes bytes
         if (!((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
               || (value >= '0' && value <= '9') || value == '_' || value == '-')) {
             memset(collision->surfaces[texinfo].material, 0, sizeof(material));
+            collision->surfaces[texinfo].material_id = collision->surfaces[texinfo].material_lower_id = QA_STRING_NONE;
             qa_error_set(error, QA_ERROR_FORMAT, i, "Invalid Q2 material sidecar name");
             return false;
         }
         material[i] = (char)value;
     }
+    qa_string_id name = QA_STRING_NONE, lower = QA_STRING_NONE;
+    if (*material) {
+        if (!qa_strings_intern_cstr(strings, material, &name, error)) return false;
+        char folded[16]; memcpy(folded, material, sizeof(folded));
+        for (size_t i = 0; folded[i]; ++i)
+            if (folded[i] >= 'A' && folded[i] <= 'Z') folded[i] = (char)(folded[i] + ('a' - 'A'));
+        if (!qa_strings_intern_cstr(strings, folded, &lower, error)) return false;
+    }
+    collision->surfaces[texinfo].material_id = name;
+    collision->surfaces[texinfo].material_lower_id = lower;
     memcpy(collision->surfaces[texinfo].material, material, sizeof(material));
     return true;
 }

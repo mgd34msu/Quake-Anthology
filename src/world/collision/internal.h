@@ -62,7 +62,7 @@ typedef struct qa_collision_tree_trace {
 void qa_collision_trace_tree(const qa_collision_tree_trace *, int32_t headnode);
 bool qa_q1_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
 bool qa_q2_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
-bool qa_q2_collision_set_material(void *, uint32_t texinfo, qa_bytes, qa_error *);
+bool qa_q2_collision_set_material(void *, uint32_t texinfo, qa_bytes, qa_strings *, qa_error *);
 bool qa_q3_collision_create(const qa_bsp_view *, const qa_collision_topology *, qa_collision_kernel *, qa_error *);
 /* Temporary actor geometry. Q1 preserves recursive box-hull behavior; Q3
  * implements boxes and capsules, including capsule-vs-capsule sweeps. */

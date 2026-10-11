@@ -674,7 +674,7 @@ static bool prepare_world(qa_application *application,
         !qa_collision_create(&publication->map, &publication->geometry,
                              error) ||
         !qa_collision_bind_resource(publication->geometry, publication->map_resource, error) ||
-        !qa_map_sidecars_apply_materials(publication->map_sidecars, publication->geometry, error))
+        !qa_map_sidecars_apply_materials(publication->map_sidecars, publication->geometry, qa_session_strings(application->session), error))
         return false;
 
     if (application->world == NULL) {

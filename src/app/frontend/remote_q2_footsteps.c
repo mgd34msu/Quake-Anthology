@@ -17,6 +17,8 @@ struct remote_q2_footsteps {
     qa_map_sidecars *sidecars;
     footstep_table *tables;
     size_t count;
+    size_t *materials, material_count;
+    qa_string_id ladder;
     char last[128];
     uint64_t last_resource;
 };
@@ -39,7 +41,7 @@ static bool table_materials(struct remote_q2_footsteps *owner, const frontend_q2
     if (!owner || !source || !qa_map_sidecars_current(owner->sidecars) || qa_map_sidecars_map(owner->sidecars) != source->map ||
         qa_map_sidecars_catalog(owner->sidecars) != source->catalog ||
         qa_map_sidecars_product(owner->sidecars) != source->product || qa_collision_resource(source->geometry) != source->map ||
-        !qa_map_sidecars_apply_materials(owner->sidecars, source->geometry, error)) return false;
+        !qa_map_sidecars_apply_materials(owner->sidecars, source->geometry, source->strings, error)) return false;
     if (!add(owner, "", error) || !add(owner, "ladder", error)) return false;
     const qa_bsp_view *bsp = qa_collision_bsp(source->geometry);
     if (!bsp) return false;
@@ -55,6 +57,26 @@ static bool table_materials(struct remote_q2_footsteps *owner, const frontend_q2
             if (*material && !add(owner, material, error)) return false;
             break;
         }
+    }
+    return true;
+}
+static bool material_index_build(frontend_q2_footsteps *owner, qa_error *error)
+{
+    qa_strings *strings = owner->source.strings;
+    if (!qa_strings_intern_cstr(strings, "ladder", &owner->ladder, error)) return false;
+    qa_string_id maximum = owner->ladder;
+    for (size_t i = 0; i < owner->count; ++i) {
+        qa_string_id id;
+        if (!qa_strings_intern_cstr(strings, owner->tables[i].material, &id, error)) return false;
+        if (id > maximum) maximum = id;
+    }
+    owner->material_count = (size_t)maximum + 1;
+    owner->materials = calloc(owner->material_count, sizeof(*owner->materials));
+    if (!owner->materials) return remote_q2_fail(error, QA_ERROR_MEMORY, "Indexing Q2 material sound tables");
+    for (size_t i = 0; i < owner->count; ++i) {
+        const char *name = owner->tables[i].material;
+        qa_string_id id = qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, strlen(name)});
+        owner->materials[id] = i;
     }
     return true;
 }
@@ -77,14 +99,14 @@ static frontend_q2_footstep_source source_read(frontend_remote_q2 *row)
 {
     return (frontend_q2_footstep_source){row->content.catalog, row->content.selected,
         frontend_remote_q2_config(row, row->layout.models + 1), row->map, row->content.mounts,
-        row->geometry, row->sounds, row, source_current, remote_q2_trace, remote_q2_effect_asset};
+        row->geometry, row->sounds, qa_session_strings(qa_application_session(row->frontend->application)), row, source_current, remote_q2_trace, remote_q2_effect_asset};
 }
 bool frontend_q2_footsteps_destroy(frontend_q2_footsteps **owned, qa_error *error)
 {
     frontend_q2_footsteps *owner = owned ? *owned : NULL;
     if (!owner) return true;
     if (owner->calls) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 footstep callback remains entered");
-    qa_map_sidecars_release(owner->sidecars); free(owner->tables); free(owner->map_name); free(owner); *owned = NULL; return true;
+    qa_map_sidecars_release(owner->sidecars); free(owner->tables); free(owner->materials); free(owner->map_name); free(owner); *owned = NULL; return true;
 }
 bool frontend_q2_footsteps_create(const frontend_q2_footstep_source *source,
     frontend_q2_footsteps **out, qa_error *error)
@@ -99,7 +121,8 @@ bool frontend_q2_footsteps_create(const frontend_q2_footstep_source *source,
     if (!owner->map_name) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 footstep map identity");
     strcpy(owner->map_name, source->map_name); owner->source.map_name = owner->map_name;
     if (!qa_map_sidecars_create(source->catalog, source->product, source->map_name, qa_vfs_resources(source->files),
-        source->map, &owner->sidecars, error) || !table_materials(owner, source, error)) return false;
+        source->map, &owner->sidecars, error) || !table_materials(owner, source, error) ||
+        !material_index_build(owner, error)) return false;
     for (size_t i = 0; i < owner->count; ++i) {
         footstep_table *table = owner->tables + i;
         for (uint32_t j = 0; j < 16; ++j) {
@@ -120,7 +143,7 @@ bool remote_q2_footsteps_prepare(frontend_remote_q2 *row, qa_error *error)
 }
 static bool surface(frontend_q2_footsteps *owner, const frontend_q2_footstep_source *source,
     const frontend_q2_footstep_sample *sample,
-    char material[16], qa_error *error)
+    qa_string_id *material, qa_error *error)
 {
     *material = 0;
     if (owner->count <= 2 || sample->footsteps >= 2) return true;
@@ -132,13 +155,13 @@ static bool surface(frontend_q2_footsteps *owner, const frontend_q2_footstep_sou
     query.end = qa_vec_add(query.start, qa_v3(0,0,sample->bottom - 9)); qa_trace_result trace;
     if (!source->trace(source->context, &query, &trace, error)) return false;
     if (trace.fraction == 1 || !trace.has_surface) return true;
-    memcpy(material, trace.surface.material, 16);
+    *material = trace.surface.material_id;
     query.end = qa_vec_add(trace.end, qa_v3(0,0,1));
     query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask,
         qa_collision_contents_mask(56, QA_GAME_Q2));
     if (!source->trace(source->context, &query, &trace, error)) return false;
-    if (trace.has_surface) memcpy(material, trace.surface.material, 16);
-    material[15] = 0; return true;
+    if (trace.has_surface) *material = trace.surface.material_id;
+    return true;
 }
 bool remote_q2_footstep(void *context, const frontend_remote_q2_effects_pose *pose, uint32_t event,
     double time, qa_builtin_random *random, qa_error *error)
@@ -181,16 +204,15 @@ bool frontend_q2_footsteps_emit(frontend_q2_footsteps *owner, const frontend_q2_
         !qa_vec_finite(sample->pose.origin) || !qa_vec_finite(sample->trace_bounds.mins) || !qa_vec_finite(sample->trace_bounds.maxs) ||
         !frontend_q2_footsteps_current(owner, source, error)) return false;
     if (sample->footsteps == 0) return true;
-    char material[16] = {0};
+    qa_string_id material = QA_STRING_NONE;
     ++owner->calls;
     bool ok = true;
-    if (sample->event == 9) strcpy(material, "ladder");
-    else ok = surface(owner, source, sample, material, error);
+    if (sample->event == 9) material = owner->ladder;
+    else ok = surface(owner, source, sample, &material, error);
     --owner->calls;
     if (!ok || !frontend_q2_footsteps_current(owner, source, error)) return false;
-    footstep_table *table = owner->tables;
-    for (size_t i = 0; i < owner->count; ++i)
-        if (!strcmp(owner->tables[i].material, material)) { table = owner->tables + i; break; }
+    size_t selected = material < owner->material_count ? owner->materials[material] : 0;
+    footstep_table *table = owner->tables + selected;
     if (!table->count) table = owner->tables;
     if (!table->count) return true;
     uint32_t index = 0;
@@ -313,6 +335,7 @@ bool frontend_q2_footsteps_restore(const frontend_q2_footstep_source *source, qa
     if (ok) ok = qa_source_save_bytes(&io, owner->last, sizeof(owner->last)) &&
         memchr(owner->last, 0, sizeof(owner->last)) &&
         qa_source_save_u64(&io, &owner->last_resource) && qa_source_save_finish(&io, NULL);
+    if (ok) ok = material_index_build(owner, error);
     bool found = !*owner->last && !owner->last_resource;
     for (size_t i = 0; ok && !found && i < count; ++i) for (uint32_t j = 0; j < owner->tables[i].count; ++j) {
         char name[128]; path(owner->tables + i, j, name); found = !strcmp(name, owner->last) &&

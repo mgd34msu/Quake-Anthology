@@ -6,6 +6,7 @@
 #include "qa/math.h"
 #include "qa/collision_bits.h"
 #include "qa/ruleset.h"
+#include "qa/strings.h"
 
 typedef enum qa_shape_kind { QA_SHAPE_POINT, QA_SHAPE_BOX, QA_SHAPE_CAPSULE } qa_shape_kind;
 typedef struct qa_trace_shape { qa_shape_kind kind; qa_bounds bounds; } qa_trace_shape;
@@ -48,7 +49,7 @@ typedef struct qa_trace_query {
     qa_actor_reference pass_source; /* Optional literal CLIENT source number. */
 } qa_trace_query;
 typedef struct qa_collision_plane { qa_vec3 normal; float distance; int32_t type; uint8_t signbits; } qa_collision_plane;
-typedef struct qa_collision_surface { char name[64]; qa_collision_bits flags; int32_t value; char material[16]; } qa_collision_surface;
+typedef struct qa_collision_surface { char name[64]; qa_collision_bits flags; int32_t value; char material[16]; qa_string_id material_id, material_lower_id; } qa_collision_surface;
 typedef enum qa_trace_hit { QA_TRACE_HIT_NONE, QA_TRACE_HIT_WORLD, QA_TRACE_HIT_ACTOR } qa_trace_hit;
 typedef struct qa_trace_result {
     qa_game_family family;
@@ -118,7 +119,7 @@ size_t qa_collision_model_count(const qa_collision_geometry *);
 bool qa_collision_model_bounds(const qa_collision_geometry *, uint32_t model, qa_bounds *, qa_error *);
 /* Q2 .mat sidecar contents: first 15 bytes up to NUL. Invalid ASCII material
  * names clear the previous value and report a format error. */
-bool qa_collision_set_surface_material(qa_collision_geometry *, uint32_t texinfo, qa_bytes, qa_error *);
+bool qa_collision_set_surface_material(qa_collision_geometry *, uint32_t texinfo, qa_bytes, qa_strings *, qa_error *);
 bool qa_collision_trace(const qa_collision_geometry *, qa_trace_scratch *, const qa_trace_query *, qa_trace_result *, qa_error *);
 /* Sweeps against one temporary body without requiring spatial publication.
  * Hosts use this for source APIs that explicitly name an entity to clip. */

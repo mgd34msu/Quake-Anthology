@@ -376,11 +376,11 @@ bool qa_collision_model_bounds(const qa_collision_geometry *geometry, uint32_t m
     return true;
 }
 
-bool qa_collision_set_surface_material(qa_collision_geometry *geometry, uint32_t texinfo, qa_bytes bytes, qa_error *error)
+bool qa_collision_set_surface_material(qa_collision_geometry *geometry, uint32_t texinfo, qa_bytes bytes, qa_strings *strings, qa_error *error)
 {
     if (geometry == NULL || geometry->family != QA_GAME_Q2)
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Material sidecars require Q2 collision geometry");
-    return qa_q2_collision_set_material(geometry->kernel.state, texinfo, bytes, error);
+    return qa_q2_collision_set_material(geometry->kernel.state, texinfo, bytes, strings, error);
 }
 
 static bool valid_policy(const qa_trace_policy *policy)

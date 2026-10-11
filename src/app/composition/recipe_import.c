@@ -456,7 +456,7 @@ static bool map_read(qa_executable_recipe *r, const qa_json_document *json, qa_j
         char path[1040]; if (!qa_map_sidecars_material_path(&r->bsp, i, path, error)) return false;
         for (size_t j = 0; j < r->sidecar_count; ++j) if (r->sidecars[j].product == map->product && !strcmp(r->sidecars[j].path, path) && r->sidecars[j].resource)
             if (i > UINT32_MAX || !qa_collision_set_surface_material(r->geometry, (uint32_t)i,
-                qa_map_sidecars_material_input(qa_resource_bytes(r->sidecars[j].resource)), error)) return false;
+                qa_map_sidecars_material_input(qa_resource_bytes(r->sidecars[j].resource)), r->strings, error)) return false;
     }
     return true;
 }

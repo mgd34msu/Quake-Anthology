@@ -601,6 +601,22 @@ The normal build and seven core suites pass:
 Names findings 1-10 are migrated at the audited sites; findings 11-17 remain.
 This is source/build/core proof, with no live-play, install or timing claim.
 
+Names item 11 floor-material admission and footsteps now use shared IDs.
+`qa_collision_set_surface_material` receives the session string table from
+map publication, sidecar application and recipe/native restore. The one Q2
+sidecar parser stores exact and ASCII-folded IDs alongside the original 16-byte
+material field: original module fields and filename spelling stay intact,
+while reverb can retain its case-insensitive rule. Traces carry these derived
+IDs without parsing text. Legacy and Unified Q2 footstep sources bind that
+same table and build an ID-to-sound-table index at map load/restore. The
+per-step material-copy and strcmp scan are deleted. The existing on-disk
+footstep fields stay unchanged; the process-local index rebuilds on restore.
+Normal build and seven core suites pass:
+`/tmp/qa-ta3196-floor-material-ids-20261011-build.log` and
+`/tmp/qa-ta3196-floor-material-ids-20261011-core.log`.
+The item-11 audio environment/reverb consumer remains next; no runtime or
+performance claim is made by this slice.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

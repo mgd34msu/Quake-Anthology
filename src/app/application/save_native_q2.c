@@ -96,7 +96,7 @@ bool application_source_baseline_prepare(application_provider *target,
         qa_map_sidecars_apply_entities(app->map_sidecars, &map, error) &&
         qa_collision_create(&map, &app->geometry, error) &&
         qa_collision_bind_resource(app->geometry, app->map_resource, error) &&
-        qa_map_sidecars_apply_materials(app->map_sidecars, app->geometry, error) &&
+        qa_map_sidecars_apply_materials(app->map_sidecars, app->geometry, qa_session_strings(app->session), error) &&
         qa_world_create(qa_session_actor_registry(app->session), app->geometry, &hooks,
             QA_WORLD_SNAPSHOT_DEFAULT_FRAMES, &world, error);
     if (!ok) return false;

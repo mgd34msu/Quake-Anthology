@@ -14,6 +14,7 @@ typedef struct frontend_q2_footstep_source {
     qa_vfs *files;
     qa_collision_geometry *geometry;
     qa_audio_bank *sounds;
+    qa_strings *strings;
     void *context;
     bool (*current)(void *, const struct frontend_q2_footstep_source *);
     bool (*trace)(void *, const qa_trace_query *, qa_trace_result *, qa_error *);

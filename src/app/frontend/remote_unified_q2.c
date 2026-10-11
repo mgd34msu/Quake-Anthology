@@ -578,7 +578,7 @@ static frontend_q2_footstep_source footstep_source(q2_bank *b)
     qa_executable_recipe *recipe=frontend_remote_unified_recipe(b->owner->replica);
     return (frontend_q2_footstep_source){.catalog=qa_executable_recipe_catalog(recipe),.product=b->product->id,
         .map_name=qa_executable_recipe_choices(recipe)->world.map,.map=qa_executable_recipe_map(recipe),
-        .files=b->files,.geometry=qa_executable_recipe_geometry(recipe),.sounds=b->sounds,.context=b,
+        .files=b->files,.geometry=qa_executable_recipe_geometry(recipe),.sounds=b->sounds,.strings=b->owner->replica->strings,.context=b,
         .current=footstep_current,.trace=trace,.sound=footstep_sound};
 }
 static bool footstep(void *ctx,const frontend_remote_q2_effects_pose *pose_value,uint32_t event,double ms,

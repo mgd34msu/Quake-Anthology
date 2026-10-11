@@ -251,7 +251,7 @@ qa_bytes qa_map_sidecars_material_input(qa_bytes input)
     }
     return (qa_bytes){input.data, length};
 }
-bool qa_map_sidecars_apply_materials(const qa_map_sidecars *owner, qa_collision_geometry *geometry, qa_error *error)
+bool qa_map_sidecars_apply_materials(const qa_map_sidecars *owner, qa_collision_geometry *geometry, qa_strings *strings, qa_error *error)
 {
     const qa_bsp_view *bsp = qa_collision_bsp(geometry); qa_bytes bytes = owner ? qa_resource_bytes(owner->map) : (qa_bytes){0};
     if (!bsp || !qa_map_sidecars_current(owner) || bsp->source.data != bytes.data || bsp->source.size != bytes.size)
@@ -262,7 +262,7 @@ bool qa_map_sidecars_apply_materials(const qa_map_sidecars *owner, qa_collision_
         if (!qa_map_sidecars_material_path(bsp, i, path, error)) return false;
         for (size_t j = 0; j < owner->count; ++j) if (!strcmp(path, owner->rows[j].value.path) && owner->rows[j].value.resource)
             if (i > UINT32_MAX || !qa_collision_set_surface_material(geometry, (uint32_t)i,
-                qa_map_sidecars_material_input(qa_resource_bytes(owner->rows[j].value.resource)), error)) return false;
+                qa_map_sidecars_material_input(qa_resource_bytes(owner->rows[j].value.resource)), strings, error)) return false;
     }
     return true;
 }
