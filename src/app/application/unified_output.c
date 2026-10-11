@@ -82,12 +82,13 @@ static int configstring_compare(const void *left, const void *right)
     uint32_t b = ((const qa_unified_q2_configstring *)right)->index;
     return a < b ? -1 : a > b;
 }
-static bool q2_configstring(qa_unified_frame_lease *lease, qa_unified_q2_hud_configuration *out, uint32_t index,
+static bool q2_configstring(qa_strings *strings, qa_unified_frame_lease *lease, qa_unified_q2_hud_configuration *out, uint32_t index,
     const char *value, qa_error *error)
 {
     qa_unified_q2_configstring *row = out->configstrings + out->configstring_count++;
     row->index = index;
-    return application_unified_frame_string(lease, &row->value, value, error);
+    return qa_strings_intern_cstr(strings, value, &row->value_id, error) &&
+        application_unified_frame_string(lease, &row->value, value, error);
 }
 static bool q2_configuration(qa_application *app, const application_unified_source *source, qa_unified_frame_lease *lease,
     qa_unified_configuration_state *row, qa_error *error)
@@ -107,7 +108,7 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
             return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Original Q2 configstrings");
         for (uint32_t i = 0; i < hud.configstring_count; ++i) {
             const char *text = qa_strings_cstr(hud.strings, hud.configstrings[i]);
-            if (text && *text && !q2_configstring(lease, out, i, text, error)) return false;
+            if (text && *text && !q2_configstring(qa_session_strings(app->session), lease, out, i, text, error)) return false;
         }
         return true;
     }
@@ -128,19 +129,18 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
     out->configstrings = application_unified_frame_alloc(lease, 2 + unique + count, sizeof(*out->configstrings), error);
     if (!out->configstrings) { if (!lease) free(names); return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD configstrings"); }
     char clients[32]; snprintf(clients, sizeof(clients), "%u", source->max_clients);
-    bool ok = q2_configstring(lease, out, 5, hud.statusbar, error) &&
-        q2_configstring(lease, out, layout.max_clients, clients, error);
+    bool ok = q2_configstring(qa_session_strings(app->session), lease, out, 5, hud.statusbar, error) &&
+        q2_configstring(qa_session_strings(app->session), lease, out, layout.max_clients, clients, error);
     for (size_t i = 0; ok && i < unique; ++i)
-        ok = q2_configstring(lease, out, layout.images + (uint32_t)i + 1, names[i], error);
+        ok = q2_configstring(qa_session_strings(app->session), lease, out, layout.images + (uint32_t)i + 1, names[i], error);
     for (size_t i = 0; ok && i < count; ++i)
-        ok = q2_configstring(lease, out, layout.items + (uint32_t)i + 1, qa_q2_item_at(hud.game, i)->name, error);
+        ok = q2_configstring(qa_session_strings(app->session), lease, out, layout.items + (uint32_t)i + 1, qa_q2_item_at(hud.game, i)->name, error);
     if (!lease) free(names);
     if (ok) qsort(out->configstrings, out->configstring_count, sizeof(*out->configstrings), configstring_compare);
     return ok;
 }
 
 typedef struct q2_stat_images {
-    const qa_strings *strings;
     const qa_unified_q2_configstring *rows;
     size_t count;
     uint32_t base;
@@ -149,15 +149,12 @@ static bool q2_stat_image(void *context, qa_string_id name_id, uint32_t *out, qa
 {
     (void)error;
     const q2_stat_images *images = context;
-    const char *name=qa_strings_cstr(images->strings,name_id);
-    size_t low = 0, high = images->count;
-    while (low < high) {
-        size_t middle = low + (high - low) / 2;
-        int order = strcmp(images->rows[middle].value, name);
-        if (order < 0) low = middle + 1; else high = middle;
-    }
-    *out = low == images->count || strcmp(images->rows[low].value, name) ? 0 :
-        images->rows[low].index - images->base;
+    *out = 0;
+    for (size_t i = 0; i < images->count; ++i)
+        if (images->rows[i].value_id == name_id) {
+            *out = images->rows[i].index - images->base;
+            break;
+        }
     return true;
 }
 static size_t q2_config_lower_bound(const qa_unified_q2_hud_configuration *config, uint32_t index)
@@ -179,7 +176,7 @@ static bool q2_hud_state(const qa_application_native_q2_hud *hud,
         qa_q2_config_layout layout; qa_q2_codec codec = {.protocol = config->protocol};
         if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
         size_t first = q2_config_lower_bound(config, layout.images);
-        q2_stat_images images = {.strings=hud->strings,.rows = config->configstrings + first,
+        q2_stat_images images = {.rows = config->configstrings + first,
             .count = q2_config_lower_bound(config, layout.images + layout.max_images) - first, .base = layout.images};
         if (!qa_q2_wire_stats(hud->game, &hud->view,
             &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image},

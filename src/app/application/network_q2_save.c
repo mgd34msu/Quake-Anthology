@@ -253,7 +253,11 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource does not match its original source config index");
             for (uint32_t k = 1; ok && k < index; ++k)
                 if (table->paths[k] && !strcmp(table->paths[k], path)) ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource aliases an earlier index");
-            if (ok) { table->paths[index] = application_network_q2_copy(path, error); ok = table->paths[index] != NULL; }
+            if (ok) {
+                table->paths[index] = application_network_q2_copy(path, error);
+                ok = table->paths[index] && qa_strings_intern_cstr(qa_session_strings(candidate->app->session),
+                    path, table->names + index, error);
+            }
             if (ok) table->count = index;
             previous = index;
         }
@@ -376,7 +380,8 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         owner->layouts = candidate->layouts; candidate->layouts = NULL;
         for (unsigned i = 0; i < 3; ++i) {
             owner->resources[i] = candidate->resources[i];
-            candidate->resources[i].paths = NULL; candidate->resources[i].count = 0;
+            candidate->resources[i].paths = NULL; candidate->resources[i].names = NULL;
+            candidate->resources[i].count = 0;
         }
         owner->event_actors = candidate->event_actors; candidate->event_actors = NULL;
         owner->events = candidate->events; candidate->events = NULL;

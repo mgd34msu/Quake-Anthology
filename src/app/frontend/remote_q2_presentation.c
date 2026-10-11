@@ -351,10 +351,10 @@ static bool loops(frontend_remote_q2 *row, qa_error *error)
         const qa_q2_entity *entity = row->frame.entities + i;
         if (!entity->sound) continue;
         if (entity->sound >= row->layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 looping sound leaves its received config range");
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + entity->sound));
-        if (!*name) continue;
+        qa_string_id name = row->config_names[row->layout.sounds + entity->sound];
+        if (!name) continue;
         qa_audio_asset *asset = NULL;
-        if (!qa_audio_bank_register(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
+        if (!qa_audio_bank_register_id(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
         if (!asset) continue;
         qa_audio_loop loop = {.sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
             .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = qa_audio_asset_name(asset), .family = QA_GAME_Q2,

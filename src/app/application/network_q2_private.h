@@ -83,6 +83,7 @@ typedef struct application_q2_held_resource {
 typedef struct application_q2_resource_table {
     uint32_t base, maximum, count;
     char **paths;
+    qa_string_id *names;
 } application_q2_resource_table;
 struct qa_application_network_q2 {
     qa_application *app;
@@ -130,6 +131,8 @@ void application_network_q2_free_tables(qa_application_network_q2 *);
 application_provider *application_network_q2_provider(qa_application_network_q2 *);
 bool application_network_q2_resource(qa_application_network_q2 *, unsigned,
     const char *, uint32_t *, qa_error *);
+bool application_network_q2_resource_id(qa_application_network_q2 *, unsigned,
+    qa_string_id, uint32_t *, qa_error *);
 bool application_network_q2_source_resource(qa_application_network_q2 *, unsigned,
     uint32_t, uint32_t *, qa_error *);
 bool application_network_q2_source_config(qa_application_network_q2 *, uint32_t,

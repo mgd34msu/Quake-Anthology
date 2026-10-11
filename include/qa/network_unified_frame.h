@@ -29,6 +29,7 @@ typedef struct qa_unified_inventory_state {
 typedef struct qa_unified_q2_configstring {
     uint32_t index;
     char *value;
+    qa_string_id value_id;
 } qa_unified_q2_configstring;
 typedef struct qa_unified_q2_hud_configuration {
     qa_actor_owner data_provider;

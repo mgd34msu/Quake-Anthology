@@ -116,7 +116,8 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
     for (unsigned i = 0; i < 3; ++i) {
         owner->resources[i] = (application_q2_resource_table){.base = bases[i], .maximum = maximum[i]};
         owner->resources[i].paths = calloc(maximum[i], sizeof(char *));
-        if (!owner->resources[i].paths) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source resource indices");
+        owner->resources[i].names = calloc(maximum[i], sizeof(qa_string_id));
+        if (!owner->resources[i].paths || !owner->resources[i].names) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source resource indices");
     }
     return true;
 }
@@ -132,29 +133,40 @@ void application_network_q2_free_tables(qa_application_network_q2 *owner)
     for (unsigned i = 0; i < 3; ++i) {
         application_q2_resource_table *table = &owner->resources[i];
         if (table->paths) for (uint32_t j = 1; j <= table->count; ++j) free(table->paths[j]);
-        free(table->paths); table->paths = NULL; table->count = 0;
+        free(table->paths); free(table->names);
+        table->paths = NULL; table->names = NULL; table->count = 0;
     }
     owner->configs = NULL; owner->entries = NULL;
 }
 
-bool application_network_q2_resource(qa_application_network_q2 *owner, unsigned kind,
-    const char *path, uint32_t *out, qa_error *error)
+bool application_network_q2_resource_id(qa_application_network_q2 *owner, unsigned kind,
+    qa_string_id name, uint32_t *out, qa_error *error)
 {
     if (!out || kind > 2) return application_fail(error, QA_ERROR_ARGUMENT, "Invalid Q2 source resource kind");
-    if (!path || !*path) { *out = 0; return true; }
+    if (!name) { *out = 0; return true; }
     application_q2_resource_table *table = &owner->resources[kind];
     for (uint32_t i = 1; i <= table->count; ++i)
-        if (table->paths[i] && !strcmp(table->paths[i], path)) { *out = i; return true; }
+        if (table->names[i] == name) { *out = i; return true; }
     uint32_t index = table->count + 1;
     /* 255 is the actual player/weapon appearance sentinel in both GAME APIs. */
     if (!kind && index == 255) ++index;
     if (index >= table->maximum)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 source resource table is full");
+    const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), name);
     char *copy = application_network_q2_copy(path, error);
     if (!copy) return false;
     if (!application_network_q2_config(owner, table->base + index, path, error)) { free(copy); return false; }
-    table->paths[index] = copy; table->count = index; *out = index;
+    table->paths[index] = copy; table->names[index] = name; table->count = index; *out = index;
     return true;
+}
+
+bool application_network_q2_resource(qa_application_network_q2 *owner, unsigned kind,
+    const char *path, uint32_t *out, qa_error *error)
+{
+    qa_string_id name = QA_STRING_NONE;
+    if (path && *path && !qa_strings_intern_cstr(qa_session_strings(owner->app->session), path, &name, error))
+        return false;
+    return application_network_q2_resource_id(owner, kind, name, out, error);
 }
 
 static struct application_native_q2 *source_engine(qa_application_network_q2 *owner)
@@ -174,7 +186,7 @@ bool application_network_q2_source_resource(qa_application_network_q2 *owner, un
     const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[kind] + index]);
     if (!path || !*path)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 published resource has no actual Source registration");
-    return application_network_q2_resource(owner, kind, path, out, error);
+    return application_network_q2_resource_id(owner, kind, engine->configstrings[engine->resource_base[kind] + index], out, error);
 }
 
 bool application_network_q2_source_config(qa_application_network_q2 *owner, uint32_t index,
