@@ -7,6 +7,7 @@
 #include "qa/font.h"
 #include "model_inventory.h"
 #include "q2_animation.h"
+#include "qa/event_ring.h"
 
 typedef struct remote_q2_model {
     struct remote_q2_model *next;
@@ -71,6 +72,7 @@ typedef struct remote_q2_cvar_handles {
     qa_cvar_handle gl_damageblend_frac;
     qa_cvar_handle paused;
     qa_cvar_handle scr_hit_marker_time;
+    qa_cvar_handle scr_centertime;
 } remote_q2_cvar_handles;
 struct frontend_remote_q2 {
     frontend_remote_q2 *next;
@@ -104,6 +106,8 @@ struct frontend_remote_q2 {
     size_t baseline_count;
     qa_q2_wire_frame frame, previous;
     qa_arena effect_storage;
+    qa_event_ring *events;
+    uint64_t event_cursor;
     struct frontend_q2_entity_pose *effect_poses;
     size_t effect_pose_capacity;
     float fraction, frame_ms, height_previous, height_current;

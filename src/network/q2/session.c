@@ -66,7 +66,7 @@ bool q2_client_hooks_valid(const qa_network_q2_client_hooks *hooks)
 {
     return hooks && hooks->current && hooks->server_data && hooks->prepare && hooks->frame && hooks->records &&
         hooks->download && hooks->cancel_loading && hooks->acknowledged && hooks->sent && hooks->command &&
-        hooks->server_command && hooks->print && hooks->drop;
+        hooks->server_command && hooks->drop;
 }
 
 q2_session *q2_get(qa_network_runtime *runtime, qa_net_client_id id, bool server, qa_error *error)

@@ -128,7 +128,10 @@ typedef struct qa_network_q2_client_hooks {
         const qa_q2_game_state *, qa_q2_preparation *, qa_error *);
     bool (*frame)(void *, qa_net_client_id, const qa_q2_wire_frame *,
         const qa_q2_server_record *, size_t record_count, uint64_t received_ns, qa_error *);
-    bool (*records)(void *, qa_net_client_id, const qa_q2_server_record *, size_t, qa_error *);
+    /* Decoded storage stays leased through the callback. Presentation may
+     * retain that lease while consuming admitted output records. */
+    bool (*records)(void *, qa_net_client_id, const qa_q2_server_record *, size_t,
+        qa_unified_frame_lease *, qa_error *);
     bool (*download)(void *, qa_net_client_id,
         const qa_q2_server_event *, bool *complete, qa_error *);
     bool (*cancel_loading)(void *, qa_net_client_id, qa_error *);
@@ -141,7 +144,6 @@ typedef struct qa_network_q2_client_hooks {
     /* Remaining stufftext reaches the actual client Source command owner.
      * source_seat retains the service marker (0 broadcast, 1..N recipients). */
     bool (*server_command)(void *, qa_net_client_id, uint8_t source_seat, const char *, qa_error *);
-    bool (*print)(void *, qa_net_client_id, const char *, qa_error *);
     bool (*drop)(void *, qa_net_client_id, const char *, qa_error *);
 } qa_network_q2_client_hooks;
 typedef struct qa_network_q2_client_policy {

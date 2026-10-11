@@ -311,6 +311,17 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
             char *copy = malloc(strlen(text) + 1); if (!copy) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server layout");
             strcpy(copy, text); free(row->overlay); row->overlay = copy; break;
         }
+        case QA_Q2_SVC_PRINT:
+            qa_console_emit(row->options.domain.console, &row->options.domain.command_context,
+                event->data.print.text); break;
+        case QA_Q2_SVC_CENTERPRINT: {
+            qa_hud *hud=row->frontend->seats[row->options.domain.physical_seat].hud;
+            const qa_cvar_view *duration=qa_cvars_read(row->options.domain.cvars,row->cvar_handles.scr_centertime);
+            double seconds=duration && isfinite(duration->number)?fmax(0,fmin(86400,duration->number)):2.5;
+            if (hud && !qa_hud_center_print(hud,event->data.print.text,row->frontend->time_ns,
+                    (uint64_t)(seconds*1e9),(qa_hud_center_policy){.instant=true,.columns=40},error)) return false;
+            break;
+        }
         case QA_Q2_SVC_SOUND: if (!sound(row, &event->data.sound, error)) return false; break;
         case QA_Q2_SVC_FOG: fog_receive(row, &event->data.fog); break;
         default: break;

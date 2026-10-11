@@ -93,7 +93,7 @@ static bool retire_client(q2_session *session, const char *reason, bool notice, 
     }
     if (client->drop_records_needed && !client->drop_records_done) {
         if (!client->hooks.records(client->hooks.context, session->id, client->batch.records,
-            client->batch.count, error)) return false;
+            client->batch.count, client->batch.lease, error)) return false;
         client->drop_records_done = true;
     }
     if (!client->drop_hook_done) {
@@ -320,8 +320,6 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
             break;
         case QA_Q2_SVC_RECONNECT: ok = cancel(session, error) && loading(session, error) &&
             qa_network_q2_client_command(runtime, id, "new", 0, error); break;
-        case QA_Q2_SVC_PRINT:
-            ok = client->hooks.print(client->hooks.context, id, event->data.print.text, error) && current(session, error); break;
         case QA_Q2_SVC_FRAME:
             if (!event->data.frame->valid) client->last_frame = -1;
             else {
@@ -348,7 +346,7 @@ bool qa_network_q2_client_continue(qa_network_runtime *runtime, qa_net_client_id
     }
     if (ok && !waiting && !session->retiring && client->receive_held && client->batch.cursor == client->batch.count)
         ok = current(session, error) && client->hooks.records(client->hooks.context, id, client->batch.records,
-            client->batch.count, error) && current(session, error);
+            client->batch.count, client->batch.lease, error) && current(session, error);
     if (!waiting && !(client->drop_reason && !client->drop_hook_done) &&
         (session->retiring || !ok || client->batch.cursor == client->batch.count)) {
         q2_records_free(&client->batch); client->receive_held = false;

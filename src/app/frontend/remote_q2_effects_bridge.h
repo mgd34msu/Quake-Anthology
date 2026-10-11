@@ -2,7 +2,7 @@
 #define QA_FRONTEND_REMOTE_Q2_EFFECTS_BRIDGE_H
 #include "remote_q2_client.h"
 #include "remote_q2_effects.h"
-bool frontend_remote_q2_effects_records(frontend_remote_q2 *, const qa_q2_server_record *, size_t, qa_error *);
+bool remote_q2_events_present(frontend_remote_q2 *, const qa_q2_server_record *, size_t, qa_error *);
 bool remote_q2_effects_create(frontend_remote_q2 *, qa_error *);
 bool remote_q2_effects_frame(frontend_remote_q2 *, qa_error *);
 bool remote_q2_hit_marker_sample(frontend_remote_q2 *, qa_error *);

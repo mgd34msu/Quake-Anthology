@@ -254,7 +254,7 @@ const qa_scene_image *frontend_remote_q2_effects_image(const frontend_remote_q2 
         frontend_remote_q2_metadata_read(row, &view, &error);
     return retained ? frontend_remote_q2_effects_particle_image(row->effects) : NULL;
 }
-bool frontend_remote_q2_effects_records(frontend_remote_q2 *row,
+bool remote_q2_events_present(frontend_remote_q2 *row,
     const qa_q2_server_record *records, size_t count, qa_error *error)
 {
     uint32_t seat;

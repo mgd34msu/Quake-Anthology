@@ -259,8 +259,8 @@ static bool records(void *context,const frontend_remote_q2_domain *domain,
     frontend_network_q2_client *owner=context;
     frontend_remote_q2_source_view source;
     if(!source_current(owner,domain,error) || !frontend_remote_q2_source_read(owner->source,&source,error)) return false;
-    bool ok=owner->options.records?owner->options.records(owner->options.context,&owner->application_source,batch,count,error):
-        frontend_remote_q2_effects_records(source.receiver,batch,count,error);
+    bool ok=!owner->options.records ||
+        owner->options.records(owner->options.context,&owner->application_source,batch,count,error);
     return ok && source_current(owner,domain,error);
 }
 static bool disconnected_source(void *context,const frontend_remote_q2_domain *domain,const char *reason,qa_error *error)
