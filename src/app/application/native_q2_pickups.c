@@ -3,7 +3,7 @@
 #include <string.h>
 
 typedef struct pickup_context_field {
-    char *record;
+    size_t record;
     uint32_t offset;
     size_t bytes;
     qa_json_id value;
@@ -93,11 +93,11 @@ static bool private_context(application_native_q2_pickups *o,pickup_context_fiel
     const qa_json_document *d=document(o); qa_json_id root=qa_json_root(d);
     qa_json_id clients=qa_json_get(d,qa_json_get(d,root,"clients"),"records");
     for(size_t i=0;i<qa_json_size(d,clients);++i)
-        if(qa_json_string_equal(d,qa_json_at(d,clients,i),f->record)) return fail(e,QA_ERROR_FORMAT,"Native pickup context addresses client storage");
+        if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_at(d,clients,i))==f->record) return fail(e,QA_ERROR_FORMAT,"Native pickup context addresses client storage");
     qa_json_id records=qa_json_get(d,root,"actorRecords"); bool declared=false;
     for(size_t i=0;i<qa_json_size(d,records);++i) {
         qa_json_id r=qa_json_at(d,records,i);
-        if(!qa_json_string_equal(d,qa_json_get(d,r,"id"),f->record)) continue;
+        if(!(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,r,"id"))==f->record)) continue;
         uint32_t stride;
         if(!word(d,qa_json_get(d,r,"stride"),&stride,e)||f->offset>stride||f->bytes>stride-f->offset) return false;
         qa_json_id fields=qa_json_get(d,r,"fields");
@@ -116,7 +116,7 @@ static bool private_context(application_native_q2_pickups *o,pickup_context_fiel
     }
     if(!declared) return fail(e,QA_ERROR_FORMAT,"Native pickup context lacks declared separate source storage");
     qa_json_id source=qa_json_get(d,root,"sourceActors");
-    if(source!=QA_JSON_NONE&&qa_json_type(d,source)!=QA_JSON_NULL&&qa_json_string_equal(d,qa_json_get(d,root,"entityRecord"),f->record)) {
+    if(source!=QA_JSON_NONE&&qa_json_type(d,source)!=QA_JSON_NULL&&application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,root,"entityRecord"))==f->record) {
         qa_json_id fields=qa_json_get(d,source,"fields"),callbacks=qa_json_get(d,source,"callbacks");
         const char *pointers[]={"ground","think","use"};
         for(size_t i=0;i<sizeof(pointers)/sizeof(*pointers);++i) {
@@ -249,7 +249,7 @@ static bool parse_definition(application_native_q2_pickups *o,size_t index,qa_js
     for(size_t i=0;i<r->field_count;++i) {
         qa_json_id f=qa_json_at(d,fields,i); pickup_context_field *out=r->fields+i; qa_native_value_type type;
         out->value=qa_json_get(d,f,"value");
-        if(!text(d,qa_json_get(d,f,"record"),&out->record,e)||!word(d,qa_json_get(d,f,"offset"),&out->offset,e)||
+        if(!((out->record=application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,f,"record")))!=0)||!word(d,qa_json_get(d,f,"offset"),&out->offset,e)||
             !application_native_q2_callbacks_value_validate(o->options.callbacks,out->value,&type,e)) return false;
         qa_json_id vkind=qa_json_get(d,out->value,"kind");
         out->bytes=qa_json_string_equal(d,vkind,"vector")?12:qa_json_string_equal(d,vkind,"address")?o->pointer_bytes:
@@ -266,7 +266,7 @@ static bool parse_definition(application_native_q2_pickups *o,size_t index,qa_js
                 if(qa_json_string_equal(d,vkind,"vector")) return fail(e,QA_ERROR_FORMAT,"Native pickup context has no vector input");
             }
         }
-        for(size_t j=0;j<i;++j) if(!strcmp(out->record,r->fields[j].record)&&overlap(out->offset,out->bytes,r->fields[j].offset,r->fields[j].bytes))
+        for(size_t j=0;j<i;++j) if(out->record==r->fields[j].record&&overlap(out->offset,out->bytes,r->fields[j].offset,r->fields[j].bytes))
             return fail(e,QA_ERROR_FORMAT,"Native pickup context overlaps another context write");
     }
     return true;
@@ -393,7 +393,6 @@ static void definitions_free(application_native_q2_pickups *o)
 {
     for(size_t i=0;i<o->count;++i) {
         pickup_definition *r=o->definitions+i;
-        if(r->fields) for(size_t j=0;j<r->field_count;++j) free(r->fields[j].record);
         free(r->name); free(r->offered); free(r->writes); free(r->fields);
     }
     free(o->definitions);

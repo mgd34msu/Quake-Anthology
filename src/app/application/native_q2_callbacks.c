@@ -74,6 +74,8 @@ typedef struct native_call {
 struct application_native_q2_callbacks {
     struct application_native_q2 *engine;
     qa_json_document *document;
+    size_t *record_nodes;
+    size_t record_node_count;
     const qa_native_module *module;
     const qa_native_declaration *declaration;
     qa_native_target target;
@@ -206,16 +208,14 @@ bool application_native_q2_callbacks_address(application_native_q2_callbacks *o,
     }
     return true;
 }
-static qa_json_id record_find(application_native_q2_callbacks *o,const char *name)
+size_t application_native_q2_callbacks_record_index(const application_native_q2_callbacks *o, qa_json_id node)
+{ return o && node < o->record_node_count ? o->record_nodes[node] : 0; }
+static qa_json_id record_find(application_native_q2_callbacks *o, size_t index)
 {
     qa_json_id rows=qa_json_get(o->document,qa_json_root(o->document),"actorRecords");
-    for(size_t i=0;i<qa_json_size(o->document,rows);++i) {
-        qa_json_id r=qa_json_at(o->document,rows,i);
-        if(qa_json_string_equal(o->document,qa_json_get(o->document,r,"id"),name)) return r;
-    }
-    return QA_JSON_NONE;
+    return index ? qa_json_at(o->document,rows,index-1) : QA_JSON_NONE;
 }
-static bool record_source(void *context,const char *name,uint32_t index,qa_native_address *out,qa_error *e)
+static bool record_source(void *context,size_t name,uint32_t index,qa_native_address *out,qa_error *e)
 {
     application_native_q2_callbacks *o=context;
     if(!name||!out||!current(o,e)) return false;
@@ -245,7 +245,7 @@ static bool record_source(void *context,const char *name,uint32_t index,qa_nativ
     if(*out>UINT64_MAX-stride) return fail(e,"Native actor record extent overflows");
     return true;
 }
-static bool record_validate(void *context,const char *name,qa_native_address *out,uint64_t *bytes,qa_error *e)
+static bool record_validate(void *context,size_t name,qa_native_address *out,uint64_t *bytes,qa_error *e)
 {
     application_native_q2_callbacks *o=context; qa_json_id r=record_find(o,name),base=qa_json_get(o->document,r,"base");
     uint32_t first,stride,capacity;
@@ -267,7 +267,7 @@ static bool record_validate(void *context,const char *name,qa_native_address *ou
     if(!*out||extent>UINT64_MAX-*out) return fail(e,"Native declared array extent overflows");
     *bytes=extent; return true;
 }
-static bool original_record(void *context,qa_actor_id actor,const char *name,
+static bool original_record(void *context,qa_actor_id actor,size_t name,
     qa_native_address *out,bool *found,qa_error *e)
 {
     application_native_q2_callbacks *o=context; *found=false; *out=0;
@@ -284,7 +284,7 @@ static bool original_record(void *context,qa_actor_id actor,const char *name,
     }
     if(slot==UINT32_MAX) return true;
     qa_json_id root=qa_json_root(o->document),entity=qa_json_get(o->document,root,"entityRecord");
-    if(!qa_json_string_equal(o->document,entity,name))
+    if(application_native_q2_callbacks_record_index(o,entity)!=name)
         return fail(e,"Owned native actor requires its actual original edict record");
     if(!qa_native_entity_address(instance(o),slot,out,e)) return false;
     *found=true; return true;
@@ -468,7 +468,7 @@ static bool records_prepare(application_native_q2_callbacks *o,qa_error *e)
     return application_native_q2_records_create(&options,&o->records,e);
 }
 bool application_native_q2_callbacks_record(application_native_q2_callbacks *o,qa_actor_id actor,
-    const char *name,qa_native_address *out,qa_error *e)
+    size_t name,qa_native_address *out,qa_error *e)
 {
     if(!name||!out||!current(o,e)) return false;
     if(!actor.registry) { *out=0; return true; }
@@ -502,7 +502,7 @@ bool application_native_q2_callbacks_pickup_foreign(application_native_q2_callba
     return pickup_actor_foreign(o,offer->pickup,e);
 }
 bool application_native_q2_callbacks_pickup_context_address(application_native_q2_callbacks *o,
-    qa_actor_id actor,const char *name,uint32_t offset,size_t bytes,qa_native_address *out,qa_error *e)
+    qa_actor_id actor,size_t name,uint32_t offset,size_t bytes,qa_native_address *out,qa_error *e)
 {
     if(!name||!out||!bytes||!pickup_actor_foreign(o,actor,e)) return false;
     qa_json_id record=record_find(o,name),base=qa_json_get(o->document,record,"base"); uint32_t stride;
@@ -513,7 +513,7 @@ bool application_native_q2_callbacks_pickup_context_address(application_native_q
     qa_json_id clients=qa_json_get(o->document,qa_json_root(o->document),"clients");
     qa_json_id client_records=qa_json_get(o->document,clients,"records");
     for(size_t i=0;i<qa_json_size(o->document,client_records);++i)
-        if(qa_json_string_equal(o->document,qa_json_at(o->document,client_records,i),name))
+        if(application_native_q2_callbacks_record_index(o,qa_json_at(o->document,client_records,i))==name)
             return fail(e,"Native pickup context cannot borrow declared client storage");
     qa_json_id fields=qa_json_get(o->document,record,"fields"); bool private_field=false;
     for(size_t i=0;i<qa_json_size(o->document,fields);++i) {
@@ -531,7 +531,7 @@ bool application_native_q2_callbacks_pickup_context_address(application_native_q
     if(!private_field) return fail(e,"Native pickup context lacks exclusive declared source storage");
     qa_native_address address;
     if(!application_native_q2_callbacks_record(o,actor,name,&address,e)||!address||!pickup_actor_foreign(o,actor,e)) return false;
-    if(qa_json_string_equal(o->document,qa_json_get(o->document,qa_json_root(o->document),"entityRecord"),name)) {
+    if(application_native_q2_callbacks_record_index(o,qa_json_get(o->document,qa_json_root(o->document),"entityRecord"))==name) {
         uint32_t slot; size_t public_bytes; qa_native_slot_binding binding;
         if(!qa_native_entity_slot(instance(o),address,&slot,e)||!qa_native_slot(instance(o),slot,&binding,e)||
             !qa_native_host_source_public_bytes(o->engine->provider->state.native.host,slot,&public_bytes,e)) return false;
@@ -630,8 +630,8 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
     *out=(qa_native_value){.type=QA_NATIVE_ADDRESS}; *storage=o->target.pointer_bytes;
     if(qa_json_string_equal(d,kind,"address")) return application_native_q2_callbacks_address(o,raw,&out->as.address,e);
     if(qa_json_string_equal(d,kind,"actor")) {
-        if(value->kind!=APPLICATION_NATIVE_VALUE_ACTOR||!text(d,qa_json_get(d,id,"record"),&name,e)) return fail(e,"Native actor input has the wrong type");
-        bool ok=application_native_q2_callbacks_record(o,value->value.actor,(char *)name.data,&out->as.address,e);
+        if(value->kind!=APPLICATION_NATIVE_VALUE_ACTOR) return fail(e,"Native actor input has the wrong type");
+        bool ok=application_native_q2_callbacks_record(o,value->value.actor,application_native_q2_callbacks_record_index(o,qa_json_get(d,id,"record")),&out->as.address,e);
         qa_buffer_free(&name); return ok;
     }
     if(qa_json_string_equal(d,kind,"client")||qa_json_string_equal(d,kind,"userinfo")) {
@@ -701,11 +701,9 @@ static bool protection_arguments(application_native_q2_callbacks *o,qa_json_id a
         point->kind!=APPLICATION_NATIVE_VALUE_VECTOR||normal->kind!=APPLICATION_NATIVE_VALUE_VECTOR||
         amount->kind!=APPLICATION_NATIVE_VALUE_NUMBER||flags->kind!=APPLICATION_NATIVE_VALUE_NUMBER)
         return fail(e,"Native armor check omitted its authentic stage inputs");
-    qa_buffer record={0};
-    if(!text(o->document,qa_json_get(o->document,qa_json_root(o->document),"entityRecord"),&record,e)) return false;
+    size_t record=application_native_q2_callbacks_record_index(o,qa_json_get(o->document,qa_json_root(o->document),"entityRecord"));
     values[0]=(qa_native_value){.type=QA_NATIVE_ADDRESS};
-    bool ok=application_native_q2_callbacks_record(o,self->value.actor,(char *)record.data,&values[0].as.address,e);
-    qa_buffer_free(&record);
+    bool ok=application_native_q2_callbacks_record(o,self->value.actor,record,&values[0].as.address,e);
     qa_vec3 vectors[]={point->value.vector,normal->value.vector};
     for(size_t i=0;ok&&i<2;++i) {
         uint8_t bytes[12]; float axes[]={vectors[i].x,vectors[i].y,vectors[i].z};
@@ -1218,6 +1216,49 @@ bool application_native_q2_callbacks_run(struct application_native_q2 *n,const c
     }
     return true;
 }
+static size_t record_node_limit(const qa_json_document *d, qa_json_id node)
+{
+    size_t limit=(size_t)node+1;
+    qa_json_kind kind=qa_json_type(d,node);
+    if(kind==QA_JSON_ARRAY||kind==QA_JSON_OBJECT)
+        for(size_t i=0;i<qa_json_size(d,node);++i) {
+            size_t child=record_node_limit(d,qa_json_at(d,node,i));
+            if(child>limit) limit=child;
+        }
+    return limit;
+}
+static void record_nodes_fill(application_native_q2_callbacks *o, qa_json_id node,
+    const qa_buffer *names, size_t count)
+{
+    qa_json_kind kind=qa_json_type(o->document,node);
+    if(kind==QA_JSON_STRING) {
+        for(size_t i=0;i<count;++i)
+            if(names[i].data&&qa_json_string_equal(o->document,node,(char *)names[i].data)) {
+                o->record_nodes[node]=i+1; break;
+            }
+    } else if(kind==QA_JSON_ARRAY||kind==QA_JSON_OBJECT)
+        for(size_t i=0;i<qa_json_size(o->document,node);++i)
+            record_nodes_fill(o,qa_json_at(o->document,node,i),names,count);
+}
+static bool record_nodes_bind(application_native_q2_callbacks *o, qa_error *e)
+{
+    qa_json_id root=qa_json_root(o->document),rows=qa_json_get(o->document,root,"actorRecords");
+    size_t count=qa_json_size(o->document,rows);
+    o->record_node_count=record_node_limit(o->document,root);
+    o->record_nodes=calloc(o->record_node_count,sizeof(*o->record_nodes));
+    qa_buffer *names=count?calloc(count,sizeof(*names)):NULL;
+    if(!o->record_nodes||(count&&!names)) {
+        free(names); return application_fail(e,QA_ERROR_MEMORY,"Binding native record descriptors");
+    }
+    bool okay=true;
+    for(size_t i=0;okay&&i<count;++i) {
+        okay=text(o->document,qa_json_get(o->document,qa_json_at(o->document,rows,i),"id"),names+i,e);
+        if(okay&&!names[i].size) okay=fail(e,"Native record identity or source extent is invalid");
+    }
+    if(okay) record_nodes_fill(o,root,names,count);
+    for(size_t i=0;i<count;++i) qa_buffer_free(names+i);
+    free(names); return okay;
+}
 bool application_native_q2_callbacks_prepare(struct application_native_q2 *n,qa_error *e)
 {
     qa_bytes bytes=qa_native_declaration_callbacks(n?n->declaration:NULL);
@@ -1228,7 +1269,7 @@ bool application_native_q2_callbacks_prepare(struct application_native_q2 *n,qa_
     n->callbacks=o; o->engine=n; o->declaration=n->declaration; o->module=n->provider->state.native.module;
     o->active_call=QA_JSON_NONE;
     o->target=qa_native_module_describe(o->module).image.target;
-    return qa_json_parse(bytes,&o->document,e);
+    return qa_json_parse(bytes,&o->document,e)&&record_nodes_bind(o,e);
 }
 static bool address_shape(application_native_q2_callbacks *o,qa_json_id address,bool nullable,qa_error *e)
 {
@@ -1271,9 +1312,7 @@ static bool value_shape(application_native_q2_callbacks *o,qa_json_id value,qa_n
             !qa_json_string_equal(d,input_name,"activator")&&!qa_json_string_equal(d,input_name,"attacker")&&
             !qa_json_string_equal(d,input_name,"inflictor")) return fail(e,"Native actor value names an unknown canonical actor input");
         if(qa_json_string_equal(d,kind,"actor")) {
-            qa_buffer name={0};
-            if(!text(d,qa_json_get(d,value,"record"),&name,e)) return false;
-            bool found=record_find(o,(char *)name.data)!=QA_JSON_NONE; qa_buffer_free(&name);
+            bool found=application_native_q2_callbacks_record_index(o,qa_json_get(d,value,"record"))!=0;
             if(!found) return fail(e,"Native actor value names an undeclared source record");
         } else if(qa_json_get(d,qa_json_root(d),"clients")==QA_JSON_NONE)
             return fail(e,"Native client value requires its declared physical clients");
@@ -1324,10 +1363,8 @@ static bool records_validate(application_native_q2_callbacks *o,qa_error *e)
         return fail(e,"Native callback client capacity is invalid");
     for(size_t i=0;i<qa_json_size(d,rows);++i) {
         qa_json_id row=qa_json_at(d,rows,i),base=qa_json_get(d,row,"base"),fields=qa_json_get(d,row,"fields");
-        uint32_t stride,capacity,first; qa_buffer name={0};
-        if(!text(d,qa_json_get(d,row,"id"),&name,e)) return false;
-        bool valid=name.size&&record_find(o,(char *)name.data)==row;
-        qa_buffer_free(&name);
+        uint32_t stride,capacity,first;
+        bool valid=application_native_q2_callbacks_record_index(o,qa_json_get(d,row,"id"))==i+1;
         if(!valid||!word(d,row,"stride",&stride,e)||stride<4||!word(d,row,"capacity",&capacity,e)||
             !capacity||capacity>65536||capacity<maximum||!word(d,row,"firstSlot",&first,e)||qa_json_type(d,fields)!=QA_JSON_ARRAY)
             return fail(e,"Native record identity or source extent is invalid");
@@ -1349,8 +1386,7 @@ static bool records_validate(application_native_q2_callbacks *o,qa_error *e)
             qa_json_id binding=qa_json_get(d,field,"binding");
             if(qa_json_string_equal(d,binding,"address")&&!address_shape(o,qa_json_get(d,field,"value"),true,e)) return false;
             if(qa_json_string_equal(d,binding,"record")) {
-                qa_buffer linked={0}; if(!text(d,qa_json_get(d,field,"record"),&linked,e)) return false;
-                bool exists=record_find(o,(char *)linked.data)!=QA_JSON_NONE; qa_buffer_free(&linked);
+                bool exists=application_native_q2_callbacks_record_index(o,qa_json_get(d,field,"record"))!=0;
                 if(!exists) return fail(e,"Native record pointer names an undeclared record");
             }
         }
@@ -1577,7 +1613,7 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     if(!application_native_q2_records_destroy(&o->records,e)) return false;
     while(o->skips) {native_skip *skip=o->skips;o->skips=skip->next;free(skip);}
     qa_buffer_free(&o->restored_weapons);
-    free(o->registrations); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
+    free(o->registrations); free(o->record_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
 }
 const qa_json_document *application_native_q2_callbacks_document(const application_native_q2_callbacks *o)
 { return o?o->document:NULL; }
@@ -1836,9 +1872,8 @@ bool application_native_q2_callbacks_reserved_slot(void *context,uint32_t slot,b
     *out=false; application_native_q2_callbacks *o=n->callbacks;
     if(!o) return true;
     if(!current(o,e)) return false;
-    const qa_json_document *d=o->document; qa_buffer name={0};
-    if(!qa_json_string(d,qa_json_get(d,qa_json_root(d),"entityRecord"),&name,e)) return false;
-    qa_json_id r=record_find(o,(char *)name.data); qa_buffer_free(&name);
+    const qa_json_document *d=o->document;
+    qa_json_id r=record_find(o,application_native_q2_callbacks_record_index(o,qa_json_get(d,qa_json_root(d),"entityRecord")));
     uint32_t first,capacity;
     if(r==QA_JSON_NONE||!word(d,r,"firstSlot",&first,e)||!word(d,r,"capacity",&capacity,e)) return false;
     *out=slot>=first&&(uint64_t)slot<(uint64_t)first+capacity;

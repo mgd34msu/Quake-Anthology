@@ -5,7 +5,7 @@
 #include "qa/strings.h"
 
 typedef struct application_native_q2_field {
-    char *record;
+    size_t record;
     uint32_t offset;
     qa_native_value_type encoding;
 } application_native_q2_field;

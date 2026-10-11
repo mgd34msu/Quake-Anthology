@@ -29,14 +29,14 @@ typedef struct application_native_q2_records_options {
     bool (*current)(void *,qa_error *);
     /* found distinguishes an original owned row from a foreign projection.
      * The callback proves the actual full actor and its original source slot. */
-    bool (*owned_record)(void *,qa_actor_id,const char *,qa_native_address *,bool *found,qa_error *);
+    bool (*owned_record)(void *,qa_actor_id,size_t,qa_native_address *,bool *found,qa_error *);
     bool (*client_slot)(void *,qa_actor_id,uint32_t *,bool *found,qa_error *);
     bool (*client_admitted)(void *,qa_actor_id);
     bool (*client_rejected)(void *,qa_actor_id);
-    bool (*record_source)(void *,const char *,uint32_t index,qa_native_address *,qa_error *);
+    bool (*record_source)(void *,size_t,uint32_t index,qa_native_address *,qa_error *);
     /* Array capacity exists independently of its allocated actor count. Client
      * records return zero extent; their real private rows are read separately. */
-    bool (*record_validate)(void *,const char *,qa_native_address *,uint64_t *bytes,qa_error *);
+    bool (*record_validate)(void *,size_t,qa_native_address *,uint64_t *bytes,qa_error *);
     /* Pure binding preflight followed by the lower no-callback slot publish;
      * failure leaves the slot unchanged. */
     bool (*bound)(void *,qa_actor_id,uint32_t source_slot,qa_error *);
@@ -58,7 +58,7 @@ bool application_native_q2_records_idle(const application_native_q2_records *);
 bool application_native_q2_records_writing(const application_native_q2_records *);
 bool application_native_q2_records_lifecycle(const application_native_q2_records *);
 bool application_native_q2_records_restoring(const application_native_q2_records *);
-bool application_native_q2_records_pointer(application_native_q2_records *,qa_actor_id,const char *,qa_native_address *,qa_error *);
+bool application_native_q2_records_pointer(application_native_q2_records *,qa_actor_id,size_t,qa_native_address *,qa_error *);
 bool application_native_q2_records_refresh(application_native_q2_records *,qa_error *);
 bool application_native_q2_records_validate(application_native_q2_records *,qa_error *);
 bool application_native_q2_records_begin(application_native_q2_records *,application_native_q2_record_scope **,qa_error *);

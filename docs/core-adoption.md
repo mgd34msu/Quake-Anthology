@@ -767,7 +767,15 @@ profile. Runtime address lowering, item storage and component pointer
 services take that index; their record-name scans and copied descriptor
 strings are deleted. Record names stay in external declarations and profile
 metadata. Every current address/pointer caller is migrated. Normal build
-and seven core suites pass. The native Q2 half of item 16 remains open.
+and seven core suites pass.
+
+Names item 16, native Q2 records: module admission binds record-name nodes
+to array ordinals. Callback lowering, links, saves, weapon/item/protection
+fields, pickup contexts and client output readers use those ordinals. The
+runtime record-name scans and copied field/pointer names are deleted. The
+zero ordinal retains absent-field semantics; declaration/save metadata keeps
+names. Normal build and seven core suites pass. Callback input binding in
+item 16 and bot variables in item 17 remain open.
 
 ## Scalar numeric callers
 

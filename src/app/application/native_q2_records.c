@@ -25,7 +25,7 @@ bool nqr_address(application_native_q2_records *o,const nqr_actor *actor,const n
 {
     if((record->client&&!actor->client)||actor->index>=record->capacity)
         return nqr_fail(e,QA_ERROR_FORMAT,"Native actor has no declared private record row");
-    if(!nqr_current(o,e)||!o->options.record_source(o->options.context,record->id,actor->index,out,e)) return false;
+    if(!nqr_current(o,e)||!o->options.record_source(o->options.context,(size_t)(record-o->records)+1,actor->index,out,e)) return false;
     return (*out&&*out<=UINT64_MAX-record->stride)||nqr_fail(e,QA_ERROR_FORMAT,"Native record row leaves its actual address extent");
 }
 bool nqr_capacity(application_native_q2_records *o,const nqr_actor *actor,qa_error *e)
@@ -52,7 +52,7 @@ bool nqr_seed(application_native_q2_records *o,nqr_actor *actor,bool constants,q
             if(f->kind==NQR_CONSTANT||f->kind==NQR_VECTOR) { if(!constants) continue; }
             else if(f->kind==NQR_LINK||f->kind==NQR_ADDRESS) {
                 qa_native_address pointer=0;
-                if(f->kind==NQR_LINK) ok=application_native_q2_records_pointer(o,actor->actor,o->records[f->target].id,&pointer,e);
+                if(f->kind==NQR_LINK) ok=application_native_q2_records_pointer(o,actor->actor,f->target+1,&pointer,e);
                 else if(qa_json_type(o->document,f->address)!=QA_JSON_NULL)
                     ok=application_native_q2_callbacks_address(o->options.callbacks,f->address,&pointer,e);
                 if(ok&&pointer_bytes==4&&pointer>UINT32_MAX) ok=nqr_fail(e,QA_ERROR_FORMAT,"Native record link exceeds its real pointer width");
@@ -106,12 +106,11 @@ bool nqr_releases(application_native_q2_records *o,qa_error *e)
     }
     return true;
 }
-bool application_native_q2_records_pointer(application_native_q2_records *o,qa_actor_id actor,const char *id,qa_native_address *out,qa_error *e)
+bool application_native_q2_records_pointer(application_native_q2_records *o,qa_actor_id actor,size_t id,qa_native_address *out,qa_error *e)
 {
     if(!id||!out||!nqr_current(o,e)) return false;
     if(!actor.registry) { *out=0; return true; }
-    nqr_record *record=NULL;
-    for(size_t i=0;i<o->record_count;++i) if(!strcmp(id,o->records[i].id)) { record=o->records+i; break; }
+    nqr_record *record=id<=o->record_count?o->records+id-1:NULL;
     if(!record) return nqr_fail(e,QA_ERROR_FORMAT,"Native callback names an undeclared actor record");
     nqr_actor *row=nqr_find(o,actor);
     if(row&&row->retired&&o->lifecycle_depth) return nqr_address(o,row,record,out,e);

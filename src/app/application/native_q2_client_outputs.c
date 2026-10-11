@@ -42,7 +42,7 @@ static bool field_parse(struct application_native_q2 *n,qa_json_id id,bool vecto
         if(!qa_json_string_equal(d,qa_json_get(d,r,"id"),(char *)name.data))continue;
         found=true;ok=qa_json_u64(d,qa_json_get(d,r,"stride"),&stride,e)&&offset<=stride&&12<=stride-offset;break;}
     if(!ok||!found){qa_buffer_free(&name);return fail(e,"Native client vector exceeds its declared record");}
-    *out=(application_native_q2_field){(char *)name.data,(uint32_t)offset,QA_NATIVE_F32};return true;
+    *out=(application_native_q2_field){application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,id,"record")),(uint32_t)offset,QA_NATIVE_F32};qa_buffer_free(&name);return true;
 }
 static bool exclusive(struct application_native_q2 *n,const application_native_q2_field *f,
     size_t bytes,const char *bounds,qa_error *e)
@@ -50,10 +50,10 @@ static bool exclusive(struct application_native_q2 *n,const application_native_q
     const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
     qa_json_id root=qa_json_root(d),clients=qa_json_get(d,root,"clients"),
         records=qa_json_get(d,root,"actorRecords"),names=qa_json_get(d,clients,"records");
-    bool client=qa_json_string_equal(d,qa_json_get(d,root,"entityRecord"),f->record),storage=false;
-    for(size_t i=0;i<qa_json_size(d,names);++i)client|=qa_json_string_equal(d,qa_json_at(d,names,i),f->record);
+    bool client=application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,root,"entityRecord"))==f->record,storage=false;
+    for(size_t i=0;i<qa_json_size(d,names);++i)client|=application_native_q2_callbacks_record_index(n->callbacks,qa_json_at(d,names,i))==f->record;
     for(size_t i=0;i<qa_json_size(d,records);++i){qa_json_id r=qa_json_at(d,records,i);
-        if(!qa_json_string_equal(d,qa_json_get(d,r,"id"),f->record))continue;
+        if(application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,r,"id"))!=f->record)continue;
         qa_json_id fields=qa_json_get(d,r,"fields");
         for(size_t j=0;j<qa_json_size(d,fields);++j){qa_json_id field=qa_json_at(d,fields,j);uint64_t offset,length;
             if(!qa_json_u64(d,qa_json_get(d,field,"offset"),&offset,e))return false;
@@ -80,7 +80,7 @@ static bool exclusive(struct application_native_q2 *n,const application_native_q
             application_native_q2_field temporary={0};
             if(!application_native_q2_field_parse(n->callbacks,field,&temporary,e))return false;
             length=application_native_q2_field_size(temporary.encoding);application_native_q2_field_dispose(&temporary);}
-        if(!qa_json_string_equal(d,qa_json_get(d,field,"record"),f->record))continue;
+        if(application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,field,"record"))!=f->record)continue;
         uint64_t offset;if(!qa_json_u64(d,qa_json_get(d,field,"offset"),&offset,e))return false;
         if(offset<(uint64_t)f->offset+bytes&&f->offset<offset+length)
             return fail(e,"Native client output overlaps an input or pose field");}

@@ -75,7 +75,7 @@ bool application_native_q2_field_value(qa_native_value_type type,double value,qa
         value>=(unsigned_value?0:-bound)&&value<bound)||fail(e,"Native source counter exceeds its exact integer encoding");
 }
 void application_native_q2_field_dispose(application_native_q2_field *field)
-{ if(field) { free(field->record); *field=(application_native_q2_field){0}; } }
+{ if(field) { *field=(application_native_q2_field){0}; } }
 bool application_native_q2_field_parse(application_native_q2_callbacks *callbacks,qa_json_id id,
     application_native_q2_field *out,qa_error *e)
 {
@@ -97,7 +97,7 @@ bool application_native_q2_field_parse(application_native_q2_callbacks *callback
         found=true; break;
     }
     if(!ok||!found) { qa_buffer_free(&name); return fail(e,"Native scalar field exceeds its declared actor record"); }
-    field.record=(char *)name.data; field.offset=(uint32_t)offset; *out=field; return true;
+    field.record=application_native_q2_callbacks_record_index(callbacks,qa_json_get(d,id,"record")); qa_buffer_free(&name); field.offset=(uint32_t)offset; *out=field; return true;
 }
 bool application_native_q2_field_address(application_native_q2_callbacks *callbacks,qa_actor_id actor,
     const application_native_q2_field *field,qa_native_address *out,qa_error *e)
@@ -175,14 +175,14 @@ static bool fields_valid(application_native_q2_armor *o,qa_error *e)
         const application_native_q2_field *a=field_at(o,i); bool eligible=false;
         for(size_t r=0;r<qa_json_size(d,rows);++r) {
             qa_json_id row=qa_json_at(d,rows,r);
-            if(qa_json_string_equal(d,qa_json_get(d,row,"id"),a->record))
-                eligible=qa_json_string_equal(d,qa_json_get(d,root,"entityRecord"),a->record)||
+            if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,row,"id"))==a->record)
+                eligible=application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,root,"entityRecord"))==a->record||
                     qa_json_string_equal(d,qa_json_get(d,qa_json_get(d,row,"base"),"kind"),"clients");
         }
         if(!eligible) return fail(e,"Native armor requires its declared entity or client storage");
         for(size_t j=0;j<i;++j) {
             const application_native_q2_field *b=field_at(o,j);
-            if(strcmp(a->record,b->record)==0&&(uint64_t)a->offset<b->offset+application_native_q2_field_size(b->encoding)&&
+            if(a->record==b->record&&(uint64_t)a->offset<b->offset+application_native_q2_field_size(b->encoding)&&
                 (uint64_t)b->offset<a->offset+application_native_q2_field_size(a->encoding)&&
                 (a->offset!=b->offset||a->encoding!=b->encoding)) return fail(e,"Native armor fields overlap incompatible encodings");
         }
@@ -366,7 +366,7 @@ static bool plan(application_native_q2_armor *o,qa_actor_id actor,const qa_armor
     if(regular&&regular->points.encoding==QA_NATIVE_F32) requested_points=(float)requested_points;
     if(power&&power->cells.encoding==QA_NATIVE_F32) requested_cells=(float)requested_cells;
     bool empty=next->regular.kind==QA_ARMOR_NONE||(regular&&requested_points==0&&!regular->selection.enumeration&&
-        regular->selection.field.offset==regular->points.offset&&strcmp(regular->selection.field.record,regular->points.record)==0);
+        regular->selection.field.offset==regular->points.offset&&regular->selection.field.record==regular->points.record);
     if(ok) ok=(after.powered.kind==next->powered.kind&&after.powered.cells==requested_cells&&
         (empty?after.regular.kind==QA_ARMOR_NONE:after.regular.kind==next->regular.kind&&after.regular.item==next->regular.item)&&
         after.regular.points==requested_points)||fail(e,"Native source selections cannot represent the requested armor");

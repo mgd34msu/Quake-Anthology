@@ -545,25 +545,13 @@ static size_t field_size(const qa_json_document *d,qa_json_id value)
     for(size_t i=0;i<10;++i) if(qa_json_string_equal(d,kind,names[i])) return sizes[i];
     return 0;
 }
-static bool input_string(struct application_native_q2_input *s,const qa_json_document *d,
-    qa_json_id id,qa_bytes *out,qa_error *e)
-{
-    qa_bytes source=qa_json_source(d,id);
-    size_t capacity=source.size?source.size-1:0;
-    uint8_t *storage=qa_unified_frame_lease_alloc(s->storage,capacity,1,1,e);
-    return storage&&qa_json_string_into(d,id,storage,capacity,out,e);
-}
 static bool field_address(struct application_native_q2_input *s,qa_json_id field,qa_native_address *address,size_t *size,qa_error *e)
 {
     struct application_native_q2 *n=s->owner->engine;const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
-    qa_bytes name={0};uint64_t offset=0;
-    if(!input_string(s,d,qa_json_get(d,field,"record"),&name,e)||memchr(name.data,0,name.size)||
-        !qa_json_u64(d,qa_json_get(d,field,"offset"),&offset,e)) return false;
-    qa_json_id rows=qa_json_get(d,qa_json_root(d),"actorRecords"),record=QA_JSON_NONE;
-    for(size_t i=0;i<qa_json_size(d,rows);++i) {
-        qa_json_id row=qa_json_at(d,rows,i);
-        if(qa_json_string_equal(d,qa_json_get(d,row,"id"),(char *)name.data)) {record=row;break;}
-    }
+    uint64_t offset=0;
+    if(!qa_json_u64(d,qa_json_get(d,field,"offset"),&offset,e)) return false;
+    size_t index=application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,field,"record"));
+    qa_json_id rows=qa_json_get(d,qa_json_root(d),"actorRecords"),record=index?qa_json_at(d,rows,index-1):QA_JSON_NONE;
     uint64_t stride=0;bool ok=record!=QA_JSON_NONE&&qa_json_u64(d,qa_json_get(d,record,"stride"),&stride,e);
     *size=field_size(d,qa_json_get(d,field,"value"));
     bool private=false;qa_json_id fields=qa_json_get(d,record,"fields");
@@ -574,7 +562,7 @@ static bool field_address(struct application_native_q2_input *s,qa_json_id field
             offset>=start&&offset-start<=length&&*size<=length-(offset-start)) private=true;
     }
     ok=ok&&*size&&offset<=stride&&*size<=stride-offset&&private;
-    if(ok) ok=application_native_q2_callbacks_record(n->callbacks,s->actor,(char *)name.data,address,e)&&
+    if(ok) ok=application_native_q2_callbacks_record(n->callbacks,s->actor,application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,field,"record")),address,e)&&
         *address&&offset<=UINT64_MAX-*address;
     if(ok) {*address+=offset;ok=qa_native_range_check(instance(n),*address,*size,QA_NATIVE_MEMORY_READ|QA_NATIVE_MEMORY_WRITE,e);}
     return ok||application_fail(e,QA_ERROR_FORMAT,"Native input field is outside declared private client storage");
@@ -649,10 +637,10 @@ static bool outputs_open(struct application_native_q2_input *s,qa_json_id bindin
         native_input_output **tail=out;while(*tail) tail=&(*tail)->next;
         *tail=o;o->input=s;o->declaration=row;
         if(qa_json_string_equal(d,qa_json_get(d,row,"kind"),"field")) {
-            qa_bytes record={0};uint64_t offset=0;qa_json_id field=QA_JSON_NONE;
-            bool ok=input_string(s,d,qa_json_get(d,row,"record"),&record,e)&&qa_json_u64(d,qa_json_get(d,row,"offset"),&offset,e);
+            size_t record=application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,row,"record"));uint64_t offset=0;qa_json_id field=QA_JSON_NONE;
+            bool ok=record&&qa_json_u64(d,qa_json_get(d,row,"offset"),&offset,e);
             for(size_t j=0;ok&&j<qa_json_size(d,fields);++j) {qa_json_id f=qa_json_at(d,fields,j);uint64_t at;
-                if(qa_json_string_equal(d,qa_json_get(d,f,"record"),(char *)record.data)&&qa_json_u64(d,qa_json_get(d,f,"offset"),&at,e)&&at==offset) {field=f;break;}}
+                if(application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,f,"record"))==record&&qa_json_u64(d,qa_json_get(d,f,"offset"),&at,e)&&at==offset) {field=f;break;}}
             o->declaration=field;
             if(!ok||field==QA_JSON_NONE||!field_address(s,field,&o->address,&o->bytes,e)||
                 !qa_native_read(instance(n),o->address,o->before,o->bytes,e)) return false;
@@ -665,8 +653,7 @@ static bool outputs_open(struct application_native_q2_input *s,qa_json_id bindin
                 for(size_t k=1;k<11;++k) if(qa_json_string_equal(d,kind,names[k])) type=(qa_native_value_type)k;
                 types[j]=(qa_native_type){.kind=type,.count=1};
                 if(qa_json_string_equal(d,kind,"actor")&&qa_json_string_equal(d,qa_json_get(d,arg,"input"),"self")) {
-                    qa_bytes name={0};if(!input_string(s,d,qa_json_get(d,arg,"record"),&name,e)) return false;
-                    bool ok=application_native_q2_callbacks_record(n->callbacks,s->actor,(char *)name.data,&o->self,e);
+                    bool ok=application_native_q2_callbacks_record(n->callbacks,s->actor,application_native_q2_callbacks_record_index(n->callbacks,qa_json_get(d,arg,"record")),&o->self,e);
                     if(!ok) return false;
                     o->self_index=j;
                 }

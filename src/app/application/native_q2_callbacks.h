@@ -79,12 +79,13 @@ bool application_native_q2_callbacks_input_write(application_native_q2_callbacks
     const application_native_callback_inputs *, qa_native_address, qa_error *);
 bool application_native_q2_callbacks_value_validate(application_native_q2_callbacks *, qa_json_id,
     qa_native_value_type *, qa_error *);
+size_t application_native_q2_callbacks_record_index(const application_native_q2_callbacks *, qa_json_id);
 bool application_native_q2_callbacks_record(application_native_q2_callbacks *, qa_actor_id,
-    const char *, qa_native_address *, qa_error *);
+    size_t, qa_native_address *, qa_error *);
 bool application_native_q2_callbacks_pickup_foreign(application_native_q2_callbacks *,
     const qa_pickup_offer *, qa_error *);
 bool application_native_q2_callbacks_pickup_context_address(application_native_q2_callbacks *,
-    qa_actor_id, const char *, uint32_t, size_t, qa_native_address *, qa_error *);
+    qa_actor_id, size_t, uint32_t, size_t, qa_native_address *, qa_error *);
 bool application_native_q2_callbacks_address(application_native_q2_callbacks *, qa_json_id,
     qa_native_address *, qa_error *);
 bool application_native_q2_callbacks_idle(const application_native_q2_callbacks *);

@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct stage_pointer { char *record; uint32_t offset; } stage_pointer;
+typedef struct stage_pointer { size_t record; uint32_t offset; } stage_pointer;
 typedef struct stage_test {
     stage_pointer pointer;
     application_native_q2_field field;
@@ -73,7 +73,7 @@ struct application_native_q2_weapon_stage {
     application_native_q2_weapon_stage_options options;
     qa_json_id definition;
     stage_tests committed, continuations, settled;
-    char *record;
+    size_t record;
     qa_native_address entry;
     qa_native_type *parameters;
     qa_native_signature signature;
@@ -142,11 +142,11 @@ static bool address_validate(application_native_q2_weapon_stage *o,qa_json_id id
     for(size_t i=0;i<qa_json_size(d,offsets);++i) { uint64_t offset; if(!qa_json_u64(d,qa_json_at(d,offsets,i),&offset,e)||offset>UINT32_MAX) return false; }
     return true;
 }
-static bool client_record(application_native_q2_weapon_stage *o,const char *name)
+static bool client_record(application_native_q2_weapon_stage *o,size_t name)
 {
     const qa_json_document *d=document(o);
     qa_json_id records=qa_json_get(d,qa_json_get(d,qa_json_root(d),"clients"),"records");
-    for(size_t i=0;i<qa_json_size(d,records);++i) if(qa_json_string_equal(d,qa_json_at(d,records,i),name)) return true;
+    for(size_t i=0;i<qa_json_size(d,records);++i) if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_at(d,records,i))==name) return true;
     return false;
 }
 static bool field_parse(application_native_q2_weapon_stage *o,qa_json_id id,application_native_q2_field *out,qa_error *e)
@@ -159,15 +159,15 @@ static bool field_parse(application_native_q2_weapon_stage *o,qa_json_id id,appl
 static bool pointer_parse(application_native_q2_weapon_stage *o,qa_json_id id,stage_pointer *out,qa_error *e)
 {
     const qa_json_document *d=document(o); stage_pointer value={0};
-    if(!text(d,qa_json_get(d,id,"record"),&value.record,e)||!word(d,id,"offset",&value.offset,e)) { free(value.record); return false; }
+    if(!((value.record=application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,id,"record")))!=0)||!word(d,id,"offset",&value.offset,e)) { return false; }
     qa_json_id records=qa_json_get(d,qa_json_root(d),"actorRecords"); bool found=false;
     for(size_t i=0;i<qa_json_size(d,records);++i) {
         qa_json_id row=qa_json_at(d,records,i); uint32_t stride;
-        if(!qa_json_string_equal(d,qa_json_get(d,row,"id"),value.record)) continue;
+        if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,row,"id"))!=value.record) continue;
         found=word(d,row,"stride",&stride,e)&&value.offset<=stride&&o->pointer_bytes<=stride-value.offset;
         break;
     }
-    if(!found||!client_record(o,value.record)) { free(value.record); return fail(e,QA_ERROR_FORMAT,"Native weapon pointer exceeds its declared client record"); }
+    if(!found||!client_record(o,value.record)) { return fail(e,QA_ERROR_FORMAT,"Native weapon pointer exceeds its declared client record"); }
     *out=value; return true;
 }
 static bool pointer_address(stage_actor *a,const stage_pointer *field,qa_native_address *out,qa_error *e)
@@ -578,14 +578,14 @@ static bool stage_prepare(application_native_q2_weapon_stage *o,qa_error *e)
     const qa_json_document *d=document(o); qa_json_id dispatcher=qa_json_get(d,definition,"dispatcher"),selection_id=qa_json_get(d,definition,"selection");
     qa_native_target target=qa_native_module_describe(qa_native_get_module(instance(o))).image.target;
     o->pointer_bytes=target.pointer_bytes; uint32_t count,argument;
-    if(!text(d,qa_json_get(d,dispatcher,"record"),&o->record,e)||!word(d,dispatcher,"arguments",&count,e)||!count||count>16||
+    if(!((o->record=application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,dispatcher,"record")))!=0)||!word(d,dispatcher,"arguments",&count,e)||!count||count>16||
         !word(d,dispatcher,"argument",&argument,e)||argument>=count||
         !application_native_q2_callbacks_entry(options->callbacks,qa_json_get(d,dispatcher,"entry"),&o->entry,e)) return false;
     o->argument=argument; o->parameters=calloc(count,sizeof(*o->parameters));
     if(!o->parameters) return fail(e,QA_ERROR_MEMORY,"Owning native dispatcher ABI");
     for(size_t i=0;i<count;++i) o->parameters[i]=(qa_native_type){.kind=QA_NATIVE_ADDRESS,.count=1};
     qa_json_id records=qa_json_get(d,qa_json_root(d),"actorRecords"); bool dispatcher_record=false;
-    for(size_t i=0;i<qa_json_size(d,records);++i) if(qa_json_string_equal(d,qa_json_get(d,qa_json_at(d,records,i),"id"),o->record)) dispatcher_record=true;
+    for(size_t i=0;i<qa_json_size(d,records);++i) if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,qa_json_at(d,records,i),"id"))==o->record) dispatcher_record=true;
     if(!dispatcher_record) return fail(e,QA_ERROR_FORMAT,"Native weapon dispatcher names no actual Source record");
     o->signature=(qa_native_signature){.abi=target.abi,.parameters=o->parameters,.parameter_count=count,.result={.kind=QA_NATIVE_VOID,.count=1}};
     if(!pointer_parse(o,qa_json_get(d,selection_id,"active"),&o->active,e)) return false;
@@ -711,12 +711,12 @@ bool application_native_q2_weapon_stage_destroy(application_native_q2_weapon_sta
     for(size_t i=0;i<sizeof(groups_list)/sizeof(*groups_list);++i) {
         stage_tests *rows=groups_list[i];
         for(size_t j=0;j<rows->count;++j) {
-            free(rows->tests[j].pointer.record);
+
             application_native_q2_field_dispose(&rows->tests[j].field);
         }
         free(rows->tests); free(rows->ends);
     }
-    free(o->regions); free(o->choices); free(o->parameters); free(o->record); free(o->active.record); free(o->pending.record); free(o); *owner=NULL; return true;
+    free(o->regions); free(o->choices); free(o->parameters); free(o); *owner=NULL; return true;
 }
 typedef struct stage_request_row { qa_actor_id actor; uint64_t id; qa_item_id item; qa_weapon_request_status status; } stage_request_row;
 static bool row_fields(qa_source_save_io *io,stage_request_row *row)

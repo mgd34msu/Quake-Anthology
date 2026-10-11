@@ -292,7 +292,7 @@ static bool field_allowed(application_native_q2_items *o,const application_nativ
 {
     const qa_json_document *d=application_native_q2_callbacks_document(o->options.callbacks);
     qa_json_id clients=qa_json_get(d,qa_json_root(d),"clients"),rows=qa_json_get(d,clients,"records");
-    for(size_t i=0;i<qa_json_size(d,rows);++i) if(qa_json_string_equal(d,qa_json_at(d,rows,i),field->record)) return true;
+    for(size_t i=0;i<qa_json_size(d,rows);++i) if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_at(d,rows,i))==field->record) return true;
     return fail(e,"Native source item field is outside its actual admitted client records");
 }
 static bool occupied(application_native_q2_items *o,qa_error *e)
@@ -311,14 +311,14 @@ static bool occupied(application_native_q2_items *o,qa_error *e)
                 for(size_t k=0;k<(old->capacity_kind==ITEM_FIELD&&!old->bit_count?2u:1u);++k) {
                     if(j==i&&k>=f) break;
                     const application_native_q2_field *other=k?&old->capacity_field:&old->field;
-                    if(strcmp(field->record,other->record)||field->offset>=(uint64_t)other->offset+application_native_q2_field_size(other->encoding)||
+                    if(field->record!=other->record||field->offset>=(uint64_t)other->offset+application_native_q2_field_size(other->encoding)||
                         other->offset>=(uint64_t)field->offset+bytes) continue;
                     if(f==1&&k==1&&field->offset==other->offset&&field->encoding==other->encoding) continue;
                     return fail(e,"Native item storage overlaps another exclusive field");
                 }
             }
             for(size_t r=0;r<qa_json_size(d,records);++r) {
-                qa_json_id record=qa_json_at(d,records,r); if(!qa_json_string_equal(d,qa_json_get(d,record,"id"),field->record)) continue;
+                qa_json_id record=qa_json_at(d,records,r); if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,record,"id"))!=field->record) continue;
                 qa_json_id fields=qa_json_get(d,record,"fields");
                 for(size_t k=0;k<qa_json_size(d,fields);++k) {
                     qa_json_id projection=qa_json_at(d,fields,k),kind=qa_json_get(d,projection,"binding"); uint64_t offset,length;

@@ -92,7 +92,7 @@ static bool counter_parse(application_native_q2_protection *o,protection_definit
     qa_json_id records=qa_json_get(d,qa_json_root(d),"actorRecords");
     for(size_t r=0;r<qa_json_size(d,records);++r) {
         qa_json_id record=qa_json_at(d,records,r);
-        if(!qa_json_string_equal(d,qa_json_get(d,record,"id"),counter->field.record)) continue;
+        if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,record,"id"))!=counter->field.record) continue;
         qa_json_id fields=qa_json_get(d,record,"fields");
         for(size_t j=0;j<qa_json_size(d,fields);++j) {
             qa_json_id field=qa_json_at(d,fields,j); uint64_t offset;

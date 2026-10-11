@@ -10,13 +10,13 @@ bool application_native_q2_records_validate(application_native_q2_records *o,qa_
         qa_json_id row=qa_json_at(o->document,qa_json_get(o->document,qa_json_root(o->document),"actorRecords"),i);
         bool clients=qa_json_string_equal(o->document,qa_json_get(o->document,qa_json_get(o->document,row,"base"),"kind"),"clients");
         qa_native_address array_base=0; uint64_t array_bytes=0;
-        ok=o->options.record_validate(o->options.context,record->id,&array_base,&array_bytes,e);
+        ok=o->options.record_validate(o->options.context,(size_t)(record-o->records)+1,&array_base,&array_bytes,e);
         if(ok&&(clients?(array_base||array_bytes):(!array_base||array_bytes!=(uint64_t)record->stride*record->capacity)))
             ok=nqr_fail(e,QA_ERROR_FORMAT,"Native record validation differs from its actual declared array");
         uint32_t rows=clients?record->capacity:1;
         for(uint32_t j=0;ok&&j<rows;++j) {
             qa_native_address base=array_base;
-            if(clients) ok=o->options.record_source(o->options.context,record->id,j,&base,e);
+            if(clients) ok=o->options.record_source(o->options.context,(size_t)(record-o->records)+1,j,&base,e);
             uint64_t length=clients?record->stride:array_bytes;
             if(ok&&(!base||base>UINT64_MAX-length)) ok=nqr_fail(e,QA_ERROR_FORMAT,"Native declared source array extent overflows");
             for(size_t k=0;ok&&k<count;++k) if(base<ranges[k].base+ranges[k].bytes&&ranges[k].base<base+length)
