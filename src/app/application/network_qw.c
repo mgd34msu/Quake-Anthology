@@ -227,7 +227,10 @@ bool qa_application_network_qw_world_read(qa_application *app,
         *values[i] = variable->number;
     }
     value.movement.entity_gravity = 1;
-    for (size_t i = 0; i < 64; ++i) value.lightstyles[i] = engine->lightstyles.patterns[i] ? qa_strings_cstr(qa_session_strings(engine->services.session), engine->lightstyles.patterns[i]) : "";
+    for (size_t i = 0; i < 64; ++i) {
+        value.lightstyle_ids[i] = engine->lightstyles.patterns[i];
+        value.lightstyles[i] = engine->lightstyles.patterns[i] ? qa_strings_cstr(qa_session_strings(engine->services.session), engine->lightstyles.patterns[i]) : "";
+    }
     *out = value;
     return true;
 }

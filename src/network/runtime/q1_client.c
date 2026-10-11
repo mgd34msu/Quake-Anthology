@@ -18,44 +18,33 @@ static bool current(q1_runtime_client *c, qa_error *e)
 bool q1_client_queue(q1_runtime_client *c, qa_bytes bytes, qa_error *e)
 {
     if ((bytes.size && !bytes.data) || bytes.size > c->policy.message_bytes ||
-        bytes.size > c->policy.queued_bytes - c->queued_bytes)
+        bytes.size > c->policy.queued_bytes - c->messages.bytes)
         return qa_network_fail(e, "Q1 CLIENT reliable FIFO exceeds its admitted capacity");
     if (!bytes.size) return true;
     if (c->demo) return true;
-    q1_client_pending *p = calloc(1, sizeof(*p));
-    if (p) p->bytes.data = malloc(bytes.size);
-    if (!p || !p->bytes.data) {
-        free(p); qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q1 CLIENT reliable service"); return false;
-    }
-    memcpy(p->bytes.data, bytes.data, bytes.size); p->bytes.size = bytes.size;
-    if (c->last) c->last->next = p; else c->first = p;
-    c->last = p; c->queued_bytes += bytes.size; return true;
+    return q1_messages_append(&c->messages, bytes, e) != NULL;
 }
 static void queue_clear(q1_runtime_client *c)
-{
-    while (c->first) {
-        q1_client_pending *next = c->first->next;
-        qa_buffer_free(&c->first->bytes); free(c->first); c->first = next;
-    }
-    c->last = NULL; c->queued_bytes = 0;
-}
+{ q1_messages_clear(&c->messages); }
 void q1_client_batch_clear(q1_runtime_client *c)
 {
-    for (size_t i = 0; i < c->record_count; ++i) free(c->records[i].names);
-    free(c->records); c->records = NULL; c->record_count = c->cursor = 0;
-    qa_buffer_free(&c->payload); qa_buffer_free(&c->before_decoder);
+    c->record_count = c->cursor = 0;
+    c->payload.size = c->before_decoder.size = 0;
+    qa_arena_reset(&c->names_storage);
     c->before_protocol = (qa_net_protocol_id){0}; c->held = false;
     c->demo_wire_prefix_present = false;
 }
-static bool names(q1_client_record *record, const char *const *a, size_t an,
+
+static bool names(q1_runtime_client *c, q1_client_record *record, const char *const *a, size_t an,
     const char *const *b, size_t bn, qa_error *e)
 {
     if (an > SIZE_MAX - bn || an + bn > SIZE_MAX / sizeof(*record->names))
         return qa_network_fail(e, "Q1 CLIENT precache pointer extent overflows");
     size_t count = an + bn;
     if (!count) return true;
-    record->names = malloc(count * sizeof(*record->names));
-    if (!record->names) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q1 CLIENT precache service"); return false; }
+    record->names = qa_arena_alloc(&c->names_storage,
+        count * sizeof(*record->names), _Alignof(const char *), e);
+    if (!record->names) return false;
     if (an) memcpy(record->names, a, an * sizeof(*a));
     if (bn) memcpy(record->names + an, b, bn * sizeof(*b));
     return true;
@@ -67,25 +56,17 @@ bool q1_client_decode_batch(q1_runtime_client *c, qa_bytes bytes, uint32_t seque
         return qa_network_fail(e, "Q1 CLIENT batch exceeds its actual receiver boundary");
     bool qw = c->qw != NULL;
     c->before_protocol = c->protocol;
-    if (!(qw ? qa_qw_decoder_checkpoint(c->qw, c->protocol, &c->before_decoder, e) :
-        qa_nq_decoder_checkpoint(c->nq, c->protocol, c->policy.nq_options, &c->before_decoder, e))) return false;
-    c->payload.data = bytes.size ? malloc(bytes.size) : NULL; c->payload.size = bytes.size;
-    if (bytes.size && !c->payload.data) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q1 CLIENT complete delivery"); q1_client_batch_clear(c); return false;
-    }
+    qa_net_writer snapshot;
+    qa_net_writer_init(&snapshot, c->before_decoder.data, c->decoder_capacity, e);
+    if (!(qw ? qa_qw_decoder_save(&snapshot, c->qw) :
+            qa_nq_decoder_save(&snapshot, c->nq))) return false;
+    c->before_decoder.size = qa_net_writer_size(&snapshot);
+    c->payload.size = bytes.size;
     if (bytes.size) memcpy(c->payload.data, bytes.data, bytes.size);
     qa_net_reader reader; qa_net_reader_init(&reader, (qa_bytes){c->payload.data, c->payload.size}, e);
-    size_t capacity = 0;
     while (qa_net_reader_remaining(&reader)) {
         if (c->record_count == c->policy.service_limit) {
             qa_network_fail(e, "Q1 CLIENT batch exceeds its admitted service count"); goto fail;
-        }
-        if (c->record_count == capacity) {
-            size_t next = capacity ? capacity * 2 : 8;
-            if (next > c->policy.service_limit) next = c->policy.service_limit;
-            q1_client_record *p = realloc(c->records, next * sizeof(*p));
-            if (!p) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining Q1 CLIENT services"); goto fail; }
-            c->records = p; capacity = next;
         }
         q1_client_record *record = &c->records[c->record_count++]; memset(record, 0, sizeof(*record));
         if (qw) {
@@ -98,7 +79,7 @@ bool q1_client_decode_batch(q1_runtime_client *c, qa_bytes bytes, uint32_t seque
             record->protocol = qa_qw_decoder_protocol(c->qw);
             if (!qa_q1_is_qw(record->protocol)) goto protocol_fail;
             if (m->kind == QA_QW_MODEL_LIST || m->kind == QA_QW_SOUND_LIST) {
-                if (!names(record, m->data.list.names, m->data.list.count, NULL, 0, e)) goto fail;
+                if (!names(c, record, m->data.list.names, m->data.list.count, NULL, 0, e)) goto fail;
                 m->data.list.names = record->names;
             }
         } else {
@@ -108,7 +89,7 @@ bool q1_client_decode_batch(q1_runtime_client *c, qa_bytes bytes, uint32_t seque
             if (qa_q1_is_qw(record->protocol)) goto protocol_fail;
             if (m->op == QA_NQ_SERVERINFO) {
                 qa_nq_serverinfo *s = &m->data.serverinfo;
-                if (!names(record, s->models, s->model_count, s->sounds, s->sound_count, e)) goto fail;
+                if (!names(c, record, s->models, s->model_count, s->sounds, s->sound_count, e)) goto fail;
                 s->models = record->names;
                 s->sounds = s->sound_count ? record->names + s->model_count : NULL;
             }
@@ -149,13 +130,12 @@ static bool receive(void *context, qa_network_runtime *runtime, qa_net_client_id
 }
 static bool queue_next(q1_runtime_client *c, qa_error *e)
 {
-    if (!c->first || (c->qw ? qa_qw_channel_pending(c->native.channel.qw) :
+    if (!c->messages.first || (c->qw ? qa_qw_channel_pending(c->native.channel.qw) :
         !qa_nq_channel_ready(c->native.channel.nq))) return true;
-    q1_client_pending *p = c->first;
+    q1_message *p = c->messages.first;
     if (!(c->qw ? qa_qw_channel_queue(c->native.channel.qw, (qa_bytes){p->bytes.data,p->bytes.size}, e) :
         qa_nq_channel_queue(c->native.channel.nq, (qa_bytes){p->bytes.data,p->bytes.size}, e))) return false;
-    c->first = p->next; if (!c->first) c->last = NULL;
-    c->queued_bytes -= p->bytes.size; qa_buffer_free(&p->bytes); free(p); return true;
+    q1_messages_pop(&c->messages); return true;
 }
 static bool transmit(q1_runtime_client *c, qa_bytes bytes, uint64_t now, qa_error *e)
 {
@@ -225,8 +205,7 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
     }
     if (!qa_q1_peer_send_ready(&c->native)) return true;
     size_t consumed = 0;
-    uint8_t *data = malloc(c->policy.message_bytes);
-    if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding Q1 CLIENT input"); return false; }
+    uint8_t *data = c->output;
     bool ok = true;
     while (ok && consumed < c->command_count &&
         qa_q1_peer_send_ready(&c->native) &&
@@ -267,7 +246,6 @@ static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id i
             c->qw ? NULL : &move->command.nq, c->qw ? &move->command.qw : NULL, now, e) && current(c, e);
         if (ok) ++consumed;
     }
-    free(data);
     if (consumed) {
         c->command_count -= consumed;
         memmove(c->commands, c->commands + consumed, c->command_count * sizeof(*c->commands));
@@ -322,6 +300,8 @@ void q1_client_close(void *context)
     qa_nq_decoder_destroy(c->nq); qa_qw_decoder_destroy(c->qw); qa_qw_precache_destroy(c->precache);
     if (c->native.kind == QA_Q1_PEER_QUAKEWORLD) qa_qw_channel_destroy(c->native.channel.qw);
     else qa_nq_channel_destroy(c->native.channel.nq);
+    q1_messages_destroy(&c->messages);
+    qa_arena_destroy(&c->names_storage); qa_arena_destroy(&c->storage);
     free(c->name); free(c->parameters); free(c->commands); free(c);
 }
 static bool pending(const void *context) { return ((const q1_runtime_client *)context)->held; }
@@ -354,6 +334,30 @@ q1_runtime_client *q1_client_get(qa_network_runtime *runtime, qa_net_client_id i
     if (!p || !qa_network_q1_client_peer(p)) { qa_network_fail(e, "Connection is not the original Q1 CLIENT owner"); return NULL; }
     return p->state;
 }
+static bool client_storage_prepare(q1_runtime_client *c, qa_error *error)
+{
+    size_t message = c->policy.message_bytes;
+    c->decoder_capacity = c->native.kind == QA_Q1_PEER_QUAKEWORLD ?
+        32 + 65536u * 54 + QA_QW_UPDATE_BACKUP * (5 + 54 * QA_QW_MAX_PACKET_ENTITIES + 9) :
+        32 + 65536u * 34;
+    if (!q1_messages_prepare(&c->messages, c->policy.queued_bytes,
+            c->policy.queued_bytes, error) ||
+        !qa_arena_reserve(&c->names_storage, message * sizeof(const char *) +
+            _Alignof(const char *), error)) return false;
+    qa_arena_seal(&c->names_storage);
+    c->payload.data = qa_arena_alloc(&c->storage, message, 1, error);
+    c->before_decoder.data = qa_arena_alloc(&c->storage, c->decoder_capacity, 1, error);
+    c->records = qa_arena_alloc(&c->storage,
+        c->policy.service_limit * sizeof(*c->records), _Alignof(q1_client_record), error);
+    c->output = qa_arena_alloc(&c->storage, message, 1, error);
+    c->command_output = qa_arena_alloc(&c->storage, message, 1, error);
+    c->text_output = qa_arena_alloc(&c->storage, message + 1, 1, error);
+    c->precache_names = qa_arena_alloc(&c->storage, 2u * 8192 * sizeof(const char *),
+        _Alignof(const char *), error);
+    qa_arena_seal(&c->storage);
+    return c->payload.data && c->before_decoder.data && c->records && c->output &&
+        c->command_output && c->text_output && c->precache_names;
+}
 bool q1_client_create(qa_network_runtime *runtime, const qa_net_connect *request,
     const qa_network_q1_client_policy *policy, const qa_network_q1_client_hooks *hooks,
     q1_runtime_client **out, qa_error *e)
@@ -380,6 +384,7 @@ bool q1_client_create(qa_network_runtime *runtime, const qa_net_connect *request
     c->commands = calloc(policy->pending_commands, sizeof(*c->commands));
     bool ok = c->commands != NULL;
     if (!ok) qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q1 CLIENT input queue");
+    if (ok) ok = client_storage_prepare(c, e);
     if (ok && qw) {
         c->qw = qa_qw_decoder_create(c->protocol, e);
         ok = c->qw && qa_qw_precache_create(c->protocol, &c->precache, e) &&
@@ -442,13 +447,11 @@ static bool emit_writer(q1_runtime_client *c, qa_net_writer *writer, qa_error *e
 static bool qw_game_state(q1_runtime_client *c, uint32_t *checksum, qa_error *e)
 {
     size_t models = qa_qw_precache_count(c->precache, true), sounds = qa_qw_precache_count(c->precache, false);
-    const char **a = models ? malloc(models * sizeof(*a)) : NULL;
-    const char **b = sounds ? malloc(sounds * sizeof(*b)) : NULL;
-    if ((models && !a) || (sounds && !b)) { free(a); free(b); qa_error_set(e, QA_ERROR_MEMORY, 0, "Borrowing actual QW Source precaches"); return false; }
+    const char **a = c->precache_names, **b = a + 8192;
     for (size_t i = 0; i < models; ++i) a[i] = qa_qw_precache_name(c->precache, true, i);
     for (size_t i = 0; i < sounds; ++i) b[i] = qa_qw_precache_name(c->precache, false, i);
-    bool ok = current(c, e) && c->hooks.qw_game_state(c->hooks.context, c->id, a, models, b, sounds, checksum, e) && current(c, e);
-    free(a); free(b); return ok;
+    return current(c, e) && c->hooks.qw_game_state(c->hooks.context, c->id,
+        models ? a : NULL, models, sounds ? b : NULL, sounds, checksum, e) && current(c, e);
 }
 static bool qw_stuff(q1_runtime_client *c, const char *text, bool *skins_requested, qa_error *e)
 {
@@ -460,8 +463,7 @@ static bool qw_stuff(q1_runtime_client *c, const char *text, bool *skins_request
             ++end;
         }
         size_t size = (size_t)(end - text);
-        char *line = malloc(size + 1);
-        if (!line) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining QW signon command"); return false; }
+        char *line = c->text_output;
         memcpy(line, text, size); line[size] = 0;
         const char *cursor = line; char name[32]; bool present;
         bool ok = qa_q1_token(&cursor, true, name, sizeof(name), &present, e);
@@ -473,7 +475,7 @@ static bool qw_stuff(q1_runtime_client *c, const char *text, bool *skins_request
             ok = qa_q1_token(&cursor, true, extra, sizeof(extra), &argument, e);
             if (ok && !argument) *skins_requested=true;
         }
-        free(line); if (!ok) return false;
+        if (!ok) return false;
         text = *end ? end + 1 : end;
     }
     return true;
@@ -527,8 +529,7 @@ bool qa_network_q1_client_continue(qa_network_runtime *runtime, qa_net_client_id
     q1_runtime_client *c = q1_client_get(runtime, id, e);
     if (!c || c->busy || c->retiring) return qa_network_fail(e, "Q1 CLIENT cannot resume its retired source batch");
     if (!c->held) return true;
-    uint8_t *data = malloc(c->policy.message_bytes);
-    if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding original Q1 signon responses"); return false; }
+    uint8_t *data = c->output;
     c->busy = true; runtime->callback = true;
     bool ok = current(c, e), skins_requested=false;
     if (ok && c->qw) {
@@ -562,7 +563,7 @@ bool qa_network_q1_client_continue(qa_network_runtime *runtime, qa_net_client_id
             ok ? "server disconnected" : "source service failed", false, ok ? e : &ignored);
         ok = ok && dropped;
     }
-    runtime->callback = false; c->busy = false; free(data); q1_client_batch_clear(c); return ok;
+    runtime->callback = false; c->busy = false; q1_client_batch_clear(c); return ok;
 }
 bool qa_network_q1_client_command(qa_network_runtime *runtime, qa_net_client_id id, const char *text, qa_error *e)
 {
@@ -570,12 +571,11 @@ bool qa_network_q1_client_command(qa_network_runtime *runtime, qa_net_client_id 
     if (!c || !text || c->retiring) return qa_network_fail(e, "Q1 CLIENT command lacks its actual live owner");
     size_t size = strlen(text);
     if (size > c->policy.message_bytes - 2) return qa_network_fail(e, "Q1 CLIENT text exceeds its actual channel policy");
-    uint8_t *data = malloc(size + 2);
-    if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding original Q1 command"); return false; }
+    uint8_t *data = c->command_output;
     qa_net_writer writer; qa_net_writer_init(&writer, data, size + 2, e);
     qa_q1_client_message message = {.op = QA_Q1_CLC_STRING, .data.text = text};
     bool ok = qa_q1_client_write(&writer, c->protocol, 0, &message) && emit_writer(c, &writer, e);
-    free(data); return ok;
+    return ok;
 }
 bool qa_network_q1_client_skins_ready(qa_network_runtime *runtime, qa_net_client_id id, qa_error *e)
 {
@@ -583,11 +583,9 @@ bool qa_network_q1_client_skins_ready(qa_network_runtime *runtime, qa_net_client
     if (!c || !c->qw || !c->waiting_skins || c->active || !current(c, e) ||
         (!qa_network_callbacks_idle(runtime) && !(c->busy && runtime->callback && !runtime->pumping)))
         return qa_network_fail(e, "QW skin completion lacks its genuine pending Source preparation");
-    uint8_t *data = malloc(c->policy.message_bytes);
-    if (!data) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding genuine QW skin completion"); return false; }
+    uint8_t *data = c->output;
     qa_net_writer writer; qa_net_writer_init(&writer, data, c->policy.message_bytes, e);
     bool ok = qa_qw_precache_skins_ready(c->precache, &writer) && emit_writer(c, &writer, e);
-    free(data);
     if (ok) c->waiting_skins = false;
     return ok;
 }
@@ -684,7 +682,7 @@ bool qa_network_q1_client_state_read(qa_network_runtime *runtime, qa_net_client_
     if (!c || !out) return qa_network_fail(e, "Q1 CLIENT state has no actual owner/output");
     *out = (qa_network_q1_client_state){c->protocol, c->admitted_protocol, c->before_protocol,
         c->moves, c->last_frame, c->record_count, c->cursor,
-        c->queued_bytes, c->command_count, c->signon.stage, c->held, c->active, c->retiring, c->has_delta,
+        c->messages.bytes, c->command_count, c->signon.stage, c->held, c->active, c->retiring, c->has_delta,
         c->waiting_skins}; return true;
 }
 const qa_nq_decoder *qa_network_q1_client_nq_decoder(qa_network_runtime *runtime, qa_net_client_id id)

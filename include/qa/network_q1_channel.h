@@ -2,6 +2,7 @@
 #define QA_NETWORK_Q1_CHANNEL_H
 
 #include "qa/network_q1.h"
+#include "qa/arena.h"
 
 #define QA_NQ_FLAG_DATA UINT32_C(0x00010000)
 #define QA_NQ_FLAG_ACK UINT32_C(0x00020000)
@@ -103,8 +104,9 @@ bool qa_nq_control_answer(qa_bytes, const qa_net_address *, uint64_t,
 
 bool qa_qw_oob_encode(const char *, bool nul_terminated, qa_net_writer *);
 bool qa_qw_oob_decode(qa_bytes, qa_bytes *text, qa_error *);
-typedef struct qa_qw_info { qa_qw_rule *rules; size_t count; char *storage; } qa_qw_info;
+typedef struct qa_qw_info { qa_qw_rule *rules; size_t count; char *storage; bool borrowed; } qa_qw_info;
 bool qa_qw_info_parse(const char *, qa_qw_info *, qa_error *);
+bool qa_qw_info_parse_arena(const char *, qa_arena *, qa_qw_info *, qa_error *);
 const char *qa_qw_info_get(const qa_qw_info *, const char *key);
 void qa_qw_info_free(qa_qw_info *);
 typedef uint32_t (*qa_qw_random_fn)(void *);

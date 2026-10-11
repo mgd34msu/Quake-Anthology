@@ -263,10 +263,13 @@ static bool defer_command(void *context, qa_net_client_id id, const char *text, 
     if (!qa_net_client_id_equal(id, peer->client) || !text || !peer_actor(peer, &actor, error)) return false;
     if (host->action_count == QW_ACTIONS)
         return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source action queue overflow");
-    qw_source_action *action = calloc(1, sizeof(*action));
-    if (!action) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld source action admission");
-    action->text = text_copy(text, error);
-    if (!action->text) { free(action); return false; }
+    size_t length = strlen(text), slot;
+    if (length >= QW_MESSAGE)
+        return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld command exceeds its wire message");
+    qw_source_action *action = qa_pool_take(&host->actions, &slot);
+    if (!action) return frontend_fail(error, QA_ERROR_CAPACITY, "QuakeWorld source action queue overflow");
+    *action = (qw_source_action){.slot = slot};
+    memcpy(action->text, text, length + 1);
     action->client = id; action->seat = peer->seat; action->actor = actor;
     action->epoch = qa_network_epoch(host->runtime, id);
     action->received_ns = peer->last_received_ns;
@@ -389,7 +392,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
             qw_frontend_peer *other = host->peers + i;
             if (!other->occupied || other->retiring || !other->begun) continue;
             qa_qw_info info = {0};
-            if (!qa_qw_info_parse(other->userinfo, &info, error)) return false;
+            if (!qa_qw_info_parse_arena(other->userinfo, &host->frontend->frame.storage, &info, error)) return false;
             const char *client_name = qa_qw_info_get(&info, "name");
             char prefix[32]; snprintf(prefix, sizeof(prefix), "%u ", peer_ping(other));
             bool ok = print_text(peer, prefix, error) && print_text(peer, client_name ? client_name : "unnamed", error) &&
@@ -477,7 +480,7 @@ static bool capture_factory(frontend_qw_host *host, qa_error *error)
     host->signon_views = calloc(host->signon_count, sizeof(*host->signon_views));
     if (host->signon_count && !host->signon_views) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld immutable signon views");
     for (size_t i = 0; i < host->signon_count; ++i) host->signon_views[i] = (qa_bytes){host->signon[i].data, host->signon[i].size};
-    for (size_t i = 0; i < 64; ++i) { host->styles[i] = text_copy(world.lightstyles[i], error); if (!host->styles[i]) return false; }
+    memcpy(host->styles, world.lightstyle_ids, sizeof(host->styles));
     host->published_time_ns = world.source.source_time_ns; return true;
 }
 
@@ -494,6 +497,10 @@ bool frontend_qw_create(qa_frontend *frontend, qa_network_runtime *runtime, qa_s
     if (!host) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating QuakeWorld physical factory owner");
     host->frontend = frontend; host->runtime = runtime; host->admin = admin; host->composition = *composition;
     host->owner = source.owner; host->generation = qa_application_configuration_generation(frontend->application);
+    if (!qa_pool_reserve_pages(&host->actions, &host->action_storage, QW_ACTIONS + 1,
+        sizeof(qw_source_action), _Alignof(qw_source_action), error)) {
+        frontend_qw_destroy(host); return false;
+    }
     uint64_t seed;
     if (!qa_platform_entropy_u64(&seed,error)) { frontend_qw_destroy(host); return false; }
     host->server_count = 1; host->random = (uint32_t)seed;
@@ -518,10 +525,9 @@ void frontend_qw_destroy(frontend_qw_host *host)
     qa_qw_challenges_destroy(host->challenges);
     for (size_t i = 0; i < QW_CLIENTS; ++i) free(host->peers[i].userinfo);
     for (size_t i = 0; i < 255; ++i) { free(host->models[i]); free(host->sounds[i]); }
-    for (size_t i = 0; i < 64; ++i) free(host->styles[i]);
     if (host->signon) for (size_t i = 0; i < host->signon_count; ++i) qa_buffer_free(host->signon + i);
-    while (host->first_action) { qw_source_action *next = host->first_action->next; free(host->first_action->text); free(host->first_action); host->first_action = next; }
-    free(host->signon); free(host->signon_views); qa_buffer_free(&host->status); free(host);
+    qa_arena_destroy(&host->action_storage);
+    free(host->signon); free(host->signon_views); free(host);
 }
 void frontend_qw_disconnected(frontend_qw_host *host, qa_net_client_id id)
 {
@@ -589,7 +595,8 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
     if (strlen(request->userinfo) >= sizeof(info)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld admission userinfo exceeds its source extent");
     strcpy(info, request->userinfo);
     if (!qa_q3_info_set(info, sizeof(info), "*spectator", spectator ? "1" : "", error)) return false;
-    qa_qw_info parsed = {0}; if (!qa_qw_info_parse(info, &parsed, error)) return false;
+    qa_qw_info parsed = {0};
+    if (!qa_qw_info_parse_arena(info, &host->frontend->frame.storage, &parsed, error)) return false;
     const char *language=qa_qw_info_get(&parsed,"language");
     if (language && !qa_localization_language_valid(language)) {
         qa_qw_info_free(&parsed);
@@ -653,22 +660,21 @@ static uint32_t peer_ping(const qw_frontend_peer *peer)
 }
 static bool source_status(void *context, const char **out, qa_error *error)
 {
-    frontend_qw_host *host = context; qa_application_network_qw_world world; qa_buffer info = {0};
+    frontend_qw_host *host = context; qa_application_network_qw_world world; char info[4096];
     if (!source_world(host, &world, error)) return false;
     if (!world.source.serverinfo &&
-        !qa_cvars_info(world.source.cvars, QA_CVAR_SERVERINFO, 4096, &info, error)) return false;
-    qa_buffer status = {malloc(65531), 0};
-    if (!status.data) { qa_buffer_free(&info); return frontend_fail(error, QA_ERROR_MEMORY, "Capturing QuakeWorld source status response"); }
-    const char *serverinfo=world.source.serverinfo?world.source.serverinfo:info.data?(char *)info.data:"";
+        !qa_cvars_info_write(world.source.cvars, QA_CVAR_SERVERINFO, sizeof(info), info, error)) return false;
+    qa_buffer status = {qa_arena_alloc(&host->frontend->frame.storage, 65531, 1, error), 0};
+    if (!status.data) return false;
+    const char *serverinfo=world.source.serverinfo?world.source.serverinfo:info;
     int length = snprintf((char *)status.data, 65531, "%s\\map\\%s\n", serverinfo, world.map);
-    qa_buffer_free(&info);
     bool ok = length >= 0 && length < 65531; size_t used = ok ? (size_t)length : 0;
     for (size_t i = 0; ok && i < QW_CLIENTS; ++i) {
         qw_frontend_peer *peer = host->peers + i;
         if (!peer->occupied || peer->retiring || peer->spectator) continue;
         qa_actor_id actor; qa_application_network_qw_client source; qa_qw_info parsed = {0};
         if (!peer_actor(peer, &actor, error) || !qa_application_network_qw_client_read(host->frontend->application, actor, &source, error) ||
-            !qa_qw_info_parse(peer->userinfo, &parsed, error)) { ok = false; break; }
+            !qa_qw_info_parse_arena(peer->userinfo, &host->frontend->frame.storage, &parsed, error)) { ok = false; break; }
         const char *name = qa_qw_info_get(&parsed, "name"), *skin = qa_qw_info_get(&parsed, "skin"),
             *top = qa_qw_info_get(&parsed, "topcolor"), *bottom = qa_qw_info_get(&parsed, "bottomcolor");
         length = snprintf((char *)status.data + used, 65531 - used, "%u %.0f %" PRIu64 " %u \"%s\" \"%s\" %s %s\n",
@@ -678,8 +684,8 @@ static bool source_status(void *context, const char **out, qa_error *error)
         qa_qw_info_free(&parsed);
         if (length < 0 || (size_t)length >= 65531 - used) ok = false; else used += (size_t)length;
     }
-    if (!ok) { qa_buffer_free(&status); return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source status response exceeds packet extent"); }
-    status.size = used; qa_buffer_free(&host->status); host->status = status; *out = (const char *)status.data; return true;
+    if (!ok) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source status response exceeds packet extent");
+    status.size = used; *out = (const char *)status.data; return true;
 }
 static bool source_log(void *context,int32_t sequence,const char **out,qa_error *error)
 {
@@ -698,12 +704,12 @@ static bool source_log(void *context,int32_t sequence,const char **out,qa_error 
     char prefix[64]; int size=snprintf(prefix,sizeof(prefix),"stdlog %u\n",previous);
     if (size<0 || (size_t)size>=sizeof(prefix) || length>65534-(size_t)size)
         return frontend_fail(error,QA_ERROR_FORMAT,"QuakeWorld frag response exceeds its native datagram");
-    qa_buffer response={malloc((size_t)size+length+1),(size_t)size+length};
-    if (!response.data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining QuakeWorld frag response");
+    qa_buffer response={qa_arena_alloc(&host->frontend->frame.storage,(size_t)size+length+1,1,error),(size_t)size+length};
+    if (!response.data) return false;
     memcpy(response.data,prefix,(size_t)size);
     if (length) memcpy(response.data+(size_t)size,bytes.data,length);
     response.data[response.size]=0;
-    qa_buffer_free(&host->status); host->status=response; *out=(const char *)response.data; return true;
+    *out=(const char *)response.data; return true;
 }
 typedef struct qw_reply { frontend_qw_host *host; const qa_net_address *address; } qw_reply;
 static bool send_reply(void *context, qa_bytes bytes, qa_error *error)
@@ -760,7 +766,7 @@ bool frontend_qw_prepare(frontend_qw_host *host, qa_error *error)
             host->models[i] = factory->models[i]; host->sounds[i] = factory->sounds[i];
             factory->models[i] = factory->sounds[i] = NULL;
         }
-        for (size_t i = 0; i < 64; ++i) { free(host->styles[i]); host->styles[i] = factory->styles[i]; factory->styles[i] = NULL; }
+        memcpy(host->styles, factory->styles, sizeof(host->styles));
         for (size_t i = 0; i < host->signon_count; ++i) qa_buffer_free(host->signon + i);
         free(host->signon); free(host->signon_views);
         host->signon = factory->signon; host->signon_views = factory->signon_views; host->signon_count = factory->signon_count;
@@ -778,7 +784,7 @@ bool frontend_qw_prepare(frontend_qw_host *host, qa_error *error)
         host->previous_pause = qa_application_q1_paused(host->frontend->application);
         while (host->first_action) {
             qw_source_action *next = host->first_action->next;
-            free(host->first_action->text); free(host->first_action); host->first_action = next;
+            qa_pool_release(&host->actions, host->first_action->slot); host->first_action = next;
         }
         host->last_action = NULL; host->action_count = 0;
         for (size_t i = 0; i < QW_CLIENTS; ++i) {
@@ -931,7 +937,7 @@ static bool source_actions(frontend_qw_host *host, qa_error *error)
             host->action_active = false; host->action_time_ns = 0; host->action_actor = (qa_actor_id){0};
             if (ok) host->reliable_cursor = qa_application_events_next(host->frontend->application);
         }
-        free(action->text); free(action);
+        qa_pool_release(&host->actions, action->slot);
         if (!ok) return false;
     }
     return true;
@@ -1034,28 +1040,28 @@ static bool publish_peer(qw_frontend_peer *peer, const qw_physical_frame *physic
     if (!qa_vec_finite(eye)) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source eye exceeds finite spatial range");
     qa_collision_geometry *geometry = qa_world_geometry(qa_application_world(host->frontend->application));
     size_t extent = qa_collision_q1_pvs_bytes(geometry);
-    uint8_t *bytes = extent ? malloc(extent) : NULL;
-    if (extent && !bytes) return frontend_fail(error, QA_ERROR_MEMORY, "Observing QuakeWorld source fat PVS");
+    uint8_t *bytes = extent ? qa_arena_alloc(&host->frontend->frame.storage, extent, 1, error) : NULL;
+    if (extent && !bytes) return false;
     bool ok = qa_collision_q1_fat_pvs(geometry,
         qa_world_trace_scratch(qa_application_world(host->frontend->application),geometry),eye, bytes, extent, error) &&
         publish_entities(peer, physical, viewer, (qa_bytes){bytes, extent}, &writer, error);
-    free(bytes);
     return ok;
 }
 bool frontend_qw_publish(frontend_qw_host *host, qa_error *error)
 {
     if (!host) return true;
     if (!frontend_qw_prepare(host, error) || !source_actions(host, error) || !frontend_qw_prepare(host, error)) return false;
-    qw_physical_frame *frame = malloc(sizeof(*frame));
-    if (!frame) return frontend_fail(error, QA_ERROR_MEMORY, "Capturing immutable QuakeWorld physical frame");
+    qw_physical_frame *frame = qa_arena_alloc(&host->frontend->frame.storage,
+        sizeof(*frame), _Alignof(qw_physical_frame), error);
+    if (!frame) return false;
     bool ok = capture_frame(host, frame, error);
     if (ok) ok = qa_application_network_qw_flush(host->frontend->application, error) && flush_events(host, NULL, NULL, error);
     qa_application_network_qw_world world;
     if (ok) ok = source_world(host, &world, error);
-    for (size_t i = 0; ok && i < 64; ++i) if (strcmp(host->styles[i], world.lightstyles[i])) {
-        char *copy = text_copy(world.lightstyles[i], error); if (!copy) { ok = false; break; }
-        ok = broadcast(host, &(qa_qw_service){.kind = QA_QW_LIGHT_STYLE, .data.light_style = {(uint8_t)i, copy}}, error);
-        if (ok) { free(host->styles[i]); host->styles[i] = copy; } else free(copy);
+    for (size_t i = 0; ok && i < 64; ++i) if (host->styles[i] != world.lightstyle_ids[i]) {
+        ok = broadcast(host, &(qa_qw_service){.kind = QA_QW_LIGHT_STYLE,
+            .data.light_style = {(uint8_t)i, world.lightstyles[i]}}, error);
+        if (ok) host->styles[i] = world.lightstyle_ids[i];
     }
     bool paused = qa_application_q1_paused(host->frontend->application);
     if (ok && host->previous_pause != paused) {
@@ -1080,7 +1086,7 @@ bool frontend_qw_publish(frontend_qw_host *host, qa_error *error)
         host->reliable_cursor = host->event_cursor; host->published_time_ns = frame->source.source_time_ns;
         host->event_generation = host->reliable_generation = qa_application_protocol_events_generation(host->frontend->application);
     }
-    free(frame); return ok;
+    return ok;
 }
 
 bool frontend_qw_source_hooks(frontend_qw_host *host, const qa_net_client *client,
@@ -1153,7 +1159,6 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
     }
     if (host->player_model != player || host->nail_model != nail || host->supernail_model != supernail)
         return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld compressed model indices differ from real source precache");
-    for (size_t i = 0; i < 64; ++i) if (!host->styles[i]) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld lightstyle cache owner is absent");
     for (size_t i = 0; i < host->baseline_count; ++i) {
         const qa_qw_source_entity *v = host->baselines + i;
         if (!v->number || v->number > 511 || (i && host->baselines[i - 1].number >= v->number) || v->effects != 0 || v->solid)
@@ -1198,7 +1203,7 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
     }
     size_t action_count = 0; const qw_source_action *last = NULL;
     for (const qw_source_action *action = host->first_action; action; action = action->next) {
-        if (++action_count > QW_ACTIONS || !action->text || !action->client.generation || !action->actor.registry || !action->epoch)
+        if (++action_count > QW_ACTIONS || !action->client.generation || !action->actor.registry || !action->epoch)
             return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld retained source action lacks its authored admission");
         last = action;
     }

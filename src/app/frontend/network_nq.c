@@ -565,7 +565,6 @@ void frontend_nq_destroy(frontend_nq_host *host)
     for (size_t i = 0; i < 256; ++i) {
         free(host->board[i].name); free(host->published_names[i]);
     }
-    for (size_t i = 0; i < 64; ++i) free(host->styles[i]);
     free(host);
 }
 void frontend_nq_disconnected(frontend_nq_host *host, qa_net_client_id id)
@@ -616,7 +615,7 @@ bool frontend_nq_prepare(frontend_nq_host *host, qa_error *error)
         host->composition = generation;
         host->generation = generation; host->submillisecond_ns = 0;
         for (size_t i = 0; i < 256; ++i) { free(host->board[i].name); host->board[i] = (nq_status_cache){0}; }
-        for (size_t i = 0; i < 64; ++i) { free(host->styles[i]); host->styles[i] = NULL; }
+        memset(host->styles, 0, sizeof(host->styles));
         for (size_t i = 0; i < NQ_CLIENTS; ++i) {
             nq_frontend_peer *peer = host->peers + i;
             if (!peer->occupied || peer->retiring) continue;
@@ -701,8 +700,8 @@ static bool publish_status(frontend_nq_host *host,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake status lost its actual source producer");
     qa_application_network_q1_status_player players[255]; size_t count;
     if (!qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error)) return false;
-    nq_status_cache next[256] = {0}; char *styles[64] = {0};
-    bool owned[256] = {0}, style_owned[64] = {0}, ok = true;
+    nq_status_cache next[256] = {0};
+    bool owned[256] = {0}, ok = true;
     char *published[255] = {0}; bool published_owned[255] = {0};
     for (size_t i = 0; ok && i < count; ++i) {
         uint32_t slot = players[i].source_slot;
@@ -712,13 +711,6 @@ static bool publish_status(frontend_nq_host *host,
             .frags = players[i].frags, .source_frags = players[i].source_frags,
             .colors = players[i].colors, .present = true};
         ok = next[slot].name != NULL;
-    }
-    for (size_t i = 0; ok && i < 64; ++i) {
-        styles[i] = host->styles[i];
-        if (!styles[i] || strcmp(styles[i], world->lightstyles[i])) {
-            styles[i] = copy_text(world->lightstyles[i], error); style_owned[i] = styles[i] != NULL;
-        }
-        ok = styles[i] != NULL;
     }
     for (uint32_t slot = 1; ok && source.source_board_events && slot <= world->max_clients; ++slot) {
         const char *name = next[slot].name ? next[slot].name : "";
@@ -748,8 +740,9 @@ static bool publish_status(frontend_nq_host *host,
         }
     }
     for (unsigned i = 0; ok && !source.source_board_events && i < 64; ++i)
-        if (!host->styles[i] || strcmp(host->styles[i], styles[i])) {
-            qa_nq_message message = {.op = QA_NQ_LIGHTSTYLE, .data.indexed_text = {(uint8_t)i, styles[i]}};
+        if (host->styles[i] != world->lightstyle_ids[i]) {
+            qa_nq_message message = {.op = QA_NQ_LIGHTSTYLE,
+                .data.indexed_text = {(uint8_t)i, world->lightstyles[i]}};
             ok = batch_message(&batch, &message, options, error);
         }
     if (ok) ok = batch_flush(&batch, error);
@@ -758,17 +751,13 @@ static bool publish_status(frontend_nq_host *host,
             if (host->board[i].name != next[i].name) free(host->board[i].name);
             host->board[i] = next[i]; owned[i] = false;
         }
-        for (size_t i = 0; i < 64; ++i) {
-            if (host->styles[i] != styles[i]) free(host->styles[i]);
-            host->styles[i] = styles[i]; style_owned[i] = false;
-        }
+        memcpy(host->styles, world->lightstyle_ids, sizeof(host->styles));
         for (uint32_t slot = 1; source.source_board_events && slot <= world->max_clients; ++slot) {
             if (host->published_names[slot - 1] != published[slot - 1]) free(host->published_names[slot - 1]);
             host->published_names[slot - 1] = published[slot - 1]; published_owned[slot - 1] = false;
         }
     }
     for (size_t i = 0; i < 256; ++i) if (owned[i]) free(next[i].name);
-    for (size_t i = 0; i < 64; ++i) if (style_owned[i]) free(styles[i]);
     for (size_t i = 0; i < 255; ++i) if (published_owned[i]) free(published[i]);
     return ok;
 }
@@ -908,8 +897,9 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,uint64_t firs
     if (!qa_application_network_q1_clientdata(host->frontend->application, actor, &message.data.clientdata, error) ||
         !qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
     qa_collision_geometry *geometry = qa_world_geometry(qa_application_world(host->frontend->application));
-    size_t extent = qa_collision_q1_pvs_bytes(geometry); uint8_t *pvs = extent ? malloc(extent) : NULL;
-    if (!pvs) return frontend_fail(error, extent ? QA_ERROR_MEMORY : QA_ERROR_FORMAT, "NetQuake frame requires its actual source PVS row");
+    size_t extent = qa_collision_q1_pvs_bytes(geometry);
+    uint8_t *pvs = extent ? qa_arena_alloc(&host->frontend->frame.storage, extent, 1, error) : NULL;
+    if (!pvs) return extent ? false : frontend_fail(error, QA_ERROR_FORMAT, "NetQuake frame requires its actual source PVS row");
     qa_vec3 eye; bool ok = qa_application_network_q1_eye(host->frontend->application, actor, &eye, error) &&
         qa_collision_q1_fat_pvs(geometry,
             qa_world_trace_scratch(qa_application_world(host->frontend->application),geometry),
@@ -939,7 +929,6 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,uint64_t firs
         if (size > writer->capacity - qa_net_writer_size(writer)) break;
         ok = qa_net_write_data(writer, encoded, size);
     }
-    free(pvs);
     return ok;
 }
 static bool publish_peer(nq_frontend_peer *peer,const qa_application_network_q1_world *world,qa_error *error)

@@ -83,7 +83,10 @@ bool application_native_q1_qw_world(qa_application *app, qa_application_network_
             else *values[i]=variable->number;
         }
         value.movement.entity_gravity=1;
-        for (size_t i=0;i<64;++i) value.lightstyles[i]=text(app,world.lightstyles[i]);
+        for (size_t i=0;i<64;++i) {
+            value.lightstyle_ids[i]=world.lightstyles[i];
+            value.lightstyles[i]=text(app,world.lightstyles[i]);
+        }
         if (!*value.game_directory || !value.map || !value.level || !value.map_bytes.data || !value.map_bytes.size)
             okay=application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld world lost its retained content identity");
     }

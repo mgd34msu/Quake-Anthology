@@ -178,22 +178,27 @@ bool qa_qw_oob_decode(qa_bytes bytes, qa_bytes *text, qa_error *error) {
 
 void qa_qw_info_free(qa_qw_info *info) {
     if (!info) return;
-    free(info->rules); free(info->storage); *info = (qa_qw_info){0};
+    if (!info->borrowed) { free(info->rules); free(info->storage); }
+    *info = (qa_qw_info){0};
 }
 const char *qa_qw_info_get(const qa_qw_info *info, const char *key) {
     if (!info || !key) return NULL;
     for (size_t i = 0; i < info->count; ++i) if (!strcmp(info->rules[i].name, key)) return info->rules[i].value;
     return NULL;
 }
-bool qa_qw_info_parse(const char *text, qa_qw_info *out, qa_error *error) {
+static bool info_parse(const char *text, qa_arena *arena, qa_qw_info *out, qa_error *error) {
     if (!text || !out) return fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeWorld info string");
     size_t length = strlen(text);
     if (length > UINT16_MAX) return fail(error, QA_ERROR_FORMAT, "QuakeWorld info string exceeds capacity");
-    qa_qw_info info = {0};
-    info.storage = copy_text(text, error);
+    qa_qw_info info = {.borrowed = arena != NULL};
+    info.storage = arena ? qa_arena_text(arena, text, error) : copy_text(text, error);
     if (!info.storage) return false;
-    info.rules = calloc(length / 2 + 2, sizeof(*info.rules));
-    if (!info.rules) { qa_qw_info_free(&info); return fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld info fields"); }
+    info.rules = arena ? qa_arena_alloc(arena, (length / 2 + 2) * sizeof(*info.rules),
+        _Alignof(qa_qw_rule), error) : calloc(length / 2 + 2, sizeof(*info.rules));
+    if (!info.rules) {
+        qa_qw_info_free(&info);
+        return arena ? false : fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld info fields");
+    }
     char *key = info.storage;
     if (*key == '\\') ++key;
     while (*key) {
@@ -211,6 +216,10 @@ bool qa_qw_info_parse(const char *text, qa_qw_info *out, qa_error *error) {
     }
     *out = info; return true;
 }
+bool qa_qw_info_parse(const char *text, qa_qw_info *out, qa_error *error)
+{ return info_parse(text, NULL, out, error); }
+bool qa_qw_info_parse_arena(const char *text, qa_arena *arena, qa_qw_info *out, qa_error *error)
+{ return info_parse(text, arena, out, error); }
 
 typedef struct qw_challenge_record { qa_net_address address; uint32_t challenge; uint64_t issued_seconds; } qw_challenge_record;
 struct qa_qw_challenges {
@@ -262,28 +271,19 @@ bool qa_qw_challenge_validate(const qa_qw_challenges *challenges, const qa_net_a
 }
 
 typedef struct qw_arguments { char **values; char *storage; size_t count; } qw_arguments;
-static void arguments_free(qw_arguments *arguments) {
-    free(arguments->values); free(arguments->storage); *arguments = (qw_arguments){0};
-}
-static bool arguments_parse(const char *text, qw_arguments *out, qa_error *error) {
+static bool arguments_parse(const char *text, qa_arena *arena, qw_arguments *out, qa_error *error) {
     size_t length = strlen(text), capacity = length / 2 + 1;
     qw_arguments arguments = {0};
-    arguments.storage = malloc(length + 2);
-    arguments.values = calloc(capacity, sizeof(*arguments.values));
-    if (!arguments.storage || !arguments.values) {
-        arguments_free(&arguments); return fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld command arguments");
-    }
+    arguments.storage = qa_arena_alloc(arena, length + 2, 1, error);
+    arguments.values = qa_arena_alloc(arena, capacity * sizeof(*arguments.values), _Alignof(char *), error);
+    if (!arguments.storage || !arguments.values) return false;
     const char *cursor = text;
     size_t used = 0;
     for (;;) {
         bool present;
-        if (!qa_q1_token(&cursor, true, arguments.storage + used, length + 2 - used, &present, error)) {
-            arguments_free(&arguments); return false;
-        }
+        if (!qa_q1_token(&cursor, true, arguments.storage + used, length + 2 - used, &present, error)) return false;
         if (!present) break;
-        if (arguments.count == capacity) {
-            arguments_free(&arguments); return fail(error, QA_ERROR_FORMAT, "Too many QuakeWorld arguments");
-        }
+        if (arguments.count == capacity) return fail(error, QA_ERROR_FORMAT, "Too many QuakeWorld arguments");
         arguments.values[arguments.count++] = arguments.storage + used;
         used += strlen(arguments.storage + used) + 1;
     }
@@ -314,12 +314,10 @@ static bool reply_text(qa_qw_reply_fn reply, void *context, const char *prefix,
     if (prefix_size > 65531 || size > 65531 - prefix_size)
         return fail(error, QA_ERROR_FORMAT, "QuakeWorld reply exceeds packet capacity");
     size_t bytes = 4 + prefix_size + size;
-    uint8_t *buffer = malloc(bytes);
-    if (!buffer) return fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld reply");
+    uint8_t buffer[bytes];
     memset(buffer, 255, 4);
     memcpy(buffer + 4, prefix, prefix_size); memcpy(buffer + 4 + prefix_size, text, size);
-    bool result = reply(context, (qa_bytes){buffer, bytes}, error);
-    free(buffer); return result;
+    return reply(context, (qa_bytes){buffer, bytes}, error);
 }
 static void info_delete(qa_qw_info *info, const char *name) {
     for (size_t i = 0; i < info->count; ++i) {
@@ -383,7 +381,7 @@ static bool admin_write(void *opaque, const char *text, qa_error *error) {
 }
 
 static bool qw_command(const qa_qw_connection_host *host, qa_qw_challenges *challenges,
-                         const qw_arguments *args, bool ping_byte, const qa_net_address *from,
+                         const qw_arguments *args, qa_arena *arena, bool ping_byte, const qa_net_address *from,
                          uint64_t now_ns, qa_qw_reply_fn reply, void *reply_context, qa_error *error) {
     const char *command = argument(args, 0);
     if (!strcmp(command, "ping") || ping_byte) return reply_text(reply, reply_context, "", "l", error);
@@ -414,8 +412,8 @@ static bool qw_command(const qa_qw_connection_host *host, qa_qw_challenges *chal
         if (!host->execute_admin) return fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld admin provider");
         size_t length = 0;
         for (size_t i = 2; i < args->count; ++i) length += strlen(args->values[i]) + 1;
-        char *admin_command = malloc(length + 1);
-        if (!admin_command) return fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld admin command");
+        char *admin_command = qa_arena_alloc(arena, length + 1, 1, error);
+        if (!admin_command) return false;
         size_t offset = 0;
         for (size_t i = 2; i < args->count; ++i) {
             size_t part = strlen(args->values[i]);
@@ -426,7 +424,6 @@ static bool qw_command(const qa_qw_connection_host *host, qa_qw_challenges *chal
         qw_admin_output output = {.reply = reply, .context = reply_context};
         memset(output.buffer, 255, 4); output.buffer[4] = 'n';
         bool result = host->execute_admin(host->context, admin_command, admin_write, &output, error);
-        free(admin_command);
         return result && !output.failed && admin_flush(&output, error);
     }
     if (strcmp(command, "connect")) return true;
@@ -441,7 +438,7 @@ static bool qw_command(const qa_qw_connection_host *host, qa_qw_challenges *chal
     size_t info_size = strlen(argument(args, 4)); if (info_size > 1022) info_size = 1022;
     memcpy(info_text, argument(args, 4), info_size); info_text[info_size] = 0;
     qa_qw_info info;
-    if (!qa_qw_info_parse(info_text, &info, error)) return false;
+    if (!qa_qw_info_parse_arena(info_text, arena, &info, error)) return false;
     const char *spectator_key = qa_qw_info_get(&info, "spectator");
     bool spectator = spectator_key && *spectator_key && strcmp(spectator_key, "0");
     const char *password = spectator ? host->spectator_password : host->password;
@@ -477,15 +474,21 @@ bool qa_qw_connectionless_receive(const qa_qw_connection_host *host, qa_qw_chall
         return reply_text(reply, reply_context, "", "n\nbanned.\n", error);
     qa_bytes text;
     if (!qa_qw_oob_decode(bytes, &text, error)) return false;
-    char *line = malloc(text.size + 1);
-    if (!line) return fail(error, QA_ERROR_MEMORY, "Cannot allocate QuakeWorld connectionless command");
+    char line[text.size + 1];
     memcpy(line, text.data, text.size); line[text.size] = 0;
     char *newline = strchr(line, '\n'); if (newline) *newline = 0;
+    size_t length = strlen(line);
+    /* Token text and pointers, rejoined rcon text, and the bounded connect info
+     * share this call's storage; callbacks borrow it synchronously. */
+    size_t info_length = length < 1022 ? length : 1022;
+    size_t capacity = (length / 2 + 1) * sizeof(char *) + 2 * length + 4 +
+        info_length + 1 + (info_length / 2 + 2) * sizeof(qa_qw_rule) + 128;
+    uint8_t storage[capacity]; qa_arena arena;
+    if (!qa_arena_init_buffer(&arena, storage, sizeof(storage), error)) return false;
     qw_arguments args;
-    if (!arguments_parse(line, &args, error)) { free(line); return false; }
-    bool result = qw_command(host, challenges, &args, text.size == 1 && text.data[0] == 'k',
-                              from, now_ns, reply, reply_context, error);
-    arguments_free(&args); free(line); return result;
+    if (!arguments_parse(line, &arena, &args, error)) return false;
+    return qw_command(host, challenges, &args, &arena, text.size == 1 && text.data[0] == 'k',
+        from, now_ns, reply, reply_context, error);
 }
 
 struct qa_nq_connect_client {

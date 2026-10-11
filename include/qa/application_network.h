@@ -83,6 +83,7 @@ typedef struct qa_application_network_q1_world {
     bool standard_quake, deathmatch;
     float seconds;
     const char *map, *level, *lightstyles[64];
+    qa_string_id lightstyle_ids[64];
     int32_t total_secrets, total_monsters, found_secrets, killed_monsters;
     uint8_t cd_track;
 } qa_application_network_q1_world;

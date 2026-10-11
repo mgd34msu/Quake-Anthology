@@ -43,7 +43,7 @@ static bool valid(const q1_runtime_client *c, const qa_net_client *client, qa_er
         qa_q1_is_qw(c->protocol) != qw ||
         (c->held ? !qa_q1_profile_valid(c->before_protocol, e) || qa_q1_is_qw(c->before_protocol) != qw :
             c->before_protocol.kind || c->before_protocol.revision || c->before_protocol.flags) || c->signon.stage > 4 ||
-        c->command_count > c->policy.pending_commands || c->queued_bytes > c->policy.queued_bytes ||
+        c->command_count > c->policy.pending_commands || c->messages.bytes > c->policy.queued_bytes ||
         c->record_count > c->policy.service_limit || c->cursor ||
         (c->held ? !c->before_decoder.size : c->record_count || c->cursor || c->payload.size || c->before_decoder.size) ||
         c->payload.size > c->policy.message_bytes || (!qw && (c->has_delta || c->waiting_skins)) ||
@@ -142,12 +142,12 @@ bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *peer, qa_buffer
     if (ok && qw) ok = qa_qw_history_checkpoint(&c->history,&parts[3],e);
     parts[4] = c->before_decoder; parts[5] = c->payload;
     size_t capacity = 256, queued = 0, queue_count = 0;
-    for (q1_client_pending *p = c->first; ok && p; p = p->next) {
+    for (q1_message *p = c->messages.first; ok && p; p = p->next) {
         if (!p->bytes.size || p->bytes.size > c->policy.message_bytes || p->bytes.size > c->policy.queued_bytes - queued ||
             capacity > SIZE_MAX - 8 || p->bytes.size > SIZE_MAX - capacity - 8) ok = qa_network_fail(e, "Invalid Q1 CLIENT retained reliable FIFO");
         else { queued += p->bytes.size; capacity += 8 + p->bytes.size; ++queue_count; }
     }
-    if (ok && queued != c->queued_bytes) ok = qa_network_fail(e, "Q1 CLIENT FIFO extent differs from its owner");
+    if (ok && queued != c->messages.bytes) ok = qa_network_fail(e, "Q1 CLIENT FIFO extent differs from its owner");
     for (size_t i=0;ok && i<Q1_CLIENT_PARTS;++i) {
         if (capacity > SIZE_MAX - 8 || parts[i].size > SIZE_MAX - capacity - 8) ok = qa_network_fail(e, "Q1 CLIENT continuation extent overflows");
         else capacity += 8 + parts[i].size;
@@ -171,7 +171,7 @@ bool qa_network_q1_client_checkpoint_peer(const qa_network_peer *peer, qa_buffer
         qa_net_write_u64(&w,c->cursor) && qa_net_write_u64(&w,c->record_count) &&
         qa_net_write_u64(&w,queue_count) && qa_net_write_u64(&w,c->command_count);
     for (size_t i=0;ok && i<Q1_CLIENT_PARTS;++i) ok = qa_net_write_u64(&w,parts[i].size) && qa_net_write_data(&w,parts[i].data,parts[i].size);
-    for (q1_client_pending *p=c->first;ok && p;p=p->next) ok = qa_net_write_u64(&w,p->bytes.size) && qa_net_write_data(&w,p->bytes.data,p->bytes.size);
+    for (q1_message *p=c->messages.first;ok && p;p=p->next) ok = qa_net_write_u64(&w,p->bytes.size) && qa_net_write_data(&w,p->bytes.data,p->bytes.size);
     for (size_t i=0;ok && i<c->command_count;++i) ok = write_move(&w,qw,&c->commands[i]);
     if (ok) ok = q1_client_retirement_write(&c->retirement, &w);
     for (size_t i=0;i<4;++i) qa_buffer_free(&parts[i]);

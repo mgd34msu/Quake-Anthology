@@ -688,7 +688,10 @@ bool application_native_q1_wire_world(qa_application *app, qa_actor_owner owner,
             .map = text(app, world.map), .level = text(app, world.level), .cd_track = world.cd_track,
             .total_secrets = (int32_t)world.total_secrets, .found_secrets = (int32_t)world.found_secrets,
             .total_monsters = (int32_t)world.total_monsters, .killed_monsters = (int32_t)world.killed_monsters};
-        for (size_t i = 0; i < 64; ++i) value.lightstyles[i] = text(app, world.lightstyles[i]);
+        for (size_t i = 0; i < 64; ++i) {
+            value.lightstyle_ids[i] = world.lightstyles[i];
+            value.lightstyles[i] = text(app, world.lightstyles[i]);
+        }
         *out = value;
     } else application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 world source fields are absent");
     application_native_q1_wire_end(&source); return okay;

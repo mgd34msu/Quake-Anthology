@@ -40,6 +40,7 @@ typedef struct qa_application_network_qw_world {
     qa_net_protocol_id protocol;
     uint32_t max_clients;
     const char *game_directory, *map, *level, *lightstyles[64];
+    qa_string_id lightstyle_ids[64];
     qa_qw_movevars movement;
     qa_bytes map_bytes;
     uint8_t cd_track;

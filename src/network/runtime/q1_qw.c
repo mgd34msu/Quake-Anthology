@@ -4,15 +4,11 @@
 #include "qa/network_q1_session_save.h"
 #include "qa/network_save.h"
 #include "q1_retirement.h"
+#include "q1_messages.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
-typedef struct qw_pending {
-    struct qw_pending *next;
-    qa_buffer bytes;
-    uint64_t serial;
-} qw_pending;
 typedef struct qw_server {
     qa_network_runtime *runtime;
     qa_net_client_id id;
@@ -22,8 +18,10 @@ typedef struct qw_server {
     qa_qw_signon *signon;
     qa_qw_source_history *frames;
     qa_qw_command last_command;
-    qw_pending *first, *last;
-    size_t queued_bytes, queued_messages, reliable_bytes;
+    q1_messages messages;
+    qa_arena output_storage;
+    uint8_t *output;
+    size_t reliable_bytes;
     uint64_t reliable_queued, reliable_inflight, reliable_acknowledged;
     uint32_t input_sequence, choked;
     uint8_t delta, loss;
@@ -38,38 +36,33 @@ static bool queue(void *context, qa_bytes bytes, qa_error *error)
     if ((bytes.size && !bytes.data) || bytes.size > peer->policy.message_bytes)
         return qa_network_fail(error, "QuakeWorld reliable block exceeds its source message extent");
     if (!bytes.size) return true;
-    if (peer->last && bytes.size <= peer->policy.message_bytes - peer->last->bytes.size) {
-        size_t size = peer->last->bytes.size + bytes.size;
-        void *next = realloc(peer->last->bytes.data, size);
-        if (!next) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining QuakeWorld reliable block"); return false;
-        }
-        peer->last->bytes.data = next;
-        memcpy(peer->last->bytes.data + peer->last->bytes.size, bytes.data, bytes.size);
-        peer->last->bytes.size = size; peer->queued_bytes += bytes.size; return true;
+    if (peer->messages.last && bytes.size <= peer->policy.message_bytes - peer->messages.last->bytes.size) {
+        q1_messages_extend(&peer->messages, bytes);
+        return true;
     }
-    if (peer->queued_messages >= peer->policy.queued_messages) {
+    if (peer->messages.count >= peer->policy.queued_messages) {
         qa_error_set(error, QA_ERROR_CAPACITY, 0, "QuakeWorld reliable back buffers overflow");
         return false;
     }
-    qw_pending *pending = calloc(1, sizeof(*pending));
-    if (pending) pending->bytes.data = malloc(bytes.size);
-    if (!pending || !pending->bytes.data) {
-        free(pending); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining QuakeWorld reliable FIFO"); return false;
-    }
-    memcpy(pending->bytes.data, bytes.data, bytes.size); pending->bytes.size = bytes.size;
+    q1_message *pending = q1_messages_append(&peer->messages, bytes, error);
+    if (!pending) return false;
     pending->serial = ++peer->reliable_queued;
-    if (peer->last) peer->last->next = pending; else peer->first = pending;
-    peer->last = pending; ++peer->queued_messages; peer->queued_bytes += bytes.size; return true;
+    return true;
 }
 static void queue_clear(qw_server *peer)
+{ q1_messages_clear(&peer->messages); }
+static bool storage_prepare(qw_server *peer, qa_error *error)
 {
-    while (peer->first) {
-        qw_pending *next = peer->first->next;
-        qa_buffer_free(&peer->first->bytes); free(peer->first); peer->first = next;
-    }
-    peer->last = NULL; peer->queued_messages = peer->queued_bytes = 0;
+    if (!q1_messages_prepare(&peer->messages,
+            peer->policy.queued_messages * peer->policy.message_bytes,
+            peer->policy.queued_messages, error)) return false;
+    peer->output = qa_arena_alloc(&peer->output_storage,
+        peer->policy.message_bytes, 1, error);
+    if (!peer->output) return false;
+    qa_arena_seal(&peer->output_storage);
+    return true;
 }
+
 static bool paused(qw_server *peer, bool *out, qa_error *error)
 {
     bool previous = peer->runtime->callback; peer->runtime->callback = true;
@@ -214,18 +207,15 @@ static bool send(qw_server *peer, qa_bytes services, const qa_qw_source_frame *f
         if (peer->choked == UINT32_MAX) return qa_network_fail(error, "QuakeWorld choke counter exhausted");
         ++peer->choked; return true;
     }
-    if (peer->first && !qa_qw_channel_pending(peer->native.channel.qw)) {
-        qw_pending *pending = peer->first;
+    if (peer->messages.first && !qa_qw_channel_pending(peer->native.channel.qw)) {
+        q1_message *pending = peer->messages.first;
         if (!qa_qw_channel_queue(peer->native.channel.qw,
             (qa_bytes){pending->bytes.data, pending->bytes.size}, error)) return false;
         peer->reliable_inflight = pending->serial;
         peer->reliable_bytes = pending->bytes.size;
-        peer->first = pending->next; if (!peer->first) peer->last = NULL;
-        peer->queued_bytes -= pending->bytes.size; --peer->queued_messages;
-        qa_buffer_free(&pending->bytes); free(pending);
+        q1_messages_pop(&peer->messages);
     }
-    uint8_t *storage = malloc(peer->policy.message_bytes);
-    if (!storage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding QuakeWorld source frame"); return false; }
+    uint8_t *storage = peer->output;
     qa_error encoding_error = {0};
     qa_net_writer writer; qa_net_writer_init(&writer, storage, peer->policy.message_bytes, &encoding_error);
     qa_qw_source_frame sent = {0}; bool encoded = false;
@@ -262,9 +252,9 @@ transmit:;
     size_t reliable = (qa_load_u32le(packet.data) & UINT32_C(0x80000000)) ? peer->reliable_bytes : 0;
     if (encoded && packet.size == 8 + reliable + qa_net_writer_size(&writer) &&
         !qa_qw_source_history_store(peer->frames, &sent, error)) goto failure;
-    free(storage); return true;
+    return true;
 failure:
-    free(storage); return false;
+    return false;
 }
 static bool flush(void *context, qa_network_runtime *runtime, qa_net_client_id id,
     uint64_t now_ns, qa_error *error)
@@ -301,7 +291,8 @@ static bool rebind(void *context, const qa_net_address *address, qa_error *error
 static void close_peer(void *context)
 {
     qw_server *peer = context; if (!peer) return;
-    queue_clear(peer); q1_retirement_clear(&peer->retirement); qa_qw_signon_destroy(peer->signon);
+    q1_messages_destroy(&peer->messages); qa_arena_destroy(&peer->output_storage);
+    q1_retirement_clear(&peer->retirement); qa_qw_signon_destroy(peer->signon);
     qa_qw_source_history_destroy(peer->frames); qa_qw_channel_destroy(peer->native.channel.qw); free(peer);
 }
 static const qa_network_peer_ops ops = {.receive=receive,.flush=flush,.command=command,
@@ -332,7 +323,8 @@ bool qa_network_attach_qw_server(qa_network_runtime *runtime, const qa_net_conne
     if (!peer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating QuakeWorld source peer"); return false; }
     peer->runtime = runtime; peer->policy = *policy; peer->hooks = *hooks;
     peer->native = (qa_q1_peer){.transport = runtime->transport, .remote = request->endpoint, .kind = QA_Q1_PEER_QUAKEWORLD};
-    if (!qa_qw_channel_create(QA_Q1_CHANNEL_SERVER, policy->qport, policy->message_bytes,
+    if (!storage_prepare(peer, error) ||
+        !qa_qw_channel_create(QA_Q1_CHANNEL_SERVER, policy->qport, policy->message_bytes,
         policy->bytes_per_second, &peer->native.channel.qw, error) ||
         !qa_qw_signon_create(&hooks->signon, false, &peer->signon, error) ||
         !(peer->frames = qa_qw_source_history_create(error)) ||
@@ -380,7 +372,7 @@ bool qa_network_qw_server_state_read(qa_network_runtime *runtime, qa_net_client_
     *out = (qa_network_qw_server_state){.input_sequence = peer->input_sequence,
         .outgoing_sequence = qa_qw_channel_get_stats(peer->native.channel.qw).outgoing_sequence,
         .choked = peer->choked, .loss = peer->loss, .qport = peer->policy.qport,
-        .queued_messages = peer->queued_messages, .queued_bytes = peer->queued_bytes,
+        .queued_messages = peer->messages.count, .queued_bytes = peer->messages.bytes,
         .active = qa_qw_signon_spawned(peer->signon), .retiring = peer->retiring, .reply = peer->reply,
         .reliable_queued=peer->reliable_queued, .reliable_inflight=peer->reliable_inflight,
         .reliable_acknowledged=peer->reliable_acknowledged};
@@ -441,7 +433,7 @@ static bool continuation_valid(const qw_server *peer, const qa_net_client *clien
         client->seat_count != 1 || peer->signon_active || peer->policy.message_bytes != 1450 ||
         peer->policy.queued_messages != 5 || peer->policy.bytes_per_second < 500 || peer->policy.bytes_per_second > 10000 ||
         channel.bytes_per_second != peer->policy.bytes_per_second ||
-        peer->queued_messages > peer->policy.queued_messages || peer->input_sequence > INT32_MAX ||
+        peer->messages.count > peer->policy.queued_messages || peer->input_sequence > INT32_MAX ||
         peer->reliable_bytes > peer->policy.message_bytes ||
         !isfinite(peer->last_command.angles[0]) || !isfinite(peer->last_command.angles[1]) ||
         !isfinite(peer->last_command.angles[2]) || peer->last_command.buttons ||
@@ -471,15 +463,15 @@ bool qa_network_qw_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
     const qw_server *peer = owner->state;
     const qa_net_client *client = qa_net_connections_get(peer->runtime->connections, peer->id);
     if (!continuation_valid(peer, client, error)) return false;
-    size_t count = 0, queued = 0, capacity = 128; const qw_pending *last = NULL;
+    size_t count = 0, queued = 0, capacity = 128; const q1_message *last = NULL;
     if (!q1_retirement_extent(&peer->retirement, &capacity, error)) return false;
-    for (const qw_pending *pending = peer->first; pending; pending = pending->next) {
+    for (const q1_message *pending = peer->messages.first; pending; pending = pending->next) {
         if (!pending->bytes.data || !pending->bytes.size || pending->bytes.size > peer->policy.message_bytes ||
             count >= peer->policy.queued_messages || capacity > SIZE_MAX - 8 - pending->bytes.size)
             return qa_network_fail(error, "QuakeWorld retained reliable FIFO inventory differs");
         ++count; queued += pending->bytes.size; capacity += 8 + pending->bytes.size; last = pending;
     }
-    if (count != peer->queued_messages || queued != peer->queued_bytes || last != peer->last)
+    if (count != peer->messages.count || queued != peer->messages.bytes || last != peer->messages.last)
         return qa_network_fail(error, "QuakeWorld reliable FIFO allocator state differs");
     qa_buffer native = {0}, signon = {0}, frames = {0};
     qa_q1_peer_save_admission admission = saved_admission(peer, client);
@@ -510,9 +502,9 @@ bool qa_network_qw_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out,
     if (ok) ok = qa_net_write_i16(&writer, peer->last_command.forward) &&
         qa_net_write_i16(&writer, peer->last_command.side) && qa_net_write_i16(&writer, peer->last_command.up) &&
         qa_net_write_u8(&writer, peer->last_command.msec) && qa_net_write_u8(&writer, peer->last_command.impulse) &&
-        qa_net_write_u64(&writer, peer->queued_bytes) && qa_net_write_u64(&writer, peer->queued_messages) &&
+        qa_net_write_u64(&writer, peer->messages.bytes) && qa_net_write_u64(&writer, peer->messages.count) &&
         q1_retirement_write(&peer->retirement, &writer);
-    for (const qw_pending *pending = peer->first; ok && pending; pending = pending->next) ok = write_blob(&writer, &pending->bytes);
+    for (const q1_message *pending = peer->messages.first; ok && pending; pending = pending->next) ok = write_blob(&writer, &pending->bytes);
     for (size_t i = 0; ok && i < 3; ++i) ok = write_blob(&writer, blobs[i]);
     if (ok) { bytes.size = qa_net_writer_size(&writer); *out = bytes; }
     else qa_buffer_free(&bytes);
@@ -546,23 +538,14 @@ bool qa_network_qw_restore_peer(qa_network_runtime *runtime, const qa_net_client
     peer->policy.message_bytes = 1450; peer->policy.queued_messages = 5;
     peer->has_delta = has_delta != 0; peer->reply = reply != 0; peer->retiring = retiring != 0;
     peer->primed = primed != 0; peer->reliable_bytes = (size_t)reliable;
-    if (ok) ok = q1_retirement_read(&peer->retirement, &reader, peer->retiring, 1458, error);
+    if (ok) ok = storage_prepare(peer, error) &&
+        q1_retirement_read(&peer->retirement, &reader, peer->retiring, 1458, error);
     for (uint64_t i = 0; ok && i < count; ++i) {
         qa_bytes payload = {0}; ok = read_blob(&reader, &payload) && payload.size && payload.size <= 1450;
-        if (ok) {
-            qw_pending *pending = calloc(1, sizeof(*pending));
-            if (pending) pending->bytes.data = malloc(payload.size);
-            if (!pending || !pending->bytes.data) {
-                free(pending); qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring QuakeWorld reliable FIFO"); ok = false;
-            } else {
-                memcpy(pending->bytes.data, payload.data, payload.size); pending->bytes.size = payload.size;
-                if (peer->last) peer->last->next = pending; else peer->first = pending;
-                peer->last = pending; ++peer->queued_messages; peer->queued_bytes += payload.size;
-            }
-        }
+        if (ok) ok = q1_messages_append(&peer->messages, payload, error) != NULL;
     }
     qa_bytes native = {0}, signon = {0}, frames = {0};
-    if (ok) ok = peer->queued_bytes == queued && read_blob(&reader, &native) &&
+    if (ok) ok = peer->messages.bytes == queued && read_blob(&reader, &native) &&
         read_blob(&reader, &signon) && read_blob(&reader, &frames) && qa_net_reader_finish(&reader);
     qa_network_qw_server_policy policy = {0}; qa_qw_download_admission downloads = {0};
     if (ok) ok = refs->source_qw(refs->context, client, &policy, &peer->hooks, &downloads, error) &&
@@ -584,7 +567,7 @@ bool qa_network_qw_restore_peer(qa_network_runtime *runtime, const qa_net_client
     }
     if (qa_qw_channel_pending(peer->native.channel.qw))
         peer->reliable_inflight = ++peer->reliable_queued;
-    for (qw_pending *pending = peer->first; pending; pending = pending->next)
+    for (q1_message *pending = peer->messages.first; pending; pending = pending->next)
         pending->serial = ++peer->reliable_queued;
     owner->ops = ops; owner->state = peer; return true;
 }

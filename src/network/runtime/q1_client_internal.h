@@ -7,11 +7,8 @@
 #include "qa/network_q1_session_save.h"
 #include "qa/network_q1_history_save.h"
 #include "q1_client_retirement.h"
+#include "q1_messages.h"
 
-typedef struct q1_client_pending {
-    struct q1_client_pending *next;
-    qa_buffer bytes;
-} q1_client_pending;
 typedef struct q1_client_record {
     qa_net_protocol_id protocol;
     union { qa_nq_message nq; qa_qw_service qw; } service;
@@ -35,8 +32,12 @@ typedef struct q1_runtime_client {
     char *name, *parameters;
     qa_qw_history history;
     q1_client_retirement retirement;
-    q1_client_pending *first, *last;
-    size_t queued_bytes;
+    q1_messages messages;
+    qa_arena storage, names_storage;
+    uint8_t *output, *command_output;
+    char *text_output;
+    const char **precache_names;
+    size_t decoder_capacity;
     q1_client_move *commands;
     size_t command_count;
     qa_buffer payload, before_decoder;

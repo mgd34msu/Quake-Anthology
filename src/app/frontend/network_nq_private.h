@@ -42,7 +42,7 @@ struct frontend_nq_host {
     char reply_address[128];
     nq_status_cache board[256];
     char *published_names[256];
-    char *styles[64];
+    qa_string_id styles[64];
 };
 bool frontend_nq_source_hooks(frontend_nq_host *, const qa_net_client *,
     qa_network_nq_server_policy *, qa_network_nq_server_hooks *, qa_error *);
