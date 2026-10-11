@@ -1259,12 +1259,8 @@ static bool selection_basis(qa_application *app, qa_actor_id actor,
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING) ||
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(e, QA_ERROR_ARGUMENT, "Selected UI requires its genuine live Source player");
-    size_t found = 0;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *row = app->players->records + i;
-        if (qa_actor_id_equal(row->actor, actor) && !row->retiring && !row->deferred &&
-            !row->source_begin_pending) ++found;
-    }
+    const application_player_record *row=application_player_record_find(app->players,actor);
+    bool found=row && !row->retiring && !row->deferred && !row->source_begin_pending;
     application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
     application_provider *selected = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (found != 1 || !source || source != app->players->map_provider || !selected ||

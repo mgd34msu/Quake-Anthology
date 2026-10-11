@@ -17,12 +17,8 @@ static bool client_binding(const struct application_qc_state *engine, uint32_t s
         return application_fail(error, QA_ERROR_NOT_FOUND, "QC output lost its admitted original client binding");
     if (canonical) {
         const struct application_player_roster *roster = engine->provider->application->players;
-        bool found = false;
-        for (size_t i = 0; roster && i < roster->count; ++i)
-            if (qa_actor_id_equal(roster->records[i].actor, client->actor) && roster->records[i].seat == client->seat) {
-                found = true; break;
-            }
-        if (!found)
+        const application_player_record *record=application_player_record_find(roster,client->actor);
+        if (!record || record->seat!=client->seat)
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC output client differs from its canonical roster generation");
     }
     return !reference || qa_qc_slot_reference(engine->provider->state.qc.instance, slot, reference, error);
@@ -187,10 +183,7 @@ bool application_qc_control_outputs(const qa_application *application, qa_actor_
         return application_fail(error, QA_ERROR_ARGUMENT, "QC output read requires its application and destination");
     *out = (application_client_outputs){0};
     if (!qa_actors_get(qa_session_actors(application->session), actor)) return true;
-    bool canonical = false;
-    for (size_t i = 0; application->players && i < application->players->count; ++i)
-        if (qa_actor_id_equal(application->players->records[i].actor, actor)) { canonical = true; break; }
-    if (!canonical) return true;
+    if (!application_player_record_find(application->players,actor)) return true;
     if(!application_native_q2_control_outputs(application,actor,out,error))return false;
     uint8_t claimed = 0;
     for(size_t i=0;i<application->provider_count;++i){const application_provider *p=application->providers[i];

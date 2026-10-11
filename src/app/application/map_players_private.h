@@ -105,6 +105,14 @@ struct application_player_roster {
     qa_string_id spawn_point;
     int32_t world_type;
 };
+static inline application_player_record *application_player_record_find(
+    const struct application_player_roster *roster,qa_actor_id actor)
+{
+    for(size_t i=0;roster && i<roster->count;++i)
+        if(qa_actor_id_equal(roster->records[i].actor,actor)) return roster->records+i;
+    return NULL;
+}
+
 struct application_player_travel {
     struct application_player_roster *roster;
     application_player_carry *carry;

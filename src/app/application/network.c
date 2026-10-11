@@ -436,11 +436,7 @@ bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
     bool paused = !qa_application_q1_paused(app);
     const char *name = NULL, *suffix = paused ? " paused the game\n" : " unpaused the game\n";
     if (!denial) {
-        const application_player_record *record = NULL;
-        for (size_t i = 0; app->players && i < app->players->count; ++i)
-            if (qa_actor_id_equal(app->players->records[i].actor, player)) {
-                record = app->players->records + i; break;
-            }
+        const application_player_record *record=application_player_record_find(app->players,player);
         if (!record || record->retiring)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause lacks its actual source roster admission");
         name = application_player_name(record) ? application_player_name(record) : "unconnected";
@@ -478,9 +474,7 @@ bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     if (!engine) return false;
     if (!application_qc_input_idle(engine->provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 name requires an idle source input owner");
-    application_player_record *record = NULL;
-    for (size_t i = 0; app->players && i < app->players->count; ++i)
-        if (qa_actor_id_equal(app->players->records[i].actor, player)) { record = app->players->records + i; break; }
+    application_player_record *record=application_player_record_find(app->players,player);
     if (!record || record->retiring)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 name lacks its actual source roster admission");
     size_t length = strlen(name); if (length > 15) length = 15;

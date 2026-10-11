@@ -27,9 +27,8 @@ static bool source_live(application_bot_world_binding *binding,qa_error *error) 
 }
 static application_player_record *player(application_bot_world_binding *binding,qa_actor_id actor) {
     struct application_player_roster *roster=binding->bots->application->players;
-    for(size_t i=0;roster && i<roster->count;++i)
-        if(!roster->records[i].retiring && qa_actor_id_equal(roster->records[i].actor,actor)) return roster->records+i;
-    return NULL;
+    application_player_record *record=application_player_record_find(roster,actor);
+    return record && !record->retiring ? record : NULL;
 }
 static qa_actor_id bot_actor(void *context,int32_t client) {
     application_bot_world_binding *binding=context;

@@ -17,13 +17,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static const application_player_record *player_record(const qa_application *app, qa_actor_id actor)
-{
-    for (size_t i = 0; i < app->players->count; ++i)
-        if (qa_actor_id_equal(app->players->records[i].actor, actor)) return app->players->records + i;
-    return NULL;
-}
-
 static bool stable(qa_application *app, const application_unified_source *source,
     uint64_t actors, qa_error *error)
 {
@@ -305,7 +298,7 @@ bool application_unified_presentations_build(qa_application *app, const applicat
     uint32_t cursor = 0; const qa_actor_record *record;
     while (ok && qa_actors_next(qa_session_actors(source->session), &cursor, &record)) {
         qa_actor_id id = record->id;
-        const application_player_record *admitted = player_record(app, id);
+        const application_player_record *admitted = application_player_record_find(app->players,id);
         if (admitted && (admitted->retiring || admitted->deferred || admitted->source_begin_pending)) continue;
         qa_application_selected_q3_character c; bool found;
         if (!qa_application_selected_q3_character_read(app, id, &c, &found, error)) { ok = false; break; }

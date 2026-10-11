@@ -162,13 +162,10 @@ bool application_native_q1_composition_player_current(void *opaque, qa_actor_own
         !qa_actor_id_equal(client.actor, actor) || client.slot != slot)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q1 composition lost its physical source client");
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *record = app->players->records + i;
-        if (!record->retiring && record->client_slot == slot &&
-            qa_actor_id_equal(record->actor, actor)) {
-            *observer = client.observer;
-            return true;
-        }
+    const application_player_record *record=application_player_record_find(app->players,actor);
+    if(record && !record->retiring && record->client_slot==slot) {
+        *observer=client.observer;
+        return true;
     }
     return application_fail(error, QA_ERROR_ARGUMENT,
         "Q1 composition client differs from its actual published roster");

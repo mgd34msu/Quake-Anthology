@@ -709,12 +709,8 @@ static bool source_player_current(application_provider *source, qa_actor_id acto
     if (!roster || roster->map_provider != source ||
         application_world_provider(app, QA_ROLE_ENTITIES, "") != source)
         return application_fail(error, QA_ERROR_ARGUMENT, "Supply source is not the actual published GAME");
-    const application_player_record *record = NULL;
-    for (size_t i = 0; i < roster->count; ++i)
-        if (!roster->records[i].retiring && qa_actor_id_equal(roster->records[i].actor, actor)) {
-            record = roster->records + i; break;
-        }
-    if (!record) return application_fail(error, QA_ERROR_ARGUMENT, "Supply source actor has no actual roster admission");
+    const application_player_record *record=application_player_record_find(roster,actor);
+    if (!record || record->retiring) return application_fail(error, QA_ERROR_ARGUMENT, "Supply source actor has no actual roster admission");
     if (source->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_source_client_view client;
         if (qa_q1_source_client_read(source->state.q1, actor, &client) &&

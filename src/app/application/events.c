@@ -1359,9 +1359,7 @@ void qa_application_player_feedback_read(const qa_application *app,qa_actor_id a
     if(first<qa_application_events_first(app)) first=qa_application_events_first(app);
     if(through>qa_application_events_next(app)) through=qa_application_events_next(app);
     struct application_player_roster *roster=app->players;
-    application_player_record *selected=NULL;
-    for(size_t i=0;roster && i<roster->count;++i)
-        if(qa_actor_id_equal(roster->records[i].actor,actor)) { selected=roster->records+i;break; }
+    application_player_record *selected=application_player_record_find(roster,actor);
     if(selected && qa_actor_id_equal(selected->feedback_actor,actor) && roster->feedback_first==first && roster->feedback_through==through &&
         roster->feedback_generation==app->protocol_events_generation &&
         roster->feedback_revision==roster->revision && roster->feedback_count==roster->count) {
@@ -1378,11 +1376,8 @@ void qa_application_player_feedback_read(const qa_application *app,qa_actor_id a
     const application_unified_event_record *row;
     while((row=qa_application_event_range_next(app,&cursor,&filter))) {
         if(!selected) { qa_player_feedback_merge(out,&row->presentation->value.feedback);continue; }
-        for(size_t i=0;i<roster->count;++i)
-            if(qa_actor_id_equal(roster->records[i].actor,row->recipient)) {
-                qa_player_feedback_merge(&roster->records[i].feedback,&row->presentation->value.feedback);
-                break;
-            }
+        application_player_record *recipient=application_player_record_find(roster,row->recipient);
+        if(recipient) qa_player_feedback_merge(&recipient->feedback,&row->presentation->value.feedback);
     }
     if(selected) {
         roster->feedback_first=first;roster->feedback_through=through;

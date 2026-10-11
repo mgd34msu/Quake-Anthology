@@ -30,9 +30,8 @@ static bool current(power_binding *binding, qa_error *error)
     if (!published)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q1 timed power publisher has no current application admission");
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *record = app->players->records + i;
-        if (record->retiring || !qa_actor_id_equal(record->actor, binding->actor)) continue;
+    const application_player_record *record=application_player_record_find(app->players,binding->actor);
+    if(record && !record->retiring) {
         if (primary->kind == APPLICATION_PROVIDER_Q1) {
             uint32_t slot;
             if (!qa_q1_native_client_slot(primary->state.q1, binding->actor, &slot, error)) return false;

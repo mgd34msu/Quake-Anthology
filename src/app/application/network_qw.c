@@ -58,16 +58,13 @@ bool qa_application_network_qw_userinfo_read(qa_application *app,
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND,
             "QuakeWorld userinfo requires its live canonical player generation");
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *record = app->players->records + i;
-        if (!qa_actor_id_equal(record->actor, actor)) continue;
-        if (!record->userinfo)
-            return application_fail(error, QA_ERROR_NOT_FOUND,
-                "QuakeWorld canonical player has no retained source userinfo owner");
-        *out = record->userinfo; return true;
-    }
-    return application_fail(error, QA_ERROR_NOT_FOUND,
+    const application_player_record *record=application_player_record_find(app->players,actor);
+    if(!record) return application_fail(error,QA_ERROR_NOT_FOUND,
         "QuakeWorld userinfo actor is absent from its canonical player roster");
+    if(!record->userinfo) return application_fail(error,QA_ERROR_NOT_FOUND,
+        "QuakeWorld canonical player has no retained source userinfo owner");
+    *out=record->userinfo;
+    return true;
 }
 
 static struct application_qc_state *qw_source(qa_application *app,
@@ -119,12 +116,8 @@ bool qa_application_network_qw_ptrack(qa_application *app,qa_actor_id actor,
     uint32_t slot;qa_q1_source_client_view client;
     bool okay=app->operation==APPLICATION_IDLE && qa_q1_native_client_slot(source.provider->state.q1,actor,&slot,error) &&
         qa_q1_source_client_read(source.provider->state.q1,actor,&client);
-    const application_player_record *row=NULL;
-    if (okay) for (size_t i=0;app->players && i<app->players->count;++i) {
-        const application_player_record *candidate=&app->players->records[i];
-        if (!candidate->retiring && candidate->client_slot==slot && qa_actor_id_equal(candidate->actor,actor)) {row=candidate;break;}
-    }
-    if (okay && !row) okay=application_fail(error,QA_ERROR_ARGUMENT,"QuakeWorld ptrack lost its trusted physical client row");
+    const application_player_record *row=okay ? application_player_record_find(app->players,actor) : NULL;
+    if (okay && (!row || row->retiring || row->client_slot!=slot)) okay=application_fail(error,QA_ERROR_ARGUMENT,"QuakeWorld ptrack lost its trusted physical client row");
     if (okay && application_player_identity(row)->spectator)
         okay=application_native_q1_spectator_track(source.provider,actor,target_supplied,client_slot,error);
     application_native_q1_wire_end(&source);
@@ -521,11 +514,8 @@ static bool qw_userinfo(qa_application *app, qa_actor_id actor,
     bool ok = raw_copy != NULL;
     if (ok) memcpy(raw_copy, text, size);
     else application_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld source userinfo");
-    application_player_record *record = NULL;
-    for (size_t i = 0; app->players && i < app->players->count; ++i)
-        if (qa_actor_id_equal(app->players->records[i].actor, actor) && !app->players->records[i].retiring)
-            record = app->players->records + i;
-    if (ok && !record) ok = application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld userinfo lost its canonical admission");
+    application_player_record *record=application_player_record_find(app->players,actor);
+    if (ok && (!record || record->retiring)) ok = application_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld userinfo lost its canonical admission");
     if (ok) ok = application_player_identity_text(record, name ? name : "unnamed", team ? team : "", skin ? skin : "", error);
     if (ok) {
         free(record->userinfo); record->userinfo = raw_copy; raw_copy = NULL;

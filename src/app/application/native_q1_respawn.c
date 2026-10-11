@@ -34,11 +34,8 @@ static bool client_current(source_call *call, qa_error *error)
     uint32_t slot;
     if (!qa_q1_native_client_slot(provider->state.q1, call->actor, &slot, error))
         return false;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *record = app->players->records + i;
-        if (!record->retiring && qa_actor_id_equal(record->actor, call->actor) &&
-            record->client_slot == slot) return true;
-    }
+    const application_player_record *record=application_player_record_find(app->players,call->actor);
+    if(record && !record->retiring && record->client_slot==slot) return true;
     return application_fail(error, QA_ERROR_ARGUMENT,
         "Q1 travel actor differs from its actual physical roster slot");
 }
@@ -231,14 +228,10 @@ bool application_native_q1_request_respawn(void *opaque, qa_actor_id actor, qa_e
     }
     qa_q1_travel_state *travel = NULL;
     if (okay && !handled && options.coop) {
-        for (size_t i = 0; i < app->players->count; ++i) {
-            const application_player_record *record = app->players->records + i;
-            if (!qa_actor_id_equal(record->actor, actor)) continue;
-            if (record->q1_entry) {
-                okay = qa_q1_travel_retain(record->q1_entry, error);
-                if (okay) travel = record->q1_entry;
-            }
-            break;
+        const application_player_record *record=application_player_record_find(app->players,actor);
+        if(record && record->q1_entry) {
+            okay=qa_q1_travel_retain(record->q1_entry,error);
+            if(okay) travel=record->q1_entry;
         }
     }
     if (okay && !handled && !travel)

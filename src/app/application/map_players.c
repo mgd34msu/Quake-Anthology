@@ -87,16 +87,8 @@ static application_player_record *physical_player(qa_application *app,
         application_fail(error, QA_ERROR_ARGUMENT, "Component admission lost its physical player");
         return NULL;
     }
-    application_player_record *actual = NULL;
-    for (size_t i = 0; i < roster->count; ++i) {
-        application_player_record *row = roster->records + i;
-        if (!qa_actor_id_equal(row->actor, actor) || row->retiring) continue;
-        if (actual) {
-            application_fail(error, QA_ERROR_ARGUMENT, "Component admission has duplicate physical players");
-            return NULL;
-        }
-        actual = row;
-    }
+    application_player_record *actual=application_player_record_find(roster,actor);
+    if(actual && actual->retiring) actual=NULL;
     if (!actual)
         application_fail(error, QA_ERROR_ARGUMENT, "Component lost its physical player roster row");
     return actual;
@@ -175,14 +167,7 @@ bool application_players_source_spawned(void *context, qa_actor_id actor, qa_err
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Completed spawn lost its actual Source player");
     if (app->operation == APPLICATION_CONFIGURING && !scoped) return true;
-    application_player_record *record = NULL;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        application_player_record *row = app->players->records + i;
-        if (qa_actor_id_equal(row->actor, actor)) {
-            if (record) return application_fail(error, QA_ERROR_ARGUMENT, "Completed spawn has duplicate players");
-            record = row;
-        }
-    }
+    application_player_record *record=application_player_record_find(app->players,actor);
     if (!record || record->retiring)
         return application_fail(error, QA_ERROR_ARGUMENT, "Completed spawn lost its published player");
     if (record->source_begin_pending || record->deferred) return true;
@@ -285,14 +270,10 @@ bool application_player_source_actor(const qa_application *application,
 {
     if (application == NULL || application->players == NULL || out == NULL)
         return false;
-    for (size_t i = 0; i < application->players->count; ++i) {
-        const application_player_record *record = &application->players->records[i];
-        if (qa_actor_id_equal(record->actor, actor) && record->configured_actor.registry) {
-            *out = record->configured_actor;
-            return true;
-        }
-    }
-    return false;
+    const application_player_record *record=application_player_record_find(application->players,actor);
+    if(!record || !record->configured_actor.registry) return false;
+    *out=record->configured_actor;
+    return true;
 }
 
 static void roster_free(struct application_player_roster *roster)
@@ -1288,9 +1269,9 @@ bool application_q3_player_spawn_pose(qa_application *application,
         !qa_actors_get(qa_session_actors(application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q3 client spawn requires its actual map roster");
-    for (size_t i = 0; i < application->players->count; ++i) {
-        application_player_record *record = &application->players->records[i];
-        if (record->retiring || !qa_actor_id_equal(record->actor, actor)) continue;
+    application_player_record *record=application_player_record_find(application->players,actor);
+    if(record && !record->retiring) {
+        size_t i=(size_t)(record-application->players->records);
         qa_mode_player_view member;
         if (!qa_modes_player_read(application->modes, application->primary_mode,
                 actor, &member, error) || member.state.spectator != spectator)
@@ -1317,10 +1298,8 @@ bool application_q3_native_deathmatch_destination(application_provider *provider
         !qa_actors_get(qa_session_actors(application->session), actor) ||
         !qa_q3_player_read(provider->state.q3, actor, &player))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 teleporter requires its actual native actor and map roster");
-    bool found = false;
-    for (size_t i = 0; i < roster->count; ++i)
-        if (!roster->records[i].retiring && qa_actor_id_equal(roster->records[i].actor, actor)) found = true;
-    if (!found)
+    const application_player_record *record=application_player_record_find(roster,actor);
+    if (!record || record->retiring)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 teleporter actor has no current physical roster row");
     qa_mode_id mode = application->primary_mode;
     application_provider *map_source = roster->map_provider;
@@ -1726,43 +1705,43 @@ static bool q2_select_spawn(void *context, qa_actor_id actor, qa_vec3 *origin,
     if (application->players == NULL ||
         application->players->map_provider == provider)
         return true;
-    for (size_t i = 0; i < application->players->count; ++i)
-        if (qa_actor_id_equal(application->players->records[i].actor, actor)) {
-            application_player_record *record = &application->players->records[i];
-            application_provider *map_source = application->players->map_provider;
-            if (application_player_identity(record)->bot && record->source_begin_pending &&
-                map_source->kind == APPLICATION_PROVIDER_Q3) {
-                application_native_q3_wire_client_view client;
-                bool present;
-                if (!application_native_q3_wire_client_admission_read(map_source,
-                        record->client_slot, &client, &present, error)) return false;
-                if (present && qa_actor_id_equal(client.actor, actor) && client.begun) {
-                    qa_body_state body;
-                    if (!qa_world_body_read(application->world, actor, &body, error)) return false;
-                    *origin = body.origin; *angles = body.angles; *found = true;
-                    return true;
-                }
-            }
-            if (application->players->records[i].deferred) {
+    application_player_record *record=application_player_record_find(application->players,actor);
+    if(record) {
+        size_t i=(size_t)(record-application->players->records);
+        application_provider *map_source = application->players->map_provider;
+        if (application_player_identity(record)->bot && record->source_begin_pending &&
+            map_source->kind == APPLICATION_PROVIDER_Q3) {
+            application_native_q3_wire_client_view client;
+            bool present;
+            if (!application_native_q3_wire_client_admission_read(map_source,
+                    record->client_slot, &client, &present, error)) return false;
+            if (present && qa_actor_id_equal(client.actor, actor) && client.begun) {
                 qa_body_state body;
                 if (!qa_world_body_read(application->world, actor, &body, error)) return false;
-                *origin = body.origin;
-                *angles = body.angles;
-                *found = true;
+                *origin = body.origin; *angles = body.angles; *found = true;
                 return true;
             }
-            qa_body_state body = {0};
-            if (!spawn_pose(application, i, false, &body, found, NULL, error))
-                return false;
-            if (!*found) {
-                defer_player(application, &application->players->records[i]);
-                if (!qa_world_body_read(application->world, actor, &body, error)) return false;
-                *found = true; /* The shared deferred selector owns the retry. */
-            }
+        }
+        if (application->players->records[i].deferred) {
+            qa_body_state body;
+            if (!qa_world_body_read(application->world, actor, &body, error)) return false;
             *origin = body.origin;
             *angles = body.angles;
+            *found = true;
             return true;
         }
+        qa_body_state body = {0};
+        if (!spawn_pose(application, i, false, &body, found, NULL, error))
+            return false;
+        if (!*found) {
+            defer_player(application, &application->players->records[i]);
+            if (!qa_world_body_read(application->world, actor, &body, error)) return false;
+            *found = true; /* The shared deferred selector owns the retry. */
+        }
+        *origin = body.origin;
+        *angles = body.angles;
+        return true;
+    }
     return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 spawn actor has no selected seat");
 }
 
@@ -2082,11 +2061,9 @@ bool application_players_native_q1_spawn_pose(qa_application *app, application_p
         app->players->map_provider != source || source->kind != APPLICATION_PROVIDER_Q1 ||
         source != application_world_provider(app, QA_ROLE_ENTITIES, ""))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source selector lost its actual map roster");
-    size_t ordinal = app->players->count;
-    for (size_t i = 0; i < app->players->count; ++i)
-        if (!app->players->records[i].retiring && !app->players->records[i].source_begin_pending &&
-            !app->players->records[i].deferred &&
-            qa_actor_id_equal(app->players->records[i].actor, actor)) { ordinal = i; break; }
+    const application_player_record *record=application_player_record_find(app->players,actor);
+    size_t ordinal=record && !record->retiring && !record->source_begin_pending && !record->deferred ?
+        (size_t)(record-app->players->records) : app->players->count;
     uint32_t slot;
     if (ordinal == app->players->count || !qa_q1_native_client_slot(source->state.q1, actor, &slot, error) ||
         slot != app->players->records[ordinal].client_slot ||
@@ -2116,23 +2093,15 @@ static bool spawn_q3_player_roles(qa_application *application, qa_actor_id actor
 static bool q1_entry_capture(qa_application *application, application_provider *source,
     qa_actor_id actor, qa_error *error)
 {
-    application_player_record *record = NULL;
-    for (size_t i = 0; application->players && i < application->players->count; ++i)
-        if (!application->players->records[i].retiring &&
-            qa_actor_id_equal(application->players->records[i].actor, actor)) {
-            record = application->players->records + i; break;
-        }
+    application_player_record *record=application_player_record_find(application->players,actor);
+    if(record && record->retiring) record=NULL;
     if (!record) return application_fail(error, QA_ERROR_ARGUMENT,
         "Q1 first spawn lost its actual roster admission");
     if (record->q1_entry) return true;
     qa_q1_travel_state *entry = NULL;
     if (!application_native_q1_travel_capture(source, actor, &entry, error)) return false;
-    application_player_record *current = NULL;
-    for (size_t i = 0; application->players && i < application->players->count; ++i)
-        if (!application->players->records[i].retiring &&
-            qa_actor_id_equal(application->players->records[i].actor, actor)) {
-            current = application->players->records + i; break;
-        }
+    application_player_record *current=application_player_record_find(application->players,actor);
+    if(current && current->retiring) current=NULL;
     if (!current || current != record || current->q1_entry) {
         qa_q1_travel_destroy(entry);
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -2242,12 +2211,9 @@ static bool selected_qc_native_current(application_provider *character,
     if (!application_qc_control_source_client(source, actor, &member, error)) return false;
     if (!member) return application_fail(error, QA_ERROR_ARGUMENT,
         "Selected Native Q1 respawn lost its borrowed QC source client");
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *record = app->players->records + i;
-        if (!record->retiring && !record->source_begin_pending &&
-            record->character == character && qa_actor_id_equal(record->actor, actor) &&
-            record->client_slot == client.slot) { *ordinal = i; return true; }
-    }
+    const application_player_record *record=application_player_record_find(app->players,actor);
+    if(record && !record->retiring && !record->source_begin_pending && record->character==character &&
+        record->client_slot==client.slot) { *ordinal=(size_t)(record-app->players->records);return true; }
     return application_fail(error, QA_ERROR_ARGUMENT,
         "Selected Native Q1 respawn differs from its actual physical roster");
 }
@@ -2369,11 +2335,10 @@ static bool q1_player_current(qa_application *app, application_provider *source,
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q1 respawn lost its actual source and selected player owners");
     if (!qa_q1_native_client_slot(source->state.q1, actor, &slot, error)) return false;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *record = app->players->records + i;
-        if (!record->retiring && (!begun || !record->source_begin_pending) &&
-            qa_actor_id_equal(record->actor, actor) && record->client_slot == slot &&
-            record->character == character) { *ordinal = i; return true; }
+    const application_player_record *record=application_player_record_find(app->players,actor);
+    if(record && !record->retiring && (!begun || !record->source_begin_pending) &&
+        record->client_slot==slot && record->character==character) {
+        *ordinal=(size_t)(record-app->players->records);return true;
     }
     return application_fail(error, QA_ERROR_ARGUMENT,
         "Q1 source player lost its actual physical roster admission");
