@@ -360,7 +360,9 @@ bool application_npc_actor_create(application_bots_npc *owner,qa_actor_id id,npc
     actor->actor=id;actor->graph=graph;
     qa_navigation_services services=application_npc_services(owner);
     bool okay=qa_navigation_create(graph->graph,&services,&actor->navigation,error) &&
-        qa_nav_workspace_create(&actor->workspace,error);
+        qa_nav_workspace_create(&actor->workspace,error) &&
+        qa_nav_workspace_prepare(actor->workspace,
+            qa_nav_workspace_limits_read(qa_nav_graph_read(graph->graph)),error);
     if(!okay) {application_npc_actor_free(actor);return false;}
     *out=actor;return true;
 }

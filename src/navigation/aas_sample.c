@@ -1,5 +1,6 @@
 #include "asset_internal.h"
 #include "qa/stamp.h"
+#include "qa/arena.h"
 
 typedef struct aas_frame {
     int32_t node;
@@ -7,6 +8,7 @@ typedef struct aas_frame {
     qa_vec3 start, end;
 } aas_frame;
 struct qa_aas_query {
+    qa_arena storage;
     aas_frame *stack;
     uint32_t *areas;
     qa_stamp_set seen;
@@ -27,42 +29,55 @@ bool qa_aas_query_create(qa_aas_query **out, qa_error *e) {
 }
 void qa_aas_query_destroy(qa_aas_query *q) {
     if (q != NULL) {
-        free(q->stack);
-        free(q->areas);
-        free(q->seen.marks);
+        qa_arena_destroy(&q->storage);
         free(q);
     }
 }
-static bool reserve(qa_aas_query *q, const qa_aas_view *v, qa_error *e) {
-    if (v->count[QA_AAS_NODES] > INT32_MAX || v->count[QA_AAS_AREAS] > INT32_MAX)
+bool qa_aas_query_prepare(qa_aas_query *q, size_t nodes, size_t areas, qa_error *e) {
+    if (nodes > INT32_MAX || areas > INT32_MAX)
         goto memory;
-    size_t stack = v->count[QA_AAS_NODES] + 2, areas = v->count[QA_AAS_AREAS];
-    if (stack > SIZE_MAX / sizeof(*q->stack) || areas > SIZE_MAX / sizeof(*q->areas))
+    size_t stack = nodes + 2;
+    if (stack <= q->stack_capacity && areas <= q->area_capacity)
+        return true;
+    if (stack < q->stack_capacity) stack = q->stack_capacity;
+    if (areas < q->area_capacity) areas = q->area_capacity;
+    size_t padding = 3 * _Alignof(aas_frame);
+    if (areas > (SIZE_MAX - padding) / (2 * sizeof(uint32_t)) ||
+        stack > (SIZE_MAX - padding - 2 * areas * sizeof(uint32_t)) / sizeof(aas_frame))
         goto memory;
-    if (stack > q->stack_capacity) {
-        aas_frame *p = realloc(q->stack, stack * sizeof(*p));
-        if (p == NULL)
-            goto memory;
-        q->stack = p;
-        q->stack_capacity = stack;
+    qa_arena storage = {0};
+    if (!qa_arena_reserve(&storage, padding + stack * sizeof(aas_frame) +
+            2 * areas * sizeof(uint32_t), e))
+        return false;
+    aas_frame *frames = qa_arena_alloc(&storage, stack * sizeof(*frames),
+        _Alignof(aas_frame), e);
+    uint32_t *values = areas ? qa_arena_alloc(&storage, areas * sizeof(*values),
+        _Alignof(uint32_t), e) : NULL;
+    uint32_t *seen = areas ? qa_arena_alloc(&storage, areas * sizeof(*seen),
+        _Alignof(uint32_t), e) : NULL;
+    if (!frames || (areas && (!values || !seen))) {
+        qa_arena_destroy(&storage);
+        return false;
     }
-    if (areas > q->area_capacity) {
-        uint32_t *p = malloc(areas * sizeof(*p));
-        uint32_t *seen = malloc(areas * sizeof(*seen));
-        if (p == NULL || seen == NULL) {
-            free(p);
-            free(seen);
-            goto memory;
-        }
-        free(q->areas);
-        free(q->seen.marks);
-        q->areas = p;
-        qa_stamp_set_init(&q->seen, seen, areas);
-        q->area_capacity = areas;
-    }
+    qa_arena_seal(&storage);
+    qa_arena_destroy(&q->storage);
+    q->storage = storage;
+    q->stack = frames;
+    q->stack_capacity = stack;
+    q->areas = values;
+    q->area_capacity = areas;
+    qa_stamp_set_init(&q->seen, seen, areas);
     return true;
 memory:
-    qa_error_set(e, QA_ERROR_MEMORY, 0, "Growing AAS query workspace");
+    qa_error_set(e, QA_ERROR_MEMORY, 0, "AAS query workspace exceeds addressable storage");
+    return false;
+}
+static bool prepared(const qa_aas_query *q, const qa_aas_view *v, qa_error *e) {
+    if (v->count[QA_AAS_NODES] <= q->stack_capacity &&
+        q->stack_capacity - v->count[QA_AAS_NODES] >= 2 &&
+        v->count[QA_AAS_AREAS] <= q->area_capacity)
+        return true;
+    qa_error_set(e, QA_ERROR_MEMORY, 0, "AAS query workspace was not sized for its graph");
     return false;
 }
 static const qa_aas_plane *plane(const qa_aas_view *v, int32_t node, uint32_t depth, qa_error *e) {
@@ -130,7 +145,7 @@ static bool crossing_reserve(qa_nav_crossings *out, size_t count, qa_error *e) {
 static bool trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa_vec3 end,
                         qa_aas_crossing *out, size_t capacity, size_t *count,
                         qa_nav_crossings *collected, qa_error *e) {
-    if (!reserve(q, v, e))
+    if (!prepared(q, v, e))
         return false;
     size_t used = 1, written = 0;
     q->stack[0] = (aas_frame){.node = 1, .start = start, .end = end};
@@ -201,7 +216,7 @@ bool qa_aas_bbox_areas(const qa_aas_view *v, qa_aas_query *q, qa_bounds bounds, 
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid AAS bounds query");
         return false;
     }
-    if (!reserve(q, v, e))
+    if (!prepared(q, v, e))
         return false;
     qa_stamp_set_begin(&q->seen);
     size_t used = 1, found = 0;

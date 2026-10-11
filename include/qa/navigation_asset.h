@@ -133,6 +133,7 @@ typedef struct qa_nav_crossings {
 } qa_nav_crossings;
 void qa_nav_crossings_free(qa_nav_crossings *);
 bool qa_aas_query_create(qa_aas_query **, qa_error *);
+bool qa_aas_query_prepare(qa_aas_query *, size_t nodes, size_t areas, qa_error *);
 void qa_aas_query_destroy(qa_aas_query *);
 bool qa_aas_point_area(const qa_aas_view *, qa_vec3, uint32_t *, qa_error *);
 bool qa_aas_trace_areas(const qa_aas_view *, qa_aas_query *, qa_vec3 start, qa_vec3 end,

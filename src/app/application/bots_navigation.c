@@ -601,10 +601,10 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
     }
     services.topology_geometry_only=false;
     if (!ok || !qa_navigation_create(graph->graph,&services,&graph->navigation,error)) return false;
-    size_t edges=qa_nav_graph_read(graph->graph)->edge_count;
-    if (bots->runtime && !qa_bot_runtime_prepare_navigation(bots->runtime,edges,error)) return false;
+    const qa_nav_graph_view *view=qa_nav_graph_read(graph->graph);
+    if (bots->runtime && !qa_bot_runtime_prepare_navigation(bots->runtime,view,error)) return false;
     for (application_bot_guest *guest=bots->guests;guest;guest=guest->next)
-        if (guest->runtime && !qa_bot_runtime_prepare_navigation(guest->runtime,edges,error)) return false;
+        if (guest->runtime && !qa_bot_runtime_prepare_navigation(guest->runtime,view,error)) return false;
     return true;
 }
 static bool navigation_graph(application_bots *bots,application_provider *movement,

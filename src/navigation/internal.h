@@ -27,6 +27,10 @@ typedef struct nav_crossing {
     float fraction;
     uint32_t ordinal;
 } nav_crossing;
+typedef struct nav_nearest_candidate {
+    uint32_t index;
+    float distance;
+} nav_nearest_candidate;
 typedef struct nav_estimate_cache nav_estimate_cache;
 typedef struct estimate_update estimate_update;
 struct qa_navigation {
@@ -44,8 +48,11 @@ struct qa_navigation {
     size_t area_update_capacity, portal_update_capacity;
     qa_arena prediction_storage;
     qa_pool prediction_results;
+    qa_arena nearest_storage;
+    qa_pool nearest_candidates;
 };
 struct qa_nav_workspace {
+    qa_arena storage;
     qa_aas_query *aas;
     float *costs;
     uint32_t *parents, *path, *repair;
@@ -71,7 +78,7 @@ typedef struct nav_prediction {
     qa_trace_query last_query;
     qa_trace_result last_trace;
 } nav_prediction;
-bool nav_workspace_prepare(qa_nav_workspace *, const qa_nav_graph *, qa_error *);
+bool nav_workspace_reset(qa_nav_workspace *, const qa_nav_graph *, qa_error *);
 bool nav_reserve(void **, size_t *, size_t, size_t, qa_error *);
 bool nav_queue_push(qa_nav_workspace *, nav_queue_entry, qa_error *);
 bool nav_queue_pop(qa_nav_workspace *, nav_queue_entry *);

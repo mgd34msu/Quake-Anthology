@@ -186,7 +186,10 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actio
     *out = m;
     return true;
 }
-bool qa_bot_moves_prepare_graph(qa_bot_moves *m, size_t edges, qa_error *e) {
+bool qa_bot_moves_prepare_graph(qa_bot_moves *m, qa_nav_workspace_limits limits, qa_error *e) {
+    if (!qa_nav_workspace_prepare(m->workspace, limits, e))
+        return false;
+    size_t edges = limits.edges;
     if (edges <= m->visited.count && m->point_capacity)
         return true;
     if (edges > (SIZE_MAX - 1) / 2 ||

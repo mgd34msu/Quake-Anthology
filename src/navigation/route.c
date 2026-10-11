@@ -226,7 +226,7 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         return false;
     if (!allowed)
         return true;
-    if (!nav_workspace_prepare(w, n->graph, e))
+    if (!nav_workspace_reset(w, n->graph, e))
         return false;
     for (size_t i = 0; i < n->graph->view.node_count; ++i) {
         w->costs[i] = INFINITY;

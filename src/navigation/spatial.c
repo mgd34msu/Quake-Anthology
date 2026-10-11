@@ -1,11 +1,7 @@
 #include "internal.h"
 
-typedef struct nearest_candidate {
-    uint32_t index;
-    float distance;
-} nearest_candidate;
 static int nearest_compare(const void *left, const void *right) {
-    const nearest_candidate *a = left, *b = right;
+    const nav_nearest_candidate *a = left, *b = right;
     if (a->distance != b->distance)
         return a->distance < b->distance ? -1 : 1;
     return a->index < b->index ? -1 : a->index != b->index;
@@ -19,18 +15,21 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
     }
     *found = false;
     *out = QA_NAV_NO_INDEX;
-    nearest_candidate *candidates = NULL;
-    size_t capacity = 0, count = n->graph->view.node_count;
+    nav_nearest_candidate *candidates = NULL;
+    size_t slot = SIZE_MAX, count = n->graph->view.node_count;
     bool ordered = !geographic && count &&
         n->graph->nodes[0].source.kind == QA_NAV_ORIGIN_CONSTRUCTED;
     if (ordered) {
-        if (!nav_reserve((void **)&candidates, &capacity, count, sizeof(*candidates), e))
+        candidates = qa_pool_take(&n->nearest_candidates, &slot);
+        if (!candidates) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation nearest query storage is full");
             return false;
+        }
         count = 0;
         for (uint32_t i = 0; i < n->graph->view.node_count; ++i) {
             float distance = nav_distance(point, n->graph->nodes[i].origin);
             if (distance <= radius)
-                candidates[count++] = (nearest_candidate){i, distance};
+                candidates[count++] = (nav_nearest_candidate){i, distance};
         }
         if (count > 1)
             qsort(candidates, count, sizeof(*candidates), nearest_compare);
@@ -78,7 +77,7 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
     }
     ok = true;
 done:
-    free(candidates);
+    if (candidates) qa_pool_release(&n->nearest_candidates, slot);
     return ok;
 }
 bool qa_navigation_nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float radius,
@@ -126,6 +125,10 @@ static int crossing_compare(const void *left, const void *right) {
 static bool trace_foreign(qa_navigation *n, qa_nav_workspace *w, qa_vec3 start, qa_vec3 end,
                            qa_aas_crossing *out, size_t capacity, size_t *count,
                            qa_nav_crossings *collected, qa_error *e) {
+    if (n->graph->view.node_count > w->crossing_capacity) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation crossing workspace was not sized for its graph");
+        return false;
+    }
     size_t crossed = 0;
     const float from[3] = {start.x, start.y, start.z}, to[3] = {end.x, end.y, end.z};
     for (size_t i = 0; i < n->graph->view.node_count; ++i) {
@@ -147,9 +150,6 @@ static bool trace_foreign(qa_navigation *n, qa_nav_workspace *w, qa_vec3 start, 
         }
         if (enter > leave)
             continue;
-        if (!nav_reserve((void **)&w->crossings, &w->crossing_capacity, crossed + 1,
-                         sizeof(*w->crossings), e))
-            return false;
         w->crossings[crossed++] =
             (nav_crossing){.crossing = {node->id, qa_vec_lerp(start, end, enter)},
                            .fraction = enter,

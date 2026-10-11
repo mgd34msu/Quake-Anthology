@@ -1,21 +1,6 @@
 #include "internal.h"
 #include <math.h>
 
-static bool crossings(qa_bot_navigation *n, qa_error *e) {
-    size_t nodes = qa_navigation_graph(n->runtime)->node_count;
-    if (nodes >= SIZE_MAX / sizeof(*n->crossings))
-        return bot_nav_fail(e, "bot prediction crossing workspace exceeds address range");
-    size_t count = nodes + 1;
-    if (count <= n->crossing_capacity) return true;
-    qa_aas_crossing *p = realloc(n->crossings, count * sizeof(*p));
-    if (!p) {
-        qa_error_set(e, QA_ERROR_MEMORY, count, "allocating bot movement trace crossings");
-        return false;
-    }
-    n->crossings = p;
-    n->crossing_capacity = count;
-    return true;
-}
 bool qa_bot_navigation_predict_movement(qa_bot_navigation *n,
                                         const qa_bot_movement_prediction_query *query,
                                         qa_bot_movement_prediction *out, qa_error *e) {
@@ -41,7 +26,6 @@ bool qa_bot_navigation_predict_movement(qa_bot_navigation *n,
         .frames = result->frames, .time = result->seconds,
         .end_area = qa_bot_navigation_source_area(n, result->end_area)};
     if (result->has_trace && result->stop_event && !(result->stop_event & (4 | 8 | 16))) {
-        if (!crossings(n, e)) return false;
         const qa_trace_result *trace = &result->last_trace;
         size_t count;
         if (!qa_bot_navigation_trace_areas(n, result->last_query.start, trace->end,
