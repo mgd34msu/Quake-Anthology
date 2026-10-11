@@ -213,6 +213,9 @@ bool qa_bot_chat_system_restore_bytes(qa_bot_chat_system *system,qa_bytes bytes,
         states.states[index]=state;++scratch.references;ok=state_fields(&io,state,refs);
     }
     if(ok) ok=qa_source_save_finish(&io,NULL) && topology_valid(&scratch,&scratch.console_count,error);
+    if(ok) ok=chat_workspace_prepare(system,&scratch.options,NULL,error);
+    for(qa_bot_chat *state=scratch.states;ok && state;state=state->next)
+        ok=chat_workspace_prepare(system,&scratch.options,state->initial,error);
     if(ok) {
         qa_bot_chat_asset_release(system->options.synonyms);qa_bot_chat_asset_release(system->options.randoms);
         qa_bot_chat_asset_release(system->options.matches);qa_bot_chat_asset_release(system->options.replies);

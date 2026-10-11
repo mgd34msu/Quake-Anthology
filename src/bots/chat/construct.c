@@ -2,6 +2,16 @@
 #include "qa/text.h"
 #include <stdio.h>
 
+static bool source_text(qa_arena *arena,const qa_bot_chat_text_source *source,char **out,qa_error *error) {
+    qa_bytes value;
+    if(!chat_text_read(source,SIZE_MAX,&value,error)) return false;
+    if(value.size==SIZE_MAX) {qa_error_set(error,QA_ERROR_MEMORY,0,"Chat argument exceeds native text extent");return false;}
+    char *text=qa_arena_alloc(arena,value.size+1,1,error);
+    if(!text) return false;
+    if(value.size) memcpy(text,value.data,value.size);
+    text[value.size]=0;*out=text;return true;
+}
+
 bool chat_random_string(qa_bot_chat_system *system,const char *name,const char **out,qa_error *error) {
     const qa_bot_chat_asset *a = system->options.randoms;
     *out=NULL;
@@ -31,7 +41,7 @@ bool chat_random_string(qa_bot_chat_system *system,const char *name,const char *
     }
     return true;
 }
-static bool expand(qa_bot_chat *state, const char *source, uint32_t context,
+static bool expand(qa_bot_chat *state,qa_arena *arena,const char *source,uint32_t context,
                    const qa_bot_chat_match *match, uint32_t variable_context, bool reply,
                    bool *expanded,bool *stopped, qa_error *e) {
     qa_bot_memory_span span;
@@ -52,10 +62,10 @@ static bool expand(qa_bot_chat *state, const char *source, uint32_t context,
         if (kind != 'v' && kind != 'r') {
             size_t size=strlen(source);
             if(size>SIZE_MAX-80) {qa_error_set(e,QA_ERROR_MEMORY,0,"Chat expansion diagnostic exceeds native extent");return false;}
-            char *message=malloc(size+80);
+            char *message=qa_arena_alloc(arena,size+80,1,e);
             if(!message) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining chat expansion diagnostic");return false;}
             (void)snprintf(message,size+80,"BotConstructChat: message \"%s\" invalid escape char",source);
-            bool ok=chat_print(state->system,QA_SCRIPT_FATAL,message,e);free(message);
+            bool ok=chat_print(state->system,QA_SCRIPT_FATAL,message,e);
             if(!ok) return false;
             continue;
         }
@@ -63,7 +73,7 @@ static bool expand(qa_bot_chat *state, const char *source, uint32_t context,
         size_t start=pointer;
         while(source[pointer] && source[pointer]!=1) ++pointer;
         size_t size=pointer-start;
-        char *key=malloc(size+1);
+        char *key=qa_arena_alloc(arena,size+1,1,e);
         if(!key) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining chat escape argument");return false;}
         memcpy(key,source+start,size);key[size]=0;
         if (source[pointer] == 1)
@@ -80,84 +90,85 @@ static bool expand(qa_bot_chat *state, const char *source, uint32_t context,
                 if (number>=8) { numeric_ok=false; break; }
             }
             if(!numeric_ok) {
-                size_t capacity=size+40;char *diagnostic=malloc(capacity);
-                if(!diagnostic) {free(key);qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining invalid chat variable diagnostic");return false;}
+                size_t capacity=size+40;char *diagnostic=qa_arena_alloc(arena,capacity,1,e);
+                if(!diagnostic) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining invalid chat variable diagnostic");return false;}
                 (void)snprintf(diagnostic,capacity,"message variable %s outside 0..7",key);
                 *stopped=true;bool ok=chat_print(state->system,QA_SCRIPT_ERROR,diagnostic,e);
-                free(diagnostic);free(key);return ok;
+                return ok;
             }
             uint32_t index=number;
-            if(match->variables[index].offset<0) {free(key);continue;}
+            if(match->variables[index].offset<0) {continue;}
             if (!qa_bot_chat_match_variable(match, index, variable, sizeof(variable), e) ||
-                !chat_replace_source(state->system,variable,variable_context,false,reply,&variable_value,e)) {
-                free(key);return false;
+                !chat_replace_source(state->system,arena,variable,variable_context,false,reply,&variable_value,e)) {
+                return false;
             }
             value = variable_value;
         } else {
-            if(!chat_random_string(state->system,key,&value,e)) {free(key);return false;}
+            if(!chat_random_string(state->system,key,&value,e)) {return false;}
             if (value == NULL) {
-                char *message=malloc(size+48);
-                if(!message) {free(key);qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining unknown random chat diagnostic");return false;}
+                char *message=qa_arena_alloc(arena,size+48,1,e);
+                if(!message) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining unknown random chat diagnostic");return false;}
                 (void)snprintf(message,size+48,"BotConstructChat: unknown random string %s",key);
                 *stopped=true;bool ok=chat_print(state->system,QA_SCRIPT_ERROR,message,e);
-                free(message);free(key);return ok;
+                return ok;
             }
             *expanded = true;
         }
-        free(key);size = strlen(value);
+        size = strlen(value);
         if (size >= QA_BOT_CHAT_MESSAGE_SIZE - length) {
-            free(variable_value);
-            size_t capacity=strlen(source)+48;char *message=malloc(capacity);
+            size_t capacity=strlen(source)+48;char *message=qa_arena_alloc(arena,capacity,1,e);
             if(!message) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining chat segment overflow diagnostic");return false;}
             (void)snprintf(message,capacity,kind=='v'?"BotConstructChat: message %s too long":"BotConstructChat: message \"%s\" too long",source);
-            *stopped=true;bool ok=chat_print(state->system,QA_SCRIPT_ERROR,message,e);free(message);return ok;
+            *stopped=true;bool ok=chat_print(state->system,QA_SCRIPT_ERROR,message,e);return ok;
         }
-        if(!chat_state_span(state,&span,e)) {free(variable_value);return false;}
+        if(!chat_state_span(state,&span,e)) {return false;}
         output=(char *)span.data+CHAT_MESSAGE;
         memcpy(output + length, value, size);
-        free(variable_value);
         length += size;
         output[length] = 0;
     }
     if(!chat_state_span(state,&span,e)) return false;
     output=(char *)span.data+CHAT_MESSAGE;output[length]=0;
     char *weighted=NULL;
-    if(!chat_replace_source(state->system,output,context,true,false,&weighted,e)) return false;
+    if(!chat_replace_source(state->system,arena,output,context,true,false,&weighted,e)) return false;
     if(strlen(weighted)>=256) {
-        free(weighted);*stopped=true;
+        *stopped=true;
         return chat_print(state->system,QA_SCRIPT_ERROR,"weighted message exceeds the source buffer",e);
     }
-    if(!chat_state_span(state,&span,e)) {free(weighted);return false;}
+    if(!chat_state_span(state,&span,e)) {return false;}
     memcpy(span.data+CHAT_MESSAGE, weighted, strlen(weighted) + 1);
-    free(weighted);
     return true;
 overflow:
     *stopped=true;
     return chat_print(state->system,QA_SCRIPT_ERROR,"expanded message exceeds the source buffer",e);
 }
-bool chat_construct(qa_bot_chat *state, const char *text, uint32_t context,
-                    qa_bot_chat_match *match, uint32_t variable_context, bool reply, qa_error *e) {
-    size_t initial_size=strlen(text)+1;
-    char *source=malloc(initial_size);
-    if(!source) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining the actual untruncated source chat expression");return false;}
-    memcpy(source,text,initial_size);bool ok=true;
-    for (unsigned i = 0; i < 10; ++i) {
+bool chat_construct(qa_bot_chat *state,const char *text,uint32_t context,
+    qa_bot_chat_match *match,uint32_t variable_context,bool reply,qa_error *e) {
+    size_t capacity=strlen(text)+1;
+    if(capacity<QA_BOT_CHAT_MESSAGE_SIZE) capacity=QA_BOT_CHAT_MESSAGE_SIZE;
+    chat_scratch retained;chat_scratch_begin(state->system,&retained);
+    char *source=qa_arena_alloc(&retained.arena,capacity,1,e);
+    if(!source) {chat_scratch_end(&retained);return false;}
+    memcpy(source,text,strlen(text)+1);
+    bool ok=true,finished=false;
+    for(unsigned i=0;i<10;++i) {
         bool expanded,stopped;
-        ok=expand(state, source, context, match, variable_context, reply, &expanded,&stopped, e);
-        if(!ok || stopped || !expanded) {free(source);return ok;}
+        chat_scratch expansion;chat_scratch_begin(state->system,&expansion);
+        ok=expand(state,&expansion.arena,source,context,match,variable_context,reply,&expanded,&stopped,e);
+        chat_scratch_end(&expansion);
+        if(!ok || stopped || !expanded) {finished=true;break;}
         char *message;
-        if(!chat_state_text(state,CHAT_MESSAGE,256,&message,e)) {free(source);return false;}
-        size_t size=strlen(message)+1;
-        if(size>initial_size) {
-            char *next=realloc(source,size);
-            if(!next) {free(source);qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining expanded source chat expression");return false;}
-            source=next;initial_size=size;
-        }
-        memcpy(source,message,size);
+        if(!chat_state_text(state,CHAT_MESSAGE,QA_BOT_CHAT_MESSAGE_SIZE,&message,e)) {ok=false;finished=true;break;}
+        memcpy(source,message,strlen(message)+1);
     }
-    free(source);char *message;
-    return chat_print(state->system,QA_SCRIPT_WARNING,"too many expansions in chat message",e) &&
-        chat_state_text(state,CHAT_MESSAGE,256,&message,e) && chat_print(state->system,QA_SCRIPT_WARNING,message,e);
+    chat_scratch_end(&retained);
+    if(!finished) {
+        char *message;
+        ok=chat_print(state->system,QA_SCRIPT_WARNING,"too many expansions in chat message",e) &&
+            chat_state_text(state,CHAT_MESSAGE,QA_BOT_CHAT_MESSAGE_SIZE,&message,e) &&
+            chat_print(state->system,QA_SCRIPT_WARNING,message,e);
+    }
+    return ok;
 }
 bool chat_append_variables(qa_bot_chat_match *match, const char *const variables[8],qa_error *error) {
     qa_bot_chat_text_source sources[8]={0};
@@ -211,9 +222,10 @@ static bool reply_key(const qa_bot_chat_asset *a, const qa_bot_chat_key *key,
         char *name,*text=NULL;
         if(!chat_state_text(state,CHAT_NAME,32,&name,error)) return false;
         char expected[33];memcpy(expected,name,strlen(name)+1);
-        bool ok=chat_text_copy(input,SIZE_MAX,&text,error);
+        chat_scratch scratch;chat_scratch_begin(state->system,&scratch);
+        bool ok=source_text(&scratch.arena,input,&text,error);
         if(ok) *out=qa_bot_chat_contains(text,expected,false)>=0;
-        free(text);return ok;
+        chat_scratch_end(&scratch);return ok;
     }
     case QA_BOT_CHAT_GENDER: {
         uint32_t gender;if(!chat_state_get(state,CHAT_GENDER,&gender,error)) return false;
@@ -224,9 +236,10 @@ static bool reply_key(const qa_bot_chat_asset *a, const qa_bot_chat_key *key,
         *out=qa_bot_chat_contains(key->data.text,name,false)>=0;return true;
     }
     case QA_BOT_CHAT_WORD: {
-        char *text=NULL;bool ok=chat_text_copy(input,SIZE_MAX,&text,error);
+        char *text=NULL;chat_scratch scratch;chat_scratch_begin(state->system,&scratch);
+        bool ok=source_text(&scratch.arena,input,&text,error);
         if(ok) *out=chat_word(text,key->data.text,0)>=0;
-        free(text);return ok;
+        chat_scratch_end(&scratch);return ok;
     }
     case QA_BOT_CHAT_PATTERN:
         *out=chat_match_pieces(a,key->data.pieces,match);return true;
@@ -245,10 +258,10 @@ static bool graph_reply_key(qa_bot_chat_asset *asset,uint32_t key,qa_bot_chat *s
     if(!bot_chat_graph_word(graph,key,BOT_CHAT_GRAPH_KEY,0,&flags,error)) return false;
     if(flags&4) {
         char *text=NULL,*name;
-        if(!chat_text_copy(input,SIZE_MAX,&text,error)) return false;
-        bool ok=chat_state_text(state,CHAT_NAME,32,&name,error);
+        chat_scratch scratch;chat_scratch_begin(state->system,&scratch);
+        bool ok=source_text(&scratch.arena,input,&text,error) && chat_state_text(state,CHAT_NAME,32,&name,error);
         if(ok) *out=qa_bot_chat_contains(text,name,false)>=0;
-        free(text);return ok;
+        chat_scratch_end(&scratch);return ok;
     }
     if(flags&32) {
         const char *text;char *name;
@@ -267,10 +280,10 @@ static bool graph_reply_key(qa_bot_chat_asset *asset,uint32_t key,qa_bot_chat *s
     }
     if(flags&8) {
         char *text=NULL;const char *word;
-        if(!chat_text_copy(input,SIZE_MAX,&text,error)) return false;
-        bool ok=graph_text(graph,key,&word,error);
+        chat_scratch scratch;chat_scratch_begin(state->system,&scratch);
+        bool ok=source_text(&scratch.arena,input,&text,error) && graph_text(graph,key,&word,error);
         if(ok) *out=chat_word(text,word,0)>=0;
-        free(text);return ok;
+        chat_scratch_end(&scratch);return ok;
     }
     return true;
 }
@@ -458,13 +471,14 @@ bool qa_bot_chat_reply_message_from(qa_bot_chat *state,const qa_bot_chat_text_so
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid source bot reply request");return false;
     }
     *found=false;chat_retain(state);char *text=NULL;
-    bool ok=chat_text_copy(input,SIZE_MAX,&text,error);
+    chat_scratch scratch;chat_scratch_begin(state->system,&scratch);
+    bool ok=source_text(&scratch.arena,input,&text,error);
     if(ok && strlen(text)>=256) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Chat text exceeds the source 256-byte buffer");ok=false;
     }
     qa_bot_chat_asset *asset=state->system->options.replies;qa_bot_chat_asset_retain(asset);
     if(ok) ok=reply_message(state,asset,text,input,context,variable_context,variables,time,found,error);
-    qa_bot_chat_asset_release(asset);free(text);chat_release(state);return ok;
+    qa_bot_chat_asset_release(asset);chat_scratch_end(&scratch);chat_release(state);return ok;
 }
 bool qa_bot_chat_reply_message(qa_bot_chat *state,const char *input,uint32_t context,
     uint32_t variable_context,const char *const variables[8],float time,bool *found,qa_error *error) {

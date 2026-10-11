@@ -6,6 +6,13 @@
 #include "source_initial_resource.h"
 #include "source_state.h"
 #include "source_packed.h"
+#include "qa/pool.h"
+
+typedef struct chat_workspace chat_workspace;
+typedef struct chat_scratch {
+    qa_arena arena;
+    chat_workspace *owner;
+} chat_scratch;
 
 struct qa_bot_chat_asset {
     atomic_uint references;
@@ -50,6 +57,7 @@ struct qa_bot_chat_system {
     uint32_t free_console;
     size_t console_count, console_capacity;
     qa_bot_chat *states;
+    chat_workspace *workspace;
     size_t references;
     uint64_t revision;
     bool retired, restoring;
@@ -87,7 +95,10 @@ bool chat_asset_message_text(const qa_bot_chat_asset *,uint32_t,const char **,qa
 bool chat_match_pieces(const qa_bot_chat_asset *, qa_bot_chat_range, qa_bot_chat_match *);
 bool chat_construct(qa_bot_chat *, const char *, uint32_t, qa_bot_chat_match *, uint32_t, bool,
                     qa_error *);
-bool chat_replace_source(qa_bot_chat_system *,const char *,uint32_t,bool,bool,char **,qa_error *);
+bool chat_replace_source(qa_bot_chat_system *,qa_arena *,const char *,uint32_t,bool,bool,char **,qa_error *);
+void chat_scratch_begin(qa_bot_chat_system *,chat_scratch *);
+void chat_scratch_end(chat_scratch *);
+bool chat_workspace_prepare(qa_bot_chat_system *,const qa_bot_chat_options *,const qa_bot_chat_asset *,qa_error *);
 void chat_match_clear(qa_bot_chat_match *, const char *);
 int32_t chat_word(const char *, const char *, size_t);
 bool chat_equal(const char *, const char *);

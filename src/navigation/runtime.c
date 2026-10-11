@@ -44,6 +44,10 @@ bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_n
         qa_navigation_destroy(n);
         goto memory;
     }
+    if (!nav_estimates_prepare(n, e)) {
+        qa_navigation_destroy(n);
+        return false;
+    }
     memset(n->enabled, -1, nodes);
     for (size_t i = 0; i < edges; ++i)
         n->admission_seconds[i] = NAN;
@@ -71,6 +75,7 @@ void qa_navigation_destroy(qa_navigation *n) {
     if (n == NULL)
         return;
     nav_estimates_free(n);
+    qa_arena_destroy(&n->estimate_storage);
     for (size_t i = 0; i < n->prediction_results.capacity; ++i)
         qa_movement_result_free(qa_pool_at(&n->prediction_results, i));
     qa_arena_destroy(&n->prediction_storage);

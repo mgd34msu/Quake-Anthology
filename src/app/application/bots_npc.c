@@ -13,7 +13,7 @@ typedef struct npc_prediction {
     qa_body_state body;
     qa_physics_properties properties;
     qa_vec3 *points;
-    size_t count,capacity;
+    size_t count,capacity,slot;
     bool initialized;
 } npc_prediction;
 
@@ -55,31 +55,51 @@ static bool actual(application_bots_npc *owner,qa_actor_id actor,qa_body_state *
     if(!qa_world_body_read(owner->world,actor,body,error)) return false;
     *found=true;return true;
 }
+static bool prediction_prepare(application_bots_npc *owner, size_t points, qa_error *error)
+{
+    if(points<=owner->prediction_points) return true;
+    if(points>(SIZE_MAX-sizeof(npc_prediction))/sizeof(qa_vec3))
+        return application_fail(error,QA_ERROR_MEMORY,"Monster trajectory capacity overflow");
+    qa_arena storage={0};qa_pool predictions={0};
+    size_t capacity=qa_actors_capacity(qa_session_actors(owner->source->application->session));
+    if(!qa_pool_reserve_pages(&predictions,&storage,capacity,
+            sizeof(npc_prediction)+points*sizeof(qa_vec3),_Alignof(npc_prediction),error)) {
+        qa_arena_destroy(&storage);return false;
+    }
+    qa_arena_destroy(&owner->prediction_storage);
+    owner->prediction_storage=storage;owner->predictions=predictions;
+    owner->prediction_points=points;return true;
+}
+static bool prediction_extent(application_bots_npc *owner,qa_vec3 minimum,qa_vec3 maximum,
+    qa_error *error)
+{
+    double x=(double)maximum.x-minimum.x,y=(double)maximum.y-minimum.y,z=(double)maximum.z-minimum.z;
+    double points=ceil(sqrt(x*x+y*y+z*z)/8)+4;
+    if(!isfinite(points) || points>=(double)SIZE_MAX)
+        return application_fail(error,QA_ERROR_MEMORY,"Monster trajectory capacity overflow");
+    return prediction_prepare(owner,(size_t)points,error);
+}
 static bool point(npc_prediction *p,qa_vec3 origin,qa_error *error)
 {
-    if(p->count==p->capacity) {
-        size_t capacity=p->capacity?p->capacity*2:32;
-        if(capacity<p->capacity || capacity>SIZE_MAX/sizeof(*p->points))
-            return application_fail(error,QA_ERROR_MEMORY,"Monster trajectory capacity overflow");
-        qa_vec3 *points=realloc(p->points,capacity*sizeof(*points));
-        if(!points) return application_fail(error,QA_ERROR_MEMORY,"Retaining monster walk trajectory");
-        p->points=points;p->capacity=capacity;
-    }
+    if(p->count==p->capacity)
+        return application_fail(error,QA_ERROR_MEMORY,"Monster trajectory exceeds admitted map extent");
     p->points[p->count++]=origin;return true;
 }
 static bool prediction_begin(void *opaque,qa_actor_id actor,void **lease,qa_error *error)
 {
     application_bots_npc *owner=opaque;
     if(!application_npc_current(owner,error)) return false;
-    npc_prediction *p=calloc(1,sizeof(*p));
-    if(!p) return application_fail(error,QA_ERROR_MEMORY,"Retaining detached monster walk continuation");
-    p->owner=owner;p->actor=actor;*lease=p;return true;
+    size_t slot;
+    npc_prediction *p=qa_pool_take(&owner->predictions,&slot);
+    if(!p) return application_fail(error,QA_ERROR_MEMORY,"Monster prediction lease storage exhausted");
+    *p=(npc_prediction){.owner=owner,.actor=actor,.slot=slot,
+        .points=(qa_vec3 *)(p+1),.capacity=owner->prediction_points};
+    *lease=p;return true;
 }
 static void prediction_end(void *opaque,void *lease)
 {
-    (void)opaque;
-    npc_prediction *p=lease;
-    if(p) {free(p->points);free(p);}
+    application_bots_npc *owner=opaque;npc_prediction *p=lease;
+    if(p) qa_pool_release(&owner->predictions,p->slot);
 }
 static bool prediction_admit(void *opaque,void *lease,qa_vec3 from,qa_vec3 to,
     qa_nav_travel mode,const qa_vec3 **points,size_t *count,float *seconds,
@@ -144,6 +164,7 @@ void application_npc_owner_free(application_bots_npc *owner)
         qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
         qa_vfs_acquisition_dispose(&graph->acquisition);free(graph);
     }
+    qa_arena_destroy(&owner->prediction_storage);
     qa_vfs_destroy(owner->files);qa_resource_release(owner->map_resource);free(owner);
 }
 void application_bots_npc_destroy(application_provider *source)
@@ -210,6 +231,11 @@ bool application_npc_owner_create(application_provider *source,bool prepared,app
         options.rules=kind;
     }
     if(okay) okay=qa_bsp_open(qa_resource_bytes(owner->map_resource),&owner->geometry,error);
+    if(okay) {
+        qa_bsp_model model;
+        okay=qa_bsp_read_model(&owner->geometry,0,&model,error) &&
+            prediction_extent(owner,model.bounds.min,model.bounds.max,error);
+    }
     if(okay) {
         owner->movement=qa_movement_profile_default(options.rules);
         owner->map=(qa_nav_map){.name=app->current_map,.format=owner->geometry.format};
@@ -287,10 +313,27 @@ bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,
         qa_nav_asset *asset=NULL;
         bool okay=qa_nav_asset_read(qa_resource_bytes(graph->asset),&checksum,&asset,error);
         if(okay) okay=qa_nav_graph_from_asset(&owner->map,asset,&profile,&services,&graph->graph,error);
-        qa_nav_asset_release(asset);return okay;
+        qa_nav_asset_release(asset);
+        if(!okay) return false;
+    } else {
+        qa_nav_construction construction={.geometry=&owner->geometry,.map=owner->map,.profile=profile};
+        if(!qa_nav_graph_construct(&construction,&services,&graph->graph,error)) return false;
     }
-    qa_nav_construction construction={.geometry=&owner->geometry,.map=owner->map,.profile=profile};
-    return qa_nav_graph_construct(&construction,&services,&graph->graph,error);
+    const qa_nav_graph_view *view=qa_nav_graph_read(graph->graph);
+    qa_bsp_model model;
+    if(!qa_bsp_read_model(&owner->geometry,0,&model,error)) return false;
+    qa_bounds bounds={model.bounds.min,model.bounds.max};
+    for(size_t i=0;i<view->node_count;++i) {
+        qa_vec3 origin=view->nodes[i].origin;
+        bounds=qa_bounds_union(bounds,(qa_bounds){origin,origin});
+    }
+    for(size_t i=0;i<view->edge_count;++i) {
+        qa_vec3 start=view->edges[i].start,end=view->edges[i].end;
+        bounds=qa_bounds_union(bounds,(qa_bounds){start,start});
+        bounds=qa_bounds_union(bounds,(qa_bounds){end,end});
+    }
+    return prediction_extent(owner,bounds.mins,bounds.maxs,error);
+
 }
 static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flags,npc_graph **out,qa_error *error)
 {

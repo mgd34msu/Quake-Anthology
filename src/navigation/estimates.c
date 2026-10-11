@@ -5,17 +5,18 @@ struct nav_estimate_cache {
     nav_estimate_cache *next;
     estimate_kind kind;
     uint32_t cluster, goal, flags;
-    size_t count, bytes;
+    size_t count, bytes, slot;
+    bool pinned;
     float *seconds;
     uint32_t *first;
     uint16_t *times;
     uint8_t *reaches;
 };
-typedef struct estimate_update {
+struct estimate_update {
     uint32_t area, cluster, row;
     uint16_t time;
     bool queued;
-} estimate_update;
+};
 typedef struct estimate_queue {
     uint32_t *values;
     size_t capacity, first, count;
@@ -72,17 +73,65 @@ bool nav_aas_estimate_topology(qa_nav_graph *g, qa_error *e) {
     }
     return true;
 }
-static void cache_free(nav_estimate_cache *c) {
-    free(c->seconds);
-    free(c->first);
-    free(c->times);
-    free(c->reaches);
-    free(c);
+enum { NAV_ESTIMATE_CACHE_LIMIT = 128, NAV_ESTIMATE_NESTED_CACHES = 2 };
+#define NAV_ESTIMATE_CACHE_BYTES (16u * 1024u * 1024u)
+
+bool nav_estimates_prepare(qa_navigation *n, qa_error *e) {
+    const qa_nav_graph *g = n->graph;
+    const qa_aas_view *aas = qa_nav_asset_aas(g->view.asset);
+    size_t graph_count = aas ? 0 : g->view.node_count;
+    size_t area_count = 1, portal_count = 1;
+    if (aas) {
+        if (aas->count[QA_AAS_PORTALS] == SIZE_MAX) goto memory;
+        portal_count = aas->count[QA_AAS_PORTALS] + 1;
+        for (size_t i = 0; i < aas->count[QA_AAS_CLUSTERS]; ++i) {
+            int32_t count = aas->clusters[i].reachable_area_count;
+            if (count > 0 && (size_t)count > area_count) area_count = (size_t)count;
+        }
+    }
+    size_t aas_count = area_count > portal_count ? area_count : portal_count;
+    if (graph_count > (SIZE_MAX - sizeof(nav_estimate_cache)) /
+            (sizeof(float) + sizeof(uint32_t)) ||
+        aas_count > (SIZE_MAX - sizeof(nav_estimate_cache)) /
+            (sizeof(uint16_t) + sizeof(uint8_t))) goto memory;
+    size_t payload = graph_count * (sizeof(float) + sizeof(uint32_t));
+    size_t aas_payload = aas ? aas_count * (sizeof(uint16_t) + sizeof(uint8_t)) : 0;
+    if (aas_payload > payload) payload = aas_payload;
+    /* Two additional slots hold the portal cache under construction and its
+     * nested area cache. Static relaxation invokes no service callbacks. */
+    if (!qa_pool_prepare(&n->estimate_caches, &n->estimate_storage,
+            NAV_ESTIMATE_CACHE_LIMIT + NAV_ESTIMATE_NESTED_CACHES,
+            sizeof(nav_estimate_cache) + payload, _Alignof(nav_estimate_cache), e)) return false;
+    if (aas) {
+        if (area_count > SIZE_MAX / sizeof(estimate_update) ||
+            portal_count > SIZE_MAX / sizeof(estimate_update) ||
+            area_count > SIZE_MAX / sizeof(uint32_t) ||
+            portal_count > SIZE_MAX / sizeof(uint32_t)) goto memory;
+        n->area_updates = qa_arena_alloc(&n->estimate_storage,
+            area_count * sizeof(*n->area_updates), _Alignof(estimate_update), e);
+        n->portal_updates = qa_arena_alloc(&n->estimate_storage,
+            portal_count * sizeof(*n->portal_updates), _Alignof(estimate_update), e);
+        n->area_queue = qa_arena_alloc(&n->estimate_storage,
+            area_count * sizeof(*n->area_queue), _Alignof(uint32_t), e);
+        n->portal_queue = qa_arena_alloc(&n->estimate_storage,
+            portal_count * sizeof(*n->portal_queue), _Alignof(uint32_t), e);
+        if (!n->area_updates || !n->portal_updates || !n->area_queue || !n->portal_queue) return false;
+        n->area_update_capacity = area_count;
+        n->portal_update_capacity = portal_count;
+    }
+    qa_arena_seal(&n->estimate_storage);
+    return true;
+memory:
+    qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation estimate storage size overflow");
+    return false;
+}
+static void cache_free(qa_navigation *n, nav_estimate_cache *c) {
+    qa_pool_release(&n->estimate_caches, c->slot);
 }
 void nav_estimates_free(qa_navigation *n) {
     while (n->estimates != NULL) {
         nav_estimate_cache *next = n->estimates->next;
-        cache_free(n->estimates);
+        cache_free(n, n->estimates);
         n->estimates = next;
     }
 }
@@ -93,11 +142,11 @@ static void prune(qa_navigation *n) {
         nav_estimate_cache *c = *at;
         bytes += c->bytes;
         ++count;
-        if (count > 1 && (bytes > 16u * 1024u * 1024u || count > 128)) {
+        if (count > 1 && (bytes > NAV_ESTIMATE_CACHE_BYTES ||
+                count > NAV_ESTIMATE_CACHE_LIMIT) && !c->pinned) {
             *at = c->next;
-            cache_free(c);
-        } else
-            at = &c->next;
+            cache_free(n, c);
+        } else at = &c->next;
     }
 }
 static nav_estimate_cache *cached(qa_navigation *n, estimate_kind kind, uint32_t cluster,
@@ -115,48 +164,38 @@ static nav_estimate_cache *cached(qa_navigation *n, estimate_kind kind, uint32_t
     }
     return NULL;
 }
-static nav_estimate_cache *cache_new(estimate_kind kind, uint32_t cluster, uint32_t goal,
+static nav_estimate_cache *cache_new(qa_navigation *n, estimate_kind kind,
+                                     uint32_t cluster, uint32_t goal,
                                      uint32_t flags, size_t count, qa_error *e) {
+    size_t slot;
+    nav_estimate_cache *c = qa_pool_take(&n->estimate_caches, &slot);
+    if (c == NULL) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation estimate cache storage exhausted");
+        return NULL;
+    }
     size_t stride = kind == ESTIMATE_GRAPH ? sizeof(float) + sizeof(uint32_t)
                                            : sizeof(uint16_t) + sizeof(uint8_t);
-    if (count > (SIZE_MAX - sizeof(nav_estimate_cache)) / stride)
-        goto memory;
-    nav_estimate_cache *c = calloc(1, sizeof(*c));
-    if (c == NULL)
-        goto memory;
-    c->kind = kind;
-    c->cluster = cluster;
-    c->goal = goal;
-    c->flags = flags;
-    c->count = count;
-    c->bytes = sizeof(*c) + count * stride;
+    *c = (nav_estimate_cache){.kind = kind, .cluster = cluster, .goal = goal,
+        .flags = flags, .count = count, .bytes = sizeof(*c) + count * stride, .slot = slot};
     if (kind == ESTIMATE_GRAPH) {
-        c->seconds = malloc((count == 0 ? 1 : count) * sizeof(*c->seconds));
-        c->first = malloc((count == 0 ? 1 : count) * sizeof(*c->first));
-        if (c->seconds == NULL || c->first == NULL) {
-            cache_free(c);
-            goto memory;
-        }
+        c->seconds = (float *)(c + 1);
+        c->first = (uint32_t *)(c->seconds + count);
         for (size_t i = 0; i < count; ++i) {
             c->seconds[i] = INFINITY;
             c->first[i] = QA_NAV_NO_INDEX;
         }
     } else {
-        c->times = calloc(count == 0 ? 1 : count, sizeof(*c->times));
-        c->reaches = calloc(count == 0 ? 1 : count, sizeof(*c->reaches));
-        if (c->times == NULL || c->reaches == NULL) {
-            cache_free(c);
-            goto memory;
-        }
+        c->times = (uint16_t *)(c + 1);
+        c->reaches = (uint8_t *)(c->times + count);
+        memset(c->times, 0, count * sizeof(*c->times));
+        memset(c->reaches, 0, count * sizeof(*c->reaches));
     }
     return c;
-memory:
-    qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating retained navigation estimate cache");
-    return NULL;
 }
 static nav_estimate_cache *remember(qa_navigation *n, nav_estimate_cache *c) {
     c->next = n->estimates;
     n->estimates = c;
+    prune(n);
     return c;
 }
 static bool graph_cache(qa_navigation *n, qa_nav_workspace *w, uint32_t goal, uint32_t flags,
@@ -169,13 +208,13 @@ static bool graph_cache(qa_navigation *n, qa_nav_workspace *w, uint32_t goal, ui
     const qa_nav_graph *g = n->graph;
     if (!nav_workspace_prepare(w, g, e))
         return false;
-    c = cache_new(ESTIMATE_GRAPH, 0, goal, flags, g->view.node_count, e);
+    c = cache_new(n, ESTIMATE_GRAPH, 0, goal, flags, g->view.node_count, e);
     if (c == NULL)
         return false;
     uint32_t index = nav_node_index(g, goal);
     c->seconds[index] = 0;
     if (!nav_queue_push(w, (nav_queue_entry){index, 0}, e)) {
-        cache_free(c);
+        cache_free(n, c);
         return false;
     }
     qa_nav_route_query q = {.has_travel_flags = true, .travel_flags = flags};
@@ -195,7 +234,7 @@ static bool graph_cache(qa_navigation *n, qa_nav_workspace *w, uint32_t goal, ui
             c->seconds[from] = seconds;
             c->first[from] = edge->id;
             if (!nav_queue_push(w, (nav_queue_entry){from, seconds}, e)) {
-                cache_free(c);
+                cache_free(n, c);
                 return false;
             }
         }
@@ -217,24 +256,12 @@ static uint32_t cluster_area(const qa_aas_view *aas, uint32_t cluster, uint32_t 
             .cluster_areas[aas->portals[portal].front_cluster == (int32_t)cluster ? 0 : 1];
     return index < 0 ? QA_NAV_NO_INDEX : (uint32_t)index;
 }
-static bool update_storage(size_t count, estimate_update **updates, estimate_queue *queue,
-                           qa_error *e) {
-    if (count == 0)
-        count = 1;
-    if (count > SIZE_MAX / sizeof(estimate_update) || count > SIZE_MAX / sizeof(uint32_t))
-        goto memory;
-    *updates = calloc(count, sizeof(**updates));
-    queue->values = malloc(count * sizeof(*queue->values));
-    queue->capacity = count;
-    if (*updates == NULL || queue->values == NULL) {
-        free(*updates);
-        free(queue->values);
-        goto memory;
-    }
-    return true;
-memory:
-    qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating AAS cache relaxation workspace");
-    return false;
+static void update_storage(qa_navigation *n, bool portal, size_t count,
+                           estimate_update **updates, estimate_queue *queue) {
+    *updates = portal ? n->portal_updates : n->area_updates;
+    queue->values = portal ? n->portal_queue : n->area_queue;
+    queue->capacity = portal ? n->portal_update_capacity : n->area_update_capacity;
+    memset(*updates, 0, count * sizeof(**updates));
 }
 static void update_enqueue(estimate_queue *q, estimate_update *updates, uint32_t index) {
     if (updates[index].queued)
@@ -266,7 +293,7 @@ static bool area_cache(qa_navigation *n, uint32_t cluster, uint32_t goal, uint32
         return false;
     }
     size_t count = (size_t)aas->clusters[cluster].reachable_area_count;
-    c = cache_new(ESTIMATE_AREA, cluster, goal, flags, count, e);
+    c = cache_new(n, ESTIMATE_AREA, cluster, goal, flags, count, e);
     if (c == NULL)
         return false;
     uint32_t first = cluster_area(aas, cluster, goal);
@@ -276,10 +303,7 @@ static bool area_cache(qa_navigation *n, uint32_t cluster, uint32_t goal, uint32
     }
     estimate_update *updates;
     estimate_queue queue = {0};
-    if (!update_storage(count, &updates, &queue, e)) {
-        cache_free(c);
-        return false;
-    }
+    update_storage(n, false, count, &updates, &queue);
     updates[first] = (estimate_update){.area = goal, .time = 1, .row = QA_NAV_NO_INDEX};
     c->times[first] = 1;
     update_enqueue(&queue, updates, first);
@@ -323,10 +347,8 @@ static bool area_cache(qa_navigation *n, uint32_t cluster, uint32_t goal, uint32
             update_enqueue(&queue, updates, index);
         }
     }
-    free(updates);
-    free(queue.values);
     if (!ok) {
-        cache_free(c);
+        cache_free(n, c);
         return false;
     }
     *out = remember(n, c);
@@ -342,15 +364,12 @@ static bool portal_cache(qa_navigation *n, uint32_t cluster, uint32_t goal, uint
     const qa_nav_graph *g = n->graph;
     const qa_aas_view *aas = qa_nav_asset_aas(g->view.asset);
     size_t count = aas->count[QA_AAS_PORTALS];
-    c = cache_new(ESTIMATE_PORTAL, 0, goal, flags, count, e);
+    c = cache_new(n, ESTIMATE_PORTAL, 0, goal, flags, count, e);
     if (c == NULL)
         return false;
     estimate_update *updates;
     estimate_queue queue = {0};
-    if (!update_storage(count + 1, &updates, &queue, e)) {
-        cache_free(c);
-        return false;
-    }
+    update_storage(n, true, count + 1, &updates, &queue);
     updates[count] = (estimate_update){.area = goal, .cluster = cluster, .time = 1};
     int32_t goal_cluster = aas->settings[goal].cluster;
     if (goal_cluster < 0 && (uint64_t)(-(int64_t)goal_cluster) < count)
@@ -390,10 +409,8 @@ static bool portal_cache(qa_navigation *n, uint32_t cluster, uint32_t goal, uint
             update_enqueue(&queue, updates, number);
         }
     }
-    free(updates);
-    free(queue.values);
     if (!ok) {
-        cache_free(c);
+        cache_free(n, c);
         return false;
     }
     *out = remember(n, c);
@@ -452,6 +469,7 @@ static bool aas_estimate(qa_navigation *n, uint32_t area, uint32_t goal, const q
     nav_estimate_cache *portals;
     if (!portal_cache(n, (uint32_t)goal_cluster, goal, flags, &portals, e))
         return false;
+    portals->pinned = true;
     if (cluster < 0) {
         uint32_t index = (uint32_t)-cluster;
         out->found = true;
@@ -459,10 +477,13 @@ static bool aas_estimate(qa_navigation *n, uint32_t area, uint32_t goal, const q
         uint32_t reach = (uint32_t)start->first_reach + portals->reaches[index];
         if (origin != NULL && nav_edge_index(g, reach) != QA_NAV_NO_INDEX)
             out->first_edge = reach;
+        portals->pinned = false;
         return true;
     }
-    if ((size_t)cluster >= aas->count[QA_AAS_CLUSTERS])
+    if ((size_t)cluster >= aas->count[QA_AAS_CLUSTERS]) {
+        portals->pinned = false;
         return true;
+    }
     const qa_aas_cluster *record = aas->clusters + cluster;
     uint16_t best = 0;
     for (int32_t i = 0; i < record->portal_count; ++i) {
@@ -471,8 +492,10 @@ static bool aas_estimate(qa_navigation *n, uint32_t area, uint32_t goal, const q
             continue;
         const qa_aas_portal *portal = aas->portals + number;
         nav_estimate_cache *local;
-        if (!area_cache(n, (uint32_t)cluster, (uint32_t)portal->area, flags, &local, e))
+        if (!area_cache(n, (uint32_t)cluster, (uint32_t)portal->area, flags, &local, e)) {
+            portals->pinned = false;
             return false;
+        }
         uint32_t index = cluster_area(aas, (uint32_t)cluster, area);
         if (index >= local->count || local->times[index] == 0)
             continue;
@@ -484,11 +507,14 @@ static bool aas_estimate(qa_navigation *n, uint32_t area, uint32_t goal, const q
             uint16_t crossing;
             if (reach >= aas->count[QA_AAS_REACHABILITY]) {
                 qa_error_set(e, QA_ERROR_FORMAT, reach, "AAS cached reach is out of bounds");
+                portals->pinned = false;
                 return false;
             }
             if (!qa_navigation_aas_area_time(start, *origin, aas->reachability[reach].start,
-                                             &crossing, e))
+                                             &crossing, e)) {
+                portals->pinned = false;
                 return false;
+            }
             time = (uint16_t)(time + crossing);
         }
         if (best == 0 || time < best) {
@@ -498,6 +524,7 @@ static bool aas_estimate(qa_navigation *n, uint32_t area, uint32_t goal, const q
             out->first_edge = nav_edge_index(g, reach) == QA_NAV_NO_INDEX ? QA_NAV_NO_INDEX : reach;
         }
     }
+    portals->pinned = false;
     return true;
 }
 bool qa_navigation_estimate(qa_navigation *n, qa_nav_workspace *w, uint32_t start, uint32_t goal,

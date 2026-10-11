@@ -1,5 +1,70 @@
 #include "internal.h"
 #include "qa/text.h"
+#include "qa/bots_memory.h"
+
+struct chat_workspace {
+    qa_arena storage;
+    qa_pool pages;
+    size_t references, capacity;
+};
+static void workspace_release(chat_workspace *workspace) {
+    if(workspace && !--workspace->references) {
+        qa_arena_destroy(&workspace->storage);
+        free(workspace);
+    }
+}
+void chat_scratch_begin(qa_bot_chat_system *system,chat_scratch *scratch) {
+    scratch->owner=system->workspace;
+    ++scratch->owner->references;
+    qa_arena_init_pool(&scratch->arena,&scratch->owner->pages);
+}
+void chat_scratch_end(chat_scratch *scratch) {
+    qa_arena_destroy(&scratch->arena);
+    workspace_release(scratch->owner);
+}
+static size_t asset_text_extent(const qa_bot_chat_asset *asset) {
+    size_t largest=0;
+    if(!asset) return largest;
+    if(asset->messages) for(size_t i=0;i<asset->view.message_count;++i) {
+        size_t size=strlen(asset->messages[i])+1;
+        if(size>largest) largest=size;
+    }
+    if(asset->alternatives) for(size_t i=0;i<asset->view.alternative_count;++i) {
+        size_t size=strlen(asset->alternatives[i])+1;
+        if(size>largest) largest=size;
+    }
+    if(asset->synonyms) for(size_t i=0;i<asset->view.synonym_count;++i) {
+        size_t size=strlen(asset->synonyms[i].text)+1;
+        if(size>largest) largest=size;
+    }
+    return largest;
+}
+bool chat_workspace_prepare(qa_bot_chat_system *system,const qa_bot_chat_options *options,
+    const qa_bot_chat_asset *initial,qa_error *error) {
+    const qa_bot_chat_asset *assets[]={options->synonyms,options->randoms,options->matches,options->replies,initial};
+    size_t text=QA_BOT_CHAT_MESSAGE_SIZE;
+    for(size_t i=0;i<sizeof(assets)/sizeof(assets[0]);++i) {
+        size_t size=asset_text_extent(assets[i]);
+        if(size>text) text=size;
+    }
+    /* Source text may span the GAME memory owner. Synonyms can expand each
+     * character of a complete chat message into an admitted asset string. */
+    if(text>(SIZE_MAX-4u*QA_BOT_GAME_MEMORY_BYTES)/(8u*QA_BOT_CHAT_MESSAGE_SIZE)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Bot chat workspace extent overflow");return false;
+    }
+    size_t capacity=4u*QA_BOT_GAME_MEMORY_BYTES+text*(8u*QA_BOT_CHAT_MESSAGE_SIZE);
+    if(system->workspace && system->workspace->capacity>=capacity) return true;
+    chat_workspace *workspace=calloc(1,sizeof(*workspace));
+    if(!workspace) {qa_error_set(error,QA_ERROR_MEMORY,0,"Preparing bot chat workspace");return false;}
+    size_t stride=4096;
+    if(!qa_pool_reserve_pages(&workspace->pages,&workspace->storage,
+        capacity/stride+(capacity%stride!=0),stride,_Alignof(max_align_t),error)) {
+        qa_arena_destroy(&workspace->storage);free(workspace);return false;
+    }
+    workspace->references=1;workspace->capacity=capacity;
+    chat_workspace *previous=system->workspace;system->workspace=workspace;
+    workspace_release(previous);return true;
+}
 
 void chat_report(qa_bot_chat_system *s, qa_script_severity severity, const char *message) {
     if (s->services.diagnostic != NULL)
@@ -45,6 +110,9 @@ bool qa_bot_chat_system_create(const qa_bot_chat_services *services,
     s->free_console = 0;
     s->references = 1;
     s->revision = 1;
+    if(!chat_workspace_prepare(s,options,NULL,e)) {
+        (void)qa_bot_memory_release(s->memory,NULL);free(s);return false;
+    }
     qa_bot_chat_asset_retain(options->synonyms);
     qa_bot_chat_asset_retain(options->randoms);
     qa_bot_chat_asset_retain(options->matches);
@@ -64,6 +132,7 @@ void chat_system_release(qa_bot_chat_system *s) {
     qa_bot_chat_asset_release(s->options.matches);
     qa_bot_chat_asset_release(s->options.replies);
     free(s->console);
+    workspace_release(s->workspace);
     (void)qa_bot_memory_release(s->memory,NULL);
     free(s);
 }
@@ -93,6 +162,7 @@ bool qa_bot_chat_system_configure(qa_bot_chat_system *s, const qa_bot_chat_optio
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot chat configuration");
         return false;
     }
+    if(!chat_workspace_prepare(s,o,NULL,e)) return false;
     if(!o->console_unavailable && o->console_capacity &&
        (!s->console_heap.owner || s->options.console_capacity!=o->console_capacity)) {
         if(s->console_heap.owner && !qa_bot_memory_free(s->memory,s->console_heap,e)) return false;
@@ -192,7 +262,8 @@ bool qa_bot_chat_set_initial(qa_bot_chat *s, qa_bot_chat_asset *asset, qa_error 
     if(asset && !pointer) {
         qa_bot_chat_asset_release(asset);qa_error_set(e,QA_ERROR_ARGUMENT,0,"Initial chat publication requires its true source pointer");return false;
     }
-    if(!chat_state_set(s,CHAT_INITIAL,pointer,e)) {qa_bot_chat_asset_release(asset);return false;}
+    if(!chat_workspace_prepare(s->system,&s->system->options,asset,e) ||
+       !chat_state_set(s,CHAT_INITIAL,pointer,e)) {qa_bot_chat_asset_release(asset);return false;}
     qa_bot_chat_asset_release(s->initial);
     s->initial = asset;
     ++s->initial_revision;

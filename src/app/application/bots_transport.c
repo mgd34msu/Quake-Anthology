@@ -10,7 +10,7 @@ typedef struct bot_connection {
     uint32_t client;
     qa_actor_id actor;
     application_q3_command_cursor server_commands;
-    int32_t *snapshot;
+    int32_t snapshot[APPLICATION_BOT_WORLD_LAST+1];
     size_t snapshot_count;
     bool active,snapshot_present;
 } bot_connection;
@@ -34,7 +34,7 @@ static void sweep(application_bot_transport *transport) {
     for(size_t i=0;i<transport->count;++i) {
         bot_connection *entry=transport->connections[i];
         if(entry->active) transport->connections[retained++]=entry;
-        else {application_q3_command_clear(&entry->server_commands);free(entry->snapshot);free(entry);}
+        else {application_q3_command_clear(&entry->server_commands);free(entry);}
     }
     transport->count=retained;
 }
@@ -51,7 +51,7 @@ bool application_bot_transport_destroy(application_bot_transport *transport,qa_e
     if(transport->calls) return fail(error,"local bot transport is executing a source callback");
     for(size_t i=0;i<transport->count;++i) {
         application_q3_command_clear(&transport->connections[i]->server_commands);
-        free(transport->connections[i]->snapshot);free(transport->connections[i]);
+        free(transport->connections[i]);
     }
     free(transport->connections);free(transport);return true;
 }
@@ -132,15 +132,13 @@ bool application_bot_transport_snapshot(application_bot_transport *transport,uin
     ++transport->calls;bool okay=true;
     if(!entry->snapshot_present) {
         uint32_t count=application_bot_world_entity_count(transport->services.world);
-        int32_t *snapshot=count?malloc((size_t)count*sizeof(*snapshot)):NULL;size_t visible=0;
-        if(count && !snapshot) {qa_error_set(error,QA_ERROR_MEMORY,0,"allocating source bot sensory snapshot");okay=false;}
+        size_t visible=0;
         for(uint32_t number=0;okay && number<count;++number) {
             application_bot_world_entity observed;
             okay=application_bot_world_read(transport->services.world,(int32_t)number,&observed,error);
-            if(okay && observed.present && observed.linked && !observed.hidden) snapshot[visible++]=(int32_t)number;
+            if(okay && observed.present && observed.linked && !observed.hidden) entry->snapshot[visible++]=(int32_t)number;
         }
-        if(okay) {entry->snapshot=snapshot;entry->snapshot_count=visible;entry->snapshot_present=true;}
-        else free(snapshot);
+        if(okay) {entry->snapshot_count=visible;entry->snapshot_present=true;}
     }
     if(okay) *out=(size_t)sequence<entry->snapshot_count?entry->snapshot[sequence]:-1;
     --transport->calls;sweep(transport);return okay;
@@ -149,7 +147,7 @@ bool application_bot_transport_frame(application_bot_transport *transport,double
     if(!transport || transport->calls) return fail(error,"local bot frame reset requires its idle transport");
     transport->elapsed_ms=elapsed_ms;
     for(size_t i=0;i<transport->count;++i) {
-        bot_connection *entry=transport->connections[i];free(entry->snapshot);entry->snapshot=NULL;
+        bot_connection *entry=transport->connections[i];
         entry->snapshot_count=0;entry->snapshot_present=false;
     }
     return true;
@@ -184,9 +182,8 @@ static bool connection_fields(qa_source_save_io *io,application_bot_transport *t
         if(io->offset>io->input.size || entry->snapshot_count>(io->input.size-io->offset)/4 ||
            entry->snapshot_count>SIZE_MAX/sizeof(*entry->snapshot))
             return bot_save_fail(io,QA_ERROR_FORMAT,"local bot snapshot exceeds its actual saved extent");
-        entry->snapshot=entry->snapshot_count?malloc(entry->snapshot_count*sizeof(*entry->snapshot)):NULL;
-        if(entry->snapshot_count && !entry->snapshot)
-            return bot_save_fail(io,QA_ERROR_MEMORY,"allocating local bot snapshot continuation");
+        if(entry->snapshot_count>sizeof(entry->snapshot)/sizeof(entry->snapshot[0]))
+            return bot_save_fail(io,QA_ERROR_FORMAT,"local bot snapshot exceeds its source entity namespace");
     }
     uint32_t extent=application_bot_world_entity_count(transport->services.world);
     for(size_t i=0;i<entry->snapshot_count;++i) {

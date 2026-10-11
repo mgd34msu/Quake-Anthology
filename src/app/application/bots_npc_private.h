@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "bots_npc.h"
 #include "qa/navigation.h"
+#include "qa/pool.h"
 #include "qa/source_save.h"
 
 typedef struct npc_graph {
@@ -35,6 +36,9 @@ typedef struct application_bots_npc {
     qa_vfs *files;
     npc_graph *graphs;
     npc_actor *actors;
+    qa_arena prediction_storage;
+    qa_pool predictions;
+    size_t prediction_points;
     bool busy;
 } application_bots_npc;
 

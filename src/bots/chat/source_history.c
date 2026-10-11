@@ -141,6 +141,7 @@ static bool image_copy(qa_bot_runtime *runtime,const bot_chat_history *saved,
     bot_chat_history *image=calloc(1,sizeof(*image));
     if(!image) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining source chat history");return false;}
     image->owner=runtime;image->system=*source;image->system.console=NULL;image->system.states=NULL;
+    image->system.workspace=NULL;
     image->system.references=1;image->system.restoring=false;
     if(!qa_bot_memory_retain(source->memory,error)) {free(image);return false;}
     qa_bot_chat_asset_retain(source->options.synonyms);qa_bot_chat_asset_retain(source->options.randoms);
@@ -233,7 +234,9 @@ void bot_chat_history_finish(bot_chat_history_restore *prepared,bool commit) {
         qa_bot_chat_asset_release(system->options.matches);qa_bot_chat_asset_release(system->options.replies);
         free(system->console);(void)qa_bot_memory_release(system->memory,NULL);
         qa_bot_chat_services services=system->services;qa_bot_log *log=system->log;
+        chat_workspace *workspace=system->workspace;
         *system=image->system;system->services=services;system->log=log;
+        system->workspace=workspace;
         for(qa_bot_chat *state=system->states;state;state=state->next) state->system=system;
         memcpy(runtime->chats,image->handles,sizeof(image->handles));
         image->system.options=(qa_bot_chat_options){0};image->system.states=NULL;image->system.console=NULL;image->system.memory=NULL;

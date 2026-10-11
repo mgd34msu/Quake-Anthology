@@ -28,6 +28,7 @@ typedef struct nav_crossing {
     uint32_t ordinal;
 } nav_crossing;
 typedef struct nav_estimate_cache nav_estimate_cache;
+typedef struct estimate_update estimate_update;
 struct qa_navigation {
     qa_nav_graph *graph;
     qa_navigation_services services;
@@ -36,6 +37,11 @@ struct qa_navigation {
     float *admission_seconds;
     uint64_t generation, world_revision, topology_revision;
     nav_estimate_cache *estimates;
+    qa_arena estimate_storage;
+    qa_pool estimate_caches;
+    estimate_update *area_updates, *portal_updates;
+    uint32_t *area_queue, *portal_queue;
+    size_t area_update_capacity, portal_update_capacity;
     qa_arena prediction_storage;
     qa_pool prediction_results;
 };
@@ -72,6 +78,7 @@ bool nav_queue_pop(qa_nav_workspace *, nav_queue_entry *);
 void nav_queue_clear(qa_nav_workspace *);
 void nav_queue_remove(qa_nav_workspace *, uint32_t);
 void nav_refresh(qa_navigation *);
+bool nav_estimates_prepare(qa_navigation *, qa_error *);
 void nav_estimates_free(qa_navigation *);
 bool nav_aas_estimate_topology(qa_nav_graph *, qa_error *);
 bool nav_static_node(const qa_navigation *, uint32_t, const qa_nav_route_query *);

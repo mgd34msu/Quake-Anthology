@@ -251,17 +251,14 @@ static bool match_pieces(const qa_bot_chat_asset *a, qa_bot_chat_range range,boo
             }
             char storage[256];
             const char *text;
-            char *snapshot=NULL;
-            if(source && match->external) {
-                snapshot=malloc(size+1);
-                if(!snapshot) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining match alternative across source text callback");return false;}
+            char snapshot[QA_BOT_CHAT_MESSAGE_SIZE];
+            if(source && match->external && size<sizeof(snapshot)) {
                 memcpy(snapshot,alternative,size+1);alternative=snapshot;
             }
-            if (!match_text(match, storage, &text, e)) {free(snapshot);return false;}
+            if (!match_text(match, storage, &text, e)) return false;
             size_t length = match->native != NULL ? native_length : strlen(text);
-            int32_t offset = qa_bot_chat_contains(text + (pointer < length ? pointer : length),
-                                                  alternative, false);
-            free(snapshot);
+            int32_t offset = size>length ? -1 :
+                qa_bot_chat_contains(text + (pointer < length ? pointer : length), alternative, false);
             if (offset < 0) {
                 if(source && !bot_chat_graph_link(graph,source_string,BOT_CHAT_GRAPH_MATCH_STRING,4,BOT_CHAT_GRAPH_MATCH_STRING,&source_string,e)) return false;
                 continue;
@@ -479,7 +476,7 @@ static bool replace_at(char *text, size_t capacity, size_t offset, size_t remove
     memcpy(text + offset, replacement, size);
     return true;
 }
-static bool replacement_capacity(char **text, size_t *capacity, size_t needed, qa_error *e) {
+static bool replacement_capacity(qa_arena *arena,char **text, size_t *capacity, size_t needed, qa_error *e) {
     if (needed <= *capacity)
         return true;
     size_t size = *capacity != 0 ? *capacity : 256;
@@ -490,7 +487,7 @@ static bool replacement_capacity(char **text, size_t *capacity, size_t needed, q
         }
         size *= 2;
     }
-    char *grown = realloc(*text, size);
+    char *grown = qa_arena_grow(arena,*text,*capacity,size,1,e);
     if (grown == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, needed, "Growing external bot text snapshot");
         return false;
@@ -499,7 +496,7 @@ static bool replacement_capacity(char **text, size_t *capacity, size_t needed, q
     *capacity = size;
     return true;
 }
-static bool replace_words_value(char **storage, size_t *capacity, const char *word,
+static bool replace_words_value(qa_arena *arena,char **storage, size_t *capacity, const char *word,
                           const char *replacement, const qa_bot_chat_text_io *io,
                           const match_access *guard,bool growing, qa_error *e) {
     char *text = *storage;
@@ -516,7 +513,7 @@ static bool replace_words_value(char **storage, size_t *capacity, const char *wo
                     qa_error_set(e, QA_ERROR_MEMORY, 0, "Bot replacement size overflow");
                     return false;
                 }
-                if (!replacement_capacity(storage, capacity, length - removed + size + 1, e))
+                if (!replacement_capacity(arena,storage, capacity, length - removed + size + 1, e))
                     return false;
                 text = *storage;
                 const char *tail = text + (uint32_t)found + removed;
@@ -532,19 +529,16 @@ static bool replace_words_value(char **storage, size_t *capacity, const char *wo
     }
     return true;
 }
-static bool replace_words(char **storage,size_t *capacity,const char *word,const char *replacement,
+static bool replace_words(qa_bot_chat_system *system,qa_arena *arena,char **storage,size_t *capacity,const char *word,const char *replacement,
     const qa_bot_chat_text_io *io,const match_access *guard,bool growing,qa_error *error) {
-    size_t word_size=strlen(word)+1,replacement_size=strlen(replacement)+1;
-    char *word_value=malloc(word_size),*replacement_value=malloc(replacement_size);
-    if(!word_value || !replacement_value) {
-        free(word_value);free(replacement_value);
-        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining reached synonym string values");return false;
-    }
-    memcpy(word_value,word,word_size);memcpy(replacement_value,replacement,replacement_size);
-    bool ok=replace_words_value(storage,capacity,word_value,replacement_value,io,guard,growing,error);
-    free(word_value);free(replacement_value);return ok;
+    chat_scratch values;chat_scratch_begin(system,&values);
+    char *word_value=qa_arena_text(&values.arena,word,error);
+    char *replacement_value=qa_arena_text(&values.arena,replacement,error);
+    bool ok=word_value && replacement_value &&
+        replace_words_value(arena,storage,capacity,word_value,replacement_value,io,guard,growing,error);
+    chat_scratch_end(&values);return ok;
 }
-static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capacity,
+static bool replace_synonyms(qa_bot_chat_system *system,qa_arena *arena,char *text, size_t capacity,
                              uint32_t context, bool weighted, bool reply,
                              const qa_bot_chat_text_io *io, const match_access *guard,
                              char **growing,qa_error *e) {
@@ -586,7 +580,7 @@ static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capa
                         if(size>=SIZE_MAX-(length-removed)) {
                             qa_error_set(e,QA_ERROR_MEMORY,0,"Reply synonym exceeds native address range");return false;
                         }
-                        bool ready=replacement_capacity(&text,&capacity,length-removed+size+1,e);
+                        bool ready=replacement_capacity(arena,&text,&capacity,length-removed+size+1,e);
                         *growing=text;if(!ready) return false;
                     }
                     if (!replace_at(text, capacity, pointer, strlen(word), replacement, e))
@@ -641,7 +635,7 @@ static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capa
                     ok = false;
                     break;
                 }
-                ok = replacement_capacity(&snapshot, &snapshot_capacity, source.size + 1, e);
+                ok = replacement_capacity(arena,&snapshot, &snapshot_capacity, source.size + 1, e);
                 if (!ok)
                     break;
                 if (source.size != 0)
@@ -650,36 +644,38 @@ static bool replace_synonyms(qa_bot_chat_system *system, char *text, size_t capa
                 qa_bot_chat_synonym entry,replacement;
                 ok=bot_chat_packed_entry(a,group.entries.first+j,&entry,e) &&
                     bot_chat_packed_entry(a,group.entries.first+chosen,&replacement,e);
-                if(ok) ok = replace_words(&snapshot, &snapshot_capacity,
+                if(ok) ok = replace_words(system,arena,&snapshot, &snapshot_capacity,
                                    entry.text, replacement.text, io,guard,false, e);
             } else {
                 qa_bot_chat_synonym entry,replacement;
                 ok=bot_chat_packed_entry(a,group.entries.first+j,&entry,e) &&
                     bot_chat_packed_entry(a,group.entries.first+chosen,&replacement,e);
-                if(ok) ok = replace_words(&text, &capacity, entry.text,
+                if(ok) ok = replace_words(system,arena,&text, &capacity, entry.text,
                                    replacement.text, NULL, NULL,growing!=NULL, e);
                 if(growing) *growing=text;
             }
         }
     }
-    free(snapshot);
     return ok;
 }
 bool qa_bot_chat_replace_synonyms(qa_bot_chat_system *system, char *text, size_t capacity,
                                   uint32_t context, bool weighted, bool reply, qa_error *e) {
-    return replace_synonyms(system, text, capacity, context, weighted, reply, NULL, NULL,NULL, e);
+    if(!system) return replace_synonyms(system,NULL,text,capacity,context,weighted,reply,NULL,NULL,NULL,e);
+    chat_scratch scratch;chat_scratch_begin(system,&scratch);
+    bool ok=replace_synonyms(system,&scratch.arena,text,capacity,context,weighted,reply,NULL,NULL,NULL,e);
+    chat_scratch_end(&scratch);return ok;
 }
-bool chat_replace_source(qa_bot_chat_system *system,const char *source,uint32_t context,
+bool chat_replace_source(qa_bot_chat_system *system,qa_arena *arena,const char *source,uint32_t context,
     bool weighted,bool reply,char **out,qa_error *error) {
     if(!out || *out || !source || !system) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source synonym expansion requires its actual string/system/output");return false;
     }
-    size_t size=strlen(source)+1;char *text=malloc(size);
+    size_t size=strlen(source)+1;char *text=qa_arena_text(arena,source,error);
     if(!text) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining source synonym result");return false;}
-    memcpy(text,source,size);qa_bot_chat_asset *asset=system->options.synonyms;qa_bot_chat_asset_retain(asset);
-    bool ok=replace_synonyms(system,text,size,context,weighted,reply,NULL,NULL,&text,error);
+    qa_bot_chat_asset *asset=system->options.synonyms;qa_bot_chat_asset_retain(asset);
+    bool ok=replace_synonyms(system,arena,text,size,context,weighted,reply,NULL,NULL,&text,error);
     qa_bot_chat_asset_release(asset);
-    if(!ok) {free(text);return false;}
+    if(!ok) return false;
     *out=text;return true;
 }
 bool qa_bot_chat_replace_synonyms_into(qa_bot_chat_system *system, const qa_bot_chat_text_io *io,
@@ -695,7 +691,9 @@ bool qa_bot_chat_replace_synonyms_into(qa_bot_chat_system *system, const qa_bot_
     qa_bot_chat_asset *asset = system->options.synonyms;
     qa_bot_chat_asset_retain(asset);
     match_access guard = {.system = system, .revision = system->revision};
-    bool ok = replace_synonyms(system, NULL, 0, context, false, false, io, &guard,NULL, e);
+    chat_scratch scratch;chat_scratch_begin(system,&scratch);
+    bool ok = replace_synonyms(system,&scratch.arena,NULL,0,context,false,false,io,&guard,NULL,e);
+    chat_scratch_end(&scratch);
     qa_bot_chat_asset_release(asset);
     chat_system_release(system);
     return ok;
