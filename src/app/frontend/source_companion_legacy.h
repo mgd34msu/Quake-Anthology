@@ -3,7 +3,6 @@
 #include "source_companion.h"
 typedef struct frontend_source_companion_legacy {
     qa_frontend *frontend;
-    qa_actor_id actor;
     qa_scene_world *world;
     frontend_source_companion_view capture;
     qa_q3_presentation *presentation;

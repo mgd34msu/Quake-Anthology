@@ -31,18 +31,18 @@ typedef struct frontend_source_companion_packet {
 } frontend_source_companion_packet;
 typedef struct frontend_source_companion_ref {
     qa_q3_ref_entity ref;
-    qa_q3_refdef definition;
+    const qa_q3_refdef *definition;
     bool view;
 } frontend_source_companion_ref;
 typedef struct frontend_source_companion_polygon {
     qa_q3_scene_polygon polygon;
     const qa_scene_vertex *vertices;
-    qa_q3_refdef definition;
+    const qa_q3_refdef *definition;
     bool view;
 } frontend_source_companion_polygon;
 typedef struct frontend_source_companion_light {
     qa_scene_light light;
-    qa_q3_refdef definition;
+    const qa_q3_refdef *definition;
     bool view;
 } frontend_source_companion_light;
 typedef struct frontend_source_companion_selection {
@@ -52,8 +52,9 @@ typedef struct frontend_source_companion_selection {
     qa_application_q3_equipment_source_weapon *weapons;
     size_t ref_count, polygon_count, light_count, weapon_count;
 } frontend_source_companion_selection;
-bool frontend_source_companion_ref_owned(const frontend_source_companion_packet *,size_t,
-    qa_actor_id,const qa_application_q3_weapon_models *,bool registered,bool *view);
+void frontend_source_companion_ref_place(const frontend_source_companion_ref *,const qa_scene_world_input *,qa_q3_ref_entity *);
+bool frontend_source_companion_polygon_vertices(const frontend_source_companion_polygon *,const qa_scene_world_input *,
+    qa_arena *,const qa_scene_vertex **,qa_error *);
 bool frontend_source_companion_selection_read(qa_frontend *,const frontend_source_companion_view *,
     const frontend_source_companion_selection **,qa_error *);
 bool frontend_source_companion_read(const qa_frontend *,uint32_t physical,qa_actor_id,
@@ -61,6 +62,5 @@ bool frontend_source_companion_read(const qa_frontend *,uint32_t physical,qa_act
 bool frontend_source_companion_current(const qa_frontend *,const frontend_source_companion_view *);
 bool frontend_source_companion_presentation_read(const qa_frontend *,const frontend_source_companion_view *,
     qa_q3_presentation **,qa_error *);
-bool frontend_source_companion_packet_read(const qa_frontend *,const frontend_source_companion_view *,size_t,
-    frontend_source_companion_packet *,qa_error *);
+
 #endif

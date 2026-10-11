@@ -59,13 +59,7 @@ struct frontend_equipment_source {
     equipment_source_weapon *source_weapons,*last_source_weapon;
     size_t source_weapon_count;
     frontend_source_companion_view companion;
-    frontend_source_companion_ref *companion_refs;
-    size_t companion_ref_count;
-    frontend_source_companion_polygon *companion_polygons;
-    frontend_source_companion_light *companion_lights;
-    size_t companion_polygon_count, companion_light_count;
-    qa_application_q3_equipment_source_weapon *companion_weapons;
-    size_t companion_weapon_count;
+    const frontend_source_companion_selection *companion_selection;
     const qa_scene_light *view_lights, *view_projected_lights;
     qa_model_transform view_transform;
     qa_q3_ref_entity view_entity;
@@ -107,10 +101,7 @@ static bool companion_prepare(frontend_equipment_source *owner, bool *present, q
     if (!*present) return true;
     const frontend_source_companion_selection *selection;
     if (!frontend_source_companion_selection_read(owner->options.frontend,&captured,&selection,error)) return false;
-    owner->companion_refs=selection->refs; owner->companion_ref_count=selection->ref_count;
-    owner->companion_polygons=selection->polygons; owner->companion_polygon_count=selection->polygon_count;
-    owner->companion_lights=selection->lights; owner->companion_light_count=selection->light_count;
-    owner->companion_weapons=selection->weapons; owner->companion_weapon_count=selection->weapon_count;
+    owner->companion_selection=selection;
     owner->companion = captured; owner->companion_selected = true;
     return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
         "Selected weapon capture retired its real Source Draw receipt");
@@ -130,14 +121,14 @@ static bool current_preparation(void *context)
 static bool companion_held(const frontend_equipment_source *owner, qa_actor_id actor)
 {
     if (!owner->companion_selected || !qa_actor_id_equal(actor, owner->selection.actor)) return false;
-    for (size_t i = 0; i < owner->companion_weapon_count; ++i)
-        if (!owner->companion_weapons[i].view && qa_actor_id_equal(owner->companion_weapons[i].actor, actor)) return true;
-    for (size_t i = 0; i < owner->companion_ref_count; ++i)
-        if (!owner->companion_refs[i].view) return true;
-    for (size_t i = 0; i < owner->companion_polygon_count; ++i)
-        if (!owner->companion_polygons[i].view) return true;
-    for (size_t i = 0; i < owner->companion_light_count; ++i)
-        if (!owner->companion_lights[i].view) return true;
+    for (size_t i = 0; i < owner->companion_selection->weapon_count; ++i)
+        if (!owner->companion_selection->weapons[i].view && qa_actor_id_equal(owner->companion_selection->weapons[i].actor, actor)) return true;
+    for (size_t i = 0; i < owner->companion_selection->ref_count; ++i)
+        if (!owner->companion_selection->refs[i].view) return true;
+    for (size_t i = 0; i < owner->companion_selection->polygon_count; ++i)
+        if (!owner->companion_selection->polygons[i].view) return true;
+    for (size_t i = 0; i < owner->companion_selection->light_count; ++i)
+        if (!owner->companion_selection->lights[i].view) return true;
     return false;
 }
 
@@ -378,10 +369,7 @@ static void release_draw(void *context)
     frontend_equipment_gear_release(owner->gear_presenter); owner->gear_presenter = NULL;
     owner->selection = owner->hud;
     owner->drawing = false; owner->original_q3_view = false;
-    owner->companion_refs = NULL; owner->companion_ref_count = 0;
-    owner->companion_polygons = NULL; owner->companion_polygon_count = 0;
-    owner->companion_lights = NULL; owner->companion_light_count = 0;
-    owner->companion_weapons = NULL; owner->companion_weapon_count = 0;
+    owner->companion_selection = NULL;
     owner->companion_selected = false; owner->companion = (frontend_source_companion_view){0};
     owner->companion_view_requested = false;
     if (owner->borrowed) {
@@ -764,10 +752,10 @@ bool frontend_equipment_source_idle(const frontend_equipment_source *owner)
     return !owner || (!owner->borrowed && !owner->drawing && !owner->active &&
         !owner->packets && !owner->world_packets && !owner->submitting && !owner->view_media &&
         !owner->q3_presenter && !owner->q3_view && !owner->gear_presenter && !owner->gear_view &&
-        !owner->companion_selected && !owner->companion_refs && !owner->source_actors &&
-        !owner->source_polygons && !owner->source_lights && !owner->companion_polygons &&
-        !owner->companion_lights && !owner->view_lights && !owner->view_projected_lights &&
-        !owner->source_weapons && !owner->companion_weapons);
+        !owner->companion_selected && !owner->companion_selection && !owner->source_actors &&
+        !owner->source_polygons && !owner->source_lights &&
+        !owner->view_lights && !owner->view_projected_lights &&
+        !owner->source_weapons);
 }
 
 bool frontend_equipment_source_destroy(frontend_equipment_source *owner, qa_error *error)
@@ -931,10 +919,8 @@ static bool companion_lights_prepare(frontend_equipment_source *owner,
     qa_q3_scene_options *options, qa_error *error)
 {
     if (!owner->companion_selected || options->world.no_world) return true;
-    frontend_source_companion_selection selection={.lights=owner->companion_lights,
-        .light_count=owner->companion_light_count};
     if(!frontend_scene_lights_companion_merge(&owner->options.frontend->frame.storage,
-        &options->world,&selection,!owner->companion_view_requested,error) ||
+        &options->world,owner->companion_selection,!owner->companion_view_requested,error) ||
         !frontend_source_companion_current(owner->options.frontend,&owner->companion)) return false;
     owner->view_lights=options->world.lights;
     owner->view_projected_lights=options->world.projected_lights;
@@ -963,8 +949,8 @@ bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
     owner->companion_view_requested = owner->companion_selected && requested && !options->world.view.clip_enabled;
     if (!companion_lights_prepare(owner, options, error)) return false;
     if (owner->companion_selected && !options->world.no_world)
-        for (size_t i = 0; i < owner->companion_ref_count; ++i)
-            if (!owner->companion_refs[i].view || owner->companion_view_requested) ++count;
+        for (size_t i = 0; i < owner->companion_selection->ref_count; ++i)
+            if (!owner->companion_selection->refs[i].view || owner->companion_view_requested) ++count;
     for (equipment_packet *row = owner->packets; row; row = row->next) {
         size_t extent = row->companion ? 0 : row->gear_output ? frontend_equipment_gear_output_count(row->gear_output) :
             row->q3_output ? frontend_equipment_q3_output_count(row->q3_output) :
@@ -985,34 +971,24 @@ static bool companion_submit(frontend_equipment_source *owner,
     const qa_q3_scene_options *options, uint32_t *order, qa_scene_frame *frame, qa_error *error)
 {
     if (!owner->companion_selected || options->world.no_world) return true;
-    for (size_t i = 0; i < owner->companion_ref_count; ++i) {
-        const frontend_source_companion_ref *captured = owner->companion_refs + i;
+    for (size_t i = 0; i < owner->companion_selection->ref_count; ++i) {
+        const frontend_source_companion_ref *captured = owner->companion_selection->refs + i;
         if (captured->view && !owner->companion_view_requested) continue;
-        qa_q3_ref_entity ref = captured->ref;
-        if (captured->view) {
-            qa_q3_ref_entity_remap(&ref,captured->definition.origin,captured->definition.axis,
-                options->world.view.origin,options->world.view.axis);
-        }
+        qa_q3_ref_entity ref;
+        frontend_source_companion_ref_place(captured,&options->world,&ref);
         if (!frontend_source_companion_current(owner->options.frontend, &owner->companion) ||
             !qa_q3_presentation_source_component_entity(owner->options.presentation, owner->companion.assets,
-                &ref, captured->definition.time, options, (*order)++, frame, error)) return false;
+                &ref, captured->definition->time, options, (*order)++, frame, error)) return false;
     }
-    for (size_t i = 0; i < owner->companion_polygon_count; ++i) {
-        const frontend_source_companion_polygon *captured = owner->companion_polygons + i;
+    for (size_t i = 0; i < owner->companion_selection->polygon_count; ++i) {
+        const frontend_source_companion_polygon *captured = owner->companion_selection->polygons + i;
         if (captured->view && !owner->companion_view_requested) continue;
-        const qa_scene_vertex *vertices=captured->vertices;qa_scene_vertex *transformed=NULL;
-        if (captured->view && captured->polygon.count) {
-            transformed=qa_arena_alloc(&frame->storage,captured->polygon.count*sizeof(*transformed),
-                _Alignof(qa_scene_vertex),error);
-            if (!transformed) return frontend_fail(error, QA_ERROR_MEMORY, "Transforming genuine Source view weapon polygon");
-            qa_scene_vertices_remap(transformed,vertices,captured->polygon.count,
-                captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis);
-            vertices = transformed;
-        }
+        const qa_scene_vertex *vertices;
+        if(!frontend_source_companion_polygon_vertices(captured,&options->world,&frame->storage,&vertices,error)) return false;
         bool okay = frontend_source_companion_current(owner->options.frontend, &owner->companion) &&
             qa_q3_presentation_source_component_poly(owner->options.presentation, owner->companion.assets,
                 captured->polygon.shader, vertices, captured->polygon.count, &captured->polygon.fog,
-                captured->definition.time, options, frame, error);
+                captured->definition->time, options, frame, error);
         if (!okay) return false;
     }
     return true;

@@ -83,7 +83,6 @@ typedef struct source_companion {
     qa_scene_frame frame;
     source_companion_packet *first,*last;
     frontend_source_companion_selection selection;
-    size_t ref_capacity, polygon_capacity, light_capacity, weapon_capacity;
     bool selection_ready,entered,completed;
 } source_companion;
 struct source_render_scope {
@@ -182,7 +181,6 @@ static void companion_clear(source_companion *capture)
         capture->view.packet_count=0; capture->completed=false;
         capture->selection=(frontend_source_companion_selection){0};
         capture->selection_ready=false;
-        capture->ref_capacity=capture->polygon_capacity=capture->light_capacity=capture->weapon_capacity=0;
     }
 }
 bool frontend_source_client_registry_read(const qa_frontend *f,uint32_t physical,
@@ -820,17 +818,6 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
         }
         if (weapon_count) memcpy(held,weapons,weapon_count*sizeof(*held));
         packet->view.weapons=held; packet->view.weapon_count=weapon_count;
-        if (!(definition->flags & 1)) {
-            if (entity_count > SIZE_MAX / sizeof(frontend_source_companion_ref) - capture->ref_capacity ||
-                polygon_count > SIZE_MAX / sizeof(frontend_source_companion_polygon) - capture->polygon_capacity ||
-                light_count > SIZE_MAX / sizeof(frontend_source_companion_light) - capture->light_capacity ||
-                weapon_count > SIZE_MAX / sizeof(*held) - capture->weapon_capacity)
-                return frontend_fail(error,QA_ERROR_FORMAT,"Companion selection exceeds the frame extent");
-            capture->ref_capacity += entity_count;
-            capture->polygon_capacity += polygon_count;
-            capture->light_capacity += light_count;
-            capture->weapon_capacity += weapon_count;
-        }
         if (capture->last) capture->last->next=packet; else capture->first=packet;
         capture->last=packet; ++capture->view.packet_count;
     }
@@ -2239,18 +2226,7 @@ bool frontend_source_companion_read(const qa_frontend *f,uint32_t physical,qa_ac
     }
     return true;
 }
-bool frontend_source_companion_packet_read(const qa_frontend *f,const frontend_source_companion_view *view,
-    size_t ordinal,frontend_source_companion_packet *out,qa_error *error)
-{
-    if (!out || !frontend_source_companion_current(f,view))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion packet lost its completed Source receipt");
-    frontend_source_lease *lease=companion_lease(f,&view->receipt);
-    const source_companion_packet *packet=lease->source->companion->first;
-    while (packet && ordinal--) packet=packet->next;
-    if (!packet) return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion packet ordinal exceeds actual completed scenes");
-    *out=packet->view; return true;
-}
-bool frontend_source_companion_ref_owned(const frontend_source_companion_packet *packet,
+static bool frontend_source_companion_ref_owned(const frontend_source_companion_packet *packet,
     size_t ordinal,qa_actor_id actor,const qa_application_q3_weapon_models *models,
     bool registered,bool *view)
 {
@@ -2264,6 +2240,68 @@ bool frontend_source_companion_ref_owned(const frontend_source_companion_packet 
     return match;
 }
 
+void frontend_source_companion_ref_place(const frontend_source_companion_ref *row,
+    const qa_scene_world_input *world,qa_q3_ref_entity *ref)
+{
+    *ref=row->ref;
+    if(row->view) qa_q3_ref_entity_remap(ref,row->definition->origin,row->definition->axis,
+        world->view.origin,world->view.axis);
+}
+bool frontend_source_companion_polygon_vertices(const frontend_source_companion_polygon *row,
+    const qa_scene_world_input *world,qa_arena *storage,const qa_scene_vertex **out,qa_error *error)
+{
+    *out=row->vertices;
+    if(!row->view || !row->polygon.count) return true;
+    qa_scene_vertex *vertices=qa_arena_alloc(storage,row->polygon.count*sizeof(*vertices),_Alignof(qa_scene_vertex),error);
+    if(!vertices) return false;
+    qa_scene_vertices_remap(vertices,row->vertices,row->polygon.count,row->definition->origin,row->definition->axis,
+        world->view.origin,world->view.axis);
+    *out=vertices;
+    return true;
+}
+
+static bool companion_selection_walk(const source_companion *capture,qa_actor_id actor,
+    const qa_application_q3_weapon_models *models,bool registered,
+    frontend_source_companion_selection *result,qa_error *error)
+{
+    for (const source_companion_packet *node=capture->first;node;node=node->next) {
+        const frontend_source_companion_packet *packet=&node->view;
+        if (packet->definition.flags&1) continue;
+        for (size_t i=0;i<packet->entity_count;++i) {
+            bool is_view;
+            if (!frontend_source_companion_ref_owned(packet,i,actor,models,registered,&is_view)) continue;
+            if (result->ref_count>=1021)
+                return frontend_fail(error,QA_ERROR_FORMAT,"Selected Source weapon refs exceed the real scene extent");
+            if(result->refs) result->refs[result->ref_count]=(frontend_source_companion_ref){packet->entities[i],&packet->definition,is_view};
+            ++result->ref_count;
+        }
+        for (size_t i=0;i<packet->polygon_count;++i) {
+            if (!packet->polygon_actors || !qa_actor_id_equal(packet->polygon_actors[i],actor)) continue;
+            const qa_q3_scene_polygon *polygon=packet->polygons+i;
+            if(result->polygons) {
+                frontend_source_companion_polygon *row=result->polygons+result->polygon_count;
+                *row=(frontend_source_companion_polygon){.polygon=*polygon,.definition=&packet->definition,
+                    .view=packet->polygon_views && packet->polygon_views[i],
+                    .vertices=polygon->count?packet->vertices+polygon->first:NULL};
+                row->polygon.first=0;
+            }
+            ++result->polygon_count;
+        }
+        for (size_t i=0;i<packet->light_count;++i) {
+            if (!packet->light_actors || !qa_actor_id_equal(packet->light_actors[i],actor)) continue;
+            if(result->lights) result->lights[result->light_count]=(frontend_source_companion_light){packet->lights[i],&packet->definition,
+                packet->light_views && packet->light_views[i]};
+            ++result->light_count;
+        }
+        for (size_t i=0;i<packet->weapon_count;++i) {
+            if (!qa_actor_id_equal(packet->weapons[i].actor,actor)) continue;
+            if(result->weapons) result->weapons[result->weapon_count]=packet->weapons[i];
+            ++result->weapon_count;
+        }
+    }
+    return true;
+}
+
 bool frontend_source_companion_selection_read(qa_frontend *f,const frontend_source_companion_view *view,
     const frontend_source_companion_selection **out,qa_error *error)
 {
@@ -2271,54 +2309,27 @@ bool frontend_source_companion_selection_read(qa_frontend *f,const frontend_sour
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion selection requires its completed frame");
     frontend_source_lease *lease=companion_lease(f,&view->receipt);
     source_companion *capture=lease->source->companion;
-    if (capture->selection_ready) { *out=&capture->selection; return true; }
     qa_application_equipment_view equipment;
     qa_application_q3_weapon_models models; bool registered;
     qa_actor_id actor=view->receipt.actor;
     if (!qa_application_equipment_read(f->application,actor,&equipment,error)) return false;
     if (!equipment.selected || !equipment.original_qvm || equipment.provider!=view->receipt.client.source.source_owner)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion selection left its selected original GAME provider");
+    if (capture->selection_ready) { *out=&capture->selection; return true; }
     if (!qa_application_equipment_q3_models_read(f->application,&equipment,view->receipt.client.source.receiver,
             view->receipt.client.source.seat,&models,&registered,error)) return false;
+    frontend_source_companion_selection count={0},result={0};
+    if(!companion_selection_walk(capture,actor,&models,registered,&count,error)) return false;
     qa_arena *storage=&f->frame.storage;
-    frontend_source_companion_selection result={0};
-#define ROWS(field,capacity,type) \
-    result.field=capture->capacity?qa_arena_alloc(storage,capture->capacity*sizeof(type),_Alignof(type),error):NULL; \
-    if(capture->capacity && !result.field) return false
-    ROWS(refs,ref_capacity,frontend_source_companion_ref);
-    ROWS(polygons,polygon_capacity,frontend_source_companion_polygon);
-    ROWS(lights,light_capacity,frontend_source_companion_light);
-    ROWS(weapons,weapon_capacity,qa_application_q3_equipment_source_weapon);
+#define ROWS(field,extent,type) \
+    result.field=count.extent?qa_arena_alloc(storage,count.extent*sizeof(type),_Alignof(type),error):NULL; \
+    if(count.extent && !result.field) return false
+    ROWS(refs,ref_count,frontend_source_companion_ref);
+    ROWS(polygons,polygon_count,frontend_source_companion_polygon);
+    ROWS(lights,light_count,frontend_source_companion_light);
+    ROWS(weapons,weapon_count,qa_application_q3_equipment_source_weapon);
 #undef ROWS
-    for (const source_companion_packet *node=capture->first;node;node=node->next) {
-        const frontend_source_companion_packet *packet=&node->view;
-        if (packet->definition.flags&1) continue;
-        for (size_t i=0;i<packet->entity_count;++i) {
-            bool is_view;
-            if (!frontend_source_companion_ref_owned(packet,i,actor,&models,registered,&is_view)) continue;
-            if (result.ref_count>=1021)
-                return frontend_fail(error,QA_ERROR_FORMAT,"Selected Source weapon refs exceed the real scene extent");
-            result.refs[result.ref_count++]=(frontend_source_companion_ref){packet->entities[i],packet->definition,is_view};
-        }
-        for (size_t i=0;i<packet->polygon_count;++i) {
-            if (!packet->polygon_actors || !qa_actor_id_equal(packet->polygon_actors[i],actor)) continue;
-            const qa_q3_scene_polygon *polygon=packet->polygons+i;
-            frontend_source_companion_polygon *row=result.polygons+result.polygon_count++;
-            *row=(frontend_source_companion_polygon){.polygon=*polygon,.definition=packet->definition,
-                .view=packet->polygon_views && packet->polygon_views[i],
-                .vertices=polygon->count?packet->vertices+polygon->first:NULL};
-            row->polygon.first=0;
-        }
-        for (size_t i=0;i<packet->light_count;++i) {
-            if (!packet->light_actors || !qa_actor_id_equal(packet->light_actors[i],actor)) continue;
-            result.lights[result.light_count++]=(frontend_source_companion_light){packet->lights[i],packet->definition,
-                packet->light_views && packet->light_views[i]};
-        }
-        for (size_t i=0;i<packet->weapon_count;++i) {
-            if (!qa_actor_id_equal(packet->weapons[i].actor,actor)) continue;
-            result.weapons[result.weapon_count++]=packet->weapons[i];
-        }
-    }
+    if(!companion_selection_walk(capture,actor,&models,registered,&result,error)) return false;
     capture->selection=result; capture->selection_ready=true; *out=&capture->selection;
     return true;
 }

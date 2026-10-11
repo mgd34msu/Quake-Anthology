@@ -60,7 +60,7 @@ static bool companion_read(void *context,qa_scene_light *light,const qa_q3_refde
     while(cursor->next<cursor->selection->light_count) {
         const frontend_source_companion_light *row=cursor->selection->lights+cursor->next++;
         if(row->view && cursor->skip_view) continue;
-        *light=row->light;*definition=&row->definition;*view=row->view;*present=true;
+        *light=row->light;*definition=row->definition;*view=row->view;*present=true;
         break;
     }
     return true;
