@@ -21,10 +21,26 @@ static bool media_probe(void *context, qa_string_id name, qa_q2_player_media_kin
     bool *found, qa_error *error)
 {
     struct application_native_q2 *engine = context;
+    qa_vfs *files = engine->provider->launch->content;
+    uint64_t generation = qa_vfs_lookup_generation(files);
+    if (engine->media_files != files || engine->media_generation != generation) {
+        qa_id_index_clear(&engine->media_probes);
+        engine->media_files = files;
+        engine->media_generation = generation;
+    }
+    size_t cached;
+    qa_id_index_cursor cursor = qa_id_index_begin(&engine->media_probes, name, 0);
+    if (qa_id_index_next(&engine->media_probes, &cursor, &cached)) {
+        *found = cached != 0;
+        return true;
+    }
+    if (!qa_id_index_reserve(&engine->media_probes, 1, error)) return false;
     const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), name);
     if (kind == QA_Q2_PLAYER_MEDIA_ICON) ++path;
     uint64_t size;
-    return qa_vfs_probe(engine->provider->launch->content, path, found, &size, error);
+    if (!qa_vfs_probe(files, path, found, &size, error)) return false;
+    qa_id_index_insert(&engine->media_probes, name, 0, *found);
+    return true;
 }
 static bool player_paths(struct application_native_q2 *engine, uint32_t slot, bool body, qa_error *error)
 {

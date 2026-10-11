@@ -7,6 +7,7 @@
 #include "qa/lightstyles.h"
 #include "qa/hud_q2.h"
 #include "qa/q2_config_changes.h"
+#include "qa/id_index.h"
 #include "qa/network_q2_messages.h"
 #include <stdlib.h>
 #include <string.h>
@@ -84,6 +85,9 @@ struct application_native_q2 {
     qa_hud_q2_player_ids player_names[256];
     qa_hud_q2_weapons weapons;
     qa_q2_player_media player_media[256];
+    qa_id_index media_probes;
+    const qa_vfs *media_files;
+    uint64_t media_generation;
     qa_source_frame frame;
     qa_string_id map_name, spawn_point;
     char *entity_text;

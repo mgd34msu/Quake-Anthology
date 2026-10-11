@@ -109,10 +109,17 @@ static bool media_path(qa_strings *strings, qa_bytes model, qa_bytes member, con
     qa_q2_player_media_kind kind, qa_q2_player_media_probe probe, void *context,
     qa_string_id *out, bool *found, qa_error *error)
 {
-    char path[4096]; size_t prefix = kind == QA_Q2_PLAYER_MEDIA_ICON ? 1 : 0;
-    path[0] = '/';
-    return qa_hud_q2_player_model_path(model, member, suffix, path + prefix, sizeof(path) - prefix, error) &&
-        qa_strings_intern_cstr(strings, path, out, error) && probe(context, *out, kind, found, error);
+    char path[4096];
+    if (kind == QA_Q2_PLAYER_MEDIA_ICON) {
+        char appearance[128];
+        int n = snprintf(appearance, sizeof(appearance), "%.*s/%.*s", (int)model.size,
+            (const char *)model.data, (int)member.size, (const char *)member.data);
+        if (n < 0 || (size_t)n >= sizeof(appearance)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 player appearance is too long"); return false;
+        }
+        if (!qa_hud_q2_player_icon_path((qa_bytes){(const uint8_t *)appearance, (size_t)n}, path, sizeof(path), error)) return false;
+    } else if (!qa_hud_q2_player_model_path(model, member, suffix, path, sizeof(path), error)) return false;
+    return qa_strings_intern_cstr(strings, path, out, error) && probe(context, *out, kind, found, error);
 }
 bool qa_q2_player_media_resolve(qa_strings *strings, const qa_hud_q2_player_ids *names,
     const qa_string_id *weapons, size_t count, bool rerelease, double noskins, bool base_client, bool body,

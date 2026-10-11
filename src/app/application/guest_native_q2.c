@@ -832,6 +832,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     qa_command_tokens_free(&engine->arguments);
     application_network_q2_retire_bindings(engine);
     qa_q2_messages_destroy(engine->event_decoder);
+    qa_id_index_destroy(&engine->media_probes);
     free(engine->config_changes.slots); free(engine->configstrings); free(engine->entity_text); free(engine->client_slots); free(engine);
     provider->state.native.q2_engine = NULL;
     if (!ok && error) *error = first;
