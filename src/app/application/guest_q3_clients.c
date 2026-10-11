@@ -56,12 +56,13 @@ bool application_q3_guest_actor_client(application_provider *provider, qa_actor_
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || !slot || !engine->game || !engine->game->initialized ||
         !qa_actors_get(qa_session_actors(provider->application->session), actor)) return false;
-    for (uint32_t i = 0; i < 64; ++i) {
-        const q3g_client *client = &engine->clients[i];
-        if (client->connected && client->begun && !client->pending_retirement &&
-            qa_actor_id_equal(client->actor, actor)) { *slot = i; return true; }
-    }
-    return false;
+    uint32_t actual;
+    if (!qa_q3_host_actor_slot(engine->game->host, actor, &actual, NULL) || actual >= 64) return false;
+    const q3g_client *client = &engine->clients[actual];
+    if (!client->connected || !client->begun || client->pending_retirement ||
+        !qa_actor_id_equal(client->actor, actor)) return false;
+    *slot = actual;
+    return true;
 }
 
 bool application_q3_guest_input_values_read(application_provider *provider,uint32_t seat,

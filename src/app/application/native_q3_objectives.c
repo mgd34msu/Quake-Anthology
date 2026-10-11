@@ -179,6 +179,15 @@ static bool entity_count(void *opaque, uint32_t *out, qa_error *error)
     return source_live(call, error) && qa_q3_source_entity_count(call->game, out, error);
 }
 
+static bool actor_slot(void *opaque, qa_actor_id actor, uint32_t *out,
+    bool *present, qa_error *error)
+{
+    objective_call *call = opaque;
+    if (!source_live(call, error)) return false;
+    *present = qa_q3_source_actor_slot(call->game, actor, out, NULL);
+    return true;
+}
+
 static bool client_at(void *opaque, uint32_t slot, mode_q3_source_client *out, qa_error *error)
 {
     objective_call *call = opaque;
@@ -399,7 +408,7 @@ static bool services(objective_call *call, mode_q3_objective_services *out, qa_e
         .team_read = team_read, .team_write = team_write, .team_score = team_score,
         .player_team_read = player_team_read, .player_team_write = player_team_write,
         .ranks = ranks, .tokens = tokens, .set_tokens = set_tokens,
-        .entity_count = entity_count, .item_at = item_at, .client_at = client_at,
+        .entity_count = entity_count, .actor_slot = actor_slot, .item_at = item_at, .client_at = client_at,
         .powerup = powerup, .set_powerup = set_powerup,
         .respawn = respawn, .retire = retire, .configstring = configstring, .print = print, .warn = warn,
         .sound = sound, .gesture = gesture, .award = award, .pers_award = pers_award,

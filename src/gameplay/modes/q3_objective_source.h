@@ -35,6 +35,7 @@ typedef struct mode_q3_objective_services {
     bool (*tokens)(void *, qa_actor_id, int32_t *, qa_error *);
     bool (*set_tokens)(void *, qa_actor_id, int32_t, qa_error *);
     bool (*entity_count)(void *, uint32_t *, qa_error *);
+    bool (*actor_slot)(void *, qa_actor_id, uint32_t *, bool *, qa_error *);
     bool (*item_at)(void *, uint32_t, mode_q3_source_item *, bool *, qa_error *);
     bool (*client_at)(void *, uint32_t, mode_q3_source_client *, qa_error *);
     bool (*powerup)(void *, qa_actor_id, int32_t tag, int32_t *, qa_error *);

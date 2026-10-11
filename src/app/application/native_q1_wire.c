@@ -24,12 +24,13 @@ typedef struct native_q1_wire_language {
     qa_actor_id actor;
     char *language;
     qa_localization *catalog;
-    struct native_q1_wire_language *next;
+    struct native_q1_wire_language *previous, *next;
 } native_q1_wire_language;
 typedef struct application_native_q1_wire {
     qa_launch_instance_lease *source;
     qa_localization_pool *catalogs;
-    native_q1_wire_language *languages;
+    native_q1_wire_language *languages, *languages_tail;
+    qa_actor_index language_actors;
     qa_resource **models, **sounds;
     size_t model_count, sound_count;
     uint32_t player_model;
@@ -57,6 +58,20 @@ struct qa_application_language_ticket {
 static void assets_release(qa_resource **rows, size_t count) {
     for (size_t i = 0; i < count; ++i) qa_resource_release(rows[i]);
     free(rows);
+}
+static native_q1_wire_language *language_row(application_native_q1_wire *owner, qa_actor_id actor) {
+    size_t row;
+    return qa_actor_index_find(&owner->language_actors, actor, &row)
+        ? (native_q1_wire_language *)(uintptr_t)row : NULL;
+}
+static void languages_clear(application_native_q1_wire *owner) {
+    qa_actor_index_clear(&owner->language_actors);
+    while (owner->languages) {
+        native_q1_wire_language *next = owner->languages->next;
+        qa_localization_release(owner->languages->catalog);
+        free(owner->languages->language); free(owner->languages); owner->languages = next;
+    }
+    owner->languages_tail = NULL;
 }
 bool application_native_q1_wire_idle(const application_provider *p) {
     return !p || !p->native_q1_wire ||
@@ -93,11 +108,8 @@ void application_native_q1_wire_destroy(application_provider *p) {
     application_native_q1_wire *owner = p ? p->native_q1_wire : NULL;
     if (!owner) return;
     p->native_q1_wire = NULL;
-    while (owner->languages) {
-        native_q1_wire_language *next = owner->languages->next;
-        qa_localization_release(owner->languages->catalog);
-        free(owner->languages->language); free(owner->languages); owner->languages = next;
-    }
+    languages_clear(owner);
+    qa_actor_index_destroy(&owner->language_actors);
     assets_release(owner->models, owner->model_count); assets_release(owner->sounds, owner->sound_count);
     qa_localization_pool_destroy(owner->catalogs);
     qa_launch_instance_lease_release(owner->source);
@@ -110,7 +122,8 @@ bool application_native_q1_wire_create(application_provider *p, qa_error *error)
     application_native_q1_wire *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q1 wire resources");
     p->native_q1_wire = owner;
-    if (!qa_launch_instance_retain_metadata(p->launch, &owner->source, error) ||
+    if (!qa_actor_index_create(&owner->language_actors, qa_session_actors(p->application->session), NULL, error) ||
+        !qa_launch_instance_retain_metadata(p->launch, &owner->source, error) ||
         !(owner->catalogs = qa_localization_pool_create(error))) {
         application_native_q1_wire_destroy(p); return false;
     }
@@ -137,11 +150,7 @@ bool application_native_q1_wire_cache_flush(application_provider *provider,qa_er
     if (!content) return false;
     /* Live SV model/sound precaches retain their actual receipts until Spawn.
      * Cache_Flush retires unreferenced cache entries, not those server holders. */
-    while (owner->languages) {
-        native_q1_wire_language *next=owner->languages->next;
-        qa_localization_release(owner->languages->catalog);
-        free(owner->languages->language); free(owner->languages); owner->languages=next;
-    }
+    languages_clear(owner);
     qa_localization_pool_trim(owner->catalogs);
     qa_resource_pool_trim(qa_vfs_resources(content));
     return true;
@@ -276,8 +285,7 @@ static bool language_prepare(application_provider *p, qa_actor_id actor,
     }
     ++owner->language_admissions;
     qa_localization *catalog = NULL;
-    native_q1_wire_language *row = owner->languages;
-    while (row && !qa_actor_id_equal(row->actor, actor)) row = row->next;
+    native_q1_wire_language *row = language_row(owner, actor);
     if (row && !strcmp(row->language, copy)) {
         catalog = row->catalog;
         qa_localization_retain(catalog);
@@ -352,11 +360,15 @@ void application_native_q1_wire_language_commit(application_native_q1_wire_langu
         if (!qa_q1_game_operation_live(&pending->operation) || pending->provider->close_pending ||
             pending->provider->application->destroy_requested ||
             !qa_actors_get(qa_session_actors(pending->provider->application->session), pending->row->actor)) continue;
-        native_q1_wire_language **position = &pending->owner->languages;
-        while (*position && !qa_actor_id_equal((*position)->actor, pending->row->actor)) position = &(*position)->next;
-        native_q1_wire_language *old = *position;
+        application_native_q1_wire *owner = pending->owner;
+        native_q1_wire_language *old = language_row(owner, pending->row->actor);
+        pending->row->previous = old ? old->previous : owner->languages_tail;
         pending->row->next = old ? old->next : NULL;
-        *position = pending->row;
+        if (pending->row->previous) pending->row->previous->next = pending->row;
+        else owner->languages = pending->row;
+        if (pending->row->next) pending->row->next->previous = pending->row;
+        else owner->languages_tail = pending->row;
+        qa_actor_index_put(&owner->language_actors, pending->row->actor, (size_t)(uintptr_t)pending->row);
         pending->row = old;
     }
     /* Release replaced rows and declarations whose full actor retired. */
@@ -442,13 +454,14 @@ void application_native_q1_wire_actor_released(qa_application *app, qa_actor_id 
     for (application_provider *p = app ? app->live_providers : NULL; p; p = p->next_live) {
         application_native_q1_wire *owner = p->native_q1_wire;
         if (!owner) continue;
-        native_q1_wire_language **position = &owner->languages;
-        while (*position) {
-            native_q1_wire_language *row = *position;
-            if (!qa_actor_id_equal(row->actor, actor)) { position = &row->next; continue; }
-            *position = row->next;
-            qa_localization_release(row->catalog); free(row->language); free(row);
-        }
+        native_q1_wire_language *row = language_row(owner, actor);
+        if (!row) continue;
+        qa_actor_index_remove(&owner->language_actors, actor);
+        if (row->previous) row->previous->next = row->next;
+        else owner->languages = row->next;
+        if (row->next) row->next->previous = row->previous;
+        else owner->languages_tail = row->previous;
+        qa_localization_release(row->catalog); free(row->language); free(row);
     }
 }
 
@@ -941,8 +954,7 @@ static bool emit_text(qa_application *app, application_provider *wire,
         if (application_player_identity(recipient)->bot && !recipient->remote) continue;
         char output[1024]; const char *value = format;
         if (formatted) {
-            native_q1_wire_language *row = source->native_q1_wire->languages;
-            while (row && !qa_actor_id_equal(row->actor, actor)) row = row->next;
+            native_q1_wire_language *row = language_row(source->native_q1_wire, actor);
             if (!row || !row->catalog) { okay = application_fail(error, QA_ERROR_NOT_FOUND, "Q1 wire text has no admitted recipient catalog"); break; }
             if (source->product->edition != QA_EDITION_RERELEASE &&
                 (*format != '$' || !qa_localization_find(row->catalog, format + 1)))

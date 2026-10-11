@@ -14,6 +14,7 @@
 #include "qa/network_unified_session.h"
 #include "qa/network_unified_frame_pool.h"
 #include "qa/allocation_gate.h"
+#include "qa/stamp.h"
 #include "qa/text.h"
 #include <float.h>
 #include <math.h>
@@ -98,7 +99,9 @@ struct application_control_frames {
     const control_group *q3_group;
     struct application_control_mod_input *mod_inputs;
     qa_actor_id *touched;
-    size_t touched_count, touched_capacity;
+    size_t *touch_heads, *touch_next;
+    qa_stamp_set touch_marks;
+    size_t touched_count;
     bool draining;
 };
 
@@ -523,10 +526,13 @@ static struct application_control_frames *frames_create(qa_application *app,qa_e
     if(!frames) { application_fail(error,QA_ERROR_MEMORY,"Allocating source input owner"); return NULL; }
     frames->application=app; frames->capacity=app->control_capacity;
     frames->inputs=calloc(frames->capacity,sizeof(*frames->inputs));
-    frames->touched_capacity=frames->capacity;
-    frames->touched=calloc(frames->touched_capacity,sizeof(*frames->touched));
+    frames->touched=calloc(frames->capacity,sizeof(*frames->touched));
+    frames->touch_heads=calloc(frames->capacity,sizeof(*frames->touch_heads));
+    frames->touch_next=calloc(frames->capacity,sizeof(*frames->touch_next));
+    uint32_t *marks=calloc(frames->capacity,sizeof(*marks));
+    qa_stamp_set_init(&frames->touch_marks,marks,marks?frames->capacity:0);
     frames->storage=qa_unified_frame_pool_create(0,frames->capacity,error);
-    if(!frames->inputs||!frames->touched||!frames->storage) {
+    if(!frames->inputs||!frames->touched||!frames->touch_heads||!frames->touch_next||!marks||!frames->storage) {
         application_control_frames_free(frames);
         application_fail(error,QA_ERROR_MEMORY,"Reserving source input storage"); return NULL;
     }
@@ -549,6 +555,7 @@ void application_control_frames_free(struct application_control_frames *frames)
     for (control_input_slot *slot = frames->first_input; slot; slot = slot->next)
         (void)application_control_turn_abort(slot->value.turn, NULL);
     qa_unified_frame_pool_destroy(&frames->storage);
+    free(frames->touch_marks.marks); free(frames->touch_heads); free(frames->touch_next);
     free(frames->touched); free(frames->inputs); free(frames);
 }
 
@@ -579,6 +586,7 @@ bool application_control_frames_abort(qa_application *app, qa_error *error)
         if (!application_control_turn_abort(turn, &current)) { if (ok) first = current; ok = false; }
     }
     owner->touched_count = 0;
+    qa_stamp_set_begin(&owner->touch_marks);
     qa_error components = {0};
     if (!application_control_mod_abort_all(app, &components)) { if (ok) first = components; ok = false; }
     inputs_prune(owner);
@@ -598,13 +606,19 @@ bool application_control_group_touch_once(qa_application *app, qa_actor_id actor
     const application_control_context *context = application_control_frame_current(app, actor);
     if (!context || context->path != APPLICATION_CONTROL_QW_GROUP || !touched.registry) return true;
     struct application_control_frames *owner = app->control_frames;
-    for (size_t i = 0; i < owner->touched_count; ++i)
-        if (qa_actor_id_equal(owner->touched[i], touched)) { *first = false; return true; }
-    if (owner->touched_count == owner->touched_capacity) {
+    bool marked = touched.slot < owner->touch_marks.count &&
+        qa_stamp_set_test(&owner->touch_marks, touched.slot);
+    if (marked) for (size_t link = owner->touch_heads[touched.slot]; link; link = owner->touch_next[link - 1])
+        if (qa_actor_id_equal(owner->touched[link - 1], touched)) { *first = false; return true; }
+    if (touched.slot >= owner->touch_marks.count || owner->touched_count == owner->touch_marks.count) {
         qa_allocation_gate_capacity_exhausted();
         return application_fail(error,QA_ERROR_CAPACITY,"QW group contact capacity exhausted");
     }
-    owner->touched[owner->touched_count++] = touched;
+    (void)qa_stamp_set_mark(&owner->touch_marks, touched.slot);
+    size_t index = owner->touched_count++;
+    owner->touched[index] = touched;
+    owner->touch_next[index] = marked ? owner->touch_heads[touched.slot] : 0;
+    owner->touch_heads[touched.slot] = index + 1;
     return true;
 }
 
@@ -2091,6 +2105,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
         *link = group->next;
         if (owner->tail == group) owner->tail = NULL;
         owner->touched_count = 0;
+        qa_stamp_set_begin(&owner->touch_marks);
         application_provider *provider = live ? source_provider(app, group->actor) : NULL;
         if (live && (!provider || group->provider != provider->owner || (frame && group->provider != frame->provider)))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Pending input execution owner changed");
@@ -2159,6 +2174,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
         }
         group_release(group);
         owner->touched_count = 0;
+        qa_stamp_set_begin(&owner->touch_marks);
     }
     owner->tail = NULL;
     for (control_group *group = owner->head; group; group = group->next) owner->tail = group;

@@ -38,7 +38,7 @@ static bool begin(qa_modes *modes, qa_mode_id id,
     if (!value || !source || !source->live || !source->team_read || !source->team_write ||
         !source->player_team_read || !source->player_team_write ||
         !source->team_score || !source->ranks || !source->tokens || !source->set_tokens ||
-        !source->entity_count || !source->item_at || !source->client_at ||
+        !source->entity_count || !source->actor_slot || !source->item_at || !source->client_at ||
         !source->powerup || !source->set_powerup || !source->respawn || !source->retire ||
         !source->configstring || !source->print || !source->warn || !source->sound || !source->gesture ||
         !source->award || !source->pers_award || !source->score_plum || !source->rank_capture || !source->rank_pickup ||
@@ -108,15 +108,18 @@ static bool item_read(const team_call *call, uint32_t slot,
 static bool actual_item(const team_call *call, qa_actor_id actor,
     mode_q3_source_item *out, qa_error *error)
 {
-    for (uint32_t slot = 64;; ++slot) {
-        uint32_t count;
+    uint32_t slot, count;
+    bool present;
+    if (!after(call, call->source->actor_slot(call->source->context,
+            actor, &slot, &present, error), error)) return false;
+    if (present && slot >= 64) {
         if (!after(call, call->source->entity_count(call->source->context, &count, error), error))
             return false;
-        if (slot >= count) break;
-        mode_q3_source_item item;
-        bool present;
-        if (!item_read(call, slot, &item, &present, error)) return false;
-        if (present && qa_actor_id_equal(item.actor, actor)) { *out = item; return true; }
+        if (slot < count) {
+            mode_q3_source_item item;
+            if (!item_read(call, slot, &item, &present, error)) return false;
+            if (present && qa_actor_id_equal(item.actor, actor)) { *out = item; return true; }
+        }
     }
     return mode_fail(error, "TEAM item has no actual physical source row");
 }
@@ -124,7 +127,11 @@ static bool actual_item(const team_call *call, qa_actor_id actor,
 static bool source_client(const team_call *call, qa_actor_id actor,
     mode_q3_source_client *out, qa_error *error)
 {
-    for (uint32_t slot = 0; slot < call->source->max_clients; ++slot) {
+    uint32_t slot;
+    bool present;
+    if (!after(call, call->source->actor_slot(call->source->context,
+            actor, &slot, &present, error), error)) return false;
+    if (present && slot < call->source->max_clients) {
         mode_q3_source_client row;
         if (!after(call, call->source->client_at(call->source->context, slot, &row, error), error))
             return false;
@@ -709,11 +716,14 @@ static bool optional_client(const team_call *call, qa_actor_id actor,
     bool *present, qa_error *error)
 {
     *present = false;
-    for (uint32_t slot = 0; slot < call->source->max_clients; ++slot) {
-        mode_q3_source_client row;
-        if (!after(call, call->source->client_at(call->source->context, slot, &row, error), error)) return false;
-        if (row.in_use && qa_actor_id_equal(row.actor, actor)) { *present = true; return true; }
-    }
+    uint32_t slot;
+    bool found;
+    if (!after(call, call->source->actor_slot(call->source->context,
+            actor, &slot, &found, error), error)) return false;
+    if (!found || slot >= call->source->max_clients) return true;
+    mode_q3_source_client row;
+    if (!after(call, call->source->client_at(call->source->context, slot, &row, error), error)) return false;
+    *present = row.in_use && qa_actor_id_equal(row.actor, actor);
     return true;
 }
 
