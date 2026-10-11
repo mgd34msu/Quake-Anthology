@@ -376,6 +376,8 @@ bool qa_application_network_q2_create(qa_application *app, qa_net_protocol_id pr
         const application_provider *provider = application_network_q2_provider(owner);
         owner->sv_novis = provider->sv_novis;
         owner->sv_airaccelerate = provider->q2_airaccelerate;
+        owner->hostname = qa_cvars_resolve(owner->host.cvars,"hostname");
+        owner->download_server = qa_cvars_resolve(owner->host.cvars,"sv_downloadserver");
         const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
         owner->source_instance = application_network_q2_copy(owner->host.source.launch->selection.instance, error);
         owner->source_map = map ? application_network_q2_copy(map, error) : NULL;

@@ -43,6 +43,7 @@ typedef struct q2_server {
     char *drop_reason;
     bool drop_notice, drop_queued, drop_sent, drop_hook_done;
     qa_resource *download;
+    qa_q2_download_policy download_policy;
     const qa_vfs *download_view;
     qa_vfs_acquisition download_opening;
     qa_buffer download_source, download_wire;

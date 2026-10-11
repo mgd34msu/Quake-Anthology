@@ -40,10 +40,23 @@ static bool prefix(const char *text, const char *start)
     }
     return true;
 }
-static bool enabled(const qa_cvars *cvars, const char *name)
+void qa_q2_download_policy_bind(qa_q2_download_policy *policy,const qa_cvars *cvars)
 {
-    const qa_cvar_view *value = qa_cvars_find(cvars, name); return value && value->number != 0;
+    static const char *const names[]={"allow_download","allow_download_maps","allow_download_models",
+        "allow_download_sounds","allow_download_players"};
+    uint64_t identity=qa_cvars_view_identity(cvars),declarations=qa_cvars_declaration_revision(cvars);
+    if(policy->registry==cvars && policy->identity==identity && policy->declarations==declarations) return;
+    *policy=(qa_q2_download_policy){.registry=cvars,.identity=identity,.declarations=declarations};
+    for(size_t i=0;i<QA_Q2_DOWNLOAD_CATEGORY_COUNT;++i) policy->handles[i]=qa_cvars_resolve(cvars,names[i]);
 }
+const qa_cvar_view *qa_q2_download_policy_read(qa_q2_download_policy *policy,const qa_cvars *cvars,
+    qa_q2_download_category category)
+{
+    qa_q2_download_policy_bind(policy,cvars);
+    return qa_cvars_read(cvars,policy->handles[category]);
+}
+static bool enabled(q2_server *server,const qa_cvars *cvars,qa_q2_download_category category)
+{ const qa_cvar_view *value=qa_q2_download_policy_read(&server->download_policy,cvars,category); return value && value->number!=0; }
 bool q2_download_begin(q2_session *session, const char *name, const char *offset_text, qa_error *error)
 {
     q2_server *server = &session->state.server;
@@ -57,11 +70,11 @@ bool q2_download_begin(q2_session *session, const char *name, const char *offset
     if (!source.content || !source.cvars) return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 download lacks its actual mounted Source policy");
     qa_error admission_error = {0}; char *normalized = qa_vfs_normalize_path(name, &admission_error);
     if (!normalized) return refused(session, error);
-    bool allowed = enabled(source.cvars, "allow_download") &&
-        (!prefix(normalized, "players/") || enabled(source.cvars, "allow_download_players")) &&
-        (!prefix(normalized, "models/") || enabled(source.cvars, "allow_download_models")) &&
-        (!prefix(normalized, "sound/") || enabled(source.cvars, "allow_download_sounds")) &&
-        (!prefix(normalized, "maps/") || enabled(source.cvars, "allow_download_maps"));
+    bool allowed = enabled(server,source.cvars,QA_Q2_DOWNLOAD_ALL) &&
+        (!prefix(normalized, "players/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_PLAYERS)) &&
+        (!prefix(normalized, "models/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_MODELS)) &&
+        (!prefix(normalized, "sound/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_SOUNDS)) &&
+        (!prefix(normalized, "maps/") || enabled(server,source.cvars,QA_Q2_DOWNLOAD_MAPS));
     free(normalized); if (!allowed) return refused(session, error);
     q2_download_close(server);
     qa_resource *resource = NULL; qa_vfs_acquisition opening = {0}; qa_buffer source_bytes = {0}, wire_bytes = {0};

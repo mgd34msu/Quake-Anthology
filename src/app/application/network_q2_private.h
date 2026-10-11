@@ -94,7 +94,7 @@ struct qa_application_network_q2 {
     qa_application *app;
     qa_application_network_q2_host host;
     qa_q2_config_layout config_layout;
-    qa_cvar_handle sv_novis, sv_airaccelerate;
+    qa_cvar_handle sv_novis, sv_airaccelerate, hostname, download_server;
     char *source_instance, *source_map;
     int32_t server_count;
     uint32_t config_count, item_base, skin_base, light_base;

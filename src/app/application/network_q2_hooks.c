@@ -593,7 +593,7 @@ bool qa_application_network_q2_discovery(qa_application_network_q2 *owner,
     qa_q2_status *out, const char **name, const char **map, qa_error *error)
 {
     if (!name || !map || !qa_application_network_q2_status(owner, out, error)) return false;
-    const qa_cvar_view *hostname = qa_cvars_find(owner->host.cvars, "hostname");
+    const qa_cvar_view *hostname = qa_cvars_read(owner->host.cvars, owner->hostname);
     *name = hostname ? hostname->value : "";
     *map = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     return *map || application_fail(error, QA_ERROR_FORMAT, "Q2 discovery has no actual Source map");
@@ -603,7 +603,7 @@ bool qa_application_network_q2_download_server(qa_application_network_q2 *owner,
     const char **out, qa_error *error)
 {
     if (!out || !application_network_q2_current(owner, error)) return false;
-    const qa_cvar_view *value = qa_cvars_find(owner->host.cvars, "sv_downloadserver");
+    const qa_cvar_view *value = qa_cvars_read(owner->host.cvars, owner->download_server);
     const char *url = value ? value->value : "";
     if (*url && strncmp(url, "http://", 7) && strncmp(url, "https://", 8))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 Source download server is not an HTTP URL");

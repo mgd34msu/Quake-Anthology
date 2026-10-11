@@ -7,6 +7,17 @@
 #include "qa/console.h"
 
 bool qa_network_q2_server_timeout_policy(qa_network_runtime *, double source_seconds, qa_error *);
+typedef enum qa_q2_download_category {
+    QA_Q2_DOWNLOAD_ALL, QA_Q2_DOWNLOAD_MAPS, QA_Q2_DOWNLOAD_MODELS,
+    QA_Q2_DOWNLOAD_SOUNDS, QA_Q2_DOWNLOAD_PLAYERS, QA_Q2_DOWNLOAD_CATEGORY_COUNT
+} qa_q2_download_category;
+typedef struct qa_q2_download_policy {
+    const qa_cvars *registry;
+    uint64_t identity, declarations;
+    qa_cvar_handle handles[QA_Q2_DOWNLOAD_CATEGORY_COUNT];
+} qa_q2_download_policy;
+void qa_q2_download_policy_bind(qa_q2_download_policy *,const qa_cvars *);
+const qa_cvar_view *qa_q2_download_policy_read(qa_q2_download_policy *,const qa_cvars *,qa_q2_download_category);
 
 typedef struct qa_q2_config_entry {
     uint16_t index;

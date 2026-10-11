@@ -414,7 +414,7 @@ static bool server_info(void *context, qa_nq_control *out, qa_error *error)
         !qa_net_address_format(qa_network_local_address(host->runtime), host->reply_address, sizeof(host->reply_address), error)) return false;
     qa_cvars *cvars = qa_application_network_q1_cvars(host->frontend->application, host->owner, error);
     if (!cvars) return false;
-    const qa_cvar_view *name = qa_cvars_find(cvars, "hostname");
+    const qa_cvar_view *name = qa_cvars_read(cvars, host->hostname);
     *out = (qa_nq_control){.kind = QA_NQ_SERVER_INFO, .data.server = {.address = host->reply_address,
         .name = name ? name->value : world.level, .map = world.map, .players = (uint8_t)count,
         .max_players = (uint8_t)world.max_clients, .version = 3}};
@@ -545,6 +545,7 @@ static bool source_observer_create(qa_frontend *frontend,qa_network_runtime *run
     if (!host_source(host, error) || !qa_application_network_q1_world_read(frontend->application, host->owner, &world, error)) {
         free(host); return false;
     }
+    host->hostname=qa_cvars_resolve(qa_application_network_q1_cvars(frontend->application,host->owner,NULL),"hostname");
     *out = host; return true;
 }
 bool frontend_nq_create(qa_frontend *frontend, qa_network_runtime *runtime,

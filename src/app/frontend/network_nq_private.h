@@ -34,6 +34,7 @@ struct frontend_nq_host {
     qa_network_runtime *runtime;
     uint64_t composition;
     qa_actor_owner owner;
+    qa_cvar_handle hostname;
     uint64_t generation, submillisecond_ns, published_source_time_ns, next_admission_order;
     nq_frontend_peer peers[NQ_CLIENTS];
     unsigned busy;

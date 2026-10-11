@@ -15,6 +15,7 @@ struct frontend_network_q2_client {
     qa_application_client_source application_source;
     frontend_remote_q2_domain domain;
     qa_source_frame_time_binding frame_time;
+    qa_q2_download_policy download_policy;
     qa_actor_owner receiver;
     qa_net_seat_binding binding;
     qa_q2_client_admission admission;
@@ -141,6 +142,7 @@ static bool configure(void *context,const qa_launch_instance *descriptor,qa_cvar
     for(size_t i=0;i<sizeof(permissions)/sizeof(*permissions);++i)
         if(!qa_cvars_register(cvars,permissions[i],"1",QA_CVAR_ARCHIVE,owner->receiver,"",error)) return false;
     owner->domain.console=console; owner->domain.cvars=cvars;
+    qa_q2_download_policy_bind(&owner->download_policy,cvars);
     qa_source_frame_time_bind(cvars,&owner->frame_time);
     owner->domain.command_context.cvar_view=qa_cvars_view_identity(cvars);
     qa_application_client_options options={.descriptor=descriptor,.receiver=owner->receiver,
@@ -287,8 +289,8 @@ static bool entities_changed(void *context, const frontend_remote_q2_domain *dom
     return source_current(owner, domain, error) && qa_application_client_entities_refresh(domain->application,
         &owner->application_source, error);
 }
-static bool permission(const qa_cvars *cvars,const char *name)
-{ const qa_cvar_view *value=qa_cvars_find(cvars,name); return value && value->number!=0; }
+static bool permission(frontend_network_q2_client *owner,qa_q2_download_category category)
+{ const qa_cvar_view *value=qa_q2_download_policy_read(&owner->download_policy,owner->domain.cvars,category); return value && value->number!=0; }
 static bool path_prefix(const char *path,const char *prefix)
 {
     while(*prefix) if(!*path || tolower((unsigned char)*path++)!=(unsigned char)*prefix++) return false;
@@ -303,15 +305,14 @@ static bool download_allowed(void *context,const char *path,bool *allowed,qa_err
     frontend_network_q2_client *owner=context;
     if(!path || !allowed || !source_current(owner,&owner->domain,error)) return false;
     if (owner->options.demo) { *allowed=false; return true; }
-    const qa_cvar_view *all=qa_cvars_find(owner->domain.cvars,"allow_download");
+    const qa_cvar_view *all=qa_q2_download_policy_read(&owner->download_policy,owner->domain.cvars,QA_Q2_DOWNLOAD_ALL);
     *allowed=all && all->number>0;
-    const char *category=path_prefix(path,"players/")?"players":path_prefix(path,"maps/")?"maps":
-        path_prefix(path,"models/")?"models":path_prefix(path,"sound/")?"sounds":NULL;
+    qa_q2_download_category category=path_prefix(path,"players/")?QA_Q2_DOWNLOAD_PLAYERS:path_prefix(path,"maps/")?QA_Q2_DOWNLOAD_MAPS:
+        path_prefix(path,"models/")?QA_Q2_DOWNLOAD_MODELS:path_prefix(path,"sound/")?QA_Q2_DOWNLOAD_SOUNDS:QA_Q2_DOWNLOAD_ALL;
     const char *extension=strrchr(path,'.');
     if(path_extension(extension,".pak") || path_extension(extension,".pkz")) {
-        static const char *const names[]={"allow_download_maps","allow_download_models","allow_download_sounds","allow_download_players"};
-        for(size_t i=0;i<4;++i) *allowed=*allowed && permission(owner->domain.cvars,names[i]);
-    } else if(category) { char name[64]; snprintf(name,sizeof(name),"allow_download_%s",category); *allowed=*allowed && permission(owner->domain.cvars,name); }
+        for(size_t i=QA_Q2_DOWNLOAD_MAPS;i<QA_Q2_DOWNLOAD_CATEGORY_COUNT;++i) *allowed=*allowed && permission(owner,(qa_q2_download_category)i);
+    } else if(category!=QA_Q2_DOWNLOAD_ALL) *allowed=*allowed && permission(owner,category);
     return true;
 }
 static bool download_stage(void *context,qa_fs_root *root,const char *path,
