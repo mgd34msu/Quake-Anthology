@@ -403,11 +403,11 @@ static bool submit_model(frontend_remote_q2 *row, uint32_t model_index, const ch
         else flags &= ~UINT32_C(32);
     }
     if (path[0] == '*') {
-        char *end; unsigned long index = strtoul(path + 1, &end, 10);
-        if (end == path + 1 || *end || index > UINT32_MAX) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 inline model has no actual model index");
-        return qa_scene_world_submit_model(row->world, (uint32_t)index, &transform, world, current->number, color, &row->frontend->frame, error);
+        const remote_q2_model_slot *slot = row->model_slots + model_index;
+        if (slot->inline_invalid) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 inline model has no actual model index");
+        return qa_scene_world_submit_model(row->world, slot->inline_index, &transform, world, current->number, color, &row->frontend->frame, error);
     }
-    remote_q2_model *model = model_index ? row->model_slots[model_index] : prepared; qa_error issue = {0};
+    remote_q2_model *model = model_index ? row->model_slots[model_index].model : prepared; qa_error issue = {0};
     if (model_index && !model) return true;
     if (!model && !remote_q2_model_read(row, path, &model, &issue)) {
         if (issue.code == QA_ERROR_NOT_FOUND) return true;
@@ -566,17 +566,10 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = f};
     if (row->fog_received && !world.no_world) world.fog = fog_sample(row, time);
     if (ok && row->shader_movies) ok = frontend_material_movies_frame(row->shader_movies, &f->frame, error);
-    bool sky_auto = true; char *sky_end;
-    world.sky_rotation = strtof(frontend_remote_q2_config(row, 3), &sky_end);
-    if (remote_q2_rerelease_presentation(row)) {
-        char *auto_end; long automatic = strtol(sky_end, &auto_end, 10);
-        if (auto_end != sky_end) sky_auto = automatic != 0;
-    }
-    if (sscanf(frontend_remote_q2_config(row, 4), "%f %f %f", &world.sky_axis.x,
-        &world.sky_axis.y, &world.sky_axis.z) != 3) world.sky_axis = qa_v3(0, 0, 0);
-    if (!isfinite(world.sky_rotation) || !qa_vec_finite(world.sky_axis))
-        ok = remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sky configuration has nonfinite received parameters");
-    world.sky_auto_rotate = sky_auto;
+    world.sky_rotation = row->sky_rotation;
+    world.sky_axis = row->sky_axis;
+    world.sky_auto_rotate = row->sky_auto;
+    if (row->sky_invalid) ok = remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sky configuration has nonfinite received parameters");
     frontend_remote_q2_effects_sample effects_sample = {0};
     if (ok) ok = remote_q2_effects_sample_prepare(row, &view, fov, viewer_origin, vector(frame->player.gunoffset), player_number,
         &effects_sample, &world.lights, &world.light_count, error);

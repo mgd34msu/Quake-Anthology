@@ -186,13 +186,13 @@ bool remote_q2_model_config(frontend_remote_q2 *row, uint32_t index, qa_error *e
 {
     if (index < row->hud_names.layout.models || (size_t)(index - row->hud_names.layout.models) >= row->hud_names.layout.max_models) return true;
     size_t slot = index - row->hud_names.layout.models;
-    row->model_slots[slot] = NULL;
+    row->model_slots[slot].model = NULL;
     if (!slot) return true;
     const char *path = frontend_remote_q2_config(row, index);
     if (!*path || path[0] == '*' || path[0] == '#' ||
         !strcmp(path, frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + 1)))) return true;
     qa_error issue = {0};
-    if (remote_q2_model_read(row, path, &row->model_slots[slot], &issue) || issue.code == QA_ERROR_NOT_FOUND) return true;
+    if (remote_q2_model_read(row, path, &row->model_slots[slot].model, &issue) || issue.code == QA_ERROR_NOT_FOUND) return true;
     if (error) *error = issue;
     return false;
 }
@@ -282,6 +282,8 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     remote_q2_prediction_config(row, row->hud_names.layout.max_clients);
     remote_q2_prediction_config(row, row->hud_names.layout.air_accelerate);
     remote_q2_prediction_config(row, row->hud_names.layout.n64_physics);
+    remote_q2_prediction_config(row, 3);
+    remote_q2_prediction_config(row, 4);
     qa_world_query_rules query_rules = {.actors = row->collision_actors,
         .brush_contents_only = true, .contents_ignore_pass = true};
     qa_world_set_query_rules(row->collision_world, &query_rules);

@@ -93,7 +93,7 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
     if (!qa_q2_codec_init(&codec, protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
     if (!layout.max_configs) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 SERVERDATA has no admitted config namespace");
     if (layout.max_configs != row->hud_names.layout.max_configs || layout.max_models != row->hud_names.layout.max_models) {
-        remote_q2_model **model_slots = calloc(layout.max_models, sizeof(*model_slots));
+        remote_q2_model_slot *model_slots = calloc(layout.max_models, sizeof(*model_slots));
         if (!model_slots) {
             free(model_slots);
             return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining negotiated Q2 config namespace");

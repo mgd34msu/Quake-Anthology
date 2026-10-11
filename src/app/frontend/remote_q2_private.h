@@ -62,6 +62,11 @@ typedef struct remote_q2_cvar_handles {
     qa_cvar_handle paused;
     qa_cvar_handle scr_centertime;
 } remote_q2_cvar_handles;
+typedef struct remote_q2_model_slot {
+    remote_q2_model *model;
+    uint32_t inline_index;
+    bool inline_invalid;
+} remote_q2_model_slot;
 struct frontend_remote_q2 {
     frontend_remote_q2 *next;
     qa_frontend *frontend;
@@ -94,7 +99,7 @@ struct frontend_remote_q2 {
     qa_q2_serverdata data;
     frontend_remote_q2_content content;
     qa_hud_q2_names hud_names;
-    remote_q2_model **model_slots;
+    remote_q2_model_slot *model_slots;
     qa_q2_entity *baselines;
     size_t baseline_count;
     qa_q2_wire_frame frame, previous;
@@ -115,6 +120,9 @@ struct frontend_remote_q2 {
     double fog_started_ms;
     uint16_t fog_duration_ms;
     bool fog_received;
+    float sky_rotation;
+    qa_vec3 sky_axis;
+    bool sky_auto, sky_invalid;
     qa_resource *map;
     qa_vfs_acquisition map_opening;
     qa_scene_resources *images;

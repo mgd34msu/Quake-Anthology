@@ -13,6 +13,29 @@ static const qa_q2_player *player(const frontend_remote_q2 *row)
 }
 void remote_q2_prediction_config(frontend_remote_q2 *row, uint32_t index)
 {
+    if (index == 3 || index == 4) {
+        const char *text = frontend_remote_q2_config(row, index);
+        size_t used = 0; double value = 0; bool range_error;
+        if (index == 3) {
+            qa_parse_strtod(text, &value, &used, &range_error, NULL);
+            row->sky_rotation = (float)value;
+            row->sky_auto = true;
+            if (remote_q2_rerelease_presentation(row)) {
+                double automatic = 0; size_t tail = 0;
+                if (qa_parse_strtod(text + used, &automatic, &tail, &range_error, NULL) && tail)
+                    row->sky_auto = automatic != 0;
+            }
+        } else {
+            float axes[3] = {0}; bool complete = true;
+            for (unsigned i = 0; i < 3; ++i) {
+                used = 0; value = 0;
+                if (!qa_parse_strtod(text, &value, &used, &range_error, NULL) || !used) { complete = false; break; }
+                axes[i] = (float)value; text += used;
+            }
+            row->sky_axis = complete ? qa_v3(axes[0], axes[1], axes[2]) : (qa_vec3){0};
+        }
+        row->sky_invalid = !isfinite(row->sky_rotation) || !qa_vec_finite(row->sky_axis);
+    }
     if (index == row->hud_names.layout.air_accelerate) {
         const char *text = frontend_remote_q2_config(row, index);
         double value = 0; qa_error ignored = {0};
@@ -27,19 +50,29 @@ void remote_q2_prediction_config(frontend_remote_q2 *row, uint32_t index)
         row->prediction_n64 = value != 0;
     }
     if (index == row->hud_names.layout.max_clients) {
-        row->collision_clients = strtoul(frontend_remote_q2_config(row, index), NULL, 10);
+        const char *text = frontend_remote_q2_config(row, index); double value = 0;
+        bool valid = qa_parse_number((qa_bytes){(const uint8_t *)text, strlen(text)}, &value, NULL) &&
+            isfinite(value) && value >= 0 && value <= UINT32_MAX && value == trunc(value);
+        row->collision_clients = valid ? (uint32_t)value : 0;
         row->collision_dirty = true;
     }
-    if (!row->collision_models || index < row->hud_names.layout.models ||
+    if (index < row->hud_names.layout.models ||
         (size_t)(index - row->hud_names.layout.models) >= row->hud_names.layout.max_models) return;
-    qa_entity_model_field *entry = row->collision_models + index - row->hud_names.layout.models;
-    *entry = (qa_entity_model_field){0};
+    size_t slot = index - row->hud_names.layout.models;
+    remote_q2_model_slot *media = row->model_slots + slot;
+    media->inline_index = 0; media->inline_invalid = false;
     const char *path = frontend_remote_q2_config(row, index);
     if (*path == '*') {
-        char *end; unsigned long model = strtoul(path + 1, &end, 10);
-        if (end != path + 1 && !*end && model && model < qa_collision_model_count(row->geometry))
-            *entry = (qa_entity_model_field){.model = (uint32_t)model, .present = true};
+        double value = 0;
+        bool valid = qa_parse_number((qa_bytes){(const uint8_t *)path + 1, strlen(path + 1)}, &value, NULL) &&
+            isfinite(value) && value >= 0 && value <= UINT32_MAX && value == trunc(value);
+        media->inline_invalid = !valid;
+        if (valid) media->inline_index = (uint32_t)value;
     }
+    if (!row->collision_models) return;
+    qa_entity_model_field *entry = row->collision_models + slot;
+    *entry = (qa_entity_model_field){.model = media->inline_index,
+        .present = !media->inline_invalid && media->inline_index && media->inline_index < qa_collision_model_count(row->geometry)};
     row->collision_dirty = true;
 }
 qa_bounds remote_q2_solid_bounds(const frontend_remote_q2 *row, uint32_t solid)
