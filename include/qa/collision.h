@@ -207,6 +207,7 @@ void qa_collision_portal_checkpoint_free(qa_collision_portal_checkpoint *);
 bool qa_collision_restore_portals(qa_collision_geometry *, const qa_collision_portal_checkpoint *, qa_error *);
 /* Applies source contact conventions without converting canonical fields. */
 void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
+qa_trace_policy qa_collision_ruleset_policy(qa_ruleset_id);
 qa_trace_policy qa_collision_default_policy(qa_game_family);
 qa_ruleset_id qa_collision_source_rules(qa_game_family);
 /* Source link expansion only; loaded BSP model bounds and explicit host bounds stay separate. */

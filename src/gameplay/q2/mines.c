@@ -12,7 +12,7 @@ static uint64_t mine_life(float multiplier) {
            Q2_NS;
 }
 static bool contents_at(qa_q2_game *g, qa_vec3 point, uint32_t *out, qa_error *e) {
-    qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    qa_point_query query = {.point = point, .policy = qa_collision_ruleset_policy(g->options.rules)};
     qa_point_contents contents;
     if (!qa_world_point_contents(g->services.world, &query, &contents, e))
         return false;
@@ -30,7 +30,7 @@ static bool visible(qa_q2_game *g, qa_actor_id from, qa_vec3 start, qa_actor_id 
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(body.origin, qa_v3(0, 0, traits.view_height)),
                             .pass_actor = from,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(25, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
@@ -332,7 +332,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_error *e) {
         qa_trace_query query = {.start = start,
                                 .end = body.origin,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(g->options.rules)};
         query.policy.contents_mask =
             qa_collision_contents_mask(g->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_GAME_Q2);
         qa_trace_result trace;

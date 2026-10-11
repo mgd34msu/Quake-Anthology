@@ -227,7 +227,7 @@ bool q2_project(q2_weapon_call *c, qa_vec3 angles, qa_vec3 offset, qa_vec3 *star
         return true;
     qa_trace_query query = {
         .start = eye, .end = qa_vec_add(eye, qa_vec_scale(f, 8192)), .pass_actor = c->actor->id};
-    query.policy = qa_collision_default_policy(QA_GAME_Q2);
+    query.policy = qa_collision_ruleset_policy(c->rules);
     query.policy.contents_mask =
         qa_collision_contents_mask((c->input.players_collide ? Q2_PROJECTILE_MASK : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS) &
         ~UINT32_C(0x04000000), QA_GAME_Q2);

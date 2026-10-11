@@ -94,7 +94,7 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         qa_trace_query query = {.start = body.origin,
                                 .end = other.origin,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(g->options.rules)};
         query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
@@ -217,7 +217,7 @@ bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
         qa_point_query query = {.point = body.origin,
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(g->options.rules)};
         qa_point_contents contents;
         if (!qa_world_point_contents(g->services.world, &query, &contents, e))
             return false;

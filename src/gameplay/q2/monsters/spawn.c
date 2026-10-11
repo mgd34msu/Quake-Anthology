@@ -21,7 +21,7 @@ static bool trace_box(qa_q2_game *game, qa_vec3 start, qa_vec3 end,
       .start = start,
       .end = end,
       .shape = {.kind = bounds == NULL ? QA_SHAPE_POINT : QA_SHAPE_BOX},
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(game->options.rules),
   };
   if (bounds != NULL)
     query.shape.bounds = *bounds;
@@ -120,7 +120,7 @@ bool qa_q2_rogue_check_ground_spawn(qa_q2_game *game, qa_vec3 origin,
     qa_point_query point = {
         .point = qa_v3(corners[i].x, corners[i].y,
                        gravity > 0.0f ? maximum.z + 1.0f : minimum.z - 1.0f),
-        .policy = qa_collision_default_policy(QA_GAME_Q2),
+        .policy = qa_collision_ruleset_policy(game->options.rules),
     };
     qa_point_contents contents;
     if (!qa_world_point_contents(game->services.world, &point, &contents,
@@ -229,7 +229,7 @@ bool q2m_rerelease_check_ground_spawn(qa_q2_game *game, qa_vec3 origin,
     for (unsigned j = 0; j < 2; ++j) {
       qa_point_query query = {
           .point = {x[i], y[j], bottom - 1.0f},
-          .policy = qa_collision_default_policy(QA_GAME_Q2)};
+          .policy = qa_collision_ruleset_policy(game->options.rules)};
       qa_point_contents contents;
       if (!qa_world_point_contents(game->services.world, &query, &contents, error))
         return false;

@@ -81,7 +81,7 @@ static bool drop_to_floor(q2m_context *context, qa_error *error) {
                            .end = context->body.origin,
                            .shape = {.kind = QA_SHAPE_BOX, .bounds = context->body.bounds},
                            .pass_actor = context->actor->id,
-                           .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                           .policy = qa_collision_ruleset_policy(context->game->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK |
         (context->game->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
     qa_trace_result hit;

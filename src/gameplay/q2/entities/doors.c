@@ -143,7 +143,7 @@ bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
                 &(qa_point_query){
                     .point = qa_vec_add(
                         b.origin, qa_vec_scale(qa_vec_add(b.bounds.mins, b.bounds.maxs), .5f)),
-                    .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC], .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_GAME_Q2)}},
+                    .policy = {.behavior = &qa_trace_behaviors[g->options.rules], .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_GAME_Q2)}},
                 &contents, e))
             return false;
         if (qa_collision_point_contents_export(contents.contents, QA_GAME_Q2, contents.q1_opaque_token) & 56) {

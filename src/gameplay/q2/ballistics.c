@@ -122,7 +122,7 @@ static qa_vec3 spread(q2_weapon_call *c, qa_vec3 origin, qa_vec3 direction, floa
 }
 static bool contents(q2_weapon_call *c, qa_vec3 origin, int32_t *out, qa_error *e) {
     qa_point_query query = {.point = origin,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->rules)};
     qa_point_contents result;
     if (!qa_world_point_contents(c->game->services.world, &query, &result, e))
         return false;
@@ -147,7 +147,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
     qa_trace_query query = {.start = own.origin,
                             .end = start,
                             .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->rules)};
     qa_trace_result trace = {0};
     qa_actor_id excluded[16];
     size_t count = 0;
@@ -265,7 +265,7 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(start, qa_vec_scale(direction, q2_hitscan_range())),
                             .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->rules)};
     query.policy.contents_mask =
         qa_collision_contents_mask((c->rules == QA_RULESET_Q2_RERELEASE ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                   : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
@@ -381,7 +381,7 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(start, qa_vec_scale(direction, q2_hitscan_range())),
                             .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->rules)};
     uint32_t mask = c->rules == QA_RULESET_Q2_RERELEASE
                         ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                     : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
@@ -464,7 +464,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_error *e) {
         qa_trace_query query = {.start = start,
                                 .end = qa_vec_add(start, qa_vec_scale(dir, spec.range)),
                                 .pass_actor = c->actor->id,
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(c->rules)};
         query.policy.contents_mask = qa_collision_contents_mask(Q2_SHOT_MASK, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(c->game->services.world, &query, &trace, e))
@@ -535,7 +535,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_error *e) {
         if (++count > 4)
             break;
         bool visible;
-        qa_trace_policy policy = qa_collision_default_policy(QA_GAME_Q2);
+        qa_trace_policy policy = qa_collision_ruleset_policy(c->rules);
         policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
         if (!qa_builtin_can_damage(&c->game->services, source ? body.origin : own.origin,
                                    source ? c->actor->id : target, source ? target : c->actor->id,

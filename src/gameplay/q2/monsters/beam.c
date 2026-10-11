@@ -117,7 +117,7 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, bool damage, qa_error *
         .start = start,
         .end = end,
         .pass_actor = ignored_actor,
-        .policy = qa_collision_default_policy(QA_GAME_Q2),
+        .policy = qa_collision_ruleset_policy(game->options.rules),
     };
     query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000001), QA_GAME_Q2);
     if (game->options.rules == QA_RULESET_Q2_RERELEASE)
@@ -408,7 +408,7 @@ static bool guardian_trace(qa_q2_game *game, q2_actor *actor, bool damage,
   if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
   qa_trace_query query = {.start = body.origin,
       .end = qa_vec_add(body.origin, qa_vec_scale(beam->controller_direction, 2048.0f)),
-      .pass_actor = actor->id, .policy = qa_collision_default_policy(QA_GAME_Q2)};
+      .pass_actor = actor->id, .policy = qa_collision_ruleset_policy(game->options.rules)};
   query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000001), QA_GAME_Q2);
   qa_actor_id excluded[16];
   size_t count = 0;
@@ -877,7 +877,7 @@ bool q2m_turret_lasersight(q2m_context *context, qa_error *error) {
   qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   qa_trace_query query = {.start = context->body.origin,
     .end = qa_vec_add(context->body.origin, qa_vec_scale(forward, 8192)),
-    .pass_actor = context->actor->id, .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    .pass_actor = context->actor->id, .policy = qa_collision_ruleset_policy(context->game->options.rules)};
   query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
   qa_trace_result trace;
   if (!qa_world_trace(context->game->services.world, &query, &trace, error))

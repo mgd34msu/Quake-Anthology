@@ -64,7 +64,7 @@ static bool sight(qa_q2_game *g, q2_actor *a, qa_actor_id target, bool *visible,
                             .end = to.origin,
                             .shape = {.kind = QA_SHAPE_POINT},
                             .pass_actor = a->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(25, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))

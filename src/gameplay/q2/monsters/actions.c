@@ -647,7 +647,7 @@ static bool soldier_aim(q2m_context *context, int flash, unsigned index,
         .start = *start,
         .end = qa_vec_add(enemy.origin, qa_v3(0.0f, 0.0f, height)),
         .pass_actor = context->actor->id,
-        .policy = qa_collision_default_policy(QA_GAME_Q2),
+        .policy = qa_collision_ruleset_policy(context->game->options.rules),
     };
     query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000003), QA_GAME_Q2);
     qa_trace_result trace;
@@ -1192,7 +1192,7 @@ static bool infantry_machinegun(q2m_context *context, qa_error *error) {
           .start = start,
           .end = eye,
           .pass_actor = context->actor->id,
-          .policy = qa_collision_default_policy(QA_GAME_Q2),
+          .policy = qa_collision_ruleset_policy(context->game->options.rules),
       };
       eye_query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46004003), QA_GAME_Q2);
       qa_trace_result trace;
@@ -1209,7 +1209,7 @@ static bool infantry_machinegun(q2m_context *context, qa_error *error) {
       qa_trace_query lead_query = {
           .start = start,
           .end = predicted,
-          .policy = qa_collision_default_policy(QA_GAME_Q2),
+          .policy = qa_collision_ruleset_policy(context->game->options.rules),
       };
       lead_query.policy.contents_mask = qa_collision_contents_mask(3u, QA_GAME_Q2);
       if (!qa_world_trace(context->game->services.world, &lead_query, &trace,
@@ -1550,7 +1550,7 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
         .start = context->body.origin,
         .end = body.origin,
         .pass_actor = context->actor->id,
-        .policy = qa_collision_default_policy(QA_GAME_Q2),
+        .policy = qa_collision_ruleset_policy(context->game->options.rules),
     };
     query.policy.contents_mask = qa_collision_contents_mask(3u, QA_GAME_Q2);
     qa_trace_result trace;
@@ -1976,7 +1976,7 @@ static bool widow2_tongue(q2m_context *context, qa_error *error) {
     return true;
   qa_trace_query query = {.start = start, .end = enemy.origin,
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2)};
+      .policy = qa_collision_ruleset_policy(context->game->options.rules)};
   query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000003), QA_GAME_Q2);
   qa_trace_result trace;
   if (!qa_world_trace(context->game->services.world, &query, &trace, error))
@@ -3297,7 +3297,7 @@ static bool blind_direction(q2m_context *context, qa_vec3 start,
         .start = start,
         .end = point,
         .pass_actor = context->actor->id,
-        .policy = qa_collision_default_policy(QA_GAME_Q2),
+        .policy = qa_collision_ruleset_policy(context->game->options.rules),
     };
     query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2);
     qa_trace_result trace;
@@ -3381,7 +3381,7 @@ static bool trace_point(q2m_context *context, qa_vec3 start, qa_vec3 end,
       .start = start,
       .end = end,
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
   query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2);
   return qa_world_trace(context->game->services.world, &query, trace, error);
@@ -3412,7 +3412,7 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
       qa_trace_query query = {
           .start = origin,
           .end = qa_vec_add(origin, qa_vec_scale(velocity, 0.1f)),
-          .policy = qa_collision_default_policy(QA_GAME_Q2),
+          .policy = qa_collision_ruleset_policy(context->game->options.rules),
       };
       query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000003), QA_GAME_Q2);
       qa_trace_result trace;
@@ -3804,7 +3804,7 @@ static bool shambler_lightning(q2m_context *context, qa_error *error) {
   qa_trace_query query = {
       .start = start, .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
   query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_GAME_Q2);
   if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
@@ -3975,7 +3975,7 @@ static bool turret_fire(q2m_context *context, bool blind, qa_error *error) {
         q2m_random(context->game) + (3 - (float)context->game->options.skill) * .1f < .8f)
       direction = qa_vec_sub(qa_vec_add(point, qa_vec_scale(enemy.velocity, distance / 1000)), start);
     qa_trace_query query = {.start = start, .end = point, .pass_actor = context->actor->id,
-                           .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                           .policy = qa_collision_ruleset_policy(context->game->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_GAME_Q2);
     if (rerelease) query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_GAME_Q2));
     qa_trace_result trace;
@@ -4281,7 +4281,7 @@ static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *err
   qa_vec3 point = {0};
   qa_bounds bounds = {{-32,-32,-24},{32,32,24}};
   qa_trace_query query = {.start = context->body.origin, .pass_actor = context->actor->id,
-    .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    .policy = qa_collision_ruleset_policy(context->game->options.rules)};
   if (vertical) {
     qa_vec3 up;
     qa_angle_vectors(context->body.angles, NULL, NULL, &up,QA_ANGLE_FLOAT_MATH);

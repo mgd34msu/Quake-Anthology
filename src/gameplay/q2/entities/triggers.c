@@ -28,7 +28,8 @@ bool q2_entity_clip(qa_q2_game *g, q2_actor *a, qa_actor_id other, bool *inside,
                         .target = {.inline_model = true,
                                    .model = a->entity->collision.model,
                                    .origin = trigger.origin,
-                                   .angles = trigger.angles}};
+                                   .angles = trigger.angles,
+                                   .pose_rules = g->options.rules}};
     qa_collision_geometry *geometry = qa_world_geometry(g->services.world);
     if (!qa_collision_trace(geometry, qa_world_trace_scratch(g->services.world,geometry), &q, &hit, e))
         return false;

@@ -160,7 +160,7 @@ static bool recover_step_origin(qa_q2_game *g, qa_actor_id id, qa_vec3 previous,
     }
     qa_trace_query query = {.start = body.origin, .end = previous,
         .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds}, .pass_actor = id,
-        .policy = qa_collision_default_policy(QA_GAME_Q2)};
+        .policy = qa_collision_ruleset_policy(g->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e)) return false;

@@ -38,7 +38,7 @@ bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
             .visibility_pass = id,
             .distance = QA_RADIUS_CENTER,
             .check_visibility = true,
-            .trace = qa_collision_default_policy(QA_GAME_Q2),
+            .trace = qa_collision_ruleset_policy(g->options.rules),
             .context = &context,
             .prepare = green_prepare};
         radius.trace.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
@@ -131,7 +131,7 @@ static bool heat_sight(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_actor_i
     qa_trace_query query = {.start = origin,
                             .end = qa_vec_add(body->origin, qa_v3(0, 0, traits.view_height)),
                             .pass_actor = id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(25, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))

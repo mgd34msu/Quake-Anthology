@@ -23,7 +23,7 @@ static qa_vec3 growth_angles(qa_q2_game *g) {
     return angles;
 }
 static bool gib_contents(qa_q2_game *g, qa_vec3 point, int32_t *contents, qa_error *e) {
-    qa_point_query query = {.point = point, .policy = qa_collision_default_policy(QA_GAME_Q2)};
+    qa_point_query query = {.point = point, .policy = qa_collision_ruleset_policy(g->options.rules)};
     qa_point_contents result;
     if (!qa_world_point_contents(g->services.world, &query, &result, e))
         return false;
@@ -320,7 +320,7 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         qa_trace_query query = {.start = body.origin,
                                 .end = qa_vec_sub(owner.origin, rotated),
                                 .pass_actor = a->id,
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(g->options.rules)};
         query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))

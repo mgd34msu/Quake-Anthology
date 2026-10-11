@@ -8,7 +8,7 @@ static void schedule(q2m_context *c, q2m_corpse_phase phase, double seconds) {
 
 static bool wet(q2m_context *c, bool *result, qa_error *error) {
     qa_point_query query = {.point = c->body.origin,
-                           .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                           .policy = qa_collision_ruleset_policy(c->game->options.rules)};
     query.point.z += c->body.bounds.mins.z + 1;
     qa_point_contents contents;
     if (!qa_world_point_contents(c->game->services.world, &query, &contents, error))
@@ -119,7 +119,7 @@ bool q2m_corpse_callback(q2m_context *c, q2m_callback_id callback, qa_error *err
                                 .shape = {.kind = QA_SHAPE_BOX,
                                           .bounds = {.mins = {-32, -32, -24},
                                                      .maxs = {32, 32, -8}}},
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(c->game->options.rules)};
         query.end = query.start;
         query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
         qa_trace_result trace;

@@ -633,7 +633,7 @@ static bool trail_visible(qa_q2_game *game, qa_actor_id observer,
   qa_trace_query query = {
       .start = qa_vec_add(body->origin, qa_v3(0, 0, view_height)),
       .end = point.origin, .pass_actor = observer,
-      .policy = qa_collision_default_policy(QA_GAME_Q2)};
+      .policy = qa_collision_ruleset_policy(game->options.rules)};
   query.policy.contents_mask = qa_collision_contents_mask(Q2M_OPAQUE_MASK, QA_GAME_Q2);
   qa_trace_result trace;
   if (!qa_world_trace(game->services.world, &query, &trace, error)) return false;
@@ -1018,7 +1018,7 @@ bool q2m_visible(q2m_context *context, qa_actor_id id, bool *visible,
                           qa_v3(0, 0, context->monster->view_height)),
       .end = qa_vec_add(target.origin, qa_v3(0, 0, traits.view_height)),
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
   query.policy.contents_mask = qa_collision_contents_mask(Q2M_OPAQUE_MASK, QA_GAME_Q2);
   qa_trace_result trace;
@@ -1050,7 +1050,7 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
       .start = start,
       .end = end,
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
   query.policy.contents_mask = qa_collision_contents_mask(context->game->options.rules == QA_RULESET_Q2_RERELEASE
                                    ? Q2M_ATTACK_MASK | UINT32_C(0x40004000)
@@ -1931,7 +1931,7 @@ static bool default_attack(q2m_context *context, bool *selected, qa_error *error
     return true;
   if (health > 0) {
     qa_trace_query query = {.start = start, .end = eye, .pass_actor = context->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(context->game->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(classic_boss ? UINT32_C(0x02000019)
         : rerelease ? UINT32_C(0x4200001b) : UINT32_C(0x0200001b), QA_GAME_Q2);
     qa_trace_result trace;
@@ -2109,7 +2109,7 @@ static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *e
         .start = qa_vec_add(context->body.origin, qa_v3(0, 0, monster->view_height)),
         .end = qa_vec_add(target.origin, qa_v3(0, 0, traits.view_height)),
         .pass_actor = context->actor->id,
-        .policy = qa_collision_default_policy(QA_GAME_Q2)};
+        .policy = qa_collision_ruleset_policy(context->game->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x02000019), QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(game->services.world, &query, &trace, error))
@@ -2784,7 +2784,7 @@ static bool fly_trace(q2m_context *context, qa_vec3 start, qa_vec3 end,
       .start = start,
       .end = end,
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
   query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x00020003), QA_GAME_Q2);
   if (bounds != NULL) {
@@ -3016,7 +3016,7 @@ static bool alternate_fly(q2m_context *context, bool *handled,
       .point = qa_vec_add(context->body.origin,
                           qa_vec_scale(wanted_direction, current_speed)),
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
   qa_point_contents contents;
   if (!qa_world_point_contents(context->game->services.world, &point, &contents,
@@ -3086,7 +3086,7 @@ static bool pursuit_trace(q2m_context *context, qa_vec3 end, bool shaped,
       .start = context->body.origin,
       .end = end,
       .pass_actor = context->actor->id,
-      .policy = qa_collision_default_policy(QA_GAME_Q2),
+      .policy = qa_collision_ruleset_policy(context->game->options.rules),
   };
   if (shaped)
     query.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX,

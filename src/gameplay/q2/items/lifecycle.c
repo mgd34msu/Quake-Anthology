@@ -362,7 +362,7 @@ static bool floor_item(qa_q2_game *g, q2_actor *a, qa_error *e) {
                             .end = qa_vec_add(body.origin, qa_v3(0, 0, -128)),
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
                             .pass_actor = a->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))

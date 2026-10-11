@@ -36,7 +36,7 @@ static bool world_hit(const q2m_context *c, const qa_trace_result *trace) {
 static bool trace(q2m_context *c, qa_vec3 start, qa_vec3 end, const qa_bounds *bounds,
                    uint32_t mask, qa_trace_result *out, qa_error *error) {
     qa_trace_query query = {.start = start, .end = end, .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->game->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2);
     if (c->game->options.rules == QA_RULESET_Q2_RERELEASE)
         query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_GAME_Q2));
@@ -46,7 +46,7 @@ static bool trace(q2m_context *c, qa_vec3 start, qa_vec3 end, const qa_bounds *b
 }
 static bool contents(q2m_context *c, qa_vec3 point, uint32_t *out, qa_error *error) {
     qa_point_query query = {.point = point, .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->game->options.rules)};
     qa_point_contents result;
     if (!qa_world_point_contents(c->game->services.world, &query, &result, error))
         return false;
@@ -223,7 +223,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
                     velocity.z -= gravity * .1f;
                     qa_trace_query query = {.start = origin,
                         .end = qa_vec_add(origin, qa_vec_scale(velocity, .1f)),
-                        .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                        .policy = qa_collision_ruleset_policy(c->game->options.rules)};
                     query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x46000003), QA_GAME_Q2);
                     qa_trace_result result;
                     if (!qa_world_trace(c->game->services.world, &query, &result, error))

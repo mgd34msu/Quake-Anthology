@@ -511,7 +511,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     qa_trace_query query = {.start = player.origin,
                             .end = body.origin,
                             .pass_actor = lm ? owner->id : id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(hook->physics.clip_mask, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))

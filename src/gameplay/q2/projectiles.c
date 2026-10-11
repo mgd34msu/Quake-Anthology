@@ -117,7 +117,7 @@ static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, flo
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
                             .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->rules)};
     query.policy.contents_mask = qa_collision_contents_mask(Q2_SHOT_MASK, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
@@ -158,7 +158,7 @@ bool q2_projectile_radius(qa_q2_game *g, qa_actor_id id, const q2_projectile *p,
                                  .distance = QA_RADIUS_CENTER,
                                  .visibility_pass = id,
                                  .check_visibility = true,
-                                 .trace = qa_collision_default_policy(QA_GAME_Q2),
+                                 .trace = qa_collision_ruleset_policy(g->options.rules),
                                  .context = g,
                                  .prepare = q2_prepare_radius_damage};
     request.trace.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
@@ -196,7 +196,7 @@ static bool grenade_explode(qa_q2_game *g, qa_actor_id id, qa_actor_id direct, q
     if (!live(g, id))
         return true;
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     qa_point_contents water;
     if (!qa_world_point_contents(g->services.world, &query, &water, e))
         return false;
@@ -246,7 +246,7 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
             body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
         float distance = qa_vec_length(qa_vec_sub(origin, center));
         bool visible;
-        qa_trace_policy policy = qa_collision_default_policy(QA_GAME_Q2);
+        qa_trace_policy policy = qa_collision_ruleset_policy(g->options.rules);
         policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q2);
         if (!qa_builtin_can_damage(&g->services, origin, target, id, policy, false, &visible, e))
             return false;
@@ -333,7 +333,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
         qa_trace_query query = {.start = origin,
                                 .end = center,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(g->options.rules)};
         qa_trace_result trace;
         if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
@@ -420,7 +420,7 @@ static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_er
     qa_trace_query query = {.start = origin,
                             .end = qa_vec_add(origin, qa_vec_scale(direction, 256)),
                             .pass_actor = id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     query.policy.contents_mask = qa_collision_contents_mask(25, QA_GAME_Q2);
     qa_trace_result trace;
     if (!qa_world_trace(g->services.world, &query, &trace, e))
@@ -821,7 +821,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
                          ? qa_vec_add(body.origin, qa_vec_scale(body.velocity, -0.02f))
                          : qa_vec_add(body.origin, normal);
     qa_point_query query = {.point = body.origin,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(g->options.rules)};
     qa_point_contents content;
     if (!qa_world_point_contents(g->services.world, &query, &content, e))
         return false;
@@ -863,7 +863,7 @@ bool q2_tracker_target(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, qa_a
     qa_trace_query query = {.start = start,
                             .end = qa_vec_add(start, qa_vec_scale(direction, 8192)),
                             .pass_actor = c->actor->id,
-                            .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                            .policy = qa_collision_ruleset_policy(c->rules)};
     query.policy.contents_mask =
         qa_collision_contents_mask(c->rules == QA_RULESET_Q2_RERELEASE ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                  : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
@@ -1215,7 +1215,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         qa_trace_query query = {.start = owner_body.origin,
                                 .end = start,
                                 .pass_actor = id,
-                                .policy = qa_collision_default_policy(QA_GAME_Q2)};
+                                .policy = qa_collision_ruleset_policy(c->rules)};
         query.policy.contents_mask = qa_collision_contents_mask(a->physics.clip_mask, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))

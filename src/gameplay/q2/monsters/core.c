@@ -2181,7 +2181,7 @@ static bool check_dodge_projectiles(q2m_context *context, qa_error *error) {
         .start = shot.origin,
         .end = qa_vec_add(shot.origin, shot.velocity),
         .shape = {.kind = QA_SHAPE_BOX, .bounds = shot.bounds},
-        .policy = qa_collision_default_policy(QA_GAME_Q2),
+        .policy = qa_collision_ruleset_policy(context->game->options.rules),
         .pass_actor = shot_actor->id,
     };
     query.policy.contents_mask = qa_collision_contents_mask(shot_actor->physics.clip_mask, QA_GAME_Q2);

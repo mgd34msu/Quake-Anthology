@@ -69,13 +69,19 @@ qa_bounds qa_collision_link_bounds(qa_bounds bounds, qa_vec3 origin, qa_vec3 ang
     return bounds;
 }
 
+qa_trace_policy qa_collision_ruleset_policy(qa_ruleset_id rules)
+{
+    const qa_trace_behavior *behavior = &qa_trace_behaviors[rules];
+    return (qa_trace_policy){.behavior = behavior,
+        .contents_mask=qa_collision_contents_mask(UINT32_MAX,behavior->contents_format),
+        .q1_move=QA_Q1_MOVE_NORMAL,.q1_hull=-1,
+        .curves=true,.player_curve_clip=true};
+}
+
 qa_trace_policy qa_collision_default_policy(qa_game_family family)
 {
     if ((unsigned)family > QA_GAME_Q3) return (qa_trace_policy){0};
-    return (qa_trace_policy){.behavior = &qa_trace_behaviors[qa_collision_source_rules(family)],
-        .contents_mask=qa_collision_contents_mask(UINT32_MAX,family),
-        .q1_move=QA_Q1_MOVE_NORMAL,.q1_hull=-1,
-        .curves=true,.player_curve_clip=true};
+    return qa_collision_ruleset_policy(qa_collision_source_rules(family));
 }
 
 /* Canonical fields stay in one domain. Only the caller's contact conventions
