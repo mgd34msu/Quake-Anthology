@@ -25,8 +25,8 @@ struct frontend_campaign {
     int32_t match_start;
     campaign_kind kind;
     qa_cvar_handle nextmap, skill, selection;
-    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[6];
-    uint64_t selection_modification, progression_revision;
+    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[6], result_fields[3];
+    uint64_t selection_modification, progression_revision, result_declarations;
     int32_t menu_selection;
     bool selection_valid;
     uint64_t cvar_revision, configuration_generation;
@@ -46,6 +46,14 @@ static const char *const base_archive_names[8]={"g_spScores1","g_spScores2","g_s
     "g_spScores5","g_spAwards","g_spVideos","g_spCompletedRound"};
 static const char *const team_overrides[6][2]={{"capturelimit","ui_saveCaptureLimit"},{"fraglimit","ui_saveFragLimit"},
     {"g_doWarmup","ui_doWarmup"},{"g_warmup","ui_Warmup"},{"sv_pure","ui_pure"},{"g_friendlyFire","ui_friendlyFire"}};
+static void campaign_result_bind(frontend_campaign *owner)
+{
+    static const char *const names[]={"ui_scoreMap","ui_scoreScore","ui_scoreTime"};
+    uint64_t revision=qa_cvars_declaration_revision(owner->cvars);
+    if(owner->result_declarations==revision) return;
+    for(size_t i=0;i<3;++i) owner->result_fields[i]=qa_cvars_resolve(owner->cvars,names[i]);
+    owner->result_declarations=revision;
+}
 void frontend_campaign_audio_stopped(qa_frontend *f)
 { if (f && f->campaign) f->campaign->music_attached=false; }
 static char *campaign_copy(const char *text,qa_error *error)
@@ -160,6 +168,7 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     owner->skill=qa_cvars_resolve(view.cvars,"g_spSkill");
     owner->selection=qa_cvars_resolve(view.cvars,"ui_spSelection");
     owner->time_to_beat=qa_cvars_resolve(view.cvars,"ui_teamArenaTimeToBeat");
+    campaign_result_bind(owner);
     for(size_t i=0;i<6;++i) owner->saved_rules[i]=qa_cvars_resolve(view.cvars,team_overrides[i][1]);
     owner->cvar_revision=qa_cvars_revision(view.cvars);
     if (ok) ok=qa_application_q3_campaign_current(f->application,&view);
@@ -396,6 +405,8 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     out->action_pending=qa_console_pending(out->source.console);
     if (out->team) {
         out->team_score_recorded=owner->result; out->team_score=owner->team_result;
+        campaign_result_bind(owner);
+        for(size_t i=0;i<3;++i) out->result_fields[i]=qa_cvars_read(owner->cvars,owner->result_fields[i]);
         if (!qa_application_q3_campaign_result_read(f->application,&out->source,launch_seat,
             &out->team_live,&out->result,error)) return false;
     }

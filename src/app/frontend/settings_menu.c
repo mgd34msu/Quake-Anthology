@@ -32,11 +32,82 @@ static const char *const match_team_labels[]={"Red","Blue","Free for all","Spect
 static const char *const match_votes[]={"map_restart","nextmap","map","kick"};
 static const char *const match_vote_labels[]={"Restart map","Next map","Change map","Kick player"};
 static const char *const match_skills[]={"1","2","3","4","5"};
+#define SETTINGS_CVARS(X) \
+    X(UI_CVAR__CL_COLOR,"_cl_color") \
+    X(UI_CVAR__CL_NAME,"_cl_name") \
+    X(UI_CVAR_AUTOSWITCH,"autoswitch") \
+    X(UI_CVAR_BGMVOLUME,"bgmvolume") \
+    X(UI_CVAR_BOTTOMCOLOR,"bottomcolor") \
+    X(UI_CVAR_CG_AUTOSWITCH,"cg_autoswitch") \
+    X(UI_CVAR_CG_DRAWCROSSHAIRNAMES,"cg_drawCrosshairNames") \
+    X(UI_CVAR_CG_DRAWGUN,"cg_drawGun") \
+    X(UI_CVAR_CG_MARKS,"cg_marks") \
+    X(UI_CVAR_CG_SIMPLEITEMS,"cg_simpleItems") \
+    X(UI_CVAR_CL_MOUSEACCEL,"cl_mouseAccel") \
+    X(UI_CVAR_CL_RUN,"cl_run") \
+    X(UI_CVAR_COLOR,"color") \
+    X(UI_CVAR_CON_SCALE,"con_scale") \
+    X(UI_CVAR_FOV,"fov") \
+    X(UI_CVAR_FREELOOK,"freelook") \
+    X(UI_CVAR_GL_MD5_LOAD,"gl_md5_load") \
+    X(UI_CVAR_GL_MD5_USE,"gl_md5_use") \
+    X(UI_CVAR_HAND,"hand") \
+    X(UI_CVAR_HEADMODEL,"headmodel") \
+    X(UI_CVAR_IN_JOYSTICK,"in_joystick") \
+    X(UI_CVAR_IN_JOYSTICKPROFILE,"in_joystickProfile") \
+    X(UI_CVAR_IN_JOYSTICKSEAT,"in_joystickSeat") \
+    X(UI_CVAR_IN_MIDI,"in_midi") \
+    X(UI_CVAR_IN_MIDICHANNEL,"in_midichannel") \
+    X(UI_CVAR_IN_MIDIDEVICE,"in_mididevice") \
+    X(UI_CVAR_IN_MIDISEAT,"in_midiseat") \
+    X(UI_CVAR_JOY_THRESHOLD,"joy_threshold") \
+    X(UI_CVAR_LOOKSPRING,"lookspring") \
+    X(UI_CVAR_LOOKSTRAFE,"lookstrafe") \
+    X(UI_CVAR_M_FILTER,"m_filter") \
+    X(UI_CVAR_M_PITCH,"m_pitch") \
+    X(UI_CVAR_M_YAW,"m_yaw") \
+    X(UI_CVAR_MODEL,"model") \
+    X(UI_CVAR_MUSIC_MENU_TRACK,"music_menu_track") \
+    X(UI_CVAR_MUSIC_SHUFFLE,"music_shuffle") \
+    X(UI_CVAR_NAME,"name") \
+    X(UI_CVAR_QTS_WEAPON_AUTOSWITCH,"qts_weapon_autoswitch") \
+    X(UI_CVAR_R_ENHANCEDMODELS,"r_enhancedmodels") \
+    X(UI_CVAR_R_FULLSCREEN,"r_fullscreen") \
+    X(UI_CVAR_R_GAMMA,"r_gamma") \
+    X(UI_CVAR_R_MODEL_DISTANCE,"r_model_distance") \
+    X(UI_CVAR_R_OVERRIDE_TEXTURES,"r_override_textures") \
+    X(UI_CVAR_R_SMP,"r_smp") \
+    X(UI_CVAR_R_SWAPINTERVAL,"r_swapInterval") \
+    X(UI_CVAR_R_TEXTURE_FORMATS,"r_texture_formats") \
+    X(UI_CVAR_R_TEXTURE_OVERRIDES,"r_texture_overrides") \
+    X(UI_CVAR_S_GEOMETRYACOUSTICS,"s_geometryAcoustics") \
+    X(UI_CVAR_S_OUTPUTBITS,"s_outputBits") \
+    X(UI_CVAR_S_OUTPUTCHANNELS,"s_outputChannels") \
+    X(UI_CVAR_S_OUTPUTRATE,"s_outputRate") \
+    X(UI_CVAR_SENSITIVITY,"sensitivity") \
+    X(UI_CVAR_SKIN,"skin") \
+    X(UI_CVAR_SV_AUTOSAVE,"sv_autosave") \
+    X(UI_CVAR_TOPCOLOR,"topcolor") \
+    X(UI_CVAR_VOLUME,"volume")
+#define SETTINGS_CVAR_ENUM(id,name) id,
+typedef enum setting_cvar { SETTINGS_CVARS(SETTINGS_CVAR_ENUM) UI_CVAR_COUNT } setting_cvar;
+#undef SETTINGS_CVAR_ENUM
+#define SETTINGS_CVAR_NAME(id,name) [id]=name,
+static const char *const setting_names[UI_CVAR_COUNT]={SETTINGS_CVARS(SETTINGS_CVAR_NAME)};
+#undef SETTINGS_CVAR_NAME
+#undef SETTINGS_CVARS
+
+typedef struct settings_cvar_store {
+    qa_cvars *cvars;
+    uint64_t identity,declarations;
+    qa_cvar_handle handles[UI_CVAR_COUNT];
+} settings_cvar_store;
 typedef struct setting_binding {
     frontend_seat *seat;
     setting_operation operation;
     qa_cvars *cvars;
     const char *name;
+    qa_cvar_handle handle;
     const char *const *values;
     size_t value_count, offset;
     uint32_t mask;
@@ -49,6 +120,8 @@ typedef struct setting_binding {
 struct frontend_settings_menu {
     qa_arena arena;
     setting_binding bindings[96];
+    settings_cvar_store cvar_stores[3];
+    size_t next_cvar_store;
     size_t count;
     qa_error allocation;
     qa_display *display;
@@ -56,6 +129,27 @@ struct frontend_settings_menu {
     char match_target[257],match_bot[257];
     size_t match_team,match_vote,match_skill;
 };
+static settings_cvar_store *settings_store_bind(frontend_settings_menu *owner,qa_cvars *cvars)
+{
+    uint64_t identity=qa_cvars_view_identity(cvars),declarations=qa_cvars_declaration_revision(cvars);
+    settings_cvar_store *store=NULL;
+    for(size_t i=0;i<3;++i)
+        if(owner->cvar_stores[i].cvars==cvars && owner->cvar_stores[i].identity==identity) {
+            store=owner->cvar_stores+i;break;
+        }
+    if(!store) store=owner->cvar_stores+(owner->next_cvar_store++%3);
+    if(store->cvars!=cvars || store->identity!=identity || store->declarations!=declarations) {
+        *store=(settings_cvar_store){.cvars=cvars,.identity=identity,.declarations=declarations};
+        for(size_t i=0;i<UI_CVAR_COUNT;++i) store->handles[i]=qa_cvars_resolve(cvars,setting_names[i]);
+    }
+    return store;
+}
+static const qa_cvar_view *setting_value(frontend_seat *seat,qa_cvars *cvars,setting_cvar variable)
+{
+    if(!cvars) return NULL;
+    settings_cvar_store *store=settings_store_bind(seat->settings_menu,cvars);
+    return qa_cvars_read(cvars,store->handles[variable]);
+}
 static double now_ms(const frontend_seat *seat)
 { return (double)seat->frontend->time_ns / 1000000.0; }
 static bool in_game(const frontend_seat *seat)
@@ -277,14 +371,14 @@ static bool action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action
     }
     case SET_MOUSE_AXIS: case SET_MOUSE_INVERT: {
         if (event->kind!=QA_UI_CHANGE_NUMBER) return true;
-        const qa_cvar_view *row=qa_cvars_find(binding->cvars,binding->name);
+        const qa_cvar_view *row=qa_cvars_read(binding->cvars,binding->handle);
         double previous=row?row->number:0.022;
         value=binding->operation==SET_MOUSE_INVERT?(value!=0?-fabs(previous):fabs(previous)):
             copysign(0.022*value/100,previous);
         char text[32]; return qa_format_number(value,text,error) && qa_cvars_set_console(binding->cvars,binding->name,text,error);
     }
     case SET_CVAR: case SET_MASK: case SET_PACKED_COLOR: {
-        const qa_cvar_view *row=qa_cvars_find(binding->cvars,binding->name);
+        const qa_cvar_view *row=qa_cvars_read(binding->cvars,binding->handle);
         if (!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Settings cvar was removed");
         const char *text=choice; char number[32];
         if (event->kind==QA_UI_CHANGE_TEXT && binding->submit_only) {
@@ -357,14 +451,15 @@ static bool enabled(const qa_cvars *cvars,const qa_cvar_view *row)
 }
 static const char *value_text(const qa_cvar_view *row)
 { return row->latched_value ? row->latched_value : row->value; }
-static qa_ui_control *cvar(frontend_seat *seat,qa_cvars *cvars,const char *name,const char *label,
+static qa_ui_control *cvar(frontend_seat *seat,qa_cvars *cvars,setting_cvar variable,const char *label,
     qa_ui_control_kind kind,double minimum,double maximum,double step)
 {
-    const qa_cvar_view *row=qa_cvars_find(cvars,name);
+    const qa_cvar_view *row=setting_value(seat,cvars,variable);
     if(!row) return NULL;
     qa_ui_control *item=control(seat,label,kind,SET_CVAR);
     if(!item) return NULL;
-    setting_binding *binding=binding_of(item); binding->cvars=cvars; binding->name=name;
+    setting_binding *binding=binding_of(item); binding->cvars=cvars; binding->name=setting_names[variable];
+    binding->handle=settings_store_bind(seat->settings_menu,cvars)->handles[variable];
     item->enabled=enabled(cvars,row);
     if(kind==QA_UI_SLIDER) { item->value.slider.value=row->number; item->value.slider.minimum=minimum;
         item->value.slider.maximum=maximum; item->value.slider.step=step; }
@@ -372,12 +467,12 @@ static qa_ui_control *cvar(frontend_seat *seat,qa_cvars *cvars,const char *name,
     if(kind==QA_UI_FIELD) { item->value.field.text=value_text(row); item->value.field.maximum=(size_t)maximum; }
     return item;
 }
-static qa_ui_control *cvar_choice(frontend_seat *seat,qa_cvars *cvars,const char *name,const char *label,
+static qa_ui_control *cvar_choice(frontend_seat *seat,qa_cvars *cvars,setting_cvar variable,const char *label,
     const char *const *labels,const char *const *values,size_t count)
 {
-    qa_ui_control *item=cvar(seat,cvars,name,label,QA_UI_CHOICE,0,0,0);
+    qa_ui_control *item=cvar(seat,cvars,variable,label,QA_UI_CHOICE,0,0,0);
     if(item) {
-        const qa_cvar_view *row=qa_cvars_find(cvars,name);
+        const qa_cvar_view *row=setting_value(seat,cvars,variable);
         item->value.choice.labels=labels; item->value.choice.count=count;
         for(size_t i=0;i<count;++i) if(!strcmp(value_text(row),values[i])) item->value.choice.selected=i;
         setting_binding *binding=binding_of(item); binding->values=values; binding->value_count=count;
@@ -416,7 +511,7 @@ static int compare_size(const void *a,const void *b)
 }
 static void renderer_controls(frontend_seat *seat,qa_cvars *cvars,const qa_display_info *info)
 {
-    qa_ui_control *item=cvar(seat,cvars,"r_smp","Render worker",QA_UI_TOGGLE,0,0,0);
+    qa_ui_control *item=cvar(seat,cvars,UI_CVAR_R_SMP,"Render worker",QA_UI_TOGGLE,0,0,0);
     if(item) binding_of(item)->restart_video=true;
     static const char *const renderers[]={"CPU","OpenGL"};
     static const char *const renderer_values[]={"cpu","gl"};
@@ -440,10 +535,10 @@ static bool display(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     }
     display_cache->display=f->display; display_cache->backend=info.backend;
     if(in_game(seat)) renderer_controls(seat,cvars,&info);
-    qa_ui_control *item=cvar(seat,cvars,"r_gamma","Brightness",QA_UI_SLIDER,.5,3,.05);
+    qa_ui_control *item=cvar(seat,cvars,UI_CVAR_R_GAMMA,"Brightness",QA_UI_SLIDER,.5,3,.05);
     item=button(seat,"Reset brightness",SET_BRIGHTNESS_RESET);
-    binding_of(item)->cvars=cvars; item->enabled=qa_cvars_find(cvars,"r_gamma")->number!=1;
-    item=cvar(seat,cvars,"r_fullscreen","Borderless fullscreen",QA_UI_TOGGLE,0,0,0);
+    binding_of(item)->cvars=cvars; item->enabled=setting_value(seat,cvars,UI_CVAR_R_GAMMA)->number!=1;
+    item=cvar(seat,cvars,UI_CVAR_R_FULLSCREEN,"Borderless fullscreen",QA_UI_TOGGLE,0,0,0);
     binding_of(item)->restart_video=true;
     static const uint32_t standard[][2]={{640,480},{800,600},{960,600},{1024,768},{1280,720},{1280,800},{1600,900},{1920,1080},{2560,1440},{3440,1440},{3840,2160}};
     int modes=SDL_GetNumDisplayModes(info.display_index); if(modes<0) modes=0;
@@ -474,7 +569,7 @@ static bool display(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     item->value.field.text=seat->menu_height; item->value.field.maximum=4; item->enabled=info.fullscreen==QA_DISPLAY_WINDOWED;
     item=button(seat,"Apply custom window size",SET_SIZE_APPLY);
     uint32_t width,height; item->enabled=info.fullscreen==QA_DISPLAY_WINDOWED && valid_size(seat,&width,&height);
-    item=cvar(seat,cvars,"r_swapInterval","Vertical sync",QA_UI_TOGGLE,0,0,0);
+    item=cvar(seat,cvars,UI_CVAR_R_SWAPINTERVAL,"Vertical sync",QA_UI_TOGGLE,0,0,0);
     item->enabled=info.backend==QA_DISPLAY_OPENGL; binding_of(item)->restart_video=true;
     if(!in_game(seat)) renderer_controls(seat,cvars,&info);
     return finish(seat,FRONTEND_DISPLAY,"Display",out,error,false);
@@ -512,7 +607,7 @@ static bool audio_controls(frontend_seat *seat,qa_error *error)
     const char **output_labels=cache(owner,5,sizeof(*output_labels),_Alignof(const char *));
     if(!output_rates || !output_labels) return false;
     memcpy(output_rates,rates,sizeof(rates)); memcpy(output_labels,rate_labels,sizeof(rate_labels));
-    size_t rate_count=4; const qa_cvar_view *rate=qa_cvars_find(cvars,"s_outputRate");
+    size_t rate_count=4; const qa_cvar_view *rate=setting_value(seat,cvars,UI_CVAR_S_OUTPUTRATE);
     double sample_rate=rate ? strtod(value_text(rate),NULL) : 0;
     bool rate_found=false;
     for(size_t i=0;rate && i<4;++i) if(sample_rate==strtod(rates[i],NULL)) {
@@ -520,23 +615,23 @@ static bool audio_controls(frontend_seat *seat,qa_error *error)
     }
     if(rate && !rate_found) { output_rates[4]=copy_text(owner,value_text(rate));
         char text[48]; snprintf(text,sizeof(text),"%.0f Hz",sample_rate); output_labels[4]=copy_text(owner,text); rate_count=5; }
-    qa_ui_control *item=cvar_choice(seat,cvars,"s_outputRate","Output sample rate",output_labels,output_rates,rate_count);
+    qa_ui_control *item=cvar_choice(seat,cvars,UI_CVAR_S_OUTPUTRATE,"Output sample rate",output_labels,output_rates,rate_count);
     if(item) binding_of(item)->restart_audio=true;
-    item=cvar_choice(seat,cvars,"s_outputBits","Output sample bits",bit_labels,bits,2);
+    item=cvar_choice(seat,cvars,UI_CVAR_S_OUTPUTBITS,"Output sample bits",bit_labels,bits,2);
     if(item) binding_of(item)->restart_audio=true;
-    item=cvar_choice(seat,cvars,"s_outputChannels","Output channels",channel_labels,channels,2);
+    item=cvar_choice(seat,cvars,UI_CVAR_S_OUTPUTCHANNELS,"Output channels",channel_labels,channels,2);
     if(item) binding_of(item)->restart_audio=true;
-    cvar(seat,cvars,"volume","Effects volume",QA_UI_SLIDER,0,1,.05);
-    cvar(seat,cvars,"bgmvolume","Music volume",QA_UI_SLIDER,0,1,.05);
-    cvar(seat,cvars,"s_geometryAcoustics","Geometry sound obstruction",QA_UI_TOGGLE,0,0,0);
-    cvar(seat,cvars,"music_shuffle","Shuffle Quake II gameplay music",QA_UI_TOGGLE,0,0,0);
+    cvar(seat,cvars,UI_CVAR_VOLUME,"Effects volume",QA_UI_SLIDER,0,1,.05);
+    cvar(seat,cvars,UI_CVAR_BGMVOLUME,"Music volume",QA_UI_SLIDER,0,1,.05);
+    cvar(seat,cvars,UI_CVAR_S_GEOMETRYACOUSTICS,"Geometry sound obstruction",QA_UI_TOGGLE,0,0,0);
+    cvar(seat,cvars,UI_CVAR_MUSIC_SHUFFLE,"Shuffle Quake II gameplay music",QA_UI_TOGGLE,0,0,0);
     frontend_music_policy *policy=frontend_music_sources_policy(f->music_sources,FRONTEND_MUSIC_MENU);
     size_t tracks=frontend_music_policy_track_count(policy), capacity=tracks+3;
     const char **labels=cache(owner,capacity,sizeof(*labels),_Alignof(const char *));
     const char **values=cache(owner,capacity,sizeof(*values),_Alignof(const char *));
     if(!labels || !values) return false;
     labels[0]="Automatic"; labels[1]="Off"; values[0]="auto"; values[1]="0";
-    const qa_cvar_view *row=qa_cvars_find(cvars,"music_menu_track"); size_t count=2, selected=0;
+    const qa_cvar_view *row=setting_value(seat,cvars,UI_CVAR_MUSIC_MENU_TRACK); size_t count=2, selected=0;
     for(size_t i=0;i<tracks;++i) { const char *track=frontend_music_policy_track_at(policy,i);
         bool found=false; for(size_t j=0;j<count;++j) if(!strcmp(values[j],track)) found=true;
         if(!found) labels[count]=values[count]=track,++count; }
@@ -544,7 +639,8 @@ static bool audio_controls(frontend_seat *seat,qa_error *error)
     for(size_t i=0;row && i<count;++i) if(!strcmp(row->value,values[i])) { selected=i; found=true; }
     if(row && !found) labels[count]=values[count]=row->value,selected=count++;
     item=choice(seat,"Menu music",labels,values,count,selected,SET_CVAR);
-    if(item) { binding_of(item)->cvars=cvars; binding_of(item)->name="music_menu_track"; }
+    if(item) { binding_of(item)->cvars=cvars; binding_of(item)->name="music_menu_track";
+        binding_of(item)->handle=settings_store_bind(owner,cvars)->handles[UI_CVAR_MUSIC_MENU_TRACK]; }
     return owner->allocation.code==QA_OK;
 }
 static bool sound(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
@@ -595,29 +691,31 @@ static bool primary_input_controls(frontend_seat *seat)
         slider(seat,"Vibration strength",haptics->strength,0,1,.05,SET_RUMBLE_STRENGTH); }
     qa_cvars *mouse=NULL; (void)client_cvars(seat,&mouse);
     if(mouse) {
-        cvar(seat,mouse,"sensitivity","Mouse sensitivity",QA_UI_SLIDER,.1,20,.1);
-        const char *const axes[]={"m_yaw","m_pitch"},*const axis_labels[]={"Horizontal sensitivity","Vertical sensitivity"};
+        cvar(seat,mouse,UI_CVAR_SENSITIVITY,"Mouse sensitivity",QA_UI_SLIDER,.1,20,.1);
+        const setting_cvar axes[]={UI_CVAR_M_YAW,UI_CVAR_M_PITCH};
+        const char *const axis_labels[]={"Horizontal sensitivity","Vertical sensitivity"};
         for(size_t i=0;i<2;++i) {
-            const qa_cvar_view *row=qa_cvars_find(mouse,axes[i]); if(!row) continue;
+            const qa_cvar_view *row=setting_value(seat,mouse,axes[i]); if(!row) continue;
             item=slider(seat,axis_labels[i],fabs(row->number)/.022*100,0,200,1,SET_MOUSE_AXIS);
-            setting_binding *binding=binding_of(item); binding->cvars=mouse; binding->name=axes[i];
+            setting_binding *binding=binding_of(item); binding->cvars=mouse; binding->name=setting_names[axes[i]];
+            binding->handle=settings_store_bind(owner,mouse)->handles[axes[i]];
             char text[48]; snprintf(text,sizeof(text),"%.2f",item->value.slider.value);
             size_t length=strlen(text);
             while(length && text[length-1]=='0') text[--length]='\0';
             if(length && text[length-1]=='.') text[--length]='\0';
             text[length++]='%'; text[length]='\0'; item->value.slider.label=copy_text(owner,text);
         }
-        const qa_cvar_view *pitch=qa_cvars_find(mouse,"m_pitch");
-        if(pitch) { item=toggle(seat,"Invert mouse",signbit(pitch->number)!=0,SET_MOUSE_INVERT); binding_of(item)->cvars=mouse; binding_of(item)->name="m_pitch"; }
-        cvar(seat,mouse,"cl_run","Always run",QA_UI_TOGGLE,0,0,0);
-        cvar(seat,mouse,"cl_mouseAccel","Mouse acceleration",QA_UI_SLIDER,0,2,.05);
-        cvar(seat,mouse,"m_filter","Mouse smoothing",QA_UI_TOGGLE,0,0,0);
-        item=cvar(seat,mouse,"lookspring","Look spring",QA_UI_TOGGLE,0,0,0);
-        if(item) { const qa_cvar_view *free_look=qa_cvars_find(mouse,"freelook");
+        const qa_cvar_view *pitch=setting_value(seat,mouse,UI_CVAR_M_PITCH);
+        if(pitch) { item=toggle(seat,"Invert mouse",signbit(pitch->number)!=0,SET_MOUSE_INVERT); binding_of(item)->cvars=mouse; binding_of(item)->name="m_pitch"; binding_of(item)->handle=settings_store_bind(owner,mouse)->handles[UI_CVAR_M_PITCH]; }
+        cvar(seat,mouse,UI_CVAR_CL_RUN,"Always run",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,mouse,UI_CVAR_CL_MOUSEACCEL,"Mouse acceleration",QA_UI_SLIDER,0,2,.05);
+        cvar(seat,mouse,UI_CVAR_M_FILTER,"Mouse smoothing",QA_UI_TOGGLE,0,0,0);
+        item=cvar(seat,mouse,UI_CVAR_LOOKSPRING,"Look spring",QA_UI_TOGGLE,0,0,0);
+        if(item) { const qa_cvar_view *free_look=setting_value(seat,mouse,UI_CVAR_FREELOOK);
             qa_ruleset_id dialect=qa_cvars_dialect(mouse);
             item->enabled=(dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD) && (!free_look || !free_look->integer); }
-        cvar(seat,mouse,"lookstrafe","Look strafe",QA_UI_TOGGLE,0,0,0);
-        cvar(seat,mouse,"freelook","Free look",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,mouse,UI_CVAR_LOOKSTRAFE,"Look strafe",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,mouse,UI_CVAR_FREELOOK,"Free look",QA_UI_TOGGLE,0,0,0);
     }
     return owner->allocation.code==QA_OK;
 }
@@ -626,14 +724,14 @@ static bool device_input_controls(frontend_seat *seat)
     qa_frontend *f=seat->frontend; frontend_settings_menu *owner=seat->settings_menu;
     qa_ui_control *item=NULL;
     qa_cvars *engine=qa_application_cvars(f->application);
-    item=cvar(seat,engine,"in_midi","MIDI input",QA_UI_TOGGLE,0,0,0); if(item) binding_of(item)->restart_input=true;
+    item=cvar(seat,engine,UI_CVAR_IN_MIDI,"MIDI input",QA_UI_TOGGLE,0,0,0); if(item) binding_of(item)->restart_input=true;
     size_t local_seats=f->options.seats;
     const char **seat_labels=cache(owner,local_seats,sizeof(*seat_labels),_Alignof(const char *));
     const char **seat_values=cache(owner,local_seats,sizeof(*seat_values),_Alignof(const char *));
     if(!seat_labels || !seat_values) return false;
     for(size_t i=0;i<local_seats;++i) { char text[32],number[12]; snprintf(text,sizeof(text),"Player %zu",i+1);
         snprintf(number,sizeof(number),"%zu",i+1); seat_labels[i]=copy_text(owner,text); seat_values[i]=copy_text(owner,number); }
-    item=cvar_choice(seat,engine,"in_midiseat","MIDI player",seat_labels,seat_values,local_seats); if(item) binding_of(item)->restart_input=true;
+    item=cvar_choice(seat,engine,UI_CVAR_IN_MIDISEAT,"MIDI player",seat_labels,seat_values,local_seats); if(item) binding_of(item)->restart_input=true;
     qa_midi_device *midi=NULL; size_t midi_count=0;
     qa_error midi_error={0};
     if(qa_input_midi_devices(&midi,&midi_count,&midi_error)) {
@@ -641,19 +739,19 @@ static bool device_input_controls(frontend_seat *seat)
         const char **midi_values=midi_count?cache(owner,midi_count,sizeof(*midi_values),_Alignof(const char *)):NULL;
         for(size_t i=0;midi_labels && midi_values && i<midi_count;++i) { char number[32]; snprintf(number,sizeof(number),"%zu",i);
             midi_labels[i]=copy_text(owner,midi[i].name); midi_values[i]=copy_text(owner,number); }
-        item=cvar_choice(seat,engine,"in_mididevice","MIDI device",midi_labels,midi_values,midi_count);
+        item=cvar_choice(seat,engine,UI_CVAR_IN_MIDIDEVICE,"MIDI device",midi_labels,midi_values,midi_count);
         if(item) { item->enabled=midi_count!=0; binding_of(item)->restart_input=true; }
     } else {
-        item=cvar_choice(seat,engine,"in_mididevice","MIDI device",NULL,NULL,0);
+        item=cvar_choice(seat,engine,UI_CVAR_IN_MIDIDEVICE,"MIDI device",NULL,NULL,0);
         if(item) item->enabled=false;
     }
     free(midi);
-    item=cvar(seat,engine,"in_midichannel","MIDI channel",QA_UI_SLIDER,1,16,1); if(item) binding_of(item)->restart_input=true;
-    item=cvar(seat,engine,"in_joystick","Source joystick input",QA_UI_TOGGLE,0,0,0); if(item) binding_of(item)->restart_input=true;
-    item=cvar_choice(seat,engine,"in_joystickSeat","Joystick player",seat_labels,seat_values,local_seats); if(item) binding_of(item)->restart_input=true;
+    item=cvar(seat,engine,UI_CVAR_IN_MIDICHANNEL,"MIDI channel",QA_UI_SLIDER,1,16,1); if(item) binding_of(item)->restart_input=true;
+    item=cvar(seat,engine,UI_CVAR_IN_JOYSTICK,"Source joystick input",QA_UI_TOGGLE,0,0,0); if(item) binding_of(item)->restart_input=true;
+    item=cvar_choice(seat,engine,UI_CVAR_IN_JOYSTICKSEAT,"Joystick player",seat_labels,seat_values,local_seats); if(item) binding_of(item)->restart_input=true;
     static const char *const joystick_labels[]={"Linux axes","Windows POV and ball"},*const joystick_values[]={"linux","windows"};
-    item=cvar_choice(seat,engine,"in_joystickProfile","Joystick profile",joystick_labels,joystick_values,2); if(item) binding_of(item)->restart_input=true;
-    item=cvar(seat,engine,"joy_threshold","Joystick axis threshold",QA_UI_SLIDER,.01,1,.01); if(item) binding_of(item)->restart_input=true;
+    item=cvar_choice(seat,engine,UI_CVAR_IN_JOYSTICKPROFILE,"Joystick profile",joystick_labels,joystick_values,2); if(item) binding_of(item)->restart_input=true;
+    item=cvar(seat,engine,UI_CVAR_JOY_THRESHOLD,"Joystick axis threshold",QA_UI_SLIDER,.01,1,.01); if(item) binding_of(item)->restart_input=true;
     size_t seats=f->options.seats;
     if(seat->menu_controller_seat>=seats) seat->menu_controller_seat=0;
     const char **labels=cache(owner,seats+1,sizeof(*labels),_Alignof(const char *));
@@ -733,16 +831,16 @@ static void gameplay_input_controls(frontend_seat *seat)
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
     if(client) {
         qa_ruleset_id dialect=qa_cvars_dialect(client);
-        if(dialect==QA_RULESET_Q3) cvar(seat,client,"cg_autoswitch","Switch to picked-up weapons",QA_UI_TOGGLE,0,0,0);
+        if(dialect==QA_RULESET_Q3) cvar(seat,client,UI_CVAR_CG_AUTOSWITCH,"Switch to picked-up weapons",QA_UI_TOGGLE,0,0,0);
         if(dialect==QA_RULESET_Q2_RERELEASE) {
             static const char *const labels_auto[]={"Smart","Always","Except consumable weapons","Never"},*const values_auto[]={"0","1","2","3"};
-            cvar_choice(seat,client,"autoswitch","Switch to picked-up weapons",labels_auto,values_auto,4);
+            cvar_choice(seat,client,UI_CVAR_AUTOSWITCH,"Switch to picked-up weapons",labels_auto,values_auto,4);
         }
         if(dialect==QA_RULESET_NETQUAKE || dialect==QA_RULESET_QUAKEWORLD) {
-            if(qa_cvars_find(client,"qts_weapon_autoswitch")) {
+            if(setting_value(seat,client,UI_CVAR_QTS_WEAPON_AUTOSWITCH)) {
                 if(q1_pickup_shared(seat)) {
                     static const char *const labels_auto[]={"Always","New weapons","Never"},*const values_auto[]={"always","new","never"};
-                    cvar_choice(seat,client,"qts_weapon_autoswitch","Switch to picked-up weapons",labels_auto,values_auto,3);
+                    cvar_choice(seat,client,UI_CVAR_QTS_WEAPON_AUTOSWITCH,"Switch to picked-up weapons",labels_auto,values_auto,3);
                 } else {
                     qa_ui_control *item=button(seat,"This game controls weapon pickup switching",SET_CLOSE);
                     if(item) item->enabled=false;
@@ -781,22 +879,22 @@ static bool graphics(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     frontend_seat *seat=context; (void)id; begin(seat);
     qa_cvars *cvars=qa_application_cvars(seat->frontend->application);
     static const char *const labels[]={"Disabled","Replace classic formats","Replace all formats"},*const values[]={"0","1","2"};
-    cvar_choice(seat,cvars,"r_override_textures","Replacement images",labels,values,3);
-    cvar(seat,cvars,"r_texture_formats","Formats (source = default)",QA_UI_FIELD,0,128,0);
+    cvar_choice(seat,cvars,UI_CVAR_R_OVERRIDE_TEXTURES,"Replacement images",labels,values,3);
+    cvar(seat,cvars,UI_CVAR_R_TEXTURE_FORMATS,"Formats (source = default)",QA_UI_FIELD,0,128,0);
     static const char *const usages[]={"Replace model skins","Replace sprites","Replace wall textures","Replace pictures","Replace sky images"};
     for(size_t i=0;i<5;++i) {
-        qa_ui_control *item=cvar(seat,cvars,"r_texture_overrides",usages[i],QA_UI_TOGGLE,0,0,0);
+        qa_ui_control *item=cvar(seat,cvars,UI_CVAR_R_TEXTURE_OVERRIDES,usages[i],QA_UI_TOGGLE,0,0,0);
         if(item) { setting_binding *binding=binding_of(item); binding->operation=SET_MASK; binding->mask=1u<<i;
-            item->value.checked=((uint32_t)qa_cvars_find(cvars,"r_texture_overrides")->integer&binding->mask)!=0; }
+            item->value.checked=((uint32_t)setting_value(seat,cvars,UI_CVAR_R_TEXTURE_OVERRIDES)->integer&binding->mask)!=0; }
     }
-    cvar(seat,cvars,"r_enhancedmodels","Q1 enhanced models",QA_UI_TOGGLE,0,0,0);
-    cvar(seat,cvars,"gl_md5_load","Load Q2 enhanced models",QA_UI_TOGGLE,0,0,0);
-    cvar(seat,cvars,"gl_md5_use","Draw Q2 enhanced models",QA_UI_TOGGLE,0,0,0);
-    qa_ui_control *item=cvar(seat,cvars,"r_model_distance","Model range (map units)",QA_UI_FIELD,0,16,0);
+    cvar(seat,cvars,UI_CVAR_R_ENHANCEDMODELS,"Q1 enhanced models",QA_UI_TOGGLE,0,0,0);
+    cvar(seat,cvars,UI_CVAR_GL_MD5_LOAD,"Load Q2 enhanced models",QA_UI_TOGGLE,0,0,0);
+    cvar(seat,cvars,UI_CVAR_GL_MD5_USE,"Draw Q2 enhanced models",QA_UI_TOGGLE,0,0,0);
+    qa_ui_control *item=cvar(seat,cvars,UI_CVAR_R_MODEL_DISTANCE,"Model range (map units)",QA_UI_FIELD,0,16,0);
     if(item) { binding_of(item)->submit_only=true; if(seat->selected_setting==item->id) item->value.field.text=seat->setting_value; }
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
     if(client && (qa_cvars_dialect(client)==QA_RULESET_Q2_CLASSIC || qa_cvars_dialect(client)==QA_RULESET_Q2_RERELEASE))
-        cvar(seat,client,"fov","Field of view",QA_UI_SLIDER,1,160,1);
+        cvar(seat,client,UI_CVAR_FOV,"Field of view",QA_UI_SLIDER,1,160,1);
     return finish(seat,FRONTEND_GRAPHICS,"Graphics",out,error,false);
 }
 static bool network(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
@@ -814,31 +912,32 @@ static bool network(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
     if(client) {
         qa_ruleset_id dialect=qa_cvars_dialect(client);
-        const char *name=dialect==QA_RULESET_NETQUAKE && !qa_cvars_find(client,"name")?"_cl_name":"name";
-        qa_ui_control *item=cvar(seat,client,name,"Player name",QA_UI_FIELD,0,dialect==QA_RULESET_NETQUAKE?15:63,0);
+        setting_cvar variable=dialect==QA_RULESET_NETQUAKE && !setting_value(seat,client,UI_CVAR_NAME)?UI_CVAR__CL_NAME:UI_CVAR_NAME;
+        qa_ui_control *item=cvar(seat,client,variable,"Player name",QA_UI_FIELD,0,dialect==QA_RULESET_NETQUAKE?15:63,0);
         if(item) { binding_of(item)->submit_only=true; if(seat->selected_setting==item->id) item->value.field.text=seat->setting_value; }
-        const char *const names[]={"model","headmodel","skin"},*const labels[]={"Player model / skin","Head model / skin","Player skin (model/skin)"};
+        const setting_cvar variables[]={UI_CVAR_MODEL,UI_CVAR_HEADMODEL,UI_CVAR_SKIN};
+        const char *const labels[]={"Player model / skin","Head model / skin","Player skin (model/skin)"};
         for(size_t i=dialect==QA_RULESET_Q3?0:2;i<(dialect==QA_RULESET_Q3?2:3);++i) {
             if(dialect!=QA_RULESET_Q3 && dialect!=QA_RULESET_Q2_CLASSIC && dialect!=QA_RULESET_Q2_RERELEASE) break;
-            item=cvar(seat,client,names[i],labels[i],QA_UI_FIELD,0,63,0);
+            item=cvar(seat,client,variables[i],labels[i],QA_UI_FIELD,0,63,0);
             if(item) { binding_of(item)->submit_only=true; if(seat->selected_setting==item->id) item->value.field.text=seat->setting_value; }
         }
         const char **colors=cache(seat->settings_menu,14,sizeof(*colors),_Alignof(const char *));
         if(!colors) return false;
         for(size_t i=0;i<14;++i) { char text[12]; snprintf(text,sizeof(text),"%zu",i); colors[i]=copy_text(seat->settings_menu,text); }
         if(dialect==QA_RULESET_NETQUAKE) {
-            const char *color=qa_cvars_find(client,"color")?"color":"_cl_color";
-            const qa_cvar_view *row=qa_cvars_find(client,color);
+            setting_cvar color=setting_value(seat,client,UI_CVAR_COLOR)?UI_CVAR_COLOR:UI_CVAR__CL_COLOR;
+            const qa_cvar_view *row=setting_value(seat,client,color);
             if(row) for(unsigned i=0;i<2;++i) {
                 item=choice(seat,i?"Pants color":"Shirt color",colors,colors,14,((unsigned)row->integer>>(i?0:4))&15u,SET_PACKED_COLOR);
-                setting_binding *binding=binding_of(item); binding->cvars=client; binding->name=color; binding->mask=i?0:4;
+                setting_binding *binding=binding_of(item); binding->cvars=client; binding->name=setting_names[color]; binding->handle=settings_store_bind(seat->settings_menu,client)->handles[color]; binding->mask=i?0:4;
             }
         } else if(dialect==QA_RULESET_QUAKEWORLD) {
-            cvar_choice(seat,client,"topcolor","Shirt color",colors,colors,14);
-            cvar_choice(seat,client,"bottomcolor","Pants color",colors,colors,14);
+            cvar_choice(seat,client,UI_CVAR_TOPCOLOR,"Shirt color",colors,colors,14);
+            cvar_choice(seat,client,UI_CVAR_BOTTOMCOLOR,"Pants color",colors,colors,14);
         } else if(dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) {
             static const char *const hands[]={"Right","Left","Center"},*const hand_values[]={"0","1","2"};
-            cvar_choice(seat,client,"hand","Weapon hand",hands,hand_values,3);
+            cvar_choice(seat,client,UI_CVAR_HAND,"Weapon hand",hands,hand_values,3);
         }
     }
     return finish(seat,FRONTEND_NETWORK_OPTIONS,"Network",out,error,false);
@@ -913,7 +1012,7 @@ bool frontend_settings_accessibility_menu(void *context,uint32_t id,qa_ui_menu *
     frontend_seat *seat=context; (void)id; begin(seat);
     qa_cvars *cvars=qa_application_cvars(seat->frontend->application);
     static const char *const scales[]={"Auto","1x","2x","3x","4x"},*const scale_values[]={"0","1","2","3","4"};
-    if(in_game(seat)) cvar_choice(seat,cvars,"con_scale","Console text size",scales,scale_values,5);
+    if(in_game(seat)) cvar_choice(seat,cvars,UI_CVAR_CON_SCALE,"Console text size",scales,scale_values,5);
     static const struct { qa_ui_preference preference; const char *label; } preferences[]={
         {QA_UI_PREF_TYPEFACE,"Typeface"},{QA_UI_PREF_COLOR_MODE,"Interface colors"},
         {QA_UI_PREF_HUD_SCALE,"HUD size"},{QA_UI_PREF_TEXT_SCALE,"Text size"},
@@ -925,8 +1024,8 @@ bool frontend_settings_accessibility_menu(void *context,uint32_t id,qa_ui_menu *
     for(size_t i=0;i<sizeof(preferences)/sizeof(*preferences);++i) {
         qa_ui_preference preference=preferences[i].preference;
         const qa_ui_preference_description *description=qa_ui_preference_describe(preference);
-        char name[64]; if(!qa_ui_preference_name(seat->id,preference,name,error)) return false;
-        const qa_cvar_view *row=qa_cvars_find(cvars,name);
+        const qa_ui_preference_handles *handles=qa_application_ui_preference_handles(seat->frontend->application);
+        const qa_cvar_view *row=qa_cvars_read(cvars,handles->seats[seat->id][preference]);
         if(!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Accessibility preferences are not registered");
         qa_ui_control *item=NULL;
         if(description->kind==QA_UI_PREFERENCE_RANGE) item=slider(seat,preferences[i].label,row->number,
@@ -942,43 +1041,43 @@ bool frontend_settings_accessibility_menu(void *context,uint32_t id,qa_ui_menu *
         if(item) { binding_of(item)->cvars=cvars; binding_of(item)->mask=(uint32_t)preference; }
     }
     qa_ui_control *item=button(seat,"Reset accessibility settings",SET_PREFERENCES_RESET); binding_of(item)->cvars=cvars;
-    if(!in_game(seat)) cvar_choice(seat,cvars,"con_scale","Console text size",scales,scale_values,5);
+    if(!in_game(seat)) cvar_choice(seat,cvars,UI_CVAR_CON_SCALE,"Console text size",scales,scale_values,5);
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
     if(in_game(seat) && client) {
-        cvar(seat,cvars,"sv_autosave","Autosave on level load",QA_UI_TOGGLE,0,0,0);
-        cvar(seat,client,"cg_drawGun","Draw weapon",QA_UI_TOGGLE,0,0,0);
-        cvar(seat,client,"cg_simpleItems","Simple items",QA_UI_TOGGLE,0,0,0);
-        cvar(seat,client,"cg_marks","Wall marks",QA_UI_TOGGLE,0,0,0);
-        cvar(seat,client,"cg_drawCrosshairNames","Target names",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,cvars,UI_CVAR_SV_AUTOSAVE,"Autosave on level load",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,client,UI_CVAR_CG_DRAWGUN,"Draw weapon",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,client,UI_CVAR_CG_SIMPLEITEMS,"Simple items",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,client,UI_CVAR_CG_MARKS,"Wall marks",QA_UI_TOGGLE,0,0,0);
+        cvar(seat,client,UI_CVAR_CG_DRAWCROSSHAIRNAMES,"Target names",QA_UI_TOGGLE,0,0,0);
     }
     return finish(seat,FRONTEND_ACCESSIBILITY,"Accessibility",out,error,false);
 }
-static bool reset_existing(qa_cvars *cvars,const char *name,qa_error *error)
-{ return !qa_cvars_find(cvars,name) || qa_cvars_reset(cvars,name,false,error); }
+static bool reset_existing(frontend_seat *seat,qa_cvars *cvars,setting_cvar variable,qa_error *error)
+{ return !setting_value(seat,cvars,variable) || qa_cvars_reset(cvars,setting_names[variable],false,error); }
 static bool gameplay_reset(frontend_seat *seat,qa_error *error)
 {
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
     if(!in_game(seat) || !client) return frontend_fail(error,QA_ERROR_ARGUMENT,"Player preferences lost their actual game recipient");
     qa_cvars *engine=qa_application_cvars(seat->frontend->application);
-    if(!reset_existing(engine,"sv_autosave",error)) return false;
-    static const char *const names[]={"cg_drawGun","cg_simpleItems","cg_marks","cg_drawCrosshairNames"};
-    for(size_t i=0;i<sizeof(names)/sizeof(*names);++i)
-        if(!reset_existing(client,names[i],error)) return false;
+    if(!reset_existing(seat,engine,UI_CVAR_SV_AUTOSAVE,error)) return false;
+    static const setting_cvar variables[]={UI_CVAR_CG_DRAWGUN,UI_CVAR_CG_SIMPLEITEMS,UI_CVAR_CG_MARKS,UI_CVAR_CG_DRAWCROSSHAIRNAMES};
+    for(size_t i=0;i<sizeof(variables)/sizeof(*variables);++i)
+        if(!reset_existing(seat,client,variables[i],error)) return false;
     qa_ruleset_id dialect=qa_cvars_dialect(client);
-    const char *name=dialect==QA_RULESET_NETQUAKE && !qa_cvars_find(client,"name")?"_cl_name":"name";
-    if(!reset_existing(client,name,error)) return false;
+    setting_cvar variable=dialect==QA_RULESET_NETQUAKE && !setting_value(seat,client,UI_CVAR_NAME)?UI_CVAR__CL_NAME:UI_CVAR_NAME;
+    if(!reset_existing(seat,client,variable,error)) return false;
     if(dialect==QA_RULESET_Q3) {
-        if(!reset_existing(client,"cg_autoswitch",error) || !reset_existing(client,"model",error) ||
-            !reset_existing(client,"headmodel",error)) return false;
+        if(!reset_existing(seat,client,UI_CVAR_CG_AUTOSWITCH,error) || !reset_existing(seat,client,UI_CVAR_MODEL,error) ||
+            !reset_existing(seat,client,UI_CVAR_HEADMODEL,error)) return false;
     } else if(dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) {
-        if(!reset_existing(client,"skin",error) || !reset_existing(client,"hand",error) ||
-            !reset_existing(client,"fov",error) ||
-            (dialect==QA_RULESET_Q2_RERELEASE && !reset_existing(client,"autoswitch",error))) return false;
+        if(!reset_existing(seat,client,UI_CVAR_SKIN,error) || !reset_existing(seat,client,UI_CVAR_HAND,error) ||
+            !reset_existing(seat,client,UI_CVAR_FOV,error) ||
+            (dialect==QA_RULESET_Q2_RERELEASE && !reset_existing(seat,client,UI_CVAR_AUTOSWITCH,error))) return false;
     } else {
-        if(q1_pickup_shared(seat) && !reset_existing(client,"qts_weapon_autoswitch",error)) return false;
+        if(q1_pickup_shared(seat) && !reset_existing(seat,client,UI_CVAR_QTS_WEAPON_AUTOSWITCH,error)) return false;
         if(dialect==QA_RULESET_NETQUAKE) {
-            if(!reset_existing(client,qa_cvars_find(client,"color")?"color":"_cl_color",error)) return false;
-        } else if(!reset_existing(client,"topcolor",error) || !reset_existing(client,"bottomcolor",error)) return false;
+            if(!reset_existing(seat,client,setting_value(seat,client,UI_CVAR_COLOR)?UI_CVAR_COLOR:UI_CVAR__CL_COLOR,error)) return false;
+        } else if(!reset_existing(seat,client,UI_CVAR_TOPCOLOR,error) || !reset_existing(seat,client,UI_CVAR_BOTTOMCOLOR,error)) return false;
     }
     return frontend_settings_devices_save(seat->frontend,error);
 }
@@ -1002,7 +1101,7 @@ static bool all_options(void *context,uint32_t id,qa_ui_menu *out,qa_error *erro
     destination(seat,"Audio",FRONTEND_AUDIO_OPTIONS);
     destination(seat,"Controls",FRONTEND_CONTROLS);
     qa_cvars *mouse=NULL,*client=client_cvars(seat,&mouse); (void)mouse;
-    if(live && client && (qa_cvars_find(client,"name") || qa_cvars_find(client,"_cl_name"))) destination(seat,"Network",FRONTEND_NETWORK_OPTIONS);
+    if(live && client && (setting_value(seat,client,UI_CVAR_NAME) || setting_value(seat,client,UI_CVAR__CL_NAME))) destination(seat,"Network",FRONTEND_NETWORK_OPTIONS);
     destination(seat,"Accessibility",FRONTEND_ACCESSIBILITY);
     if(live) destination(seat,"Language",FRONTEND_LANGUAGE);
     if(frontend_tools_llm(seat->frontend)) destination(seat,"LLM options",FRONTEND_ASSISTANCE);
@@ -1059,6 +1158,7 @@ bool frontend_settings_create(frontend_seat *seat,qa_error *error)
     frontend_settings_menu *owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining authored settings menu cache");
     qa_arena_init(&owner->arena,4096); seat->settings_menu=owner;
+    (void)settings_store_bind(owner,qa_application_cvars(seat->frontend->application));
     memcpy(owner->match_bot,"sarge",6); owner->match_skill=2;
     const qa_ui_menu_registration registrations[]={
         {.id=FRONTEND_DISPLAY,.context=seat,.factory=display},

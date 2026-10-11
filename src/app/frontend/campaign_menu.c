@@ -129,20 +129,14 @@ static bool result_menu(void *context,uint32_t seat_id,qa_ui_menu *out,qa_error 
     *out=(qa_ui_menu){.id=FRONTEND_ARENA_RESULT,.title=view.postgame.rank==1?"Victory":"Match complete",
         .controls=seat->controls,.count=count,.fullscreen=true}; return true;
 }
-static const qa_cvar_view *source_value(const frontend_campaign_ui_view *view,const char *name,qa_error *error)
-{
-    const qa_cvar_view *value=qa_cvars_find(view->source.cvars,name);
-    if (!value) frontend_fail(error,QA_ERROR_FORMAT,"Team Arena result lost its actual source score cvar");
-    return value;
-}
 static bool team_result_menu(void *context,uint32_t seat_id,qa_ui_menu *out,qa_error *error)
 {
     frontend_seat *seat=context; frontend_ui_seat_features *state=frontend_ui_features_seat(seat);
     frontend_campaign_ui_view view; (void)seat_id;
     if (!state || !read(seat,&view,error) || !view.team || !view.result) return false;
-    const qa_cvar_view *map=source_value(&view,"ui_scoreMap",error),*points=source_value(&view,"ui_scoreScore",error),
-        *time=source_value(&view,"ui_scoreTime",error);
-    if (!map || !points || !time) return false;
+    const qa_cvar_view *map=view.result_fields[0],*points=view.result_fields[1],*time=view.result_fields[2];
+    if (!map || !points || !time)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Team Arena result lost its actual source score cvar");
     snprintf(state->campaign_title,sizeof(state->campaign_title),"%s: %s (%d - %d)",
         view.team_live.won?"Victory":"Defeat",map->value,view.team_live.score,view.team_live.opponent);
     snprintf(state->campaign_status,sizeof(state->campaign_status),"Score %s · Time %s",points->value,time->value);

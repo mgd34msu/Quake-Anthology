@@ -17,6 +17,7 @@ typedef struct frontend_campaign_ui_view {
     int32_t player_client;
     qa_team_arena_score_result team_score;
     qa_application_q3_campaign_result team_live;
+    const qa_cvar_view *result_fields[3];
 } frontend_campaign_ui_view;
 /* Borrows the actual published local CGAME recipient and its physical GAME.
  * Missing campaigns or recipients succeed with installed=false. All catalog
