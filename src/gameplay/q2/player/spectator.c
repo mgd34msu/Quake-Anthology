@@ -38,7 +38,7 @@ bool qa_q2_player_chase(qa_q2_game *g, qa_actor_id id, int direction, bool toggl
             s->info.chase_target = list->rows[next].actor;
         } else
             s->info.chase_target = (qa_actor_id){0};
-        list->active = false;
+        q2_player_list_release(list);
     }
     if (!q2_player_emit(g,
                         &(qa_q2_player_event){.kind = QA_Q2_PLAYER_CHASE,

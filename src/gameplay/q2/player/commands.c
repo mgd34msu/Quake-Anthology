@@ -92,7 +92,7 @@ bool q2_player_scoreboard(qa_q2_game *g, q2_actor *a, bool reliable, qa_error *e
                                                 .score_count = count,
                                                 .reliable = reliable},
                           e);
-    list->active = false;
+    q2_player_list_release(list);
     return okay;
 }
 static bool select_item(qa_q2_game *g, q2_actor *a, int direction, int filter, qa_error *e) {
@@ -605,7 +605,7 @@ static bool players_list(qa_q2_game *g, q2_actor *a, bool scores, qa_error *e) {
     text[used] = 0;
     if (scores)
         snprintf(text + used, sizeof(text) - used, "\n%zu players\n", count);
-    list->active = false;
+    q2_player_list_release(list);
     return q2_player_print(g, a->id, 2, text, e);
 }
 bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_t count,
