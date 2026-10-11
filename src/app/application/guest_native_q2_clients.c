@@ -483,7 +483,7 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     struct application_native_q2 *engine = client_owner(provider, slot, false, error);
     if (!engine || !accepted || !userinfo) return false;
     *accepted = false;
-    const qa_cvar_view *maximum = qa_cvars_find(engine->cvars, "maxclients");
+    const qa_cvar_view *maximum = qa_cvars_read(engine->cvars, provider->q2_maxclients);
     if (!maximum || maximum->integer < 1 || maximum->integer > 256 || slot > (uint32_t)maximum->integer)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 client exceeds the source maximum clients");
     if (!qa_actors_get(qa_session_actors(provider->application->session), actor))

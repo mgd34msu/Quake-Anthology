@@ -32,22 +32,19 @@ static float source_yaw(qa_vec3 direction)
 
 static bool podium_origin(qa_q3_game *game, qa_vec3 *out, qa_error *error)
 {
-    if (!game->options.hooks.postgame_cvar_integer)
+    if (!game->options.hooks.postgame_podium_parameters)
         return q3_fail(error, "podium placement has no actual live engine cvar trap");
     qa_vec3 forward;
     q3_source_angle_vectors(game->match_state.intermission_angles, &forward, NULL, NULL);
     qa_vec3 origin = game->match_state.intermission_origin;
     int32_t distance, drop;
+    if (!game->options.hooks.postgame_podium_parameters(game->options.hooks.context,&distance,&drop,error)) return false;
     for (unsigned axis = 0; axis < 3; ++axis) {
-        if (!game->options.hooks.postgame_cvar_integer(game->options.hooks.context,
-                "g_podiumDist", &distance, error)) return false;
         float component = (q3_source_vec_component(origin, axis) + (q3_source_vec_component(forward, axis) * (float)distance));
         if (!axis) origin.x = component;
         else if (axis == 1) origin.y = component;
         else origin.z = component;
     }
-    if (!game->options.hooks.postgame_cvar_integer(game->options.hooks.context,
-            "g_podiumDrop", &drop, error)) return false;
     origin.z = (origin.z + -(float)drop);
     *out = origin;
     return true;

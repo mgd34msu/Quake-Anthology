@@ -383,6 +383,15 @@ bool application_native_q3_settings_reset_cache(application_provider *provider,
     return register_cache(provider, build_date, true, error);
 }
 
+const qa_cvar_view *application_native_q3_settings_live_at(const application_provider *provider,
+    application_native_q3_setting setting)
+{
+    const struct application_native_q3_settings *owner=owner_at(provider);
+    if(!owner || !owner->initialized || owner->indices[setting]==SIZE_MAX) return NULL;
+    const setting_reference *reference=owner->references+owner->indices[setting];
+    return qa_cvars_read(reference->registry,reference->handle);
+}
+
 bool application_native_q3_settings_snapshot_at(const application_provider *provider,
     application_native_q3_setting setting, const application_native_q3_cvar_snapshot **out,
     qa_error *error)

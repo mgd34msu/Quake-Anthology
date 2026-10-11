@@ -219,7 +219,7 @@ bool application_qc_host_command(application_provider *provider,
     *handled = true;
     bool allowed;
     if (engine->profile == QA_QC_QUAKEWORLD) {
-        const qa_cvar_view *cheats = qa_cvars_find(engine->cvars, "sv_cheats");
+        const qa_cvar_view *cheats = qa_cvars_read(engine->cvars, engine->cvar_handles.cheats);
         allowed = cheats && cheats->number != 0;
     } else {
         const qa_qc_definition *deathmatch = provider->state.qc.engine->global_bindings->deathmatch;
@@ -480,7 +480,7 @@ bool application_qc_prepare_player(application_provider *provider, qa_actor_id a
         const qa_qc_definition *colormap = application_qc_field(engine->field_bindings->colormap, QA_QC_FLOAT, error);
         const qa_qc_definition *team = application_qc_field(engine->field_bindings->team, QA_QC_FLOAT, error);
         const qa_qc_definition *netname = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
-        const qa_cvar_view *maximum = qa_cvars_find(engine->cvars, "sv_maxspeed");
+        const qa_cvar_view *maximum = qa_cvars_read(engine->cvars, engine->cvar_handles.qw_movement[8]);
         bool ok = colormap && team && netname && qa_qc_slot_reference(vm, slot, &reference, error);
         if (ok && (!maximum || !isfinite(maximum->number)))
             ok = application_fail(error, QA_ERROR_FORMAT, "QW source Prepare has no finite source speed cvar");

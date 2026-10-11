@@ -6,6 +6,7 @@
 struct qa_q3_client_authorization {
     qa_q3_client_authorization_bindings bindings;
     qa_net_address address;
+    qa_cvar_handle anonymous;
     bool resolved, busy;
 };
 static bool fail(qa_error *error, qa_status code, const char *text)
@@ -27,9 +28,12 @@ bool qa_q3_client_authorization_create(const qa_q3_client_authorization_bindings
 {
     if (!out || *out) return fail(error, QA_ERROR_ARGUMENT, "Q3 authorization requires an empty owner output");
     if (!bindings_valid(bindings, error)) return false;
+    if (!qa_cvars_register(bindings->cvars, "cl_anonymous", "0", QA_CVAR_INIT | QA_CVAR_SYSTEMINFO,
+        0, "Original Q3 authorization policy", error)) return false;
     qa_q3_client_authorization *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, "Allocating Q3 client-static authorization owner");
-    owner->bindings = *bindings; *out = owner; return true;
+    owner->bindings = *bindings; owner->anonymous=qa_cvars_resolve(bindings->cvars,"cl_anonymous");
+    *out = owner; return true;
 }
 void qa_q3_client_authorization_destroy(qa_q3_client_authorization *owner) { free(owner); }
 bool qa_q3_client_authorization_idle(const qa_q3_client_authorization *owner)
@@ -62,10 +66,7 @@ bool qa_q3_client_authorization_request(qa_q3_client_authorization *owner,
     if (!owner->bindings.read_profile(owner->bindings.context, key, &demo, error) ||
         !current(owner, connection_current, connection, error)) goto done;
     key[32] = 0;
-    if (!qa_cvars_register(owner->bindings.cvars, "cl_anonymous", "0", QA_CVAR_INIT | QA_CVAR_SYSTEMINFO,
-        0, "Original Q3 authorization policy", error) ||
-        !current(owner, connection_current, connection, error)) goto done;
-    const qa_cvar_view *anonymous = qa_cvars_find(owner->bindings.cvars, "cl_anonymous");
+    const qa_cvar_view *anonymous = qa_cvars_read(owner->bindings.cvars, owner->anonymous);
     if (!anonymous || !qa_q3_authorize_client_packet((const char *)key, demo, anonymous->integer, &packet, error) ||
         !current(owner, connection_current, connection, error)) goto done;
     ok = send(connection, &owner->address, (qa_bytes){packet.data, packet.size}, error) &&

@@ -280,7 +280,7 @@ typedef struct qa_q3_hooks {
     bool (*cheats_enabled)(void *);
     bool (*console_print)(void *, const char *, qa_error *);
     bool (*source_log)(void *, const char *, qa_error *);
-    bool (*postgame_cvar_integer)(void *, const char *, int32_t *, qa_error *);
+    bool (*postgame_podium_parameters)(void *, int32_t *distance, int32_t *drop, qa_error *);
     bool (*memory_debug_integer)(void *, int32_t *, qa_error *);
     bool (*source_hurt_carrier)(void *, qa_actor_id target, qa_actor_id attacker, qa_error *);
     bool (*source_frag_bonuses)(void *, qa_actor_id target, qa_actor_id attacker, qa_error *);

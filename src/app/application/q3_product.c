@@ -861,4 +861,7 @@ void application_q3_cvar_controls_bind(qa_cvars *cvars,
     controls[APPLICATION_Q3_CVAR_BOT_ENABLE] = qa_cvars_resolve(cvars, "bot_enable");
     controls[APPLICATION_Q3_CVAR_GAME_TYPE] = qa_cvars_resolve(cvars, "g_gametype");
     controls[APPLICATION_Q3_CVAR_MAX_CLIENTS] = qa_cvars_resolve(cvars, "sv_maxclients");
+    controls[APPLICATION_Q3_CVAR_PRIVATE_CLIENTS] = qa_cvars_resolve(cvars, "sv_privateClients");
+    controls[APPLICATION_Q3_CVAR_PRIVATE_PASSWORD] = qa_cvars_resolve(cvars, "sv_privatePassword");
+    controls[APPLICATION_Q3_CVAR_NEXTMAP] = qa_cvars_resolve(cvars, "nextmap");
 }

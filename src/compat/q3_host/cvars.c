@@ -613,6 +613,7 @@ static bool register_vm(q3_call *call, qa_error *error)
             ok=qa_cvars_vm_bind(access.registry,(const char *)name.data,(const char *)value.data,
                 (uint32_t)call->arguments[3],owner,&handle,error);
             if (ok) view=qa_cvars_handle(access.registry,handle);
+            if (ok && engine) call->host->engine_cheats=qa_cvars_resolve(access.registry,"sv_cheats");
             ok=access_leave(access,ok,error);
         }
     }

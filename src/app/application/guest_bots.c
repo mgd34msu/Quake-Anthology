@@ -1,5 +1,6 @@
 #include "guest_projection_private.h"
 #include "bots_private.h"
+#include "guest_q3_console.h"
 
 bool application_guest_bot_allocate(application_provider *provider, int32_t *out,
                                      qa_error *error)
@@ -10,7 +11,8 @@ bool application_guest_bot_allocate(application_provider *provider, int32_t *out
         !qa_q3_host_game_data_read(engine->game->host, &data))
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest bot allocation requires located canonical source records");
     uint32_t count = data.client_count < 64 ? data.client_count : 64;
-    const qa_cvar_view *maximum = qa_cvars_find(provider->application->cvars, "sv_maxclients");
+    const qa_cvar_view *maximum = qa_cvars_read(application_guest_q3_console_registry(provider),
+        application_guest_q3_console_control(provider,APPLICATION_Q3_CVAR_MAX_CLIENTS));
     if (maximum) {
         if (maximum->integer < 1 || maximum->integer > 64)
             return application_fail(error, QA_ERROR_FORMAT, "Guest source maximum clients exceeds its admitted server ABI");

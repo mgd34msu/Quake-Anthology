@@ -236,18 +236,18 @@ bool application_native_q3_postgame_console(application_provider *provider,
     return finish(&scope, scope.game_type != 2 || qa_q3_source_abort_podium(scope.game, error), error);
 }
 
-bool application_native_q3_postgame_cvar_integer(void *opaque, const char *name,
-    int32_t *out, qa_error *error)
+bool application_native_q3_postgame_podium_parameters(void *opaque,
+    int32_t *distance, int32_t *drop, qa_error *error)
 {
     application_provider *provider = opaque;
-    if (!out || !name || (strcmp(name, "g_podiumDist") && strcmp(name, "g_podiumDrop")))
+    if (!distance || !drop)
         return application_fail(error, QA_ERROR_ARGUMENT, "podium trap requires its registered source cvar");
     postgame_scope scope;
     if (!begin(provider, &scope, error)) return false;
-    qa_cvars *registry = application_native_q3_cvar_owner(provider, name);
-    const qa_cvar_view *value = registry ? qa_cvars_find(registry, name) : NULL;
-    bool okay = value != NULL;
-    if (okay) *out = value->integer;
+    const qa_cvar_view *dist = application_native_q3_settings_live_at(provider,APPLICATION_Q3_SETTING_G_PODIUM_DIST);
+    const qa_cvar_view *down = application_native_q3_settings_live_at(provider,APPLICATION_Q3_SETTING_G_PODIUM_DROP);
+    bool okay = dist && down;
+    if (okay) { *distance=dist->integer; *drop=down->integer; }
     else application_fail(error, QA_ERROR_NOT_FOUND, "podium trap has no actual registered engine cvar");
     return finish(&scope, okay, error);
 }

@@ -206,10 +206,11 @@ static bool flag(const vote_scope *scope, uint32_t slot, uint32_t set, uint32_t 
     return qa_q3_client_player_flags_update(scope->game, slot, set, clear, error);
 }
 
-static bool live_cvar(const vote_scope *scope, const char *name, char text[VOTE_BYTES], qa_error *error)
+static bool nextmap_read(const vote_scope *scope, char text[VOTE_BYTES], qa_error *error)
 {
-    qa_cvars *cvars = application_native_q3_cvar_owner(scope->owner->provider, name);
-    const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
+    const application_provider *provider=scope->owner->provider;
+    const qa_cvar_view *value = qa_cvars_read(application_native_q3_console_registry(provider),
+        application_native_q3_console_control(provider,APPLICATION_Q3_CVAR_NEXTMAP));
     if (!value)
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 vote has no actual source cvar");
     size_t length = strlen(value->value);
@@ -257,14 +258,14 @@ static bool call_vote(vote_scope *scope, const qa_command_invocation *command, q
         store_text(state->display, formatted);
     } else if (named(key, "map")) {
         char nextmap[VOTE_BYTES];
-        if (!live_cvar(scope, "nextmap", nextmap, error)) return false;
+        if (!nextmap_read(scope, nextmap, error)) return false;
         if (*nextmap) snprintf(formatted, sizeof(formatted), "%s %s; set nextmap \"%s\"", key, parameter, nextmap);
         else snprintf(formatted, sizeof(formatted), "%s %s", key, parameter);
         store_text(vote->text, formatted);
         memcpy(state->display, vote->text, sizeof(state->display));
     } else if (named(key, "nextmap")) {
         char nextmap[VOTE_BYTES];
-        if (!live_cvar(scope, "nextmap", nextmap, error)) return false;
+        if (!nextmap_read(scope, nextmap, error)) return false;
         if (!*nextmap) return print_client(scope, "nextmap not set.\n", error);
         memcpy(vote->text, "vstr nextmap", sizeof("vstr nextmap"));
         memcpy(state->display, vote->text, sizeof(state->display));

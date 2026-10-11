@@ -67,7 +67,7 @@ typedef struct application_qc_precache {
     uint32_t player_model, spike_model, water_sound;
 } application_qc_precache;
 typedef struct application_qc_cvar_handles {
-    qa_cvar_handle qw_movement[9], sv_aim, teamplay, deathmatch, pausable, hostname;
+    qa_cvar_handle qw_movement[9], sv_aim, teamplay, deathmatch, pausable, hostname, cheats;
 } application_qc_cvar_handles;
 struct application_qc_state {
     struct application_qc_items *items;

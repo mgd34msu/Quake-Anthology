@@ -8,6 +8,6 @@
 bool application_native_q3_match_begin_product(application_provider *, qa_error *);
 bool application_native_q3_postgame_console(application_provider *,
     const qa_command_invocation *, bool *handled, qa_error *);
-bool application_native_q3_postgame_cvar_integer(void *, const char *, int32_t *, qa_error *);
+bool application_native_q3_postgame_podium_parameters(void *, int32_t *, int32_t *, qa_error *);
 
 #endif

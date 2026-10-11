@@ -15,6 +15,7 @@ static void controls_bind(struct application_qc_state *engine)
     engine->cvar_handles.deathmatch = qa_cvars_resolve(engine->cvars, "deathmatch");
     engine->cvar_handles.pausable = qa_cvars_resolve(engine->cvars, "pausable");
     engine->cvar_handles.hostname = qa_cvars_resolve(engine->cvars, "hostname");
+    engine->cvar_handles.cheats = qa_cvars_resolve(engine->cvars, "sv_cheats");
 }
 
 bool application_qc_console_prepare(qa_application *app, application_provider *provider,

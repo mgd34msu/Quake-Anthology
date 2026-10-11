@@ -866,8 +866,14 @@ bool application_unified_player_admit(qa_application *app,
     if (source.family == QA_GAME_Q3 && canonical.source_slot == UINT32_MAX) {
         qa_cvars *registry = provider->kind == APPLICATION_PROVIDER_Q3 ?
             application_native_q3_console_registry(provider) : application_guest_q3_console_registry(provider);
-        const qa_cvar_view *reserved = registry ? qa_cvars_find(registry, "sv_privateClients") : NULL;
-        const qa_cvar_view *password = registry ? qa_cvars_find(registry, "sv_privatePassword") : NULL;
+        qa_cvar_handle reserved_handle=provider->kind==APPLICATION_PROVIDER_Q3 ?
+            application_native_q3_console_control(provider,APPLICATION_Q3_CVAR_PRIVATE_CLIENTS) :
+            application_guest_q3_console_control(provider,APPLICATION_Q3_CVAR_PRIVATE_CLIENTS);
+        qa_cvar_handle password_handle=provider->kind==APPLICATION_PROVIDER_Q3 ?
+            application_native_q3_console_control(provider,APPLICATION_Q3_CVAR_PRIVATE_PASSWORD) :
+            application_guest_q3_console_control(provider,APPLICATION_Q3_CVAR_PRIVATE_PASSWORD);
+        const qa_cvar_view *reserved = qa_cvars_read(registry,reserved_handle);
+        const qa_cvar_view *password = qa_cvars_read(registry,password_handle);
         char *received = info_value_copy(userinfo, "password", error);
         if (!registry || !reserved || !password || !received) {
             free(received); free(name); free(skin); free(team); free(userinfo);

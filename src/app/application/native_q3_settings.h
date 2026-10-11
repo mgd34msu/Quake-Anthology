@@ -115,6 +115,7 @@ bool application_native_q3_settings_check_cvars(application_provider *, qa_error
 /* Fixed engine callers address the same product-qualified GAME snapshots. */
 bool application_native_q3_settings_snapshot_at(const application_provider *, application_native_q3_setting,
     const application_native_q3_cvar_snapshot **, qa_error *);
+const qa_cvar_view *application_native_q3_settings_live_at(const application_provider *,application_native_q3_setting);
 bool application_native_q3_settings_integer_at(const application_provider *, application_native_q3_setting,
     int32_t *, qa_error *);
 bool application_native_q3_settings_number_at(const application_provider *, application_native_q3_setting,

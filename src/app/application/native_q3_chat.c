@@ -144,8 +144,7 @@ static bool scope_begin(qa_application *application, application_provider *provi
         !qa_q3_source_max_clients(provider->state.q3, &scope->max_clients, error) ||
         !qa_q3_source_clock(scope->game, &scope->time, error) ||
         !application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &scope->game_type, error)) return false;
-    qa_cvars *cvars = application_native_q3_cvar_owner(provider, "dedicated");
-    const qa_cvar_view *dedicated = cvars ? qa_cvars_find(cvars, "dedicated") : NULL;
+    const qa_cvar_view *dedicated = application_native_q3_settings_live_at(provider,APPLICATION_Q3_SETTING_DEDICATED);
     if (!dedicated)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "native Q3 chat has no source dedicated setting");
