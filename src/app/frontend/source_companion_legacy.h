@@ -7,8 +7,7 @@ typedef struct frontend_source_companion_legacy {
     qa_scene_world *world;
     frontend_source_companion_view capture;
     qa_q3_presentation *presentation;
-    qa_application_q3_weapon_models models;
-    bool registered;
+    const frontend_source_companion_selection *selection;
     qa_q3_scene_options options;
 } frontend_source_companion_legacy;
 bool frontend_source_companion_legacy_prepare(qa_frontend *,uint32_t physical,qa_actor_id,

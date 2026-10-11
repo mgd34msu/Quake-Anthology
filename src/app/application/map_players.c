@@ -3855,6 +3855,19 @@ static bool remote_character_slot_occupied(qa_application *app,
     return true;
 }
 
+static bool application_seat_free_first(qa_application *app,uint32_t *out,qa_error *error)
+{
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(app));
+    for(uint32_t seat=0;;++seat) {
+        bool used=false;
+        for(size_t i=0;i<app->players->count;++i)
+            used |= !app->players->records[i].retiring && app->players->records[i].seat==seat;
+        for(size_t i=0;choices && i<choices->seat_count;++i) used |= choices->seats[i].id==seat;
+        if(!used) { *out=seat; return true; }
+        if(seat==UINT32_MAX) return application_fail(error,QA_ERROR_MEMORY,"Application seats are exhausted");
+    }
+}
+
 static bool record_append(qa_application *application, application_player_record record,
                            size_t *out, qa_error *error)
 {
@@ -3918,19 +3931,7 @@ bool application_players_bot_allocate(qa_application *app,
                 return application_fail(error, QA_ERROR_ARGUMENT, "launch bot seat has duplicate pending roster rows");
             pending = i;
         }
-    if (!selected_seat) {
-        const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
-        for (;;) {
-            bool used = false;
-            for (size_t i = 0; i < app->players->count; ++i)
-                used |= !app->players->records[i].retiring && app->players->records[i].seat == seat.id;
-            for (size_t i = 0; i < choices->seat_count; ++i) used |= choices->seats[i].id == seat.id;
-            if (!used) break;
-            if (seat.id == UINT32_MAX)
-                return application_fail(error, QA_ERROR_MEMORY, "bot application seats are exhausted");
-            ++seat.id;
-        }
-    }
+    if (!selected_seat && !application_seat_free_first(app,&seat.id,error)) return false;
     application_provider *character = current_seat_provider(app, &seat, QA_ROLE_CHARACTER);
     application_provider *movement = current_seat_provider(app, &seat, QA_ROLE_MOVEMENT);
     application_provider *arsenal = current_seat_provider(app, &seat, QA_ROLE_ARSENAL);
@@ -4547,15 +4548,8 @@ bool application_players_guest_attach(qa_application *application,
         }
     bool created = index == roster->count;
     if (created) {
-        uint32_t seat = 0;
-        for (;;) {
-            bool occupied = false;
-            for (size_t i = 0; i < roster->count; ++i) occupied |= roster->records[i].seat == seat;
-            if (!occupied) break;
-            if (seat == UINT32_MAX)
-                return application_fail(error, QA_ERROR_MEMORY, "guest application seats are exhausted");
-            ++seat;
-        }
+        uint32_t seat;
+        if(!application_seat_free_first(application,&seat,error)) return false;
         const qa_actor_record *source = qa_actors_get(qa_session_actors(application->session), actor);
         application_player_record record = {.pending_identity = {.spectator = info->spectator, .bot = true}, .seat = seat, .client_slot = slot,
             .source_slot = source->source_slot, .actor = actor, .character = provider,
