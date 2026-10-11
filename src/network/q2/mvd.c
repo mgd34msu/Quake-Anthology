@@ -567,9 +567,14 @@ bool qa_q2_mvd_framer_finish(const qa_q2_mvd_framer *f, bool terminator, qa_erro
     return true;
 }
 bool qa_q2_mvd_write_magic(qa_net_writer *w) { return qa_net_write_u32(w,QA_Q2_MVD_MAGIC); }
+bool qa_q2_mvd_write_frame_prefix(qa_net_writer *w, size_t size)
+{
+    if (!size || size>QA_Q2_MVD_MESSAGE_BYTES) return qa_net_writer_fail(w,"MVD frame length out of range");
+    return qa_net_write_u16(w,(uint16_t)size);
+}
 bool qa_q2_mvd_write_framed(qa_net_writer *w, qa_bytes bytes)
 {
-    if (!bytes.size || bytes.size>QA_Q2_MVD_MESSAGE_BYTES) return qa_net_writer_fail(w,"MVD frame length out of range");
-    return qa_net_write_u16(w,(uint16_t)bytes.size) && qa_net_write_data(w,bytes.data,bytes.size);
+    return qa_q2_mvd_write_frame_prefix(w,bytes.size) &&
+        qa_net_write_data(w,bytes.data,bytes.size);
 }
 bool qa_q2_mvd_write_terminator(qa_net_writer *w) { return qa_net_write_u16(w,0); }

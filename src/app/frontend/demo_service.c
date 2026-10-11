@@ -1,4 +1,5 @@
 #include "demo_service.h"
+#include "qa/arena.h"
 #include "qa/network_q2_mvd.h"
 #include "qa/network_q3.h"
 #include "qa/vfs.h"
@@ -16,6 +17,7 @@ struct frontend_demo_reader {
     frontend_demo_end end;
     int32_t forced_track;
 };
+enum { DEMO_RECORD_PREFIX_BYTES = 64 };
 typedef struct demo_recording {
     frontend_demo_record_source source;
     frontend_demo_sink sink;
@@ -27,6 +29,8 @@ typedef struct demo_recording {
     float angles[3], seconds;
     unsigned calls;
     bool attached, faulted, footer_written, preparing, failure_reported;
+    qa_arena framing_storage;
+    uint8_t *framing;
     qa_buffer seed;
     qa_error failure;
 } demo_recording;
@@ -299,64 +303,56 @@ static bool record_append(void *owner,const frontend_demo_packet *packet,qa_erro
         if(error)r->failure=*error;
         return false;
     }
-    size_t payload=packet->format==FRONTEND_DEMO_NQ?packet->value.nq.message.size:
-        packet->format==FRONTEND_DEMO_QW&&packet->value.qw.kind==QA_QW_DEMO_PACKET?packet->value.qw.data.packet.size:
-        packet->format==FRONTEND_DEMO_QW?0:
-        packet->format==FRONTEND_DEMO_Q3?packet->value.q3.message.size:packet->value.message.size;
-    if (payload>INT32_MAX||payload>SIZE_MAX-64||
-        (packet->format==FRONTEND_DEMO_Q3&&payload>QA_Q3_MESSAGE_BYTES)) {
+    qa_bytes payload=packet->format==FRONTEND_DEMO_NQ?packet->value.nq.message:
+        packet->format==FRONTEND_DEMO_QW&&packet->value.qw.kind==QA_QW_DEMO_PACKET?packet->value.qw.data.packet:
+        packet->format==FRONTEND_DEMO_QW?(qa_bytes){0}:
+        packet->format==FRONTEND_DEMO_Q3?packet->value.q3.message:packet->value.message;
+    if (payload.size>INT32_MAX||payload.size>SIZE_MAX-DEMO_RECORD_PREFIX_BYTES||
+        (packet->format==FRONTEND_DEMO_Q3&&payload.size>QA_Q3_MESSAGE_BYTES)) {
         r->faulted=true;
         fail(error,QA_ERROR_FORMAT,"Demo packet extent overflow");
         if(error)r->failure=*error;
         return false;
     }
-    uint8_t local[128];
-    size_t capacity=payload+64;
-    uint8_t *storage=capacity>sizeof(local)?malloc(capacity):local;
-    if (!storage) {
-        r->faulted=true;
-        fail(error,QA_ERROR_MEMORY,"Framing native demo packet");
-        if(error)r->failure=*error;
-        return false;
-    }
     qa_net_writer writer;
-    qa_net_writer_init(&writer,storage,capacity,error);
+    qa_net_writer_init(&writer,r->framing,DEMO_RECORD_PREFIX_BYTES,error);
     bool okay=true;
     switch(packet->format) {
     case FRONTEND_DEMO_NQ:
-        okay=qa_q1_demo_write_record(&writer,&packet->value.nq);
+        okay=qa_q1_demo_write_record_prefix(&writer,&packet->value.nq);
         break;
     case FRONTEND_DEMO_QW:
-        okay=qa_qw_demo_write_record(&writer,&packet->value.qw);
+        okay=qa_qw_demo_write_record_prefix(&writer,&packet->value.qw);
         break;
     case FRONTEND_DEMO_Q3:
         okay=qa_net_write_i32(&writer,packet->value.q3.sequence)&&
-            qa_net_write_i32(&writer,(int32_t)payload)&&
-            qa_net_write_data(&writer,packet->value.q3.message.data,payload);
+            qa_net_write_i32(&writer,(int32_t)payload.size);
         break;
     case FRONTEND_DEMO_MVD:
-        okay=qa_q2_mvd_write_framed(&writer,packet->value.message);
+        okay=qa_q2_mvd_write_frame_prefix(&writer,payload.size);
         break;
     case FRONTEND_DEMO_Q2:case FRONTEND_DEMO_Q2_SERVER:
-        okay=qa_net_write_i32(&writer,(int32_t)payload)&&
-            qa_net_write_data(&writer,packet->value.message.data,payload);
+        okay=qa_net_write_i32(&writer,(int32_t)payload.size);
         break;
     }
+    if(okay&&payload.size&&!payload.data)
+        okay=qa_net_writer_fail(&writer,"Invalid network input span");
     ++r->calls;
     if(okay&&r->preparing) {
-        size_t size=qa_net_writer_size(&writer);
+        size_t prefix=qa_net_writer_size(&writer),size=prefix+payload.size;
         if(size>SIZE_MAX-r->seed.size)okay=fail(error,QA_ERROR_MEMORY,"Demo initial state extent overflow");
         else {
             uint8_t *bytes=realloc(r->seed.data,r->seed.size+size);
             if(!bytes)okay=fail(error,QA_ERROR_MEMORY,"Retaining actual initial demo packets");
             else {
-                memcpy(bytes+r->seed.size,storage,size);
+                memcpy(bytes+r->seed.size,r->framing,prefix);
+                if(payload.size)memcpy(bytes+r->seed.size+prefix,payload.data,payload.size);
                 r->seed=(qa_buffer){bytes,r->seed.size+size};
             }
         }
-    } else if (okay) okay=write_bytes(r,(qa_bytes){storage,qa_net_writer_size(&writer)},error);
+    } else if (okay) okay=write_bytes(r,(qa_bytes){r->framing,qa_net_writer_size(&writer)},error)&&
+        write_bytes(r,payload,error);
     --r->calls;
-    if (storage!=local) free(storage);
     if (!okay) {
         r->faulted=true;
         if(error)r->failure=*error;
@@ -412,6 +408,7 @@ static bool record_close(demo_recording **owner,bool footer,qa_error *error) {
         if(r->source.owner)return fail(error,QA_ERROR_ARGUMENT,"Recording source retained its released owner");
     }
     qa_fs_root_close(r->root);
+    qa_arena_destroy(&r->framing_storage);
     qa_buffer_free(&r->seed);
     free(r->path);
     free(r);
@@ -486,6 +483,12 @@ static bool record_begin(frontend_demo_service *s,const frontend_demo_request *r
         okay=fail(error,QA_ERROR_ARGUMENT,"Requested demo recording source format differs");
     if(okay&&(!request->name&&r->source.format!=FRONTEND_DEMO_Q3))
         okay=fail(error,QA_ERROR_ARGUMENT,"Usage: record <name>");
+    if(okay)okay=qa_arena_reserve(&r->framing_storage,DEMO_RECORD_PREFIX_BYTES,error);
+    if(okay) {
+        r->framing=qa_arena_alloc(&r->framing_storage,DEMO_RECORD_PREFIX_BYTES,1,error);
+        okay=r->framing!=NULL;
+        qa_arena_seal(&r->framing_storage);
+    }
     if(okay) {
         okay=r->source.seed(r->source.owner,&r->sink,error);
         if(okay&&!r->packets)okay=fail(error,QA_ERROR_ARGUMENT,"Recording requires matching initial source state");

@@ -193,17 +193,16 @@ bool qa_command_tokenize_span(const char *text, size_t length, qa_ruleset_id dia
     bool console_text, qa_command_tokens *out,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)
 {
-    if (text == NULL || out == NULL || !qac_dialect_valid(dialect))
+    if (text == NULL || out == NULL || !allocate || !qac_dialect_valid(dialect))
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid command tokenizer arguments");
-    *out = (qa_command_tokens){.borrowed = allocate != NULL};
+    *out = (qa_command_tokens){.borrowed = true};
     if (length > (SIZE_MAX - 1) / 2)
         return qac_fail(error, QA_ERROR_MEMORY, "command tokenizer input is too large");
     size_t maximum = dialect == QA_RULESET_Q3 ? 1024 : 80;
     size_t capacity = length < maximum ? length + 1 : maximum;
-    out->values = allocate ? allocate(context, capacity * sizeof(*out->values), _Alignof(char *), error) :
-        calloc(capacity, sizeof(*out->values));
-    out->storage = allocate ? allocate(context, length * 2 + 1, 1, error) : malloc(length * 2 + 1);
-    out->args_text = allocate ? allocate(context, length + 1, 1, error) : malloc(length + 1);
+    out->values = allocate(context, capacity * sizeof(*out->values), _Alignof(char *), error);
+    out->storage = allocate(context, length * 2 + 1, 1, error);
+    out->args_text = allocate(context, length + 1, 1, error);
     if (out->values == NULL || out->storage == NULL || out->args_text == NULL) {
         qac_fail(error, QA_ERROR_MEMORY, "allocating command tokens");
         goto fail;
@@ -261,7 +260,7 @@ void qa_command_tokens_free(qa_command_tokens *tokens)
 bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *out,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error)
 {
-    if (!from || !out || (from->count && !from->values)) {
+    if (!from || !out || !allocate || (from->count && !from->values)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid literal command token copy");
         return false;
     }
@@ -274,13 +273,12 @@ bool qa_command_tokens_copy(const qa_command_tokens *from, qa_command_tokens *ou
         }
         size += length;
     }
-    qa_command_tokens copy = {.count = from->count, .borrowed = allocate != NULL};
-    copy.values = !from->count ? NULL : allocate
-        ? allocate(context, from->count * sizeof(*copy.values), _Alignof(char *), error)
-        : calloc(from->count, sizeof(*copy.values));
-    copy.storage = !size ? NULL : allocate ? allocate(context, size, 1, error) : malloc(size);
+    qa_command_tokens copy = {.count = from->count, .borrowed = true};
+    copy.values = !from->count ? NULL :
+        allocate(context, from->count * sizeof(*copy.values), _Alignof(char *), error);
+    copy.storage = !size ? NULL : allocate(context, size, 1, error);
     const char *args = from->args_text ? from->args_text : "";
-    copy.args_text = allocate ? allocate(context, strlen(args) + 1, 1, error) : malloc(strlen(args) + 1);
+    copy.args_text = allocate(context, strlen(args) + 1, 1, error);
     if ((from->count && !copy.values) || (size && !copy.storage) || !copy.args_text) {
         qa_command_tokens_free(&copy);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining literal command tokens");

@@ -1314,9 +1314,10 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     _Alignas(max_align_t) uint8_t token_storage[16384];qa_arena token_arena={0};
     bool local=strlen(expanded)<1024;
     if(local && !qa_arena_init_buffer(&token_arena,token_storage,sizeof(token_storage),error))return false;
+    if(!local) qa_console_command_arena(console,&token_arena);
     if (!qa_command_tokenize(expanded, context->dialect, context->console_text, &tokens,
-        local?qa_arena_alloc_callback:NULL,&token_arena,error)) return false;
-    if (tokens.count == 0) { qa_command_tokens_free(&tokens); return true; }
+        qa_arena_alloc_callback,&token_arena,error)) { qa_arena_destroy(&token_arena); return false; }
+    if (tokens.count == 0) { qa_command_tokens_free(&tokens); qa_arena_destroy(&token_arena); return true; }
     qa_command_invocation command = {console, *context, tokens.count,
         (const char *const *)tokens.values, tokens.args_text, raw, 0, 0};
     command.context.direct = context->direct && context->script == NULL &&
@@ -1392,6 +1393,7 @@ done:
     }
     console->frame = frame.parent;
     qa_command_tokens_free(&tokens);
+    qa_arena_destroy(&token_arena);
     return success;
 }
 

@@ -44,11 +44,10 @@ static bool admit_line(batch *b, qa_bytes line, const char *const *ancestry, siz
             if (token >= 128) return llm_fail(error, "a command token exceeds the engine limit");
         }
     }
-    char *text = malloc(line.size + 1);
-    if (!text) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating validated console line"); return false; }
-    memcpy(text, line.data, line.size); text[line.size] = 0;
+    qa_arena storage={0}; qa_console_command_arena(b->console,&storage);
     qa_command_tokens tokens = {0}; bool ok = false;
-    if (!qa_command_tokenize(text, b->context->dialect, false, &tokens, NULL, NULL, error)) goto done;
+    if (!qa_command_tokenize_span((const char *)line.data,line.size,b->context->dialect,false,&tokens,
+        qa_arena_alloc_callback,&storage,error)) goto done;
     if (!tokens.count || (b->context->dialect != QA_RULESET_Q3 && tokens.count >= 80)) { llm_fail(error, "a command has no name or too many arguments"); goto done; }
     const char *name = tokens.values[0];
     if (llm_command_indirect(name)) { llm_fail(error, "llm_exec requires literal commands without scripts, bindings, waits or LLM calls"); goto done; }
@@ -75,7 +74,7 @@ static bool admit_line(batch *b, qa_bytes line, const char *const *ancestry, siz
     if (!llm_text_add(&b->text, line, error) || !llm_text_string(&b->text, "\n", error)) goto done;
     ++b->commands; ok = true;
 done:
-    qa_command_tokens_free(&tokens); free(text); return ok;
+    qa_command_tokens_free(&tokens); qa_arena_destroy(&storage); return ok;
 }
 static bool visit(batch *b, qa_bytes bytes, const char *const *ancestry, size_t depth, qa_error *error) {
     if (depth > 8) return llm_fail(error, "alias expansion exceeds eight levels");

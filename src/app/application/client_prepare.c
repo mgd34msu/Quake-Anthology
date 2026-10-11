@@ -159,8 +159,11 @@ static bool variables(qa_application_client_preparation *p,bool initial,qa_error
     char *early=NULL; size_t early_size=0;
     for (size_t i=0;i<qa_application_startup_command_count(p->application);++i) {
         const char *text=qa_application_startup_command(p->application,i);
+        qa_arena storage={0}; qa_console_command_arena(p->source.context.console,&storage);
         qa_command_tokens tokens={0};
-        if (!text || !qa_command_tokenize(text,dialect,false,&tokens, NULL, NULL,e)) { free(early); return false; }
+        if (!text || !qa_command_tokenize(text,dialect,false,&tokens,qa_arena_alloc_callback,&storage,e)) {
+            qa_arena_destroy(&storage); free(early); return false;
+        }
         bool ok=true;
         if (tokens.count && !strcmp(tokens.values[0],"set")) {
             if (dialect==QA_RULESET_Q3)
@@ -177,6 +180,7 @@ static bool variables(qa_application_client_preparation *p,bool initial,qa_error
             }
         }
         qa_command_tokens_free(&tokens);
+        qa_arena_destroy(&storage);
         if (!ok || !qa_application_client_prepare_startup_current(p)) { free(early); return false; }
     }
     bool ok=!early || (initial?qa_console_append(p->source.context.console,&p->source.context.command,early,e):

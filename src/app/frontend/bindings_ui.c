@@ -38,29 +38,27 @@ static bool matches(const char *command, const char *canonical)
         ((!strcmp(canonical, "+scores") || !strcmp(canonical, "score")) &&
             (!strcmp(command, "+scores") || !strcmp(command, "+showscores")));
 }
-static const char *weapon_item(const char *command,const qa_input_weapon_binding *items,size_t count)
+static const char *weapon_item(const frontend_seat *seat,const char *command,
+    const qa_input_weapon_binding *items,size_t count)
 {
     if (!count || strpbrk(command,";\r\n\\") || strstr(command,"//") || strstr(command,"/*")) return NULL;
+    qa_arena storage={0};
+    qa_console_command_arena(qa_application_console(seat->frontend->application),&storage);
     qa_command_tokens tokens={0};
-    if (!qa_command_tokenize(command,QA_RULESET_Q3,false,&tokens, NULL, NULL,NULL)) return NULL;
+    if (!qa_command_tokenize(command,QA_RULESET_Q3,false,&tokens,
+        qa_arena_alloc_callback,&storage,NULL)) { qa_arena_destroy(&storage); return NULL; }
     const qa_input_weapon_binding *item=NULL;
     if (tokens.count==2) item=qa_input_weapon_resolve(tokens.values[0],tokens.values[1],items,count);
     else if (tokens.count>2) {
-        size_t size=1;
-        for (size_t i=1;i<tokens.count;++i) size+=strlen(tokens.values[i])+1;
-        char *argument=malloc(size);
-        if (argument) {
-            argument[0]=0;
-            for (size_t i=1;i<tokens.count;++i) { if(i>1) strcat(argument," "); strcat(argument,tokens.values[i]); }
-            item=qa_input_weapon_resolve(tokens.values[0],argument,items,count); free(argument);
-        }
+        item=qa_input_weapon_resolve(tokens.values[0],tokens.args_text,items,count);
     }
-    const char *id=item?item->id:NULL; qa_command_tokens_free(&tokens); return id;
+    const char *id=item?item->id:NULL; qa_command_tokens_free(&tokens);
+    qa_arena_destroy(&storage); return id;
 }
 static bool action_matches(const char *command,const char *canonical,const char *item)
 { return matches(command,canonical) || (item && !strncmp(canonical,"use ",4) && !strcmp(item,canonical+4)); }
-static bool record_matches(const binding_record *row,const char *command)
-{ return action_matches(command,row->canonical,weapon_item(command,row->items,row->item_count)); }
+static bool record_matches(const frontend_seat *seat,const binding_record *row,const char *command)
+{ return action_matches(command,row->canonical,weapon_item(seat,command,row->items,row->item_count)); }
 static bool set_selected(frontend_seat *seat, const char *key, qa_error *error)
 {
     char *copy = NULL;
@@ -93,7 +91,7 @@ static const char *target_label(const frontend_seat *seat, const char *command)
     if (seat->binding_rows && seat->binding_labels) for (size_t i=0;i<seat->binding_capacity;++i) {
         if (!seat->binding_rows[i].enabled) continue;
         const binding_record *row=(const binding_record *)seat->binding_labels+i;
-        if (record_matches(row,command)) return row->cells[0];
+        if (record_matches(seat,row,command)) return row->cells[0];
     }
     return command;
 }
@@ -151,7 +149,7 @@ bool frontend_binding_capture(void *context, uint32_t id, qa_physical_input inpu
     const qa_input_binding *old = qa_input_seat_binding(seat->input, input);
     const char *command = old ? binding_text(old) : NULL;
     const binding_record *selected=selected_record(seat);
-    if (command && !(selected?record_matches(selected,command):matches(command,seat->binding_command))) {
+    if (command && !(selected?record_matches(seat,selected,command):matches(command,seat->binding_command))) {
         char physical[128];
         if (!qa_input_physical_name(input, physical, sizeof(physical)))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "captured key has no physical name");
@@ -210,7 +208,7 @@ static bool action(void *context, uint32_t id, qa_ui_id control, const qa_ui_act
             size_t i = 0;
             while (i < qa_input_seat_binding_count(seat->input)) {
                 const qa_input_binding *binding = qa_input_seat_binding_at(seat->input, i);
-                if (record_matches(row,binding_text(binding))) (void)qa_input_seat_unbind(seat->input, binding->input);
+                if (record_matches(seat,row,binding_text(binding))) (void)qa_input_seat_unbind(seat->input, binding->input);
                 else ++i;
             }
             return frontend_settings_devices_save(seat->frontend,error);
@@ -380,7 +378,7 @@ static bool menu(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
     char **custom=calloc(text_capacity?text_capacity:1,sizeof(*custom));
     const char **resolved=calloc(bound_count?bound_count:1,sizeof(*resolved));
     if (!actions || !custom || !resolved) { free(actions); free(custom); free(resolved); free(live_weapons); return frontend_fail(error,QA_ERROR_MEMORY,"Reading binding actions"); }
-    for (size_t i=0;i<bound_count;++i) resolved[i]=weapon_item(binding_text(qa_input_seat_binding_at(seat->input,i)),weapons,weapon_count);
+    for (size_t i=0;i<bound_count;++i) resolved[i]=weapon_item(seat,binding_text(qa_input_seat_binding_at(seat->input,i)),weapons,weapon_count);
     size_t action_count = sizeof(shared_actions)/sizeof(*shared_actions), custom_count = 0;
     memcpy(actions, shared_actions, sizeof(shared_actions));
     actions[action_count++] = (binding_action){"Show scores", entities_family == QA_GAME_Q2 ? "score" : "+scores"};

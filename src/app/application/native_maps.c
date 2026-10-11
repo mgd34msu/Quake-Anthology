@@ -410,17 +410,15 @@ static bool map_plan(qa_application *app, qa_mode_id mode, const char *command,
         size_t length = qa_command_separator(text, remaining, parser.plan.context.dialect);
         if (length >= parser.command_limit) length = parser.command_limit - 1;
         size_t consumed = length < remaining ? length + 1 : length;
-        char *line = malloc(length + 1);
-        if (!line) { ok = application_fail(error, QA_ERROR_MEMORY, "cannot inspect nextmap command"); break; }
-        memcpy(line, text, length); line[length] = 0;
         script->offset += consumed;
         parser.pending -= consumed;
+        qa_arena storage={0}; qa_console_command_arena(parser.console,&storage);
         qa_command_tokens tokens = {0};
-        ok = qa_command_tokenize(line, parser.plan.context.dialect,
-                                 parser.plan.context.console_text, &tokens, NULL, NULL, error);
-        free(line);
+        ok = qa_command_tokenize_span(text,length,parser.plan.context.dialect,
+            parser.plan.context.console_text,&tokens,qa_arena_alloc_callback,&storage,error);
         if (ok) ok = parse_command(&parser, &tokens, error);
         qa_command_tokens_free(&tokens);
+        qa_arena_destroy(&storage);
     }
     if (ok && !parser.plan.map)
         ok = application_fail(error, QA_ERROR_NOT_FOUND, "nextmap has no admitted map destination");
@@ -486,13 +484,11 @@ bool application_native_config_plan(qa_application *app, qa_mode_id mode,
         size_t length = qa_command_separator(text, bytes.size - offset, parser.plan.context.dialect);
         size_t consumed = length < bytes.size - offset ? length + 1 : length;
         size_t copied = length < parser.command_limit ? length : parser.command_limit - 1;
-        char *line = malloc(copied + 1);
-        if (!line) { okay = application_fail(error, QA_ERROR_MEMORY, "cannot inspect source config command"); break; }
-        memcpy(line, text, copied); line[copied] = 0;
         offset += consumed;
+        qa_arena storage={0}; qa_console_command_arena(parser.console,&storage);
         qa_command_tokens tokens = {0};
-        okay = qa_command_tokenize(line, parser.plan.context.dialect, parser.plan.context.console_text, &tokens, NULL, NULL, error);
-        free(line);
+        okay = qa_command_tokenize_span(text,copied,parser.plan.context.dialect,
+            parser.plan.context.console_text,&tokens,qa_arena_alloc_callback,&storage,error);
         if (okay && tokens.count) {
             qa_cvars *cvars = qa_console_cvar_owner(parser.console, &parser.plan.context, tokens.values[0]);
             const qa_cvar_view *variable = qa_cvars_find(cvars, tokens.values[0]);
@@ -518,6 +514,7 @@ bool application_native_config_plan(qa_application *app, qa_mode_id mode,
             }
         }
         qa_command_tokens_free(&tokens);
+        qa_arena_destroy(&storage);
     }
     if (okay && !parser.plan.assignment_count)
         okay = application_fail(error, QA_ERROR_FORMAT, "config continuation has no source assignment");
@@ -603,17 +600,14 @@ bool application_native_restart_plan(qa_application *app, qa_mode_id mode,
         return application_fail(error, QA_ERROR_ARGUMENT, "restart has no actual source command");
     map_parser parser = {.application = app};
     bool okay = source_console(&parser, mode, error);
+    qa_arena storage={0};
+    if(okay) qa_console_command_arena(parser.console,&storage);
     qa_command_tokens tokens = {0};
     if (okay) {
         size_t length = qa_command_separator((const char *)bytes.data, bytes.size, QA_RULESET_Q3);
         size_t copied = length < parser.command_limit ? length : parser.command_limit - 1;
-        char *line = malloc(copied + 1);
-        if (!line) okay = application_fail(error, QA_ERROR_MEMORY, "cannot inspect source restart command");
-        else {
-            memcpy(line, bytes.data, copied); line[copied] = 0;
-            okay = qa_command_tokenize(line, QA_RULESET_Q3, false, &tokens, NULL, NULL, error);
-            free(line);
-        }
+        okay = qa_command_tokenize_span((const char *)bytes.data,copied,QA_RULESET_Q3,false,
+            &tokens,qa_arena_alloc_callback,&storage,error);
         /* Enqueued source intents retain one actual engine command. Subsequent
          * script commands belong to their original console buffer. */
         if (okay && length < bytes.size)
@@ -638,6 +632,7 @@ bool application_native_restart_plan(qa_application *app, qa_mode_id mode,
         parser.plan = (application_next_map_plan){0};
     }
     qa_command_tokens_free(&tokens);
+    qa_arena_destroy(&storage);
     parser_free(&parser);
     return okay;
 }

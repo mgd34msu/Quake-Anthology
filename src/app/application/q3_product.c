@@ -61,8 +61,10 @@ bool application_startup_create(qa_application *app, const char *const *commands
             application_startup_dispose(app);
             return application_fail(error, QA_ERROR_ARGUMENT, "Startup requires one source command per original row");
         }
+        qa_arena storage={0}; qa_arena_init(&storage,0);
         qa_command_tokens tokens = {0};
-        bool okay = qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, NULL, NULL, error);
+        bool okay = qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens,
+            qa_arena_alloc_callback,&storage,error);
         app->startup->rows[i].command = startup_copy(text, error);
         okay = okay && app->startup->rows[i].command;
         if (okay && tokens.count) app->startup->rows[i].safe_command=
@@ -74,6 +76,7 @@ bool application_startup_create(qa_application *app, const char *const *commands
             okay = row->name && row->value;
         }
         qa_command_tokens_free(&tokens);
+        qa_arena_destroy(&storage);
         if (!okay) { application_startup_dispose(app); return false; }
     }
     return true;
@@ -576,8 +579,10 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
             if (memchr(row->command, 0, length) || strpbrk(row->command, "\r\n") ||
                 qa_command_separator(row->command, length, QA_RULESET_Q3) != length)
                 return application_fail(io->error, QA_ERROR_FORMAT, "Saved startup command leaves its source text domain");
+            qa_arena storage={0}; qa_arena_init(&storage,0);
             qa_command_tokens tokens = {0};
-            bool okay = qa_command_tokenize(row->command, QA_RULESET_Q3, false, &tokens, NULL, NULL, io->error);
+            bool okay = qa_command_tokenize(row->command, QA_RULESET_Q3, false, &tokens,
+                qa_arena_alloc_callback,&storage,io->error);
             if (okay && tokens.count) row->safe_command=ascii_equal(tokens.values[0],"safe") ||
                 ascii_equal(tokens.values[0],"cvar_restart");
             if (okay && tokens.count && !strcmp(tokens.values[0], "set")) {
@@ -586,6 +591,7 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
                 okay = row->name && row->value;
             }
             qa_command_tokens_free(&tokens);
+            qa_arena_destroy(&storage);
             if (!okay || (row->consumed && !row->name && !row->safe_command) ||
                 (row->shared_seeded && (!row->name || !ascii_equal(row->name, "sv_cheats"))))
                 return application_fail(io->error, QA_ERROR_FORMAT, "Saved startup consumption differs from its original command");
@@ -617,8 +623,10 @@ bool application_q3_product_initial(qa_cvars *cvars, const char *const *commands
         if (!text || strpbrk(text, "\r\n") ||
             qa_command_separator(text, strlen(text), QA_RULESET_Q3) != strlen(text))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 startup policy requires one source command per row");
+        qa_arena storage={0}; qa_arena_init(&storage,0);
         qa_command_tokens tokens = {0};
-        if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, NULL, NULL, error)) return false;
+        if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens,
+            qa_arena_alloc_callback,&storage,error)) { qa_arena_destroy(&storage); return false; }
         bool okay = true;
         if (tokens.count > 1 && !strcmp(tokens.values[0], "set"))
             for (size_t j = 0; j < sizeof(variables) / sizeof(*variables); ++j)
@@ -627,6 +635,7 @@ bool application_q3_product_initial(qa_cvars *cvars, const char *const *commands
                     break;
                 }
         qa_command_tokens_free(&tokens);
+        qa_arena_destroy(&storage);
         if (!okay) return false;
     }
     bool flags[3];

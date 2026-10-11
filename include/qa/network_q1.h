@@ -156,6 +156,7 @@ typedef struct qa_q1_demo_record { float angles[3]; qa_bytes message; } qa_q1_de
 bool qa_q1_demo_read_header(qa_net_reader *, int32_t *forced_track);
 bool qa_q1_demo_write_header(qa_net_writer *, int32_t forced_track);
 bool qa_q1_demo_read_record(qa_net_reader *, size_t max_message, qa_q1_demo_record *);
+bool qa_q1_demo_write_record_prefix(qa_net_writer *, const qa_q1_demo_record *);
 bool qa_q1_demo_write_record(qa_net_writer *, const qa_q1_demo_record *);
 typedef enum qa_qw_demo_kind { QA_QW_DEMO_COMMAND, QA_QW_DEMO_PACKET, QA_QW_DEMO_SEQUENCES } qa_qw_demo_kind;
 typedef struct qa_qw_demo_record {
@@ -168,6 +169,8 @@ typedef struct qa_qw_demo_record {
     } data;
 } qa_qw_demo_record;
 bool qa_qw_demo_read_record(qa_net_reader *, size_t max_message, qa_qw_demo_record *);
+/* Prefix includes the entire command/sequences record, but not a packet's data. */
+bool qa_qw_demo_write_record_prefix(qa_net_writer *, const qa_qw_demo_record *);
 bool qa_qw_demo_write_record(qa_net_writer *, const qa_qw_demo_record *);
 
 #endif

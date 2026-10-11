@@ -89,6 +89,7 @@ bool qa_q2_mvd_framer_identified(const qa_q2_mvd_framer *);
 bool qa_q2_mvd_framer_finished(const qa_q2_mvd_framer *);
 bool qa_q2_mvd_framer_finish(const qa_q2_mvd_framer *, bool require_terminator, qa_error *);
 bool qa_q2_mvd_write_magic(qa_net_writer *);
+bool qa_q2_mvd_write_frame_prefix(qa_net_writer *, size_t message_bytes);
 bool qa_q2_mvd_write_framed(qa_net_writer *, qa_bytes);
 bool qa_q2_mvd_write_terminator(qa_net_writer *);
 

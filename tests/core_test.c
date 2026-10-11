@@ -573,28 +573,32 @@ static void *tokens_frame_allocate(void *lease,size_t bytes,size_t alignment,qa_
 static void test_literal_tokens(void)
 {
     qa_error error={0}; qa_command_tokens owned={0},pooled={0};
+    qa_arena literal_storage={0}; qa_arena_init(&literal_storage,0);
     char first[]="print",second[]="quoted; text";
     char *values[]={first,second};
     qa_command_tokens literal={.count=2,.values=values,.args_text="quoted; text"};
-    CHECK(qa_command_tokens_copy(&literal,&owned,NULL,NULL,&error));
+    CHECK(qa_command_tokens_copy(&literal,&owned,qa_arena_alloc_callback,&literal_storage,&error));
     qa_unified_frame_pool *pool=qa_unified_frame_pool_create(128*1024,2,&error); CHECK(pool);
     qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error); CHECK(lease);
     CHECK(qa_command_tokens_copy(&literal,&pooled,tokens_frame_allocate,lease,&error));
     for (qa_ruleset_id dialect=QA_RULESET_NETQUAKE;dialect<=QA_RULESET_Q3;++dialect) {
-        qa_command_tokens heap={0},frame={0},span={0};
-        CHECK(qa_command_tokenize("say \"hello world\" next",dialect,false,&heap,NULL,NULL,&error));
+        qa_arena token_storage={0}; qa_arena_init(&token_storage,0);
+        qa_command_tokens arena={0},frame={0},span={0};
+        CHECK(qa_command_tokenize("say \"hello world\" next",dialect,false,&arena,
+            qa_arena_alloc_callback,&token_storage,&error));
         CHECK(qa_command_tokenize("say \"hello world\" next",dialect,false,&frame,tokens_frame_allocate,lease,&error));
         CHECK(qa_command_tokenize_span("say \"hello world\" next;ignored",strlen("say \"hello world\" next"),
             dialect,false,&span,tokens_frame_allocate,lease,&error));
-        CHECK(heap.count==3 && frame.count==3 && frame.borrowed);
-        CHECK(span.count==heap.count && span.borrowed);
-        for (size_t i=0;i<heap.count;++i) CHECK(!strcmp(heap.values[i],frame.values[i]));
-        for (size_t i=0;i<heap.count;++i) CHECK(!strcmp(heap.values[i],span.values[i]));
+        CHECK(arena.count==3 && frame.count==3 && frame.borrowed);
+        CHECK(span.count==arena.count && span.borrowed);
+        for (size_t i=0;i<arena.count;++i) CHECK(!strcmp(arena.values[i],frame.values[i]));
+        for (size_t i=0;i<arena.count;++i) CHECK(!strcmp(arena.values[i],span.values[i]));
         CHECK(!strcmp(frame.values[1],"hello world"));
         CHECK(!strcmp(frame.args_text,dialect==QA_RULESET_Q3?"hello world next":"\"hello world\" next"));
-        CHECK(!strcmp(frame.args_text,heap.args_text));
-        CHECK(!strcmp(span.args_text,heap.args_text));
-        qa_command_tokens_free(&heap); qa_command_tokens_free(&frame); qa_command_tokens_free(&span);
+        CHECK(!strcmp(frame.args_text,arena.args_text));
+        CHECK(!strcmp(span.args_text,arena.args_text));
+        qa_command_tokens_free(&arena); qa_command_tokens_free(&frame); qa_command_tokens_free(&span);
+        qa_arena_destroy(&token_storage);
     }
     second[0]='X'; qa_unified_frame_pool_destroy(&pool);
     CHECK(owned.count==2 && pooled.count==2);
@@ -603,6 +607,7 @@ static void test_literal_tokens(void)
     char *held=pooled.values[1];
     qa_command_tokens_free(&pooled); CHECK(!strcmp(held,"quoted; text"));
     qa_unified_frame_lease_release(lease); qa_command_tokens_free(&owned);
+    qa_arena_destroy(&literal_storage);
 }
 
 static qa_unified_document *metadata_decode(qa_unified_frame_pool *pool,

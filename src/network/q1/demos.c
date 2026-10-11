@@ -50,12 +50,17 @@ bool qa_q1_demo_read_record(qa_net_reader *r, size_t max, qa_q1_demo_record *out
     if (!qa_net_read_bytes(r,(size_t)count,&record.message)) return false;
     *out=record; return true;
 }
-bool qa_q1_demo_write_record(qa_net_writer *w, const qa_q1_demo_record *r)
+bool qa_q1_demo_write_record_prefix(qa_net_writer *w, const qa_q1_demo_record *r)
 {
     if (!r || r->message.size>INT32_MAX) return qa_net_writer_fail(w,"Invalid demo record");
     qa_net_write_i32(w,(int32_t)r->message.size);
     for (unsigned i=0;i<3;++i) write_float(w,r->angles[i]);
-    return qa_net_write_data(w,r->message.data,r->message.size);
+    return !w->failed;
+}
+bool qa_q1_demo_write_record(qa_net_writer *w, const qa_q1_demo_record *r)
+{
+    return qa_q1_demo_write_record_prefix(w,r) &&
+        qa_net_write_data(w,r->message.data,r->message.size);
 }
 bool qa_qw_demo_read_record(qa_net_reader *r, size_t max, qa_qw_demo_record *out)
 {
@@ -89,7 +94,7 @@ bool qa_qw_demo_read_record(qa_net_reader *r, size_t max, qa_qw_demo_record *out
     if (r->failed) return false;
     *out=record; return true;
 }
-bool qa_qw_demo_write_record(qa_net_writer *w, const qa_qw_demo_record *r)
+bool qa_qw_demo_write_record_prefix(qa_net_writer *w, const qa_qw_demo_record *r)
 {
     if (!r || r->kind>QA_QW_DEMO_SEQUENCES) return qa_net_writer_fail(w,"Invalid QWD record");
     write_float(w,r->seconds); qa_net_write_u8(w,(uint8_t)r->kind);
@@ -107,7 +112,6 @@ bool qa_qw_demo_write_record(qa_net_writer *w, const qa_qw_demo_record *r)
     case QA_QW_DEMO_PACKET:
         if (r->data.packet.size>INT32_MAX) return qa_net_writer_fail(w,"QWD packet too large");
         qa_net_write_i32(w,(int32_t)r->data.packet.size);
-        qa_net_write_data(w,r->data.packet.data,r->data.packet.size);
         break;
     case QA_QW_DEMO_SEQUENCES:
         qa_net_write_u32(w,r->data.sequences.outgoing);
@@ -116,4 +120,10 @@ bool qa_qw_demo_write_record(qa_net_writer *w, const qa_qw_demo_record *r)
     default: return qa_net_writer_fail(w,"Unknown QWD record type");
     }
     return !w->failed;
+}
+bool qa_qw_demo_write_record(qa_net_writer *w, const qa_qw_demo_record *r)
+{
+    return qa_qw_demo_write_record_prefix(w,r) &&
+        (r->kind!=QA_QW_DEMO_PACKET ||
+            qa_net_write_data(w,r->data.packet.data,r->data.packet.size));
 }

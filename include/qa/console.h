@@ -52,6 +52,7 @@ typedef struct qa_command_tokens {
     bool borrowed;
 } qa_command_tokens;
 
+/* The caller's allocator owns token backing until its arena or lease retires. */
 bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
     bool console_text, qa_command_tokens *out,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *error);
@@ -59,8 +60,7 @@ bool qa_command_tokenize(const char *text, qa_ruleset_id dialect,
 bool qa_command_tokenize_span(const char *, size_t, qa_ruleset_id, bool, qa_command_tokens *,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *, qa_error *);
 void qa_command_tokens_free(qa_command_tokens *tokens);
-/* Copy literal tokens without reparsing. A supplied allocator owns the backing
- * until its enclosing frame retires; NULL retains independent heap storage. */
+/* Copy literal tokens without reparsing into the caller's allocator. */
 bool qa_command_tokens_copy(const qa_command_tokens *, qa_command_tokens *,
     void *(*allocate)(void *, size_t, size_t, qa_error *), void *context, qa_error *);
 /* First source separator, or length when absent. Quotes protect semicolons;
