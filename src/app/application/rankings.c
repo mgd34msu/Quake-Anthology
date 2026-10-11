@@ -13,11 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct ranking_report {
-    qa_ranking_source_report value;
-    char *text;
-    struct ranking_report *next;
-} ranking_report;
 typedef struct ranking_client {
     qa_actor_id actor;
     uint32_t slot;
@@ -32,23 +27,16 @@ struct application_rankings {
     uint64_t source_serial;
     uint64_t map_revision;
     bool enabled, ended, busy, restoring, backend_failed;
-    ranking_report *reports, **report_tail;
+    qa_application_event_subscription reports;
     size_t report_count;
     ranking_client *clients, **client_tail;
     size_t client_count;
 };
 
-static void reports_free(ranking_report *report)
-{
-    while (report) {
-        ranking_report *next = report->next;
-        free(report->text); free(report); report = next;
-    }
-}
 static void owner_free(application_rankings *owner)
 {
     if (!owner) return;
-    reports_free(owner->reports);
+    qa_application_events_unsubscribe(&owner->reports);
     while (owner->clients) {
         ranking_client *next = owner->clients->next;
         free(owner->clients); owner->clients = next;
@@ -108,22 +96,132 @@ static bool backend_result(qa_application *app, application_rankings *owner, boo
     if (!ok && qa_rankings_backend_failed(app->rankings)) owner->backend_failed=true;
     return ok;
 }
+static const qa_ranking_source_report *report_at(const qa_application *app,
+    const application_rankings *owner, uint64_t id)
+{
+    const application_event_envelope *event=application_event_stream_at(app,id);
+    if (!event || event->kind!=QA_APPLICATION_EVENT_RANKING_REPORT) return NULL;
+    const qa_application_ranking_report_event *report=&event->raw.ranking_report;
+    return report->provider==owner->provider && report->source_serial==owner->source_serial &&
+        report->map_revision==owner->map_revision ? &report->report : NULL;
+}
+static const qa_ranking_source_report *report_next(const qa_application *app,
+    const application_rankings *owner, uint64_t *next, uint64_t end)
+{
+    while (*next<end) {
+        const qa_ranking_source_report *report=report_at(app,owner,(*next)++);
+        if (report) return report;
+    }
+    return NULL;
+}
+static bool reserve_reports(qa_application *app, size_t records, size_t bytes,
+    qa_error *error)
+{
+    if (!records) return true;
+    qa_event_capacity capacity;
+    qa_event_capacity_read(app->event_ring,&capacity);
+    size_t live=capacity.total_records-capacity.available_records;
+    if (records>SIZE_MAX-live)
+        return application_fail(error,QA_ERROR_MEMORY,"Saved ranking report capacity overflows");
+    records+=live;
+    if (records<capacity.total_records) records=capacity.total_records;
+    size_t total=capacity.total_bytes;
+    if (qa_event_ring_contiguous_bytes(app->event_ring)<bytes) {
+        if (bytes>SIZE_MAX-total)
+            return application_fail(error,QA_ERROR_MEMORY,"Saved ranking payload capacity overflows");
+        total+=bytes;
+    }
+    return qa_event_ring_reserve(app->event_ring,total,records,error);
+}
+static bool retain_report(qa_application *app, const application_rankings *owner,
+    const qa_ranking_source_report *report, qa_error *error)
+{
+    application_event_write write;
+    if (!application_event_stream_begin(app,QA_APPLICATION_EVENT_RANKING_REPORT,&write,error)) return false;
+    qa_application_ranking_report_event *event=&write.envelope->raw.ranking_report;
+    *event=(qa_application_ranking_report_event){.provider=owner->provider,
+        .source_serial=owner->source_serial,.map_revision=owner->map_revision,.report=*report};
+    if (report->stat.kind==QA_RANKING_STRING) {
+        size_t length=strlen(report->stat.value.string);
+        char *value=length!=SIZE_MAX ? application_event_stream_alloc(app,length+1,1,error) : NULL;
+        if (!value) {
+            application_event_stream_abort(app,&write,error);
+            if (length==SIZE_MAX) application_fail(error,QA_ERROR_MEMORY,"Retaining source ranking report text");
+            return false;
+        }
+        memcpy(value,report->stat.value.string,length+1);
+        event->report.stat.value.string=value;
+    }
+    return application_event_stream_commit(app,&write,error);
+}
+static void reports_consume(application_rankings *owner, uint64_t next)
+{
+    if (owner->reports.next<next) qa_application_events_consumed(&owner->reports,next);
+}
+static bool unavailable(qa_application *app, application_rankings *owner, qa_error *error)
+{
+    owner->report_count=0;
+    reports_consume(owner,qa_application_events_next(app));
+    return qa_rankings_unavailable(app->rankings,
+        "Ranking provider cannot keep up with source reports; this match cannot be submitted completely.",error);
+}
 static bool flush(qa_application *app, application_rankings *owner, qa_error *error)
 {
-    ranking_report *reports = owner->reports;
-    owner->reports = NULL; owner->report_tail = &owner->reports; owner->report_count = 0;
+    uint64_t end=qa_application_events_next(app);
+    owner->report_count=0;
     bool ok = true;
-    for (ranking_report *row = reports; row && ok; row = row->next) {
+    while (owner->reports.next<end && ok) {
+        uint64_t id=owner->reports.next;
+        const qa_ranking_source_report *value=report_at(app,owner,id);
+        if (!value) { reports_consume(owner,id+1); continue; }
         if (qa_rankings_state(app->rankings).kind != QA_RANKING_ACTIVE) break;
-        qa_ranking_source_report *value = &row->value;
+        qa_event_lease *lease=qa_application_event_retain(app,id);
+        reports_consume(owner,id+1);
         ok = backend_result(app,owner,value->stat.kind == QA_RANKING_STRING
             ? qa_rankings_report_string(app->rankings, value->self, value->other,
-                value->stat.key, row->text, error)
+                value->stat.key, value->stat.value.string, error)
             : qa_rankings_report_integer(app->rankings, value->self, value->other,
                 value->stat.key, value->stat.value.integer.value,
                 value->stat.value.integer.accumulate, error));
+        qa_event_lease_release(lease);
     }
-    reports_free(reports); return ok;
+    reports_consume(owner,end); return ok;
+}
+bool application_rankings_events_move(qa_application *from, qa_application *to,
+    uint64_t *first, qa_error *error)
+{
+    *first=qa_application_events_next(to);
+    application_rankings *owner=from->ranked_source;
+    if (!owner) return true;
+    uint64_t next=owner->reports.next, end=qa_application_events_next(from);
+    const qa_ranking_source_report *report;
+    size_t bytes=0, records=0;
+    while ((report=report_next(from,owner,&next,end))) {
+        size_t payload=sizeof(application_event_envelope)+_Alignof(application_event_envelope)-1;
+        if (report->stat.kind==QA_RANKING_STRING) {
+            size_t length=strlen(report->stat.value.string);
+            if (length>=SIZE_MAX-payload)
+                return application_fail(error,QA_ERROR_MEMORY,"Pending ranking payload capacity overflows");
+            payload+=length+1;
+        }
+        size_t record=qa_event_ring_record_storage_size(payload);
+        if (record==SIZE_MAX || record>SIZE_MAX-bytes)
+            return application_fail(error,QA_ERROR_MEMORY,"Pending ranking payload capacity overflows");
+        bytes+=record; ++records;
+    }
+    if (!reserve_reports(to,records,bytes,error)) return false;
+    next=owner->reports.next;
+    while ((report=report_next(from,owner,&next,end)))
+        if (!retain_report(to,owner,report,error))
+            return error && error->code!=QA_OK ? false :
+                application_fail(error,QA_ERROR_MEMORY,"Moving pending source ranking reports");
+    return true;
+}
+void application_rankings_events_rebind(qa_application *app, uint64_t first)
+{
+    if (!app->ranked_source) return;
+    qa_application_events_subscribe(app,&app->ranked_source->reports);
+    qa_application_events_consumed(&app->ranked_source->reports,first);
 }
 bool application_rankings_report(void *context, const qa_ranking_source_report *value, qa_error *error)
 {
@@ -135,27 +233,17 @@ bool application_rankings_report(void *context, const qa_ranking_source_report *
     if (!owner || owner->ended || qa_rankings_state(app->rankings).kind != QA_RANKING_ACTIVE) return true;
     if (owner->restoring || app->operation==APPLICATION_PERSISTING || !agreement(app, owner, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Ranking reports cannot enter a pending source continuation");
-    if (owner->report_count == 65536) {
-        reports_free(owner->reports); owner->reports = NULL;
-        owner->report_tail = &owner->reports; owner->report_count = 0;
-        return qa_rankings_unavailable(app->rankings,
-            "Ranking provider cannot keep up with source reports; this match cannot be submitted completely.", error);
-    }
+    if (owner->report_count == 65536) return unavailable(app,owner,error);
     if ((value->stat.kind != QA_RANKING_INTEGER && value->stat.kind != QA_RANKING_STRING) ||
         (value->stat.kind == QA_RANKING_STRING && !value->stat.value.string))
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid source ranking report");
-    ranking_report *row = calloc(1, sizeof(*row));
-    if (!row) return application_fail(error, QA_ERROR_MEMORY, "Retaining source ranking report");
-    row->value = *value;
-    if (value->stat.kind == QA_RANKING_STRING) {
-        size_t length = strlen(value->stat.value.string);
-        if (length == SIZE_MAX || !(row->text = malloc(length + 1))) {
-            free(row); return application_fail(error, QA_ERROR_MEMORY, "Retaining source ranking report text");
-        }
-        memcpy(row->text, value->stat.value.string, length + 1);
-        row->value.stat.value.string = row->text;
+    qa_error local={0};
+    if (!retain_report(app,owner,value,&local)) {
+        if (local.code==QA_OK) return unavailable(app,owner,error);
+        if (error) *error=local;
+        return false;
     }
-    *owner->report_tail = row; owner->report_tail = &row->next; ++owner->report_count;
+    ++owner->report_count;
     return true;
 }
 static application_player_record *player(qa_application *app, application_provider *provider,
@@ -490,7 +578,8 @@ bool application_rankings_frame(qa_application *app, qa_error *error)
         if (!owner) return application_fail(error,QA_ERROR_MEMORY,"Allocating native ranked match owner");
         owner->provider=provider->owner; owner->source_serial=provider->launch->identity;
         owner->map_revision=app->map_revision; owner->enabled=enabled;
-        owner->report_tail=&owner->reports; owner->client_tail=&owner->clients;
+        qa_application_events_subscribe(app,&owner->reports);
+        owner->client_tail=&owner->clients;
         app->ranked_source=owner;
     }
     owner->busy=true;
@@ -532,8 +621,10 @@ bool application_rankings_frame_ordinary(qa_application *app, qa_error *error)
             application_native_q3_console_rankings_handle(provider, APPLICATION_Q3_RANKINGS_ENABLE));
         qa_ranking_service_kind kind=qa_rankings_state(app->rankings).kind;
         if (enable && enable->owner==provider->owner && owner->enabled==(enable->number!=0) &&
-            (kind==QA_RANKING_DISABLED || kind==QA_RANKING_UNAVAILABLE))
+            (kind==QA_RANKING_DISABLED || kind==QA_RANKING_UNAVAILABLE)) {
+            if (!owner->report_count) reports_consume(owner,qa_application_events_next(app));
             return agreement(app,owner,error) && publish_active(app,provider,error);
+        }
     }
     qa_error local={0};
     if (application_rankings_frame(app,&local)) return true;
@@ -654,7 +745,8 @@ static bool player_fields(qa_source_save_io *io, qa_ranking_player *state)
     state->kind=(qa_ranking_player_kind)kind;
     return kind!=QA_RANKING_ACTIVE_PLAYER || isfinite(state->account.rank);
 }
-static bool owner_fields(qa_source_save_io *io, application_rankings **value)
+static bool owner_fields(qa_source_save_io *io, qa_application *app,
+    application_rankings **value)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ, present=*value!=NULL;
     if (!qa_source_save_bool(io,&present)) return false;
@@ -662,35 +754,57 @@ static bool owner_fields(qa_source_save_io *io, application_rankings **value)
     if (reading) {
         *value=calloc(1,sizeof(**value));
         if (!*value) return application_fail(io->error,QA_ERROR_MEMORY,"Allocating saved ranked source owner");
-        (*value)->report_tail=&(*value)->reports; (*value)->client_tail=&(*value)->clients;
+        qa_application_events_subscribe(app,&(*value)->reports);
+        (*value)->client_tail=&(*value)->clients;
         (*value)->restoring=true;
     }
     application_rankings *owner=*value;
     if (!qa_source_save_string(io,&owner->provider) || !owner->provider ||
         !qa_source_save_u64(io,&owner->map_revision) ||
         !qa_source_save_bool(io,&owner->enabled) || !qa_source_save_bool(io,&owner->ended)) return false;
+    if (reading) {
+        application_provider *provider=source(app);
+        if (provider && provider->launch && provider->owner==owner->provider)
+            owner->source_serial=provider->launch->identity;
+    }
     size_t count=owner->report_count;
     if (!qa_source_save_count(io,&count,65536) || (reading && count>remaining(io)/25)) return false;
-    ranking_report *report=owner->reports;
-    for (size_t i=0;i<count;++i) {
-        if (reading) {
-            report=calloc(1,sizeof(*report));
-            if (!report) return application_fail(io->error,QA_ERROR_MEMORY,"Allocating saved ranking report");
-            *owner->report_tail=report; owner->report_tail=&report->next; ++owner->report_count;
-        }
-        if (!report) return application_fail(io->error,QA_ERROR_ARGUMENT,"Ranking FIFO changed during capture");
-        qa_ranking_source_report *row=&report->value; uint32_t kind=(uint32_t)row->stat.kind;
-        if (!qa_source_save_i32(io,&row->self) || !qa_source_save_i32(io,&row->other) ||
-            !qa_source_save_i32(io,&row->stat.key) || !qa_source_save_u32(io,&kind) || kind>QA_RANKING_STRING) return false;
-        row->stat.kind=(qa_ranking_report_kind)kind;
-        if (kind==QA_RANKING_STRING) {
-            if (!text(io,&report->text) || !report->text) return false;
-            row->stat.value.string=report->text;
-        } else if (!qa_source_save_f64(io,&row->stat.value.integer.value) ||
-            !qa_source_save_bool(io,&row->stat.value.integer.accumulate)) return false;
-        if (!reading) report=report->next;
+    if (reading && count) {
+        size_t record=qa_event_ring_record_storage_size(sizeof(application_event_envelope)+
+            _Alignof(application_event_envelope)-1);
+        size_t saved=remaining(io);
+        if (record==SIZE_MAX || count>(SIZE_MAX-saved)/record)
+            return application_fail(io->error,QA_ERROR_MEMORY,"Saved ranking payload capacity overflows");
+        if (!reserve_reports(app,count,saved+count*record,io->error)) return false;
     }
-    if (!reading && report) return application_fail(io->error,QA_ERROR_ARGUMENT,"Ranking FIFO extent changed");
+    uint64_t next=owner->reports.next, end=qa_application_events_next(app);
+    for (size_t i=0;i<count;++i) {
+        const qa_ranking_source_report *pending=reading ? NULL : report_next(app,owner,&next,end);
+        if (!reading && !pending)
+            return application_fail(io->error,QA_ERROR_ARGUMENT,"Ranking FIFO changed during capture");
+        qa_ranking_source_report row=pending ? *pending : (qa_ranking_source_report){0};
+        uint32_t kind=(uint32_t)row.stat.kind;
+        if (!qa_source_save_i32(io,&row.self) || !qa_source_save_i32(io,&row.other) ||
+            !qa_source_save_i32(io,&row.stat.key) || !qa_source_save_u32(io,&kind) || kind>QA_RANKING_STRING) return false;
+        row.stat.kind=(qa_ranking_report_kind)kind;
+        char *text_value=kind==QA_RANKING_STRING ? (char *)row.stat.value.string : NULL;
+        bool ok;
+        if (kind==QA_RANKING_STRING) {
+            ok=text(io,&text_value) && text_value;
+            row.stat.value.string=text_value;
+        } else ok=qa_source_save_f64(io,&row.stat.value.integer.value) &&
+            qa_source_save_bool(io,&row.stat.value.integer.accumulate);
+        if (ok && reading) {
+            ok=retain_report(app,owner,&row,io->error);
+            if (ok) ++owner->report_count;
+            else if (!io->error || io->error->code==QA_OK)
+                application_fail(io->error,QA_ERROR_MEMORY,"Retaining saved ranking report");
+        }
+        if (reading) free(text_value);
+        if (!ok) return false;
+    }
+    if (!reading && report_next(app,owner,&next,end))
+        return application_fail(io->error,QA_ERROR_ARGUMENT,"Ranking FIFO extent changed");
     count=owner->client_count;
     if (!qa_source_save_count(io,&count,QA_Q3_SOURCE_CLIENTS) ||
         (reading && count>remaining(io)/303)) return false;
@@ -733,7 +847,7 @@ bool application_rankings_capture(qa_application *app,
     bool ok=true;
     qa_source_save_io io={0};
     if (ok && app->ranked_source) ok=agreement(app,app->ranked_source,error);
-    if (ok) ok=qa_source_save_writer(&io,app->session,error) && owner_fields(&io,&app->ranked_source) &&
+    if (ok) ok=qa_source_save_writer(&io,app->session,error) && owner_fields(&io,app,&app->ranked_source) &&
         qa_source_save_finish(&io,&body);
     qa_source_save_dispose(&io); io=(qa_source_save_io){0};
     ranking_record record={.key=app->ranking_game_key,.owner={body.data,body.size}};
@@ -751,7 +865,7 @@ bool application_rankings_restore(qa_application *app,
     bool ok=record_read(bytes,&record,error);
     if (ok && !key_equal(app->ranking_game_key,record.key))
         ok=application_fail(error,QA_ERROR_FORMAT,"Ranked source differs from actual candidate construction");
-    if (ok) ok=qa_source_save_reader(&io,app->session,record.owner,error) && owner_fields(&io,&owner) &&
+    if (ok) ok=qa_source_save_reader(&io,app->session,record.owner,error) && owner_fields(&io,app,&owner) &&
         qa_source_save_finish(&io,NULL);
     if (ok && owner) {
         application_provider *provider=source(app);

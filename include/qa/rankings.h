@@ -46,9 +46,9 @@ typedef struct qa_ranking_report {
     uint64_t self, other;
     qa_ranking_stat stat;
 } qa_ranking_report;
-/* Native gameplay emits source slots to an application-owned report queue.
+/* Native gameplay emits source slots into leased application event records.
  * Slot -1 means the match. Account IDs are resolved by the lifecycle at flush;
- * the consumer copies string values before this borrowed event expires. */
+ * admission copies string values into the record before the borrowed input expires. */
 typedef struct qa_ranking_source_report {
     int32_t self, other;
     qa_ranking_stat stat;

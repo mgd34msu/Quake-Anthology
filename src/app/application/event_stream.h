@@ -57,6 +57,7 @@ typedef struct application_event_envelope {
         qa_application_q3_command_event q3_command;
         qa_application_qw_command_event qw_command;
         qa_application_music_event music;
+        qa_application_ranking_report_event ranking_report;
     } raw;
     application_protocol_record *protocols, *last_protocol;
     application_equipment_event_record *equipment, *last_equipment;

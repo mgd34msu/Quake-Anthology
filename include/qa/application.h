@@ -573,7 +573,8 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_Q3_EFFECT,
     QA_APPLICATION_EVENT_Q3_COMMAND,
     QA_APPLICATION_EVENT_QW_COMMAND,
-    QA_APPLICATION_EVENT_MUSIC
+    QA_APPLICATION_EVENT_MUSIC,
+    QA_APPLICATION_EVENT_RANKING_REPORT
 } qa_application_event_kind;
 
 typedef struct qa_application_log_event {
@@ -618,6 +619,12 @@ typedef struct qa_application_music_event {
     const char *intro, *loop;
 } qa_application_music_event;
 
+typedef struct qa_application_ranking_report_event {
+    qa_actor_owner provider;
+    uint64_t source_serial, map_revision;
+    qa_ranking_source_report report;
+} qa_application_ranking_report_event;
+
 /* Caller-owned cursor. Unread records stay in the application ring. */
 typedef struct qa_application_event_subscription {
     qa_application *application;
@@ -640,6 +647,7 @@ typedef struct qa_application_event_view {
         const qa_application_qw_command_event *qw_command;
         const qa_application_music_event *music;
         const qa_application_log_event *log;
+        const qa_application_ranking_report_event *ranking_report;
     } value;
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;

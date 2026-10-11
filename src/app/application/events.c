@@ -1465,6 +1465,8 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
     case QA_APPLICATION_EVENT_QW_COMMAND: out->value.qw_command=&record->raw.qw_command; break;
     case QA_APPLICATION_EVENT_MUSIC: out->value.music=&record->raw.music; break;
     case QA_APPLICATION_EVENT_LOG: out->value.log=&record->raw.log; break;
+    case QA_APPLICATION_EVENT_RANKING_REPORT:
+        out->value.ranking_report=&record->raw.ranking_report; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
     case QA_APPLICATION_EVENT_EQUIPMENT: break;
     }

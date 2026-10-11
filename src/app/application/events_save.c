@@ -1043,7 +1043,12 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
             ok = application_equipment_events_publish(&moved, output.equipment, error);
         }
     }
-    if (ok) install_store(app, &store, pending_first);
+    uint64_t rankings_first=0;
+    if (ok) ok=application_rankings_events_move(app,&staging,&rankings_first,error);
+    if (ok) {
+        install_store(app, &store, pending_first);
+        application_rankings_events_rebind(app,rankings_first);
+    }
     dispose_store(&store);
     return ok;
 }

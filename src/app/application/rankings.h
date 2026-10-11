@@ -31,6 +31,11 @@ bool application_rankings_idle(const qa_application *);
 /* Private cleanup never closes the shared rankings backend. Ordinary map and
  * round close must end that backend before disposing this source state. */
 void application_rankings_dispose(qa_application *);
+/* The presentation save owner replaces the application ring. Pending ranking
+ * records move with it, while the source codec remains their saved owner. */
+bool application_rankings_events_move(qa_application *from, qa_application *to,
+    uint64_t *first, qa_error *);
+void application_rankings_events_rebind(qa_application *, uint64_t first);
 bool application_rankings_prepare(const qa_application_options *,
     qa_bytes, qa_error *);
 bool application_rankings_capture(qa_application *,
