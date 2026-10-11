@@ -515,7 +515,7 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                 qa_console *console=NULL;qa_command_context actual;
                 if (ok) ok=recovery_console(f,&command,&console,&actual,error);
                 if (ok) {
-                    frontend_replay_command queued={.console=console,
+                    frontend_queued_command queued={.console=console,.replay=true,
                         .context=actual,
                         .time_ns=command.time_ns,.frame_number=command.frame_number};
                     qa_platform_event_result admitted=qa_platform_events_frame(f->platform_events,command.wall_ns);

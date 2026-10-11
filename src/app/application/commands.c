@@ -9,6 +9,8 @@
 #include "startup_flow.h"
 #include "bots_catalog.h"
 #include "qa/application_players.h"
+#include "qa/application_equipment.h"
+#include "qa/text.h"
 
 #include <string.h>
 
@@ -380,6 +382,29 @@ static qa_command_result command_dispatch(qa_application *application,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
     application_snapshot_mutated(application);
+    if (!strcmp(command.argv[0], "useitem")) {
+        if (command.argc != 3 || !command.context.actor.registry) return QA_COMMAND_HANDLED;
+        double owner, item;
+        if (!qa_parse_number((qa_bytes){(const uint8_t *)command.argv[1],strlen(command.argv[1])},&owner,error) ||
+            !qa_parse_number((qa_bytes){(const uint8_t *)command.argv[2],strlen(command.argv[2])},&item,error))
+            return QA_COMMAND_FAILED;
+        if (!isfinite(owner) || !isfinite(item) || owner < 1 || owner > UINT32_MAX || item < 1 || item > UINT32_MAX ||
+            owner != (uint32_t)owner || item != (uint32_t)item) return QA_COMMAND_HANDLED;
+        qa_item_definition definition;
+        qa_error lookup={0};
+        if (!qa_inventory_source_definition_read(application->inventory,command.context.actor,
+            (qa_actor_owner)owner,(qa_item_id)item,&definition,&lookup)) {
+            if (lookup.code==QA_ERROR_NOT_FOUND) return QA_COMMAND_HANDLED;
+            if (error) *error=lookup;
+            return QA_COMMAND_FAILED;
+        }
+        bool accepted;
+        bool okay=definition.weapon ? qa_application_equipment_request_weapon(application,
+            command.context.actor,definition.owner,definition.item,&accepted,error) :
+            qa_inventory_item_action(application->inventory,command.context.actor,
+                definition.item,QA_ITEM_USE,error);
+        return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    }
     qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_RULESET_NETQUAKE, command.argv[0], true);
     if (chat != QA_Q1_CHAT_UNKNOWN)
         return chat_command(application, invocation, &command, chat, error);

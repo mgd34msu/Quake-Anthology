@@ -461,11 +461,14 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
         }
         case QA_PLATFORM_EVENT_CONSOLE_COMMAND: {
             if (!input_ready) continue;
-            frontend_replay_command command;
+            frontend_queued_command command;
             memcpy(&command,payload.data,sizeof(command));
-            frontend->time_ns=command.time_ns;
-            frontend->frame_number=command.frame_number;
-            ok=qa_console_execute_now(command.console,&command.context,
+            if (command.replay) {
+                frontend->time_ns=command.time_ns;
+                frontend->frame_number=command.frame_number;
+                ok=qa_console_execute_now(command.console,&command.context,
+                    (const char *)payload.data + sizeof(command),error);
+            } else ok=qa_console_append(command.console,&command.context,
                 (const char *)payload.data + sizeof(command),error);
             break;
         }

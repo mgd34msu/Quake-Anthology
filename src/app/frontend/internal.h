@@ -489,11 +489,12 @@ typedef struct frontend_replay_timing {
     uint64_t wall_ns,time_ns,frame_before,frame_after;
     bool advanced,completed;
 } frontend_replay_timing;
-typedef struct frontend_replay_command {
+typedef struct frontend_queued_command {
     qa_console *console;
     qa_command_context context;
     uint64_t time_ns,frame_number;
-} frontend_replay_command;
+    bool replay;
+} frontend_queued_command;
 bool frontend_replay_frame(qa_frontend *,const frontend_replay_timing *,qa_error *);
 bool frontend_network_prepare(qa_frontend *, qa_error *);
 bool frontend_network_intake(qa_frontend *, qa_platform_events *, uint64_t now_ns, qa_error *);

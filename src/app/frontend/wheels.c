@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "qa/application_weapon_availability.h"
 #include "qa/application_equipment.h"
+#include <inttypes.h>
+#include <stdio.h>
 
 static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
                   const qa_hud_wheel_item **out, size_t *count, qa_error *error)
@@ -90,23 +92,26 @@ static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
         !qa_application_player_actor(seat->frontend->application, launch_seat, &actor) ||
         identity.key != identity.item || !identity.item)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "wheel selection no longer belongs to a live player");
-    if(mode==QA_HUD_WHEEL_WEAPONS) {
-        const qa_hud_wheel_item *rows;size_t count;
-        if(!items(context,id,mode,&rows,&count,error))return false;
-        for(size_t i=0;i<count;++i)if(rows[i].identity.item==identity.item) {
-            qa_item_definition definition;
-            qa_actor_owner owner=seat->wheel_definitions[(size_t)rows[i].identity.source_ordinal].owner;
-            if(!qa_inventory_source_definition_read(qa_application_inventory(seat->frontend->application),
-                actor,owner,identity.item,&definition,error))return false;
-            if(!definition.weapon)
-                return frontend_fail(error,QA_ERROR_ARGUMENT,"wheel weapon lost its actual admitted Source definition");
-            bool accepted;
-            return qa_application_equipment_request_weapon(seat->frontend->application,actor,
-                owner,identity.item,&accepted,error);
-        }
-        return frontend_fail(error,QA_ERROR_NOT_FOUND,"wheel weapon is no longer admitted");
+    const qa_hud_wheel_item *rows;size_t count;
+    if(!items(context,id,mode,&rows,&count,error)) return false;
+    for(size_t i=0;i<count;++i) if(rows[i].identity.item==identity.item) {
+        qa_actor_owner owner=seat->wheel_definitions[(size_t)rows[i].identity.source_ordinal].owner;
+        qa_command_context command=qa_input_seat_context(seat->input);
+        command.actor=actor; command.seat=launch_seat;
+        command.owner=0; command.registry=command.generation=command.cvar_view=0;
+        command.origin=QA_COMMAND_SEAT; command.script=NULL; command.direct=true;
+        char text[64];
+        int length=snprintf(text,sizeof(text),"useitem %" PRIu32 " %" PRIu32,owner,identity.item);
+        frontend_queued_command queued={.console=qa_application_console(seat->frontend->application),
+            .context=command,.time_ns=seat->frontend->time_ns,.frame_number=seat->frontend->frame_number};
+        qa_platform_event_result result=qa_platform_events_push(seat->frontend->platform_events,
+            &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=seat->frontend->wall_time_ns},
+            (qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
+            (qa_bytes){(const uint8_t *)text,(size_t)length+1});
+        if(result!=QA_PLATFORM_EVENT_ACCEPTED) frontend_print(seat->frontend,"Input queue is full; item selection was not applied.");
+        return true;
     }
-    return qa_inventory_item_action(qa_application_inventory(seat->frontend->application), actor, identity.item, QA_ITEM_USE, error);
+    return true;
 }
 bool frontend_wheel_create(frontend_seat *seat, qa_error *error)
 {
