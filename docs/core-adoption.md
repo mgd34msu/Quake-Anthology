@@ -723,6 +723,12 @@ Normal build and seven core suites pass:
 Names items 1-13 are migrated at the audited sites; 14-17 and the later
 adoption kinds remain open. No new live presentation or timing claim.
 
+Names item 14, Q2 fixed projectile resources: laser/welding spark events,
+the laser helper and tracker daemon now read IDs admitted by the existing
+Q2 runtime-name table. Their per-event and per-spawn interning is deleted.
+The normal build and seven core suites pass. The remaining projectile
+emitters and Q1 runtime resources are still being migrated.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

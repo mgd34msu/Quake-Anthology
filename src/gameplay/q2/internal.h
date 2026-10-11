@@ -36,7 +36,11 @@
     X(LIGHT, "light") \
     X(MISC_VIPER, "misc_viper") \
     X(TARGET_CHANGELEVEL, "target_changelevel") \
-    X(FUNC_AREAPORTAL, "func_areaportal")
+    X(FUNC_AREAPORTAL, "func_areaportal") \
+    X(LASER_SPARKS, "q2:laser-sparks") \
+    X(NOCLASS, "noclass") \
+    X(PAIN_DAEMON, "pain daemon") \
+    X(WELDING_SPARKS, "q2:welding-sparks")
 
 typedef enum q2_runtime_name {
 #define Q2_RUNTIME_NAME_ENUM(key, text) Q2_NAME_##key,

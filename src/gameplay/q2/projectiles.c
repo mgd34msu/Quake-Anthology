@@ -409,9 +409,9 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
                                           .direction = trace.contact_plane.normal,
                                           .count = 4,
                                           .code = (int)p->skin,
+                                          .resource = g->runtime_names[Q2_NAME_LASER_SPARKS],
                                           .time_ns = g->now_ns};
-                if (!qa_builtin_resource(&g->services, "q2:laser-sparks", &spark.resource, e) ||
-                    !qa_builtin_emit(&g->services, &spark, e))
+                if (!qa_builtin_emit(&g->services, &spark, e))
                     return false;
                 break;
             }
@@ -454,9 +454,7 @@ static bool bfg_laser_spawn(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_er
         return false;
     if (trace.fraction == 1)
         return true;
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, "noclass", &definition, e))
-        return false;
+    qa_actor_definition definition = g->runtime_names[Q2_NAME_NOCLASS];
     if (!live(g, id))
         return true;
     qa_actor_reference owner = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, id);
@@ -506,9 +504,7 @@ static bool bfg_laser_update(qa_q2_game *g, q2_actor *laser, qa_body_state *body
     return qa_world_link(g->services.world, laser->id, NULL, e);
 }
 static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_reference target, qa_error *e) {
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, "pain daemon", &definition, e))
-        return false;
+    qa_actor_definition definition = g->runtime_names[Q2_NAME_PAIN_DAEMON];
     qa_builtin_spawn spawn = {.owner = g->options.owner, .definition = definition};
     qa_actor_id id;
     if (!qa_builtin_spawn_actor(&g->services, &spawn, &id, e))
@@ -1381,9 +1377,9 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                       .actor = id,
                                       .time_ns = g->now_ns,
                                       .origin = body.origin,
-                                      .code = 0xe4 + (int)(q2_random(g) * 4)};
-            if (!qa_builtin_resource(&g->services, "q2:welding-sparks", &event.resource, e) ||
-                !qa_builtin_emit(&g->services, &event, e))
+                                      .code = 0xe4 + (int)(q2_random(g) * 4),
+                                      .resource = g->runtime_names[Q2_NAME_WELDING_SPARKS]};
+            if (!qa_builtin_emit(&g->services, &event, e))
                 return false;
             if (!live(g, id))
                 return true;
