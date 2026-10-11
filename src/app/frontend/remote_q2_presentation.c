@@ -559,8 +559,8 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     ++row->busy; bool ok = qa_scene_frame_emit(&f->frame, &begin, error);
     qa_vec3 styles[256];
     for (size_t i = 0; i < 256; ++i) {
-        const char *style = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.lights + i)); size_t length = strlen(style);
-        float value = length ? (style[((size_t)fmax(0, floor(time * 0.01))) % length] - 'a') / 12.0f : 1;
+        float value = frontend_legacy_lightstyle_sample(QA_GAME_Q2,
+            frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.lights + i)), time * 0.001);
         styles[i] = qa_v3(value, value, value);
     }
     qa_scene_world_input world = {.scratch=row->world_scratch.view,

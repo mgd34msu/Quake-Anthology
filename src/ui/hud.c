@@ -21,8 +21,6 @@ struct qa_hud {
     qa_cvar_handle center_time;
     qa_hud_pickup_state pickup;
     char pickup_text[1024];
-    uint64_t hit_until;
-    float hit_damage;
     qa_builtin_ctf_status ctf_status;
     qa_actor_id ctf_actor;
     qa_actor_owner ctf_source;
@@ -166,9 +164,6 @@ void qa_hud_clear_pickup(qa_hud *hud)
 { if (hud) { qa_scene_image_release(hud->pickup.icon); hud->pickup = (qa_hud_pickup_state){0}; } }
 void qa_hud_pickup_clear_time(qa_hud *hud)
 { if (hud) { hud->pickup.starts_ns = 0; hud->pickup.until_ns = 0; } }
-void qa_hud_hit_marker(qa_hud *hud, float damage, uint64_t until) {
-    if (hud && !hud->drawing && isfinite(damage)) { hud->hit_damage = damage; hud->hit_until = until; }
-}
 bool qa_hud_ctf_status(qa_hud *hud, const qa_builtin_event *event, qa_error *error) {
     if (!hud || hud->drawing || !event ||
         event->kind != QA_BUILTIN_CTF_STATUS || event->family != QA_GAME_Q1 || event->argument_count ||
@@ -1121,9 +1116,6 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
             (!icon(hud, scene, target, hud->pickup.icon, (qa_scene_rect_f){304, 328, 32, 32},
                 (qa_vec4){1, 1, 1, 1}, error) || !text(hud, scene, target, 320, 360, hud->pickup.text, (qa_vec4){1, 1, .5f, 1},
                    1, QA_FONT_ALIGN_CENTER, error))) return false;
-        if (hud->hit_damage > 0 && hud->hit_until > frame->time_ns &&
-            !text(hud, scene, target, 320, 256, "X", (qa_vec4){1, 1, 1, 1}, 1,
-                   QA_FONT_ALIGN_CENTER, error)) return false;
     }
     if (content && data.help_title && !text(hud, scene, target, 24, 90, data.help_title,
         (qa_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;

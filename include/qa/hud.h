@@ -144,7 +144,6 @@ bool qa_hud_pickup(qa_hud *, const qa_hud_pickup_state *, qa_error *);
 const qa_hud_pickup_state *qa_hud_pickup_read(const qa_hud *);
 void qa_hud_clear_pickup(qa_hud *);
 void qa_hud_pickup_clear_time(qa_hud *);
-void qa_hud_hit_marker(qa_hud *, float damage, uint64_t until_ns);
 /* Retains the typed source status for the event's full actor and provider.
  * The actual physical-seat dispatcher qualifies the recipient before calling. */
 bool qa_hud_ctf_status(qa_hud *, const qa_builtin_event *, qa_error *);
