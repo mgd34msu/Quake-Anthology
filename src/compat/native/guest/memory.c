@@ -405,8 +405,12 @@ bool qa_native_guest_write(qa_native_guest *guest, uint64_t address, qa_bytes by
     qa_native_guest_cpu cpu = {0};
     if (guest->observe && !qa_native_guest_cpu_read(guest, &cpu, error)) return false;
     /* Input may be an alias of source storage. Keep it through effectful observers. */
-    uint8_t *copy = bytes.size ? malloc(bytes.size) : NULL;
-    if (bytes.size && !copy) return guest_fail(error, QA_ERROR_MEMORY, address, "retaining native guest write input");
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
+    uint8_t *copy = bytes.size ? qa_arena_alloc(&scratch, bytes.size, 1, error) : NULL;
+    if (bytes.size && !copy) {
+        qa_arena_destroy(&scratch);
+        return guest_fail(error, QA_ERROR_MEMORY, address, "retaining native guest write input");
+    }
     if (bytes.size) memcpy(copy, bytes.data, bytes.size);
     size_t offset = 0; bool okay = true;
     while (okay && offset < bytes.size) {
@@ -421,7 +425,7 @@ bool qa_native_guest_write(qa_native_guest *guest, uint64_t address, qa_bytes by
         offset += amount;
         okay = guest_publish(guest, &commit, error);
     }
-    free(copy);
+    qa_arena_destroy(&scratch);
     return okay;
 }
 
