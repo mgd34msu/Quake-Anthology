@@ -273,10 +273,10 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
         qa_saved_actor_id saved = {.slot = qa_net_read_u32(&reader)};
         saved.generation = qa_net_read_u64(&reader);
         uint32_t profile = qa_net_read_u32(&reader);
-        char *text = malloc(APPLICATION_Q2_LAYOUT_BYTES);
+        char *text = malloc(QA_HUD_Q2_LAYOUT_BYTES);
         qa_actor_id actor = {0}; qa_hud_q2_stat_references references;
         if (!text) { ok = application_fail(error, QA_ERROR_MEMORY, "Restoring the retained Q2 layout message"); break; }
-        ok = qa_net_read_string(&reader, text, APPLICATION_Q2_LAYOUT_BYTES) && !reader.failed &&
+        ok = qa_net_read_string(&reader, text, QA_HUD_Q2_LAYOUT_BYTES) && !reader.failed &&
             slot && slot <= candidate->host.client_slots && slot > previous &&
             (profile == QA_NATIVE_Q2_GAME_API3 || profile == QA_NATIVE_Q2_GAME_API2023) &&
             qa_actors_reference_saved(qa_session_actors(candidate->app->session), saved, candidate->archival, &actor, error) &&

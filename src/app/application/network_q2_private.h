@@ -16,8 +16,6 @@
 #include "qa/material_library_save.h"
 #include "qa/hud_q2.h"
 
-enum { APPLICATION_Q2_LAYOUT_BYTES = 65536 };
-
 typedef struct application_q2_layout_receipt {
     qa_actor_id actor;
     char *text;

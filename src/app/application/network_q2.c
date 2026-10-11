@@ -327,7 +327,7 @@ bool qa_application_network_q2_event_layout(qa_application_network_q2 *owner, qa
 {
     qa_network_q2_player physical;
     if ((profile != QA_NATIVE_Q2_GAME_API3 && profile != QA_NATIVE_Q2_GAME_API2023) ||
-        !layout || strlen(layout) >= APPLICATION_Q2_LAYOUT_BYTES)
+        !layout || strlen(layout) >= QA_HUD_Q2_LAYOUT_BYTES)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 layout exceeds its actual Source message domain");
     if (!qa_application_network_q2_player(owner, actor, &physical, error)) return false;
     qa_hud_q2_stat_references references;
