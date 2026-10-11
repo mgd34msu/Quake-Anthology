@@ -5,22 +5,18 @@
 #include <string.h>
 static bool beam_fail(qa_error *error,qa_status status,const char *message)
 { qa_error_set(error,status,0,"%s",message);return false; }
-bool frontend_q2_named_temporary(const char *name,qa_vec3 start,qa_vec3 end,qa_q2_temp_entity *out)
+bool frontend_q2_temporary_segment(uint32_t type,qa_vec3 start,qa_vec3 end,qa_q2_temp_entity *out)
 {
-    if (!name) return false;
-    if (!strncmp(name,"q2:",3)) name+=3;
-    uint8_t type;
-    if (!strcmp(name,"rail") || !strcmp(name,"rail-water")) type=QA_Q2_TE_RAILTRAIL;
-    else if (!strcmp(name,"bubble-trail")) type=QA_Q2_TE_BUBBLETRAIL;
-    else if (!strcmp(name,"bfg-laser")) type=QA_Q2_TE_BFG_LASER;
-    else if (!strcmp(name,"bfg-zap")) type=QA_Q2_TE_BFG_ZAP;
-    else return false;
-    *out=(qa_q2_temp_entity){.type=type,.field_count=2,.fields={
+    switch (type) {
+    case QA_Q2_TE_RAILTRAIL:case QA_Q2_TE_BUBBLETRAIL:case QA_Q2_TE_BFG_LASER:case QA_Q2_TE_BFG_ZAP:break;
+    default:return false;
+    }
+    *out=(qa_q2_temp_entity){.type=(uint8_t)type,.field_count=2,.fields={
         {.name=QA_Q2_TEMP_POSITION1,.kind=QA_Q2_TEMP_VECTOR,.value.vector={start.x,start.y,start.z}},
         {.name=QA_Q2_TEMP_POSITION2,.kind=QA_Q2_TEMP_VECTOR,.value.vector={end.x,end.y,end.z}}}};
     return true;
 }
-bool frontend_q2_beam_recipe_read(uint32_t type,qa_vec3 offset,frontend_q2_beam_recipe *out)
+bool frontend_q2_beam_recipe_read(uint32_t type,qa_vec3 offset,double duration,bool independent,frontend_q2_beam_recipe *out)
 {
     frontend_q2_beam_recipe recipe={.model=Q2FX_PARASITE};
     switch (type) {
@@ -33,24 +29,10 @@ bool frontend_q2_beam_recipe_read(uint32_t type,qa_vec3 offset,frontend_q2_beam_
     case QA_Q2_TE_LIGHTNING_BEAM:recipe.model=Q2FX_LIGHTNING;recipe.player=true;recipe.offset=qa_v3(0,12,-12);break;
     default:return false;
     }
+    if (independent) {recipe.lightning_sound=false;recipe.destination=false;recipe.independent=true;}
+    if (duration!=0 || independent)
+        if (recipe.player || recipe.independent) recipe.duration_seconds=duration>0?duration:.1;
     *out=recipe;return true;
-}
-bool frontend_q2_beam_named_recipe(const char *name,qa_vec3 offset,double duration,frontend_q2_beam_recipe *out)
-{
-    if (!name) return false;
-    if (!strncmp(name,"q2:",3)) name+=3;
-    uint32_t type;
-    if (!strcmp(name,"parasite")) type=QA_Q2_TE_PARASITE_ATTACK;
-    else if (!strcmp(name,"medic-cable")) type=QA_Q2_TE_MEDIC_CABLE_ATTACK;
-    else if (!strcmp(name,"grapple-cable")) type=QA_Q2_TE_GRAPPLE_CABLE;
-    else if (!strcmp(name,"lightning") || !strcmp(name,"bfg-lightning")) type=QA_Q2_TE_LIGHTNING;
-    else if (!strcmp(name,"heatbeam")) type=QA_Q2_TE_HEATBEAM;
-    else if (!strcmp(name,"monster-heatbeam")) type=QA_Q2_TE_MONSTER_HEATBEAM;
-    else return false;
-    frontend_q2_beam_recipe_read(type,offset,out);
-    if (!strcmp(name,"bfg-lightning")) { out->lightning_sound=false;out->destination=false;out->independent=true; }
-    if (out->player || out->independent) out->duration_seconds=duration>0?duration:.1;
-    return true;
 }
 frontend_q2_temporary_beam *frontend_q2_beam_retain(frontend_q2_temporary_beam *pool,size_t count,
     bool rerelease,const frontend_q2_beam_recipe *recipe,qa_actor_id actor,qa_actor_id destination,

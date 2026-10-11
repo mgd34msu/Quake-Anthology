@@ -166,7 +166,7 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
         }
     }
     if (ok && v->kind == QA_BUILTIN_BEAM && presentation.value.builtin.resource &&
-        !strcmp(alias(app, v->resource), "q2:lightning")) {
+        v->resource==app->ui_names.q2_lightning) {
         qa_q2_wire_binding from = {0}, to = {0}; qa_q2_combat_rules rules;
         ok = qa_q2_combat_rules_read(p->state.q2, &rules) &&
             qa_q2_wire_actor(p->state.q2, v->actor, &from, e) && qa_q2_wire_actor(p->state.q2, v->other, &to, e);

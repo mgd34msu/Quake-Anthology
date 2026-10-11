@@ -375,6 +375,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     free(application->q2_visuals);
     free(application->shader_remaps);
     free(application->providers);
+    free(application->ui_names.q2_effects);
     while(application->content_names) {
         application_content_names *row=application->content_names;application->content_names=row->next;
         qa_catalog_release((qa_catalog *)row->catalog);free(row);

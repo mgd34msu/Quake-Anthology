@@ -49,9 +49,8 @@ typedef struct frontend_q2_beam_context {
     bool (*draw)(void *,const frontend_q2_beam_draw *,qa_error *);
     bool (*render_clock)(void *,uint64_t *,uint64_t *,qa_error *);
 } frontend_q2_beam_context;
-bool frontend_q2_named_temporary(const char *,qa_vec3,qa_vec3,qa_q2_temp_entity *);
-bool frontend_q2_beam_named_recipe(const char *,qa_vec3 offset,double duration_seconds,frontend_q2_beam_recipe *);
-bool frontend_q2_beam_recipe_read(uint32_t type,qa_vec3 offset,frontend_q2_beam_recipe *);
+bool frontend_q2_temporary_segment(uint32_t,qa_vec3,qa_vec3,qa_q2_temp_entity *);
+bool frontend_q2_beam_recipe_read(uint32_t type,qa_vec3 offset,double duration_seconds,bool independent,frontend_q2_beam_recipe *);
 frontend_q2_temporary_beam *frontend_q2_beam_retain(frontend_q2_temporary_beam *,size_t,
     bool rerelease,const frontend_q2_beam_recipe *,qa_actor_id,qa_actor_id,
     qa_vec3 start,qa_vec3 end,double milliseconds);

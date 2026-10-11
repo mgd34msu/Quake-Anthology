@@ -79,10 +79,11 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
         break;
     }
     case QA_BUILTIN_EFFECT: {
-        const char *name = qa_strings_cstr(qa_session_strings(app->session), event->resource);
+        const qa_application_ui_names *names=&app->ui_names;
+        qa_string_id name=event->resource;
         reached = (event->flags & UINT32_C(0x80000000)) != 0 ||
-            (name && (!strcmp(name, "colored-explosion") || !strcmp(name, "developer-message") ||
-                !strcmp(name, "music") || !strcmp(name, "cutscene") || !strcmp(name, "sell-screen")));
+            (name==names->colored_explosion || name==names->developer_message ||
+                name==names->music || name==names->cutscene || name==names->sell_screen);
         if (!reached && !event->actor.registry && event->resource &&
             !(event->flags & UINT32_C(0x80000000))) {
             application_provider *p = app->live_providers;

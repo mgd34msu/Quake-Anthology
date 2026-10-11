@@ -521,6 +521,24 @@ the typed frame roster. Normal production build and seven core suites pass:
 `/tmp/qa-ta3196-q1-typed-effects-20261011-{build,core}.log`. Q2 named recipes and
 color-setting reads in finding 8 remain. No new live/client-session proof.
 
+Names finding 8, Q2 recipe slice: `q2_effect_names_prepare` binds the original
+Q2 named effect/beam recipes and accepted prefix/underscore aliases into the
+application's common session table at creation/restore. Local beam consumers
+and Unified builtin consumers index the same derived recipe table by resource
+ID. The one Q2 effect service receives numeric temporary types; its named
+helper scans, canonicalization buffer and duplicate beam name classifier are
+deleted. Source beam defaults and independent BFG lightning behavior remain
+in `frontend_q2_beam_recipe_read`. Q1 emitter/particle and Q2 emitter fixed-tag
+selectors use the shared retained IDs too. Rail colors parse on cvar revision
+changes and retain RGBA with their handles; steady reads do no text dispatch.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-q2-effect-ids-20261011-{build,core}.log`. The deleted named-effect,
+named-beam and control-kind helpers have no remaining source/header callers.
+Together with the previous slices, names findings 1-8 are migrated against the
+audited sites by source/build/core evidence. Names findings 9-17 remain open;
+this is not live gameplay, installed-artifact or timing proof.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

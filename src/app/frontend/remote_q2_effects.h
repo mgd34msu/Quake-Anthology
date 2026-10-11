@@ -31,16 +31,22 @@ typedef struct frontend_remote_q2_effects_controls {
     float rail_radius;
     uint32_t rail_core_rgba, rail_spiral_rgba;
 } frontend_remote_q2_effects_controls;
+typedef struct frontend_q2_rail_color {
+    uint64_t modification;
+    uint32_t rgba;
+    bool parsed;
+} frontend_q2_rail_color;
 typedef struct frontend_remote_q2_effects_cvars {
     qa_cvar_handle cl_disable_explosions, cl_disable_particles, cl_dlight_hacks;
     qa_cvar_handle cl_gunfov, cl_muzzleflashes, cl_muzzlelight_time;
     qa_cvar_handle cl_railcore_color, cl_railcore_width, cl_railspiral_color;
     qa_cvar_handle cl_railspiral_radius, cl_railtrail_time, cl_railtrail_type;
     qa_cvar_handle cl_rerelease_effects;
+    frontend_q2_rail_color core, spiral;
 } frontend_remote_q2_effects_cvars;
 typedef struct frontend_remote_q2_effects_control_source {
     qa_cvars *cvars;
-    const frontend_remote_q2_effects_cvars *handles;
+    frontend_remote_q2_effects_cvars *handles;
     qa_cvar_handle gun;
     qa_console *console;
     const qa_command_context *command_context;
@@ -116,7 +122,6 @@ typedef struct frontend_remote_q2_effects_sample {
     const qa_scene_world_input *world_input;
 } frontend_remote_q2_effects_sample;
 
-bool frontend_remote_q2_effects_color(const char *, uint32_t *rgba);
 
 bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *,
     frontend_remote_q2_effects **, qa_error *);
@@ -155,13 +160,13 @@ bool frontend_remote_q2_effects_monster_muzzle_pose(frontend_remote_q2_effects *
     double milliseconds, double server_milliseconds, qa_error *);
 bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *, qa_actor_id viewer,
     const qa_scene_model_input *weapon, qa_scene_frame *, qa_error *);
-bool frontend_remote_q2_effects_named_effect(frontend_remote_q2_effects *,
-    const char *recipe, qa_vec3 origin, qa_vec3 direction, int32_t count, int32_t color,
+bool frontend_remote_q2_effects_effect(frontend_remote_q2_effects *,
+    uint16_t type, qa_vec3 origin, qa_vec3 direction, int32_t count, int32_t color,
     double milliseconds, qa_error *);
 bool frontend_remote_q2_effects_beam(frontend_remote_q2_effects *,
     const frontend_q2_beam_recipe *, qa_actor_id, qa_actor_id, qa_vec3, qa_vec3, double, qa_error *);
-bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *,
-    const char *recipe, qa_actor_id, qa_vec3 start, qa_vec3 end, double duration_seconds,
+bool frontend_remote_q2_effects_beam_type(frontend_remote_q2_effects *,
+    uint32_t type, bool independent, qa_actor_id, qa_vec3 start, qa_vec3 end, double duration_seconds,
     double milliseconds, qa_error *);
 bool frontend_remote_q2_effects_monster_beam(frontend_remote_q2_effects *, qa_actor_id,
     qa_vec3 start, qa_vec3 end, double milliseconds, qa_error *);

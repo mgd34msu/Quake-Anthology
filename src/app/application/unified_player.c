@@ -18,6 +18,7 @@
 #include "qa/game_q1_ui.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_wire.h"
+#include "qa/network_q2_messages.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/native_host_q2_wire.h"
@@ -52,17 +53,118 @@ bool qa_application_content_names_bind(qa_application *app, const qa_catalog *ca
     row->next=app->content_names;app->content_names=row;return true;
 }
 
+static bool q2_effect_names_prepare(qa_application *app, qa_error *error)
+{
+    static const struct { const char *name; uint16_t effect, beam; bool independent; } recipes[] = {
+        {"gunshot", QA_Q2_TE_GUNSHOT+1, 0, false},
+        {"blood", QA_Q2_TE_BLOOD+1, 0, false},
+        {"blaster", QA_Q2_TE_BLASTER+1, 0, false},
+        {"shotgun", QA_Q2_TE_SHOTGUN+1, 0, false},
+        {"sparks", QA_Q2_TE_SPARKS+1, 0, false},
+        {"screen-sparks", QA_Q2_TE_SCREEN_SPARKS+1, 0, false},
+        {"shield-sparks", QA_Q2_TE_SHIELD_SPARKS+1, 0, false},
+        {"bullet-sparks", QA_Q2_TE_BULLET_SPARKS+1, 0, false},
+        {"greenblood", QA_Q2_TE_GREENBLOOD+1, 0, false},
+        {"blaster2", QA_Q2_TE_BLASTER2+1, 0, false},
+        {"flechette", QA_Q2_TE_FLECHETTE+1, 0, false},
+        {"moreblood", QA_Q2_TE_MOREBLOOD+1, 0, false},
+        {"electric-sparks", QA_Q2_TE_ELECTRIC_SPARKS+1, 0, false},
+        {"splash", QA_Q2_TE_SPLASH+1, 0, false},
+        {"laser-sparks", QA_Q2_TE_LASER_SPARKS+1, 0, false},
+        {"welding-sparks", QA_Q2_TE_WELDING_SPARKS+1, 0, false},
+        {"tunnel-sparks", QA_Q2_TE_TUNNEL_SPARKS+1, 0, false},
+        {"explosion1", QA_Q2_TE_EXPLOSION1+1, 0, false},
+        {"explosion2", QA_Q2_TE_EXPLOSION2+1, 0, false},
+        {"rocket-explosion", QA_Q2_TE_ROCKET_EXPLOSION+1, 0, false},
+        {"grenade-explosion", QA_Q2_TE_GRENADE_EXPLOSION+1, 0, false},
+        {"rocket-explosion-water", QA_Q2_TE_ROCKET_EXPLOSION_WATER+1, 0, false},
+        {"grenade-explosion-water", QA_Q2_TE_GRENADE_EXPLOSION_WATER+1, 0, false},
+        {"bfg-explosion", QA_Q2_TE_BFG_EXPLOSION+1, 0, false},
+        {"bfg-bigexplosion", QA_Q2_TE_BFG_BIGEXPLOSION+1, 0, false},
+        {"boss-teleport", QA_Q2_TE_BOSSTPORT+1, 0, false},
+        {"other-teleport", QA_Q2_TE_TELEPORT_EFFECT+1, 0, false},
+        {"player-teleport", QA_Q2_TE_TELEPORT_EFFECT+1, 0, false},
+        {"heatbeam-sparks", QA_Q2_TE_HEATBEAM_SPARKS+1, 0, false},
+        {"heatbeam-steam", QA_Q2_TE_HEATBEAM_STEAM+1, 0, false},
+        {"chainfist-smoke", QA_Q2_TE_CHAINFIST_SMOKE+1, 0, false},
+        {"tracker-explosion", QA_Q2_TE_TRACKER_EXPLOSION+1, 0, false},
+        {"bluehyperblaster", QA_Q2_TE_BLUEHYPERBLASTER_2+1, 0, false},
+        {"berserk-slam", QA_Q2_TE_BERSERK_SLAM+1, 0, false},
+        {"plain-explosion", QA_Q2_TE_PLAIN_EXPLOSION+1, 0, false},
+        {"item-respawn", QA_Q2_EFFECT_ITEM_RESPAWN+1, 0, false},
+        {"logout", QA_Q2_EFFECT_LOGOUT+1, 0, false},
+        {"rail", 0, QA_Q2_TE_RAILTRAIL+1, false},
+        {"rail-water", 0, QA_Q2_TE_RAILTRAIL+1, false},
+        {"bubble-trail", 0, QA_Q2_TE_BUBBLETRAIL+1, false},
+        {"bfg-laser", 0, QA_Q2_TE_BFG_LASER+1, false},
+        {"bfg-zap", 0, QA_Q2_TE_BFG_ZAP+1, false},
+        {"parasite", 0, QA_Q2_TE_PARASITE_ATTACK+1, false},
+        {"medic-cable", 0, QA_Q2_TE_MEDIC_CABLE_ATTACK+1, false},
+        {"grapple-cable", 0, QA_Q2_TE_GRAPPLE_CABLE+1, false},
+        {"lightning", 0, QA_Q2_TE_LIGHTNING+1, false},
+        {"bfg-lightning", 0, QA_Q2_TE_LIGHTNING+1, true},
+        {"heatbeam", 0, QA_Q2_TE_HEATBEAM+1, false},
+        {"monster-heatbeam", 0, QA_Q2_TE_MONSTER_HEATBEAM+1, false}
+    };
+    enum { ALIASES = 16 };
+    qa_string_id ids[sizeof(recipes)/sizeof(*recipes)][ALIASES] = {{0}};
+    qa_strings *strings=qa_session_strings(app->session);
+    qa_string_id last=0;
+    for (size_t i=0;i<sizeof(recipes)/sizeof(*recipes);++i) {
+        unsigned separators=0;
+        for (const char *p=recipes[i].name;*p;++p) separators+=*p=='-';
+        unsigned variants=recipes[i].effect?1u<<separators:1;
+        for (unsigned variant=0;variant<variants;++variant) {
+            char alias[64]="q2:"; unsigned bit=0;
+            size_t length=strlen(recipes[i].name);
+            for (size_t c=0;c<=length;++c) {
+                char ch=recipes[i].name[c];
+                if (ch=='-' && (variant&(1u<<bit++))) ch='_';
+                alias[c+3]=ch;
+            }
+            for (unsigned prefix=0;prefix<2;++prefix) {
+                qa_string_id *id=&ids[i][variant*2+prefix];
+                if (!qa_strings_intern_cstr(strings,alias+(prefix?0:3),id,error)) return false;
+                if (*id>last) last=*id;
+            }
+        }
+    }
+    size_t count=(size_t)last+1;
+    qa_application_q2_effect_name *bound=calloc(count,sizeof(*bound));
+    if (!bound) return application_fail(error,QA_ERROR_MEMORY,"Binding Q2 effect names");
+    for (size_t i=0;i<sizeof(recipes)/sizeof(*recipes);++i)
+        for (size_t j=0;j<ALIASES && ids[i][j];++j) {
+            uint16_t effect=recipes[i].effect;
+            bool palette=effect==QA_Q2_TE_SPLASH+1 || effect==QA_Q2_TE_LASER_SPARKS+1 ||
+                (j<2 && (effect==QA_Q2_TE_TUNNEL_SPARKS+1 || effect==QA_Q2_TE_WELDING_SPARKS+1));
+            bound[ids[i][j]]=(qa_application_q2_effect_name){.effect=effect,.beam=recipes[i].beam,
+                .palette=palette,.independent=recipes[i].independent};
+        }
+    free(app->ui_names.q2_effects);
+    app->ui_names.q2_effects=bound;app->ui_names.q2_effect_count=count;
+    for (size_t i=0;i<sizeof(recipes)/sizeof(*recipes);++i) {
+        switch (recipes[i].beam) {
+        case QA_Q2_TE_PARASITE_ATTACK+1:app->ui_names.q2_parasite=ids[i][1];break;
+        case QA_Q2_TE_MEDIC_CABLE_ATTACK+1:app->ui_names.q2_medic_cable=ids[i][1];break;
+        case QA_Q2_TE_GRAPPLE_CABLE+1:app->ui_names.q2_grapple_cable=ids[i][1];break;
+        case QA_Q2_TE_LIGHTNING+1:if (!recipes[i].independent) app->ui_names.q2_lightning=ids[i][1];break;
+        default:break;
+        }
+    }
+    return true;
+}
+
 bool application_ui_names_prepare(qa_application *app, qa_error *error)
 {
     qa_application_ui_names *names = &app->ui_names;
     qa_strings *strings = qa_session_strings(app->session);
-    if (!qa_application_content_names_bind(app,app->catalog,error)) return false;
+    if (!qa_application_content_names_bind(app,app->catalog,error) || !q2_effect_names_prepare(app,error)) return false;
     const struct { const char *text; qa_string_id *id; } events[] = {
         {"music", &names->music}, {"q1:fog", &names->fog},
         {"debug-bounds", &names->debug_bounds}, {"colored-explosion", &names->colored_explosion},
         {"developer-message", &names->developer_message}, {"cutscene", &names->cutscene},
         {"sell-screen", &names->sell_screen}, {"q2:monster-muzzle", &names->monster_muzzle},
-        {"q2:entity-event", &names->entity_event}, {"cp", &names->cp},
+        {"q2:entity-event", &names->entity_event}, {"entity-event", &names->entity_event_plain}, {"cp", &names->cp},
         {"chat", &names->chat}, {"tchat", &names->tchat}, {"print", &names->print}
     };
     for (size_t i = 0; i < sizeof(events) / sizeof(*events); ++i)
@@ -102,6 +204,11 @@ qa_string_id qa_application_content_name(const qa_application *app,const qa_cata
 
 const qa_application_ui_names *qa_application_ui_names_read(const qa_application *app)
 { return &app->ui_names; }
+
+qa_application_q2_effect_name qa_application_q2_effect_name_read(const qa_application *app,qa_string_id name)
+{
+    return name<app->ui_names.q2_effect_count?app->ui_names.q2_effects[name]:(qa_application_q2_effect_name){0};
+}
 
 typedef struct player_observation {
     qa_application *app;

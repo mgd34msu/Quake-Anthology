@@ -22,6 +22,7 @@
 #include "native_q3_client.h"
 #include "qa/game_q1_weapons.h"
 #include "remote_q2_effects.h"
+#include "qa/application_ui_names.h"
 #include "material_movies.h"
 #include "qa/stamp.h"
 
@@ -143,7 +144,7 @@ bool frontend_particle_prepare(qa_frontend *frontend, qa_error *error)
         qa_session_elapsed(qa_application_session(frontend->application));
     return true;
 }
-static const frontend_particle_cvars *particle_cvars_bind(qa_frontend *frontend,
+static frontend_particle_cvars *particle_cvars_bind(qa_frontend *frontend,
     uint32_t seat, const qa_cvars *registry, qa_error *error)
 {
     if (!frontend_particle_prepare(frontend,error)) return NULL;
@@ -649,7 +650,7 @@ static bool local_q2_controls(void *context,frontend_remote_q2_effects_controls 
     frontend_source_client_registry client;bool found;
     if (!frontend_source_client_registry_read(frontend,owner->seat,&client,&found,error)) return false;
     if (!found) return false;
-    const frontend_particle_cvars *bindings=particle_cvars_bind(frontend,owner->seat,client.cvars,error);
+    frontend_particle_cvars *bindings=particle_cvars_bind(frontend,owner->seat,client.cvars,error);
     if (!bindings) return false;
     frontend_remote_q2_effects_control_source source={.cvars=client.cvars,.handles=&bindings->effects,
         .gun=bindings->gun,.console=client.console,.context=owner,.current=local_q2_current};
@@ -961,7 +962,7 @@ bool frontend_particle_q2_entity(qa_frontend *frontend,uint32_t seat,
     }
     return true;
 }
-static bool q1_temporary(const qa_builtin_event *event, const char *resource, qa_q1_temp *out)
+static bool q1_temporary(const qa_builtin_event *event, qa_string_id colored_explosion, qa_q1_temp *out)
 {
     *out = (qa_q1_temp){.kind = QA_Q1_TEMP_POINT, .count = 1};
     qa_vec3 origin = event->origin;
@@ -988,7 +989,7 @@ static bool q1_temporary(const qa_builtin_event *event, const char *resource, qa
         out->end[0] = event->end.x; out->end[1] = event->end.y; out->end[2] = event->end.z;
         break;
     case QA_BUILTIN_EFFECT:
-        if (!resource || strcmp(resource, "colored-explosion") || event->count <= 0) return false;
+        if (event->resource!=colored_explosion || event->count <= 0) return false;
         out->kind = QA_Q1_TEMP_COLORS;
         out->color_start = (uint8_t)event->code; out->color_length = (uint8_t)event->count;
         break;
@@ -1040,10 +1041,10 @@ static bool q1_temporary_apply(qa_frontend *frontend, frontend_particle_owner *o
 static bool q1_particle_event(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
 {
     qa_q1_temp temporary;
-    const char *resource = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
+    qa_string_id colored_explosion=qa_application_ui_names_read(frontend->application)->colored_explosion;
     bool raw = event->kind == QA_BUILTIN_PARTICLES;
     bool blood = event->kind == QA_BUILTIN_IMPACT && event->code == 1;
-    if (!raw && !blood && !q1_temporary(event, resource, &temporary)) return true;
+    if (!raw && !blood && !q1_temporary(event, colored_explosion, &temporary)) return true;
     frontend_particle_owner *owner;
     if (!particle_owner(frontend, event->provider, QA_GAME_Q1, 0, 0,
             (qa_actor_id){0}, &owner, error)) return false;
@@ -1182,12 +1183,13 @@ bool frontend_particle_events(qa_frontend *frontend, qa_error *error)
         if (event.family == QA_GAME_Q1) {
             if (!q1_particle_event(frontend, &event, error)) return false;
         } else if (event.family==QA_GAME_Q2 && event.kind==QA_BUILTIN_BEAM) {
-            const char *resource=qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),event.resource);
+            qa_application_q2_effect_name name=qa_application_q2_effect_name_read(frontend->application,event.resource);
             frontend_q2_beam_recipe recipe;qa_q2_temp_entity temporary;
-            bool named=frontend_q2_named_temporary(resource,event.origin,event.end,&temporary);
-            if (named || frontend_q2_beam_named_recipe(resource,event.direction,event.value,&recipe)) {
+            bool segment=name.beam && frontend_q2_temporary_segment((uint32_t)name.beam-1u,event.origin,event.end,&temporary);
+            if (segment || (name.beam && frontend_q2_beam_recipe_read((uint32_t)name.beam-1u,event.direction,
+                event.value>0?event.value:.1,name.independent,&recipe))) {
                 qa_application_q2_audience audience=*output.q2_audience;
-                if (named) {
+                if (segment) {
                     qa_application_protocol_event message={.provider=event.provider,
                         .dialect=audience.source_frame.kind,.time_ns=event.time_ns};
                     if (!frontend_particle_q2_temporary(frontend,&message,&audience,&temporary,NULL,error)) return false;

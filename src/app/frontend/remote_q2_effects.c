@@ -1,5 +1,6 @@
 #include "qa/q2_sound.h"
 #include "remote_q2_effects_private.h"
+#include "qa/application_ui_names.h"
 #include "qa/material.h"
 #include "../../gameplay/q2/monsters/muzzle_data.h"
 #include "qa/console_cvar_observer.h"
@@ -19,7 +20,7 @@ static int color_hex(char c)
     if (c>='A' && c<='F') return c-'A'+10;
     return -1;
 }
-bool frontend_remote_q2_effects_color(const char *text, uint32_t *out)
+static bool rail_color_parse(const char *text, uint32_t *out)
 {
     if (!text || !*text || !out) return false;
     if (*text=='#') {
@@ -65,11 +66,15 @@ void frontend_remote_q2_effects_cvars_bind(qa_cvars *registry, frontend_remote_q
     };
 }
 static bool control_rail_color(const frontend_remote_q2_effects_control_source *source,
-    qa_cvar_handle handle, const char *name, uint32_t *out, qa_error *error)
+    qa_cvar_handle handle, frontend_q2_rail_color *color, const char *name, uint32_t *out, qa_error *error)
 {
     const qa_cvar_view *setting = qa_cvars_read(source->cvars, handle);
     if (!setting) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color lost its actual CLIENT declaration");
-    if (frontend_remote_q2_effects_color(setting->value, out)) return true;
+    if (color->parsed && color->modification==setting->modification_count) {*out=color->rgba;return true;}
+    if (rail_color_parse(setting->value, out)) {
+        *color=(frontend_q2_rail_color){.modification=setting->modification_count,.rgba=*out,.parsed=true};
+        return true;
+    }
     size_t value_length = strlen(setting->value), name_length = strlen(name);
     if (value_length > SIZE_MAX - name_length - 32)
         return q2fx_fail(error, QA_ERROR_MEMORY, "Q2 rail color warning overflow");
@@ -82,8 +87,10 @@ static bool control_rail_color(const frontend_remote_q2_effects_control_source *
     if (!source->current(source->context, error) || !qa_cvars_reset(source->cvars, name, true, error) ||
         !source->current(source->context, error)) return false;
     setting = qa_cvars_read(source->cvars, handle);
-    return (setting && frontend_remote_q2_effects_color(setting->value, out)) ||
-        q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color has no valid actual CLIENT reset value");
+    if (!setting || !rail_color_parse(setting->value,out))
+        return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail color has no valid actual CLIENT reset value");
+    *color=(frontend_q2_rail_color){.modification=setting->modification_count,.rgba=*out,.parsed=true};
+    return true;
 }
 bool frontend_remote_q2_effects_controls_read(const frontend_remote_q2_effects_control_source *source,
     frontend_remote_q2_effects_controls *out, qa_error *error)
@@ -92,8 +99,8 @@ bool frontend_remote_q2_effects_controls_read(const frontend_remote_q2_effects_c
     if (!qa_cvars_observer_idle(source->cvars))
         return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects controls require their returned CLIENT registry");
     uint32_t core, spiral;
-    if (!control_rail_color(source, source->handles->cl_railcore_color, "cl_railcore_color", &core, error) ||
-        !control_rail_color(source, source->handles->cl_railspiral_color, "cl_railspiral_color", &spiral, error)) return false;
+    if (!control_rail_color(source, source->handles->cl_railcore_color, &source->handles->core, "cl_railcore_color", &core, error) ||
+        !control_rail_color(source, source->handles->cl_railspiral_color, &source->handles->spiral, "cl_railspiral_color", &spiral, error)) return false;
     const qa_cvar_view *rail_time = qa_cvars_read(source->cvars, source->handles->cl_railtrail_time);
     if (!rail_time || !isfinite(rail_time->number))
         return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail time has no actual finite CLIENT row");
@@ -104,8 +111,8 @@ bool frontend_remote_q2_effects_controls_read(const frontend_remote_q2_effects_c
     rail_time = qa_cvars_read(source->cvars, source->handles->cl_railtrail_time);
     const qa_cvar_view *core_row = qa_cvars_read(source->cvars, source->handles->cl_railcore_color);
     const qa_cvar_view *spiral_row = qa_cvars_read(source->cvars, source->handles->cl_railspiral_color);
-    if (!core_row || !spiral_row || !frontend_remote_q2_effects_color(core_row->value, &core) ||
-        !frontend_remote_q2_effects_color(spiral_row->value, &spiral))
+    if (!core_row || !spiral_row || !rail_color_parse(core_row->value, &core) ||
+        !rail_color_parse(spiral_row->value, &spiral))
         return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail controls changed during actual CLIENT normalization");
     const qa_cvar_view *time = qa_cvars_read(source->cvars, source->handles->cl_muzzlelight_time);
     const qa_cvar_view *effects = qa_cvars_read(source->cvars, source->handles->cl_rerelease_effects);
@@ -494,7 +501,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         if (t->type==QA_Q2_TE_LIGHTNING && !field_actor(o,t,QA_Q2_TEMP_ENTITY2,actors,&destination,e)) return false;
         if (t->type==QA_Q2_TE_GRAPPLE_CABLE && !vector_field(t,QA_Q2_TEMP_OFFSET,&offset,e)) return false;
         frontend_q2_beam_recipe recipe;
-        if (!frontend_q2_beam_recipe_read(t->type,offset,&recipe) || !q2fx_model_admit(o,recipe.model,e)) return false;
+        if (!frontend_q2_beam_recipe_read(t->type,offset,0,false,&recipe) || !q2fx_model_admit(o,recipe.model,e)) return false;
         q2fx_beam *retained=frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
             rerelease,&recipe,actor,destination,pos,end,time);
         if (recipe.lightning_sound && frontend_q2_beam_lightning_sound(retained,rerelease,time)) {
@@ -541,56 +548,35 @@ bool frontend_remote_q2_effects_temporary(frontend_remote_q2_effects *owner,
     ++owner->busy; bool ok=temporary(owner,value,actors,time,server,error); owner->dirty=true; --owner->busy;
     return ok && q2fx_source_current(owner,error);
 }
-bool frontend_remote_q2_effects_named_effect(frontend_remote_q2_effects *o,
-    const char *name,qa_vec3 origin,qa_vec3 direction,int32_t count,int32_t color,double time,qa_error *e)
+bool frontend_remote_q2_effects_effect(frontend_remote_q2_effects *o,
+    uint16_t type,qa_vec3 origin,qa_vec3 direction,int32_t count,int32_t color,double time,qa_error *e)
 {
-    static const struct { const char *name; uint8_t type; } recipes[]={
-        {"gunshot",QA_Q2_TE_GUNSHOT},{"blood",QA_Q2_TE_BLOOD},{"blaster",QA_Q2_TE_BLASTER},
-        {"shotgun",QA_Q2_TE_SHOTGUN},{"sparks",QA_Q2_TE_SPARKS},{"screen-sparks",QA_Q2_TE_SCREEN_SPARKS},
-        {"shield-sparks",QA_Q2_TE_SHIELD_SPARKS},{"bullet-sparks",QA_Q2_TE_BULLET_SPARKS},{"greenblood",QA_Q2_TE_GREENBLOOD},
-        {"blaster2",QA_Q2_TE_BLASTER2},{"flechette",QA_Q2_TE_FLECHETTE},{"moreblood",QA_Q2_TE_MOREBLOOD},
-        {"electric-sparks",QA_Q2_TE_ELECTRIC_SPARKS},{"splash",QA_Q2_TE_SPLASH},{"laser-sparks",QA_Q2_TE_LASER_SPARKS},
-        {"welding-sparks",QA_Q2_TE_WELDING_SPARKS},{"tunnel-sparks",QA_Q2_TE_TUNNEL_SPARKS},
-        {"explosion1",QA_Q2_TE_EXPLOSION1},{"explosion2",QA_Q2_TE_EXPLOSION2},{"rocket-explosion",QA_Q2_TE_ROCKET_EXPLOSION},
-        {"grenade-explosion",QA_Q2_TE_GRENADE_EXPLOSION},{"rocket-explosion-water",QA_Q2_TE_ROCKET_EXPLOSION_WATER},
-        {"grenade-explosion-water",QA_Q2_TE_GRENADE_EXPLOSION_WATER},{"bfg-explosion",QA_Q2_TE_BFG_EXPLOSION},
-        {"bfg-bigexplosion",QA_Q2_TE_BFG_BIGEXPLOSION},{"boss-teleport",QA_Q2_TE_BOSSTPORT},{"other-teleport",QA_Q2_TE_TELEPORT_EFFECT},
-        {"player-teleport",QA_Q2_TE_TELEPORT_EFFECT},{"heatbeam-sparks",QA_Q2_TE_HEATBEAM_SPARKS},
-        {"heatbeam-steam",QA_Q2_TE_HEATBEAM_STEAM},{"chainfist-smoke",QA_Q2_TE_CHAINFIST_SMOKE},
-        {"tracker-explosion",QA_Q2_TE_TRACKER_EXPLOSION},{"bluehyperblaster",QA_Q2_TE_BLUEHYPERBLASTER_2},
-        {"berserk-slam",QA_Q2_TE_BERSERK_SLAM},{"plain-explosion",QA_Q2_TE_PLAIN_EXPLOSION}
-    };
-    if (!name || !qa_vec_finite(origin) || !qa_vec_finite(direction)) return false;
-    char canonical[64]; size_t offset=!strncmp(name,"q2:",3)?3:0, length=strlen(name+offset);
-    if (length>=sizeof(canonical)) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 effect recipe exceeds its source name");
-    for (size_t i=0;i<=length;++i) canonical[i]=name[offset+i]=='_'?'-':name[offset+i];
-    if (!strcmp(canonical,"item-respawn") || !strcmp(canonical,"logout")) {
+    if (!qa_vec_finite(origin) || !qa_vec_finite(direction)) return false;
+    if (type==QA_Q2_EFFECT_ITEM_RESPAWN || type==QA_Q2_EFFECT_LOGOUT) {
         if (!o || !frontend_remote_q2_effects_idle(o) || !isfinite(time) || !q2fx_source_current(o,e)) return false;
         ++o->busy;
         frontend_fx_q2_respawn_particles(&o->particles,&o->random,origin,time*.001,
-            !strcmp(canonical,"logout")?FRONTEND_FX_Q2_LOGOUT:FRONTEND_FX_Q2_ITEM);
+            type==QA_Q2_EFFECT_LOGOUT?FRONTEND_FX_Q2_LOGOUT:FRONTEND_FX_Q2_ITEM);
         o->dirty=true; --o->busy; return q2fx_source_current(o,e);
     }
-    for (size_t i=0;i<sizeof(recipes)/sizeof(*recipes);++i) if (!strcmp(canonical,recipes[i].name)) {
-        qa_q2_temp_entity t={.type=recipes[i].type,.field_count=4};
-        t.fields[0]=(qa_q2_temp_field){.name=QA_Q2_TEMP_POSITION1,.kind=QA_Q2_TEMP_VECTOR,.value.vector={origin.x,origin.y,origin.z}};
-        t.fields[1]=(qa_q2_temp_field){.name=QA_Q2_TEMP_DIRECTION,.kind=QA_Q2_TEMP_VECTOR,.value.vector={direction.x,direction.y,direction.z}};
-        t.fields[2]=(qa_q2_temp_field){.name=QA_Q2_TEMP_COUNT,.kind=QA_Q2_TEMP_INTEGER,.value.integer=count};
-        t.fields[3]=(qa_q2_temp_field){.name=QA_Q2_TEMP_COLOR,.kind=QA_Q2_TEMP_INTEGER,.value.integer=color};
-        return frontend_remote_q2_effects_temporary(o,&t,NULL,time,time,e);
-    }
-    return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized effect has no source recipe");
+    if (type>UINT8_MAX) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized effect has no source recipe");
+    qa_q2_temp_entity t={.type=(uint8_t)type,.field_count=4};
+    t.fields[0]=(qa_q2_temp_field){.name=QA_Q2_TEMP_POSITION1,.kind=QA_Q2_TEMP_VECTOR,.value.vector={origin.x,origin.y,origin.z}};
+    t.fields[1]=(qa_q2_temp_field){.name=QA_Q2_TEMP_DIRECTION,.kind=QA_Q2_TEMP_VECTOR,.value.vector={direction.x,direction.y,direction.z}};
+    t.fields[2]=(qa_q2_temp_field){.name=QA_Q2_TEMP_COUNT,.kind=QA_Q2_TEMP_INTEGER,.value.integer=count};
+    t.fields[3]=(qa_q2_temp_field){.name=QA_Q2_TEMP_COLOR,.kind=QA_Q2_TEMP_INTEGER,.value.integer=color};
+    return frontend_remote_q2_effects_temporary(o,&t,NULL,time,time,e);
 }
-bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
-    const char *name,qa_actor_id actor_id,qa_vec3 start,qa_vec3 end,double duration,double time,qa_error *e)
+bool frontend_remote_q2_effects_beam_type(frontend_remote_q2_effects *o,
+    uint32_t type,bool independent,qa_actor_id actor_id,qa_vec3 start,qa_vec3 end,double duration,double time,qa_error *e)
 {
-    if (!o || !frontend_remote_q2_effects_idle(o) || !name || !qa_vec_finite(start) || !qa_vec_finite(end) ||
+    if (!o || !frontend_remote_q2_effects_idle(o) || !qa_vec_finite(start) || !qa_vec_finite(end) ||
         !isfinite(time) || !isfinite(duration) || !q2fx_source_current(o,e)) return false;
     qa_q2_temp_entity temporary;
-    if (frontend_q2_named_temporary(name,start,end,&temporary))
+    if (frontend_q2_temporary_segment(type,start,end,&temporary))
         return frontend_remote_q2_effects_temporary(o,&temporary,NULL,time,time,e);
     frontend_q2_beam_recipe recipe;
-    if (!frontend_q2_beam_named_recipe(name,(qa_vec3){0},duration,&recipe))
+    if (!frontend_q2_beam_recipe_read(type,(qa_vec3){0},duration>0?duration:.1,independent,&recipe))
         return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam has no source recipe");
     return frontend_remote_q2_effects_beam(o,&recipe,actor_id,(qa_actor_id){0},start,end,time,e);
 }

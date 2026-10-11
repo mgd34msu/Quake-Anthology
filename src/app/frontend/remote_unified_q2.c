@@ -21,6 +21,7 @@
 #include "qa/unified_frame_visuals.h"
 #include "qa/unified_frame_components.h"
 #include "qa/unified_frame_metadata.h"
+#include "qa/application_ui_names.h"
 #include "../application/native_q2_publication.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/arena.h"
@@ -1325,11 +1326,12 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
     const qa_builtin_event *v=&row->payload.value.builtin;q2_bank *b=NULL;qa_actor_id a;
     const char *resource=qa_strings_cstr(o->replica->strings,v->resource);
     const char *text=qa_strings_cstr(o->replica->strings,v->text);
+    const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
     switch (v->kind){
     case QA_BUILTIN_SOUND:case QA_BUILTIN_STOP_SOUND:return sound_receive(o,row,resource,v->actor,v->origin,v->channel,v->volume,v->attenuation,
         v->kind==QA_BUILTIN_STOP_SOUND?2u:(v->flags&1)?1u:0u,0,e);
     case QA_BUILTIN_MUZZLE:{qa_unified_q2_muzzle m={.actor=v->actor,.flash=(uint16_t)v->code,
-        .monster=resource && !strcmp(resource,"q2:monster-muzzle"),.silenced=(v->flags&128)!=0,
+        .monster=v->resource==names->monster_muzzle,.silenced=(v->flags&128)!=0,
         .has_pose=v->has_muzzle_pose,.origin=v->origin,.direction=v->direction,.angles=v->muzzle_angles,.scale=v->muzzle_scale,
         .entity=row->has_source_entity?(uint16_t)row->source_entity:0};return muzzle_receive(o,row,&m,e);}
     case QA_BUILTIN_MESSAGE:case QA_BUILTIN_CENTERPRINT:{bool matches;
@@ -1350,26 +1352,35 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
             .blend_ns=nanoseconds(row->seconds),.family=QA_GAME_Q2},e);
         qa_scene_image_release(image);return okay;}
     case QA_BUILTIN_BEAM:{if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
-        const char *name=resource;double ms=row->seconds*1000;
-        if (!name)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 entity beam requires its received entity state");
-        if (!strcmp(name,"q2:parasite") || !strcmp(name,"q2:medic-cable"))return frontend_remote_q2_effects_monster_beam(b->effects,a,v->origin,v->end,ms,e) &&
+        double ms=row->seconds*1000;
+        if (!v->resource)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 entity beam requires its received entity state");
+        if (v->resource==names->q2_parasite || v->resource==names->q2_medic_cable)return frontend_remote_q2_effects_monster_beam(b->effects,a,v->origin,v->end,ms,e) &&
             effect_replace(o,b,a,FRONTEND_REMOTE_Q2_MONSTER_BEAM,e);
-        if (!strcmp(name,"q2:grapple-cable")){qa_unified_q2_temp_field fields[4]={
+        if (v->resource==names->q2_grapple_cable){qa_unified_q2_temp_field fields[4]={
             {.name=QA_Q2_TEMP_ENTITY1,.kind=QA_Q2_TEMP_INTEGER,.integer=row->has_source_entity?row->source_entity:0,.actor=v->actor},
             {.name=QA_Q2_TEMP_POSITION1,.kind=QA_Q2_TEMP_VECTOR,.vector=v->origin},
             {.name=QA_Q2_TEMP_POSITION2,.kind=QA_Q2_TEMP_VECTOR,.vector=v->end},
             {.name=QA_Q2_TEMP_OFFSET,.kind=QA_Q2_TEMP_VECTOR,.vector=v->direction}};
             qa_unified_q2_temporary t={.type=QA_Q2_TE_GRAPPLE_CABLE,.rerelease=row->q2_profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,.fields=fields,.field_count=4};return temporary_receive(o,row,&t,e);}
-        return frontend_remote_q2_effects_named_beam(b->effects,!strncmp(name,"q2:",3)?name+3:name,a,v->origin,v->end,v->value,ms,e);}
+        qa_application_q2_effect_name recipe=qa_application_q2_effect_name_read(o->frontend->application,v->resource);
+        return frontend_remote_q2_effects_beam_type(b->effects,recipe.beam?(uint32_t)recipe.beam-1u:UINT32_MAX,
+            recipe.independent,a,v->origin,v->end,v->value,ms,e);}
     case QA_BUILTIN_PARTICLES:case QA_BUILTIN_IMPACT:case QA_BUILTIN_EXPLOSION:case QA_BUILTIN_EFFECT:case QA_BUILTIN_TELEPORT:{
-        const char *name=resource;if (name && !strncmp(name,"q2:",3))name+=3;
-        if (v->kind==QA_BUILTIN_EFFECT && name && !strcmp(name,"entity-event"))return visual_apply(o,row,e);
-        if (!name && v->kind==QA_BUILTIN_PARTICLES){switch(v->code){case 0:name="gunshot";break;case 1:name="blood";break;case 4:name="shotgun";break;
-            case 9:name="sparks";break;case 12:name="screen-sparks";break;case 13:name="shield-sparks";break;case 14:name="bullet-sparks";break;
-            case 26:name="greenblood";break;case 42:name="moreblood";break;case 46:name="electric-sparks";break;default:break;}}
-        if (!name || !source_bank(o,row,true,&b,e))return false;
-        bool palette=!strcmp(name,"splash") || !strcmp(name,"laser-sparks") || !strcmp(name,"laser_sparks") || !strcmp(name,"tunnel-sparks") || !strcmp(name,"welding-sparks");
-        return frontend_remote_q2_effects_named_effect(b->effects,name,v->origin,v->direction,v->count,palette?v->code:0,row->seconds*1000,e);}
+        if (v->kind==QA_BUILTIN_EFFECT && (v->resource==names->entity_event || v->resource==names->entity_event_plain))
+            return visual_apply(o,row,e);
+        qa_application_q2_effect_name recipe=qa_application_q2_effect_name_read(o->frontend->application,v->resource);
+        uint16_t type=recipe.effect?(uint16_t)(recipe.effect-1):UINT16_MAX;
+        if (!v->resource && v->kind==QA_BUILTIN_PARTICLES) {
+            switch(v->code) {
+            case 0:type=QA_Q2_TE_GUNSHOT;break;case 1:type=QA_Q2_TE_BLOOD;break;case 4:type=QA_Q2_TE_SHOTGUN;break;
+            case 9:type=QA_Q2_TE_SPARKS;break;case 12:type=QA_Q2_TE_SCREEN_SPARKS;break;case 13:type=QA_Q2_TE_SHIELD_SPARKS;break;
+            case 14:type=QA_Q2_TE_BULLET_SPARKS;break;case 26:type=QA_Q2_TE_GREENBLOOD;break;case 42:type=QA_Q2_TE_MOREBLOOD;break;
+            case 46:type=QA_Q2_TE_ELECTRIC_SPARKS;break;default:break;
+            }
+        }
+        if ((!v->resource && type==UINT16_MAX) || !source_bank(o,row,true,&b,e))return false;
+        return frontend_remote_q2_effects_effect(b->effects,type,v->origin,v->direction,v->count,
+            recipe.palette?v->code:0,row->seconds*1000,e);}
     case QA_BUILTIN_Q2_PLAYER_ANIMATION: /* Source animation is carried by its actual typed model frame. */return true;
     default:return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q2 builtin presentation has no installed CLIENT handler");
     }
