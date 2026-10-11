@@ -163,7 +163,7 @@ static bool build_media(frontend_remote_q3_initial *owner,qa_error *error)
     }
     qa_scene_image_options images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
-    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_GAME_Q3,qa_application_world(f->application)},
+    qa_q3_presentation_asset_options assets={.strings=qa_session_strings(qa_application_session(f->application)),.provider={v->mounts,v->images,v->materials,QA_GAME_Q3,qa_application_world(f->application)},
         .context=owner,.model_initialize=model_initialize};
     if(!v->mounts || !v->images || !v->materials || !v->fonts || !v->movies ||
         !qa_material_library_load_scripts(v->materials,v->mounts,&images,error) ||

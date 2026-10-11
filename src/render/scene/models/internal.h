@@ -38,6 +38,7 @@ typedef struct scene_model_influence {
     bool used;
 } scene_model_influence;
 typedef struct scene_model_mesh {
+    qa_string_id surface;
     qa_scene_mesh retained;
     qa_scene_vertex *vertices;
     uint32_t *indices;
@@ -61,6 +62,7 @@ typedef struct qa_scene_model_capture qa_scene_model_capture;
 
 struct qa_scene_model {
     const qa_model *source;
+    qa_strings *strings;
     qa_scene_model_content_lease source_lease, replacement_source_lease, animation_lease;
     qa_scene_resources *resources;
     qa_material_library *materials;

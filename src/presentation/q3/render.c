@@ -689,7 +689,7 @@ static bool body_material_equal(const qa_q3_presentation_assets *assets,
         !q3p_skin_get(assets, b->custom_skin, &y, error)) return false;
     if (!!x != !!y || (x && x->count != y->count)) return true;
     if (x) for (size_t i = 0; i < x->count; ++i)
-        if (strcmp(x->mappings[i].surface, y->mappings[i].surface) ||
+        if (x->mappings[i].surface != y->mappings[i].surface ||
             strcmp(x->mappings[i].shader, y->mappings[i].shader)) return true;
     *equal = true; return true;
 }

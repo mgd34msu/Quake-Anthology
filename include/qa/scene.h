@@ -1032,9 +1032,10 @@ struct qa_scene_model_input {
     size_t shadow_light_count;
     const qa_scene_image *shadow_atlas;
 };
-/* Borrows immutable decoded model; caller keeps it alive until destruction. */
+/* Borrows immutable decoded model; caller keeps it alive until destruction.
+ * Retains the name table shared with custom-skin admission. */
 bool qa_scene_model_create(const qa_model *, qa_scene_resources *, qa_material_library *,
-                           const qa_scene_image_options *, qa_scene_model **, qa_error *);
+                           const qa_scene_image_options *, qa_strings *, qa_scene_model **, qa_error *);
 void qa_scene_model_destroy(qa_scene_model *);
 uint32_t qa_scene_model_effect_flags(const qa_scene_model *);
 bool qa_scene_model_submit(qa_scene_model *, const qa_scene_model_input *, qa_scene_frame *, qa_error *);

@@ -88,8 +88,8 @@ static bool model_array(size_t count, size_t size, void **out, qa_error *error) 
 
 bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources,
                            qa_material_library *materials, const qa_scene_image_options *options,
-                           qa_scene_model **out, qa_error *error) {
-    if (!source || !resources || !options || !out ||
+                           qa_strings *strings, qa_scene_model **out, qa_error *error) {
+    if (!source || !resources || !options || !strings || !out ||
         (options->family == QA_GAME_Q3 && !materials) ||
         (options->palette_rgb.size && (options->palette_rgb.size != 768 || !options->palette_rgb.data)) ||
         (options->translation.size && (options->translation.size != 256 || !options->translation.data))) {
@@ -98,6 +98,7 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
     qa_scene_model *model = calloc(1, sizeof(*model));
     if (!model) { qa_error_set(error, QA_ERROR_MEMORY, 0, "retained model allocation failed"); return false; }
     model->source = source; model->resources = resources; model->materials = materials;
+    model->strings = strings; qa_strings_retain(strings);
     model->identity = qa_scene_identity(); model->options = *options;
     model->options.usage = source->format == QA_MODEL_SPR || source->format == QA_MODEL_SP2 ?
         QA_IMAGE_USAGE_SPRITE : QA_IMAGE_USAGE_SKIN;
@@ -139,7 +140,14 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
     }
     if (!model_array(source->mesh_count, sizeof(*model->meshes), &allocation, error)) goto fail;
     model->meshes = allocation;
-    for (uint32_t i = 0; i < source->mesh_count; ++i) if (!scene_model_topology(model, i, error)) goto fail;
+    for (uint32_t i = 0; i < source->mesh_count; ++i) {
+        char generated[32];
+        const char *name = source->meshes[i].name;
+        if (source->format == QA_MODEL_MD5) { snprintf(generated, sizeof(generated), "mesh%u", i); name = generated; }
+        else if (source->format == QA_MODEL_MD2 || source->format == QA_MODEL_MDL) name = "alias";
+        if (!scene_model_topology(model, i, error) ||
+            !qa_strings_intern_cstr(strings, name, &model->meshes[i].surface, error)) goto fail;
+    }
     if (!model_array(source->skin_count, sizeof(*model->skins), &allocation, error)) goto fail;
     model->skins = allocation;
     for (uint32_t i = 0; i < source->skin_count; ++i) {
@@ -198,6 +206,7 @@ void qa_scene_model_destroy(qa_scene_model *model) {
     if (model->animation_lease.release) model->animation_lease.release(model->animation_lease.context);
     if (model->replacement_source_lease.release) model->replacement_source_lease.release(model->replacement_source_lease.context);
     if (model->source_lease.release) model->source_lease.release(model->source_lease.context);
+    qa_strings_destroy(model->strings);
     free(model);
 }
 
@@ -290,7 +299,7 @@ static bool replacement_skin_path(const qa_model_replacement *replacement, uint3
 
 static bool replacement_build(const qa_model *source, qa_scene_resources *resources,
     qa_material_library *materials, const qa_scene_image_options *options,
-    const qa_model_replacement *replacement, qa_scene_model **out, qa_error *error) {
+    qa_strings *strings, const qa_model_replacement *replacement, qa_scene_model **out, qa_error *error) {
     if (!replacement || !replacement->source || !replacement->mesh || !replacement->animation ||
         (replacement->source->format != QA_MODEL_MDL && replacement->source->format != QA_MODEL_MD2) ||
         (replacement->source != source && replacement->mesh != source) ||
@@ -299,7 +308,7 @@ static bool replacement_build(const qa_model *source, qa_scene_resources *resour
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "replacement does not belong to this retained model"); return false;
     }
     qa_scene_model *next = NULL;
-    if (!qa_scene_model_create(replacement->mesh, resources, materials, options, &next, error)) return false;
+    if (!qa_scene_model_create(replacement->mesh, resources, materials, options, strings, &next, error)) return false;
     next->replacement_description = *replacement;
     next->replacement_source = &next->replacement_description;
     next->replacement_skin_count = replacement->source->skin_count;
@@ -348,7 +357,7 @@ static bool prepare_replacement(qa_scene_model *model, const qa_model_replacemen
     }
     qa_scene_model *next = NULL;
     if (!replacement_build(model->source, model->resources, model->materials, &model->options,
-        replacement, &next, error)) return false;
+        model->strings, replacement, &next, error)) return false;
     next->replacement_next = model->replacement;
     next->replacement_parent = model;
     model->replacement = next;
@@ -455,7 +464,7 @@ bool qa_scene_model_replacement_prepare(qa_scene_model *model, const qa_model_re
     }
     qa_scene_model *next = NULL;
     if (!replacement_build(model->source, model->resources, model->materials, &model->options,
-        description, &next, error)) return false;
+        model->strings, description, &next, error)) return false;
     replacement_leases(next, mesh, source, animation);
     next->replacement_parent = model; next->replacement_next = model->replacement; model->replacement = next;
     return true;
@@ -471,7 +480,7 @@ bool qa_scene_model_replacement_prepare_parent(qa_scene_model *model, const qa_m
     }
     qa_scene_model *next = NULL;
     if (!replacement_build(model->source, model->resources, model->materials, &model->options,
-        description, &next, error)) return false;
+        model->strings, description, &next, error)) return false;
     next->source_lease = *mesh; *mesh = (qa_scene_model_content_lease){0};
     next->animation_lease = *animation; *animation = (qa_scene_model_content_lease){0};
     next->replacement_parent = model; next->replacement_next = model->replacement; model->replacement = next;
@@ -688,7 +697,7 @@ bool qa_scene_model_image_policy_replacement(qa_scene_model_image_policy *ticket
     qa_scene_model *next = NULL;
     if (!replacement_build(ticket->owner->source, qa_scene_resource_policy_destination(ticket->resources),
         ticket->materials ? qa_scene_material_image_policy_destination(ticket->materials) : ticket->owner->materials,
-        &ticket->owner->options, description, &next, error)) return false;
+        &ticket->owner->options, ticket->owner->strings, description, &next, error)) return false;
     replacement_leases(next, mesh, source, animation); ticket->replacement = next; return true;
 }
 bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy *ticket,
@@ -703,7 +712,7 @@ bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy 
     qa_scene_model *next = NULL;
     if (!replacement_build(ticket->owner->source, qa_scene_resource_policy_destination(ticket->resources),
         ticket->materials ? qa_scene_material_image_policy_destination(ticket->materials) : ticket->owner->materials,
-        &ticket->owner->options, description, &next, error)) return false;
+        &ticket->owner->options, ticket->owner->strings, description, &next, error)) return false;
     next->source_lease = *mesh; *mesh = (qa_scene_model_content_lease){0};
     next->animation_lease = *animation; *animation = (qa_scene_model_content_lease){0};
     ticket->replacement = next; return true;
@@ -806,12 +815,9 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
         (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MD5);
     if ((input->custom_material && custom_allowed) || shell_image) return true;
     if (input->custom_skin && custom_allowed) {
-        char generated[32];
-        const char *name = mesh->name;
-        if (model->source->format == QA_MODEL_MD5) { snprintf(generated, sizeof(generated), "mesh%u", index); name = generated; }
-        else if (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MDL) name = "alias";
+        qa_string_id name = model->meshes[index].surface;
         for (size_t i = 0; i < input->custom_skin->count; ++i)
-            if (!strcmp(input->custom_skin->mappings[i].surface, name)) {
+            if (input->custom_skin->mappings[i].surface == name) {
                 if (input->custom_skin_materials) {
                     external->material = input->custom_skin_materials[i];
                     *out = external; return true;

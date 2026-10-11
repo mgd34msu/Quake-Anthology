@@ -79,7 +79,7 @@ bool frontend_equipment_gear_content_create(qa_frontend *frontend,
     owner->frontend = frontend;
     owner->view = (frontend_equipment_gear_owner_view){.source = *source,
         .definition = definition, .product = product, .content = *content};
-    qa_q3_presentation_asset_options assets = {.provider = {.mounts = content->mounts,
+    qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {.mounts = content->mounts,
         .images = content->images, .materials = content->materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application)}};
     bool okay = qa_q3_presentation_assets_create(&assets, &owner->view.assets, error);
     size_t count = definition->presentation.attachment_count;

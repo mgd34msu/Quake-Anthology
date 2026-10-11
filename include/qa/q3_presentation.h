@@ -27,6 +27,7 @@ typedef struct qa_q3_presentation_provider {
 typedef enum qa_q3_asset_kind { QA_Q3_ASSET_MODEL, QA_Q3_ASSET_SKIN, QA_Q3_ASSET_SHADER } qa_q3_asset_kind;
 typedef struct qa_q3_presentation_asset_options {
     qa_q3_presentation_provider provider;
+    qa_strings *strings;
     qa_audio_bank *sounds;
     qa_audio_asset *zero_sound;
     qa_media_library *movies;

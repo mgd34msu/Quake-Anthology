@@ -180,14 +180,14 @@ static bool decode(qa_q3_presentation_assets *assets, q3p_model *model, const ch
             for (unsigned j = 0; lod && j < i; ++j)
                 if (qa_model_at_lod(&model->lods, j) == lod) { model->scene[i] = model->scene[j]; break; }
             if (lod && !model->scene[i] && !qa_scene_model_create(lod, model->provider.images, model->provider.materials,
-                                               &images, &model->scene[i], error)) return false;
+                                               &images, assets->options.strings, &model->scene[i], error)) return false;
         }
         return true;
     }
     if (!qa_model_load(bytes, &model->model, error)) return false;
     model->bounds = bounds(&model->model.bounds);
     return qa_scene_model_create(&model->model, model->provider.images, model->provider.materials,
-                                  &images, &model->scene[0], error);
+                                  &images, assets->options.strings, &model->scene[0], error);
 }
 
 static bool source_primary(q3p_model *model, unsigned slot, qa_error *error)
@@ -263,7 +263,7 @@ static bool source_model_lods(qa_q3_presentation_assets *assets, q3p_model *mode
         /* Material admission is reached before the next file read, preserving
          * the Source physical shader registration order. */
         if (!qa_scene_model_create(retained, model->provider.images, model->provider.materials,
-            &images, scene, error) || !source_primary(model, (unsigned)slot, error)) return false;
+            &images, assets->options.strings, scene, error) || !source_primary(model, (unsigned)slot, error)) return false;
         model->source_kind = md3 ? QA_MODEL_MD3 : QA_MODEL_MD4;
         model->lods.lod_count = ++model->source_num_lods;
         size_t allocation = qa_load_u32le(bytes.data + (md3 ? 104 : 96));

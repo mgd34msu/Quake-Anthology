@@ -2,6 +2,7 @@
 #define QA_MODEL_H
 #include "qa/common.h"
 #include "qa/math.h"
+#include "qa/strings.h"
 
 typedef enum qa_model_format {
     QA_MODEL_MDL,
@@ -212,14 +213,16 @@ extern const char *const qa_player_animation_names[QA_PLAYER_ANIMATION_COUNT];
 bool qa_player_animation_load(qa_bytes text, qa_player_animation_config *out,
                               qa_model_diagnostic diagnostic, void *context, qa_error *error);
 typedef struct qa_model_skin_mapping {
-    char surface[64];
+    qa_string_id surface;
     char *shader;
 } qa_model_skin_mapping;
 typedef struct qa_model_skin_map {
+    qa_strings *strings;
     size_t count, capacity;
     qa_model_skin_mapping *mappings;
 } qa_model_skin_map;
-bool qa_model_skin_map_load(qa_bytes text, qa_model_skin_map *out, qa_error *error);
+/* Model and skin admission use the same retained name table. */
+bool qa_model_skin_map_load(qa_bytes text, qa_strings *, qa_model_skin_map *out, qa_error *error);
 void qa_model_skin_map_free(qa_model_skin_map *map);
 
 typedef struct qa_model_replacement_paths {

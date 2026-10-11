@@ -147,9 +147,14 @@ bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *op
     qa_q3_presentation_assets *a = calloc(1, sizeof(*a));
     if (!a) return q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 presentation resource handles");
     a->options = *options; a->users = 1;
-    if (!qa_q3_assets_provider_hold(a, &options->provider, error)) { free(a); return false; }
+    if (a->options.strings) qa_strings_retain(a->options.strings);
+    else if (!qa_strings_create(&a->options.strings, error)) { free(a); return false; }
+    if (!qa_q3_assets_provider_hold(a, &options->provider, error)) {
+        qa_strings_destroy(a->options.strings); free(a); return false;
+    }
     if (options->zero_sound && !qa_audio_asset_retain(options->zero_sound)) {
-        q3p_provider_custody_release(a); free(a); return q3p_fail(error, QA_ERROR_MEMORY, "retaining Q3 fallback sound");
+        q3p_provider_custody_release(a); qa_strings_destroy(a->options.strings);
+        free(a); return q3p_fail(error, QA_ERROR_MEMORY, "retaining Q3 fallback sound");
     }
     *out = a; return true;
 }
@@ -189,6 +194,7 @@ static void assets_free(qa_q3_presentation_assets *a)
     qa_audio_asset_release(a->options.zero_sound);
     q3p_provider_custody_release(a);
     qa_q3_assets_release(a->parent);
+    qa_strings_destroy(a->options.strings);
     free(a->models); free(a->skins); free(a->sounds); free(a->shaders); free(a->names); free(a);
 }
 void q3p_assets_dispose_borrowed(qa_q3_presentation_assets *a)
@@ -290,12 +296,14 @@ static bool register_source_skin(qa_q3_presentation_assets *a, const char *path,
             ok = qa_vfs_acquire(skin->provider.mounts, path, &skin->resource, NULL, &local);
             if (!ok && local.code == QA_ERROR_NOT_FOUND) ok = true;
             else if (!ok && error) *error = local;
-            if (ok && skin->resource) ok = qa_model_skin_map_load(qa_resource_bytes(skin->resource), &skin->map, error);
+            if (ok && skin->resource) ok = qa_model_skin_map_load(qa_resource_bytes(skin->resource), a->options.strings, &skin->map, error);
         } else {
             skin->map.mappings = calloc(8, sizeof(*skin->map.mappings));
             if (!skin->map.mappings) ok = q3p_fail(error, QA_ERROR_MEMORY, "Allocating Source single-shader skin");
             if (ok) {
                 skin->map.capacity = 8; skin->map.count = 1;
+                skin->map.strings = a->options.strings; qa_strings_retain(skin->map.strings);
+                ok = qa_strings_intern_cstr(skin->map.strings, "", &skin->map.mappings[0].surface, error);
                 skin->map.mappings[0].shader = malloc(length + 1);
                 if (!skin->map.mappings[0].shader) ok = q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source skin shader");
                 else memcpy(skin->map.mappings[0].shader, path, length + 1);
@@ -347,7 +355,7 @@ bool qa_q3_register_skin(qa_q3_presentation_assets *a, const char *path, int32_t
             ok = skin && a->skin_count < INT32_MAX && q3p_reserve((void **)&a->skins, &a->skin_capacity,
                 a->skin_count + 1, sizeof(*a->skins), error);
             if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 skin handle");
-            if (ok) ok = qa_model_skin_map_load(qa_resource_bytes(resource), &skin->map, error);
+            if (ok) ok = qa_model_skin_map_load(qa_resource_bytes(resource), a->options.strings, &skin->map, error);
             if (ok) { skin->resource = resource; skin->provider = provider;
                 resource = NULL; handle = (int32_t)a->skin_count + 1; }
         }

@@ -374,7 +374,7 @@ bool frontend_native_q3_asset_options(frontend_native_q3 *row,qa_q3_presentation
 {
     if(!row || !out || !linked(row) || !row->view.mounts || !row->view.images || !row->view.materials || !row->view.sounds || !row->view.movies)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native assets require their real retained media owners");
-    *out=(qa_q3_presentation_asset_options){.provider={row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3,qa_application_world(row->frontend->application)},
+    *out=(qa_q3_presentation_asset_options){.strings=qa_session_strings(qa_application_session(row->frontend->application)),.provider={row->view.mounts,row->view.images,row->view.materials,QA_GAME_Q3,qa_application_world(row->frontend->application)},
         .sounds=row->view.sounds,.movies=row->view.movies,.context=row,.select=select_asset,.print=print_row,.model_initialize=model_initialize}; return true;
 }
 static bool prepare_picture(void *context,qa_material_context *material,qa_error *error)

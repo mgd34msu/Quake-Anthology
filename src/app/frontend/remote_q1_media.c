@@ -137,7 +137,7 @@ bool remote_q1_model_read(frontend_remote_q1 *row, const frontend_remote_q1_enti
             qa_scene_world_source_resource_bind(m->world, m->resource, error);
         if (created) qa_collision_destroy(geometry);
     } else if (ok) ok = qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) &&
-        qa_scene_model_create(&m->decoded, row->images, row->materials, &options, &m->scene, error) &&
+        qa_scene_model_create(&m->decoded, row->images, row->materials, &options, qa_session_strings(qa_application_session(row->frontend->application)), &m->scene, error) &&
         qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&
         frontend_visual_model_opening_initialize(row->frontend, QA_GAME_Q1, row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);

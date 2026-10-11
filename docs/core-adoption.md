@@ -248,8 +248,7 @@ bounded ID-adoption evidence, not a frame-time claim.
 
 Confirmed hot identity bypasses remain in
 `remote_unified_render.c:257`,
-`remote_unified_media.c:40,116,192,200`,
-`src/render/scene/models.c:814`.
+`remote_unified_media.c:40,116,192,200`.
 Move their already admitted identity into IDs or
 resource handles; do not replace comparisons with per-frame interning or hashes.
 Ordinary provider routing already caches the resolved actor/provider in
@@ -322,6 +321,19 @@ active-ammunition and powerup presentation names still require migration. The
 normal build and seven core suites pass
 (`/tmp/qa-ta3192-hud-inventory-20261011-{build,core}.log`). No live HUD proof or
 timing claim is made by these checks.
+
+TA-3192 model and custom-skin admission share the retained session name table.
+Scene construction interns mesh surface names, including the MD5 generated
+names and MD2 alias name. The one skin reader interns its existing lowercased,
+63-byte surface names into that table. Q3 drawing and skin equality compare
+IDs; their surface-name comparisons and per-draw MD5 name formatting are
+deleted. Local, remote, Unified, equipment, selected character/effects and LOD
+constructors pass the common namespace. Replacement models retain it; asset
+forks share it. Standalone asset registries create one namespace for their
+models and skins. Diagnostics resolve text at the output boundary. The normal
+production build and seven core suites pass
+(`/tmp/qa-ta3192-surface-names-20261011-{build,core}.log`). These checks do not
+prove a live mod skin, combined presentation or timing improvement.
 
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent

@@ -202,7 +202,7 @@ static bool model_report(qa_frontend *f, const qa_command_context *source, bool 
         if (!qa_q3_registered_skins(assets, scratch, &rows, &count, error)) return false;
         for (size_t i = 0; i < count; ++i) {
             if (!append(text, error, "%" PRId32 " %s\n", rows[i].handle, rows[i].name)) return false;
-            for (size_t j = 0; j < rows[i].surfaces->count; ++j) if (!append(text, error, "  %s = %s\n", rows[i].surfaces->mappings[j].surface, rows[i].surfaces->mappings[j].shader)) return false;
+            for (size_t j = 0; j < rows[i].surfaces->count; ++j) if (!append(text, error, "  %s = %s\n", qa_strings_cstr(rows[i].surfaces->strings, rows[i].surfaces->mappings[j].surface), rows[i].surfaces->mappings[j].shader)) return false;
         }
     } else {
         const qa_q3_registered_model *rows; static const char *const formats[] = {"mdl", "md2", "md3", "md4", "md5", "spr", "sp2"};

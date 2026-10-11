@@ -183,7 +183,7 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
         return frontend_fail(error,QA_ERROR_FORMAT,"Native remote CLIENT requires its actual Q3 BSP map");
     qa_scene_world_options options={.images=images,.subdivisions=64,.q1_water_alpha=1,
         .q2_light_modulate=1,.q3_overbright=1};
-    qa_q3_presentation_asset_options assets={.provider={v->mounts,v->images,v->materials,QA_GAME_Q3,qa_application_world(f->application)},
+    qa_q3_presentation_asset_options assets={.strings=qa_session_strings(qa_application_session(f->application)),.provider={v->mounts,v->images,v->materials,QA_GAME_Q3,qa_application_world(f->application)},
         .sounds=v->sounds,.movies=v->movies,.context=row,.model_initialize=model_initialize};
     if (!frontend_q3_world_policy_initialize(f,&options,error)) return false;
     if((!v->geometry && !qa_collision_create(&bsp,&v->geometry,error)) ||

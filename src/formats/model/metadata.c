@@ -185,10 +185,11 @@ void qa_model_skin_map_free(qa_model_skin_map *map) {
     for (size_t i = 0; i < map->count; ++i)
         free(map->mappings[i].shader);
     free(map->mappings);
+    qa_strings_destroy(map->strings);
     memset(map, 0, sizeof(*map));
 }
-bool qa_model_skin_map_load(qa_bytes text, qa_model_skin_map *out, qa_error *error) {
-    if (!out || (!text.data && text.size)) {
+bool qa_model_skin_map_load(qa_bytes text, qa_strings *strings, qa_model_skin_map *out, qa_error *error) {
+    if (!out || !strings || (!text.data && text.size)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "skin text and output are required");
         return false;
     }
@@ -198,7 +199,8 @@ bool qa_model_skin_map_load(qa_bytes text, qa_model_skin_map *out, qa_error *err
             text.size = (size_t)(nul - text.data);
     }
     model_reader r = {text, 0, error, true};
-    qa_model_skin_map map = {0};
+    qa_model_skin_map map = {.strings = strings};
+    qa_strings_retain(strings);
     size_t capacity = 0;
     for (;;) {
         char name[1025], shader[1025];
@@ -225,12 +227,14 @@ bool qa_model_skin_map_load(qa_bytes text, qa_model_skin_map *out, qa_error *err
             capacity = grown;
         }
         qa_model_skin_mapping *entry = &map.mappings[map.count++];
+        char surface[64];
         size_t length = strlen(name);
         if (length > 63)
             length = 63;
         for (size_t i = 0; i < length; ++i)
-            entry->surface[i] = (char)lower((uint8_t)name[i]);
-        entry->surface[length] = '\0';
+            surface[i] = (char)lower((uint8_t)name[i]);
+        surface[length] = '\0';
+        if (!qa_strings_intern_cstr(strings, surface, &entry->surface, error)) goto fail;
         size_t shader_length = strlen(shader);
         entry->shader = model_alloc(&r, shader_length + 1, 1);
         if (!r.ok)

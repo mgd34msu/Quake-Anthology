@@ -212,7 +212,7 @@ bool frontend_selected_character_prepare(qa_frontend *frontend, uint32_t launch_
         bool okay = qa_launch_instance_retain_metadata(appearance.launch, &owner->appearance_lease, error);
         if (okay) owner->view.appearance_launch = qa_launch_instance_lease_view(owner->appearance_lease);
         if (okay) okay = frontend_visual_media_acquire(frontend, appearance.provider, QA_GAME_Q3, &owner->view.content, error);
-        qa_q3_presentation_asset_options assets = {.provider = {owner->view.content.mounts,
+        qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {owner->view.content.mounts,
             owner->view.content.images, owner->view.content.materials, QA_GAME_Q3, qa_application_world(frontend->application)}};
         if (okay) okay = qa_q3_presentation_assets_create(&assets, &owner->view.assets, error);
         character_admission call = {owner, source, context, recipient_current};
