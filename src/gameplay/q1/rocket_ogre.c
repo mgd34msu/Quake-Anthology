@@ -1,11 +1,11 @@
 #include "internal.h"
 #include <stdio.h>
 
-bool q1_rocket_ogre_override(const char *name) {
-    static const char *const names[] = {"ogre_stand5", "ogre_walk3", "ogre_run1", "ogre_nail1",
-                                        "ogre_nail4",  "ogre_nail5", "ogre_die3", "ogre_bdie3"};
+bool q1_rocket_ogre_override(uint16_t name) {
+    static const uint16_t names[] = {Q1_FRAME_ogre_stand5, Q1_FRAME_ogre_walk3, Q1_FRAME_ogre_run1, Q1_FRAME_ogre_nail1,
+                                        Q1_FRAME_ogre_nail4,  Q1_FRAME_ogre_nail5, Q1_FRAME_ogre_die3, Q1_FRAME_ogre_bdie3};
     for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
-        if (!strcmp(name, names[i]))
+        if (name == names[i])
             return true;
     return false;
 }
@@ -41,11 +41,11 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     missile->state.projectile.expires = g->time + 0.2;
     return qa_builtin_resource(&g->services, "ogre_missile", &missile->classname, error);
 }
-bool q1_rocket_ogre_frame(qa_q1_game *g, q1_actor *entity, const char *name, qa_error *error) {
+bool q1_rocket_ogre_frame(qa_q1_game *g, q1_actor *entity, uint16_t name, qa_error *error) {
     q1_monster *monster = &entity->state.monster;
-    if (!strcmp(name, "ogre_nail1") || !strcmp(name, "ogre_nail5"))
+    if ((name == Q1_FRAME_ogre_nail1) || (name == Q1_FRAME_ogre_nail5))
         monster->addon.projectiles = monster->addon.projectile_max;
-    if (!strcmp(name, "ogre_nail4")) {
+    if ((name == Q1_FRAME_ogre_nail4)) {
         if (!fire(g, entity, error))
             return false;
         if (!q1_alive(g, entity->id))
@@ -53,12 +53,12 @@ bool q1_rocket_ogre_frame(qa_q1_game *g, q1_actor *entity, const char *name, qa_
         if (monster->addon.projectiles)
             --monster->addon.projectiles;
         if (monster->addon.projectile_max && monster->addon.projectiles)
-            monster->next_frame = q1_frame_index("ogre_nail2");
+            monster->next_frame = (Q1_FRAME_ogre_nail2);
     }
-    if ((!strcmp(name, "ogre_stand5") || !strcmp(name, "ogre_walk3") ||
-         !strcmp(name, "ogre_run1")) &&
+    if (((name == Q1_FRAME_ogre_stand5) || (name == Q1_FRAME_ogre_walk3) ||
+         (name == Q1_FRAME_ogre_run1)) &&
         q1_random(g) < 0.2f) {
-        unsigned index = (!strcmp(name, "ogre_walk3") ? 3u : 1u) + (q1_random(g) < 0.5f ? 0u : 1u);
+        unsigned index = ((name == Q1_FRAME_ogre_walk3) ? 3u : 1u) + (q1_random(g) < 0.5f ? 0u : 1u);
         static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_ARMAGON_IDLE1_WAV, Q1_NAME_RESOURCE_ARMAGON_IDLE2_WAV, Q1_NAME_RESOURCE_ARMAGON_IDLE3_WAV, Q1_NAME_RESOURCE_ARMAGON_IDLE4_WAV};
         qa_string_id sound = g->runtime_names[sounds[index - 1]];
         return q1_sound_resource(g, entity->id, sound, 2, 2, 1, error);

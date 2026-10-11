@@ -530,7 +530,7 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
     if (species->species == QA_Q1_OLDONE)
         return callback(record,"th_pain","nopain",error) && callback(record,"th_die","finale_1",error);
     const char *missile = species->species == QA_Q1_WIZARD ? "Wiz_Missile" :
-        species->species == QA_Q1_ZOMBIE ? "zombie_missile" : species->missile;
+        species->species == QA_Q1_ZOMBIE ? "zombie_missile" : (species->missile == UINT16_MAX ? NULL : q1_frames[species->missile].name);
     const char *touch = NULL;
     if (monster->jump_touch) {
         touch = species->species == QA_Q1_DOG ? "Dog_JumpTouch" :
@@ -540,11 +540,11 @@ static bool monster_functions(const q1_monster *monster, qa_q1_save_record *reco
     }
     bool sleeping = species->species == QA_Q1_MUMMY && monster->source.mummy.asleep;
     const char *run = species->species == QA_Q1_SWORD && !monster->source.sword.awakened ?
-        "sword_pause" : species->run;
+        "sword_pause" : (species->run == UINT16_MAX ? NULL : q1_frames[species->run].name);
     const char *hurt = species->species == QA_Q1_SWORD && monster->source.sword.pain_disabled ?
         "SUB_Null" : pain[index];
-    return callback(record, "th_stand", sleeping ? "mummy_sleep" : species->stand, error) &&
-        callback(record, "th_walk", sleeping ? "mummy_wake" : species->walk, error) &&
+    return callback(record, "th_stand", sleeping ? "mummy_sleep" : (species->stand == UINT16_MAX ? NULL : q1_frames[species->stand].name), error) &&
+        callback(record, "th_walk", sleeping ? "mummy_wake" : (species->walk == UINT16_MAX ? NULL : q1_frames[species->walk].name), error) &&
         callback(record, "th_run", sleeping ? "mummy_wake" : run, error) &&
         callback(record, "th_missile", sleeping ? "mummy_wake" : missile, error) &&
         callback(record, "th_melee", index < sizeof(melee) / sizeof(*melee) ? melee[index] : NULL, error) &&

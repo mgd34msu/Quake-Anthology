@@ -58,7 +58,7 @@ static bool check_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     m->source.dragon.attacking = true;
     m->next_frame =
-        qa_vec_length(delta) < 350 ? q1_frame_index("dragon_melee1") : m->source.dragon.missile;
+        qa_vec_length(delta) < 350 ? (Q1_FRAME_dragon_melee1) : m->source.dragon.missile;
     return true;
 }
 static bool move(qa_q1_game *g, q1_actor *entity, float distance, qa_error *error) {
@@ -293,7 +293,7 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 return false;
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TORNOFF2_WAV], 4, 0, 1, error))
             return false;
-        m->next_frame = q1_frame_index("dragon_boom2");
+        m->next_frame = (Q1_FRAME_dragon_boom2);
         return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
     }
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
@@ -337,7 +337,7 @@ bool q1_dragon_corner_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id other, 
 bool q1_dragon_use(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (q1_health(g, entity->id) < 1)
         return true;
-    entity->state.monster.next_frame = q1_frame_index("dragon_walk1");
+    entity->state.monster.next_frame = (Q1_FRAME_dragon_walk1);
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_dragon_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -348,7 +348,7 @@ bool q1_dragon_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->max_health = 3000.0f + 1000.0f * (float)g->options.skill;
     entity->state.monster.source.dragon.pain_sequence = 1;
     entity->state.monster.source.dragon.missile = UINT16_MAX;
-    entity->state.monster.next_frame = q1_frame_index("dragon_activate");
+    entity->state.monster.next_frame = (Q1_FRAME_dragon_activate);
     return qa_combat_set_health(g->services.combat, entity->id, entity->max_health, error) &&
            qa_world_body_write(g->services.world, entity->id, &body, error) &&
            q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_DRAGON_MDL], error) &&
@@ -361,10 +361,10 @@ bool q1_dragon_pain(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!stop_attack(g, entity, error) || !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DRAGON_PAIN_WAV], 2, 1, 1, error))
         return false;
     m->pain_finished = g->time + 2;
-    static const char *frames[] = {"dragon_painA1", "dragon_painF1", "dragon_painE1",
-                                   "dragon_painD1", "dragon_painC1", "dragon_painB1"};
+    static const uint16_t frames[] = {Q1_FRAME_dragon_painA1, Q1_FRAME_dragon_painF1, Q1_FRAME_dragon_painE1,
+                                   Q1_FRAME_dragon_painD1, Q1_FRAME_dragon_painC1, Q1_FRAME_dragon_painB1};
     if (m->source.dragon.pain_sequence >= 1 && m->source.dragon.pain_sequence <= 6)
-        m->next_frame = q1_frame_index(frames[m->source.dragon.pain_sequence - 1]);
+        m->next_frame = (frames[m->source.dragon.pain_sequence - 1]);
     return true;
 }
 bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
@@ -417,7 +417,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
     case Q1_ACTION_DRAGON_DRAGON_WALK1: {
         if (!stop_attack(g, entity, error))
             return false;
-        m->source.dragon.missile = q1_frame_index("dragon_atk_a1");
+        m->source.dragon.missile = (Q1_FRAME_dragon_atk_a1);
         m->source.dragon.pain_sequence = 1;
         if (!move(g, entity, 17, error))
             return false;
@@ -446,9 +446,9 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
                             : action == Q1_ACTION_DRAGON_DRAGON_WALK7 ? 4
                             : action == Q1_ACTION_DRAGON_DRAGON_WALK9 ? 5
                                                                       : 6;
-        static const char *frames[] = {"dragon_atk_b1", "dragon_atk_c1", "dragon_atk_d1",
-                                       "dragon_atk_e1", "dragon_atk_f1"};
-        m->source.dragon.missile = q1_frame_index(frames[sequence - 2]);
+        static const uint16_t frames[] = {Q1_FRAME_dragon_atk_b1, Q1_FRAME_dragon_atk_c1, Q1_FRAME_dragon_atk_d1,
+                                       Q1_FRAME_dragon_atk_e1, Q1_FRAME_dragon_atk_f1};
+        m->source.dragon.missile = (frames[sequence - 2]);
         if (!move(g, entity, 17, error))
             return false;
         m->source.dragon.pain_sequence = (uint8_t)sequence;

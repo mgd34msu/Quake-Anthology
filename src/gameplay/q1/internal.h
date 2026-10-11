@@ -686,6 +686,16 @@
     X(RESOURCE_MISC_FOOT5_WAV, "misc/foot5.wav") \
     X(RESOURCE_MISC_FOOT6_WAV, "misc/foot6.wav") \
     X(RESOURCE_MISC_FOOT7_WAV, "misc/foot7.wav") \
+    X(CLASSNAME_MONSTER_ARMY_INFECTED, "monster_army_infected") \
+    X(CLASSNAME_MONSTER_BOSS_FINAL, "monster_boss_final") \
+    X(CLASSNAME_MONSTER_DEMODOG, "monster_demodog") \
+    X(CLASSNAME_MONSTER_ENFORCER_INFECTED, "monster_enforcer_infected") \
+    X(CLASSNAME_MONSTER_GHOST, "monster_ghost") \
+    X(CLASSNAME_MONSTER_HELL_KNIGHT_INFECTED, "monster_hell_knight_infected") \
+    X(CLASSNAME_MONSTER_KNIGHT_INFECTED, "monster_knight_infected") \
+    X(CLASSNAME_MONSTER_OGRE_MARKSMAN, "monster_ogre_marksman") \
+    X(CLASSNAME_MONSTER_OGRE_ROCKET, "monster_ogre_rocket") \
+    X(CLASSNAME_MONSTER_RANGED_KNIGHT, "monster_ranged_knight") \
     X(RESOURCE_DISCHARGE, "discharge")
 
 typedef enum q1_runtime_name {
@@ -862,6 +872,13 @@ typedef struct q1_frame_operation {
     const char *text;
     q1_runtime_name sound;
 } q1_frame_operation;
+typedef enum q1_frame_id {
+#define Q1_FRAME_ROW(name, frame, next, operation, count) Q1_FRAME_##name,
+#include "frames.def"
+#undef Q1_FRAME_ROW
+    Q1_FRAME_COUNT
+} q1_frame_id;
+
 typedef struct q1_frame {
     const char *name;
     uint16_t frame, next;
@@ -870,10 +887,10 @@ typedef struct q1_frame {
 } q1_frame;
 typedef struct q1_species {
     qa_q1_species species;
-    const char *classname;
+    q1_runtime_name classname;
     q1_runtime_name model, head;
     q1_runtime_name sight;
-    const char *stand, *walk, *run, *missile;
+    uint16_t stand, walk, run, missile;
     float health, gib_health;
     qa_bounds bounds;
     uint32_t flags;
@@ -1239,8 +1256,8 @@ bool q1_addon_target(qa_q1_game *, q1_actor *, qa_actor_id *, qa_error *);
 bool q1_addon_contents(qa_q1_game *, q1_actor *, bool *, qa_error *);
 unsigned q1_mg3_range(const q1_actor *, float distance);
 bool q1_addon_move(qa_q1_game *, q1_actor *, float distance, bool seen, qa_error *);
-bool q1_rocket_ogre_frame(qa_q1_game *, q1_actor *, const char *, qa_error *);
-bool q1_rocket_ogre_override(const char *);
+bool q1_rocket_ogre_frame(qa_q1_game *, q1_actor *, uint16_t, qa_error *);
+bool q1_rocket_ogre_override(uint16_t);
 bool q1_rocket_ogre_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_sprite_explosion(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_sprite_prepare(qa_q1_game *, q1_actor *, qa_error *);
@@ -1283,6 +1300,7 @@ uint16_t q1_shub_zombie_frame(uint16_t);
 bool q1_horde_head_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_horde_axe_delay(qa_q1_game *, q1_player *, float *interval, qa_error *);
 const q1_species *q1_species_find(const char *);
+const q1_species *q1_species_named(q1_runtime_name);
 q1_actor *q1_entity(qa_q1_game *, qa_actor_id);
 const q1_actor *q1_entity_const(const qa_q1_game *, qa_actor_id);
 q1_player *q1_player_get(qa_q1_game *, qa_actor_id);
@@ -1402,7 +1420,7 @@ bool q1_teledeath_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_spawn_teledeath(qa_q1_game *, qa_vec3, qa_actor_id, double duration, bool retouch,
                         qa_actor_id *, qa_error *);
 bool q1_monster_start(qa_q1_game *, q1_actor *, qa_error *);
-bool q1_monster_play(qa_q1_game *, q1_actor *, const char *, qa_error *);
+bool q1_monster_play(qa_q1_game *, q1_actor *, uint16_t, qa_error *);
 bool q1_monster_frame(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_monster_ai(qa_q1_game *, q1_actor *, q1_ai, float, qa_error *);
 bool q1_monster_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);

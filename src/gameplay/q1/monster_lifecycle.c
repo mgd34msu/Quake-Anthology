@@ -50,7 +50,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ORB_ORB_PAIN_WAV], 2, 1, 1, error))
             return false;
         m->pain_finished = g->time + 8;
-        return !q1_alive(g, entity->id) || q1_monster_play(g, entity, "orb_pain1", error);
+        return !q1_alive(g, entity->id) || q1_monster_play(g, entity, Q1_FRAME_orb_pain1, error);
     }
     if (m->addon.heavy != Q1_HEAVY_NONE)
         return q1_heavy_pain(g, entity, attacker, damage, error);
@@ -66,14 +66,14 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         float choice = q1_random(g);
         m->pain_finished = g->time + (choice < 0.75f ? 3 : 4);
         return !q1_alive(g, entity->id) || q1_monster_play(g, entity,
-                                                           choice < 0.25f   ? "ogre_pain1"
-                                                           : choice < 0.5f  ? "ogre_painb1"
-                                                           : choice < 0.75f ? "ogre_painc1"
-                                                           : choice < 0.88f ? "ogre_paind1"
-                                                                            : "ogre_paine1",
+                                                           choice < 0.25f   ? Q1_FRAME_ogre_pain1
+                                                           : choice < 0.5f  ? Q1_FRAME_ogre_painb1
+                                                           : choice < 0.75f ? Q1_FRAME_ogre_painc1
+                                                           : choice < 0.88f ? Q1_FRAME_ogre_paind1
+                                                                            : Q1_FRAME_ogre_paine1,
                                                            error);
     }
-    const char *frame = NULL;
+    uint16_t frame = UINT16_MAX;
     qa_string_id sound = 0;
     float r;
     switch (species) {
@@ -85,15 +85,15 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
             return true;
         r = q1_random(g);
         m->pain_finished = g->time + (r < 0.2f ? 0.6 : 1.1);
-        frame = r < 0.2f ? "army_pain1" : r < 0.6f ? "army_painb1" : "army_painc1";
+        frame = r < 0.2f ? Q1_FRAME_army_pain1 : r < 0.6f ? Q1_FRAME_army_painb1 : Q1_FRAME_army_painc1;
         sound = r < 0.2f ? g->runtime_names[Q1_NAME_RESOURCE_SOLDIER_PAIN1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_SOLDIER_PAIN2_WAV];
         break;
     case QA_Q1_DOG:
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DOG_DPAIN1_WAV], 2, 1, 1, error))
             return false;
-        frame = m->addon.demodog      ? (q1_random(g) > 0.5f ? "demodog_pain1" : "demodog_painb1")
-                : q1_random(g) > 0.5f ? "dog_pain1"
-                                      : "dog_painb1";
+        frame = m->addon.demodog      ? (q1_random(g) > 0.5f ? Q1_FRAME_demodog_pain1 : Q1_FRAME_demodog_painb1)
+                : q1_random(g) > 0.5f ? Q1_FRAME_dog_pain1
+                                      : Q1_FRAME_dog_painb1;
         break;
     case QA_Q1_ZOMBIE:
         if (!qa_combat_set_health(g->services.combat, entity->id, 60, error))
@@ -102,7 +102,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
             return true;
         if (damage >= 25 || (!m->in_pain && m->pain_finished > g->time)) {
             m->in_pain = 2;
-            frame = "zombie_paine1";
+            frame = Q1_FRAME_zombie_paine1;
             break;
         }
         if (m->in_pain) {
@@ -111,20 +111,20 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         }
         m->in_pain = 1;
         r = q1_random(g);
-        frame = r < 0.25f   ? "zombie_paina1"
-                : r < 0.5f  ? "zombie_painb1"
-                : r < 0.75f ? "zombie_painc1"
-                            : "zombie_paind1";
+        frame = r < 0.25f   ? Q1_FRAME_zombie_paina1
+                : r < 0.5f  ? Q1_FRAME_zombie_painb1
+                : r < 0.75f ? Q1_FRAME_zombie_painc1
+                            : Q1_FRAME_zombie_paind1;
         break;
     case QA_Q1_FISH:
-        frame = "f_pain1";
+        frame = Q1_FRAME_f_pain1;
         break;
     case QA_Q1_WIZARD:
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WPAIN_WAV], 2, 1, 1, error))
             return false;
         if (q1_random(g) * 70 > damage)
             return true;
-        frame = "wiz_pain1";
+        frame = Q1_FRAME_wiz_pain1;
         break;
     case QA_Q1_SHAMBLER:
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SHURT2_WAV], 2, 1, 1, error))
@@ -133,7 +133,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
             m->pain_finished > g->time)
             return true;
         m->pain_finished = g->time + 2;
-        frame = "sham_pain1";
+        frame = Q1_FRAME_sham_pain1;
         break;
     case QA_Q1_DEMON:
         if (m->jump_touch || m->pain_finished > g->time)
@@ -143,7 +143,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
             return false;
         if (q1_random(g) * 200 > damage)
             return true;
-        frame = "demon1_pain1";
+        frame = Q1_FRAME_demon1_pain1;
         break;
     case QA_Q1_KNIGHT:
         if (m->pain_finished > g->time)
@@ -151,7 +151,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         r = q1_random(g);
         sound = g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_KHURT_WAV];
         m->pain_finished = g->time + 1;
-        frame = r < 0.85f ? "knight_pain1" : "knight_painb1";
+        frame = r < 0.85f ? Q1_FRAME_knight_pain1 : Q1_FRAME_knight_painb1;
         break;
     case QA_Q1_ENFORCER:
         r = q1_random(g);
@@ -160,10 +160,10 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
             return true;
         sound = r < 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_PAIN1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_PAIN2_WAV];
         m->pain_finished = g->time + (r < 0.7f ? 1 : 2);
-        frame = r < 0.2f   ? "enf_paina1"
-                : r < 0.4f ? "enf_painb1"
-                : r < 0.7f ? "enf_painc1"
-                           : "enf_paind1";
+        frame = r < 0.2f   ? Q1_FRAME_enf_paina1
+                : r < 0.4f ? Q1_FRAME_enf_painb1
+                : r < 0.7f ? Q1_FRAME_enf_painc1
+                           : Q1_FRAME_enf_paind1;
         break;
     case QA_Q1_OGRE:
         if (m->pain_finished > g->time)
@@ -172,11 +172,11 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
             return false;
         r = q1_random(g);
         m->pain_finished = g->time + (r < 0.75f ? 1 : 2);
-        frame = r < 0.25f   ? "ogre_pain1"
-                : r < 0.5f  ? "ogre_painb1"
-                : r < 0.75f ? "ogre_painc1"
-                : r < 0.88f ? "ogre_paind1"
-                            : "ogre_paine1";
+        frame = r < 0.25f   ? Q1_FRAME_ogre_pain1
+                : r < 0.5f  ? Q1_FRAME_ogre_painb1
+                : r < 0.75f ? Q1_FRAME_ogre_painc1
+                : r < 0.88f ? Q1_FRAME_ogre_paind1
+                            : Q1_FRAME_ogre_paine1;
         break;
     case QA_Q1_HELLKNIGHT:
         if (m->pain_finished > g->time)
@@ -186,14 +186,14 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         if (g->time - m->pain_finished <= 5 && q1_random(g) * 30 > damage)
             return true;
         m->pain_finished = g->time + 1;
-        frame = "hknight_pain1";
+        frame = Q1_FRAME_hknight_pain1;
         break;
     case QA_Q1_SHALRATH:
         if (m->pain_finished > g->time)
             return true;
         sound = g->runtime_names[Q1_NAME_RESOURCE_SHALRATH_PAIN_WAV];
         m->pain_finished = g->time + 3;
-        frame = "shal_pain1";
+        frame = Q1_FRAME_shal_pain1;
         break;
     case QA_Q1_TARBABY:
     case QA_Q1_BOSS:
@@ -384,7 +384,7 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
     if (q1_health(g, entity->id) < spec->gib_health && spec->head != Q1_NAME_COUNT)
         return gib_monster(g, entity, error);
     qa_string_id sound = 0;
-    const char *frame = NULL;
+    uint16_t frame = UINT16_MAX;
     switch (spec->species) {
     case QA_Q1_ARMY:
         sound = g->runtime_names[Q1_NAME_RESOURCE_SOLDIER_DEATH1_WAV];
@@ -400,7 +400,7 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         sound = g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_DEATH1_WAV];
         break;
     case QA_Q1_DEMON:
-        frame = "demon1_die1";
+        frame = Q1_FRAME_demon1_die1;
         break;
     case QA_Q1_OGRE:
         sound = m->addon.rocket_ogre ? g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_SIGHT2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_OGRE_OGDTH_WAV];
@@ -410,27 +410,27 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         break;
     case QA_Q1_SHAMBLER:
         sound = g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SDEATH_WAV];
-        frame = "sham_death1";
+        frame = Q1_FRAME_sham_death1;
         break;
     case QA_Q1_WIZARD:
         entity->physics.motion = QA_PHYSICS_TOSS;
-        frame = "wiz_death1";
+        frame = Q1_FRAME_wiz_death1;
         break;
     case QA_Q1_SHALRATH:
         sound = g->runtime_names[Q1_NAME_RESOURCE_SHALRATH_DEATH_WAV];
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
-        frame = "shal_death1";
+        frame = Q1_FRAME_shal_death1;
         break;
     case QA_Q1_TARBABY:
-        frame = "tbaby_die1";
+        frame = Q1_FRAME_tbaby_die1;
         break;
     case QA_Q1_FISH:
-        frame = "f_death1";
+        frame = Q1_FRAME_f_death1;
         break;
     case QA_Q1_ZOMBIE:
         return gib_monster(g, entity, error);
     case QA_Q1_BOSS:
-        frame = "boss_death1";
+        frame = Q1_FRAME_boss_death1;
         break;
     default:
         qa_error_set(error, QA_ERROR_UNSUPPORTED, spec->species,
@@ -441,26 +441,26 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         return false;
     if (!q1_alive(g, entity->id))
         return true;
-    if (!frame) {
+    if (frame == UINT16_MAX) {
         float r = q1_random(g);
         switch (spec->species) {
         case QA_Q1_ARMY:
-            frame = r < 0.5f ? "army_die1" : "army_cdie1";
+            frame = r < 0.5f ? Q1_FRAME_army_die1 : Q1_FRAME_army_cdie1;
             break;
         case QA_Q1_DOG:
-            frame = r > 0.5f ? "dog_die1" : "dog_dieb1";
+            frame = r > 0.5f ? Q1_FRAME_dog_die1 : Q1_FRAME_dog_dieb1;
             break;
         case QA_Q1_KNIGHT:
-            frame = r < 0.5f ? "knight_die1" : "knight_dieb1";
+            frame = r < 0.5f ? Q1_FRAME_knight_die1 : Q1_FRAME_knight_dieb1;
             break;
         case QA_Q1_ENFORCER:
-            frame = r > 0.5f ? "enf_die1" : "enf_fdie1";
+            frame = r > 0.5f ? Q1_FRAME_enf_die1 : Q1_FRAME_enf_fdie1;
             break;
         case QA_Q1_OGRE:
-            frame = r < 0.5f ? "ogre_die1" : "ogre_bdie1";
+            frame = r < 0.5f ? Q1_FRAME_ogre_die1 : Q1_FRAME_ogre_bdie1;
             break;
         case QA_Q1_HELLKNIGHT:
-            frame = r > 0.5f ? "hknight_die1" : "hknight_dieb1";
+            frame = r > 0.5f ? Q1_FRAME_hknight_die1 : Q1_FRAME_hknight_dieb1;
             break;
         default:
             return false;
@@ -521,7 +521,7 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
                                     error) &&
                q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BOSS_MDL], error) &&
                q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id, body.origin, 0, 10, error) &&
-               q1_link(g, entity, error) && q1_monster_play(g, entity, "boss_rise1", error);
+               q1_link(g, entity, error) && q1_monster_play(g, entity, Q1_FRAME_boss_rise1, error);
     }
     qa_q1_target target;
     if (q1_ref_present(m->enemy) || q1_health(g, entity->id) <= 0 || !q1_target(g, activator, &target) ||

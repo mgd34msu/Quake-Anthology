@@ -237,9 +237,9 @@ bool q1_heavy_melee(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_SLASH1_WAV], 1, 1, 1, error))
             return false;
         return !q1_alive(g, e->id) || q1_monster_play(g, e,
-                                                      g->rune_knight_melee == 1   ? "rknight_slice1"
-                                                      : g->rune_knight_melee == 2 ? "rknight_smash1"
-                                                                                  : "rknight_watk1",
+                                                      g->rune_knight_melee == 1   ? Q1_FRAME_rknight_slice1
+                                                      : g->rune_knight_melee == 2 ? Q1_FRAME_rknight_smash1
+                                                                                  : Q1_FRAME_rknight_watk1,
                                                       error);
     }
     qa_body_state value;
@@ -247,21 +247,21 @@ bool q1_heavy_melee(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     qa_vec3 delta = qa_vec_sub(value.origin, target(g, e));
     float distance = qa_vec_length(delta);
-    const char *frame;
+    uint16_t frame;
     if (distance < 110)
-        frame = q1_random(g) < .8f   ? "supsham_smash1"
-                : q1_random(g) < .5f ? "supsham_swingl1"
-                                     : "supsham_swingr1";
+        frame = q1_random(g) < .8f   ? Q1_FRAME_supsham_smash1
+                : q1_random(g) < .5f ? Q1_FRAME_supsham_swingl1
+                                     : Q1_FRAME_supsham_swingr1;
     else if (distance < 200 || e->wait > g->time) {
         qa_builtin_angle_vectors(value.angles, &g->forward, &g->right, &g->up);
         float chance = qa_vec_dot(g->right, qa_vec_normalize(delta));
-        frame = chance < .45f  ? "supsham_swingr1"
-                : chance < .9f ? "supsham_swingl1"
-                               : "supsham_smash1";
+        frame = chance < .45f  ? Q1_FRAME_supsham_swingr1
+                : chance < .9f ? Q1_FRAME_supsham_swingl1
+                               : Q1_FRAME_supsham_smash1;
     } else {
         e->count = 0;
         bool slow = q1_random(g) > .4f;
-        if (!q1_monster_play(g, e, slow ? "supsham_magic1" : "supsham_magic_b1", error))
+        if (!q1_monster_play(g, e, slow ? Q1_FRAME_supsham_magic1 : Q1_FRAME_supsham_magic_b1, error))
             return false;
         e->wait = (float)(g->time + (slow ? 5 : 3));
         return true;
@@ -318,9 +318,9 @@ static bool rune_magic(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_vec3 delta = qa_vec_sub(target(g, e), value.origin);
     float chance = qa_vec_length(delta) > 300 ? .6f : .2f;
     if (q1_random(g) < chance)
-        return q1_monster_play(g, e, "rknight_magicb1", error);
+        return q1_monster_play(g, e, Q1_FRAME_rknight_magicb1, error);
     return q1_monster_play(
-        g, e, q1_random(g) > (delta.z > 100 ? .7f : .5f) ? "rknight_magica1" : "rknight_magicc1",
+        g, e, q1_random(g) > (delta.z > 100 ? .7f : .5f) ? Q1_FRAME_rknight_magica1 : Q1_FRAME_rknight_magicc1,
         error);
 }
 static bool cleanup_orbs(qa_q1_game *g, q1_actor *e, qa_error *error) {
@@ -364,7 +364,7 @@ bool q1_heavy_check_attack(qa_q1_game *g, q1_actor *e, bool *attacking, qa_error
         *attacking = true;
         return q1_heavy_melee(g, e, error);
     }
-    if (!m->species->missile || g->time < m->attack_finished || range == 3)
+    if ((m->species->missile == UINT16_MAX) || g->time < m->attack_finished || range == 3)
         return true;
     if (range == 0)
         m->attack_finished = 0;
@@ -397,9 +397,9 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
     case Q1_ACTION_SUPSHAM_MISSILE: {
         float r = q1_random(g);
         return q1_monster_play(g, e,
-                               r < .36f   ? "supsham_magic1"
-                               : r < .66f ? "supsham_swingr1"
-                                          : "supsham_swingl1",
+                               r < .36f   ? Q1_FRAME_supsham_magic1
+                               : r < .66f ? Q1_FRAME_supsham_swingr1
+                                          : Q1_FRAME_supsham_swingl1,
                                error);
     }
     case Q1_ACTION_CLEANUP_ORBS:
@@ -410,7 +410,7 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         if (!q1_monster_ai(g, e, Q1_AI_CHARGE, 4, error))
             return false;
         if (q1_alive(g, e->id) && attack_check(g, e))
-            m->next_frame = q1_frame_index("supsham_magic1");
+            m->next_frame = (Q1_FRAME_supsham_magic1);
         return true;
     case Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SWINGL7:
     case Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SWINGR7: {
@@ -437,9 +437,9 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
             return false;
         qa_builtin_angle_vectors(value.angles, &g->forward, &g->right, &g->up);
         if (attack_check(g, e))
-            m->next_frame = q1_frame_index("supsham_magic1");
+            m->next_frame = (Q1_FRAME_supsham_magic1);
         else if (q1_random(g) < .5f)
-            m->next_frame = q1_frame_index(left ? "supsham_swingr1" : "supsham_swingl1");
+            m->next_frame = (left ? Q1_FRAME_supsham_swingr1 : Q1_FRAME_supsham_swingl1);
         return true;
     }
     case Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC1:
@@ -461,7 +461,7 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
     case Q1_ACTION_RKNIGHT_MAGIC:
         return rune_magic(g, e, error);
     case Q1_ACTION_RKNIGHT_RUN:
-        return q1_monster_play(g, e, e->spawnflags & 2 ? "rknight_runb1" : "rknight_run1", error);
+        return q1_monster_play(g, e, e->spawnflags & 2 ? Q1_FRAME_rknight_runb1 : Q1_FRAME_rknight_run1, error);
     case Q1_ACTION_RK_IDLE_SOUND: {
         if (q1_random(g) >= .2f)
             return true;
@@ -485,7 +485,7 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         if (!q1_monster_face(g, e, error) || !rune_shot(g, e, 3, 2, error))
             return false;
         if (--m->source.heavy.nails > 0)
-            m->next_frame = q1_frame_index("rknight_magicb12");
+            m->next_frame = (Q1_FRAME_rknight_magicb12);
         return true;
     default:
         break;
@@ -571,7 +571,7 @@ bool q1_heavy_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float damag
         if (m->pain_finished > g->time)
             return true;
         if (g->time - m->pain_finished > 5) {
-            if (!q1_monster_play(g, e, "rknight_pain1", error))
+            if (!q1_monster_play(g, e, Q1_FRAME_rknight_pain1, error))
                 return false;
             m->pain_finished = g->time + 1;
             return true;
@@ -579,7 +579,7 @@ bool q1_heavy_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float damag
         if (q1_random(g) * 30 > damage)
             return true;
         m->pain_finished = g->time + 1;
-        return q1_monster_play(g, e, "rknight_pain1", error);
+        return q1_monster_play(g, e, Q1_FRAME_rknight_pain1, error);
     }
     float health = q1_health(g, e->id);
     if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SHURT2_WAV], 2, 1, 1, error))
@@ -607,7 +607,7 @@ bool q1_heavy_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float damag
     if (health <= 0 || 25 + q1_random(g) * 400 > damage || m->pain_finished > g->time)
         return true;
     m->pain_finished = g->time + 5;
-    return remove_child(g, e, error) && q1_monster_play(g, e, "supsham_pain1", error);
+    return remove_child(g, e, error) && q1_monster_play(g, e, Q1_FRAME_supsham_pain1, error);
 }
 
 bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
@@ -640,9 +640,9 @@ bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_alive(g, e->id))
         return true;
     return q1_monster_play(g, e,
-                           shambler             ? "supsham_death1"
-                           : q1_random(g) > .5f ? "rknight_die1"
-                                                : "rknight_dieb1",
+                           shambler             ? Q1_FRAME_supsham_death1
+                           : q1_random(g) > .5f ? Q1_FRAME_rknight_die1
+                                                : Q1_FRAME_rknight_dieb1,
                            error);
 }
 

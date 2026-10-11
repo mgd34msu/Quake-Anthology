@@ -155,11 +155,13 @@ def main():
                 operations.append("{.kind=Q1_FRAME_ACTION,.action=" + action_id(operation["name"]) + "}")
             else:
                 raise ValueError(f"Unknown authored frame operation: {kind}")
-        frames.append("{" + literal(name) + f",{frame['frame']},{indices[frame['next']]},{first},{len(operations)-first}" + "}")
+        frames.append(f"Q1_FRAME_ROW({name},{frame['frame']},{indices[frame['next']]},{first},{len(operations)-first})")
     output = ['#include "internal.h"', "", "const q1_frame_operation q1_frame_operations[] = {"]
     output.extend("    " + entry + "," for entry in operations)
     output.extend(["};", "", "const q1_frame q1_frames[] = {"])
-    output.extend("    " + entry + "," for entry in frames)
+    destination.with_name("frames.def").write_text("\n".join(frames) + "\n")
+    output.extend(['#define Q1_FRAME_ROW(name, frame, next, operation, count) {#name, frame, next, operation, count},',
+                   '#include "frames.def"', '#undef Q1_FRAME_ROW'])
     output.extend(["};", "const size_t q1_frame_count = sizeof(q1_frames) / sizeof(*q1_frames);", "",
                    "static const uint16_t name_order[] = {"])
     order = [str(indices[name]) for name in sorted(indices)]

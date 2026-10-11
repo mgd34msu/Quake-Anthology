@@ -19,7 +19,7 @@ bool q1_lavaman_attack(qa_q1_game *g, q1_actor *entity, bool *attacking, qa_erro
     if (trace.hit != QA_TRACE_HIT_ACTOR || !q1_ref_equal(q1_ref_from(g, trace.actor), monster->enemy) ||
         (trace.in_open && trace.in_water) || g->time < monster->attack_finished)
         return true;
-    if (!q1_monster_play(g, entity, "lavaman_fire1", error))
+    if (!q1_monster_play(g, entity, Q1_FRAME_lavaman_fire1, error))
         return false;
     float delay = 1 + q1_random(g);
     if (mg3 || g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
@@ -137,7 +137,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, bool first, qa_error *error) {
         !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
         return false;
     return q1_health(g, q1_ref_actor(g, entity->state.monster.enemy)) > 0 ||
-           q1_monster_play(g, entity, "lavaman_idle1", error);
+           q1_monster_play(g, entity, Q1_FRAME_lavaman_idle1, error);
 }
 bool q1_lavaman_awake(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     bool mg3 = g->options.program == QA_Q1_MG3;
@@ -182,7 +182,7 @@ bool q1_lavaman_awake(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
         entity->physics.enemy = q1_ref_from(g, activator);
     }
     return (mg3 || q1_monster_drop_floor(g, entity, error)) &&
-           q1_monster_play(g, entity, "lavaman_rise1", error);
+           q1_monster_play(g, entity, Q1_FRAME_lavaman_rise1, error);
 }
 bool q1_lavaman_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
     switch (action) {
@@ -275,5 +275,5 @@ bool q1_lavaman_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
     if (!q1_alive(g, entity->id))
         return true;
     monster->counted_death = true;
-    return q1_monster_play(g, entity, "lavaman_death1", error);
+    return q1_monster_play(g, entity, Q1_FRAME_lavaman_death1, error);
 }

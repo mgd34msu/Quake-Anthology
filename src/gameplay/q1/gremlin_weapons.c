@@ -333,15 +333,15 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
         return true;
     entity->state.monster.hostile_until = g->time + 1;
     qa_q1_weapon weapon = entity->state.monster.source.gremlin.weapon;
-    const char *frame =
-        weapon == QA_Q1_SHOTGUN || weapon == QA_Q1_SUPER_SHOTGUN   ? "gremlin_shot1"
-        : weapon == QA_Q1_NAILGUN || weapon == QA_Q1_SUPER_NAILGUN ? "gremlin_nail3"
-        : weapon == QA_Q1_LIGHTNING                                ? "gremlin_light1"
-        : weapon == QA_Q1_LASER                                    ? "gremlin_laser3"
+    uint16_t frame =
+        weapon == QA_Q1_SHOTGUN || weapon == QA_Q1_SUPER_SHOTGUN   ? Q1_FRAME_gremlin_shot1
+        : weapon == QA_Q1_NAILGUN || weapon == QA_Q1_SUPER_NAILGUN ? Q1_FRAME_gremlin_nail3
+        : weapon == QA_Q1_LIGHTNING                                ? Q1_FRAME_gremlin_light1
+        : weapon == QA_Q1_LASER                                    ? Q1_FRAME_gremlin_laser3
         : weapon == QA_Q1_GRENADE || weapon == QA_Q1_ROCKET || weapon == QA_Q1_PROXIMITY
-            ? "gremlin_rocket1"
-            : NULL;
-    if (!frame)
+            ? Q1_FRAME_gremlin_rocket1
+            : UINT16_MAX;
+    if (frame == UINT16_MAX)
         return true;
     if (!q1_monster_play(g, entity, frame, error))
         return false;

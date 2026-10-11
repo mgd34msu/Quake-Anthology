@@ -54,24 +54,24 @@ bool q1_final_awake(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error 
            qa_world_body_write(g->services.world, e->id, &body, error) && q1_link(g, e, error) &&
            qa_combat_set_health(g->services.combat, e->id, 12000, error) &&
            q1_effect(g, QA_BUILTIN_IMPACT, e->id, body.origin, 0, 10, error) &&
-           (!q1_alive(g, e->id) || q1_monster_play(g, e, "boss_final_rise1", error));
+           (!q1_alive(g, e->id) || q1_monster_play(g, e, Q1_FRAME_boss_final_rise1, error));
 }
 bool q1_final_pain(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_monster *m = &e->state.monster;
     if (m->attack_finished > g->time || m->pain_finished > g->time || m->source.boss.immune)
         return true;
-    const char *frame = NULL;
+    uint16_t frame = UINT16_MAX;
     if (m->source.boss.stage == 0) {
-        frame = "boss_final_shocka1";
+        frame = Q1_FRAME_boss_final_shocka1;
         m->source.boss.stage = 1;
     }
     static const float fractions[] = {.83f, .66f, .5f, .33f, .16f};
     for (unsigned i = 0; i < 5; ++i)
         if (m->source.boss.stage == i + 1 && q1_health(g, e->id) < e->max_health * fractions[i]) {
-            frame = i == 2 || i == 4 ? "boss_final_shockb1" : "boss_final_shocka1";
+            frame = i == 2 || i == 4 ? Q1_FRAME_boss_final_shockb1 : Q1_FRAME_boss_final_shocka1;
             ++m->source.boss.stage;
         }
-    if (!frame)
+    if (frame == UINT16_MAX)
         return true;
     m->source.boss.immune = true;
     if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_PAIN_WAV], 1, 1, 1, error))
@@ -237,7 +237,7 @@ static bool missile(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error)
     if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
         return false;
     return !q1_alive(g, e->id) || q1_health(g, q1_ref_actor(g, e->state.monster.enemy)) > 0 ||
-           q1_monster_play(g, e, "boss_final_idle1", error);
+           q1_monster_play(g, e, Q1_FRAME_boss_final_idle1, error);
 }
 static bool upgrade(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_monster *m = &e->state.monster;
@@ -318,13 +318,13 @@ bool q1_final_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         if (!face(g, e, error))
             return false;
         return action != Q1_ACTION_BOSS_FINAL_IDLE31 ||
-               q1_monster_play(g, e, q1_ref_present(m->enemy) ? "boss_final_missile1" : "boss_final_idle1",
+               q1_monster_play(g, e, q1_ref_present(m->enemy) ? Q1_FRAME_boss_final_missile1 : Q1_FRAME_boss_final_idle1,
                                error);
     }
     switch (action) {
     case Q1_ACTION_BOSS_FINAL_DECIDE:
         return q1_monster_play(
-            g, e, e->wait > 0 && q1_random(g) < .3f ? "boss_final_mg1" : "boss_final_missile1",
+            g, e, e->wait > 0 && q1_random(g) < .3f ? Q1_FRAME_boss_final_mg1 : Q1_FRAME_boss_final_missile1,
             error);
     case Q1_ACTION_BOSS_FINAL_RISE1:
         return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_OUT1_WAV], 1, 1, 1, error);
@@ -359,7 +359,7 @@ bool q1_final_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         if (!q1_alive(g, e->id))
             return true;
         if (shots != 0)
-            m->next_frame = q1_frame_index("boss_final_mg8");
+            m->next_frame = (Q1_FRAME_boss_final_mg8);
         m->source.boss.shots = shots - 1;
         return face(g, e, error);
     }
@@ -581,7 +581,7 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
             ok = false;
         else {
             body.origin = point.origin;
-            e->state.monster.next_frame = q1_frame_index("boss_final_rise1");
+            e->state.monster.next_frame = (Q1_FRAME_boss_final_rise1);
             ok = qa_world_body_write(g->services.world, boss, &body, error) &&
                  q1_link(g, e, error) &&
                  q1_effect(g, QA_BUILTIN_IMPACT, boss, body.origin, 0, 10, error) &&

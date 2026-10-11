@@ -92,11 +92,11 @@ bool q1_monster_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
         m->jump_touch = false;
         if (!tar || !grounded)
             entity->physics.motion = QA_PHYSICS_STEP;
-        const char *next = dog        ? m->species->run
-                           : tar      ? grounded ? "tbaby_jump1" : "tbaby_run1"
-                           : grounded ? "demon1_jump11"
-                                      : "demon1_jump1";
-        m->next_frame = q1_frame_index(next);
+        uint16_t next = dog        ? m->species->run
+                           : tar      ? grounded ? Q1_FRAME_tbaby_jump1 : Q1_FRAME_tbaby_run1
+                           : grounded ? Q1_FRAME_demon1_jump11
+                                      : Q1_FRAME_demon1_jump1;
+        m->next_frame = (next);
         return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
     }
     return true;
@@ -232,7 +232,7 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
         !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
         return false;
     return q1_health(g, q1_ref_actor(g, entity->state.monster.enemy)) > 0 ||
-           q1_monster_play(g, entity, "boss_idle1", error);
+           q1_monster_play(g, entity, Q1_FRAME_boss_idle1, error);
 }
 
 bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
@@ -255,7 +255,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     q1_monster *m = &entity->state.monster;
     if (action >= Q1_ACTION_BOSS_IDLE1 && action <= Q1_ACTION_BOSS_IDLE9) {
         if (action == Q1_ACTION_BOSS_IDLE1 && q1_ref_present(m->enemy) && q1_health(g, q1_ref_actor(g, m->enemy)) > 0)
-            return q1_monster_play(g, entity, "boss_missile1", error);
+            return q1_monster_play(g, entity, Q1_FRAME_boss_missile1, error);
         return boss_face(g, entity, error);
     }
     if (action >= Q1_ACTION_BOSS_MISSILE1 && action <= Q1_ACTION_BOSS_MISSILE9) {
@@ -337,7 +337,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             if (visible) {
                 m->counter = 1;
                 m->next_frame =
-                    q1_frame_index(action == Q1_ACTION_ENF_ATK14 ? "enf_atk1" : "army_atk1");
+                    (action == Q1_ACTION_ENF_ATK14 ? Q1_FRAME_enf_atk1 : Q1_FRAME_army_atk1);
             }
         }
         return true;
@@ -451,7 +451,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                 m->counter = 0;
                 if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
                     m->attack_finished = g->time + 2;
-                return q1_monster_play(g, entity, "hknight_char_a1", error);
+                return q1_monster_play(g, entity, Q1_FRAME_hknight_char_a1, error);
             }
         }
         return true;
@@ -460,7 +460,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             m->counter = 0;
             if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
                 m->attack_finished = g->time + 3;
-            if (!q1_monster_play(g, entity, "hknight_run1", error))
+            if (!q1_monster_play(g, entity, Q1_FRAME_hknight_run1, error))
                 return false;
         } else if (!q1_sound_resource(g, entity->id, q1_random(g) > 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD1_WAV], 1, 1, 1, error))
             return false;
@@ -490,7 +490,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     case Q1_ACTION_SHAM_SWINGR9:
         if (q1_random(g) < 0.5f)
             m->next_frame =
-                q1_frame_index(action == Q1_ACTION_SHAM_SWINGL9 ? "sham_swingr1" : "sham_swingl1");
+                (action == Q1_ACTION_SHAM_SWINGL9 ? Q1_FRAME_sham_swingr1 : Q1_FRAME_sham_swingl1);
         return true;
     case Q1_ACTION_SHAM_MAGIC3:
         if (!q1_schedule(g, entity, 0.3, Q1_THINK_MONSTER_FRAME, error) ||
@@ -540,7 +540,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             return false;
         m->sliding =
             has_target && qa_vec_length(qa_vec_sub(body.origin, target.origin)) < 500 && visible;
-        m->next_frame = q1_frame_index(m->sliding ? "wiz_side1" : "wiz_run1");
+        m->next_frame = (m->sliding ? Q1_FRAME_wiz_side1 : Q1_FRAME_wiz_run1);
         return true;
     case Q1_ACTION_WIZ_DEATH1: {
         float x = -200 + 400 * q1_random(g), y = -200 + 400 * q1_random(g),
@@ -567,7 +567,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                            Q1_THINK_VORE, error);
     }
     case Q1_ACTION_TBABY_FLY4:
-        return ++m->counter != 4 || q1_monster_play(g, entity, "tbaby_jump5", error);
+        return ++m->counter != 4 || q1_monster_play(g, entity, Q1_FRAME_tbaby_jump5, error);
     case Q1_ACTION_TBABY_JUMP5:
         return jump(g, entity, true, false, error);
     case Q1_ACTION_TBABY_DIE1:
@@ -630,7 +630,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                                   true, &moved, error))
             return false;
         if (!moved) {
-            m->next_frame = q1_frame_index("zombie_paine11");
+            m->next_frame = (Q1_FRAME_zombie_paine11);
             entity->physics.solid = QA_PHYSICS_NOT_SOLID;
         }
         return q1_link(g, entity, error);
@@ -640,7 +640,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         return q1_remove(g, entity, error);
     case Q1_ACTION_OLD_THRASH15:
         if (++m->counter != 3)
-            m->next_frame = q1_frame_index("old_thrash1");
+            m->next_frame = (Q1_FRAME_old_thrash1);
         return true;
     case Q1_ACTION_OLD_THRASH20:
         if (g->host.finale)

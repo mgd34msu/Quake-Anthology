@@ -39,21 +39,21 @@ static void ghost_destination(qa_q1_game *g, q1_actor *e) {
 bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
     q1_monster *m = &e->state.monster;
     *handled = false;
-    if (!strcmp(m->species->classname, "monster_orb")) {
+    if ((m->species->classname == Q1_NAME_MONSTER_ORB)) {
         m->addon.boss = Q1_BOSS_ORB;
         return true;
     }
-    bool ghost = !strcmp(m->species->classname, "monster_ghost");
-    if (!ghost && strcmp(m->species->classname, "monster_szombie"))
+    bool ghost = (m->species->classname == Q1_NAME_CLASSNAME_MONSTER_GHOST);
+    if (!ghost && (m->species->classname != Q1_NAME_MONSTER_SZOMBIE))
         return q1_major_boss_spawn(g, e, handled, error);
     *handled = true;
     m->addon.boss = ghost ? Q1_BOSS_GHOST : Q1_BOSS_SHUB_ZOMBIE;
     m->path_end = ghost;
     if (ghost) {
-        static const char *const deaths[] = {"ghost_diea1", "ghost_dieb1", "ghost_diec1",
-                                             "ghost_died1", "ghost_diee1"};
+        static const uint16_t deaths[] = {Q1_FRAME_ghost_diea1, Q1_FRAME_ghost_dieb1, Q1_FRAME_ghost_diec1,
+                                             Q1_FRAME_ghost_died1, Q1_FRAME_ghost_diee1};
         unsigned choice = (unsigned)(q1_random(g) * 5);
-        m->source.boss.death_frame = q1_frame_index(deaths[choice < 5 ? choice : 4]);
+        m->source.boss.death_frame = (deaths[choice < 5 ? choice : 4]);
     }
     qa_body_state value;
     if (!body(g, e, &value, error))
@@ -84,8 +84,8 @@ bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
         return false;
     if (!ghost) {
         e->frame = 174;
-        m->current_frame = q1_frame_index("szombie_paine10");
-        m->next_frame = q1_frame_index("szombie_paine11");
+        m->current_frame = (Q1_FRAME_szombie_paine10);
+        m->next_frame = (Q1_FRAME_szombie_paine11);
         return q1_schedule(g, e, 2, Q1_THINK_MONSTER_FRAME, error);
     }
     m->source.boss.touch = true;
@@ -93,7 +93,7 @@ bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
     if (e->wait == 0)
         e->wait = 128;
     ghost_destination(g, e);
-    if (!q1_monster_play(g, e, "ghost_stand1", error))
+    if (!q1_monster_play(g, e, Q1_FRAME_ghost_stand1, error))
         return false;
     e->count = floorf(q1_random(g) * 5 + .5f) + 3;
     return true;
@@ -153,7 +153,7 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
     if (!q1_alive(g, e->id))
         return true;
     if (m->addon.boss == Q1_BOSS_ORB)
-        return q1_monster_play(g, e, "orb_death1", error);
+        return q1_monster_play(g, e, Q1_FRAME_orb_death1, error);
     qa_body_state value;
     if (!body(g, e, &value, error) || !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error))
         return false;
@@ -217,7 +217,7 @@ static bool ghost_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_
         return qa_world_body_write(g->services.world, e->id, &value, error);
     case Q1_ACTION_GHOST_GHOST_STAND5:
         if (--e->count == 0) {
-            m->next_frame = q1_frame_index("ghost_run1");
+            m->next_frame = (Q1_FRAME_ghost_run1);
             ghost_destination(g, e);
         }
         return true;
@@ -274,7 +274,7 @@ bool q1_orb_check_attack(qa_q1_game *g, q1_actor *e, bool *out, qa_error *error)
         if (m->sliding || m->attack_state) {
             m->sliding = false;
             m->attack_state = 0;
-            return q1_monster_play(g, e, "orb_run1", error);
+            return q1_monster_play(g, e, Q1_FRAME_orb_run1, error);
         }
         return true;
     }
@@ -293,7 +293,7 @@ bool q1_orb_check_attack(qa_q1_game *g, q1_actor *e, bool *out, qa_error *error)
         if (m->sliding || m->attack_state) {
             m->sliding = false;
             m->attack_state = 0;
-            return q1_monster_play(g, e, "orb_run1", error);
+            return q1_monster_play(g, e, Q1_FRAME_orb_run1, error);
         }
         return true;
     }
@@ -307,12 +307,12 @@ bool q1_orb_check_attack(qa_q1_game *g, q1_actor *e, bool *out, qa_error *error)
         if (m->sliding || m->attack_state) {
             m->sliding = false;
             m->attack_state = 0;
-            return q1_monster_play(g, e, "orb_run1", error);
+            return q1_monster_play(g, e, Q1_FRAME_orb_run1, error);
         }
     } else if (!m->sliding) {
         m->sliding = true;
         m->attack_state = 0;
-        return q1_monster_play(g, e, "orb_side1", error);
+        return q1_monster_play(g, e, Q1_FRAME_orb_side1, error);
     }
     return true;
 }
@@ -400,7 +400,7 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
         if (!q1_alive(g, e->id))
             return true;
         if (--m->source.boss.shots != 0)
-            m->next_frame = q1_frame_index("orb_fast2");
+            m->next_frame = (Q1_FRAME_orb_fast2);
         return q1_schedule(g, e, .2, Q1_THINK_MONSTER_FRAME, error);
     case Q1_ACTION_ORB_ORB_FAST5:
         if (!q1_monster_face(g, e, error))
@@ -409,7 +409,7 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
         m->attack_finished = g->time + 2;
         m->attack_state = 0;
         m->sliding = g->enemy_range < 2 && g->enemy_visible;
-        m->next_frame = q1_frame_index(m->sliding ? "orb_side1" : "orb_run1");
+        m->next_frame = (m->sliding ? Q1_FRAME_orb_side1 : Q1_FRAME_orb_run1);
         return true;
     case Q1_ACTION_ORB_ORB_PAIN1:
         m->source.boss.shocks = 3;
@@ -418,7 +418,7 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
         if (!q1_boss_pain_lightning(g, e, qa_v3(0, 0, 0), error))
             return false;
         if (--m->source.boss.shocks != 0)
-            m->next_frame = q1_frame_index("orb_pain2");
+            m->next_frame = (Q1_FRAME_orb_pain2);
         return q1_schedule(g, e, .3, Q1_THINK_MONSTER_FRAME, error);
     case Q1_ACTION_ORB_ORB_DEATH1: {
         qa_body_state value;
@@ -599,7 +599,7 @@ static bool shub_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_e
                                   &moved, error))
             return false;
         if (!moved) {
-            m->next_frame = q1_frame_index("szombie_paine11");
+            m->next_frame = (Q1_FRAME_szombie_paine11);
             e->physics.solid = QA_PHYSICS_NOT_SOLID;
         }
         return q1_link(g, e, error);
@@ -714,7 +714,7 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     q1_actor *zombie;
     if (!q1_create(g, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE], Q1_MONSTER, point, &zombie, error))
         return false;
-    if (!q1_monster_spawn(g, zombie, q1_species_find("monster_szombie"), error)) {
+    if (!q1_monster_spawn(g, zombie, q1_species_named(Q1_NAME_MONSTER_SZOMBIE), error)) {
         q1_remove(g, zombie, NULL);
         return false;
     }

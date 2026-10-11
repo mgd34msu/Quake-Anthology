@@ -163,11 +163,11 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
         sound = 0;
     if (sound && !q1_sound_resource(g, entity->id, sound, 2, monster->species->species == QA_Q1_ARMAGON ? 0.1f : 1, 1, error))
         return false;
-    monster->next_frame = q1_frame_index(monster->species->run);
+    monster->next_frame = (monster->species->run);
     if (monster->species->species == QA_Q1_SWORD && !monster->source.sword.awakened)
-        monster->next_frame = q1_frame_index("sword_pause");
+        monster->next_frame = (Q1_FRAME_sword_pause);
     if (monster->species->species == QA_Q1_MUMMY && monster->source.mummy.asleep)
-        monster->next_frame = q1_frame_index("mummy_wake");
+        monster->next_frame = (Q1_FRAME_mummy_wake);
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
@@ -251,66 +251,66 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
 static bool melee_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->state.monster.addon.heavy != Q1_HEAVY_NONE)
         return q1_heavy_melee(g, entity, error);
-    const char *animation = NULL;
+    uint16_t animation = UINT16_MAX;
     switch (entity->state.monster.species->species) {
     case QA_Q1_DOG:
-        animation = entity->state.monster.addon.demodog ? "demodog_atta1" : "dog_atta1";
+        animation = entity->state.monster.addon.demodog ? Q1_FRAME_demodog_atta1 : Q1_FRAME_dog_atta1;
         break;
     case QA_Q1_KNIGHT:
-        animation = range(g, entity, true) < 80 ? "knight_atk1" : "knight_runatk1";
+        animation = range(g, entity, true) < 80 ? Q1_FRAME_knight_atk1 : Q1_FRAME_knight_runatk1;
         break;
     case QA_Q1_DEMON:
-        animation = "demon1_atta1";
+        animation = Q1_FRAME_demon1_atta1;
         break;
     case QA_Q1_OGRE:
-        animation = q1_random(g) > 0.5f ? "ogre_smash1" : "ogre_swing1";
+        animation = q1_random(g) > 0.5f ? Q1_FRAME_ogre_smash1 : Q1_FRAME_ogre_swing1;
         break;
     case QA_Q1_HELLKNIGHT:
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_SLASH1_WAV], 1, 1, 1, error))
             return false;
         g->hellknight_melee = g->hellknight_melee % 3 + 1;
-        animation = g->hellknight_melee == 1   ? "hknight_slice1"
-                    : g->hellknight_melee == 2 ? "hknight_smash1"
-                                               : "hknight_watk1";
+        animation = g->hellknight_melee == 1   ? Q1_FRAME_hknight_slice1
+                    : g->hellknight_melee == 2 ? Q1_FRAME_hknight_smash1
+                                               : Q1_FRAME_hknight_watk1;
         break;
     case QA_Q1_SHAMBLER: {
         float r = q1_random(g);
-        animation = r > 0.6f || q1_health(g, entity->id) == 600 ? "sham_smash1"
-                    : r > 0.3f                                  ? "sham_swingr1"
-                                                                : "sham_swingl1";
+        animation = r > 0.6f || q1_health(g, entity->id) == 600 ? Q1_FRAME_sham_smash1
+                    : r > 0.3f                                  ? Q1_FRAME_sham_swingr1
+                                                                : Q1_FRAME_sham_swingl1;
         break;
     }
     case QA_Q1_TARBABY:
-        animation = "tbaby_jump1";
+        animation = Q1_FRAME_tbaby_jump1;
         break;
     case QA_Q1_FISH:
-        animation = "f_attack1";
+        animation = Q1_FRAME_f_attack1;
         break;
     case QA_Q1_ZOMBIE: {
         float r = q1_random(g);
-        animation = r < 0.3f ? "zombie_atta1" : r < 0.6f ? "zombie_attb1" : "zombie_attc1";
+        animation = r < 0.3f ? Q1_FRAME_zombie_atta1 : r < 0.6f ? Q1_FRAME_zombie_attb1 : Q1_FRAME_zombie_attc1;
         break;
     }
     case QA_Q1_EEL:
-        animation = "eel_attack1";
+        animation = Q1_FRAME_eel_attack1;
         break;
     case QA_Q1_SWORD:
-        animation = "sword_atk1";
+        animation = Q1_FRAME_sword_atk1;
         break;
     case QA_Q1_LAVA_MAN:
-        animation = "lavaman_fire1";
+        animation = Q1_FRAME_lavaman_fire1;
         break;
     case QA_Q1_GREMLIN:
         return q1_gremlin_melee(g, entity, error);
     case QA_Q1_ARMAGON:
-        animation = "armagon_stop1";
+        animation = Q1_FRAME_armagon_stop1;
         break;
     case QA_Q1_SUPER_WRATH:
         return q1_overlord_melee(g, entity, error);
     case QA_Q1_MORPH:
         return q1_morph_melee(g, entity, error);
     case QA_Q1_SCOURGE:
-        if (!q1_monster_play(g, entity, "scourge_melee1", error))
+        if (!q1_monster_play(g, entity, Q1_FRAME_scourge_melee1, error))
             return false;
         {
             float delay = 2 * q1_random(g);
@@ -448,7 +448,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         *out = true;
         return true;
     }
-    bool specialized = !strcmp(spec->classname, "monster_ogre") || m->addon.rocket_ogre ||
+    bool specialized = (spec->classname == Q1_NAME_MONSTER_OGRE) || m->addon.rocket_ogre ||
                        spec->species == QA_Q1_SHAMBLER;
     bool clear = false;
     if (!specialized && spec->species != QA_Q1_WIZARD) {
@@ -472,13 +472,13 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
             return melee_attack(g, entity, error);
         }
     }
-    if (!spec->missile || (mg3 && spec->species == QA_Q1_ZOMBIE && (entity->spawnflags & 128)) ||
+    if ((spec->missile == UINT16_MAX) || (mg3 && spec->species == QA_Q1_ZOMBIE && (entity->spawnflags & 128)) ||
         g->time < m->attack_finished)
         return true;
     if (category == 3 || (spec->species == QA_Q1_SHAMBLER && distance > 600)) {
         if (spec->species == QA_Q1_WIZARD && m->sliding) {
             m->sliding = false;
-            return q1_monster_play(g, entity, "wiz_run1", error);
+            return q1_monster_play(g, entity, Q1_FRAME_wiz_run1, error);
         }
         return true;
     }
@@ -488,7 +488,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         if (!clear) {
             if (spec->species == QA_Q1_WIZARD && m->sliding) {
                 m->sliding = false;
-                return q1_monster_play(g, entity, "wiz_run1", error);
+                return q1_monster_play(g, entity, Q1_FRAME_wiz_run1, error);
             }
             return true;
         }
@@ -515,7 +515,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
     if (q1_random(g) >= chance) {
         if (spec->species == QA_Q1_WIZARD && m->sliding != (category < 2)) {
             m->sliding = category < 2;
-            return q1_monster_play(g, entity, m->sliding ? "wiz_side1" : "wiz_run1", error);
+            return q1_monster_play(g, entity, m->sliding ? Q1_FRAME_wiz_side1 : Q1_FRAME_wiz_run1, error);
         }
         return true;
     }
@@ -525,10 +525,10 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         m->attack_state = 2;
         return true;
     }
-    const char *animation = spec->missile;
+    uint16_t animation = spec->missile;
     if (spec->species == QA_Q1_ZOMBIE) {
         float r = q1_random(g);
-        animation = r < 0.3f ? "zombie_atta1" : r < 0.6f ? "zombie_attb1" : "zombie_attc1";
+        animation = r < 0.3f ? Q1_FRAME_zombie_atta1 : r < 0.6f ? Q1_FRAME_zombie_attb1 : Q1_FRAME_zombie_attc1;
     }
     if (!q1_monster_play(g, entity, animation, error))
         return false;
@@ -579,7 +579,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
         if (!q1_monster_find_target(g, entity, &found_target, error))
             return false;
         if (!found_target && g->time > m->pause_until && q1_monster_route(g, entity).registry &&
-            strcmp(m->species->walk, m->species->stand))
+            (m->species->walk != m->species->stand))
             return q1_monster_play(g, entity, m->species->walk, error);
         return true;
     case Q1_AI_TURN:
@@ -688,7 +688,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
                 uint8_t state = m->attack_state;
                 m->attack_state = 0;
                 return state == 1 ? melee_attack(g, entity, error)
-                                  : !m->species->missile ||
+                                  : (m->species->missile == UINT16_MAX) ||
                                         q1_monster_play(g, entity, m->species->missile, error);
             }
             return true;
@@ -711,7 +711,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
             if (m->addon.boss == Q1_BOSS_ORB) {
                 m->sliding = false;
                 m->attack_state = 0;
-                m->next_frame = q1_frame_index(m->species->run);
+                m->next_frame = (m->species->run);
                 return true;
             }
             return qa_physics_walk_move(g->services.physics, entity->id, yaw + 180, distance,
@@ -767,12 +767,11 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
     return false;
 }
 
-bool q1_monster_play(qa_q1_game *g, q1_actor *entity, const char *name, qa_error *error) {
+bool q1_monster_play(qa_q1_game *g, q1_actor *entity, uint16_t index, qa_error *error) {
     if (!q1_alive(g, entity->id))
         return true;
-    uint16_t index = q1_frame_index(name);
     if (index == UINT16_MAX) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "missing Q1 native frame %s", name);
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "missing Q1 native frame %u", index);
         return false;
     }
     entity->state.monster.next_frame = index;
@@ -825,9 +824,9 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (m->addon.boss == Q1_BOSS_SHUB_ZOMBIE)
         m->next_frame = q1_shub_zombie_frame(m->next_frame);
     const q1_frame *frame = &q1_frames[m->next_frame];
-    bool rocket_frame = m->addon.rocket_ogre && q1_rocket_ogre_override(frame->name);
-    if (rocket_frame && !strcmp(frame->name, "ogre_stand5") &&
-        !q1_rocket_ogre_frame(g, entity, frame->name, error))
+    bool rocket_frame = m->addon.rocket_ogre && q1_rocket_ogre_override((uint16_t)(frame - q1_frames));
+    if (rocket_frame && ((uint16_t)(frame - q1_frames) == Q1_FRAME_ogre_stand5) &&
+        !q1_rocket_ogre_frame(g, entity, (uint16_t)(frame - q1_frames), error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -839,13 +838,13 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error))
         return false;
     if (g->options.edition == QA_Q1_CLASSIC) {
-        if (!strcmp(frame->name, "boss_idle1") || !strcmp(frame->name, "f_death2"))
+        if (((uint16_t)(frame - q1_frames) == Q1_FRAME_boss_idle1) || ((uint16_t)(frame - q1_frames) == Q1_FRAME_f_death2))
             return true;
-        if (!strcmp(frame->name, "f_death21")) {
+        if (((uint16_t)(frame - q1_frames) == Q1_FRAME_f_death21)) {
             entity->physics.solid = QA_PHYSICS_NOT_SOLID;
             return q1_link(g, entity, error);
         }
-        if (!strcmp(frame->name, "sham_magic11") && g->options.skill == 3)
+        if (((uint16_t)(frame - q1_frames) == Q1_FRAME_sham_magic11) && g->options.skill == 3)
             return q1_monster_action(g, entity, Q1_ACTION_SHAM_MAGIC10, error);
     }
     for (uint8_t i = 0; i < frame->count; ++i) {
@@ -888,8 +887,8 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         }
         }
     }
-    return !rocket_frame || !strcmp(frame->name, "ogre_stand5") || !q1_alive(g, entity->id) ||
-           q1_rocket_ogre_frame(g, entity, frame->name, error);
+    return !rocket_frame || ((uint16_t)(frame - q1_frames) == Q1_FRAME_ogre_stand5) || !q1_alive(g, entity->id) ||
+           q1_rocket_ogre_frame(g, entity, (uint16_t)(frame - q1_frames), error);
 }
 
 bool q1_ctf_monster_removed(qa_bytes classname) {
@@ -914,7 +913,7 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native Q1 monsters require shared physics");
         return false;
     }
-    bool infected = strstr(spec->classname, "_infected") != NULL;
+    bool infected = spec->classname == Q1_NAME_CLASSNAME_MONSTER_ARMY_INFECTED || spec->classname == Q1_NAME_CLASSNAME_MONSTER_KNIGHT_INFECTED || spec->classname == Q1_NAME_CLASSNAME_MONSTER_ENFORCER_INFECTED || spec->classname == Q1_NAME_CLASSNAME_MONSTER_HELL_KNIGHT_INFECTED;
     unsigned corpse = infected && spec->species == QA_Q1_HELLKNIGHT
                           ? (entity->spawnflags & 65536u)     ? 1
                             : (entity->spawnflags & 8388608u) ? 2
@@ -926,8 +925,8 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
     entity->state.monster = (q1_monster){.species = spec,
                                          .birth_epoch = 1,
                                          .path = entity->target,
-                                         .current_frame = q1_frame_index(spec->stand),
-                                         .next_frame = q1_frame_index(spec->stand)};
+                                         .current_frame = (spec->stand),
+                                         .next_frame = (spec->stand)};
     bool addon = g->options.program >= QA_Q1_DOPA && g->options.program <= QA_Q1_MG3 &&
                  spec->species <= QA_Q1_ZOMBIE;
     if (addon && (g->options.coop ? (entity->spawnflags & 131072u) : (entity->spawnflags & 32768u)))
@@ -948,10 +947,10 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
     monster->addon.infection_count_pending = infected;
     monster->addon.infected_kind = (uint8_t)spec->species;
     monster->addon.corpse = (uint8_t)corpse;
-    monster->addon.demodog = !strcmp(spec->classname, "monster_demodog");
+    monster->addon.demodog = (spec->classname == Q1_NAME_CLASSNAME_MONSTER_DEMODOG);
     monster->addon.heavy =
-        !strcmp(spec->classname, "monster_super_shambler")  ? Q1_HEAVY_SUPER_SHAMBLER
-        : !strcmp(spec->classname, "monster_ranged_knight") ? Q1_HEAVY_RUNE_KNIGHT
+        (spec->classname == Q1_NAME_MONSTER_SUPER_SHAMBLER)  ? Q1_HEAVY_SUPER_SHAMBLER
+        : (spec->classname == Q1_NAME_CLASSNAME_MONSTER_RANGED_KNIGHT) ? Q1_HEAVY_RUNE_KNIGHT
                                                             : Q1_HEAVY_NONE;
     if (infected || monster->addon.demodog) {
         const char *name = monster->addon.demodog            ? "monster_dog"
@@ -962,7 +961,7 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
         if (!qa_builtin_resource(&g->services, name, &entity->classname, error))
             return false;
     }
-    monster->addon.rocket_ogre = !strcmp(spec->classname, "monster_ogre_rocket");
+    monster->addon.rocket_ogre = (spec->classname == Q1_NAME_CLASSNAME_MONSTER_OGRE_ROCKET);
     if (monster->addon.rocket_ogre) {
         monster->addon.projectiles = monster->addon.projectile_max = 2;
         if (!qa_builtin_resource(&g->services, "monster_ogre", &entity->classname, error))
@@ -1112,7 +1111,7 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
     if (crucified) {
         entity->physics.motion = QA_PHYSICS_STATIONARY;
         return q1_link(g, entity, error) &&
-               q1_monster_play(g, entity, hanging ? "zombie_hang1" : "zombie_cruc1", error);
+               q1_monster_play(g, entity, hanging ? Q1_FRAME_zombie_hang1 : Q1_FRAME_zombie_cruc1, error);
     }
     if (!delayed_start)
         return true;
@@ -1136,7 +1135,7 @@ bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
         goto failed;
     state.origin = origin;
     if (!qa_world_body_write(g->services.world, id, &state, error) ||
-        !monster_spawn(g, decoy, q1_species_find("monster_decoy"), false, error))
+        !monster_spawn(g, decoy, q1_species_named(Q1_NAME_MONSTER_DECOY), false, error))
         goto failed;
     if (!q1_alive(g, id))
         return true;
@@ -1161,13 +1160,13 @@ bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
             qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
     }
     if (goal.registry && q1_classnamed(g, goal, g->runtime_names[Q1_NAME_PATH_CORNER])) {
-        if (!q1_monster_play(g, decoy, "decoy_walk1", error))
+        if (!q1_monster_play(g, decoy, Q1_FRAME_decoy_walk1, error))
             goto failed;
     } else
         decoy->state.monster.pause_until = 99999999;
     if (!q1_alive(g, id))
         return true;
-    if (!q1_monster_play(g, decoy, "decoy_stand1", error))
+    if (!q1_monster_play(g, decoy, Q1_FRAME_decoy_stand1, error))
         goto failed;
     if (!q1_alive(g, id))
         return true;
@@ -1293,10 +1292,10 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_monster_play(g, entity, goal.registry ? m->species->walk : m->species->stand, error))
         return false;
     if (m->species->species == QA_Q1_MUMMY && m->source.mummy.asleep)
-        m->next_frame = q1_frame_index(
+        m->next_frame = (
             qa_strings_text(qa_session_strings(g->services.session), m->path).size
-                ? "mummy_wake"
-                : "mummy_sleep");
+                ? Q1_FRAME_mummy_wake
+                : Q1_FRAME_mummy_sleep);
     if (addon && (entity->spawnflags & 4)) {
         if (g->options.program != QA_Q1_MG3) {
             for (uint32_t i = 0; i < g->capacity; ++i)

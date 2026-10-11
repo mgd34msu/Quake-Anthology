@@ -1649,7 +1649,7 @@ static bool use_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_ac
                                                : q1_lavaman_awake(g, entity, activator, error);
     if (entity && entity->kind == Q1_MONSTER &&
         entity->state.monster.species->species == QA_Q1_MORPH) {
-        entity->state.monster.next_frame = q1_frame_index("morph_wake");
+        entity->state.monster.next_frame = (Q1_FRAME_morph_wake);
         return q1_schedule(g, entity, entity->delay != 0 ? entity->delay : 0.1, Q1_THINK_MONSTER_FRAME,
                            error);
     }

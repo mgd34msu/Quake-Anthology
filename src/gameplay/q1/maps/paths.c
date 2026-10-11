@@ -85,7 +85,7 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
         m->addon.normal_use = true;
         return true;
     case QA_Q1_PATH_FOLLOW_BEGIN: {
-        uint16_t frame = q1_frame_index(m->species->walk);
+        uint16_t frame = (m->species->walk);
         if (frame == UINT16_MAX)
             return q1_map_fail(error, "Q1 follow target has no walk continuation");
         m->old_enemy = q1_ref_from(g, change->reference);

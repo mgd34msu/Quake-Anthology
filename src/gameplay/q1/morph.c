@@ -13,7 +13,7 @@ static bool setup(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->physics.ideal_yaw = body.angles.y;
     if (entity->physics.yaw_speed == 0)
         entity->physics.yaw_speed = 20;
-    entity->frame = q1_frames[q1_frame_index("morph_wake1")].frame;
+    entity->frame = q1_frames[(Q1_FRAME_morph_wake1)].frame;
     entity->skin = 2;
     body.bounds = entity->state.monster.species->bounds;
     combat.can_take_damage = false;
@@ -35,7 +35,7 @@ static bool wake(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     bool empty = q1_spawnpoint_empty(g, entity->id, body.origin);
     if (empty && !setup(g, entity, error))
         return false;
-    entity->state.monster.next_frame = q1_frame_index(empty ? "morph_wake1" : "morph_wake");
+    entity->state.monster.next_frame = (empty ? Q1_FRAME_morph_wake1 : Q1_FRAME_morph_wake);
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_morph_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -87,7 +87,7 @@ static bool child(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_write(g->services.world, next->id, &body, error) ||
         !q1_monster_drop_floor(g, entity, error))
         return false;
-    next->state.monster.next_frame = q1_frame_index("morph_wake1");
+    next->state.monster.next_frame = (Q1_FRAME_morph_wake1);
     return q1_schedule(g, next, 0.3, Q1_THINK_MONSTER_FRAME, error);
 }
 static bool laser(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_vec3 direction,
@@ -197,9 +197,9 @@ static bool smack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_morph_melee(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     float random = q1_random(g);
     return q1_monster_play(g, entity,
-                           random < 0.5f    ? "morph_bigattack01"
-                           : random < 0.75f ? "morph_attack01"
-                                            : "morph_knockback01",
+                           random < 0.5f    ? Q1_FRAME_morph_bigattack01
+                           : random < 0.75f ? Q1_FRAME_morph_attack01
+                                            : Q1_FRAME_morph_knockback01,
                            error);
 }
 bool q1_morph_pain(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -210,7 +210,7 @@ bool q1_morph_pain(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     float random = q1_random(g);
     monster->pain_finished = g->time + 2;
-    monster->next_frame = q1_frame_index(random > 0.6f ? "morph_painB1" : "morph_painA1");
+    monster->next_frame = (random > 0.6f ? Q1_FRAME_morph_painB1 : Q1_FRAME_morph_painA1);
     return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_GUARD_PAIN1_WAV], 2, 1, 1, error) &&
            q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
@@ -256,7 +256,7 @@ bool q1_morph_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
         if (!qa_combat_set_traits(g->services.combat, entity->id, &combat, error))
             return false;
         if (q1_ref_present(entity->owner)) {
-            entity->state.monster.next_frame = q1_frame_index("morph_run1");
+            entity->state.monster.next_frame = (Q1_FRAME_morph_run1);
             if (!q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error))
                 return false;
         }

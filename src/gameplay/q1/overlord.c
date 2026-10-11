@@ -165,9 +165,9 @@ static bool smash(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_overlord_melee(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     float random = q1_random(g);
     return q1_monster_play(g, entity,
-                           random < 0.33f   ? "overlord_at_a01"
-                           : random < 0.66f ? "overlord_at_b01"
-                                            : "overlord_at_c01",
+                           random < 0.33f   ? Q1_FRAME_overlord_at_a01
+                           : random < 0.66f ? Q1_FRAME_overlord_at_b01
+                                            : Q1_FRAME_overlord_at_c01,
                            error);
 }
 bool q1_overlord_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
@@ -178,7 +178,7 @@ bool q1_overlord_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action,
         return teleport(g, entity, error);
     case Q1_ACTION_OVERLORD_MISSILE:
         (void)q1_random(g);
-        return q1_monster_play(g, entity, "overlord_msl_a01", error);
+        return q1_monster_play(g, entity, Q1_FRAME_overlord_msl_a01, error);
     case Q1_ACTION_WRATHMISSILE_4:
         return q1_wrath_launch(g, entity, 4, error);
     case Q1_ACTION_S_WRATH_OVERLORD_DIE01:

@@ -89,9 +89,9 @@ bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator
     float health = q1_health(g, boss->id) - 1;
     return qa_combat_set_health(g->services.combat, boss->id, health, error) &&
            (!q1_alive(g, boss->id) || q1_monster_play(g, boss,
-                                                      health >= 2   ? "boss_shocka1"
-                                                      : health == 1 ? "boss_shockb1"
-                                                                    : "boss_shockc1",
+                                                      health >= 2   ? Q1_FRAME_boss_shocka1
+                                                      : health == 1 ? Q1_FRAME_boss_shockb1
+                                                                    : Q1_FRAME_boss_shockc1,
                                                       error));
 }
 bool q1_map_finale_emit(qa_q1_game *g, uint32_t stage, const char *text, qa_error *error) {
@@ -297,7 +297,7 @@ bool q1_map_boss_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
             !style(g, "abcdefghijklmlkjihgfedcb", error) || !q1_map_finale_emit(g, 3, "", error))
             return false;
         if (q1_alive(g, oldone->id)) {
-            oldone->state.monster.next_frame = q1_frame_index("old_thrash1");
+            oldone->state.monster.next_frame = (Q1_FRAME_old_thrash1);
             if (!q1_schedule(g, oldone, .1, Q1_THINK_MONSTER_FRAME, error))
                 return false;
         }

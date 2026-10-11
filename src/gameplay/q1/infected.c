@@ -2,28 +2,28 @@
 
 const q1_species *q1_infected_form(qa_q1_species kind, unsigned corpse) {
     static const q1_species corpses[] = {{QA_Q1_HELLKNIGHT,
-                                          "monster_hell_knight",
+                                          Q1_NAME_MONSTER_HELL_KNIGHT,
                                           Q1_NAME_RESOURCE_PROGS_HKNIGHT_MDL,
                                           Q1_NAME_RESOURCE_PROGS_H_HELLKN_MDL,
                                           Q1_NAME_RESOURCE_HKNIGHT_SIGHT1_WAV,
-                                          "hknight_corpse1",
-                                          "hknight_walk1",
-                                          "hknight_corpse1_rise0",
-                                          "hknight_magicc1",
+                                          Q1_FRAME_hknight_corpse1,
+                                          Q1_FRAME_hknight_walk1,
+                                          Q1_FRAME_hknight_corpse1_rise0,
+                                          Q1_FRAME_hknight_magicc1,
                                           250,
                                           -40,
                                           {{-32, -32, -24}, {32, 32, 64}},
                                           0,
                                           true},
                                          {QA_Q1_HELLKNIGHT,
-                                          "monster_hell_knight",
+                                          Q1_NAME_MONSTER_HELL_KNIGHT,
                                           Q1_NAME_RESOURCE_PROGS_HKNIGHT_MDL,
                                           Q1_NAME_RESOURCE_PROGS_H_HELLKN_MDL,
                                           Q1_NAME_RESOURCE_HKNIGHT_SIGHT1_WAV,
-                                          "hknight_corpse2",
-                                          "hknight_walk1",
-                                          "hknight_corpse2_rise0",
-                                          "hknight_magicc1",
+                                          Q1_FRAME_hknight_corpse2,
+                                          Q1_FRAME_hknight_walk1,
+                                          Q1_FRAME_hknight_corpse2_rise0,
+                                          Q1_FRAME_hknight_magicc1,
                                           250,
                                           -40,
                                           {{-32, -32, -24}, {32, 32, 64}},
@@ -31,9 +31,9 @@ const q1_species *q1_infected_form(qa_q1_species kind, unsigned corpse) {
                                           true}};
     if (kind == QA_Q1_HELLKNIGHT && corpse >= 1 && corpse <= 2)
         return &corpses[corpse - 1];
-    return q1_species_find(kind == QA_Q1_ZOMBIE  ? "monster_zombie"
-                           : kind == QA_Q1_DEMON ? "monster_demon1"
-                                                 : "monster_hell_knight");
+    return q1_species_named(kind == QA_Q1_ZOMBIE  ? Q1_NAME_MONSTER_ZOMBIE
+                           : kind == QA_Q1_DEMON ? Q1_NAME_MONSTER_DEMON1
+                                                 : Q1_NAME_MONSTER_HELL_KNIGHT);
 }
 
 bool q1_infected_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
@@ -154,9 +154,8 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     m->counted_death = false;
     entity->max_health = m->species->health;
     entity->aimed_damage = true;
+    entity->classname = g->runtime_names[zombie ? Q1_NAME_MONSTER_ZOMBIE : Q1_NAME_MONSTER_DEMON1];
     if (!q1_model(g, entity, g->runtime_names[m->species->model], error) ||
-        !qa_builtin_resource(&g->services, zombie ? "monster_zombie" : "monster_demon1",
-                             &entity->classname, error) ||
         !qa_combat_set_health(g->services.combat, entity->id, m->species->health, error))
         return false;
     qa_combat_state combat;
@@ -183,7 +182,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_alive(g, entity->id))
         return true;
     if (moved)
-        return q1_monster_play(g, entity, zombie ? "zombie_paina1" : "demon1_pain1", error);
+        return q1_monster_play(g, entity, zombie ? Q1_FRAME_zombie_paina1 : Q1_FRAME_demon1_pain1, error);
     m->counted_death = true;
     m->dead = true;
     if (!q1_monster_death_report(g, entity, q1_ref_actor(g, m->enemy), true, error))

@@ -252,7 +252,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
     }
     if (m->source.gremlin.stolen) {
         if (q1_health(g, q1_ref_actor(g, m->enemy)) < 0 && q1_classnamed(g, q1_ref_actor(g, m->enemy), g->runtime_names[Q1_NAME_PLAYER]))
-            return q1_monster_play(g, entity, "gremlin_glook1", error);
+            return q1_monster_play(g, entity, Q1_FRAME_gremlin_glook1, error);
         q1_actor *goal = q1_entity(g, q1_ref_actor(g, m->source.gremlin.flee_goal));
         if (!q1_gremlin_has_ammo(entity)) {
             if (goal) {

@@ -270,7 +270,7 @@ static bool stand_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!clear_shot(g, entity, &clear, &water, &distance, error))
         return false;
     if (!clear || water)
-        return q1_monster_play(g, entity, "armagon_run1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_armagon_run1, error);
     if (g->time < entity->state.monster.attack_finished)
         return true;
     qa_q1_target traits;
@@ -278,12 +278,12 @@ static bool stand_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return repulse(g, entity, error);
     entity->state.monster.source.armagon.repulse_state = 0;
     if (distance > 450)
-        return q1_monster_play(g, entity, "armagon_run1", error);
-    if (!q1_monster_play(g, entity, q1_random(g) < 0.5f ? "armagon_satk1" : "armagon_slaser1",
+        return q1_monster_play(g, entity, Q1_FRAME_armagon_run1, error);
+    if (!q1_monster_play(g, entity, q1_random(g) < 0.5f ? Q1_FRAME_armagon_satk1 : Q1_FRAME_armagon_slaser1,
                          error))
         return false;
     return !q1_alive(g, entity->id) || !entity->state.monster.source.armagon.behind ||
-           q1_monster_play(g, entity, "armagon_run1", error);
+           q1_monster_play(g, entity, Q1_FRAME_armagon_run1, error);
 }
 bool q1_armagon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
     entity->state.monster.lefty = false;
@@ -306,7 +306,7 @@ bool q1_armagon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         return true;
     if (distance < 400) {
         *out = true;
-        return q1_monster_play(g, entity, "armagon_stop1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_armagon_stop1, error);
     }
     entity->state.monster.lefty = true;
     return true;
@@ -428,7 +428,7 @@ bool q1_armagon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         return stand_attack(g, entity, error);
     case Q1_ACTION_ARMAGON_MISSILE_ATTACK:
         return q1_monster_play(g, entity,
-                               q1_random(g) < 0.5f ? "armagon_watk1" : "armagon_wlaseratk1", error);
+                               q1_random(g) < 0.5f ? Q1_FRAME_armagon_watk1 : Q1_FRAME_armagon_wlaseratk1, error);
     case Q1_ACTION_MOVETOGOAL_14:
         return walk(g, entity, error);
     case Q1_ACTION_HIPARMA_ARMAGON_STAND1:
@@ -462,10 +462,10 @@ bool q1_armagon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                 delta -= 360;
             if (delta < -180)
                 delta += 360;
-            m->next_frame = q1_frame_index(delta > 0 ? "armagon_overleft1" : "armagon_overright1");
+            m->next_frame = (delta > 0 ? Q1_FRAME_armagon_overleft1 : Q1_FRAME_armagon_overright1);
         } else if (m->lefty) {
             m->lefty = false;
-            m->next_frame = q1_frame_index("armagon_missile_attack");
+            m->next_frame = (Q1_FRAME_armagon_missile_attack);
         }
         return true;
     }

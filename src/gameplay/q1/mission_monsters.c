@@ -90,7 +90,7 @@ static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 static bool mummy_wake(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->state.monster.source.mummy.asleep = false;
-    return q1_monster_play(g, entity, "mummy_paine12", error);
+    return q1_monster_play(g, entity, Q1_FRAME_mummy_paine12, error);
 }
 static bool mummy_fire(qa_q1_game *g, q1_actor *entity, qa_vec3 offset, qa_error *error) {
     if (!q1_monster_face(g, entity, error))
@@ -141,7 +141,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
         if (m->counter >= 5)
             m->counter = 0;
         entity->frame = 12 + (int32_t)m->counter++;
-        return g->time <= m->pause_until || q1_monster_play(g, entity, "decoy_walk1", error);
+        return g->time <= m->pause_until || q1_monster_play(g, entity, Q1_FRAME_decoy_walk1, error);
     case Q1_ACTION_HIPDECOY_DECOY_WALK1: {
         qa_actor_id goal = q1_monster_route(g, entity);
         if (goal.registry &&
@@ -221,7 +221,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
     case Q1_ACTION_SWORD_PAUSE: {
         double delay = entity->delay;
         entity->delay = 0;
-        m->next_frame = q1_frame_index("sword_run1");
+        m->next_frame = (Q1_FRAME_sword_run1);
         m->source.sword.awakened = true;
         return q1_schedule(g, entity, delay, Q1_THINK_MONSTER_FRAME, error);
     }
@@ -262,7 +262,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
                                   true, &moved, error))
             return false;
         if (!moved) {
-            m->next_frame = q1_frame_index("mummy_paine11");
+            m->next_frame = (Q1_FRAME_mummy_paine11);
             entity->physics.solid = QA_PHYSICS_NOT_SOLID;
         }
         return q1_link(g, entity, error);
@@ -274,9 +274,9 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
             return mummy_wake(g, entity, error);
         float r = q1_random(g);
         return q1_monster_play(g, entity,
-                               r < 0.3f   ? "mummy_atta1"
-                               : r < 0.6f ? "mummy_attb1"
-                                          : "mummy_attc1",
+                               r < 0.3f   ? Q1_FRAME_mummy_atta1
+                               : r < 0.6f ? Q1_FRAME_mummy_attb1
+                                          : Q1_FRAME_mummy_attc1,
                                error);
     }
     default:
@@ -305,7 +305,7 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
         if (random > 0.2f)
             return true;
         m->pain_finished = g->time + 2;
-        return q1_monster_play(g, entity, random < 0.15f ? "overlord_pn_a01" : "overlord_pn_b01",
+        return q1_monster_play(g, entity, random < 0.15f ? Q1_FRAME_overlord_pn_a01 : Q1_FRAME_overlord_pn_b01,
                                error) &&
                q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WRATH_WPAIN_WAV], 2, 1, 1, error);
     }
@@ -313,14 +313,14 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
         if (g->options.program == QA_Q1_MG3 && entity->count == 0) {
             ++entity->count;
             m->pain_finished = g->time + 2;
-            return q1_monster_play(g, entity, "lavaman_shocka1", error);
+            return q1_monster_play(g, entity, Q1_FRAME_lavaman_shocka1, error);
         }
         if (m->pain_finished > g->time || q1_random(g) >= 0.05f)
             return true;
         m->pain_finished = g->time + 2;
-        return q1_monster_play(g, entity, "lavaman_shocka1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_lavaman_shocka1, error);
     case QA_Q1_DECOY:
-        return q1_monster_play(g, entity, "decoy_stand1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_decoy_stand1, error);
     case QA_Q1_WRATH: {
         if (m->pain_finished > g->time)
             return true;
@@ -330,7 +330,7 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
             return true;
         }
         m->pain_finished = g->time + 3;
-        return q1_monster_play(g, entity, random < 0.07f ? "wrath_pn_a01" : "wrath_pn_b01",
+        return q1_monster_play(g, entity, random < 0.07f ? Q1_FRAME_wrath_pn_a01 : Q1_FRAME_wrath_pn_b01,
                                error) &&
                q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WRATH_WPAIN_WAV], 2, 1, 1, error);
     }
@@ -340,16 +340,16 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
         (void)q1_random(g);
         m->pain_finished = g->time + 2;
         return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SCOURGE_PAIN_WAV], 2, 1, 1, error) &&
-               q1_monster_play(g, entity, "scourge_pain1", error);
+               q1_monster_play(g, entity, Q1_FRAME_scourge_pain1, error);
     case QA_Q1_EEL:
-        return q1_monster_play(g, entity, "eel_pain1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_eel_pain1, error);
     case QA_Q1_SWORD:
         if (m->source.sword.pain_disabled)
             return true;
         m->source.sword.pain_disabled = true;
         m->source.sword.awakened = true;
         entity->delay = 0;
-        m->next_frame = q1_frame_index("sword_run1");
+        m->next_frame = (Q1_FRAME_sword_run1);
         return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
     case QA_Q1_MUMMY: {
         if (m->source.mummy.asleep)
@@ -361,10 +361,10 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
             return true;
         m->pain_finished = g->time + 2.5;
         return q1_monster_play(g, entity,
-                               r < 0.06f   ? "mummy_paina1"
-                               : r < 0.12f ? "mummy_painb1"
-                               : r < 0.18f ? "mummy_painc1"
-                                           : "mummy_paind1",
+                               r < 0.06f   ? Q1_FRAME_mummy_paina1
+                               : r < 0.12f ? Q1_FRAME_mummy_painb1
+                               : r < 0.18f ? Q1_FRAME_mummy_painc1
+                                           : Q1_FRAME_mummy_paind1,
                                error);
     }
     default:
@@ -376,25 +376,25 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
 bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
     if (m->species->species == QA_Q1_ARMAGON)
-        return q1_monster_play(g, entity, "armagon_die1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_armagon_die1, error);
     if (m->species->species == QA_Q1_DRAGON)
-        return q1_monster_play(g, entity, "dragon_death1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_dragon_death1, error);
     if (m->species->species == QA_Q1_LAVA_MAN)
-        return q1_monster_play(g, entity, "lavaman_death1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_lavaman_death1, error);
     if (m->species->species == QA_Q1_SUPER_WRATH)
-        return q1_monster_play(g, entity, "overlord_die02", error);
+        return q1_monster_play(g, entity, Q1_FRAME_overlord_die02, error);
     if (m->species->species == QA_Q1_MORPH) {
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_GUARD_DEATH_WAV], 2, 1, 1, error))
             return false;
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
-        m->next_frame = q1_frame_index("morph_die1");
+        m->next_frame = (Q1_FRAME_morph_die1);
         return q1_link(g, entity, error) &&
                q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
     }
     if (m->species->species == QA_Q1_DECOY)
-        return q1_monster_play(g, entity, "decoy_stand1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_decoy_stand1, error);
     if (m->species->species == QA_Q1_WRATH)
-        return q1_monster_play(g, entity, "wrath_die02", error);
+        return q1_monster_play(g, entity, Q1_FRAME_wrath_die02, error);
     if (m->species->species == QA_Q1_SCOURGE) {
         q1_actor *trigger = q1_entity(g, q1_ref_actor(g, m->source.scourge.trigger));
         if (trigger && !q1_remove(g, trigger, error))
@@ -404,7 +404,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         if (q1_health(g, entity->id) >= -35)
             return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SCOURGE_PAIN2_WAV], 2, 1, 1, error) &&
-                   q1_monster_play(g, entity, "scourge_die1", error);
+                   q1_monster_play(g, entity, Q1_FRAME_scourge_die1, error);
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error) ||
             !q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_SCOURG_MDL], true, error))
             return false;
@@ -413,7 +413,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     if (m->species->species == QA_Q1_SWORD) {
         entity->effects = 0;
-        return q1_monster_play(g, entity, q1_random(g) < 0.5f ? "sword_die1" : "sword_dieb1",
+        return q1_monster_play(g, entity, q1_random(g) < 0.5f ? Q1_FRAME_sword_die1 : Q1_FRAME_sword_dieb1,
                                error);
     }
     if (m->species->species == QA_Q1_EEL) {
@@ -425,7 +425,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!qa_world_body_write(g->services.world, entity->id, &body, error))
             return false;
         if (q1_health(g, entity->id) >= -12)
-            return q1_monster_play(g, entity, "eel_death1", error);
+            return q1_monster_play(g, entity, Q1_FRAME_eel_death1, error);
         entity->skin = 0;
         entity->effects = 0;
         if (!q1_gib(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_EELGIB_MDL], true, error))

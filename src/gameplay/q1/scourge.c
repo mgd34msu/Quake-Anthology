@@ -72,7 +72,7 @@ static bool turn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     float yaw = qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
     if (fabsf(body.angles.y - yaw) > 10)
         return q1_monster_face(g, entity, error);
-    entity->state.monster.next_frame = q1_frame_index("scourge_run1");
+    entity->state.monster.next_frame = (Q1_FRAME_scourge_run1);
     return true;
 }
 static bool tail(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -130,8 +130,8 @@ bool q1_scourge_trigger(qa_q1_game *g, q1_actor *trigger, qa_actor_id actor, qa_
                    qa_vec_normalize(body.velocity)) < 0.8f)
         return true;
     if (g->time > trigger->delay) {
-        const char *animation =
-            q1_random(g) < 0.5f ? "scourge_strafeleft1" : "scourge_straferight1";
+        uint16_t animation =
+            q1_random(g) < 0.5f ? Q1_FRAME_scourge_strafeleft1 : Q1_FRAME_scourge_straferight1;
         if (!q1_monster_play(g, owner, animation, error))
             return false;
         owner->state.monster.source.scourge.dodge_until = g->time + 1.5;
@@ -207,7 +207,7 @@ bool q1_scourge_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                 return false;
             if (visible) {
                 monster->counter = 1;
-                monster->next_frame = q1_frame_index("scourge_melee1");
+                monster->next_frame = (Q1_FRAME_scourge_melee1);
             }
         }
         return true;

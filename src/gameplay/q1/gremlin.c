@@ -28,15 +28,15 @@ static bool resume(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (q1_ref_present(m->old_enemy) && q1_health(g, q1_ref_actor(g, m->old_enemy)) > 0) {
         m->enemy = m->old_enemy;
         entity->physics.goal = m->enemy;
-        m->next_frame = q1_frame_index(m->species->run);
+        m->next_frame = (m->species->run);
         m->attack_finished = g->time + 1;
         return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
     }
     return q1_monster_play(
         g, entity,
         qa_strings_text(qa_session_strings(g->services.session), entity->target).size
-            ? "gremlin_walk1"
-            : "gremlin_stand1",
+            ? Q1_FRAME_gremlin_walk1
+            : Q1_FRAME_gremlin_stand1,
         error);
 }
 static q1_actor *melee_source(qa_q1_game *g, qa_actor_id source) {
@@ -184,7 +184,7 @@ static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     ++g->total_monsters;
     if (!q1_effect(g, QA_BUILTIN_TARGET, id, position, (float)g->total_monsters, 1, error) ||
         !qa_world_body_write(g->services.world, id, &body, error) ||
-        !q1_monster_play(g, child, "gremlin_spawn1", error))
+        !q1_monster_play(g, child, Q1_FRAME_gremlin_spawn1, error))
         return false;
     child->state.monster.enemy = (q1_ref){0};
     child->state.monster.source.gremlin.gorging = false;
@@ -247,11 +247,11 @@ static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     }
     entity->state.monster.enemy = (q1_ref){0};
     entity->state.monster.source.gremlin.gorging = false;
-    return q1_monster_play(g, entity, "gremlin_look1", error);
+    return q1_monster_play(g, entity, Q1_FRAME_gremlin_look1, error);
 }
 bool q1_gremlin_melee(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->state.monster.source.gremlin.gorging)
-        return q1_monster_play(g, entity, "gremlin_gorge1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_gremlin_gorge1, error);
     if (entity->state.monster.source.gremlin.stolen) {
         qa_error_set(error, QA_ERROR_FORMAT, entity->id.slot,
                      "Gremlin attempted melee with stolen weapon");
@@ -268,9 +268,9 @@ bool q1_gremlin_melee(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     float random = q1_random(g);
     return q1_monster_play(g, entity,
-                           random < 0.3f   ? "gremlin_claw1"
-                           : random < 0.6f ? "gremlin_lunge1"
-                                           : "gremlin_claw1",
+                           random < 0.3f   ? Q1_FRAME_gremlin_claw1
+                           : random < 0.6f ? Q1_FRAME_gremlin_lunge1
+                                           : Q1_FRAME_gremlin_claw1,
                            error);
 }
 static bool missile_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -281,10 +281,10 @@ static bool missile_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (fired)
             return true;
         if (q1_random(g) < 0.1f && (entity->physics.flags & QA_PHYSICS_ONGROUND))
-            return q1_monster_play(g, entity, "gremlin_jump1", error);
+            return q1_monster_play(g, entity, Q1_FRAME_gremlin_jump1, error);
     }
     return !(entity->physics.flags & QA_PHYSICS_ONGROUND) ||
-           q1_monster_play(g, entity, "gremlin_jump1", error);
+           q1_monster_play(g, entity, Q1_FRAME_gremlin_jump1, error);
 }
 bool q1_gremlin_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     ++g->authored_gremlins;
@@ -317,7 +317,7 @@ bool q1_gremlin_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_e
         random < 0.66f ? g->runtime_names[Q1_NAME_RESOURCE_GREM_PAIN2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_GREM_PAIN3_WAV];
     return q1_sound_resource(g, entity->id, path, 2, 1, 1, error) &&
            q1_monster_play(g, entity,
-                           m->source.gremlin.stolen ? "gremlin_gunpain1" : "gremlin_pain1", error);
+                           m->source.gremlin.stolen ? Q1_FRAME_gremlin_gunpain1 : Q1_FRAME_gremlin_pain1, error);
 }
 bool q1_gremlin_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_error *error) {
     qa_actor_id id = entity->id;
@@ -367,8 +367,8 @@ bool q1_gremlin_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
     if (health < -35)
         return gib(g, entity, health, error);
     if (facing > 0.7f && q1_random(g) < 0.5f && (entity->physics.flags & QA_PHYSICS_ONGROUND))
-        return q1_monster_play(g, entity, "gremlin_flip1", error);
-    return q1_monster_play(g, entity, "gremlin_die1", error);
+        return q1_monster_play(g, entity, Q1_FRAME_gremlin_flip1, error);
+    return q1_monster_play(g, entity, Q1_FRAME_gremlin_die1, error);
 }
 bool q1_gremlin_touch(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     uint8_t touch = entity->state.monster.source.gremlin.touch;
@@ -383,8 +383,8 @@ bool q1_gremlin_touch(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     entity->state.monster.source.gremlin.touch = 0;
     entity->state.monster.next_frame =
-        q1_frame_index(touch == 1 ? (grounded ? "gremlin_jump12" : "gremlin_jump1")
-                                  : (grounded ? "gremlin_flip8" : "gremlin_flip1"));
+        (touch == 1 ? (grounded ? Q1_FRAME_gremlin_jump12 : Q1_FRAME_gremlin_jump1)
+                                  : (grounded ? Q1_FRAME_gremlin_flip8 : Q1_FRAME_gremlin_flip1));
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_gremlin_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
@@ -409,7 +409,7 @@ bool q1_gremlin_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (!q1_monster_find_target(g, entity, &found, error))
             return false;
         if (!found && g->time > m->pause_until &&
-            !q1_monster_play(g, entity, "gremlin_walk1", error))
+            !q1_monster_play(g, entity, Q1_FRAME_gremlin_walk1, error))
             return false;
         return !q1_alive(g, entity->id) ||
                q1_schedule(g, entity, 0.2, Q1_THINK_MONSTER_FRAME, error);
@@ -420,7 +420,7 @@ bool q1_gremlin_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (!q1_monster_face(g, entity, error))
             return false;
         if (jump && !(entity->physics.flags & QA_PHYSICS_ONGROUND))
-            return q1_monster_play(g, entity, "gremlin_run1", error);
+            return q1_monster_play(g, entity, Q1_FRAME_gremlin_run1, error);
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;

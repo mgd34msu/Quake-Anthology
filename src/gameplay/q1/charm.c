@@ -69,7 +69,7 @@ bool q1_charmed_hunt(qa_q1_game *g, q1_actor *entity, bool flee, qa_error *error
         entity->physics.ideal_yaw =
             qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
     }
-    m->next_frame = q1_frame_index(m->species->walk);
+    m->next_frame = (m->species->walk);
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
@@ -96,7 +96,7 @@ bool q1_charmed_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
                 return false;
             entity->physics.goal = (q1_ref){0};
             m->hunting_charmer = 0;
-            m->next_frame = q1_frame_index(m->species->stand);
+            m->next_frame = (m->species->stand);
             *out = true;
             return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
         }

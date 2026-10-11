@@ -48,11 +48,11 @@ bool q1_demodog_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
         if (!(entity->physics.flags & QA_PHYSICS_ONGROUND))
             return true;
         m->jump_touch = false;
-        m->next_frame = q1_frame_index("demodog_leap1");
+        m->next_frame = (Q1_FRAME_demodog_leap1);
     } else {
         entity->wait = 0;
         m->jump_touch = false;
-        m->next_frame = q1_frame_index(m->species->run);
+        m->next_frame = (m->species->run);
     }
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }

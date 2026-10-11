@@ -41,9 +41,9 @@ bool q1_wrath_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
     case Q1_ACTION_WRATH_ATTACK: {
         float random = q1_random(g);
         return q1_monster_play(g, entity,
-                               random < 0.25f   ? "wrath_at_a01"
-                               : random < 0.65f ? "wrath_at_b01"
-                                                : "wrath_at_c01",
+                               random < 0.25f   ? Q1_FRAME_wrath_at_a01
+                               : random < 0.65f ? Q1_FRAME_wrath_at_b01
+                                                : Q1_FRAME_wrath_at_c01,
                                error) &&
                q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WRATH_WATT_WAV], 2, 1, 1, error);
     }

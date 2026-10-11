@@ -1,7 +1,7 @@
 #include "internal.h"
 
 static bool species(q1_save_io *io, q1_monster *m) {
-    const char *name = (io->values.direction == QA_SOURCE_SAVE_READ) ? NULL : m->species ? m->species->classname : NULL;
+    const char *name = (io->values.direction == QA_SOURCE_SAVE_READ) ? NULL : m->species ? q1_runtime_name_text(m->species->classname) : NULL;
     if (!name && io->values.direction == QA_SOURCE_SAVE_WRITE)
         return q1_save_fail(io, "Q1 monster has no immutable species");
     uint8_t corpse = 0;

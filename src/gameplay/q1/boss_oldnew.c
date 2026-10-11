@@ -15,8 +15,8 @@ bool q1_major_boss_fields(qa_q1_game *g, q1_actor *e, const qa_q1_boss_fields *f
 }
 bool q1_major_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
     q1_monster *m = &e->state.monster;
-    bool final = !strcmp(m->species->classname, "monster_boss_final");
-    if (!final && strcmp(m->species->classname, "monster_oldone_new"))
+    bool final = (m->species->classname == Q1_NAME_CLASSNAME_MONSTER_BOSS_FINAL);
+    if (!final && (m->species->classname != Q1_NAME_MONSTER_OLDONE_NEW))
         return true;
     *handled = true;
     m->addon.boss = final ? Q1_BOSS_FINAL : Q1_BOSS_OLDNEW;
@@ -122,7 +122,7 @@ bool q1_major_boss_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float 
     if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ORB_ORB_PAIN_WAV], 2, 1, 1, error))
         return false;
     m->pain_finished = g->time + 2.1;
-    return !q1_alive(g, e->id) || q1_monster_play(g, e, "oldnew_thrash1", error);
+    return !q1_alive(g, e->id) || q1_monster_play(g, e, Q1_FRAME_oldnew_thrash1, error);
 }
 bool q1_major_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *error) {
     q1_monster *m = &e->state.monster;
@@ -135,7 +135,7 @@ bool q1_major_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_erro
     if (m->addon.boss == Q1_BOSS_FINAL) {
         e->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
         return q1_boss_targets(g, e, attacker, e->target, error) &&
-               (!q1_alive(g, e->id) || q1_monster_play(g, e, "boss_final_death1", error));
+               (!q1_alive(g, e->id) || q1_monster_play(g, e, Q1_FRAME_boss_final_death1, error));
     }
     if (!q1_monster_count_kill(g, e, attacker, error))
         return false;
@@ -143,7 +143,7 @@ bool q1_major_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_erro
         return true;
     m->source.boss.immune = true;
     m->source.boss.cycles = 0;
-    return q1_monster_play(g, e, "oldnew_death1", error) && q1_boss_cleanup(g, error) &&
+    return q1_monster_play(g, e, Q1_FRAME_oldnew_death1, error) && q1_boss_cleanup(g, error) &&
            (!q1_alive(g, e->id) ||
             q1_boss_sphere_manager(g, e, g->options.skill > 2 ? (int32_t)m->source.boss.phase : 1,
                                    false, error));
@@ -218,7 +218,7 @@ static bool finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_boss_first_player(g, &player, error))
         return false;
     if (!g->options.coop && q1_health(g, q1_ref_actor(g, player)) <= 0)
-        return q1_monster_play(g, e, "oldnew_idle1", error);
+        return q1_monster_play(g, e, Q1_FRAME_oldnew_idle1, error);
     if (!q1_boss_gib_vectors(g, e, error) || !q1_remove(g, e, error))
         return false;
     qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT,
@@ -263,7 +263,7 @@ bool q1_major_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa
         return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_DEATH_WAV], 2, 1, 1, error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH15:
         if (++m->source.boss.cycles != 3)
-            m->next_frame = q1_frame_index("oldnew_death1");
+            m->next_frame = (Q1_FRAME_oldnew_death1);
         return true;
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH16:
         return lightstyle(g, e, "g", error);
