@@ -164,6 +164,8 @@ struct application_q3_guest {
     q3g_client clients[64];
     uint32_t seats[64];
     qa_command_tokens arguments;
+    application_q3_command_storage client_commands[64];
+    size_t command_depth;
     char *entity_text;
     struct q3g_restore *restoration;
     int32_t milliseconds, random_seed;
@@ -181,6 +183,9 @@ struct application_q3_guest {
 };
 
 struct application_q3_guest *q3g_engine(application_provider *);
+bool q3g_command_begin(struct application_q3_guest *,const char *,const char *const *,size_t,
+    qa_command_tokens *,qa_error *);
+void q3g_command_end(struct application_q3_guest *,qa_command_tokens);
 bool q3g_world_begin(struct application_q3_guest *, qa_error *);
 qa_qvm_role q3g_primary_role(const char *);
 bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, qa_error *);

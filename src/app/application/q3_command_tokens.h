@@ -14,6 +14,9 @@ typedef struct application_q3_command_storage {
 bool application_q3_command_parse(application_q3_command_storage *storage,
     const char *text, qa_command_tokens *arguments, qa_error *error);
 
+bool application_q3_command_vector(application_q3_command_storage *,const char *const *,size_t,
+    qa_command_tokens *,qa_error *);
+
 bool application_q3_command_bind(application_q3_command_storage *,qa_command_tokens *,qa_error *);
 bool application_q3_server_command_deliver(application_q3_command_storage *,qa_command_tokens *,
     const qa_q3_server_command_result *,void *,

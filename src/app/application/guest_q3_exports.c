@@ -704,12 +704,11 @@ bool application_q3_guest_console_command(application_provider *provider, const 
     if (!engine || !engine->game || !engine->game->initialized ||
         engine->round.phase != Q3G_ROUND_NONE || !text || !handled)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console command requires initialized game");
-    qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, NULL, NULL, error)) return false;
-    qa_command_tokens prior = engine->arguments; engine->arguments = next;
+    qa_command_tokens prior;
+    if(!q3g_command_begin(engine,text,NULL,0,&prior,error)) return false;
     int32_t result;
     bool ok = q3g_call(engine->game, 9, NULL, 0, &result, error);
-    qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
+    q3g_command_end(engine,prior);
     if (ok) *handled = result != 0;
     if (ok) ok = application_guest_bots_admit(provider, error);
     if (ok) ok = application_guest_clients_drain(provider, error);

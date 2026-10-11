@@ -20,6 +20,23 @@ bool application_q3_command_parse(application_q3_command_storage *storage,
     return application_q3_command_bind(storage,arguments,error);
 }
 
+bool application_q3_command_vector(application_q3_command_storage *storage,
+    const char *const *values,size_t count,qa_command_tokens *arguments,qa_error *error)
+{
+    qa_q3_tokens *tokens=&storage->tokens;
+    tokens->count=0;tokens->truncated=count>1024;
+    size_t used=0;
+    for(size_t i=0;i<count && i<1024;++i) {
+        if(!values[i]) return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command has an absent word");
+        size_t size=strlen(values[i]);
+        if(size>=sizeof(tokens->text)-used)
+            return application_fail(error,QA_ERROR_FORMAT,"Q3 command exceeds token storage");
+        tokens->offsets[tokens->count++]=(uint16_t)used;
+        memcpy(tokens->text+used,values[i],size+1);used+=size+1;
+    }
+    return application_q3_command_bind(storage,arguments,error);
+}
+
 bool application_q3_command_bind(application_q3_command_storage *storage,
     qa_command_tokens *arguments,qa_error *error)
 {

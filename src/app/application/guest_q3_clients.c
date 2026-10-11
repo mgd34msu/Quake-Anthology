@@ -262,6 +262,25 @@ bool application_q3_guest_client_think(application_provider *provider, uint32_t 
     return ok;
 }
 
+bool q3g_command_begin(struct application_q3_guest *engine,const char *text,
+    const char *const *values,size_t count,qa_command_tokens *prior,qa_error *error)
+{
+    if(engine->command_depth==sizeof(engine->client_commands)/sizeof(*engine->client_commands))
+        return application_fail(error,QA_ERROR_FORMAT,"Q3 command nesting exceeds fixed storage");
+    application_q3_command_storage *storage=engine->client_commands+engine->command_depth;
+    qa_command_tokens next={0};
+    bool okay=text?application_q3_command_parse(storage,text,&next,error):
+        application_q3_command_vector(storage,values,count,&next,error);
+    if(!okay) return false;
+    *prior=engine->arguments;engine->arguments=next;++engine->command_depth;
+    return true;
+}
+void q3g_command_end(struct application_q3_guest *engine,qa_command_tokens prior)
+{
+    --engine->command_depth;
+    qa_command_tokens_free(&engine->arguments);engine->arguments=prior;
+}
+
 bool application_q3_guest_client_command(application_provider *provider, uint32_t slot,
                                            const char *text, qa_error *error)
 {
@@ -271,12 +290,11 @@ bool application_q3_guest_client_command(application_provider *provider, uint32_
         client_slot(provider, slot, &engine, error);
     if (!client || !client->connected || !text)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 command requires a connected client");
-    qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, NULL, NULL, error)) return false;
-    qa_command_tokens prior = engine->arguments; engine->arguments = next;
+    qa_command_tokens prior;
+    if(!q3g_command_begin(engine,text,NULL,0,&prior,error)) return false;
     int32_t argument = (int32_t)slot, result;
     bool ok = q3g_call(engine->game, 6, &argument, 1, &result, error);
-    qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
+    q3g_command_end(engine,prior);
     if (ok && !shutdown) ok = application_guest_bots_admit(provider, error);
     if (ok && !shutdown) ok = application_guest_clients_drain(provider, error);
     return ok;
@@ -294,38 +312,11 @@ bool application_q3_guest_client_command_vector(application_provider *provider, 
     q3g_client *client = client_slot(provider, slot, &engine, error);
     if (!client || !client->connected || !qa_actor_id_equal(client->actor, actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Source command vector lost its connected full actor");
-    size_t storage = 0, args = 0;
-    for (size_t i = 0; i < count; ++i) {
-        if (!values[i]) return application_fail(error, QA_ERROR_ARGUMENT, "Source command vector has an absent word");
-        size_t length = strlen(values[i]);
-        if (length == SIZE_MAX || length + 1 > SIZE_MAX - storage ||
-            (i && length + (i > 1) > SIZE_MAX - args))
-            return application_fail(error, QA_ERROR_MEMORY, "Source command vector exceeds its retained text extent");
-        storage += length + 1;
-        if (i) args += length + (i > 1);
-    }
-    if (args == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Source command arguments exceed address space");
-    qa_command_tokens next = {.count = count, .values = calloc(count, sizeof(char *)),
-        .storage = malloc(storage), .args_text = malloc(args + 1)};
-    if (!next.values || !next.storage || !next.args_text) {
-        qa_command_tokens_free(&next);
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining exact Source command vector");
-    }
-    size_t offset = 0, tail = 0;
-    for (size_t i = 0; i < count; ++i) {
-        size_t length = strlen(values[i]);
-        next.values[i] = next.storage + offset;
-        memcpy(next.values[i], values[i], length + 1); offset += length + 1;
-        if (i) {
-            if (i > 1) next.args_text[tail++] = ' ';
-            memcpy(next.args_text + tail, values[i], length); tail += length;
-        }
-    }
-    next.args_text[tail] = 0;
-    qa_command_tokens prior = engine->arguments; engine->arguments = next;
+    qa_command_tokens prior;
+    if(!q3g_command_begin(engine,NULL,values,count,&prior,error)) return false;
     int32_t argument = (int32_t)slot, result;
     bool ok = q3g_call(engine->game, 6, &argument, 1, &result, error);
-    qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
+    q3g_command_end(engine,prior);
     if (ok) ok = application_guest_bots_admit(provider, error);
     if (ok) ok = application_guest_clients_drain(provider, error);
     return ok;
