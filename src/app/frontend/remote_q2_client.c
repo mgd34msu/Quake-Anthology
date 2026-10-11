@@ -197,6 +197,8 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
         .cl_hit_markers=qa_cvars_resolve(registry,"cl_hit_markers"),
         .cl_lights=qa_cvars_resolve(registry,"cl_lights"),
         .cl_particles=qa_cvars_resolve(registry,"cl_particles"),
+        .cl_vwep=qa_cvars_resolve(registry,"cl_vwep"),
+        .cl_noskins=qa_cvars_resolve(registry,"cl_noskins"),
         .crosshair=qa_cvars_resolve(registry,"crosshair"),
         .gl_damageblend_frac=qa_cvars_resolve(registry,"gl_damageblend_frac"),
         .paused=qa_cvars_resolve(registry,"paused"),

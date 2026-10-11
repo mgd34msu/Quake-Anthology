@@ -379,7 +379,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
         size_t index = (dispatch == QA_NATIVE_Q2_IMPORT_Draw_RegisterPic) ? 0 : (dispatch == QA_NATIVE_Q2_IMPORT_Draw_GetPicSize) ? 2 : 4;
         const char *name=NULL; const qa_scene_image *image = NULL;
         bool ok = borrowed_text_argument(source,call,index,&name,error) && picture(source,name,
-            dispatch==QA_NATIVE_Q2_IMPORT_Draw_RegisterPic || dispatch==QA_NATIVE_Q2_IMPORT_Draw_GetPicSize,&image,error);
+            dispatch==QA_NATIVE_Q2_IMPORT_Draw_RegisterPic,&image,error);
         if (ok && import->slot == 21) result->as.u8 = image != NULL;
         else if (ok && import->slot == 22) {
             uint8_t width[4], height[4]; qa_store_u32le(width, image ? image->logical_width : UINT32_MAX); qa_store_u32le(height, image ? image->logical_height : UINT32_MAX);

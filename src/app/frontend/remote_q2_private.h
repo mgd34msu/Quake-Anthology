@@ -65,6 +65,7 @@ typedef struct remote_q2_cvar_handles {
     qa_cvar_handle cl_hit_markers;
     qa_cvar_handle cl_lights;
     qa_cvar_handle cl_particles;
+    qa_cvar_handle cl_vwep, cl_noskins;
     qa_cvar_handle crosshair;
     qa_cvar_handle gl_damageblend_frac;
     qa_cvar_handle paused;
@@ -76,6 +77,7 @@ struct frontend_remote_q2 {
     qa_frontend *frontend;
     frontend_remote_q2_options options;
     remote_q2_cvar_handles cvar_handles;
+    qa_string_id client_icons[257];
     qa_input_tuning_handles input_tuning;
     uint64_t identity, loading_generation, content_generation, received_ns, sample_ns;
     uint32_t acknowledged;

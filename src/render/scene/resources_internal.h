@@ -69,6 +69,15 @@ typedef struct image_cache {
     uint8_t palette[768], translation[256];
     qa_scene_image *image;
 } image_cache;
+typedef struct image_request {
+    qa_strings *strings;
+    qa_string_id name, path;
+    size_t next, cache_index;
+    uint64_t lookup_generation;
+    qa_status status;
+    qa_scene_filter filter;
+    bool picture, rerelease, exact_file;
+} image_request;
 typedef struct image_alias {
     struct image_alias *next;
     char *name, *request, *source_path, *logical_path;
@@ -96,6 +105,9 @@ struct qa_scene_resources {
     void *source_admit_context;
     owned_image *variants;
     image_cache *cache;
+    image_request *requests;
+    size_t *request_buckets;
+    size_t request_count, request_capacity, request_bucket_count;
     image_alias *aliases;
     size_t cache_count, cache_capacity;
     qa_buffer palettes[3];

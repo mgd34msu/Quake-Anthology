@@ -27,7 +27,7 @@ static void appearance(frontend_remote_q2 *row, const char *text, char model[64]
     const char *start = strchr(text, '\\'); start = start ? start + 1 : text;
     const char *slash = strchr(start, '/');
     if (!slash && !remote_q2_rerelease_presentation(row)) slash = strchr(start, '\\');
-    const qa_cvar_view *setting = qa_cvars_find(row->options.domain.cvars, "cl_noskins");
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars,row->cvar_handles.cl_noskins);
     double noskins = setting ? setting->number : 0;
     size_t length = slash ? (size_t)(slash - start) : 0;
     if (!length || length >= 64) strcpy(model, "male");
@@ -73,7 +73,7 @@ static const char *weapon_name(frontend_remote_q2 *row, uint32_t weapon)
     return NULL;
 }
 static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
-    remote_q2_clientinfo *out, bool base, qa_error *error)
+    remote_q2_clientinfo *out, uint32_t player, bool admit, bool base, qa_error *error)
 {
     char model[64], skin[64]; appearance(row, text, model, skin);
     bool has_model = false, has_skin = false, has_weapon = false;
@@ -99,7 +99,7 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
         if (remote_q2_rerelease_presentation(row)) strcpy(skin, "grunt");
         if (!skin_admit(row, out->skin, &has_skin, error)) return false;
     }
-    const qa_cvar_view *vwep = qa_cvars_find(row->options.domain.cvars, "cl_vwep");
+    const qa_cvar_view *vwep = qa_cvars_read(row->options.domain.cvars,row->cvar_handles.cl_vwep);
     if ((vwep && vwep->number == 0) || weapon >= 32) weapon = 0;
     const char *name = weapon_name(row, weapon);
     if (name && *name) {
@@ -116,18 +116,23 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
         if (!model_admit(row, out->weapon, &has_weapon, error)) return false;
     }
     if (!has_weapon) *out->weapon = 0;
-    char appearance[256]; snprintf(appearance, sizeof(appearance), "%s/%s", model, skin);
-    qa_error issue = {0};qa_string_id icon_id;
-    if(!qa_hud_q2_player_icon(row->hud_names.strings,appearance,strlen(appearance),&icon_id,error))return false;
-    const qa_scene_image *image = qa_scene_q2_picture(row->images,row->hud_names.strings,icon_id,
+    qa_error issue = {0};qa_string_id icon_id=row->client_icons[player];
+    const qa_scene_image *image=NULL;
+    if (admit) {
+        char appearance[256];snprintf(appearance,sizeof(appearance),"%s/%s",model,skin);
+        if (!qa_hud_q2_player_icon(row->hud_names.strings,appearance,strlen(appearance),&icon_id,error)) return false;
+        image=qa_scene_q2_picture(row->images,row->hud_names.strings,icon_id,
+            remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,&issue);
+        row->client_icons[player]=icon_id;
+    } else image=qa_scene_q2_picture_read(row->images,row->hud_names.strings,icon_id,
         remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,&issue);
-    if (!image && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) { if (error) *error = issue; return false; }
+    if (!image && issue.code!=QA_OK && issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=issue;return false;}
     out->icon=icon_id;
     bool default_weapon = false; char default_path[256];
     snprintf(default_path, sizeof(default_path), "players/%s/weapon.md2", model);
     if (!model_admit(row, default_path, &default_weapon, error)) return false;
     out->valid = has_model && has_skin && default_weapon && (remote_q2_rerelease_presentation(row) || image);
-    if (!out->valid && !base) return load(row, "male/grunt", 0, out, true, error);
+    if (!out->valid && !base) return load(row, "male/grunt", 0, out, 256, admit, true, error);
     if (!has_weapon && !base) {
         bool fallback = false; strcpy(out->weapon, "players/male/weapon.md2");
         if (!model_admit(row, out->weapon, &fallback, error)) return false;
@@ -141,18 +146,18 @@ bool remote_q2_clientinfo_read(frontend_remote_q2 *row, uint32_t player, uint32_
     if (!row || !out || !row->materials || player > 256) return false;
     *out = (remote_q2_clientinfo){0};
     bool ok=load(row, player == 256 ? "male/grunt" : frontend_remote_q2_config(row,
-        (uint16_t)(row->layout.players + player)), weapon, out, player == 256, error);
-    if(ok&&player<256) row->hud_names.icons[player]=out->icon;
+        (uint16_t)(row->layout.players + player)), weapon, out, player, false, player == 256, error);
     return ok;
 }
 bool remote_q2_clientinfo_prepare(frontend_remote_q2 *row, qa_error *error)
 {
     remote_q2_clientinfo info;
-    if (!remote_q2_clientinfo_read(row, 256, 0, &info, error)) return false;
+    if (!load(row,"male/grunt",0,&info,256,true,true,error)) return false;
     for (uint32_t i = 0; i < 256; ++i) {
         if (!*frontend_remote_q2_config(row, (uint16_t)(row->layout.players + i))) continue;
         for (uint32_t weapon = 0; weapon < 32 && weapon_name(row, weapon); ++weapon)
-            if (!remote_q2_clientinfo_read(row, i, weapon, &info, error)) return false;
+            if (!load(row,frontend_remote_q2_config(row,(uint16_t)(row->layout.players+i)),weapon,&info,i,true,false,error)) return false;
+        row->hud_names.icons[i]=info.icon;
     }
     return true;
 }

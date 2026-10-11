@@ -943,6 +943,9 @@ void qa_scene_resources_destroy(qa_scene_resources *resources)
         qa_vfs_acquisition_dispose(&resources->cache[i].palette_opening);
     }
     free(resources->cache);
+    for (size_t i=0;i<resources->request_count;++i)
+        if (resources->requests[i].picture) qa_strings_destroy(resources->requests[i].strings);
+    free(resources->requests); free(resources->request_buckets);
     while (resources->aliases) {
         image_alias *alias = resources->aliases; resources->aliases = alias->next; scene_resource_alias_free(alias);
     }
@@ -1426,6 +1429,16 @@ bool qa_scene_resource_policy_ready(qa_scene_resource_policy *ticket, qa_error *
                 if (!recipient_binding_prepare(ticket, root, binding->source, error)) return false;
         }
     }
+    for (size_t i=0;i<ticket->owner->request_count;++i) {
+        const image_request *request=ticket->owner->requests+i;
+        if (!request->picture) continue;
+        qa_error issue={0};
+        if (!qa_scene_q2_picture(ticket->destination,request->strings,request->name,
+            request->rerelease,request->filter,&issue) && issue.code!=QA_OK && issue.code!=QA_ERROR_NOT_FOUND) {
+            if (error) *error=issue;
+            return false;
+        }
+    }
     scene_names *names = ticket->owner->names, *destination = ticket->destination->names;
     if (!qa_scene_resources_idle(ticket->destination) ||
         destination->image_count > SIZE_MAX - names->image_count ||
@@ -1483,8 +1496,18 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
     owner->cache = destination->cache; owner->cache_count = destination->cache_count;
     owner->cache_capacity = destination->cache_capacity;
     destination->cache = cache; destination->cache_count = count; destination->cache_capacity = capacity;
+    image_request *requests=owner->requests; size_t *buckets=owner->request_buckets;
+    size_t request_count=owner->request_count, request_capacity=owner->request_capacity,
+        bucket_count=owner->request_bucket_count;
+    owner->requests=destination->requests; owner->request_buckets=destination->request_buckets;
+    owner->request_count=destination->request_count; owner->request_capacity=destination->request_capacity;
+    owner->request_bucket_count=destination->request_bucket_count;
+    destination->requests=requests; destination->request_buckets=buckets;
+    destination->request_count=request_count; destination->request_capacity=request_capacity;
+    destination->request_bucket_count=bucket_count;
     uint64_t lookup_generation=qa_vfs_lookup_generation(owner->vfs);
     for (size_t i=0;i<owner->cache_count;++i) owner->cache[i].lookup_generation=lookup_generation;
+    for (size_t i=0;i<owner->request_count;++i) owner->requests[i].lookup_generation=lookup_generation;
     image_alias *aliases = owner->aliases; owner->aliases = destination->aliases; destination->aliases = aliases;
     owned_image *variants = owner->variants;
     if (!ticket->source_restart) {
@@ -2801,6 +2824,67 @@ static bool same_options(const image_cache *entry, const qa_scene_image_options 
         (options->translation.size == 0 || memcmp(entry->translation, options->translation.data, 256) == 0);
 }
 
+/* Bucket selection uses interned IDs; content is never fingerprinted. */
+static size_t request_bucket(qa_string_id name,size_t count)
+{ return ((size_t)name * UINT32_C(2654435761)) & (count-1); }
+static bool request_reserve(qa_scene_resources *resources,qa_error *error)
+{
+    if (resources->request_count<resources->request_capacity) return true;
+    size_t capacity=resources->request_capacity?resources->request_capacity*2:64;
+    if (capacity<resources->request_capacity || capacity>SIZE_MAX/2/sizeof(size_t) ||
+        capacity>SIZE_MAX/sizeof(*resources->requests)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Image request index overflow");return false;
+    }
+    image_request *rows=realloc(resources->requests,capacity*sizeof(*rows));
+    if (!rows) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating image request index");return false;}
+    resources->requests=rows;
+    size_t count=capacity*2;
+    size_t *buckets=calloc(count,sizeof(*buckets));
+    if (!buckets) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating image request buckets");return false;}
+    for (size_t i=0;i<resources->request_count;++i) {
+        size_t bucket=request_bucket(rows[i].name,count);
+        rows[i].next=buckets[bucket];buckets[bucket]=i+1;
+    }
+    free(resources->request_buckets);resources->request_buckets=buckets;
+    resources->request_bucket_count=count;resources->request_capacity=capacity;
+    return true;
+}
+static size_t request_add(qa_scene_resources *resources,image_request value)
+{
+    size_t index=resources->request_count++,bucket=request_bucket(value.name,resources->request_bucket_count);
+    value.next=resources->request_buckets[bucket];resources->requests[index]=value;
+    resources->request_buckets[bucket]=index+1;return index;
+}
+static image_cache *cache_find(qa_scene_resources *resources,qa_string_id name,
+    const qa_scene_image_options *options,bool exact_file)
+{
+    if (!name || !resources->request_bucket_count) return NULL;
+    size_t row=resources->request_buckets[request_bucket(name,resources->request_bucket_count)];
+    while (row) {
+        const image_request *request=resources->requests+row-1;
+        if (!request->picture && request->name==name && request->exact_file==exact_file) {
+            image_cache *entry=resources->cache+request->cache_index;
+            if (same_options(entry,options)) return entry;
+        }
+        row=request->next;
+    }
+    return NULL;
+}
+static size_t picture_request_find(const qa_scene_resources *resources,const qa_strings *strings,
+    qa_string_id name,bool rerelease,qa_scene_filter filter)
+{
+    if (resources->request_bucket_count) {
+        size_t row=resources->request_buckets[request_bucket(name,resources->request_bucket_count)];
+        while (row) {
+            const image_request *request=resources->requests+row-1;
+            if (request->picture && request->strings==strings && request->name==name &&
+                request->rerelease==rerelease && request->filter==filter) return row-1;
+            row=request->next;
+        }
+    }
+    return SIZE_MAX;
+}
+
 bool qa_scene_image_request_read(const qa_scene_resources *resources, const qa_scene_image *image,
     qa_scene_image_request *out)
 {
@@ -2827,6 +2911,7 @@ static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resou
                       const qa_scene_image_options *options, bool exact_file,
                       qa_scene_image *image, qa_error *error)
 {
+    if (!request_reserve(resources,error)) return false;
     if (resources->cache_count == resources->cache_capacity) {
         size_t capacity = resources->cache_capacity == 0 ? 64 : resources->cache_capacity * 2;
         if (capacity < resources->cache_capacity || capacity > (size_t)PTRDIFF_MAX / sizeof(*resources->cache)) {
@@ -2869,6 +2954,7 @@ static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resou
     if (options->translation.size != 0) memcpy(entry->translation, options->translation.data, 256);
     qa_scene_image_retain(image);
     qa_resource_retain(source); qa_resource_retain(logical_source);
+    request_add(resources,(image_request){.name=name,.cache_index=resources->cache_count,.exact_file=exact_file});
     ++resources->cache_count;
     /* The completed recipe now owns the immutable decoder inputs. Only
      * uncached Source constructors need a separate pre-upload pixel copy. */
@@ -3054,12 +3140,8 @@ static bool image_alias_load(qa_scene_resources *resources, const image_alias *a
             alias->palette_attempted, alias->palette_error, error)) return false;
     qa_string_id name = 0;
     if (!qa_strings_intern_cstr(resources->names->strings, alias->name, &name, error)) return false;
-    for (size_t i = 0; i < resources->cache_count; ++i) {
-        image_cache *entry = resources->cache + i;
-        if (entry->name == name && !entry->exact_file && same_options(entry, options)) {
-            qa_scene_image_retain(entry->image); *out = entry->image; return true;
-        }
-    }
+    image_cache *entry=cache_find(resources,name,options,false);
+    if (entry) {qa_scene_image_retain(entry->image);*out=entry->image;return true;}
     qa_scene_image_options decode = alias->decode_options;
     decode.wrap = options->wrap; decode.filter = options->filter; decode.mipmap = options->mipmap;
     image_decode_context context = {.alias = alias}; qa_scene_image *image = NULL;
@@ -3225,15 +3307,12 @@ static bool image_load(qa_scene_resources *resources, const char *name,
         if (!size_ok || !observed) { failed = true; goto image_done; }
         uint64_t source_id = qa_resource_id(resource), logical_id = original == NULL ? 0 : qa_resource_id(original);
         qa_scene_image *image = NULL;
-        for (size_t i = 0; i < resources->cache_count; ++i) {
-            image_cache *entry = &resources->cache[i];
-            if (entry->name == name_id && entry->source == source_id && entry->logical_source == logical_id &&
-                entry->exact_file == exact_file && same_options(entry, options)) {
-                if (!image_palette_receipt(receipt, entry->palette_source, &entry->palette_opening,
-                    entry->palette_attempted, entry->palette_error, error)) { failed = true; goto image_done; }
-                entry->lookup_generation = qa_vfs_lookup_generation(resources->vfs);
-                qa_scene_image_retain(entry->image); image = entry->image; break;
-            }
+        image_cache *entry=cache_find(resources,name_id,options,exact_file);
+        if (entry && entry->source==source_id && entry->logical_source==logical_id) {
+            if (!image_palette_receipt(receipt,entry->palette_source,&entry->palette_opening,
+                entry->palette_attempted,entry->palette_error,error)) {failed=true;goto image_done;}
+            entry->lookup_generation=qa_vfs_lookup_generation(resources->vfs);
+            qa_scene_image_retain(entry->image);image=entry->image;
         }
         if (image != NULL) { *out = image; result = true; goto image_done; }
         image_decode_context context = {.observation = receipt ? receipt : &palette_observation, .source = resource};
@@ -3293,10 +3372,22 @@ static const qa_scene_image *q2_picture(qa_scene_resources *resources, qa_string
     qa_string_id name_id, bool rerelease, qa_scene_filter filter, bool admit, qa_error *error)
 {
     if (!resources || !strings || !name_id) return NULL;
+    uint64_t generation=qa_vfs_lookup_generation(resources->vfs);
+    size_t index=picture_request_find(resources,strings,name_id,rerelease,filter);
+    if (index!=SIZE_MAX) {
+        const image_request *request=resources->requests+index;
+        if (request->lookup_generation==generation) {
+            if (request->status==QA_OK) return resources->cache[request->cache_index].image;
+            qa_error_set(error,request->status,0,"Q2 picture is not available");return NULL;
+        }
+    }
+    if (!admit) {qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q2 picture is not precached");return NULL;}
     const char *name=qa_strings_cstr(strings,name_id);
     if (!name || !*name) return NULL;
-    char path[4096];
-    if (!qa_scene_q2_picture_path(name,rerelease,path,sizeof(path),error)) return NULL;
+    char path[4096];qa_string_id path_id;
+    if (index!=SIZE_MAX) path_id=resources->requests[index].path;
+    else if (!qa_scene_q2_picture_path(name,rerelease,path,sizeof(path),error) ||
+        !qa_strings_intern_cstr(resources->names->strings,path,&path_id,error)) return NULL;
     bool prefixed=name[0]=='/' || name[0]=='\\';
     qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,
         .wrap=QA_SCENE_CLAMP,.filter=filter,.transparent=true,.transparent_index=255};
@@ -3308,18 +3399,26 @@ static const qa_scene_image *q2_picture(qa_scene_resources *resources, qa_string
         options.wrap=sprite?QA_SCENE_CLAMP:QA_SCENE_REPEAT;
         if (sprite) options.transparent_index=-1;
     }
-    qa_string_id path_id=qa_strings_find(resources->names->strings,(qa_bytes){(const uint8_t *)path,strlen(path)});
-    uint64_t generation=qa_vfs_lookup_generation(resources->vfs);
-    for (size_t i=0;path_id && i<resources->cache_count;++i) {
-        const image_cache *entry=resources->cache+i;
-        if (entry->name==path_id && !entry->exact_file && entry->lookup_generation==generation && same_options(entry,&options))
-            return entry->image;
+    image_cache *entry=cache_find(resources,path_id,&options,false);
+    qa_status status=QA_OK;
+    if (!entry || entry->lookup_generation!=generation) {
+        qa_scene_image *image=NULL;qa_error issue={0};
+        if (!qa_scene_image_load(resources,qa_strings_cstr(resources->names->strings,path_id),&options,&image,&issue)) {
+            if (issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=issue;return NULL;}
+            status=issue.code;
+        } else {qa_scene_image_release(image);entry=cache_find(resources,path_id,&options,false);}
     }
-    if (!admit) {qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q2 picture is not precached");return NULL;}
-    qa_scene_image *image=NULL;
-    if (!qa_scene_image_load(resources,path,&options,&image,error)) return NULL;
-    qa_scene_image_release(image); /* The bank's existing image cache owns the handle. */
-    return image;
+    size_t cache_index=status==QA_OK?(size_t)(entry-resources->cache):0;
+    if (index==SIZE_MAX) {
+        if (!request_reserve(resources,error)) return NULL;
+        qa_strings_retain(strings);
+        index=request_add(resources,(image_request){.strings=strings,.name=name_id,.path=path_id,
+            .picture=true,.rerelease=rerelease,.filter=filter});
+    }
+    image_request *request=resources->requests+index;
+    request->lookup_generation=generation;request->status=status;request->cache_index=cache_index;
+    if (status!=QA_OK) {qa_error_set(error,status,0,"Q2 picture is not available");return NULL;}
+    return resources->cache[cache_index].image;
 }
 const qa_scene_image *qa_scene_q2_picture(qa_scene_resources *resources,qa_strings *strings,
     qa_string_id name,bool rerelease,qa_scene_filter filter,qa_error *error)
