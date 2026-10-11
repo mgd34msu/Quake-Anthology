@@ -1486,8 +1486,7 @@ bool q2m_set_power_cells(q2m_context *context, qa_power_kind kind, double cells,
     inventory = game->services.inventory;
     if (kind == QA_POWER_NONE && !qa_inventory_has(inventory, id))
       return true;
-    if (!qa_builtin_resource(&game->services, "q2:monster-power", &item, error))
-      return false;
+    item=game->runtime_names[Q2_NAME_RESOURCE_Q2_MONSTER_POWER];
   }
   qa_inventory_entry entry = {.item = item, .count = cells, .capacity = cells};
   qa_inventory_admission *admission;
@@ -1900,9 +1899,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   } else if (qa_inventory_has(game->services.inventory, id)) {
     qa_inventory *inventory = game->services.inventory;
     qa_item_id item;
-    if (!qa_combat_power_inventory(game->services.combat, id, &inventory, &item) &&
-        !qa_builtin_resource(&game->services, "q2:monster-power", &item, error))
-      return false;
+    if (!qa_combat_power_inventory(game->services.combat, id, &inventory, &item)) item=game->runtime_names[Q2_NAME_RESOURCE_Q2_MONSTER_POWER];
     qa_inventory_entry fuel;
     qa_error local = {0};
     bool found = qa_inventory_entry_read(inventory, id, item, &fuel, &local);

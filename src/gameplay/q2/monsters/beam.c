@@ -175,9 +175,7 @@ static bool spawn_beam(q2m_context *context, qa_actor_id target,
   if (!q2m_alive(context))
     return true;
   qa_actor_definition definition;
-  if (!qa_builtin_resource(&context->game->services, "dabeam", &definition,
-                           error))
-    return false;
+  definition=context->game->runtime_names[Q2_NAME_RESOURCE_DABEAM];
 
   qa_vec3 aim = direction;
   qa_body_state body = {
@@ -556,9 +554,7 @@ bool q2m_spawn_boss_exploder(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   qa_actor_definition definition;
-  if (!qa_builtin_resource(&context->game->services, "boss_exploder",
-                           &definition, error))
-    return false;
+  definition=context->game->runtime_names[Q2_NAME_RESOURCE_BOSS_EXPLODER];
   qa_builtin_spawn spawn = {
       .owner = context->game->options.owner,
       .definition = definition,
@@ -613,9 +609,7 @@ bool q2m_spawn_makron_entity(q2m_context *context, qa_actor_id *child,
            qa_session_strings(context->game->services.session), parent.target)},
   };
   qa_actor_definition definition;
-  if (!qa_builtin_resource(&context->game->services, "monster_makron",
-                           &definition, error))
-    return false;
+  definition=context->game->runtime_names[Q2_NAME_RESOURCE_MONSTER_MAKRON];
   qa_builtin_spawn spawn = {
       .owner = context->game->options.owner,
       .definition = definition,

@@ -66,8 +66,8 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             if (hit.fraction < 1 && (s->spawnflags & 0x80000000u)) {
                 s->spawnflags &= ~0x80000000u;
                 qa_string_id effect;
-                if (!qa_builtin_resource(&g->services, "q2:laser-sparks", &effect, e) ||
-                    !qa_builtin_emit(&g->services,
+                effect=g->runtime_names[Q2_NAME_LASER_SPARKS];
+                if (!qa_builtin_emit(&g->services,
                                      &(qa_builtin_event){.kind = QA_BUILTIN_IMPACT,
                                                          .family = QA_GAME_Q2,
                                                          .provider = g->options.owner,
@@ -80,8 +80,7 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                                          .count = sparks,
                                                          .code = s->visual.skin & 255,
                                                          .time_ns = g->now_ns},
-                                     e))
-                    goto out;
+                                     e)) goto out;
             }
             break;
         }

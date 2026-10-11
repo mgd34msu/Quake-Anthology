@@ -46,9 +46,7 @@ static bool armor(q2m_context *context, qa_error *error) {
     qa_actor_id id = context->actor->id;
     qa_inventory *inventory = game->services.inventory;
     qa_item_id item;
-    if (!qa_combat_power_inventory(game->services.combat, id, &inventory, &item) &&
-        !qa_builtin_resource(&game->services, "q2:monster-power", &item, error))
-        return false;
+    if (!qa_combat_power_inventory(game->services.combat, id, &inventory, &item)) item=game->runtime_names[Q2_NAME_RESOURCE_Q2_MONSTER_POWER];
     qa_inventory_entry fuel;
     qa_error observed = {0};
     bool present = qa_inventory_entry_read(inventory, id, item, &fuel, &observed);

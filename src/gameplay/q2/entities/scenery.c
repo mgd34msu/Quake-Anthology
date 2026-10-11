@@ -190,8 +190,7 @@ static bool barrel_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (g->now_ns >= s->timestamp_ns) s->stage = Q2_BARREL_EXPLODE;
         s->visual.effects |= UINT64_C(1) << 35;
         s->loop_sound = s->noise;
-        if (!s->loop_sound && !qa_builtin_resource(&g->services, QA_Q2_SOUND_WEAPONS_BFG__L1A,
-            &s->loop_sound, e)) return false;
+        if (!s->loop_sound) s->loop_sound=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_BFG_L1A_WAV];
         return q2_entity_show(g, a, e) && (!q2_actor_live(g, a->id) ||
             q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS));
     }
@@ -489,8 +488,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         a->physics.motion = QA_PHYSICS_STEP;
         s->touchable = true;
-        if (g->options.edition == QA_Q2_RERELEASE &&
-            !qa_builtin_resource(&g->services, QA_Q2_SOUND_WEAPONS_BFG__L1A, &s->noise, e)) return false;
+        if (g->options.edition == QA_Q2_RERELEASE) s->noise=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_BFG_L1A_WAV];
         q2_entity_schedule(g, a, Q2ET_SCENERY,
             g->options.edition == QA_Q2_RERELEASE ? .05f : 2 * (float)g->frame_ns / Q2_NS);
         return model(g, a, "models/objects/barrels/tris.md2",
@@ -633,15 +631,12 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         s->usable = true;
         s->visual.effects = (s->spawnflags & 1) ? 0 : 0x800000;
         a->physics.motion = QA_PHYSICS_STOP;
-        if (!health(g, a, s->health, 0, true, false, e) ||
-            !qa_builtin_resource(&g->services, "models/objects/light/tris.md2",
-                                 &s->visual.models[0], e))
-            return false;
+        if (!health(g, a, s->health, 0, true, false, e)) return false;
+        s->visual.models[0]=g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_LIGHT_TRIS_MD2];
         return q2_entity_solid(g, a, QA_PHYSICS_BOX, e) &&
                (!q2_actor_live(g, a->id) || q2_entity_show(g, a, e));
     case Q2S_REPAIR:
-        if (!qa_builtin_resource(&g->services, "object_repair", &s->classname, e))
-            return false;
+        s->classname=g->runtime_names[Q2_NAME_RESOURCE_OBJECT_REPAIR];
         if (s->delay == 0)
             s->delay = 1;
         if (!health(g, a, 100, 0, false, false, e))

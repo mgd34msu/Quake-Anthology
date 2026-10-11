@@ -107,8 +107,7 @@ bool q2_player_reserve_corpses(qa_q2_game *g, qa_error *e) {
     for (size_t i = 0; i < 8; i++)
         if (!q2_actor_live(g, p->corpses[i])) {
             qa_string_id name;
-            if (!qa_builtin_resource(&g->services, "bodyque", &name, e))
-                return false;
+            name=g->runtime_names[Q2_NAME_BODYQUE];
             qa_builtin_spawn spawn = {.owner = g->options.owner,
                                       .definition = name,
                                       .combat = &(qa_combat_state){0}};
@@ -237,8 +236,7 @@ static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     runtime->restart_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
     qa_string_id message;
-    if (!qa_builtin_resource(&g->services, "$g_coop_lose", &message, e))
-        return false;
+    message=g->runtime_names[Q2_NAME_RESOURCE_G_COOP_LOSE];
     players = q2_player_roster(g, e);
     if (!players)
         return false;

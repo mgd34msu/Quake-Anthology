@@ -189,9 +189,8 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                                           .direction = trace.contact_plane.normal,
                                           .count = 8,
                                           .code = color};
-                if (!qa_builtin_resource(&c->game->services, "q2:splash", &event.resource, e) ||
-                    !qa_builtin_emit(&c->game->services, &event, e))
-                    return false;
+                event.resource=c->game->runtime_names[Q2_NAME_RESOURCE_Q2_SPLASH];
+                if (!qa_builtin_emit(&c->game->services, &event, e)) return false;
                 query.end = spread(c, trace.end, qa_vec_sub(query.end, start), hs * 2, vs * 2);
             }
             mask &= ~Q2_WATER_MASK;

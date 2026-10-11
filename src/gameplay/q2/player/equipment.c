@@ -113,8 +113,7 @@ bool q2_player_compass_update(qa_q2_game *g, q2_actor *a, bool first, qa_error *
     if (!q2_actor_live(g, a->id))
         return true;
     qa_string_id sound;
-    if (!qa_builtin_resource(&g->services, QA_Q2_SOUND_MISC_HELP_MARKER, &sound, e))
-        return false;
+    sound=g->runtime_names[Q2_NAME_RESOURCE_MISC_HELP_MARKER_WAV];
     return qa_builtin_emit(&g->services,
                            &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
                                                .actor = a->id,

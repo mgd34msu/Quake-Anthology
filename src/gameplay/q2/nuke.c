@@ -300,9 +300,8 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
     }
     qa_actor_definition definition;
     qa_item_id weapon;
-    if (!qa_builtin_resource(&g->services, "nuke", &definition, e) ||
-        !qa_builtin_resource(&g->services, "q2:ammo_nuke", &weapon, e))
-        return false;
+    definition=g->runtime_names[Q2_NAME_RESOURCE_NUKE];
+    weapon=g->runtime_names[Q2_NAME_RESOURCE_Q2_AMMO_NUKE];
     qa_vec3 angles =
                 qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
                       atan2f(direction.y, direction.x) * 57.29577951308232f, 0),

@@ -367,7 +367,8 @@ bool q2_rerelease_poi(qa_q2_game *g, q2_actor *source, qa_actor_id activator, qa
                 break;
             }
     r->poi_image = q2_field_id(v, g->field_keys[QA_TARGET_KEY_IMAGE]);
-    return r->poi_image || qa_builtin_resource(&g->services, "friend", &r->poi_image, e);
+    if (!r->poi_image) r->poi_image=g->runtime_names[Q2_NAME_RESOURCE_FRIEND];
+    return true;
 }
 static bool world_text(qa_q2_game *g, q2_actor *a, qa_error *e) {
     static const qa_vec3 colors[] = {
@@ -429,8 +430,7 @@ static bool sky(qa_q2_game *g, q2_actor *a, bool initial, qa_error *e) {
     q2_entity_state *s = a->entity;
     if (initial || q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKY]))
         r->sky = q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKY]);
-    if (initial && !r->sky && !qa_builtin_resource(&g->services, "unit1_", &r->sky, e))
-        return false;
+    if (initial && !r->sky) r->sky=g->runtime_names[Q2_NAME_RESOURCE_UNIT1];
     if (initial || q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKYROTATE]))
         r->sky_rotation = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SKYROTATE], 0);
     if (initial || q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKYAUTOROTATE]))
@@ -550,12 +550,8 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
         s->touchable = false;
         if (s->wait == 0)
             s->wait = 1;
-        if (!s->message &&
-            !qa_builtin_resource(&g->services, "$g_coop_wait_for_players", &s->message, e))
-            return false;
-        if (!s->map &&
-            !qa_builtin_resource(&g->services, "$g_coop_players_waiting_for_you", &s->map, e))
-            return false;
+        if (!s->message) s->message=g->runtime_names[Q2_NAME_RESOURCE_G_COOP_WAIT_FOR_PLAYERS];
+        if (!s->map) s->map=g->runtime_names[Q2_NAME_RESOURCE_G_COOP_PLAYERS_WAITING_FOR_YOU];
         if (s->spawnflags & 1)
             return q2_entity_schedule(g, a, Q2ET_COOP_RELAY, s->wait);
         s->usable = true;
@@ -611,8 +607,7 @@ bool q2_rerelease_entity_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_a
         return q2_rerelease_poi(g, a, activator, e);
     case Q2E_MUSIC: {
         qa_string_id track = q2_field_id(s, g->field_keys[QA_TARGET_KEY_SOUNDS]);
-        if (!track && !qa_builtin_resource(&g->services, "0", &track, e))
-            return false;
+        if (!track) track=g->runtime_names[Q2_NAME_RESOURCE_MUSIC_STOP];
         return q2_map_event(
             g, &(qa_q2_map_event){.kind = QA_Q2_MAP_MUSIC, .actor = a->id, .resource = track}, e);
     }

@@ -139,10 +139,8 @@ bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, 
     growth->physics.angular_velocity.x = q2_rerelease_float(game, 280, 360) * 2;
     growth->physics.angular_velocity.y = q2_rerelease_float(game, 280, 360) * 2;
     growth->physics.angular_velocity.z = q2_rerelease_float(game, 280, 360) * 2;
-    if (!qa_builtin_resource(&game->services, "models/items/spawngro3/tris.md2", &p->model,
-                             error) ||
-        !qa_world_link(game->services.world, id, NULL, error))
-        goto failed;
+    p->model=game->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO3_TRIS_MD2];
+    if (!qa_world_link(game->services.world, id, NULL, error)) goto failed;
     if (!q2_actor_live(game, id))
         return true;
     if (!show_growth(game, growth, error))

@@ -20,11 +20,9 @@ static bool set_body(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_e
     return qa_world_body_write(g->services.world, a->id, body, e) &&
            (!q2_actor_live(g, a->id) || qa_world_link(g->services.world, a->id, NULL, e));
 }
-static bool loop(qa_q2_game *g, q2_actor *a, const char *path, qa_error *e) {
+static bool loop(qa_q2_game *g, q2_actor *a, q2_runtime_name name, qa_error *e) {
     q2_companion *c = a->item->companion;
-    qa_string_id sound;
-    if (!qa_builtin_resource(&g->services, path, &sound, e))
-        return false;
+    qa_string_id sound=g->runtime_names[name];
     if (c->loop_sound == sound)
         return true;
     qa_body_state body;
@@ -117,8 +115,7 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     if (!qa_world_body_read(g->services.world, owner, &body, e))
         return false;
     qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, "sphere", &definition, e))
-        return false;
+    definition=g->runtime_names[Q2_NAME_RESOURCE_SPHERE];
     qa_builtin_spawn spawn = {
         .owner = g->options.owner,
         .definition = definition,
@@ -148,14 +145,11 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     a->item->visible = true;
     a->item->visual = (qa_entity_visual){
         .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true, .old_frame = -1, .render_flags = 8 | 0x8000};
-    const char *model = kind == Q2_SPHERE_DEFENDER ? "models/items/defender/tris.md2"
-                        : kind == Q2_SPHERE_HUNTER ? "models/items/hunter/tris.md2"
-                                                   : "models/items/vengnce/tris.md2";
-    if (!qa_builtin_resource(&g->services, model, &a->item->visual.models[0], e) ||
-        (kind == Q2_SPHERE_DEFENDER &&
-         !qa_builtin_resource(&g->services, "models/items/shell/tris.md2",
-                              &a->item->visual.models[1], e)))
-        goto fail;
+    qa_string_id model=g->runtime_names[kind==Q2_SPHERE_DEFENDER ? Q2_NAME_RESOURCE_MODELS_ITEMS_DEFENDER_TRIS_MD2 :
+        kind==Q2_SPHERE_HUNTER ? Q2_NAME_RESOURCE_MODELS_ITEMS_HUNTER_TRIS_MD2 : Q2_NAME_RESOURCE_MODELS_ITEMS_VENGNCE_TRIS_MD2];
+    a->item->visual.models[0]=model;
+    if (kind==Q2_SPHERE_DEFENDER)
+        a->item->visual.models[1]=g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SHELL_TRIS_MD2];
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics_bound = true;
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
@@ -168,9 +162,9 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     if (!q2_item_visual(g, a, e) || !q2_actor_live(g, id))
         goto fail;
     if (!loop(g, a,
-              kind == Q2_SPHERE_DEFENDER ? QA_Q2_SOUND_SPHERES_D_IDLE
-              : kind == Q2_SPHERE_HUNTER ? QA_Q2_SOUND_SPHERES_H_IDLE
-                                         : QA_Q2_SOUND_SPHERES_V_IDLE,
+              kind == Q2_SPHERE_DEFENDER ? Q2_NAME_RESOURCE_SPHERES_D_IDLE_WAV
+              : kind == Q2_SPHERE_HUNTER ? Q2_NAME_RESOURCE_SPHERES_H_IDLE_WAV
+                                         : Q2_NAME_RESOURCE_SPHERES_V_IDLE_WAV,
               e))
         goto fail;
     if (!decoy && q2_actor_live(g, owner)) {
@@ -264,8 +258,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     if (!q2_actor_live(g, owner))
         return true;
     qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, "doppleganger", &definition, e))
-        return false;
+    definition=g->runtime_names[Q2_NAME_RESOURCE_DOPPLEGANGER];
     qa_combat_state combat = {.health = 30, .can_take_damage = true};
     qa_actor_id id, child_id = {0};
     qa_builtin_spawn spawn = {.owner = g->options.owner,
@@ -304,8 +297,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
         *used = true;
         return true;
     }
-    if (!qa_builtin_resource(&g->services, "doppleganger_body", &definition, e))
-        goto fail;
+    definition=g->runtime_names[Q2_NAME_RESOURCE_DOPPLEGANGER_BODY];
     qa_builtin_spawn child_spawn = {
         .owner = g->options.owner,
         .definition = definition,
@@ -486,7 +478,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 speed = 0;
         }
         if (c->kind == Q2_SPHERE_HUNTER &&
-            !loop(g, a, speed > 0 ? QA_Q2_SOUND_SPHERES_H_ACTIVE : QA_Q2_SOUND_SPHERES_H_LURK, e))
+            !loop(g, a, speed > 0 ? Q2_NAME_RESOURCE_SPHERES_H_ACTIVE_WAV : Q2_NAME_RESOURCE_SPHERES_H_LURK_WAV, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;

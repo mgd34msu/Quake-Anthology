@@ -231,9 +231,8 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
                                       .channel = 1,
                                       .volume = 1,
                                       .attenuation = 0.25f};
-            if (!qa_builtin_resource(&g->services, QA_Q2_SOUND_WEAPONS_RAILGR1A, &event.resource, e) ||
-                !qa_builtin_emit(&g->services, &event, e))
-                return false;
+            event.resource=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_RAILGR1A_WAV];
+            if (!qa_builtin_emit(&g->services, &event, e)) return false;
             if (!q2_actor_live(g, a->id))
                 return true;
         }

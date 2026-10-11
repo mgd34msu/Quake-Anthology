@@ -44,8 +44,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         return false;
     qa_actor_id id = source;
     qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, "gib", &definition, e))
-        return false;
+    definition=g->runtime_names[Q2_NAME_GIB];
     if (!head) {
         qa_builtin_spawn spawn = {.owner = g->options.owner, .definition = definition};
         if (!qa_builtin_spawn_actor(&g->services, &spawn, &id, e))
@@ -159,8 +158,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
 static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float speed,
                    qa_vec3 origin, qa_error *e) {
     qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, "debris", &definition, e))
-        return false;
+    definition=g->runtime_names[Q2_NAME_RESOURCE_DEBRIS];
     qa_vec3 impulse;
     impulse.x = 100 * q2_crandom(g);
     impulse.y = 100 * q2_crandom(g);
@@ -357,8 +355,7 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) {
     qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, "spawngro", &definition, e))
-        return false;
+    definition=g->runtime_names[Q2_NAME_RESOURCE_SPAWNGRO];
     qa_body_state body = {.origin = origin, .angles = growth_angles(g)};
     qa_builtin_spawn spawn = {.owner = g->options.owner, .definition = definition, .body = body};
     qa_actor_id id;

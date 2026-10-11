@@ -423,8 +423,8 @@ static bool cable(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end, 
         if (!q2_actor_live(g,owner)) return true;
         event.q2_multicast.origin=body.origin;
     }
-    return qa_builtin_resource(&g->services, "q2:grapple-cable", &event.resource, e) &&
-           qa_builtin_emit(&g->services, &event, e);
+    event.resource=g->runtime_names[Q2_NAME_RESOURCE_Q2_GRAPPLE_CABLE];
+    return qa_builtin_emit(&g->services, &event, e);
 }
 static bool draw_lm(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end, qa_error *e) {
     return qa_vec_length(qa_vec_sub(end, start)) <= 64 ||

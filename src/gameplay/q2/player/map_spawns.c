@@ -71,10 +71,8 @@ bool q2_player_map_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e)
     s->kind = Q2E_POINT;
     if (deathmatch) {
         qa_body_state body;
-        if (!qa_world_body_read(g->services.world, a->id, &body, e) ||
-            !qa_builtin_resource(&g->services, "models/objects/dmspot/tris.md2",
-                                 &s->visual.models[0], e))
-            return false;
+        if (!qa_world_body_read(g->services.world, a->id, &body, e)) return false;
+        s->visual.models[0]=g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_DMSPOT_TRIS_MD2];
         body.bounds = (qa_bounds){{-32, -32, -24}, {32, 32, -16}};
         s->visual.skin = 1;
         s->visual.visible = true;
@@ -124,8 +122,7 @@ bool q2_player_map_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_e
     if (think == Q2ET_PLAYER_SECURITY) {
         static const float x[] = {124, 252, 316};
         qa_string_id target;
-        if (!qa_builtin_resource(&g->services, "jail3", &target, e))
-            return false;
+        target=g->runtime_names[Q2_NAME_RESOURCE_JAIL3];
         for (size_t i = 0; i < 3; i++) {
             qa_body_state body = {.origin = {x[i], -164, 80}, .angles = {0, 90, 0}};
             q2_actor *spot;

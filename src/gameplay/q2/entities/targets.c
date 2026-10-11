@@ -258,9 +258,8 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         s->usable = false;
         s->has_inline = true;
         s->collision.model = 0;
-        if (!qa_builtin_resource(&g->services, "*0", &s->visual.models[0], e) ||
-            !q2_entity_solid(g, a, QA_PHYSICS_BRUSH, e) || !q2_player_reserve_corpses(g, e))
-            return false;
+        s->visual.models[0]=g->runtime_names[Q2_NAME_RESOURCE_BRUSH_WORLD];
+        if (!q2_entity_solid(g, a, QA_PHYSICS_BRUSH, e) || !q2_player_reserve_corpses(g, e)) return false;
         return q2_map_event(g,
                             &(qa_q2_map_event){.kind = QA_Q2_MAP_MUSIC,
                                                .actor = a->id,
@@ -345,7 +344,7 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return qa_session_release(g->services.session, a->id, e);
         if (!strcmp(g->player_runtime->rules.map_name, "fact1") &&
             !strcmp(qa_strings_cstr(qa_session_strings(g->services.session), s->map), "fact3"))
-            return qa_builtin_resource(&g->services, "fact3$secret1", &s->map, e);
+            { s->map=g->runtime_names[Q2_NAME_RESOURCE_FACT3_SECRET1]; return true; }
         return true;
     case Q2E_SPLASH: {
         qa_body_state b;
@@ -455,8 +454,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
             return false;
         qa_string_id effect;
-        if (!qa_builtin_resource(&g->services, "q2:splash", &effect, e))
-            return false;
+        effect=g->runtime_names[Q2_NAME_RESOURCE_Q2_SPLASH];
         if (!qa_builtin_emit(&g->services,
                              &(qa_builtin_event){.kind = QA_BUILTIN_IMPACT,
                                                  .family = QA_GAME_Q2,

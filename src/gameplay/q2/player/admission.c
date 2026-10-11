@@ -455,8 +455,8 @@ static bool player_disconnect(void *context, qa_actor_id id, qa_error *e) {
         return !q2_actor_live(g, id);
     if (!q2_actor_live(g, id))
         return true;
-    if (!qa_builtin_resource(&g->services, "q2:logout", &effect, e) ||
-        !qa_builtin_emit(&g->services,
+    effect=g->runtime_names[Q2_NAME_RESOURCE_Q2_LOGOUT];
+    if (!qa_builtin_emit(&g->services,
                          &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
                                              .family = QA_GAME_Q2,
                                              .provider = g->options.owner,
@@ -465,8 +465,7 @@ static bool player_disconnect(void *context, qa_actor_id id, qa_error *e) {
                                              .count = 1,
                                              .code = 10,
                                              .time_ns = g->now_ns},
-                         e))
-        return false;
+                         e)) return false;
     if (!q2_actor_live(g, id))
         return true;
     return q2_player_emit(g,

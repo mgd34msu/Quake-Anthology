@@ -75,8 +75,8 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   }
   qa_actor_definition definition;
   qa_string_id classname;
-  if (!qa_builtin_resource(&game->services, "gib", &definition, error) ||
-      !qa_builtin_resource(&game->services, "noclass", &classname, error)) return false;
+  definition=game->runtime_names[Q2_NAME_GIB];
+  classname=game->runtime_names[Q2_NAME_NOCLASS];
   if (!q2_actor_live(game, source)) return true;
   qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, source);
   qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
@@ -138,7 +138,7 @@ static bool pieces(qa_q2_game *game, qa_actor_id source, qa_vec3 point,
 static bool spawn_legs(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context)) return true;
   qa_actor_definition definition;
-  if (!qa_builtin_resource(&context->game->services, "widowlegs", &definition, error)) return false;
+  definition=context->game->runtime_names[Q2_NAME_RESOURCE_WIDOWLEGS];
   if (!q2m_alive(context)) return true;
   qa_builtin_spawn spawn = {.owner = context->game->options.owner, .definition = definition,
       .body = {.origin = context->body.origin, .angles = context->body.angles}};

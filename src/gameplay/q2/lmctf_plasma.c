@@ -55,10 +55,9 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
               atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
     qa_string_id classname, model, sound;
-    if (!qa_builtin_resource(&g->services, "goop", &classname, e) ||
-        !qa_builtin_resource(&g->services, "sprites/s_plasma1.sp2", &model, e) ||
-        !qa_builtin_resource(&g->services, QA_Q2_SOUND_WEAPONS_PLASMA_FLYBY, &sound, e))
-        return false;
+    classname=g->runtime_names[Q2_NAME_RESOURCE_GOOP];
+    model=g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_PLASMA1_SP2];
+    sound=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_PLASMA_FLYBY_WAV];
     for (unsigned i = 0; i < spec.shots; ++i) {
         if (!q2_actor_live(g, c->actor->id))
             return true;
@@ -254,9 +253,8 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
                                   .direction = normal,
                                   .count = 32,
                                   .code = 176};
-        if (!qa_builtin_resource(&g->services, "q2:laser_sparks", &event.resource, e) ||
-            !qa_builtin_emit(&g->services, &event, e))
-            return false;
+        event.resource=g->runtime_names[Q2_NAME_RESOURCE_Q2_LASER_SPARKS];
+        if (!qa_builtin_emit(&g->services, &event, e)) return false;
         if (!q2_actor_live(g, a->id))
             return true;
         if (!q2_projectile_radius(g, a->id, &p, body.origin, (qa_actor_id){0}, damage, damage + 70,

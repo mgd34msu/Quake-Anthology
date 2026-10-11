@@ -362,10 +362,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
     if (w == QA_Q2_GRENADES || w == QA_Q2_TRAP || w == QA_Q2_TESLA) {
         if (w == QA_Q2_TESLA && !c->rerelease) {
             s->view_model = 0;
-            if (s->frame > 1 && s->frame < 9 &&
-                !qa_builtin_resource(&c->game->services, "models/weapons/v_tesla2/tris.md2",
-                                     &s->view_model, e))
-                return false;
+            if (s->frame > 1 && s->frame < 9) s->view_model=c->game->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_V_TESLA2_TRIS_MD2];
         }
         return q2_throw_frame(c, e);
     }
@@ -399,10 +396,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
                 if (ammo >= 2 && q2_continues(c)) {
                     if (s->frame >= 13)
                         s->frame = 9;
-                    if (!qa_builtin_resource(&c->game->services,
-                                             "models/weapons/v_beamer2/tris.md2", &s->view_model,
-                                             e))
-                        return false;
+                    s->view_model=c->game->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_V_BEAMER2_TRIS_MD2];
                 } else
                     s->frame = 13;
             } else if (!q2_loop(c, "", e))

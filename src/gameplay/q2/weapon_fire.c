@@ -605,9 +605,7 @@ static bool heatbeam(q2_weapon_call *c, qa_error *e) {
             return false;
     } else {
         ++c->state->frame;
-        if (!qa_builtin_resource(&c->game->services, "models/weapons/v_beamer2/tris.md2",
-                                 &c->state->view_model, e))
-            return false;
+        c->state->view_model=c->game->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_V_BEAMER2_TRIS_MD2];
     }
     q2_kick(c, qa_v3(0, 0, 0), qa_v3(0, 0, 0), c->rerelease ? 0.2f : 0);
     bool lag;
