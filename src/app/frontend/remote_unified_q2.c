@@ -107,6 +107,7 @@ typedef struct q2_native {
     qa_unified_component_identity identity;
     qa_source_owner presentation_owner;
     const char *provider,*layout;
+    qa_string_id provider_name;
     qa_unified_document *record_document,*config_document;
     const qa_unified_component_q2 *config_source;
     uint64_t owner_generation,generation;
@@ -869,7 +870,8 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     const q2_native *old,q2_native *v,qa_error *e)
 {
     v->provider=row->owner.provider;v->layout=row->layout;v->identity=row->identity;
-    bool okay=qa_unified_document_retain(document,&v->record_document,e);
+    bool okay=qa_strings_intern_cstr(o->replica->strings,v->provider,&v->provider_name,e)&&
+        qa_unified_document_retain(document,&v->record_document,e);
     if (!okay) return false;
     v->owner_generation=row->owner.generation; v->generation=row->generation;
     v->presentation_owner=row->owner;
@@ -936,14 +938,16 @@ bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unif
     bool okay=true;
     for (size_t i=0;okay && i<count;++i) {
         const qa_unified_component_q2 *row=update->native+i; const q2_native *old=NULL;
-        for (size_t k=0;k<o->native_count;++k) if (!strcmp(row->owner.provider,o->native[k].provider)) old=o->native+k;
+        qa_string_id provider=qa_strings_find(o->replica->strings,
+            (qa_bytes){(const uint8_t *)row->owner.provider,strlen(row->owner.provider)});
+        for (size_t k=0;k<o->native_count;++k) if (provider==o->native[k].provider_name) old=o->native+k;
         okay=native_read(o,row,d,old,next+i,e);
-        for (size_t k=0;okay && k<i;++k) okay=strcmp(next[k].provider,next[i].provider)!=0;
+        for (size_t k=0;okay && k<i;++k) okay=next[k].provider_name!=next[i].provider_name;
     }
     for (size_t i=0;okay && i<count;++i) okay=frontend_unified_events_component_admit(o->events,&next[i].presentation_owner,next[i].bank->content,e);
     for (size_t i=0;okay && i<o->native_count;++i) {
         bool retained=false;
-        for (size_t k=0;k<count;++k) if (!strcmp(next[k].provider,o->native[i].provider) && next[k].owner_generation==o->native[i].owner_generation) retained=true;
+        for (size_t k=0;k<count;++k) if (next[k].provider_name==o->native[i].provider_name && next[k].owner_generation==o->native[i].owner_generation) retained=true;
         if (!retained) okay=frontend_unified_events_component_retire(o->events,&o->native[i].presentation_owner,e);
     }
     if (okay) {
@@ -965,16 +969,16 @@ static bool native_frame_read(frontend_unified_q2 *o,const qa_unified_document *
     size_t cameras=0,replacements=0;
     for (size_t i=0;components && i<components->native_count;++i) {
         const qa_unified_native_component *row=components->native+i; const q2_native *v=NULL;
-        for (size_t k=0;k<o->native_count;++k) if (!strcmp(row->owner.provider,o->native[k].provider)) v=o->native+k;
+        for (size_t k=0;k<o->native_count;++k) if (row->provider==o->native[k].provider_name) v=o->native+k;
         qa_actor_id actual;
-        if (!v || row->owner.generation!=v->owner_generation || row->generation!=v->generation ||
+        if (!v || row->owner_generation!=v->owner_generation || row->generation!=v->generation ||
             (row->hud!=NULL)!=v->hud || (row->view!=NULL)!=v->camera ||
             !frontend_remote_unified_source_actor(o->replica,frame,row->viewer,false,&actual,e) ||
             !qa_actor_id_equal(actual,viewer) || (row->hud && row->hud->stat_count!=(v->protocol.kind==QA_NET_Q2_34?32u:64u)) ||
             (row->view && row->view->rerelease!=(v->protocol.kind==QA_NET_Q2KEX_2023)))
             return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 frame changed its admitted source or full viewer");
         cameras+=row->view!=NULL; replacements+=v->replace_status;
-        for (size_t k=0;k<i;++k) if (!strcmp(row->owner.provider,components->native[k].owner.provider)) return false;
+        for (size_t k=0;k<i;++k) if (row->provider==components->native[k].provider) return false;
     }
     return cameras<=1 && replacements<=1;
 }
@@ -1877,7 +1881,7 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
         const qa_unified_native_component *row=components->native+i;
         if (!row->hud) continue;
         q2_native *v=NULL;
-        for (size_t k=0;k<o->native_count;++k) if (!strcmp(row->owner.provider,o->native[k].provider)) v=o->native+k;
+        for (size_t k=0;k<o->native_count;++k) if (row->provider==o->native[k].provider_name) v=o->native+k;
         if (!v || !v->font) return false;
         if (!status_draw(o,v,row->hud,v->inventory,v->layout,v->player_number,viewport,frame,e)) return false;
     }

@@ -12,7 +12,8 @@ typedef struct qa_unified_component_binding {
     bool owned;
 } qa_unified_component_binding;
 typedef struct qa_unified_component_source {
-    qa_source_owner owner;
+    qa_string_id provider;
+    uint64_t owner_generation;
     qa_qvm_abi abi;
     qa_actor_id viewer;
     int32_t client_number;
@@ -39,8 +40,8 @@ typedef struct qa_unified_native_camera {
     bool position_prediction, angular_prediction, weapon_visible;
 } qa_unified_native_camera;
 typedef struct qa_unified_native_component {
-    qa_source_owner owner;
-    uint64_t generation;
+    qa_string_id provider;
+    uint64_t owner_generation, generation;
     qa_actor_id viewer;
     qa_unified_native_hud *hud;
     qa_unified_native_camera *view;

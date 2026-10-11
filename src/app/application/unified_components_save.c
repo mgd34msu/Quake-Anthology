@@ -338,12 +338,6 @@ static bool roster_control(const qa_unified_components_control *update,
     return true;
 }
 
-static bool frame_owner(const qa_source_owner *owner, qa_session *session,
-    qa_actor_owner actor_owner, uint64_t generation)
-{
-    const char *name = qa_strings_cstr(qa_session_strings(session), actor_owner);
-    return name && owner->provider && !strcmp(name, owner->provider) && owner->generation == generation;
-}
 static bool roster_frame(const application_unified_component_capture *v)
 {
     const qa_unified_frame *frame = qa_unified_document_frame(v->frame_document);
@@ -353,14 +347,14 @@ static bool roster_frame(const application_unified_component_capture *v)
     for (size_t i = 0; i < v->count; ++i) {
         const component_cursor *cursor = v->rows + i;
         const qa_unified_component_source *row = v->frame->sources + i;
-        if (!frame_owner(&row->owner, v->source.session, cursor->owner, cursor->generation) ||
+        if (row->provider != cursor->owner || row->owner_generation != cursor->generation ||
             row->abi != cursor->abi || row->game_state_revision != cursor->game_state_revision ||
             row->scene != cursor->scene || !qa_actor_id_equal(row->viewer, v->player.actor) ||
             row->snapshot.server_command_number != cursor->sequence) return false;
     }
     if (v->native.present) {
         const qa_unified_native_component *row = v->frame->native;
-        if (!frame_owner(&row->owner, v->source.session, v->native.owner, v->native.activation) ||
+        if (row->provider != v->native.owner || row->owner_generation != v->native.activation ||
             row->generation != v->native.generation || !qa_actor_id_equal(row->viewer, v->player.actor)) return false;
     }
     return true;

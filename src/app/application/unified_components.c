@@ -84,9 +84,8 @@ static bool frame_source(qa_unified_component_source *out, const application_uni
         snap->entity_count > 256 || snap->server_time < 0 || context->revision < 0 ||
         context->client_number < 0 || context->client_number >= QA_Q3_ENTITIES)
         return application_fail(e, QA_ERROR_FORMAT, "Component frame lacks its real receiver snapshot or weapon policy");
-    const char *provider = qa_strings_cstr(qa_session_strings(v->source.session), row->owner);
-    if (!application_unified_frame_string(v->lease, &out->owner.provider, provider, e)) return false;
-    out->owner.generation = row->generation;
+    out->provider = row->owner;
+    out->owner_generation = row->generation;
     out->abi = row->abi; out->viewer = v->player.actor; out->client_number = context->client_number;
     out->game_state_revision = row->game_state_revision; out->weapon_presented = context->weapon_presented;
     out->scene = row->scene;

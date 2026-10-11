@@ -362,6 +362,13 @@ application_provider *application_provider_for(qa_application *application,
         application_actor_source_provider(application, actor);
 }
 
+qa_actor_owner qa_application_selected_owner(qa_application *application,
+    qa_actor_id actor, qa_launch_role role)
+{
+    application_provider *provider = application_provider_for(application, actor, role, "");
+    return provider ? provider->owner : 0;
+}
+
 static void remember_failure(bool result, const qa_error *current,
                              const char *fallback, bool *ok, qa_error *first)
 {

@@ -104,10 +104,9 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
             seat->q2_actor = actor;
             switch (event->kind) {
             case QA_Q2_PLAYER_VIEW: {
-                const qa_launch_instance *character = qa_application_selected_instance(frontend->application,
-                    qa_application_launch(frontend->application), actor, QA_ROLE_CHARACTER, "");
-                const char *provider = qa_application_provider_instance(frontend->application, observed.provider);
-                if (!character || !provider || strcmp(character->selection.instance, provider)) break;
+                qa_actor_owner character = qa_application_selected_owner(frontend->application,
+                    actor, QA_ROLE_CHARACTER);
+                if (!character || character != observed.provider) break;
                 seat->q2_view = event->view; seat->q2_view_ready = true;
                 if (event->view.hit_marker_damage > 0) {
                     const uint64_t duration = UINT64_C(150000000);

@@ -1,4 +1,5 @@
 #include "remote_unified_components_private.h"
+#include "remote_unified_private.h"
 #include "../application/guest_q3_components.h"
 #include "qa/binary.h"
 #include <limits.h>
@@ -51,7 +52,8 @@ bool q3remote_component_state_qualify(frontend_unified_components *owner,remote_
             qa_unified_component_identity_dispose(&expected);
             if(!ok) return false;
             if(!equal) continue;
-            s->mod=mod; s->provider_row=provider; return runtime_qualify(s,e);
+            s->mod=mod; s->provider_row=provider;
+            return qa_strings_intern_cstr(owner->replica->strings,product->identity,&s->content_name,e)&&runtime_qualify(s,e);
         }
     }
     return q3remote_component_fail(e,QA_ERROR_FORMAT,"Saved component has no genuine admitted recipe identity");
@@ -61,7 +63,7 @@ void q3remote_component_state_free(remote_component_state *s)
     for(size_t i=0;i<s->command_count;++i) {
         free((void *)s->commands[i].text); qa_command_tokens_free(s->arguments+i);
     }
-    free(s->provider); qa_unified_component_identity_dispose(&s->identity); memset(s,0,sizeof(*s));
+    qa_unified_component_identity_dispose(&s->identity); memset(s,0,sizeof(*s));
 }
 static void *frame_allocate(void *lease,size_t bytes,size_t alignment,qa_error *e)
 { return qa_unified_frame_lease_alloc(lease,1,bytes,alignment,e); }
@@ -117,14 +119,16 @@ bool q3remote_component_state_read(frontend_unified_components *owner,const qa_u
 {
     remote_component_state s={.owner_generation=row->owner.generation,.generation=row->generation,
         .abi=row->abi,.player_events=!row->scene,.game_state_revision=row->game_state_revision};
-    s.provider=copy_text(row->owner.provider);
-    bool ok=s.provider&&qa_unified_component_identity_clone(&row->identity,&s.identity,e);
+    bool ok=qa_strings_intern_cstr(owner->replica->strings,row->owner.provider,&s.provider_name,e);
+    s.provider=(char *)qa_strings_cstr(owner->replica->strings,s.provider_name);
+    if(ok) ok=qa_unified_component_identity_clone(&row->identity,&s.identity,e);
     s.presentation_owner=(qa_source_owner){s.provider,s.owner_generation};
     if(ok&&previous) {
         ok=s.owner_generation==previous->state.owner_generation&&s.generation==previous->state.generation&&
             s.abi==previous->state.abi&&s.player_events==previous->state.player_events&&
             qa_unified_component_identity_equal(&s.identity,&previous->state.identity);
-        if(ok) { s.mod=previous->state.mod; s.provider_row=previous->state.provider_row; }
+        if(ok) { s.mod=previous->state.mod; s.provider_row=previous->state.provider_row;
+            s.content_name=previous->state.content_name; }
     } else if(ok) ok=q3remote_component_state_qualify(owner,&s,e);
     int32_t base=row->command_base;
     if(ok) ok=!previous||base==previous->state.command_sequence;
@@ -177,17 +181,21 @@ static bool player_event_read(frontend_unified_components *o,const qa_unified_pr
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component event lost its actual replica roster");
     if(row->payload.kind!=QA_UNIFIED_PRESENTATION_Q3||row->payload.value.q3.kind!=QA_UNIFIED_Q3_PLAYER_EVENT) return true;
     const qa_unified_q3_event *event=&row->payload.value.q3;
+    qa_string_id provider=qa_strings_find(o->replica->strings,
+        (qa_bytes){(const uint8_t *)row->provider,strlen(row->provider)});
+    qa_string_id content=qa_strings_find(o->replica->strings,
+        (qa_bytes){(const uint8_t *)row->content,strlen(row->content)});
     remote_component *r=NULL; bool known=false;
     for(size_t i=0;!r&&i<q3remote_component_physical_count(o);++i) {
         remote_component *candidate=q3remote_component_physical_at(o,i);
-        if(!candidate||!candidate->state.player_events||strcmp(row->provider,candidate->state.provider)) continue;
+        if(!candidate||!candidate->state.player_events||provider!=candidate->state.provider_name) continue;
         known=true;
-        const qa_product *content=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),candidate->state.mod->product);
-        if(module_matches(&event->module,&candidate->state.identity.module)&&content&&!strcmp(row->content,content->identity)&&event->abi==candidate->state.abi) r=candidate;
+        if(module_matches(&event->module,&candidate->state.identity.module)&&content==candidate->state.content_name&&event->abi==candidate->state.abi) r=candidate;
     }
     if(!r) return !known||q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event has no actual admitted gameplay identity");
     *handled=true;
-    if(row->owner.provider&&(strcmp(row->owner.provider,r->state.provider)||!row->owner.generation))
+    if(row->owner.provider&&(qa_strings_find(o->replica->strings,
+        (qa_bytes){(const uint8_t *)row->owner.provider,strlen(row->owner.provider)})!=r->state.provider_name||!row->owner.generation))
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event lost its genuine presentation token domain");
     const qa_unified_frame *frame=qa_unified_document_frame(frontend_remote_unified_frame(o->replica));
     if(row->recipient.registry) {
@@ -237,8 +245,8 @@ bool q3remote_component_frame_read(frontend_unified_components *o,remote_compone
     }
     f->lease=lease;
     qa_actor_id viewer={0}; uint32_t viewer_slot=0;
-    bool ok=!strcmp(source->owner.provider,row->state.provider)&&source->owner.generation==row->state.owner_generation&&
-        source->owner.generation==row->state.generation&&source->game_state_revision==(int64_t)row->state.game_state_revision&&
+    bool ok=source->provider==row->state.provider_name&&source->owner_generation==row->state.owner_generation&&
+        source->owner_generation==row->state.generation&&source->game_state_revision==(int64_t)row->state.game_state_revision&&
         source->abi==row->state.abi&&frontend_remote_unified_source_actor(o->replica,frame,source->viewer,false,&f->viewer,e)&&
         frontend_remote_unified_player(o->replica,&viewer,&viewer_slot)&&qa_actor_id_equal(viewer,f->viewer)&&
         qa_unified_document_retain(d,&f->packet,e);
@@ -256,7 +264,7 @@ bool q3remote_component_frame_read(frontend_unified_components *o,remote_compone
     if(ok&&f->has_scene) ok=source->snapshot.server_command_number==row->state.command_sequence;
     if(ok) {
         if(!f->has_scene) f->snapshot.server_command_number=row->state.command_sequence;
-        f->context=(application_q3_scene_context){.generation=source->owner.generation,.revision=source->scene_revision,
+        f->context=(application_q3_scene_context){.generation=source->owner_generation,.revision=source->scene_revision,
             .game_state_revision=source->game_state_revision,.time_ms=source->snapshot.server_time,.client_number=source->client_number,
             .snapshot=&f->snapshot,.actors=f->actors,.actor_count=count,.has_weapon_presented=true,.weapon_presented=source->weapon_presented};
         ok=frame_source_copy(&row->state,&f->source,lease,e);

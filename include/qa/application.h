@@ -483,6 +483,7 @@ const char *qa_application_provider_instance(const qa_application *, qa_actor_ow
  * custody; this query never constructs, attaches or enters its execution. */
 const qa_launch_instance *qa_application_selected_instance(qa_application *,
     const qa_launch_snapshot *, qa_actor_id, qa_launch_role, const char *selector);
+qa_actor_owner qa_application_selected_owner(qa_application *, qa_actor_id, qa_launch_role);
 bool qa_application_provider_owner(const qa_application *, const char *, qa_actor_owner *);
 bool qa_application_provider_gravity(const qa_application *, qa_actor_owner, float *);
 bool qa_application_q1_fog_read(qa_application *, qa_actor_id, qa_q1_fog_state *);

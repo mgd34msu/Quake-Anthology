@@ -117,7 +117,8 @@ static const qa_unified_field qa_unified_frame_components_fields[] = {
 const qa_unified_record_layout qa_unified_component_frame_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_components, qa_unified_frame_components_fields);
 
 static const qa_unified_field qa_unified_component_source_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_component_source, owner, qa_source_owner_layout),
+    QA_UNIFIED_FIELD(qa_unified_component_source, provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_component_source, owner_generation, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_component_source, abi, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_RECORD(qa_unified_component_source, viewer, qa_unified_actor_layout),
     QA_UNIFIED_FIELD(qa_unified_component_source, client_number, QA_UNIFIED_FIELD_I32),
@@ -272,7 +273,8 @@ static const qa_unified_field qa_source_owner_fields[] = {
 static const qa_unified_record_layout qa_source_owner_layout = QA_UNIFIED_LAYOUT(qa_source_owner, qa_source_owner_fields);
 
 static const qa_unified_field qa_unified_native_component_fields[] = {
-    QA_UNIFIED_RECORD(qa_unified_native_component, owner, qa_source_owner_layout),
+    QA_UNIFIED_FIELD(qa_unified_native_component, provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_native_component, owner_generation, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_native_component, generation, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_RECORD(qa_unified_native_component, viewer, qa_unified_actor_layout),
     QA_UNIFIED_POINTER(qa_unified_native_component, hud, qa_unified_native_hud_layout),
@@ -1962,7 +1964,7 @@ static bool components_check(const qa_unified_frame_components *section, uint64_
     for (size_t s = 0; s < section->source_count; ++s) {
         const qa_unified_component_source *source = section->sources + s;
         bool bound[QA_Q3_ENTITIES] = {0}, entities[QA_Q3_ENTITIES] = {0};
-        if (!source->owner.provider || !source->owner.generation || !same_source(source->viewer, registry) ||
+        if (!source->provider || !source->owner_generation || !same_source(source->viewer, registry) ||
             (source->abi != QA_QVM_Q3_MODERN && source->abi != QA_QVM_Q3_116N) ||
             source->binding_count > QA_Q3_ENTITIES || source->snapshot.entity_count > 256 || source->snapshot.area_bytes > 32 ||
             !finite_record(&qa_q3_player_layout, &source->snapshot.player))
@@ -1983,7 +1985,7 @@ static bool components_check(const qa_unified_frame_components *section, uint64_
     }
     for (size_t i = 0; i < section->native_count; ++i) {
         const qa_unified_native_component *row = section->native + i;
-        if (!row->owner.provider || !row->owner.generation || !same_source(row->viewer, registry) ||
+        if (!row->provider || !row->owner_generation || !same_source(row->viewer, registry) ||
             (row->hud && (row->hud->stat_count > 64 || !finite_record(&qa_unified_native_hud_layout, row->hud))) ||
             (row->view && !finite_record(&qa_unified_native_camera_layout, row->view)))
             return frame_bad(error, "Typed native component lost its real viewer or finite presentation state");

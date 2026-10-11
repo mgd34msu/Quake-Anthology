@@ -189,9 +189,8 @@ bool application_unified_q2_component_documents_build(qa_application *app,
     if (ok) {
         v.frame->native_count = 1;
         qa_unified_native_component *row = v.frame->native;
-        const char *provider = qa_strings_cstr(qa_session_strings(v.source.source.session), v.publication.owner);
-        ok = application_unified_frame_string(target->lease, &row->owner.provider, provider, e);
-        row->owner.generation = v.publication.activation_generation;
+        row->provider = v.publication.owner;
+        row->owner_generation = v.publication.activation_generation;
         row->generation = v.publication.generation; row->viewer = player->actor;
         if (ok && v.publication.hud != APPLICATION_NATIVE_Q2_HUD_NONE) {
             row->hud = qa_unified_frame_lease_alloc(target->lease, 1, sizeof(*row->hud),

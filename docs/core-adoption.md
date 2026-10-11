@@ -416,6 +416,27 @@ Normal production build and seven core suites pass:
 sites in names finding 4. Names findings 5-17 and other kinds remain open;
 no live gameplay or performance result is claimed.
 
+
+Names finding 5: `qa_application_selected_owner` reads the existing role route;
+local Q2 view events compare that owner directly with the observed provider.
+QVM and native component frame records carry a session `qa_string_id` and the
+existing activation generation. Producers no longer copy provider strings into
+frame leases. The existing typed codec resolves NAME fields at its wire boundary;
+frame consumers, HUD selection and retained-frame checks compare the IDs.
+
+Reliable component admission interns names in the replica's retained session
+table. Component rows borrow that stable text only for external source-owner
+interfaces; their private provider allocation/free is deleted. Reliable roster
+matching, duplicate detection, retirement and event provider/content selection
+use retained IDs. Incoming textual event identities resolve once at that boundary.
+The Q3 bank selectors already compare content/instance/provider IDs and are
+unchanged. No second name table or provider-selection implementation is added.
+
+Normal production build and all seven existing core suites pass:
+`/tmp/qa-ta3196-provider-ids-20261011-{build,core}.log`. This migrates the listed
+names finding 5 sites. Findings 6-17 and other kinds remain open. No live network,
+guest restore, installation or performance result is claimed.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

@@ -127,9 +127,9 @@ bool frontend_unified_components_checkpoint_ready(const frontend_unified_compone
 }
 bool frontend_unified_components_idle(const frontend_unified_components *o)
 { return (!o||!o->prepared)&&frontend_unified_components_checkpoint_ready(o); }
-static remote_component *find(frontend_unified_components *o,const char *provider)
+static remote_component *find(frontend_unified_components *o,qa_string_id provider)
 {
-    for(size_t i=0;i<o->count;++i) if(o->rows[i]&&!strcmp(o->rows[i]->state.provider,provider)) return o->rows[i];
+    for(size_t i=0;i<o->count;++i) if(o->rows[i]&&o->rows[i]->state.provider_name==provider) return o->rows[i];
     return NULL;
 }
 bool frontend_unified_components_control(frontend_unified_components *o,const qa_unified_document *d,qa_error *e)
@@ -149,10 +149,12 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_unified_component_q3 *row=update->sources+i;
-        remote_component *previous=find(o,row->owner.provider);
+        qa_string_id provider=qa_strings_find(o->replica->strings,
+            (qa_bytes){(const uint8_t *)row->owner.provider,strlen(row->owner.provider)});
+        remote_component *previous=find(o,provider);
         if(previous&&(previous->state.owner_generation!=row->owner.generation||previous->state.generation!=row->generation)) previous=NULL;
         ok=q3remote_component_state_read(o,row,previous,states+i,e);
-        for(size_t k=0;ok&&k<i;++k) if(!strcmp(states[k].provider,states[i].provider)) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Reliable components duplicate a genuine provider");
+        for(size_t k=0;ok&&k<i;++k) if(states[k].provider_name==states[i].provider_name) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Reliable components duplicate a genuine provider");
         if(!ok) break;
         if(previous) next[i]=previous;
         else {
@@ -174,7 +176,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         bool retained=false; for(size_t k=0;k<count;++k) if(next[k]==o->rows[i]) retained=true;
         if(!retained&&o->rows[i]) {
             bool retire=false;
-            for(size_t k=0;k<count;++k) if(!strcmp(states[k].provider,o->rows[i]->state.provider))
+            for(size_t k=0;k<count;++k) if(states[k].provider_name==o->rows[i]->state.provider_name)
                 retire=states[k].owner_generation!=o->rows[i]->state.owner_generation;
             if(retire) ok=frontend_unified_events_component_retire(o->events,&o->rows[i]->state.presentation_owner,e);
             if(ok) {
@@ -244,7 +246,7 @@ bool frontend_unified_components_frame_prepare(frontend_unified_components *o,co
     bool ok=true;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_unified_component_source *source=frames->sources+i; remote_component *row=NULL; size_t index=0;
-        for(;index<o->count;++index) if(!strcmp(source->owner.provider,o->rows[index]->state.provider)) { row=o->rows[index]; break; }
+        for(;index<o->count;++index) if(source->provider==o->rows[index]->state.provider_name) { row=o->rows[index]; break; }
         if(!row||candidate->rows[index]) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Received component frame duplicated or changed its provider");
         else ok=q3remote_component_frame_read(o,row,d,source,candidate->rows+index,e);
     }
