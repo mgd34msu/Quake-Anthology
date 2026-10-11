@@ -186,3 +186,12 @@ void qa_arena_destroy(qa_arena *arena)
         *arena = (qa_arena){0};
     }
 }
+
+char *qa_arena_text(qa_arena *arena,const char *text,qa_error *error)
+{
+    if (!text) return NULL;
+    size_t bytes=strlen(text)+1;
+    char *copy=qa_arena_alloc(arena,bytes,1,error);
+    if (copy) memcpy(copy,text,bytes);
+    return copy;
+}

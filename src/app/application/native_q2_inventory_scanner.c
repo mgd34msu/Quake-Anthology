@@ -2,6 +2,7 @@
 #include "native_q2_inventory_source.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
+#include "native_q2_callbacks.h"
 #include "qa/native_observe.h"
 #include "qa/text.h"
 #include "qa/network.h"
@@ -54,6 +55,8 @@ struct application_native_q2_inventory_scanner {
     inventory_entry entries[5];
     inventory_region regions[6];
     size_t region_count;
+    qa_arena readout_storage;
+    qa_pool readout_pages;
     inventory_selection *selected;
     inventory_frame *frame;
     inventory_restore *pending;
@@ -113,56 +116,47 @@ void application_native_q2_inventory_scanner_release(application_native_q2_inven
 void application_native_q2_inventory_readout_free(application_native_q2_inventory_readout *r)
 {
     if (!r) return;
-    for (size_t i = 0; i < r->count; ++i) {
-        free((void *)r->rows[i].label);
-        free((void *)r->rows[i].presentation.icon); free((void *)r->rows[i].presentation.lump);
+    if (r->storage) qa_pool_release_run(r->storage,r->storage_slot,r->storage_pages);
+    *r=(application_native_q2_inventory_readout){0};
+}
+static bool rows(application_native_q2_inventory_scanner *o,qa_actor_id actor,
+    application_native_q2_inventory_readout *out,qa_error *e)
+{
+    const application_native_q2_inventory_row *borrowed=NULL;size_t count=0;bool present=false;
+    if(!o->options.rows(o->options.context,actor,&borrowed,&count,&present,e)) return false;
+    if((!present&&(count||borrowed)) || (count&&!borrowed) || count>SIZE_MAX/sizeof(*borrowed))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Native inventory row producer returned an invalid acquisition");
+    application_native_q2_inventory_readout r={.present=present};
+    if(!count) {*out=r;return true;}
+    size_t bytes=count*sizeof(*borrowed)+128;
+    for(size_t i=0;i<count;++i) {
+        if(!borrowed[i].item || !borrowed[i].label || borrowed[i].source_index>=o->count)
+            return application_fail(e,QA_ERROR_ARGUMENT,"Mixed inventory row lacks its actual source prototype");
+        bytes+=strlen(borrowed[i].label)+1;
+        if(borrowed[i].presentation.icon) bytes+=strlen(borrowed[i].presentation.icon)+1;
+        if(borrowed[i].presentation.lump) bytes+=strlen(borrowed[i].presentation.lump)+1;
     }
-    free((void *)r->selected_presentation.icon); free((void *)r->selected_presentation.lump);
-    free(r->rows); *r = (application_native_q2_inventory_readout){0};
-}
-static bool copy_text(const char *text, const char **out, qa_error *e)
-{
-    *out = NULL; if (!text) return true;
-    size_t bytes = strlen(text) + 1; char *copy = malloc(bytes);
-    if (!copy) return application_fail(e, QA_ERROR_MEMORY, "Copying actual inventory presentation text");
-    memcpy(copy, text, bytes); *out = copy; return true;
-}
-static bool copy_presentation(const application_native_q2_inventory_presentation *from,
-    application_native_q2_inventory_presentation *out, qa_error *e)
-{
-    *out = *from; out->icon = out->lump = NULL;
-    return copy_text(from->icon, &out->icon, e) && copy_text(from->lump, &out->lump, e);
-}
-static bool rows(application_native_q2_inventory_scanner *o, qa_actor_id actor,
-    application_native_q2_inventory_readout *out, qa_error *e)
-{
-    const application_native_q2_inventory_row *borrowed = NULL; size_t count = 0; bool present = false;
-    if (!o->options.rows(o->options.context, actor, &borrowed, &count, &present, e)) return false;
-    if ((!present && (count || borrowed)) || (count && !borrowed) || count > SIZE_MAX / sizeof(*borrowed))
-        return application_fail(e, QA_ERROR_ARGUMENT, "Native inventory row producer returned an invalid acquisition");
-    application_native_q2_inventory_readout r = {.present = present};
-    r.rows = count ? calloc(count, sizeof(*r.rows)) : NULL;
-    if (count && !r.rows) return application_fail(e, QA_ERROR_MEMORY, "Copying current mixed inventory rows");
-    for (size_t i = 0; i < count; ++i) {
-        if (!borrowed[i].item || !borrowed[i].label || borrowed[i].source_index >= o->count) {
-            application_native_q2_inventory_readout_free(&r);
-            return application_fail(e, QA_ERROR_ARGUMENT, "Mixed inventory row lacks its actual source prototype");
-        }
-        r.rows[i] = borrowed[i]; r.rows[i].label = NULL;
-        r.rows[i].presentation.icon = r.rows[i].presentation.lump = NULL; ++r.count;
-        size_t length = strlen(borrowed[i].label);
-        char *label = malloc(length + 1);
-        if (!label) { application_native_q2_inventory_readout_free(&r); return application_fail(e, QA_ERROR_MEMORY, "Copying mixed inventory labels"); }
-        memcpy(label, borrowed[i].label, length + 1); r.rows[i].label = label;
-        if (!copy_presentation(&borrowed[i].presentation, &r.rows[i].presentation, e)) {
-            application_native_q2_inventory_readout_free(&r); return false;
-        }
-        for (size_t j = 0; j < i; ++j) if (r.rows[j].item == r.rows[i].item) {
-            application_native_q2_inventory_readout_free(&r);
-            return application_fail(e, QA_ERROR_ARGUMENT, "Mixed inventory producer repeats a canonical item");
-        }
+    r.storage_pages=(bytes+o->readout_pages.stride-1)/o->readout_pages.stride;
+    void *memory=qa_pool_take_run(&o->readout_pages,r.storage_pages,&r.storage_slot);
+    if(!memory) return application_fail(e,QA_ERROR_CAPACITY,"Native inventory exhausted load-sized readout pages");
+    r.storage=&o->readout_pages;
+    qa_arena arena={0};
+    bool okay=qa_arena_init_buffer(&arena,memory,r.storage_pages*o->readout_pages.stride,e);
+    r.rows=okay?qa_arena_alloc(&arena,count*sizeof(*r.rows),_Alignof(application_native_q2_inventory_row),e):NULL;
+    okay=r.rows!=NULL;
+    for(size_t i=0;okay && i<count;++i) {
+        r.rows[i]=borrowed[i];
+        r.rows[i].label=qa_arena_text(&arena,borrowed[i].label,e);
+        r.rows[i].presentation.icon=qa_arena_text(&arena,borrowed[i].presentation.icon,e);
+        r.rows[i].presentation.lump=qa_arena_text(&arena,borrowed[i].presentation.lump,e);
+        okay=r.rows[i].label && (!borrowed[i].presentation.icon||r.rows[i].presentation.icon) &&
+            (!borrowed[i].presentation.lump||r.rows[i].presentation.lump);
+        ++r.count;
+        for(size_t j=0;okay && j<i;++j) if(r.rows[j].item==r.rows[i].item)
+            okay=application_fail(e,QA_ERROR_ARGUMENT,"Mixed inventory producer repeats a canonical item");
     }
-    *out = r; return true;
+    if(!okay) {application_native_q2_inventory_readout_free(&r);return false;}
+    *out=r;return true;
 }
 static bool source(application_native_q2_inventory_scanner *o, qa_actor_id actor,
     application_native_q2_inventory_source *out, qa_error *e)
@@ -493,7 +487,7 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     application_native_q2_inventory_scanner **out, qa_error *e)
 {
     if (!out || !engine || !engine->declaration || !engine->primary_inventory || !options ||
-        !options->rows || !options->use || !options->print || !engine->provider->state.native.host)
+        !options->storage_bytes || !options->rows || !options->use || !options->print || !engine->provider->state.native.host)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native inventory scanner requires its actual primary profile and row services");
     *out = NULL;
     application_native_q2_inventory_scanner *o = calloc(1, sizeof(*o));
@@ -553,6 +547,13 @@ bool application_native_q2_inventory_scanner_activate(application_native_q2_inve
 {
     if (!current(o, e) || o->calls || o->pending || !o->engine->map_ready)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native scanner activation requires its returned source map");
+    if(!o->readout_pages.values) {
+        size_t bytes=o->options.storage_bytes(o->options.context),stride=4096;
+        size_t pages=(bytes+stride-1)/stride+NQR_CALL_DEPTH;
+        if(!qa_arena_reserve(&o->readout_storage,pages*(stride+sizeof(size_t))+128,e) ||
+            !qa_pool_prepare(&o->readout_pages,&o->readout_storage,pages,stride,_Alignof(max_align_t),e)) return false;
+        qa_arena_seal(&o->readout_storage);
+    }
     for (size_t i = 0; i < 5; ++i) if (!o->entries[i].binding && !qa_native_observe_entry(instance(o),
         o->entries[i].address, &o->entries[i].signature, entry_call, o->entries + i, &o->entries[i].binding, e)) return false;
     for (size_t i = 0; i < o->region_count; ++i) if (!o->regions[i].binding &&
@@ -583,6 +584,7 @@ bool application_native_q2_inventory_scanner_destroy(application_native_q2_inven
     if (!o) return true;
     if (!application_native_q2_inventory_scanner_suspend(o, e)) return false;
     while (o->selected) application_native_q2_inventory_scanner_release(o, o->selected->actor);
+    qa_arena_destroy(&o->readout_storage);
     free(o->writes); qa_json_destroy(o->document); free(o); return true;
 }
 bool application_native_q2_inventory_scanner_read(application_native_q2_inventory_scanner *o,
@@ -602,12 +604,10 @@ bool application_native_q2_inventory_scanner_read(application_native_q2_inventor
     }
     if (ok && chosen != SIZE_MAX) {
         r.selected = r.rows[chosen].item;
-        ok = copy_presentation(&r.rows[chosen].presentation, &r.selected_presentation, e);
+        r.selected_presentation=r.rows[chosen].presentation;
     }
     if (ok) { size_t retained = 0;
-        for (size_t i = 0; i < r.count; ++i) if (r.rows[i].count != 0) r.rows[retained++] = r.rows[i]; else {
-            free((void *)r.rows[i].label); free((void *)r.rows[i].presentation.icon); free((void *)r.rows[i].presentation.lump);
-        }
+        for (size_t i = 0; i < r.count; ++i) if (r.rows[i].count != 0) r.rows[retained++] = r.rows[i];
         r.count = retained;
     }
     --o->calls;

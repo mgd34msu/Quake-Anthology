@@ -32,6 +32,8 @@ void qa_arena_seal(qa_arena *arena);
  * and alignment a power of two. Memory is uninitialized. Failures leave existing
  * allocations valid. Arenas are owned by one thread at a time. */
 void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *error);
+/* Copy a NUL-terminated string into caller-owned arena storage. */
+char *qa_arena_text(qa_arena *, const char *, qa_error *);
 /* Adapter for APIs with an untyped allocator context. */
 void *qa_arena_alloc_callback(void *, size_t, size_t, qa_error *);
 /* Grow a caller span, preserving its prefix and previous addresses until reset.

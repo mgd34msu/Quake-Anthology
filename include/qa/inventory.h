@@ -1,6 +1,7 @@
 #ifndef QA_INVENTORY_H
 #define QA_INVENTORY_H
 #include "qa/gameplay.h"
+#include "qa/arena.h"
 
 typedef enum qa_ammo_warning { QA_AMMO_NONE, QA_AMMO_LOW, QA_AMMO_EMPTY } qa_ammo_warning;
 
@@ -102,6 +103,7 @@ bool qa_inventory_entry_read(qa_inventory *, qa_actor_id, qa_item_id, qa_invento
 bool qa_inventory_count_read(qa_inventory *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool qa_inventory_entries(qa_inventory *, qa_actor_id, qa_inventory_entry *, size_t capacity, size_t *count, qa_error *);
 bool qa_inventory_has(const qa_inventory *, qa_actor_id);
+uint64_t qa_inventory_revision(const qa_inventory *, qa_actor_id);
 bool qa_inventory_mutable_capacity(qa_inventory *, qa_actor_id, qa_item_id);
 /* Only component overrides return true; serial is the exact storage lease. */
 bool qa_inventory_item_owner(qa_inventory *, qa_actor_id, qa_item_id, qa_actor_owner *, uint64_t *serial);
@@ -133,11 +135,12 @@ typedef struct qa_inventory_source_group { qa_actor_owner owner; qa_item_admissi
 typedef struct qa_inventory_source_snapshot {
     qa_inventory_entry *primary;
     size_t primary_count, primary_native_count;
-    bool primary_external;
+    bool primary_external, arena_storage;
     qa_inventory_source_group *groups;
     size_t group_count;
 } qa_inventory_source_snapshot;
-bool qa_inventory_source_items(qa_inventory *, qa_actor_id, qa_inventory_source_snapshot *, qa_error *);
+/* NULL storage returns an owned heap snapshot; otherwise storage owns all rows/text. */
+bool qa_inventory_source_items(qa_inventory *, qa_actor_id, qa_arena *storage, qa_inventory_source_snapshot *, qa_error *);
 void qa_inventory_source_snapshot_free(qa_inventory_source_snapshot *);
 
 typedef struct qa_pickup_grant { qa_item_id item; double amount; } qa_pickup_grant;

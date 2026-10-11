@@ -28,6 +28,12 @@ struct application_native_q2_inventory_rows {
     size_t slot_count;
     uint32_t prototypes[4];
     application_native_q2_inventory_readout latest;
+    qa_arena storage, commands;
+    size_t row_capacity, storage_bytes;
+    qa_actor_id latest_actor;
+    qa_actor_owner latest_arsenal;
+    uint64_t latest_map, latest_config, latest_inventory;
+    bool latest_valid;
     size_t calls;
     bool prepared;
 };
@@ -60,23 +66,18 @@ static bool owner_current(application_native_q2_inventory_rows *owner, qa_error 
 }
 
 static bool source_text(application_native_q2_inventory_rows *owner, qa_bytes input,
-    qa_buffer *out, qa_error *error) {
+    qa_arena *arena, qa_buffer *out, qa_error *error) {
     if (owner->engine->profile != QA_NATIVE_Q2_GAME_API3 && !qa_utf8_valid(input))
         return application_fail(error, QA_ERROR_FORMAT, "Original inventory text is not valid source UTF-8");
     if (input.size > (SIZE_MAX - 1) / 2)
         return application_fail(error, QA_ERROR_MEMORY, "Original inventory text extent overflows");
-    uint8_t *text = malloc(input.size * 2 + 1);
-    if (!text) return application_fail(error, QA_ERROR_MEMORY, "Retaining original inventory text");
-    size_t used = 0;
-    for (size_t i = 0; i < input.size; ++i) {
-        uint8_t byte = input.data[i];
-        if (owner->engine->profile == QA_NATIVE_Q2_GAME_API3 && byte >= 128) {
-            text[used++] = (uint8_t)(0xc0u | (byte >> 6));
-            text[used++] = (uint8_t)(0x80u | (byte & 63u));
-        } else text[used++] = byte;
-    }
-    text[used] = 0;
-    *out = (qa_buffer){text, used};
+    size_t capacity=input.size*2+1,used=0;
+    uint8_t *text=arena?qa_arena_alloc(arena,capacity,1,error):malloc(capacity);
+    if (!text) return false;
+    if (owner->engine->profile==QA_NATIVE_Q2_GAME_API3) {
+        if (!qa_text_from_source_bytes(input,(char *)text,capacity,&used,error)) { if(!arena)free(text);return false; }
+    } else { memcpy(text,input.data,input.size);used=input.size;text[used]=0; }
+    *out=(qa_buffer){text,used};
     return true;
 }
 
@@ -150,7 +151,7 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
             okay = application_fail(error, QA_ERROR_FORMAT, "Original inventory weapon has no qualified classname");
         if (okay && valid) {
             qa_buffer decoded_icon = {0};
-            okay = source_text(owner, (qa_bytes){icon.data, icon.size}, &decoded_icon, error);
+            okay = source_text(owner, (qa_bytes){icon.data, icon.size}, NULL, &decoded_icon, error);
             if (okay) { qa_buffer_free(&icon); icon = decoded_icon; }
             char qualified[1030];
             memcpy(qualified, "q2:", 3);
@@ -197,6 +198,15 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
     --owner->engine->calls;
     --owner->calls;
     if (!okay) { slots_free(slots, used); return false; }
+    qa_strings *strings=qa_session_strings(owner->engine->provider->application->session);
+    size_t names=qa_strings_count(strings),text_bytes=0;
+    for (size_t i=1;i<=names;++i) text_bytes+=qa_strings_text(strings,(qa_string_id)i).size+1;
+    owner->row_capacity=count+names;
+    owner->storage_bytes=owner->row_capacity*2*(sizeof(application_native_q2_inventory_row)+
+        sizeof(qa_item_admission)+sizeof(qa_inventory_entry))+text_bytes*4+(size_t)count*4096+65536;
+    if (!qa_arena_reserve(&owner->storage,owner->storage_bytes,error) ||
+        !qa_arena_reserve(&owner->commands,owner->storage_bytes,error)) {slots_free(slots,used);return false;}
+    qa_arena_seal(&owner->storage);qa_arena_seal(&owner->commands);
     owner->slots = slots;
     owner->slot_count = used;
     memcpy(owner->prototypes, prototypes, sizeof(prototypes));
@@ -218,46 +228,22 @@ static bool player_current(application_native_q2_inventory_rows *owner,
     return application_native_q2_inventory_source_current(owner->engine, source, error);
 }
 
-static char *copy_text(const char *text, qa_error *error) {
-    if (!text) { application_fail(error, QA_ERROR_ARGUMENT, "Inventory declaration lacks its actual label"); return NULL; }
-    size_t length = strlen(text);
-    char *copy = malloc(length + 1);
-    if (!copy) { application_fail(error, QA_ERROR_MEMORY, "Copying inventory presentation"); return NULL; }
-    memcpy(copy, text, length + 1);
-    return copy;
-}
-
-static bool append(application_native_q2_inventory_readout *out,
-    const application_native_q2_inventory_row *row, qa_error *error) {
-    application_native_q2_inventory_row value = *row;
-    value.label = copy_text(row->label, error);
-    value.presentation.icon = row->presentation.icon ? copy_text(row->presentation.icon, error) : NULL;
-    value.presentation.lump = row->presentation.lump ? copy_text(row->presentation.lump, error) : NULL;
-    if (!value.label || (row->presentation.icon && !value.presentation.icon) ||
-        (row->presentation.lump && !value.presentation.lump)) {
-        free((char *)value.label); free((char *)value.presentation.icon); free((char *)value.presentation.lump);
-        return false;
+static bool append(application_native_q2_inventory_rows *owner,application_native_q2_inventory_readout *out,
+    const application_native_q2_inventory_row *row,qa_error *error)
+{
+    size_t index=out->count;
+    for(size_t i=0;i<out->count;++i) if(out->rows[i].item==row->item) {index=i;break;}
+    if(index==out->count && out->count==owner->row_capacity) {
+        qa_error_set(error,QA_ERROR_CAPACITY,0,"Mixed inventory exceeds load-sized rows");return false;
     }
-    size_t index = out->count;
-    for (size_t i = 0; i < out->count; ++i) if (out->rows[i].item == row->item) { index = i; break; }
-    if (index == out->count) {
-        if (out->count == SIZE_MAX / sizeof(*out->rows)) {
-            free((char *)value.label); free((char *)value.presentation.icon); free((char *)value.presentation.lump);
-            return application_fail(error, QA_ERROR_MEMORY, "Mixed inventory row extent overflows");
-        }
-        application_native_q2_inventory_row *grown = realloc(out->rows, (out->count + 1) * sizeof(*grown));
-        if (!grown) {
-            free((char *)value.label); free((char *)value.presentation.icon); free((char *)value.presentation.lump);
-            return application_fail(error, QA_ERROR_MEMORY, "Building current mixed inventory rows");
-        }
-        out->rows = grown;
-        ++out->count;
-    } else {
-        free((char *)out->rows[index].label);
-        free((char *)out->rows[index].presentation.icon);
-        free((char *)out->rows[index].presentation.lump);
-    }
-    out->rows[index] = value;
+    application_native_q2_inventory_row value=*row;
+    value.label=qa_arena_text(&owner->storage,row->label,error);
+    value.presentation.icon=qa_arena_text(&owner->storage,row->presentation.icon,error);
+    value.presentation.lump=qa_arena_text(&owner->storage,row->presentation.lump,error);
+    if(!value.label || (row->presentation.icon&&!value.presentation.icon) ||
+        (row->presentation.lump&&!value.presentation.lump)) return false;
+    out->rows[index]=value;
+    if(index==out->count) ++out->count;
     return true;
 }
 
@@ -269,7 +255,7 @@ static bool original_label(application_native_q2_inventory_rows *owner, uint32_t
     const char *raw = qa_strings_cstr(qa_session_strings(owner->engine->provider->application->session), owner->engine->configstrings[base + index]);
     if (!raw) raw = "";
     qa_buffer label = {0};
-    if (!source_text(owner, (qa_bytes){(const uint8_t *)raw, strlen(raw)}, &label, error)) return false;
+    if (!source_text(owner, (qa_bytes){(const uint8_t *)raw, strlen(raw)}, &owner->storage, &label, error)) return false;
     *out = (char *)label.data;
     return true;
 }
@@ -304,22 +290,19 @@ static bool ammo_label(qa_application *app, application_provider *arsenal,
         "Selected ammunition lacks its actual source catalog label");
 }
 
-typedef struct selected_catalog { qa_item_definition *items; size_t count; } selected_catalog;
-static void catalog_free(selected_catalog *catalog) {
-    for (size_t i = 0; i < catalog->count; ++i) free((char *)catalog->items[i].label);
-    free(catalog->items);
-}
-static bool catalog_append(selected_catalog *catalog, const qa_item_definition *definition,
-    qa_error *error) {
-    if (catalog->count == SIZE_MAX / sizeof(*catalog->items))
-        return application_fail(error, QA_ERROR_MEMORY, "Selected weapon catalog extent overflows");
-    char *label = copy_text(definition->label, error);
-    if (!label) return false;
-    qa_item_definition *grown = realloc(catalog->items, (catalog->count + 1) * sizeof(*grown));
-    if (!grown) { free(label); return application_fail(error, QA_ERROR_MEMORY, "Copying selected weapon catalog"); }
-    catalog->items = grown;
-    catalog->items[catalog->count] = *definition;
-    catalog->items[catalog->count++].label = label;
+typedef struct selected_catalog { qa_item_definition *items; size_t count, capacity; qa_arena *storage; } selected_catalog;
+static bool catalog_append(selected_catalog *catalog,const qa_item_definition *definition,qa_error *error)
+{
+    if(catalog->count==catalog->capacity) {
+        qa_error_set(error,QA_ERROR_CAPACITY,0,"Weapon catalog exceeds load-sized rows");return false;
+    }
+    if(!catalog->items) catalog->items=qa_arena_alloc(catalog->storage,catalog->capacity*sizeof(*catalog->items),
+        _Alignof(qa_item_definition),error);
+    qa_item_definition *grown=catalog->items;
+    if(!grown) return false;
+    char *label=qa_arena_text(catalog->storage,definition->label,error);
+    if(!label) return false;
+    grown[catalog->count]=*definition;grown[catalog->count++].label=label;
     return true;
 }
 static bool catalog_read(qa_application *app, application_provider *arsenal, qa_actor_id actor,
@@ -371,7 +354,7 @@ static bool row_count(application_native_q2_inventory_rows *owner,
     application_native_q2_inventory_readout *out, qa_error *error) {
     qa_application *app = owner->engine->provider->application;
     return qa_inventory_count_read(app->inventory, source->actor, row->item, &row->count, error) &&
-        player_current(owner, source, arsenal, map_revision, config_revision, error) && append(out, row, error);
+        player_current(owner, source, arsenal, map_revision, config_revision, error) && append(owner, out, row, error);
 }
 
 static bool component_icon(const application_q3_component_item_metadata *metadata,
@@ -440,10 +423,23 @@ static bool rows(void *context, qa_actor_id actor,
     uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_changes.revision;
     if (!player_current(owner, &source, arsenal, map_revision, config_revision, error)) return false;
     qa_inventory_source_snapshot snapshot = {0};
-    selected_catalog catalog = {0};
+    selected_catalog catalog = {.storage=&owner->commands,.capacity=owner->row_capacity};
+    uint64_t inventory_revision=qa_inventory_revision(app->inventory,actor);
+    if(owner->latest_valid && qa_actor_id_equal(actor,owner->latest_actor) &&
+        owner->latest_arsenal==arsenal->owner && owner->latest_map==map_revision &&
+        owner->latest_config==config_revision && owner->latest_inventory==inventory_revision) {
+        for(size_t i=0;i<owner->latest.count;++i)
+            if(!qa_inventory_count_read(app->inventory,actor,owner->latest.rows[i].item,&owner->latest.rows[i].count,error)) return false;
+        *out=owner->latest.present?owner->latest.rows:NULL;*count=owner->latest.count;*present=owner->latest.present;return true;
+    }
+    owner->latest_valid=false;
+    qa_arena_reset(&owner->storage);qa_arena_reset(&owner->commands);
     application_native_q2_inventory_readout result = {0};
+    result.rows=qa_arena_alloc(&owner->storage,owner->row_capacity*sizeof(*result.rows),
+        _Alignof(application_native_q2_inventory_row),error);
+    if(!result.rows) return false;
     ++owner->calls; ++owner->engine->calls;
-    bool okay = qa_inventory_source_items(app->inventory, actor, &snapshot, error) &&
+    bool okay = qa_inventory_source_items(app->inventory, actor, &owner->storage, &snapshot, error) &&
         player_current(owner, &source, arsenal, map_revision, config_revision, error);
     bool selected = arsenal != primary;
     size_t component_count = 0;
@@ -476,14 +472,12 @@ static bool rows(void *context, qa_actor_id actor,
             if (duplicate) continue;
             const char *borrowed;
             if (!ammo_label(app, arsenal, definition->ammo, &borrowed, error)) { okay = false; break; }
-            char *label = copy_text(borrowed, error);
-            if (!label) { okay = false; break; }
+            const char *label=borrowed;
             application_native_q2_inventory_row row = {.item = definition->ammo, .label = label,
                 .source_index = owner->prototypes[1], .selected = true,
                 .presentation = {.source = arsenal->owner, .kind = APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION,
                     .weapon = definition->item}};
             okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
-            free(label);
         }
         for (size_t i = 0; okay && selected && i < owner->slot_count; ++i) {
             const original_slot *slot = owner->slots + i;
@@ -511,7 +505,6 @@ static bool rows(void *context, qa_actor_id actor,
                     .icon_kind = icon ? APPLICATION_NATIVE_INVENTORY_ICON_IMAGE : APPLICATION_NATIVE_INVENTORY_ICON_NONE,
                     .icon = icon}};
             okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
-            free(label);
         }
         for (size_t i = 0; okay && i < owner->slot_count; ++i) {
             const original_slot *slot = owner->slots + i;
@@ -520,7 +513,6 @@ static bool rows(void *context, qa_actor_id actor,
             if (!original_label(owner, slot->index, &label, error)) { okay = false; break; }
             application_native_q2_inventory_row row = {.item = slot->item, .label = label, .source_index = slot->index};
             okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
-            free(label);
         }
         /* The Source Map replacement order is equipment, then component definitions. */
         for (unsigned pass = 0; okay && pass < 2; ++pass)
@@ -594,12 +586,13 @@ static bool rows(void *context, qa_actor_id actor,
     }
     if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
     qa_inventory_source_snapshot_free(&snapshot);
-    catalog_free(&catalog);
     --owner->engine->calls; --owner->calls;
-    if (!okay) { application_native_q2_inventory_readout_free(&result); return false; }
-    application_native_q2_inventory_readout_free(&owner->latest);
+    if (!okay) return false;
     owner->latest = result;
-    *out = result.rows; *count = result.count; *present = result.present;
+    owner->latest_actor=actor;owner->latest_arsenal=arsenal->owner;
+    owner->latest_map=map_revision;owner->latest_config=config_revision;
+    owner->latest_inventory=qa_inventory_revision(app->inventory,actor);owner->latest_valid=true;
+    *out = result.present?result.rows:NULL; *count = result.count; *present = result.present;
     return true;
 }
 
@@ -619,7 +612,8 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
     bool okay = !has_component || qa_inventory_source_definition_read(app->inventory, actor,
         component_owner, item, &component, error);
     bool weapon = has_component && component.weapon;
-    selected_catalog catalog = {0};
+    qa_arena_reset(&owner->commands);
+    selected_catalog catalog = {.storage=&owner->commands,.capacity=owner->row_capacity};
     if (okay && !weapon && arsenal != owner->engine->provider) {
         if (arsenal->kind == APPLICATION_PROVIDER_QC || arsenal->kind == APPLICATION_PROVIDER_QVM ||
             (arsenal->kind == APPLICATION_PROVIDER_NATIVE && arsenal->state.native.engine)) {
@@ -642,7 +636,6 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
             has_component ? component_owner : arsenal->owner, item, &accepted, error);
     } else if (okay) okay = qa_inventory_item_action(app->inventory, actor, item, QA_ITEM_USE, error);
     if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
-    catalog_free(&catalog);
     --owner->engine->calls; --owner->calls;
     return okay;
 }
@@ -682,13 +675,15 @@ bool application_native_q2_inventory_rows_destroy(application_native_q2_inventor
     if (!owner) return true;
     if (!application_native_q2_inventory_rows_idle(owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Mixed inventory is still borrowing its actual source owner");
-    application_native_q2_inventory_readout_free(&owner->latest);
+    qa_arena_destroy(&owner->storage);qa_arena_destroy(&owner->commands);
     slots_free(owner->slots, owner->slot_count);
     free(owner);
     return true;
 }
+static size_t storage_bytes(void *context)
+{ return ((application_native_q2_inventory_rows *)context)->storage_bytes; }
 application_native_q2_inventory_scanner_options application_native_q2_inventory_rows_options(
     application_native_q2_inventory_rows *owner) {
-    return (application_native_q2_inventory_scanner_options){.context = owner,
+    return (application_native_q2_inventory_scanner_options){.context = owner,.storage_bytes=storage_bytes,
         .rows = rows, .use = use, .print = print};
 }

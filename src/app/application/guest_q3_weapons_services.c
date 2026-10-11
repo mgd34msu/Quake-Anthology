@@ -801,7 +801,7 @@ static bool inventory_read(application_q3_weapons_services *s, qa_actor_id actor
     if (!native_selected(s, actor, &out->provider, present, error)) return false;
     if (!*present) return true;
     qa_inventory *inventory = application(s)->inventory;
-    if (!qa_inventory_source_items(inventory, actor, &out->definitions, error)) return false;
+    if (!qa_inventory_source_items(inventory, actor, NULL, &out->definitions, error)) return false;
     for (size_t i = 0; i < out->definitions.group_count; ++i) {
         const qa_inventory_source_group *group = out->definitions.groups + i;
         if (group->owner != out->provider->owner) continue;

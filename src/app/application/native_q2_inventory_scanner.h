@@ -2,6 +2,7 @@
 #define QA_APPLICATION_NATIVE_Q2_INVENTORY_SCANNER_H
 #include "qa/native.h"
 #include "qa/inventory.h"
+#include "qa/pool.h"
 struct application_native_q2;
 struct application_provider;
 typedef struct application_native_q2_inventory_scanner application_native_q2_inventory_scanner;
@@ -34,6 +35,7 @@ typedef struct application_native_q2_inventory_row {
 } application_native_q2_inventory_row;
 typedef struct application_native_q2_inventory_scanner_options {
     void *context;
+    size_t (*storage_bytes)(void *);
     bool (*rows)(void *, qa_actor_id, const application_native_q2_inventory_row **,
         size_t *, bool *present, qa_error *);
     bool (*use)(void *, qa_actor_id, qa_item_id, qa_error *);
@@ -42,12 +44,14 @@ typedef struct application_native_q2_inventory_scanner_options {
 typedef struct application_native_q2_inventory_readout {
     application_native_q2_inventory_row *rows;
     size_t count;
+    qa_pool *storage;
+    size_t storage_slot, storage_pages;
     qa_item_id selected;
     application_native_q2_inventory_presentation selected_presentation;
     bool present;
 } application_native_q2_inventory_readout;
 /* The profile is the acquired primary declaration, never a callback document.
- * Returned rows borrow only their copied readout until readout_free. */
+ * Returned rows borrow load-sized storage until readout_free. */
 bool application_native_q2_inventory_scanner_create(struct application_native_q2 *,
     const application_native_q2_inventory_scanner_options *,
     application_native_q2_inventory_scanner **, qa_error *);
