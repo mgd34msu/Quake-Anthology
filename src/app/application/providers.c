@@ -394,14 +394,14 @@ static qa_q1_options q1_initial_options(application_provider *provider,
                        : product->edition == QA_EDITION_RERELEASE
                              ? QA_Q1_RERELEASE
                              : QA_Q1_CLASSIC,
-        .rules = qa_product_ruleset(product, QA_GAME_Q1),
+        .rules = provider->launch->selection.clock.kind,
         .coop = profile.cooperative,
         .skill = (uint8_t)profile.skill,
         .deathmatch = profile.deathmatch ? 1 : 0,
         .teamplay = profile.teamplay,
         .gamecfg = profile.gamecfg,
         .gravity = 800.0f,
-        .aim_threshold = product->edition == QA_EDITION_QUAKEWORLD ? 2.0f : 0.93f,
+        .aim_threshold = provider->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD ? 2.0f : 0.93f,
         .max_clients = profile.maximum_clients,
         .random_seed = (uint32_t)(provider->owner * UINT32_C(2654435761)),
     };

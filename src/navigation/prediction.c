@@ -134,7 +134,7 @@ static bool command_vector(nav_prediction *p, qa_vec3 move, uint32_t millisecond
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Navigation prediction time/sequence overflow");
         return false;
     }
-    float yaw = atan2f(move.y, move.x) * 57.29577951308232f,
+    float yaw = qa_vec_yaw(move,QA_DIRECTION_FLOAT,false),
           horizontal = fminf(400, hypotf(move.x, move.y));
     float up = fmaxf(-400, fminf(400, move.z));
     int32_t word = qa_angle_to_word(yaw,QA_ANGLE_WORD_ROUNDED);

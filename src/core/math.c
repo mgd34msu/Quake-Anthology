@@ -95,11 +95,15 @@ float qa_vec_yaw(qa_vec3 v,qa_direction_math_rule rule,bool wrap)
 qa_vec3 qa_vec_angles(qa_vec3 v,qa_direction_math_rule rule,unsigned flags)
 {
     bool vertical=v.x==0 && v.y==0;
-    double horizontal=flags&QA_VECTOR_SQUARED_HORIZONTAL?
-        (flags&QA_VECTOR_DOUBLE_SQRT?(float)sqrt((double)(v.x*v.x+v.y*v.y)):sqrtf(v.x*v.x+v.y*v.y)):
-        flags&QA_VECTOR_WIDE_HORIZONTAL?hypot((double)v.x,v.y):hypotf(v.x,v.y);
-    double pitch=vertical && (flags&QA_VECTOR_VERTICAL_CARDINAL)?(v.z>0?90:270):
-        vertical && (flags&QA_VECTOR_VERTICAL_SIGNED)?(v.z>0?90:-90):direction_degrees(v.z,horizontal,rule);
+    double pitch;
+    if(flags&QA_VECTOR_POLAR_PITCH) pitch=acosf(fminf(1,fmaxf(-1,v.z)))*57.29577951308232f;
+    else {
+        double horizontal=flags&QA_VECTOR_SQUARED_HORIZONTAL?
+            (flags&QA_VECTOR_DOUBLE_SQRT?(float)sqrt((double)(v.x*v.x+v.y*v.y)):sqrtf(v.x*v.x+v.y*v.y)):
+            flags&QA_VECTOR_WIDE_HORIZONTAL?hypot((double)v.x,v.y):hypotf(v.x,v.y);
+        pitch=vertical && (flags&QA_VECTOR_VERTICAL_CARDINAL)?(v.z>0?90:270):
+            vertical && (flags&QA_VECTOR_VERTICAL_SIGNED)?(v.z>0?90:-90):direction_degrees(v.z,horizontal,rule);
+    }
     if(flags&QA_VECTOR_NEGATE_BEFORE_WRAP) pitch=-pitch;
     if(flags&QA_VECTOR_WRAP_PITCH) pitch=direction_wrap(pitch,rule);
     if((flags&QA_VECTOR_NEGATIVE_PITCH) && !(flags&QA_VECTOR_NEGATE_BEFORE_WRAP)) pitch=-pitch;

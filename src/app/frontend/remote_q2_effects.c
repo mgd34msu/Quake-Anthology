@@ -266,11 +266,6 @@ static float random_signed(frontend_remote_q2_effects *o) { return (float)(2 * r
 qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *o)
 { return frontend_q2_effect_random_direction(&o->random,o->source.rules==QA_RULESET_Q2_RERELEASE); }
 
-static qa_vec3 direction_angles(qa_vec3 d)
-{
-    float yaw=qa_vec_yaw(d,QA_DIRECTION_FLOAT,d.x==0);
-    return qa_v3(acosf(fminf(1, fmaxf(-1, d.z))) * 57.29577951308232f, yaw, 0);
-}
 static bool sound(frontend_remote_q2_effects *o, qa_q2_sound_index path, qa_vec3 origin,
     qa_actor_id actor, double time, int32_t channel, float volume, float attenuation, double delay, qa_error *e)
 { return o->source.sound(o->source.context, qa_audio_bank_q2_name(o->source.sounds, path), origin, actor, time, channel, volume, attenuation, delay, e) && q2fx_source_current(o, e); }
@@ -427,7 +422,8 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         bool green=t->type==QA_Q2_TE_BLASTER2, blue=t->type==QA_Q2_TE_FLECHETTE, hyper=t->type==QA_Q2_TE_BLUEHYPERBLASTER_2;
         frontend_fx_q2_impact_particles(p,r,pos,dir,green?0xd0:blue?0x6f:hyper?0xb0:0xe0,40,seconds,FRONTEND_FX_Q2_BLASTER);
         explosion(o,1,Q2FX_EXPLODE,pos,server-interval,4,0,8|32,green?1:blue || hyper?2:0,rerelease && t->type==QA_Q2_TE_BLASTER?200:150,
-            green?qa_v3(0,1,0):blue?qa_v3(.19f,.41f,.75f):hyper?qa_v3(0,0,1):qa_v3(1,1,0),direction_angles(dir),1);
+            green?qa_v3(0,1,0):blue?qa_v3(.19f,.41f,.75f):hyper?qa_v3(0,0,1):qa_v3(1,1,0),
+            qa_vec_angles(dir,QA_DIRECTION_FLOAT,QA_VECTOR_POLAR_PITCH|(dir.x==0?QA_VECTOR_WRAP_YAW:0)),1);
         return sound(o,QA_Q2_SFX_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     }
     case QA_Q2_TE_RAILTRAIL: case QA_Q2_TE_RAILTRAIL2:
@@ -466,7 +462,8 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         break;
     case QA_Q2_TE_WIDOWSPLASH: radial_particles(o,pos,time,256,45,40,0,false); break;
     case QA_Q2_TE_BERSERK_SLAM:
-        frontend_fx_q2_berserk(p,r,pos,dir,seconds); explosion(o,1,Q2FX_EXPLODE,pos,server-interval,4,0,8|32,2,550,qa_v3(.19f,.41f,.75f),direction_angles(dir),3); break;
+        frontend_fx_q2_berserk(p,r,pos,dir,seconds); explosion(o,1,Q2FX_EXPLODE,pos,server-interval,4,0,8|32,2,550,qa_v3(.19f,.41f,.75f),
+            qa_vec_angles(dir,QA_DIRECTION_FLOAT,QA_VECTOR_POLAR_PITCH|(dir.x==0?QA_VECTOR_WRAP_YAW:0)),3); break;
     case QA_Q2_TE_FLASHLIGHT:
         if (!field_actor(o,t,QA_Q2_TEMP_ENTITY1,actors,&actor,e)) return false;
         light(o,actor,pos,time,400,100,qa_v3(1,1,1),0,250); break;

@@ -205,8 +205,7 @@ bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id r
                 if (qa_q2_wire_actor(v->q2_source.source.game, recipient, &binding, NULL)) slot = binding.source_slot;
             } else {
                 struct application_native_q2 *engine = source->state.native.q2_engine;
-                for (uint32_t i = 1; i < 257; ++i)
-                    if (qa_actor_id_equal(engine->clients[i].actor, recipient)) { slot = i; break; }
+                slot = application_native_q2_client_slot(engine, recipient);
             }
             if (slot) {
                 qa_cvars *cvars = v->q2_source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN ?
