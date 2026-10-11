@@ -71,10 +71,9 @@ static bool capture(struct application_native_q2_source_invocation *s,qa_error *
 {
     struct application_native_q2 *n=s->engine;qa_application *app=s->provider->application;
     if(!s->actor.registry)return true;
-    if(app->players)for(size_t i=0;i<app->players->count;++i) {
-        const application_player_record *r=app->players->records+i;
-        if(r->retiring||!qa_actor_id_equal(r->actor,s->actor))continue;
-        if(s->client)return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation repeats its actual canonical client");
+    (void)e;
+    const application_player_record *r=application_player_record_live(app->players,s->actor);
+    if(r) {
         s->client=true;s->roster=app->players;s->primary=app->players->map_provider;
         s->seat=r->seat;s->client_slot=r->client_slot;s->source_slot=r->source_slot;
         s->remote=r->remote;s->remote_client=r->remote_client;s->remote_seat=r->remote_seat;
@@ -98,17 +97,10 @@ static bool current(const struct application_native_q2_source_invocation *s)
     }
     if(!s->client)return true;
     if(app->players!=s->roster||app->players->map_provider!=s->primary)return false;
-    size_t found=0;
-    for(size_t i=0;i<app->players->count;++i) {
-        const application_player_record *r=app->players->records+i;
-        if(!qa_actor_id_equal(r->actor,s->actor))continue;
-        if(r->retiring||r->seat!=s->seat||r->client_slot!=s->client_slot||r->source_slot!=s->source_slot||
-            r->remote!=s->remote||r->remote_client.owner!=s->remote_client.owner||
-            r->remote_client.generation!=s->remote_client.generation||r->remote_client.slot!=s->remote_client.slot||
-            r->remote_seat.owner!=s->remote_seat.owner||r->remote_seat.index!=s->remote_seat.index)return false;
-        ++found;
-    }
-    return found==1;
+    const application_player_record *r=application_player_record_live(app->players,s->actor);
+    return r && r->seat==s->seat && r->client_slot==s->client_slot && r->source_slot==s->source_slot &&
+        r->remote==s->remote && qa_net_client_id_equal(r->remote_client,s->remote_client) &&
+        r->remote_seat.owner==s->remote_seat.owner && r->remote_seat.index==s->remote_seat.index;
 }
 bool application_native_q2_source_invocation_begin(struct application_native_q2 *n,qa_actor_id actor,
     struct application_native_q2_source_invocation **out,qa_error *e)

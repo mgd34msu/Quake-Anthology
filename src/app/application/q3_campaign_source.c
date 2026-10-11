@@ -150,12 +150,10 @@ bool qa_application_q3_campaign_local_seat(qa_application *app,
     }
     if (!qa_actors_get(qa_session_actors(app->session), source_actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign physical client lost its full actor binding");
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *row = app->players->records + i;
-        if (row->retiring || row->remote || application_player_identity(row)->bot || !qa_actor_id_equal(row->actor, source_actor)) continue;
+    const application_player_record *row=application_player_record_live(app->players,source_actor);
+    if(row && !row->remote && !application_player_identity(row)->bot) {
         if (row->client_slot != slot)
             return application_fail(error, QA_ERROR_ARGUMENT, "Campaign local roster differs from its physical GAME client");
-        if (*found) return application_fail(error, QA_ERROR_ARGUMENT, "Campaign physical client has ambiguous local seats");
         *found = true; *seat = row->seat; *actor = row->actor;
     }
     return true;

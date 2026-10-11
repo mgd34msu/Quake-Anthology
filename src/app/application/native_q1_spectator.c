@@ -42,11 +42,8 @@ static bool current(spectator_call *call, qa_error *error)
     if (!qa_q1_native_client_slot(source->state.q1, call->actor, &slot, error)) return false;
     if (slot != call->slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator changed physical client slots");
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *row = app->players->records + i;
-        if (!row->retiring && application_player_identity(row)->spectator != call->ordinary && row->client_slot == slot &&
-            qa_actor_id_equal(row->actor, call->actor)) return true;
-    }
+    const application_player_record *row=application_player_record_live(app->players,call->actor);
+    if(row && application_player_identity(row)->spectator!=call->ordinary && row->client_slot==slot) return true;
     return application_fail(error, QA_ERROR_ARGUMENT, "QW spectator has no trusted reserved roster row");
 }
 

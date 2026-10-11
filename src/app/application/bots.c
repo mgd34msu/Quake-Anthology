@@ -467,11 +467,7 @@ static bool bot_source_client(void *opaque,qa_actor_id actor,int32_t *out,qa_err
         if(!application_q3_guest_actor_client(source,actor,&slot))
             return application_fail(error,QA_ERROR_NOT_FOUND,"bot has no actual Q3 source client binding");
     } else {
-        application_player_record *record=NULL;
-        for(size_t i=0;bots->application->players && i<bots->application->players->count;++i) {
-            application_player_record *candidate=bots->application->players->records+i;
-            if(!candidate->retiring && qa_actor_id_equal(candidate->actor,actor)) {record=candidate;break;}
-        }
+        application_player_record *record=application_player_record_live(bots->application->players,actor);
         if(!record) return application_fail(error,QA_ERROR_NOT_FOUND,"bot has no actual shared player client binding");
         slot=record->client_slot;
     }
@@ -545,11 +541,9 @@ static bool bot_source_action_client(void *opaque,int32_t client,uint32_t *out,q
         /* Native setup reserves the canonical actor namespace, including real
          * human rows. Bot seats may instead retain their round input alias. */
         const struct application_player_roster *roster=bots->application->players;
-        for(size_t i=0;roster && i<roster->count;++i) {
-            const application_player_record *record=roster->records+i;
-            if(!record->retiring && !application_player_identity(record)->bot && record->client_slot==(uint32_t)client &&
-               qa_actor_id_equal(record->actor,actor)) {input=record->actor.slot;break;}
-        }
+        const application_player_record *record=application_player_record_live(roster,actor);
+        if(record && !application_player_identity(record)->bot && record->client_slot==(uint32_t)client)
+            input=record->actor.slot;
     }
     qa_bot_actions *actions=qa_bot_runtime_actions(bots->runtime);
     if(input==UINT32_MAX || input>=qa_bot_actions_capacity(actions) ||
@@ -1179,11 +1173,7 @@ bool application_bots_client_prepare(qa_application *app,qa_actor_id actor,uint3
        !qa_actors_get(qa_session_actors(app->session),actor) ||
        !bot_source_client(bots,actor,&actual,error) || actual<0 || (uint32_t)actual!=physical_client)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot admission requires its actual initialized source client and selected movement");
-    application_player_record *record=NULL;
-    for(size_t i=0;app->players && i<app->players->count;++i)
-        if(!app->players->records[i].retiring && qa_actor_id_equal(app->players->records[i].actor,actor)) {
-            record=app->players->records+i;break;
-        }
+    application_player_record *record=application_player_record_live(app->players,actor);
     if(!record || !application_player_identity(record)->bot || record->client_slot!=physical_client)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot admission has no genuine local source roster record");
     application_bot_seat *seat=NULL;
@@ -1254,9 +1244,8 @@ bool application_bots_native_q3_connect(application_provider *provider,qa_actor_
             bots->seats=seats;seat=bots->seats+bots->capacity++;*seat=(application_bot_seat){0};
         }
         }
-        uint32_t local_seat=UINT32_MAX;
-        for(size_t i=0;app->players && i<app->players->count;++i)
-            if(qa_actor_id_equal(app->players->records[i].actor,actor)) {local_seat=app->players->records[i].seat;break;}
+        const application_player_record *record=application_player_record_find(app->players,actor);
+        uint32_t local_seat=record?record->seat:UINT32_MAX;
         qa_bot_navigation_destroy(seat->navigation);
         *seat=(application_bot_seat){.actor=actor,.seat=local_seat,.library_client=library_client};
         if(!application_bot_navigation_bind(bots,seat,error)) return false;

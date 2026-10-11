@@ -1,3 +1,4 @@
+#include "map_players_private.h"
 #include "network_q2_private.h"
 #include "client_events.h"
 #include "native_q2_visibility.h"
@@ -191,17 +192,9 @@ static bool userinfo(void *context, qa_net_client_id id, qa_net_seat_id seat,
         !qa_application_network_q2_player(owner, actor, &physical, error) ||
         owner->app->operation != APPLICATION_IDLE) return false;
     if (!info_valid(owner, text, error)) return false;
-    application_player_record *row = NULL;
-    for (size_t i = 0; owner->app->players && i < owner->app->players->count; ++i) {
-        application_player_record *candidate = &owner->app->players->records[i];
-        if (!candidate->retiring && qa_actor_id_equal(candidate->actor, actor) &&
-            qa_net_client_id_equal(candidate->remote_client, id) &&
-            candidate->remote_seat.owner == seat.owner && candidate->remote_seat.index == seat.index) {
-            if (row) return application_fail(error, QA_ERROR_FORMAT, "Q2 userinfo aliases two canonical roster rows");
-            row = candidate;
-        }
-    }
-    if (!row) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 userinfo lost its canonical Source admission");
+    application_player_record *row=application_player_record_live(owner->app->players,actor);
+    if (!row || !qa_net_client_id_equal(row->remote_client,id) ||
+        row->remote_seat.owner!=seat.owner || row->remote_seat.index!=seat.index) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 userinfo lost its canonical Source admission");
     application_snapshot_mutated(owner->app);
     application_provider *provider = application_network_q2_provider(owner);
     owner->app->operation = APPLICATION_CONFIGURING;

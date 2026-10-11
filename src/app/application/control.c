@@ -4238,17 +4238,12 @@ bool application_control_source_spawn(qa_application *application,
                                 "Source spawn lost its actual client or character owner");
     if (!qa_q1_native_client_slot(source->state.q1, actor, &slot, error)) return false;
     if (source != map_source) {
-        const application_player_record *player = NULL;
         if (!application->players || application->players->map_provider != map_source ||
             !map_source->constructed || !map_source->attached || map_source->close_pending)
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Selected Q1 Source spawn lost its actual QC map owner");
-        for (size_t i = 0; i < application->players->count; ++i) {
-            const application_player_record *row = application->players->records + i;
-            if (!row->retiring && !row->source_begin_pending && row->character == source &&
-                qa_actor_id_equal(row->actor, actor) && row->client_slot == slot) { player = row; break; }
-        }
-        if (!player) return application_fail(error, QA_ERROR_ARGUMENT,
+        const application_player_record *player=application_player_record_live(application->players,actor);
+        if (!player || player->source_begin_pending || player->character!=source || player->client_slot!=slot) return application_fail(error, QA_ERROR_ARGUMENT,
             "Selected Q1 Source spawn differs from its actual physical roster");
     }
     if (!qa_q1_game_clock_read(source->state.q1, &source_time, &source_elapsed))

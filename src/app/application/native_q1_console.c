@@ -322,14 +322,9 @@ bool application_native_q1_console_engine_borrow(qa_application *app,
             owner->provider != source || command->context.dialect != dialect(source) ||
             (command->context.owner && command->context.owner != source->owner))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q1 engine command lost its published Source");
-        for (size_t j = 0; j < app->players->count; ++j) {
-            const application_player_record *player = app->players->records + j;
-            if (!player->retiring && qa_actor_id_equal(player->actor, actor) &&
-                player->client_slot == client.slot) {
-                ++owner->calls;
-                *out = owner;
-                return true;
-            }
+        const application_player_record *player=application_player_record_live(app->players,actor);
+        if(player && player->client_slot==client.slot) {
+            ++owner->calls;*out=owner;return true;
         }
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 engine command differs from its Source roster");
     }

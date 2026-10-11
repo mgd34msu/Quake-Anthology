@@ -1,3 +1,4 @@
+#include "map_players_private.h"
 #include "network_q2_private.h"
 #include "guest_native_q2_original_save.h"
 #include <math.h>
@@ -295,25 +296,14 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
     return ok;
 }
 
-static application_player_record *roster_player(qa_application_network_q2 *owner, qa_actor_id actor)
-{
-    struct application_player_roster *roster = owner->app->players;
-    application_player_record *found = NULL;
-    for (size_t i = 0; roster && i < roster->count; ++i) {
-        application_player_record *row = &roster->records[i];
-        if (row->retiring || row->deferred || !qa_actor_id_equal(row->actor, actor)) continue;
-        if (found) return NULL;
-        found = row;
-    }
-    return found;
-}
 
 bool qa_application_network_q2_player(qa_application_network_q2 *owner, qa_actor_id actor,
     qa_network_q2_player *out, qa_error *error)
 {
     qa_player_state control;
-    if (!out || !application_network_q2_current(owner, error) || !roster_player(owner, actor) ||
-        !qa_application_control_read(owner->app, actor, &control))
+    if (!application_network_q2_current(owner, error)) return false;
+    const application_player_record *record=application_player_record_live(owner->app->players,actor);
+    if (!out || !record || record->deferred || !qa_application_control_read(owner->app, actor, &control))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 wire player has no admitted full actor/control owner");
     uint32_t slot = 0;
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {

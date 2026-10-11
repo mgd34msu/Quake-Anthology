@@ -128,12 +128,7 @@ static bool check_player_flags(struct application_qc_state *engine,qa_qc_instanc
     const char *raw="";
     if (client->connected) {
         const struct application_player_roster *roster=engine->provider->application->players;
-        const application_player_record *actual=NULL;
-        for (size_t i=0;roster && i<roster->count;++i)
-            if (qa_actor_id_equal(roster->records[i].actor,client->actor)) {
-                if (actual) return application_fail(error,QA_ERROR_FORMAT,"QC preference has duplicate canonical player owners");
-                actual=roster->records+i;
-            }
+        const application_player_record *actual=application_player_record_find(roster,client->actor);
         if (!actual) return application_fail(error,QA_ERROR_NOT_FOUND,"QC preference has no actual canonical player owner");
         if (actual->userinfo) raw=actual->userinfo;
     }

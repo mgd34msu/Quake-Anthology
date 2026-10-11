@@ -47,23 +47,11 @@ static bool gear_current(qa_application *app, const client_listener *row,
     return true;
 }
 
-static application_player_record *player_record(qa_application *app, qa_actor_id actor)
-{
-    if (!app || !app->players || !app->session ||
-        !qa_actors_get(qa_session_actors(app->session), actor)) return NULL;
-    application_player_record *found = NULL;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        application_player_record *row = app->players->records + i;
-        if (!qa_actor_id_equal(row->actor, actor) || row->retiring) continue;
-        if (found) return NULL;
-        found = row;
-    }
-    return found;
-}
 
 static application_player_record *player(qa_application *app, qa_actor_id actor)
 {
-    application_player_record *row = player_record(app, actor);
+    if (!app || !app->session || !qa_actors_get(qa_session_actors(app->session),actor)) return NULL;
+    application_player_record *row = application_player_record_live(app?app->players:NULL, actor);
     return row && !row->source_begin_pending ? row : NULL;
 }
 
@@ -92,7 +80,7 @@ static bool userinfo_has(const char *text, const char *key)
 bool application_client_native_q3_userinfo(qa_application *app, application_provider *provider,
     qa_actor_id actor, const char *userinfo, int32_t game_type, qa_error *error)
 {
-    application_player_record *actual = player_record(app, actor);
+    application_player_record *actual = application_player_record_live(app?app->players:NULL, actor);
     const qa_launch_snapshot *snapshot = qa_application_launch(app);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
     qa_application_character_declaration declaration;
@@ -134,7 +122,7 @@ bool application_client_native_q3_userinfo(qa_application *app, application_prov
 bool application_client_userinfo_publish(qa_application *app, qa_actor_id actor,
     const char *text, qa_error *error)
 {
-    application_player_record *row = player_record(app, actor);
+    application_player_record *row = application_player_record_live(app?app->players:NULL, actor);
     application_provider *source = app && app->players ? app->players->map_provider : NULL;
     if (!text || !row || !source || source->application != app ||
         !source->constructed || !source->attached || source->close_pending ||

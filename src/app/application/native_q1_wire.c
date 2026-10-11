@@ -54,7 +54,6 @@ struct application_native_q1_wire_language_ticket {
 struct qa_application_language_ticket {
     application_native_q1_wire_language_ticket *native;
 };
-static const application_player_record *roster(qa_application *, qa_actor_id);
 static void assets_release(qa_resource **rows, size_t count) {
     for (size_t i = 0; i < count; ++i) qa_resource_release(rows[i]);
     free(rows);
@@ -749,13 +748,7 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lost its actual source player or selected control");
     application_native_q1_wire_end(&source); return okay;
 }
-static const application_player_record *roster(qa_application *app, qa_actor_id actor) {
-    for (size_t i = 0; app->players && i < app->players->count; ++i) {
-        const application_player_record *row = &app->players->records[i];
-        if (!row->retiring && qa_actor_id_equal(row->actor, actor)) return row;
-    }
-    return NULL;
-}
+
 bool application_native_q1_wire_status(qa_application *app, qa_actor_owner owner,
     qa_application_network_q1_status_player players[255], size_t *out_count, qa_error *error) {
     if (!players || !out_count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 client inventory");
@@ -765,7 +758,7 @@ bool application_native_q1_wire_status(qa_application *app, qa_actor_owner owner
     for (uint32_t slot = 0; slot < source.receipt.client_slots; ++slot) {
         qa_actor_id actor; qa_q1_source_client_view view;
         if (!qa_q1_source_client_actor(source.provider->state.q1, slot, &actor)) continue;
-        const application_player_record *row = roster(app, actor);
+        const application_player_record *row = application_player_record_live(app->players, actor);
         if (!row || !qa_q1_source_client_read(source.provider->state.q1, actor, &view) ||
             view.slot != slot || !isfinite(view.frags)) {
             okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 source client lost its actual roster binding"); break;
@@ -835,7 +828,7 @@ bool application_native_q1_wire_client_baseline(qa_application *app, qa_actor_id
 bool application_native_q1_wire_damage(qa_application *app,const qa_damage_outcome *outcome,qa_error *error)
 {
     if(!app || !outcome || !outcome->result.has_feedback ||
-        outcome->result.feedback_family!=QA_GAME_Q1 || !roster(app,outcome->request.target)) return true;
+        outcome->result.feedback_family!=QA_GAME_Q1 || !application_player_record_live(app->players,outcome->request.target)) return true;
     application_provider *provider=application_provider_for(app,outcome->request.target,QA_ROLE_CHARACTER,"");
     if(!provider || provider->kind!=APPLICATION_PROVIDER_Q1) return true;
     qa_player_feedback feedback={.damage=true,
@@ -940,7 +933,7 @@ static bool emit_text(qa_application *app, application_provider *wire,
         qa_actor_id actor;
         if (!qa_q1_source_client_actor(wire->state.q1, slot, &actor)) continue;
         if (event->actor.registry && !qa_actor_id_equal(event->actor, actor)) continue;
-        const application_player_record *recipient = roster(app, actor);
+        const application_player_record *recipient = application_player_record_live(app->players, actor);
         if (!recipient) { okay = application_fail(error, QA_ERROR_NOT_FOUND, "Q1 wire text lost its actual recipient connection"); break; }
         if (application_player_identity(recipient)->bot && !recipient->remote) continue;
         char output[1024]; const char *value = format;
@@ -1199,7 +1192,7 @@ bool application_native_q1_wire_observe(qa_application *app, qa_error *error) {
 bool application_native_q1_wire_client_userinfo(application_provider *p, qa_actor_id actor,
     qa_error *error) {
     uint32_t slot;
-    const application_player_record *record = p ? roster(p->application, actor) : NULL;
+    const application_player_record *record = p ? application_player_record_live(p->application->players, actor) : NULL;
     if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !record ||
         !qa_q1_native_client_slot(p->state.q1, actor, &slot, error) || slot != record->client_slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source admission lost its actual connection");
@@ -1221,7 +1214,7 @@ bool application_native_q1_wire_client_userinfo(application_provider *p, qa_acto
 bool application_native_q1_wire_client_admit(application_provider *p, qa_actor_id actor,
     qa_error *error) {
     uint32_t slot;
-    const application_player_record *record = p ? roster(p->application, actor) : NULL;
+    const application_player_record *record = p ? application_player_record_live(p->application->players, actor) : NULL;
     if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !record ||
         !qa_q1_native_client_slot(p->state.q1, actor, &slot, error) || slot != record->client_slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source spawned admission lost its actual connection");
@@ -1236,7 +1229,7 @@ bool application_native_q1_wire_client_publish(void *opaque,
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 publication lost its actual native source client");
     application_provider *primary = application_world_provider(p->application, QA_ROLE_ENTITIES, "");
     if (primary == p && qa_q1_wire_enabled(p->state.q1)) {
-        const application_player_record *record = roster(p->application, view->actor);
+        const application_player_record *record = application_player_record_live(p->application->players, view->actor);
         const char *language = NULL;
         if (!record) return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 text recipient lost its actual connection");
         if (application_player_identity(record)->bot && !record->remote) return application_native_q1_wire_observe(p->application, error);
@@ -1373,13 +1366,7 @@ static bool check_client_eye(void *context, qa_actor_id actor, qa_vec3 *out, qa_
     application_provider *p = context;
     if (!out || !check_client_source(p, error)) return false;
     qa_application *app = p->application;
-    const application_player_record *row = NULL;
-    for (size_t i = 0; i < app->players->count; ++i)
-        if (!app->players->records[i].retiring &&
-            qa_actor_id_equal(app->players->records[i].actor, actor)) {
-            row = app->players->records + i;
-            break;
-        }
+    const application_player_record *row=application_player_record_live(app->players,actor);
     if (!row)
         return application_fail(error, QA_ERROR_ARGUMENT, "Check-client eye lost its physical Source roster binding");
     if (row->source_begin_pending || row->deferred)
@@ -1452,7 +1439,7 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
     bool okay = !sender.registry || (client(source, sender, &slot, error) &&
         qa_q1_source_client_read(source->provider->state.q1, sender, &from));
     const qa_cvar_view *hostname = !sender.registry ? qa_q1_source_read(source->provider->state.q1, QA_Q1_SOURCE_HOSTNAME) : NULL;
-    const application_player_record *player = sender.registry ? roster(source->provider->application, sender) : NULL;
+    const application_player_record *player = sender.registry ? application_player_record_live(source->provider->application->players, sender) : NULL;
     if (okay && sender.registry && (!player || player->deferred || player->source_begin_pending ||
         (qw && !player->userinfo)))
         okay = application_fail(error, QA_ERROR_ARGUMENT, "Chat lost its admitted Source player");
@@ -1475,7 +1462,7 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *source, 
     for (uint32_t i = 0; okay && i < source->receipt.client_slots; ++i) {
         qa_actor_id actor; qa_q1_source_client_view view;
         if (!qa_q1_source_client_actor(source->provider->state.q1, i, &actor)) continue;
-        const application_player_record *recipient = roster(source->provider->application, actor);
+        const application_player_record *recipient = application_player_record_live(source->provider->application->players, actor);
         if (!recipient || recipient->deferred || recipient->source_begin_pending) continue;
         if (!qa_q1_source_client_read(source->provider->state.q1, actor, &view)) {
             okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 chat lost its physical source recipient"); break;
@@ -1561,7 +1548,7 @@ static bool source_roster_refresh(application_native_q1_wire_source *source, qa_
     qa_error *error) {
     qa_application *app = source->provider->application;
     qa_q1_source_client_view view; qa_buffer userinfo = {0};
-    const application_player_record *record = roster(app, actor);
+    const application_player_record *record = application_player_record_live(app->players, actor);
     if (!record || !qa_q1_source_client_read(source->provider->state.q1, actor, &view) ||
         record->client_slot != view.slot)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 source userinfo lost its full actor roster");

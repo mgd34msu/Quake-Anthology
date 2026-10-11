@@ -11,14 +11,11 @@ static bool replacement_arsenal(qa_application *app, qa_actor_id actor,
     *out = false;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (!arsenal || arsenal->owner == source) return true;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *player = app->players->records + i;
-        if (!qa_actor_id_equal(player->actor, actor) || player->retiring || player->deferred ||
-            player->source_begin_pending) continue;
+    const application_player_record *player=application_player_record_live(app->players,actor);
+    if(player && !player->deferred && !player->source_begin_pending) {
         qa_item_id weapon;
-        if (!qa_application_weapon_read(app, actor, &weapon, error)) return false;
-        *out = true;
-        break;
+        if (!qa_application_weapon_read(app,actor,&weapon,error)) return false;
+        *out=true;
     }
     return true;
 }

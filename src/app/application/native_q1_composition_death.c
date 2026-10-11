@@ -51,11 +51,8 @@ static bool player_current(death_call *call, qa_actor_id actor, qa_error *error)
         !qa_q1_source_client_read(call->operation.game, actor, &client) ||
         client.slot != slot || !qa_actor_id_equal(client.actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 death callback lost its physical client");
-    for (size_t i = 0; i < call->app->players->count; ++i) {
-        const application_player_record *record = call->app->players->records + i;
-        if (!record->retiring && record->client_slot == slot && qa_actor_id_equal(record->actor, actor))
-            return true;
-    }
+    const application_player_record *record=application_player_record_live(call->app->players,actor);
+    if(record && record->client_slot==slot) return true;
     return application_fail(error, QA_ERROR_ARGUMENT, "Q1 death client differs from its actual published roster");
 }
 

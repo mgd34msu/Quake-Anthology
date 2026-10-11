@@ -1051,16 +1051,14 @@ bool qa_application_player_info_read(qa_application *application, qa_actor_id ac
 
     bool matched = false;
     const struct application_player_roster *roster = application->players;
-    for (size_t index = 0; roster && index < roster->count; ++index) {
-        const application_player_record *record = &roster->records[index];
-        if (!qa_actor_id_equal(record->actor, actor)) continue;
+    const application_player_record *record=application_player_record_find(roster,actor);
+    if(record) {
         if (record->retiring || record->character != provider || !application_player_name(record)) return false;
         *out = (qa_builtin_player_info){.name = application_player_name(record), .skin = application_player_skin(record),
             .slot = record->client_slot,
             .connected = !record->deferred && !record->source_begin_pending,
             .spectator = identity->spectator, .ping = identity->ping};
         matched = true;
-        break;
     }
     if (!matched) {
         const qa_launch_choices *choices = active_choices(application);

@@ -56,14 +56,7 @@ static application_player_record *player(const view_scope *scope, qa_actor_id ac
         if (e && e->code == QA_OK) application_fail(e, QA_ERROR_ARGUMENT, "FOV preference lost its full player generation");
         return NULL;
     }
-    application_player_record *found = NULL;
-    for (size_t i = 0; i < scope->roster->count; ++i) {
-        application_player_record *row = scope->roster->records + i;
-        if (!row->retiring && qa_actor_id_equal(row->actor, actor)) {
-            if (found) { application_fail(e, QA_ERROR_FORMAT, "FOV preference aliases two physical roster rows"); return NULL; }
-            found = row;
-        }
-    }
+    application_player_record *found = application_player_record_live(scope->roster,actor);
     if (!found) application_fail(e, QA_ERROR_ARGUMENT, "FOV preference has no actual admitted player");
     return found;
 }

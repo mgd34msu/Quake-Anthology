@@ -450,13 +450,8 @@ bool application_bots_round_reconnect(application_bots_round *cut,
     if(!saved || saved->completed || !qa_actors_get(qa_session_actors(cut->bots->application->session),actor))
         return application_fail(error,QA_ERROR_ARGUMENT,"bot reconnect has no pending actual new source actor");
     application_bots *bots=cut->bots;
-    application_player_record *record=NULL;
-    for(size_t i=0;bots->application->players && i<bots->application->players->count;++i) {
-        application_player_record *candidate=bots->application->players->records+i;
-        if(!candidate->retiring && application_player_identity(candidate)->bot && candidate->source_slot==row->source_slot &&
-           qa_actor_id_equal(candidate->actor,actor)) {record=candidate;break;}
-    }
-    if(!record || record->character!=cut->provider)
+    application_player_record *record=application_player_record_live(bots->application->players,actor);
+    if(!record || !application_player_identity(record)->bot || record->source_slot!=row->source_slot || record->character!=cut->provider)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot reconnect differs from the actual admitted source roster");
     ++bots->calls;bool ok;
     if(saved->native) {

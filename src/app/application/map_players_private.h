@@ -112,6 +112,13 @@ static inline application_player_record *application_player_record_find(
         if(qa_actor_id_equal(roster->records[i].actor,actor)) return roster->records+i;
     return NULL;
 }
+static inline application_player_record *application_player_record_live(
+    const struct application_player_roster *roster,qa_actor_id actor)
+{
+    application_player_record *row=application_player_record_find(roster,actor);
+    return row&&!row->retiring?row:NULL;
+}
+
 
 struct application_player_travel {
     struct application_player_roster *roster;

@@ -861,14 +861,9 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     }
     if (!activated) return application_fail(e, QA_ERROR_ARGUMENT, "Source event has no actual presentation activation receipt");
     if (simulation && simulation_recipient.registry) {
-        bool found = false;
-        for (size_t i = 0; app->players && i < app->players->count; ++i) {
-            const application_player_record *player = app->players->records + i;
-            if (!player->retiring && qa_actor_id_equal(player->actor, simulation_recipient)) {
-                borrowed.client = player->remote_client; found = true; break;
-            }
-        }
-        if (!found) borrowed.simulation = NULL;
+        const application_player_record *player=application_player_record_live(app->players,simulation_recipient);
+        if(player) borrowed.client=player->remote_client;
+        else borrowed.simulation=NULL;
     }
     if (!borrowed.simulation) borrowed.link_presentation = false;
     if (!presentation && !borrowed.simulation) return true;

@@ -549,10 +549,8 @@ bool application_native_q1_ctf_prethink(application_provider *source, qa_actor_i
     if (okay && motd <= 2) okay = write_number(&call, QA_Q1_CTF_MOTD, motd + 1, error);
     bool bot = false;
     if (okay) {
-        for (size_t i = 0; i < call.app->players->count; ++i)
-            if (qa_actor_id_equal(call.app->players->records[i].actor, actor)) {
-                bot = application_player_identity(&call.app->players->records[i])->bot; break;
-            }
+        const application_player_record *record=application_player_record_find(call.app->players,actor);
+        bot=record && application_player_identity(record)->bot;
     }
     double team = 0;
     bool handled = false;

@@ -49,27 +49,15 @@ static bool storage(const application_q3_component_client_adapter *a)
         a->application->session&&a->application->players&&
         a->application->players->map_provider==a->source&&a->application->world==a->world;
 }
-static application_player_record *retained_player(application_q3_component_client_adapter *a,qa_actor_id actor)
-{
-    if(!storage(a)) return NULL;
-    application_player_record *found=NULL;
-    for(size_t i=0;i<a->application->players->count;++i) {
-        application_player_record *p=a->application->players->records+i;
-        if(qa_actor_id_equal(p->actor,actor)) {
-            if(found) return NULL;
-            found=p;
-        }
-    }
-    return found;
-}
+
 static application_player_record *player(application_q3_component_client_adapter *a,qa_actor_id actor)
 {
-    application_player_record *p=retained_player(a,actor);
+    application_player_record *p=storage(a)?application_player_record_find(a->application->players,actor):NULL;
     return p&&!p->retiring&&!p->deferred&&qa_actors_get(qa_session_actors(a->application->session),actor)?p:NULL;
 }
 static bool client_current(application_q3_component_client_adapter *a,qa_actor_id actor,bool begun)
 {
-    application_player_record *p=retained_player(a,actor);
+    application_player_record *p=storage(a)?application_player_record_find(a->application->players,actor):NULL;
     if(!p||p->retiring||(begun&&p->deferred)||
         !qa_actors_get(qa_session_actors(a->application->session),actor)) return false;
     application_provider *source=a->source;
@@ -195,7 +183,7 @@ static bool userinfo(void *context,qa_actor_id actor,const char **out,qa_error *
     if(!out) return application_fail(e,QA_ERROR_ARGUMENT,"Component userinfo needs its borrowed output");
     if(!client_current(a,actor,false))
         return application_fail(e,QA_ERROR_NOT_FOUND,"Component userinfo lost its physical connected client");
-    application_player_record *p=retained_player(a,actor);
+    application_player_record *p=storage(a)?application_player_record_find(a->application->players,actor):NULL;
     application_provider *source=a->source;bool ok;
     ++a->calls;
     if(source->kind==APPLICATION_PROVIDER_Q1) {
@@ -224,7 +212,7 @@ static bool set_userinfo(void *context,qa_actor_id actor,const char *text,qa_err
     if(!text) return application_fail(e,QA_ERROR_ARGUMENT,"Component stored userinfo is absent");
     if(!client_current(a,actor,false))
         return application_fail(e,QA_ERROR_NOT_FOUND,"Component userinfo storage lost its physical connected client");
-    application_player_record *p=retained_player(a,actor);
+    application_player_record *p=storage(a)?application_player_record_find(a->application->players,actor):NULL;
     application_provider *source=a->source;bool ok;
     ++a->calls;
     if(source->kind==APPLICATION_PROVIDER_Q1) ok=qa_q1_source_client_userinfo_storage(source->state.q1,actor,text,e);
@@ -564,7 +552,7 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             if(!application_players_component_retire(app,a->source,request->actor,e)) {ok=false;break;}
             goto consumed;
         }
-        application_player_record *p=retained_player(a,request->actor);
+        application_player_record *p=storage(a)?application_player_record_find(a->application->players,request->actor):NULL;
         if(!p||p->client_slot!=request->slot) {
             ok=application_fail(e,QA_ERROR_ARGUMENT,"Queued component drop changed its full primary client identity");break;
         }
@@ -626,7 +614,7 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             if(!application_players_component_retire(app,source,request->actor,e)) {ok=false;break;}
             goto consumed;
         }
-        p=retained_player(a,request->actor);
+        p=storage(a)?application_player_record_find(a->application->players,request->actor):NULL;
         if(!p||p->client_slot!=request->slot) {
             ok=application_fail(e,QA_ERROR_ARGUMENT,"Component drop lost its retained full actor/client slot");break;
         }

@@ -100,11 +100,8 @@ static bool engine_fly_client(const engine_fly_call *call, qa_actor_id actor,
         *spectator = player.spectator;
         *noclip = player.noclip;
     }
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *row = app->players->records + i;
-        if (!row->retiring && !row->source_begin_pending && row->character == source &&
-            qa_actor_id_equal(row->actor, actor) && row->client_slot == slot) return true;
-    }
+    const application_player_record *row=application_player_record_live(app->players,actor);
+    if(row && !row->source_begin_pending && row->character==source && row->client_slot==slot) return true;
     return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE fly differs from its full physical Source roster");
 }
 
@@ -185,11 +182,8 @@ static bool q1_cheat_current(application_provider *source, qa_application *appli
          application_provider_for(application, actor, QA_ROLE_CHARACTER, "") != source) ||
         !qa_q1_source_client_read(operation->game, actor, client))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat lost its actual published Source client");
-    for (size_t i = 0; i < application->players->count; ++i) {
-        const application_player_record *record = application->players->records + i;
-        if (!record->retiring && qa_actor_id_equal(record->actor, actor) &&
-            record->client_slot == client->slot) return true;
-    }
+    const application_player_record *record=application_player_record_live(application->players,actor);
+    if(record && record->client_slot==client->slot) return true;
     return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat actor differs from its physical Source roster");
 }
 

@@ -821,11 +821,7 @@ bool application_players_prepare(qa_application *application,
         bool had_player = qa_application_player_actor(application, seat->id, &previous);
         if (had_player) travel->carry[i].previous_actor = previous;
         if (q3_replacement && had_player) {
-            for (size_t j = 0; j < application->players->count; ++j)
-                if (qa_actor_id_equal(application->players->records[j].actor, previous)) {
-                    old = &application->players->records[j];
-                    break;
-                }
+            old=application_player_record_find(application->players,previous);
             if (!old || !q3_replacement_client(application, old,
                     &travel->roster->records[i], &travel->carry[i], error)) {
                 application_players_dispose(travel);
@@ -837,14 +833,8 @@ bool application_players_prepare(qa_application *application,
                 (character->launch->selection.clock.kind == QA_RULESET_Q3 ? 0u : 1u);
         }
         if (i < local_count && had_player && !q3_replacement) {
-            for (size_t j = 0; j < application->players->count; ++j) {
-                const application_player_record *candidate = &application->players->records[j];
-                if (!candidate->remote && !candidate->retiring && candidate->seat == seat->id &&
-                    qa_actor_id_equal(candidate->actor, previous)) {
-                    old = candidate;
-                    break;
-                }
-            }
+            old=application_player_record_live(application->players,previous);
+            if(old && (old->remote || old->seat!=seat->id)) old=NULL;
             const qa_launch_choices *previous_choices = qa_launch_snapshot_choices(publication->previous);
             if (!old || !previous_choices) {
                 application_players_dispose(travel);
@@ -2560,6 +2550,15 @@ bool application_players_native_q1_respawn(qa_application *app,
         q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error);
 }
 
+static bool record_actor_bind(struct application_player_roster *roster,
+    application_player_record *record,qa_actor_id actor,qa_error *error)
+{
+    const application_player_record *existing=actor.registry?application_player_record_find(roster,actor):NULL;
+    if(existing && existing!=record)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Actor already has a player roster row");
+    record->actor=actor;return true;
+}
+
 static bool publish_player(qa_application *application, const qa_launch_choices *choices,
                            const qa_launch_seat *seat, application_player_record *record,
                            const application_player_carry *carry, size_t ordinal,
@@ -2589,7 +2588,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                                            source_slot, definition, &source_actor, error))
                 return false;
         }
-        record->actor = source_actor;
+        if(!record_actor_bind(application->players,record,source_actor,error)) return false;
         record_bind_identity(application, record);
         application_actor_routes_bind(application, source_actor);
         qa_actor_id actor = record->actor;
@@ -3593,11 +3592,8 @@ bool application_player_bot(const qa_application *app, qa_actor_id actor)
 {
     if (!app || !app->players || !app->session ||
         !qa_actors_get(qa_session_actors(app->session), actor)) return false;
-    for (size_t i = 0; i < app->players->count; ++i) {
-        const application_player_record *record = &app->players->records[i];
-        if (qa_actor_id_equal(record->actor, actor)) return application_player_identity(record)->bot && !record->retiring;
-    }
-    return false;
+    const application_player_record *record=application_player_record_live(app->players,actor);
+    return record && application_player_identity(record)->bot;
 }
 
 static bool disconnect_provider(qa_application *app,application_provider *source,
@@ -3655,13 +3651,7 @@ static bool retire_player(qa_application *app,application_provider *source,
     qa_actor_id actor,qa_error *error)
 {
     struct application_player_roster *roster=app->players;
-    application_player_record *found=NULL;
-    for(size_t i=0;i<roster->count;++i) {
-        application_player_record *record=roster->records+i;
-        if(!qa_actor_id_equal(record->actor,actor)) continue;
-        if(found) return application_fail(error,QA_ERROR_FORMAT,"Retiring actor has duplicate primary rows");
-        found=record;
-    }
+    application_player_record *found=application_player_record_find(roster,actor);
     if(!found) return !qa_actors_get(qa_session_actors(app->session),actor)||
         application_fail(error,QA_ERROR_NOT_FOUND,"Retirement lost its live Source roster row");
     uint32_t client_slot=found->client_slot,source_slot=found->source_slot;
@@ -3683,11 +3673,8 @@ static bool retire_player(qa_application *app,application_provider *source,
     /* Release callbacks can grow or consume the real roster. */
     if(app->players!=roster||roster->map_provider!=source||app->publication_generation!=generation)
         return application_fail(error,QA_ERROR_ARGUMENT,"Player release changed its actual Source publication");
-    for(size_t i=0;i<app->players->count;++i) {
-        application_player_record *record=app->players->records+i;
-        if(!qa_actor_id_equal(record->actor,actor)) continue;
-        record_free(record);record->dynamic=true;
-    }
+    found=application_player_record_find(roster,actor);
+    if(found) { record_free(found);found->dynamic=true; }
     return true;
 }
 
@@ -3753,14 +3740,9 @@ bool qa_application_player_seat(const qa_application *application, qa_actor_id a
     if (application == NULL || application->players == NULL || out == NULL ||
         application->session == NULL ||
         !qa_actors_get(qa_session_actors(application->session), actor)) return false;
-    for (size_t i = 0; i < application->players->count; ++i) {
-        const application_player_record *record = &application->players->records[i];
-        if (!record->retiring && qa_actor_id_equal(record->actor, actor)) {
-            *out = record->seat;
-            return true;
-        }
-    }
-    return false;
+    const application_player_record *record=application_player_record_live(application->players,actor);
+    if(!record) return false;
+    *out=record->seat;return true;
 }
 
 const application_player_record *application_players_connection_read(
@@ -3879,6 +3861,7 @@ static bool record_append(qa_application *application, application_player_record
                            size_t *out, qa_error *error)
 {
     struct application_player_roster *roster = application->players;
+    if(!record_actor_bind(roster,&record,record.actor,error)) return false;
     /* Stable addresses are required while nested guest calls admit bots. The
      * roster reserves one row per canonical actor before map publication. */
     for (size_t i = 0; i < roster->count; ++i)
@@ -4524,14 +4507,8 @@ bool application_players_bot_detach(qa_application *application,qa_actor_id acto
        application->q3_round_active || application->q3_world_restart ||
        !application_rankings_idle(application) || !qa_session_safe(application->session))
         return application_fail(error,QA_ERROR_ARGUMENT,"local bot detach requires its actual safe source roster");
-    application_player_record *record=NULL;
-    for(size_t i=0;i<application->players->count;++i) {
-        application_player_record *candidate=application->players->records+i;
-        if(application_player_identity(candidate)->bot && !candidate->remote && !candidate->retiring && qa_actor_id_equal(candidate->actor,actor)) {
-            record=candidate;break;
-        }
-    }
-    if(!record) return true;
+    application_player_record *record=application_player_record_live(application->players,actor);
+    if(!record || !application_player_identity(record)->bot || record->remote) return true;
     application_provider *character=record->character,*source=application->players->map_provider;
     if(!character || !source || (source->kind!=APPLICATION_PROVIDER_Q1 && source->kind!=APPLICATION_PROVIDER_Q2))
         return application_fail(error,QA_ERROR_ARGUMENT,"shared bot detach lacks its actual Q1 or Q2 source owner");
@@ -4667,9 +4644,8 @@ bool application_players_guest_detach(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "guest roster detach has the wrong provider");
     if (application->players == NULL) return true;
     struct application_player_roster *roster = application->players;
-    for (size_t i = 0; i < roster->count; ++i) {
-        application_player_record *record = &roster->records[i];
-        if (!qa_actor_id_equal(record->actor, actor)) continue;
+    application_player_record *record=application_player_record_find(roster,actor);
+    if(record) {
         for (size_t j = 0; j < record->guest_count; ++j) {
             application_player_guest_binding *binding = &record->guests[j];
             if (binding->owner != provider->owner || binding->source_slot != slot) continue;

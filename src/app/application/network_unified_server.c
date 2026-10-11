@@ -467,14 +467,8 @@ bool application_unified_source_drop_recipient(qa_application *app,qa_actor_owne
         binding.client_slot!=(int32_t)slot || !qa_actor_id_equal(binding.actor,actual) ||
         native.rule.connected==QA_Q3_CLIENT_DISCONNECTED || !qa_actors_get(qa_session_actors(app->session),actual))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source DROP differs from its actual pending native full actor");
-    const application_player_record *recipient=NULL;
-    for (size_t i=0;i<app->players->count;++i) {
-        const application_player_record *record=app->players->records+i;
-        if (!record->remote || record->retiring || !qa_actor_id_equal(record->actor,actual)) continue;
-        if (recipient) return application_fail(error,QA_ERROR_FORMAT,"Source DROP aliases canonical physical remote recipients");
-        recipient=record;
-    }
-    if (!recipient) { *present=false; return true; }
+    const application_player_record *recipient=application_player_record_live(app->players,actual);
+    if (!recipient || !recipient->remote) { *present=false; return true; }
     qa_actor_id retained;
     if (!recipient->remote_seat.owner ||
         !qa_application_remote_player_actor(app,recipient->remote_client,recipient->remote_seat,&retained) ||

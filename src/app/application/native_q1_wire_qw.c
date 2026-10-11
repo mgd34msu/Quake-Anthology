@@ -18,16 +18,10 @@ bool application_native_q1_qw_selected(qa_application *app) {
     return p && p->kind == APPLICATION_PROVIDER_Q1 && p->launch &&
         p->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD;
 }
-static const application_player_record *record(qa_application *app, qa_actor_id actor) {
-    for (size_t i = 0; app->players && i < app->players->count; ++i) {
-        const application_player_record *row = &app->players->records[i];
-        if (!row->retiring && qa_actor_id_equal(row->actor, actor)) return row;
-    }
-    return NULL;
-}
+
 static bool binding(application_native_q1_wire_source *source, qa_actor_id actor,
     uint32_t *slot, const application_player_record **row, qa_error *error) {
-    const application_player_record *actual = record(source->provider->application, actor);
+    const application_player_record *actual = application_player_record_live(source->provider->application->players, actor);
     uint32_t physical;
     if (!actual || !qa_q1_native_client_slot(source->provider->state.q1, actor, &physical, error) ||
         physical >= 32 || actual->client_slot != physical) {
@@ -476,7 +470,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     case QA_NQ_NAME:case QA_NQ_COLORS: {
         uint32_t slot=message->op==QA_NQ_NAME?message->data.indexed_text.index:message->data.indexed.index;
         qa_actor_id actor;const application_player_record *row=NULL;
-        if (qa_q1_source_client_actor(p->state.q1,slot,&actor)) row=record(p->application,actor);
+        if (qa_q1_source_client_actor(p->state.q1,slot,&actor)) row=application_player_record_live(p->application->players,actor);
         if (row && !row->userinfo) return application_fail(error,QA_ERROR_NOT_FOUND,"Native QuakeWorld board lost its real source userinfo");
         uint32_t id=row?((uint32_t)(row->remote?row->remote_client.generation:actor.generation)*32u+slot+1u):0;
         int32_t signed_id;memcpy(&signed_id,&id,sizeof(id));
@@ -510,7 +504,7 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
         for (uint32_t i=0;i<32;++i) {
             qa_actor_id actor;qa_body_state body;
             if (!qa_q1_source_client_actor(p->state.q1,i,&actor)) continue;
-            const application_player_record *row=record(p->application,actor);
+            const application_player_record *row=application_player_record_live(p->application->players,actor);
             if (!row || row->source_begin_pending || row->deferred) continue;
             qa_player_state control;
             if (!qa_world_body_read(p->application->world,actor,&body,error) ||
@@ -578,10 +572,8 @@ bool application_native_q1_qw_admission(qa_application *app,bool spectator,bool 
     for (uint32_t i=0;i<32;++i) {
         qa_actor_id actor;
         if (!qa_q1_source_client_actor(source.provider->state.q1,i,&actor)) continue;
-        const application_player_record *row=NULL;
         /* Source counts every nonfree row, including one awaiting retirement. */
-        for (size_t j=0;app->players && j<app->players->count;++j)
-            if (qa_actor_id_equal(app->players->records[j].actor,actor)) {row=&app->players->records[j];break;}
+        const application_player_record *row=application_player_record_find(app->players,actor);
         if (!row || row->client_slot!=i) {okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld admission lost an occupied physical row");break;}
         if (application_player_identity(row)->spectator) ++spectators;else ++clients;
     }

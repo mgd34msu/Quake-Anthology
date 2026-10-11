@@ -139,16 +139,8 @@ static bool publisher_fields(qa_source_save_io *io, application_unified_componen
 static bool recipient_read(const application_unified_component_publisher *p,
     application_unified_source *source, qa_unified_session_player *player, qa_error *e)
 {
-    const application_player_record *found = NULL;
-    if (p->application->players) for (size_t i = 0; i < p->application->players->count; ++i) {
-        const application_player_record *row = p->application->players->records + i;
-        if (row->remote && !row->retiring && qa_net_client_id_equal(row->remote_client, p->recipient) &&
-            qa_actor_id_equal(row->actor, p->actor)) {
-            if (found) return bad(e, "Component publisher aliases two physical recipients");
-            found = row;
-        }
-    }
-    if (!found) return bad(e, "Component publisher lost its actual remote player binding");
+    const application_player_record *found=application_player_record_live(p->application->players,p->actor);
+    if (!found || !found->remote || !qa_net_client_id_equal(found->remote_client,p->recipient)) return bad(e, "Component publisher lost its actual remote player binding");
     if (p->application->operation == APPLICATION_IDLE)
         return application_unified_source_read(p->application, source, e) &&
             application_unified_player_read(p->application, p->recipient, found->remote_seat, player, e);
