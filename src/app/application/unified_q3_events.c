@@ -3,6 +3,8 @@
 #include "guest_q3_components.h"
 #include "guest_q3_private.h"
 #include "native_q3_wire_state.h"
+#include "bots_private.h"
+#include "bots_transport.h"
 
 static bool source(application_provider *p, qa_error *e)
 {
@@ -15,7 +17,8 @@ static bool source(application_provider *p, qa_error *e)
 static bool source_time(application_provider *p, int32_t *time, qa_error *e)
 {
     if (p->kind == APPLICATION_PROVIDER_Q3) return qa_q3_source_clock(p->state.q3, time, e);
-    *time = q3g_engine(p)->milliseconds;
+    struct application_q3_guest *guest=q3g_engine(p);
+    *time=guest ? guest->milliseconds : (int32_t)(uint32_t)(qa_session_elapsed(p->application->session)/UINT64_C(1000000));
     return true;
 }
 
@@ -38,7 +41,6 @@ bool application_unified_q3_attack_providers(void *context, qa_actor_id attacker
 static bool source_emit(application_provider *p, const qa_unified_q3_event *event,
     uint64_t ns, qa_error *e)
 {
-    if (!event || !source(p, e)) return false;
     qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q3, .value.q3 = *event};
     return application_unified_event_emit(p->application, p->owner, &payload, NULL,
         (qa_actor_id){0}, (qa_actor_id){0}, ns, 0, false, false, e);
@@ -84,7 +86,7 @@ bool application_unified_q3_component_output(qa_application *app, qa_actor_owner
 bool application_unified_q3_text(application_provider *p, application_unified_q3_text_kind kind,
     int32_t client, const char *value, qa_error *e)
 {
-    if ((unsigned)kind > APPLICATION_Q3_SOURCE_DROP || !value || !source(p, e))
+    if ((unsigned)kind > APPLICATION_Q3_SOURCE_DROP || !value || !p || !p->application)
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 engine event lost its authored text");
     static const qa_unified_q3_event_kind kinds[] = {QA_UNIFIED_Q3_SERVER_COMMAND,
         QA_UNIFIED_Q3_DROP_CLIENT};
@@ -159,6 +161,12 @@ bool qa_application_q3_output_drain(qa_application *app, qa_error *error)
                     ok=q3g_output(provider,&payload->value.q3,lease,error);
                     qa_event_lease_release(lease);
                 }
+            else if(app->bots && app->bots->transport && application_bot_source(app->bots)==provider &&
+                payload->value.q3.kind==QA_UNIFIED_Q3_SERVER_COMMAND) {
+                qa_event_lease *lease=qa_event_ring_retain(app->event_ring,record->id);
+                ok=application_bot_transport_output(app->bots->transport,&payload->value.q3,lease,error);
+                qa_event_lease_release(lease);
+            }
         }
         if (ok) ++app->event_source_cursor;
     }

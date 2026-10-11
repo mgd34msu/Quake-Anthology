@@ -1,6 +1,8 @@
 #ifndef QA_APPLICATION_BOTS_TRANSPORT_H
 #define QA_APPLICATION_BOTS_TRANSPORT_H
 #include "bot_world.h"
+#include "qa/event_ring.h"
+#include "qa/unified_frame_events.h"
 
 typedef struct application_bot_transport application_bot_transport;
 typedef struct application_bot_transport_services {
@@ -16,7 +18,7 @@ bool application_bot_transport_can_destroy(const application_bot_transport *);
 bool application_bot_transport_open(application_bot_transport *,uint32_t,qa_actor_id,qa_error *);
 bool application_bot_transport_close(application_bot_transport *,uint32_t,qa_error *);
 qa_actor_id application_bot_transport_actor(const application_bot_transport *,uint32_t);
-bool application_bot_transport_message(application_bot_transport *,int32_t,const char *,qa_error *);
+bool application_bot_transport_output(application_bot_transport *,const qa_unified_q3_event *,qa_event_lease *,qa_error *);
 bool application_bot_transport_console(application_bot_transport *,uint32_t,char *,size_t,bool *,qa_error *);
 bool application_bot_transport_snapshot(application_bot_transport *,uint32_t,int32_t,int32_t *,qa_error *);
 bool application_bot_transport_frame(application_bot_transport *,double elapsed_ms,qa_error *);

@@ -6,6 +6,7 @@
 #include "qa/application_players.h"
 #include "qa/text.h"
 #include "bots_transport.h"
+#include "unified_q3_events.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -231,7 +232,8 @@ static bool console(void *context,const char *text,qa_error *error) {
 }
 static bool message(void *context,uint32_t slot,const char *text,qa_error *error) {
     application_bot_world_binding *binding=context;int32_t signed_slot;memcpy(&signed_slot,&slot,sizeof(signed_slot));
-    return source_live(binding,error) && application_bot_transport_message(binding->bots->transport,signed_slot,text,error);
+    return source_live(binding,error) && application_unified_q3_text(binding->source,
+        APPLICATION_Q3_SOURCE_COMMAND,signed_slot,text,error);
 }
 static bool random(void *context,float *out,qa_error *error) {
     application_bot_world_binding *binding=context;

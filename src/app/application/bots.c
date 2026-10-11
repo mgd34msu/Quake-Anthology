@@ -618,6 +618,7 @@ static bool bot_console(void *opaque,qa_actor_id actor,char *out,size_t capacity
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
     if(bots->shared_world) {
         int32_t client;if(!bot_source_client(bots,actor,&client,error)) return false;
+        if(!qa_application_q3_output_drain(bots->application,error)) return false;
         return application_bot_transport_console(bots->transport,(uint32_t)client,out,capacity,found,error);
     }
     if(source && source->kind==APPLICATION_PROVIDER_Q3)

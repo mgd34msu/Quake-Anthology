@@ -9,6 +9,7 @@
 #include "native_q3_match.h"
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
+#include "unified_q3_events.h"
 #include "qa/game_q3_source.h"
 #include <limits.h>
 #include <string.h>
@@ -149,7 +150,7 @@ static bool append_command(void *context,const char *text,qa_error *error) {retu
 static bool server_command(void *context,int32_t number,const char *text,qa_error *error) {
     application_bots *bots=context;application_provider *actual;
     if(!source(bots,&actual,error)) return false;
-    if(bots->shared_world) return application_bot_transport_message(bots->transport,number,text,error);
+    if(bots->shared_world) return application_unified_q3_text(actual,APPLICATION_Q3_SOURCE_COMMAND,number,text,error);
     return application_native_q3_send_command(actual,number,text,error);
 }
 static bool random(void *context,float *out,qa_error *error) {

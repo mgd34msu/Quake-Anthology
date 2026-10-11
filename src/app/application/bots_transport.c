@@ -67,7 +67,6 @@ bool application_bot_transport_open(application_bot_transport *transport,uint32_
     if(transport->count>=SIZE_MAX/sizeof(*transport->connections)) return fail(error,"local bot transport roster exceeds its extent");
     bot_connection *entry=calloc(1,sizeof(*entry));
     if(!entry) {qa_error_set(error,QA_ERROR_MEMORY,0,"allocating local bot reliable owner");return false;}
-    if(!qa_q3_reliable_prepare(&entry->reliable,error)) { free(entry);return false; }
     bot_connection **entries=realloc(transport->connections,(transport->count+1)*sizeof(*entries));
     if(!entries) {qa_q3_reliable_clear(&entry->reliable);free(entry);qa_error_set(error,QA_ERROR_MEMORY,0,"growing local bot connection map");return false;}
     transport->connections=entries;entry->client=client;entry->actor=actor;entry->active=true;
@@ -81,8 +80,9 @@ bool application_bot_transport_close(application_bot_transport *transport,uint32
 qa_actor_id application_bot_transport_actor(const application_bot_transport *transport,uint32_t client) {
     bot_connection *entry=connection(transport,client);return entry?entry->actor:(qa_actor_id){0};
 }
-bool application_bot_transport_message(application_bot_transport *transport,int32_t client,const char *text,qa_error *error) {
-    if(!transport || !text || transport->calls==SIZE_MAX) return fail(error,"local bot server command lacks its actual transport");
+bool application_bot_transport_output(application_bot_transport *transport,const qa_unified_q3_event *event,
+    qa_event_lease *lease,qa_error *error) {
+    int32_t client=event->client;
     ++transport->calls;bool okay=true;
     for(size_t i=0;okay && i<transport->count;++i) {
         bot_connection *entry=transport->connections[i];
@@ -90,7 +90,7 @@ bool application_bot_transport_message(application_bot_transport *transport,int3
         qa_error appended={0};
         int32_t before=entry->reliable.sequence;
         int64_t outstanding=(int64_t)before-entry->reliable.acknowledged;
-        if(!qa_q3_reliable_add(&entry->reliable,QA_Q3_SERVER,text,&appended)) {
+        if(!qa_q3_reliable_admit(&entry->reliable,QA_Q3_SERVER,lease,event->text,UINT32_MAX,0,&appended)) {
             if(before==INT32_MAX || outstanding!=64) {if(error) *error=appended;okay=false;}
         }
     }
@@ -103,7 +103,8 @@ bool application_bot_transport_console(application_bot_transport *transport,uint
     *found=false;out[0]=0;
     if(entry->reliable.acknowledged==entry->reliable.sequence) return true;
     if(entry->reliable.acknowledged==INT32_MAX) return fail(error,"raw bot reliable acknowledgement exceeds its signed source domain");
-    int32_t next=entry->reliable.acknowledged+1;entry->reliable.acknowledged=next;
+    int32_t next=entry->reliable.acknowledged+1;bool clamped;
+    if(!qa_q3_reliable_ack(&entry->reliable,QA_Q3_SERVER,next,&clamped,error)) return false;
     const char *text=qa_q3_reliable_lookup(&entry->reliable,next);
     if(!*text) return true;
     size_t size=strlen(text);if(size>=capacity) size=capacity-1;
