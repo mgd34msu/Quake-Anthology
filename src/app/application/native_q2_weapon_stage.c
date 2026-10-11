@@ -387,7 +387,7 @@ static bool request_run(stage_actor *a,qa_item_id item,qa_error *e)
         else {
             a->requesting=true;
             double result;
-            application_native_callback_value values[Q3_MOD_VALUE_COUNT];
+            application_q3_mod_value values[Q3_MOD_VALUE_COUNT];
             application_native_callback_inputs inputs={0};
             bool ok=o->options.source_inputs(o->options.context,actor,values,&inputs,e)&&
                 current(a,e)&&application_native_q2_callbacks_call(o->options.callbacks,choice(o,item)->request,&inputs,&result,e);

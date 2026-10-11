@@ -77,10 +77,10 @@ static bool lifecycle(application_native_q2_records *o,nqr_actor *actor,const ch
     qa_json_id calls=qa_json_get(o->document,qa_json_root(o->document),section);
     double time;
     if(!o->options.time(o->options.context,&time,e)||!isfinite(time)) return nqr_fail(e,QA_ERROR_ARGUMENT,"Native projection lost its actual source clock");
-    application_native_callback_value values[]={
-        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=actor->actor},
-        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=time}};
-    application_native_callback_inputs inputs={.values=values,.count=2};
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT]={
+        [Q3_MOD_SELF]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=actor->actor},
+        [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=time}};
+    application_native_callback_inputs inputs={.values=values};
     ++o->lifecycle_depth; bool ok=true;
     while(ok&&*cursor<qa_json_size(o->document,calls)) {
         qa_json_id call=qa_json_at(o->document,calls,*cursor); double ignored; bool entered=false;

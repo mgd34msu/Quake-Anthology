@@ -777,6 +777,15 @@ zero ordinal retains absent-field semantics; declaration/save metadata keeps
 names. Normal build and seven core suites pass. Callback input binding in
 item 16 and bot variables in item 17 remain open.
 
+Names item 16, callback inputs: Q3 profile parsing and native module binding
+share one input-name table. Native descriptors retain fixed input indexes;
+lowering and client output use direct slots. Native callers now use the
+existing common module-value record, including raw client commands, item
+callbacks, protection and weapon stages. The native named-value type,
+sparse input lists, text decoding and runtime input-name scans are deleted.
+Normal build and seven core suites pass. Names item 16's audited sites are
+migrated; item 17 remains.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

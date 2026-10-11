@@ -267,20 +267,20 @@ static bool declared_raw_think(struct application_native_q2 *engine,uint32_t slo
     qa_usercmd absolute;
     qa_input_command_convert(raw,NULL,&from,&to,(qa_input_axis_rule){0},&absolute);
     qa_vec3 aim=absolute.angles;
-    application_native_callback_value values[]={
-        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=actor},
-        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)engine->input_stage->time_ns/1e9},
-        {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->milliseconds/1000.},
-        {.name="view-angles",.kind=APPLICATION_NATIVE_VALUE_VECTOR,.value.vector=aim},
-        {.name="attack",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(raw->buttons&1u)!=0},
-        {.name="jump",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=physical.kind==QA_RULESET_Q2_RERELEASE?(raw->buttons&8u)!=0:raw->up_move>0},
-        {.name="impulse",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=raw->impulse},
-        {.name="forward-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->forward_move/200.},
-        {.name="side-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)raw->side_move/200.},
-        {.name="up-move",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=physical.kind==QA_RULESET_Q2_RERELEASE?
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT]={
+        [Q3_MOD_SELF]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=actor},
+        [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)engine->input_stage->time_ns/1e9},
+        [Q3_MOD_ELAPSED]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)raw->milliseconds/1000.},
+        [Q3_MOD_VIEW_ANGLES]={.kind=Q3_MOD_VALUE_VECTOR,.as.vector=aim},
+        [Q3_MOD_ATTACK]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(raw->buttons&1u)!=0},
+        [Q3_MOD_JUMP]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=physical.kind==QA_RULESET_Q2_RERELEASE?(raw->buttons&8u)!=0:raw->up_move>0},
+        [Q3_MOD_IMPULSE]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=raw->impulse},
+        [Q3_MOD_FORWARD]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)raw->forward_move/200.},
+        [Q3_MOD_SIDE]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)raw->side_move/200.},
+        [Q3_MOD_UP]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=physical.kind==QA_RULESET_Q2_RERELEASE?
             (raw->buttons&8u)?1.:(raw->buttons&16u)?-1.:0.:(double)raw->up_move/200.}
     };
-    application_native_callback_inputs inputs={values,sizeof(values)/sizeof(*values),command};
+    application_native_callback_inputs inputs={values,command};
     declared_raw_call call={engine,&inputs};
     engine->current_client=slot;
     application_native_q2_visibility_invalidate(engine);
@@ -450,12 +450,12 @@ static bool declared_client(struct application_native_q2 *engine,uint32_t slot,
 {
     qa_source_frame frame;
     if(!application_native_q2_stages_time_read(engine,&frame,error))return false;
-    application_native_callback_value values[] = {
-        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=engine->clients[slot].actor},
-        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.time_ns/1e9},
-        {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.elapsed_ns/1e9}
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT] = {
+        [Q3_MOD_SELF]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=engine->clients[slot].actor},
+        [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)frame.time_ns/1e9},
+        [Q3_MOD_ELAPSED]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)frame.elapsed_ns/1e9}
     };
-    application_native_callback_inputs inputs={values,3,command};
+    application_native_callback_inputs inputs={values,command};
     return application_native_q2_callbacks_run(engine,stage,&inputs,accepted,error);
 }
 

@@ -266,10 +266,10 @@ static bool action(void *context,qa_item_id item,qa_item_action action_kind,qa_e
     for(size_t i=0;i<o->count;++i) if(o->admissions[i].definition.item==item) {
         qa_json_id call=action_kind==QA_ITEM_USE?o->definitions[i].use:o->definitions[i].drop; double time,ignored;
         if(call==QA_JSON_NONE||!application_native_q2_callbacks_time_read(o->options.callbacks,&time,e)) return false;
-        application_native_callback_value values[]={
-            {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=a->actor},
-            {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=time}};
-        application_native_callback_inputs inputs={.values=values,.count=2};
+        application_q3_mod_value values[Q3_MOD_VALUE_COUNT]={
+            [Q3_MOD_SELF]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=a->actor},
+            [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=time}};
+        application_native_callback_inputs inputs={.values=values};
         ++a->entered; ++o->calls;
         bool ok=application_native_q2_callbacks_call(o->options.callbacks,call,&inputs,&ignored,e);
         --o->calls; --a->entered; return ok&&current(a,e);

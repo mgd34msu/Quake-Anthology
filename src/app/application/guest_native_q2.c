@@ -561,11 +561,11 @@ static bool declared_initialize(struct application_native_q2 *engine,qa_error *e
     if(!engine->callbacks||engine->provider->application->operation==APPLICATION_PERSISTING)return true;
     qa_source_frame frame;
     if(!application_native_q2_stages_time_read(engine,&frame,error))return false;
-    application_native_callback_value values[]={
-        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.time_ns/1e9},
-        {.name="elapsed",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)frame.elapsed_ns/1e9}
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT]={
+        [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)frame.time_ns/1e9},
+        [Q3_MOD_ELAPSED]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)frame.elapsed_ns/1e9}
     };
-    application_native_callback_inputs inputs={values,2,{0}};
+    application_native_callback_inputs inputs={values,{0}};
     bool accepted;
     return application_native_q2_callbacks_run(engine,"initialize",&inputs,&accepted,error)&&
         (accepted||application_fail(error,QA_ERROR_ARGUMENT,"Declared native source rejected initialization"));

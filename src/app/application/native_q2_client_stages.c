@@ -225,10 +225,10 @@ typedef struct native_client_frame {
 static bool invoke_client_frame(void *context,qa_session *session,qa_error *e)
 {
     (void)session;native_client_frame *call=context;struct application_native_q2 *n=call->engine;
-    application_native_callback_value values[]={
-        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=call->actor},
-        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)n->frame.time_ns/1e9}};
-    application_native_callback_inputs inputs={values,2,{0}};bool accepted;
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT]={
+        [Q3_MOD_SELF]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=call->actor},
+        [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)n->frame.time_ns/1e9}};
+    application_native_callback_inputs inputs={values,{0}};bool accepted;
     return application_native_q2_callbacks_run(n,call->section,&inputs,&accepted,e);
 }
 static bool client_frame(struct application_native_q2 *n,uint32_t slot,const char *section,qa_error *e)
@@ -412,9 +412,6 @@ bool application_native_q2_stages_restore(struct application_native_q2 *n,qa_byt
     return application_native_q2_client_outputs_create(n,&o->client_outputs,e)&&
         application_native_q2_client_outputs_restore(n,(qa_bytes){bytes.data+36+(size_t)count*4,38},e);
 }
-static const char *const input_names[]={"view-angles","attack","jump","impulse","forward-move","side-move","up-move",
-    "self","other","activator","attacker","inflictor","amount","damage-flags","regular-protection-scale",
-    "knockback","point","direction","normal","item","time","elapsed","result","pickup-count","pickup-has-count","pickup-dropped"};
 static bool input_current(struct application_native_q2_input *s,qa_error *e)
 {
     if(!s||!current(s->owner,e)) return false;
@@ -434,7 +431,7 @@ static bool input_live(const struct application_native_q2_input *s)
             !n->clients[i].disconnect_started&&qa_actor_id_equal(n->clients[i].actor,s->actor)) return true;
     return false;
 }
-static bool input_values(struct application_native_q2_input *s,application_native_callback_value values[Q3_MOD_VALUE_COUNT],
+static bool input_values(struct application_native_q2_input *s,application_q3_mod_value values[Q3_MOD_VALUE_COUNT],
     application_native_callback_inputs *out,qa_error *e)
 {
     if(!input_current(s,e)) return false;
@@ -456,18 +453,7 @@ static bool input_values(struct application_native_q2_input *s,application_nativ
         s->captured=true;
     }
     const application_q3_mod_inputs *inputs=&s->inputs;
-    size_t count=0;
-    for(size_t i=0;i<Q3_MOD_VALUE_COUNT;++i) {
-        application_q3_mod_value value=inputs->values[i];if(value.kind==Q3_MOD_VALUE_ABSENT) continue;
-        application_native_callback_value *v=values+count++;v->name=input_names[i];
-        switch(value.kind) {
-        case Q3_MOD_VALUE_SCALAR:v->kind=APPLICATION_NATIVE_VALUE_NUMBER;v->value.number=value.as.scalar;break;
-        case Q3_MOD_VALUE_VECTOR:v->kind=APPLICATION_NATIVE_VALUE_VECTOR;v->value.vector=value.as.vector;break;
-        case Q3_MOD_VALUE_ACTOR:v->kind=APPLICATION_NATIVE_VALUE_ACTOR;v->value.actor=value.as.actor;break;
-        case Q3_MOD_VALUE_STRING:v->kind=APPLICATION_NATIVE_VALUE_STRING;v->value.string=value.as.string;break;
-        default:return application_fail(e,QA_ERROR_ARGUMENT,"Native input received an unknown canonical value");
-        }
-    }
+    memcpy(values,inputs->values,sizeof(inputs->values));
     bool rerelease=s->owner->engine->profile==QA_NATIVE_Q2_GAME_API2023;
     const application_q3_mod_value *v=inputs->values;
     const application_q3_mod_input scalar_inputs[]={Q3_MOD_ATTACK,Q3_MOD_JUMP,Q3_MOD_IMPULSE,Q3_MOD_FORWARD,Q3_MOD_SIDE,Q3_MOD_UP,Q3_MOD_ELAPSED};
@@ -496,10 +482,10 @@ static bool input_values(struct application_native_q2_input *s,application_nativ
     converted.impulse=(uint8_t)impulse;
     converted.server_frame=(int32_t)(uint32_t)application_native_q2_stages_frame(s->owner->engine);
     size_t command_bytes=qa_native_q2_write_usercmd(&converted,s->command);
-    *out=(application_native_callback_inputs){values,count,{s->command,command_bytes}};return true;
+    *out=(application_native_callback_inputs){values,{s->command,command_bytes}};return true;
 }
 bool application_native_q2_input_values(struct application_native_q2 *n,qa_actor_id actor,
-    application_native_callback_value values[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *out,qa_error *e)
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *out,qa_error *e)
 {
     if(!n||!n->callbacks||!values||!out||!application_native_q2_callbacks_storage_current(n->callbacks,e)||
         !qa_actors_get(qa_session_actors(n->provider->application->session),actor))
@@ -511,29 +497,25 @@ bool application_native_q2_input_values(struct application_native_q2 *n,qa_actor
             !stage->current(stage->context,actor)||
             !application_native_q2_declared_raw_capable(n->provider)||
             !application_native_q2_callbacks_transfer_current(n->callbacks)||
-            !raw->values||raw->count>Q3_MOD_VALUE_COUNT||!raw->user_command.data)
+            !raw->values||!raw->user_command.data)
             return application_fail(e,QA_ERROR_NOT_FOUND,"Declared source inputs lost their actual raw client command transfer");
-        memcpy(values,raw->values,raw->count*sizeof(*values));
-        *out=(application_native_callback_inputs){values,raw->count,raw->user_command};
+        memcpy(values,raw->values,Q3_MOD_VALUE_COUNT*sizeof(*values));
+        *out=(application_native_callback_inputs){values,raw->user_command};
         return true;
     }
     struct application_native_q2_input *s=n->stages?n->stages->inputs:NULL;
     if(s&&s->executing) {
         if(!input_values(s,values,out,e)) return false;
-        size_t i=0;while(i<out->count&&strcmp(values[i].name,"self")) ++i;
-        if(i==out->count) {
-            if(i==Q3_MOD_VALUE_COUNT) return application_fail(e,QA_ERROR_ARGUMENT,"Native source input map has no room for self");
-            ++out->count;
-        }
-        values[i]=(application_native_callback_value){.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=actor};
+        values[Q3_MOD_SELF]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_ACTOR,.as.actor=actor};
         return true;
     }
     qa_source_frame frame;
     if(!application_native_q2_stages_time_read(n,&frame,e))return false;
-    values[0]=(application_native_callback_value){.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=actor};
-    values[1]=(application_native_callback_value){.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,
-        .value.number=(double)frame.time_ns/1e9};
-    *out=(application_native_callback_inputs){values,2,{0}};return true;
+    memset(values,0,Q3_MOD_VALUE_COUNT*sizeof(*values));
+    values[Q3_MOD_SELF]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_ACTOR,.as.actor=actor};
+    values[Q3_MOD_TIME]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,
+        .as.scalar=(double)frame.time_ns/1e9};
+    *out=(application_native_callback_inputs){values,{0}};return true;
 }
 static size_t field_size(const qa_json_document *d,qa_json_id value)
 {
@@ -677,15 +659,15 @@ static bool outputs_read(native_input_output *list,qa_error *e)
         if(o->handler) {
             if(!o->called) continue;
             result.consume=true;qa_json_id names=qa_json_get(d,o->declaration,"inputs");
-            for(size_t i=0;i<qa_json_size(d,names);++i) {size_t j=1;while(j<Q3_MOD_INPUT_COUNT&&!qa_json_string_equal(d,qa_json_at(d,names,i),input_names[j])) ++j;
-                if(j==Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native input consume names an unknown scalar input");
+            for(size_t i=0;i<qa_json_size(d,names);++i) {application_q3_mod_input j=application_native_q2_callbacks_input_index(n->callbacks,qa_json_at(d,names,i));
+                if(j==Q3_MOD_VIEW_ANGLES||j>=Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native input consume names an unknown scalar input");
                 result.value.inputs|=1u<<j;}
         } else {
             uint8_t bytes[12];if(!qa_native_read(instance(n),o->address,bytes,o->bytes,e)) return false;
             if(!memcmp(bytes,o->before,o->bytes)) continue;
             qa_json_id value=qa_json_get(d,o->declaration,"value"),name=qa_json_get(d,qa_json_get(d,value,"value"),"name");
-            size_t j=0;while(j<Q3_MOD_INPUT_COUNT&&!qa_json_string_equal(d,name,input_names[j])) ++j;
-            if(j==Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native output field is not a declared client input");
+            application_q3_mod_input j=application_native_q2_callbacks_input_index(n->callbacks,name);
+            if(j>=Q3_MOD_INPUT_COUNT) return application_fail(e,QA_ERROR_FORMAT,"Native output field is not a declared client input");
             result.input=(application_q3_mod_input)j;
             qa_json_id kind=qa_json_get(d,value,"kind");
             if(!j) {if(o->bytes!=12) return application_fail(e,QA_ERROR_FORMAT,"Native view-angle output is not a source vector");result.value.angles=qa_v3(qa_load_f32le(bytes),qa_load_f32le(bytes+4),qa_load_f32le(bytes+8));}
@@ -716,7 +698,7 @@ static bool input_run(struct application_native_q2_input *s,bool before,qa_error
         qa_json_id calls=qa_json_get(d,binding,"calls");
         for(size_t j=0;ok&&j<qa_json_size(d,calls);++j) {
             if(!input_live(s)) break;
-            application_native_callback_value values[Q3_MOD_VALUE_COUNT];application_native_callback_inputs inputs;double result;
+            application_q3_mod_value values[Q3_MOD_VALUE_COUNT];application_native_callback_inputs inputs;double result;
             ok=input_values(s,values,&inputs,e);
             if(ok) {
                 ++s->executing;
@@ -753,7 +735,7 @@ bool application_native_q2_input_begin(struct application_native_q2 *n,qa_actor_
     if(!s) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native input application");
     s->storage=storage;s->owner=n->stages;s->actor=actor;s->slice=slice;s->values=values;s->output=output;s->context=context;
     s->outer=n->stages->inputs;n->stages->inputs=s;*out=s;
-    application_native_callback_value input[Q3_MOD_VALUE_COUNT];application_native_callback_inputs in;
+    application_q3_mod_value input[Q3_MOD_VALUE_COUNT];application_native_callback_inputs in;
     bool ok=input_values(s,input,&in,e);qa_json_id fields=qa_json_get(d,clients,"inputFields");
     for(size_t i=0;ok&&i<qa_json_size(d,fields);++i) {
         native_input_store *store=qa_unified_frame_lease_alloc(storage,1,sizeof(*store),_Alignof(native_input_store),e);

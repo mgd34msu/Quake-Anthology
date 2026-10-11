@@ -4,25 +4,15 @@
 #include "qa/native.h"
 #include "qa/session.h"
 #include "qa/inventory.h"
+#include "guest_q3_mod.h"
 
 struct application_native_q2;
 struct qa_application;
 struct application_native_q2_records;
 struct application_native_q2_items;
 typedef struct application_native_q2_callbacks application_native_q2_callbacks;
-typedef enum application_native_callback_value_kind {
-    APPLICATION_NATIVE_VALUE_ABSENT, APPLICATION_NATIVE_VALUE_NUMBER,
-    APPLICATION_NATIVE_VALUE_VECTOR, APPLICATION_NATIVE_VALUE_STRING,
-    APPLICATION_NATIVE_VALUE_ACTOR
-} application_native_callback_value_kind;
-typedef struct application_native_callback_value {
-    const char *name;
-    application_native_callback_value_kind kind;
-    union { double number; qa_vec3 vector; const char *string; qa_actor_id actor; } value;
-} application_native_callback_value;
 typedef struct application_native_callback_inputs {
-    const application_native_callback_value *values;
-    size_t count;
+    const application_q3_mod_value *values;
     qa_bytes user_command;
 } application_native_callback_inputs;
 typedef struct application_native_q2_source_authority {
@@ -79,6 +69,7 @@ bool application_native_q2_callbacks_input_write(application_native_q2_callbacks
     const application_native_callback_inputs *, qa_native_address, qa_error *);
 bool application_native_q2_callbacks_value_validate(application_native_q2_callbacks *, qa_json_id,
     qa_native_value_type *, qa_error *);
+application_q3_mod_input application_native_q2_callbacks_input_index(const application_native_q2_callbacks *, qa_json_id);
 size_t application_native_q2_callbacks_record_index(const application_native_q2_callbacks *, qa_json_id);
 bool application_native_q2_callbacks_record(application_native_q2_callbacks *, qa_actor_id,
     size_t, qa_native_address *, qa_error *);

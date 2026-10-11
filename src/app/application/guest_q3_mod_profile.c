@@ -55,13 +55,16 @@ static bool encoding(const qa_json_document *d, qa_json_id id, bool allow_void, 
     else return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown source scalar encoding");
     return true;
 }
+application_q3_mod_input application_q3_mod_input_find(const qa_json_document *d, qa_json_id id)
+{
+    for(size_t i=0;i<Q3_MOD_VALUE_COUNT;++i)
+        if(qa_json_string_equal(d,id,input_names[i])) return (application_q3_mod_input)i;
+    return Q3_MOD_VALUE_COUNT;
+}
 static bool input(const qa_json_document *d, qa_json_id id, application_q3_mod_input *v, qa_error *e)
 {
-    for (size_t i=0;i<Q3_MOD_VALUE_COUNT;++i) if (qa_json_string_equal(d,id,input_names[i])) {
-        *v=(application_q3_mod_input)i; return true;
-    }
-    q3mod_fail(e,QA_ERROR_FORMAT,"Unknown source callback input");
-    return false;
+    *v=application_q3_mod_input_find(d,id);
+    return *v!=Q3_MOD_VALUE_COUNT||q3mod_fail(e,QA_ERROR_FORMAT,"Unknown source callback input");
 }
 static bool vector(const qa_json_document *d, qa_json_id id, qa_vec3 *v, qa_error *e)
 {

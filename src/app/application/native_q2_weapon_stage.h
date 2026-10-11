@@ -15,7 +15,7 @@ typedef struct application_native_q2_weapon_stage_options {
     void *context;
     bool (*actor_current)(void *, qa_actor_id, qa_error *);
     bool (*source_inputs)(void *, qa_actor_id,
-        application_native_callback_value [Q3_MOD_VALUE_COUNT],
+        application_q3_mod_value [Q3_MOD_VALUE_COUNT],
         application_native_callback_inputs *, qa_error *);
 } application_native_q2_weapon_stage_options;
 

@@ -74,6 +74,7 @@ typedef struct native_call {
 struct application_native_q2_callbacks {
     struct application_native_q2 *engine;
     qa_json_document *document;
+    application_q3_mod_input *input_nodes;
     size_t *record_nodes;
     size_t record_node_count;
     const qa_native_module *module;
@@ -208,6 +209,8 @@ bool application_native_q2_callbacks_address(application_native_q2_callbacks *o,
     }
     return true;
 }
+application_q3_mod_input application_native_q2_callbacks_input_index(const application_native_q2_callbacks *o, qa_json_id node)
+{ return o&&node<o->record_node_count?o->input_nodes[node]:Q3_MOD_VALUE_COUNT; }
 size_t application_native_q2_callbacks_record_index(const application_native_q2_callbacks *o, qa_json_id node)
 { return o && node < o->record_node_count ? o->record_nodes[node] : 0; }
 static qa_json_id record_find(application_native_q2_callbacks *o, size_t index)
@@ -545,10 +548,9 @@ bool application_native_q2_callbacks_pickup_context_address(application_native_q
     if(!qa_native_range_check(instance(o),address,bytes,QA_NATIVE_MEMORY_WRITE,e)) return false;
     *out=address; return current(o,e)&&pickup_actor_foreign(o,actor,e);
 }
-static const application_native_callback_value *input(const application_native_callback_inputs *in,const char *name)
+static const application_q3_mod_value *input(const application_native_callback_inputs *in,application_q3_mod_input index)
 {
-    for(size_t i=0;in&&i<in->count;++i) if(in->values[i].name&&!strcmp(in->values[i].name,name)) return in->values+i;
-    return NULL;
+    return in&&in->values&&index<Q3_MOD_VALUE_COUNT&&in->values[index].kind!=Q3_MOD_VALUE_ABSENT?in->values+index:NULL;
 }
 static bool temporary(application_native_q2_callbacks *o,qa_bytes bytes,size_t capacity,
     native_temporary **owned,qa_native_address *out,qa_error *e)
@@ -605,39 +607,37 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
 {
     const qa_json_document *d=o->document; qa_json_id kind=qa_json_get(d,id,"kind"),raw=qa_json_get(d,id,"value");
     qa_native_value_type type; size_t size=scalar_type(d,kind,&type); *storage=size;
-    qa_buffer name={0}; const application_native_callback_value *value=NULL;
+    qa_buffer name={0}; const application_q3_mod_value *value=NULL;
     if(qa_json_string_equal(d,kind,"actor")||qa_json_string_equal(d,kind,"client")||qa_json_string_equal(d,kind,"userinfo")||qa_json_string_equal(d,kind,"time")) {
-        if(!text(d,qa_json_get(d,id,"input"),&name,e)) return false;
-        value=input(in,(char *)name.data); qa_buffer_free(&name);
+        value=input(in,application_native_q2_callbacks_input_index(o,qa_json_get(d,id,"input")));
         if(!value) return fail(e,"Native callback omitted its declared input");
     } else if(qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"input")) {
-        if(!text(d,qa_json_get(d,raw,"name"),&name,e)) return false;
-        value=input(in,(char *)name.data); qa_buffer_free(&name);
+        value=input(in,application_native_q2_callbacks_input_index(o,qa_json_get(d,raw,"name")));
         if(!value) return fail(e,"Native callback omitted its value input");
     }
     if(qa_json_string_equal(d,kind,"time")) {
-        if(value->kind!=APPLICATION_NATIVE_VALUE_NUMBER) return fail(e,"Native time input has the wrong type");
+        if(value->kind!=Q3_MOD_VALUE_SCALAR) return fail(e,"Native time input has the wrong type");
         *storage=scalar_type(d,qa_json_get(d,id,"encoding"),&type);
         double scale=qa_json_string_equal(d,qa_json_get(d,id,"units"),"milliseconds")?1000:1;
-        return *storage&&number_value(type,value->value.number*scale,out,e);
+        return *storage&&number_value(type,value->as.scalar*scale,out,e);
     }
     if(size) {
         double number;
-        if(value) { if(value->kind!=APPLICATION_NATIVE_VALUE_NUMBER) return fail(e,"Native scalar input has the wrong type"); number=value->value.number; }
+        if(value) { if(value->kind!=Q3_MOD_VALUE_SCALAR) return fail(e,"Native scalar input has the wrong type"); number=value->as.scalar; }
         else if(!qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"float")||!qa_json_number(d,qa_json_get(d,raw,"value"),&number,e)) return false;
         return number_value(type,number,out,e);
     }
     *out=(qa_native_value){.type=QA_NATIVE_ADDRESS}; *storage=o->target.pointer_bytes;
     if(qa_json_string_equal(d,kind,"address")) return application_native_q2_callbacks_address(o,raw,&out->as.address,e);
     if(qa_json_string_equal(d,kind,"actor")) {
-        if(value->kind!=APPLICATION_NATIVE_VALUE_ACTOR) return fail(e,"Native actor input has the wrong type");
-        bool ok=application_native_q2_callbacks_record(o,value->value.actor,application_native_q2_callbacks_record_index(o,qa_json_get(d,id,"record")),&out->as.address,e);
+        if(value->kind!=Q3_MOD_VALUE_ACTOR) return fail(e,"Native actor input has the wrong type");
+        bool ok=application_native_q2_callbacks_record(o,value->as.actor,application_native_q2_callbacks_record_index(o,qa_json_get(d,id,"record")),&out->as.address,e);
         qa_buffer_free(&name); return ok;
     }
     if(qa_json_string_equal(d,kind,"client")||qa_json_string_equal(d,kind,"userinfo")) {
-        if(value->kind!=APPLICATION_NATIVE_VALUE_ACTOR) return fail(e,"Native client input has the wrong type");
+        if(value->kind!=Q3_MOD_VALUE_ACTOR) return fail(e,"Native client input has the wrong type");
         uint32_t slot=0;
-        for(uint32_t i=1;i<257;++i) if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,value->value.actor)) { slot=i; break; }
+        for(uint32_t i=1;i<257;++i) if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,value->as.actor)) { slot=i; break; }
         if(!slot) return fail(e,"Native client input has no retained physical client");
         if(qa_json_string_equal(d,kind,"client")) { *storage=4; *out=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=(int32_t)slot-1}; return true; }
         size_t capacity=o->engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;
@@ -648,7 +648,7 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
         if(!source_ok||source_bytes.size>capacity) { qa_buffer_free(&source_string); return source_ok?fail(e,"Native client userinfo exceeds its API buffer"):false; }
         native_userinfo *c=calloc(1,sizeof(*c));
         if(!c) { qa_buffer_free(&source_string); return application_fail(e,QA_ERROR_MEMORY,"Owning native userinfo correction"); }
-        c->next=*corrections; *corrections=c; c->actor=value->value.actor; c->slot=slot; c->capacity=capacity;
+        c->next=*corrections; *corrections=c; c->actor=value->as.actor; c->slot=slot; c->capacity=capacity;
         bool ok=temporary(o,source_bytes,capacity+4,owned,&out->as.address,e);
         qa_buffer_free(&source_string);
         c->address=out->as.address; return ok;
@@ -657,7 +657,7 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
         return in&&in->user_command.data&&in->user_command.size&&temporary(o,in->user_command,in->user_command.size,owned,&out->as.address,e);
     if(qa_json_string_equal(d,kind,"vector")) {
         qa_vec3 v; uint8_t bytes[12];
-        if(value) { if(value->kind!=APPLICATION_NATIVE_VALUE_VECTOR) return fail(e,"Native vector input has the wrong type"); v=value->value.vector; }
+        if(value) { if(value->kind!=Q3_MOD_VALUE_VECTOR) return fail(e,"Native vector input has the wrong type"); v=value->as.vector; }
         else { double x,y,z; qa_json_id at=qa_json_get(d,raw,"value");
             if(!qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"vector")||!qa_json_number(d,qa_json_get(d,at,"x"),&x,e)||
                 !qa_json_number(d,qa_json_get(d,at,"y"),&y,e)||!qa_json_number(d,qa_json_get(d,at,"z"),&z,e)) return false;
@@ -669,7 +669,7 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
     }
     if(qa_json_string_equal(d,kind,"string")) {
         const char *string;
-        if(value) { if(value->kind!=APPLICATION_NATIVE_VALUE_STRING||!value->value.string) return fail(e,"Native string input has the wrong type"); string=value->value.string; }
+        if(value) { if(value->kind!=Q3_MOD_VALUE_STRING||!value->as.string) return fail(e,"Native string input has the wrong type"); string=value->as.string; }
         else { if(!qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"string")||!text(d,qa_json_get(d,raw,"value"),&name,e)) return false; string=(char *)name.data; }
         qa_buffer classic={0}; bool ok=classic_string(string,&classic,e);
         if(ok&&classic.size>SIZE_MAX-4095) ok=application_fail(e,QA_ERROR_MEMORY,"Native classic allocation extent overflows");
@@ -695,16 +695,16 @@ static bool protection_arguments(application_native_q2_callbacks *o,qa_json_id a
     const application_native_callback_inputs *in,qa_native_value *values,size_t count,
     native_temporary **allocations,qa_error *e)
 {
-    const application_native_callback_value *self=input(in,"self"),*point=input(in,"point"),
-        *normal=input(in,"normal"),*amount=input(in,"amount"),*flags=input(in,"damage-flags");
-    if(!self||!point||!normal||!amount||!flags||self->kind!=APPLICATION_NATIVE_VALUE_ACTOR||
-        point->kind!=APPLICATION_NATIVE_VALUE_VECTOR||normal->kind!=APPLICATION_NATIVE_VALUE_VECTOR||
-        amount->kind!=APPLICATION_NATIVE_VALUE_NUMBER||flags->kind!=APPLICATION_NATIVE_VALUE_NUMBER)
+    const application_q3_mod_value *self=input(in,Q3_MOD_SELF),*point=input(in,Q3_MOD_POINT),
+        *normal=input(in,Q3_MOD_NORMAL),*amount=input(in,Q3_MOD_AMOUNT),*flags=input(in,Q3_MOD_DAMAGE_FLAGS);
+    if(!self||!point||!normal||!amount||!flags||self->kind!=Q3_MOD_VALUE_ACTOR||
+        point->kind!=Q3_MOD_VALUE_VECTOR||normal->kind!=Q3_MOD_VALUE_VECTOR||
+        amount->kind!=Q3_MOD_VALUE_SCALAR||flags->kind!=Q3_MOD_VALUE_SCALAR)
         return fail(e,"Native armor check omitted its authentic stage inputs");
     size_t record=application_native_q2_callbacks_record_index(o,qa_json_get(o->document,qa_json_root(o->document),"entityRecord"));
     values[0]=(qa_native_value){.type=QA_NATIVE_ADDRESS};
-    bool ok=application_native_q2_callbacks_record(o,self->value.actor,record,&values[0].as.address,e);
-    qa_vec3 vectors[]={point->value.vector,normal->value.vector};
+    bool ok=application_native_q2_callbacks_record(o,self->as.actor,record,&values[0].as.address,e);
+    qa_vec3 vectors[]={point->as.vector,normal->as.vector};
     for(size_t i=0;ok&&i<2;++i) {
         uint8_t bytes[12]; float axes[]={vectors[i].x,vectors[i].y,vectors[i].z};
         if(!qa_vec_finite(vectors[i])) return fail(e,"Native armor geometry exceeds its source vector");
@@ -712,13 +712,13 @@ static bool protection_arguments(application_native_q2_callbacks *o,qa_json_id a
         values[i+1]=(qa_native_value){.type=QA_NATIVE_ADDRESS};
         ok=temporary(o,(qa_bytes){bytes,sizeof(bytes)},sizeof(bytes),allocations,&values[i+1].as.address,e);
     }
-    if(ok) ok=number_value(QA_NATIVE_I32,amount->value.number,values+3,e);
+    if(ok) ok=number_value(QA_NATIVE_I32,amount->as.scalar,values+3,e);
     if(ok&&count==6) {
         double sparks;
         ok=qa_json_number(o->document,qa_json_get(o->document,absorb,"sparks"),&sparks,e)&&
             number_value(QA_NATIVE_I32,sparks,values+4,e);
     }
-    return ok&&number_value(QA_NATIVE_I32,flags->value.number,values+count-1,e);
+    return ok&&number_value(QA_NATIVE_I32,flags->as.scalar,values+count-1,e);
 }
 static bool cleanup(application_native_q2_callbacks *o,native_global **globals,native_temporary **allocations,qa_error *e)
 {
@@ -830,17 +830,17 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     if(returns==QA_NATIVE_BYTES) return fail(e,"Native callback return has no scalar ABI");
     ++o->calls; ++o->engine->calls;
     bool ok=true;
-    const application_native_callback_value *self=input(in,"self");
-    bool item_cancellation=self&&self->kind==APPLICATION_NATIVE_VALUE_ACTOR&&
-        application_native_q2_items_actor_admitted(o->items,self->value.actor);
+    const application_q3_mod_value *self=input(in,Q3_MOD_SELF);
+    bool item_cancellation=self&&self->kind==Q3_MOD_VALUE_ACTOR&&
+        application_native_q2_items_actor_admitted(o->items,self->as.actor);
     struct application_native_q2_source_invocation *source=NULL;
     if(ok)ok=application_native_q2_source_invocation_begin(o->engine,
-        self&&self->kind==APPLICATION_NATIVE_VALUE_ACTOR?self->value.actor:(qa_actor_id){0},&source,e);
+        self&&self->kind==Q3_MOD_VALUE_ACTOR?self->as.actor:(qa_actor_id){0},&source,e);
     if(ok&&(source||item_cancellation)) {
         processor=calloc(1,sizeof(*processor));
         if(!processor)ok=application_fail(e,QA_ERROR_MEMORY,"Retaining native call cancellation");
         if(processor) {processor->source=source;source=NULL;}
-        if(ok&&item_cancellation)ok=application_native_q2_items_receipt_begin(o->items,self->value.actor,&processor->items,e);
+        if(ok&&item_cancellation)ok=application_native_q2_items_receipt_begin(o->items,self->as.actor,&processor->items,e);
         if(ok)ok=qa_native_call_scope_open(instance(o),call_cancel,processor,&processor->scope,e);
     }
     if(source) {
@@ -1073,19 +1073,19 @@ bool application_native_q2_callbacks_protection_absorb(application_native_q2_cal
         (flags.energy?4u:0u)|(flags.no_regular_armor?128u:0u)|(!classic&&flags.no_power_armor?256u:0u);
     double time;
     if(!application_native_q2_callbacks_time_read(o,&time,e)) return false;
-    application_native_callback_value values[]={
-        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=request->target},
-        {.name="attacker",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=request->attack.attacker},
-        {.name="inflictor",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=request->attack.inflictor},
-        {.name="amount",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=amount},
-        {.name="damage-flags",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=damage},
-        {.name="regular-protection-scale",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=flags.regular_scale},
-        {.name="point",.kind=APPLICATION_NATIVE_VALUE_VECTOR,.value.vector=geometry->point},
-        {.name="normal",.kind=APPLICATION_NATIVE_VALUE_VECTOR,.value.vector=geometry->normal},
-        {.name="direction",.kind=APPLICATION_NATIVE_VALUE_VECTOR,.value.vector=geometry->direction},
-        {.name="knockback",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=request->knockback},
-        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=time}};
-    application_native_callback_inputs inputs={values,sizeof(values)/sizeof(*values),{0}};
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT]={
+        [Q3_MOD_SELF]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=request->target},
+        [Q3_MOD_ATTACKER]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=request->attack.attacker},
+        [Q3_MOD_INFLICTOR]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=request->attack.inflictor},
+        [Q3_MOD_AMOUNT]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=amount},
+        [Q3_MOD_DAMAGE_FLAGS]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=damage},
+        [Q3_MOD_PROTECTION_SCALE]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=flags.regular_scale},
+        [Q3_MOD_POINT]={.kind=Q3_MOD_VALUE_VECTOR,.as.vector=geometry->point},
+        [Q3_MOD_NORMAL]={.kind=Q3_MOD_VALUE_VECTOR,.as.vector=geometry->normal},
+        [Q3_MOD_DIRECTION]={.kind=Q3_MOD_VALUE_VECTOR,.as.vector=geometry->direction},
+        [Q3_MOD_KNOCKBACK]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=request->knockback},
+        [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=time}};
+    application_native_callback_inputs inputs={values,{0}};
     double result;
     if(!call_native_common(o,call,&inputs,&result,false,NULL,check,region?absorb:QA_JSON_NONE,authority,e)) return false;
     float narrowed=(float)result;
@@ -1231,6 +1231,7 @@ static void record_nodes_fill(application_native_q2_callbacks *o, qa_json_id nod
     const qa_buffer *names, size_t count)
 {
     qa_json_kind kind=qa_json_type(o->document,node);
+    o->input_nodes[node]=application_q3_mod_input_find(o->document,node);
     if(kind==QA_JSON_STRING) {
         for(size_t i=0;i<count;++i)
             if(names[i].data&&qa_json_string_equal(o->document,node,(char *)names[i].data)) {
@@ -1246,8 +1247,9 @@ static bool record_nodes_bind(application_native_q2_callbacks *o, qa_error *e)
     size_t count=qa_json_size(o->document,rows);
     o->record_node_count=record_node_limit(o->document,root);
     o->record_nodes=calloc(o->record_node_count,sizeof(*o->record_nodes));
+    o->input_nodes=malloc(o->record_node_count*sizeof(*o->input_nodes));
     qa_buffer *names=count?calloc(count,sizeof(*names)):NULL;
-    if(!o->record_nodes||(count&&!names)) {
+    if(!o->record_nodes||!o->input_nodes||(count&&!names)) {
         free(names); return application_fail(e,QA_ERROR_MEMORY,"Binding native record descriptors");
     }
     bool okay=true;
@@ -1496,7 +1498,7 @@ static bool weapon_actor_current(void *context,qa_actor_id actor,qa_error *e)
     return n&&n->callbacks&&application_native_q2_items_actor_current(n->callbacks->items,actor,e);
 }
 static bool weapon_source_inputs(void *context,qa_actor_id actor,
-    application_native_callback_value values[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *inputs,qa_error *e)
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *inputs,qa_error *e)
 { return application_native_q2_input_values(context,actor,values,inputs,e); }
 static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
 {
@@ -1613,7 +1615,7 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     if(!application_native_q2_records_destroy(&o->records,e)) return false;
     while(o->skips) {native_skip *skip=o->skips;o->skips=skip->next;free(skip);}
     qa_buffer_free(&o->restored_weapons);
-    free(o->registrations); free(o->record_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
+    free(o->registrations); free(o->record_nodes); free(o->input_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
 }
 const qa_json_document *application_native_q2_callbacks_document(const application_native_q2_callbacks *o)
 { return o?o->document:NULL; }
@@ -1880,47 +1882,26 @@ bool application_native_q2_callbacks_reserved_slot(void *context,uint32_t slot,b
     return true;
 }
 
-static const char *const input_names[Q3_MOD_VALUE_COUNT]={
-    "view-angles","attack","jump","impulse","forward-move","side-move","up-move",
-    "self","other","activator","attacker","inflictor","amount","damage-flags",
-    "regular-protection-scale","knockback","point","direction","normal","item",
-    "time","elapsed","result","pickup-count","pickup-has-count","pickup-dropped"
-};
 static bool canonical_inputs(native_registered *r,const void *request,const void *result,
-    application_native_callback_value values[Q3_MOD_VALUE_COUNT],
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT],
     application_native_callback_inputs *out,qa_error *e)
 {
     application_native_q2_callbacks *o=r->owner;
     application_q3_mod_inputs source={0};
     application_q3_mod_operation_services *s=o->operations+r->operation;
     if(!current(o,e)||!s->inputs(s->context,request,result,&source,e)||!current(o,e)) return false;
-    size_t count=0;
-    for(size_t i=0;i<Q3_MOD_VALUE_COUNT;++i) {
-        const application_q3_mod_value *v=source.values+i;
-        if(v->kind==Q3_MOD_VALUE_ABSENT) continue;
-        application_native_callback_value *dest=values+count++;
-        *dest=(application_native_callback_value){.name=input_names[i]};
-        switch(v->kind) {
-        case Q3_MOD_VALUE_SCALAR:dest->kind=APPLICATION_NATIVE_VALUE_NUMBER;dest->value.number=v->as.scalar;break;
-        case Q3_MOD_VALUE_VECTOR:dest->kind=APPLICATION_NATIVE_VALUE_VECTOR;dest->value.vector=v->as.vector;break;
-        case Q3_MOD_VALUE_STRING:dest->kind=APPLICATION_NATIVE_VALUE_STRING;dest->value.string=v->as.string;break;
-        case Q3_MOD_VALUE_ACTOR:dest->kind=APPLICATION_NATIVE_VALUE_ACTOR;dest->value.actor=v->as.actor;break;
-        default:return fail(e,"Canonical native callback has an unknown input type");
-        }
-    }
-    *out=(application_native_callback_inputs){.values=values,.count=count};
-    if(!input(out,"time")) {
+    memcpy(values,source.values,sizeof(source.values));
+    *out=(application_native_callback_inputs){.values=values};
+    if(!input(out,Q3_MOD_TIME)) {
         double time;
         if(!application_native_q2_callbacks_time_read(o,&time,e))return false;
-        values[count++]=(application_native_callback_value){.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,
-            .value.number=time};
-        out->count=count;
+        values[Q3_MOD_TIME]=(application_q3_mod_value){.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=time};
     }
     return true;
 }
 static bool callback_transform(void *context,void *request,qa_error *e)
 {
-    native_registered *r=context; application_native_callback_value values[Q3_MOD_VALUE_COUNT];
+    native_registered *r=context; application_q3_mod_value values[Q3_MOD_VALUE_COUNT];
     application_native_callback_inputs inputs; double value;
     return canonical_inputs(r,request,NULL,values,&inputs,e)&&
         application_native_q2_callbacks_call(r->owner,r->call,&inputs,&value,e)&&
@@ -1929,7 +1910,7 @@ static bool callback_transform(void *context,void *request,qa_error *e)
 }
 static bool callback_observe(void *context,const void *request,const void *result,qa_error *e)
 {
-    native_registered *r=context; application_native_callback_value values[Q3_MOD_VALUE_COUNT];
+    native_registered *r=context; application_q3_mod_value values[Q3_MOD_VALUE_COUNT];
     application_native_callback_inputs inputs; double value;
     return canonical_inputs(r,request,result,values,&inputs,e)&&
         application_native_q2_callbacks_call(r->owner,r->call,&inputs,&value,e);
@@ -1937,7 +1918,7 @@ static bool callback_observe(void *context,const void *request,const void *resul
 static bool callback_replace(void *context,const void *request,qa_operation_next next,void *result,qa_error *e)
 {
     (void)next;
-    native_registered *r=context; application_native_callback_value values[Q3_MOD_VALUE_COUNT];
+    native_registered *r=context; application_q3_mod_value values[Q3_MOD_VALUE_COUNT];
     application_native_callback_inputs inputs; double value;
     return canonical_inputs(r,request,NULL,values,&inputs,e)&&
         application_native_q2_callbacks_call(r->owner,r->call,&inputs,&value,e)&&

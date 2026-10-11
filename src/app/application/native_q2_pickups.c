@@ -334,20 +334,20 @@ static bool take(void *context,const qa_pickup_offer *offer,qa_pickup_execution 
     if(!application_native_q2_callbacks_pickup_foreign(o->options.callbacks,offer,e)) return false;
     const char *name=qa_strings_cstr(qa_session_strings(o->options.session),offer->item);
     if(!name) return fail(e,QA_ERROR_ARGUMENT,"Native pickup item lost its actual string identity");
-    application_native_callback_value values[]={
-        {.name="self",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=a->actor},
-        {.name="other",.kind=APPLICATION_NATIVE_VALUE_ACTOR,.value.actor=offer->pickup},
-        {.name="item",.kind=APPLICATION_NATIVE_VALUE_STRING,.value.string=name},
-        {.name="time",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=(double)offer->time_ns/1e9},
-        {.name="pickup-count",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=offer->override_count?offer->count:0},
-        {.name="pickup-has-count",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=offer->override_count?1:0},
-        {.name="pickup-dropped",.kind=APPLICATION_NATIVE_VALUE_NUMBER,.value.number=offer->dropped?1:0}};
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT]={
+        [Q3_MOD_SELF]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=a->actor},
+        [Q3_MOD_OTHER]={.kind=Q3_MOD_VALUE_ACTOR,.as.actor=offer->pickup},
+        [Q3_MOD_ITEM]={.kind=Q3_MOD_VALUE_STRING,.as.string=name},
+        [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=(double)offer->time_ns/1e9},
+        [Q3_MOD_PICKUP_COUNT]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->override_count?offer->count:0},
+        [Q3_MOD_PICKUP_HAS_COUNT]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->override_count?1:0},
+        [Q3_MOD_PICKUP_DROPPED]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=offer->dropped?1:0}};
     pickup_call *call=calloc(1,sizeof(*call));
     if(!call) return fail(e,QA_ERROR_MEMORY,"Retaining native pickup source execution");
     call->saved=rule->definition->field_count?calloc(rule->definition->field_count,sizeof(*call->saved)):NULL;
     if(rule->definition->field_count&&!call->saved) { free(call); return fail(e,QA_ERROR_MEMORY,"Owning native pickup context restoration"); }
     call->rule=rule; call->pickup=offer->pickup; call->execution=execution;
-    call->inputs=(application_native_callback_inputs){values,sizeof(values)/sizeof(*values),{0}};
+    call->inputs=(application_native_callback_inputs){values,{0}};
     call->executing=true; call->next=o->pending; o->pending=call; ++o->calls; ++a->entered;
     bool ok=true;
     for(size_t i=0;ok&&i<rule->definition->field_count;++i) {

@@ -25,5 +25,5 @@ bool application_native_q2_input_begin(struct application_native_q2 *,qa_actor_i
 bool application_native_q2_input_complete(struct application_native_q2_input *,bool,qa_error *);
 bool application_native_q2_input_abort(struct application_native_q2_input **,qa_error *);
 bool application_native_q2_input_values(struct application_native_q2 *,qa_actor_id,
-    application_native_callback_value[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *,qa_error *);
+    application_q3_mod_value[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *,qa_error *);
 #endif

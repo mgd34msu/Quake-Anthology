@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_MOD_H
 
 #include "qa/qvm_save.h"
+#include "qa/json.h"
 #include "qa/session.h"
 #include "qa/gameplay.h"
 #include "qa/operation.h"
@@ -25,6 +26,7 @@ typedef enum application_q3_mod_input {
     Q3_MOD_PICKUP_COUNT, Q3_MOD_PICKUP_HAS_COUNT, Q3_MOD_PICKUP_DROPPED,
     Q3_MOD_VALUE_COUNT
 } application_q3_mod_input;
+application_q3_mod_input application_q3_mod_input_find(const qa_json_document *, qa_json_id);
 typedef enum application_q3_mod_value_kind {
     Q3_MOD_VALUE_ABSENT, Q3_MOD_VALUE_SCALAR, Q3_MOD_VALUE_VECTOR,
     Q3_MOD_VALUE_STRING, Q3_MOD_VALUE_ACTOR
