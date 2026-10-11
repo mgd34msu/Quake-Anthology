@@ -108,7 +108,11 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
             return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Original Q2 configstrings");
         for (uint32_t i = 0; i < hud.configstring_count; ++i) {
             const char *text = qa_strings_cstr(hud.strings, hud.configstrings[i]);
-            if (text && *text && !q2_configstring(qa_session_strings(app->session), lease, out, i, text, error)) return false;
+            if (text && *text) {
+                qa_unified_q2_configstring *config = out->configstrings + out->configstring_count++;
+                config->index = i; config->value_id = hud.configstrings[i];
+                if (!application_unified_frame_string(lease, &config->value, text, error)) return false;
+            }
         }
         return true;
     }

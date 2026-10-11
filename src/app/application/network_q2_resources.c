@@ -649,7 +649,7 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 model acquisition requires its real BODY visual receipt");
     const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), visual->visual.models[model]);
     if (!path || !*path || *path == '*' || *path == '#' || visual->provider == owner->host.source.source_owner)
-        return application_network_q2_resource(owner, 0, path, out, error);
+        return application_network_q2_resource_id(owner, 0, visual->visual.models[model], out, error);
     application_provider *provider = provider_at(owner, visual->provider);
     if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
         !provider->launch || provider->product->id != visual->content)
@@ -820,7 +820,7 @@ bool qa_application_network_q2_event_config(qa_application_network_q2 *owner, ui
 {
     if (!out || !application_network_q2_current(owner, error) || index >= owner->config_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 event config leaves its actual HOST table");
-    *out = owner->configs[index] ? owner->configs[index] : ""; return true;
+    *out = application_network_q2_config_text(owner, index); return true;
 }
 
 size_t qa_application_network_q2_resource_count(const qa_application_network_q2 *owner)

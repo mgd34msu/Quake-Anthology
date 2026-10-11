@@ -80,7 +80,6 @@ typedef struct application_q2_held_resource {
 
 typedef struct application_q2_resource_table {
     uint32_t base, maximum, count;
-    char **paths;
     qa_string_id *names;
 } application_q2_resource_table;
 struct qa_application_network_q2 {
@@ -91,12 +90,13 @@ struct qa_application_network_q2 {
     int32_t server_count;
     uint32_t config_count, item_base, skin_base, light_base;
     uint32_t checksum_index, clients_index, air_index, n64_index;
-    char **configs;
+    qa_string_id *configs;
     qa_hud_q2_stat_references status_references;
     qa_arena layout_scratch;
     application_q2_resource_table resources[3];
     qa_q2_config_entry *entries;
     application_q2_layout_receipt *layouts;
+    char *layout_text;
     qa_q2_entity *entities, *source_entities, *baselines;
     qa_q2_source_entity_motion *motion_rows;
     qa_q2_source_motion motion;
@@ -122,6 +122,8 @@ struct qa_application_network_q2 {
 };
 
 bool application_network_q2_current(qa_application_network_q2 *, qa_error *);
+const char *application_network_q2_config_text(const qa_application_network_q2 *, uint32_t);
+bool application_network_q2_config_id(qa_application_network_q2 *, uint32_t, qa_string_id, qa_error *);
 bool application_network_q2_config(qa_application_network_q2 *, uint32_t,
     const char *, qa_error *);
 bool application_network_q2_layout(qa_application_network_q2 *, qa_error *);

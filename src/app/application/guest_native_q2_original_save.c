@@ -420,10 +420,9 @@ bool application_q2_original_configure(qa_application_network_q2 *owner,qa_error
         for (unsigned kind=0;kind<3;++kind) {
             application_q2_resource_table *resources=owner->resources+kind;
             for (uint32_t index=1;index<resources->maximum;++index) {
-                const char *path=owner->configs[resources->base+index];
-                if (!path || !*path) continue;
-                resources->paths[index]=application_network_q2_copy(path,error);
-                if (!resources->paths[index]) {stage->failed=true;return false;}
+                qa_string_id name=owner->configs[resources->base+index];
+                if (!name) continue;
+                resources->names[index]=name;
                 resources->count=index;
             }
         }

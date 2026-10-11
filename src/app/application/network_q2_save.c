@@ -42,14 +42,14 @@ static bool capture(qa_application_network_q2 *owner, bool retained, qa_buffer *
     capacity += strlen(instance) + strlen(map);
     uint32_t configs = 0, events = 0, layouts = 0;
     for (uint32_t i = 0; i < owner->config_count; ++i) if (owner->configs[i]) {
-        size_t size = strlen(owner->configs[i]) + 5;
+        size_t size = strlen(application_network_q2_config_text(owner, i)) + 5;
         if (size > SIZE_MAX - capacity) return application_fail(error, QA_ERROR_MEMORY, "Q2 wire continuation config extent overflows");
         capacity += size; ++configs;
     }
     for (unsigned i = 0; i < 3; ++i) {
         const application_q2_resource_table *table = &owner->resources[i];
-        for (uint32_t j = 1; j <= table->count; ++j) if (table->paths[j]) {
-            size_t size = strlen(table->paths[j]) + 5;
+        for (uint32_t j = 1; j <= table->count; ++j) if (table->names[j]) {
+            size_t size = qa_strings_text(qa_session_strings(owner->app->session), table->names[j]).size + 5;
             if (size > SIZE_MAX - capacity) return application_fail(error, QA_ERROR_MEMORY, "Q2 wire continuation resource extent overflows");
             capacity += size;
         }
@@ -79,14 +79,14 @@ static bool capture(qa_application_network_q2 *owner, bool retained, qa_buffer *
     bool ok = header_write(owner, retained, &writer, error) && qa_net_write_u32(&writer, owner->config_count) &&
         qa_net_write_u32(&writer, configs);
     for (uint32_t i = 0; ok && i < owner->config_count; ++i) if (owner->configs[i])
-        ok = qa_net_write_u32(&writer, i) && qa_net_write_string(&writer, owner->configs[i]);
+        ok = qa_net_write_u32(&writer, i) && qa_net_write_string(&writer, application_network_q2_config_text(owner, i));
     for (unsigned i = 0; ok && i < 3; ++i) {
         const application_q2_resource_table *table = &owner->resources[i];
         uint32_t count = 0;
-        for (uint32_t j = 1; j <= table->count; ++j) if (table->paths[j]) ++count;
+        for (uint32_t j = 1; j <= table->count; ++j) if (table->names[j]) ++count;
         ok = qa_net_write_u32(&writer, count);
-        for (uint32_t j = 1; ok && j <= table->count; ++j) if (table->paths[j])
-            ok = qa_net_write_u32(&writer, j) && qa_net_write_string(&writer, table->paths[j]);
+        for (uint32_t j = 1; ok && j <= table->count; ++j) if (table->names[j])
+            ok = qa_net_write_u32(&writer, j) && qa_net_write_string(&writer, qa_strings_cstr(qa_session_strings(owner->app->session), table->names[j]));
     }
     const qa_actor_registry *registry = qa_session_actors(owner->app->session);
     ok = ok && qa_net_write_u32(&writer, layouts);
@@ -248,21 +248,19 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
             if (!i && next == 255) ++next;
             if (ok && (index != next || index >= table->maximum))
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource numbering leaves its admitted namespace");
-            const char *config = ok ? candidate->configs[table->base + index] : NULL;
+            const char *config = ok ? application_network_q2_config_text(candidate, table->base + index) : NULL;
             if (ok && (!*path || !config || strcmp(config, path)))
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource does not match its original source config index");
+            qa_string_id name = QA_STRING_NONE;
+            if (ok) ok = qa_strings_intern_cstr(qa_session_strings(candidate->app->session), path, &name, error);
             for (uint32_t k = 1; ok && k < index; ++k)
-                if (table->paths[k] && !strcmp(table->paths[k], path)) ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource aliases an earlier index");
-            if (ok) {
-                table->paths[index] = application_network_q2_copy(path, error);
-                ok = table->paths[index] && qa_strings_intern_cstr(qa_session_strings(candidate->app->session),
-                    path, table->names + index, error);
-            }
+                if (table->names[k] == name) ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource aliases an earlier index");
+            if (ok) table->names[index] = name;
             if (ok) table->count = index;
             previous = index;
         }
         for (uint32_t j = 0; ok && j < table->maximum; ++j)
-            if (candidate->configs[table->base + j] && !table->paths[j])
+            if (candidate->configs[table->base + j] && !table->names[j])
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q2 continuation omits a published source resource");
     }
     uint32_t layouts = qa_net_read_u32(&reader); previous = 0;
@@ -273,11 +271,12 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
         qa_saved_actor_id saved = {.slot = qa_net_read_u32(&reader)};
         saved.generation = qa_net_read_u64(&reader);
         uint32_t profile = qa_net_read_u32(&reader);
-        char *text = malloc(QA_HUD_Q2_LAYOUT_BYTES);
+        if (!slot || slot > candidate->host.client_slots || slot <= previous) {
+            ok = application_fail(error, QA_ERROR_FORMAT, "Q2 retained layout lost its genuine client/text receipt"); break;
+        }
+        char *text = candidate->layout_text + (size_t)slot * QA_HUD_Q2_LAYOUT_BYTES;
         qa_actor_id actor = {0}; qa_hud_q2_stat_references references;
-        if (!text) { ok = application_fail(error, QA_ERROR_MEMORY, "Restoring the retained Q2 layout message"); break; }
         ok = qa_net_read_string(&reader, text, QA_HUD_Q2_LAYOUT_BYTES) && !reader.failed &&
-            slot && slot <= candidate->host.client_slots && slot > previous &&
             (profile == QA_NATIVE_Q2_GAME_API3 || profile == QA_NATIVE_Q2_GAME_API2023) &&
             qa_actors_reference_saved(qa_session_actors(candidate->app->session), saved, candidate->archival, &actor, error) &&
             qa_hud_q2_layout_stat_references(text, profile == QA_NATIVE_Q2_GAME_API2023,
@@ -286,8 +285,7 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
             qa_network_q2_player physical;
             ok = qa_application_network_q2_player(candidate, actor, &physical, error) && physical.source_slot == slot;
         }
-        if (ok) { candidate->layouts[slot] = (application_q2_layout_receipt){actor, text, references, (qa_native_profile)profile}; text = NULL; }
-        free(text);
+        if (ok) { candidate->layouts[slot] = (application_q2_layout_receipt){actor, text, references, (qa_native_profile)profile}; }
         if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "Q2 retained layout lost its genuine client/text receipt");
         previous = slot;
     }
@@ -321,27 +319,17 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
             application_network_q2_resources_restore(candidate, holders, error);
     }
     ok = ok && qa_net_reader_finish(&reader);
-    char **published = NULL;
+    qa_string_id *published = NULL;
     if (ok && !candidate->archival) {
-        published = calloc(candidate->config_count, sizeof(*published));
+        published = malloc(candidate->config_count * sizeof(*published));
         if (!published) ok = application_fail(error, QA_ERROR_MEMORY, "Qualifying restored Q2 Source configstrings");
-    }
-    for (uint32_t i = 0; ok && !candidate->archival && i < candidate->config_count; ++i) {
-        if (!candidate->configs[i]) continue;
-        published[i] = application_network_q2_copy(candidate->configs[i], error);
-        ok = published[i] != NULL;
+        else memcpy(published, candidate->configs, candidate->config_count * sizeof(*published));
     }
     if (ok && !candidate->archival) ok = application_network_q2_observe(candidate, error);
-    for (uint32_t i = 0; ok && !candidate->archival && i < candidate->config_count; ++i) {
-        const char *before = published[i] ? published[i] : "";
-        const char *actual = candidate->configs[i] ? candidate->configs[i] : "";
-        if (strcmp(before, actual))
+    for (uint32_t i = 0; ok && !candidate->archival && i < candidate->config_count; ++i)
+        if (published[i] != candidate->configs[i])
             ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored configstring differs from its actual Source publication");
-    }
-    if (published) {
-        for (uint32_t i = 0; i < candidate->config_count; ++i) free(published[i]);
-        free(published);
-    }
+    free(published);
     if (ok && !candidate->archival && !qa_application_native_q2_presentation_current(candidate->app, &candidate->host.source))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q2 import changed its real restored Source cut");
     if (ok) candidate->initialized = candidate->restored = true;
@@ -378,9 +366,10 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         owner->configs = candidate->configs; candidate->configs = NULL;
         owner->entries = candidate->entries; candidate->entries = NULL;
         owner->layouts = candidate->layouts; candidate->layouts = NULL;
+        owner->layout_text = candidate->layout_text; candidate->layout_text = NULL;
         for (unsigned i = 0; i < 3; ++i) {
             owner->resources[i] = candidate->resources[i];
-            candidate->resources[i].paths = NULL; candidate->resources[i].names = NULL;
+            candidate->resources[i].names = NULL;
             candidate->resources[i].count = 0;
         }
         owner->event_actors = candidate->event_actors; candidate->event_actors = NULL;

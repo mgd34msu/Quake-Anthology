@@ -76,23 +76,40 @@ bool application_network_q2_current(qa_application_network_q2 *owner, qa_error *
     return true;
 }
 
-bool application_network_q2_config(qa_application_network_q2 *owner, uint32_t index,
-    const char *text, qa_error *error)
+const char *application_network_q2_config_text(const qa_application_network_q2 *owner, uint32_t index)
 {
-    if (!owner || index >= owner->config_count || !text || strlen(text) >= 2048)
+    const char *text = qa_strings_cstr(qa_session_strings(owner->app->session), owner->configs[index]);
+    return text ? text : "";
+}
+
+bool application_network_q2_config_id(qa_application_network_q2 *owner, uint32_t index,
+    qa_string_id name, qa_error *error)
+{
+    if (!owner || index >= owner->config_count)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 source configstring leaves its wire table");
-    const char *old = owner->configs[index];
-    if ((!old && !*text) || (old && !strcmp(old, text))) return true;
+    if (owner->configs[index] == name) return true;
+    const char *text = name ? qa_strings_cstr(qa_session_strings(owner->app->session), name) : "";
+    if (!text || strlen(text) >= 2048)
+        return application_fail(error, QA_ERROR_FORMAT, "Q2 source configstring leaves its wire table");
+    if (!*text) name = QA_STRING_NONE;
+    if (owner->configs[index] == name) return true;
     qa_hud_q2_stat_references references = {0};
     if (index == 5 && !qa_hud_q2_layout_stat_references(text,
         owner->host.source.edition == QA_Q2_RERELEASE, &owner->layout_scratch,
         &references, error)) return false;
-    char *copy = *text ? application_network_q2_copy(text, error) : NULL;
-    if (*text && !copy) return false;
-    free(owner->configs[index]); owner->configs[index] = copy;
+    owner->configs[index] = name;
     if (index == 5) owner->status_references = references;
     owner->source_entities_ready = false;
     return true;
+}
+
+bool application_network_q2_config(qa_application_network_q2 *owner, uint32_t index,
+    const char *text, qa_error *error)
+{
+    qa_string_id name = QA_STRING_NONE;
+    if (!text) return application_fail(error, QA_ERROR_FORMAT, "Q2 source configstring leaves its wire table");
+    return (!*text || qa_strings_intern_cstr(qa_session_strings(owner->app->session), text, &name, error)) &&
+        application_network_q2_config_id(owner, index, name, error);
 }
 
 bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *error)
@@ -110,31 +127,29 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
     owner->configs = calloc(owner->config_count, sizeof(*owner->configs));
     owner->entries = calloc(owner->config_count, sizeof(*owner->entries));
     owner->layouts = calloc((size_t)owner->host.client_slots + 1, sizeof(*owner->layouts));
-    if (!owner->configs || !owner->entries || !owner->layouts) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source configstrings");
+    owner->layout_text = calloc((size_t)owner->host.client_slots + 1, QA_HUD_Q2_LAYOUT_BYTES);
+    if (!owner->configs || !owner->entries || !owner->layouts || !owner->layout_text) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source configstrings");
     if (!qa_arena_reserve(&owner->layout_scratch, QA_HUD_Q2_LAYOUT_SCRATCH_BYTES, error)) return false;
     qa_arena_seal(&owner->layout_scratch);
     for (unsigned i = 0; i < 3; ++i) {
         owner->resources[i] = (application_q2_resource_table){.base = bases[i], .maximum = maximum[i]};
-        owner->resources[i].paths = calloc(maximum[i], sizeof(char *));
         owner->resources[i].names = calloc(maximum[i], sizeof(qa_string_id));
-        if (!owner->resources[i].paths || !owner->resources[i].names) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source resource indices");
+        if (!owner->resources[i].names) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source resource indices");
     }
     return true;
 }
 
 void application_network_q2_free_tables(qa_application_network_q2 *owner)
 {
-    if (owner->configs) for (uint32_t i = 0; i < owner->config_count; ++i) free(owner->configs[i]);
     free(owner->configs); free(owner->entries);
-    if (owner->layouts) for (uint32_t i = 1; i <= owner->host.client_slots; ++i) free(owner->layouts[i].text);
     free(owner->layouts); owner->layouts = NULL;
+    free(owner->layout_text); owner->layout_text = NULL;
     qa_arena_destroy(&owner->layout_scratch);
     owner->status_references = (qa_hud_q2_stat_references){0};
     for (unsigned i = 0; i < 3; ++i) {
         application_q2_resource_table *table = &owner->resources[i];
-        if (table->paths) for (uint32_t j = 1; j <= table->count; ++j) free(table->paths[j]);
-        free(table->paths); free(table->names);
-        table->paths = NULL; table->names = NULL; table->count = 0;
+        free(table->names);
+        table->names = NULL; table->count = 0;
     }
     owner->configs = NULL; owner->entries = NULL;
 }
@@ -152,11 +167,8 @@ bool application_network_q2_resource_id(qa_application_network_q2 *owner, unsign
     if (!kind && index == 255) ++index;
     if (index >= table->maximum)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 source resource table is full");
-    const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), name);
-    char *copy = application_network_q2_copy(path, error);
-    if (!copy) return false;
-    if (!application_network_q2_config(owner, table->base + index, path, error)) { free(copy); return false; }
-    table->paths[index] = copy; table->names[index] = name; table->count = index; *out = index;
+    if (!application_network_q2_config_id(owner, table->base + index, name, error)) return false;
+    table->names[index] = name; table->count = index; *out = index;
     return true;
 }
 
@@ -239,7 +251,7 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
     uint32_t source_air = rr ? 59u : 29u;
     uint32_t shared = source_air < owner->air_index ? source_air : owner->air_index;
     for (uint32_t i = 0; i < shared; ++i)
-        if (!application_network_q2_config(owner, i, engine->configstrings[i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[i]) : "", error)) return false;
+        if (!application_network_q2_config_id(owner, i, engine->configstrings[i], error)) return false;
     bool ok = true;
     for (uint32_t i = shared; ok && i < owner->air_index; ++i) ok = application_network_q2_config(owner, i, "", error);
     const uint32_t source[] = {rr ? 10814u : 800u, rr ? 11326u : 1056u,
@@ -249,17 +261,15 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
         for (uint32_t i = 0; ok && i < count; ++i) {
             uint32_t target;
             ok = application_network_q2_source_config(owner, source[range] + i, &target, error) &&
-                application_network_q2_config(owner, target,
-                    engine->configstrings[source[range] + i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[source[range] + i]) : "", error);
+                application_network_q2_config_id(owner, target, engine->configstrings[source[range] + i], error);
         }
     }
     if (rr && owner->item_base - owner->light_base >= 512)
         for (uint32_t i = 0; ok && i < 256; ++i)
-            ok = application_network_q2_config(owner, owner->light_base + 256 + i,
-                engine->configstrings[11070 + i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[11070 + i]) : "", error);
+            ok = application_network_q2_config_id(owner, owner->light_base + 256 + i, engine->configstrings[11070 + i], error);
     if (rr && owner->config_count == engine->configstring_count)
         for (uint32_t i = 12350; ok && i < owner->config_count; ++i)
-            ok = application_network_q2_config(owner, i, engine->configstrings[i] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[i]) : "", error);
+            ok = application_network_q2_config_id(owner, i, engine->configstrings[i], error);
     /* The map and vwep declarations establish actual client constructors before frames. */
     uint32_t mapped;
     if (ok && engine->configstrings[engine->resource_base[0] + 1])
@@ -333,10 +343,10 @@ bool qa_application_network_q2_event_layout(qa_application_network_q2 *owner, qa
     qa_hud_q2_stat_references references;
     if (!qa_hud_q2_layout_stat_references(layout, profile == QA_NATIVE_Q2_GAME_API2023,
         &owner->layout_scratch, &references, error)) return false;
-    char *text = application_network_q2_copy(layout, error);
-    if (!text) return false;
+    char *text = owner->layout_text + (size_t)physical.source_slot * QA_HUD_Q2_LAYOUT_BYTES;
+    memcpy(text, layout, strlen(layout) + 1);
     application_q2_layout_receipt *row = &owner->layouts[physical.source_slot];
-    free(row->text); *row = (application_q2_layout_receipt){actor, text, references, profile};
+    *row = (application_q2_layout_receipt){actor, text, references, profile};
     return true;
 }
 
@@ -474,7 +484,7 @@ bool qa_application_network_q2_configs(qa_application_network_q2 *owner,
         !application_network_q2_source_resources(owner, error)) return false;
     size_t found = 0;
     for (uint32_t i = 0; i < owner->config_count; ++i)
-        if (owner->configs[i]) owner->entries[found++] = (qa_q2_config_entry){(uint16_t)i, owner->configs[i]};
+        if (owner->configs[i]) owner->entries[found++] = (qa_q2_config_entry){(uint16_t)i, application_network_q2_config_text(owner, i)};
     *out = owner->entries; *count = found; return true;
 }
 
@@ -501,7 +511,7 @@ bool qa_application_network_q2_game_state(qa_application_network_q2 *owner,
     const char *directory = provider->product->directory;
     const char *last = directory ? strrchr(directory, '/') : NULL;
     directory = last ? last + 1 : directory;
-    const char *level = owner->configs[0] ? owner->configs[0] :
+    const char *level = owner->configs[0] ? application_network_q2_config_text(owner, 0) :
         qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
     if (!directory || strlen(directory) >= sizeof(value.data.gamedir) || !level || strlen(level) >= sizeof(value.data.levelname))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 signon Source directory or level name is too long");
@@ -514,7 +524,7 @@ bool qa_application_network_q2_game_state(qa_application_network_q2 *owner,
     value.data.wire_flags = owner->host.protocol.flags;
     size_t configs = 0;
     for (uint32_t i = 0; i < owner->config_count; ++i)
-        if (owner->configs[i]) owner->entries[configs++] = (qa_q2_config_entry){(uint16_t)i, owner->configs[i]};
+        if (owner->configs[i]) owner->entries[configs++] = (qa_q2_config_entry){(uint16_t)i, application_network_q2_config_text(owner, i)};
     owner->baseline_count = 0;
     for (size_t i = 0; i < owner->source_entity_count; ++i) {
         const qa_q2_entity *entity = &owner->source_entities[i];
@@ -678,7 +688,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
         qa_application_network_q2_client_slot client;
         if (!qa_application_network_q2_slot(owner, slot, &client, error)) return false;
         if (!client.connected || !qa_actor_id_equal(client.actor, owner->layouts[slot].actor)) {
-            free(owner->layouts[slot].text); owner->layouts[slot] = (application_q2_layout_receipt){0};
+            owner->layouts[slot] = (application_q2_layout_receipt){0};
         }
     }
     if (!config_number(owner, owner->checksum_index, qa_block_checksum(qa_resource_bytes(owner->app->map_resource)), error) ||

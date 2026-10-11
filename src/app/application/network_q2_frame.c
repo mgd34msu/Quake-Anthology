@@ -195,9 +195,8 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     vector(value.angles, source->body.angles);
     uint32_t *models[] = {&value.modelindex, &value.modelindex2, &value.modelindex3, &value.modelindex4};
     for (unsigned i = 0; !flare && i < 4; ++i) {
-        const char *path = text(owner, selected_visual ? selected.visual.models[i] : visual.models[i]);
         if (!(selected_visual ? application_network_q2_visual_resource(owner, &selected, i, models[i], error) :
-            application_network_q2_resource(owner, 0, path, models[i], error))) return false;
+            application_network_q2_resource_id(owner, 0, visual.models[i], models[i], error))) return false;
     }
     if (flare) {
         float start = selected_visual ? selected.flare.fade_start : source->flare_start;
@@ -243,21 +242,21 @@ static bool original_weapon_skin(qa_application_network_q2 *owner,
 {
     uint32_t ordinal = (*skin >> 8) & 255u;
     if (!ordinal) return true;
-    const char *weapon = NULL; uint32_t source_ordinal = 0;
+    qa_string_id weapon = QA_STRING_NONE; uint32_t source_ordinal = 0;
     for (uint32_t i = 1; i < engine->resource_limit[0]; ++i) {
         const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[0] + i]);
         if (!path || path[0] != '#') continue;
-        if (++source_ordinal == ordinal) { weapon = path; break; }
+        if (++source_ordinal == ordinal) { weapon = engine->configstrings[engine->resource_base[0] + i]; break; }
     }
     uint32_t target_ordinal = 0;
     if (weapon) {
         application_q2_resource_table *table = &owner->resources[0];
         bool found = false;
         for (uint32_t i = 1; i <= table->count; ++i) {
-            const char *path = table->paths[i];
+            const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), table->names[i]);
             if (!path || path[0] != '#') continue;
             ++target_ordinal;
-            if (!strcmp(path, weapon)) { found = true; break; }
+            if (table->names[i] == weapon) { found = true; break; }
         }
         if (!found || target_ordinal > 255)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 player weapon has no retained target appearance declaration");
