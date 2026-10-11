@@ -295,11 +295,9 @@ static bool command_import(qa_native_host *host, const qa_native_import_call *ca
     qa_native_host_command_view command = {0};
     if (!command_view(host, &command, error))
         return false;
+    if (command.count > NATIVE_HOST_COMMAND_TOKENS) command.count = NATIVE_HOST_COMMAND_TOKENS;
     qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
     if ((dispatch == QA_NATIVE_Q2_IMPORT_argc)) {
-        if (command.count > INT32_MAX)
-            return native_host_fail(error, QA_ERROR_FORMAT, command.count,
-                                    "native command has too many arguments");
         result->as.i32 = (int32_t)command.count;
         return true;
     }

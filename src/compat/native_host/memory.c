@@ -164,6 +164,16 @@ bool native_host_string_id_address(qa_native_host *host, qa_string_id name,
     *out = value;
     return true;
 }
+bool native_host_temporary_bytes(qa_native_host *host, size_t capacity,
+    const void *bytes, size_t size, qa_native_address *out, qa_error *error)
+{
+    if (!qa_native_allocate(host->instance, capacity, INT32_MIN + 2, out, error)) return false;
+    if (native_host_write(host, *out, bytes, size, error)) return true;
+    native_host_temporary_free(host, *out);
+    *out = 0;
+    return false;
+}
+
 bool native_host_temporary_string(qa_native_host *host, const char *text,
                                   qa_native_address *out, qa_error *error)
 {
@@ -174,14 +184,7 @@ bool native_host_temporary_string(qa_native_host *host, const char *text,
     if (length >= host->maximum_string_bytes || length == SIZE_MAX)
         return native_host_fail(error, QA_ERROR_ARGUMENT, length,
                                 "temporary native string exceeds its source limit");
-    if (!qa_native_allocate(host->instance, length + 1u, INT32_MIN + 2, out, error))
-        return false;
-    if (native_host_write(host, *out, text, length + 1u, error))
-        return true;
-    qa_error ignored = {0};
-    qa_native_free(host->instance, *out, &ignored);
-    *out = 0;
-    return false;
+    return native_host_temporary_bytes(host, length + 1u, text, length + 1u, out, error);
 }
 
 void native_host_temporary_free(qa_native_host *host, qa_native_address address)
@@ -202,11 +205,7 @@ static bool string_buffer_write(qa_native_host *host, native_host_string_buffer 
         while (capacity < bytes && capacity <= host->maximum_string_bytes / 2) capacity *= 2;
         if (capacity < bytes || capacity > host->maximum_string_bytes) capacity = bytes;
         qa_native_address address = 0;
-        if (!qa_native_allocate(host->instance, capacity, INT32_MIN + 2, &address, error)) return false;
-        if (!native_host_write(host, address, text, bytes, error)) {
-            native_host_temporary_free(host, address);
-            return false;
-        }
+        if (!native_host_temporary_bytes(host, capacity, text, bytes, &address, error)) return false;
         native_host_temporary_free(host, buffer->address);
         *buffer = (native_host_string_buffer){address, capacity};
         return true;
@@ -214,9 +213,9 @@ static bool string_buffer_write(qa_native_host *host, native_host_string_buffer 
     return native_host_write(host, buffer->address, text, bytes, error);
 }
 
-void native_host_command_clear(qa_native_host *host)
+void native_host_command_dispose(qa_native_host *host)
 {
-    for (size_t i = 0; i < host->command_argument_count; ++i) {
+    for (size_t i = 0; i < NATIVE_HOST_COMMAND_TOKENS; ++i) {
         native_host_temporary_free(host, host->command_arguments[i].address);
         host->command_arguments[i] = (native_host_string_buffer){0};
     }
@@ -228,17 +227,7 @@ bool native_host_command_string(qa_native_host *host, size_t index, size_t count
     const char *text, qa_native_address *out, qa_error *error)
 {
     native_host_string_buffer *buffer = &host->command_tail;
-    if (index < count) {
-        if (count > host->command_argument_count) {
-            native_host_string_buffer *rows = realloc(host->command_arguments, count * sizeof(*rows));
-            if (!rows) return native_host_fail(error, QA_ERROR_MEMORY, count, "allocating native command arguments");
-            memset(rows + host->command_argument_count, 0,
-                (count - host->command_argument_count) * sizeof(*rows));
-            host->command_arguments = rows;
-            host->command_argument_count = count;
-        }
-        buffer = &host->command_arguments[index];
-    }
+    if (index < count) buffer = &host->command_arguments[index];
     if (!string_buffer_write(host, buffer, text, error)) return false;
     *out = buffer->address;
     return true;
@@ -616,6 +605,22 @@ bool native_host_memory_fields(qa_source_save_io *io,qa_native_host *host,
             if (prior->address==row->address || !strcmp(prior->name,row->name))
                 return native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native cvar-shadow custody repeats a Source object");
         cvars=&row->next;
+    }
+    /* Older checkpoints ended after the cvar records. */
+    if (reading && io->offset == io->input.size) return true;
+    count = 0;
+    if (!reading) for (size_t i = 0; i < NATIVE_HOST_COMMAND_TOKENS; ++i)
+        if (state->command_arguments[i].address) count = i + 1;
+    if (!qa_source_save_count(io, &count, NATIVE_HOST_COMMAND_TOKENS)) return false;
+    for (size_t i = 0; i <= count; ++i) {
+        native_host_string_buffer *buffer = i == count ? &state->command_tail : &state->command_arguments[i];
+        uint64_t capacity = buffer->capacity;
+        if (!qa_source_save_u64(io, &buffer->address) || !qa_source_save_u64(io, &capacity)) return false;
+        if (capacity > host->maximum_string_bytes)
+            return native_host_fail(io->error, QA_ERROR_FORMAT, io->offset, "native command buffer exceeds its source limit");
+        buffer->capacity = (size_t)capacity;
+        if (buffer->address && !memory_allocation(host, buffer->address, buffer->capacity,
+                INT32_MIN + 2, qualify_addresses, io->error)) return false;
     }
     return true;
 }

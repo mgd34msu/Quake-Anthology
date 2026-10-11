@@ -20,6 +20,8 @@ typedef enum native_host_kind {
     NATIVE_HOST_Q3
 } native_host_kind;
 
+enum { NATIVE_HOST_COMMAND_TOKENS = 80 };
+
 typedef struct native_host_string_buffer {
     qa_native_address address;
     size_t capacity;
@@ -42,6 +44,7 @@ typedef struct native_host_cvar_record {
 typedef struct native_host_memory_state {
     qa_id_index strings;
     native_host_cvar_record *cvar_shadows;
+    native_host_string_buffer command_arguments[NATIVE_HOST_COMMAND_TOKENS], command_tail;
 } native_host_memory_state;
 bool native_host_memory_fields(qa_source_save_io *, qa_native_host *,
     native_host_memory_state *, bool qualify_addresses);
@@ -126,8 +129,7 @@ struct qa_native_host {
     qa_id_index strings;
     qa_strings *string_names;
     qa_string_id empty_string;
-    native_host_string_buffer *command_arguments, command_tail;
-    size_t command_argument_count;
+    native_host_string_buffer command_arguments[NATIVE_HOST_COMMAND_TOKENS], command_tail;
     native_host_cvar_record *cvar_shadows, *cvar_order;
     uint64_t cvar_view_identity, cvar_revision;
     native_host_surface *surfaces;
@@ -204,9 +206,10 @@ bool native_host_write_vec3(qa_native_host *, qa_native_address, qa_vec3, qa_err
 bool native_host_text_read(qa_native_host *, qa_native_address, bool, qa_bytes *, qa_error *);
 bool native_host_string_read(qa_native_host *, qa_native_address, qa_bytes *, qa_error *);
 bool native_host_string_id_address(qa_native_host *, qa_string_id, qa_native_address *, qa_error *);
+bool native_host_temporary_bytes(qa_native_host *, size_t, const void *, size_t, qa_native_address *, qa_error *);
 bool native_host_temporary_string(qa_native_host *, const char *, qa_native_address *, qa_error *);
 void native_host_temporary_free(qa_native_host *, qa_native_address);
-void native_host_command_clear(qa_native_host *);
+void native_host_command_dispose(qa_native_host *);
 bool native_host_command_string(qa_native_host *, size_t, size_t, const char *, qa_native_address *, qa_error *);
 bool native_host_cvar(qa_native_host *, const char *, const char *, uint32_t, bool,
                       qa_native_address *, qa_error *);
