@@ -129,10 +129,15 @@ static bool memory_copy(guest_sysv_runtime *r, uint64_t destination,
     if (!count) return true;
     if (!destination || !source)
         return sysv_fail(error, QA_ERROR_ARGUMENT, "System V memory copy requires actual nonnull pointers");
-    uint8_t *bytes = malloc(count);
-    if (!bytes) return sysv_fail(error, QA_ERROR_MEMORY, "copying System V guest bytes");
+    qa_arena scratch;
+    qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
+    uint8_t *bytes = qa_arena_alloc(&scratch, count, 1, error);
+    if (!bytes) {
+        qa_arena_destroy(&scratch);
+        return false;
+    }
     bool ok = sysv_read(r, source, bytes, count, error) && sysv_write(r, destination, bytes, count, error);
-    free(bytes); return ok;
+    qa_arena_destroy(&scratch); return ok;
 }
 static bool full_string(guest_sysv_runtime *r, uint64_t address, qa_buffer *out, qa_error *error)
 {
@@ -258,7 +263,12 @@ static bool strtol_call(guest_sysv_runtime *r, const qa_native_value *args, bool
     }
     return set_integer(out, sysv_signed_type(r), negative ? UINT64_C(0) - value : value);
 }
-typedef struct sort_state { guest_sysv_runtime *runtime; uint64_t base, comparator; size_t size; } sort_state;
+typedef struct sort_state {
+    guest_sysv_runtime *runtime;
+    uint64_t base, comparator;
+    size_t size;
+    uint8_t *first, *second;
+} sort_state;
 static bool sort_less(sort_state *state, size_t a, size_t b, bool *out, qa_error *error)
 {
     const qa_native_value_type types[] = {QA_NATIVE_ADDRESS,QA_NATIVE_ADDRESS};
@@ -269,13 +279,11 @@ static bool sort_less(sort_state *state, size_t a, size_t b, bool *out, qa_error
 }
 static bool sort_swap(sort_state *state, size_t a, size_t b, qa_error *error)
 {
-    uint8_t *bytes = malloc(state->size);
-    if (!bytes) return sysv_fail(error, QA_ERROR_MEMORY, "holding qsort reached swap bytes");
     uint64_t first = state->base + a * state->size, second = state->base + b * state->size;
-    bool ok = sysv_read(state->runtime, first, bytes, state->size, error) &&
-        memory_copy(state->runtime, first, second, state->size, error) &&
-        sysv_write(state->runtime, second, bytes, state->size, error);
-    free(bytes); return ok;
+    return sysv_read(state->runtime, first, state->first, state->size, error) &&
+        sysv_read(state->runtime, second, state->second, state->size, error) &&
+        sysv_write(state->runtime, first, state->second, state->size, error) &&
+        sysv_write(state->runtime, second, state->first, state->size, error);
 }
 static bool sort_sift(sort_state *state, size_t root, size_t end, qa_error *error)
 {
@@ -340,21 +348,27 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
         if (!extent(c, &count, error)) return false;
         out->as.address = a; if (!count) return true;
         if (!a) return sysv_fail(error,QA_ERROR_ARGUMENT,"System V memset requires an actual nonnull destination");
-        uint8_t *bytes = malloc(count);
-        if (!bytes) return sysv_fail(error, QA_ERROR_MEMORY, "holding memset guest bytes");
+        qa_arena scratch;
+        qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
+        uint8_t *bytes = qa_arena_alloc(&scratch, count, 1, error);
+        if (!bytes) { qa_arena_destroy(&scratch); return false; }
         memset(bytes, (uint8_t)b, count);
-        bool ok = sysv_write(r, a, bytes, count, error); free(bytes); return ok;
+        bool ok = sysv_write(r, a, bytes, count, error);
+        qa_arena_destroy(&scratch); return ok;
     }
     case LC_COMPARE: {
         if (!extent(c, &count, error)) return false;
         out->as.i32 = 0; if (!count) return true;
         if (!a || !b) return sysv_fail(error,QA_ERROR_ARGUMENT,"System V memcmp requires actual nonnull pointers");
-        uint8_t *first = malloc(count), *second = malloc(count);
-        if (!first || !second) { free(first); free(second); return sysv_fail(error, QA_ERROR_MEMORY, "holding memcmp guest bytes"); }
+        qa_arena scratch;
+        qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
+        uint8_t *first = qa_arena_alloc(&scratch, count, 1, error);
+        uint8_t *second = first ? qa_arena_alloc(&scratch, count, 1, error) : NULL;
+        if (!second) { qa_arena_destroy(&scratch); return false; }
         bool ok = sysv_read(r, a, first, count, error) && sysv_read(r, b, second, count, error);
         if (ok) for (size_t i = 0; i < count; ++i)
             if (first[i] != second[i]) { out->as.i32 = (int)first[i] - (int)second[i]; break; }
-        free(first); free(second); return ok;
+        qa_arena_destroy(&scratch); return ok;
     }
     case LC_GETENV: return getenv_call(r, a, out, error);
     case LC_GETCWD: return getcwd_call(r, a, b, out, error);
@@ -488,11 +502,18 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
         if (!extent(b, &count, error) || c > SYSV_MAX_ALLOCATION) return false;
         if (count < 2 || !c) return true;
         if (!a || c > SYSV_MAX_ALLOCATION / count || !guest_range(r->guest, a, count * (size_t)c, QA_NATIVE_GUEST_WRITE, error)) return false;
-        sort_state state = {r,a,comparator,(size_t)c};
-        for (size_t i = count / 2; i; --i) if (!sort_sift(&state, i - 1, count, error)) return false;
-        for (size_t end = count - 1; end; --end)
-            if (!sort_swap(&state, 0, end, error) || !sort_sift(&state, 0, end, error)) return false;
-        return true;
+        qa_arena scratch;
+        qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
+        uint8_t *bytes = qa_arena_alloc(&scratch, 2 * (size_t)c, 1, error);
+        if (!bytes) { qa_arena_destroy(&scratch); return false; }
+        sort_state state = {r,a,comparator,(size_t)c,bytes,bytes+(size_t)c};
+        bool ok = true;
+        for (size_t i = count / 2; ok && i; --i)
+            ok = sort_sift(&state, i - 1, count, error);
+        for (size_t end = count - 1; ok && end; --end)
+            ok = sort_swap(&state, 0, end, error) && sort_sift(&state, 0, end, error);
+        qa_arena_destroy(&scratch);
+        return ok;
     }
     case LC_MATH: {
         double value = args[0].type == QA_NATIVE_F32 ? args[0].as.f32 : args[0].as.f64;

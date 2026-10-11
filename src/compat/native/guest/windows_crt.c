@@ -930,13 +930,17 @@ static bool scanf_service(guest_windows *owner, const qa_native_value *args,
     if (integer(args + 4) || (integer(args) & ~UINT64_C(2)))
         return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "unsupported Windows scanf locale/options");
     if (!integer(args + 1)) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows scanf input is null");
+    qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
     guest_scan_program *program = NULL;
-    if (!guest_scan_prepare(owner->guest, integer(args + 3), false, &program, error)) return false;
+    if (!guest_scan_prepare(owner->guest, integer(args + 3), false, &scratch, &program, error)) {
+        qa_arena_destroy(&scratch);
+        return false;
+    }
     windows_scan_arguments arguments = {owner, integer(args + 5)};
     int32_t assigned;
     bool okay = guest_scan_execute(program, owner->guest, integer(args + 1), integer(args + 2),
         scanf_destination, &arguments, &assigned, error);
-    guest_scan_destroy(program);
+    qa_arena_destroy(&scratch);
     if (okay) result(out, QA_NATIVE_I32, (uint32_t)assigned);
     return okay;
 }

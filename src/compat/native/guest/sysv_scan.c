@@ -34,14 +34,17 @@ bool sysv_scan_call(sysv_service *service, const qa_native_value *arguments,
     qa_native_value *out, qa_error *error)
 {
     guest_sysv_runtime *runtime = service->runtime;
+    qa_arena scratch; qa_arena_init_pool(&scratch, &runtime->guest->scratch_pages);
     guest_scan_program *program = NULL;
     if (!guest_scan_prepare(runtime->guest, arguments[1].as.address,
-        service->operation == 5, &program, error)) return false;
+        service->operation == 5, &scratch, &program, error)) {
+        qa_arena_destroy(&scratch);
+        return false;
+    }
     size_t count = guest_scan_argument_count(program), width = runtime->target.pointer_bytes;
-    qa_arena scratch; qa_arena_init_pool(&scratch, &runtime->guest->scratch_pages);
     guest_abi_layout *extra = count ? qa_arena_alloc(&scratch, count * sizeof(*extra), _Alignof(guest_abi_layout), error) : NULL;
     if (count && !extra) {
-        guest_scan_destroy(program); qa_arena_destroy(&scratch);
+        qa_arena_destroy(&scratch);
         return false;
     }
     for (size_t i = 0; i < count; ++i)
@@ -57,7 +60,6 @@ bool sysv_scan_call(sysv_service *service, const qa_native_value *arguments,
         UINT64_MAX, destination, &entry, &assigned, error);
     if (okay) *out = (qa_native_value){.type = QA_NATIVE_I32, .as.i32 = assigned};
     guest_abi_plan_destroy(entry.plan);
-    guest_scan_destroy(program);
     qa_arena_destroy(&scratch);
     return okay;
 }
