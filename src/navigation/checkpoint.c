@@ -53,17 +53,19 @@ bool qa_navigation_restore(qa_navigation *n, const qa_nav_checkpoint *state, qa_
         return false;
     }
     size_t nodes = n->graph->view.node_count, edges = n->graph->view.edge_count;
-    int8_t *enabled = malloc(nodes == 0 ? 1 : nodes);
-    uint8_t *blocked = calloc(edges == 0 ? 1 : edges, 1);
-    float *admissions = malloc((edges == 0 ? 1 : edges) * sizeof(*admissions));
+    qa_arena scratch;
+    nav_arena_init(&scratch, &n->storage);
+    int8_t *enabled = qa_arena_alloc(&scratch, nodes == 0 ? 1 : nodes, _Alignof(int8_t), e);
+    uint8_t *blocked = qa_arena_alloc(&scratch, edges == 0 ? 1 : edges, _Alignof(uint8_t), e);
+    float *admissions = qa_arena_alloc(&scratch, (edges == 0 ? 1 : edges) * sizeof(*admissions),
+                                       _Alignof(float), e);
     if (enabled == NULL || blocked == NULL || admissions == NULL) {
-        free(enabled);
-        free(blocked);
-        free(admissions);
+        qa_arena_destroy(&scratch);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Preparing navigation checkpoint restore");
         return false;
     }
     memset(enabled, -1, nodes);
+    memset(blocked, 0, edges);
     for (size_t i = 0; i < edges; ++i)
         admissions[i] = NAN;
     bool ok = true;
@@ -94,19 +96,15 @@ bool qa_navigation_restore(qa_navigation *n, const qa_nav_checkpoint *state, qa_
         admissions[index] = seconds;
     }
     if (!ok) {
-        free(enabled);
-        free(blocked);
-        free(admissions);
+        qa_arena_destroy(&scratch);
         qa_error_set(e, QA_ERROR_FORMAT, 0,
                      "Unknown, duplicate or invalid navigation checkpoint record");
         return false;
     }
-    free(n->enabled);
-    free(n->blocked);
-    free(n->admission_seconds);
-    n->enabled = enabled;
-    n->blocked = blocked;
-    n->admission_seconds = admissions;
+    memcpy(n->enabled, enabled, nodes);
+    memcpy(n->blocked, blocked, edges);
+    memcpy(n->admission_seconds, admissions, edges * sizeof(*admissions));
+    qa_arena_destroy(&scratch);
     n->generation = state->generation;
     n->world_revision = state->world_revision;
     ++n->topology_revision;

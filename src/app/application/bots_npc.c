@@ -1,4 +1,5 @@
 #include "bots_npc_private.h"
+#include "control_frame.h"
 #include "qa/game_q1_bots.h"
 #include "qa/binary.h"
 #include "qa/persistence_navigation.h"
@@ -60,7 +61,8 @@ static bool prediction_prepare(application_bots_npc *owner, size_t points, qa_er
     if(points<=owner->prediction_points) return true;
     if(points>(SIZE_MAX-sizeof(npc_prediction))/sizeof(qa_vec3))
         return application_fail(error,QA_ERROR_MEMORY,"Monster trajectory capacity overflow");
-    qa_arena storage={0};qa_pool predictions={0};
+    qa_arena storage;qa_pool predictions={0};
+    qa_arena_init_pool(&storage,qa_unified_frame_lease_arena(owner->storage)->pages);
     size_t capacity=qa_actors_capacity(qa_session_actors(owner->source->application->session));
     if(!qa_pool_reserve_pages(&predictions,&storage,capacity,
             sizeof(npc_prediction)+points*sizeof(qa_vec3),_Alignof(npc_prediction),error)) {
@@ -151,7 +153,8 @@ void application_npc_actor_free(npc_actor *actor)
 {
     if(!actor) return;
     qa_nav_route_free(&actor->route);qa_nav_workspace_destroy(actor->workspace);
-    qa_navigation_destroy(actor->navigation);free(actor);
+    qa_navigation_destroy(actor->navigation);
+    qa_arena storage=actor->storage;qa_arena_destroy(&storage);
 }
 void application_npc_owner_free(application_bots_npc *owner)
 {
@@ -161,12 +164,12 @@ void application_npc_owner_free(application_bots_npc *owner)
     }
     while(owner->graphs) {
         npc_graph *graph=owner->graphs;owner->graphs=graph->next;
-        qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
-        qa_vfs_acquisition_dispose(&graph->acquisition);free(graph);
+        application_npc_graph_free(graph);
     }
     qa_actor_index_destroy(&owner->actor_routes);
     qa_arena_destroy(&owner->prediction_storage);
-    qa_vfs_destroy(owner->files);qa_resource_release(owner->map_resource);free(owner);
+    qa_vfs_destroy(owner->files);qa_resource_release(owner->map_resource);
+    qa_unified_frame_lease *storage=owner->storage;qa_unified_frame_lease_release(storage);
 }
 void application_bots_npc_destroy(application_provider *source)
 {
@@ -216,12 +219,15 @@ bool application_npc_owner_create(application_provider *source,bool prepared,app
     if(!source || (source->kind!=APPLICATION_PROVIDER_Q1 && source->kind!=APPLICATION_PROVIDER_QC) ||
        !app->map_resource || !out)
         return application_fail(error,QA_ERROR_ARGUMENT,"Monster navigation needs its actual Q1 source map");
-    application_bots_npc *owner=calloc(1,sizeof(*owner));
-    if(!owner) return application_fail(error,QA_ERROR_MEMORY,"Retaining source monster navigation");
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if(!storage) return false;
+    application_bots_npc *owner=qa_unified_frame_lease_alloc(storage,1,sizeof(*owner),_Alignof(application_bots_npc),error);
+    if(!owner) {qa_unified_frame_lease_release(storage);return false;}
+    owner->storage=storage;
     owner->source=source;owner->world=app->world;owner->physics=app->physics;
     owner->map_resource=app->map_resource;qa_resource_retain(owner->map_resource);
     qa_q1_options options={0};double time;
-    bool okay=qa_actor_index_create(&owner->actor_routes,qa_session_actors(app->session),error) &&
+    bool okay=qa_actor_index_create(&owner->actor_routes,qa_session_actors(app->session),qa_unified_frame_lease_arena(storage),error) &&
         application_npc_current(owner,error);
     if(okay && source->kind==APPLICATION_PROVIDER_Q1)
         okay=prepared?qa_q1_source_respawn_options_prepared(source->state.q1,&options,error):
@@ -273,8 +279,9 @@ static bool graph_resource(application_bots_npc *owner,npc_graph *graph,qa_error
         if(end==stem) break;
         start=end+1;
     }
-    char *name=malloc(stem+22);
-    if(!name) return application_fail(error,QA_ERROR_MEMORY,"Retaining monster navigation path");
+    qa_arena storage;qa_arena_init_pool(&storage,qa_unified_frame_lease_arena(owner->storage)->pages);
+    char *name=qa_arena_alloc(&storage,stem+22,_Alignof(char),error);
+    if(!name) {qa_arena_destroy(&storage);return false;}
     bool okay=true;
     for(size_t i=0;i<2;++i) {
         bool aas=owner->geometry.family==QA_BSP_Q3?i==0:i==1;
@@ -299,7 +306,7 @@ static bool graph_resource(application_bots_npc *owner,npc_graph *graph,qa_error
         }
         graph->asset=resource;graph->acquisition=acquisition;break;
     }
-    free(name);return okay;
+    qa_arena_destroy(&storage);return okay;
 }
 bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,qa_error *error)
 {
@@ -314,12 +321,12 @@ bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,
         memcpy(&checksum,&word,sizeof(checksum));
         qa_nav_asset *asset=NULL;
         bool okay=qa_nav_asset_read(qa_resource_bytes(graph->asset),&checksum,&asset,error);
-        if(okay) okay=qa_nav_graph_from_asset(&owner->map,asset,&profile,&services,&graph->graph,error);
+        if(okay) okay=qa_nav_graph_from_asset(&owner->map,asset,&profile,&services,&graph->storage,&graph->graph,error);
         qa_nav_asset_release(asset);
         if(!okay) return false;
     } else {
         qa_nav_construction construction={.geometry=&owner->geometry,.map=owner->map,.profile=profile};
-        if(!qa_nav_graph_construct(&construction,&services,&graph->graph,error)) return false;
+        if(!qa_nav_graph_construct(&construction,&services,&graph->storage,&graph->graph,error)) return false;
     }
     const qa_nav_graph_view *view=qa_nav_graph_read(graph->graph);
     qa_bsp_model model;
@@ -337,32 +344,43 @@ bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,
     return prediction_extent(owner,bounds.mins,bounds.maxs,error);
 
 }
+bool application_npc_graph_create(application_bots_npc *owner,npc_graph **out,qa_error *error)
+{
+    qa_arena storage;qa_arena_init_pool(&storage,qa_unified_frame_lease_arena(owner->storage)->pages);
+    npc_graph *graph=qa_arena_alloc(&storage,sizeof(*graph),_Alignof(npc_graph),error);
+    if(!graph) {qa_arena_destroy(&storage);return false;}
+    *graph=(npc_graph){.storage=storage};*out=graph;return true;
+}
+void application_npc_graph_free(npc_graph *graph)
+{
+    if(!graph) return;
+    qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
+    qa_vfs_acquisition_dispose(&graph->acquisition);
+    qa_arena storage=graph->storage;qa_arena_destroy(&storage);
+}
 static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flags,npc_graph **out,qa_error *error)
 {
     flags&=QA_PHYSICS_FLYING|QA_PHYSICS_SWIMMING;
     for(npc_graph *graph=owner->graphs;graph;graph=graph->next)
         if(graph->flags==flags && !memcmp(&graph->bounds,&bounds,sizeof(bounds))) {*out=graph;return true;}
-    npc_graph *graph=calloc(1,sizeof(*graph));
-    if(!graph) {
-        application_fail(error,QA_ERROR_MEMORY,"Retaining monster navigation graph");
-        return false;
-    }
+    npc_graph *graph=NULL;
+    if(!application_npc_graph_create(owner,&graph,error)) return false;
     graph->bounds=bounds;graph->flags=flags;
     bool okay=graph_resource(owner,graph,error) && application_npc_graph_rebuild(owner,graph,error);
-    if(!okay) {qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
-        qa_vfs_acquisition_dispose(&graph->acquisition);free(graph);return false;}
+    if(!okay) {application_npc_graph_free(graph);return false;}
     graph->next=owner->graphs;owner->graphs=graph;
     *out=graph;return true;
 }
 bool application_npc_actor_create(application_bots_npc *owner,qa_actor_id id,npc_graph *graph,
     npc_actor **out,qa_error *error)
 {
-    npc_actor *actor=calloc(1,sizeof(*actor));
-    if(!actor) return application_fail(error,QA_ERROR_MEMORY,"Retaining actual monster route owner");
-    actor->actor=id;actor->graph=graph;
+    qa_arena storage;qa_arena_init_pool(&storage,qa_unified_frame_lease_arena(owner->storage)->pages);
+    npc_actor *actor=qa_arena_alloc(&storage,sizeof(*actor),_Alignof(npc_actor),error);
+    if(!actor) {qa_arena_destroy(&storage);return false;}
+    *actor=(npc_actor){.storage=storage,.actor=id,.graph=graph};
     qa_navigation_services services=application_npc_services(owner);
-    bool okay=qa_navigation_create(graph->graph,&services,&actor->navigation,error) &&
-        qa_nav_workspace_create(&actor->workspace,error) &&
+    bool okay=qa_navigation_create(graph->graph,&services,&actor->storage,&actor->navigation,error) &&
+        qa_nav_workspace_create(&actor->storage,&actor->workspace,error) &&
         qa_nav_workspace_prepare(actor->workspace,
             qa_nav_workspace_limits_read(qa_nav_graph_read(graph->graph)),error);
     if(!okay) {application_npc_actor_free(actor);return false;}
@@ -387,28 +405,19 @@ static bool walking(void *context,const qa_nav_edge *edge)
 {
     (void)context;return edge->mode==QA_NAV_WALK || edge->mode==QA_NAV_DROP || edge->mode==QA_NAV_SWIM;
 }
-static bool route_copy(const qa_nav_route *source,qa_nav_route *out,qa_error *error)
+static bool route_copy(const qa_nav_route *source,qa_arena *storage,qa_nav_route *out,qa_error *error)
 {
     qa_nav_route result={.travel_seconds=source->travel_seconds,.generation=source->generation,
         .found=source->found};
-    if(source->node_count>SIZE_MAX/sizeof(*result.nodes) ||
-       source->edge_count>SIZE_MAX/sizeof(*result.edges) ||
-       source->point_count>SIZE_MAX/sizeof(*result.points))
-        return application_fail(error,QA_ERROR_MEMORY,"Cloned monster route extent overflow");
-    if(source->node_count) result.nodes=malloc(source->node_count*sizeof(*result.nodes));
-    if(source->edge_count) result.edges=malloc(source->edge_count*sizeof(*result.edges));
-    if(source->point_count) result.points=malloc(source->point_count*sizeof(*result.points));
-    if((source->node_count&&!result.nodes) || (source->edge_count&&!result.edges) ||
-       (source->point_count&&!result.points)) {
-        qa_nav_route_free(&result);
-        return application_fail(error,QA_ERROR_MEMORY,"Retaining cloned monster route");
+    qa_arena_init_pool(&result.storage,storage->pages);
+    if(!qa_nav_route_reserve(&result,source->node_count,source->edge_count,source->point_count,error)) {
+        qa_nav_route_free(&result);return false;
     }
     if(source->node_count) memcpy(result.nodes,source->nodes,source->node_count*sizeof(*result.nodes));
     if(source->edge_count) memcpy(result.edges,source->edges,source->edge_count*sizeof(*result.edges));
     if(source->point_count) memcpy(result.points,source->points,source->point_count*sizeof(*result.points));
-    result.node_count=result.node_capacity=source->node_count;
-    result.edge_count=result.edge_capacity=source->edge_count;
-    result.point_count=result.point_capacity=source->point_count;
+    result.node_count=source->node_count;result.edge_count=source->edge_count;
+    result.point_count=source->point_count;
     result.graph=source->graph;qa_nav_graph_retain(result.graph);*out=result;return true;
 }
 bool application_bots_npc_clone(void *opaque,qa_actor_id from,qa_actor_id to,qa_error *error)
@@ -426,7 +435,7 @@ bool application_bots_npc_clone(void *opaque,qa_actor_id from,qa_actor_id to,qa_
         return application_fail(error,QA_ERROR_ARGUMENT,"Cloned monster route target already has a continuation");
     npc_actor *copy=NULL;qa_nav_checkpoint continuation={0};
     bool okay=application_npc_actor_create(owner,to,original->graph,&copy,error) &&
-        route_copy(&original->route,&copy->route,error) &&
+        route_copy(&original->route,&copy->storage,&copy->route,error) &&
         qa_navigation_capture(original->navigation,&continuation,error) &&
         qa_navigation_restore(copy->navigation,&continuation,error);
     qa_nav_checkpoint_free(&continuation);
@@ -448,7 +457,11 @@ static bool walk(application_bots_npc *owner,qa_actor_id id,qa_vec3 goal,float d
         application_npc_actor_link(owner,actor);
     } else if(actor->graph!=graph) {
         qa_navigation_services services=application_npc_services(owner);qa_navigation *next=NULL;
-        if(!qa_navigation_create(graph->graph,&services,&next,error)) return false;
+        if(!qa_navigation_create(graph->graph,&services,&actor->storage,&next,error)) return false;
+        if(!qa_nav_workspace_prepare(actor->workspace,
+                qa_nav_workspace_limits_read(qa_nav_graph_read(graph->graph)),error)) {
+            qa_navigation_destroy(next);return false;
+        }
         qa_navigation_destroy(actor->navigation);actor->navigation=next;actor->graph=graph;
     }
     if(qa_vec_length(qa_vec_sub(goal,body.origin))<=1) {

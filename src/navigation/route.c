@@ -196,6 +196,7 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid navigation route query");
         return false;
     }
+    if (!route->storage.first && !route->storage.pages) nav_arena_init(&route->storage, &n->storage);
     route->found = false;
     route->node_count = 0;
     route->edge_count = 0;
@@ -268,10 +269,7 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
             break;
         if (failed)
             continue;
-        ok = nav_reserve((void **)&route->nodes, &route->node_capacity, count + 1,
-                         sizeof(*route->nodes), e) &&
-             nav_reserve((void **)&route->edges, &route->edge_capacity, count,
-                         sizeof(*route->edges), e);
+        ok = qa_nav_route_reserve(route, count + 1, count, 0, e);
         if (!ok)
             break;
         route->nodes[0] = start;
@@ -297,6 +295,7 @@ bool qa_navigation_admit_edge(qa_navigation *n, qa_actor_id actor, uint32_t id, 
         qa_error_set(e, QA_ERROR_ARGUMENT, id, "Invalid navigation edge admission");
         return false;
     }
+    if (!route->storage.first && !route->storage.pages) nav_arena_init(&route->storage, &n->storage);
     route->found = false;
     route->node_count = route->edge_count = route->point_count = 0;
     route->travel_seconds = 0;
@@ -313,8 +312,7 @@ bool qa_navigation_admit_edge(qa_navigation *n, qa_actor_id actor, uint32_t id, 
     bool ok = traverse(n, &prediction, actor, index, route, &admitted, e);
     nav_prediction_close(&prediction);
     if (!ok || !admitted) return ok;
-    if (!nav_reserve((void **)&route->nodes, &route->node_capacity, 2, sizeof(*route->nodes), e) ||
-        !nav_reserve((void **)&route->edges, &route->edge_capacity, 1, sizeof(*route->edges), e))
+    if (!qa_nav_route_reserve(route, 2, 1, 0, e))
         return false;
     route->nodes[0] = edge->from;
     route->nodes[1] = edge->to;
@@ -333,6 +331,7 @@ bool qa_navigation_admit_movement(qa_navigation *n, qa_actor_id actor, qa_vec3 f
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid direct navigation movement admission");
         return false;
     }
+    if (!route->storage.first && !route->storage.pages) nav_arena_init(&route->storage, &n->storage);
     route->found = false;
     route->node_count = route->edge_count = route->point_count = 0;
     route->travel_seconds = 0;

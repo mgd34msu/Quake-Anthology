@@ -228,6 +228,14 @@ static bool control_bindings(qa_frontend *frontend,qa_error *error)
     }
     return true;
 }
+static bool complete_travel(qa_frontend *frontend,qa_error *error)
+{
+    qa_application_map_view previous,current;
+    bool mapped=qa_application_map_read(frontend->application,&previous);
+    if (!frontend_travel(frontend,error)) return false;
+    return !qa_application_map_read(frontend->application,&current) ||
+        (mapped && previous.revision==current.revision) || control_bindings(frontend,error);
+}
 static bool selected_bindings(qa_frontend *frontend,qa_error *error)
 {
     qa_inventory *inventory=qa_application_inventory(frontend->application);
@@ -412,6 +420,7 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
     qa_sys_event event; qa_bytes payload;
     qa_platform_event_cursor cursor = {0};
     bool packets_blocked[QA_INPUT_LOCAL_SEATS + 2] = {0};
+    bool commands_blocked=false;
     while (qa_platform_events_read(frontend->platform_events,&cursor,&event,&payload)) {
         bool ok=true,consumed=true;
         switch (event.kind) {
@@ -443,11 +452,12 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
             break;
         }
         case QA_PLATFORM_EVENT_CONSOLE_LINE:
-            if (!input_ready) continue;
+            if (!input_ready || commands_blocked) continue;
             if (!qa_application_should_stop(frontend->application)) {
                 qa_console *console; qa_command_context context;
                 ok=runtime_console(frontend,&console,&context,error) &&
                     qa_console_append(console,&context,(const char *)payload.data,error);
+                consumed=ok;
             }
             break;
         case QA_PLATFORM_EVENT_USERCMD: {
@@ -466,7 +476,7 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
             break;
         }
         case QA_PLATFORM_EVENT_CONSOLE_COMMAND: {
-            if (!input_ready) continue;
+            if (!input_ready || commands_blocked) continue;
             frontend_queued_command command;
             memcpy(&command,payload.data,sizeof(command));
             if (command.replay) {
@@ -474,8 +484,11 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
                 frontend->frame_number=command.frame_number;
                 ok=qa_console_execute_now(command.console,&command.context,
                     (const char *)payload.data + sizeof(command),error);
-            } else ok=qa_console_append(command.console,&command.context,
-                (const char *)payload.data + sizeof(command),error);
+            } else {
+                ok=qa_console_append(command.console,&command.context,
+                    (const char *)payload.data + sizeof(command),error);
+                consumed=ok;
+            }
             break;
         }
         default:
@@ -488,6 +501,13 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
                     (qa_application_should_stop(frontend->application) || frontend_ui_features_sync(frontend,error));
             }
             break;
+        }
+        if (!ok && !consumed && (event.kind==QA_PLATFORM_EVENT_CONSOLE_LINE ||
+            event.kind==QA_PLATFORM_EVENT_CONSOLE_COMMAND)) {
+            qa_application_feature_report(frontend->application,"queued console input",error);
+            if (error) *error=(qa_error){0};
+            commands_blocked=true;
+            continue;
         }
         if(consumed) qa_platform_events_consume(frontend->platform_events,&cursor);
         if (!ok) return false;
@@ -1049,11 +1069,7 @@ static bool frontend_step(qa_frontend *frontend,
     }
     if(!ok) return false;
     if(replay || !ready || qa_application_should_stop(frontend->application)) return true;
-    qa_application_map_view previous, current;
-    bool mapped=qa_application_map_read(frontend->application,&previous);
-    if (!frontend_travel(frontend,error)) return false;
-    return !qa_application_map_read(frontend->application,&current) ||
-        (mapped && previous.revision==current.revision) || control_bindings(frontend,error);
+    return complete_travel(frontend,error);
 }
 bool qa_frontend_step(qa_frontend *frontend,qa_error *error)
 {
@@ -1078,7 +1094,7 @@ bool qa_frontend_step(qa_frontend *frontend,qa_error *error)
     qa_application_feature_report(frontend->application, "frontend frame", fault);
     if (frontend->frame_number == frame) ++frontend->frame_number;
     *fault = (qa_error){0};
-    ok = true;
+    ok = complete_travel(frontend,fault);
 completed:
 #ifdef QA_ALLOCATION_GATE
     (void)qa_allocation_gate_end(playing, ok);

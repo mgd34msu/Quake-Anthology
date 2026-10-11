@@ -20,6 +20,8 @@ typedef struct qa_unified_q1_world_state {
     int32_t total_secrets, total_monsters, found_secrets, killed_monsters;
 } qa_unified_q1_world_state;
 typedef struct qa_unified_frame_metadata {
+    /* Borrowed from the document's retained Source or receiving name table. */
+    qa_strings *strings;
     uint32_t epoch;
     uint64_t frame;
     uint64_t configuration_revision, roster_revision, style_revision, q1_revision;

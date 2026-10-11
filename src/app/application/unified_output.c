@@ -282,6 +282,7 @@ bool application_unified_output_metadata(qa_application *app, const application_
     }
     qa_unified_frame_metadata *metadata = application_unified_frame_alloc(frame->lease, 1, sizeof(*metadata), error);
     if (!metadata) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Unified Source metadata");
+    metadata->strings = qa_session_strings(source->session);
     metadata->epoch = epoch; metadata->frame = source->frame.number;
     metadata->configuration_revision = previous ? previous->configuration_revision : 0;
     if (configuration_changed) ++metadata->configuration_revision;

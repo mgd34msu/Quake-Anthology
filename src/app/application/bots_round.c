@@ -54,7 +54,7 @@ static bool navigation_prepare(application_bots *bots,bot_round_graph *graphs,si
     application_bot_graph *graph=bots->graphs;
     for(size_t i=0;i<count;++i,graph=graph->next) {
         bot_round_graph *entry=graphs+i;entry->owner=graph;entry->previous=graph->navigation;
-        if(!qa_navigation_create(graph->graph,&services,&entry->fresh,error)) return false;
+        if(!qa_navigation_create(graph->graph,&services,NULL,&entry->fresh,error)) return false;
         if(graph->navigation==map &&
            !application_bot_navigation_restore_binding(bots,entry->fresh,(qa_actor_id){0},map_navigation,error)) return false;
     }

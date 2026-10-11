@@ -10,14 +10,10 @@ void bot_move_route_clear(bot_move_record *record) {
 }
 bool bot_move_route_copy(bot_move_record *out,const bot_move_record *source,qa_error *e) {
     qa_nav_route copy=source->route;
-    copy.graph=NULL;copy.nodes=NULL;copy.edges=NULL;copy.points=NULL;
-    copy.node_capacity=copy.node_count;copy.edge_capacity=copy.edge_count;
-    copy.point_capacity=0;copy.point_count=0;
-    if(copy.node_count) copy.nodes=malloc(copy.node_count*sizeof(*copy.nodes));
-    if(copy.edge_count) copy.edges=malloc(copy.edge_count*sizeof(*copy.edges));
-    if((copy.node_count && !copy.nodes) || (copy.edge_count && !copy.edges)) {
-        qa_nav_route_free(&copy);
-        qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining actual bot route decisions");return false;
+    copy.storage=(qa_arena){0};copy.graph=NULL;copy.nodes=NULL;copy.edges=NULL;copy.points=NULL;
+    copy.node_capacity=copy.edge_capacity=copy.point_capacity=0;copy.point_count=0;
+    if(!qa_nav_route_reserve(&copy,copy.node_count,copy.edge_count,0,e)) {
+        qa_nav_route_free(&copy);return false;
     }
     if(copy.node_count) memcpy(copy.nodes,source->route.nodes,copy.node_count*sizeof(*copy.nodes));
     if(copy.edge_count) memcpy(copy.edges,source->route.edges,copy.edge_count*sizeof(*copy.edges));
@@ -179,7 +175,7 @@ bool qa_bot_moves_create(uint32_t maximum, qa_bot_library *library, qa_bot_actio
     if (!qa_bot_memory_retain(m->memory,e)) { free(m->slots);free(m);return false; }
     m->actions = actions;
     m->services = *services;
-    if (!qa_nav_workspace_create(&m->workspace, e)) {
+    if (!qa_nav_workspace_create(NULL, &m->workspace, e)) {
         qa_bot_moves_destroy(m);
         return false;
     }

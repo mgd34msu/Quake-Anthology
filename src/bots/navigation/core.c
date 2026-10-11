@@ -57,7 +57,7 @@ bool qa_bot_navigation_create(qa_navigation *runtime, qa_world *world, qa_actor_
     }
     n->world = world;
     if (observations) n->observations = *observations;
-    if (!qa_nav_workspace_create(&n->workspace, e) ||
+    if (!qa_nav_workspace_create(NULL, &n->workspace, e) ||
         !qa_bot_navigation_bind(n, runtime, actor, e)) {
         qa_bot_navigation_destroy(n);
         return false;

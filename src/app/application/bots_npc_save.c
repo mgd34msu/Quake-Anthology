@@ -86,13 +86,9 @@ static bool route_fields(qa_source_save_io *io,application_bots_npc *owner,npc_a
         size_t remaining=io->input.size-io->offset;
         if(nodes>remaining/4 || edges>(remaining-nodes*4)/4 ||
            points>(remaining-nodes*4-edges*4)/12) return fail(io,"Truncated monster route");
-        if(nodes) route->nodes=malloc(nodes*sizeof(*route->nodes));
-        if(edges) route->edges=malloc(edges*sizeof(*route->edges));
-        if(points) route->points=malloc(points*sizeof(*route->points));
-        if((nodes&&!route->nodes) || (edges&&!route->edges) || (points&&!route->points))
-            return application_fail(io->error,QA_ERROR_MEMORY,"Retaining restored monster route");
-        route->node_count=route->node_capacity=nodes;route->edge_count=route->edge_capacity=edges;
-        route->point_count=route->point_capacity=points;
+        qa_arena_init_pool(&route->storage,actor->storage.pages);
+        if(!qa_nav_route_reserve(route,nodes,edges,points,io->error)) return false;
+        route->node_count=nodes;route->edge_count=edges;route->point_count=points;
     }
     const qa_nav_graph_view *view=qa_nav_graph_read(source->graph);
     for(size_t i=0;i<nodes;++i) {
@@ -179,8 +175,7 @@ static bool fields(qa_source_save_io *io,application_provider *source,applicatio
     npc_graph **tail=&owner->graphs;
     for(size_t i=0;i<graphs;++i) {
         if(io->direction==QA_SOURCE_SAVE_READ) {
-            *tail=calloc(1,sizeof(**tail));
-            if(!*tail) return application_fail(io->error,QA_ERROR_MEMORY,"Retaining saved monster graph registry");
+            if(!application_npc_graph_create(owner,tail,io->error)) return false;
         }
         npc_graph *graph=*tail;
         if(!graph_fields(io,owner,graph)) return false;

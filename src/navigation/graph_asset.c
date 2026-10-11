@@ -121,9 +121,11 @@ static bool from_kex(qa_nav_graph *g, const qa_nav_source_view *asset,
             !nav_graph_node(g, &node, e))
             return false;
     }
+    qa_arena storage; nav_arena_init(&storage, &g->storage);
     const qa_nav_source_entity **bindings =
-        qa_arena_alloc(&g->storage, (asset->link_count ? asset->link_count : 1) * sizeof(*bindings), _Alignof(qa_nav_binding), e);
+        qa_arena_alloc(&storage, (asset->link_count ? asset->link_count : 1) * sizeof(*bindings), _Alignof(const qa_nav_source_entity *), e);
     if (bindings == NULL) {
+        qa_arena_destroy(&storage);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Indexing navigation entity bindings");
         return false;
     }
@@ -140,7 +142,7 @@ static bool from_kex(qa_nav_graph *g, const qa_nav_source_view *asset,
             ok = nav_graph_edge(g, &edge, e);
         }
     }
-
+    qa_arena_destroy(&storage);
     return ok;
 }
 bool qa_nav_graph_from_asset(const qa_nav_map *map, qa_nav_asset *asset,

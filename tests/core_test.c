@@ -657,6 +657,78 @@ static void test_metadata_retention(void)
     qa_unified_document_destroy(merged);
 }
 
+static void test_metadata_names(void)
+{
+    qa_error error={0};qa_strings *source_names=NULL,*receiver_names=NULL;
+    qa_string_id provider,content,instance,image,padding;
+    CHECK(qa_strings_create(&source_names,&error));
+    CHECK(qa_strings_create(&receiver_names,&error));
+    CHECK(qa_strings_intern_cstr(source_names,"source:one",&provider,&error));
+    CHECK(qa_strings_intern_cstr(source_names,"q1-classic-id1",&content,&error));
+    CHECK(qa_strings_intern_cstr(source_names,"client:one",&instance,&error));
+    CHECK(qa_strings_intern_cstr(source_names,"pics/weapon.pcx",&image,&error));
+    CHECK(qa_strings_intern_cstr(receiver_names,"receiver-only",&padding,&error));
+    qa_unified_frame_metadata *value=calloc(1,sizeof(*value));CHECK(value);
+    *value=(qa_unified_frame_metadata){.strings=source_names,.epoch=1,.configuration_revision=1,
+        .roster_revision=1,.replace_configurations=true,.replace_styles=true,.replace_q3=true,.replace_q1=true,
+        .configuration_count=1,.q3_configuration_count=1};
+    value->configurations=calloc(1,sizeof(*value->configurations));CHECK(value->configurations);
+    qa_unified_configuration_state *configuration=value->configurations;
+    qa_unified_provider_state selected={.provider=provider,.content=content};
+    *configuration=(qa_unified_configuration_state){.actor={.registry=77,.slot=3,.generation=1},
+        .movement=selected,.character=selected,.appearance=selected,.inventory=selected,.hud=selected,.weapon_count=1};
+    configuration->weapons=calloc(1,sizeof(*configuration->weapons));CHECK(configuration->weapons);
+    *configuration->weapons=selected;
+    configuration->q2_hud=calloc(1,sizeof(*configuration->q2_hud));CHECK(configuration->q2_hud);
+    configuration->q2_hud->protocol=qa_q2_default_protocol(false);
+    configuration->q2_hud->data_provider=provider;
+    configuration->q2_hud->configstring_count=1;
+    configuration->q2_hud->configstrings=calloc(1,sizeof(*configuration->q2_hud->configstrings));
+    CHECK(configuration->q2_hud->configstrings);
+    configuration->q2_hud->configstrings[0]=(qa_q2_config_name){.index=32,.value_id=image};
+    value->q3_configurations=calloc(1,sizeof(*value->q3_configurations));CHECK(value->q3_configurations);
+    *value->q3_configurations=(qa_unified_q3_configuration){.provider_name=provider,.instance=instance,.content=content};
+    value->q3_configurations->game_state=calloc(1,sizeof(*value->q3_configurations->game_state));
+    CHECK(value->q3_configurations->game_state);
+    value->q3_configurations->game_state->string_bytes=1;
+    qa_unified_document *source=NULL,*decoded=NULL,*update=NULL,*merged=NULL;
+    CHECK(qa_unified_document_create_metadata(&value,NULL,&source,&error));
+    qa_strings_destroy(source_names);source_names=NULL;
+    qa_buffer wire={0};CHECK(qa_unified_document_encode(source,&wire,&error));
+    qa_unified_frame_pool *pool=qa_unified_frame_pool_create(4*1024*1024,8,&error);CHECK(pool);
+    qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(pool,&error);CHECK(lease);
+    CHECK(qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,(qa_bytes){wire.data,wire.size},
+        receiver_names,lease,NULL,&decoded,&error));
+    qa_unified_frame_lease_release(lease);qa_buffer_free(&wire);
+    CHECK(qa_unified_document_equal(source,decoded));
+    const qa_unified_frame_metadata *read=qa_unified_document_metadata(decoded);
+    CHECK(read->strings==receiver_names && read->configurations[0].movement.provider!=provider);
+    CHECK(!strcmp(qa_strings_cstr(read->strings,read->configurations[0].movement.provider),"source:one"));
+    CHECK(!strcmp(qa_strings_cstr(read->strings,read->configurations[0].inventory.content),"q1-classic-id1"));
+    CHECK(!strcmp(qa_strings_cstr(read->strings,read->configurations[0].q2_hud->configstrings[0].value_id),"pics/weapon.pcx"));
+    CHECK(!strcmp(qa_strings_cstr(read->strings,read->q3_configurations[0].instance),"client:one"));
+    value=calloc(1,sizeof(*value));CHECK(value);
+    *value=(qa_unified_frame_metadata){.strings=receiver_names,.epoch=1,.frame=1,
+        .configuration_revision=1,.roster_revision=1,.style_revision=1,.replace_styles=true,.style_count=1};
+    value->styles=calloc(1,sizeof(*value->styles));CHECK(value->styles);
+    value->styles[0]=(qa_unified_style_pattern){.family=QA_GAME_Q1,.pattern=strdup("m")};
+    CHECK(value->styles[0].pattern);
+    CHECK(qa_unified_document_create_metadata(&value,NULL,&update,&error));
+    CHECK(qa_unified_metadata_apply(decoded,update,&merged,&error));
+    qa_strings_destroy(receiver_names);receiver_names=NULL;
+    qa_unified_document_destroy(source);qa_unified_document_destroy(decoded);qa_unified_document_destroy(update);
+    CHECK(qa_unified_document_encode(merged,&wire,&error));
+    qa_strings *fresh=NULL;CHECK(qa_strings_create(&fresh,&error));
+    CHECK(qa_unified_document_decode(QA_UNIFIED_CONTROL_DOCUMENT,(qa_bytes){wire.data,wire.size},
+        fresh,NULL,NULL,&decoded,&error));
+    qa_strings_destroy(fresh);
+    CHECK(qa_unified_document_equal(merged,decoded));
+    CHECK(!strcmp(qa_strings_cstr(qa_unified_document_metadata(decoded)->strings,
+        qa_unified_document_metadata(decoded)->configurations[0].appearance.provider),"source:one"));
+    qa_buffer_free(&wire);qa_unified_document_destroy(merged);qa_unified_document_destroy(decoded);
+    qa_unified_frame_pool_destroy(&pool);
+}
+
 static void test_files(void)
 {
     char directory[] = "/tmp/qa-core-test-XXXXXX";
@@ -2735,6 +2807,7 @@ int main(int argc, char **argv)
     test_arena();
     test_reserved_scene_frame();
     test_metadata_retention();
+    test_metadata_names();
     test_files();
     test_localization_lookup_generation();
     test_ring_console_capture();

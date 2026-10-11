@@ -229,8 +229,7 @@ bool bot_reach_select(bot_travel *t,const qa_bot_move_goal_source *goal,uint32_t
             state->route_map=t->graph->map;state->route_actor=t->actor;
             state->route_goal=goal_area;state->route_flags=travel_flags;
             state->route_move_flags=move_flags;
-            free(state->route.points);state->route.points=NULL;
-            state->route.point_count=state->route.point_capacity=0;
+            state->route.point_count=0;
         }
         const qa_nav_edge *edge=qa_navigation_edge(t->runtime,
             state->route.edges[state->route_cursor]);
