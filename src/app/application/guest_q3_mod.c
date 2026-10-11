@@ -1,5 +1,6 @@
 #include "guest_q3_mod_private.h"
 #include "qa/text.h"
+#include "control_frame.h"
 
 bool q3mod_fail(qa_error *e, qa_status status, const char *text)
 { qa_error_set(e,status,0,"%s",text); return false; }
@@ -51,6 +52,7 @@ bool q3mod_scalar_word(double value, mod_scalar encoding, int32_t *out, qa_error
 }
 typedef struct call_run {
     application_q3_mod *owner;
+    qa_unified_frame_lease *storage;
     const mod_call *call;
     const application_q3_mod_inputs *inputs;
     uint32_t scratch, cursor;
@@ -93,8 +95,8 @@ static bool scratch_string(call_run *r, const char *text, uint32_t *address, qa_
 {
     size_t units;
     if (!string_units(text,&units,e)) return false;
-    uint8_t *bytes=calloc(units+1,1);
-    if (!bytes) return q3mod_fail(e,QA_ERROR_MEMORY,"Lowering original source string bytes");
+    uint8_t *bytes=qa_unified_frame_lease_alloc(r->storage,units+1,1,_Alignof(uint8_t),e);
+    if (!bytes) return false;
     qa_bytes input={(const uint8_t *)text,strlen(text)};
     size_t cursor=0,index=0; uint32_t scalar;
     while (qa_utf8_next(input,&cursor,&scalar)) {
@@ -111,8 +113,7 @@ static bool scratch_string(call_run *r, const char *text, uint32_t *address, qa_
         if (!low) break;
         bytes[index++]=low;
     }
-    bool ok=scratch_bytes(r,bytes,units+1,address,e);
-    free(bytes); return ok;
+    return scratch_bytes(r,bytes,units+1,address,e);
 }
 static bool lower(call_run *r, const mod_argument *a, int32_t *word, qa_error *e)
 {
@@ -162,6 +163,22 @@ static bool source_finish(application_q3_mod *o, mod_source_lease *source, qa_er
     if (!returned) { if (e) *e=cleanup; return false; }
     return true;
 }
+static mod_source_lease *source_take(application_q3_mod *o,qa_error *e)
+{
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->services.application,e);
+    if(!storage) return NULL;
+    mod_source_lease *source=qa_unified_frame_lease_alloc(storage,1,sizeof(*source),_Alignof(mod_source_lease),e);
+    if(!source) { qa_unified_frame_lease_release(storage);return NULL; }
+    source->storage=storage;source->next=o->source_calls;o->source_calls=source;
+    return source;
+}
+static void source_release(application_q3_mod *o,mod_source_lease *source)
+{
+    mod_source_lease **link=&o->source_calls;
+    while(*link&&*link!=source) link=&(*link)->next;
+    if(*link) *link=source->next;
+    qa_unified_frame_lease_release(source->storage);
+}
 static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
 {
     call_run *r=context; r->scratch=scratch;
@@ -172,9 +189,11 @@ static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
         count+=width;
     }
     if (count>SIZE_MAX/sizeof(qa_qvm_source_word)) return q3mod_fail(e,QA_ERROR_MEMORY,"Source global projection overflows");
-    qa_qvm_source_word *globals=count?calloc(count,sizeof(*globals)):NULL;
-    if (count && !globals) return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining scoped source global words");
-    bool ok=true; size_t n=0;
+    mod_source_lease *source=source_take(r->owner,e);
+    if(!source) return false;
+    r->storage=source->storage;
+    qa_qvm_source_word *globals=qa_unified_frame_lease_alloc(source->storage,count,sizeof(*globals),_Alignof(qa_qvm_source_word),e);
+    bool ok=!count||globals;size_t n=0;
     for (size_t i=0;ok && i<r->call->argument_count;++i) ok=lower(r,r->call->arguments+i,words+i,e);
     for (size_t i=0;ok && i<r->call->global_count;++i) {
         const mod_global *g=r->call->globals+i; int32_t value;
@@ -185,9 +204,6 @@ static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
             for (size_t j=0;ok && j<3;++j) globals[n++]=(qa_qvm_source_word){g->address+(uint32_t)j*4,qa_load_i32le(bytes+j*4)};
         } else globals[n++]=(qa_qvm_source_word){g->address,value};
     }
-    mod_source_lease *source=ok?calloc(1,sizeof(*source)):NULL;
-    if (ok && !source) ok=q3mod_fail(e,QA_ERROR_MEMORY,"Owning actual source projection continuation");
-    if (source) { source->next=r->owner->source_calls; r->owner->source_calls=source; }
     if (ok && n) ok=qa_qvm_source_words_begin(vm,r->owner->profile->image,globals,n,&source->globals,e);
     if (ok) ok=r->owner->services.source_enter(r->owner->services.context,r->call->entry,
         words,r->call->argument_count,&source->scope,e);
@@ -200,19 +216,11 @@ static bool run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e)
         if (!isfinite(value)) ok=q3mod_fail(e,QA_ERROR_FORMAT,"Source callback returned a nonfinite scalar");
     }
     qa_error cleanup={0};
-    bool left=true;
-    if (source) {
-        source->succeeded=ok; source->result=r->result;
-        left=source_finish(r->owner,source,&cleanup);
-        if (source->scope || source->globals) { r->owner->failed_scope=true; left=false; }
-        else { mod_source_lease **link=&r->owner->source_calls;
-            while (*link && *link!=source) link=&(*link)->next;
-            if (*link) *link=source->next;
-            free(source);
-        }
-    }
+    source->succeeded=ok;source->result=r->result;
+    bool left=source_finish(r->owner,source,&cleanup);
+    if (source->scope || source->globals) { r->owner->failed_scope=true; left=false; }
+    else source_release(r->owner,source);
     if (!left && ok) { if (e) *e=cleanup; ok=false; }
-    free(globals);
     return ok && q3mod_current(r->owner,e);
 }
 static bool invoke(application_q3_mod *o, const mod_call *call,
@@ -289,7 +297,7 @@ bool application_q3_mod_destroy(application_q3_mod **in, qa_error *e)
         mod_source_lease *source=o->source_calls;
         bool consumed=source_finish(o,source,e);
         if (source->scope || source->globals) return false;
-        o->source_calls=source->next; free(source);
+        source_release(o,source);
         if (!consumed) return false;
     }
     if (!q3mod_protection_close(o,e)) return false;
@@ -341,18 +349,16 @@ static bool pickup_run_source(void *context,qa_qvm *vm,uint32_t scratch,qa_error
     if(o->profile->entity_record==SIZE_MAX||!q3mod_address(o,r->offer->recipient,o->profile->entity_record,0,0,&recipient,e)||
         !q3mod_address(o,r->offer->pickup,o->profile->entity_record,0,0,&pickup,e)) return false;
     (void)recipient; (void)pickup;
-    qa_qvm_source_word *words=d->context_count?calloc(d->context_count,sizeof(*words)):NULL;
-    if(d->context_count&&!words) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original offered pickup context");
-    bool ok=true;
+    mod_source_lease *held=source_take(o,e);
+    if(!held) return false;
+    r->lowering.storage=held->storage;
+    qa_qvm_source_word *words=qa_unified_frame_lease_alloc(held->storage,d->context_count,sizeof(*words),_Alignof(qa_qvm_source_word),e);
+    bool ok=!d->context_count||words;
     for(size_t i=0;ok&&i<d->context_count;++i) {
         ok=q3mod_address(o,r->offer->pickup,d->context[i].record,d->context[i].offset,4,&words[i].offset,e)&&
             lower(&r->lowering,&d->context[i].value,&words[i].value,e);
     }
-    mod_source_lease *held=ok?calloc(1,sizeof(*held)):NULL;
-    if(ok&&!held) ok=q3mod_fail(e,QA_ERROR_MEMORY,"Retaining offered pickup projection continuation");
-    if(held) { held->next=o->source_calls; o->source_calls=held; }
     if(ok&&d->context_count) ok=qa_qvm_source_words_begin(vm,o->profile->image,words,d->context_count,&held->globals,e);
-    free(words);
     double result=0; r->outcome=QA_PICKUP_REFUSED;
     if(ok&&d->gated) ok=q3mod_pickup_observe(o,r->offer->recipient,r->execution,&d->gate,r->lowering.inputs,&result,e);
     if(ok&&(!d->gated||result!=0)&&pickup_live(r)) {
@@ -360,12 +366,10 @@ static bool pickup_run_source(void *context,qa_qvm *vm,uint32_t scratch,qa_error
         if(ok&&(d->always||result!=0)) r->outcome=QA_PICKUP_ACCEPTED;
     }
     if(ok&&!pickup_live(r)) r->outcome=QA_PICKUP_STALE;
-    if(held) {
-        qa_error cleanup={0}; bool returned=source_finish(o,held,&cleanup);
-        if(held->globals||held->scope) { o->failed_scope=true; returned=false; }
-        else { mod_source_lease **link=&o->source_calls; while(*link&&*link!=held) link=&(*link)->next; if(*link) *link=held->next; free(held); }
-        if(!returned&&ok) { if(e) *e=cleanup; ok=false; }
-    }
+    qa_error cleanup={0};bool returned=source_finish(o,held,&cleanup);
+    if(held->globals||held->scope) { o->failed_scope=true; returned=false; }
+    else source_release(o,held);
+    if(!returned&&ok) { if(e) *e=cleanup; ok=false; }
     return ok;
 }
 bool q3mod_pickup_run(application_q3_mod *o,const mod_pickup *definition,const qa_pickup_offer *offer,

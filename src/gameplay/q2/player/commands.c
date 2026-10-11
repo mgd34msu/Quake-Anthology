@@ -40,8 +40,10 @@ bool q2_item_usable(const qa_q2_item_definition *d) {
 }
 bool q2_player_publish_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_inventory_entry *entries = NULL;
+    qa_arena storage;
     size_t count = 0;
-    if (!q2_player_inventory_copy(g, a->id, &entries, &count, e))
+    if (!qa_inventory_entries_snapshot(g->services.inventory, a->id, &storage,
+                                      &entries, &count, e))
         return false;
     bool ok = q2_player_emit(g,
                              &(qa_q2_player_event){.kind = QA_Q2_PLAYER_INVENTORY,
@@ -51,7 +53,7 @@ bool q2_player_publish_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                                    .visible = a->client->rule.show_inventory,
                                                    .selected_item = a->client->info.selected_item},
                              e);
-    free(entries);
+    qa_inventory_snapshot_release(g->services.inventory, &storage);
     return ok;
 }
 bool q2_player_scoreboard(qa_q2_game *g, q2_actor *a, bool reliable, qa_error *e) {

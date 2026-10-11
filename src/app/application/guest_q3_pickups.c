@@ -2,8 +2,10 @@
 #include "guest_q3_catalog.h"
 #include "guest_projection_private.h"
 #include "supplies.h"
+#include "control_frame.h"
 
 typedef struct pickup_frame {
+    qa_unified_frame_lease *storage;
     struct pickup_frame *previous;
     struct pickup_frame *cleanup_next;
     struct application_q3_pickups *owner;
@@ -126,7 +128,7 @@ static void frame_retire(pickup_frame *f)
         pickup_frame **tail=&f->owner->cleanup_frames;while(*tail)tail=&(*tail)->cleanup_next;
         *tail=f;return;
     }
-    free((void *)f->record.class_name);free(f);
+    qa_unified_frame_lease_release(f->storage);
 }
 static bool source(pickup_frame *f,const qa_qvm_call *call,int32_t *out,qa_error *e)
 {
@@ -162,7 +164,8 @@ static bool run_source(void *context,const qa_pickup_offer *offer,qa_pickup_sele
     if(!frame_cleanup(f,&cleanup)){if(ok&&e)*e=cleanup;ok=false;}
     o->frames=f->previous;f->execution=NULL;return ok;
 }
-static bool resolve(application_q3_pickups *o,const application_q3_catalog_record *record,qa_item_id *item,qa_item_id *ammo,qa_error *e)
+static bool resolve(application_q3_pickups *o,const application_q3_catalog_record *record,qa_item_id *item,qa_item_id *ammo,
+    qa_unified_frame_lease *storage,qa_error *e)
 {
     *item=0;*ammo=0;const application_q3_catalog_weapon *weapons;size_t count;
     if(!application_q3_catalog_weapons(o->role->catalog,&weapons,&count,e))return false;
@@ -174,9 +177,9 @@ static bool resolve(application_q3_pickups *o,const application_q3_catalog_recor
     if(*item)return true;
     if(!record->class_name)return application_fail(e,QA_ERROR_FORMAT,"Original pickup record lacks its Source classname");
     size_t n=strlen(record->class_name);if(n>SIZE_MAX-4)return application_fail(e,QA_ERROR_MEMORY,"Original pickup identity overflows");
-    char *name=malloc(n+4);if(!name)return application_fail(e,QA_ERROR_MEMORY,"Retaining original pickup identity");
+    char *name=qa_unified_frame_lease_alloc(storage,n+4,1,_Alignof(char),e);if(!name)return false;
     memcpy(name,"q3:",3);memcpy(name+3,record->class_name,n+1);
-    bool ok=qa_strings_intern(qa_session_strings(application(o)->session),(qa_bytes){(uint8_t *)name,n+3},item,e);free(name);return ok;
+    return qa_strings_intern(qa_session_strings(application(o)->session),(qa_bytes){(uint8_t *)name,n+3},item,e);
 }
 static bool touch(void *context,const qa_qvm_call *call,int32_t *out,qa_error *e)
 {
@@ -207,21 +210,25 @@ static bool touch(void *context,const qa_qvm_call *call,int32_t *out,qa_error *e
     f.item=*ar;f.recipient=*br;qa_item_id item_id,ammo;
     if(!actor_current(o,&f.item,f.item_slot)||!actor_current(o,&f.recipient,f.recipient_slot))
         return application_fail(e,QA_ERROR_NOT_FOUND,"Touch_Item source ownership or input admission has expired");
-    char *class_name=q3g_copy_text(f.record.class_name,e);
-    if(!class_name)return false;
+    f.storage=application_control_storage_acquire(application(o),e);
+    if(!f.storage)return false;
+    size_t class_bytes=strlen(f.record.class_name)+1;
+    char *class_name=qa_unified_frame_lease_alloc(f.storage,class_bytes,1,_Alignof(char),e);
+    if(!class_name){qa_unified_frame_lease_release(f.storage);return false;}
+    memcpy(class_name,f.record.class_name,class_bytes);
     f.record.class_name=class_name;f.record.pickup_name=NULL;
-    if(!resolve(o,&f.record,&item_id,&ammo,e)){free(class_name);return false;}
+    if(!resolve(o,&f.record,&item_id,&ammo,f.storage,e)){qa_unified_frame_lease_release(f.storage);return false;}
     qa_clock_state clock;qa_actor_owner owner=o->role->engine->provider->owner;
     if(!qa_session_clock(application(o)->session,owner,&clock)||clock.frame.provider!=owner||clock.frame.kind!=QA_RULESET_Q3){
-        free(class_name);return application_fail(e,QA_ERROR_NOT_FOUND,"Touch_Item has no completed actual Source clock");}
+        qa_unified_frame_lease_release(f.storage);return application_fail(e,QA_ERROR_NOT_FOUND,"Touch_Item has no completed actual Source clock");}
     f.offer=(qa_pickup_offer){.recipient=b,.pickup=a,.source=owner,.item=item_id,.override_count=count!=0,.count=count,
         .dropped=((uint32_t)flags&o->profile->dropped_flag)!=0,.time_ns=clock.frame.time_ns};
     if(f.record.type==3)f.offer.default_resource=(qa_pickup_resource){.kind=QA_PICKUP_PROTECTION,.channel=QA_PROTECTION_REGULAR};
     else if(f.record.type==o->profile->weapon_type||f.record.type==o->profile->ammo_type)f.offer.default_resource=(qa_pickup_resource){.kind=QA_PICKUP_INVENTORY,.item=item_id};
     for(size_t i=0;i<o->profile->objective_count;++i)if(o->profile->objective_types[i]==f.record.type)f.offer.grant=QA_PICKUP_MAP_COUPLED;
     for(size_t i=0;i<o->profile->grant_count;++i)if(o->profile->grants[i].item_type==f.record.type)f.grant=o->profile->grants+i;
-    pickup_frame *held=malloc(sizeof(*held));
-    if(!held){free(class_name);return application_fail(e,QA_ERROR_MEMORY,"Retaining real pickup Source continuation");}
+    pickup_frame *held=qa_unified_frame_lease_alloc(f.storage,1,sizeof(*held),_Alignof(pickup_frame),e);
+    if(!held){qa_unified_frame_lease_release(f.storage);return false;}
     *held=f;
     ++o->calls;bool ok=qa_pickups_run_source(application(o)->pickups,&held->offer,run_source,held,e);--o->calls;
     if(ok)*out=held->result;
@@ -238,10 +245,10 @@ static bool gate(void *context,const qa_qvm_call *call,int32_t *out,qa_error *e)
     if(f->selection!=QA_PICKUP_SELECT_REPLACEMENT||!f->grant)return qa_qvm_proceed(call,out,e);
     const application_q3_pickup_grant *g=f->grant;bool ok=true;
     if(g->eligibility==Q3_PICKUP_SOURCE_BRANCHES){
-        qa_qvm_branch_binding *bindings=g->branch_count?calloc(g->branch_count,sizeof(*bindings)):NULL;
-        if(g->branch_count&&!bindings)return application_fail(e,QA_ERROR_MEMORY,"Retaining original pickup gate branches");
+        qa_qvm_branch_binding *bindings=qa_unified_frame_lease_alloc(f->storage,g->branch_count,sizeof(*bindings),_Alignof(qa_qvm_branch_binding),e);
+        if(g->branch_count&&!bindings)return false;
         for(size_t i=0;i<g->branch_count;++i)bindings[i]=(qa_qvm_branch_binding){g->branches[i].instruction,decide,g->branches+i};
-        ok=qa_qvm_bind_branches(call,bindings,g->branch_count,e)&&qa_qvm_proceed(call,out,e);free(bindings);if(ok)*out=*out!=0;
+        ok=qa_qvm_bind_branches(call,bindings,g->branch_count,e)&&qa_qvm_proceed(call,out,e);if(ok)*out=*out!=0;
     }else if(g->eligibility==Q3_PICKUP_ELIGIBLE)*out=1;
     else {int32_t mode,lithium=0,generic,other,client;
         ok=qa_qvm_call_argument(call,0,&mode,e);
@@ -272,7 +279,7 @@ static bool region(void *context,const qa_qvm_call *call,bool *skip,qa_error *e)
     if(!projection_end(f,e))return false;
     if(!live(f))return cancel(f,e);
     int32_t amount;if(!qa_qvm_local_word(call,f->grant->quantity,&amount,e))return false;
-    qa_item_id item,ammo;if(!resolve(f->owner,&f->record,&item,&ammo,e))return false;
+    qa_item_id item,ammo;if(!resolve(f->owner,&f->record,&item,&ammo,f->storage,e))return false;
     if(!f->grant->weapon&&!ammo)return application_fail(e,QA_ERROR_NOT_FOUND,"Original ammo grant has no admitted Source counter");
     f->ammo=(qa_pickup_grant){ammo,amount};
     f->supply=(qa_supply_offer){.kind=f->grant->weapon?QA_SUPPLY_WEAPON:QA_SUPPLY_AMMO,.item=f->grant->weapon?f->offer.item:ammo,
@@ -333,7 +340,7 @@ static bool quantity(void *context,const qa_inventory_entry *entry,qa_supply_qua
     pickup_frame *f=context;application_q3_pickups *o=f->owner;const application_q3_pickup_grant *g=f->grant;
     if(o->frames!=f||!f->supply_active||!g||!g->weapon||!live(f))return application_fail(e,QA_ERROR_ARGUMENT,"Original pickup quantity requires its actual held supply grant");
     double count=trunc(entry->count);if(!isfinite(entry->count)||count<INT32_MIN||count>INT32_MAX)return application_fail(e,QA_ERROR_ARGUMENT,"Original pickup quantity exceeds the Source int32 ABI");
-    qa_item_id item,ammo;if(!resolve(o,&f->record,&item,&ammo,e))return false;
+    qa_item_id item,ammo;if(!resolve(o,&f->record,&item,&ammo,f->storage,e))return false;
     if(g->inventory){if(ammo&&!project(f,ammo,(int32_t)count,e))return false;}
     else {uint64_t offset=(uint64_t)g->ammo_offset+(uint64_t)(uint32_t)f->record.tag*4;
         if(f->record.tag<0||offset>o->profile->client_stride-4)return application_fail(e,QA_ERROR_FORMAT,"Original pickup ammo projection leaves its Source client");
@@ -398,7 +405,7 @@ bool application_q3_pickups_cleanup(application_q3_pickups *o,qa_error *e)
         pickup_frame **cursor=&o->cleanup_frames;
         while(*cursor&&!frame_cleanup_ready(*cursor))cursor=&(*cursor)->cleanup_next;
         pickup_frame *f=*cursor;if(!frame_cleanup(f,e))return false;
-        *cursor=f->cleanup_next;free((void *)f->record.class_name);free(f);
+        *cursor=f->cleanup_next;qa_unified_frame_lease_release(f->storage);
     }
     return true;
 }

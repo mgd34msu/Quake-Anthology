@@ -171,6 +171,8 @@ typedef struct qa_q2_player_carry {
     float health, maximum_health;
     qa_armor armor;
     qa_inventory_entry *inventory;
+    qa_inventory *inventory_owner;
+    qa_arena inventory_storage;
     size_t count;
     qa_q2_weapon weapon;
     qa_item_id selected_item;
@@ -206,6 +208,8 @@ typedef struct qa_q2_player_rule_tail {
     qa_entity_visual visual;
     qa_q2_player_carry coop;
     qa_inventory_entry *spawn_inventory;
+    qa_inventory *spawn_inventory_owner;
+    qa_arena spawn_inventory_storage;
     size_t spawn_count;
     char userinfo[2048], social_id[128], dogtag[256];
     qa_q2_hand hand;

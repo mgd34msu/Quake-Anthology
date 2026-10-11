@@ -436,6 +436,8 @@ struct q1_map_runtime {
     q1_door_group *door_groups;
     q1_rotate_target *rotated_targets;
     qa_actor_id *frame_ticks;
+    qa_arena score_storage;
+    float *scores;
     q1_addon_contact *addon_contacts;
     uint32_t frame_tick_count;
     qa_actor_id world_actor;

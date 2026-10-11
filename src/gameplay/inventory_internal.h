@@ -2,6 +2,7 @@
 #define QA_INVENTORY_INTERNAL_H
 #include "qa/inventory.h"
 #include "qa/operation.h"
+#include "qa/pool.h"
 
 typedef struct item_group {
     struct item_group *next;
@@ -51,7 +52,16 @@ struct qa_inventory {
     uint64_t serial;
     size_t calls;
     qa_operation *operations[4];
+    qa_arena scratch_storage;
+    qa_pool scratch_pages;
+    size_t scratch_leases;
+    bool closed;
 };
+
+static inline void qa_inventory_scratch_begin(qa_inventory *table, qa_arena *storage)
+{ qa_arena_init_pool(storage, &table->scratch_pages); }
+static inline void qa_inventory_scratch_acquire(qa_inventory *table, qa_arena *storage)
+{ ++table->scratch_leases; qa_inventory_scratch_begin(table, storage); }
 
 /* Storage identity includes the primary binding, even when no component owns
  * the item. Pickup leases use it to reject storage replaced during callbacks. */

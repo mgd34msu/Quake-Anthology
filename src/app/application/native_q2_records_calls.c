@@ -9,11 +9,13 @@ bool nqr_applies(application_native_q2_records *o,const nqr_actor *actor,const n
 }
 bool nqr_call_storage_prepare(application_native_q2_records *o,qa_error *e)
 {
-    size_t maximum=0;
+    size_t maximum=0,watches=0;
     size_t actors=o->entity_record==SIZE_MAX?0:o->records[o->entity_record].capacity;
     for(size_t i=0;i<o->record_count;++i) {
         const nqr_record *record=o->records+i;
         size_t count=record->client?o->client_maximum:actors;
+        if(count>SIZE_MAX-watches) return nqr_fail(e,QA_ERROR_MEMORY,"Native pickup watch capacity overflows");
+        watches+=count;
         for(size_t j=0;j<record->field_count;++j) if(record->fields[j].writable) {
             if(count>SIZE_MAX-maximum) return nqr_fail(e,QA_ERROR_MEMORY,"Native observation capacity overflows");
             maximum+=count;
@@ -22,12 +24,16 @@ bool nqr_call_storage_prepare(application_native_q2_records *o,qa_error *e)
     /* Baselines are immutable and shared when all frames rebase. Reserve for
      * the existing 64-deep callback limit plus ordered, reentrant commits. */
     const size_t buffers=2*NQR_CALL_DEPTH+4;
-    if(maximum>SIZE_MAX/buffers) return nqr_fail(e,QA_ERROR_MEMORY,"Native callback storage overflows");
+    if(maximum>SIZE_MAX/buffers||watches>SIZE_MAX/sizeof(qa_native_write_observer *)) return nqr_fail(e,QA_ERROR_MEMORY,"Native callback storage overflows");
     qa_arena_init(&o->call_storage,0);
     if(!qa_pool_prepare(&o->scopes,&o->call_storage,NQR_CALL_DEPTH,sizeof(application_native_q2_record_scope),
             _Alignof(application_native_q2_record_scope),e)||
         !qa_pool_prepare(&o->snapshots,&o->call_storage,NQR_CALL_DEPTH+2,sizeof(nqr_snapshot),_Alignof(nqr_snapshot),e)||
-        !qa_pool_prepare(&o->observations,&o->call_storage,maximum*buffers,sizeof(nqr_observation),_Alignof(nqr_observation),e)) return false;
+        !qa_pool_prepare(&o->observations,&o->call_storage,maximum*buffers,sizeof(nqr_observation),_Alignof(nqr_observation),e)||
+        !qa_pool_prepare(&o->pickup_scopes,&o->call_storage,NQR_CALL_DEPTH,sizeof(application_native_q2_pickup_scope),
+            _Alignof(application_native_q2_pickup_scope),e)||
+        !qa_pool_prepare(&o->pickup_watches,&o->call_storage,watches?NQR_CALL_DEPTH:0,watches?watches*sizeof(qa_native_write_observer *):1,
+            _Alignof(qa_native_write_observer *),e)) return false;
     qa_arena_seal(&o->call_storage);
     return true;
 }
@@ -414,7 +420,9 @@ bool application_native_q2_records_pickup_end(application_native_q2_records *o,
         if(!qa_native_unobserve_writes(s->watches[s->count-1],e)) return false;
         s->watches[--s->count]=NULL;
     }
-    o->pickup=s->outer; free(s->watches); free(s); *scope=NULL; return true;
+    o->pickup=s->outer;
+    if(s->capacity) qa_pool_release(&o->pickup_watches,s->watches_slot);
+    qa_pool_release(&o->pickup_scopes,s->storage_slot);*scope=NULL;return true;
 }
 bool application_native_q2_records_pickup_begin(application_native_q2_records *o,qa_actor_id actor,
     qa_pickup_execution *execution,application_native_q2_protection_item_fn protection_item,void *context,
@@ -438,10 +446,12 @@ bool application_native_q2_records_pickup_begin(application_native_q2_records *o
             ++capacity;
         }
     }
-    application_native_q2_pickup_scope *s=calloc(1,sizeof(*s));
+    size_t storage_slot;
+    application_native_q2_pickup_scope *s=qa_pool_take(&o->pickup_scopes,&storage_slot);
     if(!s) return nqr_fail(e,QA_ERROR_MEMORY,"Retaining native pickup resource observation scope");
-    s->watches=capacity?calloc(capacity,sizeof(*s->watches)):NULL;
-    if(capacity&&!s->watches) { free(s); return nqr_fail(e,QA_ERROR_MEMORY,"Owning actual native pickup write subscriptions"); }
+    *s=(application_native_q2_pickup_scope){.storage_slot=storage_slot};
+    s->watches=capacity?qa_pool_take(&o->pickup_watches,&s->watches_slot):NULL;
+    if(capacity&&!s->watches) { qa_pool_release(&o->pickup_scopes,storage_slot);return nqr_fail(e,QA_ERROR_MEMORY,"Owning actual native pickup write subscriptions"); }
     s->owner=o; s->outer=o->pickup; s->frame=o->frame; s->actor=actor;
     s->execution=execution; s->protection_item=protection_item; s->context=context; s->capacity=capacity;
     o->pickup=s; *out=s; bool ok=true;

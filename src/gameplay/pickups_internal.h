@@ -32,6 +32,7 @@ struct qa_pickup_execution {
     pickup_rule *rule;
     qa_pickup_selection selection;
     qa_combat_pickup_scope combat_scope;
+    qa_arena cargo_storage;
     pickup_consumption consumption;
     bool open, accepted, grant_used, observer_open, source_scope, failed;
     qa_error failure;

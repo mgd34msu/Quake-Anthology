@@ -135,6 +135,7 @@ typedef struct mod_registered_callback {
 typedef struct mod_protection_stage mod_protection_stage;
 typedef struct mod_source_lease {
     struct mod_source_lease *next;
+    qa_unified_frame_lease *storage;
     void *scope;
     qa_qvm_word_projection *globals;
     bool succeeded;

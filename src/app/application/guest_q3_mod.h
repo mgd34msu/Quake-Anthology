@@ -68,6 +68,7 @@ typedef struct application_q3_mod_operation_services {
 } application_q3_mod_operation_services;
 typedef struct application_q3_mod_services {
     void *context;
+    struct qa_application *application;
     qa_pickups *pickups;
     bool (*current)(void *, qa_error *);
     /* Pure retained RAM/source identity proof, including checked retirement
@@ -80,7 +81,7 @@ typedef struct application_q3_mod_services {
     bool (*player_state)(void *, qa_actor_id, qa_q3_player *, qa_error *);
     bool (*time)(void *, double *seconds, qa_error *);
     /* These are the actual component projection owner, shared by every
-     * lifecycle/input/protection/callback call. Scope is an owned heap token.
+     * lifecycle/input/protection/callback call. Scope owns a storage lease.
      * Leave nulls a consumed token; refusal retains it for checked retirement. */
     bool (*source_prepare)(void *, qa_error *);
     bool (*source_enter)(void *, uint32_t instruction, const int32_t *, size_t,

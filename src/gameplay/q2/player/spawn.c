@@ -73,15 +73,20 @@ bool q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return true;
     s->rule.pending_start_items = false;
     qa_inventory_entry *entries = NULL;
+    qa_arena storage;
     size_t count = 0;
-    if (!q2_player_inventory_copy(g, id, &entries, &count, e))
+    if (!qa_inventory_entries_snapshot(g->services.inventory, id, &storage,
+                                      &entries, &count, e))
         return false;
     if (!q2_actor_live(g, id)) {
-        free(entries);
+        qa_inventory_snapshot_release(g->services.inventory, &storage);
         return true;
     }
-    free(s->rule.spawn_inventory);
+    q2_player_inventory_free(s->rule.spawn_inventory_owner,
+        &s->rule.spawn_inventory_storage, s->rule.spawn_inventory);
     s->rule.spawn_inventory = entries;
+    s->rule.spawn_inventory_owner = g->services.inventory;
+    s->rule.spawn_inventory_storage = storage;
     s->rule.spawn_count = count;
     if (g->options.cooperative) {
         qa_q2_player_carry carry = {0};

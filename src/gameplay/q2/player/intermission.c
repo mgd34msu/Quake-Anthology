@@ -131,8 +131,10 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
         if (!q2_actor_live(g, id) || !qa_inventory_has(g->services.inventory, id))
             continue;
         qa_inventory_entry *entries;
+        qa_arena storage;
         size_t count;
-        if (!q2_player_inventory_copy(g, id, &entries, &count, e))
+        if (!qa_inventory_entries_snapshot(g->services.inventory, id, &storage,
+                                          &entries, &count, e))
             goto done;
         bool cleared = true;
         for (size_t j = 0; j < count && q2_actor_live(g, id); ++j) {
@@ -145,7 +147,7 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
                 break;
             }
         }
-        free(entries);
+        qa_inventory_snapshot_release(g->services.inventory, &storage);
         if (!cleared)
             goto done;
     }

@@ -454,9 +454,15 @@ bool qa_inventory_create(qa_actor_registry *actors, qa_inventory **out, qa_error
     table->actors = actors; table->capacity = qa_actors_capacity(actors);
     table->stores = calloc(table->capacity, sizeof(*table->stores));
     if (!table->stores && table->capacity) { free(table); return fail(e, QA_ERROR_MEMORY, "Cannot allocate inventory slots"); }
+    if (!qa_pool_reserve_pages(&table->scratch_pages, &table->scratch_storage,
+            (size_t)table->capacity + 64, 512, _Alignof(max_align_t), e)) {
+        qa_arena_destroy(&table->scratch_storage);
+        free(table->stores); free(table); return false;
+    }
     for (size_t i = 0; i < 4; ++i) {
         if (!qa_operation_create(sizeof(qa_inventory_request), sizeof(qa_inventory_result), &table->operations[i], e)) {
             for (size_t j = 0; j < i; ++j) qa_operation_destroy(table->operations[j], NULL);
+            qa_arena_destroy(&table->scratch_storage);
             free(table->stores); free(table); return false;
         }
     }
@@ -465,13 +471,15 @@ bool qa_inventory_create(qa_actor_registry *actors, qa_inventory **out, qa_error
 
 bool qa_inventory_destroy(qa_inventory *table, qa_error *e)
 {
-    if (!table) return true;
+    if (!table || table->closed) return true;
     if (table->calls) return fail(e, QA_ERROR_ARGUMENT, "Cannot destroy inventory during a callback");
     for (size_t i = 0; i < 4; ++i)
         if (!qa_operation_destroy_validate(table->operations[i], e)) return false;
     for (size_t i = 0; i < 4; ++i) qa_operation_destroy(table->operations[i], NULL);
     for (uint32_t i = 0; i < table->capacity; ++i) if (table->stores[i]) drop_store(table->stores[i]);
-    free(table->stores); free(table); return true;
+    free(table->stores); table->stores = NULL; table->closed = true;
+    if (!table->scratch_leases) { qa_arena_destroy(&table->scratch_storage); free(table); }
+    return true;
 }
 
 void qa_inventory_actor_released(qa_inventory *table, qa_actor_record actor)
@@ -893,6 +901,37 @@ uint64_t qa_inventory_definition_revision(const qa_inventory *table, qa_actor_id
     return qa_inventory_has(table, actor) ? table->stores[actor.slot]->definition_revision : 0;
 }
 
+bool qa_inventory_entries_snapshot(qa_inventory *table, qa_actor_id actor,
+    qa_arena *storage, qa_inventory_entry **out, size_t *count, qa_error *e)
+{
+    if (!table || !storage || !out || !count)
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid inventory snapshot arguments");
+    qa_inventory_scratch_acquire(table, storage);
+    size_t needed = 0;
+    bool ok = qa_inventory_entries(table, actor, NULL, 0, &needed, e);
+    qa_inventory_entry *entries = NULL;
+    if (ok && needed) {
+        if (needed > SIZE_MAX / sizeof(*entries))
+            ok = fail(e, QA_ERROR_MEMORY, "Inventory snapshot size overflow");
+        else {
+            entries = qa_arena_alloc(storage, needed * sizeof(*entries),
+                _Alignof(qa_inventory_entry), e);
+            ok = entries != NULL;
+        }
+    }
+    if (ok && needed) ok = qa_inventory_entries(table, actor, entries, needed, &needed, e);
+    if (!ok) { qa_inventory_snapshot_release(table, storage); return false; }
+    *out = entries; *count = needed; return true;
+}
+
+void qa_inventory_snapshot_release(qa_inventory *table, qa_arena *storage)
+{
+    qa_arena_destroy(storage);
+    if (--table->scratch_leases == 0 && table->closed) {
+        qa_arena_destroy(&table->scratch_storage); free(table);
+    }
+}
+
 bool qa_inventory_has(const qa_inventory *table, qa_actor_id actor)
 {
     return table && actor.slot < table->capacity && qa_actors_get(table->actors, actor) &&
@@ -1249,7 +1288,10 @@ bool qa_inventory_source_stored_ex(qa_inventory *table, qa_inventory_lease lease
     item_group *group = lease_group(store, lease.serial);
     if (!group) *retired_token = true;
     bool ok = group ? group_validate(table, store, group, e) : fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
-    qa_inventory_change *snapshots = ok && count ? calloc(count, sizeof(*snapshots)) : NULL;
+    qa_arena storage;
+    qa_inventory_scratch_begin(table, &storage);
+    qa_inventory_change *snapshots = ok && count ?
+        qa_arena_alloc(&storage, count * sizeof(*snapshots), _Alignof(qa_inventory_change), e) : NULL;
     if (ok && count && !snapshots) ok = fail(e, QA_ERROR_MEMORY, "Cannot snapshot source inventory publication");
     for (size_t i = 0; ok && i < count; ++i) {
         qa_inventory_entry actual; bool found;
@@ -1275,7 +1317,7 @@ bool qa_inventory_source_stored_ex(qa_inventory *table, qa_inventory_lease lease
         ok = source_current(&publication, e) && qa_operation_dispatch(table->operations[QA_INVENTORY_CONFIGURE],
             &request, &result, publish_source, &publication, source_published, &publication, e) && source_current(&publication, e);
     }
-    free(snapshots); release_store(table, store); return ok;
+    qa_arena_destroy(&storage); release_store(table, store); return ok;
 }
 
 bool qa_inventory_pickup_claim(qa_inventory *table, qa_actor_id actor, qa_item_id item,

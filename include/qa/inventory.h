@@ -102,6 +102,12 @@ bool qa_inventory_entry_read(qa_inventory *, qa_actor_id, qa_item_id, qa_invento
  * actors and changes to storage or item ownership during a read fail. */
 bool qa_inventory_count_read(qa_inventory *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool qa_inventory_entries(qa_inventory *, qa_actor_id, qa_inventory_entry *, size_t capacity, size_t *count, qa_error *);
+/* Snapshot the whole composed inventory into a retained common-pool lease.
+ * Move the arena with its entries; release once after the final reader.
+ * A lease survives inventory destruction and does not hold admission open. */
+bool qa_inventory_entries_snapshot(qa_inventory *, qa_actor_id, qa_arena *lease,
+    qa_inventory_entry **, size_t *, qa_error *);
+void qa_inventory_snapshot_release(qa_inventory *, qa_arena *lease);
 bool qa_inventory_has(const qa_inventory *, qa_actor_id);
 uint64_t qa_inventory_revision(const qa_inventory *, qa_actor_id);
 uint64_t qa_inventory_definition_revision(const qa_inventory *, qa_actor_id);
@@ -192,6 +198,8 @@ typedef struct qa_supply_preview_result {
     bool accepted;
     qa_pickup_receipt *weapons, *ammo;
     size_t weapon_count, ammo_count;
+    qa_arena storage;
+    qa_inventory *storage_owner;
 } qa_supply_preview_result;
 typedef struct qa_pickup_grant_plan {
     bool weapon_offer, accept_nonzero, shared_weapon_ammo;
@@ -200,11 +208,13 @@ typedef struct qa_pickup_grant_plan {
 } qa_pickup_grant_plan;
 /* Shared-ammo plans use weapon item IDs only. Every weapon must also have an
  * ammo grant; receipt reuse preserves the original source's pickup rules. */
-bool qa_pickup_preview_grants(const qa_inventory_entry *, size_t, const qa_pickup_grant_plan *, qa_supply_preview_result *, qa_error *);
+bool qa_pickup_preview_grants(qa_inventory *storage_owner, const qa_inventory_entry *, size_t, const qa_pickup_grant_plan *, qa_supply_preview_result *, qa_error *);
 bool qa_supply_apply(qa_supply *, qa_actor_id, const qa_supply_offer *, const qa_supply_options *, bool *, qa_error *);
 bool qa_supply_preview(qa_supply *, qa_actor_id, const qa_supply_offer *, bool canonical, qa_supply_preview_result *, qa_error *);
 bool qa_supply_cargo_preview(qa_supply *, qa_actor_id, const qa_pickup_cargo *, size_t,
                               bool canonical, qa_supply_preview_result *, qa_error *);
+/* Results retain inventory scratch pages until released; reads, nested
+ * previews and inventory destruction do not invalidate the receipt arrays. */
 void qa_supply_preview_free(qa_supply_preview_result *);
 typedef struct qa_supply_weapon { qa_item_id item, ammo; bool drop; } qa_supply_weapon;
 /* Outputs parallel the selected array; zero means the source cannot drop it.

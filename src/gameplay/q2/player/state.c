@@ -40,6 +40,14 @@ bool q2_players_init(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 players");
         return false;
     }
+    if (!qa_pool_reserve_pages(&g->player_runtime->scratch_pages,
+            &g->player_runtime->scratch_storage, (size_t)g->capacity + 64,
+            512, _Alignof(max_align_t), e)) {
+        qa_arena_destroy(&g->player_runtime->scratch_storage);
+        free(g->player_runtime);
+        g->player_runtime = NULL;
+        return false;
+    }
     qa_q2_player_rules_default(&g->player_runtime->rules);
     return true;
 }
@@ -56,12 +64,14 @@ void q2_players_close(qa_q2_game *g) {
         free(list);
         list = next;
     }
+    qa_arena_destroy(&g->player_runtime->scratch_storage);
     free(g->player_runtime);
     g->player_runtime = NULL;
 }
 void qa_q2_player_carry_free(qa_q2_player_carry *carry) {
     if (carry) {
-        free(carry->inventory);
+        q2_player_inventory_free(carry->inventory_owner, &carry->inventory_storage,
+                                carry->inventory);
         *carry = (qa_q2_player_carry){0};
     }
 }
@@ -69,7 +79,8 @@ void q2_client_release_state(q2_actor *a) {
     if (!a->client)
         return;
     qa_q2_player_carry_free(&a->client->rule.coop);
-    free(a->client->rule.spawn_inventory);
+    q2_player_inventory_free(a->client->rule.spawn_inventory_owner,
+        &a->client->rule.spawn_inventory_storage, a->client->rule.spawn_inventory);
     free(a->client->rule.help_points);
     free(a->client);
     a->client = NULL;
@@ -210,38 +221,28 @@ bool q2_player_move(qa_q2_game *g, q2_actor *a, const qa_q2_player_motion *chang
     return q2_player_source_motion_rules(g, a, change, e) &&
         s->set_movement(s->context, a->id, change, e);
 }
-bool q2_player_inventory_copy(qa_q2_game *g, qa_actor_id id, qa_inventory_entry **out,
-                              size_t *count, qa_error *e) {
-    size_t n = 0;
-    if (!qa_inventory_entries(g->services.inventory, id, NULL, 0, &n, e))
-        return false;
-    qa_inventory_entry *entries = n ? malloc(n * sizeof(*entries)) : NULL;
-    if (n && !entries) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Copying Q2 persistent inventory");
-        return false;
-    }
-    if (!qa_inventory_entries(g->services.inventory, id, entries, n, &n, e)) {
+void q2_player_inventory_free(qa_inventory *owner, qa_arena *storage,
+                             qa_inventory_entry *entries) {
+    if (owner)
+        qa_inventory_snapshot_release(owner, storage);
+    else
         free(entries);
-        return false;
-    }
-    *out = entries;
-    *count = n;
-    return true;
 }
 bool q2_player_inventory_set(qa_q2_game *g, qa_actor_id id, const qa_inventory_entry *entries,
                              size_t count, qa_error *e) {
     qa_inventory_entry *old = NULL;
+    qa_arena storage;
     size_t n = 0;
-    if (!q2_player_inventory_copy(g, id, &old, &n, e))
+    if (!qa_inventory_entries_snapshot(g->services.inventory, id, &storage, &old, &n, e))
         return false;
     for (size_t i = 0; i < n && q2_actor_live(g, id); i++) {
         old[i].count = 0;
         if (!qa_inventory_configure(g->services.inventory, id, &old[i], NULL, NULL, e)) {
-            free(old);
+            qa_inventory_snapshot_release(g->services.inventory, &storage);
             return false;
         }
     }
-    free(old);
+    qa_inventory_snapshot_release(g->services.inventory, &storage);
     for (size_t i = 0; i < count && q2_actor_live(g, id); i++)
         if (!qa_inventory_configure(g->services.inventory, id, &entries[i], NULL, NULL, e))
             return false;
@@ -270,8 +271,10 @@ static bool player_carry_capture(void *context, qa_actor_id id, qa_error *e) {
     qa_q2_player_carry c = {.health = combat.health,
                             .maximum_health = powers->maximum_health,
                             .armor = combat.armor};
-    if (!q2_player_inventory_copy(g, id, &c.inventory, &c.count, e))
+    if (!qa_inventory_entries_snapshot(g->services.inventory, id, &c.inventory_storage,
+                                      &c.inventory, &c.count, e))
         return false;
+    c.inventory_owner = g->services.inventory;
     if (!q2_actor_live(g, id)) {
         qa_q2_player_carry_free(&c);
         qa_error_set(e, QA_ERROR_NOT_FOUND, id.slot, "Q2 player retired during carry capture");
@@ -358,22 +361,25 @@ static bool player_carry_restore(void *context, qa_actor_id id, qa_error *e) {
 }
 bool qa_q2_player_carry_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_carry *c,
                                 qa_error *e) {
-    if (!c || (c->count && !c->inventory) ||
+    if (!g || !g->player_runtime || !c || (c->count && !c->inventory) ||
         c->count > SIZE_MAX / sizeof(*c->inventory)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 player carry");
         return false;
     }
     player_carry_restore_call call = {.game = g, .carry = *c};
-    qa_inventory_entry *inventory = c->count ? malloc(c->count * sizeof(*inventory)) : NULL;
+    qa_arena storage;
+    qa_arena_init_pool(&storage, &g->player_runtime->scratch_pages);
+    qa_inventory_entry *inventory = c->count ? qa_arena_alloc(&storage,
+        c->count * sizeof(*inventory), _Alignof(qa_inventory_entry), e) : NULL;
     if (c->count && !inventory) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Copying Q2 player carry inventory");
+        qa_arena_destroy(&storage);
         return false;
     }
     if (c->count)
         memcpy(inventory, c->inventory, c->count * sizeof(*inventory));
     call.carry.inventory = inventory;
     bool ok = qa_q2_run_actor(g, id, player_carry_restore, &call, e);
-    free(inventory);
+    qa_arena_destroy(&storage);
     return ok;
 }
 bool qa_q2_player_notarget(qa_q2_game *g, qa_actor_id id, bool *enabled, qa_error *error) {

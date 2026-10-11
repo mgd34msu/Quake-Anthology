@@ -74,12 +74,12 @@ struct application_native_q2_pickup_scope {
     application_native_q2_protection_item_fn protection_item;
     void *context;
     qa_native_write_observer **watches;
-    size_t count,capacity;
+    size_t storage_slot,watches_slot,count,capacity;
     bool closing;
 };
 struct application_native_q2_records {
     qa_arena call_storage;
-    qa_pool scopes, snapshots, observations;
+    qa_pool scopes, snapshots, observations, pickup_scopes, pickup_watches;
     application_native_q2_records_options options;
     const qa_json_document *document;
     nqr_record *records;

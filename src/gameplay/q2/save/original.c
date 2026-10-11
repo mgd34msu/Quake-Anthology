@@ -986,7 +986,8 @@ void q2_original_client_free(q2_original_client_state *state)
     if (!state) return;
     qa_q2_player_carry_free(&state->persistent);
     qa_q2_player_carry_free(&state->player.rule.coop);
-    free(state->player.rule.spawn_inventory);
+    q2_player_inventory_free(state->player.rule.spawn_inventory_owner,
+        &state->player.rule.spawn_inventory_storage, state->player.rule.spawn_inventory);
     free(state->player.rule.help_points);
     *state = (q2_original_client_state){0};
 }
@@ -1155,7 +1156,11 @@ bool q2_original_client_capture(qa_q2_game *g, q2_actor *actor,
     state->player.bot = actor->client->player->bot;
     q2_player_source_info_read(g, actor->client, &state->player.info);
     state->player.rule.coop.inventory = NULL;
+    state->player.rule.coop.inventory_owner = NULL;
+    state->player.rule.coop.inventory_storage = (qa_arena){0};
     state->player.rule.spawn_inventory = NULL;
+    state->player.rule.spawn_inventory_owner = NULL;
+    state->player.rule.spawn_inventory_storage = (qa_arena){0};
     state->player.rule.spawn_count = 0;
     state->player.rule.help_points = NULL;
     state->player.rule.help_count = state->player.rule.help_capacity = 0;

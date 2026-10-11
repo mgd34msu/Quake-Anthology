@@ -216,13 +216,15 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
         *out = clear ? id : (qa_actor_id){0};
         return true;
     }
+    qa_arena storage;
+    qa_arena_init_pool(&storage, &g->player_runtime->scratch_pages);
     struct spawn {
         qa_actor_id id;
         float distance;
         size_t source_order;
-    } *spots = malloc(count * sizeof(*spots));
+    } *spots = qa_arena_alloc(&storage, count * sizeof(*spots), _Alignof(struct spawn), e);
     if (!spots) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Selecting Q2 spawn");
+        qa_arena_destroy(&storage);
         return false;
     }
     size_t n = 0;
@@ -333,7 +335,7 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
 done:
     if (players)
         qa_builtin_snapshot_release(players);
-    free(spots);
+    qa_arena_destroy(&storage);
     return ok;
 }
 static bool trace_player(qa_q2_game *g, const qa_trace_result *hit) {

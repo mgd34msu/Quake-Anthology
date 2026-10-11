@@ -106,13 +106,17 @@ static bool rerelease_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
             other = q2_actor_get(g, id, false, NULL);
         }
         qa_inventory_entry *entries = NULL;
+        qa_arena storage;
         size_t count = 0;
         uint32_t cubes = other && other->powers ? other->powers->power_cubes : 0;
-        okay = q2_player_inventory_copy(g, id, &entries, &count, e);
+        bool captured = qa_inventory_entries_snapshot(g->services.inventory, id, &storage,
+                                                       &entries, &count, e);
+        okay = captured;
         for (size_t entry = 0; okay && entry < count && q2_actor_live(g, a->id); entry++)
             okay = qa_inventory_configure(g->services.inventory, a->id, &entries[entry], NULL, NULL,
                                           e);
-        free(entries);
+        if (captured)
+            qa_inventory_snapshot_release(g->services.inventory, &storage);
         if (okay && q2_actor_live(g, a->id))
             a->powers->power_cubes = cubes;
         break;
@@ -367,8 +371,11 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
         if (!q2_actor_live(g, id))
             return true;
     }
-    if (!q2_player_inventory_copy(g, id, &s->rule.spawn_inventory, &s->rule.spawn_count, e))
+    if (!qa_inventory_entries_snapshot(g->services.inventory, id,
+        &s->rule.spawn_inventory_storage, &s->rule.spawn_inventory,
+        &s->rule.spawn_count, e))
         return false;
+    s->rule.spawn_inventory_owner = g->services.inventory;
     if (!qa_q2_player_carry_capture(g, id, &s->rule.coop, e))
         return false;
     s->rule.has_coop = true;

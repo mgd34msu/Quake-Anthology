@@ -106,7 +106,7 @@ static bool bot_supply_actor(void *opaque,qa_actor_id pickup,qa_error *error) {
             .shared_weapon_ammo=!weapon && d->weapon!=QA_Q2_WEAPON_NONE,
             .weapons=&owned,.weapon_count=weapon || d->weapon!=QA_Q2_WEAPON_NONE?1:0,
             .ammo=with_ammo?&grant:NULL,.ammo_count=with_ammo?1:0};
-        if(!qa_pickup_preview_grants(entries,count,&plan,call->preview,error)) return false;
+        if(!qa_pickup_preview_grants(g->services.inventory,entries,count,&plan,call->preview,error)) return false;
     }
     if(q2_actor_live(g,pickup) && q2_actor_live(g,call->recipient)) return true;
 stale:

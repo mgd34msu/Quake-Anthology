@@ -496,13 +496,15 @@ static bool scope_open(qa_pickups *service, const qa_pickup_offer *offer, qa_pic
     if (!offer->item || (offer->override_count && !isfinite(offer->count)) || !resource_valid(offer->default_resource, true) ||
         offer->grant < QA_PICKUP_RESOURCE_GRANT || offer->grant > QA_PICKUP_SOURCE_EFFECT || !cargo_valid(offer->cargo, offer->cargo_count, e))
         return fail(e, QA_ERROR_ARGUMENT, "Invalid original pickup offer");
+    qa_inventory_scratch_begin(service->inventory, &execution->cargo_storage);
     if (offer->cargo_count) {
-        qa_pickup_cargo *cargo = malloc(offer->cargo_count * sizeof(*cargo));
-        if (!cargo) return fail(e, QA_ERROR_MEMORY, "Cannot capture pickup cargo");
+        qa_pickup_cargo *cargo = qa_arena_alloc(&execution->cargo_storage,
+            offer->cargo_count * sizeof(*cargo), _Alignof(qa_pickup_cargo), e);
+        if (!cargo) { qa_arena_destroy(&execution->cargo_storage); return false; }
         memcpy(cargo, offer->cargo, offer->cargo_count * sizeof(*cargo)); execution->offer.cargo = cargo;
     } else execution->offer.cargo = NULL;
     if (!qa_combat_pickup_begin(service->combat, offer->recipient, &execution->combat_scope, e)) {
-        free((void *)execution->offer.cargo); return false;
+        qa_arena_destroy(&execution->cargo_storage); return false;
     }
     qa_inventory_hold(service->inventory);
     execution->open = true; execution->previous = service->scopes; service->scopes = execution;
@@ -515,7 +517,7 @@ static void scope_close(qa_pickup_execution *execution)
     if (!execution->open) return;
     qa_pickups *service = execution->service;
     execution->open = false; service->scopes = execution->previous;
-    free((void *)execution->offer.cargo);
+    qa_arena_destroy(&execution->cargo_storage);
     qa_inventory_unhold(service->inventory);
     qa_combat_pickup_end(&execution->combat_scope, false, NULL);
     --service->calls; sweep(service);
@@ -723,6 +725,7 @@ struct qa_supply {
 };
 
 typedef struct supply_grants {
+    qa_arena storage;
     qa_item_id *weapons;
     size_t weapon_count, weapon_capacity;
     qa_pickup_grant *ammo;
@@ -878,26 +881,31 @@ static const qa_supply_mapping *destinations(qa_supply *supply, qa_item_id item,
     return mapping;
 }
 
-static bool buffer_grow(void **buffer, size_t *capacity, size_t count, size_t element, qa_error *e)
+static bool buffer_grow(qa_arena *storage, void **buffer, size_t *capacity, size_t count, size_t element, size_t alignment, qa_error *e)
 {
     if (count <= *capacity) return true;
     size_t next = *capacity ? *capacity : 8;
     while (next < count && next <= SIZE_MAX / 2) next *= 2;
     if (next < count || next > SIZE_MAX / element) return fail(e, QA_ERROR_MEMORY, "Pickup grant size overflow");
-    void *allocation = realloc(*buffer, next * element);
+    void *allocation = qa_arena_grow(storage, *buffer, *capacity * element,
+        next * element, alignment, e);
     if (!allocation) return fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup grants");
     *buffer = allocation; *capacity = next; return true;
 }
 
 static void grants_free(supply_grants *grants)
-{ free(grants->weapons); free(grants->ammo); free(grants->exact); *grants = (supply_grants){0}; }
+{ qa_arena_destroy(&grants->storage); *grants = (supply_grants){0}; }
+
+static void grants_begin(qa_supply *supply, supply_grants *grants)
+{ qa_inventory_scratch_begin(supply->inventory, &grants->storage); }
 
 static bool append_weapon(supply_grants *grants, qa_item_id item, qa_error *e)
 {
     if (!item) return fail(e, QA_ERROR_ARGUMENT, "Invalid pickup weapon");
     for (size_t i = 0; i < grants->weapon_count; ++i) if (grants->weapons[i] == item) return true;
     void *buffer = grants->weapons;
-    if (!buffer_grow(&buffer, &grants->weapon_capacity, grants->weapon_count + 1, sizeof(*grants->weapons), e)) return false;
+    if (!buffer_grow(&grants->storage, &buffer, &grants->weapon_capacity,
+            grants->weapon_count + 1, sizeof(*grants->weapons), _Alignof(qa_item_id), e)) return false;
     grants->weapons = buffer; grants->weapons[grants->weapon_count++] = item; return true;
 }
 
@@ -905,7 +913,8 @@ static bool append_ammo(supply_grants *grants, qa_pickup_grant grant, qa_error *
 {
     if (!grant.item) return fail(e, QA_ERROR_ARGUMENT, "Invalid pickup ammunition");
     void *buffer = grants->ammo;
-    if (!buffer_grow(&buffer, &grants->ammo_capacity, grants->ammo_count + 1, sizeof(*grants->ammo), e)) return false;
+    if (!buffer_grow(&grants->storage, &buffer, &grants->ammo_capacity,
+            grants->ammo_count + 1, sizeof(*grants->ammo), _Alignof(qa_pickup_grant), e)) return false;
     grants->ammo = buffer; grants->ammo[grants->ammo_count++] = grant; return true;
 }
 
@@ -957,7 +966,8 @@ static bool resolve_quantities(qa_supply *supply, qa_actor_id actor, supply_gran
                                 const qa_supply_options *options, qa_error *e)
 {
     if (!options->quantity) return true;
-    grants->exact = grants->ammo_count ? calloc(grants->ammo_count, sizeof(*grants->exact)) : NULL;
+    grants->exact = grants->ammo_count ? qa_arena_alloc(&grants->storage,
+        grants->ammo_count * sizeof(*grants->exact), _Alignof(bool), e) : NULL;
     if (grants->ammo_count && !grants->exact) return fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup quantity decisions");
     for (size_t i = 0; i < grants->ammo_count; ++i) {
         qa_inventory_entry entry;
@@ -1003,9 +1013,10 @@ static bool grant_resolved(qa_supply *supply, qa_actor_id actor, supply_grants *
                             bool weapon_offer, const qa_supply_options *options, bool *accepted, qa_error *e)
 {
     bool ok = require_entries(supply, actor, grants, e) && resolve_quantities(supply, actor, grants, options, e);
-    qa_pickup_receipt *receipts = grants->ammo_count ? calloc(grants->ammo_count, sizeof(*receipts)) : NULL;
+    qa_pickup_receipt *receipts = grants->ammo_count ? qa_arena_alloc(&grants->storage,
+        grants->ammo_count * sizeof(*receipts), _Alignof(qa_pickup_receipt), e) : NULL;
     if (grants->ammo_count && !receipts) ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup grant receipts");
-    if (!ok) { free(receipts); return false; }
+    if (!ok) return false;
     if (weapon_offer) for (size_t i = 0; ok && i < grants->weapon_count; ++i) {
         double given;
         ok = qa_inventory_give(supply->inventory, actor, grants->weapons[i], 1, &given, e) && supply_current(supply, actor, e);
@@ -1030,7 +1041,6 @@ static bool grant_resolved(qa_supply *supply, qa_actor_id actor, supply_grants *
         } else if (ok && !weapon_offer && !grants->weapon_count && supply->hooks.ammo_granted)
             ok = supply->hooks.ammo_granted(supply->hooks.context, actor, receipts, grants->ammo_count, options->auto_switch, e) && supply_current(supply, actor, e);
     }
-    free(receipts);
     if (ok) *accepted = taken;
     return ok;
 }
@@ -1043,6 +1053,7 @@ bool qa_supply_apply(qa_supply *supply, qa_actor_id actor, const qa_supply_offer
     qa_supply_options captured = *options;
     supply_enter(supply);
     supply_grants grants = {0};
+    grants_begin(supply, &grants);
     bool ok = supply_current(supply, actor, e) && resolve_offer(supply, offer, &captured, &grants, e) &&
         grant_resolved(supply, actor, &grants, offer->kind == QA_SUPPLY_WEAPON, &captured, accepted, e);
     grants_free(&grants); supply_leave(supply); return ok;
@@ -1070,7 +1081,9 @@ bool qa_supply_cargo(qa_supply *supply, qa_actor_id actor, const qa_pickup_cargo
     if (!accepted) return fail(e, QA_ERROR_ARGUMENT, "Missing cargo acceptance result");
     if (!supply_available(supply, e) || !selection_valid(selection, e) || !cargo_valid(cargo, count, e)) return false;
     supply_enter(supply);
-    supply_grants grants = {0}; bool ok = supply_current(supply, actor, e);
+    supply_grants grants = {0};
+    grants_begin(supply, &grants);
+    bool ok = supply_current(supply, actor, e);
     for (size_t i = 0; ok && i < count; ++i)
         if (cargo[i].weapon) ok = resolve_weapon(supply, &grants, cargo[i].item, canonical, e);
         else ok = resolve_ammo(supply, &grants, (qa_pickup_grant){cargo[i].item, cargo[i].count}, canonical, false, e);
@@ -1109,13 +1122,19 @@ bool qa_supply_select_weapon(qa_supply *supply, qa_actor_id actor, qa_item_id it
     if (!selection_valid(selection, e) || !supply_available(supply, e)) return false;
     supply_enter(supply);
     supply_grants grants = {0};
+    grants_begin(supply, &grants);
     bool ok = supply_current(supply, actor, e) && resolve_weapon(supply, &grants, item, false, e) && require_entries(supply, actor, &grants, e);
     if (ok && supply->hooks.weapon_granted) ok = supply->hooks.weapon_granted(supply->hooks.context, actor, grants.weapons, grants.weapon_count, selection, e) && supply_current(supply, actor, e);
     grants_free(&grants); supply_leave(supply); return ok;
 }
 
 void qa_supply_preview_free(qa_supply_preview_result *result)
-{ if (result) { free(result->weapons); free(result->ammo); *result = (qa_supply_preview_result){0}; } }
+{
+    if (!result) return;
+    qa_inventory *owner = result->storage_owner;
+    if (owner) qa_inventory_snapshot_release(owner, &result->storage);
+    *result = (qa_supply_preview_result){0};
+}
 
 static bool preview_grant(qa_inventory *inventory, qa_actor_id actor,
     qa_inventory_entry *entries, size_t count, qa_pickup_grant grant,
@@ -1135,19 +1154,25 @@ static bool preview_grant(qa_inventory *inventory, qa_actor_id actor,
     return fail(e, QA_ERROR_NOT_FOUND, "Pickup preview destination was not admitted");
 }
 
-static bool preview_grants(qa_inventory *source, qa_actor_id actor,
+static bool preview_grants(qa_inventory *storage_owner, qa_inventory *source, qa_actor_id actor,
     const qa_inventory_entry *inventory, size_t count,
     const qa_pickup_grant_plan *plan, qa_supply_preview_result *out, qa_error *e)
 {
-    if (!plan || !out || (count && !inventory) || (plan->weapon_count && !plan->weapons) ||
+    if (!storage_owner || !plan || !out || (count && !inventory) || (plan->weapon_count && !plan->weapons) ||
         (plan->ammo_count && !plan->ammo) || count > SIZE_MAX / sizeof(*inventory) ||
         plan->weapon_count > SIZE_MAX / sizeof(qa_pickup_receipt) || plan->ammo_count > SIZE_MAX / sizeof(qa_pickup_receipt) ||
         (plan->weapon_offer && plan->shared_weapon_ammo)) return fail(e, QA_ERROR_ARGUMENT, "Invalid pickup grant preview plan");
-    qa_inventory_entry *entries = count ? malloc(count * sizeof(*entries)) : NULL;
-    qa_supply_preview_result result = {0};
+    qa_arena scratch;
+    qa_inventory_scratch_begin(storage_owner, &scratch);
+    qa_inventory_entry *entries = count ? qa_arena_alloc(&scratch,
+        count * sizeof(*entries), _Alignof(qa_inventory_entry), e) : NULL;
+    qa_supply_preview_result result = {.storage_owner = storage_owner};
+    qa_inventory_scratch_acquire(storage_owner, &result.storage);
     size_t weapon_capacity = plan->shared_weapon_ammo ? plan->ammo_count : plan->weapon_count;
-    result.weapons = weapon_capacity ? calloc(weapon_capacity, sizeof(*result.weapons)) : NULL;
-    result.ammo = plan->ammo_count ? calloc(plan->ammo_count, sizeof(*result.ammo)) : NULL;
+    result.weapons = weapon_capacity ? qa_arena_alloc(&result.storage,
+        weapon_capacity * sizeof(*result.weapons), _Alignof(qa_pickup_receipt), e) : NULL;
+    result.ammo = plan->ammo_count ? qa_arena_alloc(&result.storage,
+        plan->ammo_count * sizeof(*result.ammo), _Alignof(qa_pickup_receipt), e) : NULL;
     bool ok = true;
     if ((count && !entries) || (weapon_capacity && !result.weapons) || (plan->ammo_count && !result.ammo)) {
         ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup grant preview"); goto done;
@@ -1192,22 +1217,24 @@ static bool preview_grants(qa_inventory *source, qa_actor_id actor,
         }
     }
 done:
-    free(entries);
+    qa_arena_destroy(&scratch);
     if (ok) *out = result;
     else qa_supply_preview_free(&result);
     return ok;
 }
 
-bool qa_pickup_preview_grants(const qa_inventory_entry *inventory, size_t count,
+bool qa_pickup_preview_grants(qa_inventory *storage_owner, const qa_inventory_entry *inventory, size_t count,
     const qa_pickup_grant_plan *plan, qa_supply_preview_result *out, qa_error *e)
 {
-    return preview_grants(NULL, (qa_actor_id){0}, inventory, count, plan, out, e);
+    return preview_grants(storage_owner, NULL, (qa_actor_id){0}, inventory, count, plan, out, e);
 }
 
 static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_grants *grants,
                               bool weapon_offer, qa_supply_preview_result *out, qa_error *e)
 {
     qa_supply_preview_result result = {0};
+    qa_arena scratch;
+    qa_inventory_scratch_begin(supply->inventory, &scratch);
     qa_inventory_entry *entries = NULL;
     qa_pickup_grant *weapons = NULL;
     size_t count = 0;
@@ -1217,8 +1244,10 @@ static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_
     if (count > SIZE_MAX / sizeof(*entries) || grants->weapon_count > SIZE_MAX / sizeof(*weapons)) {
         ok = fail(e, QA_ERROR_MEMORY, "Pickup preview size overflow"); goto done;
     }
-    entries = malloc((count ? count : 1) * sizeof(*entries));
-    weapons = grants->weapon_count ? calloc(grants->weapon_count, sizeof(*weapons)) : NULL;
+    entries = qa_arena_alloc(&scratch, (count ? count : 1) * sizeof(*entries),
+        _Alignof(qa_inventory_entry), e);
+    weapons = grants->weapon_count ? qa_arena_alloc(&scratch,
+        grants->weapon_count * sizeof(*weapons), _Alignof(qa_pickup_grant), e) : NULL;
     if (!entries || (grants->weapon_count && !weapons)) {
         ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup preview"); goto done;
     }
@@ -1227,10 +1256,10 @@ static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_
     for (size_t i = 0; i < grants->weapon_count; ++i) weapons[i] = (qa_pickup_grant){grants->weapons[i], 1};
     qa_pickup_grant_plan plan = {.weapon_offer = weapon_offer, .weapons = weapons,
         .weapon_count = grants->weapon_count, .ammo = grants->ammo, .ammo_count = grants->ammo_count};
-    ok = preview_grants(supply->inventory, actor, entries, count, &plan, &result, e) &&
+    ok = preview_grants(supply->inventory, supply->inventory, actor, entries, count, &plan, &result, e) &&
         supply_current(supply, actor, e);
 done:
-    free(entries); free(weapons);
+    qa_arena_destroy(&scratch);
     if (ok) *out = result;
     else qa_supply_preview_free(&result);
     return ok;
@@ -1241,7 +1270,8 @@ bool qa_supply_preview(qa_supply *supply, qa_actor_id actor, const qa_supply_off
     if(!out) return fail(e,QA_ERROR_ARGUMENT,"Missing supply preview result");
     if(!supply_available(supply,e)) return false;
     supply_enter(supply);
-    supply_grants grants={0};qa_supply_options options={.canonical=canonical};
+    supply_grants grants={0};grants_begin(supply,&grants);
+    qa_supply_options options={.canonical=canonical};
     bool ok=supply_current(supply,actor,e) && resolve_offer(supply,offer,&options,&grants,e) &&
         preview_resolved(supply,actor,&grants,offer->kind==QA_SUPPLY_WEAPON,out,e);
     grants_free(&grants);supply_leave(supply);return ok;
@@ -1251,7 +1281,8 @@ bool qa_supply_cargo_preview(qa_supply *supply,qa_actor_id actor,const qa_pickup
 {
     if(!out) return fail(e,QA_ERROR_ARGUMENT,"Missing cargo preview result");
     if(!supply_available(supply,e) || !cargo_valid(cargo,count,e)) return false;
-    supply_enter(supply);supply_grants grants={0};bool ok=supply_current(supply,actor,e);
+    supply_enter(supply);supply_grants grants={0};grants_begin(supply,&grants);
+    bool ok=supply_current(supply,actor,e);
     for(size_t i=0;ok && i<count;++i)
         if(cargo[i].weapon) ok=resolve_weapon(supply,&grants,cargo[i].item,canonical,e);
         else ok=resolve_ammo(supply,&grants,(qa_pickup_grant){cargo[i].item,cargo[i].count},canonical,false,e);

@@ -119,7 +119,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
     if(!source_metadata(c,e)||!q3component_bootstrap_profile(c,e)||!q3component_frame_profile(c,e)||!qa_strings_intern_cstr(qa_session_strings(o->host.session),"qvm:mod-actor",&c->definition,e)) return false;
     if(c->maximum&&(!o->clients.current||!o->clients.userinfo||!o->clients.set_userinfo||!o->clients.command||!o->clients.drop))
         return q3records_fail(e,QA_ERROR_ARGUMENT,"Declared component clients lack their real canonical client services");
-    application_q3_mod_services services={.context=c,.pickups=o->application?o->application->pickups:NULL,.current=q3component_current,.storage_current=q3component_storage,.pointer=pointer,.eligible_actor=eligible,.live_client=client,
+    application_q3_mod_services services={.context=c,.application=o->application,.pickups=o->application?o->application->pickups:NULL,.current=q3component_current,.storage_current=q3component_storage,.pointer=pointer,.eligible_actor=eligible,.live_client=client,
         .client_slot=client_slot,.player_state=player,.time=time_read,.source_prepare=prepare,.source_enter=enter,.source_leave=leave};
     memcpy(services.operations,o->operations,sizeof(services.operations));
     if(!application_q3_mod_create(c->profile,c->vm,o->host.session,o->host.owner,o->combat,&services,restoring,&c->mod,e)||

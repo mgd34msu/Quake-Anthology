@@ -51,6 +51,16 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 map runtime");
         return false;
     }
+    if (!qa_arena_reserve(&g->maps->score_storage,
+            (size_t)g->capacity * sizeof(*g->maps->scores), error) ||
+        !(g->maps->scores = qa_arena_alloc(&g->maps->score_storage,
+            (size_t)g->capacity * sizeof(*g->maps->scores), _Alignof(float), error))) {
+        qa_arena_destroy(&g->maps->score_storage);
+        free(g->maps);
+        g->maps = NULL;
+        return false;
+    }
+    qa_arena_seal(&g->maps->score_storage);
     g->maps->options = *options;
     g->maps->lightning_end = -1;
     return true;
@@ -110,6 +120,8 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     q1_map_state *states = g->maps->allocated;
     q1_rotate_target *rotated = g->maps->rotated_targets;
     qa_actor_id *frame_ticks = g->maps->frame_ticks;
+    qa_arena score_storage = g->maps->score_storage;
+    float *scores = g->maps->scores;
     q1_addon_contact *contacts = g->maps->addon_contacts;
     if (contacts)
         memset(contacts, 0, g->capacity * sizeof(*contacts));
@@ -118,6 +130,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     door_groups_free(g->maps->door_groups);
     *g->maps = (q1_map_runtime){.options = replacement, .allocated = states,
                                .rotated_targets = rotated, .frame_ticks = frame_ticks,
+                               .score_storage = score_storage, .scores = scores,
                                .addon_contacts = contacts,
                                .lightning_end = -1};
     while (states) {
@@ -605,18 +618,7 @@ bool q1_map_level_frame(qa_q1_game *game, const qa_source_frame *frame, qa_error
         return q1_map_fail(error, "Q1 source limits require their real frame and cvar owner");
     double seconds = game->time;
     uint64_t time_ns = game->time_ns;
-    size_t count = 0;
-    for (uint32_t i = 0; i < game->capacity; ++i) {
-        const q1_player *player = game->players[i];
-        if (player && player->source_client && q1_alive(game, player->id)) ++count;
-    }
-    if (count > SIZE_MAX / sizeof(float))
-        return q1_map_fail(error, "Q1 source score extent overflows");
-    float *scores = count ? malloc(count * sizeof(*scores)) : NULL;
-    if (count && !scores) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Reading actual Q1 source scores");
-        return false;
-    }
+    float *scores = maps->scores;
     size_t written = 0;
     for (uint32_t i = 0; i < game->capacity; ++i) {
         const q1_player *player = game->players[i];
@@ -628,19 +630,16 @@ bool q1_map_level_frame(qa_q1_game *game, const qa_source_frame *frame, qa_error
         !level_frame_current(game, maps, level, error) ||
         !q1_source_value(game, QA_Q1_SOURCE_FRAGLIMIT, 0, &frags, error) ||
         !level_frame_current(game, maps, level, error)) {
-        free(scores);
         return false;
     }
     const qa_q1_level_state *state = qa_q1_level_read(level);
     if (state->next_map || (minutes == 0 && frags == 0)) {
-        free(scores);
         return true;
     }
     bool reached = minutes != 0 && seconds >= (double)minutes * 60;
     for (size_t i = 0; i < written; ++i)
         if (frags != 0 && scores[i] >= frags) reached = true;
     if (!reached) {
-        free(scores);
         return true;
     }
     qa_q1_source_entity changelevel = {0};
@@ -665,7 +664,6 @@ bool q1_map_level_frame(qa_q1_game *game, const qa_source_frame *frame, qa_error
         okay = qa_q1_level_check_limits(level, seconds, scores, written, minutes, frags,
             destination, &triggered, error) && level_frame_current(game, maps, level, error);
     }
-    free(scores);
     return okay;
 }
 void q1_map_destroy(qa_q1_game *g) {
@@ -688,6 +686,7 @@ void q1_map_destroy(qa_q1_game *g) {
     free(g->maps->rotated_targets);
     free(g->maps->frame_ticks);
     free(g->maps->addon_contacts);
+    qa_arena_destroy(&g->maps->score_storage);
     free(g->maps);
     g->maps = NULL;
 }

@@ -306,7 +306,8 @@ void application_players_dispose(application_player_travel *travel)
     if (travel == NULL)
         return;
     for (size_t i = 0; travel->carry != NULL && i < travel->count; ++i) {
-        free(travel->carry[i].inventory);
+        if (!travel->carry[i].q2.inventory_owner)
+            free(travel->carry[i].inventory);
         qa_q1_travel_destroy(travel->carry[i].q1_source);
         qa_q2_player_carry_free(&travel->carry[i].q2);
     }

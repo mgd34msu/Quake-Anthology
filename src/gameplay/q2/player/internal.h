@@ -33,6 +33,8 @@ typedef struct q2_players {
     qa_vec3 camera_origin, camera_angles;
     qa_q2_player_noise_record noise[2];
     q2_player_list *lists;
+    qa_arena scratch_storage;
+    qa_pool scratch_pages;
 } q2_players;
 q2_actor *q2_client(qa_q2_game *, qa_actor_id, qa_error *);
 bool q2_player_info(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
@@ -50,8 +52,7 @@ bool q2_player_clear_powerups(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_player_observe(qa_q2_game *, q2_actor *, qa_q2_player_movement *, qa_error *);
 bool q2_player_move(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
 bool q2_player_collision(qa_q2_game *, q2_actor *, bool, qa_error *);
-bool q2_player_inventory_copy(qa_q2_game *, qa_actor_id, qa_inventory_entry **, size_t *,
-                              qa_error *);
+void q2_player_inventory_free(qa_inventory *, qa_arena *, qa_inventory_entry *);
 bool q2_player_inventory_set(qa_q2_game *, qa_actor_id, const qa_inventory_entry *, size_t,
                              qa_error *);
 bool q2_player_start_items(qa_q2_game *, qa_actor_id, qa_error *);

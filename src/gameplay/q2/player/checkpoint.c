@@ -6,13 +6,18 @@ void qa_q2_player_checkpoint_free(qa_q2_player_checkpoint *s) {
     if (!s)
         return;
     qa_q2_player_carry_free(&s->value.rule.coop);
-    free(s->value.rule.spawn_inventory);
+    q2_player_inventory_free(s->value.rule.spawn_inventory_owner,
+        &s->value.rule.spawn_inventory_storage, s->value.rule.spawn_inventory);
     free(s->value.rule.help_points);
     *s = (qa_q2_player_checkpoint){0};
 }
 static bool copy_arrays(const qa_q2_player_rule_tail *from, qa_q2_player_rule_tail *to, qa_error *e) {
     to->coop.inventory = NULL;
+    to->coop.inventory_owner = NULL;
+    to->coop.inventory_storage = (qa_arena){0};
     to->spawn_inventory = NULL;
+    to->spawn_inventory_owner = NULL;
+    to->spawn_inventory_storage = (qa_arena){0};
     to->help_points = NULL;
     void *copy;
     if (!q2_saved_array(from->coop.inventory, from->coop.count, sizeof(*from->coop.inventory),
