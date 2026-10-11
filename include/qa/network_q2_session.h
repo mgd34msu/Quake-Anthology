@@ -70,9 +70,10 @@ typedef struct qa_network_q2_server_hooks {
         const qa_network_q2_player *, const qa_q2_usercmd *, uint64_t source_sequence,
         qa_error *);
     /* Actual Source console macro expansion precedes protocol command routing.
-     * Owned bytes include the terminating NUL. Empty output means that Source
-     * discarded the line after its genuine lexical diagnostic. */
-    bool (*expand_command)(void *, qa_net_client_id, const char *, qa_buffer *, qa_error *);
+     * The caller arena owns bytes including the terminating NUL. Empty output
+     * means Source discarded the line after its genuine lexical diagnostic. */
+    bool (*expand_command)(void *, qa_net_client_id, const char *, struct qa_arena *,
+        qa_buffer *, qa_error *);
     bool (*command)(void *, qa_net_client_id, qa_net_seat_id, const char *, qa_error *);
     /* Returns the actual GAME-mutated dictionary as owned NUL-terminated
      * bytes. Later native deltas use this Source result. */

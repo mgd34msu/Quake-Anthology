@@ -48,14 +48,14 @@ bool qa_builtin_fire_hitscan(const qa_builtin_services *s, const qa_builtin_hits
                 return false;
             can_damage = apply_damage;
             if (apply_damage && !qa_combat_apply(s->combat, &request, &outcome, error)) {
-                qa_damage_outcome_free(&outcome);
+                qa_damage_outcome_release(&outcome);
                 return false;
             }
         }
         bool again = false;
         bool ok = !shot->hit ||
                   shot->hit(shot->context, &trace, can_damage ? &outcome : NULL, &again, error);
-        qa_damage_outcome_free(&outcome);
+        qa_damage_outcome_release(&outcome);
         if (!ok)
             return false;
         if (!again || trace.hit != QA_TRACE_HIT_ACTOR)
@@ -213,7 +213,7 @@ bool qa_builtin_radius_damage(const qa_builtin_services *s, const qa_builtin_rad
             ++total;
         if (ok && radius->after)
             ok = radius->after(radius->context, &outcome, error);
-        qa_damage_outcome_free(&outcome);
+        qa_damage_outcome_release(&outcome);
         if (!ok)
             return false;
     }

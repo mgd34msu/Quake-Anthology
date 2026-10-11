@@ -9,6 +9,33 @@ bool qa_combat_argument(qa_error *error, const char *message) {
 static bool memory_error(qa_error *error) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating combat storage"); return false;
 }
+struct qa_damage_journal_store {
+    qa_arena storage;
+    qa_pool mutations;
+    size_t outcomes;
+    bool retired;
+};
+static void journal_store_destroy(qa_damage_journal_store *store) {
+    if (!store) return;
+    qa_arena_destroy(&store->storage);
+    free(store);
+}
+static qa_damage_journal_store *journal_store_create(size_t actors, qa_error *error) {
+    /* Reserve one complete protocol-sized journal plus the original eight-entry
+     * initial journal for every actor. These slots are shared by nested and
+     * retained outcomes; there is no smaller per-hit mutation limit. */
+    if (actors > (SIZE_MAX - QA_DAMAGE_JOURNAL_MUTATIONS) / 8) {
+        memory_error(error); return NULL;
+    }
+    size_t count = QA_DAMAGE_JOURNAL_MUTATIONS + actors * 8;
+    qa_damage_journal_store *store = calloc(1, sizeof(*store));
+    if (!store) { memory_error(error); return NULL; }
+    if (!qa_pool_reserve_pages(&store->mutations, &store->storage, count,
+            sizeof(qa_damage_mutation), _Alignof(qa_damage_mutation), error)) {
+        journal_store_destroy(store); return NULL;
+    }
+    return store;
+}
 bool qa_combat_live(qa_combat *combat, qa_actor_id actor) {
     return combat && qa_actors_get(combat->actors, actor) != NULL;
 }
@@ -149,8 +176,10 @@ bool qa_combat_create(qa_actor_registry *actors, const qa_combat_hooks *hooks, q
     qa_combat *combat = calloc(1, sizeof(*combat));
     if (!combat) return memory_error(error);
     combat->records = calloc(count, sizeof(*combat->records));
-    if (!combat->records || !qa_operation_create(sizeof(qa_damage_request), sizeof(qa_damage_outcome), &combat->damage, error)) {
+    combat->journals = journal_store_create(count, error);
+    if (!combat->records || !combat->journals || !qa_operation_create(sizeof(qa_damage_request), sizeof(qa_damage_outcome), &combat->damage, error)) {
         bool allocation_failed = !combat->records;
+        journal_store_destroy(combat->journals);
         free(combat->records); free(combat);
         return allocation_failed ? memory_error(error) : false;
     }
@@ -164,6 +193,8 @@ bool qa_combat_destroy(qa_combat *combat, qa_error *error) {
     if (!qa_combat_idle(combat)) return qa_combat_argument(error, "cannot destroy active combat");
     if (combat->admissions) return qa_combat_argument(error, "abort policy admissions before combat destruction");
     if (!qa_operation_destroy(combat->damage, error)) return false;
+    combat->journals->retired = true;
+    if (!combat->journals->outcomes) journal_store_destroy(combat->journals);
     free(combat->records); free(combat->policies); free(combat); return true;
 }
 void qa_combat_actor_released(qa_combat *combat, qa_actor_record released) {
@@ -383,12 +414,32 @@ static qa_combat_cursor *cursor_for(qa_combat *combat, qa_actor_id actor) {
     return NULL;
 }
 static bool journal_reserve(qa_combat_cursor *cursor, qa_error *error) {
-    if (cursor->outcome->mutation_count < cursor->journal_capacity) return true;
-    size_t capacity = cursor->journal_capacity ? cursor->journal_capacity * 2 : 8;
-    if (capacity < cursor->journal_capacity || capacity > SIZE_MAX / sizeof(qa_damage_mutation)) return memory_error(error);
-    qa_damage_mutation *mutations = realloc(cursor->outcome->mutations, capacity * sizeof(*mutations));
-    if (!mutations) return memory_error(error);
-    cursor->outcome->mutations = mutations; cursor->journal_capacity = capacity; return true;
+    qa_damage_outcome *outcome = cursor->outcome;
+    if (outcome->mutation_count < outcome->journal_capacity) return true;
+    size_t capacity = outcome->journal_capacity ? outcome->journal_capacity * 2 : 8;
+    if (capacity < outcome->journal_capacity || capacity > SIZE_MAX / sizeof(qa_damage_mutation))
+        return memory_error(error);
+    qa_damage_journal_store *store = cursor->journals;
+    size_t slot = outcome->journal_slot;
+    qa_damage_mutation *mutations = NULL;
+    if (outcome->journal) {
+        mutations = qa_pool_grow_run(&store->mutations, &slot,
+            outcome->journal_capacity, capacity);
+        if (mutations) memmove(mutations, outcome->mutations,
+            outcome->mutation_count * sizeof(*mutations));
+    }
+    if (!mutations) {
+        mutations = qa_pool_take_run(&store->mutations, capacity, &slot);
+        if (!mutations) return memory_error(error);
+        if (outcome->mutation_count) memcpy(mutations, outcome->mutations,
+            outcome->mutation_count * sizeof(*mutations));
+        if (outcome->journal) qa_pool_release_run(&store->mutations,
+            outcome->journal_slot, outcome->journal_capacity);
+    }
+    if (!outcome->journal) ++store->outcomes;
+    outcome->journal = store; outcome->journal_slot = slot;
+    outcome->mutations = mutations; outcome->journal_capacity = capacity;
+    return true;
 }
 static void advance_cursors(qa_combat *combat, qa_actor_id actor, const qa_damage_mutation *mutation) {
     for (qa_combat_cursor *cursor = combat->current; cursor; cursor = cursor->previous) {
@@ -849,9 +900,15 @@ bool qa_combat_impulse(qa_combat *combat, const qa_damage_request *request, qa_v
     cursor->outcome->mutations[cursor->outcome->mutation_count++] = mutation;
     return true;
 }
-void qa_damage_outcome_free(qa_damage_outcome *outcome) {
+void qa_damage_outcome_release(qa_damage_outcome *outcome) {
     if (!outcome) return;
-    free(outcome->mutations); memset(outcome, 0, sizeof(*outcome));
+    qa_damage_journal_store *store = outcome->journal;
+    if (store) {
+        qa_pool_release_run(&store->mutations, outcome->journal_slot, outcome->journal_capacity);
+        --store->outcomes;
+        if (store->retired && !store->outcomes) journal_store_destroy(store);
+    }
+    memset(outcome, 0, sizeof(*outcome));
 }
 typedef struct damage_dispatch {
     qa_combat *combat;
@@ -950,7 +1007,7 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
     }
     if (!observe_public(combat, request->target, false, error) || !observe_public(combat, request->target, true, error)) return false;
     qa_combat_state initial; if (!read_state(combat, entry, &initial, error)) return false;
-    qa_combat_cursor cursor = {.previous = combat->current, .outcome = outcome, .observed = initial, .binding_serial = serial, .active = true};
+    qa_combat_cursor cursor = {.previous = combat->current, .outcome = outcome, .journals = combat->journals, .observed = initial, .binding_serial = serial, .active = true};
     combat->current = &cursor;
     qa_damage_result result = {0}; bool ok = true;
     if (allowed && source) {
@@ -1005,7 +1062,7 @@ static bool dispatch_damage(qa_combat *combat, const qa_damage_request *request,
     }
     if (ok) ok = qa_operation_dispatch(combat->damage, request, &result, damage_canonical, &dispatch, NULL, NULL, error);
     --combat->active_hits;
-    if (!ok) { qa_damage_outcome_free(&result); return false; }
+    if (!ok) { qa_damage_outcome_release(&result); return false; }
     *out = result; return true;
 }
 bool qa_combat_apply(qa_combat *combat, const qa_damage_request *request, qa_damage_outcome *out, qa_error *error) {

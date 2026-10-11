@@ -204,8 +204,8 @@ static bool source_begin(void *context,qa_net_client_id id,qa_net_seat_id seat,q
 static bool source_input(void *context,qa_net_client_id id,qa_net_seat_id seat,const qa_network_q2_player *player,
     const qa_q2_usercmd *command,uint64_t sequence,qa_error *error)
 { q2_host_peer *peer=context; return peer->source_hooks.input(peer->source_hooks.context,id,seat,player,command,sequence,error); }
-static bool source_expand(void *context,qa_net_client_id id,const char *text,qa_buffer *out,qa_error *error)
-{ q2_host_peer *peer=context; return peer->source_hooks.expand_command(peer->source_hooks.context,id,text,out,error); }
+static bool source_expand(void *context,qa_net_client_id id,const char *text,qa_arena *storage,qa_buffer *out,qa_error *error)
+{ q2_host_peer *peer=context; return peer->source_hooks.expand_command(peer->source_hooks.context,id,text,storage,out,error); }
 static bool source_command(void *context,qa_net_client_id id,qa_net_seat_id seat,const char *text,qa_error *error)
 { q2_host_peer *peer=context; return peer->source_hooks.command(peer->source_hooks.context,id,seat,text,error); }
 static bool source_userinfo(void *context,qa_net_client_id id,qa_net_seat_id seat,const char *text,qa_buffer *out,qa_error *error)

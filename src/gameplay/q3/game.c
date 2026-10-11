@@ -672,7 +672,7 @@ bool q3_damage(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker, qa_ac
     qa_damage_outcome *out = result ? result : &local;
     bool ok = qa_combat_apply(game->options.services.combat, &request, out, error);
     if (!result)
-        qa_damage_outcome_free(&local);
+        qa_damage_outcome_release(&local);
     return ok;
 }
 float q3_damage_factor(qa_q3_game *game, const qa_q3_player_state *player) {

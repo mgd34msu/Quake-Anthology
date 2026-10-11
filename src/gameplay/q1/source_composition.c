@@ -67,7 +67,7 @@ bool qa_q1_source_damage(qa_q1_game *game, qa_actor_id target, qa_actor_id infli
         if (okay) {
             qa_damage_outcome outcome = {0};
             okay = qa_combat_apply(game->services.combat, &request, &outcome, error);
-            qa_damage_outcome_free(&outcome);
+            qa_damage_outcome_release(&outcome);
         }
     }
     if (okay && !qa_q1_game_operation_live(&operation)) {

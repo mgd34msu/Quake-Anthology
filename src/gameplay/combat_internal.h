@@ -2,6 +2,7 @@
 #define QA_COMBAT_INTERNAL_H
 #include "qa/gameplay.h"
 #include "qa/operation.h"
+#include "qa/pool.h"
 
 typedef struct qa_combat_protection {
     uint64_t serial;
@@ -28,7 +29,7 @@ typedef struct qa_combat_cursor {
     qa_damage_outcome *outcome;
     qa_combat_state observed;
     qa_vec3 velocity;
-    size_t journal_capacity;
+    qa_damage_journal_store *journals;
     uint64_t binding_serial;
     bool active, has_velocity, reaction_seen;
     qa_damage_result reaction;
@@ -36,6 +37,7 @@ typedef struct qa_combat_cursor {
 struct qa_combat {
     qa_actor_registry *actors;
     qa_combat_record *records;
+    qa_damage_journal_store *journals;
     qa_combat_hooks hooks;
     qa_combat_policy *policies;
     size_t policy_count, policy_capacity;

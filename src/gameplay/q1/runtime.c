@@ -1326,7 +1326,7 @@ bool q1_damage_typed(qa_q1_game *g, qa_actor_id target, qa_actor_id inflictor, q
     if (!q1_alive(g, target)) return true;
     qa_damage_outcome outcome = {0};
     bool ok = qa_combat_apply(g->services.combat, &request, &outcome, error);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     return ok;
 }
 static bool radius_adjust(void *context, qa_actor_id target, float *damage, float *knockback,

@@ -1773,7 +1773,7 @@ static const qa_unified_field qa_damage_outcome_fields[] = {
     QA_UNIFIED_RECORD(qa_damage_outcome, request, qa_damage_request_layout),
     QA_UNIFIED_RECORD(qa_damage_outcome, result, qa_damage_result_layout),
     QA_UNIFIED_RECORD(qa_damage_outcome, inflictor_center, qa_damage_inflictor_center_layout),
-    QA_UNIFIED_ARRAY(qa_damage_outcome, mutations, mutation_count, qa_damage_mutation_layout, 65536),
+    QA_UNIFIED_ARRAY(qa_damage_outcome, mutations, mutation_count, qa_damage_mutation_layout, QA_DAMAGE_JOURNAL_MUTATIONS),
 };
 static const qa_unified_record_layout qa_damage_outcome_layout = QA_UNIFIED_LAYOUT(qa_damage_outcome, qa_damage_outcome_fields);
 

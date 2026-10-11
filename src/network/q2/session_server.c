@@ -136,17 +136,22 @@ static bool begin(q2_session *session, qa_error *error)
 }
 static bool string_command(q2_session *session, uint8_t seat, const char *text, qa_error *error)
 {
+    /* Q2 expands fewer than 1024 bytes, then admits at most 80 tokens. */
+    _Alignas(max_align_t) uint8_t bytes[4 * 1024 + 80 * sizeof(char *) + 128];
+    qa_arena storage = {0};
+    if (!qa_arena_init_buffer(&storage, bytes, sizeof(bytes), error)) return false;
     qa_buffer expanded = {0}; q2_server *server = &session->state.server;
-    if (!server->hooks.expand_command(server->hooks.context, session->id, text, &expanded, error)) {
-        qa_buffer_free(&expanded); return false;
+    if (!server->hooks.expand_command(server->hooks.context, session->id, text, &storage, &expanded, error)) {
+        return false;
     }
     if (!expanded.data && !expanded.size) return true;
     if (!expanded.data || !expanded.size || expanded.data[expanded.size - 1] || memchr(expanded.data, 0, expanded.size - 1)) {
-        qa_buffer_free(&expanded); return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source expansion returned an invalid command string");
+        return q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source expansion returned an invalid command string");
     }
     text = (const char *)expanded.data;
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q2_CLASSIC, false, &tokens, NULL, NULL, error)) { qa_buffer_free(&expanded); return false; }
+    if (!qa_command_tokenize(text, QA_RULESET_Q2_CLASSIC, false, &tokens,
+            qa_arena_alloc_callback, &storage, error)) return false;
     const char *name = token(&tokens, 0); bool ok = true;
     if (!strcmp(name, "disconnect")) {
         ok = q2_server_drop_request(session, "client disconnected", error);
@@ -171,7 +176,7 @@ static bool string_command(q2_session *session, uint8_t seat, const char *text, 
         ok = client && session->state.server.hooks.command(session->state.server.hooks.context,
             session->id, client->seats[seat].seat, text, error);
     }
-    qa_command_tokens_free(&tokens); qa_buffer_free(&expanded); return ok;
+    qa_command_tokens_free(&tokens); qa_arena_destroy(&storage); return ok;
 }
 static bool think(void *context, const qa_q2_usercmd *command, qa_error *error)
 {

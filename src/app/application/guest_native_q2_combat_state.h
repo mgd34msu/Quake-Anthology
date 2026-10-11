@@ -3,11 +3,15 @@
 #include "guest_native_q2_calls.h"
 #include "qa/gameplay.h"
 #include "qa/game_q2.h"
+#include "qa/id_index.h"
 struct application_native_q2;
 typedef struct application_q2_armor_row {
     uint32_t index;
     qa_item_id item;
 } application_q2_armor_row;
+typedef struct application_q2_combat_team {
+    qa_team_id model, skin;
+} application_q2_combat_team;
 typedef struct application_q2_combat_profile {
     struct application_native_q2 *engine;
     qa_json_document *document;
@@ -21,6 +25,10 @@ typedef struct application_q2_combat_profile {
         normal, energy, screen, shield, cells, empty;
     uint64_t godmode, no_knockback, power_armor;
     uint32_t model_team, skin_team;
+    qa_team_id coop_team;
+    qa_id_index numeric_teams;
+    application_q2_combat_team client_teams[257];
+    char *userinfo_storage;
     uint32_t damage_entry, regular_entry, power_entry, process_entry;
     uint32_t monster_attacker, monster_inflictor, monster_blood, monster_knockback,
         monster_point, monster_mod, monster_invincible;
@@ -46,6 +54,7 @@ bool application_q2_combat_profile_read(struct application_native_q2 *,
     application_q2_combat_profile *, qa_error *);
 bool application_q2_combat_profile_resolve(application_q2_combat_profile *, qa_error *);
 void application_q2_combat_profile_free(application_q2_combat_profile *);
+bool application_q2_combat_team_refresh(application_q2_combat_profile *, uint32_t, qa_error *);
 bool application_q2_combat_actor_init(application_q2_combat_profile *, uint32_t,
     qa_actor_id, bool admitting, application_q2_combat_actor *, qa_error *);
 bool application_q2_combat_actor_valid(application_q2_combat_actor *, qa_error *);

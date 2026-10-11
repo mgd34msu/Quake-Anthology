@@ -146,6 +146,7 @@ static bool damage(void *context, const application_q3_gear_damage *hit, qa_erro
         .direction = hit->direction, .point = hit->point};
     qa_damage_outcome outcome;
     if (!qa_combat_apply(runtime->options.services.combat, &request, &outcome, error)) return false;
+    qa_damage_outcome_release(&outcome);
     return source_current(source) || application_fail(error, QA_ERROR_ARGUMENT, "Gear damage source retired during combat");
 }
 

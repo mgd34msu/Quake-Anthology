@@ -504,10 +504,14 @@ bool qa_console_insert(qa_console *console, const qa_command_context *context,
                          const char *text, qa_error *error);
 bool qa_console_execute_now(qa_console *console, const qa_command_context *context,
                               const char *text, qa_error *error);
+/* A synchronous command scope borrows the console's load-owned page pool.
+ * Destroy the arena after dispatch; the console outlives every entered scope. */
+struct qa_arena;
+void qa_console_command_arena(qa_console *, struct qa_arena *);
 /* Expand through the actual Source console/cvar context without dispatching a
- * command. Owned output includes NUL; a lexical discard leaves it empty. */
+ * command. Arena-owned output includes NUL; a lexical discard leaves it empty. */
 bool qa_console_expand_command(qa_console *, const qa_command_context *,
-    const char *, qa_buffer *empty_output, qa_error *);
+    const char *, struct qa_arena *, qa_buffer *empty_output, qa_error *);
 /* Output redirection covers this synchronous invocation and nested commands.
  * Deferred commands retain their ordinary console output owner. */
 bool qa_console_execute_capture(qa_console *, const qa_command_context *, const char *,

@@ -2,7 +2,11 @@
 #include "guest_native_q2_combat_state.h"
 #include "qa/game_q2.h"
 #include "qa/native_host_q2_wire.h"
+#include "qa/text.h"
 #include <math.h>
+
+static bool numeric_team_admit(application_q2_combat_profile *, int64_t,
+    qa_team_id *, qa_error *);
 
 static bool word(const qa_json_document *doc, qa_json_id object, const char *name,
     uint32_t *out, qa_error *error)
@@ -232,6 +236,19 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         p->normal > 65532 || p->energy > 65532 || p->normal == p->energy ||
         !p->damage_entry || !p->power_entry || !p->time)
         return application_fail(error, QA_ERROR_FORMAT, "Native combat metadata lacks bounded source storage");
+    if (p->kex) {
+        if (!qa_id_index_reserve(&p->numeric_teams, UINT8_MAX, error)) return false;
+        for (int64_t team = 1; team <= UINT8_MAX; ++team) {
+            qa_team_id identity;
+            if (!numeric_team_admit(p, team, &identity, error)) return false;
+        }
+    } else {
+        if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
+            "q2:coop", &p->coop_team, error)) return false;
+        p->userinfo_storage = malloc(p->userinfo_bytes);
+        if (!p->userinfo_storage)
+            return application_fail(error, QA_ERROR_MEMORY, "Retaining native team userinfo scratch");
+    }
     return true;
 }
 bool application_q2_combat_profile_resolve(application_q2_combat_profile *p, qa_error *error)
@@ -269,7 +286,8 @@ void application_q2_combat_profile_free(application_q2_combat_profile *p)
 {
     if (!p) return;
     for (size_t i = 0; i < 6; ++i) application_q2_call_free(&p->calls[i]);
-    qa_json_destroy(p->document); free(p->regular); memset(p, 0, sizeof(*p));
+    qa_json_destroy(p->document); free(p->regular); free(p->userinfo_storage);
+    qa_id_index_destroy(&p->numeric_teams); memset(p, 0, sizeof(*p));
 }
 static qa_native_instance *native(const application_q2_combat_profile *p)
 { return qa_native_host_instance(p->engine->provider->state.native.host); }
@@ -338,22 +356,84 @@ static bool count(const application_q2_combat_profile *p, qa_native_address clie
     if (index >= p->inventory_count || !integer_read(p, client + p->inventory + (uint64_t)index * 4, 4, &value, error)) return false;
     *out = (double)value; return true;
 }
-static bool classic_skin(const char *info, char *out, size_t capacity, qa_error *error)
+static bool numeric_team_admit(application_q2_combat_profile *p, int64_t number,
+    qa_team_id *out, qa_error *error)
 {
-    out[0] = 0;
-    const char *cursor = info + (*info == '\\');
-    while (*cursor) {
-        const char *separator = strchr(cursor, '\\');
-        if (!separator) return true;
-        const char *value = separator + 1, *end = strchr(value, '\\');
-        size_t bytes = end ? (size_t)(end - value) : strlen(value);
-        if ((size_t)(separator - cursor) == 4 && !memcmp(cursor, "skin", 4)) {
-            if (bytes >= capacity) return application_fail(error, QA_ERROR_FORMAT, "Native classic skin exceeds its bounded source team value");
-            memcpy(out, value, bytes); out[bytes] = 0; return true;
-        }
-        if (!end) return true;
-        cursor = end + 1;
+    *out = 0;
+    if (number <= 0) return true;
+    qa_id_index_entry *retained = qa_id_index_find(&p->numeric_teams, (uint32_t)number, 0);
+    if (retained) {
+        *out = (qa_team_id)retained->value;
+        return true;
     }
+    char text[48];
+    snprintf(text, sizeof(text), "q2:%lld", (long long)number);
+    if (!qa_id_index_reserve(&p->numeric_teams, 1, error) ||
+        !qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session),
+            text, out, error)) return false;
+    qa_id_index_insert(&p->numeric_teams, (uint32_t)number, 0, *out);
+    return true;
+}
+bool application_q2_combat_team_refresh(application_q2_combat_profile *p,
+    uint32_t slot, qa_error *error)
+{
+    if (!slot || slot >= 257) return true;
+    const qa_actor_registry *actors = qa_session_actors(p->engine->provider->application->session);
+    if (!qa_actors_get(actors, p->engine->clients[slot].actor)) {
+        qa_native_slot_binding binding;
+        if (!qa_native_slot(native(p), slot, &binding, error)) return false;
+        if (!qa_actors_get(actors, binding.actor)) return true;
+    }
+    qa_native_address address, client;
+    if (!qa_native_entity_address(native(p), slot, &address, error) ||
+        !pointer_read(p, address + p->client_pointer, &client, error)) return false;
+    if (!client) return true;
+    if (p->kex) {
+        int64_t team;
+        if (p->team != UINT32_MAX) {
+            if (!integer_read(p, client + p->team, 4, &team, error)) return false;
+        } else {
+            qa_q2_player player;
+            if (!qa_native_host_q2_player(p->engine->provider->state.native.host,
+                slot, &player, error)) return false;
+            team = player.team_id;
+        }
+        qa_team_id identity;
+        return numeric_team_admit(p, team, &identity, error);
+    }
+    qa_bytes info;
+    if (!qa_native_string_span(native(p), client + p->userinfo,
+        p->userinfo_bytes, &info, error)) return false;
+    if (!info.data) {
+        if (!qa_native_read(native(p), client + p->userinfo, p->userinfo_storage,
+            info.size + 1, error)) return false;
+        info.data = (const uint8_t *)p->userinfo_storage;
+    }
+    qa_bytes skin = {0};
+    qa_info_find((const char *)info.data, (qa_bytes){(const uint8_t *)"skin", 4}, 0, &skin);
+    application_q2_combat_team *retained = &p->client_teams[slot];
+    if (skin.size >= 1024)
+        return application_fail(error, QA_ERROR_FORMAT, "Native classic skin exceeds its bounded source team value");
+    const uint8_t *slash = skin.size ? memchr(skin.data, '/', skin.size) : NULL;
+    qa_bytes model = {skin.data, slash ? (size_t)(slash - skin.data) : skin.size};
+    qa_bytes suffix = slash ? (qa_bytes){slash + 1, skin.size - (size_t)(slash + 1 - skin.data)} : skin;
+    qa_strings *strings = qa_session_strings(p->engine->provider->application->session);
+    qa_bytes retained_model = qa_strings_text(strings, retained->model),
+        retained_skin = qa_strings_text(strings, retained->skin);
+    if (retained_model.size == 9 + model.size && retained_skin.size == 8 + suffix.size &&
+        (!model.size || !memcmp(retained_model.data + 9, model.data, model.size)) &&
+        (!suffix.size || !memcmp(retained_skin.data + 8, suffix.data, suffix.size))) return true;
+    char text[1040];
+    qa_team_id model_id, skin_id;
+    memcpy(text, "q2:model:", 9);
+    if (model.size) memcpy(text + 9, model.data, model.size);
+    text[9 + model.size] = 0;
+    if (!qa_strings_intern_cstr(strings, text, &model_id, error)) return false;
+    memcpy(text, "q2:skin:", 8);
+    if (suffix.size) memcpy(text + 8, suffix.data, suffix.size);
+    text[8 + suffix.size] = 0;
+    if (!qa_strings_intern_cstr(strings, text, &skin_id, error)) return false;
+    retained->model = model_id; retained->skin = skin_id;
     return true;
 }
 static bool definition(application_q2_combat_profile *p, uint32_t index,
@@ -500,12 +580,9 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
                 if (!qa_native_host_q2_player(p->engine->provider->state.native.host, a->slot, &player, error)) return false;
                 team = player.team_id;
             }
-            if (team > 0) {
-                char text[48]; snprintf(text, sizeof(text), "q2:%lld", (long long)team);
-                if (!qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session), text, &out->team, error)) return false;
-            }
+            if (!numeric_team_admit(p, team, &out->team, error)) return false;
         } else {
-            uint8_t bytes[4]; qa_buffer info = {0}; char skin[1024];
+            uint8_t bytes[4];
             if (!qa_native_read(native(p), client + p->invincible, bytes, 4, error)) return false;
             float expiration = qa_load_f32le(bytes);
             if (!isfinite(expiration)) return application_fail(error, QA_ERROR_FORMAT, "Native invulnerability expiration is invalid");
@@ -513,16 +590,10 @@ bool application_q2_combat_state_read(void *opaque, qa_combat_state *out, qa_err
             const qa_cvar_view *coop = qa_cvars_read(p->engine->cvars, p->engine->combat_cvars.coop),
                 *rules = qa_cvars_read(p->engine->cvars, p->engine->combat_cvars.dmflags);
             if (coop && coop->number != 0) {
-                if (!qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session), "q2:coop", &out->team, error)) return false;
+                out->team = p->coop_team;
             } else if (rules && ((uint32_t)rules->integer & (p->model_team | p->skin_team))) {
-                bool ok = qa_native_read_string(native(p), client + p->userinfo, p->userinfo_bytes, &info, error) &&
-                    classic_skin((char *)info.data, skin, sizeof(skin), error);
-                qa_buffer_free(&info); if (!ok) return false;
-                char *slash = strchr(skin, '/'); const char *value = skin; const char *prefix = "q2:model:";
-                if ((uint32_t)rules->integer & p->model_team) { if (slash) *slash = 0; }
-                else { value = slash ? slash + 1 : skin; prefix = "q2:skin:"; }
-                char text[1040]; snprintf(text, sizeof(text), "%s%s", prefix, value);
-                if (!qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session), text, &out->team, error)) return false;
+                const application_q2_combat_team *team = &p->client_teams[a->slot];
+                out->team = (uint32_t)rules->integer & p->model_team ? team->model : team->skin;
             }
         }
     } else if (p->kex) {

@@ -392,7 +392,7 @@ static void armor_and_protection(void)
     /* progs106/combat.qc: ceil(11*.3)=4 saved, ceil(11-4)=7 taken. */
     GAME_CHECK(state.health == 68 && state.armor.regular.points == 6);
     GAME_CHECK(outcome.result.applied_damage == 7 && fixture.pain_sounds == 1);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     state.invulnerable = true;
     GAME_CHECK(qa_combat_set_traits(fixture.combat, knight, &state, &error));
     outcome = hit(&fixture, knight, 11);
@@ -400,7 +400,7 @@ static void armor_and_protection(void)
     /* Source consumes armor before checking godmode, and omits th_pain. */
     GAME_CHECK(state.health == 68 && state.armor.regular.points == 2);
     GAME_CHECK(outcome.result.reaction == QA_REACTION_NONE && fixture.pain_sounds == 1);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     fixture_destroy(&fixture);
 }
 
@@ -411,16 +411,16 @@ static void pain_cooldown(uint8_t skill)
     fixture_create(&fixture, QA_Q1_CLASSIC, skill, true, QA_Q1_ID1);
     qa_actor_id knight = spawn(&fixture, "monster_knight");
     qa_damage_outcome outcome = hit(&fixture, knight, 10);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     GAME_CHECK(fixture.pain_sounds == 1);
     advance(&fixture, 11);
     outcome = hit(&fixture, knight, 10);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     /* knight.qc uses one second; combat.qc replaces it with five on Nightmare. */
     GAME_CHECK(fixture.pain_sounds == (skill == 3 ? 1u : 2u));
     advance(&fixture, 51);
     outcome = hit(&fixture, knight, 10);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     GAME_CHECK(fixture.pain_sounds == (skill == 3 ? 2u : 3u));
     fixture_destroy(&fixture);
 }
@@ -435,12 +435,12 @@ static void edition_damage(qa_q1_edition edition)
     GAME_CHECK(qa_combat_read(fixture.combat, oldone, &state, &error));
     GAME_CHECK(state.health == 40000);
     qa_damage_outcome outcome = hit(&fixture, oldone, 1);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     GAME_CHECK(qa_combat_read(fixture.combat, oldone, &state, &error));
     /* Only rerelease combat.qc has the pre-quad damage <9999 Shub gate. */
     GAME_CHECK(state.health == (edition == QA_Q1_RERELEASE ? 40000 : 39999));
     outcome = hit(&fixture, oldone, 9999);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     GAME_CHECK(qa_combat_read(fixture.combat, oldone, &state, &error));
     GAME_CHECK(state.health == (edition == QA_Q1_RERELEASE ? 30001 : 30000));
     fixture_destroy(&fixture);

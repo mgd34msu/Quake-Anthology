@@ -8,6 +8,7 @@
 #include "guest_native_q2_input.h"
 #include "guest_native_q2_attack.h"
 #include "qa/native_host_q2_wire.h"
+#include "qa/arena.h"
 #include <math.h>
 
 uint32_t application_native_q2_client_slot(const struct application_native_q2 *engine, qa_actor_id actor)
@@ -542,8 +543,10 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     if (ok && (!qa_actor_id_equal(client->actor, actor) ||
         !qa_actors_get(qa_session_actors(provider->application->session), actor)))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 connect replaced its actual client generation");
-    if (ok && *accepted) client->connected = true;
-    else {
+    if (ok && *accepted) {
+        client->connected = true;
+        ok = application_native_q2_combat_team_refresh(engine, slot, error);
+    } else {
         qa_error cleanup = {0};
         bool detached = qa_native_host_detach_actor(provider->state.native.host, slot, actor, &cleanup);
         if (!detached && ok) { ok = false; if (error) *error = cleanup; }
@@ -562,7 +565,8 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
 {
     struct application_native_q2 *engine = client_owner(provider, slot, true, error);
     if (!engine) return false;
-    if (engine->clients[slot].begun) return application_native_q2_callbacks_components_begin(engine,engine->clients[slot].actor,error)&&
+    if (engine->clients[slot].begun) return application_native_q2_combat_team_refresh(engine, slot, error) &&
+        application_native_q2_callbacks_components_begin(engine,engine->clients[slot].actor,error)&&
         application_native_q2_inventory_admit(engine, slot, error) &&
         application_native_q2_combat_admit(
             engine, slot, engine->clients[slot].actor, false, error);
@@ -571,7 +575,8 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
     bool ok = engine->callbacks || qa_native_host_client_begin(provider->state.native.host, slot, error);
     --engine->calls;
     if (ok) engine->clients[slot].begun = true;
-    return ok && application_native_q2_callbacks_components_begin(engine,engine->clients[slot].actor,error) &&
+    return ok && application_native_q2_combat_team_refresh(engine, slot, error) &&
+        application_native_q2_callbacks_components_begin(engine,engine->clients[slot].actor,error) &&
         application_native_q2_inventory_admit(engine, slot, error) &&
         application_native_q2_combat_admit(
             engine, slot, engine->clients[slot].actor, false, error);
@@ -636,7 +641,7 @@ bool application_native_q2_client_userinfo(application_provider *provider, uint3
         engine->clients[slot].userinfo_present = true;
     }
     qa_buffer_free(&returned);
-    return ok;
+    return ok && application_native_q2_combat_team_refresh(engine, slot, error);
 }
 
 bool application_native_q2_client_disconnect(application_provider *provider, uint32_t slot, qa_error *error)
@@ -726,44 +731,9 @@ bool application_native_q2_client_think(application_provider *provider, uint32_t
     application_native_q2_visibility_invalidate(engine);
     bool ok = qa_native_host_client_think(provider->state.native.host, slot, command, error);
     --engine->calls; engine->current_client = 0;
+    if (ok && engine->profile == QA_NATIVE_Q2_GAME_API2023)
+        ok = application_native_q2_combat_team_refresh(engine, slot, error);
     return ok;
-}
-
-static bool command_arguments_copy(const qa_command_invocation *command,
-    qa_command_tokens *out, qa_error *error)
-{
-    if (!command || !command->argc || command->argc > INT32_MAX ||
-        !command->argv || !command->args_text)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 command requires its actual entered arguments");
-    size_t extent = 0;
-    for (size_t i = 0; i < command->argc; ++i) {
-        if (!command->argv[i])
-            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 GAME command has an absent argument");
-        size_t length = strlen(command->argv[i]);
-        if (length == SIZE_MAX || length + 1 > SIZE_MAX - extent)
-            return application_fail(error, QA_ERROR_MEMORY, "Native Q2 GAME command argument extent overflows");
-        extent += length + 1;
-    }
-    if (command->argc > SIZE_MAX / sizeof(char *))
-        return application_fail(error, QA_ERROR_MEMORY, "Native Q2 GAME command argument table overflows");
-    qa_command_tokens tokens = {.count = command->argc};
-    tokens.values = calloc(command->argc, sizeof(*tokens.values));
-    tokens.storage = malloc(extent);
-    size_t args_size = strlen(command->args_text);
-    if (args_size != SIZE_MAX) tokens.args_text = malloc(args_size + 1);
-    if (!tokens.values || !tokens.storage || !tokens.args_text) {
-        qa_command_tokens_free(&tokens);
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining exact native Q2 GAME command arguments");
-    }
-    size_t offset = 0;
-    for (size_t i = 0; i < command->argc; ++i) {
-        size_t size = strlen(command->argv[i]) + 1;
-        tokens.values[i] = tokens.storage + offset;
-        memcpy(tokens.values[i], command->argv[i], size); offset += size;
-    }
-    memcpy(tokens.args_text, command->args_text, args_size + 1);
-    *out = tokens;
-    return true;
 }
 
 bool application_native_q2_client_command(application_provider *provider, qa_actor_id actor,
@@ -782,8 +752,9 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
     uint32_t slot = application_native_q2_client_begun(engine, actor) ?
         application_native_q2_client_slot(engine, actor) : 0;
     if (!slot) return true;
-    qa_command_tokens tokens = {0};
-    if (!command_arguments_copy(command, &tokens, error)) return false;
+    qa_command_tokens tokens = {.count = command->argc,
+        .values = (char **)command->argv, .args_text = (char *)command->args_text,
+        .borrowed = true};
     qa_command_tokens prior = engine->arguments;
     uint32_t prior_client = engine->current_client;
     engine->arguments = tokens; engine->current_client = slot;
@@ -804,6 +775,8 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
     --engine->calls;
     engine->current_client = prior_client;
     qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
+    if (ok && engine->profile == QA_NATIVE_Q2_GAME_API2023)
+        ok = application_native_q2_combat_team_refresh(engine, slot, error);
     if (ok) *handled = declared_handled;
     return ok;
 }
@@ -822,8 +795,9 @@ bool application_native_q2_game_command(application_provider *provider,
         !qa_native_host_destroy_ready(provider->state.native.host))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 ServerCommand requires its returned initialized game");
     *handled = false;
-    qa_command_tokens tokens = {0};
-    if (!command_arguments_copy(command, &tokens, error)) return false;
+    qa_command_tokens tokens = {.count = command->argc,
+        .values = (char **)command->argv, .args_text = (char *)command->args_text,
+        .borrowed = true};
     qa_command_tokens prior = engine->arguments;
     engine->arguments = tokens;
     ++engine->calls;
@@ -844,18 +818,22 @@ bool application_native_q2_console_command(application_provider *provider, qa_ac
         engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 console export requires an idle initialized game");
     *handled = false;
+    qa_arena storage = {0}; qa_console_command_arena(engine->console, &storage);
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, engine->command_context.dialect, false, &tokens, NULL, NULL, error)) return false;
+    if (!qa_command_tokenize(text, engine->command_context.dialect, false, &tokens,
+            qa_arena_alloc_callback, &storage, error)) {
+        qa_arena_destroy(&storage); return false;
+    }
     qa_command_context context = engine->command_context;
     context.actor = actor;
     if (!qa_application_capture_command_context(provider->application, &context, &context, error)) {
-        qa_command_tokens_free(&tokens);
+        qa_command_tokens_free(&tokens); qa_arena_destroy(&storage);
         return false;
     }
     qa_command_invocation command = {.console = engine->console, .context = context,
         .argc = tokens.count, .argv = (const char *const *)tokens.values,
         .args_text = tokens.args_text, .raw = text};
     bool ok = !tokens.count || application_native_q2_game_command(provider, &command, handled, error);
-    qa_command_tokens_free(&tokens);
+    qa_command_tokens_free(&tokens); qa_arena_destroy(&storage);
     return ok;
 }

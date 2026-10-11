@@ -137,6 +137,8 @@ typedef struct qa_damage_inflictor_center {
     double center[3];
     bool present;
 } qa_damage_inflictor_center;
+typedef struct qa_damage_journal_store qa_damage_journal_store;
+#define QA_DAMAGE_JOURNAL_MUTATIONS 65536u
 typedef struct qa_damage_outcome {
     bool stale, survived;
     qa_damage_request request;
@@ -144,9 +146,12 @@ typedef struct qa_damage_outcome {
     qa_damage_inflictor_center inflictor_center;
     qa_damage_mutation *mutations;
     size_t mutation_count;
+    qa_damage_journal_store *journal;
+    size_t journal_slot, journal_capacity;
 } qa_damage_outcome;
-/* Outcomes own their journal. Hooks borrow it only for the duration of a call. */
-void qa_damage_outcome_free(qa_damage_outcome *);
+/* Outcomes own a pool lease. Hooks borrow it only for the duration of a call.
+ * Releasing one outcome never invalidates a nested or retained outcome. */
+void qa_damage_outcome_release(qa_damage_outcome *);
 typedef struct qa_damage_observer qa_damage_observer;
 bool qa_damage_observe(qa_damage_observer *, const qa_damage_mutation *, qa_error *);
 bool qa_damage_before_reaction(qa_damage_observer *, const qa_damage_result *, qa_error *);

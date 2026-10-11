@@ -7,7 +7,8 @@ typedef struct application_q3_damage_scopes application_q3_damage_scopes;
 typedef struct application_q3_damage_frame application_q3_damage_frame;
 
 bool application_q3_damage_scopes_create(struct q3g_role *,
-    const application_q3_combat_profile *, application_q3_damage_scopes **, qa_error *);
+    const application_q3_combat_profile *, size_t entered_capacity,
+    application_q3_damage_scopes **, qa_error *);
 bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **, qa_error *);
 bool application_q3_damage_scopes_idle(const application_q3_damage_scopes *);
 bool application_q3_damage_scopes_quiescent(const application_q3_damage_scopes *);

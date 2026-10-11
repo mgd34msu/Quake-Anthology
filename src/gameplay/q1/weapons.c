@@ -785,7 +785,7 @@ bool q1_environment_damage(qa_q1_game *g, qa_actor_id actor, float amount, qa_ha
         return false;
     qa_damage_outcome outcome = {0};
     bool ok = qa_combat_apply(g->services.combat, &request, &outcome, error);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     return ok;
 }
 bool qa_q1_player_environment(qa_q1_game *g, qa_actor_id actor, qa_error *error) {

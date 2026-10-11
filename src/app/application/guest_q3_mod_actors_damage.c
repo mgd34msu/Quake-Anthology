@@ -187,5 +187,5 @@ bool q3mod_actors_damage_hook(application_q3_mod_actors *o,const qa_qvm_call *ca
         damage_run run={.owner=o,.call=call,.original=request,.flags=(uint32_t)words[6],.body=body,.context=context};
         ok=qa_combat_run_source(o->options.combat,&request,entered,&run,&outcome,e);
     }
-    qa_damage_outcome_free(&outcome); if(ok) *result=0; return ok;
+    qa_damage_outcome_release(&outcome); if(ok) *result=0; return ok;
 }

@@ -37,7 +37,7 @@ bool q2_damage(qa_q2_game *g, const qa_attack *attack, qa_actor_id target, float
         return true;
     qa_damage_outcome outcome = {0};
     bool result = qa_combat_apply(g->services.combat, &request, &outcome, e);
-    qa_damage_outcome_free(&outcome);
+    qa_damage_outcome_release(&outcome);
     return result;
 }
 bool q2_prepare_damage(void *context, qa_damage_request *request, bool *allowed, qa_error *e) {

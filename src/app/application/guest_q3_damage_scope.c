@@ -1,9 +1,11 @@
 #include "guest_q3_damage_scope.h"
 #include "guest_q3_private.h"
+#include "qa/pool.h"
 
 typedef struct damage_change { uint32_t address; qa_damage_mutation mutation; } damage_change;
 typedef struct damage_delivery {
     struct damage_delivery *next;
+    size_t storage_slot;
     uint64_t sequence;
     damage_change changes[3];
     size_t count;
@@ -18,6 +20,7 @@ typedef struct reaction_watch {
 struct application_q3_damage_frame {
     struct application_q3_damage_frame *previous, *retained_next;
     struct application_q3_damage_scopes *owner;
+    size_t storage_slot;
     application_q3_combat_actor source;
     qa_qvm_call call;
     const qa_damage_request *request;
@@ -35,6 +38,8 @@ struct application_q3_damage_scopes {
     q3g_role *role;
     const application_q3_combat_profile *profile;
     application_q3_damage_frame *current, *retained;
+    qa_pool frames, deliveries;
+    qa_arena frame_storage, delivery_storage;
 };
 static bool fail(qa_error *error, qa_status status, const char *text)
 { return application_fail(error, status, text); }
@@ -120,12 +125,6 @@ static bool store_publish(void *context, qa_qvm *vm,
             !reaction_refresh(frame->reactions + i, error)) return false;
     bool report;
     if (!reporting(frame, &report, error)) return false;
-    damage_delivery *delivery = NULL;
-    if (report) {
-        delivery = calloc(1, sizeof(*delivery));
-        if (!delivery) return fail(error, QA_ERROR_MEMORY, "Retaining original Q3 committed damage stores");
-        delivery->sequence = event->sequence;
-    }
     damage_change changes[3]; size_t count = 0;
     uint32_t health_at = frame->source.entity + d->fields.health;
     if (touches(event, health_at, 4)) {
@@ -165,7 +164,11 @@ static bool store_publish(void *context, qa_qvm *vm,
             {.kind = QA_MUTATION_SOURCE_VELOCITY,
                 .value.velocity = {before, frame->velocity, frame->request->attack.movement_provider}}};
     }
-    if (delivery) {
+    if (report && count) {
+        size_t slot;
+        damage_delivery *delivery = qa_pool_take(&frame->owner->deliveries, &slot);
+        if (!delivery) return fail(error, QA_ERROR_MEMORY, "Retaining original Q3 committed damage stores");
+        *delivery = (damage_delivery){.storage_slot = slot, .sequence = event->sequence};
         for (size_t i = 1; i < count; ++i) {
             damage_change value = changes[i]; size_t j = i;
             while (j && changes[j - 1].address > value.address) { changes[j] = changes[j - 1]; --j; }
@@ -176,7 +179,7 @@ static bool store_publish(void *context, qa_qvm *vm,
     }
     return true;
 failed:
-    free(delivery); return false;
+    return false;
 }
 static bool store_after(void *context, qa_qvm *vm,
     const qa_qvm_committed_write *event, qa_error *error)
@@ -186,7 +189,7 @@ static bool store_after(void *context, qa_qvm *vm,
     while (*link && (*link)->sequence != event->sequence) link = &(*link)->next;
     if (!*link) return true;
     damage_delivery delivery = **link; damage_delivery *owned = *link;
-    *link = owned->next; free(owned);
+    *link = owned->next; qa_pool_release(&frame->owner->deliveries, owned->storage_slot);
     for (size_t i = 0; i < delivery.count; ++i) {
         bool report;
         if (!reporting(frame, &report, error)) return false;
@@ -200,6 +203,16 @@ static bool store_after(void *context, qa_qvm *vm,
         if (!live) return application_q3_damage_scope_cancel(frame, error);
     }
     return true;
+}
+static void store_dispose(void *context, const qa_qvm_committed_write *event)
+{
+    application_q3_damage_frame *frame = context;
+    damage_delivery **link = &frame->deliveries;
+    while (*link && (*link)->sequence != event->sequence) link = &(*link)->next;
+    if (!*link) return;
+    damage_delivery *delivery = *link;
+    *link = delivery->next;
+    qa_pool_release(&frame->owner->deliveries, delivery->storage_slot);
 }
 static bool frame_close(application_q3_damage_frame *frame, qa_error *error)
 {
@@ -220,18 +233,37 @@ static bool frame_close(application_q3_damage_frame *frame, qa_error *error)
 static void frame_free(application_q3_damage_frame *frame)
 {
     while (frame->deliveries) {
-        damage_delivery *next = frame->deliveries->next; free(frame->deliveries); frame->deliveries = next;
+        damage_delivery *next = frame->deliveries->next;
+        qa_pool_release(&frame->owner->deliveries, frame->deliveries->storage_slot);
+        frame->deliveries = next;
     }
-    free(frame);
+    qa_pool_release(&frame->owner->frames, frame->storage_slot);
 }
 bool application_q3_damage_scopes_create(q3g_role *role,
-    const application_q3_combat_profile *profile, application_q3_damage_scopes **out, qa_error *error)
+    const application_q3_combat_profile *profile, size_t entered_capacity,
+    application_q3_damage_scopes **out, qa_error *error)
 {
     if (!role || !profile || !out || *out || !role->vm || role->kind != QA_QVM_GAME ||
         role->image != application_q3_combat_profile_image(profile) || role->abi != application_q3_combat_profile_abi(profile))
         return fail(error, QA_ERROR_ARGUMENT, "Original Q3 damage scopes require their actual GAME executor");
     application_q3_damage_scopes *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, "Retaining original Q3 damage scope owner");
+    const application_q3_combat_definition *definition = application_q3_combat_profile_definition(profile);
+    if (definition->armor.mode_count > SIZE_MAX - 6 ||
+        6 + definition->armor.mode_count >
+            (SIZE_MAX - sizeof(application_q3_damage_frame)) / sizeof(qa_qvm_write_range)) {
+        free(owner);
+        return fail(error, QA_ERROR_MEMORY, "Original Q3 damage frame storage size overflow");
+    }
+    size_t ranges = 6 + definition->armor.mode_count;
+    if (!qa_pool_reserve_pages(&owner->frames, &owner->frame_storage, entered_capacity,
+            sizeof(application_q3_damage_frame) + ranges * sizeof(qa_qvm_write_range),
+            _Alignof(application_q3_damage_frame), error) ||
+        !qa_pool_reserve_pages(&owner->deliveries, &owner->delivery_storage, entered_capacity,
+            sizeof(damage_delivery), _Alignof(damage_delivery), error)) {
+        qa_arena_destroy(&owner->frame_storage); qa_arena_destroy(&owner->delivery_storage);
+        free(owner); return false;
+    }
     owner->role = role; owner->profile = profile; *out = owner; return true;
 }
 bool application_q3_damage_scopes_idle(const application_q3_damage_scopes *owner)
@@ -248,6 +280,7 @@ bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **out, qa
         if (!frame_close(frame, error)) return false;
         owner->retained = frame->retained_next; frame_free(frame);
     }
+    qa_arena_destroy(&owner->frame_storage); qa_arena_destroy(&owner->delivery_storage);
     free(owner); *out = NULL; return true;
 }
 bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
@@ -267,8 +300,10 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
     bool live;
     if (!application_q3_combat_actor_live(source, &live, error)) return false;
     if (!live) { *out = (qa_damage_result){0}; return true; }
-    application_q3_damage_frame *frame = calloc(1, sizeof(*frame));
+    size_t storage_slot;
+    application_q3_damage_frame *frame = qa_pool_take(&owner->frames, &storage_slot);
     if (!frame) return fail(error, QA_ERROR_MEMORY, "Retaining original Q3 entered damage frame");
+    *frame = (application_q3_damage_frame){.storage_slot = storage_slot};
     frame->owner = owner; frame->source = *source; frame->call = *call;
     frame->request = request; frame->observer = observer; frame->active = true;
     frame->previous = owner->current; owner->current = frame;
@@ -279,9 +314,7 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
     qa_combat_state state; bool ok = application_q3_combat_state_read(&frame->source, &state, error) &&
         application_q3_combat_velocity(&frame->source, &frame->velocity, error);
     if (ok) { frame->health = state.health; frame->armor = state.armor; }
-    size_t capacity = 4 + (source->player ? 2 + d->armor.mode_count : 0);
-    qa_qvm_write_range *ranges = capacity <= SIZE_MAX / sizeof(*ranges) ? calloc(capacity, sizeof(*ranges)) : NULL;
-    if (!ranges && ok) ok = fail(error, QA_ERROR_MEMORY, "Retaining original Q3 damage observation ranges");
+    qa_qvm_write_range *ranges = (qa_qvm_write_range *)(frame + 1);
     size_t count = 0;
     if (ok) {
         ranges[count++] = (qa_qvm_write_range){source->entity + d->fields.health, 4};
@@ -297,9 +330,9 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
             }
         }
         ok = reaction_refresh(frame->reactions, error) && reaction_refresh(frame->reactions + 1, error) &&
-            qa_qvm_observe_writes(call->vm, ranges, count, store_publish, store_after, frame, &frame->writes, error);
+            qa_qvm_observe_writes_owned(call->vm, ranges, count, store_publish, store_after,
+                store_dispose, frame, &frame->writes, error);
     }
-    free(ranges);
     int32_t ignored;
     if (ok) ok = qa_qvm_proceed(call, &ignored, error);
     qa_error original = error ? *error : (qa_error){0}; qa_error cleanup = {0};

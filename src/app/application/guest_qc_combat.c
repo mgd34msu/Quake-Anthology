@@ -828,7 +828,7 @@ bool application_qc_combat_replace(struct application_qc_state *engine, qa_qc_in
         if (ok) ok = qa_combat_run_source(engine->services.combat, &request, continued_damage, &entered, &outcome, error);
         if (ok && !qa_qc_call_completed(next)) ok = qa_qc_call_skip(next, (uint32_t[3]){0}, error);
     }
-    --owner->calls; qa_damage_outcome_free(&outcome); return ok;
+    --owner->calls; qa_damage_outcome_release(&outcome); return ok;
 }
 bool application_qc_combat_inline(struct application_qc_state *engine, qa_qc_instance *vm,
     const qa_qc_inline_event *event, qa_qc_inline_next next, bool *handled, qa_error *error)

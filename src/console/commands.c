@@ -495,6 +495,11 @@ static bool command_storage_prepare(qa_console *console,qa_error *error)
         pages,1024,_Alignof(max_align_t),error);
 }
 
+void qa_console_command_arena(qa_console *console, qa_arena *arena)
+{
+    qa_arena_init_pool(arena, &console->command_pages);
+}
+
 command_chunk *qac_console_chunk_create(qa_console *console,const qa_command_context *context,
     const qa_command_context *caller,const char *text,size_t length,bool newline,qa_error *error)
 {
@@ -1113,9 +1118,9 @@ static bool expand_macros(qa_console *console, const qa_command_context *context
 }
 
 bool qa_console_expand_command(qa_console *console, const qa_command_context *context,
-    const char *input, qa_buffer *out, qa_error *error)
+    const char *input, qa_arena *storage, qa_buffer *out, qa_error *error)
 {
-    if (!console || !input || !out || out->data || out->size ||
+    if (!console || !input || !storage || !out || out->data || out->size ||
         !qac_console_release_access(console, error))
         return qac_fail(error, QA_ERROR_ARGUMENT, "Source command expansion requires an empty owned output");
     qa_command_context source = *context_for(console, context);
@@ -1135,7 +1140,7 @@ bool qa_console_expand_command(qa_console *console, const qa_command_context *co
         }
         expanded=expansion_text;
     }
-    char *owned=qac_copy(expanded,error);if(!owned)return false;
+    char *owned=qa_arena_text(storage,expanded,error);if(!owned)return false;
     *out = (qa_buffer){.data = (uint8_t *)owned, .size = strlen(owned) + 1};
     return true;
 }

@@ -26,7 +26,7 @@ bool mode_damage(qa_modes *m, mode_instance *v, qa_game_family family,
         return false;
     qa_damage_outcome result = {0};
     bool ok = MODE_CALLBACK(m, qa_combat_apply(m->options.services.combat, request, &result, e));
-    qa_damage_outcome_free(&result);
+    qa_damage_outcome_release(&result);
     return ok;
 }
 qa_team_id qa_modes_combat_team(qa_modes *m, qa_mode_id id, qa_actor_id actor,

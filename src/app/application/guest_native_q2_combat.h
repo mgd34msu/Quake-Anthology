@@ -5,6 +5,7 @@ struct application_native_q2;
 bool application_native_q2_combat_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_combat_load(struct application_native_q2 *, qa_error *);
 bool application_native_q2_combat_activate(struct application_native_q2 *, qa_error *);
+bool application_native_q2_combat_team_refresh(struct application_native_q2 *, uint32_t, qa_error *);
 bool application_native_q2_combat_admit(struct application_native_q2 *, uint32_t,
     qa_actor_id, bool admitting, qa_error *);
 bool application_native_q2_combat_detach(struct application_native_q2 *, qa_actor_id, qa_error *);

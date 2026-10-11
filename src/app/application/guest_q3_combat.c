@@ -255,7 +255,7 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     qa_damage_outcome outcome = {0};
     ++owner->calls; ++target->calls;
     bool ok = qa_combat_run_source(shared(owner), &request, entered_source, &entered, &outcome, error);
-    --target->calls; --owner->calls; qa_damage_outcome_free(&outcome); actors_collect(owner);
+    --target->calls; --owner->calls; qa_damage_outcome_release(&outcome); actors_collect(owner);
     if (ok) *result = 0;
     return ok;
 }
@@ -376,7 +376,7 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
             (size_t)qa_actors_capacity(registry)+entered_capacity,
             sizeof(combat_actor), _Alignof(combat_actor), error)) return false;
     memset(owner->actors.values, 0, owner->actors.capacity * owner->actors.stride);
-    if (!application_q3_damage_scopes_create(role, profile, &owner->scopes, error)) return false;
+    if (!application_q3_damage_scopes_create(role, profile, entered_capacity, &owner->scopes, error)) return false;
     uint32_t entries[] = {d->callbacks.damage, d->callbacks.free, d->armor.check};
     qa_qvm_function_hook hooks[] = {damage, freed, armor_stage};
     for (size_t i = 0; i < 3; ++i) {

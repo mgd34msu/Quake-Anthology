@@ -4,6 +4,7 @@
 #include "native_q2_visibility.h"
 #include "qa/application_network.h"
 #include "qa/text.h"
+#include "qa/arena.h"
 #include "native_q2_wire_engine.h"
 
 static const qa_net_client *client(qa_application_network_q2 *owner,
@@ -115,14 +116,14 @@ static bool console(qa_application_network_q2 *owner, qa_actor_id actor,
 }
 
 static bool expand_command(void *context, qa_net_client_id id,
-    const char *text, qa_buffer *out, qa_error *error)
+    const char *text, qa_arena *storage, qa_buffer *out, qa_error *error)
 {
     qa_application_network_q2 *owner = context;
     qa_actor_id values[QA_Q2_MAX_SEATS]; size_t count;
     qa_console *source; qa_command_context command;
     return text && out && actors(owner, id, values, &count, error) &&
         console(owner, values[0], &source, &command, error) &&
-        qa_console_expand_command(source, &command, text, out, error);
+        qa_console_expand_command(source, &command, text, storage, out, error);
 }
 
 static bool command(void *context, qa_net_client_id id, qa_net_seat_id seat,
@@ -138,15 +139,19 @@ static bool command(void *context, qa_net_client_id id, qa_net_seat_id seat,
     bool handled = false, ok;
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL)
         return application_native_q2_console_command(provider, actor, text, &handled, error);
+    qa_arena storage = {0}; qa_console_command_arena(source, &storage);
     qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, invocation.dialect, false, &tokens, NULL, NULL, error)) return false;
+    if (!qa_command_tokenize(text, invocation.dialect, false, &tokens,
+            qa_arena_alloc_callback, &storage, error)) {
+        qa_arena_destroy(&storage); return false;
+    }
     qa_command_invocation call = {.console = source, .context = invocation,
         .argc = tokens.count, .argv = (const char *const *)tokens.values,
         .args_text = tokens.args_text, .raw = text};
     owner->app->operation = APPLICATION_CONFIGURING;
     ok = !tokens.count || qa_q2_game_console_command(provider->state.q2, actor, &call, &handled, error);
     owner->app->operation = APPLICATION_IDLE;
-    qa_command_tokens_free(&tokens);
+    qa_command_tokens_free(&tokens); qa_arena_destroy(&storage);
     if (!ok) application_fault(owner->app, error);
     return ok;
 }
