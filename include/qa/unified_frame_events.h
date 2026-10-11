@@ -78,7 +78,7 @@ typedef struct qa_unified_q3_event {
     char *text, *resource;
     int32_t client, time_ms, event, parameter, source_sequence;
     uint32_t index;
-    bool execute_now, external;
+    bool execute_now, external, round_restart;
     qa_vec3 origin, velocity;
     qa_q3_entity entity;
     qa_q3_player player;

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/network_q3_runtime.h"
 #include "qa/network_save.h"
+#include "qa/unified_frame_events.h"
 #include "../q3/client_private.h"
 #include "../q3/server_private.h"
 #include <stdlib.h>
@@ -393,8 +394,13 @@ bool qa_network_q3_snapshot_write(qa_network_runtime *runtime, qa_net_client_id 
     q3_runtime_peer *p = get(runtime, id, error);
     return p && qa_q3_server_peer_snapshot_write(p->source, snapshot, rate, write_downloads, context, error);
 }
-bool qa_network_q3_command(qa_network_runtime *runtime, qa_net_client_id id, const char *text, qa_error *error)
-{ q3_runtime_peer *p = get(runtime, id, error); return p && qa_q3_server_peer_command(p->source, text, error); }
+bool qa_network_q3_command(qa_network_runtime *runtime,qa_net_client_id id,const qa_unified_q3_event *event,
+    qa_event_lease *lease,uint32_t fragment,qa_error *error)
+{
+    q3_runtime_peer *p=get(runtime,id,error);
+    return p && qa_q3_server_peer_command(p->source,event->text,lease,
+        event->kind==QA_UNIFIED_Q3_CONFIGSTRING?event->index:UINT32_MAX,fragment,error);
+}
 bool qa_network_q3_configstring(qa_network_runtime *runtime, qa_net_client_id id,
     unsigned index, const char *text, qa_error *error)
 { q3_runtime_peer *p = get(runtime, id, error); return p && qa_q3_server_peer_configstring(p->source, index, text, error); }

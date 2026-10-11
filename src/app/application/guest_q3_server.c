@@ -121,7 +121,8 @@ static bool output_command(void *context, int32_t client, const char *text, qa_e
             !queue_room(&role->engine->clients[i], 1, error)) return false;
     /* A real transport owner receives the same reliable command. */
     if (role->server.send_command &&
-        !role->server.send_command(role->server.context, client, text, error)) return false;
+        !role->server.send_command(role->server.context,client,text,delivery->event,
+            delivery->lease,delivery->fragment,error)) return false;
     for (size_t i = 0; i < 64; ++i)
         if ((client < 0 || i == (size_t)client) && retained_command_recipient(role->engine, i) &&
             !qa_q3_reliable_admit(&role->engine->clients[i].reliable,QA_Q3_SERVER,
@@ -130,8 +131,10 @@ static bool output_command(void *context, int32_t client, const char *text, qa_e
                 delivery->fragment,error)) return false;
     return true;
 }
-static bool send_command(void *context, int32_t client, const char *text, qa_error *error)
+static bool send_command(void *context,int32_t client,const char *text,
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
 {
+    (void)event;(void)lease;(void)fragment;
     q3g_role *role = context;
     if (client < -1 || client >= 64 || !text || strlen(text) >= QA_Q3_COMMAND_CHARS)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 server command recipient or size");
@@ -156,7 +159,7 @@ bool q3g_output(application_provider *provider,const qa_unified_q3_event *event,
     if (event->kind == QA_UNIFIED_Q3_SERVER_COMMAND) {
         if (!output_command(&delivery, event->client, event->text, error)) return false;
         if (engine->round.phase == Q3G_ROUND_SETTLING && event->client >= 0 &&
-            !strcmp(event->text, "map_restart\n"))
+            event->round_restart)
             engine->round.queued |= UINT64_C(1) << (uint32_t)event->client;
         return true;
     }

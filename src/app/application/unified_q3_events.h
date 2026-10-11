@@ -4,7 +4,7 @@
 #include "internal.h"
 
 typedef enum application_unified_q3_text_kind {
-    APPLICATION_Q3_SOURCE_COMMAND, APPLICATION_Q3_SOURCE_DROP
+    APPLICATION_Q3_SOURCE_COMMAND, APPLICATION_Q3_SOURCE_DROP, APPLICATION_Q3_SOURCE_RESTART
 } application_unified_q3_text_kind;
 bool application_unified_q3_text(application_provider *, application_unified_q3_text_kind,
     int32_t client, const char *, qa_error *);

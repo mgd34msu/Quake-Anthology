@@ -1055,7 +1055,7 @@ static bool send_command_transport(application_provider *provider,int32_t slot,c
     }
     bool bot_target = slot >= 0 && wire->clients[slot].admitted && wire->clients[slot].bot;
     if (ok && !bot_target && wire->server.send_command)
-        ok = wire->server.send_command(wire->server.context, slot, text, error);
+        ok = wire->server.send_command(wire->server.context,slot,text,event,lease,fragment,error);
     if (ok && (wire_owner(provider, error) != wire || provider->state.q3 != game ||
         wire->max_clients != maximum || wire->round_pending != round_pending ||
         wire->replacement_pending != replacement_pending))

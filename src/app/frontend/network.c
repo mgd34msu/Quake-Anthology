@@ -6922,7 +6922,8 @@ static bool server_round_peer(server_lease *lease, frontend_q3_peer *peer, bool 
     }
     return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source command names an unrepresented round recipient");
 }
-static bool server_send_command(void *context, int32_t slot, const char *text, qa_error *error)
+static bool server_send_command(void *context,int32_t slot,const char *text,
+    const qa_unified_q3_event *event,qa_event_lease *record,uint32_t fragment,qa_error *error)
 {
     server_lease *lease = context;
     qa_frontend_network *n = lease->frontend->network;
@@ -6932,8 +6933,8 @@ static bool server_send_command(void *context, int32_t slot, const char *text, q
         bool owned;
         if (!server_round_peer(lease, peer, &owned, error)) return false;
         if (owned) {
-            if (!qa_network_q3_command(n->runtime, peer->client, text, error)) return false;
-            if (!strcmp(text, "map_restart\n")) {
+            if (!qa_network_q3_command(n->runtime,peer->client,event,record,fragment,error)) return false;
+            if (event->round_restart) {
                 qa_network_q3_round *cut = n->round;
                 for (size_t index = 0; index < cut->count; ++index)
                     if (cut->clients[index].source_slot == peer->slot) cut->queued[index] = true;
@@ -6942,9 +6943,10 @@ static bool server_send_command(void *context, int32_t slot, const char *text, q
         }
         if (!q3_actor(peer, &actor, error)) return false;
         if (qa_application_network_q3_client_bound(lease->frontend->application, lease->owner, actor, peer->slot) &&
-            !qa_network_q3_command(n->runtime, peer->client, text, error)) return false;
+            !qa_network_q3_command(n->runtime,peer->client,event,record,fragment,error)) return false;
     }
-    return !lease->original.send_command || lease->original.send_command(lease->original.context, slot, text, error);
+    return !lease->original.send_command || lease->original.send_command(lease->original.context,
+        slot,text,event,record,fragment,error);
 }
 static bool server_drop_client(void *context, uint32_t slot, const char *reason, qa_error *error)
 {

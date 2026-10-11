@@ -86,13 +86,14 @@ bool application_unified_q3_component_output(qa_application *app, qa_actor_owner
 bool application_unified_q3_text(application_provider *p, application_unified_q3_text_kind kind,
     int32_t client, const char *value, qa_error *e)
 {
-    if ((unsigned)kind > APPLICATION_Q3_SOURCE_DROP || !value || !p || !p->application)
+    if ((unsigned)kind > APPLICATION_Q3_SOURCE_RESTART || !value || !p || !p->application)
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 engine event lost its authored text");
     static const qa_unified_q3_event_kind kinds[] = {QA_UNIFIED_Q3_SERVER_COMMAND,
-        QA_UNIFIED_Q3_DROP_CLIENT};
+        QA_UNIFIED_Q3_DROP_CLIENT,QA_UNIFIED_Q3_SERVER_COMMAND};
     int32_t time;
     if (!source_time(p, &time, e)) return false;
-    qa_unified_q3_event event = {.kind = kinds[kind], .client = client, .text = (char *)value};
+    qa_unified_q3_event event = {.kind = kinds[kind], .client = client, .text = (char *)value,
+        .round_restart=kind==APPLICATION_Q3_SOURCE_RESTART};
     return source_emit(p, &event,
         (uint64_t)(uint32_t)time * UINT64_C(1000000), e);
 }

@@ -53,9 +53,12 @@ bool qa_q3_server_peer_rebind(qa_q3_server_peer *p, const qa_net_address *remote
     if (!p || !remote || !qa_net_address_equal(&p->remote, remote, false)) return fail(e, QA_ERROR_ARGUMENT, "Q3 NAT rebind changes host");
     p->remote = *remote; return true;
 }
-bool qa_q3_server_peer_command(qa_q3_server_peer *p, const char *text, qa_error *e) {
+bool qa_q3_server_peer_command(qa_q3_server_peer *p,const char *text,qa_event_lease *lease,
+    uint32_t config_index,uint32_t fragment,qa_error *e) {
     if (!p || !text) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 server command");
-    if (!qa_q3_reliable_add(&p->reliable, QA_Q3_SERVER, text, e)) {
+    bool admitted=lease?qa_q3_reliable_admit(&p->reliable,QA_Q3_SERVER,lease,text,config_index,fragment,e):
+        qa_q3_reliable_add(&p->reliable,QA_Q3_SERVER,text,e);
+    if (!admitted) {
         p->state.phase = QA_Q3_ZOMBIE;
         return false;
     }
@@ -232,7 +235,7 @@ bool qa_q3_server_peer_disconnect(qa_q3_server_peer *p, const qa_q3_server_rate 
     }
     if (length < sizeof(command) - 1) command[length++] = '"';
     command[length] = 0;
-    bool ok = qa_q3_server_peer_command(p, command, e) && drain(p, e);
+    bool ok = qa_q3_server_peer_command(p,command,NULL,UINT32_MAX,0,e) && drain(p,e);
     if (ok) {
         uint32_t sequence = qa_q3_channel_outgoing(p->channel);
         if (sequence > INT32_MAX) {
@@ -378,7 +381,7 @@ bool qa_q3_configstring_commands(unsigned index,const char *text,
     return true;
 }
 static bool configstring_command(void *context, const char *text, qa_error *error)
-{ return qa_q3_server_peer_command(context, text, error); }
+{ return qa_q3_server_peer_command(context,text,NULL,UINT32_MAX,0,error); }
 bool qa_q3_server_peer_configstring(qa_q3_server_peer *p, unsigned index, const char *text, qa_error *e) {
     if (!p || !text || index >= QA_Q3_CONFIGSTRINGS || strlen(text) >= 8192 || strpbrk(text, "\"\r\n"))
         return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 configstring update");

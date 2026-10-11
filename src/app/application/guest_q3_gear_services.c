@@ -139,11 +139,12 @@ static bool drop_client(void *context, uint32_t index, const char *reason, qa_er
         "Separate QVM gear rejected borrowed client: %s", reason); return false;
 }
 
-static bool send_command(void *context, int32_t client, const char *text, qa_error *error)
+static bool send_command(void *context,int32_t client,const char *text,
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
 {
     application_q3_gear *gear = context;
     return gear->options.host.server.send_command ? gear->options.host.server.send_command(
-        gear->options.host.server.context, client, text, error) :
+        gear->options.host.server.context,client,text,event,lease,fragment,error) :
         q3gear_fail(error, QA_ERROR_UNSUPPORTED, "Separate QVM gear server-command event owner is absent");
 }
 

@@ -8,8 +8,10 @@ static bool source_set_config(void *context,uint32_t index,const char *text,qa_e
     application_q3_component *c=context;
     return application_q3_component_source_set_configstring(c->source,index,text,e);
 }
-static bool source_command(void *context,int32_t slot,const char *text,qa_error *e)
+static bool source_command(void *context,int32_t slot,const char *text,
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *e)
 {
+    (void)event;(void)lease;(void)fragment;
     application_q3_component *c=context;
     return application_q3_component_source_command(c->source,slot,text,e);
 }

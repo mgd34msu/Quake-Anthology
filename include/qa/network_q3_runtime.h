@@ -84,7 +84,9 @@ bool qa_network_q3_snapshot(qa_network_runtime *, qa_net_client_id,
     size_t download_count, qa_error *);
 bool qa_network_q3_snapshot_write(qa_network_runtime *, qa_net_client_id,
     const qa_q3_snapshot *, const qa_q3_server_rate *, qa_q3_server_download_write_fn, void *, qa_error *);
-bool qa_network_q3_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
+struct qa_unified_q3_event;
+bool qa_network_q3_command(qa_network_runtime *,qa_net_client_id,const struct qa_unified_q3_event *,
+    qa_event_lease *,uint32_t fragment,qa_error *);
 bool qa_network_q3_configstring(qa_network_runtime *, qa_net_client_id,
     unsigned index, const char *, qa_error *);
 bool qa_network_q3_pure(qa_network_runtime *, qa_net_client_id,
