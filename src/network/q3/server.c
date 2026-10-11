@@ -31,17 +31,18 @@ bool qa_q3_server_peer_create(qa_q3_identity identity, qa_q3_product product, co
         Q3_SERVER_QUEUED_MESSAGES, sizeof(queued_message), _Alignof(queued_message), e)) {
         qa_q3_server_peer_destroy(p); return false;
     }
+    if (!qa_q3_slots_prepare(&p->snapshot_storage, p->history, QA_Q3_PACKET_BACKUP,
+        QA_Q3_ENTITY_NONE, product, e)) { qa_q3_server_peer_destroy(p); return false; }
     p->identity = identity; p->product = product; p->remote = *remote; p->challenge = challenge; p->hooks = *hooks;
     p->state.phase = QA_Q3_CONNECTED; p->state.delta_message = -1; p->state.gamestate_message_number = -1;
     qa_q3_gamestate_init(&p->gamestate);
-    for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) qa_q3_slot_clear(&p->history[i], product);
     *out = p; return true;
 }
 void qa_q3_server_peer_destroy(qa_q3_server_peer *p) {
     if (!p) return;
     qa_q3_channel_destroy(p->channel);
     qa_q3_reliable_clear(&p->reliable);
-    for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) free(p->history[i].entities);
+    qa_arena_destroy(&p->snapshot_storage);
     qa_arena_destroy(&p->queue_storage);
     free(p);
 }

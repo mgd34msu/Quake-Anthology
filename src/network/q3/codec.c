@@ -1,5 +1,45 @@
 #include "huffman_internal.h"
 
+bool qa_q3_slots_prepare(qa_arena *storage, qa_q3_snapshot_slot *slots, size_t count,
+    size_t entity_limit, qa_q3_product product, qa_error *error)
+{
+    if (!count || !entity_limit || count > SIZE_MAX / entity_limit ||
+        count * entity_limit > (SIZE_MAX - _Alignof(qa_q3_entity) + 1) / sizeof(qa_q3_entity)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Q3 snapshot reservation size overflow");
+        return false;
+    }
+    size_t bytes = count * entity_limit * sizeof(qa_q3_entity);
+    if (!qa_arena_reserve(storage, bytes + _Alignof(qa_q3_entity) - 1, error)) return false;
+    qa_q3_entity *entities = qa_arena_alloc(storage, bytes, _Alignof(qa_q3_entity), error);
+    if (!entities) return false;
+    for (size_t i = 0; i < count; ++i) {
+        slots[i] = (qa_q3_snapshot_slot){.entities = entities + i * entity_limit, .limit = entity_limit};
+        qa_q3_slot_clear(slots + i, product);
+    }
+    qa_arena_seal(storage);
+    return true;
+}
+
+bool qa_q3_slot_store(qa_q3_snapshot_slot *slot, const qa_q3_snapshot *value, qa_error *error)
+{
+    if (value->entity_count > slot->limit || (value->entity_count && !value->entities)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid retained Q3 snapshot entities");
+        return false;
+    }
+    if (value->entity_count > slot->capacity) slot->capacity = value->entity_count;
+    if (value->entity_count) memcpy(slot->entities, value->entities,
+        value->entity_count * sizeof(*slot->entities));
+    slot->value = *value; slot->value.entities = slot->entities;
+    return true;
+}
+
+void qa_q3_slot_clear(qa_q3_snapshot_slot *slot, qa_q3_product product)
+{
+    slot->value = (qa_q3_snapshot){.entities = slot->entities, .player = {.product = product}};
+    slot->capacity = 0; slot->ping = 0;
+    slot->sent_time = 0; slot->ack_time = -1; slot->message_size = 0;
+}
+
 void qa_q3_reader_init(qa_q3_reader *reader, qa_bytes bytes, bool oob, qa_error *error)
 {
     if (reader == NULL) return;

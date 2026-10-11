@@ -61,11 +61,12 @@ static bool create_peer(qa_q3_identity identity, qa_q3_product product, const qa
     p->command_events=qa_event_ring_create((QA_Q3_RELIABLE+2)*4096,2048,QA_Q3_RELIABLE+2,e);
     if(!p->command_events) { qa_q3_channel_destroy(p->channel); free(p); return false; }
     if(!qa_q3_reliable_prepare(&p->reliable,e)) { qa_q3_client_peer_destroy(p);return false; }
+    if (!qa_q3_slots_prepare(&p->snapshot_storage, p->history, QA_Q3_PACKET_BACKUP,
+        QA_Q3_ENTITY_NONE, product, e)) { qa_q3_client_peer_destroy(p); return false; }
     p->command_cursor=qa_event_ring_first(p->command_events);
     p->identity = identity; p->product = product; if (remote) p->remote = *remote; p->demo = demo; p->challenge = challenge; p->hooks = *hooks;
     p->generation = hooks->generation(hooks->context); p->demo_waiting = true;
     qa_q3_gamestate_init(&p->gamestate);
-    for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) qa_q3_slot_clear(&p->history[i], product);
     *out = p; return true;
 }
 bool qa_q3_client_peer_create(qa_q3_identity identity, qa_q3_product product, const qa_net_address *remote,
@@ -83,7 +84,7 @@ void qa_q3_client_peer_destroy(qa_q3_client_peer *p) {
     qa_q3_reliable_clear(&p->reliable);
     for(size_t i=0;i<QA_Q3_RELIABLE;++i) if(p->server_commands[i]) qa_event_lease_release(p->server_commands[i]);
     qa_event_ring_destroy(&p->command_events);
-    for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) free(p->history[i].entities);
+    qa_arena_destroy(&p->snapshot_storage);
     free(p);
 }
 const qa_q3_identity *qa_q3_client_peer_identity(const qa_q3_client_peer *p) { return &p->identity; }
