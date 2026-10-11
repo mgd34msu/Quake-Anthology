@@ -923,7 +923,7 @@ static bool frontend_step(qa_frontend *frontend,
                         frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
                         frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
                         frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) &&
-                        frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error), error);
+                        frontend_input_profile_bind(frontend,error) && frontend_campaign_sync(frontend,error), error);
                 }
             }
         }

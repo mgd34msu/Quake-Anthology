@@ -14,12 +14,6 @@
 
 typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM } campaign_kind;
 typedef struct campaign_player { int32_t client,rank,score; } campaign_player;
-typedef struct campaign_request {
-    struct campaign_request *next;
-    qa_command_context context;
-    char **arguments;
-    size_t count;
-} campaign_request;
 struct frontend_campaign {
     qa_frontend *frontend;
     const qa_launch_snapshot *publication;
@@ -33,7 +27,6 @@ struct frontend_campaign {
     qa_base_arena_catalog *catalog;
     qa_arena_progress progression;
     qa_team_arena_progress *team;
-    campaign_request *requests,**tail;
     qa_arena_result base_game;
     qa_arena_postgame base_result;
     campaign_player players[8];
@@ -62,9 +55,9 @@ static const char *campaign_value(const qa_cvars *cvars,const char *name)
 { const qa_cvar_view *value=qa_cvars_find(cvars,name); return value?value->value:""; }
 static int32_t campaign_word(uint32_t value)
 { int32_t result; memcpy(&result,&value,sizeof(result)); return result; }
-static int32_t campaign_number(const campaign_request *request,size_t index)
+static int32_t campaign_number(const qa_command_invocation *request,size_t index)
 {
-    const unsigned char *text=(const unsigned char *)(index+1<request->count?request->arguments[index+1]:"");
+    const unsigned char *text=(const unsigned char *)(index+1<request->argc?request->argv[index+1]:"");
     size_t length=strlen((const char *)text),at=0; if (length>1023) length=1023;
     while (at<length && (text[at]<=32 || text[at]>=128)) ++at;
     bool negative=at<length && text[at]=='-';
@@ -85,22 +78,13 @@ static bool campaign_uuid(char out[37],qa_error *error)
     }
     out[at]=0; return true;
 }
-static void campaign_request_destroy(campaign_request *request)
-{
-    if (!request) return;
-    for (size_t i=0;i<request->count;++i) free(request->arguments[i]);
-    free(request->arguments); free(request);
-}
 bool frontend_campaign_ready(const qa_frontend *f)
-{ return f && (!f->campaign || (!f->campaign->draining && !f->campaign->requests && !f->campaign->ui_pending)); }
+{ return f && (!f->campaign || (!f->campaign->draining && !f->campaign->ui_pending)); }
 bool frontend_campaign_destroy(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->campaign) return true;
     frontend_campaign *owner=f->campaign;
     if (owner->draining) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source campaign callback still owns its result context");
-    while (owner->requests) {
-        campaign_request *request=owner->requests; owner->requests=request->next; campaign_request_destroy(request);
-    }
     if (owner->music_attached) qa_audio_engine_remove_music(f->audio,QA_FRONTEND_COMMAND_OWNER);
     qa_base_arena_catalog_destroy(owner->catalog); qa_team_arena_progress_destroy(owner->team);
     qa_launch_snapshot_release(owner->publication); free(owner); f->campaign=NULL; return true;
@@ -135,7 +119,7 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     owner->frontend=f; owner->source=view.source_owner; owner->content=view.content; owner->cvars=view.cvars;
     owner->config_root=view.config_root; owner->map_revision=view.map_revision; owner->match_start=view.match_start_time;
     owner->kind=base?CAMPAIGN_BASE:CAMPAIGN_TEAM; owner->publication=view.publication;
-    qa_launch_snapshot_retain(owner->publication); owner->tail=&owner->requests;
+    qa_launch_snapshot_retain(owner->publication);
     bool ok=true;
     if (base) {
         ok=qa_base_arena_catalog_create(view.content,&owner->catalog,error) &&
@@ -160,6 +144,9 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     }
     return ok;
 }
+static bool campaign_base_complete(qa_frontend *, const qa_application_q3_campaign *, const qa_command_invocation *, qa_error *);
+static bool campaign_team_complete(qa_frontend *, const qa_application_q3_campaign *, const qa_command_invocation *, qa_error *);
+static bool campaign_base_action(qa_frontend *, const qa_application_q3_campaign *, const char *, qa_error *);
 bool frontend_campaign_source_command(void *context,qa_application *application,const qa_command_invocation *invocation,
     bool *handled,qa_error *error)
 {
@@ -184,19 +171,17 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
         (postgame && !qa_application_q3_campaign_postgame_context(application,&view,&invocation->context,error)) ||
         (!postgame && (!qa_application_command_context_active(application,&invocation->context) ||
             (invocation->context.owner && invocation->context.owner!=view.source_owner)))) return false;
-    if (invocation->argc>SIZE_MAX/sizeof(char *)) return frontend_fail(error,QA_ERROR_MEMORY,"Source campaign argument count overflows actual storage");
-    campaign_request *request=calloc(1,sizeof(*request));
-    if (!request) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining source campaign command");
-    request->arguments=calloc(invocation->argc,sizeof(*request->arguments));
-    if (!request->arguments) { free(request); return frontend_fail(error,QA_ERROR_MEMORY,"Retaining source campaign arguments"); }
-    request->context=invocation->context; request->count=invocation->argc;
-    for (size_t i=0;i<request->count;++i) {
-        if (!invocation->argv[i] || !(request->arguments[i]=campaign_copy(invocation->argv[i],error))) {
-            campaign_request_destroy(request); return false;
-        }
-    }
-    if (!qa_application_q3_campaign_current(application,&view)) { campaign_request_destroy(request); return false; }
-    *f->campaign->tail=request; f->campaign->tail=&request->next; *handled=true; return true;
+    /* The common console owns and orders the invocation; campaign has no private queue. */
+    *handled = true;
+    f->campaign->draining = true;
+    bool ok;
+    if (postgame) ok = f->campaign->kind == CAMPAIGN_BASE ?
+        campaign_base_complete(f, &view, invocation, error) : campaign_team_complete(f, &view, invocation, error);
+    else if (!strcmp(name, "teamarena-results")) ok = f->campaign->kind == CAMPAIGN_TEAM ||
+        frontend_fail(error, QA_ERROR_ARGUMENT, "No actual Team Arena skirmish is active");
+    else ok = campaign_base_action(f, &view, name, error);
+    f->campaign->draining = false;
+    return ok;
 }
 
 static bool campaign_archive(qa_frontend *f,const qa_application_q3_campaign *view,qa_error *error)
@@ -242,7 +227,7 @@ static bool campaign_music(qa_frontend *f,const qa_application_q3_campaign *view
     return true;
 }
 static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campaign *view,
-    const campaign_request *request,qa_error *error)
+    const qa_command_invocation *request,qa_error *error)
 {
     frontend_campaign *owner=f->campaign;
     const qa_base_arena *arena=qa_base_arena_catalog_find(owner->catalog,view->map);
@@ -313,7 +298,7 @@ static bool campaign_base_action(qa_frontend *f,const qa_application_q3_campaign
     return ok && campaign_archive(f,view,error);
 }
 static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campaign *view,
-    const campaign_request *request,qa_error *error)
+    const qa_command_invocation *request,qa_error *error)
 {
     frontend_campaign *owner=f->campaign;
     const qa_cvar_view *skill=qa_cvars_find(view->cvars,"g_spSkill"),*beat=qa_cvars_find(view->cvars,"ui_teamArenaTimeToBeat");
@@ -354,35 +339,6 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
     }
     return true;
 }
-bool frontend_campaign_drain(qa_frontend *f,qa_error *error)
-{
-    if (!f || !f->application || f->capture) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign drain requires its installed frontend owner");
-    if (qa_application_startup_pending(f->application)) return true;
-    frontend_campaign *owner=f->campaign;
-    if (!owner) return frontend_campaign_sync(f,error);
-    if (owner->draining) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign command drain reentered its source result owner");
-    owner->draining=true; bool ok=true;
-    while (ok && owner->requests) {
-        campaign_request *request=owner->requests; owner->requests=request->next;
-        if (!owner->requests) owner->tail=&owner->requests;
-        qa_application_q3_campaign view;
-        ok=qa_application_command_context_active(f->application,&request->context) &&
-            qa_application_q3_campaign_read(f->application,owner->source,&view,error) &&
-            view.cvars==owner->cvars && view.content==owner->content && view.config_root==owner->config_root &&
-            view.map_revision==owner->map_revision && view.match_start_time==owner->match_start;
-        const char *name=request->arguments[0];
-        if (ok && (!strcmp(name,"postgame") || !strcmp(name,"spPostgame")))
-            ok=owner->kind==CAMPAIGN_BASE?campaign_base_complete(f,&view,request,error):campaign_team_complete(f,&view,request,error);
-        else if (ok && !strcmp(name,"teamarena-results"))
-            ok=owner->kind==CAMPAIGN_TEAM || frontend_fail(error,QA_ERROR_ARGUMENT,"No actual Team Arena skirmish is active");
-        else if (ok) ok=campaign_base_action(f,&view,name,error);
-        campaign_request_destroy(request);
-    }
-    owner->draining=false;
-    if (!ok && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_ARGUMENT,"Accepted campaign command lost its actual source round");
-    return ok;
-}
-
 static bool campaign_source_matches(const frontend_campaign *owner,const qa_application_q3_campaign *view)
 {
     return owner->source==view->source_owner && owner->content==view->content && owner->cvars==view->cvars &&
@@ -475,7 +431,7 @@ bool frontend_campaign_ui_drain(qa_frontend *f,qa_error *error)
     if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
     if (!owner || !owner->ui_pending) return true;
-    if (owner->draining || owner->requests)
+    if (owner->draining)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign action still retains an earlier source command");
     qa_application_q3_campaign source; qa_application_q3_client_context client;
     uint32_t launch_seat;
