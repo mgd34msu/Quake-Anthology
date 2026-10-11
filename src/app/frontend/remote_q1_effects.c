@@ -237,7 +237,7 @@ bool remote_q1_event_present(frontend_remote_q1 *row, const qa_nq_message *messa
     case QA_NQ_CENTERPRINT: case QA_NQ_FINALE: case QA_NQ_CUTSCENE: {
         uint32_t seat = row->options.domain.physical_seat;
         if (seat >= row->frontend->options.seats || !row->frontend->seats[seat].hud) return true;
-        const qa_cvar_view *duration = qa_cvars_find(row->options.domain.cvars,"scr_centertime");
+        const qa_cvar_view *duration = qa_cvars_read(row->options.domain.cvars,row->centertime);
         double seconds = duration && isfinite(duration->number) ? fmax(0,fmin(86400,duration->number)) : 2;
         return qa_hud_center_print(row->frontend->seats[seat].hud,message->data.text,
             row->frontend->time_ns,message->op == QA_NQ_CENTERPRINT ? (uint64_t)(seconds * 1e9) : UINT64_MAX,

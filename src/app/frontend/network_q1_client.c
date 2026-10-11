@@ -457,6 +457,7 @@ static bool current_userinfo(frontend_network_q1_client *o,
     qa_buffer info={0};
     if (!qa_cvars_info(physical->source.context.cvars,QA_CVAR_USERINFO,capacity,&info,error)) return false;
     if (!qa_ui_language_read(qa_application_cvars(o->options.frontend->application),
+        qa_application_ui_preference_handles(o->options.frontend->application),
         physical->source.context.physical_seat,&language,error)) { qa_buffer_free(&info); return false; }
     uint8_t *data=realloc(info.data,capacity);
     if (!data) {

@@ -584,7 +584,8 @@ static bool localize_piece(q1_group *g,const qa_builtin_event *value,qa_buffer *
 static bool localized(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_buffer *out,qa_error *e)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);const char *language;
-    if(!qa_ui_language_read(d->cvars,d->physical_seat,&language,e)) return false;
+    if(!qa_ui_language_read(qa_application_cvars(d->application),
+        qa_application_ui_preference_handles(d->application),d->physical_seat,&language,e)) return false;
     if(!g->localization || strcmp(g->language,language)) {qa_vfs *files;const qa_product *product;qa_localization *catalog=NULL;
         if(strlen(language)>=sizeof(g->language) || !qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),g->content,&files,&product,e) ||
             !qa_localization_acquire(o->localizations,files,language,&(qa_localization_options){.profile=QA_LOCALIZATION_Q1_RERELEASE},&catalog,e)) return false;

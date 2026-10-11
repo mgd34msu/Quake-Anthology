@@ -50,7 +50,7 @@ struct frontend_remote_q1 {
     frontend_q1_motion_refs motion_refs;
     frontend_q1_sky_controls sky_controls;
     frontend_legacy_cvar_handles legacy_cvars;
-    qa_cvar_handle hightrack, chasecam, noskins, baseskin, solid_players;
+    qa_cvar_handle hightrack, chasecam, noskins, baseskin, solid_players, centertime;
     frontend_q1_view_motion view_motion;
     frontend_q1_view_pose view_pose;
     qa_vec3 view_entity_origin, view_entity_angles;

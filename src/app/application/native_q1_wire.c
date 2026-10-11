@@ -1250,7 +1250,8 @@ bool application_native_q1_wire_client_publish(void *opaque,
             size_t ordinal = 0;
             while (choices && ordinal < choices->seat_count && choices->seats[ordinal].id != record->seat) ++ordinal;
             if (!choices || ordinal >= choices->seat_count || !choices->seats[ordinal].local ||
-                ordinal > UINT32_MAX || !qa_ui_language_read(p->application->cvars, (uint32_t)ordinal, &language, error))
+                ordinal > UINT32_MAX || !qa_ui_language_read(p->application->cvars,
+                    qa_application_ui_preference_handles(p->application), (uint32_t)ordinal, &language, error))
                 return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 text recipient lost its physical ENGINE language");
         }
         application_native_q1_wire_language_ticket *ticket = NULL;

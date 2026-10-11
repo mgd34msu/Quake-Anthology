@@ -9,10 +9,10 @@ bool qa_ui_language_name(uint32_t seat, char out[64], qa_error *error) {
     snprintf(out, 64, "ui_seat%u_language", seat + 1);
     return true;
 }
-bool qa_ui_language_read(const qa_cvars *cvars, uint32_t seat, const char **out, qa_error *error) {
-    char name[64];
-    if (!cvars || !out || !qa_ui_language_name(seat, name, error)) return false;
-    const qa_cvar_view *value = qa_cvars_find(cvars, name);
+bool qa_ui_language_read(const qa_cvars *cvars, const qa_ui_preference_handles *handles,
+    uint32_t seat, const char **out, qa_error *error) {
+    if (!cvars || !handles || !out || seat >= QA_INPUT_LOCAL_SEATS) return false;
+    const qa_cvar_view *value = qa_cvars_read(cvars, handles->seats[seat][QA_UI_PREF_LANGUAGE]);
     if (!value || !value->value || !*value->value) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Actual physical ENGINE language is not admitted");
         return false;

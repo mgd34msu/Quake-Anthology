@@ -310,6 +310,7 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
     host->options = *options;
     host->no_curves = qa_cvars_resolve(options->cvars, "cm_noCurves");
     host->player_curve_clip = qa_cvars_resolve(options->cvars, "cm_playerCurveClip");
+    host->engine_cheats = qa_cvars_resolve(options->engine_cvars, "sv_cheats");
     if (!host->options.service_owner)
         host->options.service_owner = options->owner ? options->owner : (uint64_t)(uintptr_t)host;
     if (options->role == QA_QVM_GAME) {

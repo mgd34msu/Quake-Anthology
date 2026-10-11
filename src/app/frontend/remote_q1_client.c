@@ -304,6 +304,7 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     row->chasecam = qa_cvars_resolve(d->cvars, "cl_chasecam");
     row->noskins = qa_cvars_resolve(d->cvars, "noskins");
     row->baseskin = qa_cvars_resolve(d->cvars, "baseskin");
+    row->centertime = qa_cvars_resolve(d->cvars, "scr_centertime");
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&row->sky_controls);
     row->fraction = 1; row->revision = row->next_event = 1;
     row->events = qa_event_ring_create(16u * 1024u * 1024u, 16384, 65536, error);
@@ -331,6 +332,7 @@ bool frontend_remote_q1_bind(frontend_remote_q1 *row, const frontend_remote_q1_d
     row->chasecam = qa_cvars_resolve(actual->cvars, "cl_chasecam");
     row->noskins = qa_cvars_resolve(actual->cvars, "noskins");
     row->baseskin = qa_cvars_resolve(actual->cvars, "baseskin");
+    row->centertime = qa_cvars_resolve(actual->cvars, "scr_centertime");
     return true;
 }
 static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa_error *error)

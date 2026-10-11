@@ -3,6 +3,7 @@
 #include "save_native_q2.h"
 #include "native_q2_callbacks.h"
 #include "guest_native_q2_private.h"
+#include "guest_qc_internal.h"
 #include "save_content.h"
 #include "control_frame.h"
 #include "unified_player.h"
@@ -538,11 +539,8 @@ bool qa_application_provider_gravity(const qa_application *application,
         if (provider->kind == APPLICATION_PROVIDER_Q1)
             return qa_q1_game_gravity(provider->state.q1, out);
         if (provider->kind == APPLICATION_PROVIDER_QC) {
-            qa_console *console;
-            qa_cvars *cvars;
-            if (!application_guest_console_at(provider, 0, &console, &cvars, NULL))
-                return false;
-            const qa_cvar_view *gravity = qa_cvars_find(cvars, "sv_gravity");
+            const struct application_qc_state *engine=provider->state.qc.engine;
+            const qa_cvar_view *gravity = engine ? qa_cvars_read(engine->cvars, engine->cvar_handles.qw_movement[0]) : NULL;
             if (gravity != NULL && isfinite(gravity->number)) {
                 *out = gravity->number;
                 return true;

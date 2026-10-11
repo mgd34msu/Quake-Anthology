@@ -116,7 +116,7 @@ typedef struct q3_cvar_status {
 
 struct qa_q3_host {
     qa_q3_host_options options;
-    qa_cvar_handle no_curves, player_curve_clip;
+    qa_cvar_handle no_curves, player_curve_clip, engine_cheats;
     q3_file files[64];
     uint64_t file_serial;
     qa_arena scratch;

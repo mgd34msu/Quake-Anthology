@@ -471,11 +471,7 @@ static bool update_fields(q3_call *call,uint64_t pointer,const qa_cvar_view **re
         if (!routed_view(call,call->host->cvar_bindings+index,&view,&modification,error)) return false;
     } else if (handle==ENGINE_CHEATS_HANDLE && call->host->options.role==QA_QVM_GAME &&
         call->host->options.engine_cvars) {
-        q3_cvar_access access;
-        if (!access_name(call,"sv_cheats",&access,error)) return false;
-        if (access.registry!=call->host->options.engine_cvars)
-            return q3_fail(error,QA_ERROR_ARGUMENT,0,"GAME cheats handle changed its actual ENGINE namespace");
-        if (!find(access,"sv_cheats",&view,error)) return false;
+        view=qa_cvars_read(call->host->options.engine_cvars,call->host->engine_cheats);
         if (view) modification=(uint32_t)view->modification_count;
     } else if (handle>=0) {
         qa_q3_host_options *options=&call->host->options;
