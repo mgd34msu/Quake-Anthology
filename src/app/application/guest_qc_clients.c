@@ -231,8 +231,8 @@ bool application_qc_host_command(application_provider *provider,
     }
     if (!allowed) {
         if (engine->profile == QA_QC_QUAKEWORLD)
-            application_console_print(provider->application, &context,
-                "You must run the server with -cheats to enable this command.\n");
+            return application_source_message(provider, context.actor,
+                "You must run the server with -cheats to enable this command.\n", error);
         return true;
     }
     int32_t reference;
@@ -260,8 +260,7 @@ bool application_qc_host_command(application_provider *provider,
     char text[32];
     snprintf(text, sizeof(text), "%s %s\n", god ? "godmode" : notarget ? "notarget" :
         fly ? "flymode" : "noclip", enabled ? "ON" : "OFF");
-    application_console_print(provider->application, &context, text);
-    return true;
+    return application_source_message(provider, context.actor, text, error);
 }
 
 bool application_qc_console_command(application_provider *provider, qa_actor_id actor,

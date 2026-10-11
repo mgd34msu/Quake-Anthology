@@ -144,8 +144,7 @@ static bool engine_fly(void *opaque, qa_actor_id actor, qa_error *error)
         text = enabled ? "fly ON\n" : "fly OFF\n";
     }
     if (!engine_fly_client(call, actor, &spectator, &noclip, error)) return false;
-    application_console_print(call->application, call->context, text);
-    return engine_fly_client(call, actor, &spectator, &noclip, error);
+    return application_source_message(source, actor, text, error);
 }
 
 qa_command_result application_native_engine_fly(qa_application *application,

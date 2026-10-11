@@ -14,6 +14,7 @@
 #include "native_q2_protocol_resources.h"
 #include "network_q2_private.h"
 #include "qa/application_q3_round.h"
+#include "qa/game_q1_source_obituary.h"
 #include "qa/network_q1_qw.h"
 #include "qa/qc_observation.h"
 #include "guest_qc_internal.h"
@@ -722,6 +723,13 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         !application_native_q1_wire_emit(application, event, error) ||
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
         !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;
+    if (event->family == QA_GAME_Q3 && event->kind == QA_BUILTIN_MESSAGE) {
+        qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q3,
+            .value.q3 = {.kind = QA_UNIFIED_Q3_PRINT, .client = -1,
+                .text = (char *)qa_strings_cstr(qa_session_strings(application->session), event->text)}};
+        if (!application_unified_event_emit(application, event->provider, &payload, NULL,
+                event->actor, (qa_actor_id){0}, event->time_ns, 0, false, false, error)) goto abort;
+    }
     return application_event_stream_commit(application, &write, error) ||
         builtin_capacity(application,event,audience,&write,error);
 abort:
@@ -767,6 +775,20 @@ bool application_source_log(application_provider *provider, const char *text,
         .family = provider->product->family, .provider = provider->owner,
         .time_ns = clock.frame.time_ns,
         .code = console ? QA_BUILTIN_LOG_CONSOLE : 0};
+    return qa_strings_intern_cstr(qa_session_strings(app->session), text,
+        &event.text, error) && application_emit(app, &event, error);
+}
+
+bool application_source_message(application_provider *provider, qa_actor_id actor,
+    const char *text, qa_error *error)
+{
+    qa_application *app = provider->application;
+    qa_clock_state clock = {0};
+    qa_session_clock(app->session, provider->owner, &clock);
+    qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE,
+        .family = provider->product->family, .provider = provider->owner,
+        .actor = actor, .time_ns = clock.frame.time_ns,
+        .code = 2, .flags = QA_Q1_SOURCE_MESSAGE_LITERAL | 2u};
     return qa_strings_intern_cstr(qa_session_strings(app->session), text,
         &event.text, error) && application_emit(app, &event, error);
 }

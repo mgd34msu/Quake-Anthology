@@ -1046,8 +1046,18 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
     }
     application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (p && p->kind == APPLICATION_PROVIDER_QC && p->launch &&
-        p->launch->selection.clock.kind == QA_RULESET_NETQUAKE && event->provider == p->owner &&
+        event->provider == p->owner &&
         event->kind == QA_BUILTIN_MESSAGE && (event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL)) {
+        if (p->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD) {
+            qa_qw_service message = {.kind = QA_QW_PRINT,
+                .data.text = {(uint8_t)event->code, text(app, event->text)}};
+            qa_application_protocol_event record = {.provider = p->owner,
+                .dialect = QA_RULESET_QUAKEWORLD, .time_ns = event->time_ns,
+                .recipient = event->actor, .qw = &message,
+                .encoding_protocol = p->state.qc.engine->protocol,
+                .destination = event->actor.registry ? 1 : 2, .reliable = true};
+            return application_emit_protocol(p, &record, error);
+        }
         qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = text(app, event->text)};
         return emit_message(p, event, &message, event->actor, true, false, NULL, error);
     }

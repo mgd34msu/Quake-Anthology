@@ -1014,6 +1014,7 @@ static bool simulation_for(const application_unified_event_record *row, qa_net_c
 }
 static bool presentation_for(qa_application *app, const application_unified_event_record *row, qa_net_client_id recipient, qa_actor_id player)
 {
+    if (!own(row->recipient, player)) return false;
     const qa_unified_presentation_payload *p = row->presentation;
     if (p->kind == QA_UNIFIED_PRESENTATION_BUILTIN) {
         const qa_builtin_event *v = &p->value.builtin;
