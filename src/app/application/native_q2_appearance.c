@@ -23,7 +23,8 @@ static bool media_probe(void *context, qa_string_id name, qa_q2_player_media_kin
     struct application_native_q2 *engine = context;
     const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), name);
     if (kind == QA_Q2_PLAYER_MEDIA_ICON) ++path;
-    return qa_vfs_probe(engine->provider->launch->content, path, found, NULL, error);
+    uint64_t size;
+    return qa_vfs_probe(engine->provider->launch->content, path, found, &size, error);
 }
 static bool player_paths(struct application_native_q2 *engine, uint32_t slot, bool body, qa_error *error)
 {
