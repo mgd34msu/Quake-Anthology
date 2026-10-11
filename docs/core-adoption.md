@@ -539,6 +539,16 @@ Together with the previous slices, names findings 1-8 are migrated against the
 audited sites by source/build/core evidence. Names findings 9-17 remain open;
 this is not live gameplay, installed-artifact or timing proof.
 
+Names finding 9, registration-path slice: the common resource lookup API now
+takes the session `qa_string_id`. Q1/Q2 builtin sound emitters forward the ID
+already on their event; the registration scan compares `(owner, kind, path ID)`
+and its cstr/strcmp body is deleted. Q1 precache and native Q2 module/packet
+boundary names resolve once before calling that same API. Unknown names keep
+the existing not-found result. Normal production build and seven core suites
+pass: `/tmp/qa-ta3196-resource-path-ids-20261011-{build,core}.log`.
+Resource-key strings in publication/receipt lookup still need migration; this
+is a partial finding 9 slice, with no live/install claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

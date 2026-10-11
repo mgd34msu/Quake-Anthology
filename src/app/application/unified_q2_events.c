@@ -311,7 +311,9 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         bool found = false;
         const qa_application_protocol_resource_reference *receipt = resource_receipt(p, QA_NATIVE_HOST_SOUND, sound->index);
         if (receipt) { found = receipt->resource_key[0] != 0; memcpy(sound_id, receipt->resource_key, sizeof(sound_id)); }
-        else if (ok) ok = application_unified_event_resource_lookup(p->provider->application, p->provider->owner, path, sound_id, &found, e);
+        else if (ok) ok = application_unified_event_resource_lookup(p->provider->application, p->provider->owner,
+            qa_strings_find(qa_session_strings(p->provider->application->session),
+                (qa_bytes){(const uint8_t *)path,strlen(path)}), sound_id, &found, e);
         if (ok && found) {
             simulation.kind = QA_UNIFIED_SIMULATION_SOUND;
             simulation.value.sound = (qa_unified_sound_event){.resource = sound_id, .actor = a, .origin = origin,

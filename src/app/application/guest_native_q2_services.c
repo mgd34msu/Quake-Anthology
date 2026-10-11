@@ -101,7 +101,9 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
     if (!*name || *name == '*') return true;
     char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY]; bool found;
     if (!application_unified_event_resource_lookup_kind(engine->provider->application,
-        engine->provider->owner, kind, name, id, &found, error)) return false;
+        engine->provider->owner, kind,
+        qa_strings_find(qa_session_strings(engine->provider->application->session),
+            (qa_bytes){(const uint8_t *)name,strlen(name)}), id, &found, error)) return false;
     if (found) return true;
     if (kind == QA_NATIVE_HOST_IMAGE) {
         if (!engine->platform.resource_precache) return true;

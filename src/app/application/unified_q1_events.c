@@ -29,7 +29,8 @@ bool application_unified_q1_sound_precache(void *context, const char *path, qa_e
     char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
     bool found;
     if (!application_unified_event_resource_lookup(source->application, source->owner,
-        path, id, &found, error)) return false;
+        qa_strings_find(qa_session_strings(source->application->session),
+            (qa_bytes){(const uint8_t *)path,strlen(path)}), id, &found, error)) return false;
     if (found) return true;
     size_t length = strlen(path);
     if (length > SIZE_MAX - 7)
@@ -105,8 +106,7 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
     bool okay = true;
     if (event->kind == QA_BUILTIN_SOUND) {
         bool found;
-        const char *path = qa_strings_cstr(qa_session_strings(app->session), event->resource);
-        okay = application_unified_event_resource_lookup(app, event->provider, path, identity, &found, error);
+        okay = application_unified_event_resource_lookup(app, event->provider, event->resource, identity, &found, error);
         if (okay && found) {
             bool ambient = (event->flags & 1u) != 0;
             simulation.kind = QA_UNIFIED_SIMULATION_SOUND;

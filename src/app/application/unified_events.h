@@ -122,11 +122,11 @@ bool application_unified_event_resource_register_acquired(qa_application *, qa_a
     const qa_vfs_acquisition *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *);
 const qa_resource *application_unified_event_resource_read(const qa_application *, const char *id);
 bool application_unified_event_resource_lookup(qa_application *, qa_actor_owner,
-    const char *requested_path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
+    qa_string_id requested_path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
 bool application_unified_event_resource_lookup_kind(qa_application *, qa_actor_owner,
-    qa_native_host_resource_kind, const char *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
+    qa_native_host_resource_kind, qa_string_id, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
 bool application_unified_event_resource_lookup_receipt(qa_application *, qa_actor_owner,
-    qa_native_host_resource_kind, const char *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], uint64_t *custody, bool *found, qa_error *);
+    qa_native_host_resource_kind, qa_string_id, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], uint64_t *custody, bool *found, qa_error *);
 bool application_unified_event_resource_receipt_read(const qa_application *, const char *id,
     uint64_t custody, const qa_resource **, const qa_vfs **, const qa_vfs_acquisition **, qa_error *);
 bool application_unified_event_registration_clear(qa_application *, qa_actor_owner, qa_error *);

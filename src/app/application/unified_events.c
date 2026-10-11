@@ -182,18 +182,18 @@ const qa_resource *application_unified_event_resource_read(const qa_application 
 }
 
 bool application_unified_event_resource_lookup_receipt(qa_application *app, qa_actor_owner owner,
-    qa_native_host_resource_kind kind, const char *path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], uint64_t *custody,
+    qa_native_host_resource_kind kind, qa_string_id path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], uint64_t *custody,
     bool *found, qa_error *error)
 {
     application_unified_event_source source;
     if (!application_unified_event_source_read(app, owner, &source, error) ||
-        (unsigned)kind > QA_NATIVE_HOST_IMAGE || !path || !id || !custody || !found)
+        (unsigned)kind > QA_NATIVE_HOST_IMAGE || !id || !custody || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source sound lookup lost its actual registration owner");
     id[0] = 0; *custody = 0; *found = false;
+    if (!path) return true;
     for (size_t i = 0; i < app->unified_event_registration_count; ++i) {
         const application_unified_event_registration *row = app->unified_event_registrations + i;
-        const char *registered = qa_strings_cstr(qa_session_strings(app->session), row->path);
-        if (row->provider != owner || row->kind != kind || !registered || strcmp(registered, path)) continue;
+        if (row->provider != owner || row->kind != kind || row->path != path) continue;
         if (row->resource >= app->unified_event_resource_count ||
             row->custody > app->unified_event_resources[row->resource].custody_count)
             return application_fail(error, QA_ERROR_FORMAT, "Source sound registration lost its retained resource");
@@ -205,7 +205,7 @@ bool application_unified_event_resource_lookup_receipt(qa_application *app, qa_a
 }
 
 bool application_unified_event_resource_lookup_kind(qa_application *app, qa_actor_owner owner,
-    qa_native_host_resource_kind kind, const char *path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *error)
+    qa_native_host_resource_kind kind, qa_string_id path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *error)
 {
     uint64_t custody;
     return application_unified_event_resource_lookup_receipt(app, owner, kind, path, id, &custody, found, error);
@@ -237,7 +237,7 @@ bool application_unified_event_resource_receipt_read(const qa_application *app, 
 }
 
 bool application_unified_event_resource_lookup(qa_application *app, qa_actor_owner owner,
-    const char *path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *error)
+    qa_string_id path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *error)
 { return application_unified_event_resource_lookup_kind(app, owner, QA_NATIVE_HOST_SOUND, path, id, found, error); }
 
 bool application_unified_event_registration_clear(qa_application *app, qa_actor_owner owner, qa_error *error)
