@@ -209,19 +209,6 @@ bool qa_q1_character_attack_frame(qa_q1_game *g, qa_actor_id actor, qa_q1_charac
     animate(g, c, range, false, true);
     return true;
 }
-static bool cause_named(qa_q1_game *g, qa_actor_id actor, const char *name) {
-    qa_string_id classname = 0;
-    q1_actor *entity = q1_entity(g, actor);
-    if (entity)
-        classname = entity->classname;
-    else if (g->services.actor_traits) {
-        qa_builtin_actor_traits traits;
-        if (g->services.actor_traits(g->services.context, actor, &traits))
-            classname = traits.classname;
-    }
-    qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), classname);
-    return text.size == strlen(name) && !memcmp(text.data, name, text.size);
-}
 static bool bubbles(qa_q1_game *g, qa_actor_id actor, unsigned count, qa_error *error) {
     q1_actor *timer;
     if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_DEATH_BUBBLES], Q1_TIMER, actor, &timer, error))
@@ -239,7 +226,7 @@ static bool pain(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outc
         return false;
     qa_string_id sound = 0;
     float attenuation = 1;
-    if (cause_named(g, outcome->request.attack.attacker, "teledeath")) {
+    if (q1_classnamed(g, outcome->request.attack.attacker, g->runtime_names[Q1_NAME_TELEDEATH])) {
         sound = g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TELEDTH1_WAV];
         attenuation = 0;
     } else if (c->input.water_level == 3 && c->input.water_type == -3) {
@@ -322,12 +309,11 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
         body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
         if (!qa_world_body_write(g->services.world, actor, &body, error))
             return false;
-        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
         for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib_at(g, actor, gib_origin, health, g->runtime_names[models[i]], error))
+            if (!q1_gib_at(g, actor, gib_origin, health, g->runtime_names[q1_gib_models[i]], error))
                 return false;
-        bool teledeath = cause_named(g, outcome->request.attack.attacker, "teledeath") ||
-                         cause_named(g, outcome->request.attack.attacker, "teledeath2");
+        bool teledeath = q1_classnamed(g, outcome->request.attack.attacker, g->runtime_names[Q1_NAME_TELEDEATH]) ||
+                         q1_classnamed(g, outcome->request.attack.attacker, g->runtime_names[Q1_NAME_TELEDEATH2]);
         return q1_sound_resource(g, actor, teledeath             ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TELEDTH1_WAV]
                         : q1_random(g) < 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_GIB_WAV]
                                               : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 0, 1, error);
@@ -428,8 +414,7 @@ bool qa_q1_character_disconnect_pose(qa_q1_game *g, qa_actor_id actor, bool *app
     bool okay = player && qa_q1_character_read(g, actor, &view);
     bool changed = false;
     if (okay) {
-        const char *model = qa_strings_cstr(qa_session_strings(g->services.session), view.model);
-        if (model && !strcmp(model, "progs/player.mdl")) {
+        if (view.model == g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYER_MDL]) {
             okay = qa_q1_character_suicide_pose(g, actor, error);
             if (okay) {
                 player->character_state.next_animation = -1;

@@ -91,9 +91,7 @@ bool q1_map_pendulum_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if ((step == 0 || step == 14) && q1_alive(g, g->maps->world_actor))
         g->maps->pendulum_impact = step == 0 ? 1 : -1;
     if (step == 3 || step == 16) {
-        qa_string_id sound;
-        if (!qa_builtin_resource(&g->services, "pendulum/swing.wav", &sound, error) ||
-            !q1_sound_resource(g, id, sound, 0, 1, .5f, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_PENDULUM_SWING_WAV], 0, 1, .5f, error))
             return false;
     }
     entity = pendulum(g, id);
@@ -148,6 +146,6 @@ bool q1_map_pendulum_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
                               .origin = body.origin,
                               .value = 1,
                               .count = 1};
-    return qa_builtin_resource(&g->services, "meat-spray", &event.resource, error) &&
-           qa_builtin_emit(&g->services, &event, error);
+    event.resource = g->runtime_names[Q1_NAME_RESOURCE_MEAT_SPRAY];
+    return qa_builtin_emit(&g->services, &event, error);
 }

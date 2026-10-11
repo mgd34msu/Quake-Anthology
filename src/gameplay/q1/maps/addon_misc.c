@@ -108,11 +108,10 @@ bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_write(g->services.world, id, &body, error))
         return false;
     if (!sacrifice(g, id)) return true;
-    static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
-    for (size_t i = 0; i < sizeof(models) / sizeof(*models); ++i) {
+    for (size_t i = 0; i < sizeof(q1_gib_models) / sizeof(*q1_gib_models); ++i) {
         if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
         if (!sacrifice(g, id)) return true;
-        if (!q1_gib_at(g, id, body.origin, -10, g->runtime_names[models[i]], error))
+        if (!q1_gib_at(g, id, body.origin, -10, g->runtime_names[q1_gib_models[i]], error))
             return false;
         if (!sacrifice(g, id))
             return true;

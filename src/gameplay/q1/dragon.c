@@ -256,13 +256,12 @@ static bool finish_death(qa_q1_game *g, q1_actor *entity, unsigned count, qa_err
             q1_actor *gib;
             if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GIB], Q1_GIB, (qa_actor_id){0}, &gib, error))
                 return false;
-            static const q1_runtime_name gib_models[]={Q1_NAME_RESOURCE_PROGS_GIB1_MDL,Q1_NAME_RESOURCE_PROGS_GIB2_MDL,Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
             gib->physics.motion = QA_PHYSICS_BOUNCE;
             float x = q1_random(g) * 600, y = q1_random(g) * 600, z = q1_random(g) * 600;
             gib->physics.angular_velocity = qa_v3(x, y, z);
             body = (qa_body_state){
                 .origin = body.origin, .velocity = velocity, .bounds = {{-8, -8, -8}, {8, 8, 8}}};
-            if (!q1_model(g, gib, g->runtime_names[gib_models[model-1]], error) ||
+            if (!q1_model(g, gib, g->runtime_names[q1_gib_models[model-1]], error) ||
                 !qa_world_body_write(g->services.world, gib->id, &body, error) ||
                 !q1_schedule(g, gib, 10 + q1_random(g) * 10, Q1_THINK_REMOVE, error) ||
                 !q1_link(g, gib, error))
@@ -306,8 +305,8 @@ bool q1_dragon_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_erro
     if (!entity->state.monster.source.dragon.death_state)
         return true;
     if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_PLAYER])) {
-        if (!qa_builtin_resource(&g->services, "monster_dragon_dead", &entity->classname, error) ||
-            !q1_damage(g, other, entity->id, entity->id, 200, QA_Q1_WEAPON_COUNT, error))
+        entity->classname = g->runtime_names[Q1_NAME_MONSTER_DRAGON_DEAD];
+        if (!q1_damage(g, other, entity->id, entity->id, 200, QA_Q1_WEAPON_COUNT, error))
             return false;
     }
     if (!q1_alive(g, entity->id) || !qa_actor_id_equal(other, g->services.physics->world_actor))
@@ -426,16 +425,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
             return true;
         if (q1_random(g) >= 0.2f)
             return true;
-        qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND,
-                                  .family = QA_GAME_Q1,
-                                  .provider = g->options.provider,
-                                  .actor = entity->id,
-                                  .time_ns = g->time_ns,
-                                  .channel = 2,
-                                  .volume = 0.6f,
-                                  .attenuation = 2};
-        return qa_builtin_resource(&g->services, "dragon/active.wav", &sound.resource, error) &&
-               qa_builtin_emit(&g->services, &sound, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DRAGON_ACTIVE_WAV], 2, 2, 0.6f, error);
     }
     case Q1_ACTION_DRAGON_DRAGON_WALK2:
         m->source.dragon.missile = UINT16_MAX;

@@ -673,6 +673,19 @@
     X(RESOURCE_ZOMBIE_Z_PAIN1_WAV, "zombie/z_pain1.wav") \
     X(RESOURCE_ZOMBIE_Z_PAIN_WAV, "zombie/z_pain.wav") \
     X(RESOURCE_ZOMBIE_Z_SHOT1_WAV, "zombie/z_shot1.wav") \
+    X(RESOURCE_ARMAGON_SERVO_WAV, "armagon/servo.wav") \
+    X(RESOURCE_ARMAGON_FOOTFALL_WAV, "armagon/footfall.wav") \
+    X(RESOURCE_ARMAGON_DEATH_WAV, "armagon/death.wav") \
+    X(RESOURCE_DRAGON_ACTIVE_WAV, "dragon/active.wav") \
+    X(RESOURCE_PLASMA_FIRE_WAV, "plasma/fire.wav") \
+    X(RESOURCE_PENDULUM_SWING_WAV, "pendulum/swing.wav") \
+    X(RESOURCE_MISC_FOOT1_WAV, "misc/foot1.wav") \
+    X(RESOURCE_MISC_FOOT2_WAV, "misc/foot2.wav") \
+    X(RESOURCE_MISC_FOOT3_WAV, "misc/foot3.wav") \
+    X(RESOURCE_MISC_FOOT4_WAV, "misc/foot4.wav") \
+    X(RESOURCE_MISC_FOOT5_WAV, "misc/foot5.wav") \
+    X(RESOURCE_MISC_FOOT6_WAV, "misc/foot6.wav") \
+    X(RESOURCE_MISC_FOOT7_WAV, "misc/foot7.wav") \
     X(RESOURCE_DISCHARGE, "discharge")
 
 typedef enum q1_runtime_name {
@@ -681,7 +694,7 @@ typedef enum q1_runtime_name {
 #undef Q1_RUNTIME_NAME_ENUM
     Q1_NAME_COUNT
 } q1_runtime_name;
-extern const q1_runtime_name q1_rune_models[4], q1_mg1_rune_models[6];
+extern const q1_runtime_name q1_rune_models[4], q1_mg1_rune_models[6], q1_gib_models[3];
 
 typedef struct q1_map_state q1_map_state;
 typedef struct q1_map_runtime q1_map_runtime;

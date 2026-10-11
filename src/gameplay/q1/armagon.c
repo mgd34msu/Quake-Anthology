@@ -1,19 +1,6 @@
 #include "internal.h"
 #include <stdio.h>
 
-static bool sound(qa_q1_game *g, q1_actor *entity, const char *path, int32_t channel, float volume,
-                  float attenuation, qa_error *error) {
-    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                              .family = QA_GAME_Q1,
-                              .provider = g->options.provider,
-                              .actor = entity->id,
-                              .time_ns = g->time_ns,
-                              .channel = channel,
-                              .volume = volume,
-                              .attenuation = attenuation};
-    return qa_builtin_resource(&g->services, path, &event.resource, error) &&
-           qa_builtin_emit(&g->services, &event, error);
-}
 static bool sync_body(qa_q1_game *g, q1_actor *entity, bool walking, qa_error *error) {
     q1_actor *part = q1_entity(g, q1_ref_actor(g, entity->state.monster.source.armagon.body));
     if (!part) {
@@ -57,13 +44,11 @@ static bool idle(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (q1_random(g) >= 0.5f)
         return true;
     float r = q1_random(g);
-    char path[32];
-    snprintf(path, sizeof(path), "armagon/idle%u.wav",
-             r < 0.25f   ? 1
-             : r < 0.5f  ? 2
-             : r < 0.75f ? 3
-                         : 4);
-    return sound(g, entity, path, 2, 1, 0.5f, error);
+    static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_ARMAGON_IDLE1_WAV,
+        Q1_NAME_RESOURCE_ARMAGON_IDLE2_WAV, Q1_NAME_RESOURCE_ARMAGON_IDLE3_WAV,
+        Q1_NAME_RESOURCE_ARMAGON_IDLE4_WAV};
+    unsigned variant = r < 0.25f ? 0 : r < 0.5f ? 1 : r < 0.75f ? 2 : 3;
+    return q1_sound_resource(g, entity->id, g->runtime_names[sounds[variant]], 2, 0.5f, 1, error);
 }
 static bool think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!sync_body(g, entity, false, error))
@@ -392,9 +377,8 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
             part->count = 0;
         if (count < 25) {
             if ((float)count > part->count) {
-                static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
                 for (unsigned i = 0; i < 3; ++i)
-                    if (!q1_gib_at(g, part->id, body.origin, -100, g->runtime_names[models[i]], error))
+                    if (!q1_gib_at(g, part->id, body.origin, -100, g->runtime_names[q1_gib_models[i]], error))
                         return false;
                 part->count = (float)(count + 1);
             }
@@ -406,9 +390,8 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
     }
     if (!q1_sound_resource(g, part->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_LONGEXPL_WAV], 0, 0.5f, 1, error))
         return false;
-    static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
     for (unsigned i = 0; i < 9; ++i)
-        if (!q1_gib_at(g, part->id, body.origin, -200, g->runtime_names[models[i % 3]], error))
+        if (!q1_gib_at(g, part->id, body.origin, -200, g->runtime_names[q1_gib_models[i % 3]], error))
             return false;
     part->physics.motion = QA_PHYSICS_STATIONARY;
     part->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -430,9 +413,9 @@ bool q1_armagon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         action == Q1_ACTION_HIPARMA_ARMAGON_OVERLEFT5 ||
         action == Q1_ACTION_HIPARMA_ARMAGON_OVERRIGHT5 ||
         action == Q1_ACTION_HIPARMA_ARMAGON_OVERRIGHT10;
-    if (servo && !sound(g, entity, "armagon/servo.wav", 7, 0.5f, 0.5f, error))
+    if (servo && !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_SERVO_WAV], 7, 0.5f, 0.5f, error))
         return false;
-    if (foot && !sound(g, entity, "armagon/footfall.wav", 6, 1, 0.5f, error))
+    if (foot && !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_FOOTFALL_WAV], 6, 0.5f, 1, error))
         return false;
     switch (action) {
     case Q1_ACTION_ARMAGON_THINK:
@@ -530,7 +513,7 @@ bool q1_armagon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                qa_world_body_read(g->services.world, entity->id, &body, error) &&
                qa_q1_spawn_multi_explosion(g, qa_vec_add(body.origin, qa_v3(0, 0, 48)), 48, 10, 6,
                                            0.3f, 0.3f, NULL, error) &&
-               sound(g, entity, "armagon/death.wav", 0, 1, 0, error) &&
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_DEATH_WAV], 0, 0, 1, error) &&
                q1_schedule(g, entity, 0.2, Q1_THINK_MONSTER_FRAME, error);
     }
     case Q1_ACTION_HIPARMA_ARMAGON_DIE8:

@@ -625,11 +625,10 @@ bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_body_state value;
         if (!body(g, e, &value, error))
             return false;
-        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
         for (unsigned i = 0; i < 3; ++i) {
             if (!q1_alive(g, e->id))
                 return true;
-            if (!q1_gib_at(g, e->id, value.origin, health, g->runtime_names[models[i]], error))
+            if (!q1_gib_at(g, e->id, value.origin, health, g->runtime_names[q1_gib_models[i]], error))
                 return false;
         }
         return true;

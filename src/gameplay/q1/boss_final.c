@@ -13,8 +13,8 @@ static bool rock(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 direc
                  qa_vec3 velocity, qa_string_id model, q1_actor **out, qa_error *error) {
     if (!q1_boss_shot(g, owner, origin, direction, velocity, model, Q1_FINAL_ROCK, out, error))
         return false;
-    return qa_builtin_resource(&g->services, "rock", &(*out)->classname, error) &&
-           q1_link(g, *out, error);
+    (*out)->classname = g->runtime_names[Q1_NAME_ROCK];
+    return q1_link(g, *out, error);
 }
 static bool face(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_monster *m = &e->state.monster;

@@ -103,8 +103,8 @@ static bool explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
                                    .code = 244,
                                    .count = 3,
                                    .time_ns = g->time_ns};
-        if (!qa_builtin_resource(&g->services, "colored-explosion", &event.resource, error) ||
-            !qa_builtin_emit(&g->services, &event, error))
+        event.resource = g->runtime_names[Q1_NAME_RESOURCE_COLORED_EXPLOSION];
+        if (!qa_builtin_emit(&g->services, &event, error))
             return false;
     } else if (!q1_effect(g, QA_BUILTIN_EXPLOSION, id, body.origin, 0, 0, error))
         return false;

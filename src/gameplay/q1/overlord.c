@@ -112,7 +112,7 @@ static bool toss(qa_q1_game *g, q1_actor *entity, qa_string_id model, qa_error *
            q1_schedule(g, gib, 10 + q1_random(g) * 10, Q1_THINK_REMOVE, error) &&
            q1_link(g, gib, error);
 }
-static bool burst(qa_q1_game *g, q1_actor *entity, const q1_runtime_name *models, unsigned count,
+static bool burst(qa_q1_game *g, q1_actor *entity, const q1_runtime_name *models, unsigned model_count, unsigned count,
                   qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
@@ -121,7 +121,7 @@ static bool burst(qa_q1_game *g, q1_actor *entity, const q1_runtime_name *models
     for (unsigned i = 0; i < count; ++i) {
         if (!q1_alive(g, entity->id))
             return true;
-        if (!toss(g, entity, g->runtime_names[models[i]], error))
+        if (!toss(g, entity, g->runtime_names[models[i % model_count]], error))
             return false;
     }
     return true;
@@ -189,14 +189,13 @@ bool q1_overlord_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action,
     case Q1_ACTION_S_WRATH_OVERLORD_DIE17: {
         static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_S_WRTGB2_MDL, Q1_NAME_RESOURCE_PROGS_S_WRTGB3_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB1_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB2_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB3_MDL};
         entity->model = 0;
-        return burst(g, entity, models, 5, error) &&
+        return burst(g, entity, models, 5, 5, error) &&
                (!q1_alive(g, entity->id) ||
                 q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error));
     }
     case Q1_ACTION_S_WRATH_OVERLORD_DIE18:
     case Q1_ACTION_S_WRATH_OVERLORD_DIE19: {
-        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL, Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
-        if (!burst(g, entity, models, 6, error))
+        if (!burst(g, entity, q1_gib_models, 3, 6, error))
             return false;
         if (!q1_alive(g, entity->id))
             return true;

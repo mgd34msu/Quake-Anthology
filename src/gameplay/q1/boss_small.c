@@ -132,8 +132,8 @@ bool q1_boss_colored_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
                               .origin = value.origin,
                               .code = 244,
                               .count = 3};
-    return qa_builtin_resource(&g->services, "colored-explosion", &event.resource, error) &&
-           qa_builtin_emit(&g->services, &event, error);
+    event.resource = g->runtime_names[Q1_NAME_RESOURCE_COLORED_EXPLOSION];
+    return qa_builtin_emit(&g->services, &event, error);
 }
 bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *error) {
     q1_monster *m = &e->state.monster;
@@ -158,11 +158,10 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
     if (!body(g, e, &value, error) || !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error))
         return false;
     float health = q1_health(g, e->id);
-    static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
     for (unsigned i = 0; i < 3; ++i) {
         if (!q1_alive(g, e->id))
             return true;
-        if (!q1_gib_at(g, e->id, value.origin, health, g->runtime_names[models[i]], error))
+        if (!q1_gib_at(g, e->id, value.origin, health, g->runtime_names[q1_gib_models[i]], error))
             return false;
     }
     return !q1_alive(g, e->id) || q1_remove(g, e, error);
@@ -347,8 +346,8 @@ static bool orb_blast(qa_q1_game *g, q1_actor *e, qa_error *error) {
                                  &shot, error))
             return false;
         shot->state.projectile.kind = Q1_ORB_ROCK;
-        if (!qa_builtin_resource(&g->services, "rock", &shot->classname, error) ||
-            !q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], error) || !body(g, shot, &value, error)) {
+        shot->classname = g->runtime_names[Q1_NAME_ROCK];
+        if (!q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], error) || !body(g, shot, &value, error)) {
             q1_remove(g, shot, NULL);
             return false;
         }

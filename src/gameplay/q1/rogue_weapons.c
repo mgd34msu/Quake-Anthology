@@ -404,16 +404,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             if (!q1_aim(g, player->id, g->forward, &direction, error) ||
                 !q1_rogue_launch_plasma(g, player->id, origin, direction, &projectile, error))
                 return false;
-            qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND,
-                                      .family = QA_GAME_Q1,
-                                      .provider = g->options.provider,
-                                      .actor = player->id,
-                                      .time_ns = g->time_ns,
-                                      .channel = 1,
-                                      .volume = 0.5f,
-                                      .attenuation = 1};
-            if (!qa_builtin_resource(&g->services, "plasma/fire.wav", &sound.resource, error) ||
-                !qa_builtin_emit(&g->services, &sound, error))
+            if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_PLASMA_FIRE_WAV], 1, 1, 0.5f, error))
                 return false;
         }
         return finish(g, player, q1_weapon_interval(player->weapon), false, error);

@@ -267,9 +267,8 @@ bool q1_boss_teledeath_touch(qa_q1_game *g, q1_actor *death, qa_actor_id other, 
     qa_q1_target traits, owner;
     bool player = q1_target(g, other, &traits) && traits.player;
     if (player || q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_OLDONE_NEW])) {
-        if (qa_q1_game_invulnerable(g, other) &&
-            !qa_builtin_resource(&g->services, "teledeath2", &death->classname, error))
-            return false;
+        if (qa_q1_game_invulnerable(g, other))
+            death->classname = g->runtime_names[Q1_NAME_TELEDEATH2];
         if (!q1_target(g, q1_ref_actor(g, death->owner), &owner) || !owner.player)
             return !q1_ref_present(death->owner) || q1_damage(g, q1_ref_actor(g, death->owner), death->id, death->id, 50000,
                                                        QA_Q1_WEAPON_COUNT, error);

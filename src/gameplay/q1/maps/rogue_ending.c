@@ -76,8 +76,8 @@ static bool remove_stuff(qa_q1_game *g, qa_error *error) {
                               .origin = body.origin,
                               .code = 230,
                               .count = 5};
-    if (!qa_builtin_resource(&g->services, "colored-explosion", &event.resource, error) ||
-        !qa_builtin_emit(&g->services, &event, error))
+    event.resource = g->runtime_names[Q1_NAME_RESOURCE_COLORED_EXPLOSION];
+    if (!qa_builtin_emit(&g->services, &event, error))
         return false;
     q1_actor *entity = q1_entity(g, core);
     return !entity || q1_schedule(g, entity, .1, Q1_THINK_REMOVE, error);

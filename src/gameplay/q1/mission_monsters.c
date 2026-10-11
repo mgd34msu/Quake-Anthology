@@ -158,18 +158,12 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
                             : r < 0.72f ? 5
                             : r < 0.86f ? 6
                                         : 7;
-            char path[32];
-            snprintf(path, sizeof(path), "misc/foot%u.wav", step);
-            qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND,
-                                      .family = QA_GAME_Q1,
-                                      .provider = g->options.provider,
-                                      .actor = entity->id,
-                                      .time_ns = g->time_ns,
-                                      .channel = 2,
-                                      .volume = 0.5f,
-                                      .attenuation = 1};
-            if (!qa_builtin_resource(&g->services, path, &sound.resource, error) ||
-                !qa_builtin_emit(&g->services, &sound, error))
+            static const q1_runtime_name sounds[] = {
+                Q1_NAME_RESOURCE_MISC_FOOT1_WAV, Q1_NAME_RESOURCE_MISC_FOOT2_WAV,
+                Q1_NAME_RESOURCE_MISC_FOOT3_WAV, Q1_NAME_RESOURCE_MISC_FOOT4_WAV,
+                Q1_NAME_RESOURCE_MISC_FOOT5_WAV, Q1_NAME_RESOURCE_MISC_FOOT6_WAV,
+                Q1_NAME_RESOURCE_MISC_FOOT7_WAV};
+            if (!q1_sound_resource(g, entity->id, g->runtime_names[sounds[step - 1]], 2, 1, 0.5f, error))
                 return false;
         }
         entity->frame += (int32_t)m->counter++;
@@ -237,18 +231,8 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
     case Q1_ACTION_INVIS_SW_SWORD_ATK1:
         return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD1_WAV], 0, 1, 1, error) &&
                q1_monster_ai(g, entity, Q1_AI_CHARGE, 14, error);
-    case Q1_ACTION_INVIS_SW_SWORD_DIE7: {
-        qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                                  .family = QA_GAME_Q1,
-                                  .provider = g->options.provider,
-                                  .actor = entity->id,
-                                  .time_ns = g->time_ns,
-                                  .channel = 1,
-                                  .volume = 0.5f,
-                                  .attenuation = 1};
-        return qa_builtin_resource(&g->services, "player/axhit2.wav", &event.resource, error) &&
-               qa_builtin_emit(&g->services, &event, error);
-    }
+    case Q1_ACTION_INVIS_SW_SWORD_DIE7:
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_AXHIT2_WAV], 1, 1, 0.5f, error);
     case Q1_ACTION_MUMMY_MUMMY_RUN1:
         if (!q1_monster_ai(g, entity, Q1_AI_RUN, 2, error))
             return false;
