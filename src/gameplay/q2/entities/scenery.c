@@ -281,11 +281,11 @@ static bool clock_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         snprintf(text, sizeof(text), "%2d:%02d:%02d", hour, minute, second);
     }
     text[15] = 0;
-    if (!qa_builtin_resource(&g->services, text, &s->message, e))
-        return false;
+    memcpy(s->clock_text,text,strlen(text)+1);
     q2_actor *display = q2_ent(g, s->enemy);
     if (display) {
-        display->entity->message = s->message;
+        memcpy(display->entity->clock_text,s->clock_text,sizeof(s->clock_text));
+        display->entity->message = QA_STRING_NONE;
         if (!qa_q2_entity_use(g, display->id, a->id, a->id, e))
             return false;
     } else {
@@ -295,7 +295,7 @@ static bool clock_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
                          "Q2 clock requires shared target message/use services");
             return false;
         }
-        if (!services->set_message(services->context, s->enemy, s->message, e))
+        if (!services->set_message(services->context, s->enemy, s->clock_text, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -753,7 +753,8 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
         s->stage = 1;
         return q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
     case Q2S_STRING: {
-        const char *text = qa_strings_cstr(qa_session_strings(g->services.session), s->message);
+        const char *text = s->clock_text[0] ? s->clock_text :
+            qa_strings_cstr(qa_session_strings(g->services.session), s->message);
         size_t length = text ? strlen(text) : 0;
         for (q2_actor *member = g->first_actor; member;) {
             q2_actor *next = member->live_next;

@@ -53,7 +53,10 @@ static bool optional(q2_save_io *io, void **value, size_t size) {
 }
 static bool state(q2_save_io *io, qa_q2_entity_state *s) {
     Q2U(kind); Q2U(think); Q2N(classname); Q2N(targetname); Q2N(target); Q2N(killtarget);
-    Q2N(message); Q2N(team); Q2N(map); Q2N(noise); Q2N(loop_sound);
+    if (!io->reading && s->clock_text[0]) {
+        if (!q2_save_text(io,s->clock_text,sizeof(s->clock_text))) return false;
+    } else Q2N(message);
+    Q2N(team); Q2N(map); Q2N(noise); Q2N(loop_sound);
     void *fields = s->fields;
     if (!q2_save_count(io, &s->field_count, 8, sizeof(*s->fields), &fields)) return false;
     s->fields = fields;

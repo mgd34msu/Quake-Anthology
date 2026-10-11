@@ -381,7 +381,11 @@ static bool source_strings(qa_q2_game *g, q2_original_record_io *io, q2_actor *a
             else if (i == 9) value = actor->item->spawn.team;
         }
         if (i == 7 && actor->monster) value = actor->monster->combat_target;
-        if (!q2_original_string(g, io, field->name, field->offset, &value)) return false;
+        if (!io->reading && i==8 && actor->entity && actor->entity->clock_text[0]) {
+            const char *text=actor->entity->clock_text;
+            if (!q2_original_string_write(io,field->name,field->offset,
+                (qa_bytes){(const uint8_t *)text,strlen(text)})) return false;
+        } else if (!q2_original_string(g, io, field->name, field->offset, &value)) return false;
     }
     return true;
 }

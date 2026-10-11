@@ -79,27 +79,35 @@ bool q2_original_function_matches(qa_q2_game *game, q2_original_record_io *io,
     return true;
 }
 
+bool q2_original_string_write(q2_original_record_io *io,const char *name,uint16_t offset,qa_bytes text)
+{
+    if (text.size>=INT32_MAX || (text.size && memchr(text.data,0,text.size)))
+        return malformed(io,offset,"Original Q2 string has no terminated Source value");
+    if (io->edition==QA_Q2_RERELEASE) {
+        if (text.size) { qa_json_writer_key(io->writer,name); qa_json_writer_string(io->writer,(const char *)text.data); }
+        if (io->writer->failed) { if(io->error)*io->error=io->writer->failure; return false; }
+        return true;
+    }
+    uint32_t size=text.data?(uint32_t)text.size+1:0;
+    if (!q2_original_scalar(io,name,Q2_ORIGINAL_U32,offset,offset,offset,&size)) return false;
+    uint8_t zero=0;
+    return !size || (io->string_tail && q2_save_raw(io->string_tail,(void *)text.data,text.size) &&
+        q2_save_raw(io->string_tail,&zero,1));
+}
+
 bool q2_original_string(qa_q2_game *game, q2_original_record_io *io,
     const char *name, uint16_t offset, qa_string_id *value)
 {
-    if (io->edition == QA_Q2_RERELEASE)
+    if (io->reading && io->edition == QA_Q2_RERELEASE)
         return q2_original_source_text(io, game, name, value, 65536);
     if (offset == UINT16_MAX) {
         if (io->reading) *value = QA_STRING_NONE;
         return true;
     }
     if (!io->reading) {
-        qa_bytes text = *value ? qa_strings_text(qa_session_strings(game->services.session), *value) :
-            (qa_bytes){0};
-        if ((*value && !text.data) || text.size >= INT32_MAX || memchr(text.data, 0, text.size))
-            return malformed(io, offset, "Original Q2 string has no terminated Source value");
-        uint32_t size = text.data ? (uint32_t)text.size + 1 : 0;
-        if (!q2_original_scalar(io, name, Q2_ORIGINAL_U32, offset, offset, offset, &size))
-            return false;
-        uint8_t zero = 0;
-        return !size || (io->string_tail &&
-            q2_save_raw(io->string_tail, (void *)text.data, text.size) &&
-            q2_save_raw(io->string_tail, &zero, 1));
+        qa_bytes text=*value?qa_strings_text(qa_session_strings(game->services.session),*value):(qa_bytes){0};
+        if (*value && !text.data) return malformed(io,offset,"Unknown Q2 Source string");
+        return q2_original_string_write(io,name,offset,text);
     }
     size_t position = 0;
     uint32_t length = 0;

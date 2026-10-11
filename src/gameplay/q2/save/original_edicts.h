@@ -11,6 +11,7 @@ typedef struct q2_original_string_field {
 } q2_original_string_field;
 extern const q2_original_string_field q2_original_edict_strings[11];
 
+bool q2_original_string_write(q2_original_record_io *, const char *, uint16_t, qa_bytes);
 bool q2_original_string(qa_q2_game *, q2_original_record_io *, const char *,
     uint16_t offset, qa_string_id *);
 bool q2_original_reference(qa_q2_game *, q2_original_record_io *, const char *,
