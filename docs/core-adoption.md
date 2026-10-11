@@ -695,6 +695,13 @@ seven core suites pass:
 `/tmp/qa-ta3196-q2-media-ids-20261011-core.log`.
 Per-mesh skin mappings remain open; no new live Q2 presentation claim.
 
+Names item 13, Q2 model submission: regular entities, shells, linked
+attachments, beams and view weapons consume the same retained model slots.
+Player appearance paths keep their existing dynamic admission with ID-keyed
+cache reads. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-q2-model-slots-20261011-build.log` and
+`/tmp/qa-ta3196-q2-model-slots-20261011-core.log`.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
