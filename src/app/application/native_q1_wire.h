@@ -31,7 +31,7 @@ bool application_native_q1_check_client_retire(application_provider *, qa_actor_
 bool application_native_q1_wire_bounds(qa_application *, qa_actor_id, qa_actor_id,
     qa_bounds *, bool *, qa_error *);
 bool application_native_q1_wire_precache(qa_application *, qa_actor_owner, bool,
-    const char *[255], size_t *, qa_error *);
+    const char *[255], size_t *, uint32_t *, qa_error *);
 bool application_native_q1_wire_world(qa_application *, qa_actor_owner,
     qa_application_network_q1_world *, qa_error *);
 bool application_native_q1_wire_clientdata(qa_application *, qa_actor_id, qa_q1_clientdata *, qa_error *);

@@ -180,10 +180,10 @@ bool qa_application_network_q1_entity_next(qa_application *app, qa_actor_id play
     return true;
 }
 bool qa_application_network_q1_precache(qa_application *app, qa_actor_owner owner,
-    bool models, const char *names[255], size_t *count, qa_error *error)
+    bool models, const char *names[255], size_t *count, uint32_t *player_model, qa_error *error)
 {
     if (q1_native(app)) return q1_native_owner(owner, error) &&
-        application_native_q1_wire_precache(app, owner, models, names, count, error);
+        application_native_q1_wire_precache(app, owner, models, names, count, player_model, error);
     struct application_qc_state *engine = q1_host(app, owner, error);
     if (!names || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 precache observation output");
     if (!engine) return false;
@@ -199,7 +199,9 @@ bool qa_application_network_q1_precache(qa_application *app, qa_actor_owner owne
     }
     for (size_t i = 0; i < extent; ++i) if (!retained[i])
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source precache has an unrepresented index");
-    memcpy(names, retained, sizeof(retained)); *count = extent; return true;
+    memcpy(names, retained, sizeof(retained)); *count = extent;
+    if (player_model) *player_model = models ? engine->precache.player_model : 0;
+    return true;
 }
 
 bool qa_application_network_q1_eye(qa_application *app, qa_actor_id player,

@@ -150,8 +150,8 @@ static bool signon_payload(frontend_nq_host *host, qa_actor_id actor, uint32_t s
     qa_nq_message message;
     if (stage == 1) {
         const char *models[255], *sounds[255]; size_t model_count, sound_count;
-        if (!qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, error) ||
-            !qa_application_network_q1_precache(host->frontend->application, host->owner, false, sounds, &sound_count, error)) return false;
+        if (!qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, NULL, error) ||
+            !qa_application_network_q1_precache(host->frontend->application, host->owner, false, sounds, &sound_count, NULL, error)) return false;
         message = (qa_nq_message){.op = QA_NQ_SERVERINFO, .data.serverinfo = {.protocol = protocol,
             .max_clients = (uint8_t)world.max_clients, .game_type = world.deathmatch ? 1 : 0, .level = world.level,
             .models = models, .sounds = sounds, .model_count = model_count, .sound_count = sound_count}};
@@ -1169,8 +1169,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its primary classic source owner");
     uint32_t client_slots, entity_slots; const char *models[255]; size_t model_count; uint32_t player_model = 0;
     if (!qa_application_network_q1_extents(host->frontend->application, host->owner, &client_slots, &entity_slots, error) ||
-        !qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, error)) return false;
-    for (size_t i = 0; i < model_count; ++i) if (!strcmp(models[i], "progs/player.mdl")) player_model = (uint32_t)i + 1;
+        !qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, &player_model, error)) return false;
     if (host->composition != host->generation)
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its launch generation");
     for (size_t i = 0; i < NQ_CLIENTS; ++i) {

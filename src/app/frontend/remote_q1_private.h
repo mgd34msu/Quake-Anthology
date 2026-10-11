@@ -82,6 +82,7 @@ struct frontend_remote_q1 {
     char **models, **sounds;
     bool *sound_available;
     size_t model_count, sound_count;
+    uint32_t spike_model;
     char *styles[256], *skybox;
     remote_q1_client clients[256];
     qa_qw_serverdata qw;

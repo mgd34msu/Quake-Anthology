@@ -262,6 +262,7 @@ void remote_q1_clear(frontend_remote_q1 *row)
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
     names_free(&row->models, &row->model_count); names_free(&row->sounds, &row->sound_count);
+    row->spike_model = 0;
     free(row->sound_available); row->sound_available = NULL;
     for (size_t i = 0; i < 256; ++i) { free(row->styles[i]); row->styles[i] = NULL; }
     for (size_t i = 0; i < 256; ++i) {
@@ -360,6 +361,9 @@ static bool serverinfo(frontend_remote_q1 *row, const qa_nq_serverinfo *info, qa
     }
     if (!names_copy(&row->models, &row->model_count, info->models, info->model_count, error) ||
         !names_copy(&row->sounds, &row->sound_count, info->sounds, info->sound_count, error)) return false;
+    row->spike_model = 0;
+    for (size_t i = 0; i < row->model_count; ++i)
+        if (!strcmp(row->models[i], "progs/spike.mdl")) { row->spike_model = (uint32_t)i + 1; break; }
     if (!qa_vfs_acquire_receipt(row->content.mounts, map, &row->map, &row->map_opening, error)) return false;
     if (!remote_q1_media_prepare(row, error) || !remote_q1_string(&row->level_name, info->level, error)) return false;
     if (qa_q1_is_qw(row->options.domain.protocol)) row->qw.level = row->level_name;

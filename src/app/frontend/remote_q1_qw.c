@@ -142,8 +142,7 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
             if (!remote_q1_entity_set(&row->qw_entities, service->data.packet.frame->entities + i, error)) return false;
         row->qw_frame = true; return true;
     case QA_QW_NAILS: {
-        uint32_t model = 0;
-        for (size_t i = 0; i < row->model_count; ++i) if (!strcmp(row->models[i], "progs/spike.mdl")) { model = (uint32_t)i + 1; break; }
+        uint32_t model = row->spike_model;
         if (!model) return true;
         for (size_t i = 0; i < service->data.nails.count; ++i) {
             qa_q1_entity entity; qa_q1_entity_init(&entity);

@@ -32,6 +32,7 @@ typedef struct application_native_q1_wire {
     native_q1_wire_language *languages;
     qa_resource **models, **sounds;
     size_t model_count, sound_count;
+    uint32_t player_model;
     size_t language_admissions, readers;
     uint64_t generation;
 } application_native_q1_wire;
@@ -174,9 +175,11 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
     if (okay) { models = calloc(receipt.model_count, sizeof(*models)); sounds = calloc(receipt.sound_count, sizeof(*sounds)); okay = models && sounds; }
     if (!okay) application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q1 ordered resource receipts");
     qa_strings *strings = qa_session_strings(p->application->session);
+    uint32_t player_model_index = 0;
     for (size_t i = 1; okay && i < receipt.model_count; ++i) {
         const char *path = qa_strings_cstr(strings, receipt.models[i]);
         if (!path) { okay = application_fail(error, QA_ERROR_FORMAT, "Q1 model declaration lost its source path"); break; }
+        if (!strcmp(path, "progs/player.mdl")) player_model_index = (uint32_t)i;
         if (receipt.models[i] == receipt.map_path && p->application->map_resource) {
             models[i] = p->application->map_resource;
             qa_resource_retain(models[i]);
@@ -203,6 +206,7 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
         assets_release(owner->models, owner->model_count); assets_release(owner->sounds, owner->sound_count);
         owner->models = models; owner->sounds = sounds;
         owner->model_count = receipt.model_count; owner->sound_count = receipt.sound_count;
+        owner->player_model = player_model_index;
         owner->generation = receipt.generation;
     } else { assets_release(models, models ? receipt.model_count : 0); assets_release(sounds, sounds ? receipt.sound_count : 0); }
     --owner->readers;
@@ -653,7 +657,7 @@ bool application_native_q1_wire_entity(qa_application *app, qa_actor_id recipien
     application_native_q1_wire_end(&source); return okay;
 }
 bool application_native_q1_wire_precache(qa_application *app, qa_actor_owner owner, bool models,
-    const char *names[255], size_t *count, qa_error *error) {
+    const char *names[255], size_t *count, uint32_t *player_model_index, qa_error *error) {
     if (!names || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 precache inventory");
     application_native_q1_wire_source source = {0};
     if (!application_native_q1_wire_begin(app, owner, &source, error)) return false;
@@ -664,7 +668,10 @@ bool application_native_q1_wire_precache(qa_application *app, qa_actor_owner own
         names[i - 1] = text(app, rows[i]);
         if (!names[i - 1]) { okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 declaration lost its source string"); break; }
     }
-    if (okay) *count = length - 1;
+    if (okay) {
+        *count = length - 1;
+        if (player_model_index) *player_model_index = models ? source.provider->native_q1_wire->player_model : 0;
+    }
     application_native_q1_wire_end(&source); return okay;
 }
 bool application_native_q1_wire_world(qa_application *app, qa_actor_owner owner,
@@ -818,10 +825,8 @@ bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
     application_native_q1_wire_end(&source); return okay;
 }
 static bool player_model(application_native_q1_wire_source *source, uint32_t *model) {
-    qa_strings *strings = qa_session_strings(source->provider->application->session);
-    const char *path = "progs/player.mdl";
-    qa_string_id resource = qa_strings_find(strings, (qa_bytes){(const uint8_t *)path, strlen(path)});
-    return resource && qa_q1_wire_index(&source->receipt, true, resource, model);
+    *model = source->provider->native_q1_wire->player_model;
+    return *model != 0;
 }
 bool application_native_q1_wire_baseline(qa_application *app, qa_actor_id recipient,
     const qa_q1_entity *entity, qa_q1_entity *out, qa_error *error) {

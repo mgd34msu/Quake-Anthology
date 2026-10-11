@@ -674,6 +674,16 @@ The listed visual model/brush caches already use shared IDs and resource
 pointers from names item 6. Item 13's skin mapping and legacy precache/media
 readers remain open; no new live renderer claim.
 
+Names item 13, Q1 precache indexes: remote QW binds its spike index when
+serverinfo installs the precache list and clears it on teardown. Compiled
+Q1 binds its player index while admitting the ordered model resources;
+baselines and the NetQuake host read that index. QuakeC uses the player
+index already bound at precache close. The packet/baseline/name scans are
+deleted. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-q1-bound-precache-20261011-build.log` and
+`/tmp/qa-ta3196-q1-bound-precache-20261011-core.log`.
+Item 13 remains open for Q2 media and per-mesh skin mappings.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

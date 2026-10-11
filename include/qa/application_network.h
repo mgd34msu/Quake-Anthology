@@ -76,7 +76,7 @@ bool qa_application_network_q1_bounds(qa_application *, qa_actor_id source_playe
     qa_actor_id entity, qa_bounds *, bool *has_model, qa_error *);
 /* Names borrow the source until mutation; output arrays are caller-owned. */
 bool qa_application_network_q1_precache(qa_application *, qa_actor_owner source_owner,
-    bool models, const char *names[255], size_t *count, qa_error *);
+    bool models, const char *names[255], size_t *count, uint32_t *player_model, qa_error *);
 typedef struct qa_application_network_q1_world {
     qa_net_protocol_id protocol;
     uint32_t max_clients;
