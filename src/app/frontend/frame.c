@@ -1015,7 +1015,7 @@ static bool frontend_step(qa_frontend *frontend,
                     if (ok) ok=frontend_music_sources_update(frontend->music_sources,error);
                     if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
                     if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
-                         qa_audio_engine_q3_publish(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
+                         qa_audio_engine_events(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
                          audio_output(frontend, adjusted, error);
                     ok = frontend_profiler_end(profiler, ok, error);
                 }

@@ -471,21 +471,21 @@ bool qa_audio_source_milliseconds(double milliseconds, int32_t *out, qa_error *e
 bool qa_audio_engine_play(qa_audio_engine *engine, const qa_audio_play *sound, int32_t milliseconds,
                           qa_error *error);
 bool qa_audio_engine_loop(qa_audio_engine *engine, const qa_audio_loop *loop, qa_error *error);
-typedef enum qa_audio_q3_operation_kind {
-    QA_AUDIO_Q3_PLAY, QA_AUDIO_Q3_LOOP, QA_AUDIO_Q3_CLEAR,
-    QA_AUDIO_Q3_STOP, QA_AUDIO_Q3_POSITION
-} qa_audio_q3_operation_kind;
-typedef struct qa_audio_q3_operation {
-    qa_audio_q3_operation_kind kind;
+typedef enum qa_audio_event_kind {
+    QA_AUDIO_EVENT_PLAY, QA_AUDIO_EVENT_LOOP, QA_AUDIO_EVENT_CLEAR,
+    QA_AUDIO_EVENT_STOP, QA_AUDIO_EVENT_POSITION
+} qa_audio_event_kind;
+typedef struct qa_audio_event {
+    qa_audio_event_kind kind;
     qa_audio_play sound;
     qa_vec3 velocity;
     int32_t milliseconds, frame_number;
     bool persistent, all;
-} qa_audio_q3_operation;
-/* CG operations retain emission-time identities and assets until actual
- * listeners publish their logical mixers. All Q3 owners share this order. */
-bool qa_audio_engine_q3_submit(qa_audio_engine *, const qa_audio_q3_operation *, qa_error *);
-bool qa_audio_engine_q3_publish(qa_audio_engine *, qa_error *);
+} qa_audio_event;
+/* Immutable audio events retain assets until the frame publishes its listeners.
+ * Every source uses the same load-sized event pages and delivery cursor. */
+bool qa_audio_engine_event(qa_audio_engine *, const qa_audio_event *, qa_error *);
+bool qa_audio_engine_events(qa_audio_engine *, qa_error *);
 void qa_audio_engine_clear_loops(qa_audio_engine *engine, bool all);
 void qa_audio_engine_stop_channel(qa_audio_engine *engine, uint64_t actor, uint64_t owner,
                                   qa_game_family family, int32_t channel);

@@ -742,6 +742,30 @@ static void test_shared_audio_preparation(void)
         }
         CHECK(counts.starts && counts.starts == counts.stops);
         qa_audio_mixer_destroy(mixer);
+        qa_audio_engine *engine=NULL;
+        counts=(audio_notification_counts){0};
+        qa_audio_engine_options engine_options={.sample_rate=44100,.output_channels=2,
+            .mix_frames=16,.initial_voices=8,.observer=count_audio_notification,.observer_user=&counts};
+        CHECK(qa_audio_engine_create(&engine_options,&engine,&error));
+        qa_audio_event event={.kind=QA_AUDIO_EVENT_PLAY,.sound=sound};
+        event.sound.audience=0;event.sound.owner=1;
+        CHECK(qa_audio_engine_event(engine,&event,&error));
+        event.sound.owner=2;
+        CHECK(qa_audio_engine_event(engine,&event,&error));
+        CHECK(qa_audio_engine_stop_owner(engine,1,0,&error));
+        CHECK(counts.starts==0);
+        qa_audio_listener listener={.seat=0,.actor=QA_AUDIO_NO_ACTOR,.gain=1,
+            .axis={{1,0,0},{0,1,0},{0,0,1}}};
+        CHECK(qa_audio_engine_listeners(engine,&listener,1,&error));
+        CHECK(qa_audio_engine_events(engine,&error));
+        int16_t captured[32];CHECK(qa_audio_engine_mix(engine,captured,16,&error));
+        bool audible=false;for(size_t j=0;j<32;++j) audible|=captured[j]!=0;
+        CHECK(audible && counts.starts==1);
+        qa_audio_engine_stop_all(engine);CHECK(counts.starts==counts.stops);
+        CHECK(qa_audio_engine_event(engine,&event,&error));
+        CHECK(qa_audio_engine_events(engine,&error));
+        CHECK(qa_audio_engine_mix(engine,captured,16,&error) && counts.starts==2);
+        qa_audio_engine_destroy(engine);CHECK(counts.starts==counts.stops);
         if (i + 1 == sizeof(families) / sizeof(*families)) {
             CHECK(first->frame_count == sizeof(held_samples) / sizeof(*held_samples));
             memcpy(held_samples, first->samples, sizeof(held_samples)); held = qa_audio_sample_retain(first); CHECK(held);

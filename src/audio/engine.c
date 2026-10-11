@@ -10,40 +10,29 @@ static bool fail(qa_error *error, qa_status code, const char *message) {
     qa_error_set(error, code, 0, "%s", message);
     return false;
 }
-bool qa_audio_q3_operation_valid(const qa_audio_q3_operation *operation)
+typedef struct audio_event_record {
+    qa_audio_event event;
+    bool cancelled;
+} audio_event_record;
+static void events_discard(qa_audio_engine *engine, uint64_t owner, uint32_t audience, bool all_owners)
 {
-    if (!operation || (unsigned)operation->kind > QA_AUDIO_Q3_POSITION) return false;
-    const qa_audio_play *sound = &operation->sound;
-    if (sound->family != QA_GAME_Q3 || !sound->owner || sound->owner == QA_AUDIO_NO_OWNER)
-        return false;
-    if (operation->kind == QA_AUDIO_Q3_PLAY || operation->kind == QA_AUDIO_Q3_LOOP) {
-        if (!sound->asset || sound->sample != qa_audio_asset_sample(sound->asset) ||
-            sound->name != qa_audio_asset_name(sound->asset) ||
-            qa_audio_asset_family(sound->asset) != QA_GAME_Q3 ||
-            (unsigned)sound->origin_kind > QA_AUDIO_ACTOR || sound->channel < 0 ||
-            !isfinite(sound->volume) || sound->volume < 0 || sound->volume > 1 ||
-            !isfinite(sound->attenuation) || sound->attenuation < 0 ||
-            !isfinite(sound->delay_seconds) || !isfinite(sound->server_milliseconds) ||
-            !qa_vec_finite(sound->origin)) return false;
-        const qa_resource *resource = qa_audio_asset_resource(sound->asset);
-        if (sound->resource_id != (resource ? qa_resource_id(resource) : 0)) return false;
-        return operation->kind != QA_AUDIO_Q3_LOOP || qa_vec_finite(operation->velocity);
+    uint64_t next=qa_event_ring_next(engine->events);
+    for(uint64_t id=engine->event_cursor;id<next;++id) {
+        audio_event_record *record=(audio_event_record *)qa_event_ring_at(engine->events,id);
+        const qa_audio_play *sound=&record->event.sound;
+        if(!record->cancelled && (all_owners || sound->owner==owner) &&
+            (audience==QA_AUDIO_WORLD || sound->audience==audience)) {
+            record->cancelled=true;
+            qa_audio_asset_release(sound->asset);
+        }
     }
-    if (sound->audience == QA_AUDIO_WORLD || sound->asset || sound->sample || sound->name)
-        return false;
-    return operation->kind != QA_AUDIO_Q3_POSITION || qa_vec_finite(sound->origin);
-}
-static void q3_discard(qa_audio_engine *engine, uint64_t owner, uint32_t audience, bool all_owners)
-{
-    size_t kept = 0;
-    for (size_t i = 0; i < engine->q3_count; ++i) {
-        qa_audio_q3_operation operation = engine->q3_operations[engine->q3_first + i];
-        if ((all_owners || operation.sound.owner == owner) &&
-            (audience == QA_AUDIO_WORLD || operation.sound.audience == audience))
-            qa_audio_asset_release(operation.sound.asset);
-        else engine->q3_operations[kept++] = operation;
+    /* Cancellation changes delivery metadata, never the admitted payload. */
+    while(engine->event_cursor<next) {
+        const audio_event_record *record=qa_event_ring_at(engine->events,engine->event_cursor);
+        if(!record->cancelled) break;
+        ++engine->event_cursor;
     }
-    engine->q3_first = 0; engine->q3_count = kept;
+    qa_event_ring_retire(engine->events,engine->event_cursor);
 }
 static void *grow(void *memory, size_t *capacity, size_t count, size_t size, qa_error *error) {
     if (count <= *capacity)
@@ -183,6 +172,11 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
     engine->effects_gain = 0.7f;
     engine->music_gain = 0.25f;
     engine->doppler = true;
+    /* Four clients can each submit a full snapshot's sounds, loops and positions.
+     * Storage is fixed at load and recycled after the audio consumer advances. */
+    engine->events=qa_event_ring_create(4096*(sizeof(audio_event_record)+64),4096,4096,error);
+    if(!engine->events) { free(engine);return false; }
+    engine->event_cursor=qa_event_ring_first(engine->events);
     engine->sum = malloc(frames * 2 * sizeof(float));
     engine->seat_scratch = malloc(frames * 2 * sizeof(float));
     if (!engine->sum || !engine->seat_scratch) {
@@ -204,7 +198,7 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
         return;
     }
     engine->destroying = true;
-    q3_discard(engine, 0, QA_AUDIO_WORLD, true);
+    events_discard(engine, 0, QA_AUDIO_WORLD, true);
     for (size_t i = 0; i < engine->seat_count; i++)
         seat_destroy(engine->seats[i]);
     for (size_t i = 0; i < engine->round_mixer_count; ++i)
@@ -218,7 +212,7 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
     free(engine->round_mixers);
     free(engine->positions);
     free(engine->buses);
-    free(engine->q3_operations);
+    qa_event_ring_destroy(&engine->events);
     free(engine->sum);
     free(engine->seat_scratch);
     free(engine);
@@ -483,13 +477,13 @@ static bool stop_owner_impl(qa_audio_engine *engine, uint64_t owner, uint32_t au
             if (!qa_audio_mixer_end_loop_frame(engine->seats[i]->mixer, error))
                 return false;
         }
-    q3_discard(engine, owner, audience, false);
+    events_discard(engine, owner, audience, false);
     return true;
 }
 static void stop_all_impl(qa_audio_engine *engine, bool retain_menu) {
     if (!engine)
         return;
-    q3_discard(engine, 0, QA_AUDIO_WORLD, true);
+    events_discard(engine, 0, QA_AUDIO_WORLD, true);
     for (size_t i = 0; i < engine->seat_count; i++) {
         audio_seat *seat = engine->seats[i];
         if (engine->round_resetting) qa_audio_mixer_round_stop(seat->mixer);
@@ -793,73 +787,75 @@ bool qa_audio_engine_loop(qa_audio_engine *engine, const qa_audio_loop *loop, qa
     bool result = loop_impl(engine, loop, error);
     leave(engine); return result;
 }
-bool qa_audio_engine_q3_submit(qa_audio_engine *engine, const qa_audio_q3_operation *operation,
-    qa_error *error)
+bool qa_audio_engine_event(qa_audio_engine *engine, const qa_audio_event *event, qa_error *error)
 {
-    if (!qa_audio_q3_operation_valid(operation))
-        return fail(error, QA_ERROR_ARGUMENT, "Invalid retained Q3 audio operation");
-    if (!enter(engine, false, error)) return false;
-    /* CG_CheckEvents also positions temporary effect entities. Their explicit-origin
-     * sounds need no persistent actor whose mixer position could be updated. */
-    if (operation->kind == QA_AUDIO_Q3_POSITION &&
-        operation->sound.actor == QA_AUDIO_NO_ACTOR) {
-        leave(engine); return true;
+    if (!enter(engine,false,error)) return false;
+    /* Temporary effects have explicit origins and no persistent actor position. */
+    if(event->kind==QA_AUDIO_EVENT_POSITION && event->sound.actor==QA_AUDIO_NO_ACTOR) {
+        leave(engine);return true;
     }
-    if (engine->q3_first && engine->q3_count == engine->q3_capacity - engine->q3_first) {
-        memmove(engine->q3_operations, engine->q3_operations + engine->q3_first,
-            engine->q3_count * sizeof(*engine->q3_operations));
-        engine->q3_first = 0;
+    qa_event_transaction transaction;
+    bool okay=qa_event_ring_begin(engine->events,&transaction);
+    audio_event_record *record=okay ? qa_event_ring_alloc(&transaction,sizeof(*record),
+        _Alignof(audio_event_record),error) : NULL;
+    if(record) {
+        *record=(audio_event_record){.event=*event};
+        if(event->sound.asset) record->event.sound.asset=qa_audio_asset_retain(event->sound.asset);
+        okay=(!event->sound.asset || record->event.sound.asset) &&
+            qa_event_ring_commit(&transaction,record)!=0;
+        if(!okay) qa_audio_asset_release(record->event.sound.asset);
+    } else okay=false;
+    if(!okay) {
+        if(transaction.active) qa_event_ring_abort(&transaction);
+        if(!error || error->code==QA_OK) fail(error,QA_ERROR_MEMORY,"Audio event pages are full");
     }
-    bool okay = engine->q3_count < SIZE_MAX;
-    qa_audio_q3_operation *next = okay ? grow(engine->q3_operations, &engine->q3_capacity,
-        engine->q3_first + engine->q3_count + 1, sizeof(*next), error) : NULL;
-    if (next) engine->q3_operations = next;
-    qa_audio_asset *asset = next && operation->sound.asset ?
-        qa_audio_asset_retain(operation->sound.asset) : NULL;
-    okay = next && (!operation->sound.asset || asset);
-    if (okay) {
-        engine->q3_operations[engine->q3_first + engine->q3_count] = *operation;
-        engine->q3_operations[engine->q3_first + engine->q3_count++].sound.asset = asset;
-    } else if (!error || error->code == QA_OK)
-        fail(error, QA_ERROR_MEMORY, "Retaining Q3 audio operation");
-    leave(engine); return okay;
+    leave(engine);return okay;
 }
-bool qa_audio_engine_q3_publish(qa_audio_engine *engine, qa_error *error)
+bool qa_audio_engine_events(qa_audio_engine *engine, qa_error *error)
 {
     if (!enter(engine, true, error)) return false;
     bool okay = true;
-    while (okay && engine->q3_count) {
-        qa_audio_q3_operation operation = engine->q3_operations[engine->q3_first];
+    while (okay && engine->event_cursor<qa_event_ring_next(engine->events)) {
+        const audio_event_record *record=qa_event_ring_at(engine->events,engine->event_cursor);
+        qa_audio_event operation=record->event;
+        bool cancelled=record->cancelled;
         audio_seat *seat = find_seat(engine, operation.sound.audience);
         /* Delivery can fail after an observer has seen it. The attempted
          * operation is consumed once; only the untouched suffix is retried. */
-        ++engine->q3_first; --engine->q3_count;
-        if (!engine->q3_count) engine->q3_first = 0;
+        ++engine->event_cursor;
+        qa_event_ring_retire(engine->events,engine->event_cursor);
+        if(cancelled) continue;
         /* The actual published listener roster selects CG audio recipients.
          * An absent recipient contributes no audio, including during menus. */
         if (operation.sound.audience == QA_AUDIO_WORLD ? !engine->seat_count : !seat) {
             qa_audio_asset_release(operation.sound.asset); continue;
         }
         switch (operation.kind) {
-        case QA_AUDIO_Q3_PLAY:
+        case QA_AUDIO_EVENT_PLAY:
             okay = play_impl(engine, &operation.sound, operation.milliseconds, error); break;
-        case QA_AUDIO_Q3_LOOP: {
+        case QA_AUDIO_EVENT_LOOP: {
             qa_audio_loop loop = {.sound = operation.sound, .velocity = operation.velocity,
                 .frame_number = operation.frame_number, .persistent = operation.persistent};
             okay = loop_impl(engine, &loop, error); break;
         }
-        case QA_AUDIO_Q3_CLEAR:
-            qa_audio_mixer_clear_seat_loops(seat->mixer, operation.sound.owner, operation.all); break;
-        case QA_AUDIO_Q3_STOP:
+        case QA_AUDIO_EVENT_CLEAR:
+            for(size_t i=0;i<engine->seat_count;++i)
+                if(selected(operation.sound.audience,engine->seats[i]->listener.seat))
+                    qa_audio_mixer_clear_seat_loops(engine->seats[i]->mixer,operation.sound.owner,operation.all);
+            break;
+        case QA_AUDIO_EVENT_STOP:
             okay = stop_loop_impl(engine, operation.sound.actor, operation.sound.owner,
                 operation.sound.audience, error); break;
-        case QA_AUDIO_Q3_POSITION:
-            okay = qa_audio_mixer_position_owner(seat->mixer, operation.sound.actor,
-                operation.sound.owner, operation.sound.origin, error); break;
+        case QA_AUDIO_EVENT_POSITION:
+            for(size_t i=0;okay && i<engine->seat_count;++i)
+                if(selected(operation.sound.audience,engine->seats[i]->listener.seat))
+                    okay=qa_audio_mixer_position_owner(engine->seats[i]->mixer,operation.sound.actor,
+                        operation.sound.owner,operation.sound.origin,error);
+            break;
         }
         qa_audio_asset_release(operation.sound.asset);
         if (engine->destroy_pending)
-            okay = fail(error, QA_ERROR_ARGUMENT, "Q3 audio owner retired during delivery");
+            okay = fail(error, QA_ERROR_ARGUMENT, "Audio owner retired during delivery");
     }
     leave(engine); return okay;
 }
@@ -941,12 +937,6 @@ static bool engine_owners_ready(const qa_audio_engine *engine, bool selections, 
     if (!engine || engine->operation_depth || engine->callback_depth || engine->acoustics_readers ||
         engine->destroy_pending || engine->destroying || engine->round_resetting)
         return fail(error, QA_ERROR_ARGUMENT, "Audio round requires completed operations and callbacks");
-    if (engine->q3_first > engine->q3_capacity || engine->q3_count > engine->q3_capacity - engine->q3_first ||
-        (engine->q3_capacity && !engine->q3_operations))
-        return fail(error, QA_ERROR_ARGUMENT, "Audio round lost its pending Q3 operations");
-    for (size_t i = 0; i < engine->q3_count; ++i)
-        if (!qa_audio_q3_operation_valid(engine->q3_operations + engine->q3_first + i))
-            return fail(error, QA_ERROR_ARGUMENT, "Audio round lost a pending Q3 source holder");
     for (size_t i = 0; i < engine->seat_count; ++i) {
         if (!engine->seats[i] || !qa_audio_mixer_callbacks_idle(engine->seats[i]->mixer))
             return fail(error, QA_ERROR_ARGUMENT, "Audio round requires actual idle seat mixers");
