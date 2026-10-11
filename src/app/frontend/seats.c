@@ -155,15 +155,15 @@ typedef struct local_q2_hud {
     const qa_application_native_q2_hud *source;
     frontend_visual_owner_view media;
     qa_q2_config_layout config;
-    const char *images[64];
+    qa_string_id images[64];
     uint32_t image_count;
     char binding[96];
 } local_q2_hud;
-static bool local_q2_image(void *context, const char *name, uint32_t *out, qa_error *error)
+static bool local_q2_image(void *context, qa_string_id name, uint32_t *out, qa_error *error)
 {
     local_q2_hud *hud = context;
     for (uint32_t i = 1; i <= hud->image_count; ++i)
-        if (!strcmp(hud->images[i], name)) { *out = i; return true; }
+        if (hud->images[i]==name) { *out = i; return true; }
     if (hud->image_count + 1 >= sizeof(hud->images) / sizeof(hud->images[0]))
         return frontend_fail(error, QA_ERROR_MEMORY, "Q2 HUD image stat roster is full");
     *out = ++hud->image_count; hud->images[*out] = name;
@@ -179,18 +179,29 @@ static const char *local_q2_config(void *context, int32_t index)
     if (index == (int32_t)hud->config.max_clients) return "1";
     if (index >= (int32_t)hud->config.images &&
         (uint32_t)index - hud->config.images <= hud->image_count)
-        return hud->images[(uint32_t)index - hud->config.images];
+        return qa_strings_cstr(source->strings,hud->images[(uint32_t)index - hud->config.images]);
     if (index > (int32_t)hud->config.items) {
         size_t ordinal = (uint32_t)index - hud->config.items - 1;
         if (ordinal < qa_q2_item_count(source->game)) return qa_q2_item_at(source->game, ordinal)->name;
     }
     return NULL;
 }
-static const qa_scene_image *local_q2_picture(void *context, const char *name, qa_error *error)
+static const qa_scene_image *local_q2_picture(void *context, qa_string_id name, qa_error *error)
 {
     local_q2_hud *hud = context;
-    return frontend_equipment_media_q2_picture(&hud->media, name,
+    return frontend_equipment_media_q2_picture(&hud->media, qa_strings_cstr(hud->source->strings,name),
         hud->source->edition == QA_Q2_RERELEASE, error);
+}
+static qa_string_id local_q2_config_picture(void *context,int32_t index,unsigned variant)
+{
+    local_q2_hud *hud=context;
+    if(variant) {
+        int32_t slot=index-(int32_t)hud->config.player_skins;
+        if(slot<0||slot>=256)return QA_STRING_NONE;
+        return variant==1?hud->seat->q2_hud_player_icons[slot]:hud->seat->q2_hud_player_tags[slot];
+    }
+    if(hud->source->original)return index>=0&&(uint32_t)index<hud->source->configstring_count?hud->source->configstrings[index]:QA_STRING_NONE;
+    return index>=(int32_t)hud->config.images&&(uint32_t)index-hud->config.images<=hud->image_count?hud->images[(uint32_t)index-hud->config.images]:QA_STRING_NONE;
 }
 static const char *local_q2_binding(void *context, const char *command)
 {
@@ -214,9 +225,11 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     if (seat->q2_hud_font_provider != source->provider) {
         qa_font_library_destroy(seat->q2_hud_fonts); seat->q2_hud_fonts = NULL;
         seat->q2_hud_classic = NULL; seat->q2_hud_font_provider = source->provider;
+        seat->q2_hud_status_text=NULL;seat->q2_hud_config_revision=seat->q2_hud_layout_revision=UINT64_MAX;
+        if(!qa_hud_q2_picture_names_bind((qa_strings *)source->strings,&seat->q2_hud_pictures,error))return false;
     }
     if (!seat->q2_hud_classic) {
-        const qa_scene_image *conchars = local_q2_picture(&hud, "conchars", error);
+        const qa_scene_image *conchars = local_q2_picture(&hud, seat->q2_hud_pictures.conchars, error);
         if (!conchars) return false;
         if (!seat->q2_hud_fonts)
             seat->q2_hud_fonts = qa_font_library_create(hud.media.mounts, hud.media.images, error);
@@ -226,20 +239,36 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     qa_net_protocol_id protocol = {.kind = source->edition == QA_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
     qa_q2_codec codec;
     if (!qa_q2_codec_init(&codec, protocol, error) || !qa_q2_config_layout_read(&codec, &hud.config, error)) return false;
+    if(seat->q2_hud_status_text!=source->statusbar||seat->q2_hud_config_revision!=source->config_revision) {
+        qa_hud_q2_program *program;
+        if(!qa_hud_q2_program_create((qa_strings *)source->strings,source->statusbar,&program,error))return false;
+        qa_hud_q2_program_destroy(seat->q2_hud_status);seat->q2_hud_status=program;
+        seat->q2_hud_status_text=source->statusbar;seat->q2_hud_config_revision=source->config_revision;
+        for(unsigned slot=0;slot<256;++slot) {
+            const char *info=local_q2_config(&hud,(int32_t)hud.config.player_skins+(int32_t)slot);
+            if(!qa_hud_q2_player_picture_names((qa_strings *)source->strings,info?info:"",seat->q2_hud_player_icons+slot,seat->q2_hud_player_tags+slot,error))return false;
+        }
+    }
+    if(seat->q2_hud_layout_revision!=source->layout_revision) {
+        qa_hud_q2_program *program;
+        if(!qa_hud_q2_program_create((qa_strings *)source->strings,source->layout,&program,error))return false;
+        qa_hud_q2_program_destroy(seat->q2_hud_layout);seat->q2_hud_layout=program;seat->q2_hud_layout_revision=source->layout_revision;
+    }
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
             .image = local_q2_image}, source->stats, error)) return false;
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,
         .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
-        .binding = local_q2_binding};
+        .binding = local_q2_binding,.status=seat->q2_hud_status,
+        .picture_names=&seat->q2_hud_pictures,.config_picture=local_q2_config_picture};
     options.fonts.classic = seat->q2_hud_classic;
     const qa_cvar_view *use_font = source->hud_cvars ?
         qa_cvars_read(source->cvars, source->hud_cvars->use_font) : NULL;
     options.use_font = source->edition == QA_Q2_RERELEASE && use_font && use_font->integer != 0;
     qa_hud_q2_frame received = {.protocol = protocol, .stats = source->stats,
         .stat_count = QA_Q2_MAX_STATS, .inventory = source->inventory,
-        .inventory_count = sizeof(source->inventory) / sizeof(source->inventory[0]), .layout = source->layout,
+        .inventory_count = sizeof(source->inventory) / sizeof(source->inventory[0]), .layout = seat->q2_hud_layout,
         .player_number = source->player_number, .server_frame = source->server_frame,
         .time_ns = source->time_ns, .frame_ns = source->frame_ns};
     return qa_hud_q2_draw(&options, &received, false, scene, error);

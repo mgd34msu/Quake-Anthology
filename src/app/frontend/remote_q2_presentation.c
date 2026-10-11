@@ -268,6 +268,16 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
 }
 static const char *hud_config(void *context, int32_t index)
 { return index >= 0 && index <= UINT16_MAX ? frontend_remote_q2_config(context, (uint16_t)index) : ""; }
+static qa_string_id hud_config_picture(void *context,int32_t index,unsigned variant)
+{
+    frontend_remote_q2 *row=context;
+    if(index<0||(size_t)index>=row->layout.max_configs)return QA_STRING_NONE;
+    if(!variant)return row->config_names[index];
+    int32_t slot=index-(int32_t)row->layout.players;
+    if(slot<0||slot>=256)return QA_STRING_NONE;
+    qa_string_id value=variant==1?row->player_icons[slot]:row->player_tags[slot];
+    return value?value:variant==1?row->hud_pictures.player_icon:row->hud_pictures.tag;
+}
 static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_error *error)
 {
     if (!row->media_ready || !row->frontend->audio) return true;
@@ -309,6 +319,9 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
         case QA_Q2_SVC_LAYOUT: {
             const char *text = event->data.print.text; if (!text) return false;
             char *copy = malloc(strlen(text) + 1); if (!copy) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server layout");
+            qa_hud_q2_program *program;
+            if(!qa_hud_q2_program_create(qa_session_strings(qa_application_session(row->frontend->application)),text,&program,error)) {free(copy);return false;}
+            qa_hud_q2_program_destroy(row->hud_overlay);row->hud_overlay=program;
             strcpy(copy, text); free(row->overlay); row->overlay = copy; break;
         }
         case QA_Q2_SVC_PRINT:
@@ -778,11 +791,12 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     if (ok && row->classic) {
         qa_hud_q2_options options = {.viewport = view.viewport, .scale = 1, .font_line_height = 8, .white = row->white,
             .fonts = f->seats[seat].fonts, .table = &row->hud_table, .context = row,
-            .configstring = hud_config, .picture = remote_q2_picture_read};
+            .configstring = hud_config, .picture = remote_q2_picture_read,
+            .config_picture=hud_config_picture,.picture_names=&row->hud_pictures,.status=row->hud_status};
         options.fonts.classic = row->classic;
         qa_hud_q2_frame hud = {.protocol = row->options.domain.protocol, .stats = frame->player.stats,
             .stat_count = QA_Q2_MAX_STATS, .inventory = row->inventory, .inventory_count = 256,
-            .layout = row->overlay ? row->overlay : "", .player_number = player_number,
+            .layout = row->hud_overlay, .player_number = player_number,
             .server_frame = row->frame.server_frame, .time_ns = row->sample_ns, .frame_ns = (uint64_t)(row->frame_ms * 1000000)};
         ok = qa_hud_q2_draw(&options, &hud, false, &f->frame, error);
     }

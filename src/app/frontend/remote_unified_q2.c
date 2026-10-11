@@ -70,6 +70,16 @@ typedef struct q2_player_name {
     qa_unified_document *document;
 } q2_player_name;
 typedef struct q2_native_picture q2_native_picture;
+typedef struct q2_hud_names {
+    struct q2_hud_names *next;
+    const void *source;
+    size_t references;
+    qa_unified_document *document;
+    struct { uint32_t index; qa_string_id name; } *names;
+    size_t count;
+    qa_string_id icons[256],tags[256];
+    qa_hud_q2_program *status;
+} q2_hud_names;
 typedef struct q2_bank {
     struct q2_bank *next;
     struct frontend_unified_q2 *owner;
@@ -92,6 +102,8 @@ typedef struct q2_bank {
     qa_string_id source_provider;
     q2_model *models;
     q2_native_picture *native_pictures;
+    q2_hud_names *hud_names;
+    qa_hud_q2_picture_names picture_names;
     const qa_font *native_font;
     q2_alias *aliases;
     size_t alias_count;
@@ -100,7 +112,7 @@ typedef struct q2_bank {
 } q2_bank;
 struct q2_native_picture {
     struct q2_native_picture *next;
-    char *name;
+    qa_string_id name;
     qa_scene_image *image;
 };
 typedef struct q2_native {
@@ -109,12 +121,14 @@ typedef struct q2_native {
     qa_source_owner presentation_owner;
     const char *provider,*layout;
     qa_string_id provider_name;
+    q2_hud_names *names;
+    qa_hud_q2_program *layout_program;
     qa_unified_document *record_document,*config_document;
     const qa_unified_component_q2 *config_source;
     uint64_t owner_generation,generation;
     qa_net_protocol_id protocol;
     const qa_unified_q2_hud_configuration *configuration;
-    int32_t inventory[256],player_number;
+    int32_t inventory[256],player_number,skin_base;
     bool hud,replace_status,camera;
     const qa_font *font;
 } q2_native;
@@ -148,6 +162,7 @@ struct frontend_unified_q2 {
     frontend_unified_q2_rr_hud *rr_hud;
     char *help,*help_text[2];
     const char *layout;
+    qa_hud_q2_program *layout_program;
     qa_unified_document *layout_document;
     bool help_visible;
     bool inventory_visible,score_visible;
@@ -313,7 +328,7 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
         if (!m->path || !bank(o,row->content,NULL,NULL,0,false,&b,e) ||
             !model_name(b,m->path,true,&scene,e)) return false;
         for (size_t i=0;i<m->attachment_count;++i)
-            if (!model(b,m->attachments[i].path,true,&scene,e)) return false;
+            if (!model_name(b,m->attachments[i].path_id,true,&scene,e)) return false;
     }
     if (row->q2_profile && !source_bank(o,row,true,&b,e)) return false;
     const char *content,*provider;
@@ -802,6 +817,13 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
 }
 static void native_clear(q2_native *v)
 {
+    if(v->names&&! --v->names->references) {
+        q2_hud_names **link=&v->bank->hud_names;
+        while(*link!=v->names)link=&(*link)->next;
+        q2_hud_names *names=*link;*link=names->next;
+        qa_unified_document_destroy(names->document);qa_hud_q2_program_destroy(names->status);free(names->names);free(names);
+    }
+    qa_hud_q2_program_destroy(v->layout_program);
     qa_unified_document_destroy(v->record_document);
     qa_unified_document_destroy(v->config_document);
     *v=(q2_native){0};
@@ -828,10 +850,12 @@ static const char *native_config(void *context,int32_t index)
     return source && low<source->configstring_count && source->configstrings[low].index==(uint32_t)index?
         source->configstrings[low].value:"";
 }
-static const qa_scene_image *native_picture(void *context,const char *name,qa_error *e)
+static const qa_scene_image *native_picture(void *context,qa_string_id name_id,qa_error *e)
 {
     q2_native *v=context;
-    for (q2_native_picture *p=v->bank->native_pictures;p;p=p->next) if (!strcmp(p->name,name)) return p->image;
+    for (q2_native_picture *p=v->bank->native_pictures;p;p=p->next) if (p->name==name_id) return p->image;
+    const char *name=qa_strings_cstr(v->bank->owner->replica->strings,name_id);
+    if(!name||!*name)return NULL;
     const char *slash=strrchr(name,'/'),*extension=strrchr(name,'.');
     bool direct=name[0]=='/' || name[0]=='\\' ||
         (v->protocol.kind==QA_NET_Q2KEX_2023 && slash && extension && extension>slash && extension[1]);
@@ -850,15 +874,54 @@ static const qa_scene_image *native_picture(void *context,const char *name,qa_er
     }
     bool okay=qa_scene_image_load(v->bank->images,path,&options,&p->image,e); free(path);
     if (!okay) { free(p); return NULL; }
-    p->name=malloc(length+1);
-    if (!p->name) { qa_scene_image_release(p->image); free(p); return NULL; }
-    memcpy(p->name,name,length+1); p->next=v->bank->native_pictures; v->bank->native_pictures=p; return p->image;
+    p->name=name_id; p->next=v->bank->native_pictures; v->bank->native_pictures=p; return p->image;
 }
-static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
+static qa_string_id native_config_picture(void *context,int32_t index,unsigned variant)
 {
+    q2_native *v=context;
+    size_t low=0,high=v->names->count;
+    while(low<high) {size_t mid=low+(high-low)/2;if(v->names->names[mid].index<(uint32_t)index)low=mid+1;else high=mid;}
+    if(!variant)return low<v->names->count&&v->names->names[low].index==(uint32_t)index?v->names->names[low].name:QA_STRING_NONE;
+    int32_t slot=index-v->skin_base;
+    if(slot<0||slot>=256)return QA_STRING_NONE;
+    qa_string_id name=variant==1?v->names->icons[slot]:v->names->tags[slot];
+    return name?name:variant==1?v->bank->picture_names.player_icon:v->bank->picture_names.tag;
+}
+static bool native_font(frontend_unified_q2 *o,q2_native *v,const qa_unified_document *document,qa_error *e)
+{
+    const void *source=v->configuration?(const void *)v->configuration:(const void *)v->config_source;
+    q2_hud_names *binding=v->bank->hud_names;
+    while(binding&&binding->source!=source)binding=binding->next;
+    if(!binding) {
+        size_t count=v->configuration?v->configuration->configstring_count:v->config_source->configstring_count;
+        binding=calloc(1,sizeof(*binding));if(!binding)return false;
+        binding->count=count;
+        binding->names=count?calloc(count,sizeof(*binding->names)):NULL;
+        bool okay=(!count||binding->names)&&qa_unified_document_retain(document,&binding->document,e);
+        qa_q2_codec codec;qa_q2_config_layout layout;
+        okay=okay&&qa_q2_codec_init(&codec,v->protocol,e)&&qa_q2_config_layout_read(&codec,&layout,e);
+        for(size_t i=0;okay&&i<count;++i) {
+            uint32_t index=v->configuration?v->configuration->configstrings[i].index:v->config_source->configstrings[i].index;
+            const char *value=v->configuration?v->configuration->configstrings[i].value:v->config_source->configstrings[i].value;
+            binding->names[i].index=index;
+            if(value[0])okay=qa_strings_intern_cstr(o->replica->strings,value,&binding->names[i].name,e);
+            if(index==5)okay=okay&&qa_hud_q2_program_create(o->replica->strings,value,&binding->status,e);
+            if(index>=layout.player_skins&&index-layout.player_skins<256) {
+                size_t slot=index-layout.player_skins;
+                okay=okay&&qa_hud_q2_player_picture_names(o->replica->strings,value,binding->icons+slot,binding->tags+slot,e);
+            }
+        }
+        if(!okay) {qa_unified_document_destroy(binding->document);qa_hud_q2_program_destroy(binding->status);free(binding->names);free(binding);return false;}
+        binding->source=source;binding->next=v->bank->hud_names;v->bank->hud_names=binding;
+    }
+    v->names=binding;++binding->references;
+    qa_q2_codec codec;qa_q2_config_layout layout;
+    if(!qa_q2_codec_init(&codec,v->protocol,e)||!qa_q2_config_layout_read(&codec,&layout,e))return false;
+    v->skin_base=(int32_t)layout.player_skins;
     if (!v->bank->native_font) {
+        if(!qa_hud_q2_picture_names_bind(o->replica->strings,&v->bank->picture_names,e))return false;
         qa_font_library *fonts;qa_scene_resources *images;qa_material_library *materials;qa_audio_bank *sounds;
-        const qa_scene_image *conchars=native_picture(v,"conchars",e);
+        const qa_scene_image *conchars=native_picture(v,v->bank->picture_names.conchars,e);
         if (!conchars || !frontend_unified_media_bank(o->media,v->bank->content_name,&images,&materials,&fonts,&sounds,e) ||
             !qa_font_classic_create(fonts,"unified-native-q2:conchars",conchars,QA_FONT_BAKED_COLOR,&v->bank->native_font,e))return false;
     }
@@ -930,7 +993,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     v->player_number=row->player_number;
     for (size_t i=0;i<256;++i) v->inventory[i]=row->inventory[i];
     if (!okay) return false;
-    return native_font(o,v,e);
+    return qa_hud_q2_program_create(o->replica->strings,v->layout,&v->layout_program,e)&&native_font(o,v,v->config_document,e);
 }
 bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -1014,7 +1077,7 @@ static bool status_prepare(frontend_unified_q2 *o,const qa_unified_frame *frame,
         qa_strings_cstr(o->replica->strings,selected->hud.provider),
         product->edition==QA_EDITION_RERELEASE?FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE:FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
         false,&status->bank,e)) return false;
-    return native_font(o,status,e) && qa_unified_document_retain(document,&o->prepared_status_metadata,e);
+    return native_font(o,status,document,e) && qa_unified_document_retain(document,&o->prepared_status_metadata,e);
 }
 bool frontend_unified_q2_status_replacement(const frontend_unified_q2 *o,bool *out,qa_error *e)
 {
@@ -1491,6 +1554,9 @@ bool frontend_unified_q2_simulation(frontend_unified_q2 *o,const qa_unified_simu
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_LAYOUT) {
         qa_unified_document *document=NULL;
         if (!qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e))return false;
+        qa_hud_q2_program *program;
+        if(!qa_hud_q2_program_create(o->replica->strings,v->text,&program,e)) {qa_unified_document_destroy(document);return false;}
+        qa_hud_q2_program_destroy(o->layout_program);o->layout_program=program;
         qa_unified_document_destroy(o->layout_document);o->layout_document=document;o->layout=v->text;
     }
     /* Configstrings are already retained by reliable HUD metadata and native
@@ -1516,6 +1582,7 @@ void frontend_unified_q2_frame_commit(frontend_unified_q2 *o)
     if (!o || !o->prepared_frame || o->busy) return;
     qa_unified_document_destroy(o->frame); o->frame=o->prepared_frame; o->prepared_frame=NULL;
     o->seconds=o->prepared_seconds; o->frame_number=o->prepared_number;
+    native_clear(&o->status);
     o->status=o->prepared_status;o->prepared_status=(q2_native){0};
     qa_unified_document_destroy(o->status_metadata);
     o->status_metadata=o->prepared_status_metadata;o->prepared_status_metadata=NULL;
@@ -1541,7 +1608,7 @@ void frontend_unified_q2_frame_abort(frontend_unified_q2 *o)
     if (o && !o->busy) {
         frontend_unified_q2_rr_frame_abort(o->rr_hud);
         qa_unified_document_destroy(o->prepared_frame); o->prepared_frame=NULL;
-        o->prepared_status=(q2_native){0};
+        native_clear(&o->prepared_status);
         qa_unified_document_destroy(o->prepared_status_metadata);o->prepared_status_metadata=NULL;
     }
 }
@@ -1598,7 +1665,7 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,qa_str
     const qa_unified_model_state *model_state=&v->model->payload.value.model;
     for (size_t i=0;i<model_state->attachment_count;++i) {
         const char *name=model_state->attachments[i].path;qa_scene_model *scene=NULL;
-        bool okay=model(b,name,false,&scene,e);
+        bool okay=model_name(b,model_state->attachments[i].path_id,false,&scene,e);
         if (okay && scene) {qa_scene_model_input child=*input;
             child.source_path=name;
             child.attachments=NULL;child.attachment_count=0;child.skin=0;
@@ -1865,13 +1932,14 @@ static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_f
         (qa_vec4){1,0,0,opacity*(1-fraction*fraction)},e);
 }
 static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_native_hud *state,
-    const int32_t inventory[256],const char *layout,int32_t player_number,
+    const int32_t inventory[256],const qa_hud_q2_program *layout,int32_t player_number,
     qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
         .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
-        .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture};
+        .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture,
+        .config_picture=native_config_picture,.picture_names=&v->bank->picture_names,.status=v->names->status};
     options.fonts.classic=v->font;
     const qa_cvar_view *use_font=qa_cvars_read(d->cvars,o->replica->legacy_cvars.hud.use_font);
     options.use_font=v->protocol.kind==QA_NET_Q2KEX_2023 && use_font && use_font->integer!=0;
@@ -1894,7 +1962,7 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
     for (size_t i=0;i<o->native_count;++i) replacement|=o->native[i].replace_status;
     if (o->status.hud && !replacement) {
         const qa_unified_q2_hud_state *state=&received->player->q2_hud;
-        if (!status_draw(o,&o->status,&state->frame,o->inventory,o->layout,state->player_number,viewport,frame,e)) return false;
+        if (!status_draw(o,&o->status,&state->frame,o->inventory,o->layout_program,state->player_number,viewport,frame,e)) return false;
     }
     for (size_t i=0;components && i<components->native_count;++i) {
         const qa_unified_native_component *row=components->native+i;
@@ -1902,7 +1970,7 @@ bool frontend_unified_q2_hud(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect view
         q2_native *v=NULL;
         for (size_t k=0;k<o->native_count;++k) if (row->provider==o->native[k].provider_name) v=o->native+k;
         if (!v || !v->font) return false;
-        if (!status_draw(o,v,row->hud,v->inventory,v->layout,v->player_number,viewport,frame,e)) return false;
+        if (!status_draw(o,v,row->hud,v->inventory,v->layout_program,v->player_number,viewport,frame,e)) return false;
     }
     ++o->busy;
     qa_hud_options options=hud_options(o);
@@ -1959,18 +2027,21 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     o->music_retiring=true;
     for (q2_bank *b=o->banks;b;b=b->next) if (!frontend_received_music_destroy(&b->music,e)) { o->music_retiring=false; return false; }
     o->music_retiring=false;
+    for(size_t i=0;i<o->native_count;++i)native_clear(o->native+i);
+    native_clear(&o->status);native_clear(&o->prepared_status);
     while (o->banks) {
         q2_bank *b=o->banks;
         if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
         if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
         q2_native_picture *picture=b->native_pictures;
-        while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture->name);free(picture);picture=next;}
+        while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture);picture=next;}
+        while(b->hud_names) {q2_hud_names *names=b->hud_names;b->hud_names=names->next;
+            qa_unified_document_destroy(names->document);qa_hud_q2_program_destroy(names->status);free(names->names);free(names);}
         o->banks=b->next; free(b->aliases); free(b);
     }
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
-    for (size_t i=0;i<o->native_count;++i) native_clear(o->native+i);
     free(o->help);
     qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
@@ -1980,7 +2051,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a); }
     while (o->loops) {q2_loop *l=o->loops;o->loops=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);}
     while (o->names) {q2_player_name *n=o->names;o->names=n->next;qa_unified_document_destroy(n->document);}
-    qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);
+    qa_hud_q2_program_destroy(o->layout_program);qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);
     qa_arena_destroy(&o->text_storage);qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*slot=NULL;return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)

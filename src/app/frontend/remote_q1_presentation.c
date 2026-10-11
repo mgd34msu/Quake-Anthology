@@ -33,7 +33,7 @@ bool frontend_remote_q1_initial_clear(qa_frontend *frontend, uint32_t seat,
 }
 
 bool remote_q1_model_lighting(frontend_remote_q1 *row,
-    const qa_scene_world_input *world, qa_scene_model_input *input, qa_error *error)
+    const qa_scene_world_input *world, qa_scene_model_input *input, uint32_t model_flags, qa_error *error)
 {
     qa_vec3 ambient, directed, direction;
     if (!qa_scene_world_sample_light_input(row->world, world, input->previous_origin,
@@ -50,8 +50,8 @@ bool remote_q1_model_lighting(frontend_remote_q1 *row,
         if (input->view_model) base = fmaxf(base, 24);
         float total = base + dynamic, clamped = fminf(total, 128);
         float shade = fminf(total, 192 - clamped);
-        if ((input->player || !strcmp(input->source_path, "progs/player.mdl")) && clamped < 8) shade = 8;
-        if (!strcmp(input->source_path, "progs/flame.mdl") || !strcmp(input->source_path, "progs/flame2.mdl")) shade = 256;
+        if ((input->player || (model_flags & QA_MODEL_PATH_PLAYER_SHADE)) && clamped < 8) shade = 8;
+        if (model_flags & QA_MODEL_PATH_FLAME_FULLBRIGHT) shade = 256;
         values[i] = shade / 200 * 2;
     }
     input->alias_lighting = QA_ALIAS_PREPARED_LIGHT;
@@ -107,7 +107,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         }
     }
     return frontend_legacy_model_input(row->world,world,&input,error) &&
-        remote_q1_model_lighting(row, world, &input, error) &&
+        remote_q1_model_lighting(row, world, &input, qa_scene_model_path_flags(model->scene), error) &&
         qa_scene_model_submit(model->scene, &input, &row->frontend->frame, error);
 }
 static bool sky_environment(frontend_remote_q1 *row,qa_scene_q1_sky_environment *out,qa_error *error)

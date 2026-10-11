@@ -135,6 +135,14 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
         const char *appearance=strchr(value,'\\');
         if (!qa_strings_intern_cstr(strings,appearance?appearance+1:"",row->player_appearances+index-row->layout.players,error)) return false;
     }
+    if(index==5) {
+        qa_hud_q2_program *program;
+        if(!qa_hud_q2_program_create(strings,value,&program,error))return false;
+        qa_hud_q2_program_destroy(row->hud_status);row->hud_status=program;
+    }
+    if(index>=row->layout.players&&index-row->layout.players<256&&
+        !qa_hud_q2_player_picture_names(strings,value,row->player_icons+index-row->layout.players,
+            row->player_tags+index-row->layout.players,error))return false;
     remote_q2_prediction_config(row, index);
     return !row->media_ready || remote_q2_model_config(row, index, error);
 }
@@ -161,6 +169,9 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     qa_q2_frame_free(&row->frame); qa_q2_frame_free(&row->previous);
     for (size_t i = 0; row->configs && i < row->layout.max_configs; ++i) { free(row->configs[i]); row->configs[i] = NULL; row->config_names[i]=QA_STRING_NONE; }
     memset(row->player_appearances,0,sizeof(row->player_appearances));
+    memset(row->player_icons,0,sizeof(row->player_icons));memset(row->player_tags,0,sizeof(row->player_tags));
+    qa_hud_q2_program_destroy(row->hud_status);row->hud_status=NULL;
+    qa_hud_q2_program_destroy(row->hud_overlay);row->hud_overlay=NULL;
     free(row->baselines); row->baselines = NULL; row->baseline_count = 0;
     free(row->overlay); row->overlay = NULL; memset(row->inventory, 0, sizeof(row->inventory));
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog);
@@ -244,7 +255,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     row->configs = calloc(row->layout.max_configs, sizeof(*row->configs));
     row->config_names=calloc(row->layout.max_configs,sizeof(*row->config_names));
     row->model_slots = calloc(row->layout.max_models, sizeof(*row->model_slots));
-    if (!row->events || !row->configs || !row->config_names || !row->model_slots || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
+    if (!row->events || !row->configs || !row->config_names || !row->model_slots || !qa_hud_q2_picture_names_bind(qa_session_strings(qa_application_session(f->application)),&row->hud_pictures,error) || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
         qa_event_ring_destroy(&row->events);
         qa_arena_destroy(&row->effect_storage);free(row->configs); free(row->config_names); free(row->model_slots); free(row); return false;
     }

@@ -883,6 +883,15 @@ The text registration adapter delegates to that same ID implementation. The
 normal production build and seven existing core suites passed on 2026-10-11;
 this is source/build verification, not a new live audio qualification.
 
+The final four sites from the names re-check now use retained IDs: Unified Q3
+uses the media bank's content ID, Q2 attachment paths bind at event admission,
+Q2 HUD pictures and layouts retain names through the shared layout interpreter,
+and Q1 model lighting reads model path flags. Local, legacy remote and Unified
+Q2 HUD callers use that interpreter. The normal build and seven core suites
+passed on 2026-10-11; this is source/build evidence, not a live playtest. The
+13 findings in `c-commits-since-3237d615-2026-10-11.md` remain the names work
+list before events.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

@@ -70,11 +70,11 @@ static bool stat_number(double value, int16_t *out, qa_error *error)
     stat_word(value >= INT32_MIN && value < 2147483648.0 ? (int32_t)value : INT32_MIN, out);
     return true;
 }
-static bool stat_image(const qa_q2_wire_stat_resources *resources, const char *name,
+static bool stat_image(const qa_q2_wire_stat_resources *resources, qa_string_id name,
     int16_t *out, qa_error *error)
 {
     uint32_t image = 0;
-    if (name && *name && !resources->image(resources->context, name, &image, error)) return false;
+    if (name && !resources->image(resources->context, name, &image, error)) return false;
     if (image > INT16_MAX) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source HUD image exceeds its stat word");
         return false;
@@ -85,37 +85,35 @@ static bool stat_image(const qa_q2_wire_stat_resources *resources, const char *n
 bool qa_q2_wire_stats(const qa_q2_game *g, const qa_q2_player_view *view,
     const qa_q2_wire_stat_resources *resources, int16_t out[64], qa_error *error)
 {
-    qa_strings *strings = qa_session_strings(g->services.session);
     int16_t stats[64] = {0};
     if (!stat_number(view->health, &stats[1], error) ||
         !stat_number(view->armor, &stats[5], error) ||
-        !stat_image(resources, "i_health", &stats[0], error) ||
-        !stat_image(resources, qa_strings_cstr(strings, view->ammo_icon), &stats[2], error) ||
-        !stat_image(resources, qa_strings_cstr(strings, view->armor_icon), &stats[4], error) ||
-        !stat_image(resources, qa_strings_cstr(strings, view->pickup_icon), &stats[7], error) ||
-        !stat_image(resources, qa_strings_cstr(strings, view->help_icon), &stats[11], error)) return false;
+        !stat_image(resources, g->runtime_names[Q2_NAME_RESOURCE_I_HEALTH], &stats[0], error) ||
+        !stat_image(resources, view->ammo_icon, &stats[2], error) ||
+        !stat_image(resources, view->armor_icon, &stats[4], error) ||
+        !stat_image(resources, view->pickup_icon, &stats[7], error) ||
+        !stat_image(resources, view->help_icon, &stats[11], error)) return false;
     stat_word(view->ammo_count, &stats[3]); stat_word(view->timer_seconds, &stats[10]);
     stat_word(view->layouts, &stats[13]); stat_word(view->score, &stats[14]);
     stat_word(view->flashes, &stats[15]); stats[17] = view->spectator ? 1 : 0;
-    const char *pickup = qa_strings_cstr(strings, view->pickup_text);
-    const char *selected_name = qa_strings_cstr(strings, view->selected_item_name);
+
     for (size_t i = 0; i < qa_q2_item_count(g); ++i) {
         const qa_q2_item_definition *item = qa_q2_item_at(g, i);
         if (view->selected_item && item->item == view->selected_item) {
             stat_word((int32_t)i + 1, &stats[12]);
-            if (!stat_image(resources, item->icon, &stats[6], error)) return false;
+            if (!stat_image(resources, item->icon_id, &stats[6], error)) return false;
         }
         if (view->timer_item && item->item == view->timer_item &&
-            !stat_image(resources, item->icon, &stats[9], error)) return false;
-        if (pickup && item->name && !strcmp(pickup, item->name))
+            !stat_image(resources, item->icon_id, &stats[9], error)) return false;
+        if (view->pickup_text && view->pickup_text==item->name_id)
             stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[8]);
-        if (selected_name && item->name && !strcmp(selected_name, item->name))
+        if (view->selected_item_name && view->selected_item_name==item->name_id)
             stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[51]);
     }
     if (g->options.edition == QA_Q2_RERELEASE) {
         stat_word(view->hit_marker_damage, &stats[50]);
         for (unsigned i = 0; i < 3; ++i)
-            if (!stat_image(resources, qa_strings_cstr(strings, view->key_icons[i]), &stats[44 + i], error)) return false;
+            if (!stat_image(resources, view->key_icons[i], &stats[44 + i], error)) return false;
     } else stats[51] = 0;
     memcpy(out, stats, sizeof(stats));
     return true;

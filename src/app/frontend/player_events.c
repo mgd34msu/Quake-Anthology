@@ -49,6 +49,10 @@ void frontend_player_retire(frontend_seat *seat)
     seat->q2_hud_fonts = NULL; seat->q2_hud_classic = NULL;
     seat->q2_hud_font_provider = 0; seat->q2_hud_active = false;
     seat->q2_hud = (qa_application_native_q2_hud){0};
+    qa_hud_q2_program_destroy(seat->q2_hud_status);seat->q2_hud_status=NULL;
+    qa_hud_q2_program_destroy(seat->q2_hud_layout);seat->q2_hud_layout=NULL;
+    seat->q2_hud_status_text=NULL;seat->q2_hud_config_revision=seat->q2_hud_layout_revision=0;
+    seat->q2_hud_pictures=(qa_hud_q2_picture_names){0};
     free(seat->q2_scores); free(seat->q2_score_names);
     seat->q2_scores = NULL; seat->q2_score_names = NULL; seat->q2_score_count = 0;
     for (unsigned i = 0; i < 2; ++i) { free(seat->q2_help_text[i]); seat->q2_help_text[i] = NULL; seat->q2_help_lines[i] = ""; }

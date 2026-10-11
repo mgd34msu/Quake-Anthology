@@ -135,6 +135,7 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
             for (unsigned i = 0; i < sizeof(value.inventory) / sizeof(value.inventory[0]); ++i)
                 value.inventory[i] = engine->clients[selected.slot].inventory[i];
         value.layout = engine->clients[selected.slot].layout;
+        value.layout_revision=engine->clients[selected.slot].layout_revision;
         value.player_number = (int32_t)selected.slot - 1;
     } else {
         qa_q2_player_info player;

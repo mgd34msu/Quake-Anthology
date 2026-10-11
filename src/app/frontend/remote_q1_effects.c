@@ -371,7 +371,7 @@ static bool beam(frontend_remote_q1 *row,const frontend_fx_q1_beam *value,const 
         qa_scene_model_input input={.view=*view,.transform=transform,.previous_origin=point,.color={1,1,1,1},
             .family=QA_GAME_Q1,.seconds=world->seconds,.source_path=path,.entity=value->source_entity,.identity_light=1};
         if(!frontend_legacy_model_input(row->world,world,&input,error) ||
-            !remote_q1_model_lighting(row,world,&input,error) ||
+            !remote_q1_model_lighting(row,world,&input,qa_scene_model_path_flags(model->scene),error) ||
             !qa_scene_model_submit(model->scene,&input,&row->frontend->frame,error)) return false;
     }
     return true;

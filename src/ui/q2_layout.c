@@ -4,6 +4,59 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+
+struct qa_hud_q2_program { qa_strings *strings; qa_string_id *tokens; size_t count; };
+
+bool qa_hud_q2_program_create(qa_strings *strings,const char *source,qa_hud_q2_program **out,qa_error *error)
+{
+    *out=NULL; if (!source||!*source) return true;
+    qa_tokenizer parser; qa_token token; bool found; size_t count=0;
+    if (!qa_tokenizer_init(&parser,(qa_bytes){(const uint8_t *)source,strlen(source)},error)) return false;
+    for (;;) { if (!qa_tokenizer_next(&parser,&token,&found,error)) return false; if(!found)break; ++count; }
+    qa_hud_q2_program *p=calloc(1,sizeof(*p));
+    if (!p) return false;
+    p->tokens=count?calloc(count,sizeof(*p->tokens)):NULL;
+    if (count&&!p->tokens) {free(p);return false;}
+    p->strings=strings;qa_strings_retain(strings);
+    qa_tokenizer_init(&parser,(qa_bytes){(const uint8_t *)source,strlen(source)},error);
+    for (size_t i=0;i<count;++i) {
+        qa_tokenizer_next(&parser,&token,&found,error);
+        char *text=malloc(token.text.size+1);
+        bool okay=text&&qa_token_copy(&token,text,token.text.size+1,error)&&
+            qa_strings_intern_cstr(strings,text,p->tokens+i,error);
+        free(text); if (!okay) {qa_hud_q2_program_destroy(p);return false;}
+    }
+    p->count=count;*out=p;return true;
+}
+void qa_hud_q2_program_destroy(qa_hud_q2_program *p)
+{ if(p) {qa_strings_destroy(p->strings);free(p->tokens);free(p);} }
+bool qa_hud_q2_picture_names_bind(qa_strings *strings,qa_hud_q2_picture_names *names,qa_error *error)
+{
+    for(unsigned style=0;style<2;++style) for(unsigned n=0;n<11;++n) {
+        char name[32]; if(n==10)snprintf(name,sizeof name,"%s_minus",style?"anum":"num");
+        else snprintf(name,sizeof name,"%s_%u",style?"anum":"num",n);
+        if(!qa_strings_intern_cstr(strings,name,&names->digits[style][n],error))return false;
+    }
+    return qa_strings_intern_cstr(strings,"field_3",&names->field,error)&&
+        qa_strings_intern_cstr(strings,"ping",&names->ping,error)&&
+        qa_strings_intern_cstr(strings,"inventory",&names->inventory,error)&&
+        qa_strings_intern_cstr(strings,"conchars",&names->conchars,error)&&
+        qa_strings_intern_cstr(strings,"marker",&names->marker,error)&&
+        qa_hud_q2_player_picture_names(strings,"",&names->player_icon,&names->tag,error);
+}
+
+bool qa_hud_q2_player_picture_names(qa_strings *strings,const char *info,qa_string_id *icon,qa_string_id *dogtag,qa_error *error)
+{
+    const char *skin=strchr(info,'\\');skin=skin&&skin[1]?skin+1:"male/grunt";
+    const char *end=strchr(skin,'\\');size_t length=end?(size_t)(end-skin):strlen(skin);
+    const char *tag=end&&end[1]?end+1:"default";end=strchr(tag,'\\');size_t tag_length=end?(size_t)(end-tag):strlen(tag);
+    char *path=malloc((length>tag_length?length:tag_length)+24);if(!path)return false;
+    snprintf(path,length+24,"/players/%.*s_i.pcx",(int)length,skin);
+    bool okay=qa_strings_intern_cstr(strings,path,icon,error);
+    snprintf(path,tag_length+24,"/tags/%.*s.pcx",(int)tag_length,tag);
+    okay=okay&&qa_strings_intern_cstr(strings,path,dogtag,error);free(path);return okay;
+}
 
 typedef struct layout_context {
     const qa_hud_q2_options *options;
@@ -12,6 +65,9 @@ typedef struct layout_context {
     qa_arena *storage;
     qa_error *error;
     qa_tokenizer parser;
+    const qa_hud_q2_program *program;
+    size_t token;
+    qa_string_id token_name;
     qa_hud_q2_table *table;
     float x, y, width, height;
     int32_t images, items, skins, max_images, max_strings, max_clients;
@@ -42,6 +98,11 @@ static const char *config(layout_context *c, int32_t index) {
     return copy(c, c->options->configstring ? c->options->configstring(c->options->context, index) : NULL);
 }
 static const char *next(layout_context *c, bool *found) {
+    if(c->program) {
+        *found=c->token<c->program->count;
+        c->token_name=*found?c->program->tokens[c->token++]:QA_STRING_NONE;
+        return *found?qa_strings_cstr(c->program->strings,c->token_name):"";
+    }
     qa_token token;
     if (!qa_tokenizer_next(&c->parser, &token, found, c->error)) { c->failed = true; return ""; }
     if (!*found) return "";
@@ -90,8 +151,8 @@ static bool quad(layout_context *c, const qa_scene_image *image, float x, float 
 static void fill(layout_context *c, float x, float y, float w, float h, qa_vec4 color) {
     quad(c, c->options->white, x, y, w, h, (qa_vec4){0, 0, 1, 1}, color);
 }
-static void picture(layout_context *c, const char *name, float x, float y, float w, float h, bool before) {
-    if (c->failed || !*name || !c->options->picture) return;
+static void picture(layout_context *c, qa_string_id name, float x, float y, float w, float h, bool before) {
+    if (c->failed || !name || !c->options->picture) return;
     const qa_scene_image *image = c->options->picture(c->options->context, name, c->error);
     if (!image) return;
     if (before) x -= (float)image->logical_width + 2;
@@ -191,9 +252,7 @@ static void field(layout_context *c, double value, int32_t digits, bool alternat
     size_t length = strlen(s); if (length > (size_t)digits) length = (size_t)digits;
     float x = c->x + 2 + (float)(16 * (digits - (int32_t)length));
     for (size_t i = 0; i < length; ++i, x += 16) {
-        char name[32];
-        if (s[i] == '-') snprintf(name, sizeof name, "%s_minus", alternate ? "anum" : "num");
-        else snprintf(name, sizeof name, "%s_%c", alternate ? "anum" : "num", s[i]);
+        qa_string_id name=c->options->picture_names->digits[alternate][s[i]=='-'?10:(unsigned)(s[i]-'0')];
         picture(c, name, x, c->y, 0, 0, false);
     }
 }
@@ -277,7 +336,7 @@ static void item_picture(layout_context *c, int32_t index) {
     } else {
         int32_t value = stat_int(c, index);
         if (value < 0 || value >= c->max_images) { fail(c, "HUD image outside configstrings"); return; }
-        picture(c, config(c, c->images + value), c->x, c->y, 0, 0, false); return;
+        picture(c, c->options->config_picture(c->options->context,c->images+value,0), c->x, c->y, 0, 0, false); return;
     }
     if (image) {
         if (!isfinite(aspect) || aspect <= 0) { fail(c, "HUD arsenal image has invalid aspect"); return; }
@@ -391,9 +450,13 @@ static void name12(layout_context *c, const char *value, bool alternate, float x
         classic_glyph(c, scalar | mask, x + (float)units++ * 8, y, false);
     }
 }
-static bool execute(layout_context *c, const char *source) {
-    source = copy(c, source);
-    if (c->failed || !qa_tokenizer_init(&c->parser, (qa_bytes){(const uint8_t *)source, strlen(source)}, c->error)) return false;
+static bool execute(layout_context *c, const qa_hud_q2_program *program, const char *source) {
+    c->program=program;c->token=0;
+    if (!program) {
+        if (!source) return true;
+        source=copy(c,source);
+        if(c->failed||!qa_tokenizer_init(&c->parser,(qa_bytes){(const uint8_t *)source,strlen(source)},c->error))return false;
+    }
     c->x = c->y = 0;
     bool local_conditions[16], *conditions = local_conditions;
     size_t depth = 0, capacity = 16;
@@ -430,7 +493,7 @@ static bool execute(layout_context *c, const char *source) {
         } else if (!strcmp(command, "pic")) {
             int32_t index = integer(c); stat_reference(c, index, true); if (draw) item_picture(c, index);
         } else if (!strcmp(command, "picn")) {
-            const char *value = argument(c); if (draw) picture(c, value, c->x, c->y, 0, 0, false);
+            argument(c); if (draw) picture(c, c->token_name, c->x, c->y, 0, 0, false);
         } else if (!strcmp(command, "num")) {
             int32_t digits = integer(c), index = integer(c); if (draw) field(c, stat(c, index), digits, false);
         } else if (c->rerelease && !strcmp(command, "lives_num")) {
@@ -450,7 +513,7 @@ static bool execute(layout_context *c, const char *source) {
                 int32_t parsed = decimal(weapon); if (parsed) warning = parsed;
             }
             bool alternate = index == 1 ? value <= 0 || (value <= 25 && flash) : index == 3 && value <= warning && flash;
-            if (stat_int(c, 15) & (index == 1 ? 1 : index == 3 ? 4 : 2)) picture(c, "field_3", c->x, c->y, 0, 0, false);
+            if (stat_int(c, 15) & (index == 1 ? 1 : index == 3 ? 4 : 2)) picture(c, c->options->picture_names->field, c->x, c->y, 0, 0, false);
             field(c, value, 3, alternate);
         } else if (!strcmp(command, "stat_string") || (c->rerelease && !strncmp(command, "loc_stat_", 9))) {
             if (strcmp(command, "stat_string") && strcmp(command, "loc_stat_string") && strcmp(command, "loc_stat_rstring") &&
@@ -493,20 +556,20 @@ static bool execute(layout_context *c, const char *source) {
             text(c, name, !c->rerelease, c->x + 32, c->y, false);
             if (c->rerelease) {
                 text(c, number_string(c, score, true), !c->options->use_font, c->x + 32, c->y + 10, false);
-                picture(c, "ping", c->x + 96, c->y + 10, 9, 9, false);
+                picture(c, c->options->picture_names->ping, c->x + 96, c->y + 10, 9, 9, false);
                 text(c, number_string(c, ping, true), false, c->x + (c->options->use_font ? 107 : 105), c->y + 10, false);
             } else {
                 text(c, "Score: ", false, c->x + 32, c->y + 8, false);
                 text(c, number_string(c, score, true), true, c->x + 88, c->y + 8, false);
                 text(c, join(c, "Ping:  ", number_string(c, ping, true), ""), false, c->x + 32, c->y + 16, false);
                 text(c, join(c, "Time:  ", number_string(c, time, true), ""), false, c->x + 32, c->y + 24, false);
-                const char *skin = slash && slash[1] ? slash + 1 : "male/grunt";
-                picture(c, join(c, "/players/", skin, "_i.pcx"), c->x, c->y, 0, 0, false);
+                picture(c, c->options->config_picture(c->options->context,c->skins+slot,1), c->x, c->y, 0, 0, false);
             }
         } else if (!strcmp(command, "ctf")) {
             int32_t px = integer(c), py = integer(c), slot = integer(c), score = integer(c), ping = integer(c);
             if (ping > 999) ping = 999;
-            const char *icon = c->rerelease ? argument(c) : "";
+            if(c->rerelease)argument(c);
+            qa_string_id icon=c->rerelease?c->token_name:QA_STRING_NONE;
             if (!draw) continue;
             c->x = truncf(c->width / 2) - 160 + (float)px; c->y = truncf(c->height / 2) - 120 + (float)py;
             bool alternate = slot == c->frame->player_number;
@@ -535,10 +598,8 @@ static bool execute(layout_context *c, const char *source) {
             text(c, value, true, c->x - measure(c, value, false), c->y, false);
         } else if (c->rerelease && !strcmp(command, "dogtag")) {
             int32_t slot = integer(c); if (!draw) continue;
-            const char *info = client_info(c, slot), *tag = strchr(info, '\\');
-            tag = tag ? strchr(tag + 1, '\\') : NULL; tag = tag && tag[1] ? tag + 1 : "default";
-            const char *end = strchr(tag, '\\'); if (end) tag = copy_span(c, tag, (size_t)(end - tag));
-            picture(c, join(c, "/tags/", tag, ".pcx"), c->x, c->y, 198, 32, false);
+            client_info(c,slot);
+            picture(c, c->options->config_picture(c->options->context,c->skins+slot,2), c->x, c->y, 198, 32, false);
         } else if (c->rerelease && (!strcmp(command, "start_table") || !strcmp(command, "table_row"))) {
             bool start = !strcmp(command, "start_table");
             int32_t count = integer(c); const char *values[6];
@@ -600,7 +661,7 @@ bool qa_hud_q2_layout_stat_references(const char *source, bool rerelease, qa_are
     if (!source || !out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 layout reference input"); return false; }
     qa_hud_q2_stat_references value = {0};
     layout_context c = {.storage = scratch, .error = error, .rerelease = rerelease, .references = &value};
-    bool ok = execute(&c, source);
+    bool ok = execute(&c,NULL,source);
     qa_arena_reset(scratch);
     if (ok) *out = value;
     return ok;
@@ -626,7 +687,7 @@ static bool inventory_draw(layout_context *c) {
     if (top > maximum) top = maximum;
     float x = c->rerelease ? truncf(c->width / 2) - 128 : floorf((c->width - 256) / 2);
     float y = c->rerelease ? truncf(c->height / 2) - 108 : floorf((c->height - 240) / 2);
-    picture(c, "inventory", x, y + 8, 0, 0, false);
+    picture(c, c->options->picture_names->inventory, x, y + 8, 0, 0, false);
     if (!c->rerelease) {
         classic_text(c, "hotkey ### item", x + 24, y + 24, false, false, false);
         classic_text(c, "------ --- ----", x + 24, y + 32, false, false, false);
@@ -679,16 +740,15 @@ static bool table_valid(const qa_hud_q2_table *table, qa_error *error) {
     return true;
 }
 bool qa_hud_q2_layout(const qa_hud_q2_options *options, const qa_hud_q2_frame *frame,
-                      const char *source, qa_scene_frame *scene, qa_error *error) {
+                      const qa_hud_q2_program *source, qa_scene_frame *scene, qa_error *error) {
     layout_context c;
-    if (!source || !initialize(&c, options, frame, scene, error)) {
-        if (!source) qa_error_set(error, QA_ERROR_ARGUMENT, 0, "missing Q2 HUD layout");
+    if (!initialize(&c, options, frame, scene, error)) {
         return false;
     }
     qa_hud_q2_table table = {0};
     if (!c.table) c.table = &table;
     if (!table_valid(c.table, error)) return false;
-    return execute(&c, source);
+    return execute(&c,source,NULL);
 }
 bool qa_hud_q2_draw(const qa_hud_q2_options *options, const qa_hud_q2_frame *frame,
                     bool overlay_only, qa_scene_frame *scene, qa_error *error) {
@@ -698,8 +758,8 @@ bool qa_hud_q2_draw(const qa_hud_q2_options *options, const qa_hud_q2_frame *fra
     if (!c.table) c.table = &table;
     if (!table_valid(c.table, error)) return false;
     int32_t layouts = frame->stat_count > 13 ? frame->stats[13] : 0;
-    if (!overlay_only && !(c.rerelease && (layouts & 4)) && !execute(&c, config(&c, 5))) return false;
-    if ((layouts & 1) && !execute(&c, frame->layout ? frame->layout : "")) return false;
+    if (!overlay_only && !(c.rerelease && (layouts & 4)) && !execute(&c,options->status,NULL)) return false;
+    if ((layouts & 1) && !execute(&c,frame->layout,NULL)) return false;
     if (!overlay_only && (layouts & 2)) return inventory_draw(&c);
     return !c.failed;
 }

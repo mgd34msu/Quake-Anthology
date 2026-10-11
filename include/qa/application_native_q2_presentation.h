@@ -116,6 +116,7 @@ typedef struct qa_application_native_q2_hud {
     const qa_q2_game *game;
     qa_q2_player_view view;
     const char *statusbar, *layout;
+    uint64_t layout_revision;
     const qa_strings *strings;
     const qa_string_id *configstrings;
     uint32_t configstring_count;

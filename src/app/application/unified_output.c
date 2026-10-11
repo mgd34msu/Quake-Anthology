@@ -140,14 +140,16 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
 }
 
 typedef struct q2_stat_images {
+    const qa_strings *strings;
     const qa_unified_q2_configstring *rows;
     size_t count;
     uint32_t base;
 } q2_stat_images;
-static bool q2_stat_image(void *context, const char *name, uint32_t *out, qa_error *error)
+static bool q2_stat_image(void *context, qa_string_id name_id, uint32_t *out, qa_error *error)
 {
     (void)error;
     const q2_stat_images *images = context;
+    const char *name=qa_strings_cstr(images->strings,name_id);
     size_t low = 0, high = images->count;
     while (low < high) {
         size_t middle = low + (high - low) / 2;
@@ -177,7 +179,7 @@ static bool q2_hud_state(const qa_application_native_q2_hud *hud,
         qa_q2_config_layout layout; qa_q2_codec codec = {.protocol = config->protocol};
         if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
         size_t first = q2_config_lower_bound(config, layout.images);
-        q2_stat_images images = {.rows = config->configstrings + first,
+        q2_stat_images images = {.strings=hud->strings,.rows = config->configstrings + first,
             .count = q2_config_lower_bound(config, layout.images + layout.max_images) - first, .base = layout.images};
         if (!qa_q2_wire_stats(hud->game, &hud->view,
             &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image},

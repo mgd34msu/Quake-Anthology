@@ -672,9 +672,9 @@ static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_presen
 bool frontend_unified_q3_presentation_validate(frontend_unified_q3 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
     if(!o||!row||!current(o,e))return false;
-    qa_catalog *catalog=qa_executable_recipe_catalog(frontend_remote_unified_recipe(o->replica));
-    const qa_product *product=qa_catalog_find(catalog,row->content);
-    if(!product||product->family!=QA_GAME_Q3)return false;
+    qa_vfs *files; const qa_product *product;
+    if(!frontend_unified_media_files(o->media,row->content_id,&files,&product,e)||
+        product->family!=QA_GAME_Q3)return false;
     qa_actor_id id;
     if(row->payload.kind==QA_UNIFIED_PRESENTATION_Q3_CHARACTER)
         return actor(o,row->payload.value.q3_character.actor,&id,e);

@@ -162,6 +162,9 @@ struct frontend_remote_q2 {
     struct frontend_remote_q2_image_policy *image_policy;
     struct frontend_remote_q2_effects *effects;
     qa_hud_q2_table hud_table;
+    qa_hud_q2_picture_names hud_pictures;
+    qa_hud_q2_program *hud_status, *hud_overlay;
+    qa_string_id player_icons[256], player_tags[256];
     int32_t inventory[256];
     char *overlay;
     qa_fs_stage *download_stage;
@@ -200,7 +203,7 @@ bool remote_q2_prediction_publish(frontend_remote_q2 *, qa_error *);
 bool remote_q2_map_validate(const frontend_remote_q2 *, const qa_resource *, qa_bsp_view *, qa_error *);
 bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **, qa_error *);
 bool remote_q2_model_config(frontend_remote_q2 *, uint16_t, qa_error *);
-const qa_scene_image *remote_q2_picture_read(void *, const char *, qa_error *);
+const qa_scene_image *remote_q2_picture_read(void *, qa_string_id, qa_error *);
 const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *, const char *, qa_error *);
 bool remote_q2_image_direct(const frontend_remote_q2 *, const char *);
 bool remote_q2_download_prepare(frontend_remote_q2 *, qa_q2_preparation *, qa_error *);

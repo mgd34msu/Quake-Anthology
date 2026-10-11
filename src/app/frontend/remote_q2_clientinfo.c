@@ -117,7 +117,9 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
     }
     if (!has_weapon) *out->weapon = 0;
     char icon[256]; snprintf(icon, sizeof(icon), "/players/%s/%s_i.pcx", model, skin);
-    qa_error issue = {0}; const qa_scene_image *image = remote_q2_picture_read(row, icon, &issue);
+    qa_error issue = {0};qa_string_id icon_id;
+    if(!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),icon,&icon_id,error))return false;
+    const qa_scene_image *image = remote_q2_picture_read(row, icon_id, &issue);
     if (!image && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) { if (error) *error = issue; return false; }
     bool default_weapon = false; char default_path[256];
     snprintf(default_path, sizeof(default_path), "players/%s/weapon.md2", model);

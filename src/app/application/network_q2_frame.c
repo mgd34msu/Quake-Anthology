@@ -483,8 +483,8 @@ bool qa_application_network_q2_motion(qa_application_network_q2 *owner,
     return true;
 }
 
-static bool hud_image(void *context, const char *name, uint32_t *out, qa_error *error)
-{ return application_network_q2_resource(context, 2, name, out, error); }
+static bool hud_image(void *context, qa_string_id name, uint32_t *out, qa_error *error)
+{ qa_application_network_q2 *owner=context; return application_network_q2_resource(owner, 2, qa_strings_cstr(qa_session_strings(owner->app->session),name), out, error); }
 
 bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_actor_id actor,
     qa_q2_player *out, qa_error *error)

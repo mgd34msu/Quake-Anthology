@@ -151,15 +151,14 @@ bool remote_q2_image_direct(const frontend_remote_q2 *row, const char *name)
     const char *slash = strrchr(name, '/'), *extension = strrchr(name, '.');
     return remote_q2_rerelease_presentation(row) && slash && extension && extension > slash && extension[1];
 }
-const qa_scene_image *remote_q2_picture_read(void *context, const char *name, qa_error *error)
+const qa_scene_image *remote_q2_picture_read(void *context, qa_string_id name_id, qa_error *error)
 {
     frontend_remote_q2 *row = context;
     if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring) {
         remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 picture registration requires its live resource owner"); return NULL;
     }
-    qa_string_id name_id;
-    if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
-        name, &name_id, error)) return NULL;
+    const char *name=qa_strings_cstr(qa_session_strings(qa_application_session(row->frontend->application)),name_id);
+    if(!name||!*name)return NULL;
     for (remote_q2_picture *p = row->pictures; p; p = p->next)
         if (!p->sprite && p->name_id == name_id) return p->image;
     size_t length = strlen(name);
@@ -315,7 +314,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + i));
         if (!*name) continue;
         qa_error issue = {0};
-        if (!remote_q2_picture_read(row, name, &issue) && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) {
+        if (!remote_q2_picture_read(row, row->config_names[row->layout.images+i], &issue) && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) {
             if (error) *error = issue;
             return false;
         }
@@ -328,11 +327,11 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     qa_error issue = {0};
     if (!remote_q2_clientinfo_prepare(row, error)) return false;
     qa_error marker_issue = {0};
-    if (!remote_q2_picture_read(row, "marker", &marker_issue) && marker_issue.code != QA_OK && marker_issue.code != QA_ERROR_NOT_FOUND) {
+    if (!remote_q2_picture_read(row, row->hud_pictures.marker, &marker_issue) && marker_issue.code != QA_OK && marker_issue.code != QA_ERROR_NOT_FOUND) {
         if (error) *error = marker_issue;
         return false;
     }
-    const qa_scene_image *conchars = remote_q2_picture_read(row, "conchars", &issue);
+    const qa_scene_image *conchars = remote_q2_picture_read(row, row->hud_pictures.conchars, &issue);
     if (conchars && !qa_font_classic_create(row->fonts, "remote-q2:conchars", conchars,
         QA_FONT_BAKED_COLOR, &row->classic, error)) return false;
     if (!remote_q2_effects_create(row, error) || !remote_q2_live(row, error)) return false;

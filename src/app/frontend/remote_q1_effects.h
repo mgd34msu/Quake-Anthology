@@ -16,7 +16,7 @@ bool remote_q1_effects_draw(frontend_remote_q1 *, const qa_scene_view *,
     const qa_scene_world_input *, qa_error *);
 bool remote_q1_effects_models(frontend_remote_q1 *,const qa_scene_view *,const qa_scene_world_input *,qa_vec3,qa_error *);
 bool remote_q1_effects_blend(frontend_remote_q1 *,const qa_scene_view *,double,qa_vec4,qa_error *);
-bool remote_q1_model_lighting(frontend_remote_q1 *,const qa_scene_world_input *,qa_scene_model_input *,qa_error *);
+bool remote_q1_model_lighting(frontend_remote_q1 *,const qa_scene_world_input *,qa_scene_model_input *,uint32_t model_flags,qa_error *);
 size_t remote_q1_effects_light_count(const frontend_remote_q1 *);
 bool remote_q1_effects_light_at(const frontend_remote_q1 *,size_t,uint64_t *);
 size_t remote_q1_effects_static_count(const frontend_remote_q1 *);
