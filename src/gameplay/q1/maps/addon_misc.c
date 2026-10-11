@@ -108,14 +108,9 @@ bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_write(g->services.world, id, &body, error))
         return false;
     if (!sacrifice(g, id)) return true;
-    for (size_t i = 0; i < sizeof(q1_gib_models) / sizeof(*q1_gib_models); ++i) {
-        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
-        if (!sacrifice(g, id)) return true;
-        if (!q1_gib_at(g, id, body.origin, -10, g->runtime_names[q1_gib_models[i]], error))
-            return false;
-        if (!sacrifice(g, id))
-            return true;
-    }
+    const float health=-10;
+    if (!q1_gib_burst(g, id, NULL, &health, -1, error)) return false;
+    if (!sacrifice(g, id)) return true;
     if (!q1_sound_resource(g, id, q1_random(g) < .5f ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_GIB_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 0, 1, error))
         return false;
     entity = sacrifice(g, id);

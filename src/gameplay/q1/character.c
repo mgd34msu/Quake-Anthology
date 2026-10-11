@@ -309,9 +309,8 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
         body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
         if (!qa_world_body_write(g->services.world, actor, &body, error))
             return false;
-        for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib_at(g, actor, gib_origin, health, g->runtime_names[q1_gib_models[i]], error))
-                return false;
+        if (!q1_gib_burst(g, actor, &gib_origin, &health, -1, error))
+            return false;
         bool teledeath = q1_classnamed(g, outcome->request.attack.attacker, g->runtime_names[Q1_NAME_TELEDEATH]) ||
                          q1_classnamed(g, outcome->request.attack.attacker, g->runtime_names[Q1_NAME_TELEDEATH2]);
         return q1_sound_resource(g, actor, teledeath             ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TELEDTH1_WAV]

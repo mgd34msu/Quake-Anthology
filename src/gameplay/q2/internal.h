@@ -602,7 +602,7 @@ typedef struct q2_push_frame {
 struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
-    qa_string_id runtime_names[Q2_NAME_COUNT];
+    qa_string_id runtime_names[Q2_NAME_COUNT], lightstyle_bytes[256];
     qa_string_id temporary_effects[256];
     qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     const qa_cvars *source_cvars;

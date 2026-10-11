@@ -158,12 +158,8 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
     if (!body(g, e, &value, error) || !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error))
         return false;
     float health = q1_health(g, e->id);
-    for (unsigned i = 0; i < 3; ++i) {
-        if (!q1_alive(g, e->id))
-            return true;
-        if (!q1_gib_at(g, e->id, value.origin, health, g->runtime_names[q1_gib_models[i]], error))
-            return false;
-    }
+    if (!q1_gib_burst(g, e->id, &value.origin, &health, -1, error))
+        return false;
     return !q1_alive(g, e->id) || q1_remove(g, e, error);
 }
 static bool actor_physics(qa_q1_game *g, qa_actor_id actor, qa_physics_properties *out) {

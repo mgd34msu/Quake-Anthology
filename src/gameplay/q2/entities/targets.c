@@ -1,14 +1,11 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
 
-static bool style(qa_q2_game *g, q2_actor *a, const char *pattern, qa_error *e) {
-    qa_string_id text;
-    if (!qa_builtin_resource(&g->services, pattern, &text, e))
-        return false;
+static bool style(qa_q2_game *g, q2_actor *a, qa_string_id pattern, qa_error *e) {
     return q2_map_event(
         g,
         &(qa_q2_map_event){
-            .kind = QA_Q2_MAP_LIGHTSTYLE, .actor = a->id, .style = a->entity->style, .text = text},
+            .kind = QA_Q2_MAP_LIGHTSTYLE, .actor = a->id, .style = a->entity->style, .text = pattern},
         e);
 }
 static bool speaker(qa_q2_game *g, q2_actor *a, int operation, qa_error *e) {
@@ -319,7 +316,7 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (!s->targetname || g->options.deathmatch)
             return qa_session_release(g->services.session, a->id, e);
         s->usable = s->style >= 32;
-        return !s->usable || style(g, a, (s->spawnflags & 1) ? "a" : "m", e);
+        return !s->usable || style(g, a, g->lightstyle_bytes[(s->spawnflags & 1) ? 'a' : 'm'], e);
     case Q2E_HELP:
         if (g->options.deathmatch || !s->message)
             return qa_session_release(g->services.session, a->id, e);
@@ -399,7 +396,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         return s->delay != 0 ? q2_entity_schedule(g, a, Q2ET_TIMER, s->delay) : timer(g, a, e);
     case Q2E_LIGHT:
         s->spawnflags ^= 1;
-        return style(g, a, (s->spawnflags & 1) ? "a" : "m", e);
+        return style(g, a, g->lightstyle_bytes[(s->spawnflags & 1) ? 'a' : 'm'], e);
     case Q2E_PORTAL: {
         qa_q2_entity_services *services = &g->entity_runtime->services;
         if (!services->area_portal) {

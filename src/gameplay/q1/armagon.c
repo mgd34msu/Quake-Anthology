@@ -377,9 +377,9 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
             part->count = 0;
         if (count < 25) {
             if ((float)count > part->count) {
-                for (unsigned i = 0; i < 3; ++i)
-                    if (!q1_gib_at(g, part->id, body.origin, -100, g->runtime_names[q1_gib_models[i]], error))
-                        return false;
+                const float health=-100;
+                if (!q1_gib_burst(g, part->id, &body.origin, &health, -1, error)) return false;
+                if (!q1_alive(g, part->id)) return true;
                 part->count = (float)(count + 1);
             }
             part->state.effect.count = count + 1;
@@ -390,9 +390,10 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
     }
     if (!q1_sound_resource(g, part->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_LONGEXPL_WAV], 0, 0.5f, 1, error))
         return false;
-    for (unsigned i = 0; i < 9; ++i)
-        if (!q1_gib_at(g, part->id, body.origin, -200, g->runtime_names[q1_gib_models[i % 3]], error))
-            return false;
+    const float health=-200;
+    for (unsigned i=0;i<3;++i)
+        if (!q1_gib_burst(g, part->id, &body.origin, &health, -1, error)) return false;
+    if (!q1_alive(g, part->id)) return true;
     part->physics.motion = QA_PHYSICS_STATIONARY;
     part->physics.solid = QA_PHYSICS_NOT_SOLID;
     part->frame = 0;

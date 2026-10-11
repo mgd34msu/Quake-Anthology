@@ -358,6 +358,13 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
             close_game(g);
             return false;
         }
+    for (unsigned i=0;i<256;++i) {
+        const uint8_t byte=(uint8_t)i;
+        if (!qa_strings_intern(qa_session_strings(services->session),
+                (qa_bytes){&byte,i?1:0},g->lightstyle_bytes+i,e)) {
+            close_game(g); return false;
+        }
+    }
     for (unsigned i = 0; i < 256; ++i) {
         char name[32];
         snprintf(name, sizeof(name), "q2:temp-%u", i);

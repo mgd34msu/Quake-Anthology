@@ -267,8 +267,8 @@ bool q1_monster_count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, 
                                       .provider = g->options.provider,
                                       .actor = entity->id,
                                       .time_ns = g->time_ns};
-            if (!qa_builtin_resource(&g->services, "ACH_FRIENDLY_FIRE", &event.text, error) ||
-                !qa_builtin_emit(&g->services, &event, error))
+            event.text=g->runtime_names[Q1_NAME_ACH_FRIENDLY_FIRE];
+            if (!qa_builtin_emit(&g->services, &event, error))
                 return false;
         }
     }
@@ -303,26 +303,10 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (foundation && spec->species == QA_Q1_ARMY &&
         !q1_gib_head(g, entity, (spec->head==Q1_NAME_COUNT?0:g->runtime_names[spec->head]), health, error))
         return false;
-    for (unsigned i = 0; i < 3; ++i) {
-        unsigned model_index = spec->species == QA_Q1_DOG || spec->species == QA_Q1_OGRE ? 2
-                               : spec->species == QA_Q1_DEMON ? 0
-                               : spec->species == QA_Q1_WIZARD ? 1 : i;
-        qa_string_id model = g->runtime_names[q1_gib_models[model_index]];
-        if (!q1_entity(g, source))
-            return true;
-        qa_body_state body;
-        if (!qa_world_body_read(g->services.world, source, &body, error))
-            return !q1_entity(g, source);
-        if (!q1_entity(g, source))
-            return true;
-        if (!foundation) {
-            health = q1_health(g, source);
-            if (!q1_entity(g, source))
-                return true;
-        }
-        if (!q1_gib_at(g, source, body.origin, health, model, error))
-            return false;
-    }
+    int model_index=spec->species==QA_Q1_DOG || spec->species==QA_Q1_OGRE ? 2
+        : spec->species==QA_Q1_DEMON ? 0 : spec->species==QA_Q1_WIZARD ? 1 : -1;
+    if (!q1_gib_burst(g, source, NULL, foundation?&health:NULL, model_index, error))
+        return false;
     entity = q1_entity(g, source);
     if (!entity || (foundation && spec->species == QA_Q1_ARMY))
         return true;

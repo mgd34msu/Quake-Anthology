@@ -22,14 +22,14 @@ bool q1_major_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *er
     m->addon.boss = final ? Q1_BOSS_FINAL : Q1_BOSS_OLDNEW;
     e->physics.flags = QA_PHYSICS_MONSTER;
     qa_combat_state traits;
-    if (!qa_combat_read_traits(g->services.combat, e->id, &traits, error) ||
-        !qa_builtin_resource(&g->services, "q1:monsters", &traits.team, error))
+    if (!qa_combat_read_traits(g->services.combat, e->id, &traits, error))
         return false;
+    traits.team=g->runtime_names[Q1_NAME_MONSTER_TEAM];
     if (final) {
         m->source.boss.immune = true;
         ++g->total_monsters;
-        return qa_builtin_resource(&g->services, "monster_boss", &e->classname, error) &&
-               qa_combat_set_traits(g->services.combat, e->id, &traits, error);
+        e->classname=g->runtime_names[Q1_NAME_MONSTER_BOSS];
+        return qa_combat_set_traits(g->services.combat, e->id, &traits, error);
     }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, e->id, &body, error))
@@ -200,15 +200,6 @@ static bool autogun(qa_q1_game *g, q1_actor *e, float side, float offset, unsign
     return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV], 1, 1, 1, error) &&
            (!q1_alive(g, e->id) || q1_boss_autogun(g, e, origin, offset, error));
 }
-static bool lightstyle(qa_q1_game *g, q1_actor *e, const char *pattern, qa_error *error) {
-    qa_builtin_event event = {.kind = QA_BUILTIN_LIGHT,
-                              .family = QA_GAME_Q1,
-                              .provider = g->options.provider,
-                              .actor = e->id,
-                              .time_ns = g->time_ns};
-    return qa_builtin_resource(&g->services, pattern, &event.text, error) &&
-           qa_builtin_emit(&g->services, &event, error);
-}
 static bool finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_POP2_WAV], 2, 1, 1, error))
         return false;
@@ -227,8 +218,8 @@ static bool finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
                               .code = 3,
                               .count = 3,
                               .time_ns = g->time_ns};
-    return qa_builtin_resource(&g->services, "music", &event.resource, error) &&
-           qa_builtin_emit(&g->services, &event, error) && lightstyle(g, e, "m", error) &&
+    event.resource=g->runtime_names[Q1_NAME_MUSIC];
+    return qa_builtin_emit(&g->services, &event, error) && q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_M], error) &&
            qa_q1_game_map_finish_addon(g, QA_Q1_MAP_END_DOPA, error);
 }
 bool q1_major_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_error *error) {
@@ -266,13 +257,13 @@ bool q1_major_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa
             m->next_frame = (Q1_FRAME_oldnew_death1);
         return true;
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH16:
-        return lightstyle(g, e, "g", error);
+        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_G], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH17:
-        return lightstyle(g, e, "c", error);
+        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_C], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH18:
-        return lightstyle(g, e, "b", error);
+        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_B], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH19:
-        return lightstyle(g, e, "a", error);
+        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_A], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH20:
         return finish(g, e, error);
     default:

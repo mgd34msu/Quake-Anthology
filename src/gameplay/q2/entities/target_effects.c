@@ -152,14 +152,11 @@ static bool ramp(qa_q2_game *g, q2_actor *a, qa_error *e) {
     float elapsed = (float)(g->now_ns - s->timestamp_ns) / Q2_NS;
     float level = 97 + s->direction.x + elapsed / s->speed * (s->direction.y - s->direction.x);
     uint8_t byte = (uint8_t)(uint32_t)qa_source_float_to_i32(level);
-    qa_string_id text;
-    char pattern[2] = {(char)byte, 0};
-    if (!qa_builtin_resource(&g->services, pattern, &text, e) ||
-        !q2_map_event(g,
+    if (!q2_map_event(g,
                       &(qa_q2_map_event){.kind = QA_Q2_MAP_LIGHTSTYLE,
                                          .actor = a->id,
                                          .style = target->entity->style,
-                                         .text = text},
+                                         .text = g->lightstyle_bytes[byte]},
                       e))
         return false;
     if (!q2_actor_live(g, a->id))

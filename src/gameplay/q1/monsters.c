@@ -875,13 +875,7 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             break;
         }
         case Q1_FRAME_LIGHTSTYLE: {
-            qa_builtin_event event = {.kind = QA_BUILTIN_LIGHT,
-                                      .family = QA_GAME_Q1,
-                                      .provider = g->options.provider,
-                                      .actor = entity->id,
-                                      .time_ns = g->time_ns};
-            event.text=g->runtime_names[op->resource];
-            if (!qa_builtin_emit(&g->services, &event, error))
+            if (!q1_actor_lightstyle(g,entity->id,g->runtime_names[op->resource],error))
                 return false;
             break;
         }
@@ -953,19 +947,17 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
         : (spec->classname == Q1_NAME_CLASSNAME_MONSTER_RANGED_KNIGHT) ? Q1_HEAVY_RUNE_KNIGHT
                                                             : Q1_HEAVY_NONE;
     if (infected || monster->addon.demodog) {
-        const char *name = monster->addon.demodog            ? "monster_dog"
-                           : spec->species == QA_Q1_ARMY     ? "monster_army"
-                           : spec->species == QA_Q1_KNIGHT   ? "monster_knight"
-                           : spec->species == QA_Q1_ENFORCER ? "monster_enforcer"
-                                                             : "monster_hell_knight";
-        if (!qa_builtin_resource(&g->services, name, &entity->classname, error))
-            return false;
+        q1_runtime_name name=monster->addon.demodog ? Q1_NAME_MONSTER_DOG
+            : spec->species==QA_Q1_ARMY ? Q1_NAME_MONSTER_ARMY
+            : spec->species==QA_Q1_KNIGHT ? Q1_NAME_MONSTER_KNIGHT
+            : spec->species==QA_Q1_ENFORCER ? Q1_NAME_MONSTER_ENFORCER
+            : Q1_NAME_MONSTER_HELL_KNIGHT;
+        entity->classname=g->runtime_names[name];
     }
     monster->addon.rocket_ogre = (spec->classname == Q1_NAME_CLASSNAME_MONSTER_OGRE_ROCKET);
     if (monster->addon.rocket_ogre) {
         monster->addon.projectiles = monster->addon.projectile_max = 2;
-        if (!qa_builtin_resource(&g->services, "monster_ogre", &entity->classname, error))
-            return false;
+        entity->classname=g->runtime_names[Q1_NAME_MONSTER_OGRE];
     }
     entity->max_health = spec->health;
     if (spec->species == QA_Q1_DECOY && g->maps) {
@@ -1247,8 +1239,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_combat_read_traits(g->services.combat, entity->id, &combat, error))
         return false;
     combat.can_take_damage = true;
-    if (!qa_builtin_resource(&g->services, "q1:monsters", &combat.team, error))
-        return false;
+    combat.team=g->runtime_names[Q1_NAME_MONSTER_TEAM];
     if (!qa_combat_set_traits(g->services.combat, entity->id, &combat, error) ||
         !q1_link(g, entity, error))
         return false;

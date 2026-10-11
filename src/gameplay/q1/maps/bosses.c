@@ -45,9 +45,7 @@ static bool lightning_fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     if (g->maps->lightning_end >= g->time + 1)
         return true;
-    qa_string_id name;
-    if (!qa_builtin_resource(&g->services, "lightning", &name, error))
-        return false;
+    qa_string_id name=g->runtime_names[Q1_NAME_LIGHTNING];
     q1_actor *electrodes[2] = {0};
     size_t count = 0;
     uint32_t cursor = 0;
@@ -105,18 +103,16 @@ bool q1_map_finale_emit(qa_q1_game *g, uint32_t stage, const char *text, qa_erro
     g->maps->finale = view;
     return g->maps->options.finale(g->maps->options.context, &view, error);
 }
-static bool style(qa_q1_game *g, const char *text, qa_error *error) {
-    qa_string_id pattern;
-    return qa_builtin_resource(&g->services, text, &pattern, error) &&
-           g->maps->options.lightstyle(g->maps->options.context, 0, pattern, error);
+static bool style(qa_q1_game *g, qa_string_id pattern, qa_error *error) {
+    return g->maps->options.lightstyle(g->maps->options.context, 0, pattern, error);
 }
-static bool achievement(qa_q1_game *g, const char *text, qa_error *error) {
+static bool achievement(qa_q1_game *g, qa_string_id text, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_ACHIEVEMENT,
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
                               .time_ns = g->time_ns};
-    return qa_builtin_resource(&g->services, text, &event.text, error) &&
-           qa_builtin_emit(&g->services, &event, error);
+    event.text=text;
+    return qa_builtin_emit(&g->services, &event, error);
 }
 static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     if (g->maps->finale_started)
@@ -130,9 +126,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
         return false;
     qa_actor_id train_id = train->id;
     qa_vec3 angles = position->map->mangle;
-    qa_string_id start;
-    if (!qa_builtin_resource(&g->services, "start", &start, error))
-        return false;
+    qa_string_id start=g->runtime_names[Q1_NAME_START_MAP];
     g->maps->finale_started = true;
     g->maps->finale_dismissed = false;
     if (!q1_monster_count_kill(g, oldone, q1_ref_actor(g, oldone->state.monster.enemy), error))
@@ -185,8 +179,8 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     const char *map =
         qa_strings_cstr(qa_session_strings(g->services.session), g->maps->options.current_map);
     if (g->options.edition == QA_Q1_RERELEASE && map && !strcmp(map, "end")) {
-        if (!achievement(g, "ACH_DEFEAT_SHUB", error) ||
-            (g->options.skill == 3 && !achievement(g, "ACH_DEFEAT_SHUB_NIGHTMARE", error)))
+        if (!achievement(g, g->runtime_names[Q1_NAME_ACH_DEFEAT_SHUB], error) ||
+            (g->options.skill == 3 && !achievement(g, g->runtime_names[Q1_NAME_ACH_DEFEAT_SHUB_NIGHTMARE], error)))
             return false;
     }
     if (!q1_alive(g, oldone->id))
@@ -229,7 +223,7 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     if (!q1_model(g, victory, g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYER_MDL], error) ||
         !qa_world_body_write(g->services.world, victory->id, &pose, error) ||
         !q1_link(g, victory, error) || (q1_alive(g, oldone->id) && !q1_remove(g, oldone, error)) ||
-        !style(g, "m", error))
+        !style(g, g->runtime_names[Q1_NAME_RESOURCE_M], error))
         return false;
     if (g->options.edition == QA_Q1_CLASSIC)
         return true;
@@ -292,7 +286,7 @@ bool q1_map_boss_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
     }
     if (action == Q1_MAP_FINALE_THREE) {
         if (!q1_sound_resource(g, oldone->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_DEATH_WAV], 2, 1, 1, error) ||
-            !style(g, "abcdefghijklmlkjihgfedcb", error) || !q1_map_finale_emit(g, 3, "", error))
+            !style(g, g->runtime_names[Q1_NAME_RESOURCE_FINALE_RAMP], error) || !q1_map_finale_emit(g, 3, "", error))
             return false;
         if (q1_alive(g, oldone->id)) {
             oldone->state.monster.next_frame = (Q1_FRAME_old_thrash1);

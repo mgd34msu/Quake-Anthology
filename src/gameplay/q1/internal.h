@@ -19,8 +19,16 @@
 
 #define Q1_RUNTIME_NAME_LIST(X) \
     X(RESOURCE_AMBIENCE_FIRE1_WAV, "ambience/fire1.wav") \
+    X(MONSTER_TEAM, "q1:monsters") \
+    X(ACH_FRIENDLY_FIRE, "ACH_FRIENDLY_FIRE") \
+    X(ACH_DEFEAT_SHUB, "ACH_DEFEAT_SHUB") \
+    X(ACH_DEFEAT_SHUB_NIGHTMARE, "ACH_DEFEAT_SHUB_NIGHTMARE") \
+    X(LIGHTNING, "lightning") \
+    X(START_MAP, "start") \
+    X(MUSIC, "music") \
     X(RESOURCE_A, "a") \
     X(RESOURCE_M, "m") \
+    X(RESOURCE_FINALE_RAMP, "abcdefghijklmlkjihgfedcb") \
     X(RESOURCE_K, "k") \
     X(RESOURCE_I, "i") \
     X(RESOURCE_G, "g") \
@@ -1325,6 +1333,7 @@ bool q1_classnamed(qa_q1_game *, qa_actor_id, qa_string_id);
 bool q1_model(qa_q1_game *, q1_actor *, qa_string_id, qa_error *);
 const char *q1_runtime_name_text(q1_runtime_name);
 q1_runtime_name q1_door_key_sound(int32_t world_type, bool accepted);
+bool q1_actor_lightstyle(qa_q1_game *, qa_actor_id, qa_string_id, qa_error *);
 bool q1_sound_resource(qa_q1_game *, qa_actor_id, qa_string_id, int32_t channel, float attenuation,
                        float volume, qa_error *);
 bool q1_effect(qa_q1_game *, qa_builtin_event_kind, qa_actor_id, qa_vec3, float, int32_t,
@@ -1413,6 +1422,10 @@ bool q1_projectile_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_explode(qa_q1_game *, q1_actor *, qa_actor_id direct, qa_error *);
 bool q1_gib(qa_q1_game *, q1_actor *, qa_string_id, bool head, qa_error *);
 bool q1_gib_head(qa_q1_game *, q1_actor *, qa_string_id, float damage, qa_error *);
+/* NULL origin/health read the live owner for each gib. A negative model index
+ * selects the standard sequence; 0..2 repeat one model. */
+bool q1_gib_burst(qa_q1_game *, qa_actor_id, const qa_vec3 *origin, const float *health,
+    int model_index, qa_error *);
 bool q1_gib_at(qa_q1_game *, qa_actor_id owner, qa_vec3, float health, qa_string_id, qa_error *);
 bool q1_meat_spray(qa_q1_game *, q1_actor *, qa_vec3 origin, qa_vec3 velocity, qa_error *);
 bool q1_monster_spawn(qa_q1_game *, q1_actor *, const q1_species *, qa_error *);
