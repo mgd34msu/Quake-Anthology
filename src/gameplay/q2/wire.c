@@ -182,7 +182,6 @@ void q2_wire_reset(qa_q2_game *g)
     ++g->wire_lightstyles.revision;
     memset(g->wire_lightstyles.patterns, 0, sizeof(g->wire_lightstyles.patterns));
     memset(g->wire_shadows, 0, sizeof(g->wire_shadows)); g->wire_shadow_count = 0;
-    g->wire_music = 0; g->wire_music_present = false;
 }
 
 static bool bind(qa_q2_game *g, q2_actor *a, qa_actor_id id,
@@ -282,7 +281,7 @@ void q2_wire_release(qa_q2_game *g, q2_actor *a)
 {
     for (uint32_t i = 0; i < g->wire_shadow_count; ++i)
         if (qa_actor_id_equal(g->wire_shadows[i].actor, a->id)) {
-            g->wire_shadows[i] = (qa_q2_wire_shadow_light){0};
+            g->wire_shadows[i] = (q2_shadow_slot){0};
             if (g->entity_runtime) {
                 qa_error ignored={0};
                 qa_q2_map_event event={.kind=QA_Q2_MAP_DYNAMIC_LIGHT,.actor=a->id,
@@ -370,31 +369,6 @@ const qa_lightstyles *qa_q2_wire_lightstyles(const qa_q2_game *g, qa_error *erro
     return idle(g,error) ? &g->wire_lightstyles : NULL;
 }
 
-bool qa_q2_wire_map_read(const qa_q2_game *g, qa_q2_wire_map *out, qa_error *error)
-{
-    if (!out || !idle(g, error)) return false;
-    const q2_entities *state = g->entity_runtime;
-    *out = (qa_q2_wire_map){.music = g->wire_music, .music_present = g->wire_music_present,
-        .sky = state->sky, .sky_axis = state->sky_axis, .sky_rotation = state->sky_rotation,
-        .sky_auto = state->sky_auto};
-    return true;
-}
-
-bool qa_q2_wire_shadow_read(const qa_q2_game *g, uint32_t index,
-    qa_q2_wire_shadow_light *out, qa_error *error)
-{
-    if (!out || index >= 256 || !idle(g, error)) return false;
-    qa_q2_wire_shadow_light value = index < g->wire_shadow_count ?
-        g->wire_shadows[index] : (qa_q2_wire_shadow_light){0};
-    if (value.present) {
-        qa_q2_wire_binding binding;
-        if (!qa_q2_wire_actor(g, value.actor, &binding, error) || binding.source_slot != value.source_slot)
-            return false;
-    }
-    *out = value;
-    return true;
-}
-
 bool q2_wire_shadow_event(qa_q2_game *g, qa_q2_map_event *event, qa_error *error)
 {
     q2_actor *a = event->actor.slot < g->capacity ? g->actors[event->actor.slot] : NULL;
@@ -416,11 +390,7 @@ bool q2_wire_shadow_event(qa_q2_game *g, qa_q2_map_event *event, qa_error *error
     if (index == g->wire_shadow_count) ++g->wire_shadow_count;
     event->slot=(int)index;event->count=(int)a->wire_slot;
     event->value=cone;event->flags|=QA_Q2_MAP_LIGHT_SHADOW;
-    g->wire_shadows[index] = (qa_q2_wire_shadow_light){.actor = a->id, .source_slot = a->wire_slot,
-        .type = (event->flags & 1) ? 1u : 0u, .resolution = event->resolution, .radius = event->radius,
-        .intensity = event->intensity, .fade_start = event->fade_start, .fade_end = event->fade_end,
-        .style = event->style, .direction = event->direction,
-        .cone_angle = cone, .present = true};
+    g->wire_shadows[index] = (q2_shadow_slot){.actor = a->id, .source_slot = a->wire_slot};
     return true;
 }
 

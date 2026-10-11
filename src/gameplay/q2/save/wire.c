@@ -131,10 +131,12 @@ bool q2_save_wire(q2_save_io *io)
     memcpy(styles, g->wire_lightstyles.patterns, sizeof(styles));
     for (size_t i = 0; i < 256; ++i)
         if (!q2_save_string(io, &styles[i])) return false;
-    qa_string_id music = g->wire_music;
-    bool music_present = g->wire_music_present;
-    if (!q2_save_bool(io, &music_present) || !q2_save_string(io, &music) ||
-        (!music_present && music)) return q2_save_fail(io, "Invalid retained Q2 Source music");
+    if (io->legacy_map_state) {
+        /* Consume the old duplicate; the retained event store owns music. */
+        qa_string_id music = 0;
+        bool present = false;
+        if (!q2_save_bool(io, &present) || !q2_save_string(io, &music)) return false;
+    }
     if (!capacity || capacity > 65536 || !clients || clients > 256 ||
         clients >= capacity || extent < clients + 1 || extent > capacity ||
         clients != g->player_runtime->rules.max_clients)
@@ -200,36 +202,37 @@ bool q2_save_wire(q2_save_io *io)
             ok = q2_save_fail(io, "Q2 continuation omits an admitted physical source edict");
     }
     uint32_t shadow_count = g->wire_shadow_count;
-    qa_q2_wire_shadow_light shadows[256];
+    q2_shadow_slot shadows[256];
     memcpy(shadows, g->wire_shadows, sizeof(shadows));
     if (ok && (!q2_save_u32(io, &shadow_count) || shadow_count > 256 ||
         (shadow_count && g->options.edition != QA_Q2_RERELEASE)))
         ok = q2_save_fail(io, "Q2 continuation shadow-light table exceeds its Source edition");
     if (io->reading) memset(shadows, 0, sizeof(shadows));
     for (uint32_t i = 0; ok && i < shadow_count; ++i) {
-        qa_q2_wire_shadow_light *s = &shadows[i];
-        ok = q2_save_bool(io, &s->present);
-        if (!ok || !s->present) continue;
+        q2_shadow_slot *s = &shadows[i];
+        bool present = s->actor.registry != 0;
+        ok = q2_save_bool(io, &present);
+        if (!ok || !present) continue;
         qa_q2_saved_reference ref = {0};
         if (!io->reading) ok = q2_save_reference(g, s->actor, &ref, io->error);
-        ok = ok && q2_save_ref(io, &ref) && q2_save_u32(io, &s->source_slot) &&
-            q2_save_u32(io, &s->type) && q2_save_u32(io, &s->resolution) &&
-            q2_save_f32(io, &s->radius) && q2_save_f32(io, &s->intensity) &&
-            q2_save_f32(io, &s->fade_start) && q2_save_f32(io, &s->fade_end) &&
-            q2_save_f32(io, &s->cone_angle) && q2_save_i32(io, &s->style) &&
-            q2_save_vec(io, &s->direction);
+        ok = ok && q2_save_ref(io, &ref) && q2_save_u32(io, &s->source_slot);
+        if (ok && io->legacy_map_state) {
+            /* Old saves repeated 11 light parameters after this mapping.
+             * Consume them only; presentation rebuilds from retained events. */
+            uint8_t discarded[11 * 4];
+            ok = q2_save_raw(io, discarded, sizeof(discarded));
+        }
         if (!ok) break;
         const qa_actor_record *record = ref.present ?
             qa_actors_resolve_saved(qa_session_actors(g->services.session), ref.actor) : NULL;
         q2_actor *a = record && record->id.slot < g->capacity ? g->actors[record->id.slot] : NULL;
         if (!a || !a->entity || a->entity->kind != Q2E_DYNAMIC_LIGHT || a->entity->stage != 1 ||
-            s->source_slot >= extent || !qa_actor_id_equal(actors[s->source_slot], record->id) ||
-            s->type > 1 || s->radius <= 0 || s->style < -1 || s->style >= 256) {
+            s->source_slot >= extent || !qa_actor_id_equal(actors[s->source_slot], record->id)) {
             ok = q2_save_fail(io, "Q2 continuation shadow light lost its true Source entity");
             break;
         }
         for (uint32_t prior = 0; prior < i; ++prior)
-            if (shadows[prior].present && qa_actor_id_equal(shadows[prior].actor, record->id))
+            if (qa_actor_id_equal(shadows[prior].actor, record->id))
                 ok = q2_save_fail(io, "Q2 continuation aliases a Source shadow light");
         if (ok && io->reading) s->actor = record->id;
     }
@@ -266,7 +269,6 @@ bool q2_save_wire(q2_save_io *io)
         g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = extent;
         g->wire_frame = frame;
         for (uint32_t i = 0; i < 256; ++i) qa_lightstyles_set(&g->wire_lightstyles, i, styles[i]);
-        g->wire_music = music; g->wire_music_present = music_present;
         memcpy(g->wire_shadows, shadows, sizeof(shadows)); g->wire_shadow_count = shadow_count;
     } else if (io->reading) { free(actors); free(freed); free(references); }
     free(seen);

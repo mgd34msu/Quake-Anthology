@@ -18,20 +18,6 @@ typedef struct qa_q2_wire_view {
     uint64_t frame, time_ns;
     bool present;
 } qa_q2_wire_view;
-typedef struct qa_q2_wire_map {
-    qa_string_id music, sky;
-    qa_vec3 sky_axis;
-    float sky_rotation;
-    bool sky_auto, music_present;
-} qa_q2_wire_map;
-typedef struct qa_q2_wire_shadow_light {
-    qa_actor_id actor;
-    uint32_t source_slot, type, resolution;
-    float radius, intensity, fade_start, fade_end, cone_angle;
-    int32_t style;
-    qa_vec3 direction;
-    bool present;
-} qa_q2_wire_shadow_light;
 typedef struct qa_q2_wire_origin {
     uint64_t source_frame;
     qa_vec3 origin;
@@ -98,9 +84,6 @@ bool qa_q2_player_movement_complete(qa_q2_game *, qa_actor_id,
     bool was_grounded, qa_error *);
 bool qa_q2_player_movement_restore(qa_q2_game *, qa_actor_id, const qa_body_state *,
     const qa_movement_result *, const qa_vec3 *command_angles, qa_error *);
-bool qa_q2_wire_map_read(const qa_q2_game *, qa_q2_wire_map *, qa_error *);
-bool qa_q2_wire_shadow_read(const qa_q2_game *, uint32_t,
-    qa_q2_wire_shadow_light *, qa_error *);
 
 typedef struct qa_q2_wire_stat_resources {
     void *context;

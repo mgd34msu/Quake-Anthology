@@ -12,7 +12,7 @@ typedef struct q2_save_io {
     qa_buffer output;
     size_t offset, capacity;
     qa_error *error;
-    bool reading, level_only;
+    bool reading, level_only, legacy_map_state;
 } q2_save_io;
 bool q2_save_fail(q2_save_io *, const char *);
 bool q2_save_raw(q2_save_io *, void *, size_t);

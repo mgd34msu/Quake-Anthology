@@ -481,6 +481,10 @@ typedef struct q2_mt_random {
     uint32_t words[624], index;
     uint64_t draws;
 } q2_mt_random;
+typedef struct q2_shadow_slot {
+    qa_actor_id actor;
+    uint32_t source_slot;
+} q2_shadow_slot;
 typedef struct q2_wire_reference {
     qa_actor_id actor;
     uint32_t number;
@@ -548,10 +552,8 @@ struct qa_q2_game {
     uint64_t wire_frame;
     qa_string_id wire_statusbar_names[5];
     qa_lightstyles wire_lightstyles;
-    qa_q2_wire_shadow_light wire_shadows[256];
+    q2_shadow_slot wire_shadows[256];
     uint32_t wire_shadow_count;
-    qa_string_id wire_music;
-    bool wire_music_present;
     q2_push_frame *push_frames;
 };
 typedef struct q2_weapon_call {

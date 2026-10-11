@@ -3,6 +3,7 @@
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
 #define Q2_SAVE_LEVEL UINT32_C(0x80000000)
+#define Q2_SAVE_EVENT_CONFIGS UINT32_C(0x40000000)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;
@@ -57,11 +58,14 @@ static bool actor_capture(qa_q2_game *g, q2_actor *a, actor_save *s, qa_error *e
                                     &s->hand_ammo, e));
 }
 static bool header(q2_save_io *io) {
-    uint32_t magic = Q2_SAVE_MAGIC | (io->level_only ? Q2_SAVE_LEVEL : 0);
+    uint32_t magic = Q2_SAVE_MAGIC | Q2_SAVE_EVENT_CONFIGS | (io->level_only ? Q2_SAVE_LEVEL : 0);
     if (!q2_save_u32(io, &magic)) return false;
-    if ((magic & ~Q2_SAVE_LEVEL) != Q2_SAVE_MAGIC)
+    if ((magic & ~(Q2_SAVE_LEVEL | Q2_SAVE_EVENT_CONFIGS)) != Q2_SAVE_MAGIC)
         return q2_save_fail(io, "Invalid Q2 continuation signature");
-    if (io->reading) io->level_only = (magic & Q2_SAVE_LEVEL) != 0;
+    if (io->reading) {
+        io->level_only = (magic & Q2_SAVE_LEVEL) != 0;
+        io->legacy_map_state = (magic & Q2_SAVE_EVENT_CONFIGS) == 0;
+    }
     return true;
 }
 bool qa_q2_game_capture(qa_q2_game *g, qa_save_purpose purpose, qa_buffer *out, qa_error *e) {
