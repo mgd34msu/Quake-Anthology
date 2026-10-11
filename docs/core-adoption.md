@@ -1560,9 +1560,12 @@ and stamp callers in `536a0061`; and remaining Q3/admin LOG producers in
 build and all seven existing core suites, recorded in
 `/tmp/qa-ta3196-actor-storage-fixed-20261011/build.log` and `core.log`.
 
-A complete-file audit of 3,135 tracked source, header, build, tool and configuration
-inputs is in progress against source tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
-Each file assignment records reviewed and pending paths; the whole-codebase
-audit is not complete. These source/build/core results do not establish a
-whole-engine zero allocation count or live game/mod/protocol qualification.
-Cold construction, content/name admission and save encoding can still allocate.
+A complete-file audit of 3,137 tracked source, header, build, tool and executable
+configuration inputs is complete against source tree
+`b01b311cab565aebb3b8745e777ceeabf0fba2c5`, with zero unread files. The
+[audit report](audit/unification-2026-10-11.md) and its complete per-file ledger
+record the remaining adoption gaps, caller checks and refutations. Primitive
+and event-system adoption remains incomplete. These source/build/core results
+do not establish a whole-engine zero allocation count or live
+game/mod/protocol qualification. Cold construction, content/name admission and
+save encoding can still allocate.
