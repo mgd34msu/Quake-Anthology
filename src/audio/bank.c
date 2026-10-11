@@ -92,6 +92,16 @@ bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out
     }
     bank->view = view;
     bank->strings = strings; qa_strings_retain(strings);
+    static const char *const q2_names[] = {
+        NULL,
+#define QA_Q2_SOUND_PATH(name) QA_Q2_SOUND_##name,
+        QA_Q2_SOUND_LIST(QA_Q2_SOUND_PATH)
+#undef QA_Q2_SOUND_PATH
+    };
+    for (size_t i=1;i<QA_Q2_SFX_COUNT;++i)
+        if (!qa_strings_intern_cstr(strings,q2_names[i],bank->q2_names+i,error)) {
+            qa_audio_bank_destroy(bank); return false;
+        }
     bank->registration = 1;
     bank->lookup_generation = qa_vfs_lookup_generation(view);
     *out = bank;
@@ -168,6 +178,7 @@ static void bank_entry_release(bank_entry *entry)
 { qa_audio_asset_release(entry->asset); }
 static void bank_clear_entries(qa_audio_bank *bank)
 {
+    while (bank->sexed) { bank_sexed_name *entry=bank->sexed; bank->sexed=entry->next; free(entry); }
     for(size_t i=0;i<bank->count;++i)bank_entry_release(bank->entries+i);
     bank->count=0;bank_name_rebuild(bank);
 }
@@ -430,14 +441,27 @@ bool qa_audio_bank_register_id(qa_audio_bank *bank, qa_string_id id, qa_game_fam
     return true;
 }
 
-bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *model,
-                         qa_audio_asset **out, qa_error *error) {
-    if (bank == NULL || base == NULL || model == NULL || out == NULL) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid player-model sound registration");
-        return false;
-    }
-    if (base[0] != '*')
-        return qa_audio_bank_register(bank, base, QA_GAME_Q2, out, error);
+qa_string_id qa_audio_bank_q2_name(const qa_audio_bank *bank,qa_q2_sound_index index)
+{ return bank&&index>QA_Q2_SFX_NONE&&index<QA_Q2_SFX_COUNT?bank->q2_names[index]:QA_STRING_NONE; }
+bool qa_audio_bank_sexed(qa_audio_bank *bank,const char *base,const char *model,
+    qa_audio_asset **out,qa_error *error)
+{
+    qa_string_id base_id,model_id;
+    return bank&&base&&model&&qa_strings_intern_cstr(bank->strings,base,&base_id,error)&&
+        qa_strings_intern_cstr(bank->strings,model,&model_id,error)&&qa_audio_bank_sexed_id(bank,base_id,model_id,out,error);
+}
+bool qa_audio_bank_sexed_id(qa_audio_bank *bank,qa_string_id base_id,qa_string_id model_id,
+    qa_audio_asset **out,qa_error *error)
+{
+    if (!bank||!out) return false;
+    qa_audio_bank_sync(bank);
+    for (bank_sexed_name *entry=bank->sexed;entry;entry=entry->next)
+        if (entry->base==base_id&&entry->model==model_id)
+            return qa_audio_bank_register_id(bank,entry->path,QA_GAME_Q2,out,error);
+    const char *base=qa_strings_cstr(bank->strings,base_id),*model=qa_strings_cstr(bank->strings,model_id);
+    if (!base||!out) return false;
+    if (!model) model="";
+    if (base[0]!='*') return qa_audio_bank_register_id(bank,base_id,QA_GAME_Q2,out,error);
     size_t model_length = strcspn(model, "/");
     if (model_length == 0) {
         model = "male";
@@ -473,9 +497,17 @@ bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *mode
         memcpy(path + 12, name, name_length + 1);
         result = qa_audio_bank_register(bank, path, QA_GAME_Q2, &asset, error);
     }
+    if (result) {
+        bank_sexed_name *entry=calloc(1,sizeof(*entry));
+        if (!entry) { qa_error_set(error,QA_ERROR_MEMORY,0,"Binding player sound name"); result=false; }
+        if (entry) {
+            entry->base=base_id; entry->model=model_id;
+            result=qa_strings_intern_cstr(bank->strings,path,&entry->path,error);
+            if (result) { entry->next=bank->sexed; bank->sexed=entry; } else free(entry);
+        }
+    }
     if (path != local) free(path);
-    if (result)
-        *out = asset;
+    if (result) *out=asset; else qa_audio_asset_release(asset);
     return result;
 }
 

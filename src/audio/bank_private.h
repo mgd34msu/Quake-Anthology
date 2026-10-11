@@ -28,7 +28,14 @@ typedef struct bank_name {
     size_t row;
 } bank_name;
 
+typedef struct bank_sexed_name {
+    struct bank_sexed_name *next;
+    qa_string_id base, model, path;
+} bank_sexed_name;
+
 struct qa_audio_bank {
+    bank_sexed_name *sexed;
+    qa_string_id q2_names[QA_Q2_SFX_COUNT];
     qa_strings *strings;
     qa_vfs *view;
     bank_entry *entries;

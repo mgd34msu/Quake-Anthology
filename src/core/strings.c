@@ -101,6 +101,7 @@ bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa
     size_t bucket=0;
     (void)find(strings,text,hash,&bucket);
     uint32_t flags=0;
+    if(text.size&&text.data[0]=='*') flags|=QA_NAME_SEXED_SOUND;
     if(text.size>=8&&!memcmp(text.data,"monster_",8)) flags|=QA_NAME_MONSTER;
     if(text.size>=12&&!memcmp(text.data,"info_player_",12)) flags|=QA_NAME_PLAYER_START;
     if(text.size>=10&&!memcmp(text.data,"item_flag_",10)) flags|=QA_NAME_ITEM_FLAG;

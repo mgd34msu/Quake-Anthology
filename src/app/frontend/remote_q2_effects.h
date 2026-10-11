@@ -1,5 +1,6 @@
 #ifndef QA_FRONTEND_REMOTE_Q2_EFFECTS_H
 #define QA_FRONTEND_REMOTE_Q2_EFFECTS_H
+#include "qa/q2_sound.h"
 #include "qa/network_q2_messages.h"
 #include "qa/scene_effects.h"
 #include "qa/source_save.h"
@@ -14,7 +15,7 @@ typedef struct frontend_remote_q2_effects_policy frontend_remote_q2_effects_poli
 typedef enum frontend_remote_q2_effects_profile {
     FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC=1, FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE
 } frontend_remote_q2_effects_profile;
-typedef bool (*frontend_q2_muzzle_sound_fn)(void *, const char *, int32_t channel,
+typedef bool (*frontend_q2_muzzle_sound_fn)(void *, qa_q2_sound_index, int32_t channel,
     float volume, float attenuation, double delay_seconds, qa_error *);
 bool frontend_q2_player_muzzle_sounds(qa_builtin_random *, uint32_t flash,
     bool silenced, bool rerelease, bool rerelease_effects,
@@ -93,7 +94,7 @@ typedef struct frontend_remote_q2_effects_source {
     /* acquire=false reads the already retained model cache, including genuine
      * missing-resource receipts. Restore and readiness never register models. */
     bool (*model)(void *, const char *, bool acquire, qa_scene_model **, qa_error *);
-    bool (*sound)(void *, const char *, qa_vec3, qa_actor_id, double milliseconds,
+    bool (*sound)(void *, qa_string_id, qa_vec3, qa_actor_id, double milliseconds,
         int32_t channel, float volume, float attenuation, double delay_seconds, qa_error *);
     bool (*hit_marker)(void *, int32_t damage, qa_error *);
     bool (*controls)(void *, frontend_remote_q2_effects_controls *, qa_error *);

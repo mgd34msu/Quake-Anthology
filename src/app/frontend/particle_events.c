@@ -634,11 +634,10 @@ static bool local_q2_model(void *context,const char *path,bool acquire,
     }
     return true;
 }
-static bool local_q2_sound(void *context,const char *path,qa_vec3 origin,qa_actor_id actor,
+static bool local_q2_sound(void *context,qa_string_id resource,qa_vec3 origin,qa_actor_id actor,
     double milliseconds,int32_t channel,float volume,float attenuation,double delay,qa_error *error)
 {
-    frontend_particle_owner *owner=context;qa_frontend *frontend=owner->frontend;qa_string_id resource;
-    if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),path,&resource,error)) return false;
+    frontend_particle_owner *owner=context;qa_frontend *frontend=owner->frontend;
     qa_builtin_event event={.kind=QA_BUILTIN_SOUND,.family=QA_GAME_Q2,.provider=owner->provider,
         .resource=resource,.actor=actor,.origin=origin,.channel=channel,.volume=volume,
         .attenuation=attenuation,.time_ns=(uint64_t)(fmax(0,milliseconds+delay*1000)*1000000)};

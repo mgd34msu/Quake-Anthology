@@ -6,11 +6,11 @@ bool remote_q2_events_present(frontend_remote_q2 *, const qa_q2_server_record *,
 bool remote_q2_effects_create(frontend_remote_q2 *, qa_error *);
 bool remote_q2_effects_frame(frontend_remote_q2 *, qa_error *);
 bool remote_q2_hit_marker_sample(frontend_remote_q2 *, qa_error *);
-bool remote_q2_sound_asset(frontend_remote_q2 *, const char *, uint32_t source_entity,
+bool remote_q2_sound_asset(frontend_remote_q2 *, qa_string_id, uint32_t source_entity,
     qa_audio_asset **, qa_error *);
 bool remote_q2_effect_asset(void *, qa_audio_asset *, qa_vec3, qa_actor_id, double,
     int32_t, float, float, double, qa_error *);
-bool remote_q2_effect_sound(void *, const char *, qa_vec3, qa_actor_id, double,
+bool remote_q2_effect_sound(void *, qa_string_id, qa_vec3, qa_actor_id, double,
     int32_t, float, float, double, qa_error *);
 bool remote_q2_effects_source_read(frontend_remote_q2 *, frontend_remote_q2_effects_source *, qa_error *);
 const qa_scene_image *frontend_remote_q2_effects_image(const frontend_remote_q2 *);

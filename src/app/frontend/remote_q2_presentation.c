@@ -272,15 +272,15 @@ static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_erro
 {
     if (!row->media_ready || !row->frontend->audio) return true;
     if (event->index >= row->layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound leaves its actual protocol config range");
-    const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + event->index));
-    if (!*name) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound has no actual configstring");
+    qa_string_id name=row->config_names[row->layout.sounds+event->index];
+    if (!name) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound has no actual configstring");
     const qa_q2_entity *source = entity(&row->frame, event->entity);
     qa_vec3 origin = event->has_position ? vector(event->position) : source ? vector(source->origin) : qa_v3(0, 0, 0);
     qa_audio_asset *asset = NULL;
     bool ok = remote_q2_sound_asset(row, name, event->entity, &asset, error);
     if (!ok || !asset) return ok;
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_GAME_Q2,
+        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = qa_audio_asset_name(asset), .family = QA_GAME_Q2,
         .actor = event->entity ? event->entity : QA_AUDIO_NO_ACTOR, .owner = row->identity,
         .audience = row->options.domain.physical_seat, .origin_kind = QA_AUDIO_FIXED, .origin = origin,
         .channel = event->channel, .volume = event->volume, .attenuation = event->attenuation,
@@ -344,7 +344,7 @@ static bool loops(frontend_remote_q2 *row, qa_error *error)
         if (!qa_audio_bank_register(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
         if (!asset) continue;
         qa_audio_loop loop = {.sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-            .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name, .family = QA_GAME_Q2,
+            .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = qa_audio_asset_name(asset), .family = QA_GAME_Q2,
             .actor = entity->number, .owner = row->identity, .audience = row->options.domain.physical_seat,
             .origin_kind = QA_AUDIO_FIXED, .origin = vector(entity->origin), .channel = 0,
             .volume = entity->loop_volume != 0 ? entity->loop_volume : 1,

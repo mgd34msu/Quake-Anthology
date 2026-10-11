@@ -875,6 +875,14 @@ per-event interning and beam-name comparisons are deleted. Normal build and
 seven core suites pass. All expanded item 14 emitter sites are migrated; names
 items 6 and 10 remain open.
 
+Names leftovers item 10: Q2 effect, configstring and local muzzle sounds now
+carry bound string IDs into the shared audio bank. One sound path table supplies
+load-time selectors; sexed sounds retain the selected resource ID for the
+(base, player appearance) pair, invalidated with the bank's VFS generation.
+The text registration adapter delegates to that same ID implementation. The
+normal production build and seven existing core suites passed on 2026-10-11;
+this is source/build verification, not a new live audio qualification.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

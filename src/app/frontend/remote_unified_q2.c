@@ -484,11 +484,11 @@ static bool source_current(void *ctx,const frontend_remote_q2_effects_source *s,
         okay=frontend_q2_footsteps_current(b->footsteps,&actual,e); }
     return okay;
 }
-static bool sound(void *ctx,const char *path,qa_vec3 origin,qa_actor_id actor_id,double ms,
+static bool sound(void *ctx,qa_string_id path,qa_vec3 origin,qa_actor_id actor_id,double ms,
     int32_t channel,float volume,float attenuation,double delay,qa_error *e)
 {
     q2_bank *b=ctx;
-    return frontend_unified_events_sound_path(b->owner->events,b->content,path,actor_id,origin,ms,channel,volume,attenuation,delay,e);
+    return frontend_unified_events_sound_name(b->owner->events,b->content_name,path,actor_id,origin,ms,channel,volume,attenuation,delay,e);
 }
 static uint64_t nanoseconds(double seconds)
 { long double n=(long double)seconds*1e9L; return n<=0?0:n>=(long double)UINT64_MAX?UINT64_MAX:(uint64_t)n; }
@@ -520,7 +520,7 @@ static bool hit(void *ctx,int32_t damage,qa_error *e)
         origin.z+=height;
         qa_actor_id viewer_actor; uint32_t number_id;
         if (!frontend_remote_unified_player(o->replica,&viewer_actor,&number_id)) return false;
-        return sound(b,"weapons/marker.wav",origin,viewer_actor,o->seconds*1000,257,1,0,0,e);
+        return sound(b,qa_audio_bank_q2_name(b->sounds,QA_Q2_SFX_WEAPONS_MARKER),origin,viewer_actor,o->seconds*1000,257,1,0,0,e);
     }
     return true;
 }

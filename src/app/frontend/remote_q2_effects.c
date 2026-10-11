@@ -192,6 +192,15 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     if (!out || *out || !q2fx_source_valid(source)) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects require their actual private CLIENT resources");
     frontend_remote_q2_effects *owner = calloc(1, sizeof(*owner));
     if (!owner) return q2fx_fail(error, QA_ERROR_MEMORY, "Allocating remote Q2 effect pools");
+    static const char *const names[] = {
+        NULL,
+#define QA_Q2_SOUND_PATH(name) QA_Q2_SOUND_##name,
+        QA_Q2_SOUND_LIST(QA_Q2_SOUND_PATH)
+#undef QA_Q2_SOUND_PATH
+    };
+    qa_strings *strings=qa_session_strings(source->session);
+    for (size_t i=1;i<QA_Q2_SFX_COUNT;++i)
+        if (!qa_strings_intern_cstr(strings,names[i],owner->sound_names+i,error)) { free(owner); return false; }
     owner->source = *source; owner->particles.family = QA_GAME_Q2; qa_builtin_random_seed(&owner->random, 1);
     frontend_q2_effect_particles_initialize(&owner->particles,&owner->random,
         source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE);
@@ -278,9 +287,9 @@ static qa_vec3 direction_angles(qa_vec3 d)
     float yaw = d.x != 0 ? atan2f(d.y, d.x) * 57.29577951308232f : d.y > 0 ? 90 : d.y < 0 ? 270 : 0;
     return qa_v3(acosf(fminf(1, fmaxf(-1, d.z))) * 57.29577951308232f, yaw, 0);
 }
-static bool sound(frontend_remote_q2_effects *o, const char *path, qa_vec3 origin,
+static bool sound(frontend_remote_q2_effects *o, qa_q2_sound_index path, qa_vec3 origin,
     qa_actor_id actor, double time, int32_t channel, float volume, float attenuation, double delay, qa_error *e)
-{ return o->source.sound(o->source.context, path, origin, actor, time, channel, volume, attenuation, delay, e) && q2fx_source_current(o, e); }
+{ return o->source.sound(o->source.context, o->sound_names[path], origin, actor, time, channel, volume, attenuation, delay, e) && q2fx_source_current(o, e); }
 static void light(frontend_remote_q2_effects *o, qa_actor_id actor, qa_vec3 origin,
     double time, float radius, double duration, qa_vec3 color, float decay, float minimum)
 {
@@ -409,11 +418,11 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         if (t->type != QA_Q2_TE_SPARKS) smoke_flash(o,pos,server,interval);
         if (t->type == QA_Q2_TE_GUNSHOT || t->type == QA_Q2_TE_BULLET_SPARKS) {
             uint32_t n = random_word(o) & 15;
-            if (n >= 1 && n <= 3) { const char *paths[] = {QA_Q2_SOUND_WORLD_RIC1,QA_Q2_SOUND_WORLD_RIC2,QA_Q2_SOUND_WORLD_RIC3}; return sound(o,paths[n-1],pos,actor,time,0,1,1,0,e); }
+            if (n >= 1 && n <= 3) { const qa_q2_sound_index paths[] = {QA_Q2_SFX_WORLD_RIC1,QA_Q2_SFX_WORLD_RIC2,QA_Q2_SFX_WORLD_RIC3}; return sound(o,paths[n-1],pos,actor,time,0,1,1,0,e); }
         } break;
     case QA_Q2_TE_SCREEN_SPARKS: case QA_Q2_TE_SHIELD_SPARKS: case QA_Q2_TE_ELECTRIC_SPARKS:
         frontend_fx_q2_impact_particles(p,r,pos,dir,t->type == QA_Q2_TE_SCREEN_SPARKS ? 0xd0 : t->type == QA_Q2_TE_SHIELD_SPARKS ? 0xb0 : 0x75,40,seconds,FRONTEND_FX_Q2_NORMAL);
-        return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SFX_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_SPLASH: {
         const uint32_t colors[] = {0,0xe0,0xb0,0x50,0xd0,0xe0,0xe8};
         if (rerelease && color==7) {
@@ -421,7 +430,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
             frontend_fx_q2_impact_particles(p,r,pos,dir,0xb0,count/2+count%2,seconds,FRONTEND_FX_Q2_NORMAL);
             color=1;
         } else frontend_fx_q2_impact_particles(p,r,pos,dir,color >= 0 && color <= 6 ? colors[color] : 0,count,seconds,FRONTEND_FX_Q2_NORMAL);
-        if (color == 1) { uint32_t n = random_word(o) & 3; const char *paths[] = {QA_Q2_SOUND_WORLD_SPARK5,QA_Q2_SOUND_WORLD_SPARK6,QA_Q2_SOUND_WORLD_SPARK7}; return sound(o,paths[n < 2 ? n : 2],pos,actor,time,0,1,3,0,e); } break;
+        if (color == 1) { uint32_t n = random_word(o) & 3; const qa_q2_sound_index paths[] = {QA_Q2_SFX_WORLD_SPARK5,QA_Q2_SFX_WORLD_SPARK6,QA_Q2_SFX_WORLD_SPARK7}; return sound(o,paths[n < 2 ? n : 2],pos,actor,time,0,1,3,0,e); } break;
     }
     case QA_Q2_TE_LASER_SPARKS: case QA_Q2_TE_WELDING_SPARKS: case QA_Q2_TE_TUNNEL_SPARKS:
         frontend_fx_q2_impact_particles(p,r,pos,dir,(uint32_t)color,count,seconds,t->type == QA_Q2_TE_TUNNEL_SPARKS ? FRONTEND_FX_Q2_UP : FRONTEND_FX_Q2_FIXED);
@@ -435,27 +444,27 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         frontend_fx_q2_impact_particles(p,r,pos,dir,green?0xd0:blue?0x6f:hyper?0xb0:0xe0,40,seconds,FRONTEND_FX_Q2_BLASTER);
         explosion(o,1,Q2FX_EXPLODE,pos,server-interval,4,0,8|32,green?1:blue || hyper?2:0,rerelease && t->type==QA_Q2_TE_BLASTER?200:150,
             green?qa_v3(0,1,0):blue?qa_v3(.19f,.41f,.75f):hyper?qa_v3(0,0,1):qa_v3(1,1,0),direction_angles(dir),1);
-        return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SFX_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     }
     case QA_Q2_TE_RAILTRAIL: case QA_Q2_TE_RAILTRAIL2:
-        rail(o,pos,end,time,t->type==QA_Q2_TE_RAILTRAIL2,&controls); return sound(o,QA_Q2_SOUND_WEAPONS_RAILGF1A,end,actor,time,0,1,1,0,e);
+        rail(o,pos,end,time,t->type==QA_Q2_TE_RAILTRAIL2,&controls); return sound(o,QA_Q2_SFX_WEAPONS_RAILGF1A,end,actor,time,0,1,1,0,e);
     case QA_Q2_TE_BUBBLETRAIL: frontend_fx_q2_bubbles(p,r,pos,end,seconds); break;
-    case QA_Q2_TE_BUBBLETRAIL2: special_trail(o,pos,end,time,true); return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
+    case QA_Q2_TE_BUBBLETRAIL2: special_trail(o,pos,end,time,true); return sound(o,QA_Q2_SFX_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_DEBUGTRAIL: special_trail(o,pos,end,time,false); break;
     case QA_Q2_TE_BFG_LASER: case QA_Q2_TE_BFG_ZAP:
         laser(o,pos,end,time); if (t->type == QA_Q2_TE_BFG_ZAP) bfg_explosion(o,end,server,interval); break;
     case QA_Q2_TE_BFG_EXPLOSION: bfg_explosion(o,pos,server,interval); break;
     case QA_Q2_TE_BFG_BIGEXPLOSION: frontend_fx_q2_explosion(p,r,pos,seconds,true); break;
-    case QA_Q2_TE_BOSSTPORT: frontend_fx_q2_big_teleport(p,r,pos,seconds); return sound(o,QA_Q2_SOUND_MISC_BIGTELE,pos,actor,time,0,1,0,0,e);
+    case QA_Q2_TE_BOSSTPORT: frontend_fx_q2_big_teleport(p,r,pos,seconds); return sound(o,QA_Q2_SFX_MISC_BIGTELE,pos,actor,time,0,1,0,0,e);
     case QA_Q2_TE_TELEPORT_EFFECT: case QA_Q2_TE_DBALL_GOAL: frontend_fx_q2_teleport(p,r,pos,seconds); break;
     case QA_Q2_TE_FORCEWALL: frontend_fx_q2_force_wall(p,r,pos,end,(uint32_t)color,seconds); break;
     case QA_Q2_TE_CHAINFIST_SMOKE: (void)frontend_fx_q2_steam(p,r,pos,qa_v3(0,0,1),0,20,20,seconds,true); break;
     case QA_Q2_TE_HEATBEAM_SPARKS: case QA_Q2_TE_HEATBEAM_STEAM:
         (void)frontend_fx_q2_steam(p,r,pos,dir,t->type == QA_Q2_TE_HEATBEAM_SPARKS ? 8 : 0xe0,t->type == QA_Q2_TE_HEATBEAM_SPARKS ? 50 : 20,60,seconds,false);
-        return sound(o,QA_Q2_SOUND_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SFX_WEAPONS_LASHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_TRACKER_EXPLOSION:
         frontend_fx_q2_color_explosion(p,r,pos,seconds,0,1); light(o,actor,pos,time,150,100,qa_v3(-1,-1,-1),0,250);
-        return sound(o,QA_Q2_SOUND_WEAPONS_DISRUPTHIT,pos,actor,time,0,1,1,0,e);
+        return sound(o,QA_Q2_SFX_WEAPONS_DISRUPTHIT,pos,actor,time,0,1,1,0,e);
     case QA_Q2_TE_STEAM:
         if (!integer_field(t,QA_Q2_TEMP_ENTITY1,&id,e) || !integer_field(t,QA_Q2_TEMP_ENTITY2,&magnitude,e)) return false;
         if (id == -1) (void)frontend_fx_q2_steam(p,r,pos,dir,(uint32_t)color,count,(float)magnitude,seconds,false);
@@ -502,7 +511,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
         q2fx_beam *retained=frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
             rerelease,&recipe,actor,destination,pos,end,time);
         if (recipe.lightning_sound && frontend_q2_beam_lightning_sound(retained,rerelease,time)) {
-            if (!sound(o,QA_Q2_SOUND_WEAPONS_TESLA,pos,actor,time,1,1,1,0,e)) return false;
+            if (!sound(o,QA_Q2_SFX_WEAPONS_TESLA,pos,actor,time,1,1,1,0,e)) return false;
         }
         break;
     }
@@ -528,7 +537,7 @@ static bool temporary(frontend_remote_q2_effects *o, const qa_q2_temp_entity *t,
             !(grenade_weapon && (controls.disable_particles&1)) && !(rocket_weapon && (controls.disable_particles&4)))
             frontend_fx_q2_explosion(p,r,pos,seconds,false);
         if (rerelease && t->type==QA_Q2_TE_PLAIN_EXPLOSION) break;
-        return sound(o,water?QA_Q2_SOUND_WEAPONS_XPLD_WAT:grenade?QA_Q2_SOUND_WEAPONS_GRENLX1A:QA_Q2_SOUND_WEAPONS_ROCKLX1A,pos,actor,time,0,1,1,0,e);
+        return sound(o,water?QA_Q2_SFX_WEAPONS_XPLD_WAT:grenade?QA_Q2_SFX_WEAPONS_GRENLX1A:QA_Q2_SFX_WEAPONS_ROCKLX1A,pos,actor,time,0,1,1,0,e);
     }
     default: return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 effect has no admitted source recipe");
     }
@@ -619,7 +628,7 @@ typedef struct muzzle_audio {
     qa_vec3 origin;
     double milliseconds;
 } muzzle_audio;
-static bool muzzle_sound(void *context, const char *path, int32_t channel,
+static bool muzzle_sound(void *context, qa_q2_sound_index path, int32_t channel,
     float volume, float attenuation, double delay, qa_error *e)
 {
     muzzle_audio *audio=context;
@@ -629,7 +638,7 @@ static bool muzzle_sound(void *context, const char *path, int32_t channel,
 typedef struct monster_muzzle_definition {
     uint32_t profile;
     qa_vec3 color;
-    const char *path;
+    qa_q2_sound_index path;
     float attenuation;
     bool particles, smoke, tank_sound, heat;
 } monster_muzzle_definition;
@@ -649,41 +658,41 @@ static bool monster_muzzle_read(uint32_t flash, bool rerelease,
         else if (flash==74 || flash==134) profile=58;
     }
     qa_vec3 color=qa_v3(1,1,0);
-    const char *path=NULL;
+    qa_q2_sound_index path=QA_Q2_SFX_NONE;
     bool particles=false, smoke=false, tank_sound=false, heat=false;
     float attenuation=1;
     if ((profile>=26 && profile<=38) || profile==63 || (profile>=64 && profile<=69) || profile==141) {
-        particles=smoke=true; path=QA_Q2_SOUND_INFANTRY_INFATCK1;
-    } else if (soldier_flash(profile,2)) { particles=smoke=true; path=QA_Q2_SOUND_SOLDIER_SOLATCK3; }
-    else if (profile>=45 && profile<=52) { particles=smoke=true; path=QA_Q2_SOUND_GUNNER_GUNATCK2; }
+        particles=smoke=true; path=QA_Q2_SFX_INFANTRY_INFATCK1;
+    } else if (soldier_flash(profile,2)) { particles=smoke=true; path=QA_Q2_SFX_SOLDIER_SOLATCK3; }
+    else if (profile>=45 && profile<=52) { particles=smoke=true; path=QA_Q2_SFX_GUNNER_GUNATCK2; }
     else if ((profile>=73 && profile<=77) || profile==138 || profile==152) {
-        particles=smoke=true; path=QA_Q2_SOUND_INFANTRY_INFATCK1; attenuation=0;
+        particles=smoke=true; path=QA_Q2_SFX_INFANTRY_INFATCK1; attenuation=0;
     } else if ((profile>=133 && profile<=137) || profile==139 || profile==153 || (profile>=126 && profile<=131)) particles=smoke=true;
-    else if (profile>=120 && profile<=125) { particles=smoke=true; path=QA_Q2_SOUND_BOSS3_XFIRE; }
+    else if (profile>=120 && profile<=125) { particles=smoke=true; path=QA_Q2_SFX_BOSS3_XFIRE; }
     else if (profile>=4 && profile<=22) {
         particles=smoke=tank_sound=true;
-    } else if (soldier_flash(profile,0) || profile==143) path=QA_Q2_SOUND_SOLDIER_SOLATCK2;
-    else if (soldier_flash(profile,1)) { smoke=true; path=QA_Q2_SOUND_SOLDIER_SOLATCK1; }
-    else if (profile>=1 && profile<=3) path=QA_Q2_SOUND_TANK_TNKATCK3;
-    else if (profile==58 || profile==59) path=QA_Q2_SOUND_FLYER_FLYATCK3;
-    else if (profile==60) path=QA_Q2_SOUND_MEDIC_MEDATCK1;
-    else if (profile==62) path=QA_Q2_SOUND_HOVER_HOVATCK1;
-    else if (profile==82) path=QA_Q2_SOUND_FLOATER_FLTATCK1;
-    else if (profile>=102 && profile<=118) path=QA_Q2_SOUND_MAKRON_BLASTER;
+    } else if (soldier_flash(profile,0) || profile==143) path=QA_Q2_SFX_SOLDIER_SOLATCK2;
+    else if (soldier_flash(profile,1)) { smoke=true; path=QA_Q2_SFX_SOLDIER_SOLATCK1; }
+    else if (profile>=1 && profile<=3) path=QA_Q2_SFX_TANK_TNKATCK3;
+    else if (profile==58 || profile==59) path=QA_Q2_SFX_FLYER_FLYATCK3;
+    else if (profile==60) path=QA_Q2_SFX_MEDIC_MEDATCK1;
+    else if (profile==62) path=QA_Q2_SFX_HOVER_HOVATCK1;
+    else if (profile==82) path=QA_Q2_SFX_FLOATER_FLTATCK1;
+    else if (profile>=102 && profile<=118) path=QA_Q2_SFX_MAKRON_BLASTER;
     else if (profile==57 || profile==142 || (profile>=23 && profile<=25) ||
         (profile>=70 && profile<=72) || (profile>=78 && profile<=81) || (profile>=191 && profile<=194)) {
-        color=qa_v3(1,.5f,.2f); path=profile==57 || profile==142?QA_Q2_SOUND_CHICK_CHKATCK2:profile<=25?QA_Q2_SOUND_TANK_TNKATCK1:QA_Q2_SOUND_TANK_ROCKET;
-    } else if ((profile>=53 && profile<=56) || profile==140) { color=qa_v3(1,.5f,0); path=QA_Q2_SOUND_GUNNER_GUNATCK3; }
+        color=qa_v3(1,.5f,.2f); path=profile==57 || profile==142?QA_Q2_SFX_CHICK_CHKATCK2:profile<=25?QA_Q2_SFX_TANK_TNKATCK1:QA_Q2_SFX_TANK_ROCKET;
+    } else if ((profile>=53 && profile<=56) || profile==140) { color=qa_v3(1,.5f,0); path=QA_Q2_SFX_GUNNER_GUNATCK3; }
     else if (profile==61 || profile==119 || profile==147 || profile==150 || profile==154 || profile==155 || (rerelease && flash>=228 && flash<=231)) color=qa_v3(.5f,.5f,1);
     else if (profile==101 || profile==132) color=qa_v3(.5f,1,.5f);
-    else if ((profile>=144 && profile<=146) || profile==149 || (profile>=156 && profile<=190)) { color=qa_v3(0,1,0); path=QA_Q2_SOUND_TANK_TNKATCK3; }
-    else if (profile==148) { color=qa_v3(-1,-1,-1); path=QA_Q2_SOUND_WEAPONS_DISINT2; }
+    else if ((profile>=144 && profile<=146) || profile==149 || (profile>=156 && profile<=190)) { color=qa_v3(0,1,0); path=QA_Q2_SFX_TANK_TNKATCK3; }
+    else if (profile==148) { color=qa_v3(-1,-1,-1); path=QA_Q2_SFX_WEAPONS_DISINT2; }
     else if (profile==151 || (profile>=195 && profile<=210)) { heat=true; }
-    else if (rerelease && ((flash>=211 && flash<=218) || flash==254)) { color=qa_v3(1,.5f,.5f); path=QA_Q2_SOUND_WEAPONS_RIPPFIRE; }
-    else if (rerelease && ((flash>=219 && flash<=226) || flash==255)) { color=qa_v3(0,0,1); path=QA_Q2_SOUND_WEAPONS_HYPRBF1A; }
-    else if (rerelease && flash==227) path=QA_Q2_SOUND_WEAPONS_HYPRBF1A;
-    else if (rerelease && (flash==240 || flash==241)) { color=qa_v3(0,0,1); path=QA_Q2_SOUND_GUNCMDR_GCDRATCK2; }
-    else if (rerelease && flash>=242 && flash<=250) { color=qa_v3(1,.5f,0); path=QA_Q2_SOUND_GUNCMDR_GCDRATCK3; }
+    else if (rerelease && ((flash>=211 && flash<=218) || flash==254)) { color=qa_v3(1,.5f,.5f); path=QA_Q2_SFX_WEAPONS_RIPPFIRE; }
+    else if (rerelease && ((flash>=219 && flash<=226) || flash==255)) { color=qa_v3(0,0,1); path=QA_Q2_SFX_WEAPONS_HYPRBF1A; }
+    else if (rerelease && flash==227) path=QA_Q2_SFX_WEAPONS_HYPRBF1A;
+    else if (rerelease && (flash==240 || flash==241)) { color=qa_v3(0,0,1); path=QA_Q2_SFX_GUNCMDR_GCDRATCK2; }
+    else if (rerelease && flash>=242 && flash<=250) { color=qa_v3(1,.5f,0); path=QA_Q2_SFX_GUNCMDR_GCDRATCK3; }
     else return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle lacks its source effect definition");
     *out=(monster_muzzle_definition){profile,color,path,attenuation,particles,smoke,tank_sound,heat};
     return true;
@@ -691,7 +700,7 @@ static bool monster_muzzle_read(uint32_t flash, bool rerelease,
 static bool monster_muzzle_sound(const monster_muzzle_definition *definition,
     qa_builtin_random *random, frontend_q2_muzzle_sound_fn emit, void *context, qa_error *e)
 {
-    const char *path=definition->path;
+    qa_q2_sound_index path=definition->path;
     if (definition->tank_sound)
         path=qa_q2_tank_attack_sounds[qa_builtin_random_integer(random)%5];
     return !path || emit(context,path,1,1,definition->attenuation,0,e);
@@ -807,28 +816,28 @@ bool frontend_q2_player_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
 {
     if (!random || !emit || !((flash<=20 && flash!=15) || (flash>=30 && flash<=39)))
         return q2fx_fail(e,QA_ERROR_FORMAT,"Player muzzle lacks its Source sound definition");
-    float volume=silenced?.2f:1; const char *path=NULL; const char *reload=NULL;
-    if (flash==0 || flash==34) path=QA_Q2_SOUND_WEAPONS_BLASTF1A;
-    else if (flash==14 || flash==17) path=QA_Q2_SOUND_WEAPONS_HYPRBF1A;
-    else if (flash==2) { path=QA_Q2_SOUND_WEAPONS_SHOTGF1B; reload=QA_Q2_SOUND_WEAPONS_SHOTGR1B; }
-    else if (flash==13) path=QA_Q2_SOUND_WEAPONS_SSHOTF1B;
-    else if (flash==6) path=QA_Q2_SOUND_WEAPONS_RAILGF1A;
-    else if (flash==7) { path=QA_Q2_SOUND_WEAPONS_ROCKLF1A; reload=QA_Q2_SOUND_WEAPONS_ROCKLR1B; }
-    else if (flash==8 || flash==31) { path=QA_Q2_SOUND_WEAPONS_GRENLF1A; reload=flash==31?QA_Q2_SOUND_WEAPONS_PROXLR1A:QA_Q2_SOUND_WEAPONS_GRENLR1B; }
-    else if (flash==12) path=QA_Q2_SOUND_WEAPONS_BFG__F1Y;
+    float volume=silenced?.2f:1; qa_q2_sound_index path=QA_Q2_SFX_NONE; qa_q2_sound_index reload=QA_Q2_SFX_NONE;
+    if (flash==0 || flash==34) path=QA_Q2_SFX_WEAPONS_BLASTF1A;
+    else if (flash==14 || flash==17) path=QA_Q2_SFX_WEAPONS_HYPRBF1A;
+    else if (flash==2) { path=QA_Q2_SFX_WEAPONS_SHOTGF1B; reload=QA_Q2_SFX_WEAPONS_SHOTGR1B; }
+    else if (flash==13) path=QA_Q2_SFX_WEAPONS_SSHOTF1B;
+    else if (flash==6) path=QA_Q2_SFX_WEAPONS_RAILGF1A;
+    else if (flash==7) { path=QA_Q2_SFX_WEAPONS_ROCKLF1A; reload=QA_Q2_SFX_WEAPONS_ROCKLR1B; }
+    else if (flash==8 || flash==31) { path=QA_Q2_SFX_WEAPONS_GRENLF1A; reload=flash==31?QA_Q2_SFX_WEAPONS_PROXLR1A:QA_Q2_SFX_WEAPONS_GRENLR1B; }
+    else if (flash==12) path=QA_Q2_SFX_WEAPONS_BFG__F1Y;
     else if (flash>=9 && flash<=11) {
-        path=QA_Q2_SOUND_WEAPONS_GRENLF1A; volume=1;
-    } else if (flash==16) path=QA_Q2_SOUND_WEAPONS_RIPPFIRE;
-    else if (flash==18) path=QA_Q2_SOUND_WEAPONS_PLASSHOT;
-    else if (flash==30) path=QA_Q2_SOUND_WEAPONS_NAIL1;
+        path=QA_Q2_SFX_WEAPONS_GRENLF1A; volume=1;
+    } else if (flash==16) path=QA_Q2_SFX_WEAPONS_RIPPFIRE;
+    else if (flash==18) path=QA_Q2_SFX_WEAPONS_PLASSHOT;
+    else if (flash==30) path=QA_Q2_SFX_WEAPONS_NAIL1;
     else if (flash==32) {
-        path=rerelease?QA_Q2_SOUND_WEAPONS_NAIL1:QA_Q2_SOUND_WEAPONS_SHOTG2;
+        path=rerelease?QA_Q2_SFX_WEAPONS_NAIL1:QA_Q2_SFX_WEAPONS_SHOTG2;
     }
-    else if (flash==35) path=QA_Q2_SOUND_WEAPONS_DISINT2;
+    else if (flash==35) path=QA_Q2_SFX_WEAPONS_DISINT2;
     if (flash==1 || (flash>=3 && flash<=5)) {
         unsigned shots=flash==4?2:flash==5?3:1;
         for (unsigned i=0;i<shots;++i) {
-            const char *name=qa_q2_machinegun_sounds[qa_builtin_random_integer(random)%5];
+            qa_q2_sound_index name=qa_q2_machinegun_sounds[qa_builtin_random_integer(random)%5];
             if (!emit(context,name,1,volume,1,flash==4?i*.05:flash==5?i*.033:0,e)) return false;
         }
     }
@@ -836,7 +845,7 @@ bool frontend_q2_player_muzzle_sounds(qa_builtin_random *random, uint32_t flash,
     if (reload && !emit(context,reload,0,volume,1,
         rerelease && rerelease_effects?(flash==2?.35:.15):.1,e)) return false;
     return !(rerelease && rerelease_effects && flash==6) ||
-        emit(context,QA_Q2_SOUND_WEAPONS_RAILGR1B,7,volume,1,.4,e);
+        emit(context,QA_Q2_SFX_WEAPONS_RAILGR1B,7,volume,1,.4,e);
 }
 static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
     uint32_t flash, bool silenced, double time, double server, qa_error *e)

@@ -6,8 +6,8 @@ static uint32_t draw(frontend_remote_q2_effects *o) { return qa_builtin_random_i
 static bool rerelease(const frontend_remote_q2_effects *o)
 { return o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE; }
 static bool play(frontend_remote_q2_effects *o,const frontend_remote_q2_effects_pose *p,
-    const char *path,double time,int32_t channel,float volume,float attenuation,qa_error *e)
-{ return o->source.sound(o->source.context,path,p->origin,p->actor,time,channel,volume,attenuation,0,e) && q2fx_source_current(o,e); }
+    qa_q2_sound_index path,double time,int32_t channel,float volume,float attenuation,qa_error *e)
+{ return o->source.sound(o->source.context,o->sound_names[path],p->origin,p->actor,time,channel,volume,attenuation,0,e) && q2fx_source_current(o,e); }
 static bool frame_events(frontend_remote_q2_effects *o,
     const frontend_remote_q2_effects_sample *s,bool audio,qa_error *e)
 {
@@ -30,10 +30,10 @@ static bool frame_events(frontend_remote_q2_effects *o,
         if (!audio) continue;
         switch (p->event) {
         case 1:
-            ok=play(o,p,"items/respawn1.wav",s->milliseconds,1,1,2,e);
+            ok=play(o,p,QA_Q2_SFX_ITEMS_RESPAWN1,s->milliseconds,1,1,2,e);
             break;
         case 6:
-            ok=play(o,p,"misc/tele1.wav",s->milliseconds,1,1,2,e);
+            ok=play(o,p,QA_Q2_SFX_MISC_TELE1,s->milliseconds,1,1,2,e);
             break;
         case 2: case 8: case 9:
             if (s->footsteps == 0 || (p->event!=2 && !rerelease(o))) break;
@@ -41,13 +41,14 @@ static bool frame_events(frontend_remote_q2_effects *o,
                 ok=o->source.footstep && o->source.footstep(o->source.context,p,p->event,s->milliseconds,&o->random,e) && q2fx_source_current(o,e);
                 if (!ok && (!e || e->code==QA_OK)) q2fx_fail(e,QA_ERROR_ARGUMENT,"Q2 rerelease footstep has no actual material sound owner");
             } else {
-                char path[48]; snprintf(path,sizeof(path),"player/step%u.wav",(draw(o)&3)+1);
+                const qa_q2_sound_index steps[]={QA_Q2_SFX_PLAYER_STEP1,QA_Q2_SFX_PLAYER_STEP2,QA_Q2_SFX_PLAYER_STEP3,QA_Q2_SFX_PLAYER_STEP4};
+                qa_q2_sound_index path=steps[draw(o)&3];
                 ok=play(o,p,path,s->milliseconds,4,1,1,e);
             }
             break;
-        case 3: ok=play(o,p,"player/land1.wav",s->milliseconds,0,1,1,e); break;
-        case 4: ok=play(o,p,"*fall2.wav",s->milliseconds,0,1,1,e); break;
-        case 5: ok=play(o,p,"*fall1.wav",s->milliseconds,0,1,1,e); break;
+        case 3: ok=play(o,p,QA_Q2_SFX_PLAYER_LAND1,s->milliseconds,0,1,1,e); break;
+        case 4: ok=play(o,p,QA_Q2_SFX_SEXED_FALL2,s->milliseconds,0,1,1,e); break;
+        case 5: ok=play(o,p,QA_Q2_SFX_SEXED_FALL1,s->milliseconds,0,1,1,e); break;
         default: break;
         }
     }

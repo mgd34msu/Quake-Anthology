@@ -106,6 +106,8 @@ struct frontend_remote_q2 {
     remote_q2_layout layout;
     frontend_remote_q2_content content;
     char **configs;
+    qa_string_id *config_names;
+    qa_string_id player_appearances[256];
     remote_q2_model **model_slots;
     qa_q2_entity *baselines;
     size_t baseline_count;

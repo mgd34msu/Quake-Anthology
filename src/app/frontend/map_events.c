@@ -952,7 +952,7 @@ typedef struct builtin_muzzle_audio {
     uint32_t seat;
     bool fixed;
 } builtin_muzzle_audio;
-static bool builtin_muzzle_sound(void *context, const char *name, int32_t channel,
+static bool builtin_muzzle_sound(void *context, qa_q2_sound_index name, int32_t channel,
     float volume, float attenuation, double delay, qa_error *error)
 {
     builtin_muzzle_audio *audio=context;
@@ -961,7 +961,7 @@ static bool builtin_muzzle_sound(void *context, const char *name, int32_t channe
     frontend_event_resources *resources;
     if (!resources_read(frontend,event->provider,QA_GAME_Q2,&resources,error)) return false;
     qa_audio_asset *asset=NULL;
-    if (!qa_audio_bank_register(resources->sounds,name,QA_GAME_Q2,&asset,error)) return false;
+    if (!qa_audio_bank_register_id(resources->sounds,qa_audio_bank_q2_name(resources->sounds,name),QA_GAME_Q2,&asset,error)) return false;
     if (!asset) return true;
     uint64_t actor=audio->message?frontend_audio_q2_protocol_actor(frontend,audio->message,event->actor,error):
         frontend_audio_actor(frontend,event->actor,error);
@@ -978,7 +978,7 @@ static bool builtin_muzzle_sound(void *context, const char *name, int32_t channe
             ok=qa_audio_engine_position(frontend->audio,actor,origin,error);
         }
     }
-    qa_audio_play sound={.sample=qa_audio_asset_sample(asset),.asset=asset,.name=name,
+    qa_audio_play sound={.sample=qa_audio_asset_sample(asset),.asset=asset,.name=qa_audio_asset_name(asset),
         .family=QA_GAME_Q2,.actor=actor,.owner=event->provider,.audience=audio->seat,
         .origin_kind=audio->fixed?QA_AUDIO_FIXED:QA_AUDIO_ACTOR,
         .origin_actor=actor,.origin=origin,.channel=channel,

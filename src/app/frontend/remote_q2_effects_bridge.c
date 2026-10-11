@@ -115,14 +115,14 @@ static bool viewer(void *context, qa_actor_id *out, qa_error *error)
     if (!actor(row, (uint32_t)number + 1, &pose, error)) return false;
     *out = pose.actor; return true;
 }
-bool remote_q2_sound_asset(frontend_remote_q2 *row, const char *path, uint32_t entity,
+bool remote_q2_sound_asset(frontend_remote_q2 *row, qa_string_id path, uint32_t entity,
     qa_audio_asset **out, qa_error *error)
 {
-    if (path[0] != '*') return qa_audio_bank_register(row->sounds, path, QA_GAME_Q2, out, error);
-    const char *info = entity && entity <= 256 ?
-        frontend_remote_q2_config(row, (uint16_t)(row->layout.players + entity - 1)) : "";
-    const char *appearance = strchr(info, '\\');
-    return qa_audio_bank_sexed(row->sounds, path, appearance ? appearance + 1 : "", out, error);
+    qa_strings *strings=qa_session_strings(qa_application_session(row->options.domain.application));
+    if (!(qa_strings_name_flags(strings,path)&QA_NAME_SEXED_SOUND))
+        return qa_audio_bank_register_id(row->sounds,path,QA_GAME_Q2,out,error);
+    qa_string_id appearance=entity&&entity<=256?row->player_appearances[entity-1]:QA_STRING_NONE;
+    return qa_audio_bank_sexed_id(row->sounds,path,appearance,out,error);
 }
 
 bool remote_q2_effect_asset(void *context, qa_audio_asset *asset, qa_vec3 origin, qa_actor_id actor_id,
@@ -149,13 +149,13 @@ bool remote_q2_effect_asset(void *context, qa_audio_asset *asset, qa_vec3 origin
     bool ok = qa_audio_engine_play(row->frontend->audio, &play, (int32_t)(row->sample_ns / 1000000), error);
     return ok;
 }
-bool remote_q2_effect_sound(void *context, const char *path, qa_vec3 origin, qa_actor_id actor_id,
+bool remote_q2_effect_sound(void *context, qa_string_id path, qa_vec3 origin, qa_actor_id actor_id,
     double time, int32_t channel, float volume, float attenuation, double delay, qa_error *error)
 {
     frontend_remote_q2 *row = context;
     if (!row || !row->sounds || !path) return false;
     uint32_t entity = 0;
-    if (path[0] == '*' && actor_id.registry) {
+    if ((qa_strings_name_flags(qa_session_strings(qa_application_session(row->options.domain.application)),path)&QA_NAME_SEXED_SOUND)&&actor_id.registry) {
         const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
             qa_application_session(row->options.domain.application)), actor_id);
         if (record && record->has_source) entity = record->source_slot;
@@ -196,7 +196,7 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
                 qa_v3((float)player->pmove.origin[0] * .125f, (float)player->pmove.origin[1] * .125f, (float)player->pmove.origin[2] * .125f);
             position = qa_vec_add(position, vector(player->viewoffset));
         }
-        return remote_q2_effect_sound(row, "weapons/marker.wav", position, (qa_actor_id){0},
+        return remote_q2_effect_sound(row, qa_audio_bank_q2_name(row->sounds,QA_Q2_SFX_WEAPONS_MARKER), position, (qa_actor_id){0},
             ((double)row->frame.server_frame - 1 + row->fraction) * row->frame_ms, 257, 1, 0, 0, error);
     }
     return true;

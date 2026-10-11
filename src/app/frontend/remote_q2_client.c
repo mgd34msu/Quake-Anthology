@@ -107,12 +107,14 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
         for (size_t i = 0; i < row->layout.max_configs; ++i)
             if (row->configs && row->configs[i]) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 namespace replacement retains old configstrings");
         char **configs = calloc(layout.max_configs, sizeof(*configs));
+        qa_string_id *names=calloc(layout.max_configs,sizeof(*names));
         remote_q2_model **model_slots = calloc(layout.max_models, sizeof(*model_slots));
-        if (!configs || !model_slots) {
-            free(configs); free(model_slots);
+        if (!configs || !names || !model_slots) {
+            free(configs); free(names); free(model_slots);
             return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining negotiated Q2 config namespace");
         }
         free(row->configs); row->configs = configs;
+        free(row->config_names); row->config_names=names;
         free(row->model_slots); row->model_slots = model_slots;
     }
     row->layout = layout; return true;
@@ -126,6 +128,13 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
     size_t size = strlen(value) + 1; char *copy = malloc(size);
     if (!copy) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 configstring");
     memcpy(copy, value, size); free(row->configs[index]); row->configs[index] = copy;
+    qa_strings *strings=qa_session_strings(qa_application_session(row->options.domain.application));
+    row->config_names[index]=QA_STRING_NONE;
+    if (value[0]&&!qa_strings_intern_cstr(strings,value,row->config_names+index,error)) return false;
+    if (index>=row->layout.players&&index-row->layout.players<256) {
+        const char *appearance=strchr(value,'\\');
+        if (!qa_strings_intern_cstr(strings,appearance?appearance+1:"",row->player_appearances+index-row->layout.players,error)) return false;
+    }
     remote_q2_prediction_config(row, index);
     return !row->media_ready || remote_q2_model_config(row, index, error);
 }
@@ -150,7 +159,8 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     if (!remote_q2_media_clear(row, error)) return false;
     if (!remote_q2_download_clear(row, error)) return false;
     qa_q2_frame_free(&row->frame); qa_q2_frame_free(&row->previous);
-    for (size_t i = 0; row->configs && i < row->layout.max_configs; ++i) { free(row->configs[i]); row->configs[i] = NULL; }
+    for (size_t i = 0; row->configs && i < row->layout.max_configs; ++i) { free(row->configs[i]); row->configs[i] = NULL; row->config_names[i]=QA_STRING_NONE; }
+    memset(row->player_appearances,0,sizeof(row->player_appearances));
     free(row->baselines); row->baselines = NULL; row->baseline_count = 0;
     free(row->overlay); row->overlay = NULL; memset(row->inventory, 0, sizeof(row->inventory));
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog);
@@ -232,10 +242,11 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     remote_q2_cvars_bind(row);
     row->events = qa_event_ring_create(65536, 16384, 2, error);
     row->configs = calloc(row->layout.max_configs, sizeof(*row->configs));
+    row->config_names=calloc(row->layout.max_configs,sizeof(*row->config_names));
     row->model_slots = calloc(row->layout.max_models, sizeof(*row->model_slots));
-    if (!row->events || !row->configs || !row->model_slots || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
+    if (!row->events || !row->configs || !row->config_names || !row->model_slots || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
         qa_event_ring_destroy(&row->events);
-        qa_arena_destroy(&row->effect_storage);free(row->configs); free(row->model_slots); free(row); return false;
+        qa_arena_destroy(&row->effect_storage);free(row->configs); free(row->config_names); free(row->model_slots); free(row); return false;
     }
     row->event_cursor = qa_event_ring_first(row->events);
     qa_catalog_retain(d->catalog); row->frame_ms = 100; row->fraction = 1;
@@ -718,7 +729,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
     qa_event_ring_destroy(&row->events);
-    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->model_slots); qa_arena_destroy(&row->effect_storage);
+    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->config_names); free(row->model_slots); qa_arena_destroy(&row->effect_storage);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
     *link = row->next; qa_movement_result_free(&row->prediction_scratch); free(row); *owned = NULL; return true;
