@@ -51,6 +51,7 @@ typedef struct application_q3_component_item_metadata {
     application_q3_component_publication source;
     qa_item_admission admission;
     qa_bytes icon,held;
+    application_mod_item_icon icon_fields;
 } application_q3_component_item_metadata;
 bool application_q3_components_item_read(qa_application *,qa_actor_id,qa_actor_owner,qa_item_id,
     application_q3_component_item_metadata *,bool *found,qa_error *);

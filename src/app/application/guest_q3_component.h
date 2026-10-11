@@ -4,6 +4,7 @@
 #include "qa/console_save.h"
 #include "guest_q3_mod_operations.h"
 #include "guest_q3_mod_items.h"
+#include "guest_mod_item_definition.h"
 #include "qa/equipment.h"
 #include "qa/application.h"
 
@@ -75,7 +76,7 @@ bool application_q3_component_item_definition(const application_q3_component *,s
     qa_item_admission *,qa_bytes *icon,qa_bytes *held,qa_error *);
 size_t application_q3_component_item_definition_count(const application_q3_component *);
 bool application_q3_component_item_read(application_q3_component *,qa_actor_id,qa_item_id,
-    qa_item_admission *,qa_bytes *icon,qa_bytes *held,bool *found,qa_error *);
+    qa_item_admission *,qa_bytes *icon,qa_bytes *held,application_mod_item_icon *parsed_icon,bool *found,qa_error *);
 bool application_q3_component_inventory_group(application_q3_component *,qa_actor_id,uint64_t,
     const qa_inventory_source_group *,qa_inventory_items *,qa_error *);
 qa_console *application_q3_component_console(application_q3_component *,qa_cvars **);

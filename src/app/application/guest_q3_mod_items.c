@@ -16,12 +16,13 @@ bool q3items_current(item_actor *a,qa_error *e)
 bool application_q3_mod_items_actor_current(application_q3_mod_items *o,qa_actor_id actor)
 {return q3items_current(q3items_actor(o,actor),NULL);}
 bool application_q3_mod_items_item_read(application_q3_mod_items *o,qa_actor_id actor,qa_item_id item,
-    qa_item_admission *out,qa_bytes *icon,qa_bytes *held,bool *found,qa_error *e)
+    qa_item_admission *out,qa_bytes *icon,qa_bytes *held,application_mod_item_icon *parsed_icon,bool *found,qa_error *e)
 {
     if(!o||!out||!icon||!held||!found||!q3items_current(q3items_actor(o,actor),e))return false;
     *found=false;
     for(size_t i=0;i<o->profile->definition_count;++i)if(o->profile->definitions[i].admission.definition.item==item){
         if(!application_q3_mod_items_definition(o->profile,i,out,icon,held,e))return false;
+        if (parsed_icon) *parsed_icon=o->profile->definitions[i].icon_fields;
         out->definition.owner=o->mod->owner;*found=true;return true;
     }
     return true;

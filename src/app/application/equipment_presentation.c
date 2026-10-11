@@ -444,7 +444,7 @@ bool qa_application_equipment_source_read(qa_application *app,qa_actor_id actor,
             bool read=qc?application_qc_items_item_read(qc,actor,source.active,&definition,
                 &view.source_icon,&view.source_held,&declared,error):
                 application_q3_mod_items_item_read(source.context,actor,source.active,&definition,
-                &view.source_icon,&view.source_held,&declared,error);
+                &view.source_icon,&view.source_held,NULL,&declared,error);
             if(!read)return false;
             if(!declared||!definition.definition.weapon||definition.definition.owner!=source.provider)
                 return application_fail(error,QA_ERROR_FORMAT,"Active source weapon is outside its genuine admitted declaration");

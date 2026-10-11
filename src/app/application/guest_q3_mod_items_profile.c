@@ -80,7 +80,7 @@ static bool parse(application_q3_mod_items_profile *p,const qa_json_document *d,
     for(size_t i=0;i<p->definition_count;++i) {
         item_definition *v=p->definitions+i; qa_item_definition *definition=&v->admission.definition;
         qa_json_id at=qa_json_at(d,definitions,i),actions[2];
-        if(!application_mod_item_definition(d,at,strings,&v->admission,&v->icon,&v->held,actions,e)) return false;
+        if(!application_mod_item_definition(d,at,strings,&v->admission,&v->icon,&v->held,&v->icon_fields,actions,e)) return false;
         if(definition->weapon) ++weapon_count;
         for(size_t j=0;j<i;++j) if(p->definitions[j].admission.definition.item==definition->item)
             return q3mod_fail(e,QA_ERROR_FORMAT,"Duplicate source item definition");

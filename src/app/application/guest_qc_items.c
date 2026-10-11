@@ -67,7 +67,7 @@ bool application_qc_items_qualify(application_provider *provider,const qa_json_d
     if(!p->definitions)return application_fail(e,QA_ERROR_MEMORY,"Owning QC item actions and media");
     size_t weapons=0;uint64_t inputs=(UINT64_C(1)<<QC_INPUT_SELF)|(UINT64_C(1)<<QC_INPUT_TIME);
     for(size_t i=0;i<p->definition_count;++i){application_qc_item_definition *v=p->definitions+i;qa_json_id actions[2];
-        if(!application_mod_item_definition(d,qa_json_at(d,definitions,i),qa_session_strings(provider->application->session),p->admissions+i,&v->icon,&v->held,actions,e))return false;
+        if(!application_mod_item_definition(d,qa_json_at(d,definitions,i),qa_session_strings(provider->application->session),p->admissions+i,&v->icon,&v->held,NULL,actions,e))return false;
         qa_item_definition *item=&p->admissions[i].definition;item->owner=provider->owner;
         if(!*item->label)return application_fail(e,QA_ERROR_FORMAT,"QC item label must not be empty");
         weapons+=item->weapon?1u:0u;

@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_GUEST_Q3_MOD_ITEMS_PRIVATE_H
 #define QA_APPLICATION_GUEST_Q3_MOD_ITEMS_PRIVATE_H
 #include "guest_q3_mod_items.h"
+#include "guest_mod_item_definition.h"
 #include "guest_q3_mod_private.h"
 typedef struct item_field { size_t record; uint32_t offset; } item_field;
 typedef struct item_override { uint32_t address,instruction; int32_t value; bool unequal; } item_override;
@@ -19,6 +20,7 @@ typedef struct item_definition {
     qa_item_admission admission;
     application_q3_mod_call *actions[2];
     qa_buffer icon,held;
+    application_mod_item_icon icon_fields;
 } item_definition;
 typedef struct item_test { item_field field; bool masked,at_most; uint32_t mask; int32_t value; } item_test;
 typedef struct item_predicate { uint32_t instruction; bool unselected; } item_predicate;

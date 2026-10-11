@@ -353,7 +353,7 @@ bool application_q3_components_item_read(qa_application *app,qa_actor_id actor,q
         if(!row->initialized||!row->attached||!q3components_current(row))
             return application_fail(e,QA_ERROR_ARGUMENT,"Component item metadata lost its actual admitted source");
         application_q3_component_item_metadata value={.source=row->publication};
-        if(!application_q3_component_item_read(row->publication.game,actor,item,&value.admission,&value.icon,&value.held,found,e)) return false;
+        if(!application_q3_component_item_read(row->publication.game,actor,item,&value.admission,&value.icon,&value.held,&value.icon_fields,found,e)) return false;
         if(*found) *out=value;
         return true;
     }

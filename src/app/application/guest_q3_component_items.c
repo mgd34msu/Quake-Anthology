@@ -123,12 +123,12 @@ application_q3_mod_items *application_q3_component_items(application_q3_componen
 size_t application_q3_component_item_definition_count(const application_q3_component *c)
 { return c?application_q3_mod_items_definition_count(c->items_profile):0; }
 bool application_q3_component_item_read(application_q3_component *c,qa_actor_id actor,qa_item_id item,
-    qa_item_admission *out,qa_bytes *icon,qa_bytes *held,bool *found,qa_error *e)
+    qa_item_admission *out,qa_bytes *icon,qa_bytes *held,application_mod_item_icon *parsed_icon,bool *found,qa_error *e)
 {
     if(!c||!out||!icon||!held||!found||!q3component_current(c,e)) return false;
     *found=false;
     if(!c->items) return true;
-    return application_q3_mod_items_item_read(c->items,actor,item,out,icon,held,found,e);
+    return application_q3_mod_items_item_read(c->items,actor,item,out,icon,held,parsed_icon,found,e);
 }
 bool application_q3_component_item_definition(const application_q3_component *c,size_t index,qa_item_admission *out,
     qa_bytes *icon,qa_bytes *held,qa_error *e)

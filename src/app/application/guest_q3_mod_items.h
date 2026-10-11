@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_MOD_ITEMS_H
 #include "guest_q3_mod.h"
 #include "qa/inventory.h"
+#include "guest_mod_item_definition.h"
 #include "qa/equipment_weapon_slot.h"
 #include "qa/qvm_save.h"
 
@@ -44,7 +45,7 @@ bool application_q3_mod_items_admit(application_q3_mod_items *,qa_actor_id,qa_er
 bool application_q3_mod_items_release(application_q3_mod_items *,qa_actor_id,qa_error *);
 bool application_q3_mod_items_actor_current(application_q3_mod_items *,qa_actor_id);
 bool application_q3_mod_items_item_read(application_q3_mod_items *,qa_actor_id,qa_item_id,
-    qa_item_admission *,qa_bytes *icon,qa_bytes *held,bool *found,qa_error *);
+    qa_item_admission *,qa_bytes *icon,qa_bytes *held,application_mod_item_icon *parsed_icon,bool *found,qa_error *);
 bool application_q3_mod_items_weapon_read(application_q3_mod_items *,qa_actor_id,
     application_q3_items_weapon_view *,qa_error *);
 bool application_q3_mod_items_weapon_accepts(application_q3_mod_items *,qa_actor_id,

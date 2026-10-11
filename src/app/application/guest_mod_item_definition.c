@@ -69,20 +69,30 @@ static bool held(const qa_json_document *d,qa_json_id id,qa_error *e)
     }
     return true;
 }
-static bool icon(const qa_json_document *d,qa_json_id id,qa_error *e)
+static bool icon(const qa_json_document *d,qa_json_id id,qa_strings *strings,application_mod_item_icon *out,qa_error *e)
 {
+    if (out) *out = (application_mod_item_icon){0};
     if(id==QA_JSON_NONE||qa_json_type(d,id)==QA_JSON_NULL)return true;
     qa_json_id kind=qa_json_get(d,id,"kind");bool shader=qa_json_string_equal(d,kind,"shader"),wad=qa_json_string_equal(d,kind,"wad-picture");
     if((!shader&&!wad&&!qa_json_string_equal(d,kind,"image"))||!resource_path(d,qa_json_get(d,id,shader?"name":"path"),e))return false;
     if(wad){char *lump=NULL;if(!application_mod_item_text(d,qa_json_get(d,id,"lump"),&lump,e))return false;
         size_t cursor=0,units=0;uint32_t scalar;qa_bytes bytes={(const uint8_t *)lump,strlen(lump)};
         while(qa_utf8_next(bytes,&cursor,&scalar))units+=scalar>0xffff?2u:1u;
-        free(lump);if(!units||units>16)return false;
+        bool ok = units && units <= 16 && (!out || qa_strings_intern(strings, bytes, &out->lump, e));
+        free(lump); if (!ok) return false;
+    }
+    if (out) {
+        qa_buffer path = {0};
+        bool ok = qa_json_string(d,qa_json_get(d,id,shader?"name":"path"),&path,e) &&
+            qa_strings_intern(strings,(qa_bytes){path.data,path.size},&out->path,e);
+        qa_buffer_free(&path); if (!ok) return false;
+        out->kind = shader ? QA_UNIFIED_INVENTORY_ICON_SHADER :
+            wad ? QA_UNIFIED_INVENTORY_ICON_WAD_PICTURE : QA_UNIFIED_INVENTORY_ICON_IMAGE;
     }
     return true;
 }
 bool application_mod_item_definition(const qa_json_document *d,qa_json_id row,qa_strings *strings,
-    qa_item_admission *out,qa_buffer *icon_bytes,qa_buffer *held_bytes,qa_json_id actions[2],qa_error *e)
+    qa_item_admission *out,qa_buffer *icon_bytes,qa_buffer *held_bytes,application_mod_item_icon *parsed_icon,qa_json_id actions[2],qa_error *e)
 {
     qa_item_definition *definition=&out->definition;
     qa_json_id kind=qa_json_get(d,row,"kind"),admission=qa_json_get(d,row,"admission");
@@ -92,7 +102,7 @@ bool application_mod_item_definition(const qa_json_document *d,qa_json_id row,qa
         (!out->replace_primary&&!qa_json_string_equal(d,admission,"add"))||
         !application_mod_item_identity(d,qa_json_get(d,row,"item"),strings,&definition->item,e)||
         !application_mod_item_text(d,qa_json_get(d,row,"label"),(char **)&definition->label,e)||
-        !icon(d,qa_json_get(d,row,"icon"),e)||
+        !icon(d,qa_json_get(d,row,"icon"),strings,parsed_icon,e)||
         (definition->weapon&&!held(d,qa_json_get(d,row,"held"),e))||
         !raw_optional(d,qa_json_get(d,row,"icon"),icon_bytes,e)||
         !raw_optional(d,qa_json_get(d,row,"held"),held_bytes,e)) return false;
