@@ -181,8 +181,9 @@ static bool read_values(struct application_native_q2_client_outputs *o,qa_actor_
 static bool publication_slot(struct application_native_q2_client_outputs *o,qa_actor_id actor,uint32_t *out,qa_error *e)
 {
     if(!o||!o->ready||!application_native_q2_callbacks_client_current(o->engine->callbacks,actor,e))return false;
-    for(uint32_t i=1;i<257;++i){application_native_q2_client *c=o->engine->clients+i;
-        if(c->reserved&&c->connected&&!c->denied&&!c->disconnect_started&&qa_actor_id_equal(c->actor,actor)){*out=i;return true;}}
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
+    if(slot){application_native_q2_client *c=o->engine->clients+slot;
+        if(c->reserved&&c->connected&&!c->denied&&!c->disconnect_started){*out=slot;return true;}}
     return fail(e,"Native output publication lost its admitted full client");
 }
 bool application_native_q2_client_outputs_admit(struct application_native_q2 *n,qa_actor_id actor,qa_error *e)
@@ -213,7 +214,9 @@ bool application_native_q2_client_outputs_publish(struct application_native_q2 *
 void application_native_q2_client_outputs_release(struct application_native_q2 *n,qa_actor_id actor)
 {
     struct application_native_q2_client_outputs *o=application_native_q2_stages_outputs(n);if(!o)return;
-    for(uint32_t i=1;i<257;++i)if(o->clients[i].published&&qa_actor_id_equal(o->clients[i].actor,actor))o->clients[i]=(native_output_publication){0};
+    uint32_t slot=application_native_q2_client_slot(n,actor);
+    if(slot&&o->clients[slot].published&&qa_actor_id_equal(o->clients[slot].actor,actor))
+        o->clients[slot]=(native_output_publication){0};
 }
 bool application_native_q2_client_outputs_capture(struct application_native_q2 *n,qa_buffer *out,qa_error *e)
 {
@@ -253,11 +256,12 @@ bool application_native_q2_control_outputs(const qa_application *app,qa_actor_id
         if(!o||!o->claimed)continue;
         if(!o->ready||o->restoring||(claimed&o->claimed))return fail(e,"Native output read found unresolved or competing source leases");
         claimed|=o->claimed;
-        for(uint32_t j=1;j<257;++j){native_output_publication *v=o->clients+j;if(!v->published||!qa_actor_id_equal(v->actor,actor))continue;uint32_t slot;
+        uint32_t j=application_native_q2_client_slot(o->engine,actor);
+        if(j){native_output_publication *v=o->clients+j;if(!v->published||!qa_actor_id_equal(v->actor,actor))continue;uint32_t slot;
             if(!publication_slot(o,actor,&slot,e)||slot!=j)return false;
             if(v->values.has_view_offset){out->has_view_offset=true;out->view_offset=v->values.view_offset;}
             if(v->values.has_mode){out->has_mode=true;out->mode=v->values.mode;}
             if(v->values.has_stance){out->has_stance=true;out->crouched=v->values.crouched;}
-            if(v->values.has_body_bounds){out->has_body_bounds=true;out->body_bounds=v->values.body_bounds;}break;}}
+            if(v->values.has_body_bounds){out->has_body_bounds=true;out->body_bounds=v->values.body_bounds;}}}
     return true;
 }

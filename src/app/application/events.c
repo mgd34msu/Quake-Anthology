@@ -352,14 +352,10 @@ static bool protocol_capacity(application_provider *provider,
         uint32_t source_slot = 0;
         if (provider->kind == APPLICATION_PROVIDER_QC) {
             const struct application_qc_state *engine = provider->state.qc.engine;
-            for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-                const application_qc_client *client = engine->clients + slot;
-                if (client->connected && qa_actor_id_equal(client->actor, player->actor) &&
-                    (!qw || client->spawned)) {
-                    receives = true;
-                    source_slot = slot;
-                    break;
-                }
+            const application_qc_client *client = application_qc_client_for_actor(engine, player->actor);
+            if (client && client->connected && (!qw || client->spawned)) {
+                receives = true;
+                source_slot = (uint32_t)(client - engine->clients);
             }
         } else {
             receives = qa_q1_native_client_slot_prepared(provider->state.q1, player->actor, &source_slot, NULL) &&
