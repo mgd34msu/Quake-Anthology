@@ -6,6 +6,7 @@
 #include "source_client_registry.h"
 #include "video_guests.h"
 #include "source_companion.h"
+#include "scene_lights.h"
 #include "qa/application_q3_collision.h"
 #include "qa/application_q3_body_entry.h"
 #include "qa/application_q3_components.h"
@@ -1622,6 +1623,40 @@ static void body_scene_clear(frontend_source_lease *lease)
 }
 static void body_scene_completed(frontend_source_lease *lease)
 { if (lease->body_draw) lease->body_draw->components_submitted=true; }
+typedef struct body_light_cursor {
+    frontend_source_lease *lease;
+    size_t child,packet,packet_count,light;
+    frontend_component_scene_packet current;
+    bool entered;
+} body_light_cursor;
+static bool body_light_read(void *context,qa_scene_light *light,const qa_q3_refdef **definition,
+    bool *view,bool *present,qa_error *error)
+{
+    body_light_cursor *cursor=context;
+    source_body_draw *draw=cursor->lease->body_draw;
+    *present=false;*view=false;*definition=NULL;
+    while(cursor->child<draw->count) {
+        if(cursor->light<cursor->current.light_count) {
+            *light=cursor->current.lights[cursor->light++];*present=true;return true;
+        }
+        const qa_application_q3_component_draw *child=&draw->components[cursor->child].draw;
+        if(!cursor->entered) {
+            if(!frontend_component_scene_packet_count(cursor->lease->source->frontend,child->frontend_identity,
+                child->sequence,&cursor->packet_count,error)) return false;
+            cursor->entered=true;
+        }
+        if(cursor->packet<cursor->packet_count) {
+            if(!frontend_component_scene_packet_read(cursor->lease->source->frontend,child->frontend_identity,
+                child->sequence,cursor->packet++,&cursor->current,error)) return false;
+            cursor->light=0;
+        } else {
+            ++cursor->child;cursor->entered=false;cursor->packet=cursor->light=0;
+            cursor->current=(frontend_component_scene_packet){0};
+        }
+    }
+    return true;
+}
+
 static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options *options,qa_error *error)
 {
     source_body_draw *draw=lease->body_draw;
@@ -1649,30 +1684,9 @@ static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options 
         return frontend_fail(error,QA_ERROR_MEMORY,"Component scene leaves primary submission limits");
     options->first_entity+=(uint32_t)entities;
     if (!lights) return true;
-    size_t count=options->world.light_count+lights;
-    qa_arena *storage=&lease->source->frontend->frame.storage;
-    qa_scene_light *merged=qa_arena_alloc(storage,count*sizeof(*merged),_Alignof(qa_scene_light),error);
-    qa_scene_light *projected=qa_arena_alloc(storage,32*sizeof(*projected),_Alignof(qa_scene_light),error);
-    if (!merged || !projected) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining component light submission");
-    size_t used=options->world.light_count;
-    if (used) memcpy(merged,options->world.lights,used*sizeof(*merged));
-    size_t projected_count=options->world.projected_light_count;
-    if (projected_count>32) return frontend_fail(error,QA_ERROR_FORMAT,"Primary projected lights exceed Source limit");
-    if (projected_count) memcpy(projected,options->world.projected_lights,projected_count*sizeof(*projected));
-    for (size_t i=0;i<draw->count;++i) {
-        const qa_application_q3_component_draw *child=&draw->components[i].draw;
-        size_t packets;
-        if (!frontend_component_scene_packet_count(lease->source->frontend,child->frontend_identity,child->sequence,&packets,error)) return false;
-        for (size_t j=0;j<packets;++j) {
-            frontend_component_scene_packet packet;
-            if (!frontend_component_scene_packet_read(lease->source->frontend,child->frontend_identity,child->sequence,j,&packet,error)) return false;
-            if (packet.light_count) memcpy(merged+used,packet.lights,packet.light_count*sizeof(*merged));
-            used+=packet.light_count;
-            for (size_t k=0;k<packet.light_count && projected_count<32;++k) projected[projected_count++]=packet.lights[k];
-        }
-    }
-    options->world.lights=merged; options->world.light_count=count;
-    options->world.projected_lights=projected; options->world.projected_light_count=projected_count;
+    body_light_cursor cursor={.lease=lease};
+    if(!frontend_scene_lights_merge(&lease->source->frontend->frame.storage,&options->world,
+        lights,body_light_read,&cursor,error)) return false;
     return body_current(lease,&view);
 }
 static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
@@ -2261,8 +2275,10 @@ bool frontend_source_companion_selection_read(qa_frontend *f,const frontend_sour
     qa_application_equipment_view equipment;
     qa_application_q3_weapon_models models; bool registered;
     qa_actor_id actor=view->receipt.actor;
-    if (!qa_application_equipment_read(f->application,actor,&equipment,error) ||
-        !qa_application_equipment_q3_models_read(f->application,&equipment,view->receipt.client.source.receiver,
+    if (!qa_application_equipment_read(f->application,actor,&equipment,error)) return false;
+    if (!equipment.selected || !equipment.original_qvm || equipment.provider!=view->receipt.client.source.source_owner)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion selection left its selected original GAME provider");
+    if (!qa_application_equipment_q3_models_read(f->application,&equipment,view->receipt.client.source.receiver,
             view->receipt.client.source.seat,&models,&registered,error)) return false;
     qa_arena *storage=&f->frame.storage;
     frontend_source_companion_selection result={0};

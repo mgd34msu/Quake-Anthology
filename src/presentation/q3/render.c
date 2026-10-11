@@ -1311,7 +1311,7 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
         .no_world = (refdef->flags & 1) != 0, .source_hyperspace = (refdef->flags & 4) != 0,
         .visible_areas = visible, .visible_area_bytes = sizeof(visible),
         .lights = p->lights, .light_count = p->light_count, .use_projected_lights = true,
-        .projected_lights = p->lights, .projected_light_count = p->light_count < 32 ? p->light_count : 32, .source_order = true,
+        .projected_lights = p->lights, .projected_light_count = p->light_count < QA_SCENE_PROJECTED_LIGHTS ? p->light_count : QA_SCENE_PROJECTED_LIGHTS, .source_order = true,
         .identity_light = p->options.identity_light, .curve_error = 250,
         .render_texts = texts, .render_text_count = 8, .video_frame = p->options.video_frame,
         .video_context = p->options.video_context, .source_scratch = p->options.source_scratch,
@@ -1350,7 +1350,7 @@ bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef
     if (ok && (!options.world.no_world && (!p->world || !p->world_loaded)))
         ok = q3p_fail(error, QA_ERROR_ARGUMENT, "RE_RenderScene: NULL worldmodel");
     if (ok && (options.first_entity > 1022 || p->entity_count > 1022 - options.first_entity ||
-        options.world.projected_light_count > 32 || (options.world.light_count && !options.world.lights) ||
+        options.world.projected_light_count > QA_SCENE_PROJECTED_LIGHTS || (options.world.light_count && !options.world.lights) ||
         (options.world.projected_light_count && !options.world.projected_lights) ||
         !qa_vec_finite(options.weapon_offset)))
         ok = q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 scene exceeds source entity/light limits or has invalid spans");

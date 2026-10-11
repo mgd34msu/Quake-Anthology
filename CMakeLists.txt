@@ -1894,6 +1894,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_unified_q2_hud.c
     src/app/frontend/renderer_registries.c
     src/app/frontend/source_cinematics.c
+    src/app/frontend/scene_lights.c
     src/app/frontend/source_companion_legacy.c
     src/app/frontend/unified_q3_commands.c
     src/app/frontend/unified_q3_runtime_factory.c

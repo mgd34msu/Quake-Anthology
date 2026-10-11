@@ -4,6 +4,7 @@
 #include "equipment_gear_output.h"
 #include "equipment_gear_world_output.h"
 #include "source_companion.h"
+#include "scene_lights.h"
 #include "qa/ui_preferences.h"
 
 typedef struct equipment_packet {
@@ -104,9 +105,6 @@ static bool companion_prepare(frontend_equipment_source *owner, bool *present, q
     if (!frontend_source_companion_read(owner->options.frontend, owner->options.physical_seat,
             owner->selection.actor, &captured, present, error)) return false;
     if (!*present) return true;
-    const qa_application_q3_client_context *client = &captured.receipt.client.source;
-    if (client->source_owner != owner->selection.provider || client->seat != owner->options.seat || !captured.assets)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected weapon capture changed its real GAME and launch seat");
     const frontend_source_companion_selection *selection;
     if (!frontend_source_companion_selection_read(owner->options.frontend,&captured,&selection,error)) return false;
     owner->companion_refs=selection->refs; owner->companion_ref_count=selection->ref_count;
@@ -929,33 +927,14 @@ static bool build_world(frontend_equipment_source *owner, qa_error *error)
     return true;
 }
 
-typedef struct equipment_light_cursor {
-    frontend_equipment_source *owner;
-    size_t next;
-} equipment_light_cursor;
-static bool companion_light_read(void *context,qa_scene_light *light,const qa_q3_refdef **definition,
-    bool *view,qa_error *error)
-{
-    (void)error;equipment_light_cursor *cursor=context;frontend_equipment_source *owner=cursor->owner;
-    while(cursor->next<owner->companion_light_count) {
-        const frontend_source_companion_light *captured=owner->companion_lights+cursor->next++;
-        if(captured->view && !owner->companion_view_requested) continue;
-        *light=captured->light;*definition=&captured->definition;*view=captured->view;return true;
-    }
-    return false;
-}
-
 static bool companion_lights_prepare(frontend_equipment_source *owner,
     qa_q3_scene_options *options, qa_error *error)
 {
     if (!owner->companion_selected || options->world.no_world) return true;
-    size_t count = 0;
-    for (size_t i = 0; i < owner->companion_light_count; ++i)
-        if (!owner->companion_lights[i].view || owner->companion_view_requested) ++count;
-    if (!count) return true;
-    equipment_light_cursor cursor={.owner=owner};
-    if(!frontend_source_companion_lights_merge(&owner->options.frontend->frame.storage,
-        &options->world,count,companion_light_read,&cursor,error) ||
+    frontend_source_companion_selection selection={.lights=owner->companion_lights,
+        .light_count=owner->companion_light_count};
+    if(!frontend_scene_lights_companion_merge(&owner->options.frontend->frame.storage,
+        &options->world,&selection,!owner->companion_view_requested,error) ||
         !frontend_source_companion_current(owner->options.frontend,&owner->companion)) return false;
     owner->view_lights=options->world.lights;
     owner->view_projected_lights=options->world.projected_lights;

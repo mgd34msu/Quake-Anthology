@@ -11,6 +11,8 @@
 #include "qa/model.h"
 #include "qa/vfs.h"
 
+enum { QA_SCENE_PROJECTED_LIGHTS = 32 };
+
 typedef struct qa_material qa_material;
 typedef struct qa_material_context qa_material_context;
 struct qa_material_profile;
