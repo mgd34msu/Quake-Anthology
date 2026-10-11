@@ -224,7 +224,7 @@ bool application_unified_components_prepare(application_unified_component_publis
         application_q3_scene_context context = {0};
         size_t at = v->count++;
         ok = application_q3_components_publication_borrow(v->roster, index, player->actor, &origin, axis,
-            time, (int32_t)(clock.frame.elapsed_ns / UINT64_C(1000000)), v->leases + at, &context, e);
+            time, (int32_t)(clock.frame.elapsed_ns / UINT64_C(1000000)), v->lease, v->leases + at, &context, e);
         component_cursor *row = v->rows + at;
         *row = (component_cursor){.owner = publication.owner, .generation = publication.generation,
             .game_state_revision = context.game_state_revision, .sequence = scene && ok && context.snapshot ? context.snapshot->server_command_number : 0,

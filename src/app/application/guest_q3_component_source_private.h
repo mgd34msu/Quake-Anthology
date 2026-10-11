@@ -14,6 +14,7 @@ typedef struct component_source_entity {
 } component_source_entity;
 typedef struct component_source_client { qa_actor_id actor; uint32_t slot; qa_q3_player state; } component_source_client;
 typedef struct component_source_publication {
+    bool ready;
     int64_t revision,game_state_revision;
     int32_t time_ms,command_sequence;
     qa_q3_gamestate *game_state;
@@ -25,6 +26,7 @@ typedef struct component_source_publication {
 typedef struct component_source_borrow {
     struct component_source_borrow *next;
     application_q3_component_view *view;
+    qa_unified_frame_lease *storage;
     application_q3_scene_context context;
     qa_q3_snapshot snapshot;
     qa_q3_visible_entities visible;
@@ -40,7 +42,7 @@ struct application_q3_component_source {
     qa_q3_gamestate *game_state;
     int64_t game_state_revision,revision;
     int32_t time_ms,command_sequence;
-    component_source_publication current,baseline;
+    component_source_publication current,baseline,pending;
     component_source_borrow *borrows;
     bool dirty,restored;
 };

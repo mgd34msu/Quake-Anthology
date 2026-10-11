@@ -66,23 +66,17 @@ static bool client(qa_source_save_io *io,qa_qvm_abi abi,component_source_client 
 }
 static bool publication(qa_source_save_io *io,application_q3_component_source *s,component_source_publication *p)
 {
-    bool present=p->game_state!=NULL;
+    bool present=p->ready;
     int32_t commands=0; size_t command_count=0;
-    if(!qa_source_save_bool(io,&present)||!present) return !io->failed;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        p->game_state=calloc(1,sizeof(*p->game_state)); if(!p->game_state) return fail(io,"Retaining actual saved component publication");
-    }
+    if(!qa_source_save_bool(io,&present)) return false;
+    p->ready=present;
+    if(!present) return true;
     if(!qa_source_save_i64(io,&p->revision)||p->revision<=0||p->revision>s->revision||
         !qa_source_save_i64(io,&p->game_state_revision)||p->game_state_revision<0||p->game_state_revision>s->game_state_revision||
         !qa_source_save_i32(io,&p->time_ms)||p->time_ms<0||p->time_ms>s->time_ms||
         !qa_source_save_i32(io,&commands)||commands<0||
         !gamestate(io,s->options.abi,p->game_state)||!qa_source_save_count(io,&p->entity_count,1022)||
         !qa_source_save_count(io,&p->client_count,64)||!qa_source_save_count(io,&command_count,64)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) {
-        p->entities=p->entity_count?calloc(p->entity_count,sizeof(*p->entities)):NULL;
-        p->clients=p->client_count?calloc(p->client_count,sizeof(*p->clients)):NULL;
-        if((p->entity_count&&!p->entities)||(p->client_count&&!p->clients)) return fail(io,"Retaining actual source publication rows");
-    }
     for(size_t i=0;i<p->entity_count;++i) {
         if(!entity(io,s->options.abi,p->entities+i)) return false;
         for(size_t j=0;j<i;++j) if(p->entities[j].actor.slot==p->entities[i].actor.slot||qa_actor_id_equal(p->entities[j].actor.actor,p->entities[i].actor.actor)) return fail(io,"Saved source publication duplicates an entity");
@@ -108,7 +102,6 @@ static bool fields(qa_source_save_io *io,application_q3_component_source *s)
         !qa_source_save_i64(io,&s->revision)||s->revision<0||!qa_source_save_i64(io,&s->game_state_revision)||s->game_state_revision<0||
         !qa_source_save_i32(io,&s->time_ms)||s->time_ms<0||!qa_source_save_i32(io,&commands)||commands<0||
         !qa_source_save_bool(io,&s->dirty)||!gamestate(io,s->options.abi,s->game_state)||!qa_source_save_count(io,&s->actor_count,1022)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ) { s->actors=s->actor_count?calloc(s->actor_count,sizeof(*s->actors)):NULL; if(s->actor_count&&!s->actors) return fail(io,"Retaining saved component source bindings"); }
     for(size_t i=0;i<s->actor_count;++i) {
         if(!actor(io,&s->actors[i].row)||!qa_source_save_bool(io,&s->actors[i].client)) return false;
         const qa_actor_record *actual=qa_actors_get(qa_session_actors(s->options.session),s->actors[i].row.actor);
@@ -130,7 +123,7 @@ bool application_q3_component_source_checkpoint(application_q3_component_source 
 }
 bool application_q3_component_source_restore(application_q3_component_source *s,qa_bytes bytes,qa_error *e)
 {
-    if(!s||s->actors||s->revision||s->command_sequence||s->current.game_state||s->baseline.game_state||!application_q3_component_source_idle(s)) return false;
+    if(!s||s->actor_count||s->revision||s->command_sequence||s->current.ready||s->baseline.ready||!application_q3_component_source_idle(s)) return false;
     qa_source_save_io io={0}; bool ok=qa_source_save_reader(&io,s->options.session,bytes,e)&&fields(&io,s)&&qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io); return ok;
 }

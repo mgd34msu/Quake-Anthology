@@ -17,10 +17,10 @@ bool q3component_current(void *context,qa_error *e)
 }
 static bool publication_current(void *context)
 { qa_error e={0}; return q3component_current(context,&e); }
-static bool information(void *context,uint32_t flags,qa_buffer *out,qa_error *e)
+static bool information(void *context,uint32_t flags,char *out,size_t capacity,qa_error *e)
 {
     application_q3_component *c=context;
-    return q3component_current(c,e)&&qa_cvars_info(c->cvars,flags,1024,out,e);
+    return q3component_current(c,e)&&qa_cvars_info_write(c->cvars,flags,capacity,out,e);
 }
 static bool bound(void *context,qa_actor_id actor,uint32_t slot,bool owned,bool client,qa_error *e)
 {

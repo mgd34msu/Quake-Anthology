@@ -78,6 +78,7 @@ bool application_q3_components_checkpoint_publication_read(const qa_application 
     application_q3_component_publication *,bool *,qa_error *);
 bool application_q3_components_publication_borrow(application_q3_components *,size_t,
     qa_actor_id,const qa_vec3 *origin,const qa_vec3 axis[3],int32_t time_ms,int32_t frame_ms,
+    qa_unified_frame_lease *,
     application_q3_component_publication_lease **,application_q3_scene_context *,qa_error *);
 bool application_q3_components_publication_current(const application_q3_component_publication_lease *);
 void application_q3_components_publication_return(application_q3_component_publication_lease **);

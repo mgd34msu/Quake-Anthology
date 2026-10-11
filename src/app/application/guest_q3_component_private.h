@@ -34,6 +34,7 @@ struct application_q3_component {
     application_q3_mod_items_profile *items_profile;
     application_q3_mod_items *items;
     application_q3_component_records *records;
+    component_actor frame_actors[QA_Q3_ENTITIES];
     application_q3_component_source *source;
     application_q3_mod_actors *actor_semantics;
     qa_qvm_binding actor_resolver;

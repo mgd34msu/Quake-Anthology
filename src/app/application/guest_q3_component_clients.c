@@ -95,6 +95,18 @@ bool application_q3_component_command(application_q3_component *c,qa_actor_id ac
     if(ok) { *handled=true; ok=client_current(c,actor,e)&&application_q3_component_source_publish(c->source,c->milliseconds,false,e); }
     return ok;
 }
+static size_t frame_rows(application_q3_component *c)
+{
+    size_t count=c->records->actor_count;
+    component_actor *rows=c->frame_actors;
+    if(count) memcpy(rows,c->records->actors,count*sizeof(*rows));
+    for(size_t i=1;i<count;++i) {
+        component_actor value=rows[i];size_t j=i;
+        while(j && rows[j-1].slot>value.slot) { rows[j]=rows[j-1];--j; }
+        rows[j]=value;
+    }
+    return count;
+}
 bool application_q3_component_frame(application_q3_component *c,const qa_source_frame *frame,qa_error *e)
 {
     if(!c||!frame||!q3component_current(c,e)||!c->initialized||!application_q3_component_idle(c)||
@@ -106,10 +118,7 @@ bool application_q3_component_frame(application_q3_component *c,const qa_source_
     c->milliseconds=(int32_t)(frame->time_ns/1000000); c->busy=true; bool ok=true;
     /* Snapshot the source-slot order; nested source calls may allocate or
      * retire rows while the declared update executes. */
-    size_t count=c->records->actor_count; component_actor *rows=count?malloc(count*sizeof(*rows)):NULL;
-    if(count&&!rows) ok=q3records_fail(e,QA_ERROR_MEMORY,"Retaining true component frame actor order");
-    if(ok&&count) memcpy(rows,c->records->actors,count*sizeof(*rows));
-    for(size_t i=1;ok&&i<count;++i) { component_actor value=rows[i]; size_t j=i; while(j&&rows[j-1].slot>value.slot) { rows[j]=rows[j-1]; --j; } rows[j]=value; }
+    size_t count=frame_rows(c);component_actor *rows=c->frame_actors;
     for(size_t i=0;ok&&i<count;++i) if(rows[i].owned&&!rows[i].retired&&q3records_live(c->records,rows[i].actor)) {
         application_q3_mod_inputs values=inputs(c,rows[i].actor,(double)frame->elapsed_ns/1e9);
         ok=application_q3_mod_stage_run(c->mod,Q3_MOD_SOURCE_UPDATE,&values,e);
@@ -120,18 +129,11 @@ bool application_q3_component_frame(application_q3_component *c,const qa_source_
         ok=application_q3_mod_stage_run(c->mod,Q3_MOD_SOURCE_FRAME,&values,e);
         clients=c->actor_frame_completed; c->actor_frame_active=false;
     }
-    if(ok) {
-        free(rows); count=c->records->actor_count;
-        rows=count?malloc(count*sizeof(*rows)):NULL;
-        if(count&&!rows) ok=q3records_fail(e,QA_ERROR_MEMORY,"Retaining reached component client frame order");
-        if(ok&&count) memcpy(rows,c->records->actors,count*sizeof(*rows));
-        for(size_t i=1;ok&&i<count;++i) { component_actor value=rows[i]; size_t j=i; while(j&&rows[j-1].slot>value.slot) { rows[j]=rows[j-1]; --j; } rows[j]=value; }
-    }
+    if(ok) count=frame_rows(c);
     for(size_t i=0;ok&&clients&&i<count;++i) if(rows[i].client&&application_q3_component_records_live_client(c->records,rows[i].actor)) {
         application_q3_mod_inputs values=inputs(c,rows[i].actor,(double)frame->elapsed_ns/1e9);
         ok=application_q3_mod_stage_run(c->mod,Q3_MOD_CLIENT_FRAME,&values,e);
     }
-    free(rows);
     if(ok) ok=application_q3_component_source_publish(c->source,c->milliseconds,false,e);
     c->busy=false; return ok;
 }

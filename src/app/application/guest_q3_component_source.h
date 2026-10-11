@@ -3,6 +3,7 @@
 
 #include "guest_q3_scene.h"
 #include "qa/application.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct application_q3_component_source application_q3_component_source;
 typedef struct application_q3_component_source_options {
@@ -16,12 +17,13 @@ typedef struct application_q3_component_source_options {
     qa_qvm_abi abi;
     void *context;
     bool (*current)(void *);
-    bool (*information)(void *,uint32_t flags,qa_buffer *,qa_error *);
+    bool (*information)(void *,uint32_t flags,char *,size_t,qa_error *);
     qa_q3_visibility_world visibility;
     bool scene;
 } application_q3_component_source_options;
 typedef struct application_q3_component_view {
     application_q3_component_source *source;
+    qa_unified_frame_lease *storage;
     qa_actor_id viewer;
     qa_vec3 origin, axis[3];
     int32_t time_ms, frame_ms;
