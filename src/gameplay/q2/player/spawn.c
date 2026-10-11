@@ -253,14 +253,7 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     if (!q2_actor_live(g, id))
         return true;
     if (movement.animate_q2) {
-        char model[320];
-        size_t length = strcspn(q2_player_source_skin(g, s), "/");
-        if (!length)
-            snprintf(model, sizeof(model), "players/male/tris.md2");
-        else
-            snprintf(model, sizeof(model), "players/%.*s/tris.md2", (int)length, q2_player_source_skin(g, s));
-        if (!qa_builtin_resource(&g->services, model, &s->rule.visual.models[0], e))
-            return false;
+        s->rule.visual.models[0]=s->source_model_resource;
         a->physics = qa_physics_properties_default(QA_GAME_Q2);
         a->physics_bound = true;
         a->physics.q2_rerelease = rr;

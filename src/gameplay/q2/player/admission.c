@@ -2,6 +2,23 @@
 #include "qa/player_names.h"
 #include "../entities/internal.h"
 
+bool q2_player_source_identity_bind(qa_q2_game *g,q2_client_state *s,const char *name,
+    const char *skin,qa_error *error)
+{
+    qa_strings *strings=qa_session_strings(g->services.session);
+    qa_string_id model;
+    if (!qa_strings_intern_cstr(strings,name,&s->source_name,error) ||
+        !qa_player_skin_bind(strings,skin,g->options.edition==QA_Q2_RERELEASE,&s->source_skin,&model,error)) return false;
+    if (s->source_model!=model || !s->source_model_resource) {
+        char path[4096];
+        if (!qa_hud_q2_player_model_path(qa_strings_text(strings,model),
+            (qa_bytes){(const uint8_t *)"tris",4},".md2",path,sizeof(path),error) ||
+            !qa_strings_intern_cstr(strings,path,&s->source_model_resource,error)) return false;
+        s->source_model=model;
+    }
+    return true;
+}
+
 bool q2_player_userinfo_value(const char *info, const char *key, char *out, size_t capacity) {
     size_t wanted = strlen(key);
     bool found = false;
@@ -232,13 +249,11 @@ static bool player_userinfo(void *context, qa_actor_id id, qa_error *e) {
         q2_player_userinfo_value(s->rule.userinfo, "dogtag", s->rule.dogtag, sizeof(s->rule.dogtag));
     }
     qa_strings *strings = qa_session_strings(g->services.session);
-    qa_string_id model;
-    if (!qa_strings_intern_cstr(strings, name, &s->source_name, e) ||
-        !qa_player_skin_bind(strings, skin, rr, &s->source_skin, &model, e)) return false;
+    if (!q2_player_source_identity_bind(g,s,name,skin,e)) return false;
     if (!s->player->present || !g->services.player_info) {
         s->player->name = s->source_name;
         s->player->skin = s->source_skin;
-        s->player->model = model;
+        s->player->model = s->source_model;
         s->player->present = true;
     }
     if (!q2_player_emit(g,

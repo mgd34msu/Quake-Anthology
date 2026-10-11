@@ -427,7 +427,7 @@ typedef struct q2_player_source_info {
 typedef struct q2_client_state {
     q2_player_source_info info;
     qa_q2_player_rule_tail rule;
-    qa_string_id source_name, source_skin;
+    qa_string_id source_name, source_skin, source_model, source_model_resource;
     qa_actor_player *player;
 } q2_client_state;
 
@@ -830,6 +830,7 @@ static inline uint64_t q2_duration(double seconds) {
 }
 void q2_player_source_info_read(qa_q2_game *, const q2_client_state *, qa_q2_player_info *);
 bool q2_player_userinfo_value(const char *, const char *, char *, size_t);
+bool q2_player_source_identity_bind(qa_q2_game *,q2_client_state *,const char *,const char *,qa_error *);
 const char *q2_player_source_name(const qa_q2_game *, const q2_client_state *);
 const char *q2_player_source_skin(const qa_q2_game *, const q2_client_state *);
 #endif

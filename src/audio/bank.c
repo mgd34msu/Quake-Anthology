@@ -2,6 +2,7 @@
 #include "qa/player_names.h"
 
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -451,36 +452,19 @@ bool qa_audio_bank_sexed_id(qa_audio_bank *bank,qa_string_id base_id,qa_string_i
     if (bank->sexed_paths.count==bank->sexed_capacity) {
         qa_error_set(error,QA_ERROR_CAPACITY,0,"Player sound path storage is full");return false;
     }
-    const char *base=qa_strings_cstr(bank->strings,base_id),*model=qa_strings_cstr(bank->strings,model_id);
-    size_t model_length=strlen(model);
-    const char *name = base + 1;
-    size_t name_length = strlen(name);
-    if (model_length > SIZE_MAX - 11) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "player-model path length overflows storage");
-        return false;
-    }
-    size_t fixed = 11 + model_length;
-    if (fixed < 13)
-        fixed = 13;
-    if (name_length > SIZE_MAX - fixed) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "player sound path length overflows storage");
-        return false;
-    }
-    char local[1024];
-    size_t extent = fixed + name_length;
-    char *path = extent <= sizeof(local) ? local : malloc(extent);
-    if (!path) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating player sound path"); return false;
-    }
-    memcpy(path, "#players/", 9);
-    memcpy(path + 9, model, model_length);
-    path[9 + model_length] = '/';
-    memcpy(path + 10 + model_length, name, name_length + 1);
+    const char *base=qa_strings_cstr(bank->strings,base_id);
+    const char *name=base+1;
+    char path[1024];
+    path[0]='#';
+    if (!qa_hud_q2_player_model_path(qa_strings_text(bank->strings,model_id),
+        (qa_bytes){(const uint8_t *)name,strlen(name)},"",path+1,sizeof(path)-1,error)) return false;
     qa_audio_asset *asset = NULL;
     bool result = qa_audio_bank_register(bank, path, QA_GAME_Q2, &asset, error);
     if (result && asset == NULL) {
-        memcpy(path, "player/male/", 12);
-        memcpy(path + 12, name, name_length + 1);
+        int n=snprintf(path,sizeof(path),"player/male/%s",name);
+        if (n<0 || (size_t)n>=sizeof(path)) {
+            qa_error_set(error,QA_ERROR_FORMAT,0,"Q2 player sound path is too long");return false;
+        }
         result = qa_audio_bank_register(bank, path, QA_GAME_Q2, &asset, error);
     }
     if (result) {
@@ -488,7 +472,6 @@ bool qa_audio_bank_sexed_id(qa_audio_bank *bank,qa_string_id base_id,qa_string_i
         result = qa_strings_intern_cstr(bank->strings, path, bank->sexed_names + slot, error);
         if (result) qa_id_index_insert(&bank->sexed_paths, base_id, model_id, slot);
     }
-    if (path != local) free(path);
     if (result) *out=asset; else qa_audio_asset_release(asset);
     return result;
 }

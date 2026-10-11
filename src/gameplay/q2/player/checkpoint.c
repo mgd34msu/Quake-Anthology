@@ -180,9 +180,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
         .flashlight = info->flashlight,
     };
     qa_strings *strings = qa_session_strings(g->services.session);
-    qa_string_id model;
-    if (!qa_strings_intern_cstr(strings, info->name, &state->source_name, e) ||
-        !qa_player_skin_bind(strings, info->skin, g->options.edition == QA_Q2_RERELEASE, &state->source_skin, &model, e)) {
+    if (!q2_player_source_identity_bind(g,state,info->name,info->skin,e)) {
         free(state); return false;
     }
     /* Shared identity is restored by the actor checkpoint. Standalone/legacy
@@ -196,7 +194,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
             free(state); return false;
         }
         state->player->skin = state->source_skin;
-        state->player->model = model;
+        state->player->model = state->source_model;
         state->player->ping = info->ping;
         state->player->bot = saved->value.bot;
         state->player->spectator = info->spectator;
