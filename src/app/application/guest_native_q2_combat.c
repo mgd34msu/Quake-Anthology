@@ -108,14 +108,9 @@ static bool address_for(struct application_native_q2_combat *p, qa_actor_id acto
     qa_native_address *out, qa_error *error)
 {
     if (!actor.registry) return qa_native_entity_address(native(p), 0, out, error);
-    qa_native_entity_table table;
-    if (!qa_native_entity_table_get(native(p), &table, error)) return false;
-    for (uint32_t i = 0; i < table.capacity; ++i) {
-        qa_native_slot_binding binding;
-        if (!qa_native_slot(native(p), i, &binding, error)) return false;
-        if (binding.kind != QA_NATIVE_SLOT_FREE && qa_actor_id_equal(binding.actor, actor))
-            return qa_native_entity_address(native(p), i, out, error);
-    }
+    uint32_t slot;
+    if (qa_native_host_slot_for_actor(p->engine->provider->state.native.host, actor, &slot))
+        return qa_native_entity_address(native(p), slot, out, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED, "Native damage needs an original body projection for its foreign actor");
 }
 static bool health_write(void *opaque, float value, qa_error *error)

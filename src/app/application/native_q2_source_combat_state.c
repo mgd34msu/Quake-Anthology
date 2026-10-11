@@ -61,12 +61,9 @@ static bool projection_address(application_native_q2_source_combat_state *o,qa_a
         !qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor))
         return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage observation requires its actual live transfer target");
     qa_native_instance *native=application_native_q2_callbacks_instance(o->engine->callbacks);
-    qa_native_entity_table table;if(!qa_native_entity_table_get(native,&table,e))return false;
-    for(uint32_t i=1;i<table.count;++i) {
-        qa_native_slot_binding slot;if(!qa_native_slot(native,i,&slot,e))return false;
-        if((slot.kind==QA_NATIVE_SLOT_OWNED||slot.kind==QA_NATIVE_SLOT_BORROWED)&&qa_actor_id_equal(slot.actor,actor))
-            return qa_native_entity_address(native,i,out,e);
-    }
+    uint32_t index;
+    if(qa_native_host_slot_for_actor(o->engine->provider->state.native.host,actor,&index))
+        return qa_native_entity_address(native,index,out,e);
     return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage has no retained physical target projection");
 }
 bool application_native_q2_source_combat_state_create(struct application_native_q2 *n,

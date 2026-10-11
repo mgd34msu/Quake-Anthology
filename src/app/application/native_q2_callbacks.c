@@ -338,15 +338,11 @@ static bool original_record(void *context,qa_actor_id actor,size_t name,
     const qa_actor_record *r=qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor);
     if(!current(o,e)||!r) return application_fail(e,QA_ERROR_ARGUMENT,"Native original record actor retired");
     if(application_native_q2_client_slot(o->engine,actor))return true;
-    qa_native_entity_table table; uint32_t slot=UINT32_MAX;
-    if(!qa_native_entity_table_get(instance(o),&table,e)) return false;
-    for(uint32_t i=0;i<table.count;++i) {
-        qa_native_slot_binding binding;
-        if(!qa_native_slot(instance(o),i,&binding,e)) return false;
-        if(binding.kind==QA_NATIVE_SLOT_OWNED&&qa_actor_id_equal(binding.actor,actor)&&
-            binding.owner==o->engine->provider->owner&&binding.source_slot==i) { slot=i; break; }
-    }
-    if(slot==UINT32_MAX) return true;
+    uint32_t slot; qa_native_slot_binding binding;
+    if(!qa_native_host_slot_for_actor(o->engine->provider->state.native.host,actor,&slot)) return true;
+    if(!qa_native_slot(instance(o),slot,&binding,e)) return false;
+    if(binding.kind!=QA_NATIVE_SLOT_OWNED||binding.owner!=o->engine->provider->owner||binding.source_slot!=slot)
+        return true;
     if(o->records->entity_record+1!=name)
         return fail(e,"Owned native actor requires its actual original edict record");
     if(!qa_native_entity_address(instance(o),slot,out,e)) return false;
@@ -526,13 +522,11 @@ static bool pickup_actor_foreign(application_native_q2_callbacks *o,qa_actor_id 
         return fail(e,"Native pickup context requires a live foreign source actor");
     if(application_native_q2_client_slot(o->engine,actor))
         return fail(e,"Native pickup context cannot use a retained source client");
-    qa_native_entity_table table;
-    if(!qa_native_entity_table_get(instance(o),&table,e)) return false;
-    for(uint32_t i=0;i<table.count;++i) {
+    uint32_t slot;
+    if(qa_native_host_slot_for_actor(o->engine->provider->state.native.host,actor,&slot)) {
         qa_native_slot_binding binding;
-        if(!qa_native_slot(instance(o),i,&binding,e)) return false;
-        if(binding.kind==QA_NATIVE_SLOT_OWNED&&binding.owner==o->engine->provider->owner&&
-            qa_actor_id_equal(binding.actor,actor))
+        if(!qa_native_slot(instance(o),slot,&binding,e)) return false;
+        if(binding.kind==QA_NATIVE_SLOT_OWNED&&binding.owner==o->engine->provider->owner)
             return fail(e,"Native pickup context cannot use an original owned source actor");
     }
     return true;

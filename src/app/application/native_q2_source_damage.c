@@ -5,9 +5,12 @@
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
 #include <math.h>
+#include "qa/pool.h"
 
 typedef struct declared_damage_actor {
-    struct declared_damage_actor *next;
+    struct declared_damage_actor *next,*previous,*retired_next;
+    size_t storage_slot;
+    unsigned calls;
     struct application_native_q2_source_damage *owner;
     qa_actor_id actor;
     uint64_t serial;
@@ -58,7 +61,13 @@ struct application_native_q2_source_damage {
     uint32_t attacker,inflictor,point,mod,receipt;
     uint8_t pointer_bytes;
     bool deferred;
-    declared_damage_actor *actors;
+    declared_damage_actor *actors,*retired_actors;
+    declared_damage_actor **prepared_actors;
+    size_t prepared_capacity;
+    qa_actor_index actor_index;
+    qa_pool actor_pool;
+    qa_arena actor_storage;
+    unsigned calls;
     declared_damage_frame *frames,*retained;
     declared_damage_processing *processing;
 };
@@ -66,16 +75,14 @@ static qa_native_instance *instance(struct application_native_q2_source_damage *
 {return application_native_q2_callbacks_instance(o->engine->callbacks);}
 static bool eligible(struct application_native_q2_source_damage *,qa_actor_id);
 static declared_damage_actor *actor_find(struct application_native_q2_source_damage *o,qa_actor_id actor)
-{for(declared_damage_actor *r=o->actors;r;r=r->next)if(qa_actor_id_equal(r->actor,actor))return r;return NULL;}
+{size_t slot;return qa_actor_index_find(&o->actor_index,actor,&slot)?qa_pool_at(&o->actor_pool,slot):NULL;}
 static bool address_for(struct application_native_q2_source_damage *o,qa_actor_id actor,
     qa_native_address *out,qa_error *e)
 {
     if(!actor.registry)return qa_native_entity_address(instance(o),0,out,e);
-    qa_native_entity_table table;
-    if(!qa_native_entity_table_get(instance(o),&table,e))return false;
-    for(uint32_t i=0;i<table.count;++i){qa_native_slot_binding b;
-        if(!qa_native_slot(instance(o),i,&b,e))return false;
-        if(b.kind!=QA_NATIVE_SLOT_FREE&&qa_actor_id_equal(b.actor,actor))return qa_native_entity_address(instance(o),i,out,e);}
+    uint32_t slot;
+    if(qa_native_host_slot_for_actor(o->engine->provider->state.native.host,actor,&slot))
+        return qa_native_entity_address(instance(o),slot,out,e);
     return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared damage lacks its actual actor projection");
 }
 static bool vector_read(struct application_native_q2_source_damage *o,qa_native_address at,qa_vec3 *out,qa_error *e)
@@ -129,6 +136,29 @@ static bool actor_watches_close(declared_damage_actor *r,qa_error *e)
     if(r->blood_watch&&!qa_native_unobserve_writes(r->blood_watch,e))return false;
     r->blood_watch=NULL;
     r->watched=0;return true;
+}
+static void actors_collect(struct application_native_q2_source_damage *o)
+{
+    declared_damage_actor **link=&o->retired_actors;
+    while(*link){
+        declared_damage_actor *r=*link;qa_error ignored={0};
+        if(r->calls){link=&r->retired_next;continue;}
+        if(!actor_watches_close(r,&ignored)){link=&r->retired_next;continue;}
+        *link=r->retired_next;
+        if(r->previous)r->previous->next=r->next;else o->actors=r->next;
+        if(r->next)r->next->previous=r->previous;
+        if(r->slot<o->prepared_capacity&&o->prepared_actors[r->slot]==r)o->prepared_actors[r->slot]=NULL;
+        qa_pool_release(&o->actor_pool,r->storage_slot);
+    }
+}
+static declared_damage_actor *actor_create(struct application_native_q2_source_damage *o,qa_error *e)
+{
+    actors_collect(o);size_t slot;
+    declared_damage_actor *r=qa_pool_take(&o->actor_pool,&slot);
+    if(!r){application_fail(e,QA_ERROR_MEMORY,"Declared SourceActor combat pool exhausted");return NULL;}
+    *r=(declared_damage_actor){.owner=o,.storage_slot=slot,.next=o->actors};
+    if(r->next)r->next->previous=r;
+    o->actors=r;return r;
 }
 static bool actor_watches(declared_damage_actor *r,qa_error *e)
 {
@@ -271,13 +301,13 @@ static bool execute_damage(void *context,qa_combat *combat,const qa_damage_reque
     declared_damage_frame *f=calloc(1,sizeof(*f));if(!f)return application_fail(e,QA_ERROR_MEMORY,"Retaining declared source damage observations");
     *f=(declared_damage_frame){.outer=o->frames,.owner=o,.target=request->target,
         .request=request,.observer=observer,.active=true};
-    o->frames=f;++o->engine->calls;
+    o->frames=f;++o->engine->calls;++o->calls;++origin->calls;
     bool ok=application_native_q2_callbacks_transfer(o->engine->callbacks,observed_damage,f,e);
-    --o->engine->calls;o->frames=f->outer;
+    --o->engine->calls;--o->calls;--origin->calls;o->frames=f->outer;
     f->active=false;f->request=NULL;f->observer=NULL;if(ok)*result=f->result;
     qa_error cleanup={0};if(frame_close(f,&cleanup))free(f);
     else {f->retained_next=o->retained;o->retained=f;if(ok&&e)*e=cleanup;ok=false;}
-    return ok;
+    actors_collect(o);return ok;
 }
 static qa_combat_binding binding(declared_damage_actor *r)
 {
@@ -349,10 +379,10 @@ static bool incoming(void *context,qa_native_instance *native,qa_native_entry_ob
     if(!provenance(o,r.target,&r.attack,e))return false;
     declared_damage_actor *actor=actor_find(o,r.target);qa_damage_outcome outcome={0};
     declared_foreign_damage foreign={app->combat,&r,&outcome};
-    ++o->engine->calls;
+    ++o->engine->calls;++o->calls;
     bool ok=actor&&actor->bound?qa_combat_run_source(app->combat,&r,execute_damage,actor,&outcome,e):
         application_native_q2_callbacks_transfer(o->engine->callbacks,foreign_damage,&foreign,e);
-    --o->engine->calls;qa_damage_outcome_free(&outcome);
+    --o->engine->calls;--o->calls;qa_damage_outcome_free(&outcome);actors_collect(o);
     if(ok)ok=application_native_q2_callbacks_source_before(o->engine,e);
     if(ok&&result)*result=(qa_native_value){.type=QA_NATIVE_VOID};
     return ok;
@@ -379,11 +409,11 @@ static bool process_deferred(void *context,qa_native_instance *native,qa_native_
     if(!qa_damage_request_validate(&processing.request,e))return false;
     qa_combat_state state;if(!state_read(r,&state,e))return false;
     qa_damage_result reaction={.reaction=state.health<=0?QA_REACTION_DEATH:QA_REACTION_PAIN,.applied_damage=(float)blood};
-    r->pending=false;o->processing=&processing;++o->engine->calls;
+    r->pending=false;o->processing=&processing;++o->engine->calls;++r->calls;
     bool cancelled=false;
     bool ok=qa_combat_source_reaction(o->engine->provider->application->combat,&processing.request,&reaction,e)&&
         application_native_q2_source_invoke_original(o->engine,actor,entry,a,count,result,&cancelled,e);
-    --o->engine->calls;o->processing=processing.outer;return ok;
+    --o->engine->calls;--r->calls;o->processing=processing.outer;actors_collect(o);return ok;
 }
 bool application_native_q2_source_damage_activate(struct application_native_q2_source_damage *o,qa_error *e)
 {
@@ -417,6 +447,13 @@ bool application_native_q2_source_damage_create(struct application_native_q2 *n,
     qa_json_id damage=qa_json_get(d,qa_json_get(d,qa_json_get(d,qa_json_root(d),"sourceActors"),"combat"),"damage");
     o->engine=n;o->state=state;o->velocity=velocity;o->entry=qa_json_get(d,damage,"entry");
     o->rerelease=qa_json_string_equal(d,qa_json_get(d,damage,"abi"),"q2-rerelease");*out=o;
+    const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);qa_native_entity_table admission_table;
+    if(!qa_actor_index_create(&o->actor_index,registry,e)||
+        !qa_pool_reserve_pages(&o->actor_pool,&o->actor_storage,(size_t)qa_actors_capacity(registry)+NQR_CALL_DEPTH,
+            sizeof(declared_damage_actor),_Alignof(declared_damage_actor),e)||
+        !qa_native_entity_table_get(instance(o),&admission_table,e))return false;
+    o->prepared_capacity=admission_table.capacity;o->prepared_actors=calloc(o->prepared_capacity,sizeof(*o->prepared_actors));
+    if(o->prepared_capacity&&!o->prepared_actors)return application_fail(e,QA_ERROR_MEMORY,"Owning declared combat restore slots");
     o->pointer_bytes=qa_native_module_describe(qa_native_get_module(instance(o))).image.target.pointer_bytes;
     qa_json_id combat=qa_json_get(d,qa_json_get(d,qa_json_root(d),"sourceActors"),"combat"),deferred=qa_json_get(d,combat,"deferred");
     if(deferred!=QA_JSON_NONE){
@@ -441,9 +478,12 @@ bool application_native_q2_source_damage_admit(struct application_native_q2_sour
     const qa_actor_record *actual=qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor);
     if(!actual||!actual->has_source||actual->owner!=o->engine->provider->owner)
         return application_fail(e,QA_ERROR_ARGUMENT,"Declared combat admission lost its owned SourceActor");
-    if(!r)for(declared_damage_actor *p=o->actors;p;p=p->next)if(p->prepared&&p->slot==actual->source_slot){r=p;break;}
-    if(!r){r=calloc(1,sizeof(*r));if(!r)return application_fail(e,QA_ERROR_MEMORY,"Retaining declared SourceActor combat binding");
-        r->owner=o;r->actor=actor;r->slot=actual->source_slot;r->next=o->actors;o->actors=r;}
+    if(!r&&actual->source_slot<o->prepared_capacity){
+        declared_damage_actor *prepared=o->prepared_actors[actual->source_slot];
+        if(prepared&&prepared->prepared)r=prepared;
+    }
+    if(!r){r=actor_create(o,e);if(!r)return false;r->actor=actor;r->slot=actual->source_slot;
+        qa_actor_index_put(&o->actor_index,actor,r->storage_slot);}
     qa_combat *combat=o->engine->provider->application->combat;
     if(r->prepared&&!r->bound)return application_fail(e,QA_ERROR_ARGUMENT,"Saved declared combat primary has not been adopted by its canonical root");
     if(r->bound){if(!qa_combat_primary_current(combat,actor,r->serial,r))return application_fail(e,QA_ERROR_ARGUMENT,"Declared SourceActor primary binding changed");r->prepared=false;return actor_watches(r,e);}
@@ -464,22 +504,26 @@ bool application_native_q2_source_damage_reaction(struct application_native_q2_s
     return qa_damage_before_reaction(f->observer,result,e);
 }
 void application_native_q2_source_damage_released(struct application_native_q2_source_damage *o,qa_actor_id actor)
-{declared_damage_actor *r=o?actor_find(o,actor):NULL;if(r){r->bound=false;r->pending=false;}}
+{
+    declared_damage_actor *r=o?actor_find(o,actor):NULL;
+    if(r){r->bound=false;r->pending=false;qa_actor_index_remove(&o->actor_index,actor);
+        r->retired_next=o->retired_actors;o->retired_actors=r;actors_collect(o);}
+}
 bool application_native_q2_source_damage_returned(const struct application_native_q2_source_damage *o)
-{return !o||(!o->frames&&!o->processing);}
+{return !o||(!o->calls&&!o->frames&&!o->processing);}
 bool application_native_q2_source_damage_idle(const struct application_native_q2_source_damage *o)
-{return !o||(!o->frames&&!o->processing&&!o->retained);}
+{return !o||(!o->calls&&!o->frames&&!o->processing&&!o->retained);}
 bool application_native_q2_source_damage_suspend(struct application_native_q2_source_damage *o,qa_error *e)
 {
     if(!o)return true;
-    if(o->frames||o->processing)return application_fail(e,QA_ERROR_ARGUMENT,"Declared original damage remains entered");
+    if(o->calls||o->frames||o->processing)return application_fail(e,QA_ERROR_ARGUMENT,"Declared original damage remains entered");
     o->suspended=true;
     while(o->retained){declared_damage_frame *f=o->retained;if(!frame_close(f,e))return false;o->retained=f->retained_next;free(f);}
     for(declared_damage_actor *r=o->actors;r;r=r->next)if(!actor_watches_close(r,e))return false;
     if(o->process_binding&&!qa_native_unobserve_entry(o->process_binding,e))return false;
     o->process_binding=NULL;
     if(o->binding&&!qa_native_unobserve_entry(o->binding,e))return false;
-    o->binding=NULL;return true;
+    o->binding=NULL;actors_collect(o);return true;
 }
 bool application_native_q2_source_damage_destroy(struct application_native_q2_source_damage **out,qa_error *e)
 {
@@ -489,7 +533,8 @@ bool application_native_q2_source_damage_destroy(struct application_native_q2_so
     for(declared_damage_actor *r=o->actors;r;r=r->next)if(r->bound){qa_application *app=o->engine->provider->application;
         if(qa_actors_get(qa_session_actors(app->session),r->actor)&&!qa_combat_detach_primary(app->combat,r->actor,r->serial,r,e))return false;
         r->bound=false;}
-    while(o->actors){declared_damage_actor *r=o->actors;o->actors=r->next;free(r);}free(o);*out=NULL;return true;
+    qa_actor_index_destroy(&o->actor_index);qa_arena_destroy(&o->actor_storage);
+    free(o->prepared_actors);free(o);*out=NULL;return true;
 }
 static bool request_fields(qa_source_save_io *io,qa_damage_request *request)
 {
@@ -564,23 +609,32 @@ bool application_native_q2_source_damage_restore(struct application_native_q2_so
     bool ok=qa_source_save_reader(&io,o->engine->provider->application->session,bytes,e)&&
         qa_source_save_u32(&io,&version)&&version==UINT32_C(0x3243444e)&&
         qa_source_save_u64(&io,&sequence)&&qa_source_save_count(&io,&count,65536);
-    declared_damage_actor *rows=NULL,**tail=&rows;
-    for(size_t i=0;ok&&i<count;++i){declared_damage_actor *r=calloc(1,sizeof(*r));
-        if(!r){ok=application_fail(e,QA_ERROR_MEMORY,"Retaining decoded declared damage primary");break;}
-        r->owner=o;r->prepared=true;*tail=r;tail=&r->next;
+    declared_damage_actor *rows=count?calloc(count,sizeof(*rows)):NULL;
+    if(count&&!rows)ok=application_fail(e,QA_ERROR_MEMORY,"Decoding declared damage primaries");
+    if(ok&&count>o->actor_pool.capacity)ok=application_fail(e,QA_ERROR_FORMAT,"Saved declared damage exceeds the actor capacity");
+    for(size_t i=0;ok&&i<count;++i){declared_damage_actor *r=rows+i;
+        r->owner=o;r->prepared=true;
         ok=qa_source_save_u32(&io,&r->slot)&&qa_source_save_u64(&io,&r->serial)&&qa_source_save_bool(&io,&r->pending)&&
             (!r->pending||pending_fields(&io,r));
-        if(ok&&(!r->slot||!r->serial||(r->pending&&(!o->deferred||
+        if(ok&&(!r->slot||r->slot>=o->prepared_capacity||!r->serial||(r->pending&&(!o->deferred||
             !isfinite(r->saved_blood)||!isfinite(r->saved_knockback)||!qa_vec_finite(r->saved_point)||
             !qa_damage_request_validate(&r->pending_request,e)))))
             ok=application_fail(e,QA_ERROR_FORMAT,"Saved declared damage has invalid source or pending provenance");
-        for(declared_damage_actor *p=rows;ok&&p!=r;p=p->next)if(p->slot==r->slot||p->serial==r->serial)
+        for(size_t j=0;ok&&j<i;++j)if(rows[j].slot==r->slot||rows[j].serial==r->serial)
             ok=application_fail(e,QA_ERROR_FORMAT,"Saved declared damage repeats a slot or serial");
-        r->pending_prepared=r->pending;}
+        r->pending_prepared=r->pending;
+    }
     if(ok)ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if(!ok){while(rows){declared_damage_actor *r=rows;rows=r->next;free(r);}return false;}
-    while(o->actors){declared_damage_actor *r=o->actors;o->actors=r->next;free(r);}o->actors=rows;o->sequence=sequence;return true;
+    if(!ok){free(rows);return false;}
+    o->actors=NULL;o->retired_actors=NULL;qa_actor_index_clear(&o->actor_index);qa_pool_reset(&o->actor_pool);
+    memset(o->prepared_actors,0,o->prepared_capacity*sizeof(*o->prepared_actors));
+    declared_damage_actor **tail=&o->actors,*previous=NULL;
+    for(size_t i=0;i<count;++i){size_t storage_slot;declared_damage_actor *r=qa_pool_take(&o->actor_pool,&storage_slot);
+        *r=rows[i];r->storage_slot=storage_slot;r->previous=previous;*tail=r;tail=&r->next;previous=r;
+        o->prepared_actors[r->slot]=r;
+    }
+    free(rows);o->sequence=sequence;return true;
 }
 bool application_native_q2_source_damage_saved_binding(struct application_native_q2_source_damage *o,
     qa_actor_id actor,uint64_t serial,qa_combat_binding *out,qa_error *e)
@@ -589,14 +643,13 @@ bool application_native_q2_source_damage_saved_binding(struct application_native
     const qa_actor_record *actual=app?qa_actors_get(qa_session_actors(app->session),actor):NULL;
     if(!o||!out||!serial||!o->suspended||!actual||!actual->has_source||actual->owner!=o->engine->provider->owner)
         return application_fail(e,QA_ERROR_ARGUMENT,"Saved declared damage requires its retained real SourceActor");
-    declared_damage_actor *r=o->actors;
-    while(r&&r->slot!=actual->source_slot)r=r->next;
+    declared_damage_actor *r=actual->source_slot<o->prepared_capacity?o->prepared_actors[actual->source_slot]:NULL;
     if(!r||!r->prepared||r->serial!=serial||(r->actor.registry&&!qa_actor_id_equal(r->actor,actor)))
         return application_fail(e,QA_ERROR_FORMAT,"Saved declared combat primary differs from its source slot and serial");
     if(r->pending&&!qa_actor_id_equal(r->pending_request.target,actor))
         return application_fail(e,QA_ERROR_FORMAT,"Saved deferred request differs from its actual owned target");
     qa_combat_state state;if(!application_native_q2_source_combat_state_read(o->state,actor,&state,e))return false;
-    r->actor=actor;r->bound=true;*out=binding(r);return true;
+    r->actor=actor;r->bound=true;qa_actor_index_put(&o->actor_index,actor,r->storage_slot);*out=binding(r);return true;
 }
 bool application_native_q2_source_damage_finish_restore(struct application_native_q2_source_damage *o,qa_error *e)
 {
@@ -638,5 +691,6 @@ bool application_native_q2_source_damage_finish_restore(struct application_nativ
         r->pending_prepared=false;
     }
     for(declared_damage_actor *r=o->actors;r;r=r->next)r->prepared=false;
+    memset(o->prepared_actors,0,o->prepared_capacity*sizeof(*o->prepared_actors));
     return true;
 }
