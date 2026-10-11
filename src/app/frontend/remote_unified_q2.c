@@ -38,6 +38,7 @@ typedef struct q2_model {
 typedef struct q2_alias { uint32_t number; qa_actor_id actor; } q2_alias;
 typedef struct q2_activation {
     struct q2_activation *next;
+    size_t storage_slot;
     qa_string_id provider;
     uint64_t generation;
     bool retired;
@@ -144,7 +145,7 @@ struct frontend_unified_q2 {
     q2_activation *activations;
     q2_visual *visuals,*visual_rows;
     q2_loop *loops;
-    qa_pool loop_pool;
+    qa_pool loop_pool, activation_pool;
     q2_player_name *names,*name_rows;
     const qa_unified_presentation_event *story;
     qa_unified_document *story_document;
@@ -252,7 +253,9 @@ static bool activation(frontend_unified_q2 *o,qa_string_id provider,uint64_t gen
     q2_activation *a=o->activations;
     while (a && (a->generation!=generation || a->provider!=provider)) a=a->next;
     if (!a) {
-        a=calloc(1,sizeof(*a)); if (!a) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 Source owner");
+        size_t slot; a=qa_pool_take(&o->activation_pool,&slot);
+        if (!a) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 owner generations exceed loaded capacity");
+        *a=(q2_activation){.storage_slot=slot};
         a->provider=provider;
         a->generation=generation; a->next=o->activations; o->activations=a;
     }
@@ -285,6 +288,7 @@ static bool visual_prepare(frontend_unified_q2 *o,const qa_unified_presentation_
     }
     v->activation=owner;*out=v;return true;
 }
+static bool bank_destroy(q2_bank *,qa_error *);
 static bool bank_name(frontend_unified_q2 *,qa_string_id,q2_activation *,qa_string_id,frontend_remote_q2_effects_profile,bool,q2_bank **,qa_error *);
 static bool source_bank(frontend_unified_q2 *,const qa_unified_presentation_event *,bool,q2_bank **,qa_error *);
 static bool model(void *,const char *,bool,qa_scene_model **,qa_error *);
@@ -377,7 +381,17 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     }
     o->music_retiring=true;
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a && !frontend_received_music_destroy(&b->music,e)) { o->music_retiring=false;return false; }
-    o->music_retiring=false;a->retired=true;return true;
+    o->music_retiring=false;
+    q2_bank **bank=&o->banks;
+    while (*bank) {
+        q2_bank *b=*bank;
+        if (b->activation!=a) {bank=&b->next;continue;}
+        if (!bank_destroy(b,e))return false;
+        *bank=b->next;free(b);
+    }
+    q2_activation **owner=&o->activations;
+    while (*owner!=a)owner=&(*owner)->next;
+    *owner=a->next;qa_pool_release(&o->activation_pool,a->storage_slot);return true;
 }
 static bool model_name(q2_bank *b,qa_string_id path,bool acquire,qa_scene_model **out,qa_error *e)
 {
@@ -755,9 +769,10 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     *out=o;
     o->effect_pose_capacity=r->options.identity_capacity;
     o->native_capacity=qa_executable_recipe_provider_count(frontend_remote_unified_recipe(r));
+    size_t activation_capacity=2*(o->native_capacity+1);
     size_t pose_bytes=o->effect_pose_capacity*(sizeof(*o->effect_poses)+sizeof(*o->visual_rows)+sizeof(*o->name_rows))+
         (o->effect_pose_capacity+1)*(sizeof(q2_loop)+sizeof(size_t))+
-        2*o->native_capacity*sizeof(q2_native)+8*_Alignof(max_align_t);
+        2*o->native_capacity*sizeof(q2_native)+activation_capacity*(sizeof(q2_activation)+sizeof(size_t))+10*_Alignof(max_align_t);
     size_t text_bytes=(size_t)qa_unified_session_limits(r->session)->message_bytes*2;
     if(!qa_arena_reserve(&o->text_storage,text_bytes,e) ||
         !qa_arena_reserve(&o->help_storage[0],text_bytes,e) ||
@@ -766,7 +781,8 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
         !(o->effect_poses=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->effect_poses),_Alignof(frontend_remote_q2_effects_pose),e)) ||
         !(o->visual_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->visual_rows),_Alignof(q2_visual),e)) ||
         !(o->name_rows=qa_arena_alloc(&o->pose_storage,o->effect_pose_capacity*sizeof(*o->name_rows),_Alignof(q2_player_name),e)) ||
-        !qa_pool_prepare(&o->loop_pool,&o->pose_storage,o->effect_pose_capacity+1,sizeof(q2_loop),_Alignof(q2_loop),e)) {
+        !qa_pool_prepare(&o->loop_pool,&o->pose_storage,o->effect_pose_capacity+1,sizeof(q2_loop),_Alignof(q2_loop),e) ||
+        !qa_pool_prepare(&o->activation_pool,&o->pose_storage,activation_capacity,sizeof(q2_activation),_Alignof(q2_activation),e)) {
         qa_arena_destroy(&o->pose_storage);qa_arena_destroy(&o->text_storage);
         qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*out=NULL;return false;
     }
@@ -1998,6 +2014,17 @@ bool frontend_unified_q2_checkpoint_ready(const frontend_unified_q2 *o)
 }
 bool frontend_unified_q2_idle(const frontend_unified_q2 *o)
 { return (!o || !o->prepared_frame) && frontend_unified_q2_checkpoint_ready(o); }
+static bool bank_destroy(q2_bank *b,qa_error *e)
+{
+        if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
+        if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
+        while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
+        q2_native_picture *picture=b->native_pictures;
+        while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture);picture=next;}
+        while(b->hud_names) {q2_hud_names *names=b->hud_names;b->hud_names=names->next;
+            qa_unified_document_destroy(names->document);qa_hud_q2_program_destroy(names->status);free(names->names);free(names);}
+    free(b->aliases);return true;
+}
 bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
 {
     if (!slot || !*slot) return true;
@@ -2009,16 +2036,9 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     o->music_retiring=false;
     for(size_t i=0;i<o->native_count;++i)native_clear(o->native+i);
     native_clear(&o->status);native_clear(&o->prepared_status);
-    while (o->banks) {
-        q2_bank *b=o->banks;
-        if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
-        if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
-        while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
-        q2_native_picture *picture=b->native_pictures;
-        while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture);picture=next;}
-        while(b->hud_names) {q2_hud_names *names=b->hud_names;b->hud_names=names->next;
-            qa_unified_document_destroy(names->document);qa_hud_q2_program_destroy(names->status);free(names->names);free(names);}
-        o->banks=b->next; free(b->aliases); free(b);
+    while (o->banks) {q2_bank *b=o->banks;
+        if (!bank_destroy(b,e))return false;
+        o->banks=b->next;free(b);
     }
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);
@@ -2028,7 +2048,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_unified_document_destroy(o->story_document);sky_clear(o);
     qa_scene_image_release(o->marker_image);
     while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_clear(v); }
-    while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a); }
+    while (o->activations) { q2_activation *a=o->activations; o->activations=a->next;qa_pool_release(&o->activation_pool,a->storage_slot); }
     while (o->loops) {q2_loop *l=o->loops;o->loops=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);}
     while (o->names) {q2_player_name *n=o->names;o->names=n->next;qa_unified_document_destroy(n->document);}
     qa_hud_q2_program_destroy(o->layout_program);qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);
