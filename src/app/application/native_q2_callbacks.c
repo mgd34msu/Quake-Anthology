@@ -600,14 +600,8 @@ static bool temporary(application_native_q2_callbacks *o,qa_bytes bytes,size_t c
 }
 static bool classic_string(const char *string,uint8_t *out,size_t capacity,size_t *size,qa_error *e)
 {
-    qa_bytes input_bytes={(const uint8_t *)string,strlen(string)}; size_t cursor=0,used=0; uint32_t scalar;
-    while(qa_utf8_next(input_bytes,&cursor,&scalar)) {
-        if(!scalar||scalar>255) return fail(e,"Native classic strings require source byte characters");
-        if(used+1>=capacity) return fail(e,"Native classic string exceeds its source extent");
-        out[used++]=(uint8_t)scalar;
-    }
-    if(used>=capacity) return fail(e,"Native classic string exceeds its source extent");
-    out[used]=0; *size=used+1; return true;
+    if (!qa_text_to_source_bytes((qa_bytes){(const uint8_t *)string,strlen(string)},out,capacity,size,e)) return false;
+    ++*size; return true;
 }
 static bool returned_userinfo(application_native_q2_callbacks *o,const native_userinfo *c,
     char *out,size_t capacity,size_t *size,qa_error *e)
@@ -618,11 +612,7 @@ static bool returned_userinfo(application_native_q2_callbacks *o,const native_us
     if(!end) return fail(e,"Native userinfo result exceeds its source extent");
     size_t length=(size_t)(end-raw),used=0;
     if(o->engine->profile==QA_NATIVE_Q2_GAME_API3) {
-        for(size_t i=0;i<length;++i) {
-            char bytes[4]; size_t count=qa_utf8_encode(raw[i],bytes);
-            if(count>=capacity-used) return fail(e,"Native userinfo exceeds its canonical extent");
-            memcpy(out+used,bytes,count); used+=count;
-        }
+        return qa_text_from_source_bytes((qa_bytes){raw,length},out,capacity,size,e);
     } else {
         if(length>=capacity||!qa_utf8_valid((qa_bytes){raw,length})) return fail(e,"Native userinfo result is not valid UTF-8");
         memcpy(out,raw,length); used=length;

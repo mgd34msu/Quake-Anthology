@@ -13,27 +13,19 @@ bool bot_catalog_equal(const char *a,const char *b) {
     return !*a && !*b;
 }
 bool bot_catalog_latin1(const char *text,char *out,size_t capacity,qa_error *e) {
-    qa_bytes bytes={(const uint8_t *)text,strlen(text)};
-    if(!qa_utf8_valid(bytes)) return bot_catalog_fail(e,QA_ERROR_FORMAT,"public bot catalogue text is not UTF-8");
-    size_t cursor=0,count=0;uint32_t scalar;
-    while(qa_utf8_next(bytes,&cursor,&scalar)) {
-        if(scalar>255) return bot_catalog_fail(e,QA_ERROR_FORMAT,"Command text requires source bytes");
-        if(count+1>=capacity) return bot_catalog_fail(e,QA_ERROR_FORMAT,"source catalogue text exceeds its byte storage");
-        out[count++]=(char)scalar;
-    }
-    out[count]=0;return true;
+    size_t size;
+    return qa_text_to_source_bytes((qa_bytes){(const uint8_t *)text,strlen(text)},
+        (uint8_t *)out,capacity,&size,e);
 }
 bool bot_catalog_utf8(const char *text,qa_buffer *out,qa_error *e) {
     size_t size=strlen(text);
     if(size>(SIZE_MAX-1)/2 || !out || out->data) return bot_catalog_fail(e,QA_ERROR_ARGUMENT,"catalogue UTF-8 output requires empty bounded storage");
     uint8_t *bytes=malloc(size*2+1);if(!bytes) return bot_catalog_fail(e,QA_ERROR_MEMORY,"publishing catalogue Latin-1 text as UTF-8");
-    size_t written=0;
-    for(size_t i=0;i<size;++i) {
-        uint8_t ch=(uint8_t)text[i];
-        if(ch<128) bytes[written++]=ch;
-        else {bytes[written++]=(uint8_t)(0xc0u|(ch>>6));bytes[written++]=(uint8_t)(0x80u|(ch&63u));}
+    size_t written;
+    if (!qa_text_from_source_bytes((qa_bytes){(const uint8_t *)text,size},(char *)bytes,size*2+1,&written,e)) {
+        free(bytes); return false;
     }
-    bytes[written]=0;out->data=bytes;out->size=written;return true;
+    out->data=bytes;out->size=written;return true;
 }
 bool bot_catalog_info_value(const char *info,const char *key,char *out,size_t capacity,qa_error *e) {
     if(!info || !key || !out || !capacity) return bot_catalog_fail(e,QA_ERROR_ARGUMENT,"source catalogue info requires bounded output");

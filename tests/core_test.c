@@ -16,6 +16,7 @@
 #include "qa/recovery.h"
 #include "qa/persistence_fields.h"
 #include "qa/localization.h"
+#include "qa/text.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
 #include "qa/movement.h"
@@ -50,6 +51,21 @@
     } \
 } while (0)
 
+static void test_source_text(void)
+{
+    uint8_t source[256],roundtrip[257];char utf8[513];size_t size,restored;qa_error error={0};
+    for (unsigned i=0;i<256;++i) source[i]=(uint8_t)i;
+    CHECK(qa_text_from_source_bytes((qa_bytes){source,sizeof(source)},utf8,sizeof(utf8),&size,&error));
+    CHECK(size==384 && utf8[size]==0);
+    CHECK(qa_text_to_source_bytes((qa_bytes){(const uint8_t *)utf8,size},roundtrip,sizeof(roundtrip),&restored,&error));
+    CHECK(restored==sizeof(source) && roundtrip[restored]==0 && !memcmp(source,roundtrip,sizeof(source)));
+    CHECK(!qa_text_from_source_bytes((qa_bytes){source,sizeof(source)},utf8,size,&restored,&error));
+    CHECK(!qa_text_to_source_bytes((qa_bytes){(const uint8_t *)"A",1},roundtrip,1,&restored,&error));
+    const uint8_t non_source[]={0xe2,0x82,0xac},malformed[]={0xc3};
+    CHECK(!qa_text_to_source_bytes((qa_bytes){non_source,sizeof(non_source)},roundtrip,sizeof(roundtrip),&restored,&error));
+    CHECK(!qa_text_to_source_bytes((qa_bytes){malformed,sizeof(malformed)},roundtrip,sizeof(roundtrip),&restored,&error));
+    CHECK(qa_text_to_source_bytes((qa_bytes){0},roundtrip,1,&restored,&error) && !restored && !roundtrip[0]);
+}
 static void test_json_caller_storage(void)
 {
     const char source[]="\"A\\u0000B\\ud83d\\ude00\\n\"";
@@ -1892,6 +1908,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_source_text();
     test_native_import_slot_identity();
     test_literal_tokens();
     test_platform_event_retirement();

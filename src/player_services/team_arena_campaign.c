@@ -45,17 +45,16 @@ static char *copy(const char *text,qa_error *error)
 }
 static char *latin1(const char *text,qa_error *error)
 {
-    size_t size=strlen(text),length=size;
-    for (size_t i=0;i<size;++i) if ((unsigned char)text[i]>=128) ++length;
-    char *out=malloc(length+1);
+    size_t size=strlen(text);
+    if (size>(SIZE_MAX-1)/2) { fail(error,QA_ERROR_MEMORY,"Authored Team Arena text exceeds storage"); return NULL; }
+    size_t capacity=size*2+1;
+    char *out=malloc(capacity);
     if (!out) { fail(error,QA_ERROR_MEMORY,"Publishing authored Team Arena UTF-8 text"); return NULL; }
-    size_t n=0;
-    for (size_t i=0;i<size;++i) {
-        unsigned char c=(unsigned char)text[i];
-        if (c<128) out[n++]=(char)c;
-        else { out[n++]=(char)(0xc0u|(c>>6)); out[n++]=(char)(0x80u|(c&63u)); }
+    size_t written;
+    if (!qa_text_from_source_bytes((qa_bytes){(const uint8_t *)text,size},out,capacity,&written,error)) {
+        free(out); return NULL;
     }
-    out[n]=0; return out;
+    return out;
 }
 static char *lower(const char *text,qa_error *error)
 {

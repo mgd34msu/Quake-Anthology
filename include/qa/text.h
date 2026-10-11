@@ -13,6 +13,10 @@ bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error);
 bool qa_utf8_next(qa_bytes, size_t *cursor, uint32_t *scalar);
 bool qa_utf8_valid(qa_bytes);
 size_t qa_utf8_encode(uint32_t scalar, char out[4]);
+/* Source strings use one byte per Latin-1 scalar. Capacity includes the
+ * trailing NUL; size excludes it. Neither conversion allocates. */
+bool qa_text_to_source_bytes(qa_bytes, uint8_t *out, size_t capacity, size_t *size, qa_error *);
+bool qa_text_from_source_bytes(qa_bytes, char *out, size_t capacity, size_t *size, qa_error *);
 bool qa_unicode_whitespace(uint32_t scalar);
 /* Full-token conversion in the C numeric locale, independent of UI language.
  * Leading/trailing ASCII whitespace is accepted. The caller applies finite,

@@ -651,9 +651,10 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
         item->label = malloc(maximum + 1);
         if (!item->label) { ok = application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 source item label"); break; }
         if(engine->profile==QA_NATIVE_Q2_GAME_API3) {
-            size_t used=0;
-            for(size_t n=0;n<length;++n) { char bytes[4]; size_t encoded=qa_utf8_encode((uint8_t)label[n],bytes); memcpy(item->label+used,bytes,encoded); used+=encoded; }
-            item->label[used]=0;
+            size_t used;
+            if (!qa_text_from_source_bytes((qa_bytes){(const uint8_t *)label,length},item->label,maximum+1,&used,error)) {
+                ok=false; break;
+            }
         } else {
             if(!qa_utf8_valid((qa_bytes){(const uint8_t *)label,length})) { ok=application_fail(error,QA_ERROR_FORMAT,"Native source item label is not valid UTF-8"); break; }
             memcpy(item->label, label, length + 1);

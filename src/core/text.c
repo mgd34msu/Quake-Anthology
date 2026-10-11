@@ -53,6 +53,47 @@ size_t qa_utf8_encode(uint32_t code, char out[4]) {
     out[3] = (char)(0x80 | (code & 63));
     return 4;
 }
+bool qa_text_to_source_bytes(qa_bytes input, uint8_t *out, size_t capacity,
+    size_t *size, qa_error *error)
+{
+    if ((!input.data && input.size) || !out || !capacity || !size) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source text requires bounded output");
+        return false;
+    }
+    size_t cursor=0,used=0; uint32_t scalar;
+    while (qa_utf8_next(input,&cursor,&scalar)) {
+        if (scalar>255) {
+            qa_error_set(error,QA_ERROR_FORMAT,cursor,"Text is not representable as source bytes");
+            return false;
+        }
+        if (used==capacity-1) {
+            qa_error_set(error,QA_ERROR_FORMAT,cursor,"Source text exceeds its byte storage");
+            return false;
+        }
+        out[used++]=(uint8_t)scalar;
+    }
+    out[used]=0; *size=used;
+    return true;
+}
+bool qa_text_from_source_bytes(qa_bytes input, char *out, size_t capacity,
+    size_t *size, qa_error *error)
+{
+    if ((!input.data && input.size) || !out || !capacity || !size) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source text requires bounded output");
+        return false;
+    }
+    size_t used=0;
+    for (size_t i=0;i<input.size;++i) {
+        char bytes[4]; size_t count=qa_utf8_encode(input.data[i],bytes);
+        if (count>=capacity-used) {
+            qa_error_set(error,QA_ERROR_FORMAT,i,"Source text exceeds its UTF-8 storage");
+            return false;
+        }
+        memcpy(out+used,bytes,count); used+=count;
+    }
+    out[used]=0; *size=used;
+    return true;
+}
 bool qa_unicode_whitespace(uint32_t c) {
     return (c >= 9 && c <= 13) || c == 0x20 || c == 0xa0 || c == 0x1680 ||
            (c >= 0x2000 && c <= 0x200a) || c == 0x2028 || c == 0x2029 || c == 0x202f ||
