@@ -1482,7 +1482,7 @@ static void admin_print(void *context,const char *text)
 {
     qa_frontend_network *n=context; qa_application_startup_source source; bool present=false;
     if (frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,NULL) && present)
-        qa_console_emit(source.console,&source.command,text);
+        (void)qa_application_log_emit(n->frontend->application,&source.command,text,true,NULL);
 }
 static bool admin_execute(void *context, const qa_net_address *from, const char *text, bool limited,
     qa_admin_write_fn write, void *output, qa_error *error)

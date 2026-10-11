@@ -76,7 +76,8 @@ static bool command_current(frontend_source_admin *owner,qa_command_context *out
 static void print(void *context,const char *text)
 {
     frontend_source_admin *owner=context; qa_command_context command;
-    if (command_current(owner,&command,NULL)) qa_console_emit(owner->console,&command,text);
+    if (command_current(owner,&command,NULL))
+        (void)qa_application_log_emit(owner->application,&command,text,true,NULL);
 }
 static bool execute(void *context,const qa_net_address *from,const char *text,bool limited,
     qa_admin_write_fn write,void *result,qa_error *error)
