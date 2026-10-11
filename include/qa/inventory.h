@@ -104,6 +104,7 @@ bool qa_inventory_count_read(qa_inventory *, qa_actor_id, qa_item_id, double *, 
 bool qa_inventory_entries(qa_inventory *, qa_actor_id, qa_inventory_entry *, size_t capacity, size_t *count, qa_error *);
 bool qa_inventory_has(const qa_inventory *, qa_actor_id);
 uint64_t qa_inventory_revision(const qa_inventory *, qa_actor_id);
+uint64_t qa_inventory_definition_revision(const qa_inventory *, qa_actor_id);
 bool qa_inventory_mutable_capacity(qa_inventory *, qa_actor_id, qa_item_id);
 /* Only component overrides return true; serial is the exact storage lease. */
 bool qa_inventory_item_owner(qa_inventory *, qa_actor_id, qa_item_id, qa_actor_owner *, uint64_t *serial);

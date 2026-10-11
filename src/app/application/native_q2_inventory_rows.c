@@ -447,7 +447,7 @@ static bool rows(void *context, qa_actor_id actor,
     if (!player_current(owner, &source, arsenal, map_revision, config_revision, error)) return false;
     qa_inventory_source_snapshot snapshot = {0};
     selected_catalog catalog = {.storage=&owner->commands,.capacity=owner->row_capacity};
-    uint64_t inventory_revision=qa_inventory_revision(app->inventory,actor);
+    uint64_t inventory_revision=qa_inventory_definition_revision(app->inventory,actor);
     inventory_rows_cache *cache=owner->caches+source.slot;
     if(cache->valid && qa_actor_id_equal(actor,cache->actor) &&
         cache->arsenal==arsenal->owner && cache->map==map_revision &&
@@ -618,7 +618,7 @@ static bool rows(void *context, qa_actor_id actor,
     if (!okay) return false;
     cache->rows=result;cache->actor=actor;cache->arsenal=arsenal->owner;
     cache->map=map_revision;cache->config=config_revision;
-    cache->inventory=qa_inventory_revision(app->inventory,actor);cache->valid=true;
+    cache->inventory=qa_inventory_definition_revision(app->inventory,actor);cache->valid=true;
     *out=result.rows;*count=result.count;*present=result.present;
     return true;
 }

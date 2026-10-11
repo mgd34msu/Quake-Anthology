@@ -17,7 +17,7 @@ typedef struct item_group {
 typedef struct inventory_store {
     qa_actor_id actor;
     uint64_t serial;
-    uint64_t revision;
+    uint64_t revision, definition_revision;
     size_t references;
     bool local, attached;
     qa_inventory_entry *entries;

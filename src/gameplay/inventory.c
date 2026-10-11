@@ -11,8 +11,13 @@ bool qa_inventory_idle(const qa_inventory *table) { return !table || !table->cal
 static bool fail(qa_error *e, qa_status status, const char *message)
 { qa_error_set(e, status, 0, "%s", message); return false; }
 
-static void store_changed(inventory_store *store)
+static void counts_changed(inventory_store *store)
 { if (store->revision != UINT64_MAX) ++store->revision; }
+static void store_changed(inventory_store *store)
+{
+    counts_changed(store);
+    if (store->definition_revision != UINT64_MAX) ++store->definition_revision;
+}
 
 static size_t local_index(const inventory_store *store, qa_item_id item)
 {
@@ -355,12 +360,12 @@ static bool write_entry(qa_inventory *table, inventory_store *store, item_group 
             (store->count == SIZE_MAX || !reserve_entries(store, store->count + 1, e)))
             return false;
         store->entries[i] = *entry;
-        if (i == store->count) ++store->count;
-        store_changed(store);
+        if (i == store->count) { ++store->count; store_changed(store); }
+        else counts_changed(store);
         return true;
     }
     qa_inventory_binding binding = group ? group->binding : store->primary;
-    store_changed(store);
+    counts_changed(store);
     if (!binding.write(binding.context, entry, e)) return false;
     return require_current(table, store, group, e);
 }
@@ -378,7 +383,7 @@ static bool source_acquisition(qa_inventory *table, inventory_store *store, item
     if (!binding.acquire) return true;
     uint64_t revision = store->revision;
     bool ok = binding.acquire(binding.context, before, amount, publish, after, handled, writes, e);
-    if (publish && *handled && *writes) store_changed(store);
+    if (publish && *handled && *writes) counts_changed(store);
     if (!ok) return false;
     if (!require_current(table, store, group, e)) return false;
     if (group_for(store, before->item) != group)
@@ -883,6 +888,10 @@ uint64_t qa_inventory_revision(const qa_inventory *table,qa_actor_id actor)
     if (!qa_inventory_has(table,actor)) return 0;
     return table->stores[actor.slot]->revision;
 }
+uint64_t qa_inventory_definition_revision(const qa_inventory *table, qa_actor_id actor)
+{
+    return qa_inventory_has(table, actor) ? table->stores[actor.slot]->definition_revision : 0;
+}
 
 bool qa_inventory_has(const qa_inventory *table, qa_actor_id actor)
 {
@@ -1236,7 +1245,7 @@ bool qa_inventory_source_stored_ex(qa_inventory *table, qa_inventory_lease lease
         *retired_token = table != NULL;
         return fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
     }
-    store_changed(store);
+    counts_changed(store);
     item_group *group = lease_group(store, lease.serial);
     if (!group) *retired_token = true;
     bool ok = group ? group_validate(table, store, group, e) : fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
