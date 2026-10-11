@@ -997,15 +997,16 @@ bool application_native_q3_wire_map_finish(application_provider *provider, qa_er
     return application_native_q3_wire_carry_finish(provider, error);
 }
 
-static bool send_command_transport(application_provider *provider,int32_t slot,const char *text,
+static bool send_command_transport(void *context,int32_t slot,const char *text,
     const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
 {
+    application_provider *provider=context;
     struct application_native_q3_wire *wire = wire_owner(provider, error);
     if (!wire) return false;
     if (!text || strlen(text) >= QA_Q3_COMMAND_CHARS || slot < -1 ||
         slot >= (int32_t)wire->max_clients || wire->calls == SIZE_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 server command recipient is invalid");
-    uint64_t recipients = 0, retain = 0, overflow = 0;
+    uint64_t recipients = 0, retain = 0;
     uint64_t revisions[QA_Q3_SOURCE_CLIENTS] = {0};
     qa_actor_id actors[QA_Q3_SOURCE_CLIENTS] = {0};
     qa_q3_game *game = provider->state.q3;
@@ -1025,12 +1026,7 @@ static bool send_command_transport(application_provider *provider,int32_t slot,c
         /* A remote peer is the sole owner of its channel's reliable sequence.
          * Retained source queues belong to real bots and local client readers. */
         if ((!local && !client->bot) || client->drop_pending) continue;
-        int64_t outstanding = (int64_t)client->reliable.sequence - client->reliable.acknowledged;
-        if (outstanding < 0 || outstanding > QA_Q3_RELIABLE ||
-            client->reliable.sequence == INT32_MAX)
-            return application_fail(error, QA_ERROR_FORMAT, "Native Q3 retained source reliable capacity is exhausted");
         retain |= UINT64_C(1) << i;
-        if (outstanding == QA_Q3_RELIABLE) overflow |= UINT64_C(1) << i;
     }
     char retained[QA_Q3_COMMAND_CHARS];memcpy(retained,text,strlen(text)+1);
     text = retained;
@@ -1041,16 +1037,13 @@ static bool send_command_transport(application_provider *provider,int32_t slot,c
     for (uint32_t i = 0; ok && i < maximum; ++i) {
         if (!(retain & (UINT64_C(1) << i))) continue;
         native_q3_wire_client *client = &wire->clients[i];
-        qa_error current = {0};
-        bool added=qa_q3_reliable_admit(&client->reliable,QA_Q3_SERVER,lease,event->text,
-            event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? event->index : UINT32_MAX,fragment,&current);
-        if (!added && (overflow & (UINT64_C(1) << i))) {
-            client->drop_reason = "Server command overflow";
+        bool overflow;
+        ok=qa_q3_reliable_server_admit(&client->reliable,lease,event->text,
+            event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? event->index : UINT32_MAX,fragment,&overflow,error);
+        if(ok && overflow) {
+            client->drop_reason="Server command overflow";
             client->drop_reason_static=true;
-            client->drop_pending = true;
-        } else if (!added) {
-            if (error) *error = current;
-            ok = false;
+            client->drop_pending=true;
         }
     }
     bool bot_target = slot >= 0 && wire->clients[slot].admitted && wire->clients[slot].bot;
@@ -1103,31 +1096,12 @@ bool application_native_q3_configstring_changed(void *context, uint32_t index,
     const char *text, qa_error *error)
 { return application_unified_q3_configstring(context, index, text, error); }
 
-typedef struct native_output_command {
-    application_provider *provider;
-    const qa_unified_q3_event *event;
-    qa_event_lease *lease;
-    uint32_t fragment;
-} native_output_command;
-static bool output_configstring_command(void *context,const char *text,qa_error *error)
-{
-    native_output_command *delivery=context;
-    bool okay=send_command_transport(delivery->provider,-1,text,delivery->event,
-        delivery->lease,delivery->fragment,error);
-    if(okay) ++delivery->fragment;
-    return okay;
-}
 bool application_native_q3_output(application_provider *provider,
     const qa_unified_q3_event *event,qa_event_lease *lease,qa_error *error)
 {
-    if(event->kind==QA_UNIFIED_Q3_SERVER_COMMAND)
-        return send_command_transport(provider,event->client,event->text,event,lease,0,error);
-    if(event->kind==QA_UNIFIED_Q3_CONFIGSTRING) {
-        native_output_command delivery={provider,event,lease,0};
-        return ui_configstring_publish(provider->native_q3_wire,event->index,event->text,error) &&
-            qa_q3_configstring_commands(event->index,event->text,output_configstring_command,&delivery,error);
-    }
-    return true;
+    if(event->kind==QA_UNIFIED_Q3_CONFIGSTRING &&
+        !ui_configstring_publish(provider->native_q3_wire,event->index,event->text,error)) return false;
+    return application_q3_output_fanout(event,lease,send_command_transport,provider,error);
 }
 
 bool application_native_q3_bot_console(application_provider *provider, qa_actor_id actor,

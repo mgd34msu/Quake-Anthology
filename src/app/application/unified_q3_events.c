@@ -133,6 +133,32 @@ bool application_unified_q3_console(application_provider *p, bool execute_now, c
     return source_emit(p, &event,
         (uint64_t)(uint32_t)now * UINT64_C(1000000), e);
 }
+typedef struct q3_output_delivery {
+    const qa_unified_q3_event *event;
+    qa_event_lease *lease;
+    application_q3_output_recipient recipient;
+    void *context;
+    uint32_t fragment;
+} q3_output_delivery;
+static bool q3_output_fragment(void *context,const char *text,qa_error *error)
+{
+    q3_output_delivery *delivery=context;
+    bool ok=delivery->recipient(delivery->context,-1,text,delivery->event,
+        delivery->lease,delivery->fragment,error);
+    if(ok) ++delivery->fragment;
+    return ok;
+}
+bool application_q3_output_fanout(const qa_unified_q3_event *event,qa_event_lease *lease,
+    application_q3_output_recipient recipient,void *context,qa_error *error)
+{
+    if(event->kind==QA_UNIFIED_Q3_SERVER_COMMAND)
+        return recipient(context,event->client,event->text,event,lease,0,error);
+    if(event->kind==QA_UNIFIED_Q3_CONFIGSTRING) {
+        q3_output_delivery delivery={event,lease,recipient,context,0};
+        return qa_q3_configstring_commands(event->index,event->text,q3_output_fragment,&delivery,error);
+    }
+    return true;
+}
 bool qa_application_q3_output_drain(qa_application *app, qa_error *error)
 {
     if (app->event_source_draining) return true;

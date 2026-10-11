@@ -56,13 +56,10 @@ bool qa_q3_server_peer_rebind(qa_q3_server_peer *p, const qa_net_address *remote
 bool qa_q3_server_peer_command(qa_q3_server_peer *p,const char *text,qa_event_lease *lease,
     uint32_t config_index,uint32_t fragment,qa_error *e) {
     if (!p || !text) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 server command");
-    bool admitted=lease?qa_q3_reliable_admit(&p->reliable,QA_Q3_SERVER,lease,text,config_index,fragment,e):
-        qa_q3_reliable_add(&p->reliable,QA_Q3_SERVER,text,e);
-    if (!admitted) {
-        p->state.phase = QA_Q3_ZOMBIE;
-        return false;
-    }
-    return true;
+    if(p->state.phase==QA_Q3_ZOMBIE) return true;
+    bool overflow;
+    if(!qa_q3_reliable_server_admit(&p->reliable,lease,text,config_index,fragment,&overflow,e)) return false;
+    return !overflow || drop(p,"Server command overflow",e);
 }
 bool qa_q3_server_peer_receive(qa_q3_server_peer *p, qa_bytes datagram, qa_q3_receive_kind *kind, qa_error *e) {
     if (!p || !kind) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 server receive");

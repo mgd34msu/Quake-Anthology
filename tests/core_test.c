@@ -2315,6 +2315,22 @@ static void test_q3_reliable_event_references(void)
         CHECK(!memcmp(qa_q3_token(&tokens,2),text+offset,count));
         CHECK(histories[1].slots[sequence].text==text && !histories[1].storage);
     }
+    qa_q3_reliable full={0};
+    bool drop=false;
+    lease=histories[1].slots[1].lease;
+    for(size_t i=0;i<QA_Q3_RELIABLE;++i) {
+        CHECK(qa_q3_reliable_server_admit(&full,lease,text,42,0,&drop,&error));
+        CHECK(!drop);
+    }
+    CHECK(qa_q3_reliable_server_admit(&full,lease,text,42,0,&drop,&error));
+    CHECK(drop && full.sequence==QA_Q3_RELIABLE);
+    CHECK(qa_q3_reliable_ack(&full,QA_Q3_SERVER,full.sequence,&clamped,&error));
+    CHECK(qa_q3_reliable_server_admit(&full,lease,text,42,0,&drop,&error));
+    CHECK(!drop && full.sequence==QA_Q3_RELIABLE+1);
+    full.sequence=INT32_MAX;
+    CHECK(qa_q3_reliable_server_admit(&full,lease,text,42,0,&drop,&error));
+    CHECK(drop);
+    qa_q3_reliable_clear(&full);
     qa_q3_reliable_clear(histories+1);
 }
 

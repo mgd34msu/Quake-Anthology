@@ -227,6 +227,14 @@ bool qa_q3_reliable_admit(qa_q3_reliable *r,qa_q3_role role,qa_event_lease *leas
     *slot=(qa_q3_reliable_reference){lease,text,config_index,fragment};
     return true;
 }
+bool qa_q3_reliable_server_admit(qa_q3_reliable *r,qa_event_lease *lease,const char *text,
+    uint32_t config_index,uint32_t fragment,bool *drop,qa_error *error)
+{
+    *drop=r->sequence==INT32_MAX || (int64_t)r->sequence-r->acknowledged>=QA_Q3_RELIABLE;
+    if(*drop) return true;
+    return lease ? qa_q3_reliable_admit(r,QA_Q3_SERVER,lease,text,config_index,fragment,error) :
+        qa_q3_reliable_add(r,QA_Q3_SERVER,text,error);
+}
 static bool reliable_text(qa_q3_reliable *r,const char *text,qa_event_lease **out,qa_error *error)
 {
     qa_event_transaction transaction;

@@ -143,6 +143,8 @@ void qa_q3_reliable_init(qa_q3_reliable *);
 bool qa_q3_reliable_prepare(qa_q3_reliable *, qa_error *);
 void qa_q3_reliable_clear(qa_q3_reliable *);
 bool qa_q3_reliable_add(qa_q3_reliable *, qa_q3_role, const char *, qa_error *);
+bool qa_q3_reliable_server_admit(qa_q3_reliable *,qa_event_lease *,const char *,
+    uint32_t config_index,uint32_t fragment,bool *drop,qa_error *);
 bool qa_q3_reliable_admit(qa_q3_reliable *, qa_q3_role, qa_event_lease *,
     const char *, uint32_t config_index, uint32_t fragment, qa_error *);
 bool qa_q3_reliable_restore_slot(qa_q3_reliable *, size_t, const char *, qa_error *);

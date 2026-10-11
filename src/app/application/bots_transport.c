@@ -1,4 +1,5 @@
 #include "bots_transport.h"
+#include "unified_q3_events.h"
 #include "../../bots/save_fields.h"
 #include <limits.h>
 #include <math.h>
@@ -80,21 +81,32 @@ bool application_bot_transport_close(application_bot_transport *transport,uint32
 qa_actor_id application_bot_transport_actor(const application_bot_transport *transport,uint32_t client) {
     bot_connection *entry=connection(transport,client);return entry?entry->actor:(qa_actor_id){0};
 }
-bool application_bot_transport_output(application_bot_transport *transport,const qa_unified_q3_event *event,
-    qa_event_lease *lease,qa_error *error) {
-    int32_t client=event->client;
-    ++transport->calls;bool okay=true;
-    for(size_t i=0;okay && i<transport->count;++i) {
+static bool bot_output(void *context,int32_t client,const char *text,
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
+{
+    application_bot_transport *transport=context;
+    (void)text;
+    for(size_t i=0;i<transport->count;++i) {
         bot_connection *entry=transport->connections[i];
-        if(!entry->active || (client!=-1 && (client<0 || entry->client!=(uint32_t)client))) continue;
-        qa_error appended={0};
-        int32_t before=entry->reliable.sequence;
-        int64_t outstanding=(int64_t)before-entry->reliable.acknowledged;
-        if(!qa_q3_reliable_admit(&entry->reliable,QA_Q3_SERVER,lease,event->text,UINT32_MAX,0,&appended)) {
-            if(before==INT32_MAX || outstanding!=64) {if(error) *error=appended;okay=false;}
+        if(!entry->active || (client>=0 && entry->client!=(uint32_t)client)) continue;
+        bool overflow;
+        if(!qa_q3_reliable_server_admit(&entry->reliable,lease,event->text,
+            event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? event->index : UINT32_MAX,fragment,&overflow,error)) return false;
+        if(overflow) {
+            entry->active=false;
+            if(!transport->services.drop(transport->services.context,entry->client,"Server command overflow",error)) return false;
         }
     }
-    --transport->calls;sweep(transport);return okay;
+    return true;
+}
+bool application_bot_transport_output(application_bot_transport *transport,const qa_unified_q3_event *event,
+    qa_event_lease *lease,qa_error *error)
+{
+    ++transport->calls;
+    bool okay=application_q3_output_fanout(event,lease,bot_output,transport,error);
+    --transport->calls;
+    sweep(transport);
+    return okay;
 }
 bool application_bot_transport_console(application_bot_transport *transport,uint32_t client,char *out,size_t capacity,
     bool *found,qa_error *error) {

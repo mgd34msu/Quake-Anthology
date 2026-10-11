@@ -76,13 +76,6 @@ static bool configstring(void *context, uint32_t index, const char **out, qa_err
     if (index >= QA_Q3_CONFIGSTRINGS) return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 configstring");
     *out = qa_q3_configstring(&role->engine->gamestate, index); return true;
 }
-static bool queue_room(const q3g_client *client, size_t count, qa_error *error)
-{
-    int64_t outstanding = (int64_t)client->reliable.sequence - client->reliable.acknowledged;
-    return (outstanding >= 0 && (uint64_t)outstanding + count <= QA_Q3_RELIABLE &&
-            count <= (size_t)(INT32_MAX - client->reliable.sequence)) ||
-        application_fail(error, QA_ERROR_FORMAT, "Q3 reliable command capacity exhausted");
-}
 static bool command_recipient(const struct application_q3_guest *engine, size_t slot)
 {
     return !engine->clients[slot].pending_retirement && (engine->clients[slot].connected ||
@@ -104,32 +97,22 @@ static bool retained_command_recipient(const struct application_q3_guest *engine
     }
     return false;
 }
-typedef struct q3g_output_command {
-    q3g_role *role;
-    const qa_unified_q3_event *event;
-    qa_event_lease *lease;
-    uint32_t fragment;
-} q3g_output_command;
-static bool output_command(void *context, int32_t client, const char *text, qa_error *error)
+static bool drop_client(void *,uint32_t,const char *,qa_error *);
+static bool output_command(void *context,int32_t client,const char *text,
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
 {
-    q3g_output_command *delivery=context;
-    q3g_role *role=delivery->role;
-    if (client < -1 || client >= 64 || strlen(text) >= QA_Q3_COMMAND_CHARS)
-        return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 server command recipient or size");
-    for (size_t i = 0; i < 64; ++i)
-        if ((client < 0 || i == (size_t)client) && retained_command_recipient(role->engine, i) &&
-            !queue_room(&role->engine->clients[i], 1, error)) return false;
-    /* A real transport owner receives the same reliable command. */
-    if (role->server.send_command &&
-        !role->server.send_command(role->server.context,client,text,delivery->event,
-            delivery->lease,delivery->fragment,error)) return false;
-    for (size_t i = 0; i < 64; ++i)
-        if ((client < 0 || i == (size_t)client) && retained_command_recipient(role->engine, i) &&
-            !qa_q3_reliable_admit(&role->engine->clients[i].reliable,QA_Q3_SERVER,
-                delivery->lease,delivery->event->text,
-                delivery->event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? delivery->event->index : UINT32_MAX,
-                delivery->fragment,error)) return false;
-    return true;
+    q3g_role *role=context;
+    if(client < -1 || client >= 64 || strlen(text)>=QA_Q3_COMMAND_CHARS)
+        return application_fail(error,QA_ERROR_ARGUMENT,"invalid Q3 server command recipient or size");
+    for(size_t i=0;i<64;++i) {
+        if((client>=0 && i!=(size_t)client) || !retained_command_recipient(role->engine,i)) continue;
+        bool overflow;
+        if(!qa_q3_reliable_server_admit(&role->engine->clients[i].reliable,lease,event->text,
+            event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? event->index : UINT32_MAX,fragment,&overflow,error)) return false;
+        if(overflow && !drop_client(role,(uint32_t)i,"Server command overflow",error)) return false;
+    }
+    return !role->server.send_command || role->server.send_command(role->server.context,
+        client,text,event,lease,fragment,error);
 }
 static bool send_command(void *context,int32_t client,const char *text,
     const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
@@ -142,30 +125,14 @@ static bool send_command(void *context,int32_t client,const char *text,
         APPLICATION_Q3_SOURCE_COMMAND, client, text, error);
 }
 
-static bool output_configstring_command(void *context, const char *text, qa_error *error)
-{
-    q3g_output_command *delivery=context;
-    bool okay=output_command(context,-1,text,error);
-    if(okay) ++delivery->fragment;
-    return okay;
-}
-
 bool q3g_output(application_provider *provider,const qa_unified_q3_event *event,
     qa_event_lease *lease,qa_error *error)
 {
-    struct application_q3_guest *engine = q3g_engine(provider);
-    if (!engine || !engine->game) return true;
-    q3g_output_command delivery={engine->game,event,lease,0};
-    if (event->kind == QA_UNIFIED_Q3_SERVER_COMMAND) {
-        if (!output_command(&delivery, event->client, event->text, error)) return false;
-        if (engine->round.phase == Q3G_ROUND_SETTLING && event->client >= 0 &&
-            event->round_restart)
-            engine->round.queued |= UINT64_C(1) << (uint32_t)event->client;
-        return true;
-    }
-    if (event->kind == QA_UNIFIED_Q3_CONFIGSTRING)
-        return qa_q3_configstring_commands(event->index, event->text,
-            output_configstring_command,&delivery,error);
+    struct application_q3_guest *engine=q3g_engine(provider);
+    if(!engine || !engine->game) return true;
+    if(!application_q3_output_fanout(event,lease,output_command,engine->game,error)) return false;
+    if(engine->round.phase==Q3G_ROUND_SETTLING && event->round_restart && event->client>=0)
+        engine->round.queued |= UINT64_C(1) << (uint32_t)event->client;
     return true;
 }
 
