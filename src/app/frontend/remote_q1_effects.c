@@ -210,7 +210,7 @@ static bool temporary(frontend_remote_q1 *row, const qa_q1_temp *event, qa_error
     path = frontend_fx_q1_temporary_sound(event, &fx->random);
     return !path || sound(row, path, 0, origin, 0, 1, 1, false, false, error);
 }
-bool remote_q1_effects_service(frontend_remote_q1 *row, const qa_nq_message *message, qa_error *error)
+bool remote_q1_event_present(frontend_remote_q1 *row, const qa_nq_message *message, qa_error *error)
 {
     if (!row || !message || !remote_q1_mutable(row) || !remote_q1_live(row, error)) return false;
     switch (message->op) {

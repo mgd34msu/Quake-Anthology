@@ -5,6 +5,7 @@
 #include "remote_q1_camera.h"
 #include "q1_sky.h"
 #include "qa/world.h"
+#include "qa/event_ring.h"
 
 typedef struct remote_q1_model {
     struct remote_q1_model *next;
@@ -21,7 +22,6 @@ typedef struct remote_q1_model {
 } remote_q1_model;
 
 typedef struct remote_q1_entities { qa_q1_entity *rows; size_t count, capacity; } remote_q1_entities;
-typedef struct remote_q1_pending { qa_nq_message message; char *text; } remote_q1_pending;
 typedef struct remote_q1_demo_seed {
     struct remote_q1_demo_seed *next;
     qa_buffer bytes;
@@ -94,8 +94,8 @@ struct frontend_remote_q1 {
     bool qw_has_pending_track;
     bool qw_intermission;
     qa_vec3 qw_intermission_origin, qw_intermission_angles;
-    remote_q1_pending *qw_pending;
-    size_t qw_pending_count, qw_pending_capacity, qw_pending_cursor;
+    qa_event_ring *events;
+    uint64_t event_cursor;
     remote_q1_demo_seed *demo_seed, *demo_seed_last;
     size_t demo_seed_bytes;
     frontend_demo_sink demo_sink;
@@ -108,8 +108,8 @@ bool remote_q1_mutable(const frontend_remote_q1 *);
 bool remote_q1_domain_equal(const frontend_remote_q1_domain *, const frontend_remote_q1_domain *);
 bool remote_q1_string(char **, const char *, qa_error *);
 bool remote_q1_entity_set(remote_q1_entities *, const qa_q1_entity *, qa_error *);
-bool remote_q1_qw_queue(frontend_remote_q1 *, const qa_nq_message *, qa_error *);
-void remote_q1_qw_queue_clear(frontend_remote_q1 *);
+bool remote_q1_event_admit(frontend_remote_q1 *, const qa_nq_message *, uint64_t, qa_error *);
+bool remote_q1_events_consume(frontend_remote_q1 *, uint64_t, qa_error *);
 bool remote_q1_actor_read(frontend_remote_q1 *, uint32_t, qa_actor_id *, qa_error *);
 void remote_q1_clear(frontend_remote_q1 *);
 void remote_q1_media_clear(frontend_remote_q1 *);
@@ -120,7 +120,7 @@ void remote_q1_publication_update(frontend_remote_q1 *);
 bool remote_q1_media_prepare(frontend_remote_q1 *, qa_error *);
 bool remote_q1_sky_load(frontend_remote_q1 *, qa_error *);
 bool remote_q1_model_read(frontend_remote_q1 *, const frontend_remote_q1_entity_view *, remote_q1_model **, qa_error *);
-bool remote_q1_effects_service(frontend_remote_q1 *, const qa_nq_message *, qa_error *);
+bool remote_q1_event_present(frontend_remote_q1 *, const qa_nq_message *, qa_error *);
 bool remote_q1_effects_clear(frontend_remote_q1 *, qa_error *);
 bool remote_q1_effects_draw(frontend_remote_q1 *, const qa_scene_view *, const qa_scene_world_input *, qa_error *);
 void remote_q1_demo_clear(frontend_remote_q1 *);

@@ -17,33 +17,6 @@ static int32_t source_atoi(const char *text)
     if (negative && value == 2147483648u) return INT32_MIN;
     return negative ? -(int32_t)value : (int32_t)value;
 }
-void remote_q1_qw_queue_clear(frontend_remote_q1 *row)
-{
-    for (size_t i = 0; i < row->qw_pending_count; ++i) free(row->qw_pending[i].text);
-    row->qw_pending_count = row->qw_pending_cursor = 0;
-}
-bool remote_q1_qw_queue(frontend_remote_q1 *row, const qa_nq_message *message, qa_error *error)
-{
-    if (row->qw_pending_count == row->qw_pending_capacity) {
-        size_t next = row->qw_pending_capacity ? row->qw_pending_capacity * 2 : 32;
-        if (next < row->qw_pending_capacity || next > SIZE_MAX / sizeof(*row->qw_pending)) return false;
-        remote_q1_pending *items = realloc(row->qw_pending, next * sizeof(*items));
-        if (!items) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining QW translated service order");
-        row->qw_pending = items; row->qw_pending_capacity = next;
-    }
-    remote_q1_pending pending = {.message = *message}; const char *text = NULL;
-    switch (message->op) {
-    case QA_NQ_NAME: case QA_NQ_LIGHTSTYLE: text = message->data.indexed_text.text; break;
-    case QA_NQ_PRINT: case QA_NQ_CENTERPRINT: case QA_NQ_FINALE: text = message->data.text; break;
-    default: break;
-    }
-    if (text && !remote_q1_string(&pending.text, text, error)) return false;
-    if (pending.text) {
-        if (message->op == QA_NQ_NAME || message->op == QA_NQ_LIGHTSTYLE) pending.message.data.indexed_text.text = pending.text;
-        else pending.message.data.text = pending.text;
-    }
-    row->qw_pending[row->qw_pending_count++] = pending; return true;
-}
 static bool info_value(const char *info, const char *key, char **out, qa_error *error)
 {
     const char *value = ""; size_t length = 0, key_size = strlen(key);
@@ -96,9 +69,9 @@ static bool scoreboard(frontend_remote_q1 *row, uint8_t slot, qa_error *error)
         if (a < 0 || a > 13) a = 13;
         if (b < 0 || b > 13) b = 13;
         qa_nq_message message = {.op = QA_NQ_NAME, .data.indexed_text = {slot, name}};
-        ok = remote_q1_qw_queue(row, &message, error);
+        ok = remote_q1_event_admit(row, &message, row->received_ns, error);
         message = (qa_nq_message){.op = QA_NQ_COLORS, .data.indexed = {slot, a * 16 + b}};
-        if (ok) ok = remote_q1_qw_queue(row, &message, error);
+        if (ok) ok = remote_q1_event_admit(row, &message, row->received_ns, error);
     }
     free(name); free(top); free(bottom); return ok;
 }
@@ -132,7 +105,7 @@ bool frontend_remote_q1_gamestate_qw(frontend_remote_q1 *row, const char *const 
 }
 bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service *service, uint64_t now, qa_error *error)
 {
-    (void)now;
+    row->received_ns = now;
     if (!remote_q1_mutable(row) || !service || row->busy || !remote_q1_live(row, error) || !qa_q1_is_qw(row->options.domain.protocol)) return false;
     if (row->revision == UINT64_MAX) return remote_q1_fail(error, QA_ERROR_FORMAT, "QW presentation revision is exhausted");
     ++row->revision;
@@ -200,7 +173,7 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
         row->qw_intermission_origin = qa_v3(service->data.intermission.origin[0], service->data.intermission.origin[1], service->data.intermission.origin[2]);
         row->qw_intermission_angles = qa_v3(service->data.intermission.angles[0], service->data.intermission.angles[1], service->data.intermission.angles[2]);
         message.op = QA_NQ_SETANGLE; memcpy(message.data.angles, service->data.intermission.angles, sizeof(message.data.angles));
-        if (!remote_q1_qw_queue(row, &message, error)) return false;
+        if (!remote_q1_event_admit(row, &message, row->received_ns, error)) return false;
         message.op = QA_NQ_INTERMISSION; break;
     case QA_QW_CD_TRACK: message.op = QA_NQ_CDTRACK; message.data.cd.track = message.data.cd.loop = service->data.byte; break;
     case QA_QW_SELL_SCREEN: message.op = QA_NQ_SELLSCREEN; break;
@@ -221,5 +194,5 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
     case QA_QW_CENTER_PRINT: case QA_QW_FINALE: message.op = service->kind == QA_QW_FINALE ? QA_NQ_FINALE : QA_NQ_CENTERPRINT; message.data.text = service->data.text.value; break;
     default: return true;
     }
-    return remote_q1_qw_queue(row, &message, error);
+    return remote_q1_event_admit(row, &message, row->received_ns, error);
 }

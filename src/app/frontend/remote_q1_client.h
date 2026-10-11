@@ -45,8 +45,8 @@ typedef struct frontend_remote_q1_options {
     bool (*load_content)(void *, const frontend_remote_q1_domain *,
         const qa_nq_serverinfo *, const qa_qw_serverdata *,
         frontend_remote_q1_content *, qa_error *);
-    /* Synchronous, once per actually decoded service. Packet strings and list
-     * storage are still alive here. No authoritative local GAME is consulted. */
+    /* Once per decoded service. Presentation services consume committed ring
+     * storage at packet completion; state services use decoder storage. */
     bool (*service)(void *, const frontend_remote_q1_domain *,
         qa_net_protocol_id decoded_protocol, const qa_nq_message *, double seconds, uint64_t sequence, qa_error *);
     bool (*disconnected)(void *, const frontend_remote_q1_domain *, const char *, qa_error *);

@@ -261,7 +261,8 @@ void remote_q1_clear(frontend_remote_q1 *row)
     row->view_pose_ready = false;
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
-    remote_q1_qw_queue_clear(row);
+    row->event_cursor = qa_event_ring_next(row->events);
+    qa_event_ring_retire(row->events, row->event_cursor);
     names_free(&row->models, &row->model_count); names_free(&row->sounds, &row->sound_count);
     free(row->sound_available); row->sound_available = NULL;
     for (size_t i = 0; i < 256; ++i) { free(row->styles[i]); row->styles[i] = NULL; }
@@ -305,7 +306,11 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     row->baseskin = qa_cvars_resolve(d->cvars, "baseskin");
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&row->sky_controls);
     row->fraction = 1; row->revision = row->next_event = 1;
-    if (!remote_q1_effects_prepare(row,error)) { free(row);return false; }
+    row->events = qa_event_ring_create(16u * 1024u * 1024u, 16384, 65536, error);
+    if (!row->events || !remote_q1_effects_prepare(row,error)) {
+        qa_event_ring_destroy(&row->events); free(row); return false;
+    }
+    row->event_cursor = qa_event_ring_first(row->events);
     qa_catalog_retain(d->catalog);
     frontend_remote_q1 **tail = &f->remote_q1; while (*tail) tail = &(*tail)->next;
     *tail = row; *out = row;
@@ -389,7 +394,47 @@ void remote_q1_publication_update(frontend_remote_q1 *row)
     for(size_t i=0;i<row->current.count;++i)
         if(row->current.rows[i].number==row->view_entity) { row->published=true; return; }
 }
-bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message *message, uint64_t received, qa_error *error)
+typedef struct remote_q1_event {
+    qa_nq_message message;
+    uint64_t received_ns, sequence;
+} remote_q1_event;
+
+bool remote_q1_event_admit(frontend_remote_q1 *row, const qa_nq_message *message,
+    uint64_t received, qa_error *error)
+{
+    qa_event_transaction transaction;
+    if (!qa_event_ring_begin(row->events, &transaction))
+        return remote_q1_fail(error, QA_ERROR_MEMORY, "Received Q1 event storage is full");
+    remote_q1_event *event = qa_event_ring_alloc(&transaction, sizeof(*event),
+        _Alignof(remote_q1_event), error);
+    if (!event) goto full;
+    *event = (remote_q1_event){.message = *message, .received_ns = received};
+    const char *text = NULL;
+    switch (message->op) {
+    case QA_NQ_NAME: case QA_NQ_LIGHTSTYLE: case QA_NQ_SOCIAL: case QA_NQ_PLAYERINFO:
+        text = message->data.indexed_text.text; break;
+    case QA_NQ_PRINT: case QA_NQ_STUFFTEXT: case QA_NQ_CENTERPRINT:
+    case QA_NQ_FINALE: case QA_NQ_CUTSCENE: text = message->data.text; break;
+    default: break;
+    }
+    if (text) {
+        size_t size = strlen(text) + 1;
+        char *copy = qa_event_ring_alloc(&transaction, size, 1, error);
+        if (!copy) goto full;
+        memcpy(copy, text, size);
+        if (message->op == QA_NQ_NAME || message->op == QA_NQ_LIGHTSTYLE ||
+            message->op == QA_NQ_SOCIAL || message->op == QA_NQ_PLAYERINFO)
+            event->message.data.indexed_text.text = copy;
+        else event->message.data.text = copy;
+    }
+    event->sequence = row->next_event++;
+    return qa_event_ring_commit(&transaction, event) != 0;
+full:
+    qa_event_ring_abort(&transaction);
+    return remote_q1_fail(error, QA_ERROR_MEMORY, "Received Q1 event storage is full");
+}
+
+static bool message_apply(frontend_remote_q1 *row, const qa_nq_message *message, uint64_t received, qa_error *error)
 {
     if (!message || !remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error) || !row->revision || !row->next_event ||
         row->revision == UINT64_MAX || row->next_event == UINT64_MAX ||
@@ -448,18 +493,50 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
     case QA_NQ_BONUSFLASH: frontend_view_q1_bonus(&row->view_motion); break;
     default: break;
     }
-    qa_nq_message presented;
-    if (message->op == QA_NQ_CDTRACK && row->options.sample_seconds &&
-        row->options.demo_forced_track >= 0 && row->options.demo_forced_track <= UINT8_MAX) {
-        presented = *message;
-        presented.data.cd.track = presented.data.cd.loop = (uint8_t)row->options.demo_forced_track;
-        message = &presented;
-    }
-    if (ok) ok = remote_q1_effects_service(row, message, error);
-    if (ok) { ++row->revision; ok = row->options.service(row->options.context, &row->options.domain,
-        row->protocol, message, row->seconds, row->next_event++, error); }
+    if (ok) ++row->revision;
     --row->busy; return ok && remote_q1_live(row, error);
 }
+bool remote_q1_events_consume(frontend_remote_q1 *row, uint64_t received, qa_error *error)
+{
+    while (row->event_cursor < qa_event_ring_next(row->events)) {
+        const remote_q1_event *event = qa_event_ring_at(row->events, row->event_cursor);
+        const qa_nq_message *message = &event->message;
+        if (!message_apply(row, message, event->received_ns ? event->received_ns : received,
+                error)) return false;
+        qa_nq_message presented;
+        if (message->op == QA_NQ_CDTRACK && row->options.sample_seconds &&
+            row->options.demo_forced_track >= 0 && row->options.demo_forced_track <= UINT8_MAX) {
+            presented = *message;
+            presented.data.cd.track = presented.data.cd.loop = (uint8_t)row->options.demo_forced_track;
+            message = &presented;
+        }
+        if (!remote_q1_event_present(row, message, error) ||
+            !row->options.service(row->options.context, &row->options.domain,
+                row->protocol, message, row->seconds, event->sequence, error)) return false;
+        ++row->event_cursor;
+        qa_event_ring_retire(row->events, row->event_cursor);
+    }
+    return true;
+}
+
+bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message *message,
+    uint64_t received, qa_error *error)
+{
+    if (!message || !remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error)) return false;
+    switch (message->op) {
+    case QA_NQ_SOUND: case QA_NQ_STATICSOUND: case QA_NQ_STOPSOUND:
+    case QA_NQ_PARTICLE: case QA_NQ_TEMPENTITY: case QA_NQ_DAMAGE:
+    case QA_NQ_PRINT: case QA_NQ_STUFFTEXT: case QA_NQ_CENTERPRINT:
+    case QA_NQ_FINALE: case QA_NQ_CUTSCENE: case QA_NQ_INTERMISSION:
+    case QA_NQ_CDTRACK: case QA_NQ_PAUSE: case QA_NQ_SELLSCREEN: case QA_NQ_BONUSFLASH:
+        return remote_q1_event_admit(row, message, received, error);
+    default:
+        return message_apply(row, message, received, error) &&
+            row->options.service(row->options.context, &row->options.domain,
+                row->protocol, message, row->seconds, row->next_event++, error);
+    }
+}
+
 bool frontend_remote_q1_bonus(frontend_remote_q1 *row, qa_error *error)
 {
     if (!remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error))
@@ -565,7 +642,8 @@ bool frontend_remote_q1_destroy(frontend_remote_q1 **owned, qa_error *error)
     if (!ok) return false;
     remote_q1_clear(row); remote_q1_demo_clear(row);
     free(row->current.rows); free(row->previous.rows); free(row->statics.rows);
-    free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows); free(row->qw_pending);
+    free(row->qw_entities.rows); free(row->qw_nails.rows); free(row->qw_batch_players.rows);
+    qa_event_ring_destroy(&row->events);
     *link = row->next;
     free(row->qw_directory); free(row->level_name); qa_catalog_release(row->options.domain.catalog); free(row); *owned = NULL; return true;
 }

@@ -224,11 +224,7 @@ bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, 
             ++row->revision;
             row->qw_frame = false;
         }
-        while (row->qw_pending_cursor < row->qw_pending_count) {
-            const qa_nq_message *message = &row->qw_pending[row->qw_pending_cursor++].message;
-            if (!frontend_remote_q1_receive_nq(row, message, received, error)) return false;
-        }
-        remote_q1_qw_queue_clear(row);
+        if (!remote_q1_events_consume(row, received, error)) return false;
         if (frame) {
             qa_nq_message message = {0};
             const remote_q1_entities *tables[] = {&row->qw_entities, &row->qw_nails, &row->qw_batch_players};
@@ -251,6 +247,7 @@ bool frontend_remote_q1_receive_end(frontend_remote_q1 *row, uint64_t received, 
         }
         row->qw_frame = false; row->qw_batch_players.count = row->qw_nails.count = 0;
     }
+    if (!remote_q1_events_consume(row, received, error)) return false;
     ++row->busy; bool ok = true; qa_actor_id actor;
     for (size_t i = 0; ok && i < row->current.count; ++i) ok = remote_q1_actor_read(row, row->current.rows[i].number, &actor, error);
     if (ok && row->view_entity) ok = remote_q1_actor_read(row, row->view_entity, &actor, error);
