@@ -11,7 +11,7 @@ bool application_native_q2_callback_region_prepare(qa_native_instance *, const q
     const qa_json_document *, qa_json_id definition, const qa_native_signature *, qa_native_address,
     application_native_q2_region_recipe **, qa_error *);
 void application_native_q2_callback_region_dispose(application_native_q2_region_recipe *);
-bool application_native_q2_callback_region_execute(qa_native_instance *, const application_native_q2_region_recipe *, qa_native_address target,
+bool application_native_q2_callback_region_execute(qa_native_instance *, application_native_q2_region_recipe *, qa_native_address target,
     const qa_native_signature *, const qa_native_value *arguments, size_t argument_count,
     const qa_native_value *inputs, size_t input_count,
     application_native_q2_region_current_fn, void *context,

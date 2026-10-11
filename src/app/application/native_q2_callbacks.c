@@ -16,20 +16,25 @@
 #include "control_frame.h"
 #include "client_outputs.h"
 #include "qa/text.h"
+#include "qa/pool.h"
 #include <float.h>
 #include <math.h>
 
 typedef struct native_temporary {
+    size_t storage_slot;
     struct native_temporary *next;
     qa_native_address address;
+    size_t scratch_slot, scratch_count;
 } native_temporary;
 typedef struct native_global {
+    size_t storage_slot;
     struct native_global *next;
     qa_native_address address;
     uint8_t bytes[12];
     size_t size;
 } native_global;
 typedef struct native_userinfo {
+    size_t storage_slot;
     struct native_userinfo *next;
     qa_actor_id actor;
     uint32_t slot;
@@ -37,6 +42,7 @@ typedef struct native_userinfo {
     size_t capacity;
 } native_userinfo;
 typedef struct native_projection_scope {
+    size_t storage_slot;
     struct native_projection_scope *outer;
     application_native_q2_record_scope *scope;
     bool completed, succeeded;
@@ -58,6 +64,7 @@ typedef struct native_skip {
     qa_native_region_binding *binding;
 } native_skip;
 typedef struct native_region {
+    size_t storage_slot;
     struct native_region *next;
     application_native_q2_callbacks *owner;
     application_native_q2_callback_region *scope;
@@ -66,11 +73,22 @@ typedef struct native_region {
     qa_error retirement;
 } native_region;
 typedef struct native_call {
+    size_t storage_slot;
     struct native_call *next;
+    application_native_q2_callbacks *owner;
     qa_native_call_scope *scope;
     application_native_q2_item_receipt *items;
     struct application_native_q2_source_invocation *source;
 } native_call;
+typedef union native_receipt {
+    size_t storage_slot;
+    native_temporary temporary;
+    native_global global;
+    native_userinfo userinfo;
+    native_projection_scope projection;
+    native_region region;
+    native_call call;
+} native_receipt;
 typedef enum native_argument_kind {
     NATIVE_ARGUMENT_OTHER, NATIVE_ARGUMENT_SCALAR, NATIVE_ARGUMENT_TIME,
     NATIVE_ARGUMENT_ADDRESS, NATIVE_ARGUMENT_ACTOR, NATIVE_ARGUMENT_CLIENT,
@@ -92,6 +110,7 @@ typedef struct native_argument_descriptor {
     double scale, number;
     qa_vec3 vector;
     qa_buffer string;
+    uint8_t vector_bytes[12];
 } native_argument_descriptor;
 typedef struct native_global_descriptor {
     qa_json_id address, value;
@@ -121,6 +140,11 @@ struct application_native_q2_callbacks {
     native_call_descriptor *call_descriptors;
     native_protection_descriptor *protection_descriptors;
     bool descriptors_bound;
+    qa_arena storage;
+    qa_pool receipts, scratch_pages, region_values;
+    qa_native_address scratch;
+    size_t scratch_bytes;
+
     const qa_native_module *module;
     const qa_native_declaration *declaration;
     qa_native_target target;
@@ -322,8 +346,7 @@ static bool original_record(void *context,qa_actor_id actor,size_t name,
             binding.owner==o->engine->provider->owner&&binding.source_slot==i) { slot=i; break; }
     }
     if(slot==UINT32_MAX) return true;
-    qa_json_id root=qa_json_root(o->document),entity=qa_json_get(o->document,root,"entityRecord");
-    if(application_native_q2_callbacks_record_index(o,entity)!=name)
+    if(o->records->entity_record+1!=name)
         return fail(e,"Owned native actor requires its actual original edict record");
     if(!qa_native_entity_address(instance(o),slot,out,e)) return false;
     *found=true; return true;
@@ -549,52 +572,70 @@ static const application_q3_mod_value *input(const application_native_callback_i
 {
     return in&&in->values&&index<Q3_MOD_VALUE_COUNT&&in->values[index].kind!=Q3_MOD_VALUE_ABSENT?in->values+index:NULL;
 }
+static void *receipt_take(application_native_q2_callbacks *o,qa_error *e)
+{
+    size_t slot; native_receipt *receipt=qa_pool_take(&o->receipts,&slot);
+    if(!receipt) { application_fail(e,QA_ERROR_MEMORY,"Native callback receipt pool exhausted"); return NULL; }
+    memset(receipt,0,sizeof(*receipt)); receipt->storage_slot=slot; return receipt;
+}
+static void receipt_release(application_native_q2_callbacks *o,void *receipt)
+{ qa_pool_release(&o->receipts,((native_receipt *)receipt)->storage_slot); }
+static bool temporary_storage(application_native_q2_callbacks *o,size_t capacity,
+    native_temporary **owned,qa_native_address *out,uint8_t **bytes,qa_error *e)
+{
+    native_temporary *t=receipt_take(o,e);
+    if(!t) return false;
+    size_t pages=capacity/16+(capacity%16!=0);
+    uint8_t *host=qa_pool_take_run(&o->scratch_pages,pages,&t->scratch_slot);
+    if(!host) { receipt_release(o,t); return application_fail(e,QA_ERROR_MEMORY,"Native callback scratch exhausted"); }
+    t->scratch_count=pages; t->address=o->scratch+t->scratch_slot*16;
+    t->next=*owned; *owned=t; *out=t->address; *bytes=host;
+    memset(host,0,pages*16); return true;
+}
 static bool temporary(application_native_q2_callbacks *o,qa_bytes bytes,size_t capacity,
     native_temporary **owned,qa_native_address *out,qa_error *e)
 {
     if(bytes.size>capacity) return fail(e,"Native temporary exceeds its source extent");
-    native_temporary *t=calloc(1,sizeof(*t));
-    if(!t) return application_fail(e,QA_ERROR_MEMORY,"Owning native callback allocation receipt");
-    if(!qa_native_allocate(instance(o),capacity,INT32_MIN+13,&t->address,e)) { free(t); return false; }
-    t->next=*owned; *owned=t; *out=t->address;
-    return qa_native_write(instance(o),t->address,bytes,e);
+    uint8_t *host;
+    return temporary_storage(o,capacity,owned,out,&host,e)&&qa_native_write(instance(o),*out,bytes,e);
 }
-static bool classic_string(const char *string,qa_buffer *out,qa_error *e)
+static bool classic_string(const char *string,uint8_t *out,size_t capacity,size_t *size,qa_error *e)
 {
     qa_bytes input_bytes={(const uint8_t *)string,strlen(string)}; size_t cursor=0,used=0; uint32_t scalar;
-    uint8_t *classic=malloc(input_bytes.size+1);
-    if(!classic) return application_fail(e,QA_ERROR_MEMORY,"Encoding actual native source byte string");
     while(qa_utf8_next(input_bytes,&cursor,&scalar)) {
-        if(!scalar||scalar>255) { free(classic); return fail(e,"Native classic strings require source byte characters"); }
-        classic[used++]=(uint8_t)scalar;
+        if(!scalar||scalar>255) return fail(e,"Native classic strings require source byte characters");
+        if(used+1>=capacity) return fail(e,"Native classic string exceeds its source extent");
+        out[used++]=(uint8_t)scalar;
     }
-    classic[used]=0; *out=(qa_buffer){classic,used+1}; return true;
+    if(used>=capacity) return fail(e,"Native classic string exceeds its source extent");
+    out[used]=0; *size=used+1; return true;
 }
-static bool returned_userinfo(application_native_q2_callbacks *o,const native_userinfo *c,qa_buffer *out,qa_error *e)
+static bool returned_userinfo(application_native_q2_callbacks *o,const native_userinfo *c,
+    char *out,size_t capacity,size_t *size,qa_error *e)
 {
-    qa_buffer raw={0};
-    if(!qa_native_read_string(instance(o),c->address,c->capacity,&raw,e)) return false;
-    bool ok=true;
+    uint8_t raw[2048];
+    if(!qa_native_read(instance(o),c->address,raw,c->capacity,e)) return false;
+    const uint8_t *end=memchr(raw,0,c->capacity);
+    if(!end) return fail(e,"Native userinfo result exceeds its source extent");
+    size_t length=(size_t)(end-raw),used=0;
     if(o->engine->profile==QA_NATIVE_Q2_GAME_API3) {
-        if(raw.size>(SIZE_MAX-1)/2) ok=application_fail(e,QA_ERROR_MEMORY,"Native userinfo text extent overflows");
-        else {
-            out->data=malloc(raw.size*2+1);
-            if(!out->data) ok=application_fail(e,QA_ERROR_MEMORY,"Retaining actual native source userinfo");
-            else {
-                for(size_t i=0;i<raw.size;++i) { char bytes[4]; size_t count=qa_utf8_encode(raw.data[i],bytes); memcpy(out->data+out->size,bytes,count); out->size+=count; }
-                out->data[out->size]=0;
-            }
+        for(size_t i=0;i<length;++i) {
+            char bytes[4]; size_t count=qa_utf8_encode(raw[i],bytes);
+            if(count>=capacity-used) return fail(e,"Native userinfo exceeds its canonical extent");
+            memcpy(out+used,bytes,count); used+=count;
         }
-    } else if(!qa_utf8_valid((qa_bytes){raw.data,raw.size})) ok=fail(e,"Native userinfo result is not valid UTF-8");
-    else { *out=raw; raw=(qa_buffer){0}; }
-    qa_buffer_free(&raw); return ok;
+    } else {
+        if(length>=capacity||!qa_utf8_valid((qa_bytes){raw,length})) return fail(e,"Native userinfo result is not valid UTF-8");
+        memcpy(out,raw,length); used=length;
+    }
+    out[used]=0; *size=used; return true;
 }
 bool application_native_q2_callbacks_userinfo_validate(struct application_native_q2 *n,const char *value,qa_error *e)
 {
     if(!n||!value) return fail(e,"Native userinfo requires its actual retained owner and text");
     if(n->profile==QA_NATIVE_Q2_GAME_API3) {
-        qa_buffer bytes={0}; bool ok=classic_string(value,&bytes,e)&&bytes.size<=512;
-        qa_buffer_free(&bytes); return ok||fail(e,"Native classic userinfo exceeds its source byte limit");
+        uint8_t bytes[512]; size_t size;
+        return classic_string(value,bytes,sizeof(bytes),&size,e);
     }
     return strlen(value)<2048&&qa_utf8_valid((qa_bytes){(const uint8_t *)value,strlen(value)}) ? true:
         fail(e,"Native userinfo exceeds its source UTF-8 limit");
@@ -632,16 +673,19 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
         if(!slot) return fail(e,"Native client input has no retained physical client");
         if(argument->kind==NATIVE_ARGUMENT_CLIENT) { *storage=4; *out=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=(int32_t)slot-1}; return true; }
         size_t capacity=o->engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;
-        const char *userinfo=o->engine->clients[slot].userinfo; qa_buffer source_string={0};
-        bool source_ok=o->engine->profile==QA_NATIVE_Q2_GAME_API3?classic_string(userinfo,&source_string,e):true;
-        qa_bytes source_bytes=source_string.data?(qa_bytes){source_string.data,source_string.size}:
-            (qa_bytes){(const uint8_t *)userinfo,strlen(userinfo)+1};
-        if(!source_ok||source_bytes.size>capacity) { qa_buffer_free(&source_string); return source_ok?fail(e,"Native client userinfo exceeds its API buffer"):false; }
-        native_userinfo *c=calloc(1,sizeof(*c));
-        if(!c) { qa_buffer_free(&source_string); return application_fail(e,QA_ERROR_MEMORY,"Owning native userinfo correction"); }
+        const char *userinfo=o->engine->clients[slot].userinfo;
+        native_userinfo *c=receipt_take(o,e);
+        if(!c) return false;
         c->next=*corrections; *corrections=c; c->actor=value->as.actor; c->slot=slot; c->capacity=capacity;
-        bool ok=temporary(o,source_bytes,capacity+4,owned,&out->as.address,e);
-        qa_buffer_free(&source_string);
+        uint8_t *bytes; size_t string_size;
+        bool ok=temporary_storage(o,capacity+4,owned,&out->as.address,&bytes,e);
+        if(ok&&o->engine->profile==QA_NATIVE_Q2_GAME_API3) ok=classic_string(userinfo,bytes,capacity,&string_size,e);
+        else if(ok) {
+            string_size=strlen(userinfo)+1;
+            if(string_size>capacity) ok=fail(e,"Native client userinfo exceeds its API buffer");
+            else memcpy(bytes,userinfo,string_size);
+        }
+        if(ok) ok=qa_native_write(instance(o),out->as.address,(qa_bytes){bytes,capacity+4},e);
         c->address=out->as.address; return ok;
     }
     if(argument->kind==NATIVE_ARGUMENT_USER_COMMAND)
@@ -649,20 +693,21 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
     if(argument->kind==NATIVE_ARGUMENT_VECTOR) {
         qa_vec3 v; uint8_t bytes[12];
         if(value) { if(value->kind!=Q3_MOD_VALUE_VECTOR) return fail(e,"Native vector input has the wrong type"); v=value->as.vector; }
-        else v=argument->vector;
+        else { *storage=12; return temporary(o,(qa_bytes){argument->vector_bytes,12},12,owned,&out->as.address,e); }
         if(!qa_vec_finite(v)) return fail(e,"Native vector exceeds binary32 storage");
         float axes[]={v.x,v.y,v.z}; for(size_t i=0;i<3;++i) encoded((qa_native_value){.type=QA_NATIVE_F32,.as.f32=axes[i]},bytes+i*4);
         *storage=12; return temporary(o,(qa_bytes){bytes,12},12,owned,&out->as.address,e);
     }
     if(argument->kind==NATIVE_ARGUMENT_STRING) {
-        const char *string;
-        if(value) { if(value->kind!=Q3_MOD_VALUE_STRING||!value->as.string) return fail(e,"Native string input has the wrong type"); string=value->as.string; }
-        else string=(char *)argument->string.data;
-        qa_buffer classic={0}; bool ok=classic_string(string,&classic,e);
-        if(ok&&classic.size>SIZE_MAX-4095) ok=application_fail(e,QA_ERROR_MEMORY,"Native classic allocation extent overflows");
-        if(ok) ok=temporary(o,(qa_bytes){classic.data,classic.size},((classic.size+4095)/4096)*4096,owned,&out->as.address,e);
-        qa_buffer_free(&classic);
-        return ok;
+        if(!value) return temporary(o,(qa_bytes){argument->string.data,argument->string.size},
+            (argument->string.size+4095)/4096*4096,owned,&out->as.address,e);
+        if(value->kind!=Q3_MOD_VALUE_STRING||!value->as.string) return fail(e,"Native string input has the wrong type");
+        size_t length=strlen(value->as.string),string_size;
+        if(length>SIZE_MAX-4096) return application_fail(e,QA_ERROR_MEMORY,"Native string extent overflows");
+        size_t capacity=(length+4096)/4096*4096; uint8_t *bytes;
+        return temporary_storage(o,capacity,owned,&out->as.address,&bytes,e)&&
+            classic_string(value->as.string,bytes,capacity,&string_size,e)&&
+            qa_native_write(instance(o),out->as.address,(qa_bytes){bytes,capacity},e);
     }
     return fail(e,"Unknown native callback value kind");
 }
@@ -714,15 +759,12 @@ static bool cleanup(application_native_q2_callbacks *o,native_global **globals,n
             if(ok) first=fault;
             ok=false; break;
         }
-        *globals=g->next; free(g);
+        *globals=g->next; receipt_release(o,g);
     }
     while(!*globals&&*allocations) {
-        native_temporary *t=*allocations; qa_error fault={0};
-        if(!qa_native_free(instance(o),t->address,&fault)) {
-            if(ok) first=fault;
-            ok=false; break;
-        }
-        *allocations=t->next; free(t);
+        native_temporary *t=*allocations;
+        qa_pool_release_run(&o->scratch_pages,t->scratch_slot,t->scratch_count);
+        *allocations=t->next; receipt_release(o,t);
     }
     if(!ok&&e) *e=first;
     return ok;
@@ -735,7 +777,7 @@ static bool projection_end(application_native_q2_callbacks *o,qa_error *e)
     while(o->scopes&&o->scopes->completed) {
         native_projection_scope *s=o->scopes;
         if(s->scope&&!application_native_q2_records_end(o->records,&s->scope,s->succeeded,e)) return false;
-        o->scopes=s->outer; free(s);
+        o->scopes=s->outer; receipt_release(o,s);
     }
     return true;
 }
@@ -752,7 +794,7 @@ static bool region_close(native_region **owned,qa_error *e)
     if(!r) return true;
     if(!application_native_q2_callback_region_close(&r->scope,e)) return false;
     if(r->retained) r->authority.release(r->authority.context);
-    free(r); *owned=NULL;
+    receipt_release(r->owner,r); *owned=NULL;
     return true;
 }
 static bool regions_close(application_native_q2_callbacks *o,qa_error *e)
@@ -777,7 +819,7 @@ static bool call_close(native_call **owned,qa_error *e)
     if(!qa_native_call_scope_close(&call->scope,e)||
         !application_native_q2_source_invocation_close(&call->source,e)) return false;
     application_native_q2_items_receipt_end(&call->items);
-    free(call); *owned=NULL; return true;
+    receipt_release(call->owner,call); *owned=NULL; return true;
 }
 static bool calls_close(application_native_q2_callbacks *o,qa_error *e)
 {
@@ -801,7 +843,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     size_t count=descriptor->count;
     qa_native_type types[64]; qa_native_value values[64],result={0};
     native_temporary *allocations=NULL; native_global *saved=NULL; native_userinfo *corrections=NULL;
-    qa_native_value *region_values=NULL;
+    qa_native_value *region_values=NULL; size_t region_values_slot=SIZE_MAX;
     native_region *region_scope=NULL;
     native_call *processor=NULL;
     qa_native_address entry=descriptor->entry;
@@ -815,9 +857,9 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     if(ok)ok=application_native_q2_source_invocation_begin(o->engine,
         self&&self->kind==Q3_MOD_VALUE_ACTOR?self->as.actor:(qa_actor_id){0},&source,e);
     if(ok&&(source||item_cancellation)) {
-        processor=calloc(1,sizeof(*processor));
+        processor=receipt_take(o,e);
         if(!processor)ok=application_fail(e,QA_ERROR_MEMORY,"Retaining native call cancellation");
-        if(processor) {processor->source=source;source=NULL;}
+        if(processor) {processor->owner=o;processor->source=source;source=NULL;}
         if(ok&&item_cancellation)ok=application_native_q2_items_receipt_begin(o->items,self->as.actor,&processor->items,e);
         if(ok)ok=qa_native_call_scope_open(instance(o),call_cancel,processor,&processor->scope,e);
     }
@@ -829,7 +871,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
         if(!authority||!authority->current||!authority->retain||!authority->release)
             ok=application_fail(e,QA_ERROR_ARGUMENT,"Native region has no retained protection authority");
         if(ok) {
-            region_scope=calloc(1,sizeof(*region_scope));
+            region_scope=receipt_take(o,e);
             if(!region_scope)ok=application_fail(e,QA_ERROR_MEMORY,"Retaining actual native region protection scope");
         }
         if(ok) {
@@ -855,7 +897,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     if(ok&&region!=QA_JSON_NONE) {
         ok=region_current(region_scope,e);
         if(ok&&region_count) {
-            region_values=calloc(region_count,sizeof(*region_values));
+            region_values=qa_pool_take_run(&o->region_values,region_count,&region_values_slot);
             if(!region_values) ok=application_fail(e,QA_ERROR_MEMORY,"Lowering original native region inputs");
         }
         for(size_t i=0;ok&&i<region_count;++i) {
@@ -869,14 +911,14 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     for(size_t i=0;ok&&i<descriptor->global_count;++i) {
         const native_global_descriptor *g=descriptor->globals+i;
         qa_json_id definition=g->value;
-        native_global *s=calloc(1,sizeof(*s)); qa_native_value v; size_t bytes;
+        native_global *s=receipt_take(o,e); qa_native_value v; size_t bytes;
         if(!s) { ok=application_fail(e,QA_ERROR_MEMORY,"Owning native projected global bytes"); break; }
         ok=application_native_q2_callbacks_address(o,g->address,&s->address,e)&&
             lower(o,definition,in,&v,&bytes,&allocations,&corrections,e);
         if(ok) { s->size=bytes;
             ok=bytes<=sizeof(s->bytes)&&qa_native_read(instance(o),s->address,s->bytes,bytes,e);
         }
-        if(!ok) { free(s); break; }
+        if(!ok) { receipt_release(o,s); break; }
         s->next=saved; saved=s;
         uint8_t encoded_value[12]={0};
         if(v.type==QA_NATIVE_ADDRESS) {
@@ -891,7 +933,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     if(ok&&transfer) {
         ok=records_prepare(o,e);
         if(ok) {
-            scope=calloc(1,sizeof(*scope));
+            scope=receipt_take(o,e);
             if(!scope) ok=application_fail(e,QA_ERROR_MEMORY,"Retaining actual native callback transfer cleanup");
         }
         if(ok) {
@@ -924,7 +966,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
         if(resolved&&cancelled) { ok=true; result=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=0}; }
         else if(!resolved) ok=false;
     }
-    free(region_values);
+    if(region_values) qa_pool_release_run(&o->region_values,region_values_slot,region_count);
     if(entered) *entered=dispatched;
     qa_error region_error={0}; bool region_closed=region_close(&region_scope,&region_error);
     if(!region_closed) {
@@ -935,13 +977,12 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     if(!region_closed&&ok) { ok=false; if(e) *e=region_error; }
     for(native_userinfo *c=corrections;ok&&!cancelled&&c;c=c->next) {
         application_native_q2_client *client=o->engine->clients+c->slot;
-        qa_buffer after={0};
+        char after[sizeof(client->userinfo)]; size_t size;
         ok=qa_actor_id_equal(client->actor,c->actor)&&qa_actors_get(qa_session_actors(o->engine->provider->application->session),c->actor)&&
-            returned_userinfo(o,c,&after,e)&&after.size<sizeof(client->userinfo);
-        if(ok) { memcpy(client->userinfo,after.data,after.size); client->userinfo[after.size]=0; client->userinfo_present=true; }
-        qa_buffer_free(&after);
+            returned_userinfo(o,c,after,sizeof(after),&size,e);
+        if(ok) { memcpy(client->userinfo,after,size+1); client->userinfo_present=true; }
     }
-    while(corrections) { native_userinfo *c=corrections; corrections=c->next; free(c); }
+    while(corrections) { native_userinfo *c=corrections; corrections=c->next; receipt_release(o,c); }
     if(scope) { scope->completed=true; scope->succeeded=ok&&!cancelled; }
     qa_error projection_error={0}; bool projected=region_closed&&!o->pending_regions&&(!transfer||projection_end(o,&projection_error));
     if(!projected&&ok) {
@@ -1062,7 +1103,7 @@ bool application_native_q2_callbacks_transfer(application_native_q2_callbacks *o
 {
     if(!execute||!current(o,e)||o->pending||o->pending_globals||o->pending_regions||o->pending_calls||
         (o->scopes&&o->scopes->completed)||!records_prepare(o,e)) return false;
-    native_projection_scope *scope=calloc(1,sizeof(*scope));
+    native_projection_scope *scope=receipt_take(o,e);
     if(!scope) return application_fail(e,QA_ERROR_MEMORY,"Retaining native source stage transfer");
     ++o->calls; ++o->engine->calls;
     bool ok=application_native_q2_records_begin(o->records,&scope->scope,e);
@@ -1073,7 +1114,7 @@ bool application_native_q2_callbacks_transfer(application_native_q2_callbacks *o
         qa_error close={0}; bool closed=projection_end(o,&close);
         if(!closed&&ok) { ok=false; if(e) *e=close; }
         if(ok&&closed) ok=application_native_q2_client_outputs_publish(o->engine,e);
-    } else free(scope);
+    } else receipt_release(o,scope);
     --o->engine->calls; --o->calls;
     return ok;
 }
@@ -1095,7 +1136,7 @@ bool application_native_q2_callbacks_entry_call(application_native_q2_callbacks 
     qa_native_address address;
     if(!application_native_q2_callbacks_entry(o,entry,&address,e)||!records_prepare(o,e)||
         !application_native_q2_records_commit(o->records,e)) return false;
-    native_projection_scope *scope=calloc(1,sizeof(*scope));
+    native_projection_scope *scope=receipt_take(o,e);
     if(!scope) return application_fail(e,QA_ERROR_MEMORY,"Retaining native stage transfer");
     scope->outer=o->scopes; o->scopes=scope;
     ++o->calls; ++o->engine->calls;
@@ -1143,7 +1184,7 @@ bool application_native_q2_callbacks_input_write(application_native_q2_callbacks
         ok=qa_native_read(instance(o),lowered.as.address,bytes,size,e);
     else if(ok) encoded(lowered,bytes);
     if(ok) ok=qa_native_write(instance(o),address,(qa_bytes){bytes,size},e);
-    while(corrections) { native_userinfo *next=corrections->next; free(corrections); corrections=next; }
+    while(corrections) { native_userinfo *next=corrections->next; receipt_release(o,corrections); corrections=next; }
     qa_error cleanup_error={0}; bool cleaned=cleanup(o,&globals,&allocations,&cleanup_error);
     if(!cleaned) { o->pending=allocations; if(ok&&e) *e=cleanup_error; }
     return ok&&cleaned;
@@ -1462,8 +1503,16 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
                 if(!qa_json_number(d,qa_json_get(d,value,"x"),&x,e)||!qa_json_number(d,qa_json_get(d,value,"y"),&y,e)||
                     !qa_json_number(d,qa_json_get(d,value,"z"),&z,e)) return false;
                 a->vector=qa_v3((float)x,(float)y,(float)z);
+                float axes[]={a->vector.x,a->vector.y,a->vector.z};
+                for(size_t j=0;j<3;++j) encoded((qa_native_value){.type=QA_NATIVE_F32,.as.f32=axes[j]},a->vector_bytes+j*4);
             } else if(a->kind==NATIVE_ARGUMENT_STRING&&qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"string")) {
-                if(!text(d,value,&a->string,e)) return false;
+                qa_buffer utf8={0};
+                if(!text(d,value,&utf8,e)) return false;
+                a->string.data=malloc(utf8.size+1);
+                bool okay=a->string.data&&classic_string((const char *)utf8.data,a->string.data,utf8.size+1,&a->string.size,e);
+                qa_buffer_free(&utf8);
+                if(!a->string.data) return application_fail(e,QA_ERROR_MEMORY,"Binding native byte string");
+                if(!okay) return false;
             }
         }
     }
@@ -1535,6 +1584,38 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
         for(size_t j=0;j<call->global_count;++j) p->scale|=protection_scale_input(d,call->globals[j].value);
         if(region) for(size_t j=0;j<scope->input_count;++j) p->scale|=protection_scale_input(d,scope->inputs[j]);
         p->bound=true;
+    }
+    size_t max_values=1,max_receipts=4,max_bytes=16;
+    for(size_t i=0;i<o->record_node_count;++i) {
+        const native_call_descriptor *call=o->call_descriptors+i;
+        size_t receipts=4+2*(call->count+call->global_count+call->input_count),bytes=0;
+        if(receipts>max_receipts) max_receipts=receipts;
+        if(call->input_count>max_values) max_values=call->input_count;
+        for(size_t j=0;j<call->count+call->global_count+call->input_count;++j) {
+            qa_json_id id=j<call->count?call->arguments[j]:j<call->count+call->global_count?
+                call->globals[j-call->count].value:call->inputs[j-call->count-call->global_count];
+            if(id==QA_JSON_NONE) { bytes+=4096; continue; }
+            const native_argument_descriptor *a=o->arguments+id;
+            size_t extent=a->kind==NATIVE_ARGUMENT_STRING&&a->string.data?(a->string.size+4095)/4096*4096:
+                a->kind==NATIVE_ARGUMENT_STRING||a->kind==NATIVE_ARGUMENT_USERINFO?4096:
+                a->kind==NATIVE_ARGUMENT_USER_COMMAND?128:a->kind==NATIVE_ARGUMENT_VECTOR?16:0;
+            if(bytes>SIZE_MAX-extent) return application_fail(e,QA_ERROR_MEMORY,"Native scratch extent overflows");
+            bytes+=extent;
+        }
+        if(call->armor||call->power_armor) bytes+=32;
+        if(bytes>max_bytes) max_bytes=bytes;
+    }
+    if(!o->scratch) {
+        qa_arena_destroy(&o->storage);
+        qa_arena_init(&o->storage,0);
+        if(max_receipts>SIZE_MAX/64||max_values>SIZE_MAX/64||max_bytes>SIZE_MAX/64-15)
+            return application_fail(e,QA_ERROR_MEMORY,"Native callback storage extent overflows");
+        o->scratch_bytes=((max_bytes+15)/16)*16*64;
+        if(!qa_pool_prepare(&o->receipts,&o->storage,max_receipts*64,sizeof(native_receipt),_Alignof(native_receipt),e)||
+            !qa_pool_prepare(&o->scratch_pages,&o->storage,o->scratch_bytes/16,16,16,e)||
+            !qa_pool_prepare(&o->region_values,&o->storage,max_values*64,sizeof(qa_native_value),_Alignof(qa_native_value),e)||
+            !qa_native_allocate(instance(o),o->scratch_bytes,INT32_MIN+13,&o->scratch,e)) return false;
+        qa_arena_seal(&o->storage);
     }
     o->descriptors_bound=true;
     return true;
@@ -1654,6 +1735,8 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     if(!application_native_q2_records_destroy(&o->records,e)) return false;
     while(o->skips) {native_skip *skip=o->skips;o->skips=skip->next;free(skip);}
     qa_buffer_free(&o->restored_weapons);
+    if(o->scratch&&!qa_native_free(instance(o),o->scratch,e)) return false;
+    o->scratch=0; qa_arena_destroy(&o->storage);
     descriptors_clear(o);
     free(o->registrations); free(o->record_nodes); free(o->input_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
 }
