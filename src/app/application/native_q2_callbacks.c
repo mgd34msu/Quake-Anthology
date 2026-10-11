@@ -93,6 +93,22 @@ typedef struct native_argument_descriptor {
     qa_vec3 vector;
     qa_buffer string;
 } native_argument_descriptor;
+typedef struct native_global_descriptor {
+    qa_json_id address, value;
+} native_global_descriptor;
+typedef struct native_call_descriptor {
+    qa_json_id *arguments, *inputs;
+    native_global_descriptor *globals;
+    size_t count, global_count, input_count;
+    qa_native_address entry;
+    qa_native_value_type returns;
+    int32_t sparks;
+    bool bound, armor, power_armor, accepts_nonzero;
+} native_call_descriptor;
+typedef struct native_protection_descriptor {
+    qa_json_id call, region;
+    bool bound, regular, check, scale;
+} native_protection_descriptor;
 struct application_native_q2_callbacks {
     struct application_native_q2 *engine;
     qa_json_document *document;
@@ -101,6 +117,8 @@ struct application_native_q2_callbacks {
     size_t record_node_count;
     native_argument_descriptor *arguments;
     native_address_descriptor *addresses;
+    native_call_descriptor *call_descriptors;
+    native_protection_descriptor *protection_descriptors;
     bool descriptors_bound;
     const qa_native_module *module;
     const qa_native_declaration *declaration;
@@ -647,9 +665,9 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
     }
     return fail(e,"Unknown native callback value kind");
 }
-static bool target(application_native_q2_callbacks *o,qa_json_id call,qa_native_address *address,qa_error *e)
+static bool entry_decode(application_native_q2_callbacks *o,qa_json_id entry,qa_native_address *address,qa_error *e)
 {
-    qa_json_id entry=qa_json_get(o->document,call,"entry"),kind=qa_json_get(o->document,entry,"kind");
+    qa_json_id kind=qa_json_get(o->document,entry,"kind");
     if(qa_json_string_equal(o->document,kind,"rva")) {
         uint32_t rva; return word(o->document,entry,"rva",&rva,e)&&qa_native_rva(instance(o),rva,1,address,e);
     }
@@ -659,7 +677,7 @@ static bool target(application_native_q2_callbacks *o,qa_json_id call,qa_native_
         qa_json_string_equal(o->document,kind,"game-export")?qa_native_entry_address(instance(o),(char *)name.data,address,e):fail(e,"Unknown native callback entry kind");
     qa_buffer_free(&name); return ok;
 }
-static bool protection_arguments(application_native_q2_callbacks *o,qa_json_id absorb,
+static bool protection_arguments(application_native_q2_callbacks *o,const native_call_descriptor *call,
     const application_native_callback_inputs *in,qa_native_value *values,size_t count,
     native_temporary **allocations,qa_error *e)
 {
@@ -669,7 +687,7 @@ static bool protection_arguments(application_native_q2_callbacks *o,qa_json_id a
         point->kind!=Q3_MOD_VALUE_VECTOR||normal->kind!=Q3_MOD_VALUE_VECTOR||
         amount->kind!=Q3_MOD_VALUE_SCALAR||flags->kind!=Q3_MOD_VALUE_SCALAR)
         return fail(e,"Native armor check omitted its authentic stage inputs");
-    size_t record=application_native_q2_callbacks_record_index(o,qa_json_get(o->document,qa_json_root(o->document),"entityRecord"));
+    size_t record=o->records->entity_record+1;
     values[0]=(qa_native_value){.type=QA_NATIVE_ADDRESS};
     bool ok=application_native_q2_callbacks_record(o,self->as.actor,record,&values[0].as.address,e);
     qa_vec3 vectors[]={point->as.vector,normal->as.vector};
@@ -682,9 +700,7 @@ static bool protection_arguments(application_native_q2_callbacks *o,qa_json_id a
     }
     if(ok) ok=number_value(QA_NATIVE_I32,amount->as.scalar,values+3,e);
     if(ok&&count==6) {
-        double sparks;
-        ok=qa_json_number(o->document,qa_json_get(o->document,absorb,"sparks"),&sparks,e)&&
-            number_value(QA_NATIVE_I32,sparks,values+4,e);
+        values[4]=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=call->sparks};
     }
     return ok&&number_value(QA_NATIVE_I32,flags->as.scalar,values+count-1,e);
 }
@@ -780,22 +796,15 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
     if(!returned||!current(o,e)||o->pending||o->pending_globals||o->pending_regions||o->pending_calls) return false;
     if(transfer&&o->scopes&&o->scopes->completed)
         return application_fail(e,QA_ERROR_ARGUMENT,"Native callback retains an unfinished canonical projection transfer");
-    const qa_json_document *d=o->document;
-    qa_json_id arguments=qa_json_get(d,call,"arguments"),globals=qa_json_get(d,call,"globals");
-    if((!armor_check&&qa_json_type(d,arguments)!=QA_JSON_ARRAY)||
-        (qa_json_type(d,globals)!=QA_JSON_ARRAY&&!(armor_check&&globals==QA_JSON_NONE)))
-        return fail(e,"Native call has no argument/global roster");
-    size_t count=armor_check?(qa_json_string_equal(d,qa_json_get(d,call,"abi"),"q2-check-armor")?6u:5u):qa_json_size(d,arguments);
-    if(count>64) return fail(e,"Native call exceeds the admitted ABI argument limit");
+    const native_call_descriptor *descriptor=o->call_descriptors+call;
+    size_t count=descriptor->count;
     qa_native_type types[64]; qa_native_value values[64],result={0};
     native_temporary *allocations=NULL; native_global *saved=NULL; native_userinfo *corrections=NULL;
     qa_native_value *region_values=NULL;
     native_region *region_scope=NULL;
     native_call *processor=NULL;
-    qa_native_address entry; qa_native_value_type returns;
-    if(armor_check) returns=QA_NATIVE_I32;
-    else scalar_type(d,qa_json_get(d,call,"returns"),&returns);
-    if(returns==QA_NATIVE_BYTES) return fail(e,"Native callback return has no scalar ABI");
+    qa_native_address entry=descriptor->entry;
+    qa_native_value_type returns=descriptor->returns;
     ++o->calls; ++o->engine->calls;
     bool ok=true;
     const application_q3_mod_value *self=input(in,Q3_MOD_SELF);
@@ -834,37 +843,34 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
         }
     }
     if(ok&&transfer)ok=records_prepare(o,e)&&application_native_q2_records_commit(o->records,e);
-    if(ok) ok=target(o,call,&entry,e);
-    if(ok&&armor_check) ok=protection_arguments(o,call,in,values,count,&allocations,e);
+    if(ok&&armor_check) ok=protection_arguments(o,descriptor,in,values,count,&allocations,e);
     for(size_t i=0;ok&&i<count;++i) {
         size_t storage;
-        if(!armor_check) ok=lower(o,qa_json_at(d,arguments,i),in,values+i,&storage,&allocations,&corrections,e);
+        if(!armor_check) ok=lower(o,descriptor->arguments[i],in,values+i,&storage,&allocations,&corrections,e);
         if(ok) types[i]=(qa_native_type){.kind=values[i].type,.count=1};
     }
-    size_t region_count=region==QA_JSON_NONE?0:qa_json_size(d,qa_json_get(d,region,"inputs"));
+    const native_call_descriptor *region_descriptor=region==QA_JSON_NONE?NULL:o->call_descriptors+region;
+    size_t region_count=region_descriptor?region_descriptor->input_count:0;
     if(ok&&region!=QA_JSON_NONE) {
-        ok=region_current(region_scope,e)&&
-            application_native_q2_callback_region_validate(instance(o),o->declaration,d,region,e);
+        ok=region_current(region_scope,e);
         if(ok&&region_count) {
             region_values=calloc(region_count,sizeof(*region_values));
             if(!region_values) ok=application_fail(e,QA_ERROR_MEMORY,"Lowering original native region inputs");
         }
         for(size_t i=0;ok&&i<region_count;++i) {
             size_t storage;
-            ok=lower(o,qa_json_get(d,qa_json_at(d,qa_json_get(d,region,"inputs"),i),"value"),
-                in,region_values+i,&storage,&allocations,&corrections,e);
+            ok=lower(o,region_descriptor->inputs[i],in,region_values+i,&storage,&allocations,&corrections,e);
         }
 
     }
     qa_native_signature signature={.abi=o->target.abi,.parameters=types,.parameter_count=count,
         .result={.kind=returns,.count=1}};
-    if(ok&&region!=QA_JSON_NONE) ok=application_native_q2_callback_region_call_validate(
-        instance(o),o->declaration,d,region,&signature,e);
-    for(size_t i=0;ok&&i<qa_json_size(d,globals);++i) {
-        qa_json_id g=qa_json_at(d,globals,i),definition=qa_json_get(d,g,"value");
+    for(size_t i=0;ok&&i<descriptor->global_count;++i) {
+        const native_global_descriptor *g=descriptor->globals+i;
+        qa_json_id definition=g->value;
         native_global *s=calloc(1,sizeof(*s)); qa_native_value v; size_t bytes;
         if(!s) { ok=application_fail(e,QA_ERROR_MEMORY,"Owning native projected global bytes"); break; }
-        ok=application_native_q2_callbacks_address(o,qa_json_get(d,g,"address"),&s->address,e)&&
+        ok=application_native_q2_callbacks_address(o,g->address,&s->address,e)&&
             lower(o,definition,in,&v,&bytes,&allocations,&corrections,e);
         if(ok) { s->size=bytes;
             ok=bytes<=sizeof(s->bytes)&&qa_native_read(instance(o),s->address,s->bytes,bytes,e);
@@ -901,7 +907,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
         application_native_q2_visibility_invalidate(o->engine);
         if(region_scope)ok=region_current(region_scope,e);
         if(ok)ok=(region!=QA_JSON_NONE?
-            application_native_q2_callback_region_execute(instance(o),o->declaration,d,region,entry,
+            application_native_q2_callback_region_execute(instance(o),o->declaration,o->document,region,entry,
                 &signature,values,count,region_values,region_count,region_current,region_scope,
                 &region_scope->scope,&result,&dispatched,e):
             qa_native_invoke_receipt(instance(o),entry,&signature,values,count,
@@ -1017,24 +1023,12 @@ bool application_native_q2_callbacks_protection_absorb(application_native_q2_cal
         return application_fail(e,QA_ERROR_ARGUMENT,"Native protection absorption requires its actual client transfer");
     if(!application_native_q2_callbacks_client_current(o,request->target,e)||
         !authority->current(authority->context,e)) return false;
-    const qa_json_document *d=o->document;
-    qa_json_id definitions=qa_json_get(d,qa_json_root(d),"protection"); bool found=false;
-    for(size_t i=0;i<qa_json_size(d,definitions);++i) if(qa_json_at(d,definitions,i)==definition) found=true;
-    if(!found) return fail(e,"Native protection rule is outside its acquired declaration");
-    qa_json_id absorb=qa_json_get(d,definition,"absorb"),abi=qa_json_get(d,absorb,"abi");
-    bool regular=qa_json_string_equal(d,qa_json_get(d,definition,"channel"),"regular"),
-        source=qa_json_string_equal(d,abi,"source-call"),region=qa_json_string_equal(d,abi,"source-region"),
-        check=qa_json_string_equal(d,abi,"q2-check-armor")||qa_json_string_equal(d,abi,"q2-check-power-armor");
-    if(!source&&!region&&!check) return fail(e,"Native protection has no declared source absorption ABI");
-    qa_json_id call=source||region?qa_json_get(d,absorb,"call"):absorb;
-    if(regular&&flags.regular_scale!=1) {
-        bool scale=false;
-        qa_json_id arguments=qa_json_get(d,call,"arguments"),globals=qa_json_get(d,call,"globals"),inputs=qa_json_get(d,absorb,"inputs");
-        for(size_t i=0;i<qa_json_size(d,arguments);++i) scale|=protection_scale_input(d,qa_json_at(d,arguments,i));
-        for(size_t i=0;i<qa_json_size(d,globals);++i) scale|=protection_scale_input(d,qa_json_get(d,qa_json_at(d,globals,i),"value"));
-        if(region) for(size_t i=0;i<qa_json_size(d,inputs);++i) scale|=protection_scale_input(d,qa_json_get(d,qa_json_at(d,inputs,i),"value"));
-        if(!scale) return fail(e,"Native regular protection scale requires an authored floating source input");
-    }
+    const native_protection_descriptor *descriptor=o->protection_descriptors+definition;
+    if(!descriptor->bound) return fail(e,"Native protection rule is outside its acquired declaration");
+    qa_json_id call=descriptor->call;
+    bool regular=descriptor->regular,check=descriptor->check;
+    if(regular&&flags.regular_scale!=1&&!descriptor->scale)
+        return fail(e,"Native regular protection scale requires an authored floating source input");
     bool classic=o->engine->profile==QA_NATIVE_Q2_GAME_API3;
     uint32_t damage=(request->radius?1u:0u)|
         ((flags.no_armor||(classic&&(regular?flags.no_regular_armor:flags.no_power_armor)))?2u:0u)|
@@ -1055,7 +1049,7 @@ bool application_native_q2_callbacks_protection_absorb(application_native_q2_cal
         [Q3_MOD_TIME]={.kind=Q3_MOD_VALUE_SCALAR,.as.scalar=time}};
     application_native_callback_inputs inputs={values,{0}};
     double result;
-    if(!call_native_common(o,call,&inputs,&result,false,NULL,check,region?absorb:QA_JSON_NONE,authority,e)) return false;
+    if(!call_native_common(o,call,&inputs,&result,false,NULL,check,descriptor->region,authority,e)) return false;
     float narrowed=(float)result;
     if(!isfinite(narrowed)) return fail(e,"Native protection result exceeds its canonical stage amount");
     *saved=narrowed; return true;
@@ -1086,16 +1080,7 @@ bool application_native_q2_callbacks_entry(application_native_q2_callbacks *o,qa
     qa_native_address *address,qa_error *e)
 {
     if(!address||!current(o,e)) return false;
-    const qa_json_document *d=o->document; qa_json_id kind=qa_json_get(d,entry,"kind");
-    if(qa_json_string_equal(d,kind,"rva")) {
-        uint32_t rva; return word(d,entry,"rva",&rva,e)&&qa_native_rva(instance(o),rva,1,address,e);
-    }
-    qa_buffer name={0};
-    if(!text(d,qa_json_get(d,entry,"name"),&name,e)) return false;
-    bool ok=qa_json_string_equal(d,kind,"export")?qa_native_export(instance(o),(char *)name.data,address,e):
-        qa_json_string_equal(d,kind,"game-export")?qa_native_entry_address(instance(o),(char *)name.data,address,e):
-        fail(e,"Native stage has an unknown declared entry");
-    qa_buffer_free(&name); return ok;
+    *address=o->call_descriptors[entry].entry; return true;
 }
 bool application_native_q2_callbacks_entry_call(application_native_q2_callbacks *o,qa_json_id entry,
     qa_json_id returns,const qa_native_value *arguments,size_t count,bool *entered,qa_error *e)
@@ -1104,7 +1089,7 @@ bool application_native_q2_callbacks_entry_call(application_native_q2_callbacks 
     *entered=false;
     if(count>64||!current(o,e)||o->pending||o->pending_globals||o->pending_regions||o->pending_calls||o->scopes) return false;
     qa_native_value_type result_type=QA_NATIVE_VOID;
-    if(returns!=QA_JSON_NONE) scalar_type(o->document,returns,&result_type);
+    if(returns!=QA_JSON_NONE) result_type=o->call_descriptors[returns].returns;
     if(result_type==QA_NATIVE_BYTES) return fail(e,"Native stage has no scalar result ABI");
     qa_native_address address;
     if(!application_native_q2_callbacks_entry(o,entry,&address,e)||!records_prepare(o,e)||
@@ -1153,7 +1138,7 @@ bool application_native_q2_callbacks_input_write(application_native_q2_callbacks
     bool ok=lower(o,value,inputs,&lowered,&size,&allocations,&corrections,e);
     uint8_t bytes[12]={0};
     if(ok&&size>sizeof(bytes)) ok=fail(e,"Native input field exceeds its declared scalar/vector storage");
-    if(ok&&qa_json_string_equal(o->document,qa_json_get(o->document,value,"kind"),"vector"))
+    if(ok&&o->arguments[value].kind==NATIVE_ARGUMENT_VECTOR)
         ok=qa_native_read(instance(o),lowered.as.address,bytes,size,e);
     else if(ok) encoded(lowered,bytes);
     if(ok) ok=qa_native_write(instance(o),address,(qa_bytes){bytes,size},e);
@@ -1176,11 +1161,7 @@ bool application_native_q2_callbacks_run(struct application_native_q2 *n,const c
     for(size_t i=0;i<qa_json_size(o->document,list);++i) {
         qa_json_id call=qa_json_at(o->document,list,i); double value;
         if(!call_native(o,call,in,&value,strcmp(section,"initialize")!=0,NULL,e)) return false;
-        qa_json_id accepts=qa_json_get(o->document,call,"accepts");
-        if(accepts!=QA_JSON_NONE) {
-            if(qa_json_string_equal(o->document,accepts,"nonzero")) { if(value==0) { *accepted=false; return true; } }
-            else if(!qa_json_string_equal(o->document,accepts,"always")) return fail(e,"Native admission has an unknown result policy");
-        }
+        if(o->call_descriptors[call].accepts_nonzero&&value==0) { *accepted=false; return true; }
     }
     return true;
 }
@@ -1382,7 +1363,7 @@ static bool validate_calls(application_native_q2_callbacks *o,qa_json_id value,q
         qa_json_id arguments=qa_json_get(d,value,"arguments");
         if(arguments!=QA_JSON_NONE&&qa_json_get(d,value,"returns")!=QA_JSON_NONE) {
             qa_native_address address;
-            if(!target(o,value,&address,e)) return false;
+            if(!entry_decode(o,qa_json_get(d,value,"entry"),&address,e)) return false;
             qa_native_value_type returns;
             scalar_type(d,qa_json_get(d,value,"returns"),&returns);
             if(returns==QA_NATIVE_BYTES||qa_json_type(d,arguments)!=QA_JSON_ARRAY||
@@ -1433,8 +1414,14 @@ static void descriptors_clear(application_native_q2_callbacks *o)
     for(size_t i=0;i<o->record_node_count;++i) {
         if(o->arguments) qa_buffer_free(&o->arguments[i].string);
         if(o->addresses) free(o->addresses[i].indirections);
+        if(o->call_descriptors) {
+            free(o->call_descriptors[i].arguments);
+            free(o->call_descriptors[i].globals);
+            free(o->call_descriptors[i].inputs);
+        }
     }
-    free(o->arguments); free(o->addresses);
+    free(o->arguments); free(o->addresses); free(o->call_descriptors); free(o->protection_descriptors);
+    o->call_descriptors=NULL; o->protection_descriptors=NULL;
     o->arguments=NULL; o->addresses=NULL; o->descriptors_bound=false;
 }
 static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
@@ -1444,7 +1431,9 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
     const qa_json_document *d=o->document;
     o->arguments=calloc(o->record_node_count,sizeof(*o->arguments));
     o->addresses=calloc(o->record_node_count,sizeof(*o->addresses));
-    if(!o->arguments||!o->addresses)
+    o->call_descriptors=calloc(o->record_node_count,sizeof(*o->call_descriptors));
+    o->protection_descriptors=calloc(o->record_node_count,sizeof(*o->protection_descriptors));
+    if(!o->arguments||!o->addresses||!o->call_descriptors||!o->protection_descriptors)
         return application_fail(e,QA_ERROR_MEMORY,"Binding native callback declarations");
     for(size_t i=0;i<o->record_node_count;++i) {
         native_argument_descriptor *a=o->arguments+i; a->input=Q3_MOD_VALUE_COUNT;
@@ -1494,6 +1483,64 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
                 if(!text(d,value,&a->string,e)) return false;
             }
         }
+    }
+    for(size_t i=0;i<o->record_node_count;++i) {
+        qa_json_id node=(qa_json_id)i;
+        native_call_descriptor *call=o->call_descriptors+i;
+        if(qa_json_type(d,node)==QA_JSON_STRING) {
+            scalar_type(d,node,&call->returns); continue;
+        }
+        if(qa_json_type(d,node)!=QA_JSON_OBJECT) continue;
+        qa_json_id kind=qa_json_get(d,node,"kind"),entry=qa_json_get(d,node,"entry");
+        if(qa_json_string_equal(d,kind,"rva")||qa_json_string_equal(d,kind,"export")||qa_json_string_equal(d,kind,"game-export"))
+            if(!entry_decode(o,node,&call->entry,e)) return false;
+        qa_json_id inputs=qa_json_get(d,node,"inputs");
+        call->input_count=qa_json_size(d,inputs);
+        call->inputs=call->input_count?malloc(call->input_count*sizeof(*call->inputs)):NULL;
+        if(call->input_count&&!call->inputs) return application_fail(e,QA_ERROR_MEMORY,"Binding native region inputs");
+        for(size_t j=0;j<call->input_count;++j) call->inputs[j]=qa_json_get(d,qa_json_at(d,inputs,j),"value");
+        if(qa_json_type(d,entry)!=QA_JSON_OBJECT) continue;
+        call->armor=qa_json_string_equal(d,qa_json_get(d,node,"abi"),"q2-check-armor");
+        call->power_armor=qa_json_string_equal(d,qa_json_get(d,node,"abi"),"q2-check-power-armor");
+        qa_json_id arguments=qa_json_get(d,node,"arguments"),globals=qa_json_get(d,node,"globals");
+        call->count=call->armor?6:call->power_armor?5:qa_json_size(d,arguments);
+        call->global_count=qa_json_size(d,globals);
+        call->arguments=call->count?malloc(call->count*sizeof(*call->arguments)):NULL;
+        call->globals=call->global_count?malloc(call->global_count*sizeof(*call->globals)):NULL;
+        if((call->count&&!call->arguments)||(call->global_count&&!call->globals))
+            return application_fail(e,QA_ERROR_MEMORY,"Binding native call arguments and globals");
+        for(size_t j=0;j<call->count;++j) call->arguments[j]=qa_json_at(d,arguments,j);
+        for(size_t j=0;j<call->global_count;++j) {
+            qa_json_id global=qa_json_at(d,globals,j);
+            call->globals[j]=(native_global_descriptor){qa_json_get(d,global,"address"),qa_json_get(d,global,"value")};
+        }
+        if(call->armor||call->power_armor) call->returns=QA_NATIVE_I32;
+        else scalar_type(d,qa_json_get(d,node,"returns"),&call->returns);
+        if(call->armor) {
+            double sparks; qa_native_value encoded_sparks;
+            if(!qa_json_number(d,qa_json_get(d,node,"sparks"),&sparks,e)||
+                !number_value(QA_NATIVE_I32,sparks,&encoded_sparks,e)) return false;
+            call->sparks=encoded_sparks.as.i32;
+        }
+        if(!entry_decode(o,entry,&call->entry,e)) return false;
+        call->accepts_nonzero=qa_json_string_equal(d,qa_json_get(d,node,"accepts"),"nonzero");
+        call->bound=true;
+    }
+    qa_json_id protection=qa_json_get(d,qa_json_root(d),"protection");
+    for(size_t i=0;i<qa_json_size(d,protection);++i) {
+        qa_json_id node=qa_json_at(d,protection,i),absorb=qa_json_get(d,node,"absorb"),abi=qa_json_get(d,absorb,"abi");
+        native_protection_descriptor *p=o->protection_descriptors+node;
+        p->regular=qa_json_string_equal(d,qa_json_get(d,node,"channel"),"regular");
+        bool source=qa_json_string_equal(d,abi,"source-call"),region=qa_json_string_equal(d,abi,"source-region");
+        p->check=o->call_descriptors[absorb].armor||o->call_descriptors[absorb].power_armor;
+        if(!source&&!region&&!p->check) return fail(e,"Native protection has no declared source absorption ABI");
+        p->call=source||region?qa_json_get(d,absorb,"call"):absorb;
+        p->region=region?absorb:QA_JSON_NONE;
+        const native_call_descriptor *call=o->call_descriptors+p->call,*scope=o->call_descriptors+absorb;
+        for(size_t j=0;j<call->count&&!p->check;++j) p->scale|=protection_scale_input(d,call->arguments[j]);
+        for(size_t j=0;j<call->global_count;++j) p->scale|=protection_scale_input(d,call->globals[j].value);
+        if(region) for(size_t j=0;j<scope->input_count;++j) p->scale|=protection_scale_input(d,scope->inputs[j]);
+        p->bound=true;
     }
     o->descriptors_bound=true;
     return true;
