@@ -445,67 +445,15 @@ static frontend_music_origin music_origin(remote_module_lease *lease)
         .context = lease, .current = music_origin_current, .stop = music_stop};
 }
 
-static bool music(void *context, const char *intro_name, const char *loop_name, qa_error *error)
+static bool music(void *context, const char *intro, const char *loop, qa_error *error)
 {
     remote_module_lease *lease = context; qa_frontend *f = lease->owner->frontend;
     if (!entered(lease, NULL, NULL, error)) return false;
     if (!f->audio) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Remote module music has no audio output owner");
-    qa_audio_music *attached_player = qa_audio_engine_bus_music(f->audio, lease->service_owner);
-    if (attached_player && attached_player != lease->music)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Module music lost its actual retained engine player");
-    lease->music_attached = attached_player != NULL;
-    bool retained_player = lease->music != NULL;
-    if (!lease->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio), QA_GAME_Q3, true, &lease->music, error)) return false;
-    frontend_music_origin origin = music_origin(lease);
-    if (retained_player && !frontend_music_sources_explicit_selected(f->music_sources, &origin)) {
-        if (attached_player || !qa_audio_music_idle(lease->music))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Unselected module soundtrack retains an actual engine bus");
-        qa_audio_music *fresh = NULL;
-        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio), QA_GAME_Q3, true, &fresh, error)) return false;
-        qa_audio_music_destroy(lease->music); lease->music = fresh;
-        free(lease->music_intro); free(lease->music_loop); lease->music_intro = lease->music_loop = NULL;
-        lease->music_looping = false; origin = music_origin(lease);
-    }
-    if (!frontend_music_sources_explicit_begin(f->music_sources, &origin, error)) return false;
-    const char *requested_loop = loop_name ? loop_name : "";
-    bool enabled;
-    if (!qa_audio_music_controls_enabled(frontend_music_sources_controls(f->music_sources), &enabled))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Module music lost its actual shared CD controls");
-    if (intro_name && *intro_name && !enabled)
-        return frontend_music_sources_explicit(f->music_sources, &origin, NULL, NULL, false, error);
-    if (intro_name && lease->music_intro && lease->music_loop && lease->music_looping &&
-        !strcmp(intro_name, lease->music_intro) && !strcmp(requested_loop, lease->music_loop) &&
-        qa_audio_music_playing(lease->music)) return true;
-    qa_audio_music_stop(lease->music);
-    free(lease->music_intro); free(lease->music_loop);
-    lease->music_intro = lease->music_loop = NULL; lease->music_looping = false;
-    if (!intro_name || !*intro_name)
-        return frontend_music_sources_explicit(f->music_sources, &origin, NULL, NULL, false, error);
-    size_t a = strlen(intro_name), b = strlen(requested_loop);
-    lease->music_intro = malloc(a + 1); lease->music_loop = malloc(b + 1);
-    if (!lease->music_intro || !lease->music_loop) {
-        free(lease->music_intro); free(lease->music_loop); lease->music_intro = lease->music_loop = NULL;
-        return frontend_fail(error, QA_ERROR_MEMORY, "Retaining remote module music selection");
-    }
-    memcpy(lease->music_intro, intro_name, a + 1); memcpy(lease->music_loop, requested_loop, b + 1);
-    lease->music_looping = true;
-    qa_audio_stream *intro = NULL, *loop = NULL;
-    if (!qa_audio_bank_music_cue(sounds(lease->owner), intro_name, QA_GAME_Q3, NULL, NULL, &intro, error)) return false;
-    if (!intro) return frontend_music_sources_explicit(f->music_sources, &origin,
-        intro_name, requested_loop, lease->music_looping, error);
-    loop = intro;
-    if (loop_name && *loop_name && strcmp(loop_name, intro_name) &&
-        !qa_audio_bank_music_cue(sounds(lease->owner), loop_name, QA_GAME_Q3, NULL, NULL, &loop, error)) {
-        qa_audio_stream_close(intro); return false;
-    }
-    lease->music_looping = loop != NULL;
-    qa_audio_music_start(lease->music, intro, loop);
-    bool held = lease->music_attached || qa_audio_music_retain(lease->music, error);
-    bool ok = held && qa_audio_engine_music(f->audio, lease->service_owner, physical_seat(lease->owner), 1, lease->music, error);
-    if (!ok && held && !lease->music_attached) qa_audio_music_release(lease->music);
-    if (ok) lease->music_attached = true;
-    return ok && frontend_music_sources_explicit(f->music_sources, &origin,
-        intro_name, requested_loop, lease->music_looping, error);
+    frontend_music_cue_state cue = {&lease->music, &lease->music_intro, &lease->music_loop,
+        &lease->music_looping, &lease->music_attached, NULL};
+    return frontend_music_cue_start(f, sounds(lease->owner), QA_GAME_Q3, cue,
+        music_origin(lease), true, intro, loop, error) && entered(lease, NULL, NULL, error);
 }
 static qa_collision_geometry *geometry(void *context)
 { remote_module_lease *lease = context; return lease->owner->kind == REMOTE_MODULE_DECODED && entered(lease, NULL, NULL, NULL) ? lease->owner->basis.decoded.view.geometry : NULL; }

@@ -8,6 +8,92 @@
 #include <stdio.h>
 
 static bool fail(qa_error *e, const char *text) { return frontend_fail(e, QA_ERROR_ARGUMENT, text); }
+static void cue_names_clear(frontend_music_cue_state state)
+{
+    free(*state.intro); free(*state.loop);
+    *state.intro = *state.loop = NULL; *state.looping = false;
+}
+static bool cue_publish(qa_frontend *f, frontend_music_cue_state state,
+    frontend_music_origin origin, qa_error *error)
+{
+    qa_audio_music *player = *state.player;
+    qa_audio_music *attached = qa_audio_engine_bus_music(f->audio, origin.bus);
+    if (qa_audio_music_playing(player) && !attached) {
+        if (!qa_audio_music_retain(player, error)) return false;
+        if (!qa_audio_engine_music(f->audio, origin.bus, origin.physical_seat, 1, player, error)) {
+            qa_audio_music_release(player); return false;
+        }
+        attached = player;
+    } else if (!qa_audio_music_playing(player) && attached == player) {
+        qa_audio_engine_remove_music(f->audio, origin.bus); attached = NULL;
+    }
+    if (state.attached) *state.attached = attached == player;
+    origin.music = player;
+    if (!frontend_music_sources_explicit(f->music_sources, &origin,
+        *state.intro ? *state.intro : "", *state.loop ? *state.loop : "", *state.looping, error)) return false;
+    if (state.pending) *state.pending = false;
+    return true;
+}
+bool frontend_music_cue_publish(qa_frontend *f, frontend_music_cue_state state,
+    frontend_music_origin origin, qa_error *error)
+{
+    origin.music = *state.player;
+    return frontend_music_sources_explicit_begin(f->music_sources, &origin, error) &&
+        cue_publish(f, state, origin, error);
+}
+bool frontend_music_cue_start(qa_frontend *f, qa_audio_bank *sounds, qa_game_family family,
+    frontend_music_cue_state state, frontend_music_origin origin, bool published,
+    const char *intro, const char *loop, qa_error *error)
+{
+    qa_audio_music *attached = qa_audio_engine_bus_music(f->audio, origin.bus);
+    if (attached && attached != *state.player)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Music bus belongs to another player");
+    if (state.attached) *state.attached = attached != NULL;
+    origin.music = *state.player;
+    if (*state.player && published && !frontend_music_sources_explicit_selected(f->music_sources, &origin)) {
+        if (attached || !qa_audio_music_idle(*state.player))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Music selection retains its previous playback");
+        qa_audio_music *fresh = NULL;
+        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio), family, true, &fresh, error)) return false;
+        qa_audio_music_release(*state.player); *state.player = fresh;
+        cue_names_clear(state);
+    }
+    if (!*state.player && !qa_audio_music_create(qa_audio_engine_rate(f->audio), family, true, state.player, error)) return false;
+    origin.music = *state.player;
+    qa_audio_music_controls *controls = frontend_music_sources_controls(f->music_sources);
+    if (!controls || (!qa_audio_music_controls_is(*state.player, controls) &&
+        !qa_audio_music_controls_bind(*state.player, controls, error))) return false;
+    if (published && !frontend_music_sources_explicit_begin(f->music_sources, &origin, error)) return false;
+    bool enabled = false;
+    if (!qa_audio_music_controls_enabled(controls, &enabled)) return false;
+    if (intro && *intro && !enabled)
+        return !published || frontend_music_sources_explicit(f->music_sources, &origin, "", "", false, error);
+    if (state.pending) *state.pending = !published;
+    const char *tail = loop ? loop : "";
+    if (intro && *state.intro && *state.loop && *state.looping &&
+        !strcmp(intro, *state.intro) && !strcmp(tail, *state.loop) && qa_audio_music_playing(*state.player))
+        return !published || cue_publish(f, state, origin, error);
+    qa_audio_music_stop(*state.player); cue_names_clear(state);
+    if (!intro || !*intro) return !published || cue_publish(f, state, origin, error);
+    *state.intro = malloc(strlen(intro) + 1); *state.loop = malloc(strlen(tail) + 1);
+    if (!*state.intro || !*state.loop) {
+        cue_names_clear(state);
+        return frontend_fail(error, QA_ERROR_MEMORY, "Retaining music cue names");
+    }
+    strcpy(*state.intro, intro); strcpy(*state.loop, tail);
+    qa_audio_stream *first = NULL, *last = NULL;
+    if (!qa_audio_bank_music_cue(sounds, intro, family, NULL, NULL, &first, error)) return false;
+    if (first) {
+        last = first;
+        if (*tail && strcmp(intro, tail) && !qa_audio_bank_music_cue(sounds, tail, family, NULL, NULL, &last, error)) {
+            qa_audio_stream_close(first); return false;
+        }
+        *state.looping = last != NULL;
+        qa_audio_music_start(*state.player, first, last);
+    }
+    return !published || cue_publish(f, state, origin, error);
+}
+
 static bool recipe_origin(const frontend_music_origin *origin) {
     if ((origin->kind != FRONTEND_MUSIC_COMPONENT && origin->kind != FRONTEND_MUSIC_REMOTE) || origin->descriptor || !origin->recipe ||
         qa_executable_recipe_catalog(origin->recipe) != origin->catalog ||

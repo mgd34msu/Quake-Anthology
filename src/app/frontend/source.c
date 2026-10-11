@@ -570,76 +570,14 @@ static frontend_music_origin music_origin(frontend_source *source)
         .product=source->music_product,.files=source->source_files,.music=source->music,.context=source,
         .current=music_origin_current,.stop=music_origin_stop};
 }
-static bool music(void *context, const char *intro_name, const char *loop_name, qa_error *error)
+static bool music(void *context, const char *intro, const char *loop, qa_error *error)
 {
     frontend_source *source = context;
     if (!source->frontend->audio) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source music output is disabled");
-    qa_audio_music *attached=qa_audio_engine_bus_music(source->frontend->audio,source->identity);
-    if (attached && attached!=source->music)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source music bus contains another retained player");
-    source->music_attached=attached!=NULL;
-    if (!source->music && !qa_audio_music_create(qa_audio_engine_rate(source->frontend->audio), music_family(source), true, &source->music, error)) return false;
-    frontend_music_origin origin=music_origin(source);
-    bool published=music_published(source);
-    if (published && !frontend_music_sources_explicit_selected(source->frontend->music_sources,&origin)) {
-        if (attached || !qa_audio_music_idle(source->music))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source music selection retains its previous playback");
-        qa_audio_music *fresh=NULL;
-        if (!qa_audio_music_create(qa_audio_engine_rate(source->frontend->audio),music_family(source),true,&fresh,error)) return false;
-        qa_audio_music_release(source->music); source->music=fresh;
-        free(source->music_intro); free(source->music_loop); source->music_intro=source->music_loop=NULL;
-        source->music_looping=false; origin=music_origin(source);
-    }
-    qa_audio_music_controls *controls=frontend_music_sources_controls(source->frontend->music_sources);
-    if (!controls || (!qa_audio_music_controls_is(source->music,controls) &&
-        !qa_audio_music_controls_bind(source->music,controls,error))) return false;
-    if (published && !frontend_music_sources_explicit_begin(source->frontend->music_sources,&origin,error)) return false;
-    bool enabled=false;
-    if (!qa_audio_music_controls_enabled(controls,&enabled)) return false;
-    if (intro_name && *intro_name && !enabled) return true;
-    source->music_pending=!published;
-    const char *requested_loop=loop_name?loop_name:"";
-    if (intro_name && source->music_intro && source->music_loop && source->music_looping &&
-        !strcmp(source->music_intro,intro_name) && !strcmp(source->music_loop,requested_loop) &&
-        qa_audio_music_playing(source->music)) return true;
-    qa_audio_music_stop(source->music);
-    free(source->music_intro); free(source->music_loop);
-    source->music_intro=source->music_loop=NULL; source->music_looping=false;
-    if (!intro_name || !*intro_name)
-        return !published || frontend_music_sources_explicit(source->frontend->music_sources,&origin,"","",false,error);
-    size_t intro_length=strlen(intro_name),loop_length=strlen(requested_loop);
-    source->music_intro=intro_length<SIZE_MAX?malloc(intro_length+1):NULL;
-    source->music_loop=loop_length<SIZE_MAX?malloc(loop_length+1):NULL;
-    if (!source->music_intro || !source->music_loop) {
-        free(source->music_intro); free(source->music_loop); source->music_intro=source->music_loop=NULL;
-        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source music selection");
-    }
-    memcpy(source->music_intro,intro_name,intro_length+1); memcpy(source->music_loop,requested_loop,loop_length+1);
-    source->music_looping=true;
-    qa_audio_stream *intro = NULL, *loop = NULL;
-    if (!qa_audio_bank_music_cue(source->sounds, intro_name, music_family(source), NULL, NULL, &intro, error)) return false;
-    if (!intro) return !published || frontend_music_sources_explicit(source->frontend->music_sources,&origin,
-        source->music_intro,source->music_loop,false,error);
-    loop=intro;
-    if (loop_name && *loop_name) {
-        if (!strcmp(intro_name, loop_name)) loop = intro;
-        else if (!qa_audio_bank_music_cue(source->sounds, loop_name, music_family(source), NULL, NULL, &loop, error)) {
-            qa_audio_stream_close(intro); return false;
-        }
-    }
-    source->music_looping=loop!=NULL;
-    qa_audio_music_start(source->music, intro, loop);
-    if (!published) return true;
-    bool retained=!source->music_attached;
-    if (retained && !qa_audio_music_retain(source->music,error)) return false;
-    bool ok = qa_audio_engine_music(source->frontend->audio, source->identity, source->seat, 1, source->music, error);
-    if (!ok && retained) qa_audio_music_release(source->music);
-    if (ok) {
-        source->music_attached=true;
-        ok=frontend_music_sources_explicit(source->frontend->music_sources,&origin,
-            source->music_intro,source->music_loop,source->music_looping,error);
-    }
-    return ok;
+    frontend_music_cue_state cue = {&source->music, &source->music_intro, &source->music_loop,
+        &source->music_looping, &source->music_attached, &source->music_pending};
+    return frontend_music_cue_start(source->frontend, source->sounds, music_family(source), cue,
+        music_origin(source), music_published(source), intro, loop, error);
 }
 bool frontend_source_publish_music(qa_frontend *frontend,qa_error *error)
 {
@@ -647,19 +585,9 @@ bool frontend_source_publish_music(qa_frontend *frontend,qa_error *error)
         if (!source->music_pending) continue;
         if (!music_published(source))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Pending Source cue has no genuine published receiver");
-        frontend_music_origin origin=music_origin(source);
-        if (!frontend_music_sources_explicit_begin(frontend->music_sources,&origin,error)) return false;
-        bool attach=qa_audio_music_playing(source->music) &&
-            !qa_audio_engine_bus_music(frontend->audio,source->identity);
-        if (attach && !qa_audio_music_retain(source->music,error)) return false;
-        if (attach && !qa_audio_engine_music(frontend->audio,source->identity,source->seat,1,source->music,error)) {
-            qa_audio_music_release(source->music); return false;
-        }
-        source->music_attached=qa_audio_engine_bus_music(frontend->audio,source->identity)==source->music;
-        if (!frontend_music_sources_explicit(frontend->music_sources,&origin,
-            source->music_intro?source->music_intro:"",source->music_loop?source->music_loop:"",
-            source->music_looping,error)) return false;
-        source->music_pending=false;
+        frontend_music_cue_state cue = {&source->music, &source->music_intro, &source->music_loop,
+            &source->music_looping, &source->music_attached, &source->music_pending};
+        if (!frontend_music_cue_publish(frontend, cue, music_origin(source), error)) return false;
     }
     return true;
 }

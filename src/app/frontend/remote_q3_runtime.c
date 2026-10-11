@@ -148,79 +148,15 @@ static frontend_music_origin music_origin(frontend_remote_q3_runtime *o)
         .catalog=qa_launch_instance_catalog(r->descriptor),.product=r->descriptor->selection.product,
         .files=r->mounts,.music=o->music,.context=o,.current=music_origin_current,.stop=music_source_stop};
 }
-static bool music_returned(frontend_remote_q3_runtime *o,const char *intro,const char *loop,bool looping,qa_error *e)
+static bool music(void *context, const char *intro, const char *loop, qa_error *e)
 {
-    frontend_music_origin origin=music_origin(o);
-    return frontend_music_sources_explicit(o->frontend->music_sources,&origin,intro,loop,looping,e) &&
-        current(o,o->entered,e);
-}
-static bool music_attach(frontend_remote_q3_runtime *o,qa_error *e)
-{
-    qa_audio_music *bus=qa_audio_engine_bus_music(o->frontend->audio,audio_bus(o));
-    if(bus && bus!=o->music)return fail(e,QA_ERROR_ARGUMENT,"Remote soundtrack bus belongs to a different actual player");
-    if(!bus) {
-        if(!qa_audio_music_retain(o->music,e))return false;
-        if(!qa_audio_engine_music(o->frontend->audio,audio_bus(o),o->services.resources.physical_seat,1,o->music,e)) {
-            qa_audio_music_release(o->music); return false;
-        }
-    }
-    o->music_attached=true; return true;
-}
-static bool music(void *context,const char *intro_name,const char *loop_name,qa_error *e)
-{
-    frontend_remote_q3_runtime *o=context; qa_frontend *f=o->frontend;
-    if(!o->entered || !current(o,o->entered,e) || !f->audio)
-        return fail(e,QA_ERROR_UNSUPPORTED,"Remote music requires its entered CLIENT and audio owner");
-    qa_audio_music *bus=qa_audio_engine_bus_music(f->audio,audio_bus(o));
-    if(bus && bus!=o->music)return fail(e,QA_ERROR_ARGUMENT,"Remote soundtrack bus changed its actual source player");
-    o->music_attached=bus!=NULL;
-    if(o->music) {
-        frontend_music_origin retained=music_origin(o);
-        if(!frontend_music_sources_explicit_selected(f->music_sources,&retained)) {
-            if(bus || !qa_audio_music_idle(o->music))
-                return fail(e,QA_ERROR_ARGUMENT,"Selecting a different soundtrack retains the old actual player operation");
-            qa_audio_music *fresh=NULL;
-            qa_audio_music_controls *shared=frontend_music_sources_controls(f->music_sources);
-            if(!shared || !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&fresh,e))return false;
-            if(!qa_audio_music_controls_bind(fresh,shared,e)) { qa_audio_music_destroy(fresh); return false; }
-            qa_audio_music_release(o->music); o->music=fresh;
-            free(o->music_intro); free(o->music_loop); o->music_intro=o->music_loop=NULL; o->music_looping=false;
-        }
-    }
-    if(!o->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&o->music,e))return false;
-    qa_audio_music_controls *controls=frontend_music_sources_controls(f->music_sources);
-    if(!controls || (!qa_audio_music_controls_is(o->music,controls) && !qa_audio_music_controls_bind(o->music,controls,e)))return false;
-    frontend_music_origin origin=music_origin(o);
-    if(!frontend_music_sources_explicit_begin(f->music_sources,&origin,e) || !current(o,o->entered,e))return false;
-    bool enabled;
-    if(!qa_audio_music_controls_enabled(controls,&enabled))return fail(e,QA_ERROR_ARGUMENT,"Remote music lost its application CD controls");
-    if(intro_name && *intro_name && !enabled)return music_returned(o,"","",false,e);
-    const char *tail=loop_name?loop_name:"";
-    if(intro_name && o->music_intro && o->music_loop && o->music_looping &&
-       !strcmp(intro_name,o->music_intro) && !strcmp(tail,o->music_loop) && qa_audio_music_playing(o->music))
-        return music_returned(o,o->music_intro,o->music_loop,o->music_looping,e);
-    qa_audio_music_stop(o->music); free(o->music_intro); free(o->music_loop);
-    o->music_intro=o->music_loop=NULL; o->music_looping=false;
-    if(!intro_name || !*intro_name) {
-        if(bus)qa_audio_engine_remove_music(f->audio,audio_bus(o));
-        o->music_attached=qa_audio_engine_bus_music(f->audio,audio_bus(o))!=NULL;
-        return !o->music_attached && music_returned(o,"","",false,e);
-    }
-    size_t a=strlen(intro_name),b=strlen(tail);
-    char *intro=malloc(a+1),*loop=malloc(b+1);
-    if(!intro || !loop) { free(intro); free(loop); return fail(e,QA_ERROR_MEMORY,"Retaining remote CGAME music names"); }
-    memcpy(intro,intro_name,a+1); memcpy(loop,tail,b+1); o->music_intro=intro; o->music_loop=loop;
-    if(!music_attach(o,e))return false;
-    qa_audio_stream *first=NULL,*last=NULL;
-    if(!qa_audio_bank_music_cue(o->services.resources.sounds,intro_name,QA_GAME_Q3,NULL,NULL,&first,e))return false;
-    if(!first)return music_returned(o,intro_name,tail,false,e);
-    last=first;
-    if(*tail && strcmp(intro_name,tail) &&
-       !qa_audio_bank_music_cue(o->services.resources.sounds,tail,QA_GAME_Q3,NULL,NULL,&last,e)) {
-        qa_audio_stream_close(first); return false;
-    }
-    o->music_looping=last!=NULL; qa_audio_music_start(o->music,first,last);
-    return music_returned(o,intro_name,tail,o->music_looping,e);
+    frontend_remote_q3_runtime *o = context; qa_frontend *f = o->frontend;
+    if (!o->entered || !current(o, o->entered, e) || !f->audio)
+        return fail(e, QA_ERROR_UNSUPPORTED, "Remote music requires its entered CLIENT and audio owner");
+    frontend_music_cue_state cue = {&o->music, &o->music_intro, &o->music_loop, &o->music_looping,
+        &o->music_attached, NULL};
+    return frontend_music_cue_start(f, o->services.resources.sounds, QA_GAME_Q3, cue,
+        music_origin(o), true, intro, loop, e) && current(o, o->entered, e);
 }
 static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scene_options *options,qa_error *e)
 {

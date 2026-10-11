@@ -161,53 +161,14 @@ static frontend_music_origin music_origin(frontend_unified_q3_runtime_factory *o
         .catalog=d->catalog,.product=o->options.source.provider->selection.product,.files=o->options.source.files,
         .music=o->music,.context=o,.current=music_current,.checkpoint_current=music_checkpoint_current,.stop=music_stop};
 }
-static bool music_returned(frontend_unified_q3_runtime_factory *o,const frontend_music_origin *origin,
-    const q3n_compiled_frame *frame,const char *intro,const char *loop,bool looping,qa_error *e)
-{ return frontend_music_sources_explicit(o->options.frontend->music_sources,origin,intro,loop,looping,e) &&
-    q3n_compiled_frame_current(frame) && frontend_unified_q3_runtime_factory_current(o); }
-static bool music(void *context,const char *intro,const char *loop,qa_error *e)
+static bool music(void *context, const char *intro, const char *loop, qa_error *e)
 {
-    frontend_unified_q3_runtime_factory *o=context;qa_frontend *f=o->options.frontend;
-    const q3n_compiled_frame *frame=entered(o);
-    if(!frame || !q3n_compiled_frame_current(frame) || !f->audio)return fail(e,"Compiled music requires its actual entered audio Source");
-    qa_audio_music *bus=qa_audio_engine_bus_music(f->audio,o->options.audio_owner);
-    if(bus && bus!=o->music)return fail(e,"Compiled soundtrack bus changed its actual player");
-    if(o->music) {
-        frontend_music_origin retained=music_origin(o);
-        if(!frontend_music_sources_explicit_selected(f->music_sources,&retained)) {
-            if(bus || !qa_audio_music_idle(o->music))return fail(e,"Selecting compiled music retains an old player operation");
-            qa_audio_music *fresh=NULL;
-            qa_audio_music_controls *shared=frontend_music_sources_controls(f->music_sources);
-            if(!shared || !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&fresh,e))return false;
-            if(!qa_audio_music_controls_bind(fresh,shared,e)){qa_audio_music_release(fresh);return false;}
-            qa_audio_music_release(o->music);o->music=fresh;
-            free(o->intro);free(o->loop);o->intro=o->loop=NULL;o->looping=false;
-        }
-    }
-    if(!o->music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&o->music,e))return false;
-    qa_audio_music_controls *controls=frontend_music_sources_controls(f->music_sources);
-    if(!controls || (!qa_audio_music_controls_is(o->music,controls) && !qa_audio_music_controls_bind(o->music,controls,e)))return false;
-    frontend_music_origin origin=music_origin(o);
-    if(!frontend_music_sources_explicit_begin(f->music_sources,&origin,e))return false;
-    bool enabled;if(!qa_audio_music_controls_enabled(controls,&enabled))return fail(e,"Compiled music lost its application controls");
-    const char *first=intro?intro:"",*tail=loop?loop:"";
-    if(!enabled && *first)return music_returned(o,&origin,frame,"","",false,e);
-    if(o->intro && o->loop && o->looping && !strcmp(first,o->intro) && !strcmp(tail,o->loop) && qa_audio_music_playing(o->music))
-        return music_returned(o,&origin,frame,first,tail,true,e);
-    if(!music_stop(o,e))return false;
-    if(!*first)return music_returned(o,&origin,frame,"","",false,e);
-    o->intro=malloc(strlen(first)+1);o->loop=malloc(strlen(tail)+1);
-    if(!o->intro || !o->loop){free(o->intro);free(o->loop);o->intro=o->loop=NULL;return frontend_fail(e,QA_ERROR_MEMORY,"Retaining compiled soundtrack names");}
-    strcpy(o->intro,first);strcpy(o->loop,tail);
-    if(!qa_audio_music_retain(o->music,e))return false;
-    if(!qa_audio_engine_music(f->audio,o->options.audio_owner,origin.physical_seat,1,o->music,e)){
-        qa_audio_music_release(o->music);return false;}
-    qa_audio_stream *a=NULL,*b=NULL;
-    if(!qa_audio_bank_music_cue(o->sounds,first,QA_GAME_Q3,NULL,NULL,&a,e))return false;
-    if(!a)return music_returned(o,&origin,frame,first,tail,false,e);
-    b=a;if(*tail && strcmp(first,tail) && !qa_audio_bank_music_cue(o->sounds,tail,QA_GAME_Q3,NULL,NULL,&b,e)){qa_audio_stream_close(a);return false;}
-    qa_audio_music_start(o->music,a,b);o->looping=b!=NULL;
-    return music_returned(o,&origin,frame,first,tail,o->looping,e);
+    frontend_unified_q3_runtime_factory *o = context; qa_frontend *f = o->options.frontend;
+    const q3n_compiled_frame *frame = entered(o);
+    if (!frame || !q3n_compiled_frame_current(frame) || !f->audio) return fail(e, "Compiled music requires its actual entered audio Source");
+    frontend_music_cue_state cue = {&o->music, &o->intro, &o->loop, &o->looping, NULL, NULL};
+    return frontend_music_cue_start(f, o->sounds, QA_GAME_Q3, cue, music_origin(o), true, intro, loop, e) &&
+        q3n_compiled_frame_current(frame) && frontend_unified_q3_runtime_factory_current(o);
 }
 static bool timescale(void *context,int32_t elapsed,qa_error *e)
 {

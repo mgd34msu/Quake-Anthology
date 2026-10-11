@@ -238,55 +238,13 @@ static frontend_music_origin music_origin(frontend_native_q3 *row)
         .files=row->view.source_files,.music=row->view.music,.context=row,
         .current=music_origin_current,.stop=music_origin_stop};
 }
-static bool music(void *context,const char *intro,const char *loop,qa_error *e)
+static bool music(void *context, const char *intro, const char *loop, qa_error *e)
 {
-    frontend_native_q3 *row=context; qa_frontend *f=row->frontend;
-    if(!frontend_native_q3_current(row) || !f->audio)return frontend_fail(e,QA_ERROR_UNSUPPORTED,"Native music requires its actual audio owner");
-    qa_audio_music *attached=qa_audio_engine_bus_music(f->audio,row->view.identity);
-    if (attached && attached!=row->view.music)
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native bus contains another retained music player");
-    row->view.music_attached=attached!=NULL;
-    if(!row->view.music && !qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&row->view.music,e))return false;
-    frontend_music_origin origin=music_origin(row);
-    if (!frontend_music_sources_explicit_selected(f->music_sources,&origin)) {
-        if (attached || !qa_audio_music_idle(row->view.music))
-            return frontend_fail(e,QA_ERROR_ARGUMENT,"Native music selection retains its previous playback");
-        qa_audio_music *fresh=NULL;
-        if (!qa_audio_music_create(qa_audio_engine_rate(f->audio),QA_GAME_Q3,true,&fresh,e)) return false;
-        qa_audio_music_release(row->view.music); row->view.music=fresh;
-        free(row->music_intro); free(row->music_loop); row->music_intro=row->music_loop=NULL;
-        row->music_looping=false; origin=music_origin(row);
-    }
-    if (!frontend_music_sources_explicit_begin(f->music_sources,&origin,e)) return false;
-    bool enabled=false;
-    if (!qa_audio_music_controls_enabled(frontend_music_sources_controls(f->music_sources),&enabled)) return false;
-    if (intro && *intro && !enabled) return true;
-    const char *tail=loop?loop:"";
-    if(intro && row->music_intro && row->music_loop && row->music_looping &&
-        !strcmp(intro,row->music_intro) && !strcmp(tail,row->music_loop) && qa_audio_music_playing(row->view.music))return true;
-    qa_audio_music_stop(row->view.music); free(row->music_intro); free(row->music_loop);
-    row->music_intro=row->music_loop=NULL; row->music_looping=false;
-    if(!intro || !*intro)return frontend_music_sources_explicit(f->music_sources,&origin,"","",false,e);
-    row->music_intro=malloc(strlen(intro)+1); row->music_loop=malloc(strlen(tail)+1);
-    if(!row->music_intro || !row->music_loop)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining native source music names");
-    strcpy(row->music_intro,intro); strcpy(row->music_loop,tail);
-    qa_audio_stream *first=NULL,*last=NULL;
-    if(!qa_audio_bank_music_cue(row->view.sounds,intro,QA_GAME_Q3,NULL,NULL,&first,e))return false;
-    if(!first)return frontend_music_sources_explicit(f->music_sources,&origin,row->music_intro,row->music_loop,false,e);
-    last=first;
-    if(*tail && strcmp(intro,tail) && !qa_audio_bank_music_cue(row->view.sounds,tail,QA_GAME_Q3,NULL,NULL,&last,e)) {
-        qa_audio_stream_close(first); return false;
-    }
-    row->music_looping=last!=NULL; qa_audio_music_start(row->view.music,first,last);
-    bool retained=!row->view.music_attached;
-    if (retained && !qa_audio_music_retain(row->view.music,e)) return false;
-    bool ok=qa_audio_engine_music(f->audio,row->view.identity,row->view.seat,1,row->view.music,e);
-    if (!ok && retained) qa_audio_music_release(row->view.music);
-    if(ok) {
-        row->view.music_attached=true;
-        ok=frontend_music_sources_explicit(f->music_sources,&origin,row->music_intro,row->music_loop,row->music_looping,e);
-    }
-    return ok;
+    frontend_native_q3 *row = context; qa_frontend *f = row->frontend;
+    if (!frontend_native_q3_current(row) || !f->audio) return frontend_fail(e, QA_ERROR_UNSUPPORTED, "Native music requires its actual audio owner");
+    frontend_music_cue_state cue = {&row->view.music, &row->music_intro, &row->music_loop,
+        &row->music_looping, &row->view.music_attached, NULL};
+    return frontend_music_cue_start(f, row->view.sounds, QA_GAME_Q3, cue, music_origin(row), true, intro, loop, e);
 }
 static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scene_options *options,qa_error *e)
 {

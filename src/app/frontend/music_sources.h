@@ -37,6 +37,17 @@ typedef struct frontend_music_origin {
     bool (*checkpoint_current)(void *, const struct frontend_music_origin *);
     bool (*stop)(void *, qa_error *);
 } frontend_music_origin;
+/* Borrowed state belonging to the module's existing music bus. */
+typedef struct frontend_music_cue_state {
+    qa_audio_music **player;
+    char **intro, **loop;
+    bool *looping, *attached, *pending;
+} frontend_music_cue_state;
+bool frontend_music_cue_start(qa_frontend *, qa_audio_bank *, qa_game_family,
+    frontend_music_cue_state, frontend_music_origin, bool published,
+    const char *intro, const char *loop, qa_error *);
+bool frontend_music_cue_publish(qa_frontend *, frontend_music_cue_state,
+    frontend_music_origin, qa_error *);
 /* Fresh construction selects independent menu mounts from the actual initial
  * catalog/--game declaration. An empty catalog truthfully has no soundtrack.
  * WORLD selection reads the actual published ENTITIES binding and retained BSP.

@@ -248,79 +248,23 @@ static frontend_music_origin music_origin(struct frontend_component_scene *owner
             owner->request.recipe_provider->selection.product,.files=owner->files,
         .music=owner->music,.context=owner,.current=music_current,.stop=music_stop};
 }
-static bool music_publish(struct frontend_component_scene *owner,qa_error *e)
+static bool music_publish(struct frontend_component_scene *owner, qa_error *e)
 {
-    if (!owner->music_pending) return true;
-    if (!music_published(owner)) return true;
-    frontend_music_origin origin=music_origin(owner);
-    if (!frontend_music_sources_explicit_begin(owner->frontend->music_sources,&origin,e)) return false;
-    qa_audio_music *attached=qa_audio_engine_bus_music(owner->frontend->audio,owner->identity);
-    if (attached && attached!=owner->music)
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Pending component cue lost its actual player bus");
-    if (qa_audio_music_playing(owner->music) && !attached) {
-        if (!qa_audio_music_retain(owner->music,e)) return false;
-        if (!qa_audio_engine_music(owner->frontend->audio,owner->identity,owner->request.physical_seat,1,owner->music,e)) {
-            qa_audio_music_release(owner->music); return false;
-        }
-    }
-    if (!frontend_music_sources_explicit(owner->frontend->music_sources,&origin,
-        owner->music_intro?owner->music_intro:"",owner->music_loop?owner->music_loop:"",owner->music_looping,e)) return false;
-    owner->music_pending=false; return true;
+    if (!owner->music_pending || !music_published(owner)) return true;
+    frontend_music_cue_state cue = {&owner->music, &owner->music_intro, &owner->music_loop,
+        &owner->music_looping, NULL, &owner->music_pending};
+    return frontend_music_cue_publish(owner->frontend, cue, music_origin(owner), e);
 }
-static bool music(void *context,const char *intro_name,const char *loop_name,qa_error *e)
+static bool music(void *context, const char *intro, const char *loop, qa_error *e)
 {
-    struct frontend_component_scene *owner=context; application_q3_scene_context view;
-    if (!publication(owner,&view,e)) return false;
-    if (!owner->frontend->audio) return frontend_fail(e,QA_ERROR_UNSUPPORTED,"Component music output is disabled");
-    qa_audio_music *attached=qa_audio_engine_bus_music(owner->frontend->audio,owner->identity);
-    if (attached && attached!=owner->music)
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component cue lost its actual player bus");
-    if (!owner->music && !qa_audio_music_create(qa_audio_engine_rate(owner->frontend->audio),
-        music_family(owner),true,&owner->music,e)) return false;
-    frontend_music_origin origin=music_origin(owner);
-    bool published=music_published(owner);
-    if (published && !frontend_music_sources_explicit_selected(owner->frontend->music_sources,&origin)) {
-        if (attached || !qa_audio_music_idle(owner->music))
-            return frontend_fail(e,QA_ERROR_ARGUMENT,"Component source selection retains its previous player");
-        qa_audio_music *fresh=NULL;
-        if (!qa_audio_music_create(qa_audio_engine_rate(owner->frontend->audio),music_family(owner),true,&fresh,e)) return false;
-        qa_audio_music_release(owner->music); owner->music=fresh;
-        free(owner->music_intro); free(owner->music_loop); owner->music_intro=owner->music_loop=NULL;
-        owner->music_looping=false; origin=music_origin(owner);
-    }
-    qa_audio_music_controls *controls=frontend_music_sources_controls(owner->frontend->music_sources);
-    if (!controls || (!qa_audio_music_controls_is(owner->music,controls) &&
-        !qa_audio_music_controls_bind(owner->music,controls,e))) return false;
-    if (published && !frontend_music_sources_explicit_begin(owner->frontend->music_sources,&origin,e)) return false;
-    bool enabled=false;
-    if (!qa_audio_music_controls_enabled(controls,&enabled)) return false;
-    if (intro_name && *intro_name && !enabled) return true;
-    const char *loop_text=loop_name?loop_name:"";
-    if (intro_name && owner->music_intro && owner->music_loop && owner->music_looping &&
-        !strcmp(intro_name,owner->music_intro) && !strcmp(loop_text,owner->music_loop) &&
-        qa_audio_music_playing(owner->music)) return true;
-    qa_audio_music_stop(owner->music);
-    free(owner->music_intro); free(owner->music_loop); owner->music_intro=owner->music_loop=NULL;
-    owner->music_looping=false; owner->music_pending=true;
-    if (intro_name && *intro_name) {
-        owner->music_intro=malloc(strlen(intro_name)+1); owner->music_loop=malloc(strlen(loop_text)+1);
-        if (!owner->music_intro || !owner->music_loop) {
-            free(owner->music_intro); free(owner->music_loop); owner->music_intro=owner->music_loop=NULL;
-            return frontend_fail(e,QA_ERROR_MEMORY,"Retaining private component cue names");
-        }
-        strcpy(owner->music_intro,intro_name); strcpy(owner->music_loop,loop_text);
-        qa_audio_stream *intro=NULL,*loop=NULL;
-        if (!qa_audio_bank_music_cue(owner->sounds,intro_name,music_family(owner),NULL,NULL,&intro,e)) return false;
-        if (intro) {
-            loop=intro;
-            if (*loop_text && strcmp(intro_name,loop_text) &&
-                !qa_audio_bank_music_cue(owner->sounds,loop_text,music_family(owner),NULL,NULL,&loop,e)) {
-                qa_audio_stream_close(intro); return false;
-            }
-            owner->music_looping=loop!=NULL; qa_audio_music_start(owner->music,intro,loop);
-        }
-    }
-    return (!published || music_publish(owner,e)) && owner->request.source.current(owner->request.source.context,&view);
+    struct frontend_component_scene *owner = context; application_q3_scene_context view;
+    if (!publication(owner, &view, e)) return false;
+    if (!owner->frontend->audio) return frontend_fail(e, QA_ERROR_UNSUPPORTED, "Component music output is disabled");
+    frontend_music_cue_state cue = {&owner->music, &owner->music_intro, &owner->music_loop,
+        &owner->music_looping, NULL, &owner->music_pending};
+    return frontend_music_cue_start(owner->frontend, owner->sounds, music_family(owner), cue,
+        music_origin(owner), music_published(owner), intro, loop, e) &&
+        owner->request.source.current(owner->request.source.context, &view);
 }
 static bool audio_actor(void *context,int32_t number,uint64_t *out,qa_error *e)
 {
