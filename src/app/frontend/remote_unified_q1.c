@@ -93,6 +93,7 @@ typedef struct q1_group {
     qa_localization *localization;
     char language[64];
     frontend_fx_q1_state effects;
+    frontend_unified_model beam_models[QA_Q1_BEAM_MODELS];
     qa_scene_image *particle_image;
     q1_static *statics;
     q1_ambient *ambient;
@@ -319,6 +320,7 @@ static bool activation(frontend_unified_q1 *o,const q1_event *p,q1_activation **
     a->provider=provider;
     a->generation=p->owner_generation;a->next=o->activations;o->activations=a;*out=a;return true;
 }
+static qa_scene_image_options model_options(void);
 static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,q1_group **out,qa_error *e)
 {
     for(q1_group *g=o->groups;g;g=g->next) if(g->activation==owner && g->content_name==name) {*out=g;return true;}
@@ -328,6 +330,16 @@ static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,
     g->content=qa_strings_cstr(o->replica->strings,g->content_name);
     if(!g->content || !frontend_unified_media_files(o->media,name,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
         !frontend_unified_media_bank(o->media,g->content_name,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g);return false;}
+    const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
+    qa_scene_image_options images=model_options();
+    for(size_t i=0;i<QA_Q1_BEAM_MODELS;++i) {
+        qa_error missing={0};
+        if(!frontend_unified_media_model(o->media,name,names->q1_beam_models[i],QA_GAME_Q1,
+                &images,g->beam_models+i,&missing) && missing.code!=QA_ERROR_NOT_FOUND) {
+            if(e)*e=missing;
+            free(g);return false;
+        }
+    }
     g->parent=o;g->files=files;g->activation=owner;frontend_fx_q1_state_initialize(&g->effects,Q1_LIGHTS,Q1_BEAMS);q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     frontend_q1_help_bind_source(o->frontend->seats+domain->physical_seat,g->images);return true;
@@ -863,16 +875,20 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
         }
         for(size_t i=0;ok && i<Q1_BEAMS;++i) {frontend_fx_q1_beam *b=g->effects.beams+i;if(b->die<=world->seconds)continue;qa_actor_id actual;
             ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),b->actor,false,&actual,e);if(!ok)break;
-            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content_name,qa_application_ui_names_read(o->frontend->application)->q1_beam_models[frontend_fx_q1_beam_index(b->type)],QA_GAME_Q1,&images,&model,e);if(!ok)break;
+            int model_index=frontend_fx_q1_beam_index(b->type);
+            if(model_index<0 || !g->beam_models[model_index].scene)continue;
+            const frontend_unified_model *model=g->beam_models+model_index;
+            const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
+            qa_strings *strings=qa_session_strings(qa_application_session(o->frontend->application));
             frontend_fx_q1_beam_cursor cursor;frontend_fx_q1_beam_begin(&cursor,b->start,b->end);
             qa_builtin_random roll;qa_builtin_random_seed(&roll,b->roll_seed);
             qa_model_transform placement;
             while(ok && frontend_fx_q1_beam_next(&cursor,&roll,&placement)) {
                 qa_scene_model_input input={.view=*view,.transform=placement,.family=QA_GAME_Q1,
-                    .source_path=frontend_fx_q1_beam_model(b->type),.material_library=frontend_unified_model_materials(model.scene),
+                    .source_path=qa_strings_cstr(strings,names->q1_beam_models[model_index]),.material_library=frontend_unified_model_materials(model->scene),
                     .seconds=world->seconds,.identity_light=world->identity_light,.color={1,1,1,1},.ambient={1,1,1},.entity=actual.slot,
                     .video_frame=world->video_frame,.video_context=world->video_context};
-                ok=frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(model.scene,&input,frame,e);}
+                ok=frontend_legacy_model_input(frontend_unified_media_world(o->media),world,&input,e) && qa_scene_model_submit(model->scene,&input,frame,e);}
         }
     }
     o->busy=false;return ok && mutable(o,e);

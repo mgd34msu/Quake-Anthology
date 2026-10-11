@@ -64,7 +64,7 @@ bool frontend_fx_q1_state_temporary(frontend_fx_q1_state *state, qa_builtin_rand
 {
     *sound = FRONTEND_FX_Q1_SOUND_NONE;
     if (event->kind == QA_Q1_TEMP_BEAM) {
-        if (!frontend_fx_q1_beam_model(event->type)) return false;
+        if (frontend_fx_q1_beam_index(event->type)<0) return false;
         (void)frontend_fx_q1_state_beam(state, actor, received, event, seconds, 0);
         return true;
     }
@@ -173,16 +173,6 @@ int frontend_fx_q1_beam_index(uint8_t type)
     for (size_t i=0;i<QA_Q1_BEAM_MODELS;++i)
         if (frontend_fx_q1_beam_types[i]==type) return (int)i;
     return -1;
-}
-const char *frontend_fx_q1_beam_model(uint8_t type)
-{
-    static const char *const models[QA_Q1_BEAM_MODELS]={
-#define Q1_BEAM_PATH(index, type, path) [index] = path,
-        QA_Q1_BEAM_NAMES(Q1_BEAM_PATH)
-#undef Q1_BEAM_PATH
-    };
-    int index=frontend_fx_q1_beam_index(type);
-    return index<0?NULL:models[index];
 }
 
 /* CL_UpdateTEnts quantizes pitch/yaw, advances by 30 units and picks a fresh

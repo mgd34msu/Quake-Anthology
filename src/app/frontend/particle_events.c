@@ -41,7 +41,7 @@ typedef struct frontend_particle_owner {
     qa_q2_edition q2_edition;
     frontend_fx_q1_state *q1;
     bool q1_quakeworld, q1_rerelease;
-    qa_scene_model *q1_beam_models[4]; /* borrowed from the actual appearance owner */
+    qa_scene_model *q1_beam_models[QA_Q1_BEAM_MODELS]; /* borrowed from the actual appearance owner */
     qa_frontend *frontend;
     uint32_t seat;
     frontend_remote_q2_effects *q2_effects;
@@ -745,6 +745,15 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
     if (ok) ok=family==QA_GAME_Q1 ? owner->q1 &&
         qa_scene_particle_image(owner->images,QA_GAME_Q1,&owner->particle_image,error) :
         local_q2_create(frontend,owner,error);
+    if (ok && family==QA_GAME_Q1) {
+        const qa_application_ui_names *names=qa_application_ui_names_read(frontend->application);
+        for(size_t i=0;ok && i<QA_Q1_BEAM_MODELS;++i) {
+            frontend_visual_model_view model={0};qa_error missing={0};
+            if(frontend_visual_model_acquire(frontend,provider,QA_GAME_Q1,names->q1_beam_models[i],
+                    NULL,&model,&missing)) owner->q1_beam_models[i]=model.scene;
+            else if(missing.code!=QA_ERROR_NOT_FOUND) { if(error)*error=missing;ok=false; }
+        }
+    }
     if (!ok) { particle_owner_free(owner);return false; }
     owner->next = frontend->particles->owners; frontend->particles->owners = owner; *out = owner; return true;
 }
@@ -772,7 +781,6 @@ void frontend_particle_reset_round(qa_frontend *frontend)
             memset(owner->q1->lights,0,sizeof(owner->q1->lights));
             memset(owner->q1->beams,0,sizeof(owner->q1->beams));
         }
-        memset(owner->q1_beam_models,0,sizeof(owner->q1_beam_models));
     }
     state->sample_ns = state->previous_sample_ns = qa_session_elapsed(qa_application_session(frontend->application));
     if (state->q1_trails) memset(state->q1_trails, 0, state->q1_trail_capacity * sizeof(*state->q1_trails));
@@ -1005,15 +1013,8 @@ static bool q1_temporary_apply(qa_frontend *frontend, frontend_particle_owner *o
     bool received, qa_error *error)
 {
     if (event->kind == QA_Q1_TEMP_BEAM) {
-        const char *path = frontend_fx_q1_beam_model(event->type);
-        if (!path) return frontend_fail(error, QA_ERROR_FORMAT, "Q1 beam has no Source model");
-        uint8_t model_index = (uint8_t)frontend_fx_q1_beam_index(event->type);
-        if (!owner->q1_beam_models[model_index]) {
-            frontend_visual_model_view model;
-            if (!frontend_visual_model_acquire(frontend, owner->provider, QA_GAME_Q1,
-                    qa_application_ui_names_read(frontend->application)->q1_beam_models[model_index], NULL, &model, error)) return false;
-            owner->q1_beam_models[model_index] = model.scene;
-        }
+        if (frontend_fx_q1_beam_index(event->type)<0)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Q1 beam has no Source model");
     }
     frontend_fx_q1_sound sound_kind;
     if (!frontend_fx_q1_state_temporary(owner->q1, &owner->random, event, actor,
@@ -1323,7 +1324,8 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
             for (size_t i=0;i<24;++i) {
                 const frontend_fx_q1_beam *beam=owner->q1->beams+i;
                 if (!beam->active || beam->die<seconds) continue;
-                uint8_t model_index=(uint8_t)frontend_fx_q1_beam_index(beam->type);
+                int model_index=frontend_fx_q1_beam_index(beam->type);
+                if(model_index<0 || !owner->q1_beam_models[model_index])continue;
                 qa_vec3 start=beam->start;
                 if (viewer.registry && qa_actor_id_equal(viewer,beam->actor)) {
                     qa_body_state body;
@@ -1336,7 +1338,8 @@ bool frontend_particle_draw(qa_frontend *frontend, uint32_t seat, const qa_scene
                     qa_vec3 origin=qa_v3(placement.origin[0],placement.origin[1],placement.origin[2]);
                     qa_scene_model_input input={.view=*view,.transform=placement,.previous_origin=origin,
                         .family=QA_GAME_Q1,.color={1,1,1,1},.seconds=world->seconds,
-                        .source_path=frontend_fx_q1_beam_model(beam->type),.entity=beam->actor.slot,
+                        .source_path=qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),
+                            qa_application_ui_names_read(frontend->application)->q1_beam_models[model_index]),.entity=beam->actor.slot,
                         .identity_light=world->identity_light,.ambient={1,1,1},
                         .video_frame=world->video_frame,.video_context=world->video_context};
                     if (frontend->scene_world && !qa_scene_world_sample_light_input(frontend->scene_world,
