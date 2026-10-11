@@ -216,11 +216,9 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
     size_t cache_bytes=owner->storage_bytes+sizeof(owner->caches)/sizeof(*owner->caches)*
         (size_t)count*(sizeof(application_native_q2_inventory_row)+256);
     size_t pages=(cache_bytes+4095)/4096;
-    if(!qa_arena_reserve(&owner->cache_storage,pages*(4096+sizeof(size_t))+128,error) ||
-        !qa_pool_prepare(&owner->cache_pages,&owner->cache_storage,pages,4096,_Alignof(max_align_t),error)) {
+    if(!qa_pool_reserve_pages(&owner->cache_pages,&owner->cache_storage,pages,4096,_Alignof(max_align_t),error)) {
         slots_free(slots,used);return false;
     }
-    qa_arena_seal(&owner->cache_storage);
     for(size_t i=0;i<sizeof(owner->caches)/sizeof(*owner->caches);++i)
         qa_arena_init_pool(&owner->caches[i].storage,&owner->cache_pages);
     owner->slots = slots;

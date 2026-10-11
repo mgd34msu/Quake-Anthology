@@ -362,8 +362,8 @@ static void test_arena(void)
 
     qa_arena backing={0},left={0},right={0};
     qa_pool pages={0};
-    CHECK(qa_pool_prepare(&pages,&backing,8,4096,64,&error));
-    qa_arena_seal(&backing);
+    CHECK(qa_pool_reserve_pages(&pages,&backing,8,4096,64,&error));
+    CHECK(backing.sealed);
     qa_arena_init_pool(&left,&pages);qa_arena_init_pool(&right,&pages);
     uint8_t *held=qa_arena_alloc(&left,7000,64,&error);
     CHECK(held && (uintptr_t)held%64==0);

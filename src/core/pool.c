@@ -1,8 +1,8 @@
 #include "qa/pool.h"
 #include "qa/allocation_gate.h"
 
-bool qa_pool_prepare(qa_pool *pool, qa_arena *arena, size_t count, size_t stride,
-    size_t alignment, qa_error *error)
+static bool prepare(qa_pool *pool, qa_arena *arena, size_t count, size_t stride,
+    size_t alignment, bool reserve, qa_error *error)
 {
     if (!pool || !arena || !stride || !alignment || (alignment & (alignment - 1))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -17,6 +17,7 @@ bool qa_pool_prepare(qa_pool *pool, qa_arena *arena, size_t count, size_t stride
     qa_pool prepared = {.stride = stride, .capacity = count, .head = SIZE_MAX};
     if (!count) {
         *pool = prepared;
+        if (reserve) qa_arena_seal(arena);
         return true;
     }
     if (count > SIZE_MAX / stride || count > SIZE_MAX / sizeof(size_t)) {
@@ -32,15 +33,31 @@ bool qa_pool_prepare(qa_pool *pool, qa_arena *arena, size_t count, size_t stride
         return false;
     }
     size_t storage_alignment = alignment > next_alignment ? alignment : next_alignment;
-    prepared.values = qa_arena_alloc(arena, values_size + padding + next_size,
+    size_t storage_size=values_size+padding+next_size;
+    if (reserve) {
+        if (storage_size>SIZE_MAX-(storage_alignment-1)) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"pool storage size overflow");return false;
+        }
+        if (!qa_arena_reserve(arena,storage_size+storage_alignment-1,error)) return false;
+    }
+    prepared.values = qa_arena_alloc(arena, storage_size,
         storage_alignment, error);
     if (!prepared.values) return false;
     prepared.next = (size_t *)(prepared.values + values_size + padding);
     prepared.head = 0;
     for (size_t i = 0; i < count; ++i) prepared.next[i] = i + 1 < count ? i + 1 : SIZE_MAX;
     *pool = prepared;
+    if (reserve) qa_arena_seal(arena);
     return true;
 }
+
+bool qa_pool_prepare(qa_pool *pool,qa_arena *arena,size_t count,size_t stride,
+    size_t alignment,qa_error *error)
+{ return prepare(pool,arena,count,stride,alignment,false,error); }
+
+bool qa_pool_reserve_pages(qa_pool *pool,qa_arena *arena,size_t count,size_t stride,
+    size_t alignment,qa_error *error)
+{ return prepare(pool,arena,count,stride,alignment,true,error); }
 
 void *qa_pool_take(qa_pool *pool, size_t *slot)
 {

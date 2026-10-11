@@ -1033,11 +1033,9 @@ bool application_q3_weapons_services_create(q3g_role *role, application_q3_weapo
     size_t bytes = items * (sizeof(qa_item_admission) + sizeof(qa_inventory_entry) +
         sizeof(qa_inventory_source_group) + sizeof(qa_item_definition) + sizeof(qa_supply_weapon) * 2) + text_bytes;
     size_t pages = (bytes * 4 + 4095) / 4096;
-    if (!qa_arena_reserve(&s->inventory_storage, pages * (4096 + sizeof(size_t)) + 128, error) ||
-        !qa_pool_prepare(&s->inventory_pages, &s->inventory_storage, pages, 4096, _Alignof(max_align_t), error)) {
+    if (!qa_pool_reserve_pages(&s->inventory_pages,&s->inventory_storage,pages,4096,_Alignof(max_align_t),error)) {
         qa_arena_destroy(&s->inventory_storage); free(s); return false;
     }
-    qa_arena_seal(&s->inventory_storage);
     *out = s; return true;
 }
 bool application_q3_weapons_services_destroy(application_q3_weapons_services **owner, qa_error *error)

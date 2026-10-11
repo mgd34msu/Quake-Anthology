@@ -490,14 +490,9 @@ static bool command_storage_prepare(qa_console *console,qa_error *error)
     if (limit>(SIZE_MAX-512)/2 || record_pages>SIZE_MAX/(limit*2+512))
         return qac_fail(error,QA_ERROR_MEMORY,"console storage capacity overflows");
     size_t pages=(limit*2+512)*record_pages;
-    if (pages>(SIZE_MAX-128)/(1024+sizeof(size_t)))
-        return qac_fail(error,QA_ERROR_MEMORY,"console storage capacity overflows");
     qa_arena_init(&console->command_storage,0);
-    if (!qa_arena_reserve(&console->command_storage,pages*(1024+sizeof(size_t))+128,error) ||
-        !qa_pool_prepare(&console->command_pages,&console->command_storage,pages,1024,_Alignof(max_align_t),error))
-        return false;
-    qa_arena_seal(&console->command_storage);
-    return true;
+    return qa_pool_reserve_pages(&console->command_pages,&console->command_storage,
+        pages,1024,_Alignof(max_align_t),error);
 }
 
 command_chunk *qac_console_chunk_create(qa_console *console,const qa_command_context *context,

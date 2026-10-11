@@ -546,9 +546,7 @@ bool application_native_q2_inventory_scanner_activate(application_native_q2_inve
     if(!o->readout_pages.values) {
         size_t bytes=o->options.storage_bytes(o->options.context),stride=4096;
         size_t pages=(bytes+stride-1)/stride+NQR_CALL_DEPTH;
-        if(!qa_arena_reserve(&o->readout_storage,pages*(stride+sizeof(size_t))+128,e) ||
-            !qa_pool_prepare(&o->readout_pages,&o->readout_storage,pages,stride,_Alignof(max_align_t),e)) return false;
-        qa_arena_seal(&o->readout_storage);
+        if(!qa_pool_reserve_pages(&o->readout_pages,&o->readout_storage,pages,stride,_Alignof(max_align_t),e)) return false;
     }
     for (size_t i = 0; i < 5; ++i) if (!o->entries[i].binding && !qa_native_observe_entry(instance(o),
         o->entries[i].address, &o->entries[i].signature, entry_call, o->entries + i, &o->entries[i].binding, e)) return false;

@@ -17,6 +17,10 @@ typedef struct qa_pool {
  * uses no arena storage. Failure leaves the destination pool unchanged. */
 bool qa_pool_prepare(qa_pool *, qa_arena *, size_t count, size_t stride,
     size_t alignment, qa_error *);
+/* Cold preparation with a dedicated backing arena. Reserves aligned storage
+ * and seals the arena after creating the fixed pool. */
+bool qa_pool_reserve_pages(qa_pool *,qa_arena *,size_t count,size_t stride,
+    size_t alignment,qa_error *);
 /* O(1), no allocation. Exhaustion returns NULL, sets slot=SIZE_MAX and counts
  * overflow (saturating). Existing leases remain valid. */
 void *qa_pool_take(qa_pool *, size_t *slot);
