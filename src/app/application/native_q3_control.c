@@ -208,20 +208,20 @@ static bool touch_triggers(application_provider *provider, qa_actor_id actor, qa
     qa_vec3 range = qa_v3(40, 40, 52);
     qa_bounds area = {qa_vec_sub(origin, range), qa_vec_add(origin, range)};
     qa_bounds bounds = qa_bounds_translate(body.bounds, origin);
-    qa_actor_id candidates[QA_Q3_SOURCE_ENTITIES];
-    size_t count; bool overflow;
-    if (!qa_world_query(app->world, area, QA_COLLISION_BOTH, candidates,
-        QA_Q3_SOURCE_ENTITIES, &count, &overflow, error)) return false;
-    for (size_t i = 0; i < count && live(app, actor); ++i) {
-        qa_actor_id candidate = candidates[i];
+    qa_world_actor_snapshot candidates;
+    if (!qa_world_snapshot_capture(app->world, area, QA_COLLISION_BOTH,
+        QA_WORLD_ORDER_SPATIAL, &candidates, error)) return false;
+    bool okay = false;
+    for (size_t i = 0; i < candidates.count && live(app, actor); ++i) {
+        qa_actor_id candidate = candidates.actors[i];
         if (!live(app, candidate)) continue;
         bool native, touchable, door;
-        if (!qa_q3_client_touch_policy(game, candidate, &native, &touchable, &door, error)) return false;
+        if (!qa_q3_client_touch_policy(game, candidate, &native, &touchable, &door, error)) goto out;
         if (native && !touchable) continue;
         qa_actor_collision collision;
         qa_error observed = {0};
         if (!qa_world_get_collision(app->world, candidate, &collision, &observed)) {
-            if (observed.code != QA_OK) { if (error) *error = observed; return false; }
+            if (observed.code != QA_OK) { if (error) *error = observed; goto out; }
             continue;
         }
         qa_q3_entity entity = {0};
@@ -229,22 +229,25 @@ static bool touch_triggers(application_provider *provider, qa_actor_id actor, qa
             uint32_t source_slot;
             qa_q3_wire_visibility visibility;
             if (!qa_q3_source_actor_slot(game, candidate, &source_slot, error) ||
-                !qa_q3_wire_entity_read(game, source_slot, &entity, &visibility, error)) return false;
+                !qa_q3_wire_entity_read(game, source_slot, &entity, &visibility, error)) goto out;
             if (!qa_collision_bits_overlap(collision.contents, qa_collision_bit(QA_CONTENT_TRIGGER))) continue;
         } else if (collision.role != QA_COLLISION_TRIGGER && collision.role != QA_COLLISION_BOTH) continue;
         qa_q3_client_session session;
-        if (!qa_q3_client_session_read(game, actor, &session, error)) return false;
+        if (!qa_q3_client_session_read(game, actor, &session, error)) goto out;
         if (session.team == 3 && (!native || (entity.eType != 9 && !door))) continue;
         bool contact;
         if (native && entity.eType == 2) {
-            if (!qa_q3_wire_player_read(game, slot, &player, error)) return false;
+            if (!qa_q3_wire_player_read(game, slot, &player, error)) goto out;
             qa_vec3 current = qa_v3(player.origin[0], player.origin[1], player.origin[2]);
-            if (!touches_item(current, &entity.pos, now, &contact, error)) return false;
-        } else if (!contact_actor(app, bounds, candidate, &contact, error)) return false;
+            if (!touches_item(current, &entity.pos, now, &contact, error)) goto out;
+        } else if (!contact_actor(app, bounds, candidate, &contact, error)) goto out;
         if (contact && (!touch(provider, candidate, actor, error) ||
-            !bot_touch(provider, actor, candidate, error))) return false;
+            !bot_touch(provider, actor, candidate, error))) goto out;
     }
-    return !live(app, actor) || qa_q3_client_jumppad_finish(game, actor, error);
+    okay = !live(app, actor) || qa_q3_client_jumppad_finish(game, actor, error);
+out:
+    qa_world_snapshot_release(&candidates);
+    return okay;
 }
 
 static bool selected_command(native_q3_think_call *call,
