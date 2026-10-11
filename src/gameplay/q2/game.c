@@ -349,6 +349,7 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
     if (!qa_q2_sound_names_bind(qa_session_strings(services->session),&g->runtime_names,e)) {
         close_game(g); return false;
     }
+    if (!q2_wire_names_prepare(g,e)) { close_game(g); return false; }
     g->wire_lightstyles.count=256;
     if (!qa_strings_bind_bytes(qa_session_strings(services->session), &g->lightstyle_bytes, e)) {
         close_game(g); return false;

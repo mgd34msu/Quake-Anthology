@@ -79,18 +79,14 @@ static int image_compare(const void *left, const void *right)
 { return strcmp(((const q2_image_name *)left)->text, ((const q2_image_name *)right)->text); }
 static int configstring_compare(const void *left, const void *right)
 {
-    uint32_t a = ((const qa_unified_q2_configstring *)left)->index;
-    uint32_t b = ((const qa_unified_q2_configstring *)right)->index;
+    uint32_t a = ((const qa_q2_config_name *)left)->index;
+    uint32_t b = ((const qa_q2_config_name *)right)->index;
     return a < b ? -1 : a > b;
 }
-static bool q2_configstring(qa_strings *strings, qa_unified_frame_lease *lease, qa_unified_q2_hud_configuration *out, uint32_t index,
-    qa_string_id value_id, const char *value, qa_error *error)
+static bool q2_configstring(qa_unified_q2_hud_configuration *out, uint32_t index, qa_string_id value)
 {
-    qa_unified_q2_configstring *row = out->configstrings + out->configstring_count++;
-    row->index = index;
-    row->value_id = value_id;
-    return (value_id || qa_strings_intern_cstr(strings, value, &row->value_id, error)) &&
-        application_unified_frame_string(lease, &row->value, value, error);
+    out->configstrings[out->configstring_count++] = (qa_q2_config_name){index,value};
+    return true;
 }
 static bool q2_configuration(qa_application *app, const application_unified_source *source, qa_unified_frame_lease *lease,
     qa_unified_configuration_state *row, qa_error *error)
@@ -111,9 +107,8 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
         for (uint32_t i = 0; i < hud.configstring_count; ++i) {
             const char *text = qa_strings_cstr(hud.strings, hud.configstrings[i]);
             if (text && *text) {
-                qa_unified_q2_configstring *config = out->configstrings + out->configstring_count++;
+                qa_q2_config_name *config = out->configstrings + out->configstring_count++;
                 config->index = i; config->value_id = hud.configstrings[i];
-                if (!application_unified_frame_string(lease, &config->value, text, error)) return false;
             }
         }
         return true;
@@ -136,21 +131,19 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
         if (!unique || names[i].id != names[unique - 1].id) names[unique++] = names[i];
     out->configstrings = application_unified_frame_alloc(lease, 2 + unique + count, sizeof(*out->configstrings), error);
     if (!out->configstrings) { if (!lease) free(names); return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD configstrings"); }
-    char clients[32]; snprintf(clients, sizeof(clients), "%u", source->max_clients);
-    bool ok = q2_configstring(strings, lease, out, 5, QA_STRING_NONE, hud.statusbar, error) &&
-        q2_configstring(strings, lease, out, layout.max_clients, QA_STRING_NONE, clients, error);
+    bool ok = q2_configstring(out, 5, hud.statusbar_id) &&
+        q2_configstring(out, layout.max_clients, app->ui_names.client_counts[source->max_clients]);
     for (size_t i = 0; ok && i < unique; ++i)
-        ok = q2_configstring(strings, lease, out, layout.images + (uint32_t)i + 1, names[i].id, names[i].text, error);
+        ok = q2_configstring(out, layout.images + (uint32_t)i + 1, names[i].id);
     for (size_t i = 0; ok && i < count; ++i)
-        ok = q2_configstring(strings, lease, out, layout.items + (uint32_t)i + 1,
-            qa_q2_item_at(hud.game, i)->name_id, qa_q2_item_at(hud.game, i)->name, error);
+        ok = q2_configstring(out, layout.items + (uint32_t)i + 1, qa_q2_item_at(hud.game, i)->name_id);
     if (!lease) free(names);
     if (ok) qsort(out->configstrings, out->configstring_count, sizeof(*out->configstrings), configstring_compare);
     return ok;
 }
 
 typedef struct q2_stat_images {
-    const qa_unified_q2_configstring *rows;
+    const qa_q2_config_name *rows;
     size_t count;
     uint32_t base;
 } q2_stat_images;

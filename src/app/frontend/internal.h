@@ -193,10 +193,11 @@ typedef struct frontend_seat {
     const qa_font *q2_hud_classic;
     bool q2_hud_active;
     qa_hud_q2_picture_names q2_hud_pictures;
-    qa_hud_q2_program *q2_hud_status, *q2_hud_layout;
+    qa_hud_q2_names q2_hud_names;
+    qa_hud_q2_program *q2_hud_layout;
+    uint32_t q2_hud_image_count;
     const char *q2_hud_status_text;
     uint64_t q2_hud_config_revision, q2_hud_layout_revision;
-    qa_string_id q2_hud_player_icons[256], q2_hud_player_tags[256];
     qa_hud_value q1_monsters;
     char q1_monster_label[80];
     char *q2_help_text[2];

@@ -105,9 +105,7 @@ struct frontend_remote_q2 {
     qa_q2_serverdata data;
     remote_q2_layout layout;
     frontend_remote_q2_content content;
-    char **configs;
-    qa_string_id *config_names;
-    qa_string_id player_appearances[256];
+    qa_hud_q2_names hud_names;
     remote_q2_model **model_slots;
     qa_q2_entity *baselines;
     size_t baseline_count;
@@ -163,8 +161,7 @@ struct frontend_remote_q2 {
     struct frontend_remote_q2_effects *effects;
     qa_hud_q2_table hud_table;
     qa_hud_q2_picture_names hud_pictures;
-    qa_hud_q2_program *hud_status, *hud_overlay;
-    qa_string_id player_icons[256], player_tags[256];
+    qa_hud_q2_program *hud_overlay;
     int32_t inventory[256];
     qa_fs_stage *download_stage;
     qa_fs_root *download_root;

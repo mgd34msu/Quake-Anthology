@@ -158,17 +158,73 @@ bool qa_hud_q2_picture_names_bind(qa_strings *strings,qa_hud_q2_picture_names *n
         qa_hud_q2_player_picture_names(strings,"",&names->player_icon,&names->tag,error);
 }
 
-bool qa_hud_q2_player_picture_names(qa_strings *strings,const char *info,qa_string_id *icon,qa_string_id *dogtag,qa_error *error)
+bool qa_hud_q2_player_icon(qa_strings *strings,const char *appearance,size_t length,qa_string_id *icon,qa_error *error)
+{
+    char path[4096];
+    int n=snprintf(path,sizeof(path),"/players/%.*s_i.pcx",(int)length,appearance);
+    if(n<0||(size_t)n>=sizeof(path)) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q2 player icon path is too long");return false;}
+    return qa_strings_intern_cstr(strings,path,icon,error);
+}
+static bool player_names(qa_strings *strings,const char *info,qa_string_id *appearance,qa_string_id *icon,qa_string_id *dogtag,qa_error *error)
 {
     const char *skin=strchr(info,'\\');skin=skin&&skin[1]?skin+1:"male/grunt";
     const char *end=strchr(skin,'\\');size_t length=end?(size_t)(end-skin):strlen(skin);
     const char *tag=end&&end[1]?end+1:"default";end=strchr(tag,'\\');size_t tag_length=end?(size_t)(end-tag):strlen(tag);
-    char *path=malloc((length>tag_length?length:tag_length)+24);if(!path)return false;
-    snprintf(path,length+24,"/players/%.*s_i.pcx",(int)length,skin);
-    bool okay=qa_strings_intern_cstr(strings,path,icon,error);
-    snprintf(path,tag_length+24,"/tags/%.*s.pcx",(int)tag_length,tag);
-    okay=okay&&qa_strings_intern_cstr(strings,path,dogtag,error);free(path);return okay;
+    char path[4096];
+    int n=snprintf(path,sizeof(path),"/tags/%.*s.pcx",(int)tag_length,tag);
+    if(n<0||(size_t)n>=sizeof(path)) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q2 player tag path is too long");return false;}
+    return (!appearance || qa_strings_intern(strings,(qa_bytes){(const uint8_t *)skin,length},appearance,error)) &&
+        qa_hud_q2_player_icon(strings,skin,length,icon,error) && qa_strings_intern_cstr(strings,path,dogtag,error);
 }
+bool qa_hud_q2_player_picture_names(qa_strings *strings,const char *info,qa_string_id *icon,qa_string_id *dogtag,qa_error *error)
+{ return player_names(strings,info,NULL,icon,dogtag,error); }
+bool qa_hud_q2_names_init(qa_hud_q2_names *names,qa_strings *strings,qa_error *error)
+{
+    *names=(qa_hud_q2_names){.strings=strings};
+    return qa_hud_q2_program_create(strings,&names->status,error) &&
+        player_names(strings,"",NULL,&names->default_icon,&names->default_tag,error);
+}
+void qa_hud_q2_names_clear(qa_hud_q2_names *names)
+{
+    memset(names->values,0,sizeof(names->values));
+    memset(names->appearances,0,sizeof(names->appearances));
+    memset(names->icons,0,sizeof(names->icons));memset(names->tags,0,sizeof(names->tags));
+    qa_hud_q2_program_clear(names->status);
+}
+bool qa_hud_q2_names_configure(qa_hud_q2_names *names,qa_net_protocol_id protocol,qa_error *error)
+{
+    if(names->configured && names->protocol.kind==protocol.kind &&
+        names->protocol.revision==protocol.revision && names->protocol.flags==protocol.flags) return true;
+    qa_q2_codec codec;qa_q2_config_layout layout;
+    if(!qa_q2_codec_init(&codec,protocol,error)||!qa_q2_config_layout_read(&codec,&layout,error)) return false;
+    if(names->configured) qa_hud_q2_names_clear(names);
+    names->layout=layout;names->protocol=protocol;names->configured=true;
+    names->rerelease=layout.max_models==8192;
+    return true;
+}
+bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id value,qa_error *error)
+{
+    if(index>=names->layout.max_configs) return false;
+    if(names->values[index]==value) return true;
+    const char *text=value?qa_strings_cstr(names->strings,value):"";
+    if(index==5&&!qa_hud_q2_program_update(names->status,text,names->rerelease,error)) return false;
+    if(index>=names->layout.player_skins&&index-names->layout.player_skins<256) {
+        uint32_t slot=index-names->layout.player_skins;
+        if(!player_names(names->strings,text,names->appearances+slot,names->icons+slot,names->tags+slot,error)) return false;
+    }
+    names->values[index]=value;return true;
+}
+qa_string_id qa_hud_q2_names_picture(const qa_hud_q2_names *names,int32_t index,unsigned variant)
+{
+    if(index<0||(uint32_t)index>=names->layout.max_configs) return QA_STRING_NONE;
+    if(!variant) return names->values[index];
+    int32_t slot=index-(int32_t)names->layout.player_skins;
+    if(slot<0||slot>=256) return QA_STRING_NONE;
+    qa_string_id name=variant==1?names->icons[slot]:names->tags[slot];
+    return name?name:variant==1?names->default_icon:names->default_tag;
+}
+void qa_hud_q2_names_destroy(qa_hud_q2_names *names)
+{ qa_hud_q2_program_destroy(names->status);*names=(qa_hud_q2_names){0}; }
 
 typedef struct layout_context {
     const qa_hud_q2_options *options;

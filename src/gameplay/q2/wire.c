@@ -24,7 +24,7 @@
 #define Q2_RERELEASE_PICKUP \
     "if 7 xv 0 pic 7 xv 26 yb -42 loc_stat_string 8 yb -50 endif " \
     "if 51 yb -34 xv 319 loc_stat_rstring 51 yb -58 endif "
-const char *qa_q2_wire_statusbar(const qa_q2_game *g)
+static const char *statusbar_text(unsigned kind)
 {
     static const char classic_single[] = Q2_STATUS_VITALS Q2_CLASSIC_PICKUP Q2_STATUS_TIMER
         "if 11 xv 148 pic 11 endif ";
@@ -45,10 +45,30 @@ const char *qa_q2_wire_statusbar(const qa_q2_game *g)
     static const char rerelease_deathmatch[] = Q2_STATUS_VITALS Q2_RERELEASE_PICKUP Q2_STATUS_TIMER
         "yb -50 if 11 xv 150 pic 11 endif " Q2_STATUS_SCORE
         "if 27 yb -137 xr -26 pic 27 endif ";
-    if (g->options.edition == QA_Q2_CLASSIC)
-        return g->options.deathmatch ? classic_deathmatch : classic_single;
-    return g->options.deathmatch ? rerelease_deathmatch :
-        g->options.cooperative ? rerelease_coop : rerelease_single;
+    switch (kind) {
+    case 0: return classic_single;
+    case 1: return classic_deathmatch;
+    case 2: return rerelease_single;
+    case 3: return rerelease_coop;
+    default: return rerelease_deathmatch;
+    }
+}
+bool q2_wire_names_prepare(qa_q2_game *g, qa_error *error)
+{
+    for (unsigned i = 0; i < 5; ++i)
+        if (!qa_strings_intern_cstr(qa_session_strings(g->services.session), statusbar_text(i),
+            &g->wire_statusbar_names[i], error)) return false;
+    return true;
+}
+qa_string_id qa_q2_wire_statusbar_name(const qa_q2_game *g)
+{
+    unsigned kind=g->options.edition==QA_Q2_CLASSIC?(g->options.deathmatch?1:0):
+        g->options.deathmatch?4:g->options.cooperative?3:2;
+    return g->wire_statusbar_names[kind];
+}
+const char *qa_q2_wire_statusbar(const qa_q2_game *g)
+{
+    return qa_strings_cstr(qa_session_strings(g->services.session),qa_q2_wire_statusbar_name(g));
 }
 #undef Q2_STATUS_VITALS
 #undef Q2_STATUS_TIMER

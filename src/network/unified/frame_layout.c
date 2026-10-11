@@ -905,18 +905,18 @@ static const qa_unified_field qa_unified_configuration_state_fields[] = {
 };
 static const qa_unified_record_layout qa_unified_configuration_state_layout = QA_UNIFIED_ACTOR_LAYOUT(qa_unified_configuration_state, qa_unified_configuration_state_fields, actor);
 
-static const qa_unified_field qa_unified_q2_configstring_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q2_configstring, index, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_q2_configstring, value, QA_UNIFIED_FIELD_STRING),
+static const qa_unified_field q2_config_name_fields[] = {
+    QA_UNIFIED_FIELD(qa_q2_config_name, index, QA_UNIFIED_FIELD_U32),
+    {QA_UNIFIED_FIELD_NAME, offsetof(qa_q2_config_name, value_id), NULL, 0, 8192, NULL},
 };
-static const qa_unified_record_layout qa_unified_q2_configstring_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_configstring, qa_unified_q2_configstring_fields);
+static const qa_unified_record_layout q2_config_name_layout = QA_UNIFIED_LAYOUT(qa_q2_config_name, q2_config_name_fields);
 static const qa_unified_field qa_unified_q2_hud_configuration_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, data_provider, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, deathmatch, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_q2_hud_configuration, cooperative, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_RECORD(qa_unified_q2_hud_configuration, protocol, component_protocol_layout),
-    QA_UNIFIED_ARRAY(qa_unified_q2_hud_configuration, configstrings, configstring_count, qa_unified_q2_configstring_layout, 16384),
+    QA_UNIFIED_ARRAY(qa_unified_q2_hud_configuration, configstrings, configstring_count, q2_config_name_layout, 16384),
 };
 static const qa_unified_record_layout qa_unified_q2_hud_configuration_layout = QA_UNIFIED_LAYOUT(qa_unified_q2_hud_configuration, qa_unified_q2_hud_configuration_fields);
 
@@ -2230,11 +2230,7 @@ static const qa_unified_field component_q3_fields[] = {
     QA_UNIFIED_ARRAY(qa_unified_component_q3, commands, command_count, component_command_layout, 64),
 };
 static const qa_unified_record_layout component_q3_layout = QA_UNIFIED_LAYOUT(qa_unified_component_q3, component_q3_fields);
-static const qa_unified_field component_configstring_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_component_configstring, index, QA_UNIFIED_FIELD_U32),
-    {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_component_configstring, value), NULL, 0, 8192, NULL},
-};
-static const qa_unified_record_layout component_configstring_layout = QA_UNIFIED_LAYOUT(qa_unified_component_configstring, component_configstring_fields);
+
 static const qa_unified_field component_protocol_fields[] = {
     QA_UNIFIED_FIELD(qa_net_protocol_id, kind, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_FIELD(qa_net_protocol_id, flags, QA_UNIFIED_FIELD_U32),
@@ -2248,7 +2244,7 @@ static const qa_unified_field component_q2_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_component_q2, hud, QA_UNIFIED_FIELD_U32),
     QA_UNIFIED_RECORD(qa_unified_component_q2, protocol, component_protocol_layout),
     QA_UNIFIED_FIELD(qa_unified_component_q2, replace_configstrings, QA_UNIFIED_FIELD_BOOL),
-    QA_UNIFIED_ARRAY(qa_unified_component_q2, configstrings, configstring_count, component_configstring_layout, 16384),
+    QA_UNIFIED_ARRAY(qa_unified_component_q2, configstrings, configstring_count, q2_config_name_layout, 16384),
     {QA_UNIFIED_FIELD_STRING, offsetof(qa_unified_component_q2, layout), NULL, 0, 65536, NULL},
     QA_UNIFIED_FIXED(qa_unified_component_q2, inventory, int16_t_layout, 256),
     QA_UNIFIED_FIELD(qa_unified_component_q2, player_number, QA_UNIFIED_FIELD_I32),
@@ -2381,7 +2377,7 @@ static bool control_components_check(const qa_unified_components_control *update
         for (size_t k=0;k<i;++k) if (!strcmp(row->owner.provider,update->native[k].owner.provider))
             return frame_bad(error,"Unified native component owner is repeated");
         for (size_t k=0;k<row->configstring_count;++k) {
-            if (row->hud==QA_UNIFIED_COMPONENT_HUD_NONE || row->configstrings[k].index>=layout.max_configs || !row->configstrings[k].value ||
+            if (row->hud==QA_UNIFIED_COMPONENT_HUD_NONE || row->configstrings[k].index>=layout.max_configs || !row->configstrings[k].value_id ||
                 (k && row->configstrings[k-1].index>=row->configstrings[k].index))
                 return frame_bad(error,"Unified Q2 configstrings exceed their actual ordered Source table");
         }

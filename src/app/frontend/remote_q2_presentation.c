@@ -267,20 +267,12 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
 static const char *hud_config(void *context, int32_t index)
 { return index >= 0 && index <= UINT16_MAX ? frontend_remote_q2_config(context, (uint16_t)index) : ""; }
 static qa_string_id hud_config_picture(void *context,int32_t index,unsigned variant)
-{
-    frontend_remote_q2 *row=context;
-    if(index<0||(size_t)index>=row->layout.max_configs)return QA_STRING_NONE;
-    if(!variant)return row->config_names[index];
-    int32_t slot=index-(int32_t)row->layout.players;
-    if(slot<0||slot>=256)return QA_STRING_NONE;
-    qa_string_id value=variant==1?row->player_icons[slot]:row->player_tags[slot];
-    return value?value:variant==1?row->hud_pictures.player_icon:row->hud_pictures.tag;
-}
+{ return qa_hud_q2_names_picture(&((frontend_remote_q2 *)context)->hud_names,index,variant); }
 static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_error *error)
 {
     if (!row->media_ready || !row->frontend->audio) return true;
     if (event->index >= row->layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound leaves its actual protocol config range");
-    qa_string_id name=row->config_names[row->layout.sounds+event->index];
+    qa_string_id name=row->hud_names.values[row->layout.sounds+event->index];
     if (!name) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound has no actual configstring");
     const qa_q2_entity *source = entity(&row->frame, event->entity);
     qa_vec3 origin = event->has_position ? vector(event->position) : source ? vector(source->origin) : qa_v3(0, 0, 0);
@@ -346,7 +338,7 @@ static bool loops(frontend_remote_q2 *row, qa_error *error)
         const qa_q2_entity *entity = row->frame.entities + i;
         if (!entity->sound) continue;
         if (entity->sound >= row->layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 looping sound leaves its received config range");
-        qa_string_id name = row->config_names[row->layout.sounds + entity->sound];
+        qa_string_id name = row->hud_names.values[row->layout.sounds + entity->sound];
         if (!name) continue;
         qa_audio_asset *asset = NULL;
         if (!qa_audio_bank_register_id(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
@@ -787,7 +779,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         qa_hud_q2_options options = {.viewport = view.viewport, .scale = 1, .font_line_height = 8, .white = row->white,
             .fonts = f->seats[seat].fonts, .table = &row->hud_table, .context = row,
             .configstring = hud_config, .picture = remote_q2_picture_read,
-            .config_picture=hud_config_picture,.picture_names=&row->hud_pictures,.status=row->hud_status};
+            .config_picture=hud_config_picture,.picture_names=&row->hud_pictures,.status=row->hud_names.status};
         options.fonts.classic = row->classic;
         qa_hud_q2_frame hud = {.protocol = row->options.domain.protocol, .stats = frame->player.stats,
             .stat_count = QA_Q2_MAX_STATS, .inventory = row->inventory, .inventory_count = 256,

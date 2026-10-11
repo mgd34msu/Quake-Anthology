@@ -193,16 +193,7 @@ static const qa_scene_image *local_q2_picture(void *context, qa_string_id name, 
         hud->source->edition == QA_Q2_RERELEASE,QA_SCENE_NEAREST,error);
 }
 static qa_string_id local_q2_config_picture(void *context,int32_t index,unsigned variant)
-{
-    local_q2_hud *hud=context;
-    if(variant) {
-        int32_t slot=index-(int32_t)hud->config.player_skins;
-        if(slot<0||slot>=256)return QA_STRING_NONE;
-        return variant==1?hud->seat->q2_hud_player_icons[slot]:hud->seat->q2_hud_player_tags[slot];
-    }
-    if(hud->source->original)return index>=0&&(uint32_t)index<hud->source->configstring_count?hud->source->configstrings[index]:QA_STRING_NONE;
-    return index>=(int32_t)hud->config.images&&(uint32_t)index-hud->config.images<=hud->image_count?hud->images[(uint32_t)index-hud->config.images]:QA_STRING_NONE;
-}
+{ return qa_hud_q2_names_picture(&((local_q2_hud *)context)->seat->q2_hud_names,index,variant); }
 static const char *local_q2_binding(void *context, const char *command)
 {
     local_q2_hud *hud = context;
@@ -226,6 +217,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         qa_font_library_destroy(seat->q2_hud_fonts); seat->q2_hud_fonts = NULL;
         seat->q2_hud_classic = NULL; seat->q2_hud_font_provider = source->provider;
         seat->q2_hud_status_text=NULL;seat->q2_hud_config_revision=seat->q2_hud_layout_revision=UINT64_MAX;
+        qa_hud_q2_names_clear(&seat->q2_hud_names);seat->q2_hud_image_count=0;
         if(!qa_hud_q2_picture_names_bind((qa_strings *)source->strings,&seat->q2_hud_pictures,error))return false;
     }
     if (!seat->q2_hud_classic) {
@@ -237,15 +229,16 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
             "local-q2:conchars", conchars, QA_FONT_BAKED_COLOR, &seat->q2_hud_classic, error)) return false;
     }
     qa_net_protocol_id protocol = {.kind = source->edition == QA_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
-    qa_q2_codec codec;
-    if (!qa_q2_codec_init(&codec, protocol, error) || !qa_q2_config_layout_read(&codec, &hud.config, error)) return false;
+    if(!qa_hud_q2_names_configure(&seat->q2_hud_names,protocol,error)) return false;
+    hud.config=seat->q2_hud_names.layout;
     if(seat->q2_hud_status_text!=source->statusbar||seat->q2_hud_config_revision!=source->config_revision) {
-        if(!qa_hud_q2_program_update(seat->q2_hud_status,source->statusbar,source->edition==QA_Q2_RERELEASE,error))return false;
-        seat->q2_hud_status_text=source->statusbar;seat->q2_hud_config_revision=source->config_revision;
-        for(unsigned slot=0;slot<256;++slot) {
-            const char *info=local_q2_config(&hud,(int32_t)hud.config.player_skins+(int32_t)slot);
-            if(!qa_hud_q2_player_picture_names((qa_strings *)source->strings,info?info:"",seat->q2_hud_player_icons+slot,seat->q2_hud_player_tags+slot,error))return false;
+        if(source->original) {
+            for(uint32_t i=0;i<source->configstring_count;++i)
+                if(!qa_hud_q2_names_set(&seat->q2_hud_names,i,source->configstrings[i],error)) return false;
+        } else {
+            if(!qa_hud_q2_names_set(&seat->q2_hud_names,5,source->statusbar_id,error)) return false;
         }
+        seat->q2_hud_status_text=source->statusbar;seat->q2_hud_config_revision=source->config_revision;
     }
     if(seat->q2_hud_layout_revision!=source->layout_revision) {
         if(!qa_hud_q2_program_update(seat->q2_hud_layout,source->layout,source->edition==QA_Q2_RERELEASE,error))return false;
@@ -254,10 +247,17 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
             .image = local_q2_image}, source->stats, error)) return false;
+    if(!source->original) {
+        for(uint32_t i=1;i<=hud.image_count;++i)
+            if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,hud.images[i],error)) return false;
+        for(uint32_t i=hud.image_count+1;i<=seat->q2_hud_image_count;++i)
+            if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,QA_STRING_NONE,error)) return false;
+        seat->q2_hud_image_count=hud.image_count;
+    }
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,
         .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
-        .binding = local_q2_binding,.status=seat->q2_hud_status,
+        .binding = local_q2_binding,.status=seat->q2_hud_names.status,
         .picture_names=&seat->q2_hud_pictures,.config_picture=local_q2_config_picture};
     options.fonts.classic = seat->q2_hud_classic;
     const qa_cvar_view *use_font = source->hud_cvars ?
@@ -765,7 +765,7 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
         seat->client_clock_ns=frontend->wall_time_ns;
         qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
-        if (!qa_hud_q2_program_create(strings, &seat->q2_hud_status, error) ||
+        if (!qa_hud_q2_names_init(&seat->q2_hud_names,strings,error) ||
             !qa_hud_q2_program_create(strings, &seat->q2_hud_layout, error)) return false;
         if (!seat_services_create(seat, error)) return false;
         qa_ui_preferences preferences;
@@ -837,7 +837,7 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
         qa_seat_console_destroy(seat->console); seat->console = NULL;
         qa_input_seat_destroy(seat->input); seat->input = NULL;
         frontend_player_retire(seat);
-        qa_hud_q2_program_destroy(seat->q2_hud_status);
+        qa_hud_q2_names_destroy(&seat->q2_hud_names);
         qa_hud_q2_program_destroy(seat->q2_hud_layout);
         frontend_bindings_destroy(seat);
         free(seat->player_source_titles); free(seat->player_source_products);

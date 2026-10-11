@@ -104,44 +104,31 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
     remote_q2_layout layout = remote_q2_layout_read(protocol);
     if (!layout.max_configs) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 SERVERDATA has no admitted config namespace");
     if (layout.max_configs != row->layout.max_configs || layout.max_models != row->layout.max_models) {
-        for (size_t i = 0; i < row->layout.max_configs; ++i)
-            if (row->configs && row->configs[i]) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 namespace replacement retains old configstrings");
-        char **configs = calloc(layout.max_configs, sizeof(*configs));
-        qa_string_id *names=calloc(layout.max_configs,sizeof(*names));
         remote_q2_model **model_slots = calloc(layout.max_models, sizeof(*model_slots));
-        if (!configs || !names || !model_slots) {
-            free(configs); free(names); free(model_slots);
+        if (!model_slots) {
+            free(model_slots);
             return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining negotiated Q2 config namespace");
         }
-        free(row->configs); row->configs = configs;
-        free(row->config_names); row->config_names=names;
         free(row->model_slots); row->model_slots = model_slots;
     }
     row->layout = layout;
     qa_strings *strings = qa_session_strings(qa_application_session(row->options.domain.application));
-    return (row->hud_status || qa_hud_q2_program_create(strings, &row->hud_status, error)) &&
+    return qa_hud_q2_names_configure(&row->hud_names,protocol,error) &&
         (row->hud_overlay || qa_hud_q2_program_create(strings, &row->hud_overlay, error));
 }
 const char *frontend_remote_q2_config(const frontend_remote_q2 *row, uint16_t index)
-{ return row && row->configs && index < row->layout.max_configs && row->configs[index] ? row->configs[index] : ""; }
+{
+    if (!row || index>=row->layout.max_configs) return "";
+    qa_string_id id=row->hud_names.values[index];
+    return id?qa_strings_cstr(row->hud_names.strings,id):"";
+}
 bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *value, qa_error *error)
 {
     if (!value || index >= row->layout.max_configs)
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 configstring leaves the actual protocol layout");
-    size_t size = strlen(value) + 1; char *copy = malloc(size);
-    if (!copy) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 configstring");
-    memcpy(copy, value, size); free(row->configs[index]); row->configs[index] = copy;
-    qa_strings *strings=qa_session_strings(qa_application_session(row->options.domain.application));
-    row->config_names[index]=QA_STRING_NONE;
-    if (value[0]&&!qa_strings_intern_cstr(strings,value,row->config_names+index,error)) return false;
-    if (index>=row->layout.players&&index-row->layout.players<256) {
-        const char *appearance=strchr(value,'\\');
-        if (!qa_strings_intern_cstr(strings,appearance?appearance+1:"",row->player_appearances+index-row->layout.players,error)) return false;
-    }
-    if(index==5 && !qa_hud_q2_program_update(row->hud_status,value,remote_q2_rerelease_presentation(row),error)) return false;
-    if(index>=row->layout.players&&index-row->layout.players<256&&
-        !qa_hud_q2_player_picture_names(strings,value,row->player_icons+index-row->layout.players,
-            row->player_tags+index-row->layout.players,error))return false;
+    qa_string_id id=QA_STRING_NONE;
+    if (*value && !qa_strings_intern_cstr(row->hud_names.strings,value,&id,error)) return false;
+    if (!qa_hud_q2_names_set(&row->hud_names,index,id,error)) return false;
     remote_q2_prediction_config(row, index);
     return !row->media_ready || remote_q2_model_config(row, index, error);
 }
@@ -166,11 +153,8 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     if (!remote_q2_media_clear(row, error)) return false;
     if (!remote_q2_download_clear(row, error)) return false;
     qa_q2_frame_free(&row->frame); qa_q2_frame_free(&row->previous);
-    for (size_t i = 0; row->configs && i < row->layout.max_configs; ++i) { free(row->configs[i]); row->configs[i] = NULL; row->config_names[i]=QA_STRING_NONE; }
-    memset(row->player_appearances,0,sizeof(row->player_appearances));
-    memset(row->player_icons,0,sizeof(row->player_icons));memset(row->player_tags,0,sizeof(row->player_tags));
-    qa_hud_q2_program_destroy(row->hud_status);row->hud_status=NULL;
-    qa_hud_q2_program_destroy(row->hud_overlay);row->hud_overlay=NULL;
+    qa_hud_q2_names_clear(&row->hud_names);
+    qa_hud_q2_program_clear(row->hud_overlay);
     free(row->baselines); row->baselines = NULL; row->baseline_count = 0;
     memset(row->inventory, 0, sizeof(row->inventory));
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog);
@@ -251,12 +235,10 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     row->frontend = f; row->options = *options; row->layout = remote_q2_layout_read(d->protocol);
     remote_q2_cvars_bind(row);
     row->events = qa_event_ring_create(65536, 16384, 2, error);
-    row->configs = calloc(row->layout.max_configs, sizeof(*row->configs));
-    row->config_names=calloc(row->layout.max_configs,sizeof(*row->config_names));
     row->model_slots = calloc(row->layout.max_models, sizeof(*row->model_slots));
-    if (!row->events || !row->configs || !row->config_names || !row->model_slots || !qa_hud_q2_picture_names_bind(qa_session_strings(qa_application_session(f->application)),&row->hud_pictures,error) || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
+    if (!row->events || !row->model_slots || !qa_hud_q2_names_init(&row->hud_names,qa_session_strings(qa_application_session(f->application)),error) || !qa_hud_q2_picture_names_bind(qa_session_strings(qa_application_session(f->application)),&row->hud_pictures,error) || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
         qa_event_ring_destroy(&row->events);
-        qa_arena_destroy(&row->effect_storage);free(row->configs); free(row->config_names); free(row->model_slots); free(row); return false;
+        qa_arena_destroy(&row->effect_storage);qa_hud_q2_names_destroy(&row->hud_names); free(row->model_slots); free(row); return false;
     }
     row->event_cursor = qa_event_ring_first(row->events);
     qa_catalog_retain(d->catalog); row->frame_ms = 100; row->fraction = 1;
@@ -739,7 +721,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
     qa_event_ring_destroy(&row->events);
-    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->config_names); free(row->model_slots); qa_arena_destroy(&row->effect_storage);
+    qa_catalog_release(row->options.domain.catalog); qa_hud_q2_names_destroy(&row->hud_names); free(row->model_slots); qa_arena_destroy(&row->effect_storage);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
     *link = row->next; qa_movement_result_free(&row->prediction_scratch); free(row); *owned = NULL; return true;
@@ -844,7 +826,7 @@ bool frontend_remote_q2_demo_record_seed(frontend_remote_q2 *row,
     if (!configs) return remote_q2_fail(error, QA_ERROR_MEMORY, "Collecting Q2 demo configstrings");
     size_t count = 0;
     for (size_t i = 0; i < row->layout.max_configs; ++i)
-        if (row->configs[i]) configs[count++] = (qa_q2_config_entry){(uint16_t)i, row->configs[i]};
+        if (row->hud_names.values[i]) configs[count++] = (qa_q2_config_entry){(uint16_t)i, frontend_remote_q2_config(row,(uint16_t)i)};
     qa_q2_game_state state = {.data = row->data, .configs = configs, .config_count = count,
         .baselines = {row->baselines, row->baseline_count}};
     const qa_q2_messages *messages = qa_network_q2_client_messages(row->options.domain.runtime, row->options.domain.client);

@@ -546,6 +546,7 @@ struct qa_q2_game {
     size_t wire_reference_count, wire_reference_capacity;
     uint32_t wire_capacity, wire_extent, wire_clients;
     uint64_t wire_frame;
+    qa_string_id wire_statusbar_names[5];
     qa_lightstyles wire_lightstyles;
     uint64_t wire_map_revision, wire_shadow_revision;
     qa_q2_wire_shadow_light wire_shadows[256];
@@ -616,6 +617,7 @@ bool q2_player_source_motion_rules(qa_q2_game *, q2_actor *, const qa_q2_player_
 bool q2_wire_shadow_event(qa_q2_game *, const qa_q2_map_event *, qa_error *);
 bool q2_wire_bind(qa_q2_game *, q2_actor *, uint32_t, qa_error *);
 void q2_wire_release(qa_q2_game *, q2_actor *);
+bool q2_wire_names_prepare(qa_q2_game *,qa_error *);
 void q2_wire_reset(qa_q2_game *);
 bool q2_actor_live(qa_q2_game *, qa_actor_id);
 enum q2_environment_flags {

@@ -3,6 +3,7 @@
 #include "remote_q2_client.h"
 typedef struct remote_q2_clientinfo {
     char model[256], skin[256], weapon[256];
+    qa_string_id icon;
     bool valid;
 } remote_q2_clientinfo;
 bool remote_q2_clientinfo_read(frontend_remote_q2 *, uint32_t player, uint32_t weapon,

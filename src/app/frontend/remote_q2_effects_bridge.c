@@ -121,7 +121,7 @@ bool remote_q2_sound_asset(frontend_remote_q2 *row, qa_string_id path, uint32_t 
     qa_strings *strings=qa_session_strings(qa_application_session(row->options.domain.application));
     if (!(qa_strings_name_flags(strings,path)&QA_NAME_SEXED_SOUND))
         return qa_audio_bank_register_id(row->sounds,path,QA_GAME_Q2,out,error);
-    qa_string_id appearance=entity&&entity<=256?row->player_appearances[entity-1]:QA_STRING_NONE;
+    qa_string_id appearance=entity&&entity<=256?row->hud_names.appearances[entity-1]:QA_STRING_NONE;
     return qa_audio_bank_sexed_id(row->sounds,path,appearance,out,error);
 }
 

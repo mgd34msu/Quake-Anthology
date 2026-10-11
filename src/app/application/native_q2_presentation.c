@@ -79,11 +79,13 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         value->configstrings = engine->configstrings;
         value->configstring_count = engine->configstring_count;
         value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        value->statusbar_id = value->configstring_count > 5 ? value->configstrings[5] : QA_STRING_NONE;
         value->statusbar = value->configstring_count > 5 && value->configstrings[5] ?
             qa_strings_cstr(value->strings, value->configstrings[5]) : "";
     } else {
         value->game = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->state.q2 : hud->state.q2;
         value->data_provider = character && character->kind == APPLICATION_PROVIDER_Q2 ? character->owner : hud->owner;
+        value->statusbar_id = qa_q2_wire_statusbar_name(hud->state.q2);
         value->statusbar = qa_q2_wire_statusbar(hud->state.q2);
     }
     *out = selected; *found = true;
@@ -114,7 +116,7 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
     qa_application_native_q2_hud value = {.provider = source->provider, .data_provider = source->data_provider,
         .config_revision = source->config_revision, .edition = source->edition,
         .deathmatch = source->deathmatch, .cooperative = source->cooperative, .original = source->original,
-        .game = source->game, .statusbar = source->statusbar, .strings = source->strings,
+        .game = source->game, .statusbar_id = source->statusbar_id, .statusbar = source->statusbar, .strings = source->strings,
         .configstrings = source->configstrings,
         .configstring_count = source->configstring_count, .layout = ""};
     application_provider *clock_owner = original ? original : hud;

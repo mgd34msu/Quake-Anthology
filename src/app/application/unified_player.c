@@ -167,6 +167,10 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
     if (!qa_strings_intern_cstr(strings,path,&names->q1_beam_models[index],error)) return false;
     QA_Q1_BEAM_NAMES(Q1_BEAM_BIND)
 #undef Q1_BEAM_BIND
+    for (unsigned i=0;i<257;++i) {
+        char count[16];snprintf(count,sizeof(count),"%u",i);
+        if (!qa_strings_intern_cstr(strings,count,&names->client_counts[i],error)) return false;
+    }
     const struct { const char *text; qa_string_id *id; } events[] = {
         {"demon/dland2.wav", &names->landing_sounds[0]}, {"world/land.wav", &names->landing_sounds[1]},
         {"misc/h2ohit1.wav", &names->landing_sounds[2]}, {"progs/player.mdl", &names->q1_player_model},

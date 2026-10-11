@@ -287,7 +287,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + i));
         if (!*name) continue;
         qa_error issue = {0};
-        if (!remote_q2_picture_read(row, row->config_names[row->layout.images+i], &issue) && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) {
+        if (!remote_q2_picture_read(row, row->hud_names.values[row->layout.images+i], &issue) && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) {
             if (error) *error = issue;
             return false;
         }

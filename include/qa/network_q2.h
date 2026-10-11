@@ -2,6 +2,9 @@
 #define QA_NETWORK_Q2_H
 #include "qa/network.h"
 #include "qa/usercmd.h"
+#include "qa/strings.h"
+
+typedef struct qa_q2_config_name { uint32_t index; qa_string_id value_id; } qa_q2_config_name;
 #define QA_Q2_MAX_STATS 64
 #define QA_Q2_MAX_SEATS 8
 #define QA_Q2_MAX_AREABITS 8192

@@ -1,5 +1,6 @@
 #ifndef QA_NETWORK_UNIFIED_COMPONENTS_H
 #define QA_NETWORK_UNIFIED_COMPONENTS_H
+#include "qa/network_q2.h"
 
 #include "qa/unified_frame_components.h"
 #include "qa/unified_frame_events.h"
@@ -36,10 +37,7 @@ typedef enum qa_unified_component_hud {
     QA_UNIFIED_COMPONENT_HUD_NONE, QA_UNIFIED_COMPONENT_HUD_OVERLAY,
     QA_UNIFIED_COMPONENT_HUD_REPLACE
 } qa_unified_component_hud;
-typedef struct qa_unified_component_configstring {
-    uint32_t index;
-    char *value;
-} qa_unified_component_configstring;
+
 typedef struct qa_unified_component_q2 {
     qa_source_owner owner;
     qa_unified_component_identity identity;
@@ -47,7 +45,7 @@ typedef struct qa_unified_component_q2 {
     qa_unified_component_hud hud;
     qa_net_protocol_id protocol;
     bool replace_configstrings;
-    qa_unified_component_configstring *configstrings;
+    qa_q2_config_name *configstrings;
     size_t configstring_count;
     char *layout;
     int16_t inventory[256];

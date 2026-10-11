@@ -245,10 +245,10 @@ bool application_unified_q2_component_state(qa_application *app,
     memcpy(state->inventory,v->source.inventory,sizeof(state->inventory));
     if (configs) {
         state->configstrings=qa_unified_frame_lease_alloc(lease,native->configstring_count,
-            sizeof(*state->configstrings),_Alignof(qa_unified_component_configstring),e);
+            sizeof(*state->configstrings),_Alignof(qa_q2_config_name),e);
         if (native->configstring_count && !state->configstrings) return false;
         for (uint32_t i=0;i<native->configstring_count;++i) if (native->configstrings[i])
-            state->configstrings[state->configstring_count++]=(qa_unified_component_configstring){i,(char *)qa_strings_cstr(qa_session_strings(native->provider->application->session), native->configstrings[i])};
+            state->configstrings[state->configstring_count++]=(qa_q2_config_name){i,native->configstrings[i]};
     }
     return application_unified_q2_component_documents_current(app,v);
 }

@@ -111,6 +111,7 @@ typedef struct qa_q2_wire_stat_resources {
 /* One movement-independent native player-view projection for local and wire HUDs. */
 bool qa_q2_wire_stats(const qa_q2_game *, const qa_q2_player_view *,
     const qa_q2_wire_stat_resources *, int16_t stats[64], qa_error *);
+qa_string_id qa_q2_wire_statusbar_name(const qa_q2_game *);
 const char *qa_q2_wire_statusbar(const qa_q2_game *);
 
 #endif
