@@ -25,7 +25,6 @@ typedef struct item_definition {
 typedef struct item_test { item_field field; bool masked,at_most; uint32_t mask; int32_t value; } item_test;
 typedef struct item_predicate { uint32_t instruction; bool unselected; } item_predicate;
 typedef struct item_actor_pointer { size_t record; mod_pointer pointer; } item_actor_pointer;
-typedef struct item_selection { int32_t value; qa_item_id item; } item_selection;
 typedef struct item_continued_call { uint32_t instruction; application_q3_mod_call *call; } item_continued_call;
 typedef struct item_stage {
     uint32_t input_entry,dispatch_entry,request_entry,request_argument,continue_entry,continue_branch;
@@ -34,7 +33,7 @@ typedef struct item_stage {
     mod_pointer movement;
     uint32_t movement_length,minimum,maximum;
     item_field clock,selection,view_height,ground;
-    item_selection *values; size_t value_count;
+    qa_item_source_value *values; size_t value_count;
     item_test *settled,*accepted,*when; size_t settled_count,accepted_count,when_count;
     item_predicate *predicates,*continue_predicates; size_t predicate_count,continue_predicate_count;
     item_continued_call *calls; size_t call_count;

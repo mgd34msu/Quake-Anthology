@@ -42,7 +42,7 @@ static bool armor(qa_source_save_io *io, qa_armor *value)
         !qa_source_save_string(io, &value->powered.source_owner) ||
         !qa_source_save_u32(io, &edition) || !qa_source_save_u32(io, &source_kind)) return false;
     value->powered.kind = (qa_power_kind)powered;
-    value->powered.source_edition = (qa_q2_power_armor_edition)edition;
+    value->powered.source_edition = (qa_q2_native_edition)edition;
     value->powered.source_kind = (qa_power_armor_source)source_kind;
     return qa_armor_validate(value, io->error);
 }

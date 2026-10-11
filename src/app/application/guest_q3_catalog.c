@@ -3,6 +3,7 @@
 #include "guest_projection_private.h"
 #include "guest_q3_native_catalog.h"
 #include "qa/game_q3.h"
+#include "qa/inventory.h"
 #include "qa/json.h"
 #include <limits.h>
 #include <stdio.h>
@@ -10,7 +11,6 @@
 #include <string.h>
 
 typedef struct catalog_locator { uint32_t value, maximum; bool global; } catalog_locator;
-typedef struct catalog_selection { int32_t value; qa_item_id item; } catalog_selection;
 struct application_q3_catalog {
     application_q3_native_catalog *native;
     q3g_role *native_role;
@@ -23,7 +23,7 @@ struct application_q3_catalog {
     uint32_t stride, fields[4];
     int32_t weapon_type, ammo_type;
     bool table, live, private_inventory, selected, records_full;
-    catalog_selection *selection;
+    qa_item_source_value *selection;
     size_t selection_count;
     qa_item_id *stored;
     size_t stored_count;

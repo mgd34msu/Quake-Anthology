@@ -9,7 +9,6 @@ typedef struct mod_actor_call {
     int32_t words[62];
     size_t count,role_count;
 } mod_actor_call;
-typedef struct mod_actor_team { int32_t value; qa_team_id team; } mod_actor_team;
 typedef struct mod_actor_row {
     struct mod_actor_row *next;
     struct application_q3_mod_actors *owner;
@@ -48,7 +47,7 @@ struct application_q3_mod_actors {
     double mass;
     uint32_t mass_field;
     uint32_t damage_flags[5];
-    mod_actor_team *teams;
+    qa_team_source_value *teams;
     size_t team_count;
     mod_actor_call calls[MOD_ACTOR_CALLS];
     application_q3_mod_call *globals;

@@ -236,7 +236,7 @@ static bool describe(void *opaque, const qa_damage_request *request,
     *out = (qa_combat_context){
         .armor = {.q2_profile = target_state->armor.regular.kind == QA_ARMOR_Q2 ||
                 target_state->armor.powered.kind != QA_POWER_NONE,
-            .rerelease = target_state->armor.powered.source_edition == QA_Q2_POWER_ARMOR_RERELEASE,
+            .rerelease = target_state->armor.powered.source_edition == QA_Q2_CAUSE_RERELEASE,
             .ctf = ctf, .alive = target_state->health > 0,
             .screen_facing_dot = qa_vec_dot(forward, contact)},
         .game.q2 = {.player = target.player, .monster = target.monster,
@@ -377,7 +377,7 @@ static bool source_feedback(void *opaque, qa_combat *combat,
         if (feedback->powered.kind == QA_POWER_NONE)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Q2 power sparks have no actual powered armor recipe");
-        effect = feedback->powered.source_edition == QA_Q2_POWER_ARMOR_RERELEASE ||
+        effect = feedback->powered.source_edition == QA_Q2_CAUSE_RERELEASE ||
             feedback->powered.kind == QA_POWER_SCREEN ?
             QA_Q2_DAMAGE_SCREEN_SPARKS : QA_Q2_DAMAGE_SHIELD_SPARKS;
         application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
@@ -484,7 +484,7 @@ bool application_native_q2_armor_context(void *opaque, const qa_damage_request *
     qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 contact = qa_vec_normalize(qa_vec_sub(geometry->point, body.origin));
     *out = (qa_armor_context){.q2_profile = true,
-        .rerelease = state->armor.powered.source_edition == QA_Q2_POWER_ARMOR_RERELEASE,
+        .rerelease = state->armor.powered.source_edition == QA_Q2_CAUSE_RERELEASE,
         .ctf = ctf, .alive = state->health > 0,
         .screen_facing_dot = qa_vec_dot(forward, contact)};
     return true;
