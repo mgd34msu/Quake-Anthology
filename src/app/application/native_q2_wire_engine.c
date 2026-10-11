@@ -45,10 +45,9 @@ static bool physical_slot(struct application_native_q2 *engine, qa_actor_id acto
     uint32_t slot = 0;
     if (record->owner == engine->provider->owner && record->has_source) {
         slot = record->source_slot; *present = true;
-    } else for (uint32_t i = 1; i <= engine->wire_engine->clients; ++i) {
-        if (!qa_actor_id_equal(engine->clients[i].actor, actor)) continue;
-        if (*present) return application_fail(error, QA_ERROR_FORMAT, "Original Q2 Engine actor aliases physical clients");
-        slot = i; *present = true;
+    } else {
+        slot = application_native_q2_client_slot(engine, actor);
+        *present = slot != 0;
     }
     if (!*present) return true;
     qa_native_slot_binding binding;

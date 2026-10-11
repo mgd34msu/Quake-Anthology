@@ -71,10 +71,8 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         struct application_native_q2 *engine = selected.original->state.native.q2_engine;
         if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
             engine->profile != QA_NATIVE_Q2_GAME_API2023)) return true;
-        for (uint32_t i = 1; i < sizeof(engine->clients) / sizeof(engine->clients[0]); ++i)
-            if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, actor)) {
-                selected.slot = i; break;
-            }
+        if (application_native_q2_client_admitted(engine, actor))
+            selected.slot = application_native_q2_client_slot(engine, actor);
         if (!selected.slot) return true;
         value->data_provider = selected.original->owner; value->config_revision = engine->config_revision;
         value->original = true; value->strings = qa_session_strings(app->session);

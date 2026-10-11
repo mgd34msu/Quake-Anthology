@@ -507,11 +507,11 @@ bool application_native_q2_address(void *opaque, qa_native_host *host, qa_actor_
     struct application_native_q2 *engine = opaque;
     *out = 0; *present = false;
     if (!qa_actors_get(qa_session_actors(engine->provider->application->session), actor)) return true;
-    for (uint32_t i = 1; i < 257; ++i)
-        if (qa_actor_id_equal(engine->clients[i].actor, actor)) {
-            if (!qa_native_entity_address(qa_native_host_instance(host), i, out, error)) return false;
-            *present = true; return true;
-        }
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
+    if (slot) {
+        if (!qa_native_entity_address(qa_native_host_instance(host), slot, out, error)) return false;
+        *present = true;
+    }
     return true;
 }
 

@@ -27,11 +27,9 @@ struct application_native_q2 *application_native_q2_hud_source(
         application_fail(error, QA_ERROR_UNSUPPORTED, "External Q2 cgame requires an admitted KEX public player-state producer");
         return NULL;
     }
-    for (uint32_t i = 1; i < 257; ++i)
-        if (source->clients[i].connected && source->clients[i].begun &&
-            qa_actor_id_equal(source->clients[i].actor, actor)) {
-            *slot = i; return source;
-        }
+    if (application_native_q2_client_begun(source, actor)) {
+        *slot = application_native_q2_client_slot(source, actor); return source;
+    }
     application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 HUD source client projection is unavailable");
     return NULL;
 }

@@ -201,9 +201,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         if (row.retiring || (row.source_begin_pending && !before_begin) || !row.actor.registry ||
             !qa_actors_get(qa_session_actors(app->session),row.actor)) continue;
         if (original) {
-            uint32_t source_slot=0;
-            for (uint32_t slot=1;slot<257;++slot)
-                if (qa_actor_id_equal(engine->clients[slot].actor,row.actor)) { source_slot=slot; break; }
+            uint32_t source_slot=application_native_q2_client_slot(engine,row.actor);
             if (!source_slot) continue;
             const application_native_q2_client *client=&engine->clients[source_slot];
             if ((!client->connected && delivery!=QA_APPLICATION_Q2_UNICAST) ||

@@ -386,6 +386,10 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         engine->visibility = visibility; visibility = NULL;
         free(engine->configstrings); engine->configstrings = config; config = NULL;
         memcpy(engine->clients, clients, sizeof(engine->clients));
+        memset(engine->client_slots, 0, engine->client_actor_capacity * sizeof(*engine->client_slots));
+        for (uint32_t slot = 1; slot < 257; ++slot)
+            if (engine->clients[slot].actor.registry)
+                engine->client_slots[engine->clients[slot].actor.slot] = (uint16_t)slot;
         engine->world_actor = world; engine->frame = frame; engine->map_name = map_id; engine->spawn_point = spawn_id;
         engine->initialized = initialized != 0; engine->map_ready = engine->provider->map_bound = map_ready != 0;
         qa_cvars_set_server_active(engine->cvars, engine->map_ready);

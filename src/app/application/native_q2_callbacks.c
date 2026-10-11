@@ -363,9 +363,7 @@ static bool client_slot(void *context,qa_actor_id actor,uint32_t *out,bool *foun
 static bool client_admitted(void *context,qa_actor_id actor)
 {
     application_native_q2_callbacks *o=context;
-    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
-    const application_native_q2_client *c=o->engine->clients+slot;
-    return slot && c->connected && !c->denied && !c->disconnect_started;
+    return application_native_q2_client_admitted(o->engine, actor);
 }
 static bool client_rejected(void *context,qa_actor_id actor)
 {
@@ -1963,7 +1961,7 @@ bool application_native_q2_callbacks_equipment_restore_prepare(struct qa_applica
         if(!application_native_q2_items_finish_restore(o->items,e)) return false;
         for(uint32_t slot=1;slot<257;++slot) {
             const application_native_q2_client *client=n->clients+slot;
-            if(!client->reserved||!client->connected||client->denied||client->disconnect_started) continue;
+            if(!application_native_q2_client_admitted(n,client->actor)) continue;
             if(application_native_q2_items_actor_admitted(o->items,client->actor)&&o->weapons&&
                 !application_native_q2_weapon_stage_admit(o->weapons,client->actor,e)) return false;
         }
@@ -2066,7 +2064,7 @@ bool application_native_q2_callbacks_register(struct application_native_q2 *n,qa
         (o->pickups&&!application_native_q2_pickups_activate(o->pickups,e))) return false;
     if(o->pickups) for(uint32_t slot=1;slot<257;++slot) {
         const application_native_q2_client *client=n->clients+slot;
-        if(client->reserved&&client->connected&&!client->denied&&!client->disconnect_started&&
+        if(application_native_q2_client_admitted(n,client->actor)&&
             !application_native_q2_pickups_bind(o->pickups,client->actor,e)) return false;
     }
     qa_json_id rows=qa_json_get(o->document,qa_json_root(o->document),"callbacks");

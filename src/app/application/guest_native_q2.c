@@ -186,15 +186,15 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
     if (engine->provider->state.native.host &&
         !qa_native_host_actor_released(engine->provider->state.native.host, actor, &error))
         application_fault(engine->provider->application, &error);
-    for (size_t i = 1; i < 257; ++i)
-        if (qa_actor_id_equal(engine->clients[i].actor, actor.id)) {
-            engine->clients[i].actor = (qa_actor_id){0};
-            engine->clients[i].connected = engine->clients[i].begun = false;
-            engine->clients[i].denied = false;
-            engine->clients[i].inventory_bound = false;
-            engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
-            engine->clients[i].protocol_fog_actor = (qa_actor_id){0};
-        }
+    uint32_t slot = application_native_q2_client_slot(engine, actor.id);
+    if (slot) {
+        application_native_q2_client_unbind(engine, actor.id);
+        application_native_q2_client *client = engine->clients + slot;
+        client->actor = (qa_actor_id){0};
+        client->connected = client->begun = client->denied = client->inventory_bound = false;
+        client->protocol_fog = (qa_q2_wire_fog){0};
+        client->protocol_fog_actor = (qa_actor_id){0};
+    }
     if (qa_actor_id_equal(engine->world_actor, actor.id)) engine->world_actor = (qa_actor_id){0};
 }
 
@@ -279,6 +279,9 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 owner");
     provider->state.native.q2_engine = engine;
     engine->provider = provider; engine->world = world;
+    engine->client_actor_capacity = qa_actors_capacity(qa_session_actors(app->session));
+    engine->client_slots = calloc(engine->client_actor_capacity, sizeof(*engine->client_slots));
+    if (!engine->client_slots) return application_fail(error, QA_ERROR_MEMORY, "Allocating native client indices");
     bool cgame = (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_HUD)) &&
         !(provider->launch->roles & (QA_ROLE_BIT(QA_ROLE_ENTITIES) |
           QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL)));
@@ -831,7 +834,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     qa_command_tokens_free(&engine->arguments);
     application_network_q2_retire_bindings(engine);
     qa_q2_messages_destroy(engine->event_decoder);
-    free(engine->configstrings); free(engine->entity_text); free(engine);
+    free(engine->configstrings); free(engine->entity_text); free(engine->client_slots); free(engine);
     provider->state.native.q2_engine = NULL;
     if (!ok && error) *error = first;
     return ok;

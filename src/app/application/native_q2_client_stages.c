@@ -418,18 +418,14 @@ static bool input_current(struct application_native_q2_input *s,qa_error *e)
     struct application_native_q2 *n=s->owner->engine;
     if(!qa_actors_get(qa_session_actors(n->provider->application->session),s->actor))
         return application_fail(e,QA_ERROR_NOT_FOUND,"Native input actor has retired");
-    uint32_t slot=application_native_q2_client_slot(n,s->actor);
-    const application_native_q2_client *c=n->clients+slot;
-    return (slot&&c->connected&&!c->denied&&!c->disconnect_started)||
+    return application_native_q2_client_admitted(n,s->actor)||
         application_fail(e,QA_ERROR_ARGUMENT,"Native input lost its admitted physical client");
 }
 static bool input_live(const struct application_native_q2_input *s)
 {
     struct application_native_q2 *n=s->owner->engine;
     if(!qa_actors_get(qa_session_actors(n->provider->application->session),s->actor)) return false;
-    uint32_t slot=application_native_q2_client_slot(n,s->actor);
-    const application_native_q2_client *c=n->clients+slot;
-    return slot&&c->connected&&!c->denied&&!c->disconnect_started;
+    return application_native_q2_client_admitted(n,s->actor);
 }
 static bool input_values(struct application_native_q2_input *s,application_q3_mod_value values[Q3_MOD_VALUE_COUNT],
     application_native_callback_inputs *out,qa_error *e)
@@ -727,10 +723,7 @@ bool application_native_q2_input_begin(struct application_native_q2 *n,qa_actor_
     qa_json_id clients=qa_json_get(d,qa_json_root(d),"clients"),bindings=qa_json_get(d,clients,"input");bool matching=false;
     for(size_t i=0;i<qa_json_size(d,bindings);++i) if(qa_json_string_equal(d,qa_json_get(d,qa_json_at(d,bindings,i),"scope"),slice?"movement-slice":"client-command")) matching=true;
     if(!matching) return true;
-    uint32_t slot=application_native_q2_client_slot(n,actor);
-    const application_native_q2_client *client=n->clients+slot;
-    bool admitted=slot&&client->connected&&!client->denied&&!client->disconnect_started;
-    if(!admitted) return true;
+    if(!application_native_q2_client_admitted(n,actor)) return true;
     if(!values||!output||!application_native_q2_stages_prepare(n,e)) return false;
     struct application_native_q2_input *s=qa_unified_frame_lease_alloc(storage,1,sizeof(*s),_Alignof(struct application_native_q2_input),e);
     if(!s) return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native input application");

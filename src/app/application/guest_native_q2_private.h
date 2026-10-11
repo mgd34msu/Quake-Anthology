@@ -70,6 +70,8 @@ struct application_native_q2 {
     qa_actor_id world_actor;
     qa_actor_definition definition;
     application_native_q2_client clients[257];
+    uint16_t *client_slots;
+    uint32_t client_actor_capacity;
     qa_string_id *configstrings;
     qa_q2_messages *event_decoder;
     uint32_t configstring_count, resource_base[3], resource_limit[3];
@@ -176,5 +178,8 @@ bool application_native_q2_inventory_ui_read(application_provider *, qa_actor_id
     application_native_q2_ui_inventory *, qa_error *);
 void application_native_q2_inventory_ui_free(application_native_q2_ui_inventory *);
 uint32_t application_native_q2_client_slot(const struct application_native_q2 *,qa_actor_id);
+bool application_native_q2_client_admitted(const struct application_native_q2 *, qa_actor_id);
+bool application_native_q2_client_begun(const struct application_native_q2 *, qa_actor_id);
+void application_native_q2_client_unbind(struct application_native_q2 *, qa_actor_id);
 
 #endif

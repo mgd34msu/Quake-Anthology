@@ -10,12 +10,29 @@
 #include "qa/native_host_q2_wire.h"
 #include <math.h>
 
-uint32_t application_native_q2_client_slot(const struct application_native_q2 *engine,qa_actor_id actor)
+uint32_t application_native_q2_client_slot(const struct application_native_q2 *engine, qa_actor_id actor)
 {
-    if (!engine || !actor.registry) return 0;
-    for (uint32_t i=1;i<257;++i)
-        if (engine->clients[i].reserved && qa_actor_id_equal(engine->clients[i].actor,actor))return i;
-    return 0;
+    if (!engine || !engine->client_slots || !actor.registry || actor.slot >= engine->client_actor_capacity) return 0;
+    uint32_t slot = engine->client_slots[actor.slot];
+    return slot && qa_actor_id_equal(engine->clients[slot].actor, actor) ? slot : 0;
+}
+
+bool application_native_q2_client_admitted(const struct application_native_q2 *engine, qa_actor_id actor)
+{
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
+    return slot && engine->clients[slot].connected && !engine->clients[slot].denied &&
+        !engine->clients[slot].disconnect_started;
+}
+
+bool application_native_q2_client_begun(const struct application_native_q2 *engine, qa_actor_id actor)
+{
+    return application_native_q2_client_admitted(engine, actor) &&
+        engine->clients[application_native_q2_client_slot(engine, actor)].begun;
+}
+
+void application_native_q2_client_unbind(struct application_native_q2 *engine, qa_actor_id actor)
+{
+    if (application_native_q2_client_slot(engine, actor)) engine->client_slots[actor.slot] = 0;
 }
 
 static uint32_t source_client_slot(const application_provider *provider, qa_actor_id actor)
@@ -23,14 +40,8 @@ static uint32_t source_client_slot(const application_provider *provider, qa_acto
     const struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
         ? provider->state.native.q2_engine : NULL;
     if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023) return 0;
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i)
-        if (engine->clients[i].connected && engine->clients[i].begun &&
-            qa_actor_id_equal(engine->clients[i].actor, actor)) {
-            if (slot) return 0;
-            slot = i;
-        }
-    return slot;
+    return application_native_q2_client_begun(engine, actor) ?
+        application_native_q2_client_slot(engine, actor) : 0;
 }
 
 bool application_native_q2_source_client(const application_provider *provider, qa_actor_id actor)
@@ -361,10 +372,8 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
     qa_application *app = provider->application;
     if (application_provider_for(app, actor, QA_ROLE_MOVEMENT, NULL) != provider) return true;
     *handled = true;
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i)
-        if (engine->clients[i].connected && engine->clients[i].begun &&
-            qa_actor_id_equal(engine->clients[i].actor, actor)) { slot = i; break; }
+    uint32_t slot = application_native_q2_client_begun(engine, actor) ?
+        application_native_q2_client_slot(engine, actor) : 0;
     bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
     if (!slot || !engine->map_ready || actor.slot >= app->control_capacity ||
         command->kind != (classic ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) ||
@@ -481,8 +490,11 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 projected client generation is not live");
     application_native_q2_client *client = &engine->clients[slot];
     if (client->denied && qa_actor_id_equal(client->actor, actor)) return true;
-    if (client->connected || (client->actor.registry && !qa_actor_id_equal(client->actor, actor)))
+    uint32_t prior_slot = application_native_q2_client_slot(engine, actor);
+    if (client->connected || (client->actor.registry && !qa_actor_id_equal(client->actor, actor)) ||
+        (prior_slot && prior_slot != slot))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source client slot is occupied");
+    engine->client_slots[actor.slot] = (uint16_t)slot;
     client->actor = actor; client->bot = bot; client->disconnect_started = false;
     if (client->layout[0]) ++client->layout_revision;
     for (size_t i = 0; i < sizeof(client->inventory) / sizeof(*client->inventory); ++i)
@@ -509,7 +521,7 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
         qa_error cleanup={0};
         bool detached=qa_native_host_client_retained_set(provider->state.native.host,slot,false,&cleanup)&&
             qa_native_host_detach_actor(provider->state.native.host,slot,actor,&cleanup);
-        if(detached) { client->actor=(qa_actor_id){0}; client->userinfo_present=false; client->userinfo[0]=0;
+        if(detached) { application_native_q2_client_unbind(engine, actor); client->actor=(qa_actor_id){0}; client->userinfo_present=false; client->userinfo[0]=0;
             client->protocol_fog=(qa_q2_wire_fog){0}; client->protocol_fog_actor=(qa_actor_id){0}; }
         if(ok&&!detached&&error) *error=cleanup;
         return ok&&detached;
@@ -536,6 +548,7 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
         bool detached = qa_native_host_detach_actor(provider->state.native.host, slot, actor, &cleanup);
         if (!detached && ok) { ok = false; if (error) *error = cleanup; }
         if (detached) {
+            application_native_q2_client_unbind(engine, actor);
             client->actor = (qa_actor_id){0};
             client->protocol_fog = (qa_q2_wire_fog){0};
             client->protocol_fog_actor = (qa_actor_id){0};
@@ -672,6 +685,7 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     client->connected = client->begun = false;
     client->denied = false;
     application_native_q2_visibility_released(engine, actor);
+    application_native_q2_client_unbind(engine, actor);
     client->actor = (qa_actor_id){0}; client->bot = false;
     client->protocol_fog = (qa_q2_wire_fog){0};
     client->protocol_fog_actor = (qa_actor_id){0};
@@ -687,12 +701,7 @@ bool application_native_q2_actor_disconnect(application_provider *provider,
         provider->state.native.q2_engine : NULL;
     if (!engine || engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 disconnect requires its actual GAME owner");
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i) {
-        if (!qa_actor_id_equal(engine->clients[i].actor, actor)) continue;
-        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 disconnect aliases two physical clients");
-        slot = i;
-    }
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
     return !slot || application_native_q2_client_disconnect(provider, slot, error);
 }
 
@@ -770,13 +779,8 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
         !qa_actors_get(qa_session_actors(provider->application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 ClientCommand requires its actual invocation and live client");
     *handled = false;
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i)
-        if (engine->clients[i].connected && engine->clients[i].begun &&
-            qa_actor_id_equal(engine->clients[i].actor, actor)) {
-            if (slot) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 ClientCommand aliases two physical client slots");
-            slot = i;
-        }
+    uint32_t slot = application_native_q2_client_begun(engine, actor) ?
+        application_native_q2_client_slot(engine, actor) : 0;
     if (!slot) return true;
     qa_command_tokens tokens = {0};
     if (!command_arguments_copy(command, &tokens, error)) return false;

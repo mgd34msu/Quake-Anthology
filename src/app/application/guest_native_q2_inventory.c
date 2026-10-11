@@ -602,14 +602,9 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
     if (!engine || !out || !engine->map_ready || engine->shutting_down || engine->calls ||
         !engine->primary_inventory || !engine->provider->state.native.host)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 UI inventory requires its returned source owner");
-    application_native_q2_client *client = NULL;
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i)
-        if (engine->clients[i].reserved && engine->clients[i].connected && engine->clients[i].begun &&
-            !engine->clients[i].disconnect_started && qa_actor_id_equal(engine->clients[i].actor, actor)) {
-            if (client) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 UI repeats a physical source client");
-            client = &engine->clients[i]; slot = i;
-        }
+    uint32_t slot = application_native_q2_client_begun(engine, actor) ?
+        application_native_q2_client_slot(engine, actor) : 0;
+    application_native_q2_client *client = slot ? engine->clients + slot : NULL;
     if (!client || client->inventory_prepared || !engine->primary_inventory->resolved)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 UI inventory lost its physical client binding");
     struct application_native_q2_inventory *p = engine->primary_inventory;
