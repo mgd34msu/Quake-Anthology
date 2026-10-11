@@ -841,10 +841,9 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     for (size_t i = 0; i < app->unified_event_owner_count; ++i) {
         const application_unified_event_owner *receipt = app->unified_event_owners + i;
         if (receipt->provider != owner || !receipt->active) continue;
-        const char *identity = event_alias(app, receipt->content);
-        if (!identity || strcmp(identity, source.product->identity) || source.component != (receipt->generation != 0))
+        if (source.component != (receipt->generation != 0))
             return application_fail(e, QA_ERROR_ARGUMENT, "Source presentation activation changed its actual content");
-        borrowed.owner_generation = receipt->generation; activated = true;
+        borrowed.owner_generation = receipt->generation; borrowed.content = receipt->content; activated = true;
     }
     if (!activated) return application_fail(e, QA_ERROR_ARGUMENT, "Source event has no actual presentation activation receipt");
     if (simulation && simulation_recipient.registry) {
@@ -863,7 +862,6 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
     if (primary && qa_session_clock(app->session, primary->owner, &clock)) {
         borrowed.clock = clock.frame.kind; borrowed.simulation_time_ns = clock.frame.time_ns;
     }
-    if (!qa_strings_intern_cstr(qa_session_strings(app->session), source.product->identity, &borrowed.content, e)) return false;
     application_event_write write;
     bool own = app->event_write == NULL;
     if (own && !application_event_stream_begin(app, QA_APPLICATION_EVENT_UNIFIED, &write, e))

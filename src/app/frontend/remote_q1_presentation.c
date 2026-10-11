@@ -92,7 +92,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         .view_model = entity->view_weapon, .player = entity->has_colors,
         .source_path = model->path, .identity_light = 1};
     qa_scene_model_indexed_skin indexed = {0};
-    if (row->skins && !strcmp(model->path, "progs/player.mdl") &&
+    if (row->skins && (qa_scene_model_path_flags(model->scene) & QA_MODEL_PATH_PLAYER_SHADE) &&
         entity->entity.number >= 1 && entity->entity.number <= 32) {
         const qa_actor_record *actor = qa_actors_get(row->options.domain.actors, entity->actor);
         if (!actor || actor->owner != row->options.domain.actor_owner || !actor->has_source ||

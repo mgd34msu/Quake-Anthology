@@ -109,11 +109,8 @@ bool frontend_remote_q2_effects_controls_read(const frontend_remote_q2_effects_c
         (!qa_cvars_set_number(source->cvars, "cl_railtrail_time", duration < 0 ? 0 : 2073600, error) ||
             !source->current(source->context, error))) return false;
     rail_time = qa_cvars_read(source->cvars, source->handles->cl_railtrail_time);
-    const qa_cvar_view *core_row = qa_cvars_read(source->cvars, source->handles->cl_railcore_color);
-    const qa_cvar_view *spiral_row = qa_cvars_read(source->cvars, source->handles->cl_railspiral_color);
-    if (!core_row || !spiral_row || !rail_color_parse(core_row->value, &core) ||
-        !rail_color_parse(spiral_row->value, &spiral))
-        return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 rail controls changed during actual CLIENT normalization");
+    if (!control_rail_color(source, source->handles->cl_railcore_color, &source->handles->core, "cl_railcore_color", &core, error) ||
+        !control_rail_color(source, source->handles->cl_railspiral_color, &source->handles->spiral, "cl_railspiral_color", &spiral, error)) return false;
     const qa_cvar_view *time = qa_cvars_read(source->cvars, source->handles->cl_muzzlelight_time);
     const qa_cvar_view *effects = qa_cvars_read(source->cvars, source->handles->cl_rerelease_effects);
     const qa_cvar_view *flashes = qa_cvars_read(source->cvars, source->handles->cl_muzzleflashes);

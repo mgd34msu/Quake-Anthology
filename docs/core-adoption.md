@@ -804,6 +804,15 @@ are deleted. The normal build and seven core suites pass. Names leftovers
 items 5, 6, 8, 10-14 and the remaining native callback metadata in item 16
 still require migration. Item 17 uses bound bot variable pointers.
 
+Names leftovers item 8: event emission takes content from its already bound
+activation receipt; the per-event product text check and interning are deleted.
+Rail colors use the modification cache both before and after normalization,
+without an unconditional second parse. Item 6's Q3 presentation validator uses
+the catalog's existing indexed lookup instead of a whole-catalog text scan.
+Item 13's QW player-model decision uses the admitted model flag. Normal build
+and seven core suites pass. Item 6's native HUD picture cache and item 13's
+local flare/brush classification still remain.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
