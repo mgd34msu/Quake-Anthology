@@ -248,7 +248,7 @@ bool scene_model_indexed(qa_scene_model *model, const char *name, qa_bytes pixel
 
 bool scene_model_indexed_override(qa_scene_model *model, const qa_scene_model_indexed_skin *skin,
     scene_model_image **out, qa_error *error) {
-    if (!skin || !skin->name || !*skin->name || !skin->width || !skin->height ||
+    if (!skin || !skin->resource || !skin->name || !*skin->name || !skin->width || !skin->height ||
         skin->width > SIZE_MAX / skin->height || !skin->indices.data ||
         skin->indices.size != (size_t)skin->width * skin->height ||
         model->source->format != QA_MODEL_MDL || model->options.family != QA_GAME_Q1) {
@@ -256,13 +256,7 @@ bool scene_model_indexed_override(qa_scene_model *model, const qa_scene_model_in
         return false;
     }
     for (scene_model_image *entry = model->images; entry; entry = entry->next) {
-        if (strcmp(entry->name, skin->name)) continue;
-        if (!entry->indexed_override || entry->indexed_width != skin->width ||
-            entry->indexed_height != skin->height || entry->indexed_pixels.size != skin->indices.size ||
-            memcmp(entry->indexed_pixels.data, skin->indices.data, skin->indices.size)) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Indexed skin name identifies different retained pixels");
-            return false;
-        }
+        if (!entry->indexed_override || entry->indexed_resource != skin->resource) continue;
         *out = entry; return true;
     }
     qa_buffer retained = {malloc(skin->indices.size), skin->indices.size};
@@ -274,6 +268,7 @@ bool scene_model_indexed_override(qa_scene_model *model, const qa_scene_model_in
     if (!scene_model_indexed(model, skin->name, skin->indices, skin->width, skin->height,
         false, &entry, error)) { qa_buffer_free(&retained); return false; }
     entry->indexed_override = true; entry->indexed_pixels = retained;
+    entry->indexed_resource = skin->resource; qa_resource_retain((qa_resource *)entry->indexed_resource);
     entry->indexed_width = skin->width; entry->indexed_height = skin->height;
     *out = entry; return true;
 }
@@ -284,6 +279,7 @@ void scene_model_images_destroy(qa_scene_model *model) {
         scene_model_image *next = entry->next;
         qa_scene_image_release(entry->base); qa_scene_image_release(entry->fullbright);
         qa_buffer_free(&entry->indexed_pixels);
+        qa_resource_release((qa_resource *)entry->indexed_resource);
         free(entry->name); free(entry); entry = next;
     }
     free(model->skins); free(model->sprites);

@@ -968,6 +968,7 @@ typedef struct qa_scene_model_indexed_skin {
     const char *name;
     uint32_t width, height;
     qa_bytes indices;
+    const qa_resource *resource;
 } qa_scene_model_indexed_skin;
 struct qa_scene_model_input {
     qa_scene_view view;

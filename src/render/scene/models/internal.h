@@ -14,6 +14,7 @@ typedef struct scene_model_image {
     const qa_material *material;
     const qa_scene_image *base, *fullbright;
     qa_buffer indexed_pixels;
+    const qa_resource *indexed_resource;
     uint32_t indexed_width, indexed_height;
     bool indexed_override;
     struct scene_model_image *next;

@@ -8,6 +8,7 @@ typedef uint32_t qa_string_id;
 #define QA_NAME_MONSTER (1u << 0)
 #define QA_NAME_PLAYER_START (1u << 1)
 #define QA_NAME_ITEM_FLAG (1u << 2)
+#define QA_NAME_BRUSH_PATH (1u << 3)
 typedef struct qa_strings qa_strings;
 
 /* Exact byte identity, with no case folding or path normalization. Normalize

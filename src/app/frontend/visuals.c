@@ -498,14 +498,6 @@ static bool retained_source_rank(qa_frontend *frontend, frontend_visual_owner *o
     if (ok && found && receipt) return opening_rank(owner->mounts, receipt, out, error);
     return ok && (found || frontend_fail(error, QA_ERROR_ARGUMENT, "Held alias model lacks its genuine source opening receipt"));
 }
-static bool brush_path(const char *path)
-{
-    size_t length=strlen(path);
-    return length>=4 && path[length-4]=='.' &&
-        (path[length-3]=='b' || path[length-3]=='B') &&
-        (path[length-2]=='s' || path[length-2]=='S') &&
-        (path[length-1]=='p' || path[length-1]=='P');
-}
 static bool brush_read(frontend_visual_owner *owner, qa_string_id path_name, const qa_resource *source,
     frontend_brush **out, qa_error *error)
 {
@@ -1278,7 +1270,7 @@ static bool static_model_prepare(qa_frontend *frontend, frontend_visual_owner *o
     else {
         qa_string_id path_name;
         okay=qa_strings_intern_cstr(owner->strings,path,&path_name,error);
-        if (okay) okay=brush_path(path) ? brush_read(owner, path_name, asset.resource, &row->brush, error) :
+        if (okay) okay=(qa_strings_name_flags(owner->strings,path_name)&QA_NAME_BRUSH_PATH) ? brush_read(owner, path_name, asset.resource, &row->brush, error) :
             model_read(frontend, owner, path_name, asset.resource, asset.opening, false, 0, &row->model, error);
     }
     if (!okay) { free(row); return false; }
@@ -1454,7 +1446,7 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (!path || !*path) continue;
             if (!owner && !visual_owner(frontend, &view, &owner, error)) return false;
             if (owner->shader_movies && !frontend_material_movies_frame(owner->shader_movies, frame, error)) return false;
-            if (brush_path(path)) {
+            if (qa_strings_name_flags(owner->strings,view.visual.models[part])&QA_NAME_BRUSH_PATH) {
                 frontend_brush *brush;
                 if (!brush_read(owner,view.visual.models[part],view.model_resources[part],&brush,error) ||
                     !qa_scene_world_submit_model(brush->world,0,&placement,world,actor.slot,color,frame,error)) return false;

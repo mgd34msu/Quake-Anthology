@@ -104,6 +104,10 @@ bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa
     if(text.size>=8&&!memcmp(text.data,"monster_",8)) flags|=QA_NAME_MONSTER;
     if(text.size>=12&&!memcmp(text.data,"info_player_",12)) flags|=QA_NAME_PLAYER_START;
     if(text.size>=10&&!memcmp(text.data,"item_flag_",10)) flags|=QA_NAME_ITEM_FLAG;
+    if(text.size>=4 && text.data[text.size-4]=='.' &&
+        (text.data[text.size-3]=='b'||text.data[text.size-3]=='B') &&
+        (text.data[text.size-2]=='s'||text.data[text.size-2]=='S') &&
+        (text.data[text.size-1]=='p'||text.data[text.size-1]=='P')) flags|=QA_NAME_BRUSH_PATH;
     strings->entries[strings->count]=(string_entry){{copy,text.size},hash,flags};
     qa_string_id id=(qa_string_id)++strings->count;
     strings->buckets[bucket]=id;

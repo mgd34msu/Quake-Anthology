@@ -102,7 +102,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
         if (!frontend_remote_q1_skins_at(row->skins, actor->source_slot - 1, &skin, &present, error)) return false;
         if (present) {
             indexed = (qa_scene_model_indexed_skin){.name = skin.name, .width = skin.width,
-                .height = skin.height, .indices = skin.indices};
+                .height = skin.height, .indices = skin.indices, .resource = skin.resource};
             input.indexed_skin = &indexed;
         }
     }

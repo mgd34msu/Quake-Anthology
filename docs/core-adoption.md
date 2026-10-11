@@ -813,6 +813,13 @@ Item 13's QW player-model decision uses the admitted model flag. Normal build
 and seven core suites pass. Item 6's native HUD picture cache and item 13's
 local flare/brush classification still remain.
 
+Names leftovers item 12: QW indexed skins carry their immutable resource handle
+into the scene cache. The cache retains that resource and compares handles; the
+per-draw skin-name comparison and full pixel comparison are deleted. Image-policy
+rebuilds carry the same handle. Item 13's local brush decision reads the shared
+name table's admitted path flag, with the suffix parser deleted. Normal build
+and seven core suites pass. Item 13's flare image binding remains open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

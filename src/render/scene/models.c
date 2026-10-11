@@ -603,7 +603,7 @@ static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resource
         scene_model_image *prepared = NULL; bool indexed = false;
         if (image->indexed_override) {
             qa_scene_model_indexed_skin skin = {image->name, image->indexed_width, image->indexed_height,
-                {image->indexed_pixels.data, image->indexed_pixels.size}};
+                {image->indexed_pixels.data, image->indexed_pixels.size}, image->indexed_resource};
             indexed = true;
             if (!scene_model_indexed_override(&node->images, &skin, &prepared, error)) return false;
         } else if (owner->source->format == QA_MODEL_MDL) {
