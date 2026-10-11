@@ -75,7 +75,7 @@ bool q2m_melee(q2m_context *context, float range, float damage, float kick,
   bool result = q2m_damage_enemy(context, range, Q2M_MOD_HIT, 8u, damage, kick,
                                  &hit, error);
   if (result && hit && q2m_alive(context))
-    result = q2m_sound(context, Q2_NAME_RESOURCE_WEAPONS_MELEE2_WAV, 1, 1.0f, error);
+    result = q2m_sound(context, Q2_NAME_SOUND_WEAPONS_MELEE2, 1, 1.0f, error);
   return result;
 }
 
@@ -711,39 +711,39 @@ static q2_runtime_name pain_sound(q2m_species species) {
   switch (species) {
   case Q2M_INFANTRY:
   case Q2M_TURRET_DRIVER:
-    return Q2_NAME_RESOURCE_INFANTRY_INFPAIN1_WAV;
+    return Q2_NAME_SOUND_INFANTRY_INFPAIN1;
   case Q2M_SOLDIER_LIGHT:
   case Q2M_SOLDIER:
   case Q2M_SOLDIER_SS:
   case Q2M_SOLDIER_RIPPER:
   case Q2M_SOLDIER_HYPER:
   case Q2M_SOLDIER_LASER:
-    return Q2_NAME_RESOURCE_SOLDIER_SOLPAIN1_WAV;
+    return Q2_NAME_SOUND_SOLDIER_SOLPAIN1;
   case Q2M_BERSERK:
-    return Q2_NAME_RESOURCE_BERSERK_BERPAIN2_WAV;
+    return Q2_NAME_SOUND_BERSERK_BERPAIN2;
   case Q2M_BRAIN:
-    return Q2_NAME_RESOURCE_BRAIN_BRNPAIN1_WAV;
+    return Q2_NAME_SOUND_BRAIN_BRNPAIN1;
   case Q2M_CHICK:
   case Q2M_CHICK_HEAT:
-    return Q2_NAME_RESOURCE_CHICK_CHKPAIN1_WAV;
+    return Q2_NAME_SOUND_CHICK_CHKPAIN1;
   case Q2M_GUNNER:
   case Q2M_GUN_COMMANDER:
-    return Q2_NAME_RESOURCE_GUNNER_GUNPAIN1_WAV;
+    return Q2_NAME_SOUND_GUNNER_GUNPAIN1;
   case Q2M_TANK:
   case Q2M_TANK_COMMANDER:
-    return Q2_NAME_RESOURCE_TANK_TNKPAIN2_WAV;
+    return Q2_NAME_SOUND_TANK_TNKPAIN2;
   case Q2M_MEDIC:
   case Q2M_MEDIC_COMMANDER:
-    return Q2_NAME_RESOURCE_MEDIC_MEDPAIN1_WAV;
+    return Q2_NAME_SOUND_MEDIC_MEDPAIN1;
   case Q2M_PARASITE:
-    return Q2_NAME_RESOURCE_PARASITE_PARPAIN1_WAV;
+    return Q2_NAME_SOUND_PARASITE_PARPAIN1;
   case Q2M_MUTANT:
-    return Q2_NAME_RESOURCE_MUTANT_MUTPAIN1_WAV;
+    return Q2_NAME_SOUND_MUTANT_MUTPAIN1;
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
-    return Q2_NAME_RESOURCE_GLADIATOR_GLDPAIN1_WAV;
+    return Q2_NAME_SOUND_GLADIATOR_GLDPAIN1;
   default:
-    return Q2_NAME_RESOURCE_MISC_PAIN_WAV;
+    return Q2_NAME_SOUND_MISC_PAIN;
   }
 }
 
@@ -751,39 +751,39 @@ static q2_runtime_name death_sound(q2m_species species) {
   switch (species) {
   case Q2M_INFANTRY:
   case Q2M_TURRET_DRIVER:
-    return Q2_NAME_RESOURCE_INFANTRY_INFDETH1_WAV;
+    return Q2_NAME_SOUND_INFANTRY_INFDETH1;
   case Q2M_SOLDIER_LIGHT:
   case Q2M_SOLDIER:
   case Q2M_SOLDIER_SS:
   case Q2M_SOLDIER_RIPPER:
   case Q2M_SOLDIER_HYPER:
   case Q2M_SOLDIER_LASER:
-    return Q2_NAME_RESOURCE_SOLDIER_SOLDETH1_WAV;
+    return Q2_NAME_SOUND_SOLDIER_SOLDETH1;
   case Q2M_BERSERK:
-    return Q2_NAME_RESOURCE_BERSERK_BERDETH2_WAV;
+    return Q2_NAME_SOUND_BERSERK_BERDETH2;
   case Q2M_BRAIN:
-    return Q2_NAME_RESOURCE_BRAIN_BRNDETH1_WAV;
+    return Q2_NAME_SOUND_BRAIN_BRNDETH1;
   case Q2M_CHICK:
   case Q2M_CHICK_HEAT:
-    return Q2_NAME_RESOURCE_CHICK_CHKDETH1_WAV;
+    return Q2_NAME_SOUND_CHICK_CHKDETH1;
   case Q2M_GUNNER:
   case Q2M_GUN_COMMANDER:
-    return Q2_NAME_RESOURCE_GUNNER_DEATH1_WAV;
+    return Q2_NAME_SOUND_GUNNER_DEATH1;
   case Q2M_TANK:
   case Q2M_TANK_COMMANDER:
-    return Q2_NAME_RESOURCE_TANK_TNKDETH1_WAV;
+    return Q2_NAME_SOUND_TANK_TNKDETH1;
   case Q2M_MEDIC:
   case Q2M_MEDIC_COMMANDER:
-    return Q2_NAME_RESOURCE_MEDIC_MEDDETH1_WAV;
+    return Q2_NAME_SOUND_MEDIC_MEDDETH1;
   case Q2M_PARASITE:
-    return Q2_NAME_RESOURCE_PARASITE_PARDETH1_WAV;
+    return Q2_NAME_SOUND_PARASITE_PARDETH1;
   case Q2M_MUTANT:
-    return Q2_NAME_RESOURCE_MUTANT_MUTDETH1_WAV;
+    return Q2_NAME_SOUND_MUTANT_MUTDETH1;
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
-    return Q2_NAME_RESOURCE_GLADIATOR_GLDDETH2_WAV;
+    return Q2_NAME_SOUND_GLADIATOR_GLDDETH2;
   default:
-    return Q2_NAME_RESOURCE_MISC_UDEATH_WAV;
+    return Q2_NAME_SOUND_MISC_UDEATH;
   }
 }
 
@@ -840,8 +840,8 @@ static bool pain_brain_mutant(q2m_context *context, bool brain, qa_error *error)
       Q2M_MOVE_brain_move_pain1, Q2M_MOVE_brain_move_pain2, Q2M_MOVE_brain_move_pain3};
   static const q2m_move_id mutant_moves[] = {
       Q2M_MOVE_mutant_move_pain1, Q2M_MOVE_mutant_move_pain2, Q2M_MOVE_mutant_move_pain3};
-  q2_runtime_name sound = brain ? (index == 1 ? Q2_NAME_RESOURCE_BRAIN_BRNPAIN2_WAV : Q2_NAME_RESOURCE_BRAIN_BRNPAIN1_WAV)
-                            : (index == 1 ? Q2_NAME_RESOURCE_MUTANT_MUTPAIN2_WAV : Q2_NAME_RESOURCE_MUTANT_MUTPAIN1_WAV);
+  q2_runtime_name sound = brain ? (index == 1 ? Q2_NAME_SOUND_BRAIN_BRNPAIN2 : Q2_NAME_SOUND_BRAIN_BRNPAIN1)
+                            : (index == 1 ? Q2_NAME_SOUND_MUTANT_MUTPAIN2 : Q2_NAME_SOUND_MUTANT_MUTPAIN1);
   if (!q2m_sound(context, sound, 2, 1, error))
     return false;
   if (!q2m_alive(context) || (rerelease && !reacts_to_pain(context)))
@@ -873,8 +873,8 @@ static bool pain_flipper_flyer(q2m_context *context, bool flyer, qa_error *error
   }
   static const q2m_move_id flyer_moves[] = {
       Q2M_MOVE_flyer_move_pain1, Q2M_MOVE_flyer_move_pain2, Q2M_MOVE_flyer_move_pain3};
-  q2_runtime_name sound = flyer ? (index == 1 ? Q2_NAME_RESOURCE_FLYER_FLYPAIN2_WAV : Q2_NAME_RESOURCE_FLYER_FLYPAIN1_WAV)
-                            : (index == 1 ? Q2_NAME_RESOURCE_FLIPPER_FLPPAIN2_WAV : Q2_NAME_RESOURCE_FLIPPER_FLPPAIN1_WAV);
+  q2_runtime_name sound = flyer ? (index == 1 ? Q2_NAME_SOUND_FLYER_FLYPAIN2 : Q2_NAME_SOUND_FLYER_FLYPAIN1)
+                            : (index == 1 ? Q2_NAME_SOUND_FLIPPER_FLPPAIN2 : Q2_NAME_SOUND_FLIPPER_FLPPAIN1);
   if (!q2m_sound(context, sound, 2, 1, error))
     return false;
   if (!q2m_alive(context) || (rerelease && !reacts_to_pain(context)))
@@ -904,7 +904,7 @@ static bool pain_berserk(q2m_context *context, qa_error *error) {
        (m->move->id == Q2M_MOVE_berserk_move_attack_strike))) return true;
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
-  if (!q2m_sound(context, Q2_NAME_RESOURCE_BERSERK_BERPAIN2_WAV, 2, 1, error)) return false;
+  if (!q2m_sound(context, Q2_NAME_SOUND_BERSERK_BERPAIN2, 2, 1, error)) return false;
   if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) : g->options.skill == 3))
     return true;
   if (rerelease || g->options.product == QA_Q2_ROGUE) {
@@ -935,8 +935,8 @@ static bool pain_chick(q2m_context *context, qa_error *error) {
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
   float choice = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
-  q2_runtime_name sound = choice < .33f ? Q2_NAME_RESOURCE_CHICK_CHKPAIN1_WAV :
-                      choice < .66f ? Q2_NAME_RESOURCE_CHICK_CHKPAIN2_WAV : Q2_NAME_RESOURCE_CHICK_CHKPAIN3_WAV;
+  q2_runtime_name sound = choice < .33f ? Q2_NAME_SOUND_CHICK_CHKPAIN1 :
+                      choice < .66f ? Q2_NAME_SOUND_CHICK_CHKPAIN2 : Q2_NAME_SOUND_CHICK_CHKPAIN3;
   if (!q2m_sound(context, sound, 2, 1, error)) return false;
   bool xatrix = g->options.product == QA_Q2_XATRIX || m->definition->species == Q2M_CHICK_HEAT;
   if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) :
@@ -969,7 +969,7 @@ static bool pain_gunner(q2m_context *context, qa_error *error) {
   m->pain_ns = q2m_after(g->now_ns, 3.0);
   bool first = rerelease ? q2_random_bounded(g, 2) == 0 :
                           (qa_builtin_random_integer(&g->random) & 1u) != 0;
-  if (!q2m_sound(context, first ? Q2_NAME_RESOURCE_GUNNER_GUNPAIN2_WAV : Q2_NAME_RESOURCE_GUNNER_GUNPAIN1_WAV,
+  if (!q2m_sound(context, first ? Q2_NAME_SOUND_GUNNER_GUNPAIN2 : Q2_NAME_SOUND_GUNNER_GUNPAIN1,
                   2, 1, error)) return false;
   if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) : g->options.skill == 3))
     return true;
@@ -999,8 +999,8 @@ static bool pain_hover(q2m_context *context, qa_error *error) {
   if (rerelease) {
     first = q2_rerelease_float(g, 0, 1) < .5f;
     q2_runtime_name sound = context->combat.mass < 225 ?
-        (first ? Q2_NAME_RESOURCE_HOVER_HOVPAIN1_WAV : Q2_NAME_RESOURCE_HOVER_HOVPAIN2_WAV) :
-        (first ? Q2_NAME_RESOURCE_DAEDALUS_DAEDPAIN1_WAV : Q2_NAME_RESOURCE_DAEDALUS_DAEDPAIN2_WAV);
+        (first ? Q2_NAME_SOUND_HOVER_HOVPAIN1 : Q2_NAME_SOUND_HOVER_HOVPAIN2) :
+        (first ? Q2_NAME_SOUND_DAEDALUS_DAEDPAIN1 : Q2_NAME_SOUND_DAEDALUS_DAEDPAIN2);
     if (!q2m_sound(context, sound, 2, 1, error)) return false;
     if (!q2m_alive(context) || !reacts_to_pain(context)) return true;
     float choice = q2_rerelease_float(g, 0, 1);
@@ -1012,8 +1012,8 @@ static bool pain_hover(q2m_context *context, qa_error *error) {
     move = first ? (damage <= 25 ? Q2M_MOVE_hover_move_pain3 : Q2M_MOVE_hover_move_pain1) :
                    Q2M_MOVE_hover_move_pain2;
     q2_runtime_name sound = !rogue || context->combat.mass < 225 ?
-        (first ? Q2_NAME_RESOURCE_HOVER_HOVPAIN1_WAV : Q2_NAME_RESOURCE_HOVER_HOVPAIN2_WAV) :
-        (first ? Q2_NAME_RESOURCE_DAEDALUS_DAEDPAIN1_WAV : Q2_NAME_RESOURCE_DAEDALUS_DAEDPAIN2_WAV);
+        (first ? Q2_NAME_SOUND_HOVER_HOVPAIN1 : Q2_NAME_SOUND_HOVER_HOVPAIN2) :
+        (first ? Q2_NAME_SOUND_DAEDALUS_DAEDPAIN1 : Q2_NAME_SOUND_DAEDALUS_DAEDPAIN2);
     if (!q2m_sound(context, sound, 2, 1, error)) return false;
     if (!q2m_alive(context)) return true;
   }
@@ -1051,9 +1051,9 @@ static bool pain_soldier(q2m_context *context, qa_error *error) {
   } else {
     m->pain_ns = q2m_after(g->now_ns, 3.0);
     int type = (rerelease ? m->count : m->skin) | 1;
-    q2_runtime_name sound = type == 1 ? Q2_NAME_RESOURCE_SOLDIER_SOLPAIN2_WAV
-                        : type == 3 ? Q2_NAME_RESOURCE_SOLDIER_SOLPAIN1_WAV
-                                    : Q2_NAME_RESOURCE_SOLDIER_SOLPAIN3_WAV;
+    q2_runtime_name sound = type == 1 ? Q2_NAME_SOUND_SOLDIER_SOLPAIN2
+                        : type == 3 ? Q2_NAME_SOUND_SOLDIER_SOLPAIN1
+                                    : Q2_NAME_SOUND_SOLDIER_SOLPAIN3;
     if (!q2m_sound(context, sound, 2, 1.0f, error)) return false;
     if (!q2m_alive(context)) return true;
     if (!airborne) {
@@ -1092,7 +1092,7 @@ static bool pain_tank(q2m_context *context, qa_error *error) {
          (m->frame >= 55 && m->frame <= 70))) return true;
   }
   m->pain_ns = q2m_after(g->now_ns, 3.0);
-  q2_runtime_name sound = rerelease && m->count ? Q2_NAME_RESOURCE_TANK_PAIN_WAV : Q2_NAME_RESOURCE_TANK_TNKPAIN2_WAV;
+  q2_runtime_name sound = rerelease && m->count ? Q2_NAME_SOUND_TANK_PAIN : Q2_NAME_SOUND_TANK_TNKPAIN2;
   if (!q2m_sound(context, sound, 2, 1, error)) return false;
   if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) : g->options.skill == 3))
     return true;
@@ -1134,7 +1134,7 @@ static bool pain_infantry(q2m_context *context, qa_error *error) {
                              : qa_builtin_random_integer(&g->random) % 2u;
   q2m_move_id move = index ? Q2M_MOVE_infantry_move_pain2 : Q2M_MOVE_infantry_move_pain1;
   if (!rerelease && !q2m_set_move(context, move, false, error)) return false;
-  if (!q2m_sound(context, index ? Q2_NAME_RESOURCE_INFANTRY_INFPAIN2_WAV : Q2_NAME_RESOURCE_INFANTRY_INFPAIN1_WAV,
+  if (!q2m_sound(context, index ? Q2_NAME_SOUND_INFANTRY_INFPAIN2 : Q2_NAME_SOUND_INFANTRY_INFPAIN1,
                    2, 1, error)) return false;
   if (!q2m_alive(context) || (rerelease && !ordinary_think)) return true;
   if (rerelease) {
@@ -1166,8 +1166,8 @@ static bool pain_supertank(q2m_context *context, qa_error *error) {
     m->pain_ns = q2m_after(g->now_ns, 3.0);
     if (!boss5 && g->options.skill == 3) return true;
   }
-  q2_runtime_name sound = damage <= 10 ? Q2_NAME_RESOURCE_BOSSTANK_BTKPAIN1_WAV :
-                      damage <= 25 ? Q2_NAME_RESOURCE_BOSSTANK_BTKPAIN3_WAV : Q2_NAME_RESOURCE_BOSSTANK_BTKPAIN2_WAV;
+  q2_runtime_name sound = damage <= 10 ? Q2_NAME_SOUND_BOSSTANK_BTKPAIN1 :
+                      damage <= 25 ? Q2_NAME_SOUND_BOSSTANK_BTKPAIN3 : Q2_NAME_SOUND_BOSSTANK_BTKPAIN2;
   if (!q2m_sound(context, sound, 2, 1, error)) return false;
   if (!q2m_alive(context)) return true;
   if (rerelease) {
@@ -1191,12 +1191,12 @@ static bool pain_classic_makron(q2m_context *context, qa_error *error) {
   if (g->options.skill == 3) return true;
   q2m_move_id move; q2_runtime_name sound;
   if (damage <= 40) {
-    move = Q2M_MOVE_makron_move_pain4; sound = Q2_NAME_RESOURCE_MAKRON_PAIN3_WAV;
+    move = Q2M_MOVE_makron_move_pain4; sound = Q2_NAME_SOUND_MAKRON_PAIN3;
   } else if (damage <= 110) {
-    move = Q2M_MOVE_makron_move_pain5; sound = Q2_NAME_RESOURCE_MAKRON_PAIN2_WAV;
+    move = Q2M_MOVE_makron_move_pain5; sound = Q2_NAME_SOUND_MAKRON_PAIN2;
   } else {
     if (q2m_random(g) > (damage <= 150 ? .45f : .35f)) return true;
-    move = Q2M_MOVE_makron_move_pain6; sound = Q2_NAME_RESOURCE_MAKRON_PAIN1_WAV;
+    move = Q2M_MOVE_makron_move_pain6; sound = Q2_NAME_SOUND_MAKRON_PAIN1;
   }
   if (!q2m_sound(context, sound, 2, 0, error)) return false;
   return !q2m_alive(context) || q2m_set_move(context, move, false, error);
@@ -1226,11 +1226,11 @@ static bool pain_jorg(q2m_context *context, qa_error *error) {
   q2m_move_id move = Q2M_MOVE_NONE; q2_runtime_name sound = Q2_NAME_NONE;
   if (damage <= 50) {
     move = Q2M_MOVE_jorg_move_pain1;
-    if (!rerelease) sound = Q2_NAME_RESOURCE_BOSS3_BS3PAIN1_WAV;
+    if (!rerelease) sound = Q2_NAME_SOUND_BOSS3_BS3PAIN1;
   } else if (damage <= 100) {
-    move = Q2M_MOVE_jorg_move_pain2; sound = Q2_NAME_RESOURCE_BOSS3_BS3PAIN2_WAV;
+    move = Q2M_MOVE_jorg_move_pain2; sound = Q2_NAME_SOUND_BOSS3_BS3PAIN2;
   } else if ((rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) <= .3f) {
-    move = Q2M_MOVE_jorg_move_pain3; sound = Q2_NAME_RESOURCE_BOSS3_BS3PAIN3_WAV;
+    move = Q2M_MOVE_jorg_move_pain3; sound = Q2_NAME_SOUND_BOSS3_BS3PAIN3;
   }
   if (sound && !q2m_sound(context, sound, 2, 1, error)) return false;
   if (!q2m_alive(context)) return true;
@@ -1261,7 +1261,7 @@ static bool pain_floater(q2m_context *context, qa_error *error) {
                    ? q2_random_bounded(context->game, 3) == 0
                    : ((uint64_t)qa_builtin_random_integer(&context->game->random) + 1u) % 3u == 0;
   if (!q2m_sound(context,
-                 first ? Q2_NAME_RESOURCE_FLOATER_FLTPAIN1_WAV : Q2_NAME_RESOURCE_FLOATER_FLTPAIN2_WAV, 2,
+                 first ? Q2_NAME_SOUND_FLOATER_FLTPAIN1 : Q2_NAME_SOUND_FLOATER_FLTPAIN2, 2,
                  1.0f, error))
     return false;
   if (!q2m_alive(context)) return true;
@@ -1282,8 +1282,8 @@ static bool pain_boss2(q2m_context *context, qa_error *error) {
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
   float damage = m->pending_damage;
-  q2_runtime_name sound = damage < 10 ? Q2_NAME_RESOURCE_BOSSHOVR_BHVPAIN3_WAV :
-                      damage < 30 ? Q2_NAME_RESOURCE_BOSSHOVR_BHVPAIN1_WAV : Q2_NAME_RESOURCE_BOSSHOVR_BHVPAIN2_WAV;
+  q2_runtime_name sound = damage < 10 ? Q2_NAME_SOUND_BOSSHOVR_BHVPAIN3 :
+                      damage < 30 ? Q2_NAME_SOUND_BOSSHOVR_BHVPAIN1 : Q2_NAME_SOUND_BOSSHOVR_BHVPAIN2;
   if (!q2m_sound(context, sound, 2, 0, error)) return false;
   return !q2m_alive(context) || (rerelease && !reacts_to_pain(context)) ||
          q2m_set_move(context, damage < 30 ? Q2M_MOVE_boss2_move_pain_light :
@@ -1297,8 +1297,8 @@ static bool pain_classic_parasite(q2m_context *context, qa_error *error) {
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
   if (g->options.skill == 3) return true;
-  if (!q2m_sound(context, q2m_random(g) < .5f ? Q2_NAME_RESOURCE_PARASITE_PARPAIN1_WAV :
-                                               Q2_NAME_RESOURCE_PARASITE_PARPAIN2_WAV, 2, 1, error)) return false;
+  if (!q2m_sound(context, q2m_random(g) < .5f ? Q2_NAME_SOUND_PARASITE_PARPAIN1 :
+                                               Q2_NAME_SOUND_PARASITE_PARPAIN2, 2, 1, error)) return false;
   return !q2m_alive(context) || q2m_set_move(context, Q2M_MOVE_parasite_move_pain1, false, error);
 }
 
@@ -1319,7 +1319,7 @@ static bool pain_gekk(q2m_context *context, qa_error *error) {
   }
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
-  if (!q2m_sound(context, Q2_NAME_RESOURCE_GEK_GK_PAIN1_WAV, 2, 1, error)) return false;
+  if (!q2m_sound(context, Q2_NAME_SOUND_GEK_GK_PAIN1, 2, 1, error)) return false;
   if (!q2m_alive(context)) return true;
   bool water = m->water_level >= (rerelease ? 2 : 1);
   if (rerelease && water && !(context->actor->physics.flags & QA_PHYSICS_SWIMMING)) {
@@ -1346,10 +1346,10 @@ static bool pain_insane(q2m_context *context, qa_error *error) {
   int band = context->combat.health < 25 ? 25 : context->combat.health < 50 ? 50 :
              context->combat.health < 75 ? 75 : 100;
   static const q2_runtime_name sounds[4][2] = {
-      {Q2_NAME_RESOURCE_PLAYER_MALE_PAIN25_1_WAV, Q2_NAME_RESOURCE_PLAYER_MALE_PAIN25_2_WAV},
-      {Q2_NAME_RESOURCE_PLAYER_MALE_PAIN50_1_WAV, Q2_NAME_RESOURCE_PLAYER_MALE_PAIN50_2_WAV},
-      {Q2_NAME_RESOURCE_PLAYER_MALE_PAIN75_1_WAV, Q2_NAME_RESOURCE_PLAYER_MALE_PAIN75_2_WAV},
-      {Q2_NAME_RESOURCE_PLAYER_MALE_PAIN100_1_WAV, Q2_NAME_RESOURCE_PLAYER_MALE_PAIN100_2_WAV},
+      {Q2_NAME_SOUND_PLAYER_MALE_PAIN25_1, Q2_NAME_SOUND_PLAYER_MALE_PAIN25_2},
+      {Q2_NAME_SOUND_PLAYER_MALE_PAIN50_1, Q2_NAME_SOUND_PLAYER_MALE_PAIN50_2},
+      {Q2_NAME_SOUND_PLAYER_MALE_PAIN75_1, Q2_NAME_SOUND_PLAYER_MALE_PAIN75_2},
+      {Q2_NAME_SOUND_PLAYER_MALE_PAIN100_1, Q2_NAME_SOUND_PLAYER_MALE_PAIN100_2},
   };
   q2_runtime_name sound=sounds[band==25?0:band==50?1:band==75?2:3][variant-1];
   if (!q2m_sound(context, sound, 2, 2, error)) return false;
@@ -1383,8 +1383,8 @@ static bool pain_gladiator(q2m_context *context, qa_error *error) {
   }
   monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
   q2_runtime_name sound = q2m_random(context->game) < 0.5f
-                          ? Q2_NAME_RESOURCE_GLADIATOR_PAIN_WAV
-                          : Q2_NAME_RESOURCE_GLADIATOR_GLDPAIN2_WAV;
+                          ? Q2_NAME_SOUND_GLADIATOR_PAIN
+                          : Q2_NAME_SOUND_GLADIATOR_GLDPAIN2;
   if (!q2m_sound(context, sound, 2, 1.0f, error))
     return false;
   if (!q2m_alive(context))
@@ -1415,7 +1415,7 @@ static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
     monster->fly_max_distance = 500;
   }
   monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
-  if (!q2m_sound(context, Q2_NAME_RESOURCE_FLYER_FLYPAIN1_WAV, 2, 1.0f, error))
+  if (!q2m_sound(context, Q2_NAME_SOUND_FLYER_FLYPAIN1, 2, 1.0f, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -1433,7 +1433,7 @@ static bool pain_arachnid(q2m_context *context, qa_error *error) {
   bool chainfist = last_attack_chainfist(m);
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3);
-  if (!q2m_sound(context, Q2_NAME_RESOURCE_ARACHNID_PAIN_WAV, 2, 1, error)) return false;
+  if (!q2m_sound(context, Q2_NAME_SOUND_ARACHNID_PAIN, 2, 1, error)) return false;
   if (!q2m_alive(context) || (rerelease ? !reacts_to_pain_cause(context, chainfist) :
       m->ducked || m->combat_point || g->options.skill >= 3)) return true;
   float choice = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
@@ -1449,7 +1449,7 @@ static bool pain_shambler(q2m_context *context, qa_error *error) {
   bool chainfist = last_attack_chainfist(m);
   if (g->now_ns < m->timestamp_ns) return true;
   m->timestamp_ns = q2_deadline(g->now_ns, rerelease ? UINT64_C(1000000) : g->frame_ns);
-  if (!q2m_sound(context, Q2_NAME_RESOURCE_SHAMBLER_SHURT2_WAV, 0, 1, error)) return false;
+  if (!q2m_sound(context, Q2_NAME_SOUND_SHAMBLER_SHURT2, 0, 1, error)) return false;
   if (!q2m_alive(context)) return true;
   if (!(rerelease && chainfist) && damage <= 30 &&
       (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) > .2f) return true;
@@ -1488,8 +1488,8 @@ static bool pain_gun_commander(q2m_context *context, qa_error *error) {
   if (g->now_ns < m->pain_ns) return commander_pain_dodge(context, attacker, error);
   m->pain_ns = q2m_after(g->now_ns, 3);
   bool first = rerelease ? q2_random_bounded(g, 2) == 0 : q2m_random(g) < .5f;
-  if (!q2m_sound(context, first ? Q2_NAME_RESOURCE_GUNCMDR_GCDRPAIN2_WAV :
-                               Q2_NAME_RESOURCE_GUNCMDR_GCDRPAIN1_WAV, 2, 1, error)) return false;
+  if (!q2m_sound(context, first ? Q2_NAME_SOUND_GUNCMDR_GCDRPAIN2 :
+                               Q2_NAME_SOUND_GUNCMDR_GCDRPAIN1, 2, 1, error)) return false;
   if (!q2m_alive(context)) return true;
   if (rerelease ? !reacts_to_pain_cause(context, chainfist) :
       m->ducked || m->combat_point || g->options.skill >= 3)
@@ -1536,9 +1536,9 @@ static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
       context->game->now_ns < monster->pain_ns)
     return true;
   monster->pain_ns = q2m_after(context->game->now_ns, 5.0);
-  q2_runtime_name sound = damage < 10 ? Q2_NAME_RESOURCE_CARRIER_PAIN_SM_WAV
-                      : damage < 30 ? Q2_NAME_RESOURCE_CARRIER_PAIN_MD_WAV
-                                    : Q2_NAME_RESOURCE_CARRIER_PAIN_LG_WAV;
+  q2_runtime_name sound = damage < 10 ? Q2_NAME_SOUND_CARRIER_PAIN_SM
+                      : damage < 30 ? Q2_NAME_SOUND_CARRIER_PAIN_MD
+                                    : Q2_NAME_SOUND_CARRIER_PAIN_LG;
   if (!q2m_sound(context, sound, 2, 0, error))
     return false;
   if (!q2m_alive(context) ||
@@ -1575,12 +1575,12 @@ static bool pain_widow(q2m_context *context, float damage, bool sequel,
     monster->pause_ns = 0;
   monster->pain_ns = q2m_after(context->game->now_ns, 5.0);
   q2_runtime_name sound = sequel
-                          ? damage < 15.0f   ? Q2_NAME_RESOURCE_WIDOW_BW2PAIN1_WAV
-                            : damage < 75.0f ? Q2_NAME_RESOURCE_WIDOW_BW2PAIN2_WAV
-                                             : Q2_NAME_RESOURCE_WIDOW_BW2PAIN3_WAV
-                          : damage < 15.0f   ? Q2_NAME_RESOURCE_WIDOW_BW1PAIN1_WAV
-                            : damage < 75.0f ? Q2_NAME_RESOURCE_WIDOW_BW1PAIN2_WAV
-                                             : Q2_NAME_RESOURCE_WIDOW_BW1PAIN3_WAV;
+                          ? damage < 15.0f   ? Q2_NAME_SOUND_WIDOW_BW2PAIN1
+                            : damage < 75.0f ? Q2_NAME_SOUND_WIDOW_BW2PAIN2
+                                             : Q2_NAME_SOUND_WIDOW_BW2PAIN3
+                          : damage < 15.0f   ? Q2_NAME_SOUND_WIDOW_BW1PAIN1
+                            : damage < 75.0f ? Q2_NAME_SOUND_WIDOW_BW1PAIN2
+                                             : Q2_NAME_SOUND_WIDOW_BW1PAIN3;
   if ((rerelease || sequel) && !q2m_sound(context, sound, 2, 0, error))
     return false;
   if (!q2m_alive(context))
@@ -1624,7 +1624,7 @@ static bool pain_guardian(q2m_context *context, float damage, qa_error *error) {
     return true;
   if (!q2m_set_move(context, Q2M_MOVE_guardian_move_pain1, true, error))
     return false;
-  return stop_loop_sound(context, Q2_NAME_RESOURCE_WEAPONS_HYPRBL1A_WAV, 0, error);
+  return stop_loop_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBL1A, 0, error);
 }
 
 static bool pain_rerelease_makron(q2m_context *context, float damage,
@@ -1640,14 +1640,14 @@ static bool pain_rerelease_makron(q2m_context *context, float damage,
   q2_runtime_name sound = Q2_NAME_NONE;
   q2m_move_id move = Q2M_MOVE_NONE;
   if (damage <= 40.0f) {
-    sound = Q2_NAME_RESOURCE_MAKRON_PAIN3_WAV;
+    sound = Q2_NAME_SOUND_MAKRON_PAIN3;
     move = Q2M_MOVE_makron_move_pain4;
   } else if (damage <= 110.0f) {
-    sound = Q2_NAME_RESOURCE_MAKRON_PAIN2_WAV;
+    sound = Q2_NAME_SOUND_MAKRON_PAIN2;
     move = Q2M_MOVE_makron_move_pain5;
   } else if (q2m_random(context->game) <=
              (damage <= 150.0f ? 0.45f : 0.35f)) {
-    sound = Q2_NAME_RESOURCE_MAKRON_PAIN1_WAV;
+    sound = Q2_NAME_SOUND_MAKRON_PAIN1;
     move = Q2M_MOVE_makron_move_pain6;
   }
   if (sound != Q2_NAME_NONE && !q2m_sound(context, sound, 2, 1.0f, error))
@@ -1666,8 +1666,8 @@ static bool pain_rerelease_parasite(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
-  q2_runtime_name sound = q2m_random(context->game) < 0.5f ? Q2_NAME_RESOURCE_PARASITE_PARPAIN1_WAV
-                                                     : Q2_NAME_RESOURCE_PARASITE_PARPAIN2_WAV;
+  q2_runtime_name sound = q2m_random(context->game) < 0.5f ? Q2_NAME_SOUND_PARASITE_PARPAIN1
+                                                     : Q2_NAME_SOUND_PARASITE_PARPAIN2;
   if (!q2m_sound(context, sound, 2, 1.0f, error))
     return false;
   return !q2m_alive(context) || !reacts_to_pain(context) ||
@@ -1770,14 +1770,14 @@ static bool pain_medic(q2m_context *context, qa_error *error) {
     roll = q2_rerelease_float(context->game, 0, 1);
   if (rogue && commander) {
     if (damage < 35) {
-      if (!q2m_sound(context, Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDPAIN1_WAV, 2, 1, error))
+      if (!q2m_sound(context, Q2_NAME_SOUND_MEDIC_COMMANDER_MEDPAIN1, 2, 1, error))
         return false;
       if (!q2m_alive(context) || !rerelease || !chainfist)
         return true;
     }
     if (!rerelease)
       m->manual_steering = m->hold_frame = false;
-    if (!q2m_sound(context, Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDPAIN2_WAV, 2, 1, error))
+    if (!q2m_sound(context, Q2_NAME_SOUND_MEDIC_COMMANDER_MEDPAIN2, 2, 1, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -1793,7 +1793,7 @@ static bool pain_medic(q2m_context *context, qa_error *error) {
       return false;
     if (!q2m_alive(context))
       return true;
-    if (!q2m_sound(context, pain2 ? Q2_NAME_RESOURCE_MEDIC_MEDPAIN2_WAV : Q2_NAME_RESOURCE_MEDIC_MEDPAIN1_WAV, 2, 1, error))
+    if (!q2m_sound(context, pain2 ? Q2_NAME_SOUND_MEDIC_MEDPAIN2 : Q2_NAME_SOUND_MEDIC_MEDPAIN1, 2, 1, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -1905,25 +1905,25 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
                                                    : Q2M_MOVE_gladiator_move_pain_air
            : species == Q2M_GLADB            ? Q2M_MOVE_gladb_move_pain
                                              : Q2M_MOVE_gladiator_move_pain;
-    sound = random < 0.5f ? Q2_NAME_RESOURCE_GLADIATOR_PAIN_WAV : Q2_NAME_RESOURCE_GLADIATOR_GLDPAIN2_WAV;
+    sound = random < 0.5f ? Q2_NAME_SOUND_GLADIATOR_PAIN : Q2_NAME_SOUND_GLADIATOR_GLDPAIN2;
     break;
   case Q2M_CARRIER:
     if (damage < 10.0f) {
       move = Q2M_MOVE_NONE;
-      sound = Q2_NAME_RESOURCE_CARRIER_PAIN_SM_WAV;
+      sound = Q2_NAME_SOUND_CARRIER_PAIN_SM;
     } else if (damage < 30.0f) {
       move = random < 0.5f ? Q2M_MOVE_carrier_move_pain_light : Q2M_MOVE_NONE;
-      sound = Q2_NAME_RESOURCE_CARRIER_PAIN_MD_WAV;
+      sound = Q2_NAME_SOUND_CARRIER_PAIN_MD;
     } else {
       move = Q2M_MOVE_carrier_move_pain_heavy;
-      sound = Q2_NAME_RESOURCE_CARRIER_PAIN_LG_WAV;
+      sound = Q2_NAME_SOUND_CARRIER_PAIN_LG;
     }
     break;
   case Q2M_FIXBOT:
     move = damage <= 10.0f   ? Q2M_MOVE_fixbot_move_pain3
            : damage <= 25.0f ? Q2M_MOVE_fixbot_move_painb
                              : Q2M_MOVE_fixbot_move_paina;
-    sound = Q2_NAME_RESOURCE_FLYER_FLYPAIN1_WAV;
+    sound = Q2_NAME_SOUND_FLYER_FLYPAIN1;
     break;
   default:
     if (monster->definition->pain3_move != Q2M_MOVE_NONE && random > 0.66f)
@@ -2527,7 +2527,7 @@ static bool rerelease_flying_explosion(q2m_context *context,
   monster->touch_active = false;
   if (!q2m_damageable(context, false, error) ||
       !q2m_sound(context,
-                 floater ? Q2_NAME_RESOURCE_FLOATER_FLTDETH1_WAV : Q2_NAME_RESOURCE_FLYER_FLYDETH1_WAV, 2,
+                 floater ? Q2_NAME_SOUND_FLOATER_FLTDETH1 : Q2_NAME_SOUND_FLYER_FLYDETH1, 2,
                  1.0f, error) ||
       !emit_explosion(context, Q2_NAME_RESOURCE_Q2_EXPLOSION1, context->body.origin, 0,
                       error))
@@ -2620,7 +2620,7 @@ static bool widow_death(q2m_context *context, bool sequel, qa_error *error) {
     monster->can_take_damage = false;
     context->combat.can_take_damage = false;
     float damage = fminf(monster->pending_damage, 100.0f);
-    if (!q2m_sound(context, Q2_NAME_RESOURCE_MISC_UDEATH_WAV, 2, 1.0f, error))
+    if (!q2m_sound(context, Q2_NAME_SOUND_MISC_UDEATH, 2, 1.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -2637,7 +2637,7 @@ static bool widow_death(q2m_context *context, bool sequel, qa_error *error) {
   context->actor->physics.flags |= QA_PHYSICS_DEAD;
   if (!q2m_damageable(context, false, error))
     return false;
-  if (sequel && !q2m_sound(context, Q2_NAME_RESOURCE_WIDOW_DEATH_WAV, 2, 1.0f, error))
+  if (sequel && !q2m_sound(context, Q2_NAME_SOUND_WIDOW_DEATH, 2, 1.0f, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -2715,7 +2715,7 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context)) return true;
   }
   if (species == Q2M_GUARDIAN) {
-    if (!stop_loop_sound(context, Q2_NAME_RESOURCE_WEAPONS_HYPRBL1A_WAV, 0, error)) return false;
+    if (!stop_loop_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBL1A, 0, error)) return false;
     if (!q2m_alive(context)) return true;
     monster->dead = true;
     context->actor->physics.flags |= QA_PHYSICS_DEAD;
@@ -2741,7 +2741,7 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     monster->dead = true;
     monster->gibbed = true;
     monster->can_take_damage = false;
-    if (!q2m_sound(context, Q2_NAME_RESOURCE_MISC_UDEATH_WAV, 2, 1.0f, error))
+    if (!q2m_sound(context, Q2_NAME_SOUND_MISC_UDEATH, 2, 1.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -2773,8 +2773,8 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     bool commander = (rerelease || context->game->options.product == QA_Q2_ROGUE ||
                       species == Q2M_MEDIC_COMMANDER) &&
                      context->combat.mass != 400;
-    if (!q2m_sound(context, commander ? Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDDETH_WAV
-                                     : Q2_NAME_RESOURCE_MEDIC_MEDDETH1_WAV, 2, 1, error))
+    if (!q2m_sound(context, commander ? Q2_NAME_SOUND_MEDIC_COMMANDER_MEDDETH
+                                     : Q2_NAME_SOUND_MEDIC_MEDDETH1, 2, 1, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -2817,29 +2817,29 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   case Q2M_CHICK_HEAT:
     if (q2m_random(context->game) < 0.5f) {
       move = Q2M_MOVE_chick_move_death1;
-      sound = Q2_NAME_RESOURCE_CHICK_CHKDETH1_WAV;
+      sound = Q2_NAME_SOUND_CHICK_CHKDETH1;
     } else {
       move = Q2M_MOVE_chick_move_death2;
-      sound = Q2_NAME_RESOURCE_CHICK_CHKDETH2_WAV;
+      sound = Q2_NAME_SOUND_CHICK_CHKDETH2;
     }
     break;
   case Q2M_FLOATER:
-    sound = Q2_NAME_RESOURCE_FLOATER_FLTDETH1_WAV;
+    sound = Q2_NAME_SOUND_FLOATER_FLTDETH1;
     break;
   case Q2M_FLYER:
   case Q2M_KAMIKAZE:
-    sound = Q2_NAME_RESOURCE_FLYER_FLYDETH1_WAV;
+    sound = Q2_NAME_SOUND_FLYER_FLYDETH1;
     break;
   case Q2M_HOVER:
   case Q2M_DAEDALUS:
-    sound = q2m_random(context->game) < 0.5f ? Q2_NAME_RESOURCE_HOVER_HOVDETH1_WAV
-                                             : Q2_NAME_RESOURCE_HOVER_HOVDETH2_WAV;
+    sound = q2m_random(context->game) < 0.5f ? Q2_NAME_SOUND_HOVER_HOVDETH1
+                                             : Q2_NAME_SOUND_HOVER_HOVDETH2;
     break;
   case Q2M_JORG:
-    sound = Q2_NAME_RESOURCE_BOSS3_BS3DETH1_WAV;
+    sound = Q2_NAME_SOUND_BOSS3_BS3DETH1;
     break;
   case Q2M_MAKRON:
-    sound = Q2_NAME_RESOURCE_MAKRON_DEATH_WAV;
+    sound = Q2_NAME_SOUND_MAKRON_DEATH;
     break;
   case Q2M_MUTANT:
     monster->skin = 1;
@@ -2848,17 +2848,17 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     break;
   case Q2M_SUPERTANK:
   case Q2M_BOSS5:
-    sound = Q2_NAME_RESOURCE_BOSSTANK_BTKDETH1_WAV;
+    sound = Q2_NAME_SOUND_BOSSTANK_BTKDETH1;
     break;
   case Q2M_TANK:
   case Q2M_TANK_COMMANDER:
-    sound = Q2_NAME_RESOURCE_TANK_DEATH_WAV;
+    sound = Q2_NAME_SOUND_TANK_DEATH;
     break;
   case Q2M_BOSS2:
-    sound = Q2_NAME_RESOURCE_BOSSHOVR_BHVDETH1_WAV;
+    sound = Q2_NAME_SOUND_BOSSHOVR_BHVDETH1;
     break;
   case Q2M_CARRIER:
-    sound = Q2_NAME_RESOURCE_CARRIER_DEATH_WAV;
+    sound = Q2_NAME_SOUND_CARRIER_DEATH;
     break;
   case Q2M_ACTOR:
     move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_actor_move_death1
@@ -2873,7 +2873,7 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     unsigned variant = 1u + (unsigned)floorf(q2m_random(context->game) * 4.0f);
     if (variant > 4u)
       variant = 4u;
-    static const q2_runtime_name deaths[4] = {Q2_NAME_RESOURCE_PLAYER_MALE_DEATH1_WAV, Q2_NAME_RESOURCE_PLAYER_MALE_DEATH2_WAV, Q2_NAME_RESOURCE_PLAYER_MALE_DEATH3_WAV, Q2_NAME_RESOURCE_PLAYER_MALE_DEATH4_WAV};
+    static const q2_runtime_name deaths[4] = {Q2_NAME_SOUND_PLAYER_MALE_DEATH1, Q2_NAME_SOUND_PLAYER_MALE_DEATH2, Q2_NAME_SOUND_PLAYER_MALE_DEATH3, Q2_NAME_SOUND_PLAYER_MALE_DEATH4};
     sound=deaths[variant-1];
     break;
   }
@@ -2889,7 +2889,7 @@ bool q2m_die(q2m_context *context, qa_error *error) {
                  ? Q2M_MOVE_gekk_move_death4
                  : Q2M_MOVE_gekk_move_death3;
     }
-    sound = Q2_NAME_RESOURCE_GEK_GK_DETH1_WAV;
+    sound = Q2_NAME_SOUND_GEK_GK_DETH1;
     break;
   default:
     if (monster->definition->death2_move != Q2M_MOVE_NONE &&
@@ -2984,7 +2984,7 @@ bool q2_world_effects(qa_q2_game *g, q2_actor *a, const qa_body_state *body,
   }
   if (!water) {
     if (a->environment_flags & Q2_ENV_IN_WATER) {
-      if (!environment_sound(g, a, body->origin, Q2_NAME_RESOURCE_PLAYER_WATR_OUT_WAV, error)) return false;
+      if (!environment_sound(g, a, body->origin, Q2_NAME_SOUND_PLAYER_WATR_OUT, error)) return false;
       if (!q2_actor_live(g, a->id)) return true;
       a->environment_flags &= ~(uint32_t)Q2_ENV_IN_WATER;
     }
@@ -3005,7 +3005,7 @@ bool q2_world_effects(qa_q2_game *g, q2_actor *a, const qa_body_state *body,
   if (!(a->environment_flags & Q2_ENV_IN_WATER)) {
     bool sound = rerelease || !(a->physics.flags & QA_PHYSICS_DEAD);
     if (sound) {
-      q2_runtime_name path = contents & (16 | 32) ? Q2_NAME_RESOURCE_PLAYER_WATR_IN_WAV : Q2_NAME_NONE;
+      q2_runtime_name path = contents & (16 | 32) ? Q2_NAME_SOUND_PLAYER_WATR_IN : Q2_NAME_NONE;
       if (contents & 8) {
         if (rerelease && (a->physics.flags & QA_PHYSICS_MONSTER)) {
           qa_combat_state combat;
@@ -3013,9 +3013,9 @@ bool q2_world_effects(qa_q2_game *g, q2_actor *a, const qa_body_state *body,
           health = combat.health;
         }
         if (!rerelease || ((a->physics.flags & QA_PHYSICS_MONSTER) && health > 0))
-          path = q2_random(g) <= .5f ? Q2_NAME_RESOURCE_PLAYER_LAVA1_WAV : Q2_NAME_RESOURCE_PLAYER_LAVA2_WAV;
+          path = q2_random(g) <= .5f ? Q2_NAME_SOUND_PLAYER_LAVA1 : Q2_NAME_SOUND_PLAYER_LAVA2;
         else
-          path = Q2_NAME_RESOURCE_PLAYER_WATR_IN_WAV;
+          path = Q2_NAME_SOUND_PLAYER_WATR_IN;
       }
       if (path && !environment_sound(g, a, body->origin, path, error)) return false;
       if (!q2_actor_live(g, a->id)) return true;
@@ -3193,11 +3193,11 @@ bool q2m_berserk_land(q2m_context *context, qa_error *error) {
   context->actor->physics.gravity_scale = 1.0f;
   context->body.velocity = qa_v3(0, 0, 0);
   if (!q2m_write_body(context, true, error) ||
-      !q2m_sound(context, Q2_NAME_RESOURCE_MUTANT_THUD1_WAV, 1, 1.0f, error))
+      !q2m_sound(context, Q2_NAME_SOUND_MUTANT_THUD1, 1, 1.0f, error))
     return false;
   if (!q2m_alive(context))
     return true;
-  if (!q2m_sound(context, Q2_NAME_RESOURCE_WORLD_EXPLOD2_WAV, 0, 0.75f, error))
+  if (!q2m_sound(context, Q2_NAME_SOUND_WORLD_EXPLOD2, 0, 0.75f, error))
     return false;
   if (!q2m_alive(context))
     return true;

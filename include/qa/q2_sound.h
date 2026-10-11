@@ -1,6 +1,7 @@
 #ifndef QA_Q2_SOUND_H
 #define QA_Q2_SOUND_H
 #include <stddef.h>
+#include "qa/strings.h"
 /* Compiled game and client effect declarations. Playback and precache use
  * these same names; map-authored and guest resources are declared by source. */
 #define QA_Q2_SOUND__DEATH1 "*death1.wav"
@@ -886,6 +887,7 @@ typedef enum qa_q2_sound_index {
     QA_Q2_SFX_COUNT
 } qa_q2_sound_index;
 
+bool qa_q2_sound_names_bind(qa_strings *, const qa_string_id **out, qa_error *);
 size_t qa_q2_sound_count(void);
 const char *qa_q2_sound_path(size_t);
 extern const qa_q2_sound_index qa_q2_tank_attack_sounds[5];

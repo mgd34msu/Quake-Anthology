@@ -21,6 +21,10 @@ void qa_strings_retain(qa_strings *strings);
 void qa_strings_destroy(qa_strings *strings);
 bool qa_strings_intern(qa_strings *strings, qa_bytes text, qa_string_id *out, qa_error *error);
 bool qa_strings_intern_cstr(qa_strings *strings, const char *text, qa_string_id *out, qa_error *error);
+/* Bind a static name table once. The table pointer and names must remain valid
+ * for the string table lifetime. The returned IDs are owned by strings. */
+bool qa_strings_bind_names(qa_strings *, const char *const *, size_t count,
+    const qa_string_id **out, qa_error *);
 qa_string_id qa_strings_find(const qa_strings *strings, qa_bytes text);
 /* Data addresses remain stable until destruction. An extra trailing NUL is
  * stored for native APIs, but embedded NUL bytes retain their counted identity. */

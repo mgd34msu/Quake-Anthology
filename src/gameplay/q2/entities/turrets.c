@@ -53,7 +53,7 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
     if (!q2_actor_live(g, a->id))
         return true;
     qa_string_id sound;
-    sound=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_ROCKLF1A_WAV];
+    sound=g->runtime_names[Q2_NAME_SOUND_WEAPONS_ROCKLF1A];
     return qa_builtin_emit(&g->services,
                            &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
                                                .family = QA_GAME_Q2,

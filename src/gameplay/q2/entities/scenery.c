@@ -190,7 +190,7 @@ static bool barrel_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (g->now_ns >= s->timestamp_ns) s->stage = Q2_BARREL_EXPLODE;
         s->visual.effects |= UINT64_C(1) << 35;
         s->loop_sound = s->noise;
-        if (!s->loop_sound) s->loop_sound=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_BFG_L1A_WAV];
+        if (!s->loop_sound) s->loop_sound=g->runtime_names[Q2_NAME_SOUND_WEAPONS_BFG__L1A];
         return q2_entity_show(g, a, e) && (!q2_actor_live(g, a->id) ||
             q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS));
     }
@@ -488,7 +488,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         a->physics.motion = QA_PHYSICS_STEP;
         s->touchable = true;
-        if (g->options.edition == QA_Q2_RERELEASE) s->noise=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_BFG_L1A_WAV];
+        if (g->options.edition == QA_Q2_RERELEASE) s->noise=g->runtime_names[Q2_NAME_SOUND_WEAPONS_BFG__L1A];
         q2_entity_schedule(g, a, Q2ET_SCENERY,
             g->options.edition == QA_Q2_RERELEASE ? .05f : 2 * (float)g->frame_ns / Q2_NS);
         return model(g, a, "models/objects/barrels/tris.md2",

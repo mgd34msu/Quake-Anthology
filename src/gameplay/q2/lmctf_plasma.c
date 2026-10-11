@@ -57,7 +57,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
     qa_string_id classname, model, sound;
     classname=g->runtime_names[Q2_NAME_RESOURCE_GOOP];
     model=g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_PLASMA1_SP2];
-    sound=g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_PLASMA_FLYBY_WAV];
+    sound=g->runtime_names[Q2_NAME_SOUND_WEAPONS_PLASMA_FLYBY];
     for (unsigned i = 0; i < spec.shots; ++i) {
         if (!q2_actor_live(g, c->actor->id))
             return true;

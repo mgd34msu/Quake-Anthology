@@ -199,7 +199,7 @@ static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
             return false;
         *used = true;
         return !q2_actor_live(g, id) ||
-               q2_item_sound(g, id, active ? g->runtime_names[Q2_NAME_RESOURCE_MISC_POWER2] : g->runtime_names[Q2_NAME_RESOURCE_MISC_POWER1], e);
+               q2_item_sound(g, id, active ? g->runtime_names[Q2_NAME_SOUND_MISC_POWER2] : g->runtime_names[Q2_NAME_SOUND_MISC_POWER1], e);
     }
     if (d->kind == QA_Q2_ITEM_SPHERE || d->kind == QA_Q2_ITEM_DECOY)
         return q2_companion_use(g, id, d, used, e);
@@ -239,11 +239,11 @@ static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
     uint64_t *until = timer(p, d->powerup);
     if (until)
         *until = q2_deadline(*until > g->now_ns ? *until : g->now_ns, duration);
-    qa_string_id sound = d->powerup == QA_Q2_POWER_QUAD           ? g->runtime_names[Q2_NAME_RESOURCE_ITEMS_DAMAGE]
-                        : d->powerup == QA_Q2_POWER_QUADFIRE     ? g->runtime_names[Q2_NAME_RESOURCE_ITEMS_QUADFIRE1]
-                        : d->powerup == QA_Q2_POWER_DOUBLE       ? g->runtime_names[Q2_NAME_RESOURCE_MISC_DDAMAGE1]
-                        : d->powerup == QA_Q2_POWER_IR           ? g->runtime_names[Q2_NAME_RESOURCE_MISC_IR_START]
-                        : d->powerup == QA_Q2_POWER_INVISIBILITY ? g->runtime_names[Q2_NAME_RESOURCE_ITEMS_PROTECT]
+    qa_string_id sound = d->powerup == QA_Q2_POWER_QUAD           ? g->runtime_names[Q2_NAME_SOUND_ITEMS_DAMAGE]
+                        : d->powerup == QA_Q2_POWER_QUADFIRE     ? g->runtime_names[Q2_NAME_SOUND_ITEMS_QUADFIRE1]
+                        : d->powerup == QA_Q2_POWER_DOUBLE       ? g->runtime_names[Q2_NAME_SOUND_MISC_DDAMAGE1]
+                        : d->powerup == QA_Q2_POWER_IR           ? g->runtime_names[Q2_NAME_SOUND_MISC_IR_START]
+                        : d->powerup == QA_Q2_POWER_INVISIBILITY ? g->runtime_names[Q2_NAME_SOUND_ITEMS_PROTECT]
                                                                  : 0;
     return !sound || q2_item_sound(g, id, sound, e);
 }

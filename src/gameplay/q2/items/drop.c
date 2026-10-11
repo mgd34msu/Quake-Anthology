@@ -206,7 +206,7 @@ bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float 
         return true;
     a->item->think = Q2_ITEM_IDLE;
     a->item->due_ns = 0;
-    qa_string_id sound = g->runtime_names[Q2_NAME_RESOURCE_MISC_FHIT3_WAV];
+    qa_string_id sound = g->runtime_names[Q2_NAME_SOUND_MISC_FHIT3];
     if (!qa_world_body_read(g->services.world, id, &body, e) ||
         !qa_builtin_emit(&g->services,
                          &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,

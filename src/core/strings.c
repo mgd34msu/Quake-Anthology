@@ -5,8 +5,15 @@
 #include <string.h>
 
 typedef struct string_entry { qa_bytes text; uint64_t hash; uint32_t name_flags; } string_entry;
+typedef struct bound_names {
+    struct bound_names *next;
+    const char *const *names;
+    size_t count;
+    qa_string_id ids[];
+} bound_names;
 struct qa_strings {
     qa_arena arena;
+    bound_names *bound;
     string_entry *entries;
     qa_string_id *buckets;
     size_t count, capacity, bucket_count, references;
@@ -31,6 +38,7 @@ void qa_strings_retain(qa_strings *strings) {
 }
 void qa_strings_destroy(qa_strings *strings) {
     if (!strings || --strings->references) return;
+    while (strings->bound) { bound_names *row=strings->bound; strings->bound=row->next; free(row); }
     qa_arena_destroy(&strings->arena);
     free(strings->entries); free(strings->buckets); free(strings);
 }
@@ -129,3 +137,21 @@ const char *qa_strings_cstr(const qa_strings *strings, qa_string_id id) {
 size_t qa_strings_count(const qa_strings *strings) { return strings ? strings->count : 0; }
 uint32_t qa_strings_name_flags(const qa_strings *strings,qa_string_id id)
 { return strings&&id&&(size_t)id<=strings->count?strings->entries[id-1u].name_flags:0; }
+
+bool qa_strings_bind_names(qa_strings *strings, const char *const *names, size_t count,
+    const qa_string_id **out, qa_error *error)
+{
+    for (bound_names *row=strings->bound;row;row=row->next)
+        if (row->names==names && row->count==count) { *out=row->ids; return true; }
+    if (count>(SIZE_MAX-sizeof(bound_names))/sizeof(qa_string_id)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Static name table exceeds storage"); return false;
+    }
+    bound_names *row=malloc(sizeof(*row)+count*sizeof(*row->ids));
+    if (!row) { qa_error_set(error,QA_ERROR_MEMORY,0,"Binding static names"); return false; }
+    for (size_t i=0;i<count;++i) {
+        row->ids[i]=QA_STRING_NONE;
+        if (names[i] && !qa_strings_intern_cstr(strings,names[i],row->ids+i,error)) { free(row); return false; }
+    }
+    row->names=names;row->count=count;row->next=strings->bound;strings->bound=row;*out=row->ids;
+    return true;
+}

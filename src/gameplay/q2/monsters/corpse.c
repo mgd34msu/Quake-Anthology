@@ -31,7 +31,7 @@ static bool flies(q2m_context *c, bool enabled, qa_error *error) {
                               .volume = 1,
                               .attenuation = 1,
                               .flags = enabled ? 1u : 0u};
-    event.resource=c->game->runtime_names[Q2_NAME_RESOURCE_INFANTRY_INFLIES1_WAV];
+    event.resource=c->game->runtime_names[Q2_NAME_SOUND_INFANTRY_INFLIES1];
     if (!q2m_alive(c))
         return true;
     if (!qa_builtin_emit(&c->game->services, &event, error))

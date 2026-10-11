@@ -357,7 +357,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         if (!q2_actor_live(g, hook_id))
             return true;
         if (g->options.edition == QA_Q2_RERELEASE &&
-            !loop(g, hook, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_GRAPPLE_GRPULL_WAV], e))
+            !loop(g, hook, g->runtime_names[Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRPULL], e))
             return false;
     } else {
         s->hook_state = 2;
@@ -558,7 +558,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
         return q2_grapple_touch(g, &contact, e) && q2_weapon_fired(g, owner->id, weapon, e);
     }
     *launched = true;
-    return (!rr || loop(g, hook, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_GRAPPLE_GRFLY_WAV], e)) &&
+    return (!rr || loop(g, hook, g->runtime_names[Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRFLY], e)) &&
            q2_weapon_fired(g, owner->id, weapon, e);
 }
 static bool project_pose(q2_weapon_call *call, bool lm, const qa_q2_grapple_pose *p,
@@ -791,7 +791,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
     if (s->phase == QA_Q2_GRAPPLE_PULL && qa_vec_length(direction) < 64) {
         s->phase = QA_Q2_GRAPPLE_HANG;
         if (rr) {
-            if (!loop(g, hook, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_GRAPPLE_GRHANG_WAV], e))
+            if (!loop(g, hook, g->runtime_names[Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRHANG], e))
                 return false;
         } else {
             qa_q2_grapple_motion change = {.set_prediction = true, .prediction_suppressed = true};

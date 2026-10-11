@@ -17,6 +17,7 @@
 #include "qa/persistence_fields.h"
 #include "qa/localization.h"
 #include "qa/text.h"
+#include "qa/q2_sound.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
 #include "qa/movement.h"
@@ -51,6 +52,19 @@
     } \
 } while (0)
 
+static void test_compiled_sound_names(void)
+{
+    qa_strings *strings=NULL;const qa_string_id *first,*second;qa_error error={0};
+    CHECK(qa_strings_create(&strings,&error));
+    CHECK(qa_q2_sound_names_bind(strings,&first,&error));
+    size_t count=qa_strings_count(strings);
+    CHECK(qa_q2_sound_names_bind(strings,&second,&error));
+    CHECK(first==second && qa_strings_count(strings)==count);
+    CHECK(first[QA_Q2_SFX_NONE]==QA_STRING_NONE);
+    for (size_t i=1;i<QA_Q2_SFX_COUNT;++i)
+        CHECK(!strcmp(qa_strings_cstr(strings,first[i]),qa_q2_sound_path(i-1)));
+    qa_strings_destroy(strings);
+}
 static void test_source_text(void)
 {
     uint8_t source[256],roundtrip[257];char utf8[513];size_t size,restored;qa_error error={0};
@@ -1909,6 +1923,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_source_text();
+    test_compiled_sound_names();
     test_native_import_slot_identity();
     test_literal_tokens();
     test_platform_event_retirement();
