@@ -342,7 +342,7 @@ static bool chainfist_smoke(q2_weapon_call *c, qa_error *e) {
         qa_vec3 start, dir;
         if (!q2_project(c, c->input.angles, qa_v3(8, 8, -4), &start, &dir, e))
             return false;
-        return q2_projectile_event(c->game, c->actor->id, QA_BUILTIN_IMPACT, "q2:chainfist-smoke",
+        return q2_projectile_event(c->game, c->actor->id, QA_BUILTIN_IMPACT, c->game->runtime_names[Q2_NAME_RESOURCE_Q2_CHAINFIST_SMOKE],
                                    0, start, qa_v3(0, 0, 0), e);
     }
     return true;

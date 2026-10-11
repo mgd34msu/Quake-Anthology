@@ -824,7 +824,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        if (!q2_projectile_event(g, a->id, QA_BUILTIN_MUZZLE, "q2:monster-muzzle", 57, from.origin,
+        if (!q2_projectile_event(g, a->id, QA_BUILTIN_MUZZLE, g->runtime_names[Q2_NAME_RESOURCE_Q2_MONSTER_MUZZLE], 57, from.origin,
                                  direction, e))
             return false;
         return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_FREE, .1f);

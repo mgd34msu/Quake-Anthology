@@ -115,7 +115,7 @@ bool q2_route_touch(qa_q2_game *g, q2_actor *a, qa_actor_id actor, qa_error *e) 
             return false;
         if (!q2_actor_live(g, a->id) || !q2_actor_live(g, actor))
             return true;
-        if (!q2_projectile_event(g, actor, QA_BUILTIN_TELEPORT, "", 7, b.origin, qa_v3(0, 0, 0), e))
+        if (!q2_projectile_event(g, actor, QA_BUILTIN_TELEPORT, g->runtime_names[Q2_NAME_RESOURCE_EMPTY], 7, b.origin, qa_v3(0, 0, 0), e))
             return false;
         next = (qa_actor_id){0};
         q2_entity_pick(g, next_target, &next);

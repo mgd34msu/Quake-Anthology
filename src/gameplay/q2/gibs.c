@@ -152,7 +152,9 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         if (!gib_contents(g, origin, &a->physics.water_type, e)) return false;
         a->physics.water_level = ((uint32_t)a->physics.water_type & (8u | 16u | 32u)) ? 1 : 0;
     }
-    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model, 0, origin, angles, e);
+    qa_string_id model_id;
+    if (!qa_builtin_resource(&g->services, model, &model_id, e)) return false;
+    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model_id, 0, origin, angles, e);
 }
 static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float speed,
                    qa_vec3 origin, qa_error *e) {
@@ -193,7 +195,9 @@ static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float s
         .visible = true,
         .scale = 1,
         .expire_ns = q2_deadline(g->now_ns, (uint64_t)((5 + q2_random(g) * 5) * 1e9))};
-    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model, 0, body.origin, body.angles, e);
+    qa_string_id model_id;
+    if (!qa_builtin_resource(&g->services, model, &model_id, e)) return false;
+    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model_id, 0, body.origin, body.angles, e);
 }
 bool q2_spawn_debris(qa_q2_game *g, qa_actor_id source, qa_error *e) {
     qa_body_state body;
@@ -238,7 +242,7 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     p->armed = true;
     if (!contact->has_plane)
         return true;
-    if (!q2_projectile_event(g, a->id, QA_BUILTIN_SOUND, QA_Q2_SOUND_MISC_FHIT3, 2, body.origin,
+    if (!q2_projectile_event(g, a->id, QA_BUILTIN_SOUND, g->runtime_names[Q2_NAME_RESOURCE_MISC_FHIT3_WAV], 2, body.origin,
                              body.origin, e))
         return false;
     if (!q2_actor_live(g, a->id))
@@ -378,9 +382,9 @@ bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) 
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     return qa_world_link(g->services.world, id, NULL, e) &&
            q2_projectile_event(g, id, QA_BUILTIN_ANIMATION,
-                               size <= 1   ? "models/items/spawngro2/tris.md2"
-                               : size == 2 ? "models/items/spawngro3/tris.md2"
-                                           : "models/items/spawngro/tris.md2",
+                               size <= 1   ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO2_TRIS_MD2]
+                               : size == 2 ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO3_TRIS_MD2]
+                                           : g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO_TRIS_MD2],
                                0, origin, body.angles, e);
 }
 static bool trap_capture_run(qa_q2_game *g, q2_actor *trap,

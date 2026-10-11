@@ -25,7 +25,7 @@ static bool speaker(qa_q2_game *g, q2_actor *a, int operation, qa_error *e) {
 static bool explode(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e) ||
-        !q2_projectile_event(g, a->id, QA_BUILTIN_EXPLOSION, "q2:explosion1", 1, b.origin,
+        !q2_projectile_event(g, a->id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, b.origin,
                              qa_v3(0, 0, 0), e))
         return false;
     if (!q2_actor_live(g, a->id))

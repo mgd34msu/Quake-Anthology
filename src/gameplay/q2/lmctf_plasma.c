@@ -111,7 +111,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         a->physics.solid = QA_PHYSICS_BOX;
         a->physics.clip_mask = Q2_SHOT_MASK;
         if (!qa_world_link(g->services.world, id, NULL, e) ||
-            !q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, "sprites/s_plasma1.sp2", 0, start,
+            !q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_PLASMA1_SP2], 0, start,
                                  spawn.body.angles, e))
             return false;
         if (!q2_actor_live(g, id))
@@ -281,6 +281,6 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
     return qa_world_body_write(g->services.world, a->id, &body, e) &&
            qa_world_set_collision(g->services.world, a->id, NULL, e) &&
            qa_world_link(g->services.world, a->id, NULL, e) &&
-           q2_projectile_event(g, a->id, QA_BUILTIN_ANIMATION, "sprites/s_plasma2.sp2", 0,
+           q2_projectile_event(g, a->id, QA_BUILTIN_ANIMATION, g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_PLASMA2_SP2], 0,
                                body.origin, body.angles, e);
 }

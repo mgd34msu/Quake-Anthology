@@ -13,7 +13,7 @@ static qa_vec3 project(const qa_body_state *body, qa_vec3 offset) {
 }
 
 static bool effect(qa_q2_game *game, qa_actor_id actor, qa_vec3 point,
-                   const char *name, int count, qa_error *error) {
+                   qa_string_id name, int count, qa_error *error) {
   if (!q2_actor_live(game, actor)) return true;
   return q2_projectile_event(game, actor, QA_BUILTIN_EFFECT, name, count,
                              point, point, error);
@@ -112,7 +112,10 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   if (!qa_world_link(game->services.world, id, NULL, error))
     return release_failed(game, id, error);
   if (!q2_actor_live(game, id)) return true;
-  if (!q2_projectile_event(game, id, QA_BUILTIN_ANIMATION, model, 0, origin,
+  qa_string_id model_id;
+  if (!qa_builtin_resource(&game->services, model, &model_id, error))
+    return release_failed(game, id, error);
+  if (!q2_projectile_event(game, id, QA_BUILTIN_ANIMATION, model_id, 0, origin,
                            qa_v3(0, 0, 0), error))
     return release_failed(game, id, error);
   return true;
@@ -160,7 +163,7 @@ static bool spawn_legs(q2m_context *context, qa_error *error) {
     return release_failed(context->game, id, error);
   if (!q2_actor_live(context->game, id)) return true;
   if (!q2_projectile_event(context->game, id, QA_BUILTIN_ANIMATION,
-      "models/monsters/legs/tris.md2", 0, spawn.body.origin, spawn.body.angles, error))
+      context->game->runtime_names[Q2_NAME_RESOURCE_MODELS_MONSTERS_LEGS_TRIS_MD2], 0, spawn.body.origin, spawn.body.angles, error))
     return release_failed(context->game, id, error);
   return true;
 }
@@ -173,7 +176,7 @@ bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
   if (!q2_actor_live(game, id)) return true;
   if (actor->projectile.frame == 17) {
     qa_vec3 point = project(&body, qa_v3(11.77f, -7.24f, 23.31f));
-    if (!effect(game, id, point, "q2:explosion1", 1, error) ||
+    if (!effect(game, id, point, game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, error) ||
         !pieces(game, id, point, false, error)) return false;
     if (!q2_actor_live(game, id)) return true;
   }
@@ -201,7 +204,7 @@ bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
         "models/monsters/blackwidow/gib2/tris.md2", "models/monsters/blackwidow/gib3/tris.md2"};
     for (unsigned i = 0; i < 2; ++i) {
       qa_vec3 point = project(&body, offsets[i]);
-      if (!effect(game, id, point, "q2:explosion1", 1, error) ||
+      if (!effect(game, id, point, game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, error) ||
           !pieces(game, id, point, false, error)) return false;
       if (!q2_actor_live(game, id)) return true;
       for (unsigned j = 0; j < i + 2; ++j) {
@@ -217,8 +220,8 @@ bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
       game->now_ns / Q2_MS > (uint64_t)(warning * 1000.0f) : classic_time > warning;
   if (!actor->projectile.phase && warning_due) {
     actor->projectile.phase = 1;
-    if (!effect(game, id, project(&body, qa_v3(31, -88.7f, 10.96f)), "q2:explosion1", 1, error) ||
-        !effect(game, id, project(&body, qa_v3(-12.67f, -4.39f, 15.68f)), "q2:explosion1", 1, error)) return false;
+    if (!effect(game, id, project(&body, qa_v3(31, -88.7f, 10.96f)), game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, error) ||
+        !effect(game, id, project(&body, qa_v3(-12.67f, -4.39f, 15.68f)), game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, error)) return false;
     if (!q2_actor_live(game, id)) return true;
   }
   actor->projectile.next_ns = q2_deadline(game->now_ns, 100 * Q2_MS);
@@ -245,7 +248,7 @@ static bool sized_touch(void *opaque, qa_actor_id id, qa_error *error) {
   if (!qa_world_set_collision(game->services.world, id, NULL, error)) return false;
   if (!qa_world_link(game->services.world, id, NULL, error)) return false;
   return !q2_actor_live(game, id) || !sound ||
-      q2_projectile_event(game, id, QA_BUILTIN_SOUND, QA_Q2_SOUND_MISC_FHIT3, 2, body.origin, body.origin, error);
+      q2_projectile_event(game, id, QA_BUILTIN_SOUND, game->runtime_names[Q2_NAME_RESOURCE_MISC_FHIT3_WAV], 2, body.origin, body.origin, error);
 }
 
 bool q2_widow_gib_touch(qa_q2_game *game, const qa_touch_contact *contact, qa_error *error) {
@@ -270,7 +273,7 @@ bool q2m_widow_explode(q2m_context *context, qa_error *error) {
     return false;
   }
   if (count == 12) {
-    if (!q2_projectile_event(game, id, QA_BUILTIN_STOP_SOUND, NULL, 0, origin, origin, error)) return false;
+    if (!q2_projectile_event(game, id, QA_BUILTIN_STOP_SOUND, 0, 0, origin, origin, error)) return false;
     if (!q2m_alive(context)) return true;
     if (!gib(game, id, meat, 400, true, NULL, false, false, true, error)) return false;
     for (unsigned i = 0; i < 2; ++i)
@@ -289,7 +292,7 @@ bool q2m_widow_explode(q2m_context *context, qa_error *error) {
   if (count == 5 || count == 6) {
     qa_vec3 arm = project(&context->body, qa_v3(65.76f, 17.52f, 7.56f));
     if (count == 5) {
-      if (!effect(game, id, arm, "q2:explosion1_big", 1, error)) return false;
+      if (!effect(game, id, arm, game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1_BIG], 1, error)) return false;
       for (unsigned i = 0; i < 2; ++i)
         if (!gib(game, id, metal, 100, false, &arm, false, false, false, error)) return false;
     } else if (!gib(game, id, "models/monsters/blackwidow2/gib4/tris.md2", 200,
@@ -299,8 +302,8 @@ bool q2m_widow_explode(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context)) return true;
   ++context->monster->count;
   context->monster->death_ns = q2m_after(game->now_ns, .1);
-  const char *name = count >= 8 ? "q2:explosion1_big" :
-                     (count & 1) == 0 ? "q2:explosion1" : "q2:explosion1_np";
+  qa_string_id name = count >= 8 ? context->game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1_BIG] :
+                     (count & 1) == 0 ? context->game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1] : context->game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1_NP];
   return effect(game, id, point, name, 1, error);
 }
 
@@ -314,12 +317,12 @@ bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
     const qa_vec3 offsets[] = {{12.58f,-43.71f,68.88f},{3.43f,58.72f,68.41f}};
     for (unsigned i = 0; i < 2; ++i) {
       if (!effect(context->game, context->actor->id, project(&context->body, offsets[i]),
-          start ? "q2:widowbeamout" : "q2:widowsplash", start ? 20001 + (int)i : 1, error)) return false;
+          start ? context->game->runtime_names[Q2_NAME_RESOURCE_Q2_WIDOWBEAMOUT] : context->game->runtime_names[Q2_NAME_RESOURCE_Q2_WIDOWSPLASH], start ? 20001 + (int)i : 1, error)) return false;
       if (!q2m_alive(context)) return true;
     }
     if (start) return q2m_sound(context, QA_Q2_SOUND_MISC_BWIDOWBEAMOUT, 2, 1, error);
     qa_vec3 point = context->body.origin; point.z += 36;
-    if (!effect(context->game, context->actor->id, point, "q2:bosstport", 1, error) ||
+    if (!effect(context->game, context->actor->id, point, context->game->runtime_names[Q2_NAME_RESOURCE_Q2_BOSSTPORT], 1, error) ||
         !spawn_legs(context, error)) return false;
     return !q2m_alive(context) || q2m_release(context, error);
   }
@@ -329,7 +332,7 @@ bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
   if (name >= Q2M_CALLBACK_WidowExplosion1 && name <= Q2M_CALLBACK_WidowExplosion7) {
     qa_vec3 point = project(&context->body, offsets[name - Q2M_CALLBACK_WidowExplosion1]);
     qa_actor_id id = context->actor->id;
-    if (!effect(context->game, id, point, "q2:explosion1", 1, error) ||
+    if (!effect(context->game, id, point, context->game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, error) ||
         !gib(context->game, id, meat, 300, true, &point, false, false, false, error) ||
         !gib(context->game, id, metal, 100, false, &point, false, false, false, error)) return false;
     for (unsigned i = 0; i < 2; ++i)
@@ -343,7 +346,7 @@ bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
     for (unsigned i = 0; i < 2; ++i) {
       qa_vec3 point = project(&context->body, leg_offsets[i]);
       qa_actor_id id = context->actor->id;
-      if (!effect(context->game, id, point, i ? "q2:explosion1" : "q2:explosion1_big", 1, error) ||
+      if (!effect(context->game, id, point, i ? context->game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1] : context->game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1_BIG], 1, error) ||
           !gib(context->game, id, models[i], i ? 300 : 200, false, &point, true, true, false, error) ||
           !gib(context->game, id, meat, 300, true, &point, false, false, false, error) ||
           !gib(context->game, id, metal, 100, false, &point, false, false, false, error)) return false;

@@ -744,6 +744,15 @@ Radius damage receives a retained cause ID. Original-save projection converts
 the same mover definitions to text at its file boundary. The normal build
 and seven core suites pass; no live installation is claimed.
 
+Names item 14, Q2 projectile emitters: the event and loop helpers now receive
+`qa_string_id`; all their callers are migrated and both text conversions are
+deleted. Fixed weapon/model/effect selectors use the existing admission table.
+The 256 target-temp names are bound once at game creation, instead of formatted
+on use. Empty-model removal and zero-resource events remain distinct; loop
+stop uses zero. Public variable-model arguments are interned at their entry
+boundary. Normal build and seven core suites pass. Names item 14's audited
+sites are migrated; campaign, guest-record and bot-variable items remain.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

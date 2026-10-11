@@ -125,9 +125,9 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         return true;
     if ((p.damage > 400 && !nuke_sound(g, a, QA_Q2_SOUND_ITEMS_DAMAGE3, 3, 1, 1, e)) ||
         !nuke_sound(g, a, QA_Q2_SOUND_WEAPONS_GRENLX1A, 10, 1, 0, e) ||
-        !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, "q2:explosion1-big", 0, body.origin,
+        !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1_BIG_2], 0, body.origin,
                              qa_v3(0, 0, 0), e) ||
-        !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, "q2:nukeblast", 0, body.origin,
+        !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_NUKEBLAST], 0, body.origin,
                              qa_v3(0, 0, 0), e))
         return false;
     if (!q2_actor_live(g, id))
@@ -262,7 +262,7 @@ bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                       .frame = p->frame};
         if (!qa_builtin_emit(&g->services, &animation, e))
             return false;
-        if (!q2_projectile_event(g, a->id, QA_BUILTIN_MUZZLE, NULL,
+        if (!q2_projectile_event(g, a->id, QA_BUILTIN_MUZZLE, 0,
                                  multiplier == 2   ? 37
                                  : multiplier == 4 ? 38
                                  : multiplier == 8 ? 39
@@ -369,6 +369,6 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
         return true;
     return qa_world_body_read(g->services.world, id, &spawn.body, e) &&
            qa_world_link(g->services.world, id, NULL, e) &&
-           q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, "models/weapons/g_nuke/tris.md2", 0,
+           q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_G_NUKE_TRIS_MD2], 0,
                                spawn.body.origin, spawn.body.angles, e);
 }

@@ -433,8 +433,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
     }
     case Q2E_TEMP: {
         qa_body_state b;
-        char effect[32];
-        snprintf(effect, sizeof(effect), "q2:temp-%u", (unsigned)s->style & 255);
+        qa_string_id effect = g->temporary_effects[(unsigned)s->style & 255];
         return qa_world_body_read(g->services.world, a->id, &b, e) &&
                q2_projectile_event(g, a->id, QA_BUILTIN_IMPACT, effect, 0, b.origin, qa_v3(0, 0, 0),
                                    e);

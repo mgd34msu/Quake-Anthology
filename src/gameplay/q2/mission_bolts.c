@@ -57,7 +57,7 @@ bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
                        contact->has_plane ? contact->plane.normal : qa_v3(0, 0, 0), false, e))
             return false;
     } else if (!hurt &&
-               !q2_projectile_event(g, id, QA_BUILTIN_IMPACT, "q2:blaster2", 0, body.origin,
+               !q2_projectile_event(g, id, QA_BUILTIN_IMPACT, g->runtime_names[Q2_NAME_RESOURCE_Q2_BLASTER2], 0, body.origin,
                                     contact->has_plane ? contact->plane.normal : qa_v3(0, 0, 0), e))
         return false;
     return !q2_actor_live(g, id) || qa_session_release(g->services.session, id, e);

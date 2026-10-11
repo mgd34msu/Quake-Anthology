@@ -55,7 +55,7 @@ bool q2_target_creature(qa_q2_game *g, qa_actor_id id, bool *creature, bool *pla
     return true;
 }
 bool q2_projectile_event(qa_q2_game *g, qa_actor_id id, qa_builtin_event_kind kind,
-                         const char *path, int code, qa_vec3 origin, qa_vec3 end, qa_error *e) {
+                         qa_string_id resource, int code, qa_vec3 origin, qa_vec3 end, qa_error *e) {
     qa_builtin_event event = {.kind = kind,
                               .family = QA_GAME_Q2,
                               .provider = g->options.owner,
@@ -65,18 +65,17 @@ bool q2_projectile_event(qa_q2_game *g, qa_actor_id id, qa_builtin_event_kind ki
                               .end = end,
                               .volume = 1,
                               .attenuation = 1,
-                              .code = code};
+                              .code = code,
+                              .resource = resource};
     if (kind == QA_BUILTIN_BEAM)
         event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS,origin};
     if (kind == QA_BUILTIN_SOUND || kind == QA_BUILTIN_STOP_SOUND)
         event.channel = code;
-    if (path != NULL && !qa_builtin_resource(&g->services, path, &event.resource, e))
-        return false;
-    if (kind == QA_BUILTIN_ANIMATION && path != NULL && id.slot < g->capacity &&
+    if (kind == QA_BUILTIN_ANIMATION && resource != 0 && id.slot < g->capacity &&
         g->actors[id.slot] != NULL && qa_actor_id_equal(g->actors[id.slot]->id, id) &&
         g->actors[id.slot]->projectile.kind != Q2_PROJECTILE_NONE) {
         g->actors[id.slot]->projectile.model = event.resource;
-        g->actors[id.slot]->projectile.visible = path[0] != '\0';
+        g->actors[id.slot]->projectile.visible = resource != g->runtime_names[Q2_NAME_RESOURCE_EMPTY];
     }
     return qa_builtin_emit(&g->services, &event, e);
 }
@@ -98,11 +97,8 @@ qa_attack q2_projectile_attack(qa_q2_game *g, qa_actor_id id, const q2_projectil
                                    : 0;
     return attack;
 }
-bool q2_projectile_loop(qa_q2_game *g, q2_actor *a, const char *path, bool stop_previous,
+bool q2_projectile_loop(qa_q2_game *g, q2_actor *a, qa_string_id resource, bool stop_previous,
                         qa_error *e) {
-    qa_string_id resource = 0;
-    if (*path != 0 && !qa_builtin_resource(&g->services, path, &resource, e))
-        return false;
     if (resource == a->projectile.loop_sound)
         return true;
     qa_body_state body;
@@ -228,9 +224,9 @@ static bool grenade_explode(qa_q2_game *g, qa_actor_id id, qa_actor_id direct, q
     if (!qa_world_point_contents(g->services.world, &query, &water, e))
         return false;
     bool wet = ((uint32_t)qa_collision_point_contents_export(water.contents, QA_GAME_Q2, water.q1_opaque_token) & Q2_WATER_MASK) != 0;
-    const char *effect = !qa_actor_reference_present(body.ground)
-                             ? (wet ? "q2:rocket-explosion-water" : "q2:rocket-explosion")
-                             : (wet ? "q2:grenade-explosion-water" : "q2:grenade-explosion");
+    qa_string_id effect = !qa_actor_reference_present(body.ground)
+                             ? (wet ? g->runtime_names[Q2_NAME_RESOURCE_Q2_ROCKET_EXPLOSION_WATER] : g->runtime_names[Q2_NAME_RESOURCE_Q2_ROCKET_EXPLOSION])
+                             : (wet ? g->runtime_names[Q2_NAME_RESOURCE_Q2_GRENADE_EXPLOSION_WATER] : g->runtime_names[Q2_NAME_RESOURCE_Q2_GRENADE_EXPLOSION]);
     return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, effect, 0,
                                qa_vec_add(body.origin, qa_vec_scale(body.velocity, -0.02f)),
                                qa_v3(0, 0, 0), e) &&
@@ -300,7 +296,7 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
         float damage = truncf(p->damage * (1 - sqrtf(distance / p->radius)));
         qa_attack attack = q2_projectile_attack(g, id, p, 14, 4);
         if (g->options.edition == QA_Q2_CLASSIC &&
-            !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, "q2:bfg-explosion", 0, body.origin,
+            !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_BFG_EXPLOSION], 0, body.origin,
                                  qa_v3(0, 0, 0), e))
             return false;
         if (!live(g, id))
@@ -317,7 +313,7 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
             return true;
         if (g->options.edition == QA_Q2_RERELEASE) {
             if (!qa_world_body_read(g->services.world, id, &blast, e) ||
-                !q2_projectile_event(g, id, QA_BUILTIN_BEAM, "q2:bfg-zap", 0, blast.origin, center,
+                !q2_projectile_event(g, id, QA_BUILTIN_BEAM, g->runtime_names[Q2_NAME_RESOURCE_Q2_BFG_ZAP], 0, blast.origin, center,
                                      e))
                 return false;
         }
@@ -426,7 +422,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
                 query.pass_actor = hit;
             }
         }
-        if (!q2_projectile_event(g, id, QA_BUILTIN_BEAM, "q2:bfg-laser", 0, origin, trace.end, e))
+        if (!q2_projectile_event(g, id, QA_BUILTIN_BEAM, g->runtime_names[Q2_NAME_RESOURCE_Q2_BFG_LASER], 0, origin, trace.end, e))
             return false;
     }
     return true;
@@ -572,7 +568,7 @@ static bool tracker_touch(qa_q2_game *g, qa_actor_id id, const q2_projectile *p,
     }
     if (!live(g, id))
         return true;
-    return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, "q2:tracker-explosion", 0, body->origin,
+    return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_TRACKER_EXPLOSION], 0, body->origin,
                                body->origin, e) &&
            qa_session_release(g->services.session, id, e);
 }
@@ -600,7 +596,7 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 victim->extra_effects &= ~UINT64_C(0x80000000);
         }
         if (p.kind == Q2_TRACKER &&
-            !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, "q2:tracker-explosion", 0,
+            !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_TRACKER_EXPLOSION], 0,
                                  body.origin, body.origin, e))
             return false;
         return qa_session_release(g->services.session, id, e);
@@ -732,8 +728,8 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         if (!qa_world_body_read(g->services.world, id, &body, e))
             return false;
         return q2_projectile_event(g, id, QA_BUILTIN_SOUND,
-                                   q2_random(g) > 0.5f ? QA_Q2_SOUND_WEAPONS_HGRENB1A
-                                                       : QA_Q2_SOUND_WEAPONS_HGRENB2A,
+                                   q2_random(g) > 0.5f ? g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_HGRENB1A_WAV]
+                                                       : g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_HGRENB2A_WAV],
                                    2, body.origin, body.origin, e);
     }
     if (qa_actor_id_equal(contact->other, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner)))
@@ -759,9 +755,9 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     if (p.kind == Q2_GRENADE) {
         if (hurt)
             return grenade_explode(g, id, contact->other, e);
-        const char *sound =
-            p.hand ? (q2_random(g) > 0.5f ? QA_Q2_SOUND_WEAPONS_HGRENB1A : QA_Q2_SOUND_WEAPONS_HGRENB2A)
-                   : QA_Q2_SOUND_WEAPONS_GRENLB1B;
+        qa_string_id sound =
+            p.hand ? (q2_random(g) > 0.5f ? g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_HGRENB1A_WAV] : g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_HGRENB2A_WAV])
+                   : g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_GRENLB1B_WAV];
         return q2_projectile_event(g, id, QA_BUILTIN_SOUND, sound, 2, body.origin, qa_v3(0, 0, 0),
                                    e);
     }
@@ -799,8 +795,8 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     if (p.kind == Q2_BOLT || p.kind == Q2_BLUE_BOLT || p.kind == Q2_ION || p.kind == Q2_FLECHETTE) {
         if (!hurt && p.kind != Q2_ION &&
             !q2_projectile_event(g, id, QA_BUILTIN_IMPACT,
-                                 p.kind == Q2_BOLT || p.kind == Q2_BLUE_BOLT ? "q2:blaster"
-                                                                             : "q2:flechette",
+                                 p.kind == Q2_BOLT || p.kind == Q2_BLUE_BOLT ? g->runtime_names[Q2_NAME_RESOURCE_Q2_BLASTER]
+                                                                             : g->runtime_names[Q2_NAME_RESOURCE_Q2_FLECHETTE],
                                  0, body.origin, normal, e))
             return false;
         return !live(g, id) || qa_session_release(g->services.session, id, e);
@@ -812,12 +808,12 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         if (!live(g, id))
             return true;
         q2_actor *a = g->actors[id.slot];
-        if (!q2_projectile_event(g, id, QA_BUILTIN_SOUND, QA_Q2_SOUND_WEAPONS_BFG__X1B, 2, body.origin,
+        if (!q2_projectile_event(g, id, QA_BUILTIN_SOUND, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_BFG_X1B_WAV], 2, body.origin,
                                  body.origin, e))
             return false;
         if (!live(g, id))
             return true;
-        if (!q2_projectile_loop(g, a, "", true, e))
+        if (!q2_projectile_loop(g, a, 0, true, e))
             return false;
         if (!live(g, id))
             return true;
@@ -835,9 +831,9 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         return qa_world_body_write(g->services.world, id, &body, e) &&
                qa_world_set_collision(g->services.world, id, NULL, e) &&
                qa_world_link(g->services.world, id, NULL, e) &&
-               q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, "sprites/s_bfg3.sp2", 0,
+               q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_BFG3_SP2], 0,
                                    body.origin, body.angles, e) &&
-               q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, "q2:bfg-bigexplosion", 0,
+               q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_BFG_BIGEXPLOSION], 0,
                                    body.origin, body.origin, e);
     }
     if (p.radius > 0 && p.radius_damage > 0 &&
@@ -854,9 +850,9 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     qa_point_contents content;
     if (!qa_world_point_contents(g->services.world, &query, &content, e))
         return false;
-    const char *effect = p.kind == Q2_PLASMA                       ? "q2:plasma-explosion"
-                         : ((uint32_t)qa_collision_point_contents_export(content.contents, QA_GAME_Q2, content.q1_opaque_token) & 56u) != 0 ? "q2:rocket-explosion-water"
-                                                                   : "q2:rocket-explosion";
+    qa_string_id effect = p.kind == Q2_PLASMA                       ? g->runtime_names[Q2_NAME_RESOURCE_Q2_PLASMA_EXPLOSION]
+                         : ((uint32_t)qa_collision_point_contents_export(content.contents, QA_GAME_Q2, content.q1_opaque_token) & 56u) != 0 ? g->runtime_names[Q2_NAME_RESOURCE_Q2_ROCKET_EXPLOSION_WATER]
+                                                                   : g->runtime_names[Q2_NAME_RESOURCE_Q2_ROCKET_EXPLOSION];
     return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, effect, 0, origin, normal, e) &&
            (!live(g, id) || qa_session_release(g->services.session, id, e));
 }
@@ -1009,39 +1005,37 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (!live(g, c->actor->id))
         return true;
     bool monster = creature && !player;
-    const char *name = kind == Q2_BOLT        ? "bolt"
-                       : kind == Q2_LOOGIE    ? "loogie"
-                       : kind == Q2_ROCKET    ? "rocket"
-                       : kind == Q2_BFG_BALL  ? "bfg blast"
-                       : kind == Q2_ION       ? "ion"
-                       : kind == Q2_PLASMA    ? "plasma"
-                       : kind == Q2_FLECHETTE ? "flechette"
-                       : kind == Q2_TRACKER   ? "tracker"
-                       : hand                 ? (c->rerelease ? "hand_grenade" : "hgrenade")
-                                              : "grenade";
-    const char *model = kind == Q2_BOLT        ? "models/objects/laser/tris.md2"
-                        : kind == Q2_LOOGIE    ? "models/objects/loogy/tris.md2"
-                        : kind == Q2_ROCKET    ? "models/objects/rocket/tris.md2"
-                        : kind == Q2_BFG_BALL  ? "sprites/s_bfg1.sp2"
-                        : kind == Q2_ION       ? "models/objects/boomrang/tris.md2"
-                        : kind == Q2_PLASMA    ? "sprites/s_photon.sp2"
-                        : kind == Q2_FLECHETTE ? "models/proj/flechette/tris.md2"
-                        : kind == Q2_TRACKER   ? "models/proj/disintegrator/tris.md2"
-                        : hand ? (c->rerelease ? "models/objects/grenade3/tris.md2"
-                                               : "models/objects/grenade2/tris.md2")
-                               : (c->rerelease && !monster ? "models/objects/grenade4/tris.md2"
-                                                           : "models/objects/grenade/tris.md2");
+    qa_string_id name = kind == Q2_BOLT        ? g->runtime_names[Q2_NAME_RESOURCE_BOLT]
+                       : kind == Q2_LOOGIE    ? g->runtime_names[Q2_NAME_RESOURCE_LOOGIE]
+                       : kind == Q2_ROCKET    ? g->runtime_names[Q2_NAME_RESOURCE_ROCKET]
+                       : kind == Q2_BFG_BALL  ? g->runtime_names[Q2_NAME_RESOURCE_BFG_BLAST]
+                       : kind == Q2_ION       ? g->runtime_names[Q2_NAME_RESOURCE_ION]
+                       : kind == Q2_PLASMA    ? g->runtime_names[Q2_NAME_RESOURCE_PLASMA]
+                       : kind == Q2_FLECHETTE ? g->runtime_names[Q2_NAME_RESOURCE_FLECHETTE]
+                       : kind == Q2_TRACKER   ? g->runtime_names[Q2_NAME_RESOURCE_TRACKER]
+                       : hand                 ? (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_HAND_GRENADE] : g->runtime_names[Q2_NAME_RESOURCE_HGRENADE])
+                                              : g->runtime_names[Q2_NAME_GRENADE];
+    qa_string_id model = kind == Q2_BOLT        ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_LASER_TRIS_MD2]
+                        : kind == Q2_LOOGIE    ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_LOOGY_TRIS_MD2]
+                        : kind == Q2_ROCKET    ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_ROCKET_TRIS_MD2]
+                        : kind == Q2_BFG_BALL  ? g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_BFG1_SP2]
+                        : kind == Q2_ION       ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_BOOMRANG_TRIS_MD2]
+                        : kind == Q2_PLASMA    ? g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_PHOTON_SP2]
+                        : kind == Q2_FLECHETTE ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_PROJ_FLECHETTE_TRIS_MD2]
+                        : kind == Q2_TRACKER   ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_PROJ_DISINTEGRATOR_TRIS_MD2]
+                        : hand ? (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE3_TRIS_MD2]
+                                               : g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE2_TRIS_MD2])
+                               : (c->rerelease && !monster ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE4_TRIS_MD2]
+                                                           : g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE_TRIS_MD2]);
     if (source_kind == Q2_BLUE_BOLT)
-        model = "models/objects/blaser/tris.md2";
+        model = g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_BLASER_TRIS_MD2];
     if (source_kind == Q2_GREEN_BOLT && !c->rerelease)
-        model = "models/proj/laser2/tris.md2";
+        model = g->runtime_names[Q2_NAME_RESOURCE_MODELS_PROJ_LASER2_TRIS_MD2];
     if ((kind == Q2_BOLT && (!c->rerelease || source_kind == Q2_GREEN_BOLT)) || kind == Q2_ION ||
         kind == Q2_FLECHETTE || kind == Q2_LOOGIE)
         direction = qa_vec_normalize(direction);
     qa_vec3 dodge_start = start, dodge_direction = direction;
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, name, &definition, e))
-        return false;
+    qa_actor_definition definition = name;
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
@@ -1179,10 +1173,9 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
             a->projectile.render_flags |= 1;
         }
     }
-    if (!qa_builtin_resource(&g->services, model, &a->projectile.model, e))
-        return false;
+    a->projectile.model = model;
     if (hand) {
-        if (!q2_projectile_loop(g, a, QA_Q2_SOUND_WEAPONS_HGRENC1B, false, e))
+        if (!q2_projectile_loop(g, a, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_HGRENC1B_WAV], false, e))
             return false;
         if (!live(g, id))
             return true;
@@ -1223,13 +1216,13 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         return false;
     if (!live(g, id))
         return true;
-    const char *loop = source_kind == Q2_GREEN_BOLT             ? NULL
-                       : kind == Q2_BOLT || kind == Q2_ION      ? QA_Q2_SOUND_MISC_LASFLY
-                       : kind == Q2_ROCKET || kind == Q2_PLASMA ? QA_Q2_SOUND_WEAPONS_ROCKFLY
-                       : kind == Q2_BFG_BALL                    ? QA_Q2_SOUND_WEAPONS_BFG__L1A
-                       : kind == Q2_TRACKER                     ? QA_Q2_SOUND_WEAPONS_DISRUPT
-                                                                : NULL;
-    if (loop != NULL && !q2_projectile_loop(g, a, loop, false, e))
+    qa_string_id loop = source_kind == Q2_GREEN_BOLT             ? 0
+                       : kind == Q2_BOLT || kind == Q2_ION      ? g->runtime_names[Q2_NAME_RESOURCE_MISC_LASFLY_WAV]
+                       : kind == Q2_ROCKET || kind == Q2_PLASMA ? g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_ROCKFLY_WAV]
+                       : kind == Q2_BFG_BALL                    ? g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_BFG_L1A_WAV]
+                       : kind == Q2_TRACKER                     ? g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_DISRUPT_WAV]
+                                                                : 0;
+    if (loop != 0 && !q2_projectile_loop(g, a, loop, false, e))
         return false;
     qa_vec3 dodge =
         kind == Q2_ION || kind == Q2_FLECHETTE || kind == Q2_TRACKER || source_kind == Q2_GREEN_BOLT

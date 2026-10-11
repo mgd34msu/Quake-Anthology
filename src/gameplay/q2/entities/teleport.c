@@ -22,7 +22,7 @@ bool q2_entity_teleport(qa_q2_game *g, q2_actor *source, qa_actor_id id,
         return true;
     qa_vec3 from = body.origin;
     if (!ctf && !pad &&
-        !q2_projectile_event(g, id, QA_BUILTIN_TELEPORT, "q2:teleport_effect", 0, from,
+        !q2_projectile_event(g, id, QA_BUILTIN_TELEPORT, g->runtime_names[Q2_NAME_RESOURCE_Q2_TELEPORT_EFFECT], 0, from,
                              qa_v3(0, 0, 0), e))
         return false;
     if (!q2_actor_live(g, id) || !q2_actor_live(g, source->id))
@@ -81,12 +81,12 @@ bool q2_entity_teleport(qa_q2_game *g, q2_actor *source, qa_actor_id id,
         qa_actor_id emitter =
             q2_actor_live(g, source->entity->owner) ? source->entity->owner : source->id;
         if (!qa_world_body_read(g->services.world, emitter, &origin, e) ||
-            !q2_projectile_event(g, emitter, QA_BUILTIN_TELEPORT, "q2:player-teleport", 0,
+            !q2_projectile_event(g, emitter, QA_BUILTIN_TELEPORT, g->runtime_names[Q2_NAME_RESOURCE_Q2_PLAYER_TELEPORT], 0,
                                  origin.origin, qa_v3(0, 0, 0), e))
             return false;
         if (!q2_actor_live(g, id))
             return true;
-        if (!q2_projectile_event(g, id, QA_BUILTIN_TELEPORT, "q2:player-teleport", 0, body.origin,
+        if (!q2_projectile_event(g, id, QA_BUILTIN_TELEPORT, g->runtime_names[Q2_NAME_RESOURCE_Q2_PLAYER_TELEPORT], 0, body.origin,
                                  qa_v3(0, 0, 0), e))
             return false;
     }

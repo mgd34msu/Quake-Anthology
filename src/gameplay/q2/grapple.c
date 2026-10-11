@@ -77,7 +77,7 @@ static bool sound(qa_q2_game *g, qa_actor_id id, qa_actor_id owner, const char *
     return qa_builtin_resource(&g->services, path, &event.resource, e) &&
            qa_builtin_emit(&g->services, &event, e);
 }
-static bool loop(qa_q2_game *g, q2_actor *hook, const char *path, qa_error *e) {
+static bool loop(qa_q2_game *g, q2_actor *hook, qa_string_id path, qa_error *e) {
     return q2_projectile_loop(g, hook, path, true, e);
 }
 static q2_anchor anchor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind, qa_error *error) {
@@ -205,7 +205,7 @@ bool qa_q2_grapple_reset(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
     q2_actor *hook = find(g, hook_id);
     if (hook == NULL)
         return true;
-    if (kind == QA_Q2_CTF_GRAPPLE && !loop(g, hook, "", e))
+    if (kind == QA_Q2_CTF_GRAPPLE && !loop(g, hook, 0, e))
         return false;
     if (!q2_actor_live(g, hook_id))
         return true;
@@ -222,7 +222,7 @@ bool q2_grapple_released(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (hook == NULL)
             continue;
         qa_error local = {0};
-        if (i == QA_Q2_CTF_GRAPPLE && !loop(g, hook, "", &local)) {
+        if (i == QA_Q2_CTF_GRAPPLE && !loop(g, hook, 0, &local)) {
             if (ok && e != NULL)
                 *e = local;
             ok = false;
@@ -357,7 +357,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         if (!q2_actor_live(g, hook_id))
             return true;
         if (g->options.edition == QA_Q2_RERELEASE &&
-            !loop(g, hook, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRPULL, e))
+            !loop(g, hook, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_GRAPPLE_GRPULL_WAV], e))
             return false;
     } else {
         s->hook_state = 2;
@@ -402,7 +402,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
             return false;
     }
     return !q2_actor_live(g, hook_id) ||
-           q2_projectile_event(g, hook_id, QA_BUILTIN_IMPACT, lm ? "q2:blaster" : "q2:sparks", 0,
+           q2_projectile_event(g, hook_id, QA_BUILTIN_IMPACT, lm ? g->runtime_names[Q2_NAME_RESOURCE_Q2_BLASTER] : g->runtime_names[Q2_NAME_RESOURCE_Q2_SPARKS], 0,
                                body.origin, normal, e);
 }
 static bool cable(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end, qa_vec3 offset,
@@ -526,8 +526,8 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
         return false;
     if (!qa_world_link(g->services.world, id, NULL, e) ||
         !q2_projectile_event(g, id, QA_BUILTIN_ANIMATION,
-                             lm ? "models/objects/ghook/tris.md2"
-                                : "models/weapons/grapple/hook/tris.md2",
+                             lm ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GHOOK_TRIS_MD2]
+                                : g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_GRAPPLE_HOOK_TRIS_MD2],
                              0, body.origin, body.angles, e))
         return false;
     if (!q2_actor_live(g, id))
@@ -558,7 +558,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
         return q2_grapple_touch(g, &contact, e) && q2_weapon_fired(g, owner->id, weapon, e);
     }
     *launched = true;
-    return (!rr || loop(g, hook, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFLY, e)) &&
+    return (!rr || loop(g, hook, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_GRAPPLE_GRFLY_WAV], e)) &&
            q2_weapon_fired(g, owner->id, weapon, e);
 }
 static bool project_pose(q2_weapon_call *call, bool lm, const qa_q2_grapple_pose *p,
@@ -791,7 +791,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
     if (s->phase == QA_Q2_GRAPPLE_PULL && qa_vec_length(direction) < 64) {
         s->phase = QA_Q2_GRAPPLE_HANG;
         if (rr) {
-            if (!loop(g, hook, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHANG, e))
+            if (!loop(g, hook, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_GRAPPLE_GRHANG_WAV], e))
                 return false;
         } else {
             qa_q2_grapple_motion change = {.set_prediction = true, .prediction_suppressed = true};

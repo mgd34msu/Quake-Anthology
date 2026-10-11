@@ -634,7 +634,7 @@ bool q2_brush_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e
             return true;
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, other, &b, e) ||
-            !q2_projectile_event(g, other, QA_BUILTIN_EXPLOSION, "q2:explosion1", 1, b.origin,
+            !q2_projectile_event(g, other, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, b.origin,
                                  qa_v3(0, 0, 0), e))
             return false;
         return !q2_actor_live(g, other) || qa_session_release(g->services.session, other, e);

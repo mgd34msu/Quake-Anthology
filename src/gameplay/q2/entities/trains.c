@@ -57,7 +57,7 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;
-            if (!q2_projectile_event(g, a->id, QA_BUILTIN_TELEPORT, "q2:other-teleport", 0, goal,
+            if (!q2_projectile_event(g, a->id, QA_BUILTIN_TELEPORT, g->runtime_names[Q2_NAME_RESOURCE_Q2_OTHER_TELEPORT], 0, goal,
                                      qa_v3(0, 0, 0), e))
                 return false;
             if (!q2_actor_live(g, a->id))

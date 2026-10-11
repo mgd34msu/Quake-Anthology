@@ -357,6 +357,14 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
             close_game(g);
             return false;
         }
+    for (unsigned i = 0; i < 256; ++i) {
+        char name[32];
+        snprintf(name, sizeof(name), "q2:temp-%u", i);
+        if (!qa_builtin_resource(services, name, &g->temporary_effects[i], e)) {
+            close_game(g);
+            return false;
+        }
+    }
     if (!qa_targets_bind_field_keys(qa_session_strings(services->session), g->field_keys, e)) {
         close_game(g);
         return false;

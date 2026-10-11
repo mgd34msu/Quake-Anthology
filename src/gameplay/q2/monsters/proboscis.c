@@ -139,7 +139,7 @@ static bool hit(qa_q2_game *game, q2_actor *tip, qa_actor_id other, qa_vec3 poin
         tip->projectile.enemy = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, other);
         tip->projectile.render_flags |= 32;
         if (!stop(game, tip, error) ||
-            !q2_projectile_event(game, id, QA_BUILTIN_SOUND, QA_Q2_SOUND_PARASITE_PARATCK3, 1,
+            !q2_projectile_event(game, id, QA_BUILTIN_SOUND, game->runtime_names[Q2_NAME_RESOURCE_PARASITE_PARATCK3_WAV], 1,
                                   body.origin, body.origin, error))
             return false;
     } else {
@@ -177,7 +177,7 @@ static bool hit(qa_q2_game *game, q2_actor *tip, qa_actor_id other, qa_vec3 poin
         if (!q2_damage(game, &attack, other, 5, 0, normal, point, normal, false, error))
             return false;
     }
-    if (!q2_projectile_event(game, owner_id, QA_BUILTIN_SOUND, QA_Q2_SOUND_PARASITE_PARATCK2, 0,
+    if (!q2_projectile_event(game, owner_id, QA_BUILTIN_SOUND, game->runtime_names[Q2_NAME_RESOURCE_PARASITE_PARATCK2_WAV], 0,
                               point, point, error))
         return false;
     if (!q2_actor_live(game, id))

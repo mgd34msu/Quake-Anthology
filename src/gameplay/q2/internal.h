@@ -1,6 +1,7 @@
 #ifndef QA_Q2_INTERNAL_H
 #define QA_Q2_INTERNAL_H
 #include "qa/game_q2.h"
+#include "qa/q2_sound.h"
 #include "qa/target_keys.h"
 #include "qa/game_q2_wire.h"
 #include "qa/game_q2_source.h"
@@ -40,7 +41,97 @@
     X(LASER_SPARKS, "q2:laser-sparks") \
     X(NOCLASS, "noclass") \
     X(PAIN_DAEMON, "pain daemon") \
-    X(WELDING_SPARKS, "q2:welding-sparks")
+    X(WELDING_SPARKS, "q2:welding-sparks") \
+    X(RESOURCE_Q2_ROCKET_EXPLOSION_WATER, "q2:rocket-explosion-water") \
+    X(RESOURCE_Q2_ROCKET_EXPLOSION, "q2:rocket-explosion") \
+    X(RESOURCE_Q2_GRENADE_EXPLOSION_WATER, "q2:grenade-explosion-water") \
+    X(RESOURCE_Q2_GRENADE_EXPLOSION, "q2:grenade-explosion") \
+    X(RESOURCE_Q2_PLASMA_EXPLOSION, "q2:plasma-explosion") \
+    X(RESOURCE_BOLT, "bolt") \
+    X(RESOURCE_LOOGIE, "loogie") \
+    X(RESOURCE_ROCKET, "rocket") \
+    X(RESOURCE_BFG_BLAST, "bfg blast") \
+    X(RESOURCE_ION, "ion") \
+    X(RESOURCE_PLASMA, "plasma") \
+    X(RESOURCE_FLECHETTE, "flechette") \
+    X(RESOURCE_TRACKER, "tracker") \
+    X(RESOURCE_HAND_GRENADE, "hand_grenade") \
+    X(RESOURCE_HGRENADE, "hgrenade") \
+    X(RESOURCE_MODELS_OBJECTS_LASER_TRIS_MD2, "models/objects/laser/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_LOOGY_TRIS_MD2, "models/objects/loogy/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_ROCKET_TRIS_MD2, "models/objects/rocket/tris.md2") \
+    X(RESOURCE_SPRITES_S_BFG1_SP2, "sprites/s_bfg1.sp2") \
+    X(RESOURCE_MODELS_OBJECTS_BOOMRANG_TRIS_MD2, "models/objects/boomrang/tris.md2") \
+    X(RESOURCE_SPRITES_S_PHOTON_SP2, "sprites/s_photon.sp2") \
+    X(RESOURCE_MODELS_PROJ_FLECHETTE_TRIS_MD2, "models/proj/flechette/tris.md2") \
+    X(RESOURCE_MODELS_PROJ_DISINTEGRATOR_TRIS_MD2, "models/proj/disintegrator/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GRENADE3_TRIS_MD2, "models/objects/grenade3/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GRENADE2_TRIS_MD2, "models/objects/grenade2/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GRENADE4_TRIS_MD2, "models/objects/grenade4/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GRENADE_TRIS_MD2, "models/objects/grenade/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_BLASER_TRIS_MD2, "models/objects/blaser/tris.md2") \
+    X(RESOURCE_MODELS_PROJ_LASER2_TRIS_MD2, "models/proj/laser2/tris.md2") \
+    X(RESOURCE_MISC_LASFLY_WAV, QA_Q2_SOUND_MISC_LASFLY) \
+    X(RESOURCE_WEAPONS_ROCKFLY_WAV, QA_Q2_SOUND_WEAPONS_ROCKFLY) \
+    X(RESOURCE_WEAPONS_BFG_L1A_WAV, QA_Q2_SOUND_WEAPONS_BFG__L1A) \
+    X(RESOURCE_WEAPONS_DISRUPT_WAV, QA_Q2_SOUND_WEAPONS_DISRUPT) \
+    X(RESOURCE_PROX_MINE, "prox_mine") \
+    X(RESOURCE_PROX, "prox") \
+    X(RESOURCE_FOOD_CUBE_TRAP, "food_cube_trap") \
+    X(RESOURCE_HTRAP, "htrap") \
+    X(RESOURCE_MODELS_WEAPONS_G_PROX_TRIS_MD2, "models/weapons/g_prox/tris.md2") \
+    X(RESOURCE_MODELS_WEAPONS_G_TESLA_TRIS_MD2, "models/weapons/g_tesla/tris.md2") \
+    X(RESOURCE_MODELS_WEAPONS_Z_TRAP_TRIS_MD2, "models/weapons/z_trap/tris.md2") \
+    X(RESOURCE_Q2_EXPLOSION1, "q2:explosion1") \
+    X(RESOURCE_Q2_EXPLOSION1_BIG, "q2:explosion1_big") \
+    X(RESOURCE_Q2_WIDOWBEAMOUT, "q2:widowbeamout") \
+    X(RESOURCE_Q2_WIDOWSPLASH, "q2:widowsplash") \
+    X(RESOURCE_Q2_BOSSTPORT, "q2:bosstport") \
+    X(RESOURCE_WEAPONS_GRAPPLE_GRPULL_WAV, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRPULL) \
+    X(RESOURCE_WEAPONS_GRAPPLE_GRFLY_WAV, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFLY) \
+    X(RESOURCE_WEAPONS_GRAPPLE_GRHANG_WAV, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHANG) \
+    X(RESOURCE_Q2_EXPLOSION1_BIG_2, "q2:explosion1-big") \
+    X(RESOURCE_Q2_NUKEBLAST, "q2:nukeblast") \
+    X(RESOURCE_MODELS_WEAPONS_G_NUKE_TRIS_MD2, "models/weapons/g_nuke/tris.md2") \
+    X(RESOURCE_Q2_CHAINFIST_SMOKE, "q2:chainfist-smoke") \
+    X(RESOURCE_MISC_FHIT3_WAV, QA_Q2_SOUND_MISC_FHIT3) \
+    X(RESOURCE_MODELS_ITEMS_SPAWNGRO2_TRIS_MD2, "models/items/spawngro2/tris.md2") \
+    X(RESOURCE_MODELS_ITEMS_SPAWNGRO3_TRIS_MD2, "models/items/spawngro3/tris.md2") \
+    X(RESOURCE_MODELS_ITEMS_SPAWNGRO_TRIS_MD2, "models/items/spawngro/tris.md2") \
+    X(RESOURCE_Q2_BLASTER, "q2:blaster") \
+    X(RESOURCE_Q2_SPARKS, "q2:sparks") \
+    X(RESOURCE_MODELS_OBJECTS_GHOOK_TRIS_MD2, "models/objects/ghook/tris.md2") \
+    X(RESOURCE_MODELS_WEAPONS_GRAPPLE_HOOK_TRIS_MD2, "models/weapons/grapple/hook/tris.md2") \
+    X(RESOURCE_SPRITES_S_PLASMA1_SP2, "sprites/s_plasma1.sp2") \
+    X(RESOURCE_SPRITES_S_PLASMA2_SP2, "sprites/s_plasma2.sp2") \
+    X(RESOURCE_WEAPONS_TRAPSUCK_WAV, QA_Q2_SOUND_WEAPONS_TRAPSUCK) \
+    X(RESOURCE_WEAPONS_TRAPLOOP_WAV, QA_Q2_SOUND_WEAPONS_TRAPLOOP) \
+    X(RESOURCE_Q2_BLASTER2, "q2:blaster2") \
+    X(RESOURCE_Q2_BFG_EXPLOSION, "q2:bfg-explosion") \
+    X(RESOURCE_Q2_BFG_ZAP, "q2:bfg-zap") \
+    X(RESOURCE_Q2_BFG_LASER, "q2:bfg-laser") \
+    X(RESOURCE_Q2_TRACKER_EXPLOSION, "q2:tracker-explosion") \
+    X(RESOURCE_WEAPONS_HGRENB1A_WAV, QA_Q2_SOUND_WEAPONS_HGRENB1A) \
+    X(RESOURCE_WEAPONS_HGRENB2A_WAV, QA_Q2_SOUND_WEAPONS_HGRENB2A) \
+    X(RESOURCE_Q2_FLECHETTE, "q2:flechette") \
+    X(RESOURCE_WEAPONS_BFG_X1B_WAV, QA_Q2_SOUND_WEAPONS_BFG__X1B) \
+    X(RESOURCE_SPRITES_S_BFG3_SP2, "sprites/s_bfg3.sp2") \
+    X(RESOURCE_Q2_BFG_BIGEXPLOSION, "q2:bfg-bigexplosion") \
+    X(RESOURCE_WEAPONS_HGRENC1B_WAV, QA_Q2_SOUND_WEAPONS_HGRENC1B) \
+    X(RESOURCE_PARASITE_PARATCK3_WAV, QA_Q2_SOUND_PARASITE_PARATCK3) \
+    X(RESOURCE_PARASITE_PARATCK2_WAV, QA_Q2_SOUND_PARASITE_PARATCK2) \
+    X(RESOURCE_MODELS_MONSTERS_LEGS_TRIS_MD2, "models/monsters/legs/tris.md2") \
+    X(RESOURCE_Q2_TELEPORT_EFFECT, "q2:teleport_effect") \
+    X(RESOURCE_Q2_PLAYER_TELEPORT, "q2:player-teleport") \
+    X(RESOURCE_Q2_MONSTER_MUZZLE, "q2:monster-muzzle") \
+    X(RESOURCE_EMPTY, "") \
+    X(RESOURCE_Q2_OTHER_TELEPORT, "q2:other-teleport") \
+    X(RESOURCE_Q2_TUNNEL_SPARKS, "q2:tunnel-sparks") \
+    X(RESOURCE_MODELS_OBJECTS_GEKKGIB_TORSO_TRIS_MD2, "models/objects/gekkgib/torso/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_CHEST_TRIS_MD2, "models/objects/gibs/chest/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2, "models/objects/gibs/sm_meat/tris.md2") \
+    X(RESOURCE_WEAPONS_GRENLB1B_WAV, "weapons/grenlb1b.wav") \
+    X(RESOURCE_Q2_EXPLOSION1_NP, "q2:explosion1_np")
 
 typedef enum q2_runtime_name {
 #define Q2_RUNTIME_NAME_ENUM(key, text) Q2_NAME_##key,
@@ -213,6 +304,7 @@ struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
     qa_string_id runtime_names[Q2_NAME_COUNT];
+    qa_string_id temporary_effects[256];
     qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     const qa_cvars *source_cvars;
     qa_cvar_handle source_settings[QA_Q2_SOURCE_SETTING_COUNT];
@@ -398,9 +490,9 @@ bool q2_launch_behavior(qa_q2_game *, q2_actor *, qa_builtin_projectile_role, bo
                         qa_error *);
 bool q2_target_damageable(qa_q2_game *, qa_actor_id);
 bool q2_target_creature(qa_q2_game *, qa_actor_id, bool *creature, bool *player, qa_error *);
-bool q2_projectile_event(qa_q2_game *, qa_actor_id, qa_builtin_event_kind, const char *, int,
+bool q2_projectile_event(qa_q2_game *, qa_actor_id, qa_builtin_event_kind, qa_string_id, int,
                          qa_vec3, qa_vec3, qa_error *);
-bool q2_projectile_loop(qa_q2_game *, q2_actor *, const char *, bool stop_previous, qa_error *);
+bool q2_projectile_loop(qa_q2_game *, q2_actor *, qa_string_id, bool stop_previous, qa_error *);
 qa_attack q2_projectile_attack(qa_q2_game *, qa_actor_id, const q2_projectile *, int, uint32_t);
 bool q2_projectile_noise(qa_q2_game *, const q2_projectile *, qa_vec3, qa_error *);
 bool q2_projectile_radius(qa_q2_game *, qa_actor_id, const q2_projectile *, qa_vec3, qa_actor_id,

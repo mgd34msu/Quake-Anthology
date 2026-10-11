@@ -396,7 +396,7 @@ bool q2_trigger_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, bool *h
         for (int i = 0; i < 10; i++) {
             origin.z += s->speed * .01f * ((float)i + q2_random(g));
             int color = 0x74 + (int)(q2_random(g) * 8);
-            if (!q2_projectile_event(g, a->id, QA_BUILTIN_IMPACT, "q2:tunnel-sparks", color, origin,
+            if (!q2_projectile_event(g, a->id, QA_BUILTIN_IMPACT, g->runtime_names[Q2_NAME_RESOURCE_Q2_TUNNEL_SPARKS], color, origin,
                                      qa_v3(0, 0, 0), e))
                 return false;
             if (!q2_actor_live(g, a->id))

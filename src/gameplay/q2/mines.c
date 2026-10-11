@@ -132,10 +132,10 @@ static bool explode(qa_q2_game *g, q2_actor *a, bool blow, qa_error *e) {
     uint32_t contents;
     if (!contents_at(g, body.origin, &contents, e))
         return false;
-    const char *effect =
+    qa_string_id effect =
         !qa_actor_reference_present(body.ground)
-            ? ((contents & 56u) != 0 ? "q2:rocket-explosion-water" : "q2:rocket-explosion")
-            : ((contents & 56u) != 0 ? "q2:grenade-explosion-water" : "q2:grenade-explosion");
+            ? ((contents & 56u) != 0 ? g->runtime_names[Q2_NAME_RESOURCE_Q2_ROCKET_EXPLOSION_WATER] : g->runtime_names[Q2_NAME_RESOURCE_Q2_ROCKET_EXPLOSION])
+            : ((contents & 56u) != 0 ? g->runtime_names[Q2_NAME_RESOURCE_Q2_GRENADE_EXPLOSION_WATER] : g->runtime_names[Q2_NAME_RESOURCE_Q2_GRENADE_EXPLOSION]);
     return q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, effect, 0,
                                qa_vec_add(body.origin, qa_vec_scale(body.velocity, -0.02f)),
                                qa_v3(0, 0, 0), e) &&
@@ -415,11 +415,11 @@ static bool trap_gibs(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_
         gib->physics.solid = QA_PHYSICS_NOT_SOLID;
         gib->projectile.effects = (a->projectile.gekk ? 26u : 1u) | 2u;
         gib->projectile.scale = 1;
-        const char *model =
-            a->projectile.gekk ? "models/objects/gekkgib/torso/tris.md2"
+        qa_string_id model =
+            a->projectile.gekk ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GEKKGIB_TORSO_TRIS_MD2]
             : truncf(a->projectile.captured_mass / (g->options.deathmatch ? 4 : 10)) > 200
-                ? "models/objects/gibs/chest/tris.md2"
-                : "models/objects/gibs/sm_meat/tris.md2";
+                ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_CHEST_TRIS_MD2]
+                : g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2];
         if (!q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model, 0, origin, body->angles, e))
             return false;
     }
@@ -571,7 +571,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             !qa_world_link(g->services.world, best, NULL, e))
             return false;
         if (rerelease) {
-            if (!q2_projectile_loop(g, a, QA_Q2_SOUND_WEAPONS_TRAPSUCK, false, e))
+            if (!q2_projectile_loop(g, a, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_TRAPSUCK_WAV], false, e))
                 return false;
         } else {
             qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
@@ -839,15 +839,13 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
                    float damage, float speed, float range, float splash, float fuse, bool held,
                    qa_error *e) {
     qa_q2_game *g = c->game;
-    const char *classname = kind == Q2_PROX    ? (c->rerelease ? "prox_mine" : "prox")
-                            : kind == Q2_TESLA ? (c->rerelease ? "tesla_mine" : "tesla")
-                                               : (c->rerelease ? "food_cube_trap" : "htrap");
-    const char *model = kind == Q2_PROX    ? "models/weapons/g_prox/tris.md2"
-                        : kind == Q2_TESLA ? "models/weapons/g_tesla/tris.md2"
-                                           : "models/weapons/z_trap/tris.md2";
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, classname, &definition, e))
-        return false;
+    qa_string_id classname = kind == Q2_PROX    ? (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_PROX_MINE] : g->runtime_names[Q2_NAME_RESOURCE_PROX])
+                            : kind == Q2_TESLA ? (c->rerelease ? g->runtime_names[Q2_NAME_TESLA_MINE] : g->runtime_names[Q2_NAME_TESLA])
+                                               : (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_FOOD_CUBE_TRAP] : g->runtime_names[Q2_NAME_RESOURCE_HTRAP]);
+    qa_string_id model = kind == Q2_PROX    ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_G_PROX_TRIS_MD2]
+                        : kind == Q2_TESLA ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_G_TESLA_TRIS_MD2]
+                                           : g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_Z_TRAP_TRIS_MD2];
+    qa_actor_definition definition = classname;
     float horizontal = hypotf(direction.x, direction.y);
     qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
                            atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
@@ -941,7 +939,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
         !qa_world_link(g->services.world, id, NULL, e) ||
         !q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model, 0, body.origin, body.angles, e))
         return false;
-    return kind != Q2_TRAP || q2_projectile_loop(g, a, QA_Q2_SOUND_WEAPONS_TRAPLOOP, false, e);
+    return kind != Q2_TRAP || q2_projectile_loop(g, a, g->runtime_names[Q2_NAME_RESOURCE_WEAPONS_TRAPLOOP_WAV], false, e);
 }
 typedef struct projectile_reaction_call {
     qa_q2_game *game;
