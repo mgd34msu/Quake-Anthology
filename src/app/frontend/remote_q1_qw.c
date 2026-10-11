@@ -83,7 +83,9 @@ bool frontend_remote_q1_serverdata_qw(frontend_remote_q1 *row, const qa_qw_serve
         return remote_q1_fail(error, QA_ERROR_ARGUMENT, "QW serverdata requires its real native CLIENT dialect");
     if (!remote_q1_string(&row->qw_directory, data->game_directory, error) || !remote_q1_string(&row->level_name, data->level, error)) return false;
     row->qw = *data; row->qw.game_directory = row->qw_directory; row->qw.level = row->level_name;
-    row->qw_ready = false; row->qw_has_pending_track = false; ++row->revision; return true;
+    row->event_cursor = qa_event_ring_next(row->events);
+    qa_event_ring_retire(row->events, row->event_cursor);
+    row->qw_ready = false; ++row->revision; return true;
 }
 bool frontend_remote_q1_gamestate_qw(frontend_remote_q1 *row, const char *const *models, size_t model_count,
     const char *const *sounds, size_t sound_count, uint32_t *checksum, qa_error *error)
@@ -95,11 +97,6 @@ bool frontend_remote_q1_gamestate_qw(frontend_remote_q1 *row, const char *const 
     if (!frontend_remote_q1_receive_nq(row, &message, 0, error)) return false;
     message = (qa_nq_message){.op = QA_NQ_SETVIEW, .data.value = (uint32_t)row->qw.player_slot + 1};
     if (!frontend_remote_q1_receive_nq(row, &message, 0, error)) return false;
-    if (row->qw_has_pending_track) {
-        message = (qa_nq_message){.op = QA_NQ_CDTRACK, .data.cd = {row->qw_pending_track, row->qw_pending_track}};
-        if (!frontend_remote_q1_receive_nq(row, &message, 0, error)) return false;
-        row->qw_has_pending_track = false;
-    }
     if (!qa_qw_map_checksum2(qa_resource_bytes(row->map), checksum, error)) return false;
     row->qw_ready = true; ++row->revision; return true;
 }
@@ -119,7 +116,11 @@ bool frontend_remote_q1_receive_qw(frontend_remote_q1 *row, const qa_qw_service 
             (!actual.waiting_skins || qa_network_q1_client_skins_ready(row->options.domain.runtime,row->options.domain.client,error));
     }
     if (!row->qw_ready) {
-        if (service->kind == QA_QW_CD_TRACK) row->qw_pending_track = service->data.byte, row->qw_has_pending_track = true;
+        if (service->kind == QA_QW_CD_TRACK) {
+            qa_nq_message message = {.op = QA_NQ_CDTRACK,
+                .data.cd = {service->data.byte, service->data.byte}};
+            return remote_q1_event_admit(row, &message, now, error);
+        }
         return true;
     }
     qa_nq_message message = {0};

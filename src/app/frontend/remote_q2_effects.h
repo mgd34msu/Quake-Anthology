@@ -7,6 +7,7 @@
 #include "qa/collision.h"
 #include "qa/console.h"
 #include "q2_entity_effects.h"
+#include "q2_temporary_beams.h"
 
 typedef struct frontend_remote_q2_effects frontend_remote_q2_effects;
 typedef struct frontend_remote_q2_effects_policy frontend_remote_q2_effects_policy;
@@ -119,6 +120,7 @@ bool frontend_remote_q2_effects_color(const char *, uint32_t *rgba);
 
 bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *,
     frontend_remote_q2_effects **, qa_error *);
+void frontend_remote_q2_effects_reset(frontend_remote_q2_effects *);
 bool frontend_remote_q2_effects_idle(const frontend_remote_q2_effects *);
 bool frontend_remote_q2_effects_current(const frontend_remote_q2_effects *,
     const frontend_remote_q2_effects_source *, qa_error *);
@@ -156,6 +158,8 @@ bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *, qa_act
 bool frontend_remote_q2_effects_named_effect(frontend_remote_q2_effects *,
     const char *recipe, qa_vec3 origin, qa_vec3 direction, int32_t count, int32_t color,
     double milliseconds, qa_error *);
+bool frontend_remote_q2_effects_beam(frontend_remote_q2_effects *,
+    const frontend_q2_beam_recipe *, qa_actor_id, qa_actor_id, qa_vec3, qa_vec3, double, qa_error *);
 bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *,
     const char *recipe, qa_actor_id, qa_vec3 start, qa_vec3 end, double duration_seconds,
     double milliseconds, qa_error *);
@@ -179,6 +183,8 @@ bool frontend_remote_q2_effects_light_identity_at(const frontend_remote_q2_effec
  * it does not sample particles, roll beam models, emit audio or advance time. */
 bool frontend_remote_q2_effects_view_lights(frontend_remote_q2_effects *,
     const frontend_remote_q2_effects_sample *, const qa_scene_light **, size_t *, qa_error *);
+bool frontend_remote_q2_effects_frame_particles(frontend_remote_q2_effects *,
+    const frontend_remote_q2_effects_sample *, qa_error *);
 bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *,
     const frontend_remote_q2_effects_sample *, qa_error *);
 bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *,

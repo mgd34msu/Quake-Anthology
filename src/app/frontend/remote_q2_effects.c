@@ -243,6 +243,19 @@ bool frontend_remote_q2_effects_destroy(frontend_remote_q2_effects **slot, qa_er
     qa_arena_destroy(&owner->semantic_storage);
     free(owner); *slot = NULL; return true;
 }
+void frontend_remote_q2_effects_reset(frontend_remote_q2_effects *owner)
+{
+    owner->particles.count=owner->sampled_particle_count=0;
+    memset(owner->explosions,0,sizeof(owner->explosions));memset(owner->lights,0,sizeof(owner->lights));
+    memset(owner->beams,0,sizeof(owner->beams));memset(owner->player_beams,0,sizeof(owner->player_beams));
+    memset(owner->lasers,0,sizeof(owner->lasers));memset(owner->sustains,0,sizeof(owner->sustains));
+    memset(owner->entity_trails.rows,0,owner->entity_trails.capacity*sizeof(*owner->entity_trails.rows));
+    owner->light_count=owner->transient_light_count=owner->draw_count=0;
+    owner->source_beam_count=owner->source_light_count=owner->flashlight_count=0;
+    owner->sampled=owner->event_received=owner->event_failed=false;
+    owner->weapon_muzzle=(q2fx_weapon_muzzle){0};owner->beam_random=(frontend_q2_beam_random){0};
+    owner->dirty=true;
+}
 static uint32_t random_word(frontend_remote_q2_effects *o) { return qa_builtin_random_integer(&o->random); }
 static double random_unit(frontend_remote_q2_effects *o) { return (double)(random_word(o) & 32767) / 32767; }
 static float random_signed(frontend_remote_q2_effects *o) { return (float)(2 * random_unit(o) - 1); }
@@ -579,13 +592,17 @@ bool frontend_remote_q2_effects_named_beam(frontend_remote_q2_effects *o,
     frontend_q2_beam_recipe recipe;
     if (!frontend_q2_beam_named_recipe(name,(qa_vec3){0},duration,&recipe))
         return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized beam has no source recipe");
-    if (recipe.player && !actor_id.registry)
-        return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 normalized player beam lost its full actor");
-    if (!q2fx_model_admit(o,recipe.model,e)) return false;
+    return frontend_remote_q2_effects_beam(o,&recipe,actor_id,(qa_actor_id){0},start,end,time,e);
+}
+bool frontend_remote_q2_effects_beam(frontend_remote_q2_effects *o,
+    const frontend_q2_beam_recipe *recipe,qa_actor_id actor,qa_actor_id destination,
+    qa_vec3 start,qa_vec3 end,double time,qa_error *e)
+{
+    if (!q2fx_model_admit(o,recipe->model,e)) return false;
     ++o->busy;
-    (void)frontend_q2_beam_retain(recipe.player?o->player_beams:o->beams,Q2FX_POOL,
-        o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,&recipe,actor_id,(qa_actor_id){0},start,end,time);
-    o->dirty=true; --o->busy; return q2fx_source_current(o,e);
+    (void)frontend_q2_beam_retain(recipe->player?o->player_beams:o->beams,Q2FX_POOL,
+        o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,recipe,actor,destination,start,end,time);
+    o->dirty=true;--o->busy;return q2fx_source_current(o,e);
 }
 
 static bool soldier_flash(uint32_t flash, unsigned kind)
@@ -1008,7 +1025,6 @@ bool frontend_remote_q2_effects_prepare(frontend_remote_q2_effects *o,
     if (!o->source.render_clock(o->source.context,&render_wall,&render_frame,e) || !q2fx_source_current(o,e)) return false;
     for (size_t i=0;i<s->entity_count;++i) {
         if (!s->entities[i].actor.registry || !qa_vec_finite(s->entities[i].origin) || !qa_vec_finite(s->entities[i].angles)) return false;
-        for (size_t j=0;j<i;++j) if (qa_actor_id_equal(s->entities[i].actor,s->entities[j].actor)) return false;
     }
     bool advance=!o->sampled || s->milliseconds>o->time, events=!o->sampled || s->frame_sequence!=o->frame_sequence;
     frontend_remote_q2_effects_controls controls;

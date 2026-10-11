@@ -261,8 +261,6 @@ void remote_q1_clear(frontend_remote_q1 *row)
     row->view_pose_ready = false;
     remote_q1_prediction_clear(row);
     remote_q1_media_clear(row);
-    row->event_cursor = qa_event_ring_next(row->events);
-    qa_event_ring_retire(row->events, row->event_cursor);
     names_free(&row->models, &row->model_count); names_free(&row->sounds, &row->sound_count);
     free(row->sound_available); row->sound_available = NULL;
     for (size_t i = 0; i < 256; ++i) { free(row->styles[i]); row->styles[i] = NULL; }
@@ -498,6 +496,7 @@ static bool message_apply(frontend_remote_q1 *row, const qa_nq_message *message,
 }
 bool remote_q1_events_consume(frontend_remote_q1 *row, uint64_t received, qa_error *error)
 {
+    if (qa_q1_is_qw(row->options.domain.protocol) && !row->qw_ready) return true;
     while (row->event_cursor < qa_event_ring_next(row->events)) {
         const remote_q1_event *event = qa_event_ring_at(row->events, row->event_cursor);
         const qa_nq_message *message = &event->message;
@@ -523,6 +522,8 @@ bool frontend_remote_q1_receive_nq(frontend_remote_q1 *row, const qa_nq_message 
     uint64_t received, qa_error *error)
 {
     if (!message || !remote_q1_mutable(row) || row->busy || !remote_q1_live(row, error)) return false;
+    if (message->op == QA_NQ_SERVERINFO && !qa_q1_is_qw(row->options.domain.protocol) &&
+        !remote_q1_events_consume(row, received, error)) return false;
     switch (message->op) {
     case QA_NQ_SOUND: case QA_NQ_STATICSOUND: case QA_NQ_STOPSOUND:
     case QA_NQ_PARTICLE: case QA_NQ_TEMPENTITY: case QA_NQ_DAMAGE:

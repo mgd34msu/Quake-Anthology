@@ -8,8 +8,8 @@ static bool rerelease(const frontend_remote_q2_effects *o)
 static bool play(frontend_remote_q2_effects *o,const frontend_remote_q2_effects_pose *p,
     const char *path,double time,int32_t channel,float volume,float attenuation,qa_error *e)
 { return o->source.sound(o->source.context,path,p->origin,p->actor,time,channel,volume,attenuation,0,e) && q2fx_source_current(o,e); }
-bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *o,
-    const frontend_remote_q2_effects_sample *s,qa_error *e)
+static bool frame_events(frontend_remote_q2_effects *o,
+    const frontend_remote_q2_effects_sample *s,bool audio,qa_error *e)
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !s || !isfinite(s->milliseconds) ||
         !isfinite(s->server_milliseconds) || !isfinite(s->footsteps) || (s->entity_count && !s->entities) || !q2fx_source_current(o,e)) return false;
@@ -25,14 +25,15 @@ bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *o,
     for (size_t i=0;ok && i<s->entity_count;++i) {
         const frontend_remote_q2_effects_pose *p=&s->entities[i];
         frontend_q2_entity_frame_particles(&effects,p,s->milliseconds);
+        if (p->event==1) frontend_fx_q2_respawn_particles(&o->particles,&o->random,p->origin,s->milliseconds*.001,FRONTEND_FX_Q2_ITEM);
+        else if (p->event==6) frontend_fx_q2_teleport(&o->particles,&o->random,p->origin,s->milliseconds*.001);
+        if (!audio) continue;
         switch (p->event) {
         case 1:
             ok=play(o,p,"items/respawn1.wav",s->milliseconds,1,1,2,e);
-            if (ok) frontend_fx_q2_respawn_particles(&o->particles,&o->random,p->origin,s->milliseconds*.001,FRONTEND_FX_Q2_ITEM);
             break;
         case 6:
             ok=play(o,p,"misc/tele1.wav",s->milliseconds,1,1,2,e);
-            if (ok) frontend_fx_q2_teleport(&o->particles,&o->random,p->origin,s->milliseconds*.001);
             break;
         case 2: case 8: case 9:
             if (s->footsteps == 0 || (p->event!=2 && !rerelease(o))) break;
@@ -60,6 +61,12 @@ bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *o,
     }
     return ok;
 }
+bool frontend_remote_q2_effects_frame(frontend_remote_q2_effects *o,
+    const frontend_remote_q2_effects_sample *s,qa_error *e)
+{ return frame_events(o,s,true,e); }
+bool frontend_remote_q2_effects_frame_particles(frontend_remote_q2_effects *o,
+    const frontend_remote_q2_effects_sample *s,qa_error *e)
+{ return frame_events(o,s,false,e); }
 static void entity_light(void *context,const qa_scene_light *light)
 {
     frontend_remote_q2_effects *o=context;

@@ -90,8 +90,6 @@ struct frontend_remote_q1 {
     bool qw_player_valid[32], qw_ready, qw_frame;
     int32_t stats[256];
     int8_t qw_kick;
-    uint8_t qw_pending_track;
-    bool qw_has_pending_track;
     bool qw_intermission;
     qa_vec3 qw_intermission_origin, qw_intermission_angles;
     qa_event_ring *events;
