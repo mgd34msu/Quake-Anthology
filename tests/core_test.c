@@ -533,6 +533,49 @@ static void test_arena(void)
     CHECK(!qa_pool_grow_run(&pages,&move_slot,4,5));
     CHECK(move_slot==0 && pages.active==5 && guard[0]==0x62 && pages.overflow==overflows);
     qa_pool_reset(&pages);
+
+    qa_arena_init_pool(&left,&pages);
+    qa_pool records={0};
+    CHECK(qa_pool_prepare(&records,&left,2,32,16,&error));
+    size_t record_slots[6];uint8_t *record_values[6];
+    for(size_t i=0;i<2;++i){
+        record_values[i]=qa_pool_take(&records,record_slots+i);
+        CHECK(record_values[i] && record_slots[i]==i);
+        memset(record_values[i],(int)(0x40+i),records.stride);
+    }
+    CHECK(qa_pool_extend(&records,&left,2,&error));
+    record_values[2]=qa_pool_take(&records,record_slots+2);
+    CHECK(record_values[2] && record_slots[2]==2);
+    record_values[2][0]=0x42;
+    qa_pool_release(&records,record_slots[0]);
+    CHECK(qa_pool_take(&records,record_slots)==record_values[0] && record_slots[0]==0);
+    CHECK(qa_pool_extend(&records,&left,2,&error));
+    for(size_t i=3;i<6;++i){
+        record_values[i]=qa_pool_take(&records,record_slots+i);
+        CHECK(record_values[i] && record_values[i]==qa_pool_at(&records,record_slots[i]));
+        record_values[i][0]=(uint8_t)(0x40+i);
+    }
+    CHECK(record_slots[3]==4 && record_slots[4]==5 && record_slots[5]==3);
+    CHECK(records.capacity==6 && records.active==6);
+    for(size_t i=0;i<6;++i)CHECK(record_values[i][0]==0x40+i);
+    size_t retained_head=records.head;
+    CHECK(!qa_pool_extend(&records,&left,4096,&error));
+    CHECK(records.head==retained_head && records.capacity==6 && records.active==6);
+    for(size_t i=0;i<6;++i)CHECK(record_values[i][0]==0x40+i);
+    for(size_t i=0;i<6;++i)qa_pool_release(&records,record_slots[i]);
+    CHECK(records.active==0);
+    qa_pool_reset(&records);
+    CHECK(!qa_pool_take_run(&records,3,&slot));
+    CHECK(records.active==0);
+    CHECK(qa_pool_take_run(&records,2,&slot)==record_values[0] && slot==0);
+    CHECK(!qa_pool_grow_run(&records,&slot,2,3) && slot==0);
+    CHECK(records.active==2 && record_values[1][0]==0x41);
+    qa_pool_release_run(&records,slot,2);
+    qa_pool_reset(&records);
+    for(size_t i=0;i<records.capacity;++i)
+        CHECK(qa_pool_take(&records,&slot)==qa_pool_at(&records,i) && slot==i);
+    qa_arena_destroy(&left);
+    CHECK(pages.active==0);
     qa_arena_destroy(&backing);
 
     qa_unified_frame_pool *frames=qa_unified_frame_pool_create(128*1024,2,&error);

@@ -1,9 +1,12 @@
 #include "guest_qc_items.h"
 #include "guest_mod_item_definition.h"
 #include "guest_qc_item_weapons.h"
+#include "control_frame.h"
+#include "qa/pool.h"
 #include <float.h>
 
 struct application_qc_item_actor {
+    size_t storage_slot;
     struct application_qc_state *engine;
     qa_actor_id actor;
     int32_t reference;
@@ -12,6 +15,8 @@ struct application_qc_item_actor {
     struct application_qc_item_actor *next, *previous;
 };
 struct application_qc_item_store {
+    qa_unified_frame_lease *storage;
+    qa_pool actors;
     qa_actor_index index;
     struct application_qc_item_actor *head;
 };
@@ -22,7 +27,13 @@ static bool store_create(struct application_qc_state *engine, qa_error *e)
     if(!store)return application_fail(e,QA_ERROR_MEMORY,"Owning QC item binding store");
     engine->item_store=store;
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    return qa_actor_index_create(&store->index,registry,NULL,e);
+    size_t count=qa_actors_capacity(registry);
+    store->storage=application_control_storage_acquire(engine->provider->application,e);
+    if(!store->storage)return false;
+    qa_arena *arena=qa_unified_frame_lease_arena(store->storage);
+    return qa_actor_index_create(&store->index,registry,arena,e)&&
+        qa_pool_prepare(&store->actors,arena,count,sizeof(struct application_qc_item_actor),
+            _Alignof(struct application_qc_item_actor),e);
 }
 static void actor_reclaim(struct application_qc_item_actor *a)
 {
@@ -32,7 +43,7 @@ static void actor_reclaim(struct application_qc_item_actor *a)
         qa_actor_index_remove(&store->index,a->actor);
     if(a->previous)a->previous->next=a->next;else store->head=a->next;
     if(a->next)a->next->previous=a->previous;
-    free(a);
+    qa_pool_release(&store->actors,a->storage_slot);
 }
 static bool list(const qa_json_document *d,qa_json_id id,size_t stride,void **out,size_t *count,qa_error *e)
 {
@@ -213,6 +224,7 @@ void application_qc_items_destroy(struct application_qc_state *engine)
     engine->items=NULL;
     if(engine->item_store){
         qa_actor_index_destroy(&engine->item_store->index);
+        qa_unified_frame_lease_release(engine->item_store->storage);
         free(engine->item_store);engine->item_store=NULL;
     }
 }
@@ -311,11 +323,15 @@ static struct application_qc_item_actor *actor_create(struct application_qc_stat
         struct application_qc_item_actor *a=(struct application_qc_item_actor *)(uintptr_t)slot;
         return application_qc_reference(engine,actor,&a->reference,e)&&physical_current(a,e)?a:NULL;
     }
-    struct application_qc_item_actor *a=store?calloc(1,sizeof(*a)):NULL;
+    if(!store){application_fail(e,QA_ERROR_MEMORY,"Owning actual QC item binding");return NULL;}
+    if(store->actors.head==SIZE_MAX&&!qa_pool_extend(&store->actors,
+        qa_unified_frame_lease_arena(store->storage),store->index.capacity,e))return NULL;
+    size_t storage_slot;
+    struct application_qc_item_actor *a=qa_pool_take(&store->actors,&storage_slot);
     if(!a){application_fail(e,QA_ERROR_MEMORY,"Owning actual QC item binding");return NULL;}
-    *a=(struct application_qc_item_actor){.engine=engine,.actor=actor};
+    *a=(struct application_qc_item_actor){.storage_slot=storage_slot,.engine=engine,.actor=actor};
     if(!application_qc_reference(engine,actor,&a->reference,e)||!physical_current(a,e)){
-        free(a);return NULL;
+        qa_pool_release(&store->actors,storage_slot);return NULL;
     }
     a->next=store->head;if(a->next)a->next->previous=a;store->head=a;
     qa_actor_index_put(&store->index,actor,(size_t)(uintptr_t)a);return a;
@@ -383,8 +399,11 @@ bool application_qc_items_source_stored(struct application_qc_state *engine,qa_q
     if(!qa_qc_reference_actor(engine->provider->state.qc.instance,event->entity_reference,&actor,e))return false;
     struct application_qc_item_actor *a=actor_find(engine,actor);if(!a)return true;
     if(!physical_current(a,e)||!qa_inventory_lease_current(engine->services.inventory,a->lease))return false;
-    const struct application_qc_items *p=profile_of(a);qa_inventory_change *changes=calloc(p->definition_count,sizeof(*changes));
-    if(!changes)return application_fail(e,QA_ERROR_MEMORY,"Observing QC item Source stores");
+    const struct application_qc_items *p=profile_of(a);
+    qa_unified_frame_lease *storage=application_control_storage_acquire(engine->provider->application,e);
+    if(!storage)return false;
+    qa_inventory_change *changes=qa_unified_frame_lease_alloc(storage,p->definition_count,sizeof(*changes),_Alignof(qa_inventory_change),e);
+    if(p->definition_count&&!changes){qa_unified_frame_lease_release(storage);return false;}
     size_t count=0;bool ok=true;
     for(size_t i=0;ok&&i<p->storage_count;++i){const application_qc_item_storage *s=p->storage+i;
         bool touches=s->field->offset>=event->word&&s->field->offset<event->word+event->count;
@@ -399,7 +418,7 @@ bool application_qc_items_source_stored(struct application_qc_state *engine,qa_q
         }
     }
     if(ok&&count){++a->calls;ok=qa_inventory_source_stored(engine->services.inventory,a->lease,changes,count,e);--a->calls;actor_reclaim(a);}
-    free(changes);return ok;
+    qa_unified_frame_lease_release(storage);return ok;
 }
 bool application_qc_items_saved_group(application_provider *provider,qa_actor_id actor,uint64_t serial,const qa_inventory_source_group *group,qa_inventory_items *out,qa_error *e)
 {

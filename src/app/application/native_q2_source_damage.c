@@ -5,12 +5,14 @@
 #include "control_frame.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
+#include "qa/pool.h"
 #include <math.h>
 
 typedef struct declared_damage_actor {
     struct declared_damage_actor *next,*previous,*retired_next;
     unsigned calls;
     struct application_native_q2_source_damage *owner;
+    size_t storage_slot;
     qa_actor_id actor;
     uint64_t serial;
     uint32_t slot;
@@ -66,6 +68,9 @@ struct application_native_q2_source_damage {
     declared_damage_actor **prepared_actors;
     size_t prepared_capacity;
     qa_actor_index actor_index;
+    qa_unified_frame_lease *actor_storage;
+    qa_pool actor_pool;
+    size_t actor_chunk;
     unsigned calls;
     declared_damage_frame *frames,*retained;
     declared_damage_processing *processing;
@@ -147,17 +152,17 @@ static void actors_collect(struct application_native_q2_source_damage *o)
         if(r->previous)r->previous->next=r->next;else o->actors=r->next;
         if(r->next)r->next->previous=r->previous;
         if(r->slot<o->prepared_capacity&&o->prepared_actors[r->slot]==r)o->prepared_actors[r->slot]=NULL;
-        free(r);
+        qa_pool_release(&o->actor_pool,r->storage_slot);
     }
 }
 static declared_damage_actor *actor_create(struct application_native_q2_source_damage *o,qa_error *e)
 {
-    actors_collect(o);
-    declared_damage_actor *r=calloc(1,sizeof(*r));
-    if(!r){application_fail(e,QA_ERROR_MEMORY,"Retaining declared SourceActor combat binding");return NULL;}
-    *r=(declared_damage_actor){.owner=o,.next=o->actors};
-    if(r->next)r->next->previous=r;
-    o->actors=r;return r;
+    if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
+        qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,e))return NULL;
+    size_t slot;
+    declared_damage_actor *r=qa_pool_take(&o->actor_pool,&slot);
+    if(!r)return NULL;
+    *r=(declared_damage_actor){.owner=o,.storage_slot=slot};return r;
 }
 static bool actor_watches(declared_damage_actor *r,qa_error *e)
 {
@@ -458,6 +463,11 @@ bool application_native_q2_source_damage_create(struct application_native_q2 *n,
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);qa_native_entity_table admission_table;
     if(!qa_actor_index_create(&o->actor_index,registry,NULL,e)||
         !qa_native_entity_table_get(instance(o),&admission_table,e))return false;
+    o->actor_chunk=qa_actors_capacity(registry);
+    o->actor_storage=application_control_storage_acquire(n->provider->application,e);
+    if(!o->actor_storage||!qa_pool_prepare(&o->actor_pool,
+        qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,
+        sizeof(declared_damage_actor),_Alignof(declared_damage_actor),e))return false;
     o->prepared_capacity=admission_table.capacity;o->prepared_actors=calloc(o->prepared_capacity,sizeof(*o->prepared_actors));
     if(o->prepared_capacity&&!o->prepared_actors)return application_fail(e,QA_ERROR_MEMORY,"Owning declared combat restore slots");
     o->pointer_bytes=qa_native_module_describe(qa_native_get_module(instance(o))).image.target.pointer_bytes;
@@ -488,7 +498,11 @@ bool application_native_q2_source_damage_admit(struct application_native_q2_sour
         declared_damage_actor *prepared=o->prepared_actors[actual->source_slot];
         if(prepared&&prepared->prepared)r=prepared;
     }
-    if(!r){r=actor_create(o,e);if(!r)return false;r->actor=actor;r->slot=actual->source_slot;
+    if(!r){actors_collect(o);r=actor_create(o,e);if(!r)return false;
+        r->next=o->actors;
+        if(r->next)r->next->previous=r;
+        o->actors=r;
+        r->actor=actor;r->slot=actual->source_slot;
         qa_actor_index_put(&o->actor_index,actor,(size_t)(uintptr_t)r);}
     qa_combat *combat=o->engine->provider->application->combat;
     if(r->prepared&&!r->bound)return application_fail(e,QA_ERROR_ARGUMENT,"Saved declared combat primary has not been adopted by its canonical root");
@@ -541,7 +555,7 @@ bool application_native_q2_source_damage_destroy(struct application_native_q2_so
         if(qa_actors_get(qa_session_actors(app->session),r->actor)&&!qa_combat_detach_primary(app->combat,r->actor,r->serial,r,e))return false;
         r->bound=false;}
     qa_actor_index_destroy(&o->actor_index);
-    while(o->actors){declared_damage_actor *next=o->actors->next;free(o->actors);o->actors=next;}
+    qa_unified_frame_lease_release(o->actor_storage);
     free(o->prepared_actors);free(o);*out=NULL;return true;
 }
 static bool request_fields(qa_source_save_io *io,qa_damage_request *request)
@@ -635,12 +649,15 @@ bool application_native_q2_source_damage_restore(struct application_native_q2_so
     qa_source_save_dispose(&io);
     if(!ok){free(rows);return false;}
     declared_damage_actor *loaded=NULL,**tail=&loaded,*previous=NULL;
-    for(size_t i=0;i<count;++i){declared_damage_actor *r=calloc(1,sizeof(*r));
-        if(!r){while(loaded){declared_damage_actor *next=loaded->next;free(loaded);loaded=next;}
-            free(rows);return application_fail(e,QA_ERROR_MEMORY,"Retaining decoded declared damage primary");}
-        *r=rows[i];r->previous=previous;*tail=r;tail=&r->next;previous=r;
+    for(size_t i=0;i<count;++i){declared_damage_actor *r=actor_create(o,e);
+        if(!r){while(loaded){declared_damage_actor *next=loaded->next;
+                qa_pool_release(&o->actor_pool,loaded->storage_slot);loaded=next;}
+            free(rows);return false;}
+        size_t storage_slot=r->storage_slot;
+        *r=rows[i];r->storage_slot=storage_slot;r->previous=previous;*tail=r;tail=&r->next;previous=r;
     }
-    while(o->actors){declared_damage_actor *next=o->actors->next;free(o->actors);o->actors=next;}
+    while(o->actors){declared_damage_actor *next=o->actors->next;
+        qa_pool_release(&o->actor_pool,o->actors->storage_slot);o->actors=next;}
     o->actors=loaded;o->retired_actors=NULL;qa_actor_index_clear(&o->actor_index);
     memset(o->prepared_actors,0,o->prepared_capacity*sizeof(*o->prepared_actors));
     for(declared_damage_actor *r=loaded;r;r=r->next)o->prepared_actors[r->slot]=r;

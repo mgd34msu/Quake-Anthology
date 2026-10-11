@@ -3,7 +3,9 @@
 
 #include "qa/arena.h"
 
-/* One owner; fixed capacity. The caller's arena owns backing storage and must
+typedef struct qa_pool_segment qa_pool_segment;
+
+/* One owner. The caller's arena owns backing storage and must
  * outlive all slots. Payload survives release/reuse; callers initialize it.
  * Slot generations and domain identity belong to callers, not this pool. */
 typedef struct qa_pool {
@@ -11,6 +13,8 @@ typedef struct qa_pool {
     uint8_t *values;
     size_t *next;
     size_t head, active, peak, overflow;
+    size_t first_capacity, alignment;
+    qa_pool_segment *segments, *last_segment;
 } qa_pool;
 
 /* Cold preparation; stride rounds up to alignment. Zero capacity is valid and
@@ -21,6 +25,11 @@ bool qa_pool_prepare(qa_pool *, qa_arena *, size_t count, size_t stride,
  * and seals the arena after creating the fixed pool. */
 bool qa_pool_reserve_pages(qa_pool *,qa_arena *,size_t count,size_t stride,
     size_t alignment,qa_error *);
+/* Append slots from the same backing arena without moving live payloads.
+ * A pool-backed arena obtains only its already-reserved common pages. Failure
+ * leaves every existing slot and free-list entry unchanged. Runs never cross
+ * segment boundaries. */
+bool qa_pool_extend(qa_pool *,qa_arena *,size_t count,qa_error *);
 /* O(1), no allocation. Exhaustion returns NULL, sets slot=SIZE_MAX and counts
  * overflow (saturating). Existing leases remain valid. */
 void *qa_pool_take(qa_pool *, size_t *slot);
