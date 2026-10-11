@@ -197,6 +197,7 @@ bool native_host_write_u32(qa_native_host *, qa_native_address, uint32_t, qa_err
 bool native_host_write_i32(qa_native_host *, qa_native_address, int32_t, qa_error *);
 bool native_host_read_vec3(qa_native_host *, qa_native_address, qa_vec3 *, qa_error *);
 bool native_host_write_vec3(qa_native_host *, qa_native_address, qa_vec3, qa_error *);
+bool native_host_text_read(qa_native_host *, qa_native_address, bool, qa_bytes *, qa_error *);
 bool native_host_string_read(qa_native_host *, qa_native_address, qa_bytes *, qa_error *);
 bool native_host_string_address(qa_native_host *, const char *, qa_native_address *, qa_error *);
 bool native_host_temporary_string(qa_native_host *, const char *, qa_native_address *, qa_error *);

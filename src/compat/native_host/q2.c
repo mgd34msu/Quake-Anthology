@@ -3,22 +3,28 @@
 #include <errno.h>
 #include <math.h>
 
-static bool call_text(qa_native_host *host, const qa_native_import_call *call, size_t index,
-                      qa_bytes *out, qa_error *error)
+static bool call_string(qa_native_host *host, const qa_native_import_call *call, size_t index,
+    bool copy, qa_bytes *out, qa_error *error)
 {
     if (index >= call->argument_count)
         return native_host_fail(error, QA_ERROR_ARGUMENT, index,
                                 "native import string argument is missing");
-    qa_native_address address = native_argument_address(call, index);
-    return native_host_string_read(host, address, out, error);
+    return native_host_text_read(host, native_argument_address(call, index), copy, out, error);
+}
+
+static bool call_text(qa_native_host *host, const qa_native_import_call *call, size_t index,
+    qa_bytes *out, qa_error *error)
+{
+    return call_string(host, call, index, true, out, error);
 }
 
 bool qa_native_host_q2_call_string(const qa_native_host_q2_application_call *call,
     size_t index, const char **out, qa_error *error)
 {
-    if (index >= call->import->argument_count)
-        return native_host_fail(error, QA_ERROR_ARGUMENT, index, "native import string argument is missing");
-    return qa_native_host_string_span(call->host, native_argument_address(call->import, index), out, error);
+    qa_bytes text;
+    if (!call_string(call->host, call->import, index, false, &text, error)) return false;
+    *out = (const char *)text.data;
+    return true;
 }
 
 static bool emit_print(qa_native_host *host, qa_native_host_print_kind kind,
@@ -360,26 +366,17 @@ static bool tagged_memory(qa_native_host *host, const qa_native_import_call *cal
 static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
                         qa_native_value *result, qa_error *error)
 {
-    qa_bytes name_copy = {0}, value_copy = {0};
-    const char *name="", *value="";
-    qa_native_host_q2_application_call application = {.host = host, .instance = host->instance, .import = call};
-    if (!qa_native_host_q2_call_string(&application, 0, &name, error) ||
-        !qa_native_host_q2_call_string(&application, 1, &value, error)) {
-        return false;
-    }
+    qa_bytes name_text, value_text;
+    if (!call_string(host, call, 0, false, &name_text, error)) return false;
     qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
     bool registration = (dispatch == QA_NATIVE_Q2_IMPORT_cvar);
-    const qa_cvar_view *existing = host->cvars ? qa_cvars_find(host->cvars, name) : NULL;
-    bool declaration = !existing || !existing->declared;
-    /* Declaration and set callbacks may reenter the guest before the common
-     * table retains their text. Existing Cvar_Get ignores the supplied default. */
-    if ((declaration && !name_copy.data && !call_text(host, call, 0, &name_copy, error)) ||
-        ((declaration || !registration) && !value_copy.data &&
-         !call_text(host, call, 1, &value_copy, error))) {
-        return false;
-    }
-    if (name_copy.data) name = (const char *)name_copy.data;
-    if (value_copy.data) value = (const char *)value_copy.data;
+    const qa_cvar_view *existing = host->cvars ? qa_cvars_find(host->cvars, (const char *)name_text.data) : NULL;
+    bool copy = !registration || !existing || !existing->declared;
+    /* Declaration and set callbacks may reenter the guest before retaining text.
+     * Existing Cvar_Get ignores the supplied default. */
+    if ((copy && !call_string(host, call, 0, true, &name_text, error)) ||
+        !call_string(host, call, 1, copy, &value_text, error)) return false;
+    const char *name = (const char *)name_text.data, *value = (const char *)value_text.data;
     uint32_t flags = registration
                          ? (host->profile == QA_NATIVE_Q2_GAME_API3
                                 ? (uint32_t)native_argument_i32(call, 2)

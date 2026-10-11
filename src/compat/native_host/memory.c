@@ -97,21 +97,8 @@ bool native_host_write_vec3(qa_native_host *host, qa_native_address address, qa_
     return native_host_write(host, address, bytes, sizeof(bytes), error);
 }
 
-bool qa_native_host_string_span(qa_native_host *host, qa_native_address address,
-    const char **out, qa_error *error)
-{
-    if (!address) { *out = ""; return true; }
-    qa_bytes text;
-    if (!qa_native_string_span(host->instance, address, host->maximum_string_bytes, &text, error)) return false;
-    if (text.data) { *out = (const char *)text.data; return true; }
-    uint8_t *copy = qa_arena_alloc(&host->text_storage, text.size + 1, 1, error);
-    if (!copy || !qa_native_read(host->instance, address, copy, text.size + 1, error)) return false;
-    *out = (const char *)copy;
-    return true;
-}
-
-bool native_host_string_read(qa_native_host *host, qa_native_address address, qa_bytes *out,
-                             qa_error *error)
+bool native_host_text_read(qa_native_host *host, qa_native_address address, bool copy,
+    qa_bytes *out, qa_error *error)
 {
     if (!out)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native string output is required");
@@ -122,12 +109,28 @@ bool native_host_string_read(qa_native_host *host, qa_native_address address, qa
     qa_bytes source;
     if (!qa_native_string_span(host->instance, address, host->maximum_string_bytes,
             &source, error)) return false;
+    if (!copy && source.data) { *out = source; return true; }
     uint8_t *text = qa_arena_alloc(&host->text_storage, source.size + 1, 1, error);
     if (!text) return false;
     if (source.data) memcpy(text, source.data, source.size + 1);
     else if (!qa_native_read(host->instance, address, text, source.size + 1, error)) return false;
     *out = (qa_bytes){text, source.size};
     return true;
+}
+
+bool qa_native_host_string_span(qa_native_host *host, qa_native_address address,
+    const char **out, qa_error *error)
+{
+    qa_bytes text;
+    if (!native_host_text_read(host, address, false, &text, error)) return false;
+    *out = (const char *)text.data;
+    return true;
+}
+
+bool native_host_string_read(qa_native_host *host, qa_native_address address, qa_bytes *out,
+    qa_error *error)
+{
+    return native_host_text_read(host, address, true, out, error);
 }
 
 static char *copy_text(const char *text)
