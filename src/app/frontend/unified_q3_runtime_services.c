@@ -86,7 +86,8 @@ static void print(void *context,const char *text)
     frontend_unified_q3_runtime_services *o=context;
     const frontend_remote_unified_domain *d=o?frontend_remote_unified_domain_read(o->options.replica):NULL;
     if(d && text && frontend_unified_q3_runtime_services_current(o))
-        qa_console_emit(d->console,frontend_unified_q3_client_context(o->options.client),text);
+        qa_application_log_emit(o->options.frontend->application,
+            frontend_unified_q3_client_context(o->options.client),text,true,NULL);
 }
 static int32_t milliseconds(void *context)
 {

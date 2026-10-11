@@ -670,6 +670,11 @@ bool qa_application_console_execute_capture(qa_application *,qa_console *,const 
 bool qa_application_q3_output_drain(qa_application *, qa_error *);
 bool qa_application_event_read(const qa_application *, qa_application_event_cursor *,
     qa_application_event_view *);
+/* Walk raw records once. next advances past the returned record; end is an
+ * exclusive bound. Attached projections remain available through event_read. */
+#define QA_APPLICATION_EVENT_MASK(kind) (UINT64_C(1) << (kind))
+bool qa_application_events_next_of_kind(const qa_application *, uint64_t *next,
+    uint64_t end, uint64_t kind_mask, qa_application_event_view *);
 uint64_t qa_application_protocol_events_generation(const qa_application *);
 /* Typed module records encode only at consumption. The writer owns the
  * resulting bytes; already encoded external records keep their payload. */

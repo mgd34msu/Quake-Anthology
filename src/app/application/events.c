@@ -808,12 +808,10 @@ bool qa_application_console_execute_capture(qa_application *app,qa_console *cons
     qa_application_events_subscribe(app,&reader);
     bool ok=qa_console_execute_capture(console,command,text,capture_print,&capture,error);
     uint64_t next=qa_application_events_next(app);
-    for(uint64_t id=reader.next;id<next;++id) {
-        qa_application_event_view view;
-        if(qa_application_event_read(app,&(qa_application_event_cursor){.id=id},&view) &&
-            view.kind==QA_APPLICATION_EVENT_LOG)
-            qa_application_log_deliver(console,view.value.log,capture_print,&capture);
-    }
+    qa_application_event_view view;
+    while(qa_application_events_next_of_kind(app,&reader.next,next,
+        QA_APPLICATION_EVENT_MASK(QA_APPLICATION_EVENT_LOG),&view))
+        qa_application_log_deliver(console,view.value.log,capture_print,&capture);
     qa_application_events_unsubscribe(&reader);
     if(capture.error.code) { if(error) *error=capture.error; return false; }
     return ok;
@@ -1366,6 +1364,21 @@ const application_unified_event_record *qa_application_event_range_next(
                 (int32_t)event->presentation->kind!=filter->presentation_kind)))) continue;
         return event;
     }
+}
+
+bool qa_application_events_next_of_kind(const qa_application *app,uint64_t *next,
+    uint64_t end,uint64_t kind_mask,qa_application_event_view *out)
+{
+    uint64_t first=qa_application_events_first(app),limit=qa_application_events_next(app);
+    if(*next<first) *next=first;
+    if(end>limit) end=limit;
+    while(*next<end) {
+        uint64_t id=(*next)++;
+        const application_event_envelope *record=application_event_stream_at(app,id);
+        if(record && (kind_mask&QA_APPLICATION_EVENT_MASK(record->kind)))
+            return qa_application_event_read(app,&(qa_application_event_cursor){.id=id},out);
+    }
+    return false;
 }
 
 bool qa_application_event_read(const qa_application *app, qa_application_event_cursor *cursor,

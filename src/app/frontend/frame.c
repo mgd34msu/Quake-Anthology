@@ -508,14 +508,14 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     uint64_t next = qa_application_events_next(frontend->application);
-    for (uint64_t i = qa_application_events_local_first(frontend->application); i < next; ++i) {
-        qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output)) continue;
+    uint64_t cursor=qa_application_events_local_first(frontend->application);
+    qa_application_event_view output;
+    while(qa_application_events_next_of_kind(frontend->application,&cursor,next,
+        QA_APPLICATION_EVENT_MASK(QA_APPLICATION_EVENT_LOG)|QA_APPLICATION_EVENT_MASK(QA_APPLICATION_EVENT_BUILTIN),&output)) {
         if(output.kind==QA_APPLICATION_EVENT_LOG) {
             qa_application_log_deliver(qa_application_console(frontend->application),output.value.log,NULL,NULL);
             continue;
         }
-        if(output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
         if (!frontend_ranking_event(frontend,&event,error)) return false;
         const char *text = qa_strings_cstr(strings, event.text);

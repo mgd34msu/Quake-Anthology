@@ -106,7 +106,7 @@ static void print(void *context,const char *text)
 {
     frontend_remote_q3_services *owner=context;
     if(owner && !owner->retiring && !owner->released)
-        qa_console_emit(owner->row->resources.domain.source.receiver.console,&owner->origin,text);
+        qa_application_log_emit(owner->row->frontend->application,&owner->origin,text,true,NULL);
 }
 static size_t memory_remaining(void)
 {

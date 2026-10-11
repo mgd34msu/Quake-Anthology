@@ -570,9 +570,9 @@ bool q3n_events_deliver(const q3n_frame *f,qa_error *error)
     if(!admit(f,error)) return false;
     uint64_t end=qa_application_events_next(f->application);
     bool ok=true;
-    for(uint64_t id=owner->delivery.next;ok && id<end;++id) {
-        qa_application_event_cursor cursor={.id=id}; qa_application_event_view view;
-        if(!qa_application_event_read(f->application,&cursor,&view) || view.kind!=QA_APPLICATION_EVENT_Q3_EFFECT) continue;
+    qa_application_event_view view;
+    while(ok && qa_application_events_next_of_kind(f->application,&owner->delivery.next,end,
+        QA_APPLICATION_EVENT_MASK(QA_APPLICATION_EVENT_Q3_EFFECT),&view)) {
         const qa_application_q3_effect_event *event=view.value.q3_effect;
         if(event->recipient!=owner) continue;
         q3n_entity *cent; q3n_remote_entity remote; const q3n_remote_entity *actual=NULL;
@@ -592,10 +592,9 @@ bool q3n_events_deliver(const q3n_frame *f,qa_error *error)
         qa_q3_entity state=event->entity;
         if(event->has_sound_origin) ok=qa_q3_presentation_sound_position(f->presentation,state.number,event->sound_origin,error);
         if(ok) ok=present(f,&state,cent,event->position,actual,error);
-        /* A consumed effect is never replayed if a later effect fails. */
-        qa_application_events_consumed(&owner->delivery,id+1);
     }
     if(ok) qa_application_events_unsubscribe(&owner->delivery);
+    else qa_application_events_consumed(&owner->delivery,owner->delivery.next);
     owner->busy=false;
     return ok;
 }
