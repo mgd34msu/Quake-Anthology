@@ -3,8 +3,10 @@
 #include "native_q2_callbacks.h"
 #include "native_q2_visibility.h"
 #include "map_players_private.h"
+#include "qa/pool.h"
 
 typedef struct source_retirement {
+    size_t storage_slot;
     struct source_retirement *next;
     application_native_q2_source_authority authority;
     struct application_native_q2_source_invocation *scope;
@@ -12,6 +14,7 @@ typedef struct source_retirement {
     bool retained,consumed;
 } source_retirement;
 struct application_native_q2_source_invocation {
+    size_t storage_slot;
     struct application_native_q2_source_invocation *outer;
     struct application_native_q2 *engine;
     application_provider *provider;
@@ -22,16 +25,47 @@ struct application_native_q2_source_invocation {
     qa_net_client_id remote_client;
     qa_net_seat_id remote_seat;
     bool client,remote,returned;
-    struct application_native_q2_source_invocation *root,*all_next;
+    struct application_native_q2_source_invocation *root;
     source_retirement *retirements;
 };
-static bool declared(const struct application_native_q2 *n)
+struct application_native_q2_source_storage {
+    qa_arena arena;
+    qa_pool scopes, retirements;
+    bool declared;
+};
+bool application_native_q2_source_invocation_prepare(struct application_native_q2 *n, qa_error *e)
 {
-    const qa_json_document *d=application_native_q2_callbacks_document(n->callbacks);
-    qa_json_id rows=qa_json_get(d,qa_json_root(d),"protection");
-    for(size_t i=0;i<qa_json_size(d,rows);++i)
-        if(qa_json_string_equal(d,qa_json_get(d,qa_json_get(d,qa_json_at(d,rows,i),"absorb"),"abi"),"source-region"))return true;
-    return false;
+    if (n->source_storage) return true;
+    struct application_native_q2_source_storage *storage = calloc(1, sizeof(*storage));
+    if (!storage) return application_fail(e, QA_ERROR_MEMORY, "Preparing native invocation storage");
+    const qa_json_document *d = application_native_q2_callbacks_document(n->callbacks);
+    qa_json_id rows = qa_json_get(d, qa_json_root(d), "protection");
+    size_t regions = qa_json_size(d, rows);
+    for (size_t i = 0; i < regions; ++i)
+        storage->declared |= qa_json_string_equal(d,
+            qa_json_get(d, qa_json_get(d, qa_json_at(d, rows, i), "absorb"), "abi"), "source-region");
+    qa_arena_init(&storage->arena, 0);
+    if (regions > SIZE_MAX / 64 ||
+        !qa_pool_prepare(&storage->scopes, &storage->arena, storage->declared ? 64 : 0,
+            sizeof(struct application_native_q2_source_invocation), _Alignof(struct application_native_q2_source_invocation), e) ||
+        !qa_pool_prepare(&storage->retirements, &storage->arena, storage->declared ? regions * 64 : 0,
+            sizeof(source_retirement), _Alignof(source_retirement), e)) {
+        qa_arena_destroy(&storage->arena); free(storage); return false;
+    }
+    qa_arena_seal(&storage->arena);
+    n->source_storage = storage;
+    return true;
+}
+void application_native_q2_source_invocation_destroy(struct application_native_q2 *n)
+{
+    if (!n->source_storage) return;
+    qa_arena_destroy(&n->source_storage->arena);
+    free(n->source_storage); n->source_storage = NULL;
+}
+static void retirement_release(struct application_native_q2 *n, source_retirement *r)
+{
+    if (r->retained) r->authority.release(r->authority.context);
+    qa_pool_release(&n->source_storage->retirements, r->storage_slot);
 }
 static bool capture(struct application_native_q2_source_invocation *s,qa_error *e)
 {
@@ -80,13 +114,14 @@ bool application_native_q2_source_invocation_begin(struct application_native_q2 
     struct application_native_q2_source_invocation **out,qa_error *e)
 {
     if(!n||!out||*out)return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation requires its actual empty owner");
-    if(!n->callbacks||!declared(n))return true;
-    struct application_native_q2_source_invocation *s=calloc(1,sizeof(*s));
+    if(!n->callbacks||!n->source_storage||!n->source_storage->declared)return true;
+    size_t slot;
+    struct application_native_q2_source_invocation *s=qa_pool_take(&n->source_storage->scopes,&slot);
     if(!s)return application_fail(e,QA_ERROR_MEMORY,"Retaining actual Source invocation scope");
+    *s=(struct application_native_q2_source_invocation){.storage_slot=slot};
     s->outer=n->source_invocation;s->engine=n;s->provider=n->provider;s->actor=actor;
-    if(!capture(s,e)) {free(s);return false;}
+    if(!capture(s,e)) {qa_pool_release(&n->source_storage->scopes,slot);return false;}
     s->root=s->outer?s->outer->root:s;
-    if(s->outer) {s->all_next=s->root->all_next;s->root->all_next=s;}
     n->source_invocation=s;*out=s;return true;
 }
 bool application_native_q2_source_invocation_guard(struct application_native_q2 *n,
@@ -100,9 +135,11 @@ bool application_native_q2_source_invocation_guard(struct application_native_q2 
     while(r&&(r->error.code!=retirement->code||r->error.offset!=retirement->offset||
         strcmp(r->error.message,retirement->message)))r=r->next;
     if(!r) {
-        r=calloc(1,sizeof(*r));
+        size_t slot;
+        r=qa_pool_take(&n->source_storage->retirements,&slot);
         if(!r)return application_fail(e,QA_ERROR_MEMORY,"Retaining reached Source region authority");
-        if(!authority->retain(authority->context,e)) {free(r);return false;}
+        *r=(source_retirement){.storage_slot=slot};
+        if(!authority->retain(authority->context,e)) {qa_pool_release(&n->source_storage->retirements,slot);return false;}
         r->authority=*authority;r->scope=s;r->error=*retirement;r->retained=true;
         r->next=s->root->retirements;s->root->retirements=r;
     }
@@ -124,8 +161,7 @@ void application_native_q2_source_invocation_unguard(struct application_native_q
         if(!r->consumed&&failure&&failure->code==r->error.code&&failure->offset==r->error.offset&&
             !strcmp(failure->message,r->error.message)&&!r->authority.current(r->authority.context,&ignored))return;
         *link=r->next;
-        if(r->retained)r->authority.release(r->authority.context);
-        free(r);return;
+        retirement_release(n,r);return;
     }
 }
 bool application_native_q2_source_invocation_accepts(void *context,const qa_error *e)
@@ -157,16 +193,15 @@ bool application_native_q2_source_invocation_close(struct application_native_q2_
     if(s->engine->source_invocation!=s)
         return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation retains an unfinished inner owner");
     s->engine->source_invocation=s->outer;*owned=NULL;
-    if(s->outer)return true;
-    while(s->retirements) {
+    if (s->outer) {
+        for (source_retirement *r=s->root->retirements; r; r=r->next)
+            if (r->scope==s) r->scope=NULL;
+    } else while(s->retirements) {
         source_retirement *r=s->retirements;s->retirements=r->next;
-        if(r->retained)r->authority.release(r->authority.context);
-        free(r);
+        retirement_release(s->engine,r);
     }
-    while(s->all_next) {
-        struct application_native_q2_source_invocation *p=s->all_next;s->all_next=p->all_next;free(p);
-    }
-    free(s);return true;
+    qa_pool_release(&s->engine->source_storage->scopes,s->storage_slot);
+    return true;
 }
 bool application_native_q2_source_invocation_drain(struct application_native_q2 *n,qa_error *e)
 {
@@ -176,8 +211,7 @@ bool application_native_q2_source_invocation_drain(struct application_native_q2 
     struct application_native_q2_source_invocation *root=n->source_invocation->root;
     while(root->retirements) {
         source_retirement *r=root->retirements;root->retirements=r->next;
-        if(r->retained)r->authority.release(r->authority.context);
-        free(r);
+        retirement_release(n,r);
     }
     while(n->source_invocation&&n->source_invocation->returned) {
         struct application_native_q2_source_invocation *s=n->source_invocation;

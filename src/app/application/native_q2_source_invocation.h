@@ -4,6 +4,8 @@
 #include "native_q2_callbacks.h"
 struct application_native_q2;
 struct application_native_q2_source_invocation;
+bool application_native_q2_source_invocation_prepare(struct application_native_q2 *,qa_error *);
+void application_native_q2_source_invocation_destroy(struct application_native_q2 *);
 bool application_native_q2_source_invocation_begin(struct application_native_q2 *,qa_actor_id,
     struct application_native_q2_source_invocation **,qa_error *);
 bool application_native_q2_source_invocation_guard(struct application_native_q2 *,

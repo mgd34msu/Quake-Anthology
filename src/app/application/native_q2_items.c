@@ -1,6 +1,7 @@
 #include "native_q2_items.h"
 #include "native_q2_records.h"
 #include "qa/native_observe.h"
+#include "qa/pool.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -41,6 +42,7 @@ typedef struct item_actor {
     bool admitting,releasing,ready,restore_inventory;
 } item_actor;
 struct application_native_q2_item_receipt {
+    size_t storage_slot;
     application_native_q2_item_receipt *previous;
     item_actor *entry;
     qa_inventory_lease lease;
@@ -48,6 +50,8 @@ struct application_native_q2_item_receipt {
     bool retired;
 };
 struct application_native_q2_items {
+    qa_arena receipt_storage;
+    qa_pool receipt_pool;
     application_native_q2_items_options options;
     qa_item_admission *admissions;
     item_definition *definitions;
@@ -429,6 +433,13 @@ bool application_native_q2_items_create(const application_native_q2_items_option
         /* Layout parsing installs no actor leases or write subscriptions. */
         (void)application_native_q2_items_destroy(&o,NULL);return false;
     }
+    qa_arena_init(&o->receipt_storage, 0);
+    if (!qa_pool_prepare(&o->receipt_pool, &o->receipt_storage, 64,
+        sizeof(application_native_q2_item_receipt), _Alignof(application_native_q2_item_receipt), e)) {
+        (void)application_native_q2_items_destroy(&o, NULL);
+        return false;
+    }
+    qa_arena_seal(&o->receipt_storage);
     *out=o;return true;
 }
 static bool actor_prepare_layout(application_native_q2_items *o,qa_actor_id actor,item_actor **out,qa_error *e)
@@ -523,8 +534,10 @@ bool application_native_q2_items_receipt_begin(application_native_q2_items *o,qa
     if(!out||*out||!a||!a->ready||a->restore_inventory||a->entered==UINT_MAX)
         return fail(e,"Native item receipt requires its actual admitted Source lease");
     if(!current(a,e)) return false;
-    application_native_q2_item_receipt *r=calloc(1,sizeof(*r));
+    size_t slot;
+    application_native_q2_item_receipt *r=qa_pool_take(&o->receipt_pool, &slot);
     if(!r) {qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining lexical native item receipt");return false;}
+    *r=(application_native_q2_item_receipt){.storage_slot=slot};
     r->entry=a;r->lease=a->lease;r->previous=o->receipts;o->receipts=r;++a->entered;*out=r;return true;
 }
 bool application_native_q2_items_receipt_retired(const application_native_q2_item_receipt *r)
@@ -547,7 +560,7 @@ void application_native_q2_items_receipt_end(application_native_q2_item_receipt 
     application_native_q2_item_receipt **link=&o->receipts;
     while(*link&&*link!=r) link=&(*link)->previous;
     if(*link==r) *link=r->previous;
-    --r->entry->entered;free(r);*owned=NULL;
+    --r->entry->entered;qa_pool_release(&o->receipt_pool,r->storage_slot);*owned=NULL;
 }
 bool application_native_q2_items_release(application_native_q2_items *o,qa_actor_id actor,qa_error *e)
 {
@@ -608,5 +621,6 @@ bool application_native_q2_items_destroy(application_native_q2_items **owner,qa_
     if(o->storage) for(size_t i=0;i<o->storage_count;++i) {
         application_native_q2_field_dispose(&o->storage[i].field); application_native_q2_field_dispose(&o->storage[i].capacity_field); free(o->storage[i].bits);
     }
-    free(o->definitions); free(o->admissions); free(o->storage); free(o); *owner=NULL; return true;
+    free(o->definitions); free(o->admissions); free(o->storage);
+    qa_arena_destroy(&o->receipt_storage); free(o); *owner=NULL; return true;
 }

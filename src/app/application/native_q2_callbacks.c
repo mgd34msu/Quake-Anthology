@@ -1623,6 +1623,7 @@ static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
 {
     struct application_native_q2 *n=o->engine;
     qa_application *app=n->provider->application;
+    if(!application_native_q2_source_invocation_prepare(n,e)) return false;
     if(!o->items&&qa_json_size(o->document,qa_json_get(o->document,qa_json_root(o->document),"items"))) {
         application_native_q2_items_options options={.callbacks=o,.session=app->session,
             .inventory=app->inventory,.pickups=app->pickups,.owner=n->provider->owner};
@@ -1736,6 +1737,7 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     qa_buffer_free(&o->restored_weapons);
     if(o->scratch&&!qa_native_free(instance(o),o->scratch,e)) return false;
     o->scratch=0; qa_arena_destroy(&o->storage);
+    application_native_q2_source_invocation_destroy(n);
     descriptors_clear(o);
     free(o->registrations); free(o->record_nodes); free(o->input_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
 }
