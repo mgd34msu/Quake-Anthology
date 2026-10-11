@@ -1,4 +1,5 @@
 #include "network_browser.h"
+#include "qa/arena.h"
 #include "qa/console.h"
 #include "qa/network_q3.h"
 #include "../../network/service_save_fields.h"
@@ -11,7 +12,7 @@
 
 typedef struct browser_row { qa_net_address address; char name[32]; double ping; int32_t visible; bool addressed; } browser_row;
 typedef struct browser_list {
-    browser_row *rows;
+    browser_row *rows, *previous;
     uint32_t count, capacity;
     uint64_t generation, reset_generation;
     bool synchronized, pending;
@@ -31,6 +32,7 @@ typedef struct browser_status {
 } browser_status;
 struct frontend_q3_browser {
     frontend_q3_browser_options options;
+    qa_arena list_storage;
     browser_list lists[4];
     qa_net_address seen[8192], overflow[4096];
     uint32_t seen_count, overflow_count;
@@ -62,8 +64,7 @@ static bool list_read(frontend_q3_browser *b, int32_t source, browser_list **out
     if (!qa_server_browser_q3_list_read(b->options.browser, source, &canonical, e)) return false;
     list->pending = canonical.pending;
     if (list->synchronized && list->generation == canonical.generation) { *out = list; return true; }
-    browser_row *previous = calloc(list->capacity, sizeof(*previous));
-    if (!previous) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Synchronizing actual Q3 UI list"); return false; }
+    browser_row *previous = list->previous;
     bool reset = !list->synchronized || list->reset_generation != canonical.reset_generation;
     uint32_t old_count = reset ? 0 : list->count;
     memcpy(previous, list->rows, list->capacity * sizeof(*previous));
@@ -110,7 +111,7 @@ static bool list_read(frontend_q3_browser *b, int32_t source, browser_list **out
         }
     }
     list->generation = canonical.generation; list->reset_generation = canonical.reset_generation; list->synchronized = true;
-    free(previous); *out = list; return true;
+    *out = list; return true;
 }
 static bool row_read(frontend_q3_browser *b, int32_t source, int32_t index, browser_row **out, qa_error *e)
 {
@@ -588,12 +589,20 @@ bool frontend_q3_browser_create(const frontend_q3_browser_options *options, fron
         return fail(e, "Incomplete physical Q3 browser options");
     frontend_q3_browser *b = calloc(1, sizeof(*b));
     if (!b) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Constructing Q3 UI browser view"); return false; }
-    b->options = *options;
+    b->options = *options; size_t scratch_bytes = 4 * _Alignof(browser_row);
     for (size_t i = 0; i < 4; ++i) {
         b->lists[i].capacity = i == 2 ? 4096 : 128;
         b->lists[i].rows = calloc(b->lists[i].capacity, sizeof(*b->lists[i].rows));
         if (!b->lists[i].rows) { frontend_q3_browser_destroy(b); qa_error_set(e, QA_ERROR_MEMORY, 0, "Constructing source LAN rows"); return false; }
+        scratch_bytes += b->lists[i].capacity * sizeof(browser_row);
     }
+    if (!qa_arena_reserve(&b->list_storage, scratch_bytes, e)) { frontend_q3_browser_destroy(b); return false; }
+    for (size_t i = 0; i < 4; ++i) {
+        b->lists[i].previous = qa_arena_alloc(&b->list_storage,
+            b->lists[i].capacity * sizeof(browser_row), _Alignof(browser_row), e);
+        if (!b->lists[i].previous) { frontend_q3_browser_destroy(b); return false; }
+    }
+    qa_arena_seal(&b->list_storage);
     for (size_t i = 0; i < 16; ++i) b->statuses[i].retrieved = true;
     *out = b; return true;
 }
@@ -603,6 +612,7 @@ void frontend_q3_browser_destroy(frontend_q3_browser *b)
     for (size_t i = 0; i < 32; ++i) (void)qa_server_browser_q3_release(b->options.browser, b->pings[i].request, NULL);
     for (size_t i = 0; i < 16; ++i) (void)qa_server_browser_q3_release(b->options.browser, b->statuses[i].request, NULL);
     for (size_t i = 0; i < 4; ++i) free(b->lists[i].rows);
+    qa_arena_destroy(&b->list_storage);
     free(b);
 }
 static bool browser_scan(frontend_q3_browser *b, qa_error *e)

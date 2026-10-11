@@ -227,7 +227,7 @@ static bool begin(frontend_remote_q3_runtime *o,const q3n_remote_frame *r,q3n_fr
 {
     if(!o || !o->complete || o->busy || !o->frames || !current(o,r,e))
         return fail(e,QA_ERROR_ARGUMENT,"Remote CGAME callback requires its actual bound, returned children");
-    o->busy=true; o->entered=r; o->trace_count=0;
+    o->busy=true; o->entered=r; o->traces=NULL; o->trace_count=o->trace_capacity=0;
     if((r->snapshots.stage==Q3N_REMOTE_INITIALIZATION || project(o,r,false,e)) && frame_read(o,r,out,e))return true;
     o->entered=NULL; o->busy=false; return false;
 }
@@ -451,8 +451,9 @@ static bool retain_trace(frontend_remote_q3_runtime *o,const qa_trace_result *hi
     if(o->trace_count==o->trace_capacity) {
         if(o->trace_capacity>SIZE_MAX/2/sizeof(*o->traces))return fail(e,QA_ERROR_MEMORY,"Remote trace receipt capacity overflow");
         size_t count=o->trace_capacity?o->trace_capacity*2:16;
-        remote_trace_receipt *rows=realloc(o->traces,count*sizeof(*rows));
-        if(!rows)return fail(e,QA_ERROR_MEMORY,"Retaining paired remote trace witnesses");
+        remote_trace_receipt *rows=qa_arena_grow(&o->frontend->frame.storage,o->traces,
+            o->trace_capacity*sizeof(*rows),count*sizeof(*rows),_Alignof(remote_trace_receipt),e);
+        if(!rows)return false;
         o->traces=rows; o->trace_capacity=count;
     }
     remote_trace_receipt *row=o->traces+o->trace_count++;
@@ -927,7 +928,7 @@ bool frontend_remote_q3_runtime_destroy(frontend_remote_q3_runtime **owner,qa_er
     qa_audio_music_release(o->music); o->music=NULL; o->music_attached=false;
     free(o->music_intro); free(o->music_loop); o->music_intro=o->music_loop=NULL;
     if(o->attached && !frontend_remote_q3_runtime_detach(o->parent,o,e))return false;
-    free(o->traces); free(o); *owner=NULL; return true;
+    free(o); *owner=NULL; return true;
 }
 bool frontend_remote_q3_runtime_initialize(void *context,const q3n_remote_frame *r,qa_error *e)
 {

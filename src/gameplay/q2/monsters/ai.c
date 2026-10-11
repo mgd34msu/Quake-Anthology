@@ -13,6 +13,7 @@ typedef struct q2m_player_trail {
   qa_actor_id actor;
   qa_actor_reference head, tail;
   size_t count;
+  size_t actor_next;
   uint64_t updated_ns;
   bool updated;
 } q2m_player_trail;
@@ -20,6 +21,7 @@ typedef struct q2m_player_trail {
 typedef struct q2m_alert {
   qa_actor_id player, observer;
   uint64_t time_ns, hostile_ns;
+  size_t observer_previous, observer_next;
 } q2m_alert;
 
 struct q2_monsters_runtime {
@@ -27,8 +29,12 @@ struct q2_monsters_runtime {
   qa_q2_monster_services services;
   q2m_player_trail *trails;
   size_t trail_count, trail_capacity;
+  size_t no_actor_trail;
+  qa_actor_index trail_index;
   q2m_alert *alerts;
   size_t alert_count, alert_capacity;
+  size_t no_player_alert;
+  qa_actor_index alert_index, observer_index;
   qa_actor_id sight_client, sight_observer;
   qa_actor_reference classic_trail[Q2M_TRAIL_POINTS];
   uint32_t classic_trail_head;
@@ -36,6 +42,66 @@ struct q2_monsters_runtime {
   uint64_t sight_time_ns, last_frame_ns;
   bool began_frame;
 };
+
+static void index_trails(q2_monsters_runtime *runtime) {
+  qa_actor_index_clear(&runtime->trail_index);
+  runtime->no_actor_trail = SIZE_MAX;
+  for (size_t index = runtime->trail_count; index-- > 0;) {
+    q2m_player_trail *trail = &runtime->trails[index];
+    trail->actor_next = SIZE_MAX;
+    if (!trail->actor.registry) {
+      trail->actor_next = runtime->no_actor_trail;
+      runtime->no_actor_trail = index;
+      continue;
+    }
+    size_t next;
+    if (qa_actor_index_find(&runtime->trail_index, trail->actor, &next))
+      trail->actor_next = next;
+    qa_actor_index_put(&runtime->trail_index, trail->actor, index);
+  }
+}
+
+static void index_alerts(q2_monsters_runtime *runtime) {
+  qa_actor_index_clear(&runtime->alert_index);
+  qa_actor_index_clear(&runtime->observer_index);
+  runtime->no_player_alert = SIZE_MAX;
+  for (size_t index = runtime->alert_count; index-- > 0;) {
+    q2m_alert *alert = &runtime->alerts[index];
+    if (alert->player.registry)
+      qa_actor_index_put(&runtime->alert_index, alert->player, index);
+    else runtime->no_player_alert = index;
+    alert->observer_previous = alert->observer_next = SIZE_MAX;
+    if (!alert->observer.registry) continue;
+    size_t next;
+    if (qa_actor_index_find(&runtime->observer_index, alert->observer, &next)) {
+      alert->observer_next = next;
+      runtime->alerts[next].observer_previous = index;
+    }
+    qa_actor_index_put(&runtime->observer_index, alert->observer, index);
+  }
+}
+
+static void alert_observer(q2_monsters_runtime *runtime, size_t index, qa_actor_id observer) {
+  q2m_alert *alert = &runtime->alerts[index];
+  if (alert->observer.registry) {
+    if (alert->observer_previous != SIZE_MAX)
+      runtime->alerts[alert->observer_previous].observer_next = alert->observer_next;
+    else if (alert->observer_next != SIZE_MAX)
+      qa_actor_index_put(&runtime->observer_index, alert->observer, alert->observer_next);
+    else qa_actor_index_remove(&runtime->observer_index, alert->observer);
+    if (alert->observer_next != SIZE_MAX)
+      runtime->alerts[alert->observer_next].observer_previous = alert->observer_previous;
+  }
+  alert->observer = observer;
+  alert->observer_previous = alert->observer_next = SIZE_MAX;
+  if (!observer.registry) return;
+  size_t next;
+  if (qa_actor_index_find(&runtime->observer_index, observer, &next)) {
+    alert->observer_next = next;
+    runtime->alerts[next].observer_previous = index;
+  }
+  qa_actor_index_put(&runtime->observer_index, observer, index);
+}
 
 static bool campaign_count(void *context, qa_actor_id id,
                            qa_q2_monster_count kind, qa_error *error) {
@@ -147,7 +213,19 @@ bool q2_monsters_init(qa_q2_game *game, qa_error *error) {
                  "Unable to allocate Q2 monster perception runtime");
     return false;
   }
-  if (!q2m_definitions_bind(game, error)) return false;
+  const qa_actor_registry *registry = qa_session_actors(game->services.session);
+  game->monster_runtime->no_actor_trail = SIZE_MAX;
+  game->monster_runtime->no_player_alert = SIZE_MAX;
+  if (!qa_actor_index_create(&game->monster_runtime->trail_index, registry, error) ||
+      !qa_actor_index_create(&game->monster_runtime->alert_index, registry, error) ||
+      !qa_actor_index_create(&game->monster_runtime->observer_index, registry, error)) {
+    q2_monsters_close(game);
+    return false;
+  }
+  if (!q2m_definitions_bind(game, error)) {
+    q2_monsters_close(game);
+    return false;
+  }
   game->monster_runtime->services = (qa_q2_monster_services){
       .context = game, .count = campaign_count};
   return true;
@@ -159,6 +237,9 @@ void q2_monsters_close(qa_q2_game *game) {
   q2_monsters_reclaim(game);
   free(game->monster_runtime->trails);
   free(game->monster_runtime->alerts);
+  qa_actor_index_destroy(&game->monster_runtime->trail_index);
+  qa_actor_index_destroy(&game->monster_runtime->alert_index);
+  qa_actor_index_destroy(&game->monster_runtime->observer_index);
   free(game->monster_definitions);
   game->monster_definitions = NULL; game->monster_definition_count = 0;
   free(game->monster_runtime);
@@ -168,9 +249,15 @@ void q2_monsters_close(qa_q2_game *game) {
 void q2_monsters_begin_map(qa_q2_game *game) {
   q2_monsters_reclaim(game);
   q2_monsters_runtime *runtime = game->monster_runtime;
+  qa_actor_index_clear(&runtime->trail_index);
+  qa_actor_index_clear(&runtime->alert_index);
+  qa_actor_index_clear(&runtime->observer_index);
   *runtime = (q2_monsters_runtime){.services = runtime->services,
       .trails = runtime->trails, .trail_capacity = runtime->trail_capacity,
-      .alerts = runtime->alerts, .alert_capacity = runtime->alert_capacity};
+      .trail_index = runtime->trail_index, .no_actor_trail = SIZE_MAX,
+      .alerts = runtime->alerts, .alert_capacity = runtime->alert_capacity,
+      .alert_index = runtime->alert_index, .observer_index = runtime->observer_index,
+      .no_player_alert = SIZE_MAX};
 }
 
 void q2m_retire_monster(qa_q2_game *game, struct qa_q2_monster *monster) {
@@ -297,6 +384,7 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
 
   q2m_player_trail *trails = NULL;
   q2m_alert *alerts = NULL;
+  qa_actor_index trail_index = {0}, alert_index = {0}, observer_index = {0};
   if (saved->trail_count != 0) {
     trails = calloc(saved->trail_count, sizeof(trails[0]));
     if (trails == NULL) {
@@ -314,6 +402,11 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
       return false;
     }
   }
+
+  const qa_actor_registry *registry = qa_session_actors(game->services.session);
+  if (!qa_actor_index_create(&trail_index, registry, error) ||
+      !qa_actor_index_create(&alert_index, registry, error) ||
+      !qa_actor_index_create(&observer_index, registry, error)) goto failure;
 
   qa_actor_id sight_client = {0}, sight_observer = {0};
   if (!q2_resolve_reference(game, saved->sight_client, &sight_client, error) ||
@@ -343,12 +436,20 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   q2_monsters_runtime *runtime = game->monster_runtime;
   free(runtime->trails);
   free(runtime->alerts);
+  qa_actor_index_destroy(&runtime->trail_index);
+  qa_actor_index_destroy(&runtime->alert_index);
+  qa_actor_index_destroy(&runtime->observer_index);
   runtime->trails = trails;
   runtime->trail_count = saved->trail_count;
   runtime->trail_capacity = saved->trail_count;
+  runtime->trail_index = trail_index;
   runtime->alerts = alerts;
   runtime->alert_count = saved->alert_count;
   runtime->alert_capacity = saved->alert_count;
+  runtime->alert_index = alert_index;
+  runtime->observer_index = observer_index;
+  index_trails(runtime);
+  index_alerts(runtime);
   runtime->sight_client = sight_client;
   runtime->sight_observer = sight_observer;
   runtime->sight_time_ns = saved->sight_time_ns;
@@ -362,6 +463,9 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
 failure:
   free(trails);
   free(alerts);
+  qa_actor_index_destroy(&trail_index);
+  qa_actor_index_destroy(&alert_index);
+  qa_actor_index_destroy(&observer_index);
   return false;
 }
 
@@ -370,6 +474,7 @@ static void remove_trail(q2_monsters_runtime *runtime, size_t index) {
     memmove(&runtime->trails[index], &runtime->trails[index + 1],
             (runtime->trail_count - index - 1) * sizeof(runtime->trails[0]));
   --runtime->trail_count;
+  index_trails(runtime);
 }
 
 static void remove_alert(q2_monsters_runtime *runtime, size_t index) {
@@ -377,39 +482,38 @@ static void remove_alert(q2_monsters_runtime *runtime, size_t index) {
     memmove(&runtime->alerts[index], &runtime->alerts[index + 1],
             (runtime->alert_count - index - 1) * sizeof(runtime->alerts[0]));
   --runtime->alert_count;
+  index_alerts(runtime);
 }
 
 void q2_monsters_release_actor(qa_q2_game *game, qa_actor_id actor) {
   if (game == NULL || game->monster_runtime == NULL)
     return;
   q2_monsters_runtime *runtime = game->monster_runtime;
-  for (size_t i = 0; i < runtime->trail_count; ++i)
-    if (qa_actor_id_equal(runtime->trails[i].actor, actor)) {
-      if (!q2_player_trail_destroy(game, actor, &game->release_error))
-        game->release_failed = true;
-      break;
-    }
+  size_t index;
+  if (qa_actor_index_find(&runtime->trail_index, actor, &index) &&
+      !q2_player_trail_destroy(game, actor, &game->release_error))
+    game->release_failed = true;
   if (qa_actor_id_equal(runtime->sight_client, actor))
     runtime->sight_client = (qa_actor_id){0};
   if (qa_actor_id_equal(runtime->sight_observer, actor)) {
     runtime->sight_observer = (qa_actor_id){0};
     runtime->sight_time_ns = 0;
   }
-  for (size_t index = runtime->trail_count; index-- > 0;)
-    if (qa_actor_id_equal(runtime->trails[index].actor, actor))
-      remove_trail(runtime, index);
-  for (size_t index = runtime->alert_count; index-- > 0;)
-    if (qa_actor_id_equal(runtime->alerts[index].player, actor) ||
-        qa_actor_id_equal(runtime->alerts[index].observer, actor))
-      remove_alert(runtime, index);
+  while (qa_actor_index_find(&runtime->trail_index, actor, &index))
+    remove_trail(runtime, index);
+  while (qa_actor_index_find(&runtime->alert_index, actor, &index))
+    remove_alert(runtime, index);
+  while (qa_actor_index_find(&runtime->observer_index, actor, &index))
+    remove_alert(runtime, index);
 }
 
 static q2m_player_trail *trail_for(q2_monsters_runtime *runtime,
                                    qa_actor_id actor, bool create,
                                    qa_error *error) {
-  for (size_t index = 0; index < runtime->trail_count; ++index)
-    if (qa_actor_id_equal(runtime->trails[index].actor, actor))
-      return &runtime->trails[index];
+  size_t index;
+  if (actor.registry ? qa_actor_index_find(&runtime->trail_index, actor, &index) :
+      ((index = runtime->no_actor_trail) != SIZE_MAX))
+    return &runtime->trails[index];
   if (!create)
     return NULL;
   if (!runtime_reserve((void **)&runtime->trails, &runtime->trail_capacity,
@@ -417,7 +521,9 @@ static q2m_player_trail *trail_for(q2_monsters_runtime *runtime,
                        error))
     return NULL;
   q2m_player_trail *trail = &runtime->trails[runtime->trail_count++];
-  *trail = (q2m_player_trail){.actor = actor};
+  *trail = (q2m_player_trail){.actor = actor, .actor_next = SIZE_MAX};
+  if (actor.registry) qa_actor_index_put(&runtime->trail_index, actor, runtime->trail_count - 1);
+  else runtime->no_actor_trail = runtime->trail_count - 1;
   return trail;
 }
 
@@ -502,11 +608,19 @@ bool q2_player_trail_destroy(qa_q2_game *game, qa_actor_id player, qa_error *err
       if (!qa_session_release(game->services.session, actor->id, error)) return false;
   }
   q2_monsters_runtime *runtime = game->monster_runtime;
-  for (size_t i = 0; i < runtime->trail_count; ++i)
-    if (!player.registry || qa_actor_id_equal(runtime->trails[i].actor, player)) {
-      runtime->trails[i].head = runtime->trails[i].tail = (qa_actor_reference){0};
-      runtime->trails[i].count = 0;
+  size_t index;
+  if (player.registry) {
+    if (qa_actor_index_find(&runtime->trail_index, player, &index)) {
+      do {
+        runtime->trails[index].head = runtime->trails[index].tail = (qa_actor_reference){0};
+        runtime->trails[index].count = 0;
+        index = runtime->trails[index].actor_next;
+      } while (index != SIZE_MAX);
     }
+  } else for (index = 0; index < runtime->trail_count; ++index) {
+    runtime->trails[index].head = runtime->trails[index].tail = (qa_actor_reference){0};
+    runtime->trails[index].count = 0;
+  }
   return true;
 }
 
@@ -667,9 +781,10 @@ static bool trail_pick(q2m_context *context, bool next, q2_actor **out,
 
 static q2m_alert *alert_for(q2_monsters_runtime *runtime, qa_actor_id player,
                             bool create, qa_error *error) {
-  for (size_t index = 0; index < runtime->alert_count; ++index)
-    if (qa_actor_id_equal(runtime->alerts[index].player, player))
-      return &runtime->alerts[index];
+  size_t index;
+  if (player.registry ? qa_actor_index_find(&runtime->alert_index, player, &index) :
+      ((index = runtime->no_player_alert) != SIZE_MAX))
+    return &runtime->alerts[index];
   if (!create)
     return NULL;
   if (!runtime_reserve((void **)&runtime->alerts, &runtime->alert_capacity,
@@ -677,7 +792,10 @@ static q2m_alert *alert_for(q2_monsters_runtime *runtime, qa_actor_id player,
                        error))
     return NULL;
   q2m_alert *alert = &runtime->alerts[runtime->alert_count++];
-  *alert = (q2m_alert){.player = player};
+  *alert = (q2m_alert){.player = player,
+      .observer_previous = SIZE_MAX, .observer_next = SIZE_MAX};
+  if (player.registry) qa_actor_index_put(&runtime->alert_index, player, runtime->alert_count - 1);
+  else runtime->no_player_alert = runtime->alert_count - 1;
   return alert;
 }
 
@@ -760,7 +878,7 @@ bool q2m_perception_alert(q2m_context *context, qa_actor_id target,
   q2m_alert *alert = alert_for(runtime, target, true, error);
   if (alert == NULL)
     return false;
-  alert->observer = context->actor->id;
+  alert_observer(runtime, (size_t)(alert - runtime->alerts), context->actor->id);
   alert->time_ns = context->game->now_ns;
   alert->hostile_ns = q2m_after(context->game->now_ns, 1.0);
   return true;
@@ -1495,10 +1613,10 @@ static uint64_t alert_hostile_until(const q2_monsters_runtime *runtime,
                                     qa_actor_id player) {
   if (runtime == NULL)
     return 0;
-  for (size_t index = 0; index < runtime->alert_count; ++index)
-    if (qa_actor_id_equal(runtime->alerts[index].player, player))
-      return runtime->alerts[index].hostile_ns;
-  return 0;
+  size_t index;
+  return (player.registry ? qa_actor_index_find(&runtime->alert_index, player, &index) :
+      ((index = runtime->no_player_alert) != SIZE_MAX)) ?
+      runtime->alerts[index].hostile_ns : 0;
 }
 
 static bool visual_candidate(q2m_context *context, qa_actor_id candidate,

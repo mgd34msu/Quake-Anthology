@@ -7,7 +7,6 @@
 #include "guest_native_q2_combat_state.h"
 #include "guest_q3_mod_operations.h"
 #include "qa/native_observe.h"
-#include "qa/pool.h"
 #include <math.h>
 
 enum { NATIVE_ACTOR_THINK = 4, NATIVE_ACTOR_CALLBACKS = 5 };
@@ -25,7 +24,6 @@ typedef struct native_source_actor {
     struct native_source_actor **previous;
     struct application_native_q2_source_actors *owner;
     qa_actor_id actor;
-    size_t storage_slot;
     uint32_t slot;
     uint64_t serial;
     unsigned calls;
@@ -46,8 +44,6 @@ struct application_native_q2_source_actors {
     struct application_native_q2 *engine;
     native_source_actor *actors;
     qa_actor_index actor_index;
-    qa_pool actor_pool;
-    qa_arena actor_storage;
     uint32_t velocity,ground;
     uint32_t offsets[NATIVE_ACTOR_CALLBACKS];
     bool present[NATIVE_ACTOR_CALLBACKS],rerelease,suspended;
@@ -70,8 +66,8 @@ static bool scratch_close(struct application_native_q2_source_actors *o,native_a
 }
 static native_source_actor *actor_find(struct application_native_q2_source_actors *o,qa_actor_id actor)
 {
-    size_t slot;
-    return qa_actor_index_find(&o->actor_index,actor,&slot)?qa_pool_at(&o->actor_pool,slot):NULL;
+    size_t row;
+    return qa_actor_index_find(&o->actor_index,actor,&row)?(native_source_actor *)(uintptr_t)row:NULL;
 }
 static native_source_actor *row_at(struct application_native_q2_source_actors *o,uint32_t slot)
 {
@@ -83,10 +79,9 @@ static bool actor_collect(native_source_actor *r,qa_error *e)
 {
     if(!r->retired||r->calls)return true;
     if(!unwatch(r,e))return false;
-    struct application_native_q2_source_actors *o=r->owner;
     *r->previous=r->next;
     if(r->next)r->next->previous=r->previous;
-    qa_pool_release(&o->actor_pool,r->storage_slot);
+    free(r);
     return true;
 }
 static bool actors_collect(struct application_native_q2_source_actors *o,qa_error *e)
@@ -176,14 +171,14 @@ static bool dispatch_reaction(void *context,qa_session *session,qa_error *e)
     return application_q3_mod_actor_dispatch(call->entry->owner->engine->provider->application->mod_operations,
         call->entry->operation,call->request,original,call,&handled,e);
 }
-static bool reaction_run(native_source_actor *r,void *context,qa_native_instance *native,
+static bool reaction_run(native_source_actor *r,void *context,qa_native_instance *native,qa_native_entry_observer *binding,
     const qa_native_value *arguments,size_t count,qa_native_value *result,qa_error *e)
 {
     native_actor_entry *entry=context;struct application_native_q2_source_actors *o=entry->owner;
     size_t kind=entry->operation==Q3_MOD_THINK?NATIVE_ACTOR_THINK:(size_t)entry->operation-Q3_MOD_TOUCH;
     qa_native_address target;
     if(!pointer_read(o,arguments[0].as.address+o->offsets[kind],&target,e)) return false;
-    if(target!=entry->address) return application_native_q2_source_original(o->engine,entry->binding,arguments,count,result,e);
+    if(target!=entry->address) return application_native_q2_source_original(o->engine,binding,arguments,count,result,e);
     if(!current(r,e)) return false;
     application_q3_mod_actor_request request={.self=r->actor};
     if(entry->operation==Q3_MOD_THINK) {
@@ -254,7 +249,7 @@ static bool reaction(void *context,qa_native_instance *native,qa_native_entry_ob
     native_source_actor *r=row_at(o,slot);
     if(!r)return application_native_q2_source_original(o->engine,binding,arguments,count,result,e);
     ++r->calls;
-    return actor_finish(r,reaction_run(r,context,native,arguments,count,result,e),e);
+    return actor_finish(r,reaction_run(r,context,native,binding,arguments,count,result,e),e);
 }
 static bool ensure(struct application_native_q2_source_actors *o,uint32_t slot,size_t kind,qa_error *e)
 {
@@ -393,9 +388,7 @@ static bool prepare(struct application_native_q2 *n,qa_error *e)
     o->rerelease=qa_json_string_equal(d,qa_json_get(d,callbacks,"abi"),"q2-rerelease");
     memcpy(o->offsets,offsets,sizeof(offsets));memcpy(o->present,present,sizeof(present));n->source_actors=o;
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);
-    if(!qa_actor_index_create(&o->actor_index,registry,e)||
-        !qa_pool_reserve_pages(&o->actor_pool,&o->actor_storage,(size_t)qa_actors_capacity(registry)+NQR_CALL_DEPTH,
-            sizeof(native_source_actor),_Alignof(native_source_actor),e))return false;
+    if(!qa_actor_index_create(&o->actor_index,registry,e))return false;
     if(!application_native_q2_source_combat_state_create(n,&o->combat,e))return false;
     if(!application_native_q2_source_damage_create(n,o->combat,o->velocity,&o->damage,e))return false;
     o->ready=true;
@@ -625,12 +618,12 @@ bool application_native_q2_source_actors_admit(struct application_native_q2 *n,u
     struct application_native_q2_source_actors *o=n->source_actors;
     if(!actors_collect(o,e))return false;
     native_source_actor *r=actor_find(o,actor);
-    if(!r){size_t storage_slot;r=qa_pool_take(&o->actor_pool,&storage_slot);
+    if(!r){r=calloc(1,sizeof(*r));
         if(!r)return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native body callback");
-        *r=(native_source_actor){.owner=o,.actor=actor,.slot=slot,.storage_slot=storage_slot,
+        *r=(native_source_actor){.owner=o,.actor=actor,.slot=slot,
             .next=o->actors,.previous=&o->actors};
         if(r->next)r->next->previous=&r->next;
-        o->actors=r;qa_actor_index_put(&o->actor_index,actor,storage_slot);}
+        o->actors=r;qa_actor_index_put(&o->actor_index,actor,(size_t)(uintptr_t)r);}
     ++r->calls;
     return actor_finish(r,actor_admit(r,e),e);
 }
@@ -695,7 +688,8 @@ bool application_native_q2_source_actors_close(struct application_native_q2 *n,q
     if(!application_native_q2_source_actors_suspend(n,e)) return false;
     if(!application_native_q2_source_damage_destroy(&o->damage,e))return false;
     if(!application_native_q2_source_combat_state_destroy(&o->combat,e))return false;
-    qa_actor_index_destroy(&o->actor_index);qa_arena_destroy(&o->actor_storage);
+    qa_actor_index_destroy(&o->actor_index);
+    while(o->actors){native_source_actor *r=o->actors;o->actors=r->next;free(r);}
     free(o);n->source_actors=NULL;return true;
 }
 bool application_native_q2_source_actors_damage_capture(struct application_native_q2 *n,qa_buffer *out,qa_error *e)

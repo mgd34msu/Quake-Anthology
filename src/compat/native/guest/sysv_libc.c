@@ -139,19 +139,20 @@ static bool memory_copy(guest_sysv_runtime *r, uint64_t destination,
     bool ok = sysv_read(r, source, bytes, count, error) && sysv_write(r, destination, bytes, count, error);
     qa_arena_destroy(&scratch); return ok;
 }
-static bool full_string(guest_sysv_runtime *r, uint64_t address, qa_buffer *out, qa_error *error)
+static bool full_string(guest_sysv_runtime *r, uint64_t address, qa_arena *arena,
+    qa_buffer *out, qa_error *error)
 {
     bool terminated;
     if (!address) return sysv_fail(error, QA_ERROR_ARGUMENT, "System V string requires a nonnull pointer");
-    if (!sysv_string(r, address, SYSV_MAX_STRING, out, &terminated, error)) return false;
-    if (!terminated) { qa_buffer_free(out); return sysv_fail(error, QA_ERROR_ARGUMENT, "System V string exceeds supported terminated extent"); }
+    if (!sysv_string(r, address, SYSV_MAX_STRING, arena, out, &terminated, error)) return false;
+    if (!terminated) return sysv_fail(error, QA_ERROR_ARGUMENT, "System V string exceeds supported terminated extent");
     return true;
 }
 static bool getenv_call(guest_sysv_runtime *r, uint64_t name_address,
-    qa_native_value *out, qa_error *error)
+    qa_arena *arena, qa_native_value *out, qa_error *error)
 {
     qa_buffer name = {0};
-    if (!full_string(r, name_address, &name, error)) return false;
+    if (!full_string(r, name_address, arena, &name, error)) return false;
     out->as.address = 0;
     bool okay = true;
     for (size_t i = 0; name.size && i < r->options.environment_count; ++i) {
@@ -169,7 +170,7 @@ static bool getenv_call(guest_sysv_runtime *r, uint64_t name_address,
         if (!okay) break;
         if (at > name.size) { out->as.address = entry + name.size + 1; break; }
     }
-    qa_buffer_free(&name); return okay;
+    return okay;
 }
 static bool getcwd_call(guest_sysv_runtime *r, uint64_t address, uint64_t size,
     qa_native_value *out, qa_error *error)
@@ -219,14 +220,13 @@ static int digit(uint8_t byte)
     return -1;
 }
 static bool strtol_call(guest_sysv_runtime *r, const qa_native_value *args, bool binary,
-    qa_native_value *out, qa_error *error)
+    qa_arena *arena, qa_native_value *out, qa_error *error)
 {
     uint64_t source = args[0].as.address, end = args[1].as.address;
     qa_buffer text = {0};
-    if (!full_string(r, source, &text, error)) return false;
+    if (!full_string(r, source, arena, &text, error)) return false;
     int radix = args[2].as.i32;
     if (radix && (radix < 2 || radix > 36)) {
-        qa_buffer_free(&text);
         if (!sysv_errno(r, 22, error) || (end && !sysv_put_pointer(r, end, source, error))) return false;
         return set_integer(out, sysv_signed_type(r), 0);
     }
@@ -255,7 +255,6 @@ static bool strtol_call(guest_sysv_runtime *r, const qa_native_value *args, bool
             else value = value * (unsigned)radix + (unsigned)d;
         }
     }
-    qa_buffer_free(&text);
     if (end && !sysv_put_pointer(r, end, source + (at == first ? 0 : at), error)) return false;
     if (overflow || (!negative && value >= limit)) {
         if (!sysv_errno(r, 34, error)) return false;
@@ -300,8 +299,8 @@ static bool sort_sift(sort_state *state, size_t root, size_t end, qa_error *erro
     }
     return true;
 }
-bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
-    qa_native_value *out, qa_error *error)
+static bool libc_call(sysv_service *service, const qa_native_value *args,
+    qa_arena *temporary, qa_native_value *out, qa_error *error)
 {
     guest_sysv_runtime *r = service->runtime;
     out->type = service->result.kind;
@@ -370,78 +369,75 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
             if (first[i] != second[i]) { out->as.i32 = (int)first[i] - (int)second[i]; break; }
         qa_arena_destroy(&scratch); return ok;
     }
-    case LC_GETENV: return getenv_call(r, a, out, error);
+    case LC_GETENV: return getenv_call(r, a, temporary, out, error);
     case LC_GETCWD: return getcwd_call(r, a, b, out, error);
     case LC_LENGTH: {
-        qa_buffer text = {0}; if (!full_string(r, a, &text, error)) return false;
-        set_integer(out, sysv_size_type(r), text.size); qa_buffer_free(&text); return true;
+        qa_buffer text = {0}; if (!full_string(r, a, temporary, &text, error)) return false;
+        return set_integer(out, sysv_size_type(r), text.size);
     }
     case LC_STRING_COMPARE: {
         qa_buffer first = {0}, second = {0};
-        bool ok = full_string(r, a, &first, error) && full_string(r, b, &second, error);
+        bool ok = full_string(r, a, temporary, &first, error) && full_string(r, b, temporary, &second, error);
         out->as.i32 = 0;
         if (ok) {
             size_t n = first.size < second.size ? first.size : second.size, i = 0;
             for (; i < n; ++i) if (first.data[i] != second.data[i]) { out->as.i32 = first.data[i] - second.data[i]; break; }
             if (i == n && first.size != second.size) out->as.i32 = first.size < second.size ? -(int)second.data[n] : first.data[n];
         }
-        qa_buffer_free(&first); qa_buffer_free(&second); return ok;
+        return ok;
     }
     case LC_STRING_COPY: {
         qa_buffer text = {0}, prefix = {0};
         if (!a) return sysv_fail(error,QA_ERROR_ARGUMENT,"System V string copy requires an actual nonnull destination");
-        bool ok = full_string(r, b, &text, error);
-        if (ok && (service->a & 2)) ok = full_string(r, a, &prefix, error);
+        bool ok = full_string(r, b, temporary, &text, error);
+        if (ok && (service->a & 2)) ok = full_string(r, a, temporary, &prefix, error);
         uint64_t total = prefix.size + text.size + 1;
         if (ok && (service->a & 1) && total > c) ok = sysv_fail(error, QA_ERROR_ARGUMENT, "fortified System V string copy exceeds its actual destination");
-        if (ok) {
-            uint8_t *bytes = realloc(text.data, text.size + 1);
-            if (!bytes) ok = sysv_fail(error, QA_ERROR_MEMORY, "terminating copied System V string");
-            else { text.data = bytes; bytes[text.size] = 0;
-                ok = a <= UINT64_MAX-prefix.size && sysv_write(r, a + prefix.size, bytes, text.size + 1, error); }
-        }
+        if (ok) ok = a <= UINT64_MAX-prefix.size &&
+            sysv_write(r, a + prefix.size, text.data, text.size + 1, error);
         out->as.address = a + ((service->a & 4) ? text.size : 0);
-        qa_buffer_free(&text); qa_buffer_free(&prefix); return ok;
+        return ok;
     }
     case LC_STRING_NCOPY: {
         if (!extent(c, &count, error)) return false;
         out->as.address = a; if (!count) return true;
         if (!a || !b) return sysv_fail(error, QA_ERROR_ARGUMENT, "strncpy requires actual nonnull source and destination");
-        uint8_t *bytes = calloc(count, 1);
-        if (!bytes) return sysv_fail(error, QA_ERROR_MEMORY, "holding zero-padded strncpy bytes");
+        uint8_t *bytes = qa_arena_alloc(temporary, count, 1, error);
+        if (!bytes) return false;
+        memset(bytes, 0, count);
         bool ok = true;
         for (size_t i = 0; i < count; ++i) {
             if (b > UINT64_MAX-i || !sysv_read(r, b + i, bytes + i, 1, error)) { ok = false; break; }
             if (!bytes[i]) break;
         }
         if (ok) ok = sysv_write(r, a, bytes, count, error);
-        free(bytes); return ok;
+        return ok;
     }
     case LC_CHARACTER: {
-        qa_buffer text = {0}; if (!full_string(r, a, &text, error)) return false;
+        qa_buffer text = {0}; if (!full_string(r, a, temporary, &text, error)) return false;
         size_t found = SIZE_MAX;
         for (size_t i = 0; i <= text.size; ++i) if ((i == text.size ? 0 : text.data[i]) == (uint8_t)b) {
             found = i; if (!service->a) break;
         }
-        out->as.address = found == SIZE_MAX ? 0 : a + found; qa_buffer_free(&text); return true;
+        out->as.address = found == SIZE_MAX ? 0 : a + found; return true;
     }
     case LC_SUBSTRING: {
         qa_buffer text = {0}, needle = {0};
-        bool ok = full_string(r, a, &text, error) && full_string(r, b, &needle, error);
+        bool ok = full_string(r, a, temporary, &text, error) && full_string(r, b, temporary, &needle, error);
         size_t found = SIZE_MAX;
         if (ok) for (size_t i = 0; i <= text.size; ++i) {
             if (service->a) { if (i < text.size && needle.size && memchr(needle.data, text.data[i], needle.size)) { found = i; break; } }
             else if (needle.size <= text.size - i && (!needle.size || !memcmp(text.data + i, needle.data, needle.size))) { found = i; break; }
         }
         out->as.address = found == SIZE_MAX ? 0 : a + found;
-        qa_buffer_free(&text); qa_buffer_free(&needle); return ok;
+        return ok;
     }
     case LC_TOKEN: {
         qa_buffer text = {0}, delimiters = {0};
         if (!a && !sysv_pointer(r, r->strtok_slot, &a, error)) return false;
-        if (!full_string(r, b, &delimiters, error)) return false;
-        if (!a) { qa_buffer_free(&delimiters); out->as.address = 0; return true; }
-        if (!full_string(r, a, &text, error)) { qa_buffer_free(&delimiters); return false; }
+        if (!full_string(r, b, temporary, &delimiters, error)) return false;
+        if (!a) { out->as.address = 0; return true; }
+        if (!full_string(r, a, temporary, &text, error)) return false;
         size_t first = 0;
         while (first < text.size && delimiters.size && memchr(delimiters.data, text.data[first], delimiters.size)) ++first;
         size_t last = first;
@@ -450,24 +446,20 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
         if (last < text.size) ok = sysv_store(r, a + last, 1, 0, error);
         if (ok) ok = sysv_put_pointer(r, r->strtok_slot, last < text.size ? a + last + 1 : 0, error);
         out->as.address = first == text.size ? 0 : a + first;
-        qa_buffer_free(&text); qa_buffer_free(&delimiters); return ok;
+        return ok;
     }
-    case LC_STRTOL: return strtol_call(r, args, service->a != 0, out, error);
+    case LC_STRTOL: return strtol_call(r, args, service->a != 0, temporary, out, error);
     case LC_STRTOD: {
         qa_buffer text = {0};
         qa_native_guest_cpu cpu;
         if ((b && !guest_range(r->guest,b,r->target.pointer_bytes,QA_NATIVE_GUEST_WRITE,error)) ||
-            !full_string(r,a,&text,error) || !qa_native_guest_cpu_read(r->guest,&cpu,error)) {
-            qa_buffer_free(&text); return false;
-        }
-        uint8_t *terminated = realloc(text.data,text.size+1);
-        if (!terminated) { qa_buffer_free(&text); return sysv_fail(error,QA_ERROR_MEMORY,"terminating System V strtod input"); }
-        text.data = terminated; text.data[text.size] = 0;
+            !full_string(r,a,temporary,&text,error) || !qa_native_guest_cpu_read(r->guest,&cpu,error))
+            return false;
         const int modes[] = {FE_TONEAREST,FE_DOWNWARD,FE_UPWARD,FE_TOWARDZERO};
         unsigned rounding = r->target.pointer_bytes == 8 ? (cpu.mxcsr>>13)&3 : (cpu.fp_control>>10)&3;
         fenv_t saved;
         if (feholdexcept(&saved) != 0) {
-            qa_buffer_free(&text); return sysv_fail(error,QA_ERROR_UNSUPPORTED,"host cannot retain the System V strtod floating environment");
+            return sysv_fail(error,QA_ERROR_UNSUPPORTED,"host cannot retain the System V strtod floating environment");
         }
         bool ok = fesetround(modes[rounding]) == 0, range_error = false;
         size_t consumed = 0;
@@ -475,7 +467,6 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
         else sysv_fail(error,QA_ERROR_UNSUPPORTED,"host cannot select System V strtod rounding");
         int exceptions = fetestexcept(FE_ALL_EXCEPT);
         if (fesetenv(&saved) != 0) ok = sysv_fail(error,QA_ERROR_UNSUPPORTED,"host cannot restore the System V strtod floating environment");
-        qa_buffer_free(&text);
         if (!ok) return false;
         unsigned sticky = (exceptions & FE_INVALID ? 1u : 0u) |
             (exceptions & FE_DIVBYZERO ? 4u : 0u) | (exceptions & FE_OVERFLOW ? 8u : 0u) |
@@ -541,4 +532,13 @@ bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
     case LC_ABORT: return sysv_fail(error, QA_ERROR_UNSUPPORTED, "System V guest called abort");
     default: return sysv_fail(error, QA_ERROR_FORMAT, "unknown retained System V libc operation");
     }
+}
+bool sysv_libc_call(sysv_service *service, const qa_native_value *args,
+    qa_native_value *out, qa_error *error)
+{
+    qa_arena temporary;
+    qa_arena_init_pool(&temporary, &service->runtime->guest->scratch_pages);
+    bool ok = libc_call(service, args, &temporary, out, error);
+    qa_arena_destroy(&temporary);
+    return ok;
 }

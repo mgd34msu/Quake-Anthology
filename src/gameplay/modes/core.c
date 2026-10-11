@@ -85,9 +85,8 @@ bool mode_intent(qa_modes *m, mode_instance *v, qa_match_intent_kind kind, qa_ac
         return mode_fail(e, "match transition has no campaign/match coordinator");
     qa_match_intent intent = {
         .kind = kind, .mode = v->id, .actor = actor, .team = team, .map = map};
-    if (v->value.rules.source >= QA_MODE_Q3 && kind == QA_MATCH_RESTART_MAP &&
-        !MODE_CALLBACK(m, qa_builtin_resource(&m->options.services, "map_restart 0\n",
-                                               &intent.source_command, e))) return false;
+    if (v->value.rules.source >= QA_MODE_Q3 && kind == QA_MATCH_RESTART_MAP)
+        intent.source_command = m->runtime_names[MODE_NAME_MAP_RESTART];
     return MODE_CALLBACK(m, m->options.hooks.intent(m->options.hooks.context, &intent, e));
 }
 bool mode_alive(qa_modes *m, qa_actor_id actor) {
@@ -95,7 +94,7 @@ bool mode_alive(qa_modes *m, qa_actor_id actor) {
     return mode_live(m, actor) && qa_combat_read(m->options.services.combat, actor, &state, NULL) &&
            state.health > 0;
 }
-static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound,
+static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound,
                           int32_t channel, float volume, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
                               .provider = m->options.owner,
@@ -111,16 +110,16 @@ static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, const 
     event.family = v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                    : v->value.rules.source < QA_MODE_Q3      ? QA_GAME_Q2
                                                              : QA_GAME_Q3;
-    return qa_builtin_resource(&m->options.services, sound, &event.resource, e) &&
-           (m->options.hooks.emit
+    event.resource = sound;
+    return m->options.hooks.emit
                ? m->options.hooks.emit(m->options.hooks.context, v->id, &event, e)
-               : qa_builtin_emit(&m->options.services, &event, e));
+               : qa_builtin_emit(&m->options.services, &event, e);
 }
-bool mode_sound(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound, float volume,
+bool mode_sound(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound, float volume,
                 qa_error *e) {
     return MODE_CALLBACK(m, sound_event(m, v, actor, sound, 3, volume, e));
 }
-bool mode_sound_channel(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound,
+bool mode_sound_channel(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id sound,
                         int32_t channel, float volume, qa_error *e) {
     return MODE_CALLBACK(m, sound_event(m, v, actor, sound, channel, volume, e));
 }

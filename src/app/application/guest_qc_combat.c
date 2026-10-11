@@ -1,5 +1,4 @@
 #include "guest_qc_combat.h"
-#include "qa/pool.h"
 #include "guest_qc_armor.h"
 #include "guest_mod_item_definition.h"
 #include "qa/qc_observation.h"
@@ -44,7 +43,6 @@ typedef struct combat_actor {
     int32_t reference;
     uint64_t serial;
     unsigned calls;
-    size_t storage_slot;
     bool bound, restoring, retired;
 } combat_actor;
 typedef struct damage_frame {
@@ -71,8 +69,6 @@ struct application_qc_combat {
     const application_qc_combat_profile *profile;
     combat_actor *actors;
     qa_actor_index index;
-    qa_pool actor_pool;
-    qa_arena storage;
     damage_frame *frame;
     incoming_damage *incoming;
     uint64_t sequence;
@@ -288,21 +284,21 @@ const qa_qc_inline_region *application_qc_combat_regions(const application_qc_co
 static combat_actor *find(application_qc_combat *owner, qa_actor_id actor)
 {
     size_t slot;
-    return qa_actor_index_find(&owner->index,actor,&slot)?qa_pool_at(&owner->actor_pool,slot):NULL;
+    return qa_actor_index_find(&owner->index,actor,&slot)?(combat_actor *)(uintptr_t)slot:NULL;
 }
 static void actor_reclaim(combat_actor *actor)
 {
-    if(actor->retired&&!actor->calls)qa_pool_release(&actor->owner->actor_pool,actor->storage_slot);
+    if(actor->retired&&!actor->calls)free(actor);
 }
 static combat_actor *actor_create(application_qc_combat *owner,qa_actor_id id,uint32_t physical,
     int32_t reference,qa_error *error)
 {
-    size_t slot;combat_actor *actor=qa_pool_take(&owner->actor_pool,&slot);
-    if(!actor){application_fail(error,QA_ERROR_MEMORY,"QC combat binding pool exhausted");return NULL;}
+    combat_actor *actor=calloc(1,sizeof(*actor));
+    if(!actor){application_fail(error,QA_ERROR_MEMORY,"Owning QC combat callback context");return NULL;}
     *actor=(combat_actor){.next=owner->actors,.owner=owner,.actor=id,.slot=physical,
-        .reference=reference,.storage_slot=slot};
+        .reference=reference};
     if(actor->next)actor->next->previous=actor;owner->actors=actor;
-    qa_actor_index_put(&owner->index,id,slot);return actor;
+    qa_actor_index_put(&owner->index,id,(size_t)(uintptr_t)actor);return actor;
 }
 static void actor_retire(combat_actor *actor)
 {
@@ -469,11 +465,7 @@ bool application_qc_combat_create(struct application_qc_state *engine, qa_error 
     engine->combat = calloc(1, sizeof(*engine->combat));
     if (!engine->combat) return application_fail(error, QA_ERROR_MEMORY, "Owning QC combat callback contexts");
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    /* Source callbacks may retire contexts in any of the VM's default 32 call frames. */
-    if (!qa_actor_index_create(&engine->combat->index,registry,error)||
-        !qa_pool_reserve_pages(&engine->combat->actor_pool,&engine->combat->storage,
-            (size_t)qa_actors_capacity(registry)+32,sizeof(combat_actor),_Alignof(combat_actor),error)) {
-        qa_actor_index_destroy(&engine->combat->index);qa_arena_destroy(&engine->combat->storage);
+    if (!qa_actor_index_create(&engine->combat->index,registry,error)) {
         free(engine->combat); engine->combat = NULL;
         return false;
     }
@@ -945,7 +937,7 @@ bool application_qc_combat_destroy(struct application_qc_state *engine, qa_error
 {
     if (!application_qc_combat_suspend(engine, error)) return false;
     if (engine->combat) {
-        qa_actor_index_destroy(&engine->combat->index);qa_arena_destroy(&engine->combat->storage);
+        qa_actor_index_destroy(&engine->combat->index);
     }
     free(engine->combat); engine->combat = NULL; return true;
 }

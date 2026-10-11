@@ -570,7 +570,8 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_AUDIO,
     QA_APPLICATION_EVENT_LOG,
     QA_APPLICATION_EVENT_Q3_EFFECT,
-    QA_APPLICATION_EVENT_Q3_COMMAND
+    QA_APPLICATION_EVENT_Q3_COMMAND,
+    QA_APPLICATION_EVENT_QW_COMMAND
 } qa_application_event_kind;
 
 typedef struct qa_application_log_event {
@@ -595,6 +596,15 @@ typedef struct qa_application_q3_command_event {
     const char *text;
 } qa_application_q3_command_event;
 
+typedef struct qa_application_qw_command_event {
+    const void *recipient;
+    qa_net_client_id client;
+    qa_net_seat_id seat;
+    qa_actor_id actor;
+    uint64_t epoch, received_ns;
+    const char *text;
+} qa_application_qw_command_event;
+
 /* Caller-owned cursor. Unread records stay in the application ring. */
 typedef struct qa_application_event_subscription {
     qa_application *application;
@@ -614,6 +624,7 @@ typedef struct qa_application_event_view {
         const qa_audio_event *audio;
         const qa_application_q3_effect_event *q3_effect;
         const qa_application_q3_command_event *q3_command;
+        const qa_application_qw_command_event *qw_command;
         const qa_application_log_event *log;
     } value;
     const qa_application_protocol_event *protocol;
@@ -671,6 +682,8 @@ void qa_application_events_unsubscribe(qa_application_event_subscription *);
 void qa_application_events_consumed(qa_application_event_subscription *,uint64_t next);
 qa_event_lease *qa_application_event_retain(qa_application *,uint64_t id);
 bool qa_application_log_emit(qa_application *,const qa_command_context *,const char *,bool console,qa_error *);
+bool qa_application_qw_command_emit(qa_application *,const qa_application_qw_command_event *,
+    bool *overflow,qa_error *);
 void qa_application_log_deliver(qa_console *,const qa_application_log_event *,
     void (*print)(void *,const qa_command_context *,const char *),void *context);
 bool qa_application_console_execute_capture(qa_application *,qa_console *,const qa_command_context *,const char *,

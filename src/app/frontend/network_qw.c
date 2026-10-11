@@ -261,20 +261,20 @@ static bool defer_command(void *context, qa_net_client_id id, const char *text, 
 {
     qw_frontend_peer *peer = context; frontend_qw_host *host = peer->host; qa_actor_id actor;
     if (!qa_net_client_id_equal(id, peer->client) || !text || !peer_actor(peer, &actor, error)) return false;
-    if (host->action_count == QW_ACTIONS)
-        return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source action queue overflow");
-    size_t length = strlen(text), slot;
+    size_t length = strlen(text);
     if (length >= QW_MESSAGE)
         return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld command exceeds its wire message");
-    qw_source_action *action = qa_pool_take(&host->actions, &slot);
-    if (!action) return frontend_fail(error, QA_ERROR_CAPACITY, "QuakeWorld source action queue overflow");
-    *action = (qw_source_action){.slot = slot};
-    memcpy(action->text, text, length + 1);
-    action->client = id; action->seat = peer->seat; action->actor = actor;
-    action->epoch = qa_network_epoch(host->runtime, id);
-    action->received_ns = peer->last_received_ns;
-    if (host->last_action) host->last_action->next = action; else host->first_action = action;
-    host->last_action = action; ++host->action_count; return true;
+    qa_application *app=host->frontend->application;
+    bool pending=host->commands.application!=NULL;
+    qa_application_events_subscribe(app,&host->commands);
+    qa_application_qw_command_event action={.recipient=host,.client=id,.seat=peer->seat,.actor=actor,
+        .epoch=qa_network_epoch(host->runtime,id),.received_ns=peer->last_received_ns,.text=text};
+    bool overflow;
+    bool ok=qa_application_qw_command_emit(app,&action,&overflow,error);
+    if(!pending && (!ok || overflow)) qa_application_events_unsubscribe(&host->commands);
+    if(!ok) return false;
+    return !overflow || (source_drop(peer,id,"Reliable event overflow",error) &&
+        qa_network_qw_server_drop(host->runtime,id,"Reliable event overflow",error));
 }
 static uint32_t source_rate(const char *text)
 {
@@ -497,10 +497,6 @@ bool frontend_qw_create(qa_frontend *frontend, qa_network_runtime *runtime, qa_s
     if (!host) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating QuakeWorld physical factory owner");
     host->frontend = frontend; host->runtime = runtime; host->admin = admin; host->composition = *composition;
     host->owner = source.owner; host->generation = qa_application_configuration_generation(frontend->application);
-    if (!qa_pool_reserve_pages(&host->actions, &host->action_storage, QW_ACTIONS + 1,
-        sizeof(qw_source_action), _Alignof(qw_source_action), error)) {
-        frontend_qw_destroy(host); return false;
-    }
     uint64_t seed;
     if (!qa_platform_entropy_u64(&seed,error)) { frontend_qw_destroy(host); return false; }
     host->server_count = 1; host->random = (uint32_t)seed;
@@ -526,7 +522,7 @@ void frontend_qw_destroy(frontend_qw_host *host)
     for (size_t i = 0; i < QW_CLIENTS; ++i) free(host->peers[i].userinfo);
     for (size_t i = 0; i < 255; ++i) { free(host->models[i]); free(host->sounds[i]); }
     if (host->signon) for (size_t i = 0; i < host->signon_count; ++i) qa_buffer_free(host->signon + i);
-    qa_arena_destroy(&host->action_storage);
+    qa_application_events_unsubscribe(&host->commands);
     free(host->signon); free(host->signon_views); free(host);
 }
 void frontend_qw_disconnected(frontend_qw_host *host, qa_net_client_id id)
@@ -782,11 +778,7 @@ bool frontend_qw_prepare(frontend_qw_host *host, qa_error *error)
         if (host->reliable_cursor < first) host->reliable_cursor = first;
         host->event_generation = host->reliable_generation = qa_application_protocol_events_generation(host->frontend->application);
         host->previous_pause = qa_application_q1_paused(host->frontend->application);
-        while (host->first_action) {
-            qw_source_action *next = host->first_action->next;
-            qa_pool_release(&host->actions, host->first_action->slot); host->first_action = next;
-        }
-        host->last_action = NULL; host->action_count = 0;
+        qa_application_events_unsubscribe(&host->commands);
         for (size_t i = 0; i < QW_CLIENTS; ++i) {
             qw_frontend_peer *peer = host->peers + i;
             if (!peer->occupied || peer->retiring) continue;
@@ -918,9 +910,18 @@ uint64_t frontend_qw_events_retired(frontend_qw_host *host)
 }
 static bool source_actions(frontend_qw_host *host, qa_error *error)
 {
-    while (host->first_action) {
-        qw_source_action *action = host->first_action;
-        host->first_action = action->next; if (!host->first_action) host->last_action = NULL; --host->action_count;
+    qa_application *app=host->frontend->application;
+    if(!host->commands.application) return true;
+    while (host->commands.next<qa_application_events_next(app)) {
+        uint64_t id=host->commands.next;
+        qa_application_event_view view;
+        if(!qa_application_event_read(app,&(qa_application_event_cursor){.id=id},&view) ||
+            view.kind!=QA_APPLICATION_EVENT_QW_COMMAND || view.value.qw_command->recipient!=host) {
+            qa_application_events_consumed(&host->commands,id+1);
+            continue;
+        }
+        qa_event_lease *lease=qa_application_event_retain(app,id);
+        const qa_application_qw_command_event *action=view.value.qw_command;
         qw_frontend_peer *peer = NULL;
         for (size_t i = 0; i < QW_CLIENTS; ++i) if (host->peers[i].occupied && !host->peers[i].retiring &&
             qa_net_client_id_equal(host->peers[i].client, action->client)) peer = host->peers + i;
@@ -937,9 +938,12 @@ static bool source_actions(frontend_qw_host *host, qa_error *error)
             host->action_active = false; host->action_time_ns = 0; host->action_actor = (qa_actor_id){0};
             if (ok) host->reliable_cursor = qa_application_events_next(host->frontend->application);
         }
-        qa_pool_release(&host->actions, action->slot);
+        if(host->commands.application==app) qa_application_events_consumed(&host->commands,id+1);
+        qa_event_lease_release(lease);
         if (!ok) return false;
+        if(!host->commands.application) return true;
     }
+    qa_application_events_unsubscribe(&host->commands);
     return true;
 }
 static int16_t source_short(float value)
@@ -1130,7 +1134,7 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
         host->action_actor.registry || host->action_actor.generation || host->action_actor.slot ||
         host->generation != qa_application_configuration_generation(host->frontend->application) || !host->owner ||
         !host->active_limit || host->active_limit > 32 || host->server_count < 1 ||
-        host->baseline_count < 32 || host->baseline_count > 511 || host->action_count > QW_ACTIONS ||
+        host->baseline_count < 32 || host->baseline_count > 511 ||
         host->model_count > 255 || host->sound_count > 255 || (host->signon_count && (!host->signon || !host->signon_views)))
         return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld continuation lacks its actual source factory inventory");
     qa_application_network_qw_world world;
@@ -1201,12 +1205,5 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
         while (qa_net_connections_next(qa_network_connections(host->runtime), &cursor, &client)) ++count;
         if (count != occupied) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld runtime has an undeclared physical peer");
     }
-    size_t action_count = 0; const qw_source_action *last = NULL;
-    for (const qw_source_action *action = host->first_action; action; action = action->next) {
-        if (++action_count > QW_ACTIONS || !action->client.generation || !action->actor.registry || !action->epoch)
-            return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld retained source action lacks its authored admission");
-        last = action;
-    }
-    if (action_count != host->action_count || last != host->last_action) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source action allocator differs");
     return true;
 }

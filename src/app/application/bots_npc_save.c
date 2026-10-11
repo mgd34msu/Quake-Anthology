@@ -121,8 +121,7 @@ static bool actor_fields(qa_source_save_io *io,application_bots_npc *owner,npc_a
         return fail(io,"Missing actual restored monster actor");
     npc_graph *graph=graph_at(owner,index);
     if(io->direction==QA_SOURCE_SAVE_READ) {
-        for(npc_actor *previous=owner->actors;previous;previous=previous->next)
-            if(qa_actor_id_equal(previous->actor,id)) return fail(io,"Duplicate monster route actor");
+        if(application_npc_actor_find(owner,id)) return fail(io,"Duplicate monster route actor");
         if(!application_npc_actor_create(owner,id,graph,&actor,io->error)) return false;
         *value=actor;
     }
@@ -194,11 +193,16 @@ static bool fields(qa_source_save_io *io,application_provider *source,applicatio
     for(npc_actor *actor=owner->actors;actor;actor=actor->next) ++actors;
     if(!qa_source_save_count(io,&actors,qa_actors_capacity(qa_session_actors(io->session)))) return false;
     npc_actor **actor_tail=&owner->actors;
+    npc_actor *previous=NULL;
     for(size_t i=0;i<actors;++i) {
         npc_actor *actor=*actor_tail;
         bool okay=actor_fields(io,owner,&actor);
-        if(io->direction==QA_SOURCE_SAVE_READ) *actor_tail=actor;
+        if(io->direction==QA_SOURCE_SAVE_READ && actor) {
+            *actor_tail=actor;actor->previous=previous;
+            qa_actor_index_put(&owner->actor_routes,actor->actor,(size_t)(uintptr_t)actor);
+        }
         if(!okay) return false;
+        previous=actor;
         actor_tail=&actor->next;
     }
     return true;

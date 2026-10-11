@@ -706,9 +706,7 @@ bool mode_horde_reconcile_keys(qa_modes *m, mode_instance *changed, qa_error *e)
     qa_actor_id manager = h->options.manager;
     for (unsigned gold = 0; gold < 2; ++gold) {
         bool present = key_present(m, manager, gold != 0);
-        qa_item_id item;
-        if (!qa_builtin_resource(&m->options.services, gold ? "q1:key/gold" : "q1:key/silver", &item, e))
-            return false;
+        qa_item_id item = m->runtime_names[gold ? MODE_NAME_KEY_GOLD : MODE_NAME_KEY_SILVER];
         for (size_t i = 0; i < m->players_order.count; ++i) {
             qa_actor_id actor = m->players_order.ids[i];
             if (!mode_player_get(m, actor)) continue;
@@ -734,10 +732,7 @@ static bool change_keys(qa_modes *m, qa_mode_id id, bool gold, int change, qa_er
         return true;
     bool present = key_present(m, manager, gold);
     if (before == present) return true;
-    qa_item_id item;
-    if (!qa_builtin_resource(&m->options.services, gold ? "q1:key/gold" : "q1:key/silver", &item,
-                             e))
-        return false;
+    qa_item_id item = m->runtime_names[gold ? MODE_NAME_KEY_GOLD : MODE_NAME_KEY_SILVER];
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
         qa_actor_id actor = m->players_order.ids[ordinal];
         if (mode_player_get(m, actor) && key_player(m, manager, actor) &&
@@ -755,10 +750,7 @@ bool mode_horde_respawn(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_err
     if (!h)
         return true;
     for (int i = 0; i < 2; ++i) {
-        qa_item_id item;
-        if (!qa_builtin_resource(&m->options.services, i ? "q1:key/gold" : "q1:key/silver", &item,
-                                 e))
-            return false;
+        qa_item_id item = m->runtime_names[i ? MODE_NAME_KEY_GOLD : MODE_NAME_KEY_SILVER];
         if (!mode_set_count(m, actor, item, key_present(m, h->options.manager, i != 0) ? 1 : 0, e))
             return false;
     }

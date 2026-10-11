@@ -3,6 +3,7 @@
 #include "map_players_private.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_bots.h"
+#include "qa/game_q2_wire.h"
 #include "qa/application_players.h"
 #include "qa/text.h"
 #include "bots_transport.h"
@@ -30,14 +31,24 @@ static application_player_record *player(application_bot_world_binding *binding,
     application_player_record *record=application_player_record_find(roster,actor);
     return record && !record->retiring ? record : NULL;
 }
-static qa_actor_id bot_actor(void *context,int32_t client) {
+static bool client_actor(void *context,uint32_t client,qa_actor_id *out,qa_error *error) {
     application_bot_world_binding *binding=context;
-    struct application_player_roster *roster=binding->bots->application->players;
-    for(size_t i=0;client>=0 && roster && i<roster->count;++i) {
-        application_player_record *record=roster->records+i;
-        if(!record->retiring && application_player_identity(record)->bot && record->client_slot==(uint32_t)client) return record->actor;
+    *out=(qa_actor_id){0};
+    if(!source_live(binding,error)) return false;
+    if(binding->source->kind==APPLICATION_PROVIDER_Q1) {
+        qa_q1_source_client_actor(binding->source->state.q1,client,out);
+    } else {
+        qa_q2_source_client_actor(binding->source->state.q2,client,out);
     }
-    return (qa_actor_id){0};
+    application_player_record *record=player(binding,*out);
+    if(!record || record->client_slot!=client) *out=(qa_actor_id){0};
+    return true;
+}
+static qa_actor_id bot_actor(void *context,int32_t client) {
+    application_bot_world_binding *binding=context;qa_actor_id actor={0};
+    if(client<0 || !client_actor(context,(uint32_t)client,&actor,NULL)) return (qa_actor_id){0};
+    application_player_record *record=player(binding,actor);
+    return record && application_player_identity(record)->bot?actor:(qa_actor_id){0};
 }
 static bool metadata(void *context,qa_actor_id actor,application_bot_world_metadata *out,
     bool *found,qa_error *error) {
@@ -263,7 +274,7 @@ bool application_bot_world_binding_services(application_bot_world_binding *bindi
         .world=binding->bots->application->world,.source=binding->source->kind==APPLICATION_PROVIDER_Q1?
             APPLICATION_BOT_WORLD_Q1:APPLICATION_BOT_WORLD_Q2,.max_clients=maximum,.base_model_count=(uint32_t)models,
         .metadata=metadata,.movement=movement,.client=client,.combat=combat,.brush=brush,.weapon=weapon,
-        .world_actor=world_actor,.bot_actor=bot_actor,.clock=clock,.print=print,.memory_debug=memory_debug,
+        .world_actor=world_actor,.client_actor=client_actor,.bot_actor=bot_actor,.clock=clock,.print=print,.memory_debug=memory_debug,
         .q2_connect=q2_connect,.userinfo_changed=userinfo_changed,.bot_connect=bot_connect,.bot_begin=bot_begin,
         .bot_drop=bot_drop,.q2_activate=q2_activate,.exit_level=exit_level,.console=console,.message=message,.random=random};
     return true;

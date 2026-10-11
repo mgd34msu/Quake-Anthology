@@ -318,6 +318,7 @@ static void close_game(void *context) {
     q2_items_close(g);
     free(g->actors);
     qa_actor_index_destroy(&g->wire_index);
+    qa_actor_index_destroy(&g->wire_shadow_index);
     free(g->wire_freed_ns);
     free(g);
 }

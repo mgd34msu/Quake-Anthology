@@ -164,6 +164,7 @@ void application_npc_owner_free(application_bots_npc *owner)
         qa_nav_graph_release(graph->graph);qa_resource_release(graph->asset);
         qa_vfs_acquisition_dispose(&graph->acquisition);free(graph);
     }
+    qa_actor_index_destroy(&owner->actor_routes);
     qa_arena_destroy(&owner->prediction_storage);
     qa_vfs_destroy(owner->files);qa_resource_release(owner->map_resource);free(owner);
 }
@@ -220,7 +221,8 @@ bool application_npc_owner_create(application_provider *source,bool prepared,app
     owner->source=source;owner->world=app->world;owner->physics=app->physics;
     owner->map_resource=app->map_resource;qa_resource_retain(owner->map_resource);
     qa_q1_options options={0};double time;
-    bool okay=application_npc_current(owner,error);
+    bool okay=qa_actor_index_create(&owner->actor_routes,qa_session_actors(app->session),error) &&
+        application_npc_current(owner,error);
     if(okay && source->kind==APPLICATION_PROVIDER_Q1)
         okay=prepared?qa_q1_source_respawn_options_prepared(source->state.q1,&options,error):
             qa_q1_source_respawn_options_read(source->state.q1,&options,&time,error);
@@ -375,13 +377,11 @@ void application_bots_npc_released(void *opaque,qa_actor_id id)
     application_provider *source=opaque;
     application_bots_npc *owner=source?source->bots_npc:NULL;
     if(!owner) return;
-    npc_actor **link=&owner->actors;
-    while(*link && !qa_actor_id_equal((*link)->actor,id)) link=&(*link)->next;
-    if(*link) {
-        npc_actor *actor=*link;
-        if(owner->busy) {actor->retired=true;return;}
-        *link=actor->next;application_npc_actor_free(actor);
-    }
+    npc_actor *actor=application_npc_actor_find(owner,id);
+    if(!actor) return;
+    qa_actor_index_remove(&owner->actor_routes,id);
+    if(owner->busy) {actor->retired=true;return;}
+    application_npc_actor_unlink(owner,actor);application_npc_actor_free(actor);
 }
 static bool walking(void *context,const qa_nav_edge *edge)
 {
@@ -416,16 +416,14 @@ bool application_bots_npc_clone(void *opaque,qa_actor_id from,qa_actor_id to,qa_
     application_provider *source=opaque;
     application_bots_npc *owner=source?source->bots_npc:NULL;
     if(!owner) return true;
-    npc_actor *original=owner->actors;
-    while(original && !qa_actor_id_equal(original->actor,from)) original=original->next;
+    npc_actor *original=application_npc_actor_find(owner,from);
     if(!original || !original->has_path || original->retired) return true;
     if(qa_actor_id_equal(from,to) || !application_npc_current(owner,error)) return false;
     qa_body_state body;qa_physics_properties properties;bool found;
     if(!actual(owner,to,&body,&properties,&found,error)) return false;
     if(!found) return application_fail(error,QA_ERROR_NOT_FOUND,"Cloned monster route lacks its actual target body");
-    for(npc_actor *held=owner->actors;held;held=held->next)
-        if(qa_actor_id_equal(held->actor,to))
-            return application_fail(error,QA_ERROR_ARGUMENT,"Cloned monster route target already has a continuation");
+    if(application_npc_actor_find(owner,to))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Cloned monster route target already has a continuation");
     npc_actor *copy=NULL;qa_nav_checkpoint continuation={0};
     bool okay=application_npc_actor_create(owner,to,original->graph,&copy,error) &&
         route_copy(&original->route,&copy->route,error) &&
@@ -434,7 +432,7 @@ bool application_bots_npc_clone(void *opaque,qa_actor_id from,qa_actor_id to,qa_
     qa_nav_checkpoint_free(&continuation);
     if(!okay) {application_npc_actor_free(copy);return false;}
     copy->goal=original->goal;copy->cursor=original->cursor;copy->has_path=true;
-    copy->next=owner->actors;owner->actors=copy;return true;
+    application_npc_actor_link(owner,copy);return true;
 }
 static bool walk(application_bots_npc *owner,qa_actor_id id,qa_vec3 goal,float distance,
     qa_q1_path_result *result,qa_error *error)
@@ -444,11 +442,10 @@ static bool walk(application_bots_npc *owner,qa_actor_id id,qa_vec3 goal,float d
     if(!found) {application_bots_npc_released(owner->source,id);return true;}
     npc_graph *graph;
     if(!graph_for(owner,body.bounds,properties.flags,&graph,error)) return false;
-    npc_actor *actor=owner->actors;
-    while(actor && !qa_actor_id_equal(actor->actor,id)) actor=actor->next;
+    npc_actor *actor=application_npc_actor_find(owner,id);
     if(!actor) {
         if(!application_npc_actor_create(owner,id,graph,&actor,error)) return false;
-        actor->next=owner->actors;owner->actors=actor;
+        application_npc_actor_link(owner,actor);
     } else if(actor->graph!=graph) {
         qa_navigation_services services=application_npc_services(owner);qa_navigation *next=NULL;
         if(!qa_navigation_create(graph->graph,&services,&next,error)) return false;
@@ -508,12 +505,13 @@ bool application_bots_npc_walk(void *opaque,qa_actor_id id,qa_vec3 goal,float di
     owner->busy=true;
     bool okay=walk(owner,id,goal,distance,result,error);
     owner->busy=false;
-    npc_actor **link=&owner->actors;
-    while(*link) {
-        npc_actor *actor=*link;
+    npc_actor *actor=owner->actors;
+    while(actor) {
+        npc_actor *next=actor->next;
         if(actor->retired || !qa_actors_get(qa_session_actors(source->application->session),actor->actor)) {
-            *link=actor->next;application_npc_actor_free(actor);
-        } else link=&actor->next;
+            application_npc_actor_unlink(owner,actor);application_npc_actor_free(actor);
+        }
+        actor=next;
     }
     qa_q1_game_operation_end(&operation);
     return okay;

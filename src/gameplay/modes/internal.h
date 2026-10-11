@@ -93,6 +93,33 @@ typedef struct mode_objective {
     bool active, reserved;
 } mode_objective;
 #define MODE_NAME_LIST(X) \
+    X(SOUND_WEAPONS_PKUP_WAV, "weapons/pkup.wav") \
+    X(SOUND_RUNES_END1_WAV, "runes/end1.wav") \
+    X(SOUND_RUNES_END2_WAV, "runes/end2.wav") \
+    X(SOUND_RUNES_END3_WAV, "runes/end3.wav") \
+    X(SOUND_RUNE_RUNE1_WAV, "rune/rune1.wav") \
+    X(SOUND_RUNE_RUNE22_WAV, "rune/rune22.wav") \
+    X(SOUND_RUNE_RUNE2_WAV, "rune/rune2.wav") \
+    X(SOUND_RUNE_RUNE3_WAV, "rune/rune3.wav") \
+    X(SOUND_RUNE_RUNE4_WAV, "rune/rune4.wav") \
+    X(SOUND_CTF_TECH2X_WAV, "ctf/tech2x.wav") \
+    X(SOUND_CTF_TECH2_WAV, "ctf/tech2.wav") \
+    X(SOUND_CTF_TECH3_WAV, "ctf/tech3.wav") \
+    X(SOUND_CTF_TECH4_WAV, "ctf/tech4.wav") \
+    X(SOUND_CTF_TECH1_WAV, "ctf/tech1.wav") \
+    X(SOUND_PLAYER_LAVA1_WAV, "player/lava1.wav") \
+    X(SOUND_CTF_STRENGTH_WAV, "ctf/strength.wav") \
+    X(SOUND_CTF_REGEN_WAV, "ctf/regen.wav") \
+    X(SOUND_CTF_RESIST_WAV, "ctf/resist.wav") \
+    X(SOUND_BRAIN_BRNATCK3_WAV, "brain/brnatck3.wav") \
+    X(SOUND_RUNES_END4_WAV, "runes/end4.wav") \
+    X(SOUND_MISC_AM_PKUP_WAV, "misc/am_pkup.wav") \
+    X(SOUND_ITEMS_PKUP_WAV, "items/pkup.wav") \
+    X(CTF_TEAMCHANGE, "ctf:teamchange") \
+    X(CTF_REFLECTION, "ctf:reflection") \
+    X(MAP_RESTART, "map_restart 0\n") \
+    X(KEY_GOLD, "q1:key/gold") \
+    X(KEY_SILVER, "q1:key/silver") \
     X(MONSTER_ZOMBIE, "monster_zombie") \
     X(ITEM_HEALTH, "item_health") \
     X(ITEM_HEALTH_SMALL, "item_health_small") \
@@ -160,8 +187,8 @@ bool mode_event(qa_modes *, mode_instance *, qa_mode_event_kind, qa_actor_id, qa
 bool mode_intent(qa_modes *, mode_instance *, qa_match_intent_kind, qa_actor_id, qa_team_id,
                  qa_string_id, qa_error *);
 bool mode_alive(qa_modes *, qa_actor_id);
-bool mode_sound(qa_modes *, mode_instance *, qa_actor_id, const char *, float, qa_error *);
-bool mode_sound_channel(qa_modes *, mode_instance *, qa_actor_id, const char *, int32_t,
+bool mode_sound(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, float, qa_error *);
+bool mode_sound_channel(qa_modes *, mode_instance *, qa_actor_id, qa_string_id, int32_t,
                         float, qa_error *);
 bool mode_count(qa_modes *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool mode_set_count(qa_modes *, qa_actor_id, qa_item_id, double, qa_error *);

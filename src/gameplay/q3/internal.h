@@ -21,6 +21,32 @@
 #define Q3_CONTENTS_TRIGGER INT32_C(0x40000000)
 #define Q3_PI 3.14159265358979323846f
 
+#define Q3_RUNTIME_NAME_LIST(X) \
+    X(EMPTY, "") \
+    X(GRENADE, "grenade") \
+    X(ROCKET, "rocket") \
+    X(PLASMA, "plasma") \
+    X(BFG, "bfg") \
+    X(HOOK, "hook") \
+    X(NAIL, "nail") \
+    X(PROX_MINE, "prox mine") \
+    X(PROXMINE_TRIGGER, "proxmine_trigger") \
+    X(PROXMINE_TICK, "sound/weapons/proxmine/wstbtick.wav") \
+    X(KAMIKAZE_TIMER, "kamikaze timer") \
+    X(KAMIKAZE, "kamikaze") \
+    X(PORTAL_SOURCE, "hi_portal source") \
+    X(PORTAL_DESTINATION, "hi_portal destination") \
+    X(TEMP_ENTITY, "tempEntity")
+
+typedef enum q3_runtime_name {
+#define Q3_RUNTIME_NAME_ENUM(key, text) Q3_NAME_##key,
+    Q3_RUNTIME_NAME_LIST(Q3_RUNTIME_NAME_ENUM)
+#undef Q3_RUNTIME_NAME_ENUM
+    Q3_NAME_COUNT
+} q3_runtime_name;
+
+bool q3_configstring_index(qa_q3_game *, qa_string_id, uint32_t start, int32_t *, qa_error *);
+
 static inline float q3_source_vec_component(qa_vec3 vector, unsigned axis) {
     return axis == 0 ? vector.x : axis == 1 ? vector.y : vector.z;
 }
@@ -85,6 +111,7 @@ typedef struct q3_client_names {
 struct qa_q3_game {
     qa_q3_source_memory memory;
     qa_q3_options options;
+    qa_string_id runtime_names[Q3_NAME_COUNT];
     qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     q3_actor *actors;
     q3_kamikaze_cooldown *kamikaze_cooldowns;

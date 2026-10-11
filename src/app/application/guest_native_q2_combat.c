@@ -6,15 +6,12 @@
 #include "qa/native_observe.h"
 #include "qa/source_save.h"
 #include "control_frame.h"
-#include "native_q2_callbacks.h"
-#include "qa/pool.h"
 #include <math.h>
 
 typedef struct combat_record {
     application_q2_combat_actor source;
     struct combat_record *next, *previous;
     struct application_native_q2_combat *owner;
-    size_t storage_slot;
     unsigned calls;
     uint64_t serial;
     bool bound, fuel_bound, prepared, retired;
@@ -70,8 +67,6 @@ struct application_native_q2_combat {
     application_q2_combat_profile profile;
     combat_record *records;
     qa_actor_index record_index;
-    qa_pool record_pool;
-    qa_arena record_storage;
     combat_reaction *reactions;
     qa_native_entry_observer *damage;
     combat_armor_hook armor[2];
@@ -87,19 +82,19 @@ static qa_combat *shared(struct application_native_q2_combat *p)
 { return p->engine->provider->application->combat; }
 static combat_record *record_for(struct application_native_q2_combat *p, qa_actor_id actor)
 {
-    size_t slot;
-    return qa_actor_index_find(&p->record_index, actor, &slot) ? qa_pool_at(&p->record_pool, slot) : NULL;
+    size_t value;
+    return qa_actor_index_find(&p->record_index, actor, &value) ? (combat_record *)(uintptr_t)value : NULL;
 }
 static combat_record *record_create(struct application_native_q2_combat *p, qa_actor_id actor,
     qa_error *error)
 {
-    size_t slot; combat_record *record = qa_pool_take(&p->record_pool, &slot);
-    if (!record) { application_fail(error, QA_ERROR_MEMORY, "Native combat actor pool exhausted"); return NULL; }
-    *record = (combat_record){.owner = p, .storage_slot = slot, .next = p->records};
+    combat_record *record = calloc(1, sizeof(*record));
+    if (!record) { application_fail(error, QA_ERROR_MEMORY, "Retaining native combat actor context"); return NULL; }
+    *record = (combat_record){.owner = p, .next = p->records};
     record->source.actor = actor;
     if (record->next) record->next->previous = record;
     p->records = record;
-    qa_actor_index_put(&p->record_index, actor, slot);
+    qa_actor_index_put(&p->record_index, actor, (size_t)(uintptr_t)record);
     return record;
 }
 static void record_reclaim(combat_record *record)
@@ -109,7 +104,7 @@ static void record_reclaim(combat_record *record)
     if (record->previous) record->previous->next = record->next;
     else p->records = record->next;
     if (record->next) record->next->previous = record->previous;
-    qa_pool_release(&p->record_pool, record->storage_slot);
+    free(record);
 }
 static void record_leave(combat_record *record)
 {
@@ -641,10 +636,7 @@ bool application_native_q2_combat_prepare(struct application_native_q2 *engine, 
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing original native combat producer");
     p->engine = engine; engine->source_combat = p;
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
-    if (!qa_actor_index_create(&p->record_index, registry, error) ||
-        !qa_pool_reserve_pages(&p->record_pool, &p->record_storage,
-            (size_t)qa_actors_capacity(registry) + NQR_CALL_DEPTH,
-            sizeof(combat_record), _Alignof(combat_record), error)) return false;
+    if (!qa_actor_index_create(&p->record_index, registry, error)) return false;
     if (!application_q2_combat_profile_read(engine, &p->profile, error)) return false;
     return !p->profile.kex || application_q2_kex_damage_prepare(&p->profile, &p->kex, error);
 }
@@ -761,8 +753,15 @@ bool application_native_q2_combat_suspend(struct application_native_q2 *engine, 
     struct application_native_q2_combat *p = engine->source_combat;
     if (!p) return true;
     if (p->current || p->incoming || p->deferred) return application_fail(error, QA_ERROR_ARGUMENT, "Native combat suspension requires drained source damage and reaction helpers");
-    for (combat_record *record = p->records; record; record = record->next)
-        if (!application_native_q2_combat_detach(engine, record->source.actor, error)) return false;
+    combat_record *record = p->records;
+    while (record) {
+        ++record->calls;
+        bool ok = application_native_q2_combat_detach(engine, record->source.actor, error);
+        combat_record *next = record->next;
+        record_leave(record);
+        if (!ok) return false;
+        record = next;
+    }
     p->active = false;
     if (!application_q2_kex_damage_suspend(p->kex, error)) return false;
     combat_frame **frame_cursor = &p->retained;
@@ -793,7 +792,8 @@ bool application_native_q2_combat_close(struct application_native_q2 *engine, qa
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_q2_kex_damage_close(p->kex, error)) return false;
     p->kex = NULL;
-    qa_actor_index_destroy(&p->record_index); qa_arena_destroy(&p->record_storage);
+    while (p->records) { combat_record *record = p->records; p->records = record->next; free(record); }
+    qa_actor_index_destroy(&p->record_index);
     application_q2_combat_profile_free(&p->profile); free(p); engine->source_combat = NULL; return true;
 }
 bool application_native_q2_combat_binding(application_provider *provider, qa_actor_id actor,

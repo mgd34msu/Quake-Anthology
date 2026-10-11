@@ -86,12 +86,12 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
                qa_vec3 direction, qa_vec3 right, qa_vec3 up, float factor, qa_actor_id *out,
                qa_error *error) {
     float speed = 0, damage = 0, splash = 0, radius = 0;
-    const char *classname = NULL;
+    qa_string_id classname = 0;
     int32_t duration = 10000, method = 0, splash_method = 0;
     bool gravity = false;
     switch (weapon) {
     case QA_Q3_W_GRENADE:
-        classname = "grenade";
+        classname = game->runtime_names[Q3_NAME_GRENADE];
         speed = 700;
         duration = 2500;
         gravity = true;
@@ -102,7 +102,7 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
         splash_method = 5;
         break;
     case QA_Q3_W_ROCKET:
-        classname = "rocket";
+        classname = game->runtime_names[Q3_NAME_ROCKET];
         speed = 900;
         duration = 15000;
         damage = 100;
@@ -112,7 +112,7 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
         splash_method = 7;
         break;
     case QA_Q3_W_PLASMA:
-        classname = "plasma";
+        classname = game->runtime_names[Q3_NAME_PLASMA];
         speed = 2000;
         damage = 20;
         splash = 15;
@@ -121,7 +121,7 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
         splash_method = 9;
         break;
     case QA_Q3_W_BFG:
-        classname = "bfg";
+        classname = game->runtime_names[Q3_NAME_BFG];
         speed = 2000;
         damage = 100;
         splash = 100;
@@ -130,18 +130,18 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
         splash_method = 13;
         break;
     case QA_Q3_W_GRAPPLE:
-        classname = "hook";
+        classname = game->runtime_names[Q3_NAME_HOOK];
         speed = 800;
         duration = 10000;
         method = game->options.product == QA_Q3_ARENA ? 23 : 28;
         break;
     case QA_Q3_W_NAIL:
-        classname = "nail";
+        classname = game->runtime_names[Q3_NAME_NAIL];
         damage = 20;
         method = 23;
         break;
     case QA_Q3_W_PROX:
-        classname = "prox mine";
+        classname = game->runtime_names[Q3_NAME_PROX_MINE];
         speed = 700;
         duration = 3000;
         gravity = true;
@@ -163,10 +163,8 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
                                     .owner = owner_record && owner_record->owner == game->options.owner && owner_record->has_source ?
                                         qa_actor_reference_source(owner_record->owner, owner_record->source_slot) : qa_actor_reference_lifetime(owner),
                                     .role = QA_COLLISION_SOLID};
-    qa_string_id definition;
-    if (!qa_builtin_resource(&game->options.services, classname, &definition, error)) return false;
     qa_builtin_spawn spawn = {.owner = game->options.owner,
-                              .definition = definition,
+                              .definition = classname,
                               .body = {.origin = start, .velocity = velocity},
                               .collision = &collision};
     qa_actor_id actor;
@@ -685,16 +683,13 @@ static bool activate_mine(qa_q3_game *game, qa_actor_id actor, qa_error *error) 
     if (!entry || entry->kind != Q3_ACTOR_MISSILE)
         return true;
     int32_t sound_index;
-    if (!qa_q3_sound_index(game, "sound/weapons/proxmine/wstbtick.wav", &sound_index, error))
+    qa_string_id resource = game->runtime_names[Q3_NAME_PROXMINE_TICK];
+    if (!q3_configstring_index(game, resource, 288, &sound_index, error))
         return false;
     q3_wire_entity_source *source = q3_wire_entity(game, actor);
     if (!source)
         return true;
     source->loop_sound = sound_index;
-    qa_string_id resource;
-    if (!qa_builtin_resource(&game->options.services, "sound/weapons/proxmine/wstbtick.wav",
-                             &resource, error))
-        return false;
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_MISSILE)
         return true;
@@ -709,8 +704,7 @@ static bool activate_mine(qa_q3_game *game, qa_actor_id actor, qa_error *error) 
         .body = {.origin = origin,
                  .bounds = {qa_v3(-radius, -radius, -radius), qa_v3(radius, radius, radius)}},
         .collision = &collision};
-    if (!qa_builtin_resource(&game->options.services, "proxmine_trigger",
-                              &spawn.definition, error)) return false;
+    spawn.definition = game->runtime_names[Q3_NAME_PROXMINE_TRIGGER];
     qa_actor_id trigger;
     if (!q3_spawn_actor(game, &spawn, &trigger, error))
         return false;

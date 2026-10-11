@@ -9,6 +9,7 @@ typedef struct bot_world_row { qa_actor_id actor; uint64_t generation; } bot_wor
 typedef struct bot_world_text { uint32_t id; char *text; } bot_world_text;
 struct application_bot_world {
     application_bot_world_services services;
+    qa_actor_index actor_entities;
     bot_world_row rows[APPLICATION_BOT_WORLD_CAPACITY];
     uint32_t order[APPLICATION_BOT_WORLD_CAPACITY],free_ids[APPLICATION_BOT_WORLD_CAPACITY];
     uint32_t order_count,free_count,next_entity;
@@ -39,7 +40,8 @@ static void retire(application_bot_world *world) {
     for(uint32_t i=0;i<world->order_count;++i) {
         uint32_t id=world->order[i];bot_world_row *entry=row(world,id);
         if(live(world,entry->actor)) world->order[retained++]=id;
-        else {entry->actor=(qa_actor_id){0};world->free_ids[world->free_count++]=id;}
+        else {qa_actor_index_remove(&world->actor_entities,entry->actor);
+            entry->actor=(qa_actor_id){0};world->free_ids[world->free_count++]=id;}
     }
     world->order_count=retained;
 }
@@ -55,10 +57,8 @@ static bool entity_id(application_bot_world *world,qa_actor_id actor,int32_t *ou
     application_bot_world_metadata metadata;
     if(!world->services.metadata(world->services.context,actor,&metadata,&found,error)) return false;
     if(found && metadata.worldspawn) {*out=1022;return true;}
-    for(uint32_t i=0;i<world->order_count;++i) {
-        uint32_t id=world->order[i];
-        if(qa_actor_id_equal(row(world,id)->actor,actor)) {*out=(int32_t)id;return true;}
-    }
+    size_t existing;
+    if(qa_actor_index_find(&world->actor_entities,actor,&existing)) {*out=(int32_t)existing;return true;}
     retire(world);
     uint32_t id=world->free_count?world->free_ids[world->free_count-1]:world->next_entity;
     if(id>=1022) return fail(error,QA_ERROR_ARGUMENT,"live bot observations exceed the simultaneous sensory capacity");
@@ -68,18 +68,20 @@ static bool entity_id(application_bot_world *world,qa_actor_id actor,int32_t *ou
     if(world->free_count) --world->free_count;
     else ++world->next_entity;
     *row(world,id)=(bot_world_row){.actor=actor,.generation=world->next_generation++};
+    qa_actor_index_put(&world->actor_entities,actor,id);
     world->order[world->order_count++]=id;*out=(int32_t)id;return true;
 }
 static bool actor_for_id(application_bot_world *world,int32_t number,qa_actor_id *out,qa_error *error) {
     *out=(qa_actor_id){0};
     if(number<0) return true;
     if(number<64) {
-        uint32_t cursor=0;const qa_actor_record *record;
-        while(qa_actors_next(qa_session_actors(world->services.session),&cursor,&record)) {
+        qa_actor_id actor;
+        if(!world->services.client_actor(world->services.context,(uint32_t)number,&actor,error)) return false;
+        if(actor.registry) {
             application_bot_world_movement movement;application_bot_world_client client;
-            bool moving,has_client;qa_actor_id actor=record->id;
+            bool moving,has_client;
             if(!world->services.client(world->services.context,actor,&client,&has_client,error)) return false;
-            if(!has_client) continue;
+            if(!has_client) return true;
             if(!world->services.movement(world->services.context,actor,&movement,&moving,error)) return false;
             if(moving && movement.source_client==number && live(world,actor)) {*out=actor;return true;}
         }
@@ -133,7 +135,7 @@ bool application_bot_world_create(const application_bot_world_services *services
     if(!services || !out || *out || !services->session || !services->world ||
        services->source>APPLICATION_BOT_WORLD_Q2 || !services->metadata || !services->movement ||
        !services->client || !services->combat || !services->brush || !services->weapon ||
-       !services->world_actor || !services->bot_actor || !services->clock || services->max_clients>INT32_MAX)
+       !services->world_actor || !services->client_actor || !services->bot_actor || !services->clock || services->max_clients>INT32_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"shared bot world requires its actual Q1 or Q2 sensory owners");
     if(!services->print || !services->memory_debug || !services->userinfo_changed || !services->bot_connect ||
        !services->bot_begin || !services->bot_drop || !services->exit_level || !services->console ||
@@ -143,8 +145,10 @@ bool application_bot_world_create(const application_bot_world_services *services
     application_bot_world *world=calloc(1,sizeof(*world));
     if(!world) return fail(error,QA_ERROR_MEMORY,"allocating independent shared bot sensory owner");
     world->services=*services;world->restoring=restoring;world->next_entity=64;world->next_generation=1;
+    if(!qa_actor_index_create(&world->actor_entities,qa_session_actors(services->session),error)) {free(world);return false;}
     world->begun=services->max_clients?calloc(services->max_clients,sizeof(*world->begun)):NULL;
-    if(services->max_clients && !world->begun) {free(world);return fail(error,QA_ERROR_MEMORY,"allocating shared bot begun-client set");}
+    if(services->max_clients && !world->begun) {qa_actor_index_destroy(&world->actor_entities);free(world);
+        return fail(error,QA_ERROR_MEMORY,"allocating shared bot begun-client set");}
     *out=world;
     if(restoring || application_bot_world_refresh(world,error)) return true;
     application_bot_world_destroy(world,NULL);*out=NULL;return false;
@@ -154,7 +158,8 @@ bool application_bot_world_destroy(application_bot_world *world,qa_error *error)
     if(!world) return true;
     if(world->calls) return fail(error,QA_ERROR_ARGUMENT,"shared bot world is executing a source observation");
     text_free(world->userinfos,world->userinfo_count);text_free(world->strings,world->string_count);
-    text_free(world->models,world->model_count);free(world->begun);free(world);return true;
+    text_free(world->models,world->model_count);qa_actor_index_destroy(&world->actor_entities);
+    free(world->begun);free(world);return true;
 }
 bool application_bot_world_refresh(application_bot_world *world,qa_error *error) {
     if(!idle(world,error)) return false;
@@ -500,6 +505,10 @@ bool application_bot_world_restore(application_bot_world *world,qa_bytes bytes,q
     bool okay=qa_source_save_reader(&io,world->services.session,bytes,error) && fields(&io,candidate) &&
         qa_source_save_finish(&io,NULL) && topology(candidate,error);
     if(okay) {
+        for(uint32_t i=0;i<candidate->order_count;++i) {
+            uint32_t id=candidate->order[i];qa_actor_id actor=row(candidate,id)->actor;
+            if(live(candidate,actor)) qa_actor_index_put(&candidate->actor_entities,actor,id);
+        }
         application_bot_world old=*world;*world=*candidate;*candidate=old;
         world->restoring=false;candidate->calls=0;
     } else --world->calls;

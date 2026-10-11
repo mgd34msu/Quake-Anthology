@@ -81,7 +81,7 @@ static bool respawn(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e) 
 bool mode_rogue_tag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                           bool *accepted, qa_error *e) {
     if (!take(m, v, o, actor, 30 * MODE_SECOND, e) ||
-        !mode_sound(m, v, o->actor, "runes/end1.wav", 1, e))
+        !mode_sound(m, v, o->actor, m->runtime_names[MODE_NAME_SOUND_RUNES_END1_WAV], 1, e))
         return false;
     *accepted = true;
     return announce(m, v, actor, "$qc_got_token", e);
@@ -166,7 +166,7 @@ static bool score(qa_modes *m, mode_instance *v, qa_actor_id victim, qa_actor_id
             return announce(m, v, attacker, "$qc_lost_token", e) && respawn(m, v, o, e);
     } else if (qa_actor_id_equal(victim, v->tag_owner)) {
         *points = 5;
-        if (!mode_sound(m, v, victim, "runes/end1.wav", 1, e))
+        if (!mode_sound(m, v, victim, m->runtime_names[MODE_NAME_SOUND_RUNES_END1_WAV], 1, e))
             return false;
         if (mode_player_get(m, attacker))
             return take(m, v, o, attacker, MODE_SECOND / 2, e);

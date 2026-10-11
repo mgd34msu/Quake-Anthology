@@ -2,7 +2,6 @@
 #include "guest_mod_item_definition.h"
 #include "guest_qc_item_weapons.h"
 #include <float.h>
-#include "qa/pool.h"
 
 struct application_qc_item_actor {
     struct application_qc_state *engine;
@@ -10,13 +9,10 @@ struct application_qc_item_actor {
     int32_t reference;
     qa_inventory_lease lease;
     unsigned calls;
-    size_t storage_slot;
     struct application_qc_item_actor *next, *previous;
 };
 struct application_qc_item_store {
     qa_actor_index index;
-    qa_pool actors;
-    qa_arena storage;
     struct application_qc_item_actor *head;
 };
 static bool store_create(struct application_qc_state *engine, qa_error *e)
@@ -26,21 +22,17 @@ static bool store_create(struct application_qc_state *engine, qa_error *e)
     if(!store)return application_fail(e,QA_ERROR_MEMORY,"Owning QC item binding store");
     engine->item_store=store;
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    /* This engine constructs QC with call_limit=0, selecting the VM's 32-frame default. */
-    const size_t entered_capacity=32;
-    return qa_actor_index_create(&store->index,registry,e)&&
-        qa_pool_reserve_pages(&store->actors,&store->storage,(size_t)qa_actors_capacity(registry)+entered_capacity,
-            sizeof(struct application_qc_item_actor),_Alignof(struct application_qc_item_actor),e);
+    return qa_actor_index_create(&store->index,registry,e);
 }
 static void actor_reclaim(struct application_qc_item_actor *a)
 {
     if(a->lease.serial||a->calls)return;
     struct application_qc_item_store *store=a->engine->item_store;size_t slot;
-    if(qa_actor_index_find(&store->index,a->actor,&slot)&&slot==a->storage_slot)
+    if(qa_actor_index_find(&store->index,a->actor,&slot)&&(struct application_qc_item_actor *)(uintptr_t)slot==a)
         qa_actor_index_remove(&store->index,a->actor);
     if(a->previous)a->previous->next=a->next;else store->head=a->next;
     if(a->next)a->next->previous=a->previous;
-    qa_pool_release(&store->actors,a->storage_slot);
+    free(a);
 }
 static bool list(const qa_json_document *d,qa_json_id id,size_t stride,void **out,size_t *count,qa_error *e)
 {
@@ -221,7 +213,6 @@ void application_qc_items_destroy(struct application_qc_state *engine)
     engine->items=NULL;
     if(engine->item_store){
         qa_actor_index_destroy(&engine->item_store->index);
-        qa_arena_destroy(&engine->item_store->storage);
         free(engine->item_store);engine->item_store=NULL;
     }
 }
@@ -229,7 +220,7 @@ static struct application_qc_item_actor *actor_find(struct application_qc_state 
 {
     size_t slot;
     if(!engine->item_store||!qa_actor_index_find(&engine->item_store->index,actor,&slot))return NULL;
-    struct application_qc_item_actor *a=qa_pool_at(&engine->item_store->actors,slot);
+    struct application_qc_item_actor *a=(struct application_qc_item_actor *)(uintptr_t)slot;
     return a->lease.serial?a:NULL;
 }
 static bool physical_current(struct application_qc_item_actor *a,qa_error *e)
@@ -317,17 +308,17 @@ static struct application_qc_item_actor *actor_create(struct application_qc_stat
 {
     struct application_qc_item_store *store=engine->item_store;size_t slot;
     if(store&&qa_actor_index_find(&store->index,actor,&slot)){
-        struct application_qc_item_actor *a=qa_pool_at(&store->actors,slot);
+        struct application_qc_item_actor *a=(struct application_qc_item_actor *)(uintptr_t)slot;
         return application_qc_reference(engine,actor,&a->reference,e)&&physical_current(a,e)?a:NULL;
     }
-    struct application_qc_item_actor *a=store?qa_pool_take(&store->actors,&slot):NULL;
-    if(!a){application_fail(e,QA_ERROR_MEMORY,"QC item binding pool exhausted");return NULL;}
-    *a=(struct application_qc_item_actor){.engine=engine,.actor=actor,.storage_slot=slot};
+    struct application_qc_item_actor *a=store?calloc(1,sizeof(*a)):NULL;
+    if(!a){application_fail(e,QA_ERROR_MEMORY,"Owning actual QC item binding");return NULL;}
+    *a=(struct application_qc_item_actor){.engine=engine,.actor=actor};
     if(!application_qc_reference(engine,actor,&a->reference,e)||!physical_current(a,e)){
-        qa_pool_release(&store->actors,slot);return NULL;
+        free(a);return NULL;
     }
     a->next=store->head;if(a->next)a->next->previous=a;store->head=a;
-    qa_actor_index_put(&store->index,actor,slot);return a;
+    qa_actor_index_put(&store->index,actor,(size_t)(uintptr_t)a);return a;
 }
 bool application_qc_items_admit(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
@@ -352,7 +343,7 @@ bool application_qc_items_release(struct application_qc_state *engine,qa_actor_i
 {
     if(!application_qc_item_weapons_release(engine,actor,e))return false;
     size_t slot;struct application_qc_item_store *store=engine->item_store;
-    struct application_qc_item_actor *a=store&&qa_actor_index_find(&store->index,actor,&slot)?qa_pool_at(&store->actors,slot):NULL;
+    struct application_qc_item_actor *a=store&&qa_actor_index_find(&store->index,actor,&slot)?(struct application_qc_item_actor *)(uintptr_t)slot:NULL;
     if(a){
         if(a->lease.serial&&qa_inventory_lease_current(engine->services.inventory,a->lease)&&
             !qa_inventory_close_items(engine->services.inventory,a->lease,e))return false;

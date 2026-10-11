@@ -268,6 +268,7 @@ static void free_instance(qa_qc_instance *instance)
     free(instance->inline_regions);
     qc_strings_destroy(&instance->strings);
     qa_arena_destroy(&instance->scratch);
+    qa_arena_destroy(&instance->findradius_storage);
     free(instance->globals); free(instance->entities); free(instance->slots);
     free(instance->actor_slots);
     free(instance->projected_words);
@@ -358,6 +359,20 @@ bool qa_qc_instance_create(const qa_qc_program *program,
         free_instance(instance); return false;
     }
     qa_arena_seal(&instance->scratch);
+    qa_arena_init(&instance->findradius_storage, 0);
+    size_t snapshot_item_bytes = sizeof(qa_actor_id) + sizeof(int32_t);
+    if (instance->actor_capacity > SIZE_MAX / snapshot_item_bytes) {
+        free_instance(instance);
+        return qc_fail(error, QA_ERROR_MEMORY, 0,
+                       "findradius actor snapshot is too large");
+    }
+    size_t snapshot_bytes = (size_t)instance->actor_capacity * snapshot_item_bytes;
+    if (!qa_pool_reserve_pages(&instance->findradius_snapshots,
+            &instance->findradius_storage,
+            instance->actor_capacity ? instance->options.call_limit : 0,
+            snapshot_bytes ? snapshot_bytes : 1, _Alignof(qa_actor_id), error)) {
+        free_instance(instance); return false;
+    }
     if (!qc_strings_create(&instance->strings,
             (qa_bytes){program->strings, program->string_bytes},
             program->info.api == QA_QC_API_QUAKEWORLD, error)
@@ -1449,18 +1464,14 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
                        "findradius needs the solid float field");
     const qa_actor_registry *actors = qa_session_actors(instance->options.host.session);
     size_t actor_count = qa_actors_count(actors);
-    if (actor_count > SIZE_MAX / sizeof(qa_actor_id)
-        || actor_count > SIZE_MAX / sizeof(int32_t))
-        return qc_fail(error, QA_ERROR_MEMORY, actor_count,
-                       "findradius actor snapshot is too large");
-    qa_actor_id *snapshot = actor_count == 0 ? NULL
-        : malloc(actor_count * sizeof(*snapshot));
-    int32_t *references = actor_count == 0 ? NULL
-        : malloc(actor_count * sizeof(*references));
-    if (actor_count != 0 && (snapshot == NULL || references == NULL)) {
-        free(snapshot); free(references);
+    if (actor_count == 0) return qa_qc_return_int(instance, 0, error);
+    size_t snapshot_slot;
+    qa_actor_id *snapshot = qa_pool_take(&instance->findradius_snapshots,
+                                       &snapshot_slot);
+    if (snapshot == NULL)
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot snapshot findradius actors");
-    }
+    int32_t *references = (int32_t *)(snapshot + instance->actor_capacity);
+    bool ok = false;
     size_t written = 0;
     uint32_t cursor = 0;
     const qa_actor_record *record;
@@ -1475,7 +1486,7 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
                                     snapshot[i], &collision, &collision_error)) {
             if (collision_error.code != QA_OK) {
                 if (error) *error = collision_error;
-                free(snapshot); free(references); return false;
+                goto release;
             }
             continue;
         }
@@ -1483,7 +1494,7 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
         bool has_body;
         if (!read_body_optional(instance->options.host.world, snapshot[i],
                                 &body, &has_body, error)) {
-            free(snapshot); free(references); return false;
+            goto release;
         }
         if (!has_body) continue;
         qa_vec3 center = qa_vec_add(body.origin,
@@ -1492,16 +1503,15 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
         int32_t reference;
         if (!qa_qc_actor_reference(instance, snapshot[i], true,
                                    &reference, error)) {
-            free(snapshot); free(references); return false;
+            goto release;
         }
         float solidity;
         if (!qa_qc_entity_float(instance, reference, solid->offset, &solidity, error)) {
-            free(snapshot); free(references); return false;
+            goto release;
         }
         if (solidity == 0.0f) continue;
         references[reference_count++] = reference;
     }
-    free(snapshot);
     if (reference_count > 1u)
         qsort(references, reference_count, sizeof(*references), reference_order);
     int32_t head = 0;
@@ -1510,7 +1520,7 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
         if (!qa_qc_reference_actor(instance, references[i], &actor, NULL)) continue;
         float solidity;
         if (!qa_qc_entity_float(instance, references[i], solid->offset, &solidity, error)) {
-            free(references); return false;
+            goto release;
         }
         if (solidity == 0.0f) continue;
         qa_actor_collision collision;
@@ -1520,14 +1530,14 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
                                     actor, &collision, &collision_error)) {
             if (collision_error.code != QA_OK) {
                 if (error) *error = collision_error;
-                free(references); return false;
+                goto release;
             }
             continue;
         }
         bool has_body;
         if (!read_body_optional(instance->options.host.world, actor,
                                 &body, &has_body, error)) {
-            free(references); return false;
+            goto release;
         }
         if (!has_body) continue;
         qa_vec3 center = qa_vec_add(body.origin,
@@ -1542,13 +1552,15 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
         }
         if (!qa_qc_set_entity_int(instance, references[i], chain->offset,
                                   head, error)) {
-            free(references); return false;
+            goto release;
         }
         if (!slot_matches(instance, slot, binding.kind, binding.actor)) continue;
         head = references[i];
     }
-    free(references);
-    return qa_qc_return_int(instance, head, error);
+    ok = qa_qc_return_int(instance, head, error);
+release:
+    qa_pool_release(&instance->findradius_snapshots, snapshot_slot);
+    return ok;
 }
 
 static bool droptofloor(qa_qc_instance *instance, qa_error *error)

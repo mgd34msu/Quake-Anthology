@@ -55,7 +55,7 @@ bool sysv_put_pointer(guest_sysv_runtime *runtime, uint64_t address, uint64_t va
 bool sysv_errno(guest_sysv_runtime *runtime, int value, qa_error *error)
 { return sysv_store(runtime, runtime->errno_address, 4, (uint32_t)value, error); }
 bool sysv_string(guest_sysv_runtime *runtime, uint64_t address, size_t maximum,
-    qa_buffer *out, bool *terminated, qa_error *error)
+    qa_arena *arena, qa_buffer *out, bool *terminated, qa_error *error)
 {
     if (!out || out->data || out->size || !terminated || maximum > SYSV_MAX_STRING)
         return sysv_fail(error, QA_ERROR_ARGUMENT, "invalid System V string receipt");
@@ -64,12 +64,25 @@ bool sysv_string(guest_sysv_runtime *runtime, uint64_t address, size_t maximum,
     for (size_t i = 0; i < maximum; ++i) {
         uint8_t byte;
         if (address > UINT64_MAX - i || !sysv_read(runtime, address + i, &byte, 1, error)) {
-            qa_buffer_free(out); return false;
+            if (!arena) qa_buffer_free(out); else *out = (qa_buffer){0};
+            return false;
         }
-        if (!byte) { *terminated = true; return true; }
-        if (!guest_grow((void **)&out->data, &capacity, out->size + 1, 1, error)) {
-            qa_buffer_free(out); return false;
+        size_t needed = out->size + 1;
+        if (needed > capacity) {
+            size_t next = capacity ? capacity * 2 : 16;
+            if (next < needed) next = needed;
+            bool grown;
+            if (arena) {
+                void *data = qa_arena_grow(arena, out->data, out->size, next, 1, error);
+                grown = data != NULL;
+                if (grown) { out->data = data; capacity = next; }
+            } else grown = guest_grow((void **)&out->data, &capacity, needed, 1, error);
+            if (!grown) {
+                if (!arena) qa_buffer_free(out); else *out = (qa_buffer){0};
+                return false;
+            }
         }
+        if (!byte) { out->data[out->size] = 0; *terminated = true; return true; }
         out->data[out->size++] = byte;
     }
     return true;

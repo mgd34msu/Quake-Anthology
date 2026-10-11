@@ -1576,11 +1576,10 @@ bool q3_wire_temp_entity(qa_q3_game *game, qa_vec3 origin, int32_t event,
         return q3_fail(error, "invalid actual Q3 temporary-entity producer");
     *out = (qa_actor_id){0};
     ++game->observation_depth;
-    qa_string_id name;
-    bool ok = qa_builtin_resource(&game->options.services, "tempEntity", &name, error);
+    qa_string_id name = game->runtime_names[Q3_NAME_TEMP_ENTITY];
     qa_actor_id actor = {0};
     qa_vec3 snapped = qa_v3(snap_component(origin.x), snap_component(origin.y), snap_component(origin.z));
-    if (ok) ok = q3_spawn_raw_actor(game, name, &actor, error);
+    bool ok = q3_spawn_raw_actor(game, name, &actor, error);
     if (ok) {
         uint32_t slot;
         ok = qa_q3_source_actor_slot(game, actor, &slot, error);

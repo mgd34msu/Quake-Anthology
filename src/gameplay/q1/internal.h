@@ -1348,7 +1348,7 @@ typedef struct q1_player {
     q1_character character_state;
 } q1_player;
 typedef struct q1_rogue_rune_player {
-    struct q1_rogue_rune_player *next;
+    struct q1_rogue_rune_player *next, *previous;
     qa_actor_id actor;
     uint32_t rune;
     double notice, earth_noise, black_noise, hell_noise, regeneration;
@@ -1367,6 +1367,8 @@ struct qa_q1_game {
     qa_q1_source_rogue_tag_services source_rogue_tag;
     qa_q1_source_rogue_flags_services source_rogue_flags;
     q1_rogue_rune_player *rogue_rune_players;
+    q1_rogue_rune_player *rogue_rune_last;
+    qa_actor_index rogue_rune_index;
     void *source_client_context;
     bool (*source_client_publish)(void *,const struct qa_q1_source_client_view *,qa_error *);
     bool (*source_client_observer)(void *,qa_actor_id,bool,qa_error *);

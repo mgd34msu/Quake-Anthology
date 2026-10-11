@@ -419,6 +419,8 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
             !provider_field(io,bots->application,&target->movement,false) ||
             !qa_persistence_movement_profile(io,&target->profile) || !qa_persistence_bounds(io,&target->bounds) ||
             !binding(io,bots,target->actor,&target->navigation) || !target->navigation) return false;
+        if(io->direction==QA_SOURCE_SAVE_READ && !application_bot_target_find(bots,target->actor))
+            application_bot_target_index_bind(bots,target);
         target=target->next;
     }
     return true;

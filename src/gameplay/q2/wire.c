@@ -170,6 +170,17 @@ qa_actor_id q2_wire_actor_at(const qa_q2_game *g, uint32_t slot)
     return record ? record->id : (qa_actor_id){0};
 }
 
+bool qa_q2_source_client_actor(const qa_q2_game *g, uint32_t client, qa_actor_id *out)
+{
+    if (!g || !out || client >= g->wire_clients) return false;
+    qa_actor_id id = q2_wire_actor_at(g, client + 1);
+    const q2_actor *actor = id.slot < g->capacity ? g->actors[id.slot] : NULL;
+    if (!q2_actor_live(g, id) || !actor || !qa_actor_id_equal(actor->id, id) || !actor->client)
+        return false;
+    *out = id;
+    return true;
+}
+
 bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
     uint32_t clients, qa_error *error)
 {
@@ -179,18 +190,21 @@ bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
             "Q2 wire construction requires an empty representable source edict table");
         return false;
     }
-    qa_actor_index index = {0};
+    qa_actor_index index = {0}, shadows = {0};
     uint64_t *freed = calloc(capacity, sizeof(*freed));
     if (!freed) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 physical source edicts");
         return false;
     }
     if (!qa_actor_index_create(&index, qa_session_actors(g->services.session), error) ||
-        !qa_actor_index_reverse_reserve(&index, capacity, error)) {
-        qa_actor_index_destroy(&index); free(freed); return false;
+        !qa_actor_index_reverse_reserve(&index, capacity, error) ||
+        !qa_actor_index_create(&shadows, qa_session_actors(g->services.session), error)) {
+        qa_actor_index_destroy(&index); qa_actor_index_destroy(&shadows); free(freed); return false;
     }
     qa_actor_index_destroy(&g->wire_index); free(g->wire_freed_ns);
+    qa_actor_index_destroy(&g->wire_shadow_index);
     g->wire_index = index; g->wire_freed_ns = freed;
+    g->wire_shadow_index = shadows;
     g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = clients + 1;
     g->wire_frame = 0;
     return true;
@@ -199,6 +213,7 @@ bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
 void q2_wire_reset(qa_q2_game *g)
 {
     qa_actor_index_clear(&g->wire_index);
+    qa_actor_index_clear(&g->wire_shadow_index);
     memset(g->wire_freed_ns, 0, g->wire_capacity * sizeof(*g->wire_freed_ns));
     g->wire_extent = g->wire_clients + 1; g->wire_frame = 0;
     ++g->wire_lightstyles.revision;
@@ -302,16 +317,17 @@ bool q2_wire_admit(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *error)
 
 void q2_wire_release(qa_q2_game *g, q2_actor *a, qa_actor_record released)
 {
-    for (uint32_t i = 0; i < g->wire_shadow_count; ++i)
-        if (qa_actor_id_equal(g->wire_shadows[i].actor, a->id)) {
-            g->wire_shadows[i] = (q2_shadow_slot){0};
-            if (g->entity_runtime) {
-                qa_error ignored={0};
-                qa_q2_map_event event={.kind=QA_Q2_MAP_DYNAMIC_LIGHT,.actor=a->id,
-                    .slot=(int)i,.flags=QA_Q2_MAP_LIGHT_SHADOW};
-                (void)q2_map_event(g,&event,&ignored);
-            }
+    size_t shadow;
+    if (qa_actor_index_find(&g->wire_shadow_index, a->id, &shadow)) {
+        qa_actor_index_remove(&g->wire_shadow_index, a->id);
+        g->wire_shadows[shadow] = (q2_shadow_slot){0};
+        if (g->entity_runtime) {
+            qa_error ignored={0};
+            qa_q2_map_event event={.kind=QA_Q2_MAP_DYNAMIC_LIGHT,.actor=a->id,
+                .slot=(int)shadow,.flags=QA_Q2_MAP_LIGHT_SHADOW};
+            (void)q2_map_event(g,&event,&ignored);
         }
+    }
     size_t slot;
     bool bound = released.owner == g->options.owner && released.has_source;
     if (bound) slot = released.source_slot;
@@ -410,13 +426,14 @@ bool q2_wire_shadow_event(qa_q2_game *g, qa_q2_map_event *event, qa_error *error
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 shadow light lost its actual physical Source fields");
         return false;
     }
-    uint32_t index = 0;
-    while (index < g->wire_shadow_count && !qa_actor_id_equal(g->wire_shadows[index].actor, a->id)) ++index;
+    size_t index;
+    if (!qa_actor_index_find(&g->wire_shadow_index, a->id, &index)) index = g->wire_shadow_count;
     if (index >= 256) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source shadow-light table is full"); return false; }
     if (index == g->wire_shadow_count) ++g->wire_shadow_count;
     event->slot=(int)index;event->count=(int)slot;
     event->value=cone;event->flags|=QA_Q2_MAP_LIGHT_SHADOW;
     g->wire_shadows[index] = (q2_shadow_slot){.actor = a->id, .source_slot = slot};
+    qa_actor_index_put(&g->wire_shadow_index, a->id, index);
     return true;
 }
 

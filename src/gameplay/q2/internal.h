@@ -543,6 +543,7 @@ struct qa_q2_game {
     qa_string_id wire_statusbar_names[5];
     qa_lightstyles wire_lightstyles;
     q2_shadow_slot wire_shadows[256];
+    qa_actor_index wire_shadow_index;
     uint32_t wire_shadow_count;
     qa_arena push_storage;
     qa_pool push_teams;

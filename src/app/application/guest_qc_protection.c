@@ -4,7 +4,6 @@
 #include "guest_qc_armor.h"
 #include "qa/qc_observation.h"
 #include "qa/text.h"
-#include "qa/pool.h"
 #include <float.h>
 #include <limits.h>
 
@@ -32,7 +31,6 @@ typedef struct protection_channel {
     qa_protection_lease lease;
     uint32_t client;
     size_t definition;
-    size_t storage_slot;
     unsigned calls;
     bool bound, restoring, retired;
 } protection_channel;
@@ -46,8 +44,6 @@ struct application_qc_protection {
     const application_qc_protection_profile *profile;
     protection_channel *channels;
     qa_actor_index indexes[2];
-    qa_pool channel_pool;
-    qa_arena storage;
     protection_scope *scope;
 };
 
@@ -285,7 +281,7 @@ static bool client(const application_qc_protection *owner, qa_actor_id actor, ui
 static protection_channel *find(application_qc_protection *owner, qa_actor_id actor, size_t definition)
 {
     size_t slot;
-    return qa_actor_index_find(owner->indexes+definition,actor,&slot)?qa_pool_at(&owner->channel_pool,slot):NULL;
+    return qa_actor_index_find(owner->indexes+definition,actor,&slot)?(protection_channel *)(uintptr_t)slot:NULL;
 }
 static protection_channel *actor_first(application_qc_protection *owner,qa_actor_id actor)
 {
@@ -295,18 +291,18 @@ static protection_channel *actor_first(application_qc_protection *owner,qa_actor
 }
 static void channel_reclaim(protection_channel *row)
 {
-    if(row->retired&&!row->calls)qa_pool_release(&row->owner->channel_pool,row->storage_slot);
+    if(row->retired&&!row->calls)free(row);
 }
 static protection_channel *channel_create(application_qc_protection *owner,qa_actor_id actor,
     uint32_t client,size_t definition,qa_error *error)
 {
-    size_t slot;protection_channel *row=qa_pool_take(&owner->channel_pool,&slot);
-    if(!row){fail(error,QA_ERROR_MEMORY,"QC protection binding pool exhausted");return NULL;}
+    protection_channel *row=calloc(1,sizeof(*row));
+    if(!row){fail(error,QA_ERROR_MEMORY,"Owning QC protection callback context");return NULL;}
     *row=(protection_channel){.next=owner->channels,.actor_next=actor_first(owner,actor),.owner=owner,.actor=actor,.client=client,
-        .definition=definition,.storage_slot=slot};
+        .definition=definition};
     if(row->actor_next)row->actor_next->actor_previous=row;
     if(row->next)row->next->previous=row;owner->channels=row;
-    qa_actor_index_put(owner->indexes+definition,actor,slot);return row;
+    qa_actor_index_put(owner->indexes+definition,actor,(size_t)(uintptr_t)row);return row;
 }
 static void channel_retire(protection_channel *row)
 {
@@ -512,12 +508,9 @@ bool application_qc_protection_create(struct application_qc_state *engine, qa_er
     bool prepared=true;
     for(size_t i=0;prepared&&i<owner->profile->count;++i)
         prepared=qa_actor_index_create(owner->indexes+i,registry,error);
-    /* Each definition retains its own entered context through the default 32 QC frames. */
-    if(!prepared||!qa_pool_reserve_pages(&owner->channel_pool,&owner->storage,
-        ((size_t)qa_actors_capacity(registry)+32)*owner->profile->count,
-        sizeof(protection_channel),_Alignof(protection_channel),error)){
+    if(!prepared){
         for(size_t i=0;i<owner->profile->count;++i)qa_actor_index_destroy(owner->indexes+i);
-        qa_arena_destroy(&owner->storage);free(owner);return false;
+        free(owner);return false;
     }
     engine->protection = owner;
     return held(owner, error);
@@ -622,7 +615,6 @@ bool application_qc_protection_destroy(struct application_qc_state *engine, qa_e
     if(engine->protection){
         for(size_t i=0;i<engine->protection->profile->count;++i)
             qa_actor_index_destroy(engine->protection->indexes+i);
-        qa_arena_destroy(&engine->protection->storage);
     }
     free(engine->protection); engine->protection = NULL; return true;
 }

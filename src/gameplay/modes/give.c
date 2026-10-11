@@ -126,7 +126,7 @@ static bool give_complete(void *context, const qa_pickup_offer *offer, bool acce
             : qa_builtin_emit(&m->options.services, &event, e)))
         return false;
     return !v || !mode_live(m, offer->recipient) || mode_sound(m, v, offer->recipient,
-        call->row->kind == QA_MODE_OBJECT_FLAG ? "misc/am_pkup.wav" : "items/pkup.wav", 1, e);
+        call->row->kind == QA_MODE_OBJECT_FLAG ? m->runtime_names[MODE_NAME_SOUND_MISC_AM_PKUP_WAV] : m->runtime_names[MODE_NAME_SOUND_ITEMS_PKUP_WAV], 1, e);
 }
 static bool give_item(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_item_id item,
                       bool direct, int32_t count, bool *accepted, qa_error *e) {
