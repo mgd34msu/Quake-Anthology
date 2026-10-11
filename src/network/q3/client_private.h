@@ -1,6 +1,7 @@
 #ifndef QA_Q3_CLIENT_PRIVATE_H
 #define QA_Q3_CLIENT_PRIVATE_H
 #include "peer_internal.h"
+#include "qa/event_ring.h"
 
 typedef struct sent_packet { uint64_t command_number; int32_t server_time, real_time; } sent_packet;
 struct qa_q3_client_peer {
@@ -12,7 +13,9 @@ struct qa_q3_client_peer {
     qa_q3_client_hooks hooks;
     uint64_t generation;
     qa_q3_reliable reliable;
-    char server_commands[QA_Q3_RELIABLE][QA_Q3_COMMAND_CHARS];
+    qa_event_ring *command_events;
+    qa_event_lease *server_commands[QA_Q3_RELIABLE];
+    uint64_t command_cursor;
     int32_t server_message_sequence, server_command_sequence, last_executed_server_command;
     int32_t server_id, last_packet_sent_time, receive_time;
     bool demo_waiting, disconnected, demo;
@@ -34,4 +37,6 @@ struct qa_q3_client_peer {
     sent_packet packets[QA_Q3_PACKET_BACKUP];
     char big_configstring[8192];
 };
+bool q3_client_command_admit(qa_q3_client_peer *,const qa_q3_command *,qa_error *);
+const char *q3_client_command_text(const qa_q3_client_peer *,size_t slot);
 #endif

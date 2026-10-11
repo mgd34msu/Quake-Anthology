@@ -14,7 +14,38 @@ static bool current(const qa_q3_client_peer *p, qa_error *e) {
     if (p->hooks.generation(p->hooks.context) != p->generation) return fail(e, QA_ERROR_FORMAT, "Q3 client callback belongs to a retired session");
     return true;
 }
-static const char *lookup(void *user, int32_t sequence) { return ((qa_q3_client_peer *)user)->server_commands[(uint32_t)sequence & 63]; }
+const char *q3_client_command_text(const qa_q3_client_peer *p,size_t slot)
+{
+    const qa_q3_command *record=p->server_commands[slot] ? qa_event_lease_record(p->server_commands[slot]) : NULL;
+    return record ? record->text : "";
+}
+static const char *lookup(void *user, int32_t sequence)
+{ return q3_client_command_text(user,(uint32_t)sequence & (QA_Q3_RELIABLE-1)); }
+bool q3_client_command_admit(qa_q3_client_peer *p,const qa_q3_command *value,qa_error *e)
+{
+    /* The wire keeps its original 64-command XOR history. Presentation reads
+     * immutable records from the same pages, with an independent cursor. */
+    uint64_t first=qa_event_ring_first(p->command_events),next=qa_event_ring_next(p->command_events);
+    while(first<next) {
+        const qa_q3_command *row=qa_event_ring_at(p->command_events,first);
+        if((int64_t)row->sequence>(int64_t)value->sequence-QA_Q3_RELIABLE) break;
+        ++first;
+    }
+    qa_event_ring_retire(p->command_events,first);
+    qa_event_transaction transaction;
+    if(!qa_event_ring_begin(p->command_events,&transaction))
+        return fail(e,QA_ERROR_FORMAT,"Q3 received command history is full");
+    qa_q3_command *record=qa_event_ring_alloc(&transaction,sizeof(*record),_Alignof(qa_q3_command),e);
+    if(!record) { qa_event_ring_abort(&transaction); return false; }
+    *record=*value;
+    uint64_t id=qa_event_ring_commit(&transaction,record);
+    if(!id) return fail(e,QA_ERROR_FORMAT,"Q3 received command history is full");
+    size_t slot=(uint32_t)value->sequence & (QA_Q3_RELIABLE-1);
+    qa_event_lease *old=p->server_commands[slot];
+    p->server_commands[slot]=qa_event_ring_retain(p->command_events,id);
+    if(old) qa_event_lease_release(old);
+    return true;
+}
 static const qa_q3_snapshot *history(void *user, int32_t sequence) { return &((qa_q3_client_peer *)user)->history[(uint32_t)sequence & 31].value; }
 static bool system_info(qa_q3_client_peer *p, qa_error *e) {
     const char *text = qa_q3_configstring(&p->gamestate, 1);
@@ -34,6 +65,9 @@ static bool create_peer(qa_q3_identity identity, qa_q3_product product, const qa
     qa_q3_client_peer *p = calloc(1, sizeof(*p));
     if (!p) return fail(e, QA_ERROR_MEMORY, "Allocating Q3 client peer");
     if (!demo && !qa_q3_channel_create(QA_Q3_CLIENT, qport, &p->channel, e)) { free(p); return false; }
+    p->command_events=qa_event_ring_create((QA_Q3_RELIABLE+2)*4096,2048,QA_Q3_RELIABLE+2,e);
+    if(!p->command_events) { qa_q3_channel_destroy(p->channel); free(p); return false; }
+    p->command_cursor=qa_event_ring_first(p->command_events);
     p->identity = identity; p->product = product; if (remote) p->remote = *remote; p->demo = demo; p->challenge = challenge; p->hooks = *hooks;
     p->generation = hooks->generation(hooks->context); p->demo_waiting = true;
     qa_q3_gamestate_init(&p->gamestate);
@@ -52,6 +86,8 @@ bool qa_q3_client_peer_create_demo(qa_q3_identity identity, qa_q3_product produc
 void qa_q3_client_peer_destroy(qa_q3_client_peer *p) {
     if (!p) return;
     qa_q3_channel_destroy(p->channel);
+    for(size_t i=0;i<QA_Q3_RELIABLE;++i) if(p->server_commands[i]) qa_event_lease_release(p->server_commands[i]);
+    qa_event_ring_destroy(&p->command_events);
     for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) free(p->history[i].entities);
     free(p);
 }
@@ -114,8 +150,8 @@ static bool consume(void *user, const qa_q3_server_event *event, qa_error *e) {
         if (!system_info(p, e)) return false;
         return p->hooks.gamestate(p->hooks.context, event->value.gamestate, e) && current(p, e);
     case QA_Q3_EVENT_COMMAND:
+        if(!q3_client_command_admit(p,event->value.command,e)) return false;
         p->server_command_sequence = event->value.command->sequence;
-        memcpy(p->server_commands[(uint32_t)p->server_command_sequence & 63], event->value.command->text, QA_Q3_COMMAND_CHARS);
         return true;
     case QA_Q3_EVENT_DOWNLOAD:
         return p->hooks.download(p->hooks.context, event->value.download, e) && current(p, e);
@@ -300,7 +336,16 @@ bool qa_q3_client_peer_execute(qa_q3_client_peer *p, int32_t sequence, bool demo
     }
     if (sequence > p->server_command_sequence) return fail(e, QA_ERROR_FORMAT, "Requested Q3 server command has not arrived");
     p->last_executed_server_command = sequence;
-    return execute(p, sequence, p->server_commands[(uint32_t)sequence & 63], e);
+    qa_event_lease *lease=p->server_commands[(uint32_t)sequence & (QA_Q3_RELIABLE-1)];
+    uint64_t id=lease ? qa_event_lease_id(lease) : 0;
+    const qa_q3_command *record=id ? qa_event_ring_at(p->command_events,id) : NULL;
+    if(!record && lease) record=qa_event_lease_record(lease);
+    bool okay=execute(p,sequence,record ? record->text : "",e);
+    if(okay && id>=p->command_cursor) {
+        p->command_cursor=id+1;
+        qa_event_ring_retire(p->command_events,p->command_cursor);
+    }
+    return okay;
 }
 static bool transmit_pending(qa_q3_client_peer *p, int32_t real_time, qa_error *e)
 {

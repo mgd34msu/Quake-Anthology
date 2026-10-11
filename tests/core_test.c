@@ -32,6 +32,7 @@
 #include "qa/input.h"
 #include "qa/platform_events.h"
 #include "qa/network_q3.h"
+#include "qa/network_q3_save.h"
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_q2_kex.h"
@@ -2056,6 +2057,50 @@ static void test_native_import_slot_identity(void)
     CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,UINT32_MAX)==QA_NATIVE_Q2_IMPORT_NONE);
 }
 
+typedef struct q3_command_test { int32_t sequence; size_t calls; } q3_command_test;
+static uint64_t q3_test_generation(void *context) { (void)context; return 1; }
+static bool q3_test_ok(void *context,qa_error *error) { (void)context;(void)error;return true; }
+static bool q3_test_download_size(void *context,int32_t size,int32_t *out,qa_error *error)
+{ (void)context;(void)error;*out=size;return true; }
+static bool q3_test_gamestate(void *context,const qa_q3_gamestate *state,qa_error *error)
+{ (void)state;return q3_test_ok(context,error); }
+static bool q3_test_text(void *context,const char *text,qa_error *error)
+{ (void)text;return q3_test_ok(context,error); }
+static bool q3_test_snapshot(void *context,const qa_q3_snapshot *snapshot,int32_t ping,qa_error *error)
+{ (void)snapshot;(void)ping;return q3_test_ok(context,error); }
+static bool q3_test_download(void *context,const qa_q3_download *download,qa_error *error)
+{ (void)download;return q3_test_ok(context,error); }
+static bool q3_test_command(void *context,int32_t sequence,const qa_q3_tokens *tokens,qa_error *error)
+{ (void)error;CHECK(tokens->count>0);q3_command_test *state=context;state->sequence=sequence;++state->calls;return true; }
+static bool q3_test_local(void *context) { (void)context;return false; }
+static void test_q3_received_commands(void)
+{
+    qa_error error={0};q3_command_test state={0};
+    qa_q3_client_hooks hooks={.context=&state,.generation=q3_test_generation,.clear_active=q3_test_ok,
+        .download_size=q3_test_download_size,.gamestate=q3_test_gamestate,.system_info=q3_test_text,
+        .snapshot=q3_test_snapshot,.download=q3_test_download,.command=q3_test_command,
+        .map_restart=q3_test_ok,.disconnect=q3_test_text,.level_shot=q3_test_ok,.local_server_running=q3_test_local};
+    qa_q3_client_peer *peer=NULL,*restored=NULL;
+    CHECK(qa_q3_client_peer_create_demo((qa_q3_identity){0},QA_Q3_ARENA,&hooks,&peer,&error));
+    const char *chunks[]={"bcs0 42 \"alpha \"","bcs1 42 \"beta \"","bcs2 42 \"gamma\""};
+    for(int32_t sequence=1;sequence<=131;++sequence) {
+        uint8_t bytes[4096];qa_q3_writer writer;qa_q3_writer_init(&writer,bytes,sizeof(bytes),false,&error);
+        CHECK(qa_q3_server_begin(&writer,0));
+        CHECK(qa_q3_server_command(&writer,sequence,sequence<=3 ? chunks[sequence-1] : "print sample"));
+        CHECK(qa_q3_server_end(&writer));
+        CHECK(qa_q3_client_peer_message(peer,sequence,(qa_bytes){bytes,qa_q3_writer_size(&writer)},sequence,&error));
+        CHECK(qa_q3_client_peer_execute(peer,sequence,false,&error));
+        if(sequence==3) CHECK(!strcmp(qa_q3_configstring(qa_q3_client_peer_gamestate(peer),42),"alpha beta gamma"));
+    }
+    CHECK(state.sequence==131 && state.calls==129);
+    qa_buffer saved={0};CHECK(qa_q3_client_peer_checkpoint(peer,&saved,&error));
+    CHECK(qa_q3_client_peer_restore((qa_bytes){saved.data,saved.size},(qa_q3_identity){0},&hooks,&restored,&error));
+    CHECK(qa_q3_client_peer_execute(restored,131,false,&error));
+    CHECK(state.sequence==131 && state.calls==130);
+    CHECK(!strcmp(qa_q3_configstring(qa_q3_client_peer_gamestate(restored),42),"alpha beta gamma"));
+    qa_buffer_free(&saved);qa_q3_client_peer_destroy(peer);qa_q3_client_peer_destroy(restored);
+}
+
 static bool player_feedback_test(void)
 {
     qa_player_feedback first={.damage=true,.armor=1.25f,.blood=4.5f,.origin={1,2,3}},
@@ -2095,6 +2140,7 @@ int main(int argc, char **argv)
     test_kex_direct_delivery();
     test_nq_send_admission();
     test_q3_send_admission();
+    test_q3_received_commands();
     test_shared_cvar_archive();
     test_cvar_info_storage();
     test_shared_input_menu_defaults();

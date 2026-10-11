@@ -75,7 +75,7 @@ bool qa_q3_client_peer_checkpoint(const qa_q3_client_peer *p, qa_buffer *out, qa
         qa_net_write_i32(&w, p->reliable.sequence) && qa_net_write_i32(&w, p->reliable.acknowledged);
     for (size_t i = 0; ok && i < QA_Q3_RELIABLE; ++i)
         ok = q3_save_text(&w, p->reliable.text[i], QA_Q3_COMMAND_CHARS) &&
-            q3_save_text(&w, p->server_commands[i], QA_Q3_COMMAND_CHARS);
+            q3_save_text(&w, q3_client_command_text(p,i), QA_Q3_COMMAND_CHARS);
     ok = ok && qa_net_write_i32(&w, p->server_message_sequence) &&
         qa_net_write_i32(&w, p->server_command_sequence) && qa_net_write_i32(&w, p->last_executed_server_command) &&
         qa_net_write_i32(&w, p->server_id) && qa_net_write_i32(&w, p->last_packet_sent_time) &&
@@ -129,9 +129,10 @@ bool qa_q3_client_peer_restore(qa_bytes bytes, qa_q3_identity identity,
         qa_q3_channel_destroy(p->channel); p->channel = channel;
     }
     p->reliable.sequence = qa_net_read_i32(&r); p->reliable.acknowledged = qa_net_read_i32(&r);
+    char commands[QA_Q3_RELIABLE][QA_Q3_COMMAND_CHARS];
     for (size_t i = 0; i < QA_Q3_RELIABLE; ++i)
         if (!qa_net_read_string(&r, p->reliable.text[i], QA_Q3_COMMAND_CHARS) ||
-            !qa_net_read_string(&r, p->server_commands[i], QA_Q3_COMMAND_CHARS)) goto failure;
+            !qa_net_read_string(&r, commands[i], QA_Q3_COMMAND_CHARS)) goto failure;
     p->server_message_sequence = qa_net_read_i32(&r); p->server_command_sequence = qa_net_read_i32(&r);
     p->last_executed_server_command = qa_net_read_i32(&r); p->server_id = qa_net_read_i32(&r);
     p->last_packet_sent_time = qa_net_read_i32(&r); p->receive_time = qa_net_read_i32(&r);
@@ -167,6 +168,15 @@ bool qa_q3_client_peer_restore(qa_bytes bytes, qa_q3_identity identity,
         p->receive_cursor.reader.raw.error = NULL;
     }
     if (!qa_net_reader_finish(&r) || !continuation_valid(p, error)) goto failure;
+    int64_t first=(int64_t)p->server_command_sequence-QA_Q3_RELIABLE+1;
+    if(first<1) first=1;
+    for(int64_t sequence=first;sequence<=p->server_command_sequence;++sequence) {
+        qa_q3_command command={.sequence=(int32_t)sequence};
+        memcpy(command.text,commands[(uint32_t)sequence & (QA_Q3_RELIABLE-1)],sizeof(command.text));
+        if(!q3_client_command_admit(p,&command,error)) goto failure;
+        if(sequence<=p->last_executed_server_command) p->command_cursor=qa_event_ring_next(p->command_events);
+    }
+    qa_event_ring_retire(p->command_events,p->command_cursor);
     *out = p; return true;
 failure:
     qa_q3_client_peer_destroy(p); return false;
