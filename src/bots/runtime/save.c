@@ -296,12 +296,14 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         if (state.library) {
             qa_bot_library_reload(runtime->library, state.reload);
             ok = ok && qa_bot_library_variables_restore(runtime->library, parts[VARIABLES], error) &&
+                 bot_runtime_bind_variables(runtime,error) &&
                  qa_bot_runtime_assets_restore(runtime, parts[ASSETS], &assets, error);
         } else {
             qa_bot_moves_destroy(runtime->moves); runtime->moves = NULL;
             qa_bot_goals_destroy(runtime->goals); runtime->goals = NULL;
             qa_bot_chat_system_destroy(runtime->chat_system); runtime->chat_system = NULL;
             qa_bot_library_destroy(runtime->library); runtime->library = NULL;
+            runtime->dropped_weight=runtime->developer=runtime->test_initial=runtime->test_reply=NULL;
             if(!qa_bot_memory_dispose(runtime->memory,error)) ok=false;
         }
     }

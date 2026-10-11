@@ -210,7 +210,7 @@ static bool entity(void *context, int32_t number, qa_bot_goal_entity *out, bool 
 }
 static float dropped_weight(void *context) {
     qa_bot_runtime *r = context;
-    const qa_bot_variable *v = qa_bot_library_variable(r->library, "droppedweight");
+    const qa_bot_variable *v = r->dropped_weight;
     return v ? v->value : 1000;
 }
 static bool maximum_level_items(void *context, int32_t *out, qa_error *error) {
@@ -301,7 +301,7 @@ static bool log_text(void *context, const char *message, qa_error *error) {
 }
 static bool developer(void *context) {
     qa_bot_runtime *r = context;
-    const qa_bot_variable *value = qa_bot_library_variable(r->library, "bot_developer");
+    const qa_bot_variable *value = r->developer;
     return value && value->value != 0;
 }
 static bool debug(void *context) { return ((qa_bot_runtime *)context)->options.debug; }

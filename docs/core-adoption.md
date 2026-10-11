@@ -786,6 +786,13 @@ sparse input lists, text decoding and runtime input-name scans are deleted.
 Normal build and seven core suites pass. Names item 16's audited sites are
 migrated; item 17 remains.
 
+Names item 17: bot runtime creation binds droppedweight, bot_developer,
+bot_testichat and bot_testrchat to stable variable pointers. Goal evaluation,
+diagnostics and chat decisions read those pointers. Restore rebinds after
+replacing the library variable store; shutdown clears the pointers. Normal
+build and seven core suites pass. Names items 1-17 are migrated at the
+audited sites. The cvars kind and later kinds remain open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

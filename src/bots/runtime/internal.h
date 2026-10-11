@@ -16,6 +16,7 @@ struct qa_bot_runtime {
     qa_bot_runtime_options options;
     qa_bot_runtime_services services;
     qa_bot_library *library;
+    const qa_bot_variable *dropped_weight, *developer, *test_initial, *test_reply;
     qa_bot_memory *memory;
     qa_script_defines *globals;
     qa_bot_log *log;
@@ -50,6 +51,7 @@ bool bot_runtime_bsp_load(qa_bot_runtime *,qa_bot_bsp **,qa_error *);
 bool bot_runtime_mutable(qa_bot_runtime *, qa_error *);
 bool bot_runtime_owners_idle(qa_bot_runtime *, qa_error *);
 bool bot_runtime_variable(qa_bot_runtime *, const char *, const char *, const qa_bot_variable **, qa_error *);
+bool bot_runtime_bind_variables(qa_bot_runtime *, qa_error *);
 bool bot_runtime_integer(qa_bot_runtime *, const char *, const char *, int32_t *, qa_error *);
 void bot_runtime_handles_close(qa_bot_runtime *);
 bool bot_runtime_chat_shutdown(qa_bot_runtime *,qa_error *);

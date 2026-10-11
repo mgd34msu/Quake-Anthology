@@ -35,12 +35,12 @@ static void diagnostic(void *context, qa_script_severity severity, const char *t
 }
 static bool test_initial(void *context) {
     qa_bot_runtime *r=context;
-    const qa_bot_variable *v=qa_bot_library_variable(r->library,"bot_testichat");
+    const qa_bot_variable *v=r->test_initial;
     return v && v->value!=0;
 }
 static bool test_reply(void *context) {
     qa_bot_runtime *r=context;
-    const qa_bot_variable *v=qa_bot_library_variable(r->library,"bot_testrchat");
+    const qa_bot_variable *v=r->test_reply;
     return v && v->value!=0;
 }
 static bool chat_print_source(void *context,qa_script_severity severity,const char *text,qa_error *error) {
@@ -57,7 +57,7 @@ static bool chat_time_source(void *context,float *out,qa_error *error) {
 }
 static bool chat_developer_source(void *context) {
     qa_bot_runtime *runtime=context;
-    const qa_bot_variable *variable=qa_bot_library_variable(runtime->library,"bot_developer");
+    const qa_bot_variable *variable=runtime->developer;
     return variable && variable->value!=0;
 }
 static bool chat_reload_source(void *context) {
@@ -228,7 +228,14 @@ static qa_bot_move_services movement_services(qa_bot_runtime *r) {
             grapple_observation : NULL,
         .diagnostic = diagnostic, .random = r->services.random};
 }
+bool bot_runtime_bind_variables(qa_bot_runtime *r, qa_error *e) {
+    return qa_bot_library_variable_default(r->library,"droppedweight","1000",&r->dropped_weight,e)&&
+        qa_bot_library_variable_default(r->library,"bot_developer","0",&r->developer,e)&&
+        qa_bot_library_variable_default(r->library,"bot_testichat","0",&r->test_initial,e)&&
+        qa_bot_library_variable_default(r->library,"bot_testrchat","0",&r->test_reply,e);
+}
 bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
+    if(!bot_runtime_bind_variables(r,e)) return false;
     qa_bot_action_services actions = {.context = r, .command = command};
     if (!qa_bot_actions_create_source(r->memory, &actions, &r->actions, e)) return false;
     qa_bot_chat_options options = {.debug = r->options.debug, .console_unavailable = true};
@@ -262,12 +269,11 @@ static bool source_failure(qa_bot_runtime *r, const qa_error *e) {
 }
 static bool setup_goals(qa_bot_runtime *r, int32_t *result, qa_error *e) {
     int32_t count, game_type, maximum;
-    const qa_bot_variable *path, *dropped;
+    const qa_bot_variable *path;
     if (!bot_runtime_integer(r, "max_iteminfo", "256", &count, e) ||
         !bot_runtime_integer(r, "g_gametype", "0", &game_type, e) ||
         !bot_runtime_integer(r, "max_levelitems", "256", &maximum, e) ||
-        !bot_runtime_variable(r, "itemconfig", "items.c", &path, e) ||
-        !bot_runtime_variable(r, "droppedweight", "1000", &dropped, e)) return false;
+        !bot_runtime_variable(r, "itemconfig", "items.c", &path, e)) return false;
     if (count < 0) {
         count = 256;
         if (!qa_bot_library_variable_set(r->library, "max_iteminfo", "256", e)) return false;
@@ -288,7 +294,7 @@ static bool setup_goals(qa_bot_runtime *r, int32_t *result, qa_error *e) {
     else {
         qa_bot_goal_options options = {.maximum_states = r->options.maximum_states,
             .maximum_level_items = (uint32_t)maximum, .game_type = game_type,
-            .dropped_weight = dropped->value, .random = r->services.random};
+            .dropped_weight = r->dropped_weight->value, .random = r->services.random};
         qa_bot_goal_services services = bot_runtime_goal_services(r);
         ok = qa_bot_goals_create(items, &options, &services, &r->goals, e);
         if(ok) ok=bot_goal_memory_bind(r->goals,r->memory,e);
@@ -342,7 +348,7 @@ static bool setup_chat(qa_bot_runtime *r, qa_error *e) {
         if(ok && (r->chat_system->retired || r->chat_system->revision!=revision))
             ok=bot_runtime_fail(e,"Chat setup retired during its source load");
         if(ok && i==3) {
-            const qa_bot_variable *developer=qa_bot_library_variable(r->library,"bot_developer");
+            const qa_bot_variable *developer=r->developer;
             if(asset && developer && developer->value!=0) ok=qa_bot_chat_check_integrity(r->chat_system,asset,e);
             if(ok && (!asset || !asset->packed_source->graph.root)) ok=chat_print(r->chat_system,QA_SCRIPT_INFO,"no rchats",e);
         }
