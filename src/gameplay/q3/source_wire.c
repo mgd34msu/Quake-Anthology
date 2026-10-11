@@ -50,7 +50,7 @@ static void vector(float out[3], qa_vec3 value) {
 
 static bool current(const qa_q3_game *game, uint32_t slot, qa_actor_id actor) {
     return slot < QA_Q3_SOURCE_ENTITIES &&
-        qa_actor_id_equal(game->source_entities[slot].actor, actor) &&
+        qa_actor_id_equal(q3_source_actor(game, slot), actor) &&
         qa_actor_id_equal(game->wire->rows[slot].actor, actor) &&
         qa_actors_get(qa_session_actors(game->options.services.session), actor);
 }
@@ -123,7 +123,7 @@ bool q3_player_motion_read(const qa_q3_game *game, qa_actor_id actor,
 }
 bool q3_player_motion_slot_read(const qa_q3_game *game, uint32_t slot,
                                 qa_q3_player_motion *out, qa_error *error) {
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!actor.registry || !game->source_entities[slot].body_attached ||
         game->wire->clients[slot].movement_detached) {
         *out = game->wire->foreign_motions[slot];
@@ -133,7 +133,7 @@ bool q3_player_motion_slot_read(const qa_q3_game *game, uint32_t slot,
 }
 void q3_player_motion_slots_restore(qa_q3_game *game, const qa_q3_player_motion *motions) {
     for (uint32_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
-        qa_actor_id actor = game->source_entities[i].actor;
+        qa_actor_id actor = q3_source_actor(game, i);
         if (actor.registry && game->source_entities[i].body_attached &&
             !game->wire->clients[i].movement_detached)
             q3_player_motion_restore(game, actor, &motions[i]);
@@ -365,7 +365,7 @@ bool qa_q3_wire_client_ready(qa_q3_game *game, uint32_t slot,
                              int32_t ready_mask, qa_error *error) {
     if (!game || !game->wire || game->source_restored || slot >= game->options.max_clients ||
         game->clients[slot].rule.connected != QA_Q3_CLIENT_CONNECTED ||
-        !row(game, game->source_entities[slot].actor) || ready_mask < 0 || ready_mask > 65535)
+        !row(game, q3_source_actor(game, slot)) || ready_mask < 0 || ready_mask > 65535)
         return q3_fail(error, "Q3 readiness publication requires a CONNECTED source PS row");
     game->wire->clients[slot].clients_ready = ready_mask;
     qa_q3_player *followed = q3_client_follow_player(game, slot);
@@ -564,7 +564,7 @@ bool qa_q3_wire_client_stop_following(qa_q3_game *game, uint32_t slot, qa_error 
     if (!game || !game->wire || slot >= QA_Q3_SOURCE_CLIENTS || game->source_restored ||
         game->observation_depth == SIZE_MAX)
         return q3_fail(error, "Q3 StopFollowing requires its actual fixed source client");
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     ++game->observation_depth;
     bool ok = true;
     if (!game->wire->clients[slot].movement_detached && actor.registry &&
@@ -596,7 +596,7 @@ bool qa_q3_wire_client_detach(qa_q3_game *game, uint32_t slot, qa_error *error) 
         return q3_fail(error, "Q3 PM retirement requires its current movement source capability");
     q3_wire_client *client = &game->wire->clients[slot];
     if (client->movement_detached) return true;
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 PM retirement has no current native source client generation");
     ++game->observation_depth;
@@ -677,7 +677,7 @@ static bool player_read(const qa_q3_game *game, uint32_t slot, qa_q3_player *out
     qa_q3_player followed;
     bool has_followed;
     if (!qa_q3_client_follow_read(game, slot, &followed, &has_followed, error)) return false;
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     const q3_actor *entry = q3_actor_const(game, actor);
     if (!current(game, slot, actor) || !entry || entry->kind != Q3_ACTOR_PLAYER)
         return q3_fail(error, "Q3 PS observation lacks its full source client generation");
@@ -1021,7 +1021,7 @@ bool qa_q3_wire_native_visibility_read(const qa_q3_game *game, uint32_t slot,
         return q3_fail(error, "invalid native Q3 visibility observation boundary");
     const qa_q3_source_binding *binding = &game->source_entities[slot];
     const q3_wire_row *record = &game->wire->rows[slot];
-    qa_actor_id actor = binding->actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!qa_actor_id_equal(record->actor, actor) ||
         (actor.registry && !current(game, slot, actor)) ||
         (!actor.registry && binding->in_use) || (binding->in_use && !record->initialized))
@@ -1068,7 +1068,7 @@ bool qa_q3_wire_native_visibility_read(const qa_q3_game *game, uint32_t slot,
 static bool entity_read(const qa_q3_game *game, uint32_t slot, qa_q3_entity *out,
                          qa_q3_wire_visibility *visible, qa_error *error) {
     const q3_wire_row *record = &game->wire->rows[slot];
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!qa_actor_id_equal(record->actor, actor) ||
         (actor.registry && !current(game, slot, actor)) ||
         (!actor.registry && game->source_entities[slot].in_use))
@@ -1151,7 +1151,7 @@ bool qa_q3_source_model_read(const qa_q3_game *game, uint32_t slot,
     if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_NONE || game->source_restored ||
         !game->source_entities[slot].in_use || !game->wire->rows[slot].initialized)
         return q3_fail(error, "Q3 model observation requires a completed physical Source row");
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 model observation has a stale Source actor generation");
     const q3_wire_entity_source *source = &game->wire->rows[slot].source;
@@ -1174,7 +1174,7 @@ bool qa_q3_source_activator_frame_read(const qa_q3_game *game, uint32_t slot,
         game->source_restored || !game->source_entities[slot].in_use ||
         !game->wire->rows[slot].initialized)
         return q3_fail(error, "Q3 activator observation requires an initialized physical Source row");
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 activator observation has a stale Source actor generation");
     const q3_actor *entry = q3_actor_const(game, actor);
@@ -1200,7 +1200,7 @@ bool qa_q3_source_contents_read(const qa_q3_game *game, uint32_t slot,
         !game->source_entities[slot].in_use || !game->source_entities[slot].body_attached ||
         !game->wire->rows[slot].initialized || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "Q3 contents observation requires a completed physical Source body");
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 contents observation has a stale Source actor generation");
     qa_world *world = game->options.services.world;
@@ -1230,7 +1230,7 @@ bool qa_q3_source_model_bounds_read(const qa_q3_game *game, uint32_t slot,
         game->source_restored || !game->source_entities[slot].in_use ||
         !game->source_entities[slot].body_attached || !game->wire->rows[slot].initialized)
         return q3_fail(error, "Q3 model bounds require a completed physical Source row and output");
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 model bounds have a stale Source actor generation");
     qa_body_state body;
@@ -1289,7 +1289,7 @@ bool qa_q3_wire_body_read(const qa_q3_game *game, uint32_t slot,
         game->source_restored || game->observation_depth == SIZE_MAX ||
         !game->source_entities[slot].in_use || !game->wire->rows[slot].initialized)
         return q3_fail(error, "Q3 source body observation requires a current physical row");
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 source body observation has a stale actor generation");
     qa_q3_game *retained = (qa_q3_game *)game;
@@ -1326,7 +1326,7 @@ bool qa_q3_wire_client_read(const qa_q3_game *game, uint32_t slot,
         return q3_fail(error, "Q3 fixed client read exceeds its actual source records");
     const qa_q3_source_binding *binding = &game->source_entities[slot];
     qa_q3_wire_client_view value = {.present = binding->in_use, .bot = (binding->server_flags & 8u) != 0};
-    qa_actor_id actor = binding->actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!actor.registry) {
         if (binding->in_use) return q3_fail(error, "Active Q3 source client has no body actor");
         *out = value;
@@ -1353,7 +1353,7 @@ bool qa_q3_wire_client_source_body_read(const qa_q3_game *game, uint32_t slot,
     qa_q3_wire_client_body value = {.model_shape = game->clients[slot].rule.source_model_shape};
     const qa_q3_source_binding *binding = &game->source_entities[slot];
     if (!binding->body_attached) { *out = value; return true; }
-    qa_actor_id actor = binding->actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor)) return q3_fail(error, "Q3 fixed source body is stale");
     qa_q3_game *retained = (qa_q3_game *)game;
     ++retained->observation_depth;
@@ -1386,7 +1386,7 @@ bool qa_q3_wire_client_source_pm_read(const qa_q3_game *game, uint32_t slot,
         return true;
     }
     qa_q3_wire_policy policy;
-    if (!qa_q3_wire_player_policy_read(game, game->source_entities[slot].actor, &policy, error)) return false;
+    if (!qa_q3_wire_player_policy_read(game, q3_source_actor(game, slot), &policy, error)) return false;
     *out = policy.pm_type;
     return true;
 }
@@ -1405,7 +1405,7 @@ bool qa_q3_wire_client_source_score_read(const qa_q3_game *game, uint32_t slot,
         *out = game->clients[slot].rule.retired_score;
         return true;
     }
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!current(game, slot, actor) || !game->wire->services.mode)
         return q3_fail(error, "Q3 fixed source score lacks its genuine selected owner");
     qa_q3_game *retained = (qa_q3_game *)game;
@@ -1427,7 +1427,7 @@ bool qa_q3_wire_borrowed_client_motion_read(const qa_q3_game *game, qa_actor_id 
         return q3_fail(error, "Q3 borrowed PS motion requires its real client pointer");
     qa_q3_game *retained = (qa_q3_game *)game;
     ++retained->observation_depth;
-    qa_actor_id original = game->source_entities[client].actor;
+    qa_actor_id original = q3_source_actor(game, client);
     qa_body_state body = {0};
     bool ok = !game->source_entities[client].body_attached ||
         (qa_world_body_read(game->options.services.world, original, &body, error) &&
@@ -1483,7 +1483,7 @@ bool qa_q3_wire_entity_event_time(const qa_q3_game *game, uint32_t slot,
     if (!game || !game->wire || !out || slot >= QA_Q3_SOURCE_ENTITIES || game->source_restored)
         return q3_fail(error, "Q3 event timestamp read exceeds its actual fixed source rows");
     const q3_wire_row *record = &game->wire->rows[slot];
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!actor.registry) { *out = record->event_time_ms; return true; }
     if (!current(game, slot, actor))
         return q3_fail(error, "Q3 event timestamp has a stale physical source generation");
@@ -1986,7 +1986,7 @@ bool q3_wire_validate(const qa_q3_game *game, const q3_wire_state *state, qa_err
             (i < QA_Q3_SOURCE_CLIENTS || i >= game->source_count))
             return q3_fail(error, "Q3 arena continuation exceeds actual dynamic source rows");
         qa_actor_id actor = state->rows[i].actor;
-        if (!qa_actor_id_equal(actor, game->source_entities[i].actor) ||
+        if (!qa_actor_id_equal(actor, q3_source_actor(game, i)) ||
             (actor.registry && !qa_actors_get(
                 qa_session_actors(game->options.services.session), actor)))
             return q3_fail(error, "Q3 source wire continuation disagrees with physical GAME bindings");

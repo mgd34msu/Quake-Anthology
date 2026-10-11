@@ -1078,7 +1078,7 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     if (spawn.wait_seconds == -1) {
         source->unlink_after_event = true;
         entry->state.item.hidden = true;
-        game->source_entities[game->source_numbers[offer->pickup.slot]].server_flags |= 1u;
+        game->source_entities[q3_actor_source_number(game, offer->pickup, &game->foreign_clients)].server_flags |= 1u;
         source->flags |= 0x80;
         return qa_world_set_collision(game->options.services.world, offer->pickup, NULL, error);
     }
@@ -1248,7 +1248,7 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     int32_t owner_number = game->source_entities[source_slot].owner_number;
     qa_actor_id owner = owner_number >= 0 && owner_number < (int32_t)QA_Q3_SOURCE_WORLD &&
         game->source_entities[owner_number].in_use
-            ? game->source_entities[owner_number].actor : (qa_actor_id){0};
+            ? q3_source_actor(game, (uint32_t)owner_number) : (qa_actor_id){0};
     qa_trace_query query = {.start = body.origin,
                             .end = destination,
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},

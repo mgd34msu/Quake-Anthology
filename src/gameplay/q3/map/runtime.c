@@ -85,7 +85,7 @@ static bool level_state_idle(qa_q3_game *game, bool require_empty, qa_error *err
 
 static bool provider_state_empty(const qa_q3_game *game) {
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
-        if (game->source_entities[i].actor.registry) return false;
+        if (q3_source_actor(game, i).registry) return false;
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->actors[i].kind || game->kamikaze_cooldowns[i].actor.registry ||
             game->player_binding_tokens[i])

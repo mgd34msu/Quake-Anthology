@@ -212,7 +212,7 @@ bool qa_q3_source_score_plum(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin
     int32_t recipient = game->source_entities[client_slot].number;
     qa_actor_id temporary;
     if (!q3_wire_temp_entity(game, origin, 65, &temporary, error)) return false;
-    if (!qa_actor_id_equal(game->source_entities[client_slot].actor, actor) ||
+    if (!qa_actor_id_equal(q3_source_actor(game, client_slot), actor) ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor)) {
         q3_rollback_spawn(game, temporary, NULL);
         return true;
@@ -249,12 +249,12 @@ bool qa_q3_source_team_gesture(qa_q3_game *game, int32_t team, qa_error *error) 
         return q3_fail(error, "Q3 team gesture needs its actual source session owner");
     ++game->observation_depth;
     for (uint32_t slot = 0; slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
-        qa_actor_id actor = game->source_entities[slot].actor;
+        qa_actor_id actor = q3_source_actor(game, slot);
         if (!game->source_entities[slot].in_use || !actor.registry) continue;
         int32_t actual_team = q3_source_team(game, actor);
         q3_actor *entry = q3_actor_get(game, actor);
         if (actual_team == team && entry && entry->kind == Q3_ACTOR_PLAYER &&
-            qa_actor_id_equal(game->source_entities[slot].actor, actor) &&
+            qa_actor_id_equal(q3_source_actor(game, slot), actor) &&
             game->source_entities[slot].in_use) entry->force_gesture = true;
     }
     --game->observation_depth;

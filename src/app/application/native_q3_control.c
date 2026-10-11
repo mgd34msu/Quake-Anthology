@@ -357,10 +357,6 @@ static bool client_think_body(void *opaque, qa_session *session,
         if (!live(app, call->actor)) return true;
         const qa_movement_result *result = application_control_q3_result(provider, call->actor, error);
         if (!result) return false;
-        int32_t water_level = result->water_level;
-        int32_t water_type = result->water_type < 0
-            ? result->water_type == -3 ? 32 : result->water_type == -4 ? 16 : result->water_type == -5 ? 8 : 0
-            : result->water_type;
         qa_bounds bounds = result->bounds;
         int32_t completed_time = result->state.kind == QA_RULESET_Q3
             ? result->state.data.q3.command_time_ms : call->accepted.serverTime;
@@ -387,9 +383,6 @@ static bool client_think_body(void *opaque, qa_session *session,
                 ok = qa_q3_client_fire_held_finish(provider->state.q3, call->actor, error);
             if (ok && live(app, call->actor))
                 ok = movement_bounds(provider, call->actor, bounds, error);
-            if (ok && live(app, call->actor))
-                ok = qa_q3_client_movement_water(provider->state.q3, call->actor,
-                    water_level, water_type, error);
             bool origin_scope = false;
             if (ok && live(app, call->actor)) {
                 qa_q3_wire_player_publication published;

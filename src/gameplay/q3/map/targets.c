@@ -622,7 +622,7 @@ static bool link_locations(qa_q3_game *game, qa_error *error) {
         return false;
     int32_t number = 1;
     for (uint32_t i = 0; i < game->source_count; ++i) {
-        qa_q3_map_actor_state *location = q3_map_get(game, game->source_entities[i].actor);
+        qa_q3_map_actor_state *location = q3_map_get(game, q3_source_actor(game, i));
         if (!location || location->kind != QA_Q3_MAP_TARGET_LOCATION)
             continue;
         location->health = number;

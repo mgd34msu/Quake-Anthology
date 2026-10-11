@@ -71,7 +71,6 @@ bool qa_q3_client_events(qa_q3_game *, qa_actor_id, uint32_t old_event_sequence,
 bool qa_q3_client_think_finish(qa_q3_game *, qa_actor_id, int32_t msec, qa_error *);
 bool qa_q3_client_movement_complete(qa_q3_game *, qa_actor_id, int32_t, qa_vec3,
                                     float, qa_movement_ground, qa_error *);
-bool qa_q3_client_movement_water(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);
 bool qa_q3_client_spectator_origin(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_client_current_origin(qa_q3_game *, qa_actor_id, qa_vec3, qa_error *);
 bool qa_q3_client_current_origin_finish(qa_q3_game *, qa_actor_id, qa_error *);
@@ -82,7 +81,6 @@ bool qa_q3_client_connecting(qa_q3_game *, uint32_t, qa_error *);
 bool qa_q3_client_touch_policy(const qa_q3_game *, qa_actor_id, bool *, bool *, bool *, qa_error *);
 bool qa_q3_client_jumppad_finish(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_client_world_effects(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);
-bool qa_q3_client_movement_water_read(const qa_q3_game *, qa_actor_id, int32_t *, int32_t *, qa_error *);
 bool qa_q3_client_end_prepare(qa_q3_game *, qa_actor_id, int32_t, int32_t, bool *, qa_error *);
 bool qa_q3_client_command_time(const qa_q3_game *, qa_actor_id, int32_t *, qa_error *);
 bool qa_q3_client_think_complete(qa_q3_game *, qa_actor_id, int32_t command_time_ms, qa_error *);

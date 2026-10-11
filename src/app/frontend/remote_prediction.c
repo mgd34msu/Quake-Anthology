@@ -20,11 +20,7 @@ typedef struct prediction_command {
     qa_usercmd selected;
     qa_usercmd source;
     frontend_remote_prediction_angle_space angle_space;
-    uint64_t source_sequence;
     uint64_t receipt_time_ns;
-    int32_t source_time;
-    uint32_t source_buttons;
-    uint8_t source_weapon;
     prediction_player continuation;
     bool has_continuation;
 } prediction_command;
@@ -218,7 +214,7 @@ static bool weapon(replay_context *context, const qa_usercmd *command,
     bool animate = context->source->configuration.q3_character;
     bool attack = (command->buttons & 1u) != 0;
     bool use = ((command->kind == QA_RULESET_Q3 ? command->buttons :
-        context->command->source_buttons) & 4u) != 0;
+        context->command->source.buttons) & 4u) != 0;
     if (player->environment.health > 0 && !attack && !use) p->pmFlags &= ~512;
     double clock = (double)elapsed + player->fractional_weapon_ms;
     if (!isfinite(clock) || clock < 0 || clock > INT32_MAX)
@@ -240,7 +236,7 @@ static bool weapon(replay_context *context, const qa_usercmd *command,
     if (!use) p->pmFlags &= ~1024;
     if (p->weaponTime > 0) p->weaponTime = add_word(p->weaponTime, -msec);
     int32_t requested = player->requested_weapon >= 0 ? player->requested_weapon :
-        command->kind == QA_RULESET_Q3 ? command->weapon : context->command->source_weapon;
+        command->kind == QA_RULESET_Q3 ? command->weapon : context->command->source.weapon;
     if (player->external_slot == 3) return true;
     if (player->external_slot == 2) {
         if (p->weaponTime <= 0) player->external_slot = 3;
@@ -771,7 +767,7 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
         input.trace_policy.curves = input.trace_policy.player_curve_clip = true;
         input.has_trace_policy = true;
         if (source->settings.pmove_fixed) {
-            int32_t rounded = add_word(entry->source_time, captured_pmove_msec - 1);
+            int32_t rounded = add_word(entry->source.server_time_ms, captured_pmove_msec - 1);
             int32_t quotient = rounded / captured_pmove_msec;
             input.command.server_time_ms = signed_word((uint32_t)quotient * (uint32_t)captured_pmove_msec);
         }
@@ -781,12 +777,12 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     input.snap_initial = input.state.kind == QA_RULESET_Q2_RERELEASE && first;
     if (input.state.kind == QA_RULESET_Q2_CLASSIC) input.profile.data.q2.snap_initial = false;
     int64_t duration = input.state.kind == QA_RULESET_NETQUAKE || input.state.kind == QA_RULESET_Q3 ?
-        (int64_t)entry->source_time - player->view.command_time : input.command.milliseconds;
+        (int64_t)entry->source.server_time_ms - player->view.command_time : input.command.milliseconds;
     if (duration < 0) duration = 0;
     input.elapsed_ns = (uint64_t)duration * UINT64_C(1000000);
     input.time_ns = selected->receipt_time_ns;
     input.has_source_seconds = input.state.kind == QA_RULESET_NETQUAKE;
-    input.source_seconds = (double)entry->source_time / 1000.0;
+    input.source_seconds = (double)entry->source.server_time_ms / 1000.0;
     /* The event receipt clock is independent of signed source physics time. */
     if (input.state.kind == QA_RULESET_NETQUAKE) {
         if (duration > UINT32_MAX) return fail(error, QA_ERROR_ARGUMENT, "Private NQ command interval exceeds native duration");
@@ -820,8 +816,8 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     player->view.view_offset = result->view_offset; player->view.view_height = result->view_height;
     player->view.ground = result->ground; player->view.water_level = result->water_level;
     player->view.water_type = result->water_type;
-    player->view.command_time = input.state.kind == QA_RULESET_Q3 ? result->state.data.q3.command_time_ms : entry->source_time;
-    player->view.sequence = entry->source_sequence;
+    player->view.command_time = input.state.kind == QA_RULESET_Q3 ? result->state.data.q3.command_time_ms : entry->source.server_time_ms;
+    player->view.sequence = entry->source.sequence;
     if (!write_player(owner, player, error) || !source_current(&context, error)) return false;
     entry->continuation = *player; entry->has_continuation = true;
     return true;
@@ -1020,7 +1016,7 @@ static const prediction_command *selected_receipt(const prediction_state *state,
     /* The foreign adapter's command map replaces the selected payload at an
      * existing source clock. The literal source ring still retains each row. */
     for (size_t i = index + 1; i < state->count; ++i)
-        if (state->commands[i].source_time == selected->source_time)
+        if (state->commands[i].source.server_time_ms == selected->source.server_time_ms)
             selected = state->commands + i;
     return selected;
 }
@@ -1038,19 +1034,17 @@ bool frontend_remote_prediction_submit(frontend_remote_prediction *owner,
     if (!present || !source_valid(owner, &source) || !same_identity(&owner->state, &source))
         return fail(error, QA_ERROR_ARGUMENT, "Prediction command belongs to a different live source");
     prediction_state *state = &owner->state;
-    uint64_t previous = state->count ? state->commands[state->count - 1].source_sequence : state->baseline.view.sequence;
+    uint64_t previous = state->count ? state->commands[state->count - 1].source.sequence : state->baseline.view.sequence;
     if (source_command->sequence <= previous) return true;
     if (state->count && selected->sequence <= state->commands[state->count - 1].selected.sequence)
         return fail(error, QA_ERROR_ARGUMENT, "Selected physical prediction receipts must retain their real order");
     if (state->count == 64) {
-        state->discarded_sequence = state->commands[0].source_sequence; state->has_discarded = true;
+        state->discarded_sequence = state->commands[0].source.sequence; state->has_discarded = true;
         memmove(state->commands, state->commands + 1, 63 * sizeof(*state->commands)); --state->count;
     }
     prediction_command command = {.selected = *selected, .angle_space = angle_space,
         .source = *source_command,
-        .source_sequence = source_command->sequence, .receipt_time_ns = source.receipt_time_ns,
-        .source_time = source_command->server_time_ms,
-        .source_buttons = source_command->buttons, .source_weapon = source_command->weapon};
+        .receipt_time_ns = source.receipt_time_ns};
     memcpy(state->commands + state->count++, &command, sizeof(command));
     return true;
 }
@@ -1100,9 +1094,9 @@ static bool replay(frontend_remote_prediction *owner,
     if (acknowledged) {
         for (size_t i = 0; i < next.count; ++i) {
             prediction_command *entry = next.commands + i;
-            if (entry->source_sequence <= source.acknowledged_sequence && entry->has_continuation &&
+            if (entry->source.sequence <= source.acknowledged_sequence && entry->has_continuation &&
                 entry->continuation.view.command_time == snapshot->player.commandTime &&
-                (!available || entry->source_sequence >= base.view.sequence)) {
+                (!available || entry->source.sequence >= base.view.sequence)) {
                 base = entry->continuation; available = true;
             }
         }
@@ -1147,8 +1141,8 @@ static bool replay(frontend_remote_prediction *owner,
             if (next.count) ok = update_angles(&next.predicted, next.commands + next.count - 1, error);
             next.predicted.view.status = FRONTEND_REMOTE_PREDICTION_DISABLED;
             if (ok) ok = write_player(owner, &next.predicted, error);
-        } else if (next.count == 64 && next.commands[0].source_time > current->player.commandTime &&
-            next.commands[0].source_time < source.scene.time) {
+        } else if (next.count == 64 && next.commands[0].source.server_time_ms > current->player.commandTime &&
+            next.commands[0].source.server_time_ms < source.scene.time) {
             ok = warning(owner, &source, "exceeded PACKET_BACKUP on commands\n", error);
             next.predicted = old;
             next.predicted.view.hyperspace = false;
@@ -1158,14 +1152,14 @@ static bool replay(frontend_remote_prediction *owner,
             bool moved = false;
             int32_t captured_pmove_msec = source.settings.pmove_msec;
             ok = clamp_pmove_msec(owner, &source, error);
-            int32_t latest_time = next.count ? next.commands[next.count - 1].source_time : 0;
+            int32_t latest_time = next.count ? next.commands[next.count - 1].source.server_time_ms : 0;
             int32_t last_time = 0;
             for (size_t i = 0; ok && i < next.count; ++i) {
                 prediction_command *entry = next.commands + i;
                 const prediction_command *selected = selected_receipt(&next, i);
-                last_time = entry->source_time;
+                last_time = entry->source.server_time_ms;
                 if (source.settings.pmove_fixed) ok = update_angles(&next.predicted, selected, error);
-                if (!ok || entry->source_time <= next.predicted.view.command_time || entry->source_time > latest_time) continue;
+                if (!ok || entry->source.server_time_ms <= next.predicted.view.command_time || entry->source.server_time_ms > latest_time) continue;
                 if (next.predicted.view.command_time == old.view.command_time) {
                     if (this_teleport(owner, &source) && !next.predicted.view.consumed_teleport) {
                         next.prediction_error = qa_v3(0, 0, 0);
@@ -1514,22 +1508,27 @@ static bool state_fields(qa_source_save_io *io, prediction_state *state,
         prediction_command *entry = state->commands + i;
         uint32_t space = entry->angle_space;
         if (!command_fields(io, &entry->selected) || !command_valid(&entry->selected) ||
-            !command_fields(io, &entry->source) || !command_valid(&entry->source) || entry->source.kind != QA_RULESET_Q3 ||
-            entry->selected.kind != kind || !qa_source_save_u32(io, &space) ||
-            space > FRONTEND_REMOTE_PREDICTION_ABSOLUTE || !qa_source_save_u64(io, &entry->source_sequence) ||
-            !qa_source_save_u64(io, &entry->receipt_time_ns) || !qa_source_save_i32(io, &entry->source_time) ||
-            !qa_source_save_u32(io, &entry->source_buttons) || !qa_source_save_u8(io, &entry->source_weapon) ||
+            !command_fields(io, &entry->source) || !command_valid(&entry->source) ||
+            entry->source.kind != QA_RULESET_Q3 || entry->selected.kind != kind) return false;
+        uint64_t archive_sequence = entry->source.sequence;
+        int32_t archive_time = entry->source.server_time_ms;
+        uint32_t archive_buttons = entry->source.buttons;
+        uint8_t archive_weapon = entry->source.weapon;
+        if (!qa_source_save_u32(io, &space) ||
+            space > FRONTEND_REMOTE_PREDICTION_ABSOLUTE || !qa_source_save_u64(io, &archive_sequence) ||
+            !qa_source_save_u64(io, &entry->receipt_time_ns) || !qa_source_save_i32(io, &archive_time) ||
+            !qa_source_save_u32(io, &archive_buttons) || !qa_source_save_u8(io, &archive_weapon) ||
             !qa_source_save_bool(io, &entry->has_continuation) ||
             (entry->has_continuation && !player_fields(io, &entry->continuation)) ||
-            entry->source_sequence <= prior_source || (i && entry->selected.sequence <= prior_selected) ||
-            entry->source.sequence != entry->source_sequence || entry->source.server_time_ms != entry->source_time ||
-            entry->source.buttons != entry->source_buttons || entry->source.weapon != entry->source_weapon ||
+            entry->source.sequence <= prior_source || (i && entry->selected.sequence <= prior_selected) ||
+            entry->source.sequence != archive_sequence || entry->source.server_time_ms != archive_time ||
+            entry->source.buttons != archive_buttons || entry->source.weapon != archive_weapon ||
             (entry->has_continuation && (entry->continuation.view.movement.kind != kind ||
-                entry->continuation.view.sequence != entry->source_sequence ||
+                entry->continuation.view.sequence != entry->source.sequence ||
                 (kind == QA_RULESET_Q3 ? entry->continuation.view.command_time != entry->continuation.view.movement.data.q3.command_time_ms :
-                    entry->continuation.view.command_time != entry->source_time)))) return false;
+                    entry->continuation.view.command_time != entry->source.server_time_ms)))) return false;
         entry->angle_space = (frontend_remote_prediction_angle_space)space;
-        prior_source = entry->source_sequence; prior_selected = entry->selected.sequence;
+        prior_source = entry->source.sequence; prior_selected = entry->selected.sequence;
     }
     return !state->count || state->predicted.view.sequence <= prior_source;
 }

@@ -142,7 +142,7 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         if (q3_source_client_pointer(game, actor, &client)) {
             view.source_client = s->clientNum;
             view.owner = game->source_entities[client].body_attached
-                ? game->source_entities[client].actor : (qa_actor_id){0};
+                ? q3_source_actor(game, client) : (qa_actor_id){0};
         }
         break;
     }

@@ -16,11 +16,15 @@ typedef struct qa_q3_source_memory {
 } qa_q3_source_memory;
 
 typedef struct qa_q3_source_binding {
+    /* Boundary projections include the actor. Live rows resolve it from the
+     * canonical registry or the shared foreign-role binding index. */
     qa_actor_id actor;
     qa_string_id classname;
     int32_t free_time_ms;
     int32_t number, owner_number, client_slot;
     uint32_t server_flags;
+    /* Original GAME allocation state: a free physical row may still have a
+     * canonical actor backing native field writes. */
     bool in_use, never_free, body_attached;
 } qa_q3_source_binding;
 

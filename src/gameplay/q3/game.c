@@ -130,9 +130,8 @@ int32_t q3_sub_time(int32_t a, int32_t b) {
 }
 q3_actor *q3_actor_storage(qa_q3_game *game, qa_actor_id actor) {
     if (!game || actor.slot >= game->capacity) return NULL;
-    uint32_t slot = game->source_numbers[actor.slot];
-    if (slot < QA_Q3_SOURCE_CLIENTS &&
-        qa_actor_id_equal(game->source_entities[slot].actor, actor))
+    uint32_t slot = q3_actor_source_number(game, actor, &game->foreign_clients);
+    if (slot < QA_Q3_SOURCE_CLIENTS)
         return &game->client_actors[slot];
     return &game->actors[actor.slot];
 }
@@ -145,10 +144,11 @@ q3_actor *q3_actor_get(qa_q3_game *game, qa_actor_id actor) {
 }
 const q3_actor *q3_actor_at_const(const qa_q3_game *game, uint32_t host_slot) {
     if (!game || host_slot >= game->capacity) return NULL;
-    uint32_t slot = game->source_numbers[host_slot];
-    if (slot < QA_Q3_SOURCE_CLIENTS &&
-        game->source_entities[slot].actor.registry &&
-        game->source_entities[slot].actor.slot == host_slot)
+    const qa_actor_record *record = qa_actors_at(
+        qa_session_actors(game->options.services.session), host_slot);
+    uint32_t slot = record ? q3_actor_source_number(game, record->id, &game->foreign_clients)
+        : QA_Q3_SOURCE_NONE;
+    if (slot < QA_Q3_SOURCE_CLIENTS)
         return &game->client_actors[slot];
     return &game->actors[host_slot];
 }
@@ -159,9 +159,8 @@ const q3_actor *q3_actor_const(const qa_q3_game *game, qa_actor_id actor) {
     if (!game || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return NULL;
-    uint32_t slot = game->source_numbers[actor.slot];
-    const q3_actor *entry = slot < QA_Q3_SOURCE_CLIENTS &&
-        qa_actor_id_equal(game->source_entities[slot].actor, actor)
+    uint32_t slot = q3_actor_source_number(game, actor, &game->foreign_clients);
+    const q3_actor *entry = slot < QA_Q3_SOURCE_CLIENTS
         ? &game->client_actors[slot] : &game->actors[actor.slot];
     return entry->kind && qa_actor_id_equal(entry->actor, actor) ? entry : NULL;
 }
@@ -254,18 +253,20 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
     game->player_binding_tokens = calloc(game->capacity, sizeof(*game->player_binding_tokens));
     game->item_observations = calloc(game->capacity, sizeof(*game->item_observations));
     game->inventory_owners = calloc(game->capacity, sizeof(*game->inventory_owners));
-    game->source_numbers = malloc(game->capacity * sizeof(*game->source_numbers));
-    if (!game->actors || !game->kamikaze_cooldowns || !game->player_binding_tokens || !game->item_observations || !game->inventory_owners || !game->source_numbers) {
+    if (!game->actors || !game->kamikaze_cooldowns || !game->player_binding_tokens || !game->item_observations || !game->inventory_owners) {
         free(game->actors);
         free(game->kamikaze_cooldowns);
         free(game->player_binding_tokens);
         free(game->item_observations);
         free(game->inventory_owners);
-        free(game->source_numbers);
         free(game);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 actor extensions");
         return false;
     }
+    if (!qa_actor_index_create(&game->foreign_clients,
+            qa_session_actors(options->services.session), error)) goto fail;
+    if (!qa_actor_index_reverse_reserve(&game->foreign_clients,
+            QA_Q3_SOURCE_ENTITIES, error)) goto fail;
     if (!qa_targets_bind_field_keys(qa_session_strings(options->services.session), game->field_keys, error))
         goto fail;
     game->rng = options->random_seed;
@@ -300,7 +301,7 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
 fail:
     (void)qa_physics_dispose(&game->physics, NULL);
     q3_wire_destroy(game);
-    free(game->source_numbers);
+    qa_actor_index_destroy(&game->foreign_clients);
     free(game->kamikaze_cooldowns);
     free(game->player_binding_tokens);
     free(game->item_observations);
@@ -338,7 +339,7 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     q3_map_destroy(game);
     q3_configstrings_clear(game);
     q3_wire_destroy(game);
-    free(game->source_numbers);
+    qa_actor_index_destroy(&game->foreign_clients);
     for(uint32_t i=0;i<game->capacity;++i)
         if(game->item_observations[i].serial)
             qa_pickups_observation_close(game->options.services.pickups,game->item_observations[i],NULL);
@@ -379,9 +380,8 @@ bool qa_q3_set_source_rules(qa_q3_game *game, const qa_q3_rules *rules, qa_error
 int32_t q3_entity_number(const qa_q3_game *game, qa_actor_id actor) {
     if (actor.slot < game->capacity &&
         qa_actors_get(qa_session_actors(game->options.services.session), actor)) {
-        uint32_t slot = game->source_numbers[actor.slot];
-        if (slot < QA_Q3_SOURCE_ENTITIES &&
-            qa_actor_id_equal(game->source_entities[slot].actor, actor))
+        uint32_t slot = q3_actor_source_number(game, actor, &game->foreign_clients);
+        if (slot < QA_Q3_SOURCE_NONE)
             return (int32_t)slot;
     }
     if (game->options.hooks.entity_number)
@@ -637,9 +637,9 @@ bool q3_damage(qa_q3_game *game, qa_actor_id target, qa_actor_id attacker, qa_ac
                qa_q3_weapon weapon, int32_t method, uint32_t flags, float amount, qa_vec3 direction,
                qa_vec3 point, bool radius, qa_damage_outcome *result, qa_error *error) {
     if (!attacker.registry)
-        attacker = game->source_entities[QA_Q3_SOURCE_WORLD].actor;
+        attacker = q3_source_actor(game, QA_Q3_SOURCE_WORLD);
     if (!inflictor.registry)
-        inflictor = game->source_entities[QA_Q3_SOURCE_WORLD].actor;
+        inflictor = q3_source_actor(game, QA_Q3_SOURCE_WORLD);
     qa_actor_owner policy = game->options.owner;
     if (game->options.hooks.combat_provider)
         policy = game->options.hooks.combat_provider(game->options.hooks.context, target, policy);
@@ -777,10 +777,15 @@ void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
             qa_inventory_close_items(game->options.services.inventory, inventory->holdables, NULL);
         *inventory = (q3_inventory_owner){0};
     }
-    q3_actor *entry = q3_actor_storage(game, record.id);
+    size_t foreign;
+    uint32_t source_slot = record.owner == game->options.owner && record.has_source
+        ? record.source_slot : qa_actor_index_find(&game->foreign_clients, record.id, &foreign)
+            ? (uint32_t)foreign : QA_Q3_SOURCE_NONE;
+    q3_actor *entry = source_slot < QA_Q3_SOURCE_CLIENTS
+        ? &game->client_actors[source_slot] : &game->actors[record.id.slot];
     if (qa_actor_id_equal(entry->actor, record.id)) {
         q3_actor retired = *entry;
-        if (game->source_numbers[record.id.slot] >= QA_Q3_SOURCE_CLIENTS)
+        if (source_slot >= QA_Q3_SOURCE_CLIENTS)
             memset(entry, 0, sizeof(*entry));
         if (retired.kind == Q3_ACTOR_MISSILE) {
             q3_missile missile = retired.state.missile;
@@ -816,7 +821,7 @@ void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
         } else if (qa_actor_id_equal(missile->trigger, record.id))
             missile->trigger = (qa_actor_id){0};
     }
-    q3_source_actor_released(game, record.id);
+    q3_source_actor_released(game, record);
 }
 static bool component_begin(void *context, qa_session *session, const qa_source_frame *frame,
                             qa_error *error) {
@@ -871,7 +876,7 @@ static bool component_end(void *context, qa_session *session, const qa_source_fr
         return q3_fail(error, "Q3 frame tail requires its actual source END phase");
     if (game->options.hooks.source_client_end)
         for (uint32_t slot = 0; slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
-            qa_actor_id actor = game->source_entities[slot].actor;
+            qa_actor_id actor = q3_source_actor(game, slot);
             if (!game->source_entities[slot].in_use || !actor.registry ||
                 !qa_actors_get(qa_session_actors(session), actor)) continue;
             if (!game->options.hooks.source_client_end(

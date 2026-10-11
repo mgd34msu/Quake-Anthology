@@ -21,7 +21,8 @@ bool qa_q3_client_bot_state_read(const qa_q3_game *game, uint32_t slot,
                                  qa_bot_source_player_state *out, qa_error *error) {
     if (!game || !out || game->source_restored || slot >= QA_Q3_NATIVE_CLIENTS)
         return q3_fail(error, "Q3 bot observation exceeds its fixed clients");
-    qa_q3_source_binding binding = game->source_entities[slot];
+    qa_q3_source_binding binding;
+    if (!qa_q3_source_binding_read(game, slot, &binding, error)) return false;
     qa_bot_source_player_state value = {.present = binding.in_use,
                                     .has_player = binding.client_slot >= 0};
     if (value.has_player) {
@@ -34,7 +35,7 @@ bool qa_q3_client_bot_state_read(const qa_q3_game *game, uint32_t slot,
         value.last_hurt_mod = player->last_hurt_mod;
     }
     const qa_q3_source_binding *actual = &game->source_entities[slot];
-    if (!qa_actor_id_equal(actual->actor, binding.actor) ||
+    if (!qa_actor_id_equal(q3_source_actor(game, slot), binding.actor) ||
         actual->client_slot != binding.client_slot || actual->in_use != binding.in_use ||
         actual->body_attached != binding.body_attached)
         return q3_fail(error, "Q3 fixed bot client changed during source observation");
@@ -316,7 +317,7 @@ bool qa_q3_client_connect(qa_q3_game *game, qa_actor_id actor, bool bot, qa_erro
     qa_q3_wire_policy zero = {0};
     if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_ALL, &zero, error)) return false;
     if (!q3_actor_get(game, actor) ||
-        !qa_actor_id_equal(game->source_entities[client_slot].actor, actor)) return true;
+        !qa_actor_id_equal(q3_source_actor(game, client_slot), actor)) return true;
     if (bot) {
         uint32_t slot;
         if (!q3_client_slot(game, actor, &slot)) return false;
@@ -348,7 +349,7 @@ bool qa_q3_client_begin_state(qa_q3_game *game, qa_actor_id actor, qa_error *err
     qa_q3_wire_policy zero = {0};
     if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_ALL, &zero, error)) return false;
     entry = q3_actor_get(game, actor);
-    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) return true;
     qa_string_id classname;
     if (!qa_builtin_resource(&game->options.services, "noclass", &classname, error)) return false;
     game->source_entities[slot].classname = classname;

@@ -118,11 +118,13 @@ static bool client_end_frame(application_provider *provider, qa_actor_id actor,
     if (session.team == 3)
         return spectator_end_frame(provider, actor, slot, frame, session, error);
 
-    int32_t water_level, water_type;
-    if (!qa_q3_client_movement_water_read(game, actor,
-        &water_level, &water_type, error)) return false;
+    qa_player_state control = {0};
+    (void)qa_application_control_read(provider->application, actor, &control);
+    int32_t water_type = qa_collision_contents_export(
+        qa_collision_contents_decode(control.water_type,
+            qa_ruleset_descriptors[control.state.kind].family), QA_GAME_Q3, 0);
     bool publish, live;
-    if (!qa_q3_client_end_prepare(game, actor, water_level,
+    if (!qa_q3_client_end_prepare(game, actor, control.water_level,
             water_type, &publish, error) ||
         !client_current(provider, actor, slot, frame, &live, error)) return false;
     if (!live || !publish) return true;

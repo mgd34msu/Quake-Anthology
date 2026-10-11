@@ -172,7 +172,7 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
     qa_actor_id actor;
     if (!q3_spawn_actor(game, &spawn, &actor, error))
         return false;
-    uint32_t source_slot = game->source_numbers[actor.slot];
+    uint32_t source_slot = q3_actor_source_number(game, actor, &game->foreign_clients);
     game->source_entities[source_slot].server_flags = 0x80u;
     game->source_entities[source_slot].owner_number = q3_entity_number(game, owner);
     q3_actor *entry = &game->actors[actor.slot];

@@ -46,7 +46,7 @@ bool q3_schedule_kamikaze(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, q
     qa_actor_id timer;
     if (!q3_spawn_actor(game, &spawn, &timer, error))
         return false;
-    game->source_entities[game->source_numbers[timer.slot]].server_flags |= 1u;
+    game->source_entities[q3_actor_source_number(game, timer, &game->foreign_clients)].server_flags |= 1u;
     game->actors[timer.slot] =
         (q3_actor){.actor = timer,
                    .kind = Q3_ACTOR_KAMIKAZE_TIMER,
@@ -153,7 +153,7 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
     entry = q3_actor_get(game, victim);
     killer = q3_actor_get(game, request->attack.attacker);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || (native_client &&
-        (!qa_actor_id_equal(game->source_entities[victim_slot].actor, victim) ||
+        (!qa_actor_id_equal(q3_source_actor(game, victim_slot), victim) ||
          !game->source_entities[victim_slot].body_attached))) return true;
     if (!killer || killer->kind != Q3_ACTOR_PLAYER || qa_actor_id_equal(victim, killer->actor))
         return true;
@@ -358,7 +358,7 @@ static bool player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry || (native_client &&
-        (!qa_actor_id_equal(game->source_entities[source_slot].actor, actor) ||
+        (!qa_actor_id_equal(q3_source_actor(game, source_slot), actor) ||
          !game->source_entities[source_slot].body_attached)))
         return true;
     if (!native_client) {
@@ -540,7 +540,7 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                          .physics_object = true,
                          .trajectory = source_position}};
     for (uint32_t i = QA_Q3_SOURCE_CLIENTS; i < game->source_count; ++i) {
-        q3_actor *timer = q3_actor_get(game, game->source_entities[i].actor);
+        q3_actor *timer = q3_actor_get(game, q3_source_actor(game, i));
         if (game->source_entities[i].in_use && timer && timer->kind == Q3_ACTOR_KAMIKAZE_TIMER &&
             qa_actor_id_equal(timer->state.kamikaze.attacker, actor)) {
             timer->state.kamikaze.attacker = corpse;

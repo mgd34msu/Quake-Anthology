@@ -555,7 +555,6 @@ typedef struct qa_q3_actor_state {
     bool enemy_source_present;
     bool force_gesture;
     int32_t spawnflags;
-    int32_t water_level, water_type;
     qa_q3_actor_kind kind;
     float alpha;
     union {

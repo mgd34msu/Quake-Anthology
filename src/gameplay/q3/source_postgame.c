@@ -58,7 +58,7 @@ static bool source_entity(qa_q3_game *game, uint32_t slot, qa_q3_entity *out,
 {
     if (slot >= game->source_count)
         return q3_fail(error, "podium reference exceeds actual raw source rows");
-    const q3_actor *entry = q3_actor_const(game, game->source_entities[slot].actor);
+    const q3_actor *entry = q3_actor_const(game, q3_source_actor(game, slot));
     if (postgame_kind(entry)) { *out = entry->state.postgame.entity; return true; }
     qa_q3_wire_visibility visible;
     return qa_q3_wire_entity_read(game, slot, out, &visible, error);
@@ -362,7 +362,7 @@ bool q3_postgame_step(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     int32_t owner_number = game->source_entities[slot].owner_number;
     qa_actor_id owner = owner_number >= 0 && owner_number < (int32_t)QA_Q3_SOURCE_WORLD &&
         game->source_entities[owner_number].in_use
-            ? game->source_entities[owner_number].actor : (qa_actor_id){0};
+            ? q3_source_actor(game, (uint32_t)owner_number) : (qa_actor_id){0};
     qa_trace_query query = {.start = body.origin, .end = destination, .pass_actor = owner,
         .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
         .policy = qa_collision_default_policy(QA_GAME_Q3)};

@@ -169,11 +169,11 @@ bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3
 }
 qa_actor_id q3_portal_destination(qa_q3_game *game, int32_t sequence) {
     for (uint32_t slot = QA_Q3_SOURCE_CLIENTS; slot < game->source_count; ++slot) {
-        qa_q3_source_binding binding = game->source_entities[slot];
-        q3_actor *entry = binding.in_use ? q3_actor_get(game, binding.actor) : NULL;
+        qa_actor_id actor = q3_source_actor(game, slot);
+        q3_actor *entry = game->source_entities[slot].in_use ? q3_actor_get(game, actor) : NULL;
         if (entry && entry->kind == Q3_ACTOR_PORTAL && !entry->state.portal.source &&
             entry->state.portal.sequence == sequence)
-            return binding.actor;
+            return actor;
     }
     return (qa_actor_id){0};
 }
@@ -535,9 +535,8 @@ bool q3_kamikaze_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_vec3 angles = qa_v3(pitch_angle, yaw_angle, 0), previous = entry->state.kamikaze.angles;
     entry->state.kamikaze.angles = angles;
     for (uint32_t slot = 0; slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
-        qa_q3_source_binding binding = game->source_entities[slot];
-        qa_actor_id target = binding.actor;
-        if (!binding.in_use || !q3_actor_get(game, target)) continue;
+        qa_actor_id target = q3_source_actor(game, slot);
+        if (!game->source_entities[slot].in_use || !q3_actor_get(game, target)) continue;
         q3_actor *candidate = q3_actor_get(game, target);
         qa_builtin_actor_traits traits = {0};
         bool described =
@@ -545,7 +544,7 @@ bool q3_kamikaze_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
             game->options.services.actor_traits(game->options.services.context, target, &traits);
         if (!q3_actor_get(game, actor)) return true;
         if (!game->source_entities[slot].in_use ||
-            !qa_actor_id_equal(game->source_entities[slot].actor, target)) continue;
+            !qa_actor_id_equal(q3_source_actor(game, slot), target)) continue;
         if (!described && candidate && candidate->kind == Q3_ACTOR_PLAYER) {
             qa_builtin_player_control control;
             if (!q3_player_control(game, target, &control, error)) return false;

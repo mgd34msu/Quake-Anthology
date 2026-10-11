@@ -116,7 +116,7 @@ struct qa_q3_game {
     q3_client_state clients[QA_Q3_NATIVE_CLIENTS];
     q3_actor client_actors[QA_Q3_NATIVE_CLIENTS];
     qa_q3_source_binding source_entities[QA_Q3_SOURCE_ENTITIES];
-    uint16_t *source_numbers;
+    qa_actor_index foreign_clients;
     uint32_t source_count;
     bool new_session;
     int32_t fry_sound_index;
@@ -142,9 +142,11 @@ bool q3_teleport_event_at(qa_q3_game *, qa_actor_id, qa_vec3, bool entering, qa_
 bool q3_source_body_read(qa_q3_game *, qa_actor_id, qa_body_state *, qa_error *);
 void q3_source_origin_written(qa_q3_game *, qa_actor_id, qa_vec3);
 bool q3_source_origins_idle(const qa_q3_game *);
-void q3_source_actor_released(qa_q3_game *, qa_actor_id);
-bool q3_source_prepare(qa_q3_game *, const qa_q3_checkpoint *, uint16_t **, q3_client_names *, qa_error *);
-void q3_source_commit(qa_q3_game *, const qa_q3_checkpoint *, uint16_t *, const q3_client_names *);
+qa_actor_id q3_source_actor(const qa_q3_game *, uint32_t);
+uint32_t q3_actor_source_number(const qa_q3_game *, qa_actor_id, const qa_actor_index *);
+void q3_source_actor_released(qa_q3_game *, qa_actor_record);
+bool q3_source_prepare(qa_q3_game *, const qa_q3_checkpoint *, qa_actor_index *, q3_client_names *, qa_error *);
+void q3_source_commit(qa_q3_game *, const qa_q3_checkpoint *, qa_actor_index *, const q3_client_names *);
 const char *q3_client_name(const qa_q3_game *, const q3_client_state *);
 void q3_client_name_bytes(const qa_q3_game *, const q3_client_state *, char[QA_Q3_NATIVE_NETNAME]);
 bool q3_client_name_store(qa_q3_game *, q3_client_state *, const char[QA_Q3_NATIVE_NETNAME], qa_error *);

@@ -183,13 +183,25 @@ static bool wire_player(qa_source_save_io *io, qa_q3_player *p)
     return true;
 }
 
-static bool actor_state(qa_source_save_io *io, qa_q3_actor_state *p, qa_q3_player_motion *motion)
+static bool actor_state(qa_source_save_io *io, qa_q3_game *game,
+                        qa_q3_actor_state *p, qa_q3_player_motion *motion)
 {
     FIELD(actor, p->actor); ENUM(p->kind, Q3_ACTOR_VICTORY_MODEL);
     FIELD(actor, p->enemy); FIELD(bool, p->enemy_source_present); FIELD(u32, p->enemy_source_slot);
     FIELD(bool, p->force_gesture);
     FIELD(i32, p->spawnflags);
-    FIELD(i32, p->water_level); FIELD(i32, p->water_type);
+    int32_t legacy_water_level = 0, legacy_water_type = 0;
+    if (io->direction == QA_SOURCE_SAVE_WRITE && p->kind == Q3_ACTOR_PLAYER) {
+        qa_builtin_player_control control;
+        if (q3_player_control(game, p->actor, &control, NULL) && control.player) {
+            legacy_water_level = control.player->water_level;
+            qa_game_family family = qa_ruleset_descriptors[control.player->state.kind].family;
+            legacy_water_type = qa_collision_contents_export(
+                qa_collision_contents_decode(control.player->water_type, family),
+                QA_GAME_Q3, 0);
+        }
+    }
+    FIELD(i32, legacy_water_level); FIELD(i32, legacy_water_type);
     FIELD(f32, p->alpha);
     switch (p->kind) {
     case Q3_ACTOR_PODIUM: case Q3_ACTOR_VICTORY_MODEL:
@@ -387,7 +399,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
         FIELD(bool, client->rule.predict_item_pickup); FIELD(bool, client->rule.pmove_fixed);
         FIELD(bool, client->rule.team_info);
         FIELD(bool, client->rule.ready_to_exit);
-        if (!actor_state(io, &p->source_clients[i], &p->source_player_motions[i]) ||
+        if (!actor_state(io, game, &p->source_clients[i], &p->source_player_motions[i]) ||
             p->source_clients[i].kind != Q3_ACTOR_PLAYER)
             return save_fail(io, "invalid Q3 retained source client");
     }
@@ -403,7 +415,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
         p->actor_player_motions = allocate(io, p->actor_count, sizeof(*p->actor_player_motions));
         if (!p->actors || !p->actor_player_motions) return false;
     }
-    for (size_t i = 0; i < p->actor_count; ++i) if (!actor_state(io, &p->actors[i], &p->actor_player_motions[i])) return false;
+    for (size_t i = 0; i < p->actor_count; ++i) if (!actor_state(io, game, &p->actors[i], &p->actor_player_motions[i])) return false;
     if (!qa_source_save_count(io, &p->cooldown_count, game->capacity)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && p->cooldown_count) {
         p->kamikaze_cooldowns = allocate(io, p->cooldown_count, sizeof(*p->kamikaze_cooldowns));
@@ -635,7 +647,7 @@ bool qa_q3_game_restore(qa_q3_game *game, qa_bytes input, qa_error *error)
         !qa_world_idle(game->options.services.world) || !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 portable restore requires an idle candidate");
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
-        if (game->source_entities[i].actor.registry)
+        if (q3_source_actor(game, i).registry)
             return q3_fail(error, "Q3 portable restore requires an empty physical source candidate");
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->actors[i].kind != Q3_ACTOR_NONE || game->player_binding_tokens[i] ||

@@ -535,7 +535,7 @@ static bool map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
         if (!worldspawn(game, fields, error))
             return false;
         *out = (qa_q3_map_spawn_result){.status = QA_Q3_MAP_WORLD,
-            .actor = game->source_entities[QA_Q3_SOURCE_WORLD].actor,
+            .actor = q3_source_actor(game, QA_Q3_SOURCE_WORLD),
             .classname = game->source_entities[QA_Q3_SOURCE_WORLD].classname};
         return true;
     }
@@ -696,7 +696,7 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
         return q3_map_fail(error, "invalid Q3 map post-spawn phase");
     size_t count = 0;
     for (uint32_t i = 0; i < game->source_count; ++i)
-        if (q3_map_get(game, game->source_entities[i].actor))
+        if (q3_map_get(game, q3_source_actor(game, i)))
             ++count;
     qa_q3_map_actor_state **ordered = count ? malloc(count * sizeof(*ordered)) : NULL;
     if (count && !ordered) {
@@ -705,7 +705,7 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
     }
     size_t n = 0;
     for (uint32_t i = 0; i < game->source_count; ++i) {
-        qa_q3_map_actor_state *state = q3_map_get(game, game->source_entities[i].actor);
+        qa_q3_map_actor_state *state = q3_map_get(game, q3_source_actor(game, i));
         if (state)
             ordered[n++] = state;
     }

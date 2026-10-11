@@ -180,7 +180,8 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
     memcpy(saved.memory.pool, game->memory.pool, saved.memory.allocated_bytes);
     memcpy(saved.body_queue, game->body_queue, sizeof(saved.body_queue));
     memcpy(saved.podium_players, game->podium_players, sizeof(saved.podium_players));
-    memcpy(saved.source_entities, game->source_entities, sizeof(saved.source_entities));
+    for (uint32_t slot = 0; slot < QA_Q3_SOURCE_ENTITIES; ++slot)
+        if (!qa_q3_source_binding_read(game, slot, &saved.source_entities[slot], error)) return false;
     for (uint32_t i = 0; i < QA_Q3_NATIVE_CLIENTS; ++i)
         q3_client_projection(game, &game->clients[i], &saved.clients[i]);
     memcpy(saved.source_clients, game->client_actors, sizeof(saved.source_clients));
@@ -191,18 +192,18 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
             (saved.clients[i].rule.has_followed_player &&
              !q3_followed_player_saved_valid(game, &saved.clients[i].rule.followed_player)))
             return q3_fail(error, "Q3 client checkpoint has invalid retained source PS");
-    uint16_t *source_numbers = NULL;
+    qa_actor_index foreign_clients = {0};
     q3_client_names source_names;
-    if (!q3_source_prepare((qa_q3_game *)game, &saved, &source_numbers, &source_names, error)) return false;
+    if (!q3_source_prepare((qa_q3_game *)game, &saved, &foreign_clients, &source_names, error)) return false;
     for (uint32_t i = 0; i < game->capacity; ++i) {
         const q3_actor *actor = q3_actor_const(game, game->actors[i].actor);
         if (!actor) continue;
-        uint32_t source_slot = source_numbers[actor->actor.slot];
-        if (source_slot == UINT16_MAX && actor->kind == Q3_ACTOR_PLAYER &&
+        uint32_t source_slot = q3_actor_source_number(game, actor->actor, &foreign_clients);
+        if (source_slot == QA_Q3_SOURCE_NONE && actor->kind == Q3_ACTOR_PLAYER &&
             actor->state.player.selections && actor_valid(game, actor, error)) continue;
         if (source_slot < QA_Q3_SOURCE_CLIENTS || source_slot >= QA_Q3_SOURCE_WORLD ||
             !actor_valid(game, actor, error)) {
-            free(source_numbers);
+            qa_actor_index_destroy(&foreign_clients);
             return q3_fail(error, "Q3 capture has invalid actual source actor state");
         }
         const qa_q3_source_binding *binding = &saved.source_entities[source_slot];
@@ -212,11 +213,11 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
              : binding->client_slot != -1) ||
             ((model || actor->kind == Q3_ACTOR_PODIUM) &&
              actor->state.postgame.entity.number != (int32_t)source_slot)) {
-            free(source_numbers);
+            qa_actor_index_destroy(&foreign_clients);
             return q3_fail(error, "Q3 capture has invalid borrowed source client identity");
         }
     }
-    free(source_numbers);
+    qa_actor_index_destroy(&foreign_clients);
     for (size_t i = 0; i < 3; ++i) {
         uint32_t podium = saved.podium_players[i];
         if (podium != QA_Q3_SOURCE_NONE &&
@@ -294,11 +295,11 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
              !q3_followed_player_saved_valid(game, &saved->clients[i].rule.followed_player)))
             return q3_fail(error, "Q3 client restore has invalid retained source PS");
     qa_string_id *configstrings = NULL;
-    uint16_t *source_numbers = NULL;
+    qa_actor_index foreign_clients = {0};
     q3_client_names source_names;
     q3_wire_state *wire = NULL;
     qa_q3_shader_remap_state shader_remaps;
-    if (!q3_source_prepare(game, saved, &source_numbers, &source_names, error)) return false;
+    if (!q3_source_prepare(game, saved, &foreign_clients, &source_names, error)) return false;
     if (!q3_configstrings_prepare(game, saved, &configstrings, error))
         goto invalid_strings;
     if (!q3_shader_remaps_prepare(&saved->shader_remaps, &shader_remaps, error) ||
@@ -315,7 +316,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
         free(actors);
         free(cooldowns);
         q3_configstrings_discard(configstrings);
-        free(source_numbers);
+        qa_actor_index_destroy(&foreign_clients);
         q3_wire_discard(wire);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 restore candidate");
         return false;
@@ -326,15 +327,15 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
             !actor_valid(game, actor, error))
             goto invalid;
         actors[actor->actor.slot] = *actor;
-        if (source_numbers[actor->actor.slot] == UINT16_MAX &&
+        uint32_t source_slot = q3_actor_source_number(game, actor->actor, &foreign_clients);
+        if (source_slot == QA_Q3_SOURCE_NONE &&
             actor->kind == Q3_ACTOR_PLAYER && actor->state.player.selections) continue;
-        if (source_numbers[actor->actor.slot] < QA_Q3_SOURCE_CLIENTS ||
-            source_numbers[actor->actor.slot] >= QA_Q3_SOURCE_WORLD) goto invalid;
+        if (source_slot < QA_Q3_SOURCE_CLIENTS || source_slot >= QA_Q3_SOURCE_WORLD) goto invalid;
         if (actor->kind == Q3_ACTOR_TEMPORARY &&
-            actor->state.temporary.entity.number != source_numbers[actor->actor.slot]) goto invalid;
-        const qa_q3_source_binding *binding = &saved->source_entities[source_numbers[actor->actor.slot]];
+            actor->state.temporary.entity.number != (int32_t)source_slot) goto invalid;
+        const qa_q3_source_binding *binding = &saved->source_entities[source_slot];
         if (actor->kind == Q3_ACTOR_PODIUM || actor->kind == Q3_ACTOR_VICTORY_MODEL) {
-            if (actor->state.postgame.entity.number != source_numbers[actor->actor.slot] ||
+            if (actor->state.postgame.entity.number != (int32_t)source_slot ||
                 (actor->kind == Q3_ACTOR_PODIUM ? binding->client_slot != -1 :
                  binding->client_slot < 0)) goto invalid;
             if (actor->kind == Q3_ACTOR_VICTORY_MODEL &&
@@ -363,12 +364,12 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
         qa_actor_id body = saved->body_queue[i];
         if (!reference_valid(game, body, error))
             goto invalid;
+        uint32_t source_slot = q3_actor_source_number(game, body, &foreign_clients);
         if (qa_actors_get(qa_session_actors(game->options.services.session), body) &&
             (body.slot >= game->capacity || actors[body.slot].kind != Q3_ACTOR_CORPSE ||
              !qa_actor_id_equal(actors[body.slot].actor, body) ||
-             source_numbers[body.slot] < QA_Q3_SOURCE_CLIENTS ||
-             source_numbers[body.slot] >= saved->source_count ||
-             !saved->source_entities[source_numbers[body.slot]].never_free))
+             source_slot < QA_Q3_SOURCE_CLIENTS || source_slot >= saved->source_count ||
+             !saved->source_entities[source_slot].never_free))
             goto invalid;
         if (saved->source_entities[QA_Q3_SOURCE_WORLD].actor.registry &&
             !qa_actors_get(qa_session_actors(game->options.services.session), body)) goto invalid;
@@ -391,7 +392,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
     memset(game->memory.pool + saved->memory.allocated_bytes, 0,
            sizeof(game->memory.pool) - saved->memory.allocated_bytes);
     game->options.max_clients = saved->max_clients;
-    q3_source_commit(game, saved, source_numbers, &source_names);
+    q3_source_commit(game, saved, &foreign_clients, &source_names);
     game->new_session = saved->new_session;
     game->fry_sound_index = saved->fry_sound_index;
     game->portal_sequence = saved->portal_sequence;
@@ -426,7 +427,7 @@ invalid:
     q3_configstrings_discard(configstrings);
     q3_wire_discard(wire);
 invalid_strings:
-    free(source_numbers);
+    qa_actor_index_destroy(&foreign_clients);
     return q3_fail(error, "invalid Q3 checkpoint state or references");
 }
 bool qa_q3_checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved, qa_error *error) {

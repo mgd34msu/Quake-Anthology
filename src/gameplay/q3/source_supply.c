@@ -52,8 +52,8 @@ bool qa_q3_bot_supply_preview(qa_q3_game *game,qa_actor_id pickup,qa_actor_id re
     if(!entry || entry->kind!=Q3_ACTOR_ITEM ||
        !q3_source_client_pointer(game,recipient,&client) ||
        !game->source_entities[item_slot].in_use || !game->source_entities[player_slot].in_use ||
-       !qa_actor_id_equal(game->source_entities[item_slot].actor,pickup) ||
-       !qa_actor_id_equal(game->source_entities[player_slot].actor,recipient)) goto discard;
+       !qa_actor_id_equal(q3_source_actor(game, item_slot),pickup) ||
+       !qa_actor_id_equal(q3_source_actor(game, player_slot),recipient)) goto discard;
     *found=true;
     source=q3_wire_entity(game,pickup);
     qa_q3_wire_body body;

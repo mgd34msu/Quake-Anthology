@@ -52,7 +52,7 @@ void q3_source_state_reset(qa_q3_game *game) {
     memset(game->source_entities, 0, sizeof(game->source_entities));
     for (uint32_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
         game->source_entities[i].client_slot = i < game->options.max_clients ? (int32_t)i : -1;
-    memset(game->source_numbers, 0xff, game->capacity * sizeof(*game->source_numbers));
+    qa_actor_index_clear(&game->foreign_clients);
     game->source_count = QA_Q3_SOURCE_CLIENTS;
 }
 bool qa_q3_source_entity_count(const qa_q3_game *game, uint32_t *out, qa_error *error) {
@@ -153,17 +153,37 @@ bool qa_q3_source_binding_read(const qa_q3_game *game, uint32_t slot,
     if (!game || !out || slot >= QA_Q3_SOURCE_ENTITIES)
         return q3_fail(error, "Q3 entity observation exceeds the physical source rows");
     *out = game->source_entities[slot];
+    out->actor = q3_source_actor(game, slot);
     return true;
+}
+qa_actor_id q3_source_actor(const qa_q3_game *game, uint32_t slot) {
+    if (!game || slot >= QA_Q3_SOURCE_ENTITIES) return (qa_actor_id){0};
+    const qa_actor_record *record = qa_actors_at_source(
+        qa_session_actors(game->options.services.session), game->options.owner, slot);
+    return record ? record->id : qa_actor_index_at_source(&game->foreign_clients, slot);
+}
+uint32_t q3_actor_source_number(const qa_q3_game *game, qa_actor_id actor,
+                          const qa_actor_index *foreign_clients) {
+    if (!game || actor.slot >= game->capacity) return QA_Q3_SOURCE_NONE;
+    const qa_actor_record *record = qa_actors_get(
+        qa_session_actors(game->options.services.session), actor);
+    if (!record) return QA_Q3_SOURCE_NONE;
+    if (record->owner == game->options.owner && record->has_source)
+        return record->source_slot;
+    size_t slot;
+    return qa_actor_index_find(foreign_clients, actor, &slot)
+        ? (uint32_t)slot : QA_Q3_SOURCE_NONE;
 }
 bool qa_q3_source_classname_read(const qa_q3_game *game, uint32_t slot,
                                  const char **out, qa_error *error) {
     if (!game || !out || slot >= QA_Q3_SOURCE_ENTITIES)
         return q3_fail(error, "Q3 classname observation exceeds the source rows");
     const qa_q3_source_binding *binding = &game->source_entities[slot];
-    if (binding->actor.registry && !qa_actors_get(
-            qa_session_actors(game->options.services.session), binding->actor))
+    qa_actor_id actor = q3_source_actor(game, slot);
+    if (actor.registry && !qa_actors_get(
+            qa_session_actors(game->options.services.session), actor))
         return q3_fail(error, "Q3 classname has a stale source generation");
-    const q3_actor *entry = q3_actor_const(game, binding->actor);
+    const q3_actor *entry = q3_actor_const(game, actor);
     if (entry && entry->kind == Q3_ACTOR_VICTORY_MODEL) {
         if (binding->client_slot < 0 || binding->client_slot >= (int32_t)QA_Q3_NATIVE_CLIENTS)
             return q3_fail(error, "Q3 victory classname lost its borrowed client pointer");
@@ -179,9 +199,8 @@ bool qa_q3_source_actor_slot(const qa_q3_game *game, qa_actor_id actor,
     if (!game || !out || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return q3_fail(error, "Q3 source entity has no current actor");
-    uint32_t slot = game->source_numbers[actor.slot];
-    if (slot >= QA_Q3_SOURCE_ENTITIES ||
-        !qa_actor_id_equal(game->source_entities[slot].actor, actor))
+    uint32_t slot = q3_actor_source_number(game, actor, &game->foreign_clients);
+    if (slot >= QA_Q3_SOURCE_NONE)
         return q3_fail(error, "Actor has no physical Q3 source row");
     *out = slot;
     return true;
@@ -200,20 +219,28 @@ static bool bind(qa_q3_game *game, uint32_t slot, qa_actor_id actor, qa_error *e
         !qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return q3_fail(error, "Q3 physical row admission needs a current canonical actor");
     qa_q3_source_binding *row = &game->source_entities[slot];
-    if (qa_actor_id_equal(row->actor, actor)) return true;
-    if (row->actor.registry || game->source_numbers[actor.slot] != UINT16_MAX)
+    const qa_actor_record *record = qa_actors_get(
+        qa_session_actors(game->options.services.session), actor);
+    qa_actor_id current = q3_source_actor(game, slot);
+    if (row->body_attached && qa_actor_id_equal(current, actor)) return true;
+    uint32_t bound = q3_actor_source_number(game, actor, &game->foreign_clients);
+    if ((current.registry && !qa_actor_id_equal(current, actor)) ||
+        (bound != QA_Q3_SOURCE_NONE && bound != slot))
         return q3_fail(error, "Q3 physical row or actor is already admitted");
+    if (record->owner == game->options.owner) {
+        if (!record->has_source && !qa_actors_bind_source(
+                qa_session_actor_registry(game->options.services.session), actor, slot, error)) return false;
+    } else qa_actor_index_put(&game->foreign_clients, actor, slot);
     *row = slot < QA_Q3_SOURCE_CLIENTS
-        ? (qa_q3_source_binding){.actor = actor, .server_flags = row->server_flags,
+        ? (qa_q3_source_binding){.server_flags = row->server_flags,
             .number = row->number, .owner_number = row->owner_number,
             .classname = row->classname, .in_use = row->in_use,
             .client_slot = (int32_t)slot, .body_attached = true}
-        : (qa_q3_source_binding){.actor = actor, .number = (int32_t)slot,
+        : (qa_q3_source_binding){.number = (int32_t)slot,
             .owner_number = QA_Q3_SOURCE_NONE, .in_use = true,
             .free_time_ms = row->free_time_ms, .classname = game->source_noclass,
             .server_flags = row->server_flags, .never_free = row->never_free,
             .client_slot = row->client_slot, .body_attached = true};
-    game->source_numbers[actor.slot] = (uint16_t)slot;
     game->source_actor_ran[slot] = false;
     if (slot < QA_Q3_SOURCE_CLIENTS)
         game->clients[slot].player = qa_actors_player(
@@ -249,7 +276,7 @@ bool q3_source_client_body_ensure(qa_q3_game *game, uint32_t slot,
     if (!game || !out || slot >= game->options.max_clients || game->source_restored)
         return q3_fail(error, "Q3 PS body write exceeds its fixed clients");
     qa_q3_source_binding *row = &game->source_entities[slot];
-    qa_actor_id actor = row->actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!actor.registry) {
         qa_string_id definition;
         if (!qa_builtin_resource(&game->options.services, "q3:player", &definition, error) ||
@@ -264,7 +291,7 @@ bool q3_source_client_body_ensure(qa_q3_game *game, uint32_t slot,
     if (!row->body_attached &&
         !qa_world_body_write(game->options.services.world, actor, &(qa_body_state){0}, error))
         return false;
-    if (!qa_actor_id_equal(game->source_entities[slot].actor, actor))
+    if (!qa_actor_id_equal(q3_source_actor(game, slot), actor))
         return q3_fail(error, "Q3 fixed PS body changed during allocation");
     game->source_entities[slot].body_attached = true;
     *out = actor;
@@ -277,10 +304,11 @@ bool q3_source_row_body_ensure(qa_q3_game *game, uint32_t slot,
         return q3_fail(error, "Q3 retained row body write exceeds its source extent");
     qa_q3_source_binding saved = game->source_entities[slot];
     q3_wire_entity_source source = *q3_wire_entity_slot(game, slot);
-    if (saved.actor.registry) {
-        if (!qa_actors_get(qa_session_actors(game->options.services.session), saved.actor))
+    qa_actor_id current = q3_source_actor(game, slot);
+    if (current.registry) {
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), current))
             return q3_fail(error, "Q3 retained row body write has a stale physical actor");
-        *out = saved.actor;
+        *out = current;
         return true;
     }
     qa_string_id definition;
@@ -292,7 +320,6 @@ bool q3_source_row_body_ensure(qa_q3_game *game, uint32_t slot,
     if (!bind(game, slot, actor, error)) return q3_rollback_spawn(game, actor, error);
     *q3_wire_entity_slot(game, slot) = source;
     game->source_entities[slot] = saved;
-    game->source_entities[slot].actor = actor;
     game->source_entities[slot].body_attached = true;
     if (!source_components_create(game, actor, error) ||
         !q3_wire_entity_ready(game, actor, error))
@@ -304,11 +331,11 @@ bool qa_q3_source_physics_object_read(const qa_q3_game *game, uint32_t slot,
                                       bool *out, qa_error *error) {
     if (!game || !out || slot >= QA_Q3_SOURCE_NONE || game->source_restored)
         return q3_fail(error, "Q3 physicsObject observation exceeds its actual source rows");
-    const qa_q3_source_binding *binding = &game->source_entities[slot];
-    if (binding->actor.registry && !qa_actors_get(
-            qa_session_actors(game->options.services.session), binding->actor))
+    qa_actor_id actor = q3_source_actor(game, slot);
+    if (actor.registry && !qa_actors_get(
+            qa_session_actors(game->options.services.session), actor))
         return q3_fail(error, "Q3 physicsObject observation has a stale source generation");
-    const q3_actor *entry = q3_actor_const(game, binding->actor);
+    const q3_actor *entry = q3_actor_const(game, actor);
     *out = entry && ((entry->kind == Q3_ACTOR_CORPSE && entry->state.corpse.physics_object) ||
         ((entry->kind == Q3_ACTOR_PODIUM || entry->kind == Q3_ACTOR_VICTORY_MODEL) &&
          entry->state.postgame.physics_object));
@@ -318,11 +345,11 @@ bool qa_q3_source_dropped_read(const qa_q3_game *game, uint32_t slot,
                                bool *out, qa_error *error) {
     if (!game || !out || slot >= QA_Q3_SOURCE_NONE || game->source_restored)
         return q3_fail(error, "Q3 dropped flag read exceeds its physical source rows");
-    const qa_q3_source_binding *binding = &game->source_entities[slot];
-    if (binding->actor.registry && !qa_actors_get(
-            qa_session_actors(game->options.services.session), binding->actor))
+    qa_actor_id actor = q3_source_actor(game, slot);
+    if (actor.registry && !qa_actors_get(
+            qa_session_actors(game->options.services.session), actor))
         return q3_fail(error, "Q3 dropped flag read has a stale source generation");
-    const q3_actor *entry = q3_actor_const(game, binding->actor);
+    const q3_actor *entry = q3_actor_const(game, actor);
     *out = entry && entry->kind == Q3_ACTOR_ITEM && entry->state.item.spawn.dropped;
     return true;
 }
@@ -357,11 +384,14 @@ bool qa_q3_source_bind_world(qa_q3_game *game, qa_actor_id actor, qa_error *erro
         return q3_fail(error, "Q3 world admission conflicts with source restoration");
     return bind(game, QA_Q3_SOURCE_WORLD, actor, error);
 }
-void q3_source_actor_released(qa_q3_game *game, qa_actor_id actor) {
+void q3_source_actor_released(qa_q3_game *game, qa_actor_record record) {
+    qa_actor_id actor = record.id;
     if (!game || actor.slot >= game->capacity) return;
-    uint32_t slot = game->source_numbers[actor.slot];
-    if (slot >= QA_Q3_SOURCE_ENTITIES ||
-        !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return;
+    size_t foreign;
+    uint32_t slot = record.owner == game->options.owner && record.has_source
+        ? record.source_slot : qa_actor_index_find(&game->foreign_clients, actor, &foreign)
+            ? (uint32_t)foreign : QA_Q3_SOURCE_NONE;
+    if (slot >= QA_Q3_SOURCE_NONE) return;
     uint32_t flags = game->source_entities[slot].server_flags;
     int32_t number = game->source_entities[slot].number;
     int32_t owner = game->source_entities[slot].owner_number;
@@ -380,7 +410,7 @@ void q3_source_actor_released(qa_q3_game *game, qa_actor_id actor) {
         .owner_number = slot < QA_Q3_SOURCE_CLIENTS ? owner : 0,
         .classname = slot < QA_Q3_SOURCE_CLIENTS ? classname : game->source_freed,
         .client_slot = slot < QA_Q3_SOURCE_CLIENTS ? client_slot : -1};
-    game->source_numbers[actor.slot] = UINT16_MAX;
+    qa_actor_index_remove(&game->foreign_clients, actor);
     if (slot < QA_Q3_SOURCE_CLIENTS) game->client_actors[slot].actor = (qa_actor_id){0};
 }
 
@@ -408,7 +438,7 @@ bool q3_source_level_init(qa_q3_game *game, qa_error *error) {
         qa_actor_id actor;
         if (!q3_spawn_actor(game, &(qa_builtin_spawn){.owner = game->options.owner,
                 .definition = body_name}, &actor, error)) return false;
-        uint32_t slot = game->source_numbers[actor.slot];
+        uint32_t slot = q3_actor_source_number(game, actor, &game->foreign_clients);
         game->source_entities[slot].never_free = true;
         game->actors[actor.slot] = (q3_actor){.actor = actor,
             .kind = Q3_ACTOR_CORPSE, .alpha = 1};
@@ -457,7 +487,7 @@ bool q3_spawn_raw_actor(qa_q3_game *game, qa_string_id definition,
         return q3_fail(error, "Q3 raw entity allocation needs its actual source owner");
     uint32_t slot;
     if (!allocate_slot(game, &slot, error)) return false;
-    qa_actor_id actor = game->source_entities[slot].actor;
+    qa_actor_id actor = q3_source_actor(game, slot);
     if (!actor.registry) {
         if (!qa_session_allocate(game->options.services.session, game->options.owner,
                 definition, true, slot, &actor, error)) return false;
@@ -465,7 +495,7 @@ bool q3_spawn_raw_actor(qa_q3_game *game, qa_string_id definition,
         if (!source_components_create(game, actor, error))
             return q3_rollback_spawn(game, actor, error);
     } else if (!qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
-               game->source_numbers[actor.slot] != slot)
+               q3_actor_source_number(game, actor, &game->foreign_clients) != slot)
         return q3_fail(error, "Q3 raw source row has a stale physical actor");
     qa_q3_source_binding *row = &game->source_entities[slot];
     row->in_use = true;
@@ -484,7 +514,7 @@ bool q3_spawn_actor(qa_q3_game *game, const qa_builtin_spawn *input,
     qa_builtin_spawn spawn = *input;
     qa_actor_id actor;
     if (!q3_spawn_raw_actor(game, spawn.definition, &actor, error)) return false;
-    uint32_t slot = game->source_numbers[actor.slot];
+    uint32_t slot = q3_actor_source_number(game, actor, &game->foreign_clients);
     if (spawn.definition) game->source_entities[slot].classname = spawn.definition;
     if (spawn.collision && qa_actor_reference_present(spawn.collision->owner))
         game->source_entities[slot].owner_number = spawn.collision->owner.kind == QA_ACTOR_REFERENCE_SOURCE &&
@@ -505,15 +535,15 @@ bool q3_spawn_actor(qa_q3_game *game, const qa_builtin_spawn *input,
     return true;
 }
 bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
-    uint16_t **out, q3_client_names *names, qa_error *error) {
+    qa_actor_index *out, q3_client_names *names, qa_error *error) {
     if (saved->source_count < QA_Q3_SOURCE_CLIENTS || saved->source_count > QA_Q3_SOURCE_WORLD)
         return q3_fail(error, "Invalid Q3 physical entity count");
-    uint16_t *numbers = malloc(game->capacity * sizeof(*numbers));
-    if (!numbers) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 physical source index");
+    if (!qa_actor_index_create(out, qa_session_actors(game->options.services.session), error))
+        return false;
+    if (!qa_actor_index_reverse_reserve(out, QA_Q3_SOURCE_ENTITIES, error)) {
+        qa_actor_index_destroy(out);
         return false;
     }
-    memset(numbers, 0xff, game->capacity * sizeof(*numbers));
     for (uint32_t slot = 0; slot < QA_Q3_SOURCE_ENTITIES; ++slot) {
         const qa_q3_source_binding *row = &saved->source_entities[slot];
         if (row->client_slot < -1 || row->client_slot >= (int32_t)QA_Q3_SOURCE_CLIENTS ||
@@ -534,16 +564,15 @@ bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
         }
         const qa_actor_record *record = qa_actors_get(
             qa_session_actors(game->options.services.session), row->actor);
+        size_t previous;
         if (!record || row->actor.slot >= game->capacity ||
-            numbers[row->actor.slot] != UINT16_MAX ||
+            qa_actor_index_find(out, row->actor, &previous) ||
             (slot < QA_Q3_SOURCE_CLIENTS && slot >= saved->max_clients) ||
-            (slot >= QA_Q3_SOURCE_CLIENTS && slot < QA_Q3_SOURCE_WORLD &&
-             (record->owner != game->options.owner || !record->has_source ||
-              record->source_slot != slot)) ||
-            (slot == QA_Q3_SOURCE_WORLD &&
-             (record->owner != game->options.owner || !record->has_source ||
-              record->source_slot != slot))) goto invalid;
-        numbers[row->actor.slot] = (uint16_t)slot;
+            (record->owner == game->options.owner &&
+             (!record->has_source || record->source_slot != slot)) ||
+            (slot >= QA_Q3_SOURCE_CLIENTS && record->owner != game->options.owner)) goto invalid;
+        if (record->owner != game->options.owner)
+            qa_actor_index_put(out, row->actor, slot);
     }
     for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
         const qa_q3_native_client *client = &saved->clients[slot];
@@ -568,22 +597,24 @@ bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
         if (!qa_strings_intern(strings, (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME},
                 &names->source[slot], error) ||
             !qa_strings_intern_cstr(strings, name, &names->player[slot], error)) {
-            free(numbers);
+            qa_actor_index_destroy(out);
             return false;
         }
     }
-    *out = numbers;
     return true;
 invalid:
-    free(numbers);
+    qa_actor_index_destroy(out);
     return q3_fail(error, "Invalid Q3 physical entity or retained client continuation");
 }
 void q3_source_commit(qa_q3_game *game, const qa_q3_checkpoint *saved,
-    uint16_t *numbers, const q3_client_names *names) {
-    free(game->source_numbers);
-    game->source_numbers = numbers;
+    qa_actor_index *foreign_clients, const q3_client_names *names) {
+    qa_actor_index_destroy(&game->foreign_clients);
+    game->foreign_clients = *foreign_clients;
+    *foreign_clients = (qa_actor_index){0};
     game->source_count = saved->source_count;
     memcpy(game->source_entities, saved->source_entities, sizeof(game->source_entities));
+    for (uint32_t slot = 0; slot < QA_Q3_SOURCE_ENTITIES; ++slot)
+        game->source_entities[slot].actor = (qa_actor_id){0};
     for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
         qa_actor_player *player = qa_actors_player(qa_session_actors(game->options.services.session),
             saved->source_entities[slot].actor);

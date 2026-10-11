@@ -1170,7 +1170,7 @@ bool q3_source_initial_death(qa_q3_game *game, const qa_damage_outcome *outcome,
     if (q3_actor_get(game, hook) && !qa_session_release(game->options.services.session, hook, error))
         return false;
     entry = q3_actor_get(game, actor);
-    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) return true;
     q3_actor *mine = q3_actor_get(game, entry->state.player.attached_mine);
     q3_wire_entity_source *source = q3_wire_entity(game, actor);
     if (!source) return q3_fail(error, "Q3 source death lost its entity fields");
@@ -1185,7 +1185,7 @@ bool q3_source_initial_death(qa_q3_game *game, const qa_damage_outcome *outcome,
     if (!qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_TYPE, &policy, error))
         return false;
     entry = q3_actor_get(game, actor);
-    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) return true;
     if (entry->state.player.selections & QA_Q3_CHARACTER)
         game->death_continuations[slot] = (q3_death_continuation){.actor = actor,
             .sequence = outcome->request.attack.sequence, .time_ns = outcome->request.attack.time_ns,
@@ -1201,21 +1201,21 @@ bool q3_source_death_effects(qa_q3_game *game, const qa_damage_outcome *outcome,
     if (!qa_q3_native_client_slot(game, actor, &slot, NULL)) return true;
     if (!q3_death_rewards(game, actor, &outcome->request, error)) return false;
     q3_actor *entry = q3_actor_get(game, actor);
-    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) return true;
     if (game->options.hooks.death &&
         !game->options.hooks.death(game->options.hooks.context, actor, &outcome->request, error))
         return false;
     entry = q3_actor_get(game, actor);
-    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) return true;
     if (game->options.hooks.source_frag_bonuses &&
         !game->options.hooks.source_frag_bonuses(game->options.hooks.context,
             actor, outcome->request.attack.attacker, error)) return false;
     entry = q3_actor_get(game, actor);
-    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor) ||
+    if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor) ||
         !game->source_entities[slot].body_attached) return true;
     if (!qa_q3_player_death_cleanup(game, actor, error)) return false;
     entry = q3_actor_get(game, actor);
-    if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) return true;
+    if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) return true;
     entry->state.player.respawn_after = q3_add_time(game->now_ms, 1700);
     q3_wire_entity_source *source = q3_wire_entity(game, actor);
     if (!source) return q3_fail(error, "Q3 source death lost its native entity state");
@@ -1698,7 +1698,7 @@ bool qa_q3_client_events(qa_q3_game *game, qa_actor_id actor, uint32_t old_seque
     oldest = q3_sub_time(sequence, 2);
     if (old < oldest) old = oldest;
     for (; old < sequence; old = q3_add_time(old, 1)) {
-        if (!qa_actor_id_equal(game->source_entities[slot].actor, actor) ||
+        if (!qa_actor_id_equal(q3_source_actor(game, slot), actor) ||
             !q3_actor_get(game, actor)) break;
         player = &game->client_actors[slot].state.player;
         int32_t event = player->events[(uint32_t)old & 1u];
@@ -1716,7 +1716,7 @@ bool qa_q3_client_events(qa_q3_game *game, qa_actor_id actor, uint32_t old_seque
             } else {
                 bool allowed = game->options.hooks.primary_attack_allowed(
                     game->options.hooks.context, actor);
-                if (allowed && qa_actor_id_equal(game->source_entities[slot].actor, actor) &&
+                if (allowed && qa_actor_id_equal(q3_source_actor(game, slot), actor) &&
                     q3_actor_get(game, actor))
                     okay = qa_q3_fire_weapon(game, actor, game->client_actors[slot].state.player.weapon, error);
             }
@@ -1770,15 +1770,6 @@ bool qa_q3_client_movement_complete(qa_q3_game *game, qa_actor_id actor, int32_t
     return true;
 }
 
-bool qa_q3_client_movement_water(qa_q3_game *game, qa_actor_id actor, int32_t level,
-                                 int32_t type, qa_error *error) {
-    uint32_t slot;
-    if (!game || !source_command_active(game, actor) || level < 0 || level > 3 ||
-        !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
-    game->client_actors[slot].water_level = level;
-    game->client_actors[slot].water_type = type;
-    return true;
-}
 bool qa_q3_client_spectator_origin(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     uint32_t slot;
     qa_body_state body;
@@ -1853,17 +1844,6 @@ bool qa_q3_client_think_finish(qa_q3_game *game, qa_actor_id actor, int32_t msec
     }
     return qa_q3_player_timers(game, actor, msec, error);
 }
-bool qa_q3_client_movement_water_read(const qa_q3_game *game, qa_actor_id actor,
-                                      int32_t *level, int32_t *type, qa_error *error) {
-    uint32_t slot;
-    if (!level || !type || !qa_q3_native_client_slot(game, actor, &slot, error)) return false;
-    const q3_actor *entry = q3_actor_const(game, actor);
-    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
-        return q3_fail(error, "Q3 water observation lost its actual source entity");
-    *level = entry->water_level;
-    *type = entry->water_type;
-    return true;
-}
 static bool invulnerability_overlap(qa_q3_game *game, qa_actor_id actor,
     qa_bounds bounds, bool source_clients, bool *stuck, qa_error *error) {
     qa_world_actor_snapshot targets;
@@ -1889,7 +1869,7 @@ static bool invulnerability_overlap(qa_q3_game *game, qa_actor_id actor,
             break;
         }
         if (combat.health <= 0 || (source_clients &&
-            !qa_actor_id_equal(game->source_entities[slot].actor, other))) continue;
+            !qa_actor_id_equal(q3_source_actor(game, slot), other))) continue;
         qa_linked_body linked;
         if (qa_world_linked(game->options.services.world, other, &linked) &&
             qa_bounds_overlap(bounds, linked.absolute_bounds)) {
@@ -2042,7 +2022,7 @@ bool qa_q3_client_think_prepare(qa_q3_game *game, qa_actor_id actor,
         }
         bool allowed = game->options.hooks.primary_attack_allowed(game->options.hooks.context, actor);
         entry = q3_actor_get(game, actor);
-        if (!entry || !qa_actor_id_equal(game->source_entities[slot].actor, actor)) goto done;
+        if (!entry || !qa_actor_id_equal(q3_source_actor(game, slot), actor)) goto done;
         if (allowed) {
             bool hit;
             okay = q3_gauntlet(game, actor, &hit, error);
