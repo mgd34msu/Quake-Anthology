@@ -74,7 +74,7 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         if (application_native_q2_client_admitted(engine, actor))
             selected.slot = application_native_q2_client_slot(engine, actor);
         if (!selected.slot) return true;
-        value->data_provider = selected.original->owner; value->config_revision = engine->config_revision;
+        value->data_provider = selected.original->owner; value->config_revision = engine->hud_names_revision;
         value->original = true; value->strings = qa_session_strings(app->session);
         value->configstrings = engine->configstrings;
         value->configstring_count = engine->configstring_count;

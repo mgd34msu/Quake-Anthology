@@ -93,7 +93,8 @@ struct qa_application_network_q2 {
     uint32_t checksum_index, clients_index, air_index, n64_index;
     uint64_t observed_map_revision;
     uint32_t observed_client_slots;
-    bool map_configs_ready;
+    bool map_configs_ready, builtin_metadata_ready;
+    uint64_t map_metadata_revision, shadow_revision, style_revision;
     qa_string_id *configs;
     qa_hud_q2_stat_references status_references;
     qa_arena layout_scratch;

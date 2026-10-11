@@ -237,7 +237,9 @@ static bool retained_lightstyles(qa_application *app, application_provider *p,
     else if (p->kind==APPLICATION_PROVIDER_QC) {
         struct application_qc_state *qc=application_network_q1_qc_observation(app,p->owner,error);
         if (qc) *out=&qc->lightstyles;
-    } else return true;
+    } else if (p->kind == APPLICATION_PROVIDER_NATIVE && p->state.native.q2_engine)
+        *out = &p->state.native.q2_engine->lightstyles;
+    else return true;
     return *out!=NULL;
 }
 
@@ -253,10 +255,6 @@ static bool metadata_revision(qa_application *app, const application_unified_sou
     const qa_lightstyles *table;
     if (!retained_lightstyles(app,p,&table,error)) return false;
     if (table) out->style_revision=table->revision;
-    else if (p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2) {
-        if (!p->state.native.q2_engine) return application_fail(error, QA_ERROR_ARGUMENT, "Unified metadata lost its original Q2 Source");
-        out->style_revision = p->state.native.q2_engine->lightstyle_revision;
-    }
     return true;
 }
 
@@ -270,15 +268,9 @@ static bool styles(qa_application *app, const application_unified_source *source
     if (extent && !out->styles) return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Source lightstyle patterns");
     const qa_lightstyles *table;
     if (!retained_lightstyles(app,p,&table,error)) return false;
-    struct application_native_q2 *native = p->kind == APPLICATION_PROVIDER_NATIVE && source->family == QA_GAME_Q2 ?
-        p->state.native.q2_engine : NULL;
-    uint32_t base = native ? native->resource_base[QA_NATIVE_HOST_IMAGE] + native->resource_limit[QA_NATIVE_HOST_IMAGE] : 0;
-    if (native && (!native->configstrings || base > native->configstring_count || native->configstring_count - base < 256))
-        return application_fail(error, QA_ERROR_FORMAT, "Original Q2 lightstyles leave actual configstrings");
     for (size_t i = 0; i < extent; ++i) {
         const char *pattern = NULL;
         if (table && table->patterns[i]) pattern=qa_strings_cstr(strings,table->patterns[i]);
-        else if (native) pattern=qa_strings_cstr(strings,native->configstrings[base+i]);
         qa_unified_style_pattern *row = out->styles + out->style_count++;
         row->family = source->family; row->index = (uint32_t)i;
         if (!application_unified_frame_string(lease, &row->pattern, pattern ? pattern : "", error)) return false;

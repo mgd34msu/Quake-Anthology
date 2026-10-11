@@ -705,8 +705,8 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     if (!air || !application_network_q2_config(owner, owner->air_index, air->value, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");
     if (owner->n64_index != UINT32_MAX && owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
-        bool n64 = provider->product->campaign && !strcmp(provider->product->campaign, "n64");
-        if (!application_network_q2_config(owner, owner->n64_index, n64 ? "1" : "0", error)) return false;
+        if (!owner->builtin_metadata_ready && !config_number(owner, owner->n64_index,
+            provider->product->campaign_id == QA_CAMPAIGN_N64, error)) return false;
     }
     if (owner->event_frame != owner->host.source.clock.frame_number) {
         memset(owner->event_actors, 0, owner->entity_capacity * sizeof(*owner->event_actors));
@@ -717,22 +717,29 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
         qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
         qa_q2_wire_map map;
         if (!qa_q2_wire_map_read(game, &map, error)) return false;
-        if (map.music_present && !application_network_q2_config(owner, 1, source_text(owner, map.music), error)) return false;
-        if (map.sky) {
-            char axis[128], rotation[64];
-            snprintf(axis, sizeof(axis), "%.9g %.9g %.9g", map.sky_axis.x, map.sky_axis.y, map.sky_axis.z);
-            if (owner->host.source.edition == QA_Q2_RERELEASE)
-                snprintf(rotation, sizeof(rotation), "%.9g %u", map.sky_rotation, map.sky_auto ? 1u : 0u);
-            else snprintf(rotation, sizeof(rotation), "%.9g", map.sky_rotation);
-            if (!application_network_q2_config(owner, 2, source_text(owner, map.sky), error) ||
-                !application_network_q2_config(owner, 3, axis, error) ||
-                !application_network_q2_config(owner, 4, rotation, error)) return false;
+        if (!owner->builtin_metadata_ready || owner->map_metadata_revision != map.revision) {
+            if (map.music_present && !application_network_q2_config_id(owner, 1, map.music, error)) return false;
+            if (map.sky) {
+                char axis[128], rotation[64];
+                snprintf(axis, sizeof(axis), "%.9g %.9g %.9g", map.sky_axis.x, map.sky_axis.y, map.sky_axis.z);
+                if (owner->host.source.edition == QA_Q2_RERELEASE)
+                    snprintf(rotation, sizeof(rotation), "%.9g %u", map.sky_rotation, map.sky_auto ? 1u : 0u);
+                else snprintf(rotation, sizeof(rotation), "%.9g", map.sky_rotation);
+                if (!application_network_q2_config_id(owner, 2, map.sky, error) ||
+                    !application_network_q2_config(owner, 3, axis, error) ||
+                    !application_network_q2_config(owner, 4, rotation, error)) return false;
+            }
+            owner->map_metadata_revision = map.revision;
         }
         const qa_lightstyles *styles=qa_q2_wire_lightstyles(game,error);
         if (!styles) return false;
-        for (uint32_t style = 0; style < styles->count; ++style)
-            if (!application_network_q2_config_id(owner, owner->light_base + style, styles->patterns[style], error)) return false;
-        if (owner->host.source.edition == QA_Q2_RERELEASE && owner->item_base - owner->light_base >= 512) {
+        if (!owner->builtin_metadata_ready || owner->style_revision != styles->revision) {
+            for (uint32_t style = 0; style < styles->count; ++style)
+                if (!application_network_q2_config_id(owner, owner->light_base + style, styles->patterns[style], error)) return false;
+            owner->style_revision = styles->revision;
+        }
+        if ((!owner->builtin_metadata_ready || owner->shadow_revision != map.shadow_revision) &&
+            owner->host.source.edition == QA_Q2_RERELEASE && owner->item_base - owner->light_base >= 512) {
             for (uint32_t index = 0; index < 256; ++index) {
                 qa_q2_wire_shadow_light light;
                 char config[512] = {0};
@@ -749,6 +756,8 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
                 if (!application_network_q2_config(owner, owner->light_base + 256 + index, config, error)) return false;
             }
         }
+        owner->shadow_revision = map.shadow_revision;
+        owner->builtin_metadata_ready = true;
         uint64_t events_next = qa_application_events_next(owner->app);
         for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
             qa_application_event_view output;
@@ -757,10 +766,9 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             const qa_builtin_event event = *output.value.builtin;
             if (event.family != QA_GAME_Q2 ||
                 event.provider != owner->host.source.source_owner || event.time_ns != owner->host.source.server_time_ns) continue;
-            const char *resource = source_text(owner, event.resource);
             uint32_t ignored;
             if (event.kind == QA_BUILTIN_SOUND &&
-                !application_network_q2_resource(owner, 1, resource, &ignored, error)) return false;
+                !application_network_q2_resource_id(owner, 1, event.resource, &ignored, error)) return false;
             if (event.kind == QA_BUILTIN_Q2_ENTITY_EVENT) {
                 qa_q2_wire_binding binding;
                 if (qa_q2_wire_actor(game, event.actor, &binding, NULL)) {

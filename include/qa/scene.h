@@ -342,6 +342,7 @@ bool qa_scene_image_alias_bind(qa_scene_resources *, const char *alias,
                               const qa_scene_image_alias_source *, qa_error *);
 /* Normalize an authored external model image path within its content root.
  * The caller owns the result. This is the same admission used by model images. */
+bool qa_scene_model_image_path_write(const char *, char *, size_t, qa_error *);
 char *qa_scene_model_image_path(const char *, qa_error *);
 bool qa_scene_resources_source_q3_initialize(qa_scene_resources *, const qa_q3_image_upload_options *, qa_error *);
 const qa_scene_image *qa_scene_source_q3_white(const qa_scene_resources *);

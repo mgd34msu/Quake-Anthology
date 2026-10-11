@@ -335,7 +335,10 @@ bool q2_map_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *e) {
             qa_error_set(e, QA_ERROR_FORMAT, 0, "Q2 music emission lost its actual Source string");
             return false;
         }
+        if (g->wire_music != music || !g->wire_music_present) ++g->wire_map_revision;
         g->wire_music = music; g->wire_music_present = true;
+    } else if (event->kind == QA_Q2_MAP_SKY) {
+        ++g->wire_map_revision;
     } else if (event->kind == QA_Q2_MAP_DYNAMIC_LIGHT && !q2_wire_shadow_event(g, event, e)) {
         return false;
     }

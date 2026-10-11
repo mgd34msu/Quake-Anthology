@@ -4,6 +4,7 @@
 #include "native_process_owner.h"
 #include "qa/binary.h"
 #include "qa/json.h"
+#include "qa/lightstyles.h"
 #include "qa/network_q2_messages.h"
 #include <stdlib.h>
 #include <string.h>
@@ -83,7 +84,8 @@ struct application_native_q2 {
     uint32_t current_client, disconnect_client;
     uint64_t current_command_sequence;
     uint64_t config_revision, hud_config_revision;
-    uint64_t lightstyle_revision;
+    uint64_t hud_names_revision;
+    qa_lightstyles lightstyles;
     struct qa_network_runtime *network_recipient_runtime;
     void *network_recipient_context;
     bool (*network_recipient)(void *, qa_actor_id,

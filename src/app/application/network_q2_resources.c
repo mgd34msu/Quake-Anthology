@@ -95,7 +95,7 @@ static bool image_options_equal(const qa_scene_image_options *a, const qa_scene_
 static bool held_same(const application_q2_held_resource *a, const application_q2_held_resource *b, bool derived)
 {
     if (a->identity != b->identity || a->provider != b->provider || a->kind != b->kind ||
-        a->missing != b->missing || a->authority != b->authority || !text_equal(a->path, b->path) ||
+        a->missing != b->missing || a->authority != b->authority || a->path_name != b->path_name ||
         a->resource != b->resource || !qa_vfs_lookup_equal(a->view, b->view) ||
         (a->resource && !acquisition_equal(&a->opening, &b->opening))) return false;
     if (a->kind == APPLICATION_Q2_HELD_MATERIAL && (!text_equal(a->script_name, b->script_name) ||
@@ -173,6 +173,8 @@ static bool model_scope_finish(qa_application_network_q2 *owner,
 static bool held_store(qa_application_network_q2 *owner, application_q2_held_resource *held,
     size_t *out, qa_error *error)
 {
+    if (held->path && !held->path_name && !qa_strings_intern_cstr(qa_session_strings(owner->app->session),
+        held->path, &held->path_name, error)) return false;
     for (size_t i = 0; i < owner->held_resource_count; ++i) {
         const application_q2_held_resource *old = &owner->held_resources[i];
         if (held_same(held, old, held->kind != APPLICATION_Q2_HELD_IMAGE_RECEIPT) &&
@@ -428,6 +430,9 @@ static bool sky_store(qa_application_network_q2 *owner, application_q2_held_reso
     const char *normalized, size_t out[6], char alias_base[64], qa_error *error)
 {
     uint64_t group = 0;
+    for (size_t face = 0; face < 6; ++face)
+        if (!qa_strings_intern_cstr(qa_session_strings(owner->app->session), faces[face].path,
+            &faces[face].path_name, error)) return false;
     for (size_t candidate = 0; candidate < owner->held_resource_count; ++candidate) {
         const application_q2_held_resource *first = &owner->held_resources[candidate];
         if (first->sky_face != 1 || !text_equal(first->sky_base, normalized) || !held_same(first, &faces[0], false)) continue;
@@ -760,42 +765,37 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     if (reference->resource_key && (!receipt || !captured_view || !captured ||
         !content || strcmp(content, source.product->identity) || !path || !*path))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 event lost its immutable captured resource key");
-    if(receipt) {
-        application_q2_held_resource probe={.provider=emitter,.identity=source.descriptor->identity,
-            .kind=kind==QA_NATIVE_HOST_MODEL?APPLICATION_Q2_HELD_MODEL:APPLICATION_Q2_HELD_EVENT,
-            .event_kind=reference->kind,.resource=(qa_resource *)captured,.view=(qa_vfs *)captured_view,
-            .path=(char *)path,.opening=*captured_opening};
-        if(probe.kind==APPLICATION_Q2_HELD_EVENT) {
-            probe.event_key=reference->resource_key;
-            probe.event_custody=reference->resource_custody;
-        }
-        const qa_application_visual_view colors={0};
-        for(size_t i=0;i<owner->held_resource_count;++i) {
-            const application_q2_held_resource *old=owner->held_resources+i;
-            if(held_same(&probe,old,false) && (probe.kind!=APPLICATION_Q2_HELD_MODEL || model_colors_current(old,&colors)))
-                return event_wire(owner,i,kind,out,error);
-        }
-    }
+    char requested[4096], normalized[4096];
     if (!receipt && kind == QA_NATIVE_HOST_SOUND && *path == '#') ++path;
-    char *requested = NULL;
     if (!receipt && kind == QA_NATIVE_HOST_SOUND && strncmp(path, "sound/", 6)) {
-        size_t length = strlen(path);
-        if (length > SIZE_MAX - 7) return application_fail(error, QA_ERROR_MEMORY, "Q2 sound request extent overflows");
-        requested = malloc(length + 7);
-        if (requested) { memcpy(requested, "sound/", 6); memcpy(requested + 6, path, length + 1); }
-        else return application_fail(error, QA_ERROR_MEMORY, "Retaining actual missing Q2 sound request");
+        int size = snprintf(requested, sizeof(requested), "sound/%s", path);
+        if (size < 0 || (size_t)size >= sizeof(requested))
+            return application_fail(error, QA_ERROR_FORMAT, "Q2 sound request exceeds its path limit");
         path = requested;
     }
+    if (!qa_scene_model_image_path_write(path, normalized, sizeof(normalized), error)) return false;
+    qa_string_id path_name = qa_strings_find(qa_session_strings(owner->app->session),
+        (qa_bytes){(const uint8_t *)normalized, strlen(normalized)});
     application_q2_held_resource held = {.provider = emitter, .identity = source.descriptor->identity,
         .kind = receipt && kind == QA_NATIVE_HOST_MODEL ? APPLICATION_Q2_HELD_MODEL : APPLICATION_Q2_HELD_EVENT,
-        .missing = receipt == NULL, .event_kind = reference->kind};
+        .missing = receipt == NULL, .event_kind = reference->kind, .path_name = path_name,
+        .resource = (qa_resource *)captured, .view = (qa_vfs *)(receipt ? captured_view : source.content)};
+    if (receipt) held.opening = *captured_opening;
     if (held.kind == APPLICATION_Q2_HELD_EVENT) {
-        held.event_key=reference->resource_key; held.event_custody = reference->resource_custody;
+        held.event_key = reference->resource_key; held.event_custody = reference->resource_custody;
     }
+    if (path_name) {
+        const qa_application_visual_view colors = {0};
+        for (size_t i = 0; i < owner->held_resource_count; ++i) {
+            const application_q2_held_resource *old = owner->held_resources + i;
+            if (held_same(&held, old, false) && (held.kind != APPLICATION_Q2_HELD_MODEL || model_colors_current(old, &colors)))
+                return event_wire(owner, i, kind, out, error);
+        }
+    }
+    held.resource = NULL; held.view = NULL; held.opening = (qa_vfs_acquisition){0};
     held.instance = application_network_q2_copy(source.descriptor->selection.instance, error);
-    held.path = qa_scene_model_image_path(path, error);
+    held.path = application_network_q2_copy(normalized, error);
     held.view = qa_vfs_clone(receipt ? captured_view : source.content, error);
-    free(requested);
     bool ok = held.instance && held.path && held.view;
     if (ok && receipt) {
         ok = qa_vfs_acquisition_retained(held.view, captured_opening, error) &&
@@ -804,19 +804,10 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
     }
     size_t dependency_start = owner->held_resource_count;
     size_t index = 0;
-    bool reused = false;
-    if (ok && held.kind == APPLICATION_Q2_HELD_MODEL) {
-        const qa_application_visual_view colors = {0};
-        for (size_t i = 0; i < owner->held_resource_count; ++i)
-            if (held_same(&held, &owner->held_resources[i], false) &&
-                model_colors_current(&owner->held_resources[i], &colors)) {
-                index = i; reused = true; break;
-            }
-    }
-    if (ok && !reused) ok = held_serial(owner, &held, error);
-    if (ok && !reused && held.kind == APPLICATION_Q2_HELD_MODEL)
+    if (ok) ok = held_serial(owner, &held, error);
+    if (ok && held.kind == APPLICATION_Q2_HELD_MODEL)
         ok = model_derivation(owner, &held, source.product->family, false, 0, error);
-    if (ok && !reused) ok = held_store(owner, &held, &index, error);
+    if (ok) ok = held_store(owner, &held, &index, error);
     if (ok) ok=event_wire(owner,index,kind,out,error);
     else while (owner->held_resource_count > dependency_start)
         held_free(&owner->held_resources[--owner->held_resource_count]);

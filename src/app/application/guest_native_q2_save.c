@@ -394,6 +394,10 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         engine->initialized = initialized != 0; engine->map_ready = engine->provider->map_bound = map_ready != 0;
         qa_cvars_set_server_active(engine->cvars, engine->map_ready);
         ++engine->config_revision;
+        ++engine->hud_names_revision;
+        uint32_t styles = engine->resource_base[QA_NATIVE_HOST_IMAGE] + engine->resource_limit[QA_NATIVE_HOST_IMAGE];
+        for (uint32_t i = 0; i < 256; ++i)
+            qa_lightstyles_set(&engine->lightstyles, i, engine->configstrings[styles + i]);
         engine->hud_source_owner = 0;
     }
     free(config);

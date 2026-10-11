@@ -382,6 +382,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     engine->resource_base[1] = engine->resource_base[0] + engine->resource_limit[0];
     engine->resource_base[2] = engine->resource_base[1] + engine->resource_limit[1];
     engine->configstring_count = rerelease ? 12448 : 2080;
+    engine->lightstyles.count = 256;
     engine->configstrings = calloc(engine->configstring_count, sizeof(*engine->configstrings));
     if (!engine->configstrings)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 source configstring table");

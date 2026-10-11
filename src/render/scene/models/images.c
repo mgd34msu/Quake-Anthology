@@ -12,7 +12,11 @@ static char *copy_name(const char *name, qa_error *error) {
 }
 
 /* Embedded ../ records are resolved within the content root before VFS lookup. */
-static bool image_path_write(const char *name, char *out, qa_error *error) {
+bool qa_scene_model_image_path_write(const char *name, char *out, size_t capacity, qa_error *error) {
+    if (!name || !out || strlen(name) >= capacity) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Model image path exceeds caller storage");
+        return false;
+    }
     size_t length = strlen(name), used = 0, begin = 0;
     if (!length || (isalpha((unsigned char)name[0]) && name[1] == ':')) goto invalid;
     for (size_t i = 0; i <= length; ++i) {
@@ -47,7 +51,7 @@ char *qa_scene_model_image_path(const char *name, qa_error *error) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "model image path allocation failed");
         return NULL;
     }
-    if (!image_path_write(name, out, error)) { free(out); return NULL; }
+    if (!qa_scene_model_image_path_write(name, out, strlen(name) + 1, error)) { free(out); return NULL; }
     return out;
 }
 
@@ -100,7 +104,7 @@ bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_fram
         if (frame) {
             if (!name) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"model image path is absent"); return false; }
             char *scratch=qa_arena_alloc(&frame->storage,strlen(name)+1,1,error);
-            if (!scratch || !image_path_write(name,scratch,error)) return false;
+            if (!scratch || !qa_scene_model_image_path_write(name,scratch,strlen(name)+1,error)) return false;
             path=scratch;
         } else path = owned = qa_scene_model_image_path(name, error);
     }
