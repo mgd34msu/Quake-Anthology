@@ -1,8 +1,8 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
 
-static const char *const meat = "models/objects/gibs/sm_meat/tris.md2";
-static const char *const metal = "models/objects/gibs/sm_metal/tris.md2";
+static const q2_runtime_name meat = Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2;
+static const q2_runtime_name metal = Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_METAL_TRIS_MD2;
 
 static qa_vec3 project(const qa_body_state *body, qa_vec3 offset) {
   qa_vec3 forward, right, up;
@@ -33,7 +33,7 @@ static qa_vec3 clip_velocity(qa_vec3 value) {
                 fmaxf(200, fminf(500, value.z)));
 }
 
-static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
+static bool gib(qa_q2_game *game, qa_actor_id source, q2_runtime_name model,
                  float damage, bool organic, const qa_vec3 *point,
                  bool sized, bool hit_sound, bool fade, qa_error *error) {
   if (!q2_actor_live(game, source)) return true;
@@ -70,7 +70,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
     velocity.z = fabsf(velocity.z);
     velocity = clip_velocity(velocity);
     velocity.z = fmaxf(350 + q2_random(game) * 100, velocity.z);
-    float size = strcmp(model, "models/monsters/blackwidow2/gib2/tris.md2") == 0 ? 10 : 5;
+    float size = model == Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB2_TRIS_MD2 ? 10 : 5;
     bounds = (qa_bounds){.mins = {-size, -size, 0}, .maxs = {size, size, size}};
   }
   qa_actor_definition definition;
@@ -112,10 +112,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, const char *model,
   if (!qa_world_link(game->services.world, id, NULL, error))
     return release_failed(game, id, error);
   if (!q2_actor_live(game, id)) return true;
-  qa_string_id model_id;
-  if (!qa_builtin_resource(&game->services, model, &model_id, error))
-    return release_failed(game, id, error);
-  if (!q2_projectile_event(game, id, QA_BUILTIN_ANIMATION, model_id, 0, origin,
+  if (!q2_projectile_event(game, id, QA_BUILTIN_ANIMATION, game->runtime_names[model], 0, origin,
                            qa_v3(0, 0, 0), error))
     return release_failed(game, id, error);
   return true;
@@ -200,8 +197,8 @@ bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
       classic_time > wait;
   if (expired) {
     const qa_vec3 offsets[] = {{-65.6f, -8.44f, 28.59f}, {-1.04f, -51.18f, 7.04f}};
-    const char *const models[] = {"models/monsters/blackwidow/gib1/tris.md2",
-        "models/monsters/blackwidow/gib2/tris.md2", "models/monsters/blackwidow/gib3/tris.md2"};
+    const q2_runtime_name models[] = {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB1_TRIS_MD2,
+        Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB2_TRIS_MD2, Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB3_TRIS_MD2};
     for (unsigned i = 0; i < 2; ++i) {
       qa_vec3 point = project(&body, offsets[i]);
       if (!effect(game, id, point, game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1], 1, error) ||
@@ -295,7 +292,7 @@ bool q2m_widow_explode(q2m_context *context, qa_error *error) {
       if (!effect(game, id, arm, game->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1_BIG], 1, error)) return false;
       for (unsigned i = 0; i < 2; ++i)
         if (!gib(game, id, metal, 100, false, &arm, false, false, false, error)) return false;
-    } else if (!gib(game, id, "models/monsters/blackwidow2/gib4/tris.md2", 200,
+    } else if (!gib(game, id, Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB4_TRIS_MD2, 200,
                       false, &arm, true, true, false, error) ||
                !gib(game, id, meat, 300, true, &arm, false, false, false, error)) return false;
   }
@@ -341,8 +338,8 @@ bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
   }
   if (name == Q2M_CALLBACK_WidowExplosionLeg) {
     const qa_vec3 leg_offsets[] = {{-31.89f,-47.86f,67.02f},{-44.9f,-82.14f,54.72f}};
-    const char *const models[] = {"models/monsters/blackwidow2/gib2/tris.md2",
-                                  "models/monsters/blackwidow2/gib1/tris.md2"};
+    const q2_runtime_name models[] = {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB2_TRIS_MD2,
+                                  Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB1_TRIS_MD2};
     for (unsigned i = 0; i < 2; ++i) {
       qa_vec3 point = project(&context->body, leg_offsets[i]);
       qa_actor_id id = context->actor->id;
@@ -359,27 +356,27 @@ bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
 }
 
 bool q2m_widow_death_gibs(q2m_context *context, float damage, qa_error *error) {
-  static const struct { const char *model; unsigned count; bool organic, sized, sound; } recipe[] = {
-      {"models/objects/gibs/bone/tris.md2",2,true,false,false},
-      {"models/objects/gibs/sm_meat/tris.md2",3,true,false,false},
-      {"models/monsters/blackwidow2/gib1/tris.md2",1,false,true,false},
-      {"models/monsters/blackwidow2/gib2/tris.md2",1,false,true,true},
-      {"models/monsters/blackwidow2/gib1/tris.md2",1,false,true,false},
-      {"models/monsters/blackwidow2/gib2/tris.md2",1,false,true,true},
-      {"models/monsters/blackwidow2/gib1/tris.md2",1,false,true,false},
-      {"models/monsters/blackwidow2/gib2/tris.md2",1,false,true,true},
-      {"models/monsters/blackwidow2/gib3/tris.md2",1,false,true,false},
-      {"models/monsters/blackwidow/gib3/tris.md2",1,false,true,false},
-      {"models/monsters/blackwidow2/gib3/tris.md2",1,false,true,false},
-      {"models/monsters/blackwidow/gib3/tris.md2",1,false,true,false}};
+  static const struct { q2_runtime_name model; unsigned count; bool organic, sized, sound; } recipe[] = {
+      {Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_BONE_TRIS_MD2,2,true,false,false},
+      {Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2,3,true,false,false},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB1_TRIS_MD2,1,false,true,false},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB2_TRIS_MD2,1,false,true,true},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB1_TRIS_MD2,1,false,true,false},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB2_TRIS_MD2,1,false,true,true},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB1_TRIS_MD2,1,false,true,false},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB2_TRIS_MD2,1,false,true,true},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB3_TRIS_MD2,1,false,true,false},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB3_TRIS_MD2,1,false,true,false},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB3_TRIS_MD2,1,false,true,false},
+      {Q2_NAME_RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB3_TRIS_MD2,1,false,true,false}};
   qa_actor_id id = context->actor->id;
   for (unsigned i = 0; i < sizeof(recipe) / sizeof(recipe[0]); ++i)
     for (unsigned j = 0; j < recipe[i].count; ++j)
       if (!gib(context->game, id, recipe[i].model, damage, recipe[i].organic,
                  NULL, recipe[i].sized, recipe[i].sound, false, error)) return false;
   if (!q2m_alive(context)) return true;
-  if (!q2_spawn_gib(context->game, id, "models/objects/gibs/chest/tris.md2", damage,
+  if (!q2_spawn_gib(context->game, id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_CHEST_TRIS_MD2, damage,
                      0, 0, 1, error)) return false;
   return !q2m_alive(context) || q2_spawn_gib(context->game, id,
-      "models/objects/gibs/head2/tris.md2", damage, Q2_GIB_HEAD, 0, 1, error);
+      Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2, damage, Q2_GIB_HEAD, 0, 1, error);
 }

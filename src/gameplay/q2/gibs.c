@@ -34,7 +34,7 @@ static bool gib_contents(qa_q2_game *g, qa_vec3 point, int32_t *contents, qa_err
     *contents = qa_collision_point_contents_export(result.contents, QA_GAME_Q2, result.q1_opaque_token);
     return true;
 }
-bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float damage,
+bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, float damage,
                   uint32_t flags, int skin, float scale, qa_error *e) {
     bool head = (flags & Q2_GIB_HEAD) != 0, metal = (flags & Q2_GIB_METALLIC) != 0,
          rr = g->options.edition == QA_Q2_RERELEASE,
@@ -151,11 +151,9 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
         if (!gib_contents(g, origin, &a->physics.water_type, e)) return false;
         a->physics.water_level = ((uint32_t)a->physics.water_type & (8u | 16u | 32u)) ? 1 : 0;
     }
-    qa_string_id model_id;
-    if (!qa_builtin_resource(&g->services, model, &model_id, e)) return false;
-    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model_id, 0, origin, angles, e);
+    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, g->runtime_names[model], 0, origin, angles, e);
 }
-static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float speed,
+static bool debris(qa_q2_game *g, qa_body_state body, q2_runtime_name model, float speed,
                    qa_vec3 origin, qa_error *e) {
     qa_actor_definition definition;
     definition=g->runtime_names[Q2_NAME_RESOURCE_DEBRIS];
@@ -193,18 +191,16 @@ static bool debris(qa_q2_game *g, qa_body_state body, const char *model, float s
         .visible = true,
         .scale = 1,
         .expire_ns = q2_deadline(g->now_ns, (uint64_t)((5 + q2_random(g) * 5) * 1e9))};
-    qa_string_id model_id;
-    if (!qa_builtin_resource(&g->services, model, &model_id, e)) return false;
-    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, model_id, 0, body.origin, body.angles, e);
+    return q2_projectile_event(g, id, QA_BUILTIN_ANIMATION, g->runtime_names[model], 0, body.origin, body.angles, e);
 }
 bool q2_spawn_debris(qa_q2_game *g, qa_actor_id source, qa_error *e) {
     qa_body_state body;
     return qa_world_body_read(g->services.world, source, &body, e) &&
-           debris(g, body, "models/objects/debris2/tris.md2", 2, body.origin, e);
+           debris(g, body, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, 2, body.origin, e);
 }
-bool q2_spawn_model_debris(qa_q2_game *g, qa_actor_id source, const char *model, float speed,
+bool q2_spawn_model_debris(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, float speed,
                            qa_vec3 origin, qa_error *e) {
-    if (g == NULL || model == NULL || !isfinite(speed) || !qa_vec_finite(origin)) {
+    if (g == NULL || model == Q2_NAME_NONE || !isfinite(speed) || !qa_vec_finite(origin)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 scenery debris");
         return false;
     }
@@ -252,8 +248,7 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    const char *model = qa_strings_cstr(qa_session_strings(g->services.session), p->model);
-    if (model != NULL && strcmp(model, "models/objects/gibs/sm_meat/tris.md2") == 0) {
+    if (p->model == g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2]) {
         ++p->frame;
         p->phase = 1;
         p->next_ns = q2_deadline(g->now_ns, 100 * Q2_MS);

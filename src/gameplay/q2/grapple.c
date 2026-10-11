@@ -435,9 +435,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     q2_shot_spec spec;
     q2_grapple_spec(g, lm, &spec);
     float speed = spec.speed;
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, lm ? "noclass" : "grapple", &definition, e))
-        return false;
+    qa_actor_definition definition=g->runtime_names[lm?Q2_NAME_NOCLASS:Q2_NAME_GRAPPLE];
     direction = qa_vec_normalize(direction);
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner->id);
     qa_actor_collision collision = {.family = QA_GAME_Q2,

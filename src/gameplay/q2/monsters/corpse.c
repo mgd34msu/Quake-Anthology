@@ -267,8 +267,8 @@ bool q2m_hover_dying(q2m_context *c, qa_error *error) {
         return true;
     bool organic = q2_random_bounded(c->game, 2) != 0;
     return q2_spawn_gib(c->game, c->actor->id,
-                        organic ? "models/objects/gibs/sm_meat/tris.md2"
-                                : "models/objects/gibs/sm_metal/tris.md2",
+                        organic ? Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2
+                                : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_METAL_TRIS_MD2,
                         120, organic ? 0 : Q2_GIB_METALLIC,
                         c->monster->skin, c->monster->entity_scale != 0 ? c->monster->entity_scale : 1, error);
 }

@@ -28,10 +28,8 @@ bool q2_lmctf_plasma_mode(qa_q2_game *g, q2_actor *a, qa_error *e) {
                               .actor = a->id,
                               .time_ns = g->now_ns,
                               .code = 2};
-    return qa_builtin_resource(&g->services,
-                               a->lmctf_plasma_bounce ? "bounce plasma\n" : "spread plasma\n",
-                               &event.text, e) &&
-           qa_builtin_emit(&g->services, &event, e);
+    event.text=g->runtime_names[a->lmctf_plasma_bounce?Q2_NAME_PLASMA_BOUNCE_MESSAGE:Q2_NAME_PLASMA_SPREAD_MESSAGE];
+    return qa_builtin_emit(&g->services, &event, e);
 }
 bool q2_lmctf_plasma_weapon(q2_weapon_call *c, qa_error *e) {
     c->game->lmctf_plasma_quad = c->input.quad_until_ns > c->now_ns;

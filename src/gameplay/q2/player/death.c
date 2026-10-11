@@ -6,11 +6,8 @@ static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     q2_client_state *s = a->client;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     bool head = q2_random(g) < .5f;
-    if (!qa_builtin_resource(&g->services,
-                             head ? "models/objects/gibs/head2/tris.md2"
-                                  : "models/objects/gibs/skull/tris.md2",
-                             &s->rule.visual.models[0], e))
-        return false;
+    s->rule.visual.models[0] = g->runtime_names[head ? Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2
+                                  : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SKULL_TRIS_MD2];
     s->rule.visual.skin = head ? 1 : 0;
     s->rule.visual.frame = 0;
     s->rule.visual.effects = 2;
@@ -48,7 +45,7 @@ static bool throw_gibs(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     if (!q2_player_sound(g, a->id, Q2_NAME_SOUND_MISC_UDEATH, 4, e))
         return false;
     for (int i = 0; i < 4 && q2_actor_live(g, a->id); i++)
-        if (!q2_spawn_gib(g, a->id, "models/objects/gibs/sm_meat/tris.md2", damage, 0, 0, 1, e))
+        if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2, damage, 0, 0, 1, e))
             return false;
     return true;
 }

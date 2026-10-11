@@ -12,6 +12,136 @@
 #include <string.h>
 
 #define Q2_RUNTIME_NAME_LIST(X) \
+    X(RESOURCE_MODELS_CTF_BANNER_SMALL_MD2, "models/ctf/banner/small.md2") \
+    X(RESOURCE_MODELS_CTF_BANNER_TRIS_MD2, "models/ctf/banner/tris.md2") \
+    X(RESOURCE_MODELS_DEADBODS_DUDE_TRIS_MD2, "models/deadbods/dude/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BERSERK_GIBS_CHEST_MD2, "models/monsters/berserk/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BERSERK_GIBS_HAMMER_MD2, "models/monsters/berserk/gibs/hammer.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BERSERK_GIBS_HEAD_MD2, "models/monsters/berserk/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BERSERK_GIBS_THIGH_MD2, "models/monsters/berserk/gibs/thigh.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BITCH_GIBS_ARM_MD2, "models/monsters/bitch/gibs/arm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BITCH_GIBS_CHEST_MD2, "models/monsters/bitch/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BITCH_GIBS_FOOT_MD2, "models/monsters/bitch/gibs/foot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BITCH_GIBS_HEAD_MD2, "models/monsters/bitch/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BITCH_GIBS_TUBE_MD2, "models/monsters/bitch/gibs/tube.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BITCH_TRIS_MD2, "models/monsters/bitch/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB1_TRIS_MD2, "models/monsters/blackwidow/gib1/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB2_TRIS_MD2, "models/monsters/blackwidow/gib2/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BLACKWIDOW_GIB3_TRIS_MD2, "models/monsters/blackwidow/gib3/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB1_TRIS_MD2, "models/monsters/blackwidow2/gib1/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB2_TRIS_MD2, "models/monsters/blackwidow2/gib2/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB3_TRIS_MD2, "models/monsters/blackwidow2/gib3/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BLACKWIDOW2_GIB4_TRIS_MD2, "models/monsters/blackwidow2/gib4/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_CGUN_MD2, "models/monsters/boss1/gibs/cgun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_CHEST_MD2, "models/monsters/boss1/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_CORE_MD2, "models/monsters/boss1/gibs/core.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_HEAD_MD2, "models/monsters/boss1/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_LTREAD_MD2, "models/monsters/boss1/gibs/ltread.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_RGUN_MD2, "models/monsters/boss1/gibs/rgun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_RTREAD_MD2, "models/monsters/boss1/gibs/rtread.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS1_GIBS_TUBE_MD2, "models/monsters/boss1/gibs/tube.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_CHAINGUN_MD2, "models/monsters/boss2/gibs/chaingun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_CHEST_MD2, "models/monsters/boss2/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_CPU_MD2, "models/monsters/boss2/gibs/cpu.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_ENGINE_MD2, "models/monsters/boss2/gibs/engine.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_HEAD_MD2, "models/monsters/boss2/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_LARM_MD2, "models/monsters/boss2/gibs/larm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_RARM_MD2, "models/monsters/boss2/gibs/rarm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_ROCKET_MD2, "models/monsters/boss2/gibs/rocket.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_SPINE_MD2, "models/monsters/boss2/gibs/spine.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS2_GIBS_WING_MD2, "models/monsters/boss2/gibs/wing.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_CHEST_MD2, "models/monsters/boss3/jorg/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_FOOT_MD2, "models/monsters/boss3/jorg/gibs/foot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_GUN_MD2, "models/monsters/boss3/jorg/gibs/gun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_HEAD_MD2, "models/monsters/boss3/jorg/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_SPIKE_MD2, "models/monsters/boss3/jorg/gibs/spike.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_SPINE_MD2, "models/monsters/boss3/jorg/gibs/spine.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_THIGH_MD2, "models/monsters/boss3/jorg/gibs/thigh.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BOSS3_JORG_GIBS_TUBE_MD2, "models/monsters/boss3/jorg/gibs/tube.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BRAIN_GIBS_ARM_MD2, "models/monsters/brain/gibs/arm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BRAIN_GIBS_BOOT_MD2, "models/monsters/brain/gibs/boot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BRAIN_GIBS_CHEST_MD2, "models/monsters/brain/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BRAIN_GIBS_DOOR_MD2, "models/monsters/brain/gibs/door.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BRAIN_GIBS_HEAD_MD2, "models/monsters/brain/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_BRAIN_GIBS_PELVIS_MD2, "models/monsters/brain/gibs/pelvis.md2") \
+    X(RESOURCE_MODELS_MONSTERS_COMMANDR_TRIS_MD2, "models/monsters/commandr/tris.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLOAT_GIBS_BASE_MD2, "models/monsters/float/gibs/base.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLOAT_GIBS_GUN_MD2, "models/monsters/float/gibs/gun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLOAT_GIBS_JAR_MD2, "models/monsters/float/gibs/jar.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLOAT_GIBS_PIECE_MD2, "models/monsters/float/gibs/piece.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLYER_GIBS_BASE_MD2, "models/monsters/flyer/gibs/base.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLYER_GIBS_GUN_MD2, "models/monsters/flyer/gibs/gun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLYER_GIBS_HEAD_MD2, "models/monsters/flyer/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_FLYER_GIBS_WING_MD2, "models/monsters/flyer/gibs/wing.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GLADIATR_GIBS_CHEST_MD2, "models/monsters/gladiatr/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GLADIATR_GIBS_HEAD_MD2, "models/monsters/gladiatr/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GLADIATR_GIBS_LARM_MD2, "models/monsters/gladiatr/gibs/larm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GLADIATR_GIBS_RARM_MD2, "models/monsters/gladiatr/gibs/rarm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GLADIATR_GIBS_THIGH_MD2, "models/monsters/gladiatr/gibs/thigh.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUARDIAN_GIB1_MD2, "models/monsters/guardian/gib1.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUARDIAN_GIB2_MD2, "models/monsters/guardian/gib2.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUARDIAN_GIB3_MD2, "models/monsters/guardian/gib3.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUARDIAN_GIB4_MD2, "models/monsters/guardian/gib4.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUARDIAN_GIB5_MD2, "models/monsters/guardian/gib5.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUARDIAN_GIB6_MD2, "models/monsters/guardian/gib6.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUARDIAN_GIB7_MD2, "models/monsters/guardian/gib7.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUNNER_GIBS_CHEST_MD2, "models/monsters/gunner/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUNNER_GIBS_FOOT_MD2, "models/monsters/gunner/gibs/foot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUNNER_GIBS_GARM_MD2, "models/monsters/gunner/gibs/garm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUNNER_GIBS_GUN_MD2, "models/monsters/gunner/gibs/gun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_GUNNER_GIBS_HEAD_MD2, "models/monsters/gunner/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_HOVER_GIBS_CHEST_MD2, "models/monsters/hover/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_HOVER_GIBS_FOOT_MD2, "models/monsters/hover/gibs/foot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_HOVER_GIBS_HEAD_MD2, "models/monsters/hover/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_HOVER_GIBS_RING_MD2, "models/monsters/hover/gibs/ring.md2") \
+    X(RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_ARM_MD2, "models/monsters/infantry/gibs/arm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_CHEST_MD2, "models/monsters/infantry/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_FOOT_MD2, "models/monsters/infantry/gibs/foot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_GUN_MD2, "models/monsters/infantry/gibs/gun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_HEAD_MD2, "models/monsters/infantry/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MEDIC_GIBS_CHEST_MD2, "models/monsters/medic/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MEDIC_GIBS_GUN_MD2, "models/monsters/medic/gibs/gun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MEDIC_GIBS_HEAD_MD2, "models/monsters/medic/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MEDIC_GIBS_HOOK_MD2, "models/monsters/medic/gibs/hook.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MEDIC_GIBS_LEG_MD2, "models/monsters/medic/gibs/leg.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MUTANT_GIBS_CHEST_MD2, "models/monsters/mutant/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MUTANT_GIBS_FOOT_MD2, "models/monsters/mutant/gibs/foot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MUTANT_GIBS_HAND_MD2, "models/monsters/mutant/gibs/hand.md2") \
+    X(RESOURCE_MODELS_MONSTERS_MUTANT_GIBS_HEAD_MD2, "models/monsters/mutant/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_PARASITE_GIBS_BLEG_MD2, "models/monsters/parasite/gibs/bleg.md2") \
+    X(RESOURCE_MODELS_MONSTERS_PARASITE_GIBS_CHEST_MD2, "models/monsters/parasite/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_PARASITE_GIBS_FLEG_MD2, "models/monsters/parasite/gibs/fleg.md2") \
+    X(RESOURCE_MODELS_MONSTERS_PARASITE_GIBS_HEAD_MD2, "models/monsters/parasite/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_SOLDIER_GIBS_ARM_MD2, "models/monsters/soldier/gibs/arm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_SOLDIER_GIBS_CHEST_MD2, "models/monsters/soldier/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_SOLDIER_GIBS_GUN_MD2, "models/monsters/soldier/gibs/gun.md2") \
+    X(RESOURCE_MODELS_MONSTERS_SOLDIER_GIBS_HEAD_MD2, "models/monsters/soldier/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_TANK_GIBS_BARM_MD2, "models/monsters/tank/gibs/barm.md2") \
+    X(RESOURCE_MODELS_MONSTERS_TANK_GIBS_CHEST_MD2, "models/monsters/tank/gibs/chest.md2") \
+    X(RESOURCE_MODELS_MONSTERS_TANK_GIBS_FOOT_MD2, "models/monsters/tank/gibs/foot.md2") \
+    X(RESOURCE_MODELS_MONSTERS_TANK_GIBS_HEAD_MD2, "models/monsters/tank/gibs/head.md2") \
+    X(RESOURCE_MODELS_MONSTERS_TANK_GIBS_THIGH_MD2, "models/monsters/tank/gibs/thigh.md2") \
+    X(RESOURCE_MODELS_MONSTERS_TANK_TRIS_MD2, "models/monsters/tank/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_BANNER_TRIS_MD2, "models/objects/banner/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_BARRELS_TRIS_MD2, "models/objects/barrels/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_BLACK_TRIS_MD2, "models/objects/black/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_BOMB_TRIS_MD2, "models/objects/bomb/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_DEBRIS1_TRIS_MD2, "models/objects/debris1/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, "models/objects/debris2/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_DEBRIS3_TRIS_MD2, "models/objects/debris3/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_ARM_TRIS_MD2, "models/objects/gibs/arm/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_BONE_TRIS_MD2, "models/objects/gibs/bone/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_BONE2_TRIS_MD2, "models/objects/gibs/bone2/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_GEAR_TRIS_MD2, "models/objects/gibs/gear/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_HEAD_TRIS_MD2, "models/objects/gibs/head/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2, "models/objects/gibs/head2/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_LEG_TRIS_MD2, "models/objects/gibs/leg/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_SKULL_TRIS_MD2, "models/objects/gibs/skull/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_GIBS_SM_METAL_TRIS_MD2, "models/objects/gibs/sm_metal/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_MINELITE_LIGHT1_TRIS_MD2, "models/objects/minelite/light1/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_MINELITE_LIGHT2_TRIS_MD2, "models/objects/minelite/light2/tris.md2") \
+    X(RESOURCE_MODELS_OBJECTS_SATELLITE_TRIS_MD2, "models/objects/satellite/tris.md2") \
+    X(RESOURCE_MODELS_SHIPS_BIGVIPER_TRIS_MD2, "models/ships/bigviper/tris.md2") \
     X(RESOURCE_I_HEALTH, "i_health") \
     X(FUNC_PLAT2, "func_plat2") \
     X(FUNC_DOOR_SECRET2, "func_door_secret2") \
@@ -42,6 +172,11 @@
     X(FUNC_AREAPORTAL, "func_areaportal") \
     X(LASER_SPARKS, "q2:laser-sparks") \
     X(NOCLASS, "noclass") \
+    X(GRAPPLE, "grapple") \
+    X(SPAWNGRO, "spawngro") \
+    X(SPAWNGRO_BEAM, "spawngro_beam") \
+    X(PLASMA_BOUNCE_MESSAGE, "bounce plasma\n") \
+    X(PLASMA_SPREAD_MESSAGE, "spread plasma\n") \
     X(ZERO, "0") \
     X(SPACE, " ") \
     X(PAIN_DAEMON, "pain daemon") \
@@ -623,10 +758,10 @@ enum {
 };
 bool q2_widow_legs_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_widow_gib_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);
-bool q2_spawn_gib(qa_q2_game *, qa_actor_id source, const char *model, float damage, uint32_t flags,
+bool q2_spawn_gib(qa_q2_game *, qa_actor_id source, q2_runtime_name model, float damage, uint32_t flags,
                   int skin, float scale, qa_error *);
 bool q2_spawn_debris(qa_q2_game *, qa_actor_id source, qa_error *);
-bool q2_spawn_model_debris(qa_q2_game *, qa_actor_id source, const char *model, float speed,
+bool q2_spawn_model_debris(qa_q2_game *, qa_actor_id source, q2_runtime_name model, float speed,
                            qa_vec3 origin, qa_error *);
 bool q2_spawn_growth(qa_q2_game *, qa_vec3 origin, unsigned size, qa_error *);
 bool q2_gib_think(qa_q2_game *, q2_actor *, qa_error *);

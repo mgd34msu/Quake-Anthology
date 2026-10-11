@@ -85,11 +85,9 @@ bool q2m_rerelease_growth_tick(qa_q2_game *game, q2_actor *actor, qa_error *erro
     return true;
 }
 
-static bool admit_part(qa_q2_game *game, const char *classname, qa_body_state body, q2_actor **out,
+static bool admit_part(qa_q2_game *game, q2_runtime_name classname, qa_body_state body, q2_actor **out,
                        qa_error *error) {
-    qa_string_id definition;
-    if (!qa_builtin_resource(&game->services, classname, &definition, error))
-        return false;
+    qa_string_id definition=game->runtime_names[classname];
     qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition, .body = body};
     qa_actor_id id;
     if (!qa_builtin_spawn_actor(&game->services, &spawn, &id, error))
@@ -113,7 +111,7 @@ static bool admit_part(qa_q2_game *game, const char *classname, qa_body_state bo
 
 bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, qa_error *error) {
     q2_actor *growth;
-    if (!admit_part(game, "spawngro", (qa_body_state){0}, &growth, error))
+    if (!admit_part(game, Q2_NAME_SPAWNGRO, (qa_body_state){0}, &growth, error))
         return false;
     qa_actor_id id = growth->id;
     qa_vec3 angles;
@@ -148,7 +146,7 @@ bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, 
     if (!q2_actor_live(game, id))
         return true;
     q2_actor *beam;
-    if (!admit_part(game, "spawngro_beam", (qa_body_state){.origin = origin}, &beam, error))
+    if (!admit_part(game, Q2_NAME_SPAWNGRO_BEAM, (qa_body_state){.origin = origin}, &beam, error))
         goto failed;
     if (!q2_actor_live(game, id))
         return qa_session_release(game->services.session, beam->id, error);

@@ -92,22 +92,22 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     size = qa_vec_scale(size, .5f);
     for (int i = 0; i < large; i++) {
         if (rerelease) {
-            if (!q2_spawn_gib(g, a->id, "models/objects/debris1/tris.md2", 1,
+            if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS1_TRIS_MD2, 1,
                 Q2_GIB_METALLIC | Q2_GIB_DEBRIS, 0, s->visual.scale != 0 ? s->visual.scale : 1, e)) return false;
         } else {
             qa_vec3 point = random_point(g, body.origin, size);
-            if (!q2_spawn_model_debris(g, a->id, "models/objects/debris1/tris.md2", 1, point, e)) return false;
+            if (!q2_spawn_model_debris(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS1_TRIS_MD2, 1, point, e)) return false;
         }
         if (!q2_actor_live(g, a->id))
             return true;
     }
     for (int i = 0; i < small; i++) {
         if (rerelease) {
-            if (!q2_spawn_gib(g, a->id, "models/objects/debris2/tris.md2", 2,
+            if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, 2,
                 Q2_GIB_METALLIC | Q2_GIB_DEBRIS, 0, s->visual.scale != 0 ? s->visual.scale : 1, e)) return false;
         } else {
             qa_vec3 point = random_point(g, body.origin, size);
-            if (!q2_spawn_model_debris(g, a->id, "models/objects/debris2/tris.md2", 2, point, e)) return false;
+            if (!q2_spawn_model_debris(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, 2, point, e)) return false;
         }
         if (!q2_actor_live(g, a->id))
             return true;
@@ -139,10 +139,10 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     if (g->options.edition == QA_Q2_RERELEASE) {
-        static const struct { const char *model; unsigned count; } pieces[] = {
-            {"models/objects/debris1/tris.md2", 2},
-            {"models/objects/debris3/tris.md2", 4},
-            {"models/objects/debris2/tris.md2", 8}
+        static const struct { q2_runtime_name model; unsigned count; } pieces[] = {
+            {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS1_TRIS_MD2, 2},
+            {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS3_TRIS_MD2, 4},
+            {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, 8}
         };
         float speed = (float)qa_source_float_to_i32(1.5f * s->damage / 200);
         for (size_t piece = 0; piece < sizeof(pieces) / sizeof(*pieces); ++piece)
@@ -158,7 +158,7 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
             center = qa_vec_add(low, qa_vec_scale(size, .5f));
     for (int i = 0; i < 2; i++) {
         qa_vec3 point = random_point(g, center, size);
-        if (!q2_spawn_model_debris(g, a->id, "models/objects/debris1/tris.md2",
+        if (!q2_spawn_model_debris(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS1_TRIS_MD2,
                                    1.5f * s->damage / 200, point, e))
             return false;
         if (!q2_actor_live(g, a->id))
@@ -166,7 +166,7 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     for (int i = 0; i < 4; i++) {
         qa_vec3 point = qa_vec_add(low, qa_v3((i & 1) ? size.x : 0, (i & 2) ? size.y : 0, 0));
-        if (!q2_spawn_model_debris(g, a->id, "models/objects/debris3/tris.md2",
+        if (!q2_spawn_model_debris(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS3_TRIS_MD2,
                                    1.75f * s->damage / 200, point, e))
             return false;
         if (!q2_actor_live(g, a->id))
@@ -174,7 +174,7 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     for (int i = 0; i < 8; i++) {
         qa_vec3 point = random_point(g, center, size);
-        if (!q2_spawn_model_debris(g, a->id, "models/objects/debris2/tris.md2", 2 * s->damage / 200,
+        if (!q2_spawn_model_debris(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS2_TRIS_MD2, 2 * s->damage / 200,
                                    point, e))
             return false;
         if (!q2_actor_live(g, a->id))
@@ -1031,12 +1031,12 @@ bool q2_scenery_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *ou
         for (int i = 0; i < 4; i++) {
             if (!q2_actor_live(g, a->id))
                 return true;
-            if (!q2_spawn_gib(g, a->id, "models/objects/gibs/sm_meat/tris.md2",
+            if (!q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MEAT_TRIS_MD2,
                               out->result.applied_damage, 0, 0, 1, e))
                 return false;
         }
         return !q2_actor_live(g, a->id) ||
-               q2_spawn_gib(g, a->id, "models/objects/gibs/head2/tris.md2",
+               q2_spawn_gib(g, a->id, Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2,
                             out->result.applied_damage, Q2_GIB_HEAD, 0, 1, e);
     }
     case Q2S_ROTATING_LIGHT:
