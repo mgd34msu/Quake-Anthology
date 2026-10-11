@@ -26,7 +26,8 @@ static size_t local_index(const inventory_store *store, qa_item_id item)
     return store->count;
 }
 
-static bool reserve_entries(inventory_store *store, size_t needed, qa_error *e)
+bool qa_inventory_store_reserve_entries(qa_inventory *table, inventory_store *store,
+    size_t needed, qa_error *e)
 {
     if (needed <= store->capacity) return true;
     if (needed > SIZE_MAX / sizeof(*store->entries))
@@ -34,12 +35,30 @@ static bool reserve_entries(inventory_store *store, size_t needed, qa_error *e)
     size_t capacity = store->capacity > SIZE_MAX / 2 ? needed : store->capacity * 2;
     if (capacity < 8) capacity = 8;
     if (capacity < needed || capacity > SIZE_MAX / sizeof(*store->entries)) capacity = needed;
-    qa_inventory_entry *entries = realloc(store->entries, capacity * sizeof(*entries));
+    qa_inventory *owner = store->entries_owner ? store->entries_owner : table;
+    qa_pool *pool = &owner->scratch_pages;
+    size_t bytes = capacity * sizeof(*store->entries);
+    size_t pages = bytes / pool->stride + (bytes % pool->stride != 0);
+    size_t slot = store->entries_slot;
+    qa_inventory_entry *entries = store->entries_pages ?
+        qa_pool_grow_run(pool, &slot, store->entries_pages, pages) : NULL;
+    bool relocated = entries == NULL;
+    if (relocated) entries = qa_pool_take_run(pool, pages, &slot);
     if (!entries) return fail(e, QA_ERROR_MEMORY, "Cannot grow inventory");
-    store->entries = entries;
-    store->capacity = capacity;
+    if (store->count) memmove(entries, store->entries, store->count * sizeof(*entries));
+    if (relocated && store->entries_pages)
+        qa_pool_release_run(pool, store->entries_slot, store->entries_pages);
+    if (!store->entries_owner) { ++owner->scratch_leases; store->entries_owner = owner; }
+    store->entries = entries; store->entries_slot = slot; store->entries_pages = pages;
+    store->capacity = pages * pool->stride / sizeof(*entries);
     return true;
 }
+
+static void scratch_free(qa_inventory *table)
+{ qa_arena_destroy(&table->scratch_storage); free(table); }
+
+static void scratch_release(qa_inventory *table)
+{ if (--table->scratch_leases == 0 && table->closed) scratch_free(table); }
 
 static void free_group(item_group *group)
 {
@@ -55,8 +74,10 @@ static void drop_store(inventory_store *store)
         while (group) { item_group *next = group->next; free_group(group); group = next; }
         pickup_claim *claim = store->pickups;
         while (claim) { pickup_claim *next = claim->next; free(claim); claim = next; }
-        free(store->entries);
+        qa_inventory *owner = store->entries_owner;
+        if (owner) qa_pool_release_run(&owner->scratch_pages, store->entries_slot, store->entries_pages);
         free(store);
+        if (owner) scratch_release(owner);
     } else if (store->references == 1 && store->attached) {
         item_group **link = &store->groups;
         while (*link) {
@@ -286,7 +307,7 @@ bool qa_inventory_admission_validate(qa_inventory_admission *admission, qa_error
     }
     if (admission->missing > SIZE_MAX - store->count)
         return fail(e, QA_ERROR_MEMORY, "Inventory admission size overflow");
-    if (!reserve_entries(store, store->count + admission->missing, e)) return false;
+    if (!qa_inventory_store_reserve_entries(table, store, store->count + admission->missing, e)) return false;
     admission->revision = revision;
     admission->validated = true;
     return true;
@@ -357,7 +378,7 @@ static bool write_entry(qa_inventory *table, inventory_store *store, item_group 
     size_t i = local_index(store, entry->item);
     if (!group && (store->local || i < store->count)) {
         if (i == store->count &&
-            (store->count == SIZE_MAX || !reserve_entries(store, store->count + 1, e)))
+            (store->count == SIZE_MAX || !qa_inventory_store_reserve_entries(table, store, store->count + 1, e)))
             return false;
         store->entries[i] = *entry;
         if (i == store->count) { ++store->count; store_changed(store); }
@@ -478,7 +499,7 @@ bool qa_inventory_destroy(qa_inventory *table, qa_error *e)
     for (size_t i = 0; i < 4; ++i) qa_operation_destroy(table->operations[i], NULL);
     for (uint32_t i = 0; i < table->capacity; ++i) if (table->stores[i]) drop_store(table->stores[i]);
     free(table->stores); table->stores = NULL; table->closed = true;
-    if (!table->scratch_leases) { qa_arena_destroy(&table->scratch_storage); free(table); }
+    if (!table->scratch_leases) scratch_free(table);
     return true;
 }
 
@@ -676,7 +697,7 @@ bool qa_inventory_detach_primary(qa_inventory *table, qa_inventory_lease lease,
     if (count > SIZE_MAX - store->count) {
         fail(e, QA_ERROR_MEMORY, "Primary inventory detach size overflow"); goto done;
     }
-    if (!reserve_entries(store, store->count + count, e)) goto done;
+    if (!qa_inventory_store_reserve_entries(table, store, store->count + count, e)) goto done;
     if (count) memcpy(store->entries + store->count, source, count * sizeof(*source));
     store->count += count; store->local = true; store->primary = (qa_inventory_binding){0};
     store->serial = ++table->serial; store_changed(store); ok = true;
@@ -687,15 +708,14 @@ done:
 bool qa_inventory_create_actor(qa_inventory *table, qa_actor_id actor,
                                const qa_inventory_entry *entries, size_t count, qa_error *e)
 {
-    if ((count && !entries) || count > SIZE_MAX / sizeof(*entries)) return fail(e, QA_ERROR_ARGUMENT, "Invalid initial inventory");
+    if (!table || (count && !entries) || count > SIZE_MAX / sizeof(*entries)) return fail(e, QA_ERROR_ARGUMENT, "Invalid initial inventory");
     inventory_store *store = calloc(1, sizeof(*store));
     if (!store) return fail(e, QA_ERROR_MEMORY, "Cannot allocate inventory storage");
     store->local = true; store->references = 1;
-    if (count) {
-        store->entries = malloc(count * sizeof(*entries));
-        if (!store->entries) { drop_store(store); return fail(e, QA_ERROR_MEMORY, "Cannot allocate inventory entries"); }
+    if (!qa_inventory_store_reserve_entries(table, store, count, e)) {
+        drop_store(store); return false;
     }
-    store->capacity = store->count = count;
+    store->count = count;
     for (size_t i = 0; i < count; ++i) {
         if (!qa_inventory_validate_entry(&entries[i], &store->entries[i], e)) { drop_store(store); return false; }
         for (size_t j = 0; j < i; ++j) if (entries[j].item == entries[i].item) {
@@ -927,9 +947,7 @@ bool qa_inventory_entries_snapshot(qa_inventory *table, qa_actor_id actor,
 void qa_inventory_snapshot_release(qa_inventory *table, qa_arena *storage)
 {
     qa_arena_destroy(storage);
-    if (--table->scratch_leases == 0 && table->closed) {
-        qa_arena_destroy(&table->scratch_storage); free(table);
-    }
+    scratch_release(table);
 }
 
 bool qa_inventory_has(const qa_inventory *table, qa_actor_id actor)

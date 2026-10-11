@@ -22,6 +22,8 @@ typedef struct inventory_store {
     size_t references;
     bool local, attached;
     qa_inventory_entry *entries;
+    qa_inventory *entries_owner;
+    size_t entries_slot, entries_pages;
     size_t count, capacity;
     qa_inventory_binding primary;
     item_group *groups;
@@ -74,6 +76,7 @@ bool qa_inventory_pickup_storage_current(const qa_inventory *,qa_actor_id,qa_ite
 void qa_inventory_pickup_release(qa_inventory *, qa_actor_id, const void *);
 void qa_inventory_hold(qa_inventory *);
 void qa_inventory_unhold(qa_inventory *);
+bool qa_inventory_store_reserve_entries(qa_inventory *, inventory_store *, size_t, qa_error *);
 inventory_store *qa_inventory_checkpoint_acquire(qa_inventory *, qa_actor_id);
 void qa_inventory_checkpoint_release(qa_inventory *, inventory_store *);
 #endif
