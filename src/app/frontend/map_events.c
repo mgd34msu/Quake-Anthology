@@ -9,6 +9,7 @@
 #include "particle_delivery.h"
 #include "particle_clock.h"
 #include "legacy_render_policy.h"
+#include "view_settings.h"
 #include "qa/application_selected_effects.h"
 #include "qa/application_players.h"
 #include "qa/application_ui_names.h"
@@ -443,6 +444,20 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     for (unsigned seat = 0; seat < frontend->options.seats; ++seat)
         if (!frontend_network_local_input_owned(frontend,seat) &&
             !q1_fog_initialize(frontend, seat, &state->views[seat].q1_fog, error)) return false;
+    for(unsigned seat=0;seat<frontend->options.seats;++seat) {
+        qa_actor_id actor;
+        if(frontend_network_local_input_owned(frontend,seat) || !frontend_seat_actor_read(frontend,seat,&actor)) continue;
+        qa_player_feedback feedback;
+        qa_application_player_feedback_read(frontend->application,actor,
+            qa_application_events_local_first(frontend->application),qa_application_events_next(frontend->application),&feedback);
+        if(feedback.damage) {
+            qa_vec3 from;
+            if(!frontend_view_q1_damage_origin(feedback.origin,&from,error) ||
+                !frontend_view_q1_local_damage(frontend,actor,
+                    (uint8_t)(uint32_t)qa_source_float_to_i32(feedback.armor),
+                    (uint8_t)(uint32_t)qa_source_float_to_i32(feedback.blood),from,error)) return false;
+        }
+    }
     uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
     frontend_retained_bounds **link = &state->bounds;
     while (*link) {

@@ -113,6 +113,7 @@ static bool audio_actor(void *context, qa_actor_id actor, uint64_t *out, qa_erro
 static bool presentation_validate(void *context,const qa_unified_presentation_event *row,qa_error *error)
 {
     unified_presentation *p = context;
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK) return true;
     if (row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER)
         return frontend_unified_q1_owner_validate(p->q1,row,error) &&
             frontend_unified_q2_owner_validate(p->q2,row,error) &&
@@ -134,6 +135,18 @@ static bool simulation_validate(void *context,const qa_unified_simulation_event 
 static bool presentation(void *context,const qa_unified_presentation_event *row,bool *mirrored,qa_error *error)
 {
     unified_presentation *p = context;
+    if(row->payload.kind==QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK) {
+        *mirrored=false;
+        qa_actor_id player; uint32_t slot;
+        if(!frontend_remote_unified_player(p->replica,&player,&slot)) return true;
+        const qa_unified_frame *frame=qa_unified_document_frame(frontend_remote_unified_frame(p->replica));
+        qa_actor_id recipient;
+        if(!frontend_remote_unified_source_actor(p->replica,frame,row->recipient,false,&recipient,error)) return false;
+        if(!qa_actor_id_equal(recipient,player)) return true;
+        const qa_player_feedback *feedback=&row->payload.value.feedback;
+        return (!feedback->set_angle || frontend_unified_input_force_view(p->physical,feedback->angles,error)) &&
+            frontend_unified_render_feedback(p->render,feedback,row->seconds,error);
+    }
     if (row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER) {
         *mirrored=false;
         return frontend_unified_q1_owner_retire(p->q1,row,error) &&

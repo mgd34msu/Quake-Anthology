@@ -6,6 +6,15 @@
 /* Current selected player state. The control owner stores one instance per
  * live actor; reads return temporary snapshots. Body/link publication and
  * completed command history remain separate domains. */
+typedef struct qa_player_feedback {
+    bool damage, set_angle;
+    float armor, blood;
+    double origin[3];
+    float angles[3];
+} qa_player_feedback;
+
+void qa_player_feedback_merge(qa_player_feedback *, const qa_player_feedback *);
+
 typedef struct qa_player_state {
     qa_actor_id actor;
     qa_movement_state state;

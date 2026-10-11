@@ -268,8 +268,7 @@ bool application_native_q1_spectator_postthink(application_provider *source, qa_
                 qa_builtin_motion_change change = {.body = body, .view_angles = body.angles,
                     .reason = QA_BUILTIN_MOTION_RESET, .force_view_angles = true};
                 okay = application_control_motion_changed(app, actor, &change, error) && current(&call, error) &&
-                    qa_world_link(app->world, actor, NULL, error) && current(&call, error) &&
-                    application_native_q1_qw_setangle(source, actor, body.angles, error) && current(&call, error);
+                    qa_world_link(app->world, actor, NULL, error) && current(&call, error);
             }
         }
     }

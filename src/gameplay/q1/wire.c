@@ -22,7 +22,6 @@ static void state_free(q1_wire_state *wire) {
     if (!wire) return;
     free(wire->models.rows);
     free(wire->sounds.rows);
-    free(wire->damage);
     free(wire->board);
     free(wire->edicts);
     free(wire);
@@ -34,7 +33,6 @@ void q1_wire_destroy(qa_q1_game *g) {
 void q1_wire_map_reset(qa_q1_game *g) {
     if (g->wire) {
         g->wire->loading = true;
-        g->wire->damage_count = 0;
         q1_wire_changed(g->wire);
     }
 }
@@ -49,12 +47,7 @@ void q1_wire_actor_released(qa_q1_game *g, qa_actor_record released) {
         wire->edicts[released.source_slot].released = actor;
         q1_wire_changed(wire);
     }
-    for (size_t i = 0; wire && i < wire->damage_count;)
-        if (qa_actor_id_equal(wire->damage[i].recipient, actor)) {
-            wire->damage[i] = wire->damage[--wire->damage_count];
-            q1_wire_changed(wire);
-        }
-        else ++i;
+
 }
 static bool append(qa_q1_game *g, q1_wire_table *table, const char *path, qa_error *error) {
     if (!path || (unsigned char)path[0] <= 32)
@@ -517,85 +510,7 @@ bool qa_q1_wire_actor_at(const qa_q1_wire_receipt *receipt, uint32_t slot, qa_ac
     *out = actor;
     return true;
 }
-bool qa_q1_wire_feedback_add(qa_q1_game *g, qa_actor_id recipient, qa_actor_id inflictor,
-                             float armor, float blood, const double origin[3], qa_error *error) {
-    uint32_t slot;
-    if (!g || !g->wire || g->wire->revision == UINT64_MAX || g->destroy_pending || !origin ||
-        !isfinite(armor) || !isfinite(blood) ||
-        !isfinite(origin[0]) || !isfinite(origin[1]) || !isfinite(origin[2]) ||
-        !qa_q1_native_client_slot(g, recipient, &slot, NULL))
-        return fail(error, "Q1 wire feedback requires an actual native source client");
-    q1_wire_state *wire = g->wire;
-    size_t index = 0;
-    while (index < wire->damage_count &&
-           !qa_actor_id_equal(wire->damage[index].recipient, recipient)) ++index;
-    if (index == wire->damage_count) {
-        if (wire->damage_count == wire->damage_capacity) {
-            size_t next = wire->damage_capacity ? wire->damage_capacity * 2 : 8;
-            if (next < wire->damage_capacity || next > SIZE_MAX / sizeof(*wire->damage))
-                return fail(error, "Q1 wire feedback source extent exhausted");
-            q1_wire_damage *rows = realloc(wire->damage, next * sizeof(*rows));
-            if (!rows) {
-                qa_error_set(error, QA_ERROR_MEMORY, 0, "growing Q1 source feedback");
-                return false;
-            }
-            wire->damage = rows;
-            wire->damage_capacity = next;
-        }
-        wire->damage[wire->damage_count++] = (q1_wire_damage){.recipient = recipient};
-    }
-    qa_q1_wire_feedback *value = &wire->damage[index].value;
-    if (!isfinite(value->armor + armor) || !isfinite(value->blood + blood))
-        return fail(error, "Q1 source damage feedback exceeds its float fields");
-    value->armor += armor;
-    value->blood += blood;
-    value->inflictor = inflictor;
-    memcpy(value->origin, origin, sizeof(value->origin));
-    q1_wire_changed(wire);
-    wire->damage[index].revision = wire->revision;
-    return true;
-}
-bool qa_q1_wire_feedback_consume(const qa_q1_wire_receipt *receipt, qa_actor_id recipient,
-                                 qa_q1_wire_feedback *out) {
-    if (!out || !qa_q1_wire_receipt_current(receipt)) return false;
-    uint32_t slot;
-    if (!qa_q1_native_client_slot(receipt->operation.game, recipient, &slot, NULL)) return false;
-    qa_q1_game *game = receipt->operation.game;
-    q1_wire_state *wire = game->wire;
-    if (wire->revision == UINT64_MAX) return false;
-    for (size_t i = 0; i < wire->damage_count; ++i)
-        if (qa_actor_id_equal(wire->damage[i].recipient, recipient)) {
-            q1_wire_damage pending = wire->damage[i];
-            qa_q1_wire_feedback value = pending.value;
-            qa_body_state body;
-            uint64_t body_serial = qa_world_body_storage_serial(game->services.world, value.inflictor);
-            if (value.inflictor.registry && body_serial && qa_world_body_read(
-                    game->services.world, value.inflictor, &body, NULL) &&
-                qa_world_body_storage_serial(game->services.world, value.inflictor) == body_serial) {
-                value.origin[0] = (double)body.origin.x + .5 * ((double)body.bounds.mins.x + body.bounds.maxs.x);
-                value.origin[1] = (double)body.origin.y + .5 * ((double)body.bounds.mins.y + body.bounds.maxs.y);
-                value.origin[2] = (double)body.origin.z + .5 * ((double)body.bounds.mins.z + body.bounds.maxs.z);
-            }
-            if (!qa_q1_wire_receipt_current(receipt) ||
-                !qa_q1_native_client_slot(game, recipient, &slot, NULL)) return false;
-            wire = game->wire;
-            if (wire->revision == UINT64_MAX) return false;
-            size_t current = 0;
-            while (current < wire->damage_count &&
-                   !qa_actor_id_equal(wire->damage[current].recipient, recipient)) ++current;
-            if (current == wire->damage_count || wire->damage[current].revision != pending.revision)
-                return false;
-            wire->damage[current] = wire->damage[--wire->damage_count];
-            q1_wire_changed(wire);
-            *out = value;
-            return true;
-        }
-    *out = (qa_q1_wire_feedback){0};
-    return true;
-}
 
-/* progs106 W_Precache/worldspawn, followed by each admitted spawn function.
- * Interner order is deliberately irrelevant to these two source tables. */
 static const char *const world_sounds[] = {
     "weapons/r_exp3.wav", "weapons/rocket1i.wav", "weapons/sgun1.wav",
     "weapons/guncock.wav", "weapons/ric1.wav", "weapons/ric2.wav", "weapons/ric3.wav",

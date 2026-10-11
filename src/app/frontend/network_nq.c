@@ -877,29 +877,27 @@ static bool source_events(nq_frontend_peer *peer,qa_actor_id actor,qa_net_writer
         peer->baselines,peer->baseline_count,&peer->protocol_generation,&peer->protocol_cursor,
         datagram,world,event_reliable_emit,&submission,error);
 }
-static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,qa_net_protocol_id protocol,
+static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,uint64_t first,qa_net_protocol_id protocol,
     const qa_q1_entity *baselines,size_t baseline_count,const qa_application_network_q1_world *world,
     qa_net_writer *writer,qa_error *error)
 {
     qa_nq_options options = {.standard_quake = world->standard_quake};
     qa_nq_message message = {.op = QA_NQ_TIME, .data.seconds = world->seconds};
     if (!qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
-    qa_application_network_q1_feedback feedback;
-    if (!qa_application_network_q1_consume_feedback(host->frontend->application, actor, &feedback, error)) return false;
+    qa_player_feedback feedback;
+    qa_application_player_feedback_read(host->frontend->application,actor,first,
+        qa_application_events_next(host->frontend->application),&feedback);
+    uint8_t armor=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.armor);
+    uint8_t blood=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.blood);
     if (feedback.damage) {
         if (protocol.kind == QA_NET_NQ15) {
-            if (!qa_nq_write_damage(writer, feedback.armor, feedback.blood, feedback.origin)) return false;
+            if (!qa_nq_write_damage(writer, armor, blood, feedback.origin)) return false;
         } else {
             message = (qa_nq_message){.op = QA_NQ_DAMAGE,
-                .data.damage = {.armor = feedback.armor, .blood = feedback.blood}};
+                .data.damage = {.armor = armor, .blood = blood}};
             for (size_t i = 0; i < 3; ++i) message.data.damage.origin[i] = (float)feedback.origin[i];
             if (!qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
         }
-        /* Local demo recording owns this real feedback consumption before
-         * presentation. Project that same receipt for its admitted seat. */
-        qa_vec3 from;
-        if (!frontend_view_q1_damage_origin(feedback.origin,&from,error) ||
-            !frontend_view_q1_local_damage(host->frontend,actor,feedback.armor,feedback.blood,from,error)) return false;
     }
     if (feedback.set_angle) {
         message.op = QA_NQ_SETANGLE; memcpy(message.data.angles, feedback.angles, sizeof(feedback.angles));
@@ -955,7 +953,7 @@ static bool publish_peer(nq_frontend_peer *peer,const qa_application_network_q1_
         return qa_event_receipts_submit(&peer->event_receipts, peer->event_receipts.through,
             peer->protocol_cursor, 0);
     }
-    if (!(frame_payload(host,actor,host->frontend->options.network_protocol,peer->baselines,peer->baseline_count,world,&writer,error)&&
+    if (!(frame_payload(host,actor,peer->protocol_cursor,host->frontend->options.network_protocol,peer->baselines,peer->baseline_count,world,&writer,error)&&
         source_events(peer,actor,&writer,world,error)&&
         (peer->retiring || qa_network_nq_server_frame(host->runtime,peer->client,(qa_bytes){bytes,qa_net_writer_size(&writer)},error)))) return false;
     return qa_event_receipts_submit(&peer->event_receipts, peer->event_receipts.through,
@@ -1122,7 +1120,7 @@ static bool nq_demo_publish(void *context,qa_error *error)
      * absorbs only the recording fault, preserving Source producer errors. */
     if(!publish_status(host,&world,record->protocol,nq_demo_live_emit,&output,error))return false;
     uint8_t bytes[64000];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
-    if(!frame_payload(host,record->actor,record->protocol,record->baselines,record->baseline_count,&world,&writer,error)||
+    if(!frame_payload(host,record->actor,record->protocol_cursor,record->protocol,record->baselines,record->baseline_count,&world,&writer,error)||
         !source_event_payload(host,record->actor,record->protocol,record->baselines,record->baseline_count,
             &record->protocol_generation,&record->protocol_cursor,&writer,&world,nq_demo_live_emit,&output,error))return false;
     (void)nq_demo_emit(&output,(qa_bytes){bytes,qa_net_writer_size(&writer)},&write_error);

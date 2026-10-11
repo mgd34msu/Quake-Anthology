@@ -23,11 +23,7 @@ typedef struct qa_q1_wire_receipt {
     bool standard_quake;
 } qa_q1_wire_receipt;
 
-typedef struct qa_q1_wire_feedback {
-    float armor, blood;
-    qa_actor_id inflictor;
-    double origin[3];
-} qa_q1_wire_feedback;
+
 typedef struct qa_q1_wire_world {
     qa_string_id map, level, lightstyles[64];
     uint32_t total_secrets, found_secrets, total_monsters, killed_monsters, server_flags;
@@ -99,9 +95,6 @@ void qa_q1_wire_read_end(qa_q1_wire_receipt *);
 bool qa_q1_wire_index(const qa_q1_wire_receipt *, bool models, qa_string_id, uint32_t *);
 bool qa_q1_wire_actor_slot(const qa_q1_wire_receipt *, qa_actor_id, uint32_t *);
 bool qa_q1_wire_actor_at(const qa_q1_wire_receipt *, uint32_t, qa_actor_id *);
-bool qa_q1_wire_feedback_add(qa_q1_game *, qa_actor_id recipient, qa_actor_id inflictor,
-                             float armor, float blood, const double origin[3], qa_error *);
-bool qa_q1_wire_feedback_consume(const qa_q1_wire_receipt *, qa_actor_id,
-                                 qa_q1_wire_feedback *);
+
 
 #endif

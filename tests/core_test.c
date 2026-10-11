@@ -8,6 +8,7 @@
 #include "qa/network_unified_frame_pool.h"
 #include "qa/network_unified_control.h"
 #include "qa/unified_frame_metadata.h"
+#include "qa/unified_frame_events.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/settings.h"
 #include "qa/binary.h"
@@ -2055,8 +2056,27 @@ static void test_native_import_slot_identity(void)
     CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,UINT32_MAX)==QA_NATIVE_Q2_IMPORT_NONE);
 }
 
+static bool player_feedback_test(void)
+{
+    qa_player_feedback first={.damage=true,.armor=1.25f,.blood=4.5f,.origin={1,2,3}},
+        second={.damage=true,.armor=2.5f,.blood=5.25f,.origin={4,5,6},
+            .set_angle=true,.angles={15,90,0}}, view={0},wire={0};
+    qa_player_feedback_merge(&view,&first); qa_player_feedback_merge(&view,&second);
+    qa_player_feedback_merge(&wire,&first); qa_player_feedback_merge(&wire,&second);
+    CHECK(view.armor==3.75f && view.blood==9.75f && view.damage && view.set_angle);
+    CHECK(view.origin[0]==4 && view.angles[1]==90);
+    CHECK(wire.armor==view.armor && wire.blood==view.blood && wire.origin[2]==view.origin[2]);
+    qa_unified_presentation_payload source={.kind=QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK,.value.feedback=view},copy={0};
+    qa_error error={0};
+    CHECK(qa_unified_presentation_payload_clone(&source,&copy,&error));
+    CHECK(copy.value.feedback.armor==3.75f && copy.value.feedback.origin[1]==5 && copy.value.feedback.angles[0]==15);
+    qa_unified_presentation_payload_dispose(&copy);
+    return true;
+}
+
 int main(int argc, char **argv)
 {
+    if(!player_feedback_test()) return 1;
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();

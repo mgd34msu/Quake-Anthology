@@ -18,7 +18,7 @@ bool application_native_q1_qw_kill(qa_application *, qa_actor_id, bool *, qa_err
 bool application_native_q1_qw_pause(qa_application *, qa_actor_id, qa_buffer *, bool *, qa_error *);
 bool application_native_q1_qw_userinfo(qa_application *, qa_actor_id, const char *, qa_error *);
 bool application_native_q1_qw_flush(qa_application *, qa_error *);
-bool application_native_q1_qw_setangle(application_provider *, qa_actor_id, qa_vec3, qa_error *);
+
 bool application_native_q1_qw_retire_capture(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q1_qw_precache(qa_application *, bool, const char *[255], size_t *, qa_error *);
 qa_vfs *application_native_q1_qw_content(qa_application *, qa_error *);

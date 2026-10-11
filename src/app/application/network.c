@@ -507,46 +507,75 @@ bool qa_application_network_q1_colors(qa_application *app, qa_actor_id player,
     return engine && application_qc_client_colors(engine->provider, player, top, bottom, error);
 }
 
-bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id player,
-    qa_application_network_q1_feedback *out, qa_error *error)
+bool application_qc_player_feedback_emit(struct application_qc_state *engine, qa_actor_id player, qa_error *error)
 {
-    if (q1_native(app)) return application_native_q1_wire_feedback(app, player, out, error);
-    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client feedback output");
-    uint32_t slot; struct application_qc_state *engine = application_network_q1_qc_observation(app, 0, error);
-    if (!engine || !application_network_q1_qc_client(engine, player, &slot, error)) return false;
-    if ((engine->profile != QA_QC_NETQUAKE && engine->profile != QA_QC_RERELEASE &&
-        engine->profile != QA_QC_QUAKEWORLD) || !engine->clients[slot].spawned ||
-        !application_qc_input_idle(engine->provider))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 feedback requires its idle spawned source client");
-    qa_application_network_q1_feedback value = {0}; int32_t reference;
-    float armor, blood, fixangle;
+    qa_application *app=engine->provider->application;
+    uint32_t slot;
+    if (!application_network_q1_qc_client(engine,player,&slot,error)) return false;
+    qa_player_feedback value = {0}; int32_t reference;
+    float armor=0, blood=0, fixangle=0;
     if (!q1_entity_reference(engine, player, &reference, error) ||
-        !application_qc_float(engine, reference, engine->field_bindings->dmg_save, &armor, error) ||
-        !application_qc_float(engine, reference, engine->field_bindings->dmg_take, &blood, error) ||
-        !application_qc_float(engine, reference, engine->field_bindings->fixangle, &fixangle, error)) return false;
+        (engine->field_bindings->dmg_save && !application_qc_float(engine, reference, engine->field_bindings->dmg_save, &armor, error)) ||
+        (engine->field_bindings->dmg_take && !application_qc_float(engine, reference, engine->field_bindings->dmg_take, &blood, error)) ||
+        (engine->field_bindings->fixangle && !application_qc_float(engine, reference, engine->field_bindings->fixangle, &fixangle, error))) return false;
     if (!isfinite(fixangle)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source view reset");
     value.damage = armor != 0 || blood != 0; value.set_angle = fixangle != 0;
     if (value.damage) {
         const qa_qc_definition *field = application_qc_field(engine->field_bindings->dmg_inflictor, QA_QC_ENTITY, error);
-        int32_t inflictor; uint32_t saved, taken; float origin[3], minimum[3], maximum[3];
-        if (!field || !q1_wire_bits(armor, &saved, error) ||
-            !q1_wire_bits(blood, &taken, error) ||
+        int32_t inflictor; float origin[3], minimum[3], maximum[3];
+        if (!field ||
             !qa_qc_entity_int(engine->provider->state.qc.instance, reference, field->offset, &inflictor, error) ||
             !q1_wire_vector(engine, inflictor, engine->field_bindings->origin, origin, error) ||
             !q1_wire_vector(engine, inflictor, engine->field_bindings->mins, minimum, error) ||
             !q1_wire_vector(engine, inflictor, engine->field_bindings->maxs, maximum, error)) return false;
-        value.armor = (uint8_t)saved; value.blood = (uint8_t)taken;
+        value.armor = armor; value.blood = blood;
         for (unsigned axis = 0; axis < 3; ++axis)
             value.origin[axis] = (double)origin[axis] + ((double)minimum[axis] + maximum[axis]) * 0.5;
     }
     if (value.set_angle && (!q1_wire_vector(engine, reference, engine->field_bindings->angles, value.angles, error) ||
         !application_control_set_angles(app, player,
             qa_v3(value.angles[0], value.angles[1], value.angles[2]), error))) return false;
+    if ((value.damage || value.set_angle) && !application_player_feedback_emit(app,
+        engine->provider->owner,player,&value,engine->source_time_ns,error)) return false;
     /* Consume the returned Source fields after reading their complete typed state. */
-    if ((value.damage && (!application_qc_set_float(engine, reference, engine->field_bindings->dmg_save, 0, error) ||
-        !application_qc_set_float(engine, reference, engine->field_bindings->dmg_take, 0, error))) ||
+    if ((value.damage && ((engine->field_bindings->dmg_save && !application_qc_set_float(engine, reference, engine->field_bindings->dmg_save, 0, error)) ||
+        (engine->field_bindings->dmg_take && !application_qc_set_float(engine, reference, engine->field_bindings->dmg_take, 0, error)))) ||
         (value.set_angle && !application_qc_set_float(engine, reference, engine->field_bindings->fixangle, 0, error))) return false;
-    *out = value; return true;
+    return true;
+}
+
+bool application_q1_feedback_protocol_flush(qa_application *app,application_provider *provider,qa_error *error)
+{
+    uint64_t next=qa_application_events_next(app);
+    qa_clock_state clock;
+    if(!qa_session_clock(app->session,provider->owner,&clock)) return true;
+    qa_net_protocol_id protocol={.kind=QA_NET_QW28};
+    if(provider->kind==APPLICATION_PROVIDER_QC) protocol=provider->state.qc.engine->protocol;
+    for(size_t i=0;app->players && i<app->players->count;++i) {
+        const application_player_record *player=app->players->records+i;
+        if(player->retiring || player->deferred || player->source_begin_pending) continue;
+        qa_player_feedback feedback;
+        qa_application_player_feedback_read(app,player->actor,app->q1_feedback_protocol_cursor,next,&feedback);
+        if(feedback.damage) {
+            qa_qw_service message={.kind=QA_QW_DAMAGE,
+                .data.damage={.armor=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.armor),
+                    .blood=(uint8_t)(uint32_t)qa_source_float_to_i32(feedback.blood)}};
+            for(size_t axis=0;axis<3;++axis) message.data.damage.origin[axis]=(float)feedback.origin[axis];
+            if(!application_emit_protocol(provider,&(qa_application_protocol_event){
+                .provider=provider->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=clock.frame.time_ns,
+                .recipient=player->actor,.qw=&message,.encoding_protocol=protocol,
+                .destination=1,.reliable=true},error)) return false;
+        }
+        if(feedback.set_angle) {
+            qa_qw_service message={.kind=QA_QW_SET_ANGLE};
+            memcpy(message.data.angles,feedback.angles,sizeof(feedback.angles));
+            if(!application_emit_protocol(provider,&(qa_application_protocol_event){
+                .provider=provider->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=clock.frame.time_ns,
+                .recipient=player->actor,.qw=&message,.encoding_protocol=protocol,.destination=1},error)) return false;
+        }
+    }
+    app->q1_feedback_protocol_cursor=next;
+    return true;
 }
 
 bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,

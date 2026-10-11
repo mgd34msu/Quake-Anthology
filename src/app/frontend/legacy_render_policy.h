@@ -21,6 +21,13 @@ typedef struct frontend_legacy_render_policy {
 /* Borrow the reached canonical ENGINE values; QACV owns their continuation. */
 bool frontend_legacy_render_policy_read(const qa_frontend *, const qa_product *,
     frontend_legacy_render_policy *, qa_error *);
+typedef struct frontend_q1_motion_refs {
+    const qa_cvars *registry;
+    qa_cvar_handle bob, bob_cycle, bob_up, roll_speed, roll_angle, cshift_percent;
+    qa_cvar_handle kick_time, kick_roll, kick_pitch, idle_scale, contents_blend;
+    qa_cvar_handle idle_cycle[3], idle_level[3], offset[3];
+} frontend_q1_motion_refs;
+
 typedef struct frontend_legacy_cvar_handles {
     qa_cvar_handle r_shadows, gl_shadows, gl_flashblend, gl_doubleeys;
     qa_cvar_handle r_mirroralpha, gl_texsort, r_fullbright, r_lightmap, gl_lightmap;
@@ -28,6 +35,7 @@ typedef struct frontend_legacy_cvar_handles {
     qa_cvar_handle gl_modulate, gl_monolightmap, gl_saturatelighting, cl_flares;
     qa_cvar_handle cl_predict, r_drawviewmodel, cl_gun, hand, cl_footsteps;
     qa_hud_cvar_handles hud;
+    frontend_q1_motion_refs motion;
 } frontend_legacy_cvar_handles;
 
 void frontend_legacy_cvars_bind(const qa_cvars *, frontend_legacy_cvar_handles *);

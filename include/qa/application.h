@@ -606,6 +606,9 @@ uint64_t qa_application_events_output_failures(const qa_application *);
 /* Audio retains its unread records in the same ring while listeners are unavailable. */
 uint64_t qa_application_events_audio_first(const qa_application *);
 void qa_application_events_audio_consume(qa_application *, uint64_t next);
+/* Feedback is read independently by each local/protocol consumer. */
+void qa_application_player_feedback_read(const qa_application *, qa_actor_id,
+    uint64_t first, uint64_t through, qa_player_feedback *);
 /* Client-generated effect sounds have no network projection. */
 bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
 /* Module/protocol adapters consume committed Q3 output before client publication. */

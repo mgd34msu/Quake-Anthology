@@ -114,16 +114,6 @@ bool qa_application_network_q1_pause(qa_application *, qa_actor_id,
 bool qa_application_network_q1_name(qa_application *, qa_actor_id, const char *, qa_error *);
 bool qa_application_network_q1_colors(qa_application *, qa_actor_id,
     int32_t top, int32_t bottom, qa_error *);
-typedef struct qa_application_network_q1_feedback {
-    bool damage, set_angle;
-    uint8_t armor, blood;
-    double origin[3];
-    float angles[3];
-} qa_application_network_q1_feedback;
-/* Consume the returned source damage and fixangle fields once.
- * Requires a spawned NetQuake or rerelease client. */
-bool qa_application_network_q1_consume_feedback(qa_application *, qa_actor_id,
-    qa_application_network_q1_feedback *, qa_error *);
 bool qa_application_network_q1_baseline(qa_application *, qa_actor_id,
     const qa_q1_entity *, qa_q1_entity *, qa_error *);
 /* The original QuakeC donor captures a baseline for every reserved client

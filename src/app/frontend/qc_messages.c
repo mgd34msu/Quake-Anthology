@@ -246,7 +246,7 @@ static bool project(frontend_qc_messages *owner,qc_recipient *row,const qa_nq_me
         return !local || frontend_view_q1_local_bonus(owner->frontend,row_actor(row),error);
     if(message->op==QA_NQ_DAMAGE) {
         if(!local) return true;
-        if(row->native && !qa_q1_is_qw(row_protocol(row))) return true;
+        if(row->native || (event->qw && event->qw->kind==QA_QW_DAMAGE)) return true;
         return frontend_view_q1_local_damage(owner->frontend,row_actor(row),message->data.damage.armor,message->data.damage.blood,
             qa_v3(message->data.damage.origin[0],message->data.damage.origin[1],message->data.damage.origin[2]),error);
     }

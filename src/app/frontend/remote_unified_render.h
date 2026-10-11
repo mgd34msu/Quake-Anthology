@@ -5,6 +5,8 @@
 #include "remote_unified_prediction.h"
 #include "qa/unified_frame_visuals.h"
 typedef struct frontend_unified_render frontend_unified_render;
+bool frontend_unified_render_feedback(frontend_unified_render *, const qa_player_feedback *, double, qa_error *);
+
 bool frontend_unified_render_pending_current(const frontend_unified_render *);
 typedef struct frontend_unified_render_equipment {
     qa_actor_id actor;

@@ -4131,6 +4131,16 @@ bool application_control_motion_changed(
         if (!change->preserve_command_angles)
             record->player.command_angles = change->view_angles;
         ++record->player.command_angle_revision;
+        application_provider *source=application_world_provider(application,QA_ROLE_ENTITIES,"");
+        qa_clock_state clock;
+        if(source && source->kind!=APPLICATION_PROVIDER_QC && source->attached &&
+            !source->event_activation_deferred && qa_session_clock(application->session,source->owner,&clock)) {
+            qa_player_feedback feedback={.set_angle=true,
+                .angles={change->view_angles.x,change->view_angles.y,change->view_angles.z}};
+            if(!application_player_feedback_emit(application,source->owner,actor,&feedback,clock.frame.time_ns,error)) return false;
+            if(record->player.state.kind==QA_RULESET_NETQUAKE) record->player.state.data.nq.fix_angle=false;
+            if(active && active->kind==QA_RULESET_NETQUAKE) active->data.nq.fix_angle=false;
+        }
     }
     if (change->reason == QA_BUILTIN_MOTION_TELEPORT && change->hold_ns &&
         record->player.state.kind == QA_RULESET_NETQUAKE) {

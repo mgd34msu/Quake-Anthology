@@ -63,7 +63,29 @@ struct frontend_unified_render {
     int64_t milliseconds;
     bool explicit_fov, source_view_offset, busy;
     bool has_blend,has_damage_blend;
+    bool feedback_seen;
+    uint64_t feedback_cycle;
+    qa_vec3 feedback_kick;
+    qa_vec4 feedback_blend;
 };
+bool frontend_unified_render_feedback(frontend_unified_render *r,const qa_player_feedback *feedback,
+    double seconds,qa_error *error)
+{
+    if(!r || !feedback->damage) return true;
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r->replica);
+    if(!domain) return true;
+    frontend_q1_motion_settings settings;
+    if(!frontend_view_settings_q1_motion_sample(&r->replica->legacy_cvars.motion,false,&settings,error)) return false;
+    qa_vec3 from;
+    if(!frontend_view_q1_damage_origin(feedback->origin,&from,error)) return false;
+    frontend_view_q1_damage(&settings,r->origin,r->angles,
+        (uint8_t)(uint32_t)qa_source_float_to_i32(feedback->armor),
+        (uint8_t)(uint32_t)qa_source_float_to_i32(feedback->blood),from,seconds,
+        &r->frontend->seats[domain->physical_seat].q1_view_motion);
+    r->feedback_seen=true;
+    return true;
+}
+
 static bool render_frame_current(const frontend_unified_render *);
 static bool presentation_source(const frontend_unified_render *r,const qa_unified_source_identity *source,qa_error *e)
 {
@@ -274,8 +296,8 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
         client.items |= UINT32_C(1) << ((variant == QA_HUD_Q1_ROGUE ? 23u : 13u) + grade);
     }
     const qa_scene_image *face = NULL;
-    frontend_q1_view_motion motion = {0};
-    if (!frontend_q1_face_read(materials, frontend_view_q1_face(client.health, client.items, r->seconds, &motion),
+    frontend_q1_view_motion *motion=&r->frontend->seats[domain->physical_seat].q1_view_motion;
+    if (!frontend_q1_face_read(materials, frontend_view_q1_face(client.health, client.items, r->seconds, motion),
             &face, e) || !frontend_q1_hud_read(materials, &client, product, domain->cvars,
             &r->replica->legacy_cvars.hud, r->frontend->view_settings,
             product->edition == QA_EDITION_QUAKEWORLD, r->seconds, face, &r->q1, e)) return false;
@@ -571,6 +593,18 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         height=(float)source_view->view_height; fov=source_view->field_of_view;
         kick=qa_v3((float)source_view->kick_angles[0],(float)source_view->kick_angles[1],(float)source_view->kick_angles[2]);
     }
+    if (r->feedback_seen) {
+        if (r->feedback_cycle != r->frontend->frame.sequence) {
+            frontend_q1_motion_settings settings;
+            if (!frontend_view_settings_q1_motion_sample(&r->replica->legacy_cvars.motion,false,&settings,e)) return false;
+            frontend_seat *seat=r->frontend->seats+d->physical_seat;
+            r->feedback_kick=frontend_view_q1_feedback_step(&settings,
+                (double)seat->client_frame_ns/1e9,has_view,&seat->q1_view_motion);
+            r->feedback_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,-1,false,0);
+            r->feedback_cycle=r->frontend->frame.sequence;
+        }
+        if (!has_view) angles=qa_vec_add(angles,r->feedback_kick);
+    }
     if (!(fov>0 && fov<180))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified received camera has no finite field of view");
     if (children && children->view_origin &&
@@ -652,6 +686,13 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         okay=children->player_blend(children->context,player,r->has_blend,&r->blend,
             r->has_damage_blend,&r->damage_blend,view.viewport,&r->frontend->frame,e) &&
             unified_scene_current(&context);
+    if (okay && r->feedback_blend.w>0 && !r->preferences.reduced_flashes) {
+        frontend_legacy_render_policy policy;
+        okay=frontend_legacy_render_policy_read_controls(d->cvars,&r->replica->legacy_cvars,product,&policy,e);
+        if (okay && policy.lighting.polyblend)
+            okay=qa_scene_frame_picture(&r->frontend->frame,qa_scene_white(r->frontend->ui_images),
+                view.viewport,view.viewport,(qa_vec4){0,0,1,1},r->feedback_blend,e);
+    }
     if (okay) okay=qa_hud_draw_content(r->hud,&(qa_hud_options){.ui=r->frontend->seats[d->physical_seat].ui,
         .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},&(qa_hud_frame){.seat=d->physical_seat,.actor=player,
         .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=r->preferences.hud_scale,.visible=true,

@@ -1319,3 +1319,27 @@ bool qa_application_q3_round_clear_events(qa_application *application,
     return qa_application_q3_round_callback_ready(application, source, error) &&
         clear_events(application, error);
 }
+
+bool application_player_feedback_emit(qa_application *app,qa_actor_owner provider,
+    qa_actor_id actor,const qa_player_feedback *feedback,uint64_t time_ns,qa_error *error)
+{
+    qa_unified_presentation_payload payload={.kind=QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK,
+        .value.feedback=*feedback};
+    return application_unified_event_emit(app,provider,&payload,NULL,actor,(qa_actor_id){0},
+        time_ns,0,false,false,error);
+}
+
+void qa_application_player_feedback_read(const qa_application *app,qa_actor_id actor,
+    uint64_t first,uint64_t through,qa_player_feedback *out)
+{
+    *out=(qa_player_feedback){0};
+    if(first<qa_application_events_first(app)) first=qa_application_events_first(app);
+    if(through>qa_application_events_next(app)) through=qa_application_events_next(app);
+    for(uint64_t id=first;id<through;++id) {
+        const application_event_envelope *record=application_event_stream_at(app,id);
+        for(const application_event_view *row=record?record->views:NULL;row;row=row->next)
+            if(qa_actor_id_equal(row->event.recipient,actor) && row->event.presentation &&
+                row->event.presentation->kind==QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK)
+                qa_player_feedback_merge(out,&row->event.presentation->value.feedback);
+    }
+}

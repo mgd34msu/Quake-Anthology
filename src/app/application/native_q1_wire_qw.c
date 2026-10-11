@@ -532,34 +532,6 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
 static uint8_t byte(double number) {
     return (uint8_t)(uint32_t)qa_source_float_to_i32((float)number);
 }
-bool application_native_q1_qw_setangle(application_provider *p,qa_actor_id actor,
-    qa_vec3 angles,qa_error *error) {
-    qa_q1_options options;double elapsed;uint64_t time_ns;
-    if (!p || p->kind!=APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
-        p->close_pending || !p->launch || p->launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD ||
-        !qa_vec_finite(angles) || !application_native_q1_qw_selected(p->application) ||
-        !qa_q1_source_respawn_options_read(p->state.q1,&options,&elapsed,error) ||
-        !options.quakeworld || options.program!=QA_Q1_ID1 || options.edition!=QA_Q1_CLASSIC)
-        return application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld setangle lost its actual source owner");
-    application_native_q1_wire_source source={0};
-    if (!application_native_q1_wire_retain(p,&source,error)) return false;
-    uint32_t slot;const application_player_record *row;
-    bool okay=source.receipt.client_slots==32 && binding(&source,actor,&slot,&row,error);
-    if (okay && (row->source_begin_pending || row->deferred))
-        okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld setangle requires genuine source Begin");
-    if (okay) okay=qa_q1_game_clock_read(p->state.q1,&time_ns,&elapsed);
-    if (okay) {
-        qa_nq_message message={.op=QA_NQ_SETANGLE};vector(message.data.angles,angles);
-        qa_builtin_event event={.family=QA_GAME_Q1,.provider=p->owner,.actor=actor,.time_ns=time_ns};
-        /* Source consumes fixangle into this frame's unreliable datagram. */
-        okay=application_native_q1_qw_emit(p,&event,&message,actor,false,false,NULL,error) &&
-            qa_q1_wire_receipt_current(&source.receipt);
-    }
-    application_native_q1_wire_end(&source);
-    if (!okay && error && error->code==QA_OK)
-        application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld setangle changed its held source client");
-    return okay;
-}
 bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
     application_native_q1_wire_source source={0};
     if (!application_native_q1_wire_qw_begin(app,&source,error)) return false;
@@ -567,23 +539,7 @@ bool application_native_q1_qw_flush(qa_application *app,qa_error *error) {
     bool okay=app->operation==APPLICATION_IDLE && qa_q1_game_clock_read(source.provider->state.q1,&time_ns,&elapsed) &&
         application_native_q1_wire_observe(app,error) &&
         application_native_q1_source_info_flush(source.provider,error);
-    for (uint32_t i=0;okay && i<32;++i) {
-        qa_actor_id actor;qa_q1_wire_feedback feedback;
-        if (!qa_q1_source_client_actor(source.provider->state.q1,i,&actor)) continue;
-        const application_player_record *row=record(app,actor);
-        if (!row || row->source_begin_pending || row->deferred) continue;
-        if (!qa_q1_wire_feedback_consume(&source.receipt,actor,&feedback)) {
-            okay=application_fail(error,QA_ERROR_ARGUMENT,"Native QuakeWorld damage lost its held source client");break;
-        }
-        if (feedback.armor == 0 && feedback.blood == 0) continue;
-        uint8_t bytes[32];qa_net_writer writer;qa_net_writer_init(&writer,bytes,sizeof(bytes),error);
-        /* svc_damage and its fixed-coordinate layout are shared by NQ15/QW28.
-         * Preserve the source's binary64 center until coordinate conversion. */
-        okay=qa_nq_write_damage(&writer,byte(feedback.armor),byte(feedback.blood),feedback.origin);
-        if (okay) okay=application_emit_protocol(source.provider,&(qa_application_protocol_event){
-            .provider=source.provider->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=time_ns,
-            .recipient=actor,.payload={bytes,qa_net_writer_size(&writer)},.destination=1,.reliable=true},error);
-    }
+    if(okay) okay=application_q1_feedback_protocol_flush(app,source.provider,error);
     application_native_q1_wire_end(&source);return okay;
 }
 

@@ -49,8 +49,7 @@ bool application_native_q1_wire_chat(application_native_q1_wire_source *, qa_act
 bool application_native_q1_wire_pause(qa_application *, qa_actor_id, qa_buffer *, bool *, qa_error *);
 bool application_native_q1_wire_name(qa_application *, qa_actor_id, const char *, qa_error *);
 bool application_native_q1_wire_colors(qa_application *, qa_actor_id, int32_t, int32_t, qa_error *);
-bool application_native_q1_wire_feedback(qa_application *, qa_actor_id,
-    qa_application_network_q1_feedback *, qa_error *);
+
 bool application_native_q1_wire_baseline(qa_application *, qa_actor_id,
     const qa_q1_entity *, qa_q1_entity *, qa_error *);
 bool application_native_q1_wire_client_baseline(qa_application *, qa_actor_id, uint32_t,

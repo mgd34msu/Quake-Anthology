@@ -49,11 +49,6 @@ bool q1_save_wire_validate(q1_save_io *io, qa_q1_game *g) {
             (shared->source_slot && shared->source_slot <= g->options.max_clients))
             return q1_save_fail(io, "Q1 wire continuation leaves its actual source entity namespace");
     }
-    for (size_t i = 0; i < g->wire->damage_count; ++i) {
-        uint32_t client;
-        if (!qa_q1_native_client_slot_prepared(g, g->wire->damage[i].recipient, &client, NULL))
-            return q1_save_fail(io, "Q1 wire feedback has no actual source client continuation");
-    }
     return true;
 }
 bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
@@ -129,34 +124,13 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
         if (!actual || strcmp(path, actual))
             return q1_save_fail(io, "Q1 ordered inline model prefix differs");
     }
-    if (io->values.direction == QA_SOURCE_SAVE_WRITE && wire->damage_count > UINT32_MAX)
-        return q1_save_fail(io, "Q1 feedback extent exceeds its codec");
-    uint32_t count = (io->values.direction == QA_SOURCE_SAVE_READ) ? 0 : (uint32_t)wire->damage_count;
-    Q1_SAVE(io, u32, count);
-    if (count > g->options.max_clients ||
-        ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 35))
-        return q1_save_fail(io, "Invalid Q1 source feedback extent");
-    if ((io->values.direction == QA_SOURCE_SAVE_READ) && count) {
-        wire->damage = calloc(count, sizeof(*wire->damage));
-        if (!wire->damage) {
-            qa_error_set(io->values.error, QA_ERROR_MEMORY, io->values.offset, "restoring Q1 source feedback");
-            return false;
-        }
-        wire->damage_count = wire->damage_capacity = count;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        q1_wire_damage *row = &wire->damage[i];
-        Q1_SAVE(io, actor, row->recipient);
-        Q1_SAVE(io, float, row->value.armor);
-        Q1_SAVE(io, float, row->value.blood);
-        Q1_SAVE(io, actor, row->value.inflictor);
-        for (size_t axis = 0; axis < 3; ++axis)
-            Q1_SAVE(io, double, row->value.origin[axis]);
-        if (!row->recipient.registry)
-            return q1_save_fail(io, "Q1 source feedback has no recipient");
-        for (uint32_t j = 0; j < i; ++j)
-            if (qa_actor_id_equal(wire->damage[j].recipient, row->recipient))
-                return q1_save_fail(io, "Duplicate Q1 source feedback recipient");
+    uint32_t count=0;
+    Q1_SAVE(io,u32,count);
+    for(uint32_t i=0;i<count;++i) {
+        qa_actor_id recipient={0},inflictor={0}; float armor=0,blood=0; double origin[3]={0};
+        Q1_SAVE(io,actor,recipient); Q1_SAVE(io,float,armor); Q1_SAVE(io,float,blood);
+        Q1_SAVE(io,actor,inflictor);
+        for(size_t axis=0;axis<3;++axis) Q1_SAVE(io,double,origin[axis]);
     }
     if ((io->values.direction == QA_SOURCE_SAVE_READ) && g->options.max_clients) {
         if (sizeof(*wire->board) > SIZE_MAX / g->options.max_clients)

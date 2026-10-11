@@ -247,18 +247,6 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
     }
     qa_vec3 angles = camera->angles;
-    {
-        qa_application_network_q1_feedback feedback;
-        if (!qa_application_network_q1_consume_feedback(f->application, actor, &feedback, error)) return false;
-        if (feedback.set_angle && !camera->cutscene)
-            angles = qa_v3(feedback.angles[0], feedback.angles[1], feedback.angles[2]);
-        if (feedback.damage && q1_character) {
-            qa_vec3 from;
-            if (!frontend_view_q1_damage_origin(feedback.origin,&from,error)) return false;
-            frontend_view_q1_damage(&settings, body.origin, body.angles,
-                feedback.armor, feedback.blood, from, seconds, &seat->q1_view_motion);
-        }
-    }
     frontend_q1_motion_input input = {.origin = camera->origin, .angles = angles,
         .entity_angles = qa_v3(-angles.x, angles.y, body.angles.z),
         .velocity = body.velocity, .punch = equipment.kick_angles, .seconds = seconds,

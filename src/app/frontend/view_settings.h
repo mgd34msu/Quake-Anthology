@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_VIEW_SETTINGS_H
 #define QA_FRONTEND_VIEW_SETTINGS_H
 #include "shared_storage.h"
+#include "legacy_render_policy.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_engine_shutdown.h"
@@ -32,12 +33,7 @@ typedef struct frontend_q1_motion_settings {
     bool contents_blend;
     qa_vec3 idle_cycle, idle_level, offset;
 } frontend_q1_motion_settings;
-typedef struct frontend_q1_motion_refs {
-    const qa_cvars *registry;
-    qa_cvar_handle bob, bob_cycle, bob_up, roll_speed, roll_angle, cshift_percent;
-    qa_cvar_handle kick_time, kick_roll, kick_pitch, idle_scale, contents_blend;
-    qa_cvar_handle idle_cycle[3], idle_level[3], offset[3];
-} frontend_q1_motion_refs;
+
 typedef struct frontend_q1_motion_input {
     qa_vec3 origin, angles, entity_angles, velocity, punch;
     double seconds, frame_seconds;
@@ -52,6 +48,8 @@ bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *,boo
 void frontend_view_q1_damage(const frontend_q1_motion_settings *,qa_vec3 origin,qa_vec3 angles,
     uint8_t armor,uint8_t blood,qa_vec3 from,double seconds,frontend_q1_view_motion *);
 void frontend_view_q1_bonus(frontend_q1_view_motion *);
+qa_vec3 frontend_view_q1_feedback_step(const frontend_q1_motion_settings *,double elapsed,
+    bool intermission,frontend_q1_view_motion *);
 bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *,const char *,qa_arena *,qa_error *);
 bool frontend_view_q1_local_bonus(qa_frontend *,qa_actor_id,qa_error *);
 bool frontend_view_q1_local_bonus_commands(qa_frontend *,qa_actor_id,const char *,qa_error *);

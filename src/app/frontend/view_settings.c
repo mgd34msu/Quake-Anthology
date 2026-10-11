@@ -289,6 +289,22 @@ void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec
 }
 void frontend_view_q1_bonus(frontend_q1_view_motion *state)
 { state->bonus_percent = 50; }
+qa_vec3 frontend_view_q1_feedback_step(const frontend_q1_motion_settings *settings,double elapsed,
+    bool intermission,frontend_q1_view_motion *state)
+{
+    if (elapsed < 0) elapsed = 0;
+    double remaining = state->damage_percent - elapsed * 150;
+    state->damage_percent = remaining <= 0 ? 0 : (int32_t)remaining;
+    remaining = state->bonus_percent - elapsed * 100;
+    state->bonus_percent = remaining <= 0 ? 0 : (int32_t)remaining;
+    qa_vec3 kick = {0};
+    if (!intermission && state->damage_time > 0) {
+        kick.z = state->damage_time / settings->kick_time * state->damage_roll;
+        kick.x = state->damage_time / settings->kick_time * state->damage_pitch;
+        state->damage_time -= (float)elapsed;
+    }
+    return kick;
+}
 bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *state, const char *text, qa_arena *storage, qa_error *error)
 {
     if (!state || !text) return fail(error, "Q1 bonus command lost its actual client text");
@@ -449,10 +465,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     double elapsed = input->frame_seconds;
     if (elapsed < 0) elapsed = 0;
     state->seconds = input->seconds; state->initialized = true;
-    double remaining = state->damage_percent - elapsed * 150;
-    state->damage_percent = remaining <= 0 ? 0 : (int32_t)remaining;
-    remaining = state->bonus_percent - elapsed * 100;
-    state->bonus_percent = remaining <= 0 ? 0 : (int32_t)remaining;
+    qa_vec3 feedback = frontend_view_q1_feedback_step(settings,elapsed,input->intermission,state);
     float idle_scale = input->intermission ? 1 : settings->idle_scale;
     double idle[3] = {
         idle_scale * sin(input->seconds * settings->idle_cycle.x) * settings->idle_level.x,
@@ -489,11 +502,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     else side = settings->roll_angle;
     qa_vec3 camera_angles = input->angles;
     camera_angles.z += side * sign;
-    if (state->damage_time > 0) {
-        camera_angles.z += state->damage_time / settings->kick_time * state->damage_roll;
-        camera_angles.x += state->damage_time / settings->kick_time * state->damage_pitch;
-        state->damage_time -= (float)elapsed;
-    }
+    camera_angles = qa_vec_add(camera_angles,feedback);
     if (!input->quakeworld && input->dead) camera_angles.z = 80;
     camera_angles.x = (float)(camera_angles.x + idle[0]);
     camera_angles.y = (float)(camera_angles.y + idle[1]);

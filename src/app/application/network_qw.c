@@ -429,7 +429,8 @@ bool qa_application_network_qw_flush(qa_application *app, qa_error *error)
 {
     if (application_native_q1_qw_selected(app)) return application_native_q1_qw_flush(app, error);
     struct application_qc_state *engine = qw_source(app, NULL, error);
-    bool ok = engine && app->operation == APPLICATION_IDLE && application_qc_flush(engine, error);
+    bool ok = engine && app->operation == APPLICATION_IDLE && application_qc_flush(engine, error) &&
+        application_q1_feedback_protocol_flush(app,engine->provider,error);
     if (!ok && engine) application_fault(app, error);
     return ok;
 }

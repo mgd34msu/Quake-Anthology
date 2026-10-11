@@ -697,9 +697,6 @@ bool application_native_q1_wire_world(qa_application *app, qa_actor_owner owner,
 static uint32_t counter(double value) {
     return value <= 0 ? 0 : value >= UINT32_MAX ? UINT32_MAX : (uint32_t)trunc(value);
 }
-static uint8_t source_byte(double value) {
-    return (uint8_t)(uint32_t)qa_source_float_to_i32((float)value);
-}
 static int16_t source_short(double value) {
     uint16_t bits = (uint16_t)(uint32_t)qa_source_float_to_i32((float)value);
     int16_t result; memcpy(&result, &bits, sizeof(result)); return result;
@@ -783,47 +780,6 @@ bool application_native_q1_wire_status(qa_application *app, qa_actor_owner owner
     if (okay) *out_count = count;
     application_native_q1_wire_end(&source); return okay;
 }
-bool application_native_q1_wire_feedback(qa_application *app, qa_actor_id actor,
-    qa_application_network_q1_feedback *out, qa_error *error) {
-    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 feedback consumption");
-    application_native_q1_wire_source source = {0};
-    if (!observation_begin(app, 0, &source, error)) return false;
-    uint32_t physical;
-    if (!qa_q1_native_client_slot(source.provider->state.q1, actor, &physical, NULL)) {
-        *out = (qa_application_network_q1_feedback){0};
-        application_native_q1_wire_end(&source);
-        return true;
-    }
-    uint32_t slot; application_control_record *row = control(app, actor);
-    const application_player_record *connection = roster(app, actor);
-    qa_q1_wire_feedback feedback;
-    bool okay = client(&source, actor, &slot, error) && row && connection &&
-        !connection->deferred && !connection->source_begin_pending &&
-        qa_q1_wire_feedback_consume(&source.receipt, actor, &feedback);
-    if (okay) {
-        connection = roster(app, actor);
-        row = control(app, actor);
-        okay = qa_q1_wire_receipt_current(&source.receipt) &&
-            application_world_provider(app, QA_ROLE_ENTITIES, "") == source.provider &&
-            client(&source, actor, &slot, error) && row && connection &&
-            !connection->deferred && !connection->source_begin_pending;
-    }
-    if (okay) {
-        qa_application_network_q1_feedback value = {.damage = feedback.armor != 0 || feedback.blood != 0,
-            .armor = source_byte(feedback.armor), .blood = source_byte(feedback.blood),
-            .set_angle = row->player.state.kind == QA_RULESET_NETQUAKE && row->player.state.data.nq.fix_angle};
-        memcpy(value.origin, feedback.origin, sizeof(value.origin));
-        if (value.set_angle) {
-            vector(value.angles, row->player.state.data.nq.angles);
-            okay = application_control_set_angles(app, actor,
-                qa_v3(value.angles[0], value.angles[1], value.angles[2]), error);
-            if (okay) row->player.state.data.nq.fix_angle = false;
-        }
-        if (okay) *out = value;
-    } else if (error && error->code == QA_OK)
-        application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 feedback requires an actual spawned source client");
-    application_native_q1_wire_end(&source); return okay;
-}
 static bool player_model(application_native_q1_wire_source *source, uint32_t *model) {
     *model = source->provider->native_q1_wire->player_model;
     return *model != 0;
@@ -876,38 +832,23 @@ bool application_native_q1_wire_client_baseline(qa_application *app, qa_actor_id
         application_fail(error, QA_ERROR_ARGUMENT, "Reserved native Q1 baseline leaves its actual client extent");
     application_native_q1_wire_end(&source); return okay;
 }
-bool application_native_q1_wire_damage(qa_application *app, const qa_damage_outcome *outcome,
-    qa_error *error) {
-    if (!app || !outcome || !outcome->result.has_feedback ||
-        outcome->result.feedback_family != QA_GAME_Q1) return true;
-    application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    uint32_t slot;
-    if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
-        p->close_pending || !qa_q1_wire_enabled(p->state.q1) ||
-        !qa_q1_native_client_slot(p->state.q1, outcome->request.target, &slot, NULL)) return true;
-    qa_actor_id inflictor = outcome->request.attack.inflictor;
-    application_native_q1_wire_source source = {0};
-    if (!application_native_q1_wire_retain(p, &source, error)) return false;
+bool application_native_q1_wire_damage(qa_application *app,const qa_damage_outcome *outcome,qa_error *error)
+{
+    if(!app || !outcome || !outcome->result.has_feedback ||
+        outcome->result.feedback_family!=QA_GAME_Q1 || !roster(app,outcome->request.target)) return true;
+    application_provider *provider=application_provider_for(app,outcome->request.target,QA_ROLE_CHARACTER,"");
+    if(!provider || provider->kind!=APPLICATION_PROVIDER_Q1) return true;
+    qa_player_feedback feedback={.damage=true,
+        .armor=outcome->result.power_saved+outcome->result.armor_saved,.blood=outcome->result.blood};
     qa_body_state body;
-    double origin[3];
-    uint64_t serial = qa_world_body_storage_serial(app->world, inflictor);
-    bool okay = true;
-    if (serial && qa_world_body_read(app->world, inflictor, &body, NULL) &&
-        qa_world_body_storage_serial(app->world, inflictor) == serial) {
-        origin[0] = (double)body.origin.x + .5 * ((double)body.bounds.mins.x + body.bounds.maxs.x);
-        origin[1] = (double)body.origin.y + .5 * ((double)body.bounds.mins.y + body.bounds.maxs.y);
-        origin[2] = (double)body.origin.z + .5 * ((double)body.bounds.mins.z + body.bounds.maxs.z);
-    } else if (outcome->inflictor_center.present &&
-               qa_actor_id_equal(outcome->inflictor_center.inflictor, inflictor))
-        memcpy(origin, outcome->inflictor_center.center, sizeof(origin));
-    else okay = application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 feedback lost its source inflictor center");
-    if (okay && (p->close_pending || application_world_provider(app, QA_ROLE_ENTITIES, "") != p ||
-        !qa_q1_wire_receipt_current(&source.receipt) ||
-        !qa_q1_native_client_slot(p->state.q1, outcome->request.target, &slot, error)))
-        okay = application_fail(error, QA_ERROR_ARGUMENT, "Q1 feedback recipient changed during body observation");
-    if (okay) okay = qa_q1_wire_feedback_add(p->state.q1, outcome->request.target, inflictor,
-        outcome->result.power_saved + outcome->result.armor_saved, outcome->result.blood, origin, error);
-    application_native_q1_wire_end(&source); return okay;
+    if(qa_world_body_read(app->world,outcome->request.attack.inflictor,&body,NULL))
+        for(size_t axis=0;axis<3;++axis) {
+            const float *origin=&body.origin.x,*mins=&body.bounds.mins.x,*maxs=&body.bounds.maxs.x;
+            feedback.origin[axis]=(double)origin[axis]+.5*((double)mins[axis]+maxs[axis]);
+        }
+    else if(outcome->inflictor_center.present) memcpy(feedback.origin,outcome->inflictor_center.center,sizeof(feedback.origin));
+    return application_player_feedback_emit(app,provider->owner,outcome->request.target,
+        &feedback,outcome->request.attack.time_ns,error);
 }
 bool application_native_q1_wire_inflictor_center(qa_application *app,
     const qa_damage_request *request, double center[3], bool *found, qa_error *error) {

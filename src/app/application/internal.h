@@ -361,6 +361,7 @@ struct qa_application {
     uint16_t event_baseline_incomplete;
     uint64_t equipment_event_owner_next;
     uint64_t event_local_cursor, event_peer_cursor, event_audio_cursor, event_source_cursor;
+    uint64_t q1_feedback_protocol_cursor;
     bool event_source_draining;
     uint64_t protocol_events_generation;
     uint64_t simulation_event_sequence;
@@ -661,6 +662,10 @@ bool application_control_ensure(qa_application *, qa_actor_id, qa_vec3,
                                 application_control_record **, qa_error *);
 bool application_control_cutscene(qa_application *, qa_actor_id, qa_vec3,
                                   qa_vec3, qa_vec3, qa_error *);
+bool application_player_feedback_emit(qa_application *, qa_actor_owner, qa_actor_id,
+    const qa_player_feedback *, uint64_t time_ns, qa_error *);
+bool application_q1_feedback_protocol_flush(qa_application *, struct application_provider *, qa_error *);
+bool application_qc_player_feedback_emit(struct application_qc_state *, qa_actor_id, qa_error *);
 bool application_control_set_angles(qa_application *, qa_actor_id, qa_vec3, qa_error *);
 bool application_control_motion_changed(qa_application *, qa_actor_id,
                                         const qa_builtin_motion_change *,

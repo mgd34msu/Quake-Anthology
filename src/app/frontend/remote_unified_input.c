@@ -90,6 +90,13 @@ bool frontend_unified_input_create(qa_frontend *f,frontend_remote_unified *repli
 bool frontend_input_import_create(qa_frontend *f,frontend_remote_unified *replica,
     frontend_remote_unified_prediction *prediction,frontend_unified_input **out,qa_error *e)
 { return frontend_remote_unified_restore_pending(replica) && create(f,replica,prediction,true,out,e); }
+bool frontend_unified_input_force_view(frontend_unified_input *input,const float angles[3],qa_error *error)
+{
+    if(!input) return true;
+    /* Q2/Q3 force the view through their received pmove delta angles. */
+    if(input->builder.kind!=QA_RULESET_NETQUAKE && input->builder.kind!=QA_RULESET_QUAKEWORLD) return true;
+    return qa_input_command_angles(&input->builder,qa_v3(angles[0],angles[1],angles[2]),error);
+}
 static bool frame_read(frontend_unified_input *p,double time,
     const frontend_unified_prediction_view *snapshot,qa_input_command_frame *out,qa_error *e)
 {

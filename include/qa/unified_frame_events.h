@@ -123,7 +123,7 @@ typedef enum qa_unified_presentation_kind {
     QA_UNIFIED_PRESENTATION_Q2_TEMPORARY, QA_UNIFIED_PRESENTATION_MODEL,
     QA_UNIFIED_PRESENTATION_Q3, QA_UNIFIED_PRESENTATION_Q3_CHARACTER,
     QA_UNIFIED_PRESENTATION_Q3_BALLISTIC, QA_UNIFIED_PRESENTATION_OWNER,
-    QA_UNIFIED_PRESENTATION_VISIBILITY
+    QA_UNIFIED_PRESENTATION_VISIBILITY, QA_UNIFIED_PRESENTATION_PLAYER_FEEDBACK
 } qa_unified_presentation_kind;
 typedef struct qa_unified_presentation_payload {
     qa_unified_presentation_kind kind;
@@ -139,6 +139,7 @@ typedef struct qa_unified_presentation_payload {
         qa_unified_q3_ballistic_event q3_ballistic;
         qa_unified_owner_event owner;
         qa_unified_visibility_event visibility;
+        qa_player_feedback feedback;
     } value;
 } qa_unified_presentation_payload;
 typedef struct qa_unified_presentation_event {

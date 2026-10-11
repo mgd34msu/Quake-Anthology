@@ -1210,6 +1210,9 @@ static bool end_frame(void *opaque, qa_session *session, const qa_source_frame *
         if (retouch->type != QA_QC_FLOAT || !qa_qc_global_float(engine->provider->state.qc.instance, retouch->offset, &value, error)) return false;
         if (value != 0 && !qa_qc_set_global_float(engine->provider->state.qc.instance, retouch->offset, value - 1, error)) return false;
     }
+    for(uint32_t slot=0;slot<engine->max_clients;++slot)
+        if(engine->clients[slot].spawned && !application_qc_player_feedback_emit(engine,
+            engine->clients[slot].actor,error)) return false;
     size_t commands;
     bool ok = application_qc_rerelease_frame(engine,error) &&
         application_qc_flush(engine, error) &&
