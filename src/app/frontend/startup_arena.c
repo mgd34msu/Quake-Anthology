@@ -131,7 +131,8 @@ static bool progress(frontend_startup_arena *owner,const qa_launch_draft *draft,
     qa_cvars *registry=live_registry(owner,draft);
     if (registry) {
         /* Existing physical Source owns these declarations and archive writes. */
-        owner->progress=(qa_arena_progress){registry,qa_base_arena_catalog_levels(owner->base)};
+        if(owner->progress.cvars!=registry)
+            qa_arena_progress_bind(&owner->progress,registry,qa_base_arena_catalog_levels(owner->base));
         return true;
     }
     if (refresh || !owner->preview) {
@@ -150,7 +151,8 @@ static bool progress(frontend_startup_arena *owner,const qa_launch_draft *draft,
         if (!ok) { qa_cvars_destroy(preview); return false; }
         qa_cvars_destroy(owner->preview); owner->preview=preview;
     }
-    owner->progress=(qa_arena_progress){owner->preview,qa_base_arena_catalog_levels(owner->base)};
+    if(owner->progress.cvars!=owner->preview)
+        qa_arena_progress_bind(&owner->progress,owner->preview,qa_base_arena_catalog_levels(owner->base));
     return true;
 }
 

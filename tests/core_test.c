@@ -14,6 +14,7 @@
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/campaign.h"
+#include "qa/arena_progress.h"
 #include "qa/recovery.h"
 #include "qa/persistence_fields.h"
 #include "qa/localization.h"
@@ -2149,6 +2150,38 @@ static bool q3_test_download(void *context,const qa_q3_download *download,qa_err
 static bool q3_test_command(void *context,int32_t sequence,const qa_q3_tokens *tokens,qa_error *error)
 { (void)error;CHECK(tokens->count>0);q3_command_test *state=context;state->sequence=sequence;++state->calls;return true; }
 static bool q3_test_local(void *context) { (void)context;return false; }
+static void test_arena_progress_bound_store(void)
+{
+    qa_error error={0};
+    qa_cvars *cvars=qa_cvars_create(&(qa_cvar_options){.dialect=QA_RULESET_Q3},&error);
+    CHECK(cvars!=NULL);
+    qa_arena_progress progress;
+    CHECK(qa_arena_progress_init(&progress,cvars,(qa_arena_catalog){4,6,4,5},0,&error));
+    int32_t current;
+    CHECK(qa_arena_progress_current(&progress,&current,&error) && current==4);
+    CHECK(qa_cvars_set(cvars,"g_spScores3","\\l4\\1\\l0\\1\\l1\\1",true,&error));
+    CHECK(qa_arena_progress_current(&progress,&current,&error) && current==2);
+    qa_arena_best best;
+    CHECK(qa_arena_progress_best(&progress,0,&best,&error) && best.rank==1 && best.skill==3);
+    CHECK(qa_cvars_set(cvars,"name","player",true,&error));
+    CHECK(qa_arena_progress_current(&progress,&current,&error) && current==2);
+    CHECK(qa_cvars_set(cvars,"g_spScores5","\\l4\\1\\l0\\1\\l1\\1\\l2\\1\\l3\\1",true,&error));
+    CHECK(qa_arena_progress_current(&progress,&current,&error) && current==5);
+    CHECK(qa_arena_progress_reset(&progress,&error));
+    CHECK(qa_arena_progress_current(&progress,&current,&error) && current==4);
+    CHECK(qa_arena_progress_unlock_levels(&progress,&error));
+    CHECK(qa_arena_progress_current(&progress,&current,&error) && current==5);
+    bool unlocked=false;
+    CHECK(qa_arena_progress_movie(&progress,1,&unlocked,&error) && unlocked);
+    CHECK(qa_arena_progress_unlock_medals(&progress,&error));
+    int32_t awards;
+    CHECK(qa_arena_progress_award(&progress,3,&awards,&error) && awards==100);
+    qa_arena_progress rebound;
+    qa_arena_progress_bind(&rebound,cvars,progress.catalog);
+    CHECK(qa_arena_progress_current(&rebound,&current,&error) && current==5);
+    qa_cvars_destroy(cvars);
+}
+
 static void test_q3_reliable_event_references(void)
 {
     qa_error error={0};
@@ -2259,6 +2292,7 @@ int main(int argc, char **argv)
     test_kex_direct_delivery();
     test_nq_send_admission();
     test_q3_send_admission();
+    test_arena_progress_bound_store();
     test_q3_reliable_event_references();
     test_q3_received_commands();
     test_shared_cvar_archive();

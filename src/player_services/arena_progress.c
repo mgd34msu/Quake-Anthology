@@ -27,11 +27,11 @@ static int32_t game_integer(const char *text) {
         value = value * 10u + (uint32_t)(*p++ - '0');
     return signed_word(negative ? 0u - value : value);
 }
-static bool read_value(const qa_arena_progress *progress, const char *name, const char *prefix,
+static bool read_value(const qa_arena_progress *progress, qa_cvar_handle handle, const char *prefix,
                        int32_t index, int32_t *out, qa_error *error) {
     if (!progress || !progress->cvars || !out)
         return fail(error, "Missing arena progression owner/output");
-    const qa_cvar_view *variable = qa_cvars_find(progress->cvars, name);
+    const qa_cvar_view *variable = qa_cvars_read(progress->cvars, handle);
     char key[32], value[8192];
     (void)snprintf(key, sizeof(key), "%s%" PRId32, prefix, index);
     if (!qa_q3_info_value(variable ? variable->value : "", key, value, sizeof(value), error))
@@ -39,9 +39,9 @@ static bool read_value(const qa_arena_progress *progress, const char *name, cons
     *out = game_integer(value);
     return true;
 }
-static bool write_value(qa_arena_progress *progress, const char *name, const char *prefix,
+static bool write_value(qa_arena_progress *progress, qa_cvar_handle handle, const char *prefix,
                         int32_t index, int32_t value, qa_error *error) {
-    const qa_cvar_view *variable = qa_cvars_find(progress->cvars, name);
+    const qa_cvar_view *variable = qa_cvars_read(progress->cvars, handle);
     const char *text = variable ? variable->value : "";
     char info[1024], key[32], number[16];
     size_t size = strlen(text);
@@ -51,7 +51,13 @@ static bool write_value(qa_arena_progress *progress, const char *name, const cha
     (void)snprintf(key, sizeof(key), "%s%" PRId32, prefix, index);
     (void)snprintf(number, sizeof(number), "%" PRId32, value);
     return qa_q3_info_set(info, sizeof(info), key, number, error) &&
-           qa_cvars_set(progress->cvars, name, info, true, error);
+           qa_cvars_set(progress->cvars, variable->name, info, true, error);
+}
+void qa_arena_progress_bind(qa_arena_progress *out,qa_cvars *cvars,qa_arena_catalog catalog)
+{
+    *out=(qa_arena_progress){.cvars=cvars,.catalog=catalog,
+        .awards=qa_cvars_resolve(cvars,"g_spAwards"),.videos=qa_cvars_resolve(cvars,"g_spVideos")};
+    for(size_t i=0;i<5;++i) out->scores[i]=qa_cvars_resolve(cvars,score_names[i]);
 }
 bool qa_arena_progress_init(qa_arena_progress *out, qa_cvars *cvars, qa_arena_catalog catalog,
                             uint64_t owner, qa_error *error) {
@@ -66,7 +72,7 @@ bool qa_arena_progress_init(qa_arena_progress *out, qa_cvars *cvars, qa_arena_ca
     if (!qa_cvars_register(cvars, "g_spAwards", "", QA_CVAR_ARCHIVE, owner, NULL, error) ||
         !qa_cvars_register(cvars, "g_spVideos", "", QA_CVAR_ARCHIVE, owner, NULL, error))
         return false;
-    *out = (qa_arena_progress){cvars, catalog};
+    qa_arena_progress_bind(out,cvars,catalog);
     return true;
 }
 bool qa_arena_progress_best(const qa_arena_progress *progress, int32_t level, qa_arena_best *out,
@@ -76,7 +82,7 @@ bool qa_arena_progress_best(const qa_arena_progress *progress, int32_t level, qa
     qa_arena_best best = {0};
     for (int32_t skill = 1; skill <= 5; ++skill) {
         int32_t rank;
-        if (!read_value(progress, score_names[skill - 1], "l", level, &rank, error))
+        if (!read_value(progress, progress->scores[skill - 1], "l", level, &rank, error))
             return false;
         if (rank >= 1 && rank <= 8 && (best.rank == 0 || rank <= best.rank))
             best = (qa_arena_best){rank, skill};
@@ -86,19 +92,19 @@ bool qa_arena_progress_best(const qa_arena_progress *progress, int32_t level, qa
 }
 bool qa_arena_progress_award(const qa_arena_progress *progress, int32_t medal, int32_t *out,
                              qa_error *error) {
-    return read_value(progress, "g_spAwards", "a", medal, out, error);
+    return read_value(progress, progress->awards, "a", medal, out, error);
 }
 bool qa_arena_progress_movie(const qa_arena_progress *progress, int32_t tier, bool *out,
                              qa_error *error) {
     if (!out)
         return fail(error, "Missing arena movie output");
     int32_t value = 0;
-    if (tier > 0 && !read_value(progress, "g_spVideos", "tier", tier, &value, error))
+    if (tier > 0 && !read_value(progress, progress->videos, "tier", tier, &value, error))
         return false;
     *out = value != 0;
     return true;
 }
-bool qa_arena_progress_current(const qa_arena_progress *progress, int32_t *out, qa_error *error) {
+static bool current_level(const qa_arena_progress *progress, int32_t *out, qa_error *error) {
     if (!progress || !progress->cvars || !out)
         return fail(error, "Missing arena progression owner/output");
     qa_arena_best best;
@@ -121,6 +127,25 @@ bool qa_arena_progress_current(const qa_arena_progress *progress, int32_t *out, 
     }
     *out = progress->catalog.final;
     return true;
+}
+bool qa_arena_progress_current(const qa_arena_progress *progress,int32_t *out,qa_error *error)
+{
+    if(!progress || !progress->cvars || !out)
+        return fail(error,"Missing arena progression owner/output");
+    uint64_t modifications[5];bool changed=!progress->current_valid;
+    for(size_t i=0;i<5;++i) {
+        const qa_cvar_view *row=qa_cvars_read(progress->cvars,progress->scores[i]);
+        modifications[i]=row?row->modification_count:0;
+        changed=changed || modifications[i]!=progress->score_modifications[i];
+    }
+    if(changed) {
+        int32_t level;
+        if(!current_level(progress,&level,error)) return false;
+        qa_arena_progress *cache=(qa_arena_progress *)progress;
+        memcpy(cache->score_modifications,modifications,sizeof(modifications));
+        cache->current_level=level;cache->current_valid=true;++cache->current_revision;
+    }
+    *out=progress->current_level;return true;
 }
 bool qa_arena_progress_available(const qa_arena_progress *progress, int32_t level, bool *out,
                                  qa_error *error) {
@@ -187,7 +212,7 @@ static bool grant(qa_arena_progress *progress, qa_arena_postgame *out, int32_t m
         return true;
     int32_t previous;
     if (!qa_arena_progress_award(progress, medal, &previous, error) ||
-        !write_value(progress, "g_spAwards", "a", medal,
+        !write_value(progress, progress->awards, "a", medal,
                      signed_word((uint32_t)previous + (uint32_t)count), error))
         return false;
     if (display)
@@ -200,12 +225,12 @@ bool qa_arena_progress_record(qa_arena_progress *progress, const qa_arena_result
         result->level >= progress->catalog.total_levels || result->rank < 1 || result->rank > 8 ||
         result->skill < 1 || result->skill > 5)
         return fail(error, "Invalid arena result");
-    const char *name = score_names[result->skill - 1];
+    qa_cvar_handle handle = progress->scores[result->skill - 1];
     int32_t previous;
-    if (!read_value(progress, name, "l", result->level, &previous, error))
+    if (!read_value(progress, handle, "l", result->level, &previous, error))
         return false;
     if ((!previous || previous > result->rank) &&
-        !write_value(progress, name, "l", result->level, result->rank, error))
+        !write_value(progress, handle, "l", result->level, result->rank, error))
         return false;
     qa_arena_postgame postgame = {.rank = result->rank, .completed_tier = -1, .unlocked_movie = -1};
     if (result->accuracy >= 50 && !grant(progress, &postgame, 0, 1, result->accuracy, error))
@@ -233,7 +258,7 @@ bool qa_arena_progress_record(qa_arena_progress *progress, const qa_arena_result
         if (!qa_arena_progress_movie(progress, movie, &unlocked, error))
             return false;
         if (!unlocked) {
-            if (!write_value(progress, "g_spVideos", "tier", movie, 1, error))
+            if (!write_value(progress, progress->videos, "tier", movie, 1, error))
                 return false;
             postgame.unlocked_movie = movie;
         }
@@ -247,19 +272,19 @@ bool qa_arena_progress_reset(qa_arena_progress *progress, qa_error *error) {
     if (!progress || !progress->cvars)
         return fail(error, "Missing arena progression owner");
     for (size_t i = 0; i < 5; ++i)
-        if (!qa_cvars_set(progress->cvars, score_names[i], "", true, error))
+        if (!qa_cvars_set(progress->cvars, qa_cvars_read(progress->cvars,progress->scores[i])->name, "", true, error))
             return false;
-    return qa_cvars_set(progress->cvars, "g_spAwards", "", true, error) &&
-           qa_cvars_set(progress->cvars, "g_spVideos", "", true, error);
+    return qa_cvars_set(progress->cvars, qa_cvars_read(progress->cvars,progress->awards)->name, "", true, error) &&
+           qa_cvars_set(progress->cvars, qa_cvars_read(progress->cvars,progress->videos)->name, "", true, error);
 }
 bool qa_arena_progress_unlock_levels(qa_arena_progress *progress, qa_error *error) {
     if (!progress || !progress->cvars)
         return fail(error, "Missing arena progression owner");
     for (int32_t level = 0; level < progress->catalog.total_levels; ++level)
-        if (!write_value(progress, score_names[0], "l", level, 1, error))
+        if (!write_value(progress, progress->scores[0], "l", level, 1, error))
             return false;
     for (int32_t tier = 1; tier <= 8; ++tier)
-        if (!write_value(progress, "g_spVideos", "tier", tier, 1, error))
+        if (!write_value(progress, progress->videos, "tier", tier, 1, error))
             return false;
     return true;
 }
@@ -267,7 +292,7 @@ bool qa_arena_progress_unlock_medals(qa_arena_progress *progress, qa_error *erro
     if (!progress || !progress->cvars)
         return fail(error, "Missing arena progression owner");
     for (int32_t medal = 0; medal < 6; ++medal)
-        if (!write_value(progress, "g_spAwards", "a", medal, 100, error))
+        if (!write_value(progress, progress->awards, "a", medal, 100, error))
             return false;
     return true;
 }

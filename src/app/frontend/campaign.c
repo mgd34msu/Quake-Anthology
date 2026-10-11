@@ -25,6 +25,10 @@ struct frontend_campaign {
     int32_t match_start;
     campaign_kind kind;
     qa_cvar_handle nextmap, skill, selection;
+    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[6];
+    uint64_t selection_modification, progression_revision;
+    int32_t menu_selection;
+    bool selection_valid;
     uint64_t cvar_revision, configuration_generation;
     qa_base_arena_catalog *catalog;
     qa_arena_progress progression;
@@ -40,6 +44,8 @@ struct frontend_campaign {
 };
 static const char *const base_archive_names[8]={"g_spScores1","g_spScores2","g_spScores3","g_spScores4",
     "g_spScores5","g_spAwards","g_spVideos","g_spCompletedRound"};
+static const char *const team_overrides[6][2]={{"capturelimit","ui_saveCaptureLimit"},{"fraglimit","ui_saveFragLimit"},
+    {"g_doWarmup","ui_doWarmup"},{"g_warmup","ui_Warmup"},{"sv_pure","ui_pure"},{"g_friendlyFire","ui_friendlyFire"}};
 void frontend_campaign_audio_stopped(qa_frontend *f)
 { if (f && f->campaign) f->campaign->music_attached=false; }
 static char *campaign_copy(const char *text,qa_error *error)
@@ -48,8 +54,8 @@ static char *campaign_copy(const char *text,qa_error *error)
     if (!copy) { frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source campaign text"); return NULL; }
     memcpy(copy,text,size+1); return copy;
 }
-static const char *campaign_value(const qa_cvars *cvars,const char *name)
-{ const qa_cvar_view *value=qa_cvars_find(cvars,name); return value?value->value:""; }
+static const char *campaign_value(const qa_cvars *cvars,qa_cvar_handle handle)
+{ const qa_cvar_view *value=qa_cvars_read(cvars,handle); return value?value->value:""; }
 static int32_t campaign_word(uint32_t value)
 { int32_t result; memcpy(&result,&value,sizeof(result)); return result; }
 static int32_t campaign_number(const qa_command_invocation *request,size_t index)
@@ -139,18 +145,22 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
             qa_arena_progress_init(&owner->progression,view.cvars,qa_base_arena_catalog_levels(owner->catalog),view.source_owner,error) &&
             qa_cvars_register(view.cvars,"g_spRoundIdentity","",QA_CVAR_ARCHIVE,view.source_owner,NULL,error) &&
             qa_cvars_register(view.cvars,"g_spCompletedRound","",QA_CVAR_ARCHIVE,view.source_owner,NULL,error);
+        owner->round_identity=qa_cvars_resolve(view.cvars,"g_spRoundIdentity");
+        for(size_t i=0;i<8;++i) owner->archive[i]=qa_cvars_resolve(view.cvars,base_archive_names[i]);
         const qa_base_arena *arena=ok?qa_base_arena_catalog_find(owner->catalog,view.map):NULL;
         if (ok && arena && !f->source_restoring) {
             char selection[24]; (void)snprintf(selection,sizeof(selection),"%" PRId32,arena->selection);
             ok=qa_cvars_register(view.cvars,"ui_spSelection","0",QA_CVAR_ARCHIVE,view.source_owner,NULL,error) &&
                 qa_cvars_set(view.cvars,"ui_spSelection",selection,true,error);
         }
-        if (ok && (!f->source_restoring || !*campaign_value(view.cvars,"g_spRoundIdentity"))) {
+        if (ok && (!f->source_restoring || !*campaign_value(view.cvars,owner->round_identity))) {
             char identity[37]; ok=campaign_uuid(identity,error) && qa_cvars_set(view.cvars,"g_spRoundIdentity",identity,true,error);
         }
     } else ok=view.config_root && qa_team_arena_progress_create(view.config_root,&owner->team,error);
     owner->skill=qa_cvars_resolve(view.cvars,"g_spSkill");
     owner->selection=qa_cvars_resolve(view.cvars,"ui_spSelection");
+    owner->time_to_beat=qa_cvars_resolve(view.cvars,"ui_teamArenaTimeToBeat");
+    for(size_t i=0;i<6;++i) owner->saved_rules[i]=qa_cvars_resolve(view.cvars,team_overrides[i][1]);
     owner->cvar_revision=qa_cvars_revision(view.cvars);
     if (ok) ok=qa_application_q3_campaign_current(f->application,&view);
     f->campaign=owner;
@@ -264,13 +274,13 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
         players[i]=(campaign_player){campaign_number(request,8+i*3),rank,campaign_number(request,10+i*3)};
         if (players[i].client==player) game.rank=rank;
     }
-    const char *identity=campaign_value(view->cvars,"g_spRoundIdentity"); size_t length=strlen(identity);
+    const char *identity=campaign_value(view->cvars,owner->round_identity); size_t length=strlen(identity);
     if (length>SIZE_MAX-32) return frontend_fail(error,QA_ERROR_MEMORY,"Source round identity exceeds addressable text");
     char *round=malloc(length+32);
     if (!round) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source completed-round identity");
     (void)snprintf(round,length+32,"%s:%" PRId32,identity,view->match_start_time);
     qa_arena_postgame result={.rank=game.rank,.completed_tier=-1,.unlocked_movie=-1,.next_level=-1};
-    bool duplicate=!strcmp(campaign_value(view->cvars,"g_spCompletedRound"),round),ok=true;
+    bool duplicate=!strcmp(campaign_value(view->cvars,owner->archive[7]),round),ok=true;
     if (duplicate) ok=qa_arena_progress_tier(&owner->progression,arena->number,&result.completed_tier,error) &&
         qa_arena_progress_current(&owner->progression,&result.next_level,error);
     bool local=false; uint32_t seat=0; qa_actor_id actor={0};
@@ -288,7 +298,7 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     }
     char *before[8]={0}; bool mutated=false;
     if (ok && !duplicate) {
-        for (size_t i=0;ok && i<8;++i) ok=(before[i]=campaign_copy(campaign_value(view->cvars,base_archive_names[i]),error))!=NULL;
+        for (size_t i=0;ok && i<8;++i) ok=(before[i]=campaign_copy(campaign_value(view->cvars,owner->archive[i]),error))!=NULL;
         if (ok) {
             mutated=true;
             ok=qa_arena_progress_record(&owner->progression,&game,&result,error) &&
@@ -321,7 +331,7 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
     const qa_command_invocation *request,qa_error *error)
 {
     frontend_campaign *owner=f->campaign;
-    const qa_cvar_view *skill=qa_cvars_read(view->cvars,owner->skill),*beat=qa_cvars_find(view->cvars,"ui_teamArenaTimeToBeat");
+    const qa_cvar_view *skill=qa_cvars_read(view->cvars,owner->skill),*beat=qa_cvars_read(view->cvars,owner->time_to_beat);
     qa_team_arena_score_input input={.match_start_time=view->match_start_time,
         .skill=skill?skill->number:0,.time_to_beat=beat?beat->number:0,
         .stats={campaign_number(request,2),campaign_number(request,3),campaign_number(request,4),
@@ -344,12 +354,10 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
     if (!qa_cvars_set(view->cvars,"ui_scoreScore",score,true,error) || !qa_application_q3_campaign_current(f->application,view) ||
         !qa_cvars_set(view->cvars,"ui_scoreTime",time,true,error) || !qa_application_q3_campaign_current(f->application,view) ||
         !qa_cvars_set(view->cvars,"ui_scoreTeam",teams,true,error) || !qa_application_q3_campaign_current(f->application,view)) return false;
-    static const char *const overrides[6][2]={{"capturelimit","ui_saveCaptureLimit"},{"fraglimit","ui_saveFragLimit"},
-        {"g_doWarmup","ui_doWarmup"},{"g_warmup","ui_Warmup"},{"sv_pure","ui_pure"},{"g_friendlyFire","ui_friendlyFire"}};
     for (size_t i=0;i<6;++i) {
-        char *saved=campaign_copy(campaign_value(view->cvars,overrides[i][1]),error);
+        char *saved=campaign_copy(campaign_value(view->cvars,owner->saved_rules[i]),error);
         if (!saved) return false;
-        bool ok=qa_cvars_set(view->cvars,overrides[i][0],saved,true,error) && qa_application_q3_campaign_current(f->application,view);
+        bool ok=qa_cvars_set(view->cvars,team_overrides[i][0],saved,true,error) && qa_application_q3_campaign_current(f->application,view);
         free(saved); if (!ok) return false;
     }
     owner->team_result=result; owner->result=true;
@@ -393,23 +401,32 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     }
     else {
         out->catalog=owner->catalog; out->progression=&owner->progression;
-        out->selection=-1;
-        if (!qa_arena_progress_current(&owner->progression,&out->selection,error)) return false;
+        int32_t current;
+        if (!qa_arena_progress_current(&owner->progression,&current,error)) return false;
         const qa_cvar_view *selected=qa_cvars_read(owner->cvars,owner->selection);
-        if (selected && *selected->value) {
-            char *end=NULL; double value=strtod(selected->value,&end);
-            while (end && (*end==' ' || (*end>='\t' && *end<='\r'))) ++end;
-            if (end && !*end && isfinite(value)) {
-                for (size_t i=0;i<qa_base_arena_catalog_count(owner->catalog);++i) {
-                    const qa_base_arena *arena=qa_base_arena_catalog_at(owner->catalog,i);
-                    bool available=false;
-                    if (arena->selection!=value) continue;
-                    if (!qa_arena_progress_available(&owner->progression,arena->number,&available,error)) return false;
-                    if (available) out->selection=arena->number;
-                    break;
+        uint64_t modification=selected?selected->modification_count:0;
+        if(!owner->selection_valid || owner->selection_modification!=modification ||
+            owner->progression_revision!=owner->progression.current_revision) {
+            owner->menu_selection=current;
+            if (selected && *selected->value) {
+                char *end=NULL; double value=strtod(selected->value,&end);
+                while (end && (*end==' ' || (*end>='\t' && *end<='\r'))) ++end;
+                if (end && !*end && isfinite(value)) {
+                    for (size_t i=0;i<qa_base_arena_catalog_count(owner->catalog);++i) {
+                        const qa_base_arena *arena=qa_base_arena_catalog_at(owner->catalog,i);
+                        bool available=false;
+                        if (arena->selection!=value) continue;
+                        if (!qa_arena_progress_available(&owner->progression,arena->number,&available,error)) return false;
+                        if (available) owner->menu_selection=arena->number;
+                        break;
+                    }
                 }
             }
+            owner->selection_modification=modification;
+            owner->progression_revision=owner->progression.current_revision;
+            owner->selection_valid=true;
         }
+        out->selection=owner->menu_selection;
         out->game=owner->base_game; out->postgame=owner->base_result;
         out->player_count=owner->player_count; out->player_client=owner->player_client;
         for (size_t i=0;i<owner->player_count;++i)

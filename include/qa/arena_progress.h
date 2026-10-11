@@ -10,6 +10,10 @@ typedef struct qa_arena_catalog {
 typedef struct qa_arena_progress {
     qa_cvars *cvars;
     qa_arena_catalog catalog;
+    qa_cvar_handle scores[5], awards, videos;
+    uint64_t score_modifications[5], current_revision;
+    int32_t current_level;
+    bool current_valid;
 } qa_arena_progress;
 typedef struct qa_arena_best {
     int32_t rank, skill;
@@ -33,6 +37,9 @@ typedef struct qa_arena_postgame {
  * application owns the archive transaction and round-identity deduplication. */
 bool qa_arena_progress_init(qa_arena_progress *, qa_cvars *, qa_arena_catalog, uint64_t owner,
                             qa_error *);
+/* Bind an already registered store at load. Read queries maintain the
+ * score-revision cache in this initialized, mutable owner. */
+void qa_arena_progress_bind(qa_arena_progress *, qa_cvars *, qa_arena_catalog);
 bool qa_arena_progress_best(const qa_arena_progress *, int32_t level, qa_arena_best *, qa_error *);
 bool qa_arena_progress_award(const qa_arena_progress *, int32_t medal, int32_t *, qa_error *);
 bool qa_arena_progress_movie(const qa_arena_progress *, int32_t tier, bool *, qa_error *);
