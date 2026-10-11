@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <float.h>
+#include "qa/text.h"
 
 static qa_vec3 vector(const float *value) { return qa_v3(value[0], value[1], value[2]); }
 static const qa_q2_player *player(const frontend_remote_q2 *row)
@@ -14,14 +15,17 @@ void remote_q2_prediction_config(frontend_remote_q2 *row, uint32_t index)
 {
     if (index == row->hud_names.layout.air_accelerate) {
         const char *text = frontend_remote_q2_config(row, index);
-        char *end;
-        double value = strtod(text, &end);
-        while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') ++end;
-        row->prediction_air_invalid = (*text && (*end || !isfinite(value))) || value < -FLT_MAX || value > FLT_MAX;
+        double value = 0; qa_error ignored = {0};
+        row->prediction_air_invalid = (*text && !qa_parse_number(
+            (qa_bytes){(const uint8_t *)text, strlen(text)}, &value, &ignored)) ||
+            !isfinite(value) || value < -FLT_MAX || value > FLT_MAX;
         row->prediction_air_accelerate = row->prediction_air_invalid ? 0 : (float)value;
     }
-    if (index == row->hud_names.layout.n64_physics)
-        row->prediction_n64 = strtod(frontend_remote_q2_config(row, index), NULL) != 0;
+    if (index == row->hud_names.layout.n64_physics) {
+        double value = 0; qa_error ignored = {0};
+        qa_parse_atof(frontend_remote_q2_config(row, index), &value, &ignored);
+        row->prediction_n64 = value != 0;
+    }
     if (index == row->hud_names.layout.max_clients) {
         row->collision_clients = strtoul(frontend_remote_q2_config(row, index), NULL, 10);
         row->collision_dirty = true;

@@ -198,9 +198,10 @@ void qa_hud_q2_weapons_warning(qa_strings *strings, const qa_q2_config_layout *l
         if (text) ++text;
     }
     if (text && *text) {
-        char *end;
-        long long value = strtoll(text, &end, 10);
-        if (end != text && (!*end || *end == '|') && value >= INT32_MIN && value <= INT32_MAX)
+        const char *end = strchr(text, '|');
+        double value = 0; qa_error ignored = {0};
+        if (qa_parse_number((qa_bytes){(const uint8_t *)text, end ? (size_t)(end - text) : strlen(text)},
+                &value, &ignored) && isfinite(value) && value >= INT32_MIN && value <= INT32_MAX && trunc(value) == value)
             warning = (int32_t)value;
     }
     weapons->warnings[index - layout->wheel_weapons] = warning;

@@ -5,12 +5,6 @@
 #include <zlib.h>
 
 
-static bool is_kex(const qa_q2_codec *c) {
-    return c->protocol.kind == QA_NET_Q2KEX_2023 || c->protocol.kind == QA_NET_Q2KEX_DEMO_2022;
-}
-static bool is_rerelease(const qa_q2_codec *c) {
-    return c->protocol.kind == QA_NET_Q2REPRO_1038 || c->protocol.kind == QA_NET_Q2PRIVATE_4038;
-}
 static bool extended(const qa_q2_codec *c) {
     return c->protocol.kind == QA_NET_Q2PRO_36 && qa_q2pro_extensions(c);
 }
@@ -183,7 +177,7 @@ static bool serverdata_layout(qa_q2_messages *m, qa_error *error) {
 
 bool qa_q2_messages_accept(qa_q2_messages *m, const qa_q2_server_record *record, qa_error *error) {
     if (!m || !record || record->seat > QA_Q2_MAX_SEATS ||
-        (record->seat == QA_Q2_MAX_SEATS && !is_kex(&m->codec)) || m->reading) {
+        (record->seat == QA_Q2_MAX_SEATS && !qa_q2_protocol_kex(m->codec.protocol)) || m->reading) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid decoded Q2 record"); return false;
     }
     const qa_q2_server_event *e = &record->event;
@@ -202,7 +196,7 @@ bool qa_q2_messages_accept(qa_q2_messages *m, const qa_q2_server_record *record,
     if (e->kind == QA_Q2_SVC_CONFIGSTRING) return set_config(m, e->data.config.index, e->data.config.value, error);
     if (e->kind == QA_Q2_SVC_BASELINE) return set_baseline(m, &e->data.baseline, error);
     if (e->kind == QA_Q2_SVC_FRAME) {
-        qa_q2_frame_history *h = history(m, is_kex(&m->codec) ? 0 : record->seat, error);
+        qa_q2_frame_history *h = history(m, qa_q2_protocol_kex(m->codec.protocol) ? 0 : record->seat, error);
         return h && qa_q2_frame_history_accept(h, e->data.frame, error);
     }
     return true;
@@ -213,7 +207,7 @@ static bool emit_record(qa_q2_messages *m, qa_net_reader *r, size_t start, uint8
     if (r->failed) return false;
     if (r->bit % 8) return qa_net_reader_fail(r, "Q2 server record ended inside a byte");
     qa_q2_server_record record = {m->seat, opcode, raw_span(r, start), *event};
-    if (event->kind == QA_Q2_SVC_FRAME && is_kex(&m->codec)) record.seat = 0;
+    if (event->kind == QA_Q2_SVC_FRAME && qa_q2_protocol_kex(m->codec.protocol)) record.seat = 0;
     if (emit && !emit(user, &record, r->error)) return callback_failed(r, "Q2 server record callback failed");
     return true;
 }
@@ -242,7 +236,7 @@ static bool read_baseline(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_even
 }
 
 static bool read_sound(qa_q2_codec *c, qa_net_reader *r, qa_q2_kex_sound *out) {
-    if (is_kex(c)) return qa_q2_kex_read_sound(c, r, out);
+    if (qa_q2_protocol_kex(c->protocol)) return qa_q2_kex_read_sound(c, r, out);
     qa_q2_kex_sound s = {0};
     s.flags = qa_net_read_u8(r);
     s.index = (s.flags & 32u) ? qa_net_read_u16(r) : qa_net_read_u8(r);
@@ -376,7 +370,7 @@ static bool blast_baseline(void *user, const qa_q2_entity *entity, qa_error *err
 
 static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_fn emit, void *user, unsigned depth) {
     if (depth > 32) return qa_net_reader_fail(r, "Excessively nested Q2 zpacket");
-    bool kex = is_kex(&m->codec), rerelease = is_rerelease(&m->codec);
+    bool kex = qa_q2_protocol_kex(m->codec.protocol), rerelease = qa_q2_protocol_repro(m->codec.protocol);
     while (qa_net_reader_remaining(r)) {
         size_t start = r->bit / 8;
         qa_q2_server_event event = {0};
@@ -546,7 +540,7 @@ bool qa_q2_messages_read(qa_q2_messages *m, qa_bytes bytes, qa_q2_server_emit_fn
 
 uint8_t qa_q2_sound_flags(const qa_q2_codec *c, const qa_q2_kex_sound *from) {
     qa_q2_kex_sound s = *from;
-    bool kex = is_kex(c);
+    bool kex = qa_q2_protocol_kex(c->protocol);
     if (!kex && s.index > UINT8_MAX) s.flags |= 32u;
     if (s.has_position) s.flags |= 4u;
     if (s.entity || s.channel) s.flags |= 8u;
@@ -560,9 +554,9 @@ uint8_t qa_q2_sound_flags(const qa_q2_codec *c, const qa_q2_kex_sound *from) {
 
 static bool write_sound(qa_q2_codec *c, qa_net_writer *w, const qa_q2_kex_sound *from) {
     qa_q2_kex_sound s = *from;
-    bool kex = is_kex(c);
+    bool kex = qa_q2_protocol_kex(c->protocol);
     if (s.channel > 7 || s.entity > (UINT32_MAX >> 3)) return qa_net_writer_fail(w, "Invalid Q2 sound channel");
-    if (!kex && s.index > UINT8_MAX && !is_rerelease(c) && !extended(c))
+    if (!kex && s.index > UINT8_MAX && !qa_q2_protocol_repro(c->protocol) && !extended(c))
         return qa_net_writer_fail(w, "Q2 sound needs extended index");
     s.flags = qa_q2_sound_flags(c, from);
     uint32_t channel = (s.entity << 3) | s.channel;
@@ -582,7 +576,7 @@ static bool write_sound(qa_q2_codec *c, qa_net_writer *w, const qa_q2_kex_sound 
 
 bool qa_q2_server_event_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_server_event *e) {
     if (!c || !e) return qa_net_writer_fail(w, "Missing Q2 server event");
-    bool kex = is_kex(c), rerelease = is_rerelease(c);
+    bool kex = qa_q2_protocol_kex(c->protocol), rerelease = qa_q2_protocol_repro(c->protocol);
     if (!kex && !rerelease && (e->kind == QA_Q2_SVC_ACHIEVEMENT || e->kind == QA_Q2_SVC_FOG ||
         e->kind == QA_Q2_SVC_DAMAGE || e->kind == QA_Q2_SVC_POI || e->kind == QA_Q2_SVC_HELP_PATH ||
         e->kind == QA_Q2_SVC_LOCALIZED_PRINT))
@@ -684,13 +678,13 @@ bool qa_q2_client_messages_read(qa_q2_codec *c, qa_bytes bytes, uint32_t sequenc
             if (!e->data.text || (kex && !qa_utf8_valid((qa_bytes){(const uint8_t *)e->data.text, strlen(e->data.text)}))) return qa_net_reader_fail(&r, "Invalid Q2 client control string");
             break;
         case 5:
-            if (c->protocol.kind != QA_NET_R1Q2_35 && c->protocol.kind != QA_NET_Q2PRO_36 && !is_rerelease(c))
+            if (!qa_q2_protocol_enhanced(c->protocol))
                 return qa_net_reader_fail(&r, "Q2 client setting is unsupported by selected wire");
             e->kind = QA_Q2_CLC_SETTING;
             e->data.setting.index = qa_net_read_i16(&r); e->data.setting.value = qa_net_read_i16(&r);
             break;
         case 12:
-            if (c->protocol.kind != QA_NET_Q2PRO_36 && !is_rerelease(c))
+            if (c->protocol.kind != QA_NET_Q2PRO_36 && !qa_q2_protocol_repro(c->protocol))
                 return qa_net_reader_fail(&r, "Q2 userinfo delta is unsupported by selected wire");
             e->kind = QA_Q2_CLC_USERINFO_DELTA;
             e->data.userinfo_delta.name = read_text(&r); e->data.userinfo_delta.value = read_text(&r);
@@ -732,7 +726,7 @@ bool qa_q2_client_messages_read(qa_q2_codec *c, qa_bytes bytes, uint32_t sequenc
                         e->data.batch.frames[i].commands[j].lightlevel = batch.lightlevel;
                     }
                 }
-            } else if (is_rerelease(c)) {
+            } else if (qa_q2_protocol_repro(c->protocol)) {
                 if (!qa_q2_repro_read_batch(c, &r, opcode == 10, &e->data.batch)) return false;
             } else return qa_net_reader_fail(&r, "Batched Q2 movement is unsupported by selected wire");
             break;
@@ -780,11 +774,11 @@ bool qa_q2_client_event_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_clie
         if (kex && e->kind == QA_Q2_CLC_COMMAND) qa_net_write_u8(w, (uint8_t)(seat + 1));
         return qa_net_write_string(w, e->data.text);
     case QA_Q2_CLC_SETTING:
-        if (c->protocol.kind != QA_NET_R1Q2_35 && c->protocol.kind != QA_NET_Q2PRO_36 && !is_rerelease(c))
+        if (!qa_q2_protocol_enhanced(c->protocol))
             return qa_net_writer_fail(w, "Q2 wire does not support client settings");
         return qa_net_write_u8(w, 5) && qa_net_write_i16(w, e->data.setting.index) && qa_net_write_i16(w, e->data.setting.value);
     case QA_Q2_CLC_USERINFO_DELTA:
-        if (c->protocol.kind != QA_NET_Q2PRO_36 && !is_rerelease(c)) return qa_net_writer_fail(w, "Q2 wire does not support userinfo deltas");
+        if (c->protocol.kind != QA_NET_Q2PRO_36 && !qa_q2_protocol_repro(c->protocol)) return qa_net_writer_fail(w, "Q2 wire does not support userinfo deltas");
         return qa_net_write_u8(w, 12) && qa_net_write_string(w, e->data.userinfo_delta.name) && qa_net_write_string(w, e->data.userinfo_delta.value);
     case QA_Q2_CLC_BATCH:
         if (!e->data.batch.frame_count || e->data.batch.frame_count > QA_Q2_REPRO_BATCH_FRAMES)
@@ -804,7 +798,7 @@ bool qa_q2_client_event_write(qa_q2_codec *c, qa_net_writer *w, const qa_q2_clie
             }
             return qa_q2pro_write_batch_message(c, w, &batch);
         }
-        if (!is_rerelease(c)) return qa_net_writer_fail(w, "Q2 wire does not support command batches");
+        if (!qa_q2_protocol_repro(c->protocol)) return qa_net_writer_fail(w, "Q2 wire does not support command batches");
         return qa_net_write_u8(w, e->data.batch.last_frame == -1 ? 10 : 11) &&
                qa_q2_repro_write_batch(c, w, e->data.batch.last_frame == -1, &e->data.batch);
     case QA_Q2_CLC_MOVE: return qa_net_writer_fail(w, "Q2 move encoding requires its sequence checksum context");

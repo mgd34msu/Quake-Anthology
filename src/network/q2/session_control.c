@@ -269,8 +269,7 @@ bool q2_server_projection(q2_session *session, const qa_q2_wire_frame *source,
     bool rerelease = qa_q2_protocol_rerelease(session->codec.protocol);
     bool extended = rerelease ||
         (session->codec.protocol.kind == QA_NET_Q2PRO_36 && qa_q2pro_extensions(&session->codec));
-    bool enhanced = session->codec.protocol.kind == QA_NET_R1Q2_35 || session->codec.protocol.kind == QA_NET_Q2PRO_36 ||
-        session->codec.protocol.kind == QA_NET_Q2REPRO_1038 || session->codec.protocol.kind == QA_NET_Q2PRIVATE_4038;
+    bool enhanced = qa_q2_protocol_enhanced(session->codec.protocol);
     static const qa_q2_player zero;
     for (size_t i = 0; i < out->player_count; ++i)
         player_projection(settings, old && i < old->player_count ? &old->players[i].player : &zero,

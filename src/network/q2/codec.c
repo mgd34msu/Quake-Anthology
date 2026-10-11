@@ -4,10 +4,21 @@
 qa_net_protocol_id qa_q2_default_protocol(bool rerelease)
 { return (qa_net_protocol_id){.kind = rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34}; }
 
+bool qa_q2_protocol_kex(qa_net_protocol_id protocol)
+{
+    return protocol.kind == QA_NET_Q2KEX_2023 || protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+}
+bool qa_q2_protocol_repro(qa_net_protocol_id protocol)
+{
+    return protocol.kind == QA_NET_Q2REPRO_1038 || protocol.kind == QA_NET_Q2PRIVATE_4038;
+}
 bool qa_q2_protocol_rerelease(qa_net_protocol_id protocol)
 {
-    return protocol.kind==QA_NET_Q2REPRO_1038 || protocol.kind==QA_NET_Q2PRIVATE_4038 ||
-        protocol.kind==QA_NET_Q2KEX_2023 || protocol.kind==QA_NET_Q2KEX_DEMO_2022;
+    return qa_q2_protocol_repro(protocol) || qa_q2_protocol_kex(protocol);
+}
+bool qa_q2_protocol_enhanced(qa_net_protocol_id protocol)
+{
+    return protocol.kind == QA_NET_R1Q2_35 || protocol.kind == QA_NET_Q2PRO_36 || qa_q2_protocol_repro(protocol);
 }
 
 uint32_t qa_q2_protocol_version(qa_net_protocol_id p) {
