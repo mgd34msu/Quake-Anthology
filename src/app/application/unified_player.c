@@ -161,6 +161,7 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
     if (!qa_application_content_names_bind(app,app->catalog,error) || !q2_effect_names_prepare(app,error)) return false;
     const struct { const char *text; qa_string_id *id; } events[] = {
         {"music", &names->music}, {"q1:fog", &names->fog},
+        {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
         {"debug-bounds", &names->debug_bounds}, {"colored-explosion", &names->colored_explosion},
         {"developer-message", &names->developer_message}, {"cutscene", &names->cutscene},
         {"sell-screen", &names->sell_screen}, {"q2:monster-muzzle", &names->monster_muzzle},

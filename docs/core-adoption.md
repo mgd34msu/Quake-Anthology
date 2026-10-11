@@ -827,6 +827,14 @@ retained IDs; dropped-item landing uses the runtime sound ID. The replaced
 text setters are deleted. Normal build and seven core suites pass. Q1 model
 and map emitters, and Q2 monster emitters, remain open in this item.
 
+Names leftovers items 11 and 13: local footsteps use the trace's admitted
+lowercase material ID, including bound default/ladder IDs. The material text
+copy and case-insensitive search are deleted. Local flares carry the authored
+image ID into an owner-retained image binding. Image loading, fallback and
+standard-image classification happen once per binding, including missing-image
+results, rather than on every actor draw. All item 13 sites in the expanded
+list are migrated. Normal build and seven core suites pass.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

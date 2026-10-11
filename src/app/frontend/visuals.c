@@ -147,6 +147,12 @@ static void static_models_free(frontend_static_model **models)
         frontend_static_model *row = *models; *models = row->next; free(row);
     }
 }
+typedef struct frontend_flare_image {
+    struct frontend_flare_image *next;
+    qa_string_id name;
+    qa_scene_image *image;
+    bool standard;
+} frontend_flare_image;
 struct frontend_visual_owner {
     frontend_visual_owner *next;
     qa_actor_owner owner;
@@ -160,6 +166,7 @@ struct frontend_visual_owner {
     frontend_material_movies *shader_movies;
     frontend_model *models;
     frontend_brush *brushes;
+    frontend_flare_image *flares;
     frontend_static_model *statics, *static_tail;
     qa_nq_decoder *static_nq;
     qa_qw_decoder *static_qw;
@@ -298,6 +305,10 @@ void frontend_visuals_destroy(qa_frontend *frontend)
         while (owner->brushes) {
             frontend_brush *brush=owner->brushes; owner->brushes=brush->next;
             qa_scene_world_destroy(brush->world); qa_resource_release(brush->resource); free(brush);
+        }
+        while (owner->flares) {
+            frontend_flare_image *flare=owner->flares; owner->flares=flare->next;
+            qa_scene_image_release(flare->image); free(flare);
         }
         qa_material_library_destroy(owner->materials);
         qa_media_library_destroy(owner->media);
@@ -1109,26 +1120,32 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
         return frontend_fail(error, QA_ERROR_FORMAT, "Q2 flare requires its genuine image receipt");
     if (world->legacy_policy.present && !world->legacy_policy.flares) return true;
     if (!visual_owner(frontend, view, &owner, error)) return false;
-    qa_scene_image_options sampling = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
-        .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SPRITE, .transparent_index = -1};
-    const char *path = view->flare.image;
-    qa_scene_image *image = NULL;
-    for (unsigned attempt = 0; attempt < 2; ++attempt) {
-        qa_error load = {0};
-        if (qa_scene_image_load(owner->images, path, &sampling, &image, &load)) break;
-        if (load.code != QA_ERROR_NOT_FOUND) { if (error) *error = load; return false; }
-        if (!strcmp(path, "misc/flare.tga")) return true;
-        path = "misc/flare.tga";
+    frontend_flare_image *binding=owner->flares;
+    while (binding && binding->name!=view->flare_image) binding=binding->next;
+    if (!binding) {
+        binding=calloc(1,sizeof(*binding));
+        if (!binding) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining flare image binding");
+        binding->name=view->flare_image;
+        qa_scene_image_options sampling = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
+            .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SPRITE, .transparent_index = -1};
+        const char *path=view->flare.image;
+        for (unsigned attempt=0;attempt<2;++attempt) {
+            qa_error load={0};
+            if (qa_scene_image_load(owner->images,path,&sampling,&binding->image,&load)) break;
+            if (load.code!=QA_ERROR_NOT_FOUND) { free(binding); if(error)*error=load; return false; }
+            if (!strcmp(path,"misc/flare.tga")) break;
+            path="misc/flare.tga";
+        }
+        binding->standard=flare_standard_image(path);
+        binding->next=owner->flares; owner->flares=binding;
     }
-    if (!image) return true;
+    if (!binding->image) return true;
     qa_scene_flare_options options = {.color = view->flare.color,
         .rim_color = view->flare.rim_color, .scale = view->flare.scale != 0 ? view->flare.scale : 1,
         .fade_start = view->flare.fade_start, .fade_end = view->flare.fade_end,
         .separate_rim = view->flare.has_rim_color, .lock_angle = view->flare.lock_angle,
-        .standard_image = flare_standard_image(path)};
-    bool ok = qa_scene_flare(frame, &world->view, view->body.origin, &options, image, error);
-    qa_scene_image_release(image);
-    return ok;
+        .standard_image = binding->standard};
+    return qa_scene_flare(frame, &world->view, view->body.origin, &options, binding->image, error);
 }
 static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_actor_id actor,
     const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)

@@ -77,6 +77,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
                     (float)((skin >> 16) & 255) / 255, (float)((skin >> 8) & 255) / 255) : qa_v3(1, 1, 1),
                 .rim_color = qa_v3((shell & 0x400) ? 1.f : 0.f, (shell & 0x800) ? 1.f : 0.f, (shell & 0x1000) ? 1.f : 0.f),
                 .has_rim_color = shell != 0, .lock_angle = (source.render_flags & 1) != 0};
+            out->flare_image = image && *image ? entity.flare_image : application->ui_names.flare_image;
             out->has_flare = true;
             memset(out->visual.models, 0, sizeof(out->visual.models));
         }

@@ -26,7 +26,7 @@
 enum { FRONTEND_STYLES = 256 };
 typedef struct frontend_footsteps {
     struct frontend_footsteps *next;
-    char material[16];
+    qa_string_id material;
     qa_audio_asset *assets[16];
     uint32_t count;
 } frontend_footsteps;
@@ -819,29 +819,20 @@ static uint32_t step_uniform(frontend_event_state *state, uint32_t count)
     do value = step_random(state); while (value < reject);
     return value % count;
 }
-static bool material_equal(const char *a, const char *b)
-{
-    while (*a && *b) {
-        unsigned x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false;
-    }
-    return *a == *b;
-}
-static bool footsteps_read(frontend_event_resources *resources, const char *material,
+static bool footsteps_read(qa_frontend *frontend, frontend_event_resources *resources, qa_string_id material,
     frontend_footsteps **out, qa_error *error)
 {
-    if (material_equal(material, "default")) material = "";
-    if (material_equal(material, "ladder")) material = "ladder";
+    const qa_application_ui_names *names=qa_application_ui_names_read(frontend->application);
+    if (material==names->material_default) material=QA_STRING_NONE;
     for (frontend_footsteps *entry = resources->footsteps; entry; entry = entry->next)
-        if (material_equal(entry->material, material)) { *out = entry; return true; }
+        if (entry->material==material) { *out = entry; return true; }
     frontend_footsteps *entry = calloc(1, sizeof(*entry));
     if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "retaining source footstep table");
-    snprintf(entry->material, sizeof(entry->material), "%s", material);
+    entry->material=material;
+    const char *text=qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),material);
     for (unsigned i = 0; i < 16; ++i) {
         char path[64];
-        if (*material) snprintf(path, sizeof(path), "#sound/player/steps/%s%u.wav", material, i + 1);
+        if (text && *text) snprintf(path, sizeof(path), "#sound/player/steps/%s%u.wav", text, i + 1);
         else snprintf(path, sizeof(path), "#sound/player/step%u.wav", i + 1);
         qa_audio_asset *asset = NULL;
         if (!qa_audio_bank_register(resources->sounds, path, QA_GAME_Q2, &asset, error)) {
@@ -864,8 +855,8 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
     qa_body_state body; qa_actor_collision collision;
     if (!qa_world_body_read(world, event->actor, &body, error) ||
         !qa_world_get_collision(world, event->actor, &collision, error)) return false;
-    char material[16] = "";
-    if (event->code == 9) strcpy(material, "ladder");
+    qa_string_id material=QA_STRING_NONE;
+    if (event->code == 9) material=qa_application_ui_names_read(frontend->application)->material_ladder;
     else if (!enabled || enabled->number < 2) {
         qa_vec3 start = body.origin; start.z += 1;
         qa_vec3 end = start; end.z -= 9;
@@ -880,17 +871,17 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
         qa_trace_result hit;
         if (!qa_world_trace(world, &query, &hit, error)) return false;
         if (hit.fraction < 1 && hit.has_surface) {
-            memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0;
+            material=hit.surface.material_lower_id;
             query.end = hit.end; query.end.z += 1;
             query.policy.contents_mask = qa_collision_contents_mask(1 | 8 | 16 | 32, QA_GAME_Q2);
             if (!qa_world_trace(world, &query, &hit, error)) return false;
-            if (hit.has_surface) { memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0; }
+            if (hit.has_surface) material=hit.surface.material_lower_id;
         }
     }
     frontend_event_resources *resources; frontend_footsteps *steps;
     if (!resources_read(frontend, event->provider, QA_GAME_Q2, &resources, error) ||
-        !footsteps_read(resources, material, &steps, error)) return false;
-    if (!steps->count && !footsteps_read(resources, "", &steps, error)) return false;
+        !footsteps_read(frontend, resources, material, &steps, error)) return false;
+    if (!steps->count && !footsteps_read(frontend, resources, QA_STRING_NONE, &steps, error)) return false;
     if (!steps->count) return true;
     uint32_t index = step_uniform(state, steps->count);
     if (steps->assets[index] == state->last_step) index = (index + 1) % steps->count;

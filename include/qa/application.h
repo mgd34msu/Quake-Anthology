@@ -65,6 +65,7 @@ typedef struct qa_application_visual_view {
     int32_t source_number, source_client;
     bool has_source_entity;
     qa_entity_flare flare;
+    qa_string_id flare_image;
     bool has_flare;
 } qa_application_visual_view;
 typedef struct qa_application_presentation_view {
