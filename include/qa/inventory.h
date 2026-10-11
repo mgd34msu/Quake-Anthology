@@ -95,6 +95,7 @@ bool qa_inventory_source_stored(qa_inventory *, qa_inventory_lease, const qa_inv
  * failure returned by a source reader or a configure callback. */
 bool qa_inventory_source_stored_ex(qa_inventory *, qa_inventory_lease, const qa_inventory_change *, size_t,
     bool *retired_token, qa_error *);
+bool qa_inventory_entry_find(qa_inventory *, qa_actor_id, qa_item_id, qa_inventory_entry *, bool *found, qa_error *);
 bool qa_inventory_entry_read(qa_inventory *, qa_actor_id, qa_item_id, qa_inventory_entry *, qa_error *);
 /* A current actor with no store or a missing item has count zero. Retired
  * actors and changes to storage or item ownership during a read fail. */

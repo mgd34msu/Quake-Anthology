@@ -884,37 +884,38 @@ bool qa_inventory_has(const qa_inventory *table, qa_actor_id actor)
         table->stores[actor.slot] && qa_actor_id_equal(table->stores[actor.slot]->actor, actor);
 }
 
+bool qa_inventory_entry_find(qa_inventory *table, qa_actor_id actor, qa_item_id item,
+                             qa_inventory_entry *out, bool *found, qa_error *e)
+{
+    if (!out || !found) return fail(e, QA_ERROR_ARGUMENT, "Missing inventory output");
+    *found = false;
+    if (!table || actor.slot >= table->capacity || !qa_actors_get(table->actors, actor))
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory actor is not current");
+    if (!table->stores[actor.slot]) return true;
+    inventory_store *store = acquire(table, actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Actor has no current inventory");
+    qa_inventory_entry entry;
+    item_group *group = group_for(store, item);
+    bool ok = find_in(table, store, group, item, &entry, found, e);
+    if (ok && group_for(store, item) != group) ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed during read");
+    if (ok && *found) *out = entry;
+    release_store(table, store); return ok;
+}
 bool qa_inventory_entry_read(qa_inventory *table, qa_actor_id actor, qa_item_id item,
                              qa_inventory_entry *out, qa_error *e)
 {
-    if (!out) return fail(e, QA_ERROR_ARGUMENT, "Missing inventory output");
-    inventory_store *store = acquire(table, actor);
-    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Actor has no current inventory");
-    qa_inventory_entry entry; bool found;
-    item_group *group = group_for(store, item);
-    bool ok = find_in(table, store, group, item, &entry, &found, e);
-    if (ok && group_for(store, item) != group) ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed during read");
-    if (ok && !found) ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory item not admitted");
-    if (ok) *out = entry;
-    release_store(table, store); return ok;
+    bool found;
+    return qa_inventory_entry_find(table, actor, item, out, &found, e) &&
+        (found || fail(e, QA_ERROR_NOT_FOUND, "Inventory item not admitted"));
 }
-
 bool qa_inventory_count_read(qa_inventory *table, qa_actor_id actor, qa_item_id item,
                              double *out, qa_error *e)
 {
     if (!out) return fail(e, QA_ERROR_ARGUMENT, "Missing inventory count output");
-    if (!table || actor.slot >= table->capacity || !qa_actors_get(table->actors, actor))
-        return fail(e, QA_ERROR_NOT_FOUND, "Inventory actor is not current");
-    if (!table->stores[actor.slot]) { *out = 0; return true; }
-    inventory_store *store = acquire(table, actor);
-    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Actor has no current inventory");
     qa_inventory_entry entry; bool found;
-    item_group *group = group_for(store, item);
-    bool ok = find_in(table, store, group, item, &entry, &found, e);
-    if (ok && group_for(store, item) != group)
-        ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed during count read");
-    if (ok) *out = found ? entry.count : 0;
-    release_store(table, store); return ok;
+    if (!qa_inventory_entry_find(table, actor, item, &entry, &found, e)) return false;
+    *out = found ? entry.count : 0;
+    return true;
 }
 
 bool qa_inventory_entries(qa_inventory *table, qa_actor_id actor, qa_inventory_entry *out,

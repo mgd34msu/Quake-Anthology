@@ -5,6 +5,7 @@
 #include "qa/json.h"
 #include "qa/source_save.h"
 #include "qa/native_observe.h"
+#include "qa/pool.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,11 +52,18 @@ typedef struct nqr_observation {
     bool count_present,capacity_present;
     double count,capacity;
 } nqr_observation;
+enum { NQR_CALL_DEPTH = 64 };
+typedef struct nqr_snapshot {
+    size_t storage_slot, rows_slot, count, references;
+    nqr_observation *rows;
+} nqr_snapshot;
 struct application_native_q2_record_scope {
     application_native_q2_records *owner;
     struct application_native_q2_record_scope *outer;
-    nqr_observation *observations,*pending;
-    size_t observation_count,pending_count,cursor;
+    size_t storage_slot;
+    nqr_snapshot *snapshot;
+    nqr_observation *pending;
+    size_t pending_slot,pending_capacity,pending_count,cursor;
     unsigned committing;
 };
 struct application_native_q2_pickup_scope {
@@ -71,6 +79,8 @@ struct application_native_q2_pickup_scope {
     bool closing;
 };
 struct application_native_q2_records {
+    qa_arena call_storage;
+    qa_pool scopes, snapshots, observations;
     application_native_q2_records_options options;
     const qa_json_document *document;
     nqr_record *records;
@@ -98,6 +108,7 @@ size_t nqr_scalar_size(qa_native_value_type);
 bool nqr_address(application_native_q2_records *,const nqr_actor *,const nqr_record *,qa_native_address *,qa_error *);
 bool nqr_seed(application_native_q2_records *,nqr_actor *,bool constants,qa_error *);
 bool nqr_releases(application_native_q2_records *,qa_error *);
+bool nqr_call_storage_prepare(application_native_q2_records *,qa_error *);
 bool nqr_rebase(application_native_q2_records *,qa_error *);
 bool nqr_capacity(application_native_q2_records *,const nqr_actor *,qa_error *);
 bool nqr_actor_current(application_native_q2_records *,const nqr_actor *,qa_error *);

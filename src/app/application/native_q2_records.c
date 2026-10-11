@@ -176,7 +176,7 @@ bool application_native_q2_records_create(const application_native_q2_records_op
         return nqr_fail(e,QA_ERROR_ARGUMENT,"Native projection requires its actual module and canonical owners");
     application_native_q2_records *o=calloc(1,sizeof(*o)); if(!o) return nqr_fail(e,QA_ERROR_MEMORY,"Owning native declared actor projection");
     o->options=*options; o->document=application_native_q2_callbacks_document(options->callbacks); *out=o;
-    return nqr_current(o,e)&&nqr_profile(o,e);
+    return nqr_current(o,e)&&nqr_profile(o,e)&&nqr_call_storage_prepare(o,e);
 }
 bool application_native_q2_records_idle(const application_native_q2_records *o)
 { return !o||(!o->frame&&!o->pickup&&!o->projection_depth&&!o->lifecycle_depth); }
@@ -202,5 +202,5 @@ bool application_native_q2_records_destroy(application_native_q2_records **owner
     }
     while(o->actors) { nqr_actor *r=o->actors; o->actors=r->next; free(r); }
     for(size_t i=0;o->records&&i<o->record_count;++i) { nqr_record *r=o->records+i; for(size_t j=0;r->fields&&j<r->field_count;++j) free(r->fields[j].teams); free(r->fields); free(r->id); }
-    free(o->records); free(o); *owner=NULL; return true;
+    free(o->records); qa_arena_destroy(&o->call_storage); free(o); *owner=NULL; return true;
 }
