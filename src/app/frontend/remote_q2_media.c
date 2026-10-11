@@ -192,7 +192,7 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
         qa_vfs_acquisition_dispose(&m->scope_opening); qa_vfs_acquisition_dispose(&m->palette_opening);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m); return false;
     }
-    m->source = &m->decoded; m->next = row->models; row->models = m;
+    m->source = &m->decoded;
     row->model_rows[row->model_count] = m;
     qa_id_index_insert(&row->model_names, path_id, 0, row->model_count++);
     *out = m; return true;
@@ -243,8 +243,8 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     qa_collision_destroy(row->geometry); row->geometry = NULL;
     memset(row->clientinfo,0,sizeof(row->clientinfo));
     if (row->model_slots) memset(row->model_slots, 0, row->hud_names.layout.max_models * sizeof(*row->model_slots));
-    while (row->models) {
-        remote_q2_model *m = row->models; row->models = m->next;
+    for (size_t i = 0; i < row->model_count; ++i) {
+        remote_q2_model *m = row->model_rows[i];
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
         qa_resource_release(m->scope); qa_resource_release(m->palette);
         qa_vfs_acquisition_dispose(&m->scope_opening); qa_vfs_acquisition_dispose(&m->palette_opening);

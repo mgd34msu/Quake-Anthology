@@ -12,7 +12,6 @@
 #include "remote_q2_clientinfo.h"
 
 typedef struct remote_q2_model {
-    struct remote_q2_model *next;
     char *path;
     qa_string_id path_id;
     qa_resource *resource;
@@ -143,7 +142,6 @@ struct frontend_remote_q2 {
     qa_buffer saved_effects;
     bool effects_imported;
     struct remote_q2_footsteps *footsteps;
-    remote_q2_model *models;
     qa_id_index model_names, flare_names;
     remote_q2_model **model_rows;
     size_t model_count, model_capacity;

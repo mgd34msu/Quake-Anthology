@@ -572,8 +572,8 @@ static bool media_idle(const frontend_remote_q2 *row)
         (row->images && !qa_scene_resources_idle(row->images)) ||
         (row->materials && !qa_material_library_idle(row->materials)) ||
         (row->fonts && !qa_font_library_idle(row->fonts))) return false;
-    for (remote_q2_model *model = row->models; model; model = model->next)
-        if (model->scene && !qa_scene_model_idle(model->scene)) return false;
+    for (size_t i = 0; i < row->model_count; ++i)
+        if (row->model_rows[i]->scene && !qa_scene_model_idle(row->model_rows[i]->scene)) return false;
     return true;
 }
 bool remote_q2_capture_owned(const frontend_remote_q2 *row)
@@ -604,10 +604,11 @@ bool remote_q2_capture_owned(const frontend_remote_q2 *row)
     for (size_t i = 0; frontend_capture_world_at(capture, i); ++i)
         if (frontend_capture_world_at(capture, i) == row->world) world = true;
     if (!images || !materials || !fonts || !world) return false;
-    for (const remote_q2_model *model = row->models; model; model = model->next) {
+    for (size_t i = 0; i < row->model_count; ++i) {
+        const remote_q2_model *model = row->model_rows[i];
         bool found = !model->scene;
-        for (size_t i = 0; frontend_capture_model_at(capture, i); ++i)
-            if (frontend_capture_model_at(capture, i) == model->scene) found = true;
+        for (size_t j = 0; frontend_capture_model_at(capture, j); ++j)
+            if (frontend_capture_model_at(capture, j) == model->scene) found = true;
         if (!found) return false;
     }
     return true;
@@ -688,17 +689,14 @@ frontend_remote_q2 *frontend_remote_q2_at(const qa_frontend *f, size_t ordinal)
 }
 size_t frontend_remote_q2_model_count(const frontend_remote_q2 *row)
 {
-    size_t count = 0;
-    for (const remote_q2_model *model = row ? row->models : NULL; model; model = model->next) ++count;
-    return count;
+    return row ? row->model_count : 0;
 }
 bool frontend_remote_q2_model_at(const frontend_remote_q2 *row, size_t ordinal,
     frontend_remote_q2_model_view *out, qa_error *error)
 {
     if (!row || !out || !linked(row) || row->busy)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 model inventory requires returned retained cache producers");
-    const remote_q2_model *model = row->models;
-    while (model && ordinal--) model = model->next;
+    const remote_q2_model *model = ordinal < row->model_count ? row->model_rows[ordinal] : NULL;
     if (!model) return remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 model cache ordinal is absent");
     *out = (frontend_remote_q2_model_view){model->path, model->resource, &model->opening, model->source, model->scene};
     return true;
@@ -741,8 +739,8 @@ bool frontend_remote_q2_content_visit(const qa_frontend *f, const qa_application
             !visitor->pool(visitor->context, qa_vfs_resources(row->content.mounts), error) ||
             !visitor->view(visitor->context, row->content.mounts, error))) return false;
         if (!remote_q2_footsteps_visit(row, visitor, error)) return false;
-        for (const remote_q2_model *m = row->models; m; m = m->next)
-            if (!remote_q2_model_scope_current(row, m, error)) return false;
+        for (size_t i = 0; i < row->model_count; ++i)
+            if (!remote_q2_model_scope_current(row, row->model_rows[i], error)) return false;
         if (row->media) {
             qa_resource_pool *pool = qa_vfs_resources(row->content.mounts);
             if (!pool || qa_media_library_resource_owner(row->media) != row->images ||
