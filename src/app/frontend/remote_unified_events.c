@@ -328,6 +328,12 @@ static bool record_finish(frontend_unified_events *o,qa_event_transaction *trans
         if (!qa_strings_intern_cstr(o->strings,row->content,&row->content_id,error)||
             !qa_strings_intern_cstr(o->strings,row->provider,&row->provider_id,error)) return false;
         if (row->owner.provider&&!qa_strings_intern_cstr(o->strings,row->owner.provider,&row->owner_provider_id,error)) return false;
+        const char *resource=NULL;
+        if (row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_PROTOCOL)
+            resource=row->payload.value.q2_protocol.resource;
+        else if (row->payload.kind==QA_UNIFIED_PRESENTATION_Q3)
+            resource=row->payload.value.q3.resource;
+        if (resource && *resource && !qa_strings_intern_cstr(o->strings,resource,&row->resource_id,error)) return false;
         if (row->payload.kind==QA_UNIFIED_PRESENTATION_MODEL) {
             qa_unified_model_state *model=&row->payload.value.model;
             for (size_t j=0;j<model->attachment_count;++j)
@@ -709,7 +715,6 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     if (!o || !row || !out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Sound linkage needs its actual delivery record");
     *out=false;
     qa_unified_sound_event emitted={0};
-    const char *emitted_path=NULL;
     switch (row->payload.kind) {
     case QA_UNIFIED_PRESENTATION_BUILTIN: {
         const qa_builtin_event *source=&row->payload.value.builtin;
@@ -724,8 +729,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     case QA_UNIFIED_PRESENTATION_Q2_PROTOCOL: {
         const qa_unified_q2_protocol_event *source=&row->payload.value.q2_protocol;
         if (source->kind!=QA_Q2_SVC_SOUND) return true;
-        emitted_path=source->resource;
-        emitted=(qa_unified_sound_event){.actor=source->actor,.origin=source->origin,
+        emitted=(qa_unified_sound_event){.resource=row->resource_id,.actor=source->actor,.origin=source->origin,
             .channel=source->channel,.volume=source->volume,.attenuation=source->attenuation,
             .delay_seconds=source->delay_seconds};
         break;
@@ -733,8 +737,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     case QA_UNIFIED_PRESENTATION_Q3: {
         const qa_unified_q3_event *source=&row->payload.value.q3;
         if (source->kind!=QA_UNIFIED_Q3_SOUND || source->loop) return true;
-        emitted_path=source->resource;
-        emitted=(qa_unified_sound_event){.actor=source->actor,.origin=source->origin,
+        emitted=(qa_unified_sound_event){.resource=row->resource_id,.actor=source->actor,.origin=source->origin,
             .channel=source->channel,.volume=source->volume,.attenuation=1};
         break;
     }
@@ -753,8 +756,6 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
         if (!resource) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Linked sound lost its declared resource");
         if (resource->content!=content) continue;
         if (!resource_sound_asset(o,resource,e)) return false;
-        if (!emitted.resource && emitted_path)
-            emitted.resource=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)emitted_path,strlen(emitted_path)});
         bool same_path=emitted.resource &&
             qa_audio_bank_get_id(resource->bank,emitted.resource,resource->family)==resource->asset;
         double seconds=simulation->milliseconds?simulation->time/1000:simulation->time;
@@ -768,34 +769,43 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     }
     return true;
 }
-bool frontend_unified_events_sound_loop_path(frontend_unified_events *o,const char *content,const char *path,
+bool frontend_unified_events_sound_loop_name(frontend_unified_events *o,qa_string_id content_name,qa_string_id path,
     qa_actor_id actor_id,qa_vec3 origin,qa_vec3 velocity,double ms,int32_t channel,
     float volume,float attenuation,int32_t frame_number,bool persistent,qa_error *e)
 {
-    if (!o || !content || !path || !isfinite(ms) || !qa_vec_finite(origin) || !qa_vec_finite(velocity) ||
+    if (!o || !content_name || !path || !isfinite(ms) || !qa_vec_finite(origin) || !qa_vec_finite(velocity) ||
         !isfinite(volume) || !isfinite(attenuation) || !execution_current(o,e)) return false;
     qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
     qa_vfs *files; const qa_product *product;
-    qa_string_id content_name=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
     if (
         !frontend_unified_media_files(o->media,content_name,&files,&product,e) ||
         !frontend_unified_media_bank(o->media,content_name,&images,&materials,&fonts,&bank,e)) return false;
     qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_audio_asset *asset=NULL;
-    if (!qa_audio_bank_register(bank,path,family,&asset,e)) return false;
+    if (!qa_audio_bank_register_id(bank,path,family,&asset,e)) return false;
     if (!asset) return true;
+    bool okay=frontend_unified_events_sound_loop_asset(o,asset,actor_id,origin,velocity,ms,
+        channel,volume,attenuation,frame_number,persistent,e);
+    qa_audio_asset_release(asset); return okay;
+}
+bool frontend_unified_events_sound_loop_asset(frontend_unified_events *o,qa_audio_asset *asset,
+    qa_actor_id actor_id,qa_vec3 origin,qa_vec3 velocity,double ms,int32_t channel,
+    float volume,float attenuation,int32_t frame_number,bool persistent,qa_error *e)
+{
+    if (!o || !asset || !isfinite(ms) || !qa_vec_finite(origin) || !qa_vec_finite(velocity) ||
+        !isfinite(volume) || !isfinite(attenuation) || !execution_current(o,e)) return false;
     uint64_t audio; bool okay=frontend_unified_events_audio_actor(o,actor_id,&audio,e) && current(o,e);
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (okay && !o->frontend->audio) okay=frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified loop has no output engine");
     if (okay) {
         qa_audio_loop loop={.sound={.sample=qa_audio_asset_sample(asset),.asset=asset,
-            .resource_id=qa_resource_id(qa_audio_asset_resource(asset)),.name=path,.family=family,
+            .resource_id=qa_resource_id(qa_audio_asset_resource(asset)),.name=qa_audio_asset_name(asset),.family=qa_audio_asset_family(asset),
             .actor=audio,.owner=o->options.audio_owner,.audience=d->physical_seat,.origin_kind=QA_AUDIO_FIXED,
             .origin=origin,.channel=channel,.volume=volume,.attenuation=attenuation,
             .has_server_time=true,.server_milliseconds=ms},.velocity=velocity,.frame_number=frame_number,.persistent=persistent};
         okay=qa_audio_engine_loop(o->frontend->audio,&loop,e);
     }
-    qa_audio_asset_release(asset); return okay;
+    return okay;
 }
 bool frontend_unified_events_sound_stop_loop(frontend_unified_events *o,qa_actor_id actor_id,qa_error *e)
 {

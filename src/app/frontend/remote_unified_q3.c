@@ -317,7 +317,7 @@ static bool sound_output(void *context,const q3n_frame *f,qa_audio_asset *asset,
 {
     unified_q3_bank *b=context; frontend_unified_q3 *o=b->owner;
     return f->unified_effects==&b->source && effect_current(&b->source) && o->events && origin &&
-        frontend_unified_events_sound_path(o->events,b->content,qa_audio_asset_name(asset),
+        frontend_unified_events_sound_asset(o->events,asset,
             b->source.actor,*origin,b->source.time,channel,1,1,0,e) && effect_current(&b->source);
 }
 static bool frame_read(frontend_unified_q3 *o, const qa_unified_document *d, int32_t *time, qa_error *e)
@@ -584,26 +584,24 @@ static bool ballistic_sound(frontend_unified_q3 *o,unified_q3_bank *b,int32_t ha
     qa_vec3 origin,int32_t time,int32_t channel,float volume,qa_error *e)
 {
     qa_audio_asset *asset=q3p_sound(b->assets,handle);
-    return !asset || (o->events && frontend_unified_events_sound_path(o->events,b->content,
-        qa_audio_asset_name(asset),id,origin,time,channel,volume,1,0,e) && effect_current(&b->source));
+    return !asset || (o->events && frontend_unified_events_sound_asset(o->events,asset,id,origin,time,channel,volume,1,0,e) && effect_current(&b->source));
 }
 static bool ballistic_event_apply(frontend_unified_q3 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
     qa_unified_q3_ballistic_event v=row->payload.value.q3_ballistic; unified_q3_bank *b=NULL;
-    const char *content=row->content,*instance=row->owner.provider; uint64_t generation=row->owner.generation;
-    qa_string_id content_name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
-    qa_string_id instance_name=instance?qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)instance,strlen(instance)}):QA_STRING_NONE;
+    uint64_t generation=row->owner.generation;
+    qa_string_id content_name=row->content_id, instance_name=row->owner_provider_id;
     bool okay=actor(o,v.actor,&v.actor,e)&&actor(o,v.target,&v.target,e)&&enter(o,v.actor,e);
     if(okay && v.kind==QA_UNIFIED_Q3_REMOVE){
         for(unified_q3_bank *existing=o->banks;existing;existing=existing->next){
             if(existing->content_name!=content_name ||
-                (instance && (existing->activation!=instance_name || existing->generation!=generation)))continue;
+                (instance_name && (existing->activation!=instance_name || existing->generation!=generation)))continue;
             unified_q3_ballistic *state=ballistic_find(o,existing,v.actor);
             if(state){state->projectile=false;state->bolt=false;}
         }
         return leave(o,true,e);
     }
-    if(okay)okay=bank_read(o,content,instance,generation,&b,e);
+    if(okay)okay=bank_name(o,content_name,instance_name,generation,&b,e);
     unified_q3_ballistic *state=okay?ballistic_find(o,b,v.actor):NULL;
     if(okay){
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
@@ -864,8 +862,7 @@ static bool ballistic_loop(frontend_unified_q3 *o,unified_q3_bank *b,int32_t han
     qa_actor_id id,qa_vec3 origin,qa_vec3 velocity,qa_error *e)
 {
     qa_audio_asset *asset=q3p_sound(b->assets,handle);
-    return !asset || (o->events && frontend_unified_events_sound_loop_path(o->events,b->content,
-        qa_audio_asset_name(asset),id,origin,velocity,o->time,0,1,1,
+    return !asset || (o->events && frontend_unified_events_sound_loop_asset(o->events,asset,id,origin,velocity,o->time,0,1,1,
         (int32_t)(uint32_t)o->frontend->frame_number,false,e) && effect_current(&b->source));
 }
 static bool ballistic_draw(frontend_unified_q3 *o,unified_q3_bank *b,qa_error *e)
@@ -1151,10 +1148,10 @@ bool frontend_unified_q3_presentation(frontend_unified_q3 *o,const qa_unified_pr
         qa_actor_id id; bool duplicate=false;
         bool okay=o->events&&actor(o,v->actor,&id,e)&&frontend_unified_events_sound_mirrored(o->events,row,&duplicate,e);
         if(okay&&!duplicate){
-            if(v->loop)okay=frontend_unified_events_sound_loop_path(o->events,row->content,v->resource,id,
+            if(v->loop)okay=frontend_unified_events_sound_loop_name(o->events,row->content_id,row->resource_id,id,
                 v->origin,v->velocity,row->seconds*1000,v->channel,v->volume,1,
                 q3ne_word((uint32_t)o->frontend->frame_number),true,e);
-            else okay=frontend_unified_events_sound_path(o->events,row->content,v->resource,id,v->origin,
+            else okay=frontend_unified_events_sound_name(o->events,row->content_id,row->resource_id,id,v->origin,
                 row->seconds*1000,v->channel,v->volume,1,0,e);
         }
         return okay&&current(o,e);

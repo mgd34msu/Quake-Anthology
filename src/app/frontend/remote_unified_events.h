@@ -53,7 +53,10 @@ bool frontend_unified_events_sound_path(frontend_unified_events *, const char *c
 bool frontend_unified_events_sound_name(frontend_unified_events *, qa_string_id content, qa_string_id path,
     qa_actor_id, qa_vec3, double milliseconds, int32_t channel, float volume, float attenuation,
     double delay_seconds, qa_error *);
-bool frontend_unified_events_sound_loop_path(frontend_unified_events *, const char *, const char *,
+bool frontend_unified_events_sound_loop_name(frontend_unified_events *, qa_string_id, qa_string_id,
+    qa_actor_id, qa_vec3 origin, qa_vec3 velocity, double milliseconds, int32_t channel,
+    float volume, float attenuation, int32_t frame_number, bool persistent, qa_error *);
+bool frontend_unified_events_sound_loop_asset(frontend_unified_events *, qa_audio_asset *,
     qa_actor_id, qa_vec3 origin, qa_vec3 velocity, double milliseconds, int32_t channel,
     float volume, float attenuation, int32_t frame_number, bool persistent, qa_error *);
 bool frontend_unified_events_sound_stop_loop(frontend_unified_events *, qa_actor_id, qa_error *);
