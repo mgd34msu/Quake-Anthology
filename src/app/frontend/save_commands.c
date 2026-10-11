@@ -79,8 +79,9 @@ static bool command_fields(qa_source_save_io *io,recovery_command *command)
 }
 static bool frame_fields(qa_source_save_io *io,frontend_replay_timing *frame)
 {
+    uint64_t legacy_duration=0;
     return qa_source_save_u64(io,&frame->wall_ns) && qa_source_save_u64(io,&frame->time_ns) &&
-        qa_source_save_u64(io,&frame->duration_ns) && qa_source_save_u64(io,&frame->frame_before) &&
+        qa_source_save_u64(io,&legacy_duration) && qa_source_save_u64(io,&frame->frame_before) &&
         qa_source_save_u64(io,&frame->frame_after) && qa_source_save_bool(io,&frame->advanced) &&
         qa_source_save_bool(io,&frame->completed);
 }
@@ -516,8 +517,9 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                 if (ok) {
                     frontend_replay_command queued={.console=console,
                         .context=actual,
-                        .wall_ns=command.wall_ns,.time_ns=command.time_ns,.frame_number=command.frame_number};
-                    qa_platform_event_result admitted=qa_platform_events_push(f->platform_events,
+                        .time_ns=command.time_ns,.frame_number=command.frame_number};
+                    qa_platform_event_result admitted=qa_platform_events_frame(f->platform_events,command.wall_ns);
+                    if(admitted==QA_PLATFORM_EVENT_ACCEPTED) admitted=qa_platform_events_push(f->platform_events,
                         &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=command.wall_ns},(qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
                         (qa_bytes){(const uint8_t *)command.text,strlen(command.text)+1});
                     queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;

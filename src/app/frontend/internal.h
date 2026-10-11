@@ -349,6 +349,7 @@ struct qa_frontend {
     qa_audio_bank *sounds;
     frontend_seat *seats;
     uint64_t time_ns, wall_time_ns, frame_number, configuration, map_revision;
+    uint64_t pending_frame_ns;
     uint64_t recipient_begin_generation;
     uint64_t silent_audio_remainder;
     char *map_name;
@@ -472,13 +473,13 @@ bool frontend_network_close_client(qa_frontend *,qa_error *);
 bool frontend_network_retire_clients(qa_frontend *,qa_error *);
 bool frontend_platform_drain(qa_frontend *, bool input_ready, qa_error *);
 typedef struct frontend_replay_timing {
-    uint64_t wall_ns,time_ns,duration_ns,frame_before,frame_after;
+    uint64_t wall_ns,time_ns,frame_before,frame_after;
     bool advanced,completed;
 } frontend_replay_timing;
 typedef struct frontend_replay_command {
     qa_console *console;
     qa_command_context context;
-    uint64_t wall_ns,time_ns,frame_number;
+    uint64_t time_ns,frame_number;
 } frontend_replay_command;
 bool frontend_replay_frame(qa_frontend *,const frontend_replay_timing *,qa_error *);
 bool frontend_network_prepare(qa_frontend *, qa_error *);

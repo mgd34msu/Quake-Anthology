@@ -58,8 +58,8 @@ void qa_frontend_options_destroy(qa_frontend_options *);
  * when checked cleanup rejects. Retry qa_frontend_destroy on that owner. */
 bool qa_frontend_create(const qa_frontend_options *, qa_frontend **, qa_error *);
 /* One frontend owns SDL global lifetime and the only platform event pump.
- * step measures no time: elapsed_ns comes from run or a replay caller. */
-bool qa_frontend_step(qa_frontend *, uint64_t elapsed_ns, qa_error *);
+ * step measures no time: duration comes from admitted platform TIME records. */
+bool qa_frontend_step(qa_frontend *, qa_error *);
 /* The driver adopts the current heap owner from slot at each completed frame
  * boundary. Serialized restore requests publish through that same slot. */
 bool qa_frontend_run(qa_frontend **slot, qa_error *);

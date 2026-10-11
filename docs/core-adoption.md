@@ -218,6 +218,27 @@ log: `/tmp/qa-normal-q2-float-command-20261010/build.log`. The checkpoint extens
 is source-reviewed, not claimed as a live save/restore round trip. No new
 installation, original-module gameplay or frame-time result is claimed.
 
+## TA-3196 caller adoption
+
+Clock finding 1 and events finding 3 are one change. Platform TIME records are
+the only frontend frame-duration input. `frontend_platform_drain` accumulates
+their wall-clock differences; `frontend_step` takes that accumulated duration
+for mode progression, source clocks, simulation, controls and audio. The driver
+admits TIME before stepping, and both physical intakes remain. The elapsed-time
+argument to `qa_frontend_step` and `frontend_step` is deleted.
+
+Recovery frames and recorded commands admit their wall timestamps through the
+same queue. `frontend_replay_timing.duration_ns` is deleted; the import boundary
+still consumes the old journal duration word without using it as another clock.
+The existing recovery/guest fixture callers now admit TIME records. Shutdown
+and pacing retain platform clock reads outside simulation. Admission failure is
+handled at the queue boundary instead of ignoring it.
+
+The normal production build and seven existing core suites pass:
+`/tmp/qa-ta3196-frame-clock-20261011-build.log` and
+`/tmp/qa-ta3196-frame-clock-20261011-core.log`. This is build/core evidence, not
+a new live recovery or gameplay claim. Other audit items remain open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

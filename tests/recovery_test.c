@@ -27,7 +27,8 @@ static bool fail(qa_error *error,const char *text)
 static bool frames(qa_frontend **slot,unsigned count,qa_error *error)
 {
     for (unsigned i=0;i<count;++i)
-        if (!qa_frontend_step(*slot,UINT64_C(16666667),error) ||
+        if (qa_platform_events_frame((*slot)->platform_events,(*slot)->wall_time_ns+UINT64_C(16666667))!=QA_PLATFORM_EVENT_ACCEPTED ||
+            !qa_frontend_step(*slot,error) ||
             !frontend_save_commands_drain(slot,error)) return false;
     return true;
 }

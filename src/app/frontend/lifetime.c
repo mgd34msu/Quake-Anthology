@@ -940,7 +940,8 @@ bool qa_frontend_shutdown(qa_frontend **slot,qa_error *error)
         last=now;
         if(elapsed>UINT64_MAX-frontend->wall_time_ns)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Final shutdown wall clock overflow");
-        (void)qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns+elapsed);
+        if(qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns+elapsed)!=QA_PLATFORM_EVENT_ACCEPTED)
+            return frontend_fail(error,QA_ERROR_MEMORY,"Final shutdown time does not fit the platform queue");
         qa_error clock_fault={0};
         if (!frontend_platform_drain(frontend,false,&clock_fault) && original.code==QA_OK)
             original=clock_fault;
@@ -1011,7 +1012,11 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
         qa_frontend *frontend=*slot;
         uint64_t now=qa_platform_time_ns(),elapsed=now-last;
         last=now;
-        ok = qa_frontend_step(frontend, elapsed, error);
+        if(elapsed>UINT64_MAX-frontend->wall_time_ns)
+            ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend wall clock overflow");
+        else if(qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns+elapsed)!=QA_PLATFORM_EVENT_ACCEPTED)
+            ok=frontend_fail(error,QA_ERROR_MEMORY,"Frontend frame time does not fit the platform queue");
+        else ok=qa_frontend_step(frontend,error);
         if (ok) ok=frontend_save_commands_drain(slot,error);
         frontend=*slot;
         if (!frontend_save_commands_restoring(frontend) && frontend->options.frame_limit &&

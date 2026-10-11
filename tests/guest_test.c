@@ -6,6 +6,7 @@
 #include "qa/frontend.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/qc.h"
+#include "../src/app/frontend/internal.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -474,7 +475,8 @@ static bool live_guest_run(const live_guest_case *test, const char *root,
             qa_error_set(&error, QA_ERROR_IO, 0, "Live guest deadline reached during %s", stage);
             goto cleanup;
         }
-        if (!qa_frontend_step(frontend, UINT64_C(20000000), &error)) goto cleanup;
+        if (qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns+UINT64_C(20000000))!=QA_PLATFORM_EVENT_ACCEPTED ||
+            !qa_frontend_step(frontend,&error)) goto cleanup;
         qa_application *app = qa_frontend_application(frontend);
         if (!app || qa_application_get_state(app) != QA_APPLICATION_RUNNING ||
             qa_application_startup_pending(app)) continue;

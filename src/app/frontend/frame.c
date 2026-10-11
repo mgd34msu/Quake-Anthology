@@ -415,7 +415,10 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
         bool ok=true,consumed=true;
         switch (event.kind) {
         case QA_PLATFORM_EVENT_TIME:
-            if (event.time_ns>frontend->wall_time_ns) frontend->wall_time_ns=event.time_ns;
+            if (event.time_ns>frontend->wall_time_ns) {
+                frontend->pending_frame_ns+=event.time_ns-frontend->wall_time_ns;
+                frontend->wall_time_ns=event.time_ns;
+            }
             break;
         case QA_PLATFORM_EVENT_QUIT:
             qa_application_request_stop(frontend->application);
@@ -458,7 +461,6 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
             if (!input_ready) continue;
             frontend_replay_command command;
             memcpy(&command,payload.data,sizeof(command));
-            frontend->wall_time_ns=command.wall_ns;
             frontend->time_ns=command.time_ns;
             frontend->frame_number=command.frame_number;
             ok=qa_console_execute_now(command.console,&command.context,
@@ -781,31 +783,28 @@ static bool continue_mode(qa_frontend *frontend,uint64_t elapsed_ns,bool *ready,
     return true;
 }
 
-static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
+static bool frontend_step(qa_frontend *frontend,
     const frontend_replay_timing *replay,bool *playing,qa_error *error)
 {
     if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round ||
-        frontend->frame_number == UINT64_MAX ||
-        (!replay && elapsed_ns > UINT64_MAX - frontend->wall_time_ns))
+        frontend->frame_number == UINT64_MAX)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
     if (!frontend->capture && !frontend->resource_inventory && !frontend->source_restoring &&
         !frontend->frame.source_pending)
         qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     if(replay) {
-        frontend->wall_time_ns=replay->wall_ns;
         frontend->time_ns=replay->time_ns;
         frontend->frame_number=replay->frame_before;
     }
-    uint64_t frame_time = replay ? replay->wall_ns : frontend->wall_time_ns + elapsed_ns;
-    (void)qa_platform_events_frame(frontend->platform_events,frame_time);
-    bool ok=true,ready=false;
-    if(replay) ok=frontend_platform_drain(frontend,true,error);
-    else {
-        ok=platform_collect(frontend,frame_time,error);
+    bool ok=frontend_platform_drain(frontend,replay!=NULL,error),ready=false;
+    if(!replay && ok) {
+        ok=platform_collect(frontend,frontend->wall_time_ns,error);
         if(qa_platform_events_quit_requested(frontend->platform_events))
             qa_application_request_stop(frontend->application);
         if (ok) ok=frontend_platform_drain(frontend,false,error);
     }
+    uint64_t elapsed_ns=frontend->pending_frame_ns;
+    frontend->pending_frame_ns=0;
     if(replay) ready=true;
     else if(ok && !qa_application_should_stop(frontend->application))
         ok=continue_mode(frontend,elapsed_ns,&ready,error);
@@ -1037,7 +1036,7 @@ static bool frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,
     return !qa_application_map_read(frontend->application,&current) ||
         (mapped && previous.revision==current.revision) || control_bindings(frontend,error);
 }
-bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
+bool qa_frontend_step(qa_frontend *frontend,qa_error *error)
 {
     qa_error local = {0};
     qa_error *fault = error ? error : &local;
@@ -1046,7 +1045,7 @@ bool qa_frontend_step(qa_frontend *frontend,uint64_t elapsed_ns,qa_error *error)
 #ifdef QA_ALLOCATION_GATE
     qa_allocation_gate_begin();
 #endif
-    bool ok=frontend_step(frontend,elapsed_ns,NULL,&playing,fault);
+    bool ok=frontend_step(frontend,NULL,&playing,fault);
     if (ok) goto completed;
     frontend_save_commands_recovery_abandon(frontend);
     if (!playing || qa_application_should_stop(frontend->application) ||
@@ -1071,5 +1070,7 @@ completed:
 bool frontend_replay_frame(qa_frontend *frontend,const frontend_replay_timing *timing,qa_error *error)
 {
     bool playing=false;
-    return frontend_step(frontend,timing->duration_ns,timing,&playing,error);
+    if(qa_platform_events_frame(frontend->platform_events,timing->wall_ns)!=QA_PLATFORM_EVENT_ACCEPTED)
+        return frontend_fail(error,QA_ERROR_MEMORY,"Recovery frame time does not fit the platform queue");
+    return frontend_step(frontend,timing,&playing,error);
 }
