@@ -153,7 +153,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
             (qa_bytes){(const uint8_t *)row->owner.provider,strlen(row->owner.provider)});
         remote_component *previous=find(o,provider);
         if(previous&&(previous->state.owner_generation!=row->owner.generation||previous->state.generation!=row->generation)) previous=NULL;
-        ok=q3remote_component_state_read(o,row,previous,states+i,e);
+        ok=q3remote_component_state_read(o,d,row,previous,states+i,e);
         for(size_t k=0;ok&&k<i;++k) if(states[k].provider_name==states[i].provider_name) ok=q3remote_component_fail(e,QA_ERROR_FORMAT,"Reliable components duplicate a genuine provider");
         if(!ok) break;
         if(previous) next[i]=previous;

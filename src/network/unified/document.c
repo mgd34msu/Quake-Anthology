@@ -176,6 +176,9 @@ bool qa_unified_document_retain(const qa_unified_document *source,
     ++d->references; *out=d; return true;
 }
 
+qa_unified_frame_lease *qa_unified_document_lease(const qa_unified_document *d)
+{ return d ? d->lease : NULL; }
+
 void qa_unified_document_destroy(qa_unified_document *d) {
     if (!d || --d->references) return;
     for (size_t i=0;i<4;++i) qa_unified_document_destroy(d->metadata_owners[i]);

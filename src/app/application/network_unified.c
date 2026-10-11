@@ -14,6 +14,7 @@
 #include "qa/game_q2_bots.h"
 #include "qa/game_q3_clients.h"
 #include "qa/text.h"
+#include "qa/arena.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -665,6 +666,15 @@ static int32_t command_color(const char *word)
     return color>13?13:(int32_t)color;
 }
 
+static char *command_arguments_join(qa_console *console, const char *const *arguments,
+    size_t count, size_t extent, qa_arena *storage, qa_error *error)
+{
+    qa_console_command_arena(console, storage);
+    char *text = qa_arena_alloc(storage, extent + 1, 1, error);
+    if (!text || !qa_text_join_words(arguments, count, text, extent + 1, error)) return NULL;
+    return text;
+}
+
 bool application_unified_player_command(qa_application *app, qa_net_client_id client,
     qa_net_seat_id seat, const char *name, const char *const *arguments, size_t count, qa_error *error)
 {
@@ -682,14 +692,9 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
             return application_fail(error, QA_ERROR_FORMAT, "Unified command has an invalid actual argument");
         words[i + 1] = arguments[i]; extent += strlen(arguments[i]) + (i != 0);
     }
-    char *args = malloc(extent + 1);
-    if (!args) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual unified command arguments");
-    size_t offset = 0;
-    for (size_t i = 0; i < count; ++i) {
-        if (i) args[offset++] = ' ';
-        size_t size = strlen(arguments[i]); memcpy(args + offset, arguments[i], size); offset += size;
-    }
-    args[offset] = 0;
+    qa_arena storage = {0};
+    char *args = command_arguments_join(app->console, arguments, count, extent, &storage, error);
+    if (!args) { qa_arena_destroy(&storage); return false; }
     const application_player_record *row = application_players_connection_read(app, client, seat);
     qa_command_invocation command = {.console = app->console, .argc = count + 1,
         .argv = words, .args_text = args, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL,
@@ -736,7 +741,7 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         okay = command_provider(arsenal, &selection, false, &handled, error);
     }
     if (okay && !handled) okay = command_provider(source, &command, true, &handled, error);
-    free(args);
+    qa_arena_destroy(&storage);
     if (!okay) { application_fault(app, error); return false; }
     return true;
 }
@@ -755,14 +760,10 @@ bool application_unified_component_command(qa_application *app, qa_net_client_id
             return application_fail(error, QA_ERROR_FORMAT, "Component command argument exceeds its actual immutable extent");
         if (i) extent += strlen(arguments[i]) + (i > 1);
     }
-    char *tail = malloc(extent + 1);
-    if (!tail) return application_fail(error, QA_ERROR_MEMORY, "Retaining component command arguments");
-    size_t offset = 0;
-    for (size_t i = 1; i < count; ++i) {
-        if (i > 1) tail[offset++] = ' ';
-        size_t length = strlen(arguments[i]); memcpy(tail + offset, arguments[i], length); offset += length;
-    }
-    tail[offset] = 0;
+    qa_arena storage = {0};
+    char *tail = command_arguments_join(app->console, arguments + 1, count - 1,
+        extent, &storage, error);
+    if (!tail) { qa_arena_destroy(&storage); return false; }
     const application_player_record *row = application_players_connection_read(app, client, seat);
     qa_command_invocation command = {.console = app->console, .argc = count, .argv = arguments,
         .args_text = tail, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL, .owner = player.source_owner,
@@ -770,7 +771,7 @@ bool application_unified_component_command(qa_application *app, qa_net_client_id
     bool handled = false;
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error) &&
         application_q3_components_command(app, player.actor, owner, &command, &handled, error);
-    free(tail);
+    qa_arena_destroy(&storage);
     if (okay && !handled)
         return application_fail(error, QA_ERROR_ARGUMENT, "Component command names no admitted recipient handler");
     return okay;
@@ -812,14 +813,10 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
             return application_fail(error,QA_ERROR_FORMAT,"Source command has an invalid lexical argument");
         if (i) extent+=strlen(value->arguments[i])+(i>1);
     }
-    char *tail=malloc(extent+1);
-    if (!tail) return application_fail(error,QA_ERROR_MEMORY,"Retaining scoped Source command arguments");
-    size_t offset=0;
-    for (size_t i=1;i<value->argument_count;++i) {
-        if (i>1) tail[offset++]=' ';
-        size_t length=strlen(value->arguments[i]); memcpy(tail+offset,value->arguments[i],length); offset+=length;
-    }
-    tail[offset]=0;
+    qa_arena storage = {0};
+    char *tail = command_arguments_join(app->console, value->arguments + 1,
+        value->argument_count - 1, extent, &storage, error);
+    if (!tail) { qa_arena_destroy(&storage); return false; }
     const application_player_record *row=application_players_connection_read(app,client,seat);
     qa_command_invocation command={.console=app->console,.argc=value->argument_count,
         .argv=value->arguments,.args_text=tail,.context={.origin=row->remote?QA_COMMAND_REMOTE:QA_COMMAND_LOCAL,
@@ -827,7 +824,7 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
     bool handled=false;
     bool okay=qa_application_capture_command_context(app,&command.context,&command.context,error) &&
         application_native_q3_source_client_command(provider,player.actor,&command,&handled,error);
-    free(tail);
+    qa_arena_destroy(&storage);
     if (!okay) { application_fault(app,error); return false; }
     return (handled && application_unified_source_current(app,&source) &&
         application_unified_player_current(app,client,&player)) ||

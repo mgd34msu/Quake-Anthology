@@ -7,6 +7,7 @@
 #include "remote_unified_events.h"
 #include "component_scene.h"
 #include "qa/network_unified_control.h"
+#include "qa/network_unified_frame_pool.h"
 #include "qa/pool.h"
 
 typedef struct remote_component_state {
@@ -24,6 +25,8 @@ typedef struct remote_component_state {
     qa_q3_gamestate game_state;
     application_q3_scene_command commands[64];
     qa_command_tokens arguments[64];
+    qa_unified_document *command_documents[64];
+    qa_unified_frame_lease *command_leases[64];
     size_t command_count;
 } remote_component_state;
 typedef struct remote_component_frame {
@@ -125,7 +128,7 @@ bool q3remote_component_fail(qa_error *,qa_status,const char *);
 bool q3remote_component_player_finite(const qa_q3_player *);
 void q3remote_component_state_free(remote_component_state *);
 void q3remote_component_frame_free(remote_component_frame *);
-bool q3remote_component_state_read(frontend_unified_components *,const qa_unified_component_q3 *,
+bool q3remote_component_state_read(frontend_unified_components *,const qa_unified_document *,const qa_unified_component_q3 *,
     const remote_component *,remote_component_state *,qa_error *);
 bool q3remote_component_frame_read(frontend_unified_components *,remote_component *,const qa_unified_document *,const qa_unified_component_source *,
     remote_component_frame **,qa_error *);

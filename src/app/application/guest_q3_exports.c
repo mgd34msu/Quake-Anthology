@@ -721,9 +721,9 @@ static bool role_console_command(q3g_role *role,int32_t time,const char *text,
     qa_qvm_role kind=role->kind;
     if (!text || !handled || !role->initialized || !role->init_succeeded)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console export requires initialized client role");
-    qa_command_tokens next = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &next, NULL, NULL, error)) return false;
-    qa_command_tokens prior = role->arguments; role->arguments = next;
+    qa_command_tokens engine_prior;
+    if (!q3g_command_begin(role->engine, text, NULL, 0, &engine_prior, error)) return false;
+    qa_command_tokens prior = role->arguments; role->arguments = role->engine->arguments;
     bool prior_scope = role->arguments_scoped; role->arguments_scoped = true;
     int32_t result;
     bool ok = q3g_call(role, kind == QA_QVM_UI ? 8 : 2,
@@ -731,6 +731,7 @@ static bool role_console_command(q3g_role *role,int32_t time,const char *text,
                        &result, error);
     qa_command_tokens_free(&role->arguments); role->arguments = prior;
     role->arguments_scoped = prior_scope;
+    q3g_command_end(role->engine, engine_prior);
     if (ok) *handled = result != 0;
     return ok;
 }

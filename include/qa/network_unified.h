@@ -109,6 +109,8 @@ bool qa_unified_document_equal(const qa_unified_document *, const qa_unified_doc
 /* Retain shares the immutable record. Each custody is released
  * by destroy; retain/destroy stay on the owning session/frontend thread. */
 bool qa_unified_document_retain(const qa_unified_document *, qa_unified_document **, qa_error *);
+/* Borrowed backing owner; retained documents keep this lease alive. */
+qa_unified_frame_lease *qa_unified_document_lease(const qa_unified_document *);
 void qa_unified_document_destroy(qa_unified_document *);
 const qa_json_document *qa_unified_document_json(const qa_unified_document *);
 qa_json_id qa_unified_document_root(const qa_unified_document *);

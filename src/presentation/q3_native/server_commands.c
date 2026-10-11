@@ -267,6 +267,11 @@ static bool create(const q3n_server_command_options *options, unsigned domain,
     }
     q3n_server_commands *o = calloc(1, sizeof(*o));
     if (!o) return q3nc_fail(e, QA_ERROR_MEMORY, "Allocating native CGAME server commands");
+    qa_arena_init(&o->arguments, 0);
+    if (!qa_arena_reserve(&o->arguments, 1024u * (1024u + sizeof(char *)), e)) {
+        qa_arena_destroy(&o->arguments); free(o); return false;
+    }
+    qa_arena_seal(&o->arguments);
     o->options = *options; o->native_recipient = services ? &services->client : NULL;
     for (unsigned i = 0; i < 8; ++i) o->voice.lists[i].gender = QA_MODEL_MALE;
     *out = o; return true;
@@ -279,7 +284,8 @@ bool q3n_server_commands_create_remote(const q3n_server_command_options *options
 { return create(options, true, out, e); }
 bool q3n_server_commands_create_compiled(const q3n_server_command_options *options,q3n_server_commands **out,qa_error *e)
 { return create(options,2,out,e); }
-void q3n_server_commands_destroy(q3n_server_commands *o) { if (q3n_server_commands_idle(o)) free(o); }
+void q3n_server_commands_destroy(q3n_server_commands *o)
+{ if (q3n_server_commands_idle(o)) { qa_arena_destroy(&o->arguments); free(o); } }
 bool q3n_server_commands_rebind_prepare(q3n_server_commands *o,const q3n_compiled_source_rebind_ticket *t,
     const qa_command_context *context,qa_error *e)
 {
@@ -844,7 +850,8 @@ static bool receipt(q3n_server_commands *o, const q3n_frame *f, const q3n_server
         (!r->present || r->arguments) && o->options.receipt_current(o->options.context, f, r) && q3nc_current(o, f, e) ? true :
         q3nc_fail(e, QA_ERROR_ARGUMENT, "Native CGAME command receipt has another reader or publication generation");
 }
-static bool copy_arguments(const qa_command_tokens *source, qa_command_tokens *out, qa_error *e)
+static bool copy_arguments(q3n_server_commands *owner, const qa_command_tokens *source,
+    qa_command_tokens *out, qa_error *e)
 {
     if (!source || source->count > 1024 || (source->count && !source->values))
         return q3nc_fail(e, QA_ERROR_FORMAT, "Native CGAME command exceeds source token storage");
@@ -854,8 +861,11 @@ static bool copy_arguments(const qa_command_tokens *source, qa_command_tokens *o
         size_t length = strlen(source->values[i]); if (length > 1023) length = 1023;
         size += length + 1;
     }
-    out->values = source->count ? calloc(source->count, sizeof(*out->values)) : NULL;
-    out->storage = size ? malloc(size) : NULL;
+    qa_arena_reset(&owner->arguments);
+    out->borrowed = true;
+    out->values = source->count ? qa_arena_alloc(&owner->arguments,
+        source->count * sizeof(*out->values), _Alignof(char *), e) : NULL;
+    out->storage = size ? qa_arena_alloc(&owner->arguments, size, 1, e) : NULL;
     if ((source->count && !out->values) || (size && !out->storage)) {
         qa_command_tokens_free(out); return q3nc_fail(e, QA_ERROR_MEMORY, "Retaining native command arguments across callbacks");
     }
@@ -875,7 +885,7 @@ bool q3n_server_commands_execute(q3n_server_commands *o, const q3n_frame *f, int
         int32_t sequence = ++o->state.server_command_sequence;
         q3n_server_command_receipt actual = {0}; qa_command_tokens owned = {0};
         ok = o->options.read_command(o->options.context, f, sequence, &actual, e) && receipt(o, f, &actual, sequence, e);
-        if (ok && actual.present) ok = copy_arguments(actual.arguments, &owned, e) && dispatch(o, f, &owned, e);
+        if (ok && actual.present) ok = copy_arguments(o, actual.arguments, &owned, e) && dispatch(o, f, &owned, e);
         if (ok) ok = receipt(o, f, &actual, sequence, e);
         qa_command_tokens_free(&owned);
     }
@@ -890,7 +900,7 @@ bool q3n_server_commands_compiled_dispatch(q3n_server_commands *o,const q3n_fram
         return q3nc_fail(e,QA_ERROR_ARGUMENT,"Compiled dispatch requires its actual next reached command");
     o->busy=true; o->state.server_command_sequence=actual->sequence;
     qa_command_tokens owned={0}; bool okay=true;
-    if(actual->present)okay=copy_arguments(actual->arguments,&owned,e) && dispatch(o,f,&owned,e);
+    if(actual->present)okay=copy_arguments(o,actual->arguments,&owned,e) && dispatch(o,f,&owned,e);
     if(okay)okay=receipt(o,f,actual,actual->sequence,e);
     qa_command_tokens_free(&owned); return end(o,okay);
 }
@@ -916,7 +926,7 @@ bool q3n_server_commands_remote_dispatch(q3n_server_commands *o, const q3n_frame
             char *values[1024];
             for (size_t i = 0; i < tokens->count; ++i) values[i] = (char *)qa_q3_token(tokens, i);
             qa_command_tokens borrowed = {.count = tokens->count, .values = values};
-            okay = copy_arguments(&borrowed, &owned, e) && dispatch(o, f, &owned, e);
+            okay = copy_arguments(o, &borrowed, &owned, e) && dispatch(o, f, &owned, e);
         }
     }
     if (okay) okay = receipt(o, f, actual, actual->sequence, e);

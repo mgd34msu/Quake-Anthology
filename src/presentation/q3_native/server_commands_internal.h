@@ -4,6 +4,7 @@
 #include "voice.h"
 #include "events.h"
 #include "qa/network_q3.h"
+#include "qa/arena.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -16,6 +17,7 @@ struct q3n_server_commands {
     q3n_voice voice;
     const q3n_compiled_source_rebind_ticket *rebind;
     qa_command_context rebound_context;
+    qa_arena arguments;
     bool initialized, busy, closed;
 };
 bool q3nc_fail(qa_error *, qa_status, const char *);

@@ -15,6 +15,9 @@ bool qa_unified_session_fail(qa_error *e, qa_status status, const char *message)
 const qa_unified_limits *qa_unified_session_limits(const qa_unified_session *s)
 { return s?&s->limits:NULL; }
 
+qa_unified_frame_lease *qa_unified_session_frame_lease_acquire(qa_unified_session *s,qa_error *e)
+{ return qa_unified_frame_lease_acquire(s?s->frame_pool:NULL,e); }
+
 bool qa_unified_session_idle(const qa_unified_session *s)
 {
     return s && !s->entered && !s->processing && qa_network_callbacks_idle(s->runtime);

@@ -546,36 +546,6 @@ static bool invoke(native_client_module *role, int32_t command, const int32_t *a
     return okay;
 }
 
-static bool command_snapshot(const qa_command_invocation *source, qa_command_tokens *out,
-    qa_error *error)
-{
-    size_t bytes = 0;
-    for (size_t i = 0; i < source->argc; ++i) {
-        if (!source->argv[i]) return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console argument is absent");
-        size_t length = strlen(source->argv[i]);
-        if (length == SIZE_MAX || bytes > SIZE_MAX - length - 1)
-            return application_fail(error, QA_ERROR_MEMORY, "Acquired console argv exceeds capacity");
-        bytes += length + 1;
-    }
-    size_t tail = strlen(source->args_text ? source->args_text : "");
-    if (tail == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Acquired console arguments exceed capacity");
-    out->count = source->argc;
-    out->values = calloc(source->argc ? source->argc : 1, sizeof(*out->values));
-    out->storage = malloc(bytes ? bytes : 1); out->args_text = malloc(tail + 1);
-    if (!out->values || !out->storage || !out->args_text) {
-        qa_command_tokens_free(out);
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining acquired console entry arguments");
-    }
-    size_t cursor = 0;
-    for (size_t i = 0; i < source->argc; ++i) {
-        size_t length = strlen(source->argv[i]) + 1;
-        out->values[i] = out->storage + cursor;
-        memcpy(out->storage + cursor, source->argv[i], length); cursor += length;
-    }
-    memcpy(out->args_text, source->args_text ? source->args_text : "", tail + 1);
-    return true;
-}
-
 bool qa_application_native_q3_client_modules_call(application_native_q3_client_modules *owner,
     qa_qvm_role kind, int32_t command, const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
 {
@@ -622,7 +592,9 @@ bool qa_application_native_q3_client_modules_console_command(application_native_
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry retains another source call");
     if (!console_current(role, call, error) ||
         !application_native_q3_remote_role_arguments(owner->provider, owner->source.receiver.seat,
-            &reached, &revision, error) || !command_snapshot(call, &snapshot, error)) return false;
+            &reached, &revision, error)) return false;
+    snapshot = (qa_command_tokens){.count = call->argc, .values = (char **)call->argv,
+        .args_text = (char *)call->args_text, .borrowed = true};
     owner->command_role = role; owner->command_arguments = &snapshot; owner->command_revision = revision;
     bool okay = invoke(role, kind == QA_QVM_UI ? NATIVE_Q3_UI_CONSOLE_COMMAND : NATIVE_Q3_CG_CONSOLE_COMMAND,
         kind == QA_QVM_UI ? &milliseconds : NULL, kind == QA_QVM_UI ? 1 : 0, result, false, error);
