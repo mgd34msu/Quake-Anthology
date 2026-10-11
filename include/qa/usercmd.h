@@ -5,6 +5,7 @@
 #include "qa/ruleset.h"
 #include "qa/actors.h"
 #include "qa/network_ids.h"
+#include "qa/strings.h"
 
 typedef enum qa_frame_phase {
     QA_FRAME_ENTRY, QA_CLIENT_COMMAND, QA_ENTITY_PRETHINK, QA_ENTITY_PHYSICS,
@@ -12,6 +13,10 @@ typedef enum qa_frame_phase {
 } qa_frame_phase;
 
 typedef struct qa_usercmd_arsenal {
+    /* Engine selection uses retained name IDs. Counted text is a borrowed
+     * protocol/save boundary view, never command-owned storage. */
+    qa_strings *names;
+    qa_string_id provider_id, weapon_id;
     qa_bytes provider, weapon;
     bool use_holdable, has_impulse;
     uint8_t impulse;

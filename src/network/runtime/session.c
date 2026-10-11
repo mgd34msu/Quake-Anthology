@@ -35,9 +35,11 @@ bool qa_network_create(qa_net_transport *transport, const qa_network_options *op
     runtime->options = *options;
     runtime->timeout_enabled = options->timeout_ns != 0;
     runtime->peers = calloc(options->clients, sizeof(*runtime->peers));
-    if (!runtime->peers || !qa_net_connections_create(options->owner, options->clients,
+    if (!runtime->peers || !qa_strings_create(&runtime->command_names, error) ||
+        !qa_net_connections_create(options->owner, options->clients,
         qa_network_admission, runtime, &runtime->connections, error)) {
         if (!runtime->peers) qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating network peers");
+        qa_strings_destroy(runtime->command_names);
         free(runtime->peers); free(runtime); return false;
     }
     runtime->transport = transport; *out = runtime; return true;
@@ -59,6 +61,7 @@ void qa_network_destroy(qa_network_runtime *runtime) {
         if (runtime->peers[i].occupied) retire(runtime, &runtime->peers[i], "runtime closed");
     qa_net_connections_destroy(runtime->connections);
     qa_net_transport_close(runtime->transport);
+    qa_strings_destroy(runtime->command_names);
     free(runtime->peers); free(runtime);
 }
 const qa_net_connections *qa_network_connections(const qa_network_runtime *runtime) {

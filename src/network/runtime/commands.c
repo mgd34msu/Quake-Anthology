@@ -9,11 +9,30 @@
 void qa_network_history_clear(qa_network_peer *peer) {
     for (size_t seat = 0; seat < peer->seat_count; ++seat) {
         qa_network_seat *state = &peer->seats[seat];
-        for (size_t i = 0; i < QA_NETWORK_COMMAND_BACKUP; ++i)
-            qa_buffer_free(&state->history[i].arsenal);
+        qa_strings_destroy(state->arsenal_names);
         qa_net_seat_id id = state->id;
         memset(state, 0, sizeof(*state)); state->id = id;
     }
+}
+bool qa_network_history_arsenal(qa_network_runtime *runtime, qa_network_seat *seat,
+    qa_usercmd *command, qa_error *error)
+{
+    if (!command->has_arsenal) return true;
+    qa_usercmd_arsenal *arsenal = &command->arsenal;
+    if (!seat->arsenal_names) {
+        seat->arsenal_names = arsenal->names ? arsenal->names : runtime->command_names;
+        qa_strings_retain(seat->arsenal_names);
+    }
+    if (arsenal->names != seat->arsenal_names || !arsenal->provider_id) {
+        if (!qa_strings_intern(seat->arsenal_names, arsenal->provider, &arsenal->provider_id, error)) return false;
+        arsenal->weapon_id = QA_STRING_NONE;
+        if (arsenal->weapon.size && !qa_strings_intern(seat->arsenal_names,
+            arsenal->weapon, &arsenal->weapon_id, error)) return false;
+    }
+    arsenal->names = seat->arsenal_names;
+    arsenal->provider = qa_strings_text(arsenal->names, arsenal->provider_id);
+    arsenal->weapon = qa_strings_text(arsenal->names, arsenal->weapon_id);
+    return true;
 }
 static qa_network_seat *seat_get(qa_network_peer *peer, qa_net_seat_id id, qa_error *error) {
     for (size_t i = 0; i < peer->seat_count; ++i)
@@ -179,24 +198,13 @@ bool qa_network_submit(qa_network_runtime *runtime, const qa_usercmd *command, q
     if (entry->valid && (!seat->has_snapshot || entry->command.sequence > seat->acknowledged))
         return qa_network_fail(error, "Unacknowledged prediction history is full");
     qa_network_history_entry pending = {.command = *command, .valid = true};
-    if (command->has_arsenal) {
-        if (command->arsenal.weapon.size > SIZE_MAX - command->arsenal.provider.size)
-            return qa_network_fail(error, "Arsenal command exceeds storage");
-        pending.arsenal.size = command->arsenal.provider.size + command->arsenal.weapon.size;
-        pending.arsenal.data = malloc(pending.arsenal.size);
-        if (!pending.arsenal.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining command arsenal"); return false; }
-        memcpy(pending.arsenal.data, command->arsenal.provider.data, command->arsenal.provider.size);
-        if (command->arsenal.weapon.size) memcpy(pending.arsenal.data + command->arsenal.provider.size,
-            command->arsenal.weapon.data, command->arsenal.weapon.size);
-        pending.command.arsenal.provider.data = pending.arsenal.data;
-        pending.command.arsenal.weapon.data = pending.arsenal.data + command->arsenal.provider.size;
-    }
+    if (!qa_network_history_arsenal(runtime, seat, &pending.command, error)) return false;
     bool previous = runtime->callback; runtime->callback = true;
     seat->applying = true;
-    bool ok = peer->ops.command(peer->state, command, error);
+    bool ok = peer->ops.command(peer->state, &pending.command, error);
     seat->applying = false; runtime->callback = previous;
-    if (!ok) { qa_buffer_free(&pending.arsenal); return false; }
-    qa_buffer_free(&entry->arsenal); *entry = pending;
+    if (!ok) return false;
+    *entry = pending;
     seat->submitted = command->sequence; seat->has_submitted = true; return true;
 }
 bool qa_network_snapshot_apply(qa_network_runtime *runtime, qa_net_client_id id,
@@ -243,7 +251,7 @@ bool qa_network_snapshot_apply(qa_network_runtime *runtime, qa_net_client_id id,
     for (size_t i = 0; i < QA_NETWORK_COMMAND_BACKUP; ++i) {
         qa_network_history_entry *entry = &seat->history[i];
         if (entry->valid && entry->command.sequence <= seat->acknowledged) {
-            qa_buffer_free(&entry->arsenal); memset(entry, 0, sizeof(*entry));
+            memset(entry, 0, sizeof(*entry));
         }
     }
     return true;

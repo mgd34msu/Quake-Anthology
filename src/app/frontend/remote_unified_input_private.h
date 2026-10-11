@@ -12,6 +12,7 @@ struct frontend_unified_input {
     frontend_neutral_config_view configuration;
     qa_executable_recipe *recipe;
     const qa_recipe_provider *movement, *arsenal;
+    qa_string_id arsenal_provider;
     qa_input_command_builder builder, pending_builder;
     qa_usercmd q3_commands[64];
     size_t q3_command_count;

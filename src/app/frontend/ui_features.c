@@ -209,7 +209,8 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
     }
     if (event->argument_count>SIZE_MAX/(sizeof(const char *)+32))
         return frontend_fail(error,QA_ERROR_MEMORY,"Localized source argument count overflows");
-    const char **arguments=event->argument_count?malloc(event->argument_count*(sizeof(*arguments)+32)):NULL;
+    const char **arguments=event->argument_count?qa_arena_alloc(&f->frame.storage,
+        event->argument_count*(sizeof(*arguments)+32),_Alignof(const char *),error):NULL;
     if (event->argument_count && !arguments) return frontend_fail(error,QA_ERROR_MEMORY,"Reading genuine source localization arguments");
     char *numbers=arguments?(char *)(arguments+event->argument_count):NULL;
     bool ok=true;
@@ -240,7 +241,7 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
         else (void)qa_localize_presentation(catalog,format,arguments,event->argument_count,true,output,1024);
         if (ok) *out=output;
     }
-    qa_localization_release(catalog); free(arguments); return ok;
+    qa_localization_release(catalog); return ok;
 }
 bool frontend_ui_source_prompt_text(qa_frontend *f,uint32_t seat,const qa_builtin_event *event,
     qa_string_id field,char output[1024],const char **out,qa_error *error)

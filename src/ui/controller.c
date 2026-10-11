@@ -222,6 +222,31 @@ bool qa_ui_register(qa_ui *ui, const qa_ui_menu_registration *registration, qa_e
     ui->menus[ui->menu_count++] = *registration;
     return true;
 }
+static bool input_storage_prepare(qa_ui *ui,const qa_ui_menu *menu,qa_error *error) {
+    if (ui->options.input_storage) return true;
+    size_t capacity = 1;
+    for (size_t i = 0; i < menu->count; ++i) {
+        const qa_ui_control *control = &menu->controls[i];
+        if (control->kind == QA_UI_FIELD) {
+            size_t maximum = control->value.field.maximum;
+            size_t retained = control->value.field.text ? strlen(control->value.field.text) : 0;
+            if (maximum < retained) maximum = retained;
+            if (maximum > (SIZE_MAX - 1) / 4) return ui_fail(error,"UI field size overflow");
+            size_t bytes = maximum * 4 + 1;
+            if (capacity < bytes) capacity = bytes;
+        } else if (control->kind == QA_UI_LIST) {
+            for (size_t j = 0; j < control->value.list.count; ++j) {
+                const char *key = control->value.list.rows[j].key;
+                size_t bytes = key ? strlen(key) + 1 : 1;
+                if (capacity < bytes) capacity = bytes;
+            }
+        }
+    }
+    ui->input_storage.sealed = false;
+    bool ok = qa_arena_reserve(&ui->input_storage,capacity,error);
+    qa_arena_seal(&ui->input_storage);
+    return ok;
+}
 bool qa_ui_open(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
     if (!ui || ui->drawing || !isfinite(time) || time < 0)
         return ui_fail(error, "invalid UI open");
@@ -242,7 +267,7 @@ bool qa_ui_open(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
     qa_ui_menu menu;
     if (!registration.factory(registration.context, ui->options.seat, &menu, error))
         return false;
-    if (!menu_valid(&menu, id, error)) return false;
+    if (!menu_valid(&menu, id, error) || !input_storage_prepare(ui,&menu,error)) return false;
     if (!ui_reserve((void **)&ui->stack, &ui->stack_capacity, ui->depth + 1,
                      sizeof(*ui->stack), error))
         return false;
@@ -331,6 +356,7 @@ bool qa_ui_destroy(qa_ui *ui, double time, qa_error *error) {
     free(ui->fields);
     free(ui->stack);
     free(ui->menus);
+    qa_arena_destroy(&ui->input_storage);
     free(ui);
     return true;
 }

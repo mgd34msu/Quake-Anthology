@@ -1,5 +1,9 @@
 #include "internal.h"
 
+static qa_arena *input_storage(qa_ui *ui) {
+    return ui->options.input_storage ? ui->options.input_storage : &ui->input_storage;
+}
+
 bool ui_inside(qa_scene_rect_f rect, qa_vec2 point) {
     return point.x >= rect.x && point.y >= rect.y &&
            point.x < rect.x + rect.width && point.y < rect.y + rect.height;
@@ -130,19 +134,23 @@ static bool field_replace(qa_ui *ui, const qa_ui_control *control, size_t begin,
     if (bytes > SIZE_MAX - (length - (last - first)) - 1)
         return ui_fail(error, "UI field size overflow");
     size_t size = first + bytes + length - last;
-    char *value = malloc(size + 1);
-    if (!value) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating UI field edit");
-        return false;
-    }
+    char *value = qa_arena_alloc(input_storage(ui),size+1,1,error);
+    if (!value) return false;
     memcpy(value, text, first);
-    if (bytes)
-        memcpy(value + first, insert, bytes);
+    if (insert) {
+        qa_bytes input = {(const uint8_t *)insert,strlen(insert)};
+        size_t offset = 0, at = first, count = 0;
+        uint32_t scalar;
+        while (count < advance && qa_utf8_next(input,&offset,&scalar)) {
+            if (scalar < 32 || scalar == 127) continue;
+            at += qa_utf8_encode(scalar,value+at);
+            ++count;
+        }
+    }
     memcpy(value + first + bytes, text + last, length - last + 1);
     qa_ui_action action = {.kind = QA_UI_CHANGE_TEXT, .value.text = value};
     qa_ui_id menu = ui->depth ? ui->stack[ui->depth - 1].menu : 0;
     bool ok = ui_action(ui, control, &action, error);
-    free(value);
     if (ok && ui->depth && ui->stack[ui->depth - 1].menu == menu) {
         ui_field *field = ui_field_get(ui, control->id, error);
         if (!field)
@@ -165,11 +173,6 @@ bool ui_text(qa_ui *ui, const qa_ui_control *control, const char *incoming, qa_e
     size_t input_length = strlen(incoming);
     if (input_length > (SIZE_MAX - 1) / 3)
         return ui_fail(error, "UI input text too large");
-    char *accepted = malloc(input_length * 3 + 1);
-    if (!accepted) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating UI text input");
-        return false;
-    }
     qa_bytes input = {(const uint8_t *)incoming, input_length};
     size_t offset = 0, bytes = 0, count = 0;
     uint32_t scalar;
@@ -178,15 +181,12 @@ bool ui_text(qa_ui *ui, const qa_ui_control *control, const char *incoming, qa_e
             continue;
         char encoded[4];
         size_t size = qa_utf8_encode(scalar, encoded);
-        memcpy(accepted + bytes, encoded, size);
         bytes += size;
         ++count;
     }
-    bool ok = !count || field_replace(ui, control, cursor,
+    return !count || field_replace(ui, control, cursor,
         field->overstrike ? (cursor + count < length ? cursor + count : length) : cursor,
-        accepted, bytes, count, error);
-    free(accepted);
-    return ok;
+        incoming, bytes, count, error);
 }
 static bool field_key(qa_ui *ui, const qa_ui_control *control, uint32_t key,
                        bool *handled, qa_error *error) {
@@ -295,10 +295,8 @@ static bool row_click(qa_ui *ui, const qa_ui_menu *menu, const qa_ui_control *co
                        size_t row, bool row_action, qa_error *error) {
     const char *key = control->value.list.rows[row].key;
     if (!key) return ui_fail(error, "clicked UI row needs an identity");
-    size_t length = strlen(key);
-    char *identity = malloc(length + 1);
-    if (!identity) { qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining clicked UI row"); return false; }
-    memcpy(identity, key, length + 1);
+    char *identity = qa_arena_text(input_storage(ui),key,error);
+    if (!identity) return false;
     bool ok = ui_action(ui, control, &(qa_ui_action){.kind = QA_UI_SELECT, .value.row = row}, error);
     qa_ui_menu current;
     if (ok && ui->depth && ui->stack[ui->depth - 1].menu == menu->id) {
@@ -317,7 +315,6 @@ static bool row_click(qa_ui *ui, const qa_ui_menu *menu, const qa_ui_control *co
             break;
         }
     }
-    free(identity);
     return ok;
 }
 static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
@@ -519,9 +516,11 @@ bool qa_ui_input(qa_ui *ui, const qa_input_event *event, bool *consumed, qa_erro
     if (!ui->options.input_now_ms) ui->time_ms = event->time_ms;
     *consumed = ui->depth != 0;
     if (!*consumed) return true;
+    if (!ui->options.input_storage) qa_arena_reset(&ui->input_storage);
     ui->handling = true;
     bool ok = input(ui, event, error);
     ui->handling = false;
+    if (!ui->options.input_storage) qa_arena_reset(&ui->input_storage);
     return ok;
 }
 bool qa_ui_tick(qa_ui *ui, double time, qa_error *error) {
@@ -529,13 +528,16 @@ bool qa_ui_tick(qa_ui *ui, double time, qa_error *error) {
     double input_time;
     if (!ui_input_time(ui,time,&input_time,error)) return false;
     ui->time_ms = time;
+    if (!ui->options.input_storage) qa_arena_reset(&ui->input_storage);
     ui->handling = true;
     bool ok = true;
     for (size_t axis = 0; axis < QA_AXIS_COUNT && ok && ui->depth; ++axis)
         if (ui->held_direction[axis] && input_time >= ui->repeat_at[axis]) {
             ui->repeat_at[axis] = input_time + 80;
             ok = key(ui, (uint32_t)ui->held_direction[axis], true, input_time, error);
+            if (!ui->options.input_storage) qa_arena_reset(&ui->input_storage);
         }
     ui->handling = false;
+    if (!ui->options.input_storage) qa_arena_reset(&ui->input_storage);
     return ok;
 }

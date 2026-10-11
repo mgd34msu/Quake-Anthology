@@ -4,13 +4,13 @@
 
 typedef struct qa_network_history_entry {
     qa_usercmd command;
-    qa_buffer arsenal;
     bool valid;
 } qa_network_history_entry;
 typedef struct qa_network_seat {
     qa_net_seat_id id;
     uint64_t submitted, accepted, acknowledged, snapshot;
     bool has_submitted, has_accepted, has_snapshot, prediction_fault, applying;
+    qa_strings *arsenal_names;
     qa_network_history_entry history[QA_NETWORK_COMMAND_BACKUP];
 } qa_network_seat;
 typedef struct qa_network_peer {
@@ -27,12 +27,14 @@ struct qa_network_runtime {
     qa_net_connections *connections;
     qa_network_options options;
     qa_network_peer *peers;
+    qa_strings *command_names;
     uint64_t now_ns;
     bool pumping, callback;
     bool timeout_enabled, timeout_immediate;
 };
 qa_network_peer *qa_network_peer_get(qa_network_runtime *, qa_net_client_id, qa_error *);
 void qa_network_history_clear(qa_network_peer *);
+bool qa_network_history_arsenal(qa_network_runtime *, qa_network_seat *, qa_usercmd *, qa_error *);
 bool qa_network_fail(qa_error *, const char *);
 bool qa_network_admission(void *, const qa_net_connect *, qa_error *);
 struct qa_network_checkpoint_refs;

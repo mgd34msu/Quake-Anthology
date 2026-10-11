@@ -110,6 +110,9 @@ typedef struct qa_ui_options {
     const qa_scene_image *white;
     qa_ui_art art;
     qa_font_selection title_fonts;
+    /* Borrowed temporary storage for input callbacks. NULL uses storage sized
+     * from the menu's fields and row keys when the menu opens. */
+    qa_arena *input_storage;
     void *context;
     void (*sound)(void *, uint32_t, qa_ui_sound);
     const char *(*localize)(void *, const char *);

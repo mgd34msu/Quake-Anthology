@@ -45,11 +45,14 @@ static bool history_valid(const qa_network_peer *peer, const qa_network_seat *s,
             !c->actor.registry || !c->actor.generation || !movement_valid(c) ||
             !c->sequence || c->sequence <= s->acknowledged || c->sequence > s->submitted ||
             c->sequence % QA_NETWORK_COMMAND_BACKUP != i) goto invalid;
-        if (c->has_arsenal && (!c->arsenal.provider.size || c->arsenal.weapon.size > SIZE_MAX - c->arsenal.provider.size ||
-            entry->arsenal.size != c->arsenal.provider.size + c->arsenal.weapon.size ||
-            !entry->arsenal.data || c->arsenal.provider.data != entry->arsenal.data ||
-            c->arsenal.weapon.data != entry->arsenal.data + c->arsenal.provider.size)) goto invalid;
-        if (!c->has_arsenal && entry->arsenal.size) goto invalid;
+        if (c->has_arsenal) {
+            qa_bytes provider = qa_strings_text(s->arsenal_names, c->arsenal.provider_id);
+            qa_bytes weapon = qa_strings_text(s->arsenal_names, c->arsenal.weapon_id);
+            if (!provider.size || weapon.size > SIZE_MAX - provider.size ||
+                c->arsenal.names != s->arsenal_names || c->arsenal.provider.data != provider.data ||
+                c->arsenal.provider.size != provider.size || c->arsenal.weapon.data != weapon.data ||
+                c->arsenal.weapon.size != weapon.size) goto invalid;
+        }
     }
     for (uint64_t i = 1; i <= s->submitted - s->acknowledged; ++i) {
         uint64_t sequence = s->acknowledged + i;
@@ -77,8 +80,10 @@ bool qa_network_prediction_checkpoint(const qa_network_runtime *runtime, const q
             if (!history_valid(peer, s, error)) return false;
             for (size_t k = 0; k < QA_NETWORK_COMMAND_BACKUP; ++k) {
                 const qa_network_history_entry *entry = &s->history[k]; if (!entry->valid) continue;
-                if (entry->arsenal.size > SIZE_MAX - size) return qa_network_fail(error, "Prediction arsenal extent overflow");
-                size += entry->arsenal.size;
+                size_t extent = entry->command.has_arsenal ?
+                    entry->command.arsenal.provider.size + entry->command.arsenal.weapon.size : 0;
+                if (extent > SIZE_MAX - size) return qa_network_fail(error, "Prediction arsenal extent overflow");
+                size += extent;
             }
         }
     }
@@ -107,7 +112,8 @@ bool qa_network_prediction_checkpoint(const qa_network_runtime *runtime, const q
                     ok = qa_net_write_u64(&w, c->arsenal.provider.size) && qa_net_write_u64(&w, c->arsenal.weapon.size) &&
                         qa_net_write_u8(&w, c->arsenal.use_holdable) &&
                         qa_net_write_u8(&w, c->arsenal.has_impulse) && qa_net_write_u8(&w,c->arsenal.impulse) &&
-                        qa_net_write_data(&w, entry->arsenal.data, entry->arsenal.size);
+                        qa_net_write_data(&w, c->arsenal.provider.data, c->arsenal.provider.size) &&
+                        qa_net_write_data(&w, c->arsenal.weapon.data, c->arsenal.weapon.size);
             }
         }
     }
@@ -165,11 +171,9 @@ bool qa_network_prediction_restore(qa_network_runtime *runtime, const qa_network
                         provider + weapon > qa_net_reader_remaining(&r)) {
                         ok = qa_net_reader_fail(&r, "Invalid prediction arsenal storage extent"); break;
                     }
-                    entry->arsenal.size = (size_t)(provider + weapon); entry->arsenal.data = malloc(entry->arsenal.size);
-                    if (!entry->arsenal.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring prediction arsenal"); ok = false; break; }
-                    c->arsenal.provider = (qa_bytes){entry->arsenal.data, (size_t)provider};
-                    c->arsenal.weapon = (qa_bytes){entry->arsenal.data + provider, (size_t)weapon};
-                    ok = qa_net_read_data(&r, entry->arsenal.data, entry->arsenal.size);
+                    ok = qa_net_read_bytes(&r, (size_t)provider, &c->arsenal.provider) &&
+                        qa_net_read_bytes(&r, (size_t)weapon, &c->arsenal.weapon) &&
+                        qa_network_history_arsenal(runtime, s, c, error);
                 }
                 if (ok && !r.failed) {
                     bool previous_callback = runtime->callback;
@@ -191,8 +195,8 @@ bool qa_network_prediction_restore(qa_network_runtime *runtime, const qa_network
         qa_network_seat *old = peer->seats; peer->seats = scratch[i]; scratch[i] = old;
     }
     for (uint32_t i = 0; i < runtime->options.clients; ++i) if (scratch[i]) {
-        for (size_t j = 0; j < runtime->peers[i].seat_count; ++j)
-            for (size_t k = 0; k < QA_NETWORK_COMMAND_BACKUP; ++k) qa_buffer_free(&scratch[i][j].history[k].arsenal);
+        qa_network_peer history = {.seats = scratch[i], .seat_count = runtime->peers[i].seat_count};
+        qa_network_history_clear(&history);
         free(scratch[i]);
     }
     free(scratch); return ok;

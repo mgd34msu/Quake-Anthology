@@ -78,7 +78,8 @@ static bool create(qa_frontend *f,frontend_remote_unified *replica,
         frontend_client_source_retain(client,e))) {free(p);return false;}
     p->frontend=f;p->replica=replica;p->prediction=prediction;p->client=client;p->client_view=selected;
     p->configuration=configuration;p->recipe=frontend_remote_unified_recipe(replica);
-    p->movement=movement;p->arsenal=arsenal;p->epoch=frontend_remote_unified_epoch(replica);
+    p->movement=movement;p->arsenal=arsenal;p->arsenal_provider=arsenal->instance_name;
+    p->epoch=frontend_remote_unified_epoch(replica);
     p->builder=(qa_input_command_builder){.kind=snapshot.state.kind,
         .angles={(float)snapshot.view_angles.x,(float)snapshot.view_angles.y,(float)snapshot.view_angles.z}};
     p->command_time=snapshot.command_time_ms;
@@ -170,7 +171,8 @@ static bool prepare_sample(frontend_unified_input *p,qa_error *e)
         !current(p,e)) return false;
     input.has_arsenal=true;
     input.arsenal=(qa_usercmd_arsenal){
-        .provider={(const unsigned char *)p->arsenal->selection.instance,strlen(p->arsenal->selection.instance)},
+        .names=p->replica->strings,.provider_id=p->arsenal_provider,
+        .provider=qa_strings_text(p->replica->strings,p->arsenal_provider),
         .has_impulse=sample->impulse!=0,.impulse=sample->impulse,
         .use_holdable=sample->game_focus &&
             (sample->buttons[QA_INPUT_USE].active || sample->buttons[QA_INPUT_USE].pressed ||

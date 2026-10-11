@@ -59,7 +59,7 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
     size_t prefix = strlen(name) + 1 + (targeted ? strlen(target_text) + 1 : 0), size = strlen(text);
     if (size > SIZE_MAX - prefix - 1)
         return frontend_fail(error, QA_ERROR_MEMORY, "Chat command size overflow");
-    char *raw = malloc(prefix + size + 1);
+    char *raw = qa_arena_alloc(&frontend->frame.storage,prefix+size+1,1,error);
     if (!raw) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining source chat command");
     if (targeted) snprintf(raw, prefix + size + 1, "%s %s %s", name, target_text, text);
     else snprintf(raw, prefix + size + 1, "%s %s", name, text);
@@ -71,5 +71,5 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
             &context, raw, error);
     if (ok && client_source && !frontend_network_client_recipient_current(frontend,seat->id,&recipient))
         ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Chat changed its actual CLIENT recipient");
-    free(raw); return ok;
+    return ok;
 }

@@ -187,13 +187,14 @@ bool frontend_remote_q1_player_command(frontend_remote_q1 *row, qa_actor_id acto
         size += strlen(args[i]) + 3;
     }
     if (!strcmp(name, "use")) {
-        char *selection = malloc(size); if (!selection) return false;
+        char *selection = qa_arena_alloc(&row->frontend->frame.storage,size,1,error);
+        if (!selection) return false;
         size_t at = 0;
         for (size_t i = 0; i < count; ++i) for (const unsigned char *p = (const unsigned char *)args[i]; *p; ++p)
             if (*p != ' ') selection[at++] = (char)(*p >= 'A' && *p <= 'Z' ? *p + 32 : *p);
         bool ok = selected(row, (qa_bytes){(const uint8_t *)selection, at}, error);
         if (ok) ++row->revision;
-        free(selection); return ok;
+        return ok;
     }
     if (!strcmp(name, "weapnext") || !strcmp(name, "weapprev")) {
         size_t owned[8], available = 0, chosen = active(row), position = SIZE_MAX;
@@ -210,12 +211,12 @@ bool frontend_remote_q1_player_command(frontend_remote_q1 *row, qa_actor_id acto
         }
         return true;
     }
-    char *text = malloc(size); if (!text) return false;
+    char *text = qa_arena_alloc(&row->frontend->frame.storage,size,1,error);
+    if (!text) return false;
     size_t at = strlen(name); memcpy(text, name, at);
     for (size_t i = 0; i < count; ++i) {
         text[at++] = ' '; text[at++] = '"'; size_t n = strlen(args[i]); memcpy(text + at, args[i], n); at += n; text[at++] = '"';
     }
     text[at] = 0;
-    bool ok = qa_network_q1_client_command(row->options.domain.runtime, row->options.domain.client, text, error);
-    free(text); return ok;
+    return qa_network_q1_client_command(row->options.domain.runtime, row->options.domain.client, text, error);
 }
