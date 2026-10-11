@@ -245,9 +245,7 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     const qa_cvar_view *crosshair = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.crosshair);
     if (!crosshair || crosshair->number == 0 || (player->stats[13] & (4 | 32))) return true;
     const qa_cvar_view *duration = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.scr_hit_marker_time);
-    const qa_scene_image *image = NULL;
-    for (remote_q2_picture *picture = row->pictures; picture; picture = picture->next)
-        if (!strcmp(picture->name, "marker")) { image = picture->image; break; }
+    const qa_scene_image *image=remote_q2_picture_read(row,row->hud_pictures.marker,error);
     double elapsed = row->sample_ns >= row->hit_marker_ns ? (double)(row->sample_ns - row->hit_marker_ns) / 1000000 : 0;
     double limit = duration && isfinite(duration->number) ? trunc(duration->number) : 0;
     if (!image || limit <= 0 || elapsed > limit) { row->hit_marker_count = 0; return true; }

@@ -831,21 +831,33 @@ bool qa_scene_image_source_scratch_version(qa_scene_resources *resources, size_t
     *out = image; return true;
 }
 
+static void q2_pictures_clear(qa_scene_resources *resources)
+{
+    if (!resources->q2_pictures) return;
+    for (size_t i=0; i<Q2_PICTURE_CACHE_CAPACITY; ++i) {
+        q2_picture_entry *entry=resources->q2_pictures+i;
+        if (!entry->strings) continue;
+        qa_scene_image_release(entry->image); qa_strings_destroy(entry->strings);
+    }
+    memset(resources->q2_pictures,0,Q2_PICTURE_CACHE_CAPACITY*sizeof(*resources->q2_pictures));
+}
 qa_scene_resources *qa_scene_resources_create_detached(qa_vfs *vfs, qa_error *error)
 {
     qa_scene_resources *resources = calloc(1, sizeof(*resources));
     if (resources == NULL) goto failed;
     resources->names = calloc(1, sizeof(*resources->names));
     if (resources->names == NULL) { free(resources); goto failed; }
+    resources->q2_pictures = calloc(Q2_PICTURE_CACHE_CAPACITY, sizeof(*resources->q2_pictures));
+    if (!resources->q2_pictures) { free(resources->names); free(resources); goto failed; }
     resources->names->references = 1;
     resources->references = 1; resources->names->owner = resources;
     resources->recipient_generation = 1;
     if (!qa_strings_create(&resources->names->strings, error)) {
-        free(resources->names); free(resources); return NULL;
+        free(resources->q2_pictures); free(resources->names); free(resources); return NULL;
     }
     resources->vfs = vfs;
     if (vfs && !qa_vfs_retain(vfs, error)) {
-        names_release(resources->names); free(resources); return NULL;
+        names_release(resources->names); free(resources->q2_pictures); free(resources); return NULL;
     }
     resources->detached = true;
     return resources;
@@ -926,6 +938,7 @@ void qa_scene_resources_destroy(qa_scene_resources *resources)
 {
     if (resources && resources->references > 1) { --resources->references; return; }
     if (!qa_scene_resources_idle(resources)) return;
+    q2_pictures_clear(resources); free(resources->q2_pictures);
     resources->names->owner = NULL;
     while (resources->variants) {
         owned_image *image = resources->variants;
@@ -1452,6 +1465,7 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
 {
     if (!qa_scene_resource_policy_ready_is(ticket)) return;
     qa_scene_resources *owner = ticket->owner, *destination = ticket->destination;
+    q2_pictures_clear(owner);
     recipient_correspondence_changed(owner);
     recipient_correspondence_changed(destination);
     for (recipient_policy_binding *row = ticket->recipient_bindings; row; row = row->next) {
@@ -3266,6 +3280,63 @@ bool qa_scene_image_load(qa_scene_resources *resources, const char *name,
     return image_load(resources, name, options, false, out, NULL, error);
 }
 
+bool qa_scene_q2_picture_direct(const char *name, bool rerelease)
+{
+    if (!name || !*name) return false;
+    if (name[0]=='/' || name[0]=='\\') return true;
+    const char *slash=strrchr(name,'/'), *extension=strrchr(name,'.');
+    return rerelease && slash && extension && extension>slash && extension[1];
+}
+const qa_scene_image *qa_scene_q2_picture(qa_scene_resources *resources, qa_strings *strings,
+    qa_string_id name_id, bool rerelease, qa_scene_filter filter, qa_error *error)
+{
+    if (!resources || !strings || !name_id) return NULL;
+    uint64_t generation=qa_vfs_lookup_generation(resources->vfs);
+    if (resources->q2_picture_generation!=generation) {
+        q2_pictures_clear(resources); resources->q2_picture_generation=generation;
+    }
+    size_t bucket=((size_t)name_id+((uintptr_t)strings>>4)+(unsigned)filter*131u+rerelease*17u) &
+        (Q2_PICTURE_CACHE_CAPACITY-1);
+    q2_picture_entry *entry=NULL;
+    for (size_t i=0;i<Q2_PICTURE_CACHE_CAPACITY;++i) {
+        q2_picture_entry *candidate=resources->q2_pictures+((bucket+i)&(Q2_PICTURE_CACHE_CAPACITY-1));
+        if (!candidate->strings) {entry=candidate;break;}
+        if (candidate->strings==strings && candidate->name==name_id &&
+            candidate->rerelease==rerelease && candidate->filter==filter) {
+            if (candidate->error) qa_error_set(error,candidate->error,0,"Q2 picture is not installed");
+            return candidate->image;
+        }
+    }
+    if (!entry) {qa_error_set(error,QA_ERROR_MEMORY,0,"Q2 picture cache is full");return NULL;}
+    const char *name=qa_strings_cstr(strings,name_id);
+    if (!name || !*name) return NULL;
+    bool prefixed=name[0]=='/' || name[0]=='\\';
+    bool direct=qa_scene_q2_picture_direct(name,rerelease);
+    char path[4096];
+    const char *extension=strrchr(name,'.');
+    const char *suffix=extension && !strchr(extension,'/') ? "" : ".pcx";
+    int length=direct?snprintf(path,sizeof(path),"%s",name+prefixed):
+        snprintf(path,sizeof(path),"pics/%s%s",name,suffix);
+    if (length<0 || (size_t)length>=sizeof(path)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 picture path exceeds the filesystem limit");return NULL;
+    }
+    qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,
+        .wrap=QA_SCENE_CLAMP,.filter=filter,.transparent=true,.transparent_index=255};
+    if (direct && !prefixed) {
+        options.usage=!strncmp(name,"sprites/",8)?QA_IMAGE_USAGE_SPRITE:QA_IMAGE_USAGE_SKIN;
+        options.mipmap=options.usage!=QA_IMAGE_USAGE_SPRITE;
+        options.filter=options.mipmap?QA_SCENE_LINEAR_MIPMAP_LINEAR:filter;
+        options.wrap=QA_SCENE_REPEAT;
+    }
+    qa_scene_image *image=NULL;qa_error issue={0};
+    bool ok=qa_scene_image_load(resources,path,&options,&image,&issue);
+    if (!ok && issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=issue;return NULL;}
+    qa_strings_retain(strings);
+    *entry=(q2_picture_entry){.strings=strings,.name=name_id,.image=image,.filter=filter,
+        .rerelease=rerelease,.error=ok?QA_OK:issue.code};
+    if (!ok && error) *error=issue;
+    return image;
+}
 bool qa_scene_image_load_exact(qa_scene_resources *resources, const char *name,
     const qa_scene_image_options *options, qa_scene_image **out, qa_error *error)
 {

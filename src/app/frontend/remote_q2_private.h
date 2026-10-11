@@ -204,7 +204,6 @@ bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **
 bool remote_q2_model_config(frontend_remote_q2 *, uint16_t, qa_error *);
 const qa_scene_image *remote_q2_picture_read(void *, qa_string_id, qa_error *);
 const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *, const char *, qa_error *);
-bool remote_q2_image_direct(const frontend_remote_q2 *, const char *);
 bool remote_q2_download_prepare(frontend_remote_q2 *, qa_q2_preparation *, qa_error *);
 bool remote_q2_download_receive(frontend_remote_q2 *, const qa_q2_server_event *, bool *, qa_error *);
 bool remote_q2_download_path_valid(const char *);

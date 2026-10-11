@@ -70,7 +70,6 @@ typedef struct q2_player_name {
     const char *name;
     qa_unified_document *document;
 } q2_player_name;
-typedef struct q2_native_picture q2_native_picture;
 typedef struct q2_hud_names {
     struct q2_hud_names *next;
     const void *source;
@@ -102,7 +101,6 @@ typedef struct q2_bank {
     size_t sampled_light_count;
     qa_string_id source_provider;
     q2_model *models;
-    q2_native_picture *native_pictures;
     q2_hud_names *hud_names;
     qa_hud_q2_picture_names picture_names;
     const qa_font *native_font;
@@ -111,11 +109,6 @@ typedef struct q2_bank {
     const char *styles[256];
     uint64_t style_sequences[256];
 } q2_bank;
-struct q2_native_picture {
-    struct q2_native_picture *next;
-    qa_string_id name;
-    qa_scene_image *image;
-};
 typedef struct q2_native {
     q2_bank *bank;
     qa_unified_component_identity identity;
@@ -858,28 +851,8 @@ static const char *native_config(void *context,int32_t index)
 static const qa_scene_image *native_picture(void *context,qa_string_id name_id,qa_error *e)
 {
     q2_native *v=context;
-    for (q2_native_picture *p=v->bank->native_pictures;p;p=p->next) if (p->name==name_id) return p->image;
-    const char *name=qa_strings_cstr(v->bank->owner->replica->strings,name_id);
-    if(!name||!*name)return NULL;
-    const char *slash=strrchr(name,'/'),*extension=strrchr(name,'.');
-    bool direct=name[0]=='/' || name[0]=='\\' ||
-        (v->protocol.kind==QA_NET_Q2KEX_2023 && slash && extension && extension>slash && extension[1]);
-    size_t length=strlen(name);
-    if (length>SIZE_MAX-11) return NULL;
-    char *path=malloc(length+11); q2_native_picture *p=calloc(1,sizeof(*p));
-    if (!path || !p) { free(path); free(p); frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining native Q2 picture"); return NULL; }
-    if (direct) strcpy(path,name+(name[0]=='/' || name[0]=='\\')); else snprintf(path,length+11,"pics/%s.pcx",name);
-    qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,
-        .wrap=QA_SCENE_CLAMP,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.transparent=true,.transparent_index=255};
-    if (direct && name[0]!='/' && name[0]!='\\') {
-        options.usage=!strncmp(name,"sprites/",8)?QA_IMAGE_USAGE_SPRITE:QA_IMAGE_USAGE_SKIN;
-        options.mipmap=options.usage!=QA_IMAGE_USAGE_SPRITE;
-        options.filter=options.mipmap?QA_SCENE_LINEAR_MIPMAP_LINEAR:QA_SCENE_LINEAR;
-        options.wrap=QA_SCENE_REPEAT;
-    }
-    bool okay=qa_scene_image_load(v->bank->images,path,&options,&p->image,e); free(path);
-    if (!okay) { free(p); return NULL; }
-    p->name=name_id; p->next=v->bank->native_pictures; v->bank->native_pictures=p; return p->image;
+    return qa_scene_q2_picture(v->bank->images,v->bank->owner->replica->strings,name_id,
+        v->protocol.kind==QA_NET_Q2KEX_2023,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
 }
 static qa_string_id native_config_picture(void *context,int32_t index,unsigned variant)
 {
@@ -2021,8 +1994,6 @@ static bool bank_destroy(q2_bank *b,qa_error *e)
         if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
         if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
-        q2_native_picture *picture=b->native_pictures;
-        while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture);picture=next;}
         while(b->hud_names) {q2_hud_names *names=b->hud_names;b->hud_names=names->next;
             qa_unified_document_destroy(names->document);qa_hud_q2_program_destroy(names->status);free(names->names);free(names);}
     free(b->aliases);return true;

@@ -189,8 +189,8 @@ static const char *local_q2_config(void *context, int32_t index)
 static const qa_scene_image *local_q2_picture(void *context, qa_string_id name, qa_error *error)
 {
     local_q2_hud *hud = context;
-    return frontend_equipment_media_q2_picture(&hud->media, qa_strings_cstr(hud->source->strings,name),
-        hud->source->edition == QA_Q2_RERELEASE, error);
+    return qa_scene_q2_picture(hud->media.images,(qa_strings *)hud->source->strings,name,
+        hud->source->edition == QA_Q2_RERELEASE,QA_SCENE_NEAREST,error);
 }
 static qa_string_id local_q2_config_picture(void *context,int32_t index,unsigned variant)
 {

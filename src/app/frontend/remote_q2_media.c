@@ -144,42 +144,15 @@ bool remote_q2_model_config(frontend_remote_q2 *row, uint16_t index, qa_error *e
     if (error) *error = issue;
     return false;
 }
-bool remote_q2_image_direct(const frontend_remote_q2 *row, const char *name)
-{
-    if (!row || !name) return false;
-    if (name[0] == '/' || name[0] == '\\') return true;
-    const char *slash = strrchr(name, '/'), *extension = strrchr(name, '.');
-    return remote_q2_rerelease_presentation(row) && slash && extension && extension > slash && extension[1];
-}
 const qa_scene_image *remote_q2_picture_read(void *context, qa_string_id name_id, qa_error *error)
 {
     frontend_remote_q2 *row = context;
     if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring) {
         remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 picture registration requires its live resource owner"); return NULL;
     }
-    const char *name=qa_strings_cstr(qa_session_strings(qa_application_session(row->frontend->application)),name_id);
-    if(!name||!*name)return NULL;
-    for (remote_q2_picture *p = row->pictures; p; p = p->next)
-        if (!p->sprite && p->name_id == name_id) return p->image;
-    size_t length = strlen(name);
-    if (length > SIZE_MAX - 11) return NULL;
-    char *path = malloc(length + 11);
-    remote_q2_picture *p = calloc(1, sizeof(*p));
-    if (!path || !p) { free(path); free(p); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 picture"); return NULL; }
-    bool direct = remote_q2_image_direct(row, name);
-    if (direct) strcpy(path, name + (name[0] == '/' || name[0] == '\\')); else snprintf(path, length + 11, "pics/%s.pcx", name);
-    qa_scene_image *image = NULL; qa_scene_image_options options = image_options(QA_IMAGE_USAGE_PICTURE);
-    if (direct && name[0] != '/' && name[0] != '\\') {
-        options.usage = !strncmp(name, "sprites/", 8) ? QA_IMAGE_USAGE_SPRITE : QA_IMAGE_USAGE_SKIN;
-        options.mipmap = options.usage != QA_IMAGE_USAGE_SPRITE;
-        options.filter = options.mipmap ? QA_SCENE_LINEAR_MIPMAP_LINEAR : QA_SCENE_LINEAR;
-    }
-    bool ok = qa_scene_image_load(row->images, path, &options, &image, error); free(path);
-    if (!ok) { free(p); return NULL; }
-    p->name = malloc(length + 1);
-    if (!p->name) { qa_scene_image_release(image); free(p); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 picture name"); return NULL; }
-    strcpy(p->name, name); p->name_id = name_id; p->image = image;
-    p->next = row->pictures; row->pictures = p; return image;
+    return qa_scene_q2_picture(row->images,
+        qa_session_strings(qa_application_session(row->frontend->application)),name_id,
+        remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,error);
 }
 const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *row, const char *path, qa_error *error)
 {

@@ -80,7 +80,18 @@ typedef struct image_alias {
     bool palette_attempted;
     qa_status palette_error;
 } image_alias;
+enum { Q2_PICTURE_CACHE_CAPACITY = 32768 };
+typedef struct q2_picture_entry {
+    qa_strings *strings;
+    qa_string_id name;
+    qa_scene_image *image;
+    qa_scene_filter filter;
+    qa_status error;
+    bool rerelease;
+} q2_picture_entry;
 struct qa_scene_resources {
+    q2_picture_entry *q2_pictures;
+    uint64_t q2_picture_generation;
     size_t references;
     qa_vfs *vfs;
     const qa_scene_embedded_image *embedded_images;

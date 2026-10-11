@@ -14,11 +14,6 @@
 #include <math.h>
 #include <stdio.h>
 
-typedef struct native_q2_picture {
-    struct native_q2_picture *next;
-    char *name;
-    const qa_scene_image *image;
-} native_q2_picture;
 typedef struct native_q2_string {
     qa_native_instance *instance;
     qa_native_address address;
@@ -44,7 +39,6 @@ struct frontend_native_q2 {
     const qa_font *classic;
     qa_localization_pool *catalogs;
     qa_font_world_store *world_text;
-    native_q2_picture *pictures;
     frontend_native_q2_image_policy *image_policy;
     native_q2_string strings[8];
     size_t next_string;
@@ -163,28 +157,15 @@ static bool localize(frontend_native_q2 *source, const qa_native_host_q2_applica
 static bool picture(frontend_native_q2 *source, const char *name,
     const qa_scene_image **out, qa_error *error)
 {
-    for (native_q2_picture *item = source->pictures; item; item = item->next)
-        if (!strcmp(item->name, name)) { *out = item->image; return true; }
-    if (!source_files(source, error)) return false;
-    char path[1024];
-    int length = name[0] == '/' || name[0] == '\\' ? snprintf(path, sizeof(path), "%s", name + 1) :
-        snprintf(path, sizeof(path), "pics/%s", name);
-    if (length < 0 || (size_t)length >= sizeof(path)) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 picture path exceeds source limit");
-    qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
-        .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 255};
-    qa_scene_image *image = NULL;
-    qa_error load_error = {0};
-    if (!qa_scene_image_load(source->images, path, &options, &image, &load_error)) {
-        if (load_error.code == QA_ERROR_NOT_FOUND) { *out = NULL; return true; }
-        if (error) *error = load_error;
-        return false;
-    }
-    if (!image) { *out = NULL; return true; }
-    native_q2_picture *item = calloc(1, sizeof(*item));
-    if (item) item->name = malloc(strlen(name) + 1);
-    if (!item || !item->name) { if (item) free(item); qa_scene_image_release(image); return frontend_fail(error, QA_ERROR_MEMORY, "retaining native Q2 picture"); }
-    strcpy(item->name, name); item->image = image; item->next = source->pictures; source->pictures = item;
-    *out = image; return true;
+    if (!source_files(source,error)) return false;
+    qa_strings *strings=qa_session_strings(qa_application_session(source->application));
+    qa_string_id id;
+    if (!qa_strings_intern_cstr(strings,name,&id,error)) return false;
+    qa_error issue={0};
+    *out=qa_scene_q2_picture(source->images,strings,id,true,QA_SCENE_LINEAR,&issue);
+    if (*out || issue.code==QA_ERROR_NOT_FOUND || issue.code==QA_OK) return true;
+    if (error) *error=issue;
+    return false;
 }
 static bool seat_ready(frontend_native_q2 *source, qa_error *error)
 {
@@ -580,7 +561,6 @@ static bool source_free(frontend_native_q2 *source, qa_error *error)
             if (!qa_audio_engine_stop_owner(source->frontend->audio, source->identity, seat, error))
                 return false;
     }
-    while (source->pictures) { native_q2_picture *picture = source->pictures; source->pictures = picture->next; qa_scene_image_release(picture->image); free(picture->name); free(picture); }
     qa_font_world_store_destroy(source->world_text); qa_localization_pool_destroy(source->catalogs);
     qa_audio_bank_destroy(source->sounds); qa_font_library_destroy(source->fonts);
     qa_scene_resources_destroy(source->images); qa_vfs_destroy(source->mounts);
@@ -797,52 +777,40 @@ bool frontend_native_q2_discard_unbound(qa_frontend *frontend, qa_error *error)
 
 typedef struct native_q2_policy_source {
     frontend_native_q2 *source;
-    native_q2_picture *pictures;
     qa_scene_resources *images;
     void *owner_context;
     bool (*owner_idle)(void *);
     qa_scene_resource_policy *bank;
 } native_q2_policy_source;
-typedef struct native_q2_policy_picture {
-    native_q2_picture *picture;
-    const qa_scene_image *original, *prepared;
-} native_q2_policy_picture;
 struct frontend_native_q2_image_policy {
     qa_frontend *frontend;
     qa_application *application;
     frontend_native_q2 *head;
     native_q2_policy_source *sources;
-    native_q2_policy_picture *pictures;
-    size_t source_count, picture_count;
+    size_t source_count;
     bool sealed, published;
 };
 static bool q2_policy_current(const frontend_native_q2_image_policy *ticket)
 {
     if (!ticket || ticket->frontend->application != ticket->application ||
         ticket->frontend->native_q2 != ticket->head || ticket->frontend->stepping) return false;
-    size_t row = 0, picture = 0;
+    size_t row = 0;
     for (frontend_native_q2 *source = ticket->head; source; source = source->next, ++row) {
         if (row == ticket->source_count) return false;
         const native_q2_policy_source *saved = ticket->sources + row;
         if (source != saved->source || source->frontend != ticket->frontend ||
             source->application != ticket->application || source->active_imports ||
             source->image_policy != ticket || source->images != saved->images ||
-            source->pictures != saved->pictures || source->owner_context != saved->owner_context ||
+            source->owner_context != saved->owner_context ||
             source->owner_idle != saved->owner_idle || source->prepared || source->restored) return false;
-        for (native_q2_picture *item = source->pictures; item; item = item->next, ++picture)
-            if (picture == ticket->picture_count || ticket->pictures[picture].picture != item ||
-                item->image != (ticket->published ? ticket->pictures[picture].prepared :
-                    ticket->pictures[picture].original)) return false;
     }
-    return row == ticket->source_count && picture == ticket->picture_count;
+    return row == ticket->source_count;
 }
 static void q2_policy_dispose(frontend_native_q2_image_policy *ticket)
 {
-    for (size_t i = 0; i < ticket->picture_count; ++i)
-        qa_scene_image_release(ticket->published ? ticket->pictures[i].original : ticket->pictures[i].prepared);
     for (size_t i = 0; i < ticket->source_count; ++i)
         if (ticket->sources[i].source->image_policy == ticket) ticket->sources[i].source->image_policy = NULL;
-    free(ticket->pictures); free(ticket->sources); free(ticket);
+    free(ticket->sources); free(ticket);
 }
 bool frontend_native_q2_image_policy_prepare(qa_frontend *f, qa_scene_resource_policy *const *banks,
     size_t count, frontend_native_q2_image_policy **out, qa_error *error)
@@ -857,46 +825,33 @@ bool frontend_native_q2_image_policy_prepare(qa_frontend *f, qa_scene_resource_p
         if (source->prepared || source->restored || source->image_policy || !source->owner_idle ||
             !source->owner_idle(source->owner_context) || ticket->source_count == SIZE_MAX / sizeof(*ticket->sources)) goto invalid;
         ++ticket->source_count;
-        for (native_q2_picture *picture = source->pictures; picture; picture = picture->next) {
-            if (ticket->picture_count == SIZE_MAX / sizeof(*ticket->pictures)) goto invalid;
-            ++ticket->picture_count;
-        }
     }
     ticket->sources = ticket->source_count ? calloc(ticket->source_count, sizeof(*ticket->sources)) : NULL;
-    ticket->pictures = ticket->picture_count ? calloc(ticket->picture_count, sizeof(*ticket->pictures)) : NULL;
-    if ((ticket->source_count && !ticket->sources) || (ticket->picture_count && !ticket->pictures)) {
-        free(ticket->pictures); free(ticket->sources); free(ticket);
+    if (ticket->source_count && !ticket->sources) {
+        free(ticket->sources); free(ticket);
         return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Q2 picture binding rows");
     }
-    size_t row = 0, picture = 0;
+    size_t row = 0;
     for (frontend_native_q2 *source = ticket->head; source; source = source->next, ++row) {
         native_q2_policy_source *saved = ticket->sources + row;
-        *saved = (native_q2_policy_source){source, source->pictures, source->images,
+        *saved = (native_q2_policy_source){source, source->images,
             source->owner_context, source->owner_idle, NULL};
         for (size_t i = 0; i < count; ++i)
             if (qa_scene_resource_policy_source(banks[i]) == source->images) saved->bank = banks[i];
         if (source->images && !saved->bank) goto failed;
         source->image_policy = ticket;
-        for (native_q2_picture *item = source->pictures; item; item = item->next, ++picture) {
-            native_q2_policy_picture *saved_picture = ticket->pictures + picture;
-            *saved_picture = (native_q2_policy_picture){.picture = item, .original = item->image};
-            qa_scene_image *image = NULL;
-            if (!saved->bank || !qa_scene_resource_policy_image(saved->bank, item->image, &image, error)) goto failed;
-            saved_picture->prepared = image;
-        }
     }
     if (!q2_policy_current(ticket)) goto failed;
     *out = ticket; return true;
 invalid:
-    free(ticket->pictures); free(ticket->sources); free(ticket);
+    free(ticket->sources); free(ticket);
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 image preparation lacks a returned real owner or addressable roster");
 failed:
     /* Unvisited rows have no owner hold or image reference. */
-    for (size_t i = 0; i < ticket->picture_count; ++i) qa_scene_image_release(ticket->pictures[i].prepared);
     for (size_t i = 0; i < ticket->source_count; ++i)
         if (ticket->sources[i].source && ticket->sources[i].source->image_policy == ticket)
             ticket->sources[i].source->image_policy = NULL;
-    free(ticket->pictures); free(ticket->sources); free(ticket);
+    free(ticket->sources); free(ticket);
     if (error && error->code == QA_OK) frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 image bindings lost their actual prepared bank");
     return false;
 }
@@ -916,8 +871,6 @@ bool frontend_native_q2_image_policy_ready_is(const frontend_native_q2_image_pol
 void frontend_native_q2_image_policy_publish(frontend_native_q2_image_policy *ticket)
 {
     if (!q2_policy_current(ticket) || !ticket->sealed || ticket->published) return;
-    for (size_t i = 0; i < ticket->picture_count; ++i)
-        ticket->pictures[i].picture->image = ticket->pictures[i].prepared;
     ticket->published = true;
 }
 static bool q2_policy_end(frontend_native_q2_image_policy **owner, bool published, qa_error *error)
