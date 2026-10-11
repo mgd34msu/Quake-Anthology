@@ -119,39 +119,38 @@ static unified_component_owner *component_find(const frontend_unified_events *o,
         if (c->generation==generation && c->provider==id) return c;
     return NULL;
 }
-static bool component_read(frontend_unified_events *o,const qa_source_owner *owner,const char *content,
+static bool component_read(frontend_unified_events *o,const qa_source_owner *owner,qa_string_id provider,qa_string_id content,
     unified_component_owner *out,qa_error *e)
 {
     qa_vfs *files; const qa_product *product;
-    bool okay=owner && owner->provider && *owner->provider && owner->generation && content && *content &&
-        qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&product,e);
-    if (okay) okay=qa_strings_intern_cstr(o->strings,content,&out->content,e) &&
-        qa_strings_intern_cstr(o->strings,owner->provider,&out->provider,e);
+    bool okay=owner && provider && owner->generation && content &&
+        frontend_unified_media_files(o->media,content,&files,&product,e);
+    if (okay) {out->content=content;out->provider=provider;}
     if (okay) out->generation=owner->generation;
     else { if (!e || e->code==QA_OK)
         frontend_unified_fail(e,QA_ERROR_FORMAT,"Component presentation identity is outside its admitted recipe"); }
     return okay;
 }
 bool frontend_unified_events_component_current(const frontend_unified_events *o,const qa_source_owner *owner,
-    const char *content,bool *active,qa_error *e)
+    qa_string_id provider,qa_string_id content,bool *active,qa_error *e)
 {
     if (!o || !owner || !owner->provider || !owner->generation || !content || !active)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component qualification needs its retained owner and content");
-    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
-    if (!c || c->content!=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)content,strlen(content)}))
+    unified_component_owner *c=component_find(o,provider,owner->generation);
+    if (!c || c->content!=content)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Component presentation token has no matching reliable content admission");
     *active=!c->retired && !c->cancelled; return true;
 }
-bool frontend_unified_events_component_admit(frontend_unified_events *o,const qa_source_owner *owner,const char *content,qa_error *e)
-{ bool created; return frontend_unified_events_component_admit_created(o,owner,content,&created,e); }
-bool frontend_unified_events_component_admit_created(frontend_unified_events *o,const qa_source_owner *owner,const char *content,
+bool frontend_unified_events_component_admit(frontend_unified_events *o,const qa_source_owner *owner,qa_string_id provider,qa_string_id content,qa_error *e)
+{ bool created; return frontend_unified_events_component_admit_created(o,owner,provider,content,&created,e); }
+bool frontend_unified_events_component_admit_created(frontend_unified_events *o,const qa_source_owner *owner,qa_string_id provider,qa_string_id content,
     bool *created,qa_error *e)
 {
     if (!o || !created || o->busy || o->prepared || !current(o,e)) return false;
     *created=false;
     unified_component_owner candidate={0};
-    if (!component_read(o,owner,content,&candidate,e)) return false;
-    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
+    if (!component_read(o,owner,provider,content,&candidate,e)) return false;
+    unified_component_owner *c=component_find(o,provider,owner->generation);
     if (c) {
         bool okay=c->content==candidate.content ||
             frontend_unified_fail(e,QA_ERROR_FORMAT,"Reliable component token changed its admitted content");
@@ -165,19 +164,19 @@ bool frontend_unified_events_component_admit_created(frontend_unified_events *o,
     metadata_commit(o,&transaction,record);
     c->next=o->components; o->components=c; *created=true; return true;
 }
-bool frontend_unified_events_component_cancel(frontend_unified_events *o,const qa_source_owner *owner,qa_error *e)
+bool frontend_unified_events_component_cancel(frontend_unified_events *o,const qa_source_owner *owner,qa_string_id provider,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !owner || !owner->provider || !owner->generation)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component cancellation needs returned retained event storage");
-    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
+    unified_component_owner *c=component_find(o,provider,owner->generation);
     if (!c || c->retired) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Component cancellation has no unpublished admission");
     c->cancelled=true; return true;
 }
-bool frontend_unified_events_component_retire(frontend_unified_events *o,const qa_source_owner *owner,qa_error *e)
+bool frontend_unified_events_component_retire(frontend_unified_events *o,const qa_source_owner *owner,qa_string_id provider,qa_error *e)
 {
     if (!o || o->busy || o->prepared || !owner || !owner->provider || !owner->generation)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component retirement needs returned retained event storage");
-    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
+    unified_component_owner *c=component_find(o,provider,owner->generation);
     if (!c) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Retiring component has no reliable presentation admission");
     c->retired=true; c->cancelled=false; return true;
 }
@@ -745,7 +744,7 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     if (!o->busy || !events || o->presentation_at>=events->presentation_count ||
         events->presentation+o->presentation_at!=row)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Sound linkage is outside its actual retained presentation delivery");
-    qa_string_id content=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)row->content,strlen(row->content)});
+    qa_string_id content=row->content_id;
     for (size_t i=0;i<events->simulation_count;++i) {
         const qa_unified_simulation_event *simulation=events->simulation+i;
         if (simulation->payload.kind!=QA_UNIFIED_SIMULATION_SOUND) continue;

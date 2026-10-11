@@ -41,7 +41,7 @@ bool frontend_unified_components_events_bind(frontend_unified_components *o,fron
         remote_component *row=o->rows[i]; if(!row) continue;
         const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),row->state.mod->product);
         bool active=false;
-        if(!product||!frontend_unified_events_component_current(events,&row->state.presentation_owner,product->identity,&active,e)||!active)
+        if(!product||!frontend_unified_events_component_current(events,&row->state.presentation_owner,row->state.provider_name,row->state.content_name,&active,e)||!active)
             return e&&e->code!=QA_OK?false:q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event token has no genuine active reliable admission");
     }
     o->events=events; return true;
@@ -167,7 +167,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
     bool publishing=false;
     for(size_t i=0;ok&&i<count;++i) {
         const qa_product *product=qa_catalog_product(qa_executable_recipe_catalog(o->recipe),states[i].mod->product);
-        ok=product&&frontend_unified_events_component_admit_created(o->events,&states[i].presentation_owner,product->identity,admitted+i,e);
+        ok=product&&frontend_unified_events_component_admit_created(o->events,&states[i].presentation_owner,states[i].provider_name,states[i].content_name,admitted+i,e);
     }
     publishing=ok;
     /* Retire old physical clients before replacing their activation metadata.
@@ -178,7 +178,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
             bool retire=false;
             for(size_t k=0;k<count;++k) if(states[k].provider_name==o->rows[i]->state.provider_name)
                 retire=states[k].owner_generation!=o->rows[i]->state.owner_generation;
-            if(retire) ok=frontend_unified_events_component_retire(o->events,&o->rows[i]->state.presentation_owner,e);
+            if(retire) ok=frontend_unified_events_component_retire(o->events,&o->rows[i]->state.presentation_owner,o->rows[i]->state.provider_name,e);
             if(ok) {
                 remote_component *row=o->rows[i];
                 ok=q3remote_component_retire(row,e);
@@ -200,7 +200,7 @@ bool frontend_unified_components_control(frontend_unified_components *o,const qa
         qa_error original={0}; if(e) original=*e;
         for(size_t i=0;i<count;++i) if(admitted[i]) {
             qa_error cleanup={0};
-            if(!frontend_unified_events_component_cancel(o->events,&states[i].presentation_owner,&cleanup)) o->failed=true;
+            if(!frontend_unified_events_component_cancel(o->events,&states[i].presentation_owner,states[i].provider_name,&cleanup)) o->failed=true;
         }
         if(e) *e=original;
         for(size_t i=0;i<count;++i) if(created[i]) { free(next[i]); next[i]=NULL; }
