@@ -12,7 +12,7 @@ static bool continuation_valid(const qa_q3_server_peer *p, qa_error *error)
         p->state.phase < QA_Q3_ZOMBIE || p->state.phase > QA_Q3_ACTIVE ||
         p->reliable.sequence < 0 || p->reliable.acknowledged < 0 || pending < 0 || pending > QA_Q3_RELIABLE + 1 ||
         p->state.reliable_sent < 0 || p->state.reliable_sent > p->reliable.sequence ||
-        p->state.last_client_command < 0 || p->state.message_acknowledge < 0 || p->queue_count > 64) goto invalid;
+        p->state.last_client_command < 0 || p->state.message_acknowledge < 0 || p->queue_count > Q3_SERVER_QUEUED_MESSAGES) goto invalid;
     unsigned count = 0;
     const queued_message *last = NULL;
     for (const queued_message *q = p->queue_first; q; q = q->next) {
@@ -114,10 +114,12 @@ bool qa_q3_server_peer_restore(qa_bytes bytes, qa_q3_identity identity,
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i)
         if (!q3_restore_snapshot(&r, &p->history[i], product)) goto failure;
     unsigned count = qa_net_read_u32(&r);
-    if (count > 64) { qa_net_reader_fail(&r, "Invalid Q3 server continuation queue extent"); goto failure; }
+    if (count > Q3_SERVER_QUEUED_MESSAGES) { qa_net_reader_fail(&r, "Invalid Q3 server continuation queue extent"); goto failure; }
     for (unsigned i = 0; !r.failed && i < count; ++i) {
-        queued_message *q = calloc(1, sizeof(*q));
+        size_t slot;
+        queued_message *q = qa_pool_take(&p->queue_slots, &slot);
         if (!q) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring Q3 server message queue"); goto failure; }
+        q->slot = slot; q->next = NULL;
         if (p->queue_last) p->queue_last->next = q; else p->queue_first = q;
         p->queue_last = q; ++p->queue_count;
         if (!qa_net_read_string(&r, q->key_command, sizeof(q->key_command))) goto failure;

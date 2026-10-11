@@ -27,6 +27,10 @@ bool qa_q3_server_peer_create(qa_q3_identity identity, qa_q3_product product, co
     if (!p) return fail(e, QA_ERROR_MEMORY, "Allocating Q3 server peer");
     if (!qa_q3_channel_create(QA_Q3_SERVER, qport, &p->channel, e)) { free(p); return false; }
     if(!qa_q3_reliable_prepare(&p->reliable,e)) { qa_q3_server_peer_destroy(p);return false; }
+    if (!qa_pool_reserve_pages(&p->queue_slots, &p->queue_storage,
+        Q3_SERVER_QUEUED_MESSAGES, sizeof(queued_message), _Alignof(queued_message), e)) {
+        qa_q3_server_peer_destroy(p); return false;
+    }
     p->identity = identity; p->product = product; p->remote = *remote; p->challenge = challenge; p->hooks = *hooks;
     p->state.phase = QA_Q3_CONNECTED; p->state.delta_message = -1; p->state.gamestate_message_number = -1;
     qa_q3_gamestate_init(&p->gamestate);
@@ -38,8 +42,7 @@ void qa_q3_server_peer_destroy(qa_q3_server_peer *p) {
     qa_q3_channel_destroy(p->channel);
     qa_q3_reliable_clear(&p->reliable);
     for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) free(p->history[i].entities);
-    queued_message *q = p->queue_first;
-    while (q) { queued_message *next = q->next; free(q); q = next; }
+    qa_arena_destroy(&p->queue_storage);
     free(p);
 }
 qa_q3_server_state *qa_q3_server_peer_state(qa_q3_server_peer *p) { return &p->state; }
@@ -151,7 +154,7 @@ bool qa_q3_server_peer_fragment(qa_q3_server_peer *p, bool *sent, qa_error *e) {
         qa_q3_xor_server(q->data, q->size, p->challenge, qa_q3_channel_outgoing(p->channel), q->key_command);
         if (!qa_q3_channel_begin(p->channel, (qa_bytes){q->data, q->size}, e)) return false;
         p->queue_first = q->next; if (!p->queue_first) p->queue_last = NULL;
-        --p->queue_count; free(q);
+        --p->queue_count; qa_pool_release(&p->queue_slots, q->slot);
         bool next_sent;
         if (!send_next(p, &next_sent, e)) return false;
         *sent = *sent || next_sent;
@@ -175,10 +178,11 @@ static bool transmit(qa_q3_server_peer *p, qa_q3_writer *writer, uint8_t *data, 
     qa_q3_server_world world = p->hooks.world(p->hooks.context);
     bool sent;
     if (qa_q3_channel_pending(p->channel) || p->queue_first) {
-        if (p->queue_count >= 64) return fail(e, QA_ERROR_FORMAT, "Q3 server message queue is full");
-        queued_message *q = malloc(sizeof(*q));
+        if (p->queue_count >= Q3_SERVER_QUEUED_MESSAGES) return fail(e, QA_ERROR_FORMAT, "Q3 server message queue is full");
+        size_t slot;
+        queued_message *q = qa_pool_take(&p->queue_slots, &slot);
         if (!q) return fail(e, QA_ERROR_MEMORY, "Allocating queued Q3 server message");
-        q->next = NULL; q->size = size; memcpy(q->data, data, size);
+        q->next = NULL; q->slot = slot; q->size = size; memcpy(q->data, data, size);
         memcpy(q->key_command, p->last_command, sizeof(q->key_command));
         if (p->queue_last) p->queue_last->next = q; else p->queue_first = q;
         p->queue_last = q; ++p->queue_count;
