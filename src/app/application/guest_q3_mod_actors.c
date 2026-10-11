@@ -1,4 +1,5 @@
 #include "guest_q3_mod_actors_private.h"
+#include "control_frame.h"
 
 bool q3mod_actors_current(application_q3_mod_actors *o,qa_error *e)
 {
@@ -6,7 +7,25 @@ bool q3mod_actors_current(application_q3_mod_actors *o,qa_error *e)
         q3mod_fail(e,QA_ERROR_ARGUMENT,"Source actor operation has no current component owner");
 }
 mod_actor_row *q3mod_actors_find(application_q3_mod_actors *o,qa_actor_id actor)
-{ for(mod_actor_row *r=o->actors;r;r=r->next) if(qa_actor_id_equal(r->actor,actor)) return r; return NULL; }
+{
+    size_t value;
+    return qa_actor_index_find(&o->actor_index,actor,&value)?(mod_actor_row *)(uintptr_t)value:NULL;
+}
+void q3mod_actors_collect(application_q3_mod_actors *o)
+{
+    if(!application_q3_mod_actors_idle(o))return;
+    while(o->retired){mod_actor_row *r=o->retired;o->retired=r->retired_next;
+        qa_pool_release(&o->actor_pool,r->storage_slot);}
+}
+mod_actor_row *q3mod_actors_row_create(application_q3_mod_actors *o,qa_error *e)
+{
+    q3mod_actors_collect(o);
+    if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
+        qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,e))return NULL;
+    size_t slot;mod_actor_row *row=qa_pool_take(&o->actor_pool,&slot);
+    if(row)*row=(mod_actor_row){.owner=o,.storage_slot=slot};
+    return row;
+}
 static bool actor_invoke(application_q3_mod_actors *o,uint32_t entry,const int32_t *words,size_t count,int32_t *result,bool *started,qa_error *e)
 {
     if(started) *started=false;
@@ -42,7 +61,17 @@ bool application_q3_mod_actors_create(const application_q3_mod_actors_options *o
     o->options=*options; o->restoring=restoring;
     bool ok=q3mod_actors_profile(o,e);
     if(ok&&o->combat&&!options->damage_context) ok=q3mod_fail(e,QA_ERROR_ARGUMENT,"Source damage requires actual canonical attack provenance");
-    if(!ok) { application_q3_mod_call_destroy(o->globals); free(o->teams); free(o); return false; }
+    if(ok){
+        const qa_actor_registry *registry=qa_session_actors(options->session);
+        o->actor_chunk=qa_actors_capacity(registry);
+        o->actor_storage=application_control_storage_acquire(options->mod->services.application,e);
+        ok=o->actor_storage&&qa_pool_prepare(&o->actor_pool,
+            qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,
+            sizeof(mod_actor_row),_Alignof(mod_actor_row),e)&&
+            qa_actor_index_create(&o->actor_index,registry,qa_unified_frame_lease_arena(o->actor_storage),e);
+    }
+    if(!ok) { qa_actor_index_destroy(&o->actor_index);qa_unified_frame_lease_release(o->actor_storage);
+        application_q3_mod_call_destroy(o->globals); free(o->teams); free(o); return false; }
     *out=o; return true;
 }
 bool application_q3_mod_actors_idle(const application_q3_mod_actors *o)
@@ -82,10 +111,15 @@ bool application_q3_mod_actors_admit(application_q3_mod_actors *o,qa_actor_id ac
     mod_actor_row *r=q3mod_actors_find(o,actor);
     if(r&&(r->retired||r->pointer!=pointer)) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Actor semantic admission changed its retained source row");
     if(!r) {
-        for(mod_actor_row *prior=o->actors;prior;prior=prior->next) if(!prior->retired&&prior->pointer==pointer)
+        qa_actor_id projected;int32_t word;memcpy(&word,&pointer,sizeof(word));
+        if(!o->options.actor(o->options.context,word,&projected,e))return false;
+        if(projected.registry&&!qa_actor_id_equal(projected,actor))
             return q3mod_fail(e,QA_ERROR_FORMAT,"Actor semantic pointer is still owned by another full actor");
-        r=calloc(1,sizeof(*r)); if(!r) return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining declared actor callback row");
-        *r=(mod_actor_row){.owner=o,.actor=actor,.pointer=pointer}; mod_actor_row **tail=&o->actors; while(*tail) tail=&(*tail)->next; *tail=r;
+        r=q3mod_actors_row_create(o,e);if(!r)return false;
+        r->actor=actor;r->pointer=pointer;r->previous=o->actors_tail;
+        if(o->actors_tail)o->actors_tail->next=r;else o->actors=r;
+        o->actors_tail=r;
+        qa_actor_index_put(&o->actor_index,actor,(size_t)(uintptr_t)r);
     }
     if(o->combat&&!r->bound) {
         qa_combat_binding binding;
@@ -105,12 +139,15 @@ bool application_q3_mod_actors_before_release(application_q3_mod_actors *o,qa_ac
 bool application_q3_mod_actors_release(application_q3_mod_actors *o,qa_actor_id actor,qa_error *e)
 {
     if(!o) return true;
-    mod_actor_row **link=&o->actors; while(*link&&!qa_actor_id_equal((*link)->actor,actor)) link=&(*link)->next;
-    if(!*link) return true;
-    mod_actor_row *r=*link;
+    mod_actor_row *r=q3mod_actors_find(o,actor);
+    if(!r)return true;
     if(r->bound&&qa_combat_primary_current(o->options.combat,r->actor,r->serial,r)&&
         !qa_combat_detach_primary(o->options.combat,r->actor,r->serial,r,e)) return false;
-    *link=r->next; free(r); return true;
+    qa_actor_index_remove(&o->actor_index,actor);
+    if(r->previous)r->previous->next=r->next;else o->actors=r->next;
+    if(r->next)r->next->previous=r->previous;else o->actors_tail=r->previous;
+    r->bound=false;r->retired=true;r->retired_next=o->retired;o->retired=r;
+    q3mod_actors_collect(o);return true;
 }
 bool application_q3_mod_actors_destroy(application_q3_mod_actors **in,qa_error *e)
 {
@@ -120,6 +157,7 @@ bool application_q3_mod_actors_destroy(application_q3_mod_actors **in,qa_error *
     /* Detach snapshots while the real projection is still current. */
     while(o->actors) if(!application_q3_mod_actors_release(o,o->actors->actor,e)) return false;
     o->closing=true;
+    qa_actor_index_destroy(&o->actor_index);qa_unified_frame_lease_release(o->actor_storage);
     application_q3_mod_call_destroy(o->globals); free(o->teams); free(o); *in=NULL; return true;
 }
 bool application_q3_mod_actors_damage_entry(const application_q3_mod_actors *o,uint32_t *entry)

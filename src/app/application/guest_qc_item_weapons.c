@@ -1,6 +1,8 @@
 #include "guest_qc_item_weapons.h"
 #include "guest_qc_items.h"
 #include "guest_mod_item_definition.h"
+#include "control_frame.h"
+#include "qa/pool.h"
 #include "qa/qc_observation.h"
 #include <float.h>
 
@@ -17,6 +19,7 @@ struct application_qc_item_weapons {
     application_qc_calls resume;
 };
 struct application_qc_item_weapon_actor {
+    size_t storage_slot;
     struct application_qc_state *engine;
     qa_actor_id actor;
     int32_t reference;
@@ -25,6 +28,8 @@ struct application_qc_item_weapon_actor {
     struct application_qc_item_weapon_actor *next;
 };
 struct application_qc_item_weapon_store {
+    qa_unified_frame_lease *storage;
+    qa_pool actors;
     qa_actor_index index;
     struct application_qc_item_weapon_actor *head;
 };
@@ -39,7 +44,14 @@ bool application_qc_item_weapons_create(struct application_qc_state *engine,qa_e
     struct application_qc_item_weapon_store *store=calloc(1,sizeof(*store));
     if(!store)return application_fail(e,QA_ERROR_MEMORY,"Owning QC weapon binding store");
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    if(!qa_actor_index_create(&store->index,registry,NULL,e)){
+    store->storage=application_control_storage_acquire(engine->provider->application,e);
+    qa_arena *arena=store->storage?qa_unified_frame_lease_arena(store->storage):NULL;
+    if(!arena || !qa_actor_index_create(&store->index,registry,arena,e) ||
+        !qa_pool_prepare(&store->actors,arena,qa_actors_capacity(registry),
+            sizeof(struct application_qc_item_weapon_actor),
+            _Alignof(struct application_qc_item_weapon_actor),e)){
+        qa_actor_index_destroy(&store->index);
+        qa_unified_frame_lease_release(store->storage);
         free(store);return false;
     }
     engine->item_weapon_store=store;return true;
@@ -48,6 +60,7 @@ void application_qc_item_weapons_destroy(struct application_qc_state *engine)
 {
     if(!engine->item_weapon_store)return;
     qa_actor_index_destroy(&engine->item_weapon_store->index);
+    qa_unified_frame_lease_release(engine->item_weapon_store->storage);
     free(engine->item_weapon_store);engine->item_weapon_store=NULL;
 }
 static bool array(const qa_json_document *d, qa_json_id id, size_t stride,
@@ -418,9 +431,15 @@ bool application_qc_item_weapons_reserve(struct application_qc_state *engine,qa_
     if(a)return current(a,e);
     if(!application_qc_items_actor_current(engine,actor,e))return false;
     struct application_qc_item_weapon_store *store=engine->item_weapon_store;
-    a=calloc(1,sizeof(*a));if(!a)return application_fail(e,QA_ERROR_MEMORY,"Retaining QC weapon actor binding");
-    a->engine=engine;a->actor=actor;
-    if(!application_qc_reference(engine,actor,&a->reference,e)) { free(a);return false; }
+    if(store->actors.head==SIZE_MAX&&!qa_pool_extend(&store->actors,
+        qa_unified_frame_lease_arena(store->storage),store->index.capacity,e))return false;
+    size_t storage_slot;
+    a=qa_pool_take(&store->actors,&storage_slot);
+    if(!a)return application_fail(e,QA_ERROR_MEMORY,"Retaining QC weapon actor binding");
+    *a=(struct application_qc_item_weapon_actor){.storage_slot=storage_slot,.engine=engine,.actor=actor};
+    if(!application_qc_reference(engine,actor,&a->reference,e)) {
+        qa_pool_release(&store->actors,storage_slot);return false;
+    }
     a->next=store->head;store->head=a;
     qa_actor_index_put(&store->index,actor,(size_t)(uintptr_t)a);
     return current(a,e);
@@ -468,7 +487,7 @@ bool application_qc_item_weapons_close(struct application_qc_state *engine,qa_er
     while(store&&store->head) {
         struct application_qc_item_weapon_actor *a=store->head;
         if(!a->retired && !application_qc_item_weapons_release(engine,a->actor,e))return false;
-        store->head=a->next;free(a);
+        store->head=a->next;qa_pool_release(&store->actors,a->storage_slot);
     }
     return true;
 }

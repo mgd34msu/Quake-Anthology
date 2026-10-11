@@ -1,4 +1,5 @@
 #include "native_q2_records_private.h"
+#include "control_frame.h"
 
 bool nqr_current(application_native_q2_records *o,qa_error *e)
 {
@@ -10,7 +11,42 @@ bool nqr_current(application_native_q2_records *o,qa_error *e)
 bool nqr_live(application_native_q2_records *o,qa_actor_id actor)
 { return qa_actors_get(qa_session_actors(o->options.session),actor)!=NULL; }
 nqr_actor *nqr_find(application_native_q2_records *o,qa_actor_id actor)
-{ for(nqr_actor *r=o->actors;r;r=r->next) if(qa_actor_id_equal(r->actor,actor)) return r; return NULL; }
+{
+    size_t slot;
+    if(!qa_actor_index_find(&o->actor_index,actor,&slot)&&
+        !qa_actor_index_find_retained(&o->actor_index,actor,&slot)) return NULL;
+    return qa_pool_at(&o->actor_pool,slot);
+}
+nqr_actor *nqr_actor_take(application_native_q2_records *o,qa_error *e)
+{
+    if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
+        qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,e)) return NULL;
+    size_t slot; nqr_actor *row=qa_pool_take(&o->actor_pool,&slot);
+    if(!row) { nqr_fail(e,QA_ERROR_MEMORY,"Retaining native full actor projection"); return NULL; }
+    *row=(nqr_actor){.storage_slot=slot}; return row;
+}
+bool nqr_actor_publish(application_native_q2_records *o,nqr_actor *row,qa_error *e)
+{
+    if(!qa_actor_index_remember(&o->actor_index,row->actor,row->storage_slot,e)) return false;
+    qa_actor_index_put(&o->actor_index,row->actor,row->storage_slot); return true;
+}
+void nqr_actor_reclaim(application_native_q2_records *o,nqr_actor *row)
+{
+    qa_actor_index_remove(&o->actor_index,row->actor);
+    qa_actor_index_forget_retained(&o->actor_index,row->actor);
+    qa_pool_release(&o->actor_pool,row->storage_slot);
+}
+static bool actor_storage_prepare(application_native_q2_records *o,qa_error *e)
+{
+    const qa_actor_registry *actors=qa_session_actors(o->options.session);
+    o->actor_chunk=qa_actors_capacity(actors);
+    o->actor_storage=application_control_storage_acquire(o->options.application,e);
+    if(!o->actor_storage) return false;
+    qa_arena *arena=qa_unified_frame_lease_arena(o->actor_storage);
+    return qa_actor_index_create(&o->actor_index,actors,arena,e)&&
+        qa_id_index_reserve(&o->actor_index.retained,o->actor_chunk,e)&&
+        qa_pool_prepare(&o->actor_pool,arena,o->actor_chunk,sizeof(nqr_actor),_Alignof(nqr_actor),e);
+}
 bool nqr_actor_current(application_native_q2_records *o,const nqr_actor *actor,qa_error *e)
 {
     if(!nqr_live(o,actor->actor)||actor->retired||actor->failed) return nqr_fail(e,QA_ERROR_NOT_FOUND,"Native projection actor retired");
@@ -102,7 +138,7 @@ bool nqr_releases(application_native_q2_records *o,qa_error *e)
             if(!o->options.released(o->options.context,actor->actor,source_slot,e)) return false;
             actor->bound=false;
         }
-        *slot=actor->next; free(actor);
+        *slot=actor->next; nqr_actor_reclaim(o,actor);
     }
     return true;
 }
@@ -133,14 +169,15 @@ bool application_native_q2_records_pointer(application_native_q2_records *o,qa_a
         if(!used) break;
         if(client||index==UINT32_MAX) return nqr_fail(e,QA_ERROR_FORMAT,"Native source client projection is occupied");
     }
-    row=calloc(1,sizeof(*row)); if(!row) return nqr_fail(e,QA_ERROR_MEMORY,"Retaining native full actor projection");
-    *row=(nqr_actor){.actor=actor,.index=index,.client=client};
-    if(!nqr_capacity(o,row,e)) { free(row); return false; }
+    row=nqr_actor_take(o,e); if(!row) return false;
+    row->actor=actor; row->index=index; row->client=client;
+    if(!nqr_capacity(o,row,e)) { nqr_actor_reclaim(o,row); return false; }
     for(size_t i=0;i<o->record_count;++i) {
         if(o->records[i].client&&!client) continue;
         qa_native_address base;
-        if(!nqr_address(o,row,o->records+i,&base,e)) { free(row); return false; }
+        if(!nqr_address(o,row,o->records+i,&base,e)) { nqr_actor_reclaim(o,row); return false; }
     }
+    if(!nqr_actor_publish(o,row,e)) { nqr_actor_reclaim(o,row); return false; }
     nqr_actor **tail=&o->actors; while(*tail) tail=&(*tail)->next; *tail=row;
     bool ok=true;
     if(o->entity_record!=SIZE_MAX) {
@@ -151,7 +188,7 @@ bool application_native_q2_records_pointer(application_native_q2_records *o,qa_a
             row->bound=ok;
         }
     }
-    if(!ok) { *tail=NULL; free(row); return false; }
+    if(!ok) { *tail=NULL; nqr_actor_reclaim(o,row); return false; }
     if(ok) ok=nqr_seed(o,row,true,e);
     size_t project_cursor=0;
     if(ok&&!client) ok=lifecycle(o,row,"project",&project_cursor,e);
@@ -171,12 +208,12 @@ bool application_native_q2_records_release(application_native_q2_records *o,qa_a
 }
 bool application_native_q2_records_create(const application_native_q2_records_options *options,application_native_q2_records **out,qa_error *e)
 {
-    if(!options||!out||*out||!options->callbacks||!options->instance||!options->session||!options->world||!options->combat||
+    if(!options||!out||*out||!options->application||!options->callbacks||!options->instance||!options->session||!options->world||!options->combat||
         !options->inventory||!options->strings||!options->current||!options->owned_record||!options->client_slot||!options->client_admitted||!options->record_source||!options->record_validate||!options->bound||!options->binding_current||!options->released||!options->time||!options->lifecycle)
         return nqr_fail(e,QA_ERROR_ARGUMENT,"Native projection requires its actual module and canonical owners");
     application_native_q2_records *o=calloc(1,sizeof(*o)); if(!o) return nqr_fail(e,QA_ERROR_MEMORY,"Owning native declared actor projection");
     o->options=*options; o->document=application_native_q2_callbacks_document(options->callbacks); *out=o;
-    return nqr_current(o,e)&&nqr_profile(o,e)&&nqr_call_storage_prepare(o,e);
+    return nqr_current(o,e)&&nqr_profile(o,e)&&actor_storage_prepare(o,e)&&nqr_call_storage_prepare(o,e);
 }
 bool application_native_q2_records_idle(const application_native_q2_records *o)
 { return !o||(!o->frame&&!o->pickup&&!o->projection_depth&&!o->lifecycle_depth); }
@@ -200,7 +237,9 @@ bool application_native_q2_records_destroy(application_native_q2_records **owner
         if(!o->options.released(o->options.context,r->actor,source_slot,e)) return false;
         r->bound=false;
     }
-    while(o->actors) { nqr_actor *r=o->actors; o->actors=r->next; free(r); }
+    while(o->actors) { nqr_actor *r=o->actors; o->actors=r->next; nqr_actor_reclaim(o,r); }
     for(size_t i=0;o->records&&i<o->record_count;++i) { nqr_record *r=o->records+i; for(size_t j=0;r->fields&&j<r->field_count;++j) free(r->fields[j].teams); free(r->fields); free(r->id); }
-    free(o->records); qa_arena_destroy(&o->call_storage); free(o); *owner=NULL; return true;
+    free(o->records); qa_arena_destroy(&o->call_storage);
+    qa_actor_index_destroy(&o->actor_index); qa_unified_frame_lease_release(o->actor_storage);
+    free(o); *owner=NULL; return true;
 }

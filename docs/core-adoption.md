@@ -1471,8 +1471,10 @@ results, not live-play or timing proof. Identity and heap adoption remain open.
 
 ## TA-3196 identity adoption
 
-All eight identity items in the current foundation list now use common actor
-indices or the existing canonical player state. The shared index is declared in
+The supplied identity callers have been migrated in stages. The October 11
+closeout found a private QC actor-slot table beneath the shared lookup wrappers
+and retained actor payloads still allocated individually. The QC table and the
+remaining module binding stores now use the common index and pool. The shared index is declared in
 `include/qa/actors.h:20` and implemented in `src/world/actors.c`. It checks the full
 registry, slot and generation. Current entries, optional reverse entries and
 retained historical generations have separate lifetimes in that one implementation.
@@ -1482,7 +1484,7 @@ retained historical generations have separate lifetimes in that one implementati
 | 1 | Native host actor-address and release readers, application native Q2 damage/projection readers and Q3 host borrowed/bind readers use `qa_native_host_slot_for_actor` or the common index. Full source-table identity scans are deleted. SLOT notifications carry the previous actor so rebinding removes its entry. Checkpoint restore rebuilds the index for the restored registry. |
 | 2 | QC client input, output, messages, protection, imports, weapon, rerelease and network readers use `application_qc_client_for_actor` in `guest_qc_clients.c:11`. Actor-matching client-array scans are deleted. Admission, release and checkpoint candidates maintain the index. |
 | 3 | `map_players_private.h:109` roster lookup and bot actor/client seat readers use indexed membership. The private bot retirement flag is deleted; its legacy saved boolean is derived at the boundary. Bot rows and client-seat storage reserve actor capacity at load. |
-| 4 | Q3 combat, native Q2 source damage and QC item bindings use common actor indices and fixed pools. Per-actor calloc and lookup list walks are deleted. Entered callbacks retain their records until return; released unrelated records reclaim immediately. |
+| 4 | Q3 combat, native Q2 source damage and QC item bindings use common actor indices. Lookup list walks are deleted. QC weapon, native Q2 source/weapon/record and Q3 mod/component bindings also use common indices and pool storage. Entered callbacks retain their records until return; retirement forgets the exact actor generation. |
 | 5 | Q3 own source bindings read canonical actor source slots; foreign bindings use the common index. `source_numbers` and live source-row actor copies are deleted. Original GAME allocation flags and boundary projections remain original game state. |
 | 6 | Compiled and native Q2 wire readers use the common current/history index. `wire_actors`, runtime wire-slot/bound fields and private provenance vectors are deleted. Released generations remain available for already-admitted events. Save counts, field widths and admission order stay in the existing boundary layout. |
 | 7 | Remote prediction reads its retained `qa_usercmd` instead of four duplicate sequence/time/button/weapon fields. Existing checkpoint positions remain serializer locals. |
@@ -1542,17 +1544,25 @@ whole-memory retirement, before guest backing and scratch destruction. Cold
 signature bindings still own persistent ABI plans; call-scoped plans borrow the
 scratch arena. Scratch is rebuilt on restore and is not saved game state.
 
-Final source checks covered every supplied heap site in
-`c-remaining-kinds-current-2026-10-10.md` and the remaining event readers in
-`c-events-status-1100-2026-10-11.md`. No listed old hot allocation or event bypass
-remains. The final native slice passed the normal production build and the
+The prior supplied-list review covered the heap sites in
+`c-remaining-kinds-current-2026-10-10.md` and event readers in
+`c-events-status-1100-2026-10-11.md`, but later inspection found additional
+private stores beneath migrated callers. It does not establish whole-codebase
+adoption. The native scratch slice passed the normal production build and the
 existing platform_services, core, archive, VFS, BSP, image and model suites:
 `/tmp/qa-heap-native-abi-20261011-build.log` and
 `/tmp/qa-heap-native-abi-20261011-core.log`.
 
-The supplied TA-3196 implementation list is complete and ready for supervisor
-review. This source/build/core evidence does not establish a whole-engine zero
-allocation count, live game/mod/protocol qualification, or the absence of
-additional sites outside the supplied lists. Cold construction, content/name
-admission and save encoding can still allocate. Held commit-audit/internal
-duplicate lists remain separate work.
+The earlier supplied-list closure was premature. The QC membership migration
+was verified in `2902f26f`; retained combat storage in `c53c5a31`; contact index
+and stamp callers in `536a0061`; and remaining Q3/admin LOG producers in
+`9a569d51`. The remaining actor-storage slice passed the normal production
+build and all seven existing core suites, recorded in
+`/tmp/qa-ta3196-actor-storage-fixed-20261011/build.log` and `core.log`.
+
+A complete-file audit of 3,135 tracked source, header, build, tool and configuration
+inputs is in progress against source tree `b01b311cab565aebb3b8745e777ceeabf0fba2c5`.
+Each file assignment records reviewed and pending paths; the whole-codebase
+audit is not complete. These source/build/core results do not establish a
+whole-engine zero allocation count or live game/mod/protocol qualification.
+Cold construction, content/name admission and save encoding can still allocate.

@@ -27,6 +27,7 @@ static bool fields(application_q3_component_records *r,qa_source_save_io *io)
     if(!qa_source_save_count(io,&actors,1022)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
         memset(r->actors,0,r->actor_capacity*sizeof(*r->actors)); r->actor_count=actors;
+        qa_actor_index_clear(&r->actor_rows); qa_id_index_clear(&r->source_rows);
     }
     for(size_t i=0;i<actors;++i) {
         component_actor *row=r->actors+i;
@@ -40,8 +41,11 @@ static bool fields(application_q3_component_records *r,qa_source_save_io *io)
             (row->owned&&(row->client||!row->projected||actual->owner==0||!actual->has_source||actual->source_slot!=row->slot))||
             (row->admitted&&(!row->client||!row->projected))||(!row->client&&row->disconnected))
             return q3records_fail(io->error,QA_ERROR_FORMAT,"Component saved projection lost its full actor or source admission");
-        for(size_t j=0;j<i;++j) if(r->actors[j].slot==row->slot||qa_actor_id_equal(r->actors[j].actor,row->actor))
-            return q3records_fail(io->error,QA_ERROR_FORMAT,"Component saved projections duplicate an actor or slot");
+        if(io->direction==QA_SOURCE_SAVE_READ) {
+            if(q3records_actor(r,row->actor)||q3records_slot(r,row->slot))
+                return q3records_fail(io->error,QA_ERROR_FORMAT,"Component saved projections duplicate an actor or slot");
+            if(!q3records_index_row(r,i,io->error)) return false;
+        }
         for(size_t j=0;j<r->record_count;++j) if((!r->records[j].client||row->client)&&row->slot>=r->records[j].capacity)
             return q3records_fail(io->error,QA_ERROR_FORMAT,"Component saved projection exceeds an actual auxiliary array");
     }

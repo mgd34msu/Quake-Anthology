@@ -25,10 +25,8 @@ static bool actor(void *context,int32_t word,qa_actor_id *out,qa_error *e)
     if(at<record->address||(uint64_t)at>=(uint64_t)record->address+(uint64_t)record->stride*record->capacity||(at-record->address)%record->stride)
         return q3records_fail(e,QA_ERROR_FORMAT,"Actor callback pointer leaves its actual entity row");
     uint32_t slot=(at-record->address)/record->stride;
-    for(size_t i=0;i<c->records->actor_count;++i) {
-        component_actor *row=c->records->actors+i;
-        if(row->slot==slot&&!row->retired&&q3records_live(c->records,row->actor)) { *out=row->actor; return true; }
-    }
+    component_actor *row=q3records_slot(c->records,slot);
+    if(row&&!row->retired&&q3records_live(c->records,row->actor)) *out=row->actor;
     return true;
 }
 static bool team(void *context,qa_actor_id actor,qa_team_id *out,qa_error *e)

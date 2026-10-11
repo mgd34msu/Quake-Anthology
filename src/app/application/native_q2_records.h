@@ -18,6 +18,7 @@ typedef struct application_native_q2_inventory_commit {
     qa_inventory_committed_fn committed;
 } application_native_q2_inventory_commit;
 typedef struct application_native_q2_records_options {
+    struct qa_application *application;
     application_native_q2_callbacks *callbacks;
     qa_native_instance *instance;
     qa_session *session;

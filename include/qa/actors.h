@@ -33,8 +33,8 @@ typedef struct qa_actor_index {
     bool borrowed_entries;
 } qa_actor_index;
 
-/* Optional entry storage must outlive the index. Reverse and retained bindings
- * keep their own storage; a NULL arena gives the index ownership of entries. */
+/* Optional arena storage must outlive the index; entries and retained bindings
+ * borrow it. Reverse bindings are owned; NULL gives ownership of all storage. */
 bool qa_actor_index_create(qa_actor_index *, const qa_actor_registry *, qa_arena *, qa_error *);
 void qa_actor_index_destroy(qa_actor_index *);
 void qa_actor_index_clear(qa_actor_index *);
@@ -43,9 +43,10 @@ void qa_actor_index_remove(qa_actor_index *, qa_actor_id);
 bool qa_actor_index_find(const qa_actor_index *, qa_actor_id, size_t *value);
 bool qa_actor_index_reverse_reserve(qa_actor_index *, size_t values, qa_error *);
 qa_actor_id qa_actor_index_at_source(const qa_actor_index *, size_t value);
-/* Protocol references retain all generations in admission order until clear.
- * They grant a number, never live actor access. */
+/* Retained bindings keep full generations until forgotten or cleared.
+ * They grant binding metadata, never live actor access. */
 bool qa_actor_index_remember(qa_actor_index *, qa_actor_id, size_t value, qa_error *);
+void qa_actor_index_forget_retained(qa_actor_index *, qa_actor_id);
 bool qa_actor_index_find_retained(const qa_actor_index *, qa_actor_id, size_t *value);
 size_t qa_actor_index_retained_count(const qa_actor_index *);
 bool qa_actor_index_retained_at(const qa_actor_index *, size_t ordinal,

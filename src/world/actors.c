@@ -76,7 +76,8 @@ bool qa_actor_index_create(qa_actor_index *index, const qa_actor_registry *regis
     if (!entries) return storage ? false : fail(error, QA_ERROR_MEMORY, "Allocating actor binding index");
     if (storage) memset(entries, 0, capacity * sizeof(*entries));
     *index = (qa_actor_index){.entries = entries, .capacity = capacity,
-        .registry = qa_actors_identity(registry), .borrowed_entries = storage != NULL};
+        .registry = qa_actors_identity(registry), .retained.storage = storage,
+        .borrowed_entries = storage != NULL};
     return true;
 }
 
@@ -155,6 +156,12 @@ bool qa_actor_index_find_retained(const qa_actor_index *index, qa_actor_id actor
     if (!actor.registry || actor.registry != index->registry) return false;
     qa_id_index_cursor cursor = qa_id_index_begin(&index->retained, actor.slot, actor.generation);
     return qa_id_index_next(&index->retained, &cursor, value);
+}
+
+void qa_actor_index_forget_retained(qa_actor_index *index, qa_actor_id actor)
+{
+    if (actor.registry == index->registry)
+        (void)qa_id_index_remove(&index->retained, actor.slot, actor.generation);
 }
 
 size_t qa_actor_index_retained_count(const qa_actor_index *index) { return index->retained.count; }

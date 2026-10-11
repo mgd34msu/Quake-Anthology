@@ -6,7 +6,9 @@
 #include "native_q2_client_stages.h"
 #include "guest_native_q2_combat_state.h"
 #include "guest_q3_mod_operations.h"
+#include "control_frame.h"
 #include "qa/native_observe.h"
+#include "qa/pool.h"
 #include <math.h>
 
 enum { NATIVE_ACTOR_THINK = 4, NATIVE_ACTOR_CALLBACKS = 5 };
@@ -23,6 +25,7 @@ typedef struct native_source_actor {
     struct native_source_actor *next;
     struct native_source_actor **previous;
     struct application_native_q2_source_actors *owner;
+    size_t storage_slot;
     qa_actor_id actor;
     uint32_t slot;
     uint64_t serial;
@@ -44,6 +47,9 @@ struct application_native_q2_source_actors {
     struct application_native_q2 *engine;
     native_source_actor *actors;
     qa_actor_index actor_index;
+    qa_unified_frame_lease *actor_storage;
+    qa_pool actor_pool;
+    size_t actor_chunk;
     uint32_t velocity,ground;
     uint32_t offsets[NATIVE_ACTOR_CALLBACKS];
     bool present[NATIVE_ACTOR_CALLBACKS],rerelease,suspended;
@@ -81,7 +87,7 @@ static bool actor_collect(native_source_actor *r,qa_error *e)
     if(!unwatch(r,e))return false;
     *r->previous=r->next;
     if(r->next)r->next->previous=r->previous;
-    free(r);
+    qa_pool_release(&r->owner->actor_pool,r->storage_slot);
     return true;
 }
 static bool actors_collect(struct application_native_q2_source_actors *o,qa_error *e)
@@ -388,7 +394,12 @@ static bool prepare(struct application_native_q2 *n,qa_error *e)
     o->rerelease=qa_json_string_equal(d,qa_json_get(d,callbacks,"abi"),"q2-rerelease");
     memcpy(o->offsets,offsets,sizeof(offsets));memcpy(o->present,present,sizeof(present));n->source_actors=o;
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);
-    if(!qa_actor_index_create(&o->actor_index,registry,NULL,e))return false;
+    o->actor_chunk=qa_actors_capacity(registry);
+    o->actor_storage=application_control_storage_acquire(n->provider->application,e);
+    qa_arena *arena=o->actor_storage?qa_unified_frame_lease_arena(o->actor_storage):NULL;
+    if(!arena||!qa_actor_index_create(&o->actor_index,registry,arena,e)||
+        !qa_pool_prepare(&o->actor_pool,arena,o->actor_chunk,
+            sizeof(native_source_actor),_Alignof(native_source_actor),e))return false;
     if(!application_native_q2_source_combat_state_create(n,&o->combat,e))return false;
     if(!application_native_q2_source_damage_create(n,o->combat,o->velocity,&o->damage,e))return false;
     o->ready=true;
@@ -618,9 +629,12 @@ bool application_native_q2_source_actors_admit(struct application_native_q2 *n,u
     struct application_native_q2_source_actors *o=n->source_actors;
     if(!actors_collect(o,e))return false;
     native_source_actor *r=actor_find(o,actor);
-    if(!r){r=calloc(1,sizeof(*r));
+    if(!r){
+        if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
+            qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,e))return false;
+        size_t storage_slot;r=qa_pool_take(&o->actor_pool,&storage_slot);
         if(!r)return application_fail(e,QA_ERROR_MEMORY,"Retaining declared native body callback");
-        *r=(native_source_actor){.owner=o,.actor=actor,.slot=slot,
+        *r=(native_source_actor){.owner=o,.storage_slot=storage_slot,.actor=actor,.slot=slot,
             .next=o->actors,.previous=&o->actors};
         if(r->next)r->next->previous=&r->next;
         o->actors=r;qa_actor_index_put(&o->actor_index,actor,(size_t)(uintptr_t)r);}
@@ -689,7 +703,7 @@ bool application_native_q2_source_actors_close(struct application_native_q2 *n,q
     if(!application_native_q2_source_damage_destroy(&o->damage,e))return false;
     if(!application_native_q2_source_combat_state_destroy(&o->combat,e))return false;
     qa_actor_index_destroy(&o->actor_index);
-    while(o->actors){native_source_actor *r=o->actors;o->actors=r->next;free(r);}
+    qa_unified_frame_lease_release(o->actor_storage);
     free(o);n->source_actors=NULL;return true;
 }
 bool application_native_q2_source_actors_damage_capture(struct application_native_q2 *n,qa_buffer *out,qa_error *e)

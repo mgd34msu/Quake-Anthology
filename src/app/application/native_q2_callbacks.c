@@ -498,7 +498,7 @@ static bool records_prepare(application_native_q2_callbacks *o,qa_error *e)
 {
     if(o->records) return true;
     qa_application *app=o->engine->provider->application;
-    application_native_q2_records_options options={.callbacks=o,.instance=instance(o),.session=app->session,
+    application_native_q2_records_options options={.application=app,.callbacks=o,.instance=instance(o),.session=app->session,
         .world=o->engine->world,.combat=app->combat,.inventory=app->inventory,.strings=qa_session_strings(app->session),
         .context=o,.current=projection_current,.owned_record=original_record,.client_slot=client_slot,
         .client_admitted=client_admitted,.client_rejected=client_rejected,
@@ -1641,7 +1641,7 @@ static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
         if(!application_native_q2_protection_create(&options,&o->protection,e)) return false;
     }
     if(o->items&&!o->weapons&&application_native_q2_items_weapon_stage(o->items)!=QA_JSON_NONE) {
-        application_native_q2_weapon_stage_options options={.callbacks=o,.items=o->items,.session=app->session,
+        application_native_q2_weapon_stage_options options={.application=app,.callbacks=o,.items=o->items,.session=app->session,
             .inventory=app->inventory,.equipment=app->equipment,.owner=n->provider->owner,.context=n,
             .actor_current=weapon_actor_current,.source_inputs=weapon_source_inputs};
         if(!application_native_q2_weapon_stage_create(&options,&o->weapons,e)) return false;

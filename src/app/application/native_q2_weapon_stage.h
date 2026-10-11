@@ -6,6 +6,7 @@
 
 typedef struct application_native_q2_weapon_stage application_native_q2_weapon_stage;
 typedef struct application_native_q2_weapon_stage_options {
+    struct qa_application *application;
     application_native_q2_callbacks *callbacks;
     application_native_q2_items *items;
     qa_session *session;

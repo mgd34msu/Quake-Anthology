@@ -6,7 +6,26 @@ bool q3records_fail(qa_error *e,qa_status code,const char *message)
 bool q3records_live(const application_q3_component_records *r,qa_actor_id actor)
 { return r&&qa_actors_get(qa_session_actors(r->options.session),actor)!=NULL; }
 component_actor *q3records_actor(application_q3_component_records *r,qa_actor_id actor)
-{ for(size_t i=0;i<r->actor_count;++i) if(qa_actor_id_equal(r->actors[i].actor,actor)) return r->actors+i; return NULL; }
+{
+    size_t row;
+    return qa_actor_index_find(&r->actor_rows,actor,&row)||
+        qa_actor_index_find_retained(&r->actor_rows,actor,&row)?r->actors+row:NULL;
+}
+component_actor *q3records_slot(application_q3_component_records *r,uint32_t slot)
+{
+    qa_id_index_entry *row=qa_id_index_find(&r->source_rows,slot+1,0);
+    return row?r->actors+row->value:NULL;
+}
+bool q3records_index_row(application_q3_component_records *r,size_t index,qa_error *e)
+{
+    const component_actor *row=r->actors+index;
+    if(!qa_actor_index_remember(&r->actor_rows,row->actor,index,e)) return false;
+    if(!row->retired) qa_actor_index_put(&r->actor_rows,row->actor,index);
+    qa_id_index_entry *source=qa_id_index_find(&r->source_rows,row->slot+1,0);
+    if(source) source->value=index;
+    else qa_id_index_insert(&r->source_rows,row->slot+1,0,index);
+    return true;
+}
 bool q3records_raw(application_q3_component_records *r,uint32_t address,qa_bytes bytes,qa_error *e)
 { return r->options.storage_current(r->options.context,e)&&qa_qvm_write(r->options.vm,address,bytes,e); }
 bool q3records_scalar(double value,bool floating,uint8_t out[4],qa_error *e)
@@ -82,6 +101,9 @@ bool application_q3_component_records_create(const application_q3_component_reco
     r->actor_capacity=1022;
     r->actors=calloc(r->actor_capacity,sizeof(*r->actors));
     if(!r->actors) return q3records_fail(e,QA_ERROR_MEMORY,"Reserving component actor projections");
+    if(!qa_actor_index_create(&r->actor_rows,qa_session_actors(o->session),NULL,e)||
+        !qa_id_index_reserve(&r->actor_rows.retained,r->actor_capacity,e)||
+        !qa_id_index_reserve(&r->source_rows,r->actor_capacity,e)) return false;
     r->record_count=application_q3_mod_record_count(o->profile); r->records=r->record_count?calloc(r->record_count,sizeof(*r->records)):NULL;
     if(r->record_count&&!r->records) return q3records_fail(e,QA_ERROR_MEMORY,"Retaining actual component record roster");
     for(size_t i=0;i<r->record_count;++i) {
@@ -122,6 +144,7 @@ bool application_q3_component_records_destroy(application_q3_component_records *
     application_q3_component_records *r=*slot;
     if(!application_q3_component_records_idle(r)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component actor projection has a real source call");
     for(size_t i=0;r->records&&i<r->record_count;++i) { component_record *record=r->records+i; for(size_t j=0;record->fields&&j<record->field_count;++j) free(record->fields[j].teams); free(record->fields); qa_buffer_free(&record->defaults); }
+    qa_actor_index_destroy(&r->actor_rows); qa_id_index_destroy(&r->source_rows);
     free(r->records); free(r->actors); free(r); *slot=NULL; return true;
 }
 bool application_q3_component_records_defaults(application_q3_component_records *r,qa_error *e)
@@ -156,11 +179,13 @@ bool application_q3_component_records_bind(application_q3_component_records *r,q
     component_actor *existing=q3records_actor(r,actor);
     if(existing&&(existing->retired||existing->slot!=slot||existing->owned!=owned||existing->client!=client)) return q3records_fail(e,QA_ERROR_FORMAT,"Component actor projection changed identity");
     if(existing&&existing->projected) return true;
-    for(size_t i=0;i<r->actor_count;++i) if(r->actors+i!=existing&&r->actors[i].slot==slot) return q3records_fail(e,QA_ERROR_FORMAT,"Component projection slot is occupied");
+    component_actor *occupied=q3records_slot(r,slot);
+    if(occupied&&occupied!=existing) return q3records_fail(e,QA_ERROR_FORMAT,"Component projection slot is occupied");
     for(size_t i=0;i<r->record_count;++i) if((!r->records[i].client||client)&&slot>=r->records[i].capacity) return q3records_fail(e,QA_ERROR_FORMAT,"Component auxiliary projection capacity exceeded");
     if(!existing) {
         if(!q3records_reserve_actor(r,e)) return false;
         r->actors[r->actor_count++]=(component_actor){.actor=actor,.slot=slot,.owned=owned,.client=client};
+        if(!q3records_index_row(r,r->actor_count-1,e)) return false;
     }
     if(!owned) {
         if(!reset(r,slot,client,e)) return false;
@@ -185,10 +210,12 @@ bool application_q3_component_records_reserve_client(application_q3_component_re
     component_actor *row=q3records_actor(r,actor);
     if(row) { if(!row->client||row->retired) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component client already occupies another projection"); *out=row->slot; return true; }
     uint32_t slot=0;
-    for(;slot<r->client_maximum;++slot) { bool used=false; for(size_t i=0;i<r->actor_count;++i) if(r->actors[i].slot==slot) used=true; if(!used) break; }
+    for(;slot<r->client_maximum&&q3records_slot(r,slot);++slot) {}
     if(slot==r->client_maximum) return q3records_fail(e,QA_ERROR_FORMAT,"Component source client capacity exceeded");
     if(!q3records_reserve_actor(r,e)) return false;
-    r->actors[r->actor_count++]=(component_actor){.actor=actor,.slot=slot,.client=true}; *out=slot; return true;
+    r->actors[r->actor_count++]=(component_actor){.actor=actor,.slot=slot,.client=true};
+    if(!q3records_index_row(r,r->actor_count-1,e)) return false;
+    *out=slot; return true;
 }
 bool q3records_finish_retired(application_q3_component_records *r,qa_error *e)
 {
@@ -196,14 +223,19 @@ bool q3records_finish_retired(application_q3_component_records *r,qa_error *e)
     for(size_t i=0;i<r->actor_count;) {
         component_actor row=r->actors[i]; if(!row.retired) { ++i; continue; }
         if(!row.owned&&!reset(r,row.slot,true,e)) return false;
+        qa_actor_index_remove(&r->actor_rows,row.actor);
+        qa_actor_index_forget_retained(&r->actor_rows,row.actor);
+        (void)qa_id_index_remove(&r->source_rows,row.slot+1,0);
         memmove(r->actors+i,r->actors+i+1,(r->actor_count-i-1)*sizeof(*r->actors)); --r->actor_count;
+        for(size_t j=i;j<r->actor_count;++j) if(!q3records_index_row(r,j,e)) return false;
     }
     return true;
 }
 bool application_q3_component_records_release(application_q3_component_records *r,qa_actor_id actor,qa_error *e)
 {
     component_actor *row=r?q3records_actor(r,actor):NULL; if(!row) return true;
-    row->retired=true; if(!r->options.released(r->options.context,actor,e)) return false;
+    row->retired=true; qa_actor_index_remove(&r->actor_rows,actor);
+    if(!r->options.released(r->options.context,actor,e)) return false;
     return q3records_finish_retired(r,e);
 }
 bool application_q3_component_records_admitted(application_q3_component_records *r,qa_actor_id actor,bool admitted,qa_error *e)
@@ -222,7 +254,7 @@ bool application_q3_component_records_pointer(void *context,qa_actor_id actor,si
     component_actor *row=q3records_actor(r,actor);
     if(!row) {
         uint32_t slot=r->client_maximum;
-        for(;;++slot) { bool used=false; for(size_t i=0;i<r->actor_count;++i) if(r->actors[i].slot==slot) used=true; if(!used) break; }
+        for(;q3records_slot(r,slot);++slot) {}
         if(!application_q3_component_records_bind(r,actor,slot,false,false,e)) return false;
         row=q3records_actor(r,actor);
     }

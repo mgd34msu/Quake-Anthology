@@ -39,7 +39,7 @@ bool application_q3_mod_actors_callback(application_q3_mod_actors *o,application
     if(!entry) return true;
     ++o->depth;
     bool ok=reaction_words(o,k,request,words,e)&&q3mod_actors_invoke(o,entry,words,o->calls[k].count,NULL,e);
-    --o->depth; return ok;
+    --o->depth;q3mod_actors_collect(o);return ok;
 }
 typedef struct touch_run { application_q3_mod_actors *owner; mod_actor_row *row; const qa_touch_contact *contact; uint32_t entry; } touch_run;
 static bool touch_scratch(void *context,qa_qvm *vm,uint32_t scratch,qa_error *e)
@@ -68,24 +68,28 @@ bool application_q3_mod_actors_touch(application_q3_mod_actors *o,const qa_touch
     *handled=true; if(!entry) return true;
     touch_run run={o,row,contact,entry}; ++o->depth;
     bool ok=qa_qvm_source_scratch_run_reserved(o->options.vm,o->options.profile->image,56,65536,touch_scratch,&run,e);
-    --o->depth; return ok;
+    --o->depth;q3mod_actors_collect(o);return ok;
 }
 static bool match(application_q3_mod_actors *o,const qa_qvm_call *call,mod_actor_row **actor,size_t *selected,qa_error *e)
 {
     *actor=NULL; *selected=SIZE_MAX;
-    if(call->caller_instruction==UINT32_MAX) return true;
+    if(call->caller_instruction==UINT32_MAX||!o->present) return true;
+    const mod_record *record=o->options.profile->records+o->entity_record;
     for(size_t k=0;k<4;++k) {
         uint32_t target=o->calls[k].roles[0]; if(target>=call->argument_count) continue;
         int32_t pointer_word; if(!qa_qvm_call_argument(call,target,&pointer_word,e)) return false;
-        for(mod_actor_row *r=o->actors;r;r=r->next) {
-            if(r->retired||r->pointer!=(uint32_t)pointer_word||!qa_actors_get(qa_session_actors(o->options.session),r->actor)) continue;
-            uint32_t entry;
-            if(!q3mod_actors_entry(r,k,&entry,e)) return false;
-            if(!entry||entry!=call->instruction) continue;
-            if(call->argument_count<o->calls[k].count) return q3mod_fail(e,QA_ERROR_FORMAT,"Actor callback exceeds the reached original caller frame");
-            if(*actor) return q3mod_fail(e,QA_ERROR_FORMAT,"Actor callback entry has ambiguous declared source signatures");
-            *actor=r; *selected=k;
-        }
+        uint32_t at=(uint32_t)pointer_word;
+        if(at<record->address||(uint64_t)at>=(uint64_t)record->address+(uint64_t)record->stride*record->capacity||
+            (at-record->address)%record->stride)continue;
+        qa_actor_id id;if(!o->options.actor(o->options.context,pointer_word,&id,e))return false;
+        mod_actor_row *r=q3mod_actors_find(o,id);
+        if(!r||r->pointer!=at||!qa_actors_get(qa_session_actors(o->options.session),r->actor))continue;
+        uint32_t entry;
+        if(!q3mod_actors_entry(r,k,&entry,e)) return false;
+        if(!entry||entry!=call->instruction) continue;
+        if(call->argument_count<o->calls[k].count) return q3mod_fail(e,QA_ERROR_FORMAT,"Actor callback exceeds the reached original caller frame");
+        if(*actor) return q3mod_fail(e,QA_ERROR_FORMAT,"Actor callback entry has ambiguous declared source signatures");
+        *actor=r; *selected=k;
     }
     return true;
 }
@@ -150,7 +154,7 @@ static bool proceed(void *context,const application_q3_mod_actor_request *reques
 }
 static bool source_actor(application_q3_mod_actors *o,const qa_qvm_call *call,uint32_t position,qa_actor_id *actor,qa_error *e)
 { int32_t word; return qa_qvm_call_argument(call,position,&word,e)&&o->options.actor(o->options.context,word,actor,e); }
-bool application_q3_mod_actors_hook_run(application_q3_mod_actors *o,const qa_qvm_call *call,
+static bool hook_run(application_q3_mod_actors *o,const qa_qvm_call *call,
     application_q3_mod_actor_proceed body,void *context,int32_t *result,qa_error *e)
 {
     if(!call||!result||!body||!q3mod_actors_current(o,e)||call->vm!=o->options.vm) return false;
@@ -199,6 +203,14 @@ bool application_q3_mod_actors_hook_run(application_q3_mod_actors *o,const qa_qv
     --o->depth;
     if(ok) *result=0;
     return ok;
+}
+bool application_q3_mod_actors_hook_run(application_q3_mod_actors *o,const qa_qvm_call *call,
+    application_q3_mod_actor_proceed body,void *context,int32_t *result,qa_error *e)
+{
+    if(!o)return hook_run(o,call,body,context,result,e);
+    ++o->depth;
+    bool ok=hook_run(o,call,body,context,result,e);
+    --o->depth;q3mod_actors_collect(o);return ok;
 }
 static bool original(void *context,const qa_qvm_call *call,int32_t *result,qa_error *e)
 { (void)context; return qa_qvm_proceed(call,result,e); }

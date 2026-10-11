@@ -122,6 +122,7 @@ static bool frame_run(application_q3_mod_actors *o,const qa_damage_request *requ
     else ok=qa_qvm_source_scratch_run_reserved(o->options.vm,o->options.profile->image,24,65536,lower_scratch,run,e);
     if(ok) ok=q3mod_actors_flush(o,&frame,e);
     --o->depth; o->frames=frame.previous;
+    q3mod_actors_collect(o);
     if(ok) *result=frame.result;
     return ok;
 }
@@ -135,7 +136,7 @@ bool q3mod_actors_source_damage(void *context,qa_combat *combat,const qa_damage_
     mod_actor_incoming incoming={.row=row,.request=request,.observer=observer,.result=result};
     damage_run run={.owner=o,.effective=request,.incoming=true,.receipt=&incoming}; ++o->depth;
     bool ok=qa_qvm_source_scratch_run_reserved(o->options.vm,o->options.profile->image,24,65536,lower_scratch,&run,e);
-    --o->depth; return ok;
+    --o->depth;q3mod_actors_collect(o);return ok;
 }
 static bool entered(void *context,qa_combat *combat,const qa_damage_request *request,qa_damage_observer *observer,qa_damage_result *result,qa_error *e)
 {
@@ -157,6 +158,7 @@ void application_q3_mod_actors_entry_end(application_q3_mod_actors *o,const qa_q
 {
     for(mod_actor_incoming *incoming=o?o->incoming:NULL;incoming;incoming=incoming->previous)
         if(incoming->call==call) incoming->call=NULL;
+    if(o)q3mod_actors_collect(o);
 }
 bool q3mod_actors_damage_hook(application_q3_mod_actors *o,const qa_qvm_call *call,
     application_q3_mod_actor_proceed body,void *context,int32_t *result,qa_error *e)
@@ -182,10 +184,13 @@ bool q3mod_actors_damage_hook(application_q3_mod_actors *o,const qa_qvm_call *ca
     request.attack.cause=(qa_damage_cause){.kind=QA_CAUSE_Q3,.source.q3={words[7],canonical_flags(o,(uint32_t)words[6])}};
     if(!o->options.damage_context(o->options.context,&request,e)||!qa_attack_next(&o->sequence,&request.attack,e)) return false;
     mod_actor_row *row=q3mod_actors_find(o,request.target); qa_damage_outcome outcome={0}; bool ok;
+    ++o->depth;
     if(!row||row->retired) ok=qa_combat_apply(o->options.combat,&request,&outcome,e);
     else {
         damage_run run={.owner=o,.call=call,.original=request,.flags=(uint32_t)words[6],.body=body,.context=context};
         ok=qa_combat_run_source(o->options.combat,&request,entered,&run,&outcome,e);
     }
-    qa_damage_outcome_release(&outcome); if(ok) *result=0; return ok;
+    qa_damage_outcome_release(&outcome);--o->depth;q3mod_actors_collect(o);
+    if(ok) *result=0;
+    return ok;
 }

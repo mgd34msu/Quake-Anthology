@@ -6,6 +6,7 @@
 #include "qa/source_save.h"
 #include "qa/native_observe.h"
 #include "qa/pool.h"
+#include "qa/network_unified_frame_pool.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,7 +41,7 @@ typedef struct nqr_actor {
     struct nqr_actor *next;
     qa_actor_id actor;
     uint32_t index;
-    size_t release_cursor;
+    size_t storage_slot,release_cursor;
     bool client,retired,failed,bound;
 } nqr_actor;
 typedef struct nqr_observation {
@@ -79,6 +80,10 @@ struct application_native_q2_pickup_scope {
 struct application_native_q2_records {
     qa_arena call_storage;
     qa_pool scopes, snapshots, observations, pickup_scopes, pickup_watches;
+    qa_unified_frame_lease *actor_storage;
+    qa_pool actor_pool;
+    qa_actor_index actor_index;
+    size_t actor_chunk;
     application_native_q2_records_options options;
     const qa_json_document *document;
     nqr_record *records;
@@ -98,6 +103,9 @@ static inline bool nqr_fail(qa_error *e,qa_status code,const char *message)
 bool nqr_current(application_native_q2_records *,qa_error *);
 bool nqr_live(application_native_q2_records *,qa_actor_id);
 nqr_actor *nqr_find(application_native_q2_records *,qa_actor_id);
+nqr_actor *nqr_actor_take(application_native_q2_records *,qa_error *);
+bool nqr_actor_publish(application_native_q2_records *,nqr_actor *,qa_error *);
+void nqr_actor_reclaim(application_native_q2_records *,nqr_actor *);
 bool nqr_profile(application_native_q2_records *,qa_error *);
 bool nqr_private_range(const nqr_record *,uint32_t,size_t);
 bool nqr_scalar_encode(double,qa_native_value_type,uint8_t *,qa_error *);

@@ -1,6 +1,8 @@
 #include "native_q2_weapon_stage.h"
+#include "control_frame.h"
 #include "qa/native_observe.h"
 #include "qa/binary.h"
+#include "qa/pool.h"
 #include "qa/source_save.h"
 #include <math.h>
 #include <stdlib.h>
@@ -49,7 +51,8 @@ typedef struct stage_watch {
     qa_native_write_observer *binding;
 } stage_watch;
 typedef struct stage_actor {
-    struct stage_actor *next;
+    struct stage_actor *next, *previous;
+    size_t storage_slot;
     application_native_q2_weapon_stage *owner;
     qa_actor_id actor;
     qa_native_address dispatcher;
@@ -88,6 +91,10 @@ struct application_native_q2_weapon_stage {
     stage_dispatch *dispatch;
     stage_projection *projections;
     stage_actor *actors;
+    qa_actor_index actor_index;
+    qa_pool actor_pool;
+    qa_unified_frame_lease *actor_storage;
+    size_t actor_chunk;
     uint64_t next_request;
     unsigned calls;
 };
@@ -98,7 +105,10 @@ static const qa_json_document *document(application_native_q2_weapon_stage *o)
 static qa_native_instance *instance(application_native_q2_weapon_stage *o)
 { return application_native_q2_callbacks_instance(o->options.callbacks); }
 static stage_actor *find(application_native_q2_weapon_stage *o, qa_actor_id actor)
-{ for(stage_actor *a=o?o->actors:NULL;a;a=a->next) if(qa_actor_id_equal(a->actor,actor)) return a; return NULL; }
+{
+    size_t value;
+    return o&&qa_actor_index_find(&o->actor_index,actor,&value)?(stage_actor *)(uintptr_t)value:NULL;
+}
 static bool source_current(stage_actor *a, qa_error *e)
 {
     application_native_q2_weapon_stage *o=a?a->owner:NULL;
@@ -494,8 +504,15 @@ bool application_native_q2_weapon_stage_admit(application_native_q2_weapon_stage
     if(!a) {
         qa_native_address address;
         if(!o->options.actor_current(o->options.context,actor,e)||!application_native_q2_callbacks_record(o->options.callbacks,actor,o->record,&address,e)) return false;
-        a=calloc(1,sizeof(*a)); if(!a) return fail(e,QA_ERROR_MEMORY,"Admitting native source weapon owner");
-        a->owner=o; a->actor=actor; a->dispatcher=address; a->next=o->actors; o->actors=a;
+        if(o->actor_pool.head==SIZE_MAX&&!qa_pool_extend(&o->actor_pool,
+            qa_unified_frame_lease_arena(o->actor_storage),o->actor_chunk,e))return false;
+        size_t slot;
+        a=qa_pool_take(&o->actor_pool,&slot);
+        if(!a)return fail(e,QA_ERROR_MEMORY,"Admitting native source weapon owner");
+        *a=(stage_actor){.owner=o,.actor=actor,.dispatcher=address,.storage_slot=slot,.next=o->actors};
+        if(o->actors)o->actors->previous=a;
+        o->actors=a;
+        qa_actor_index_put(&o->actor_index,actor,(size_t)(uintptr_t)a);
     }
     if(!current(a,e)) return false;
     if(!a->watch_count) {
@@ -643,14 +660,20 @@ static bool stage_prepare(application_native_q2_weapon_stage *o,qa_error *e)
 }
 bool application_native_q2_weapon_stage_create(const application_native_q2_weapon_stage_options *options,application_native_q2_weapon_stage **out,qa_error *e)
 {
-    if(!options||!out||*out||!options->callbacks||!options->items||!options->session||!options->inventory||!options->equipment||!options->owner||!options->actor_current||!options->source_inputs)
+    if(!options||!out||*out||!options->application||!options->callbacks||!options->items||!options->session||!options->inventory||!options->equipment||!options->owner||!options->actor_current||!options->source_inputs)
         return fail(e,QA_ERROR_ARGUMENT,"Native weapon stage requires its actual callback, item and broker owners");
     qa_json_id definition=application_native_q2_items_weapon_stage(options->items);
     if(definition==QA_JSON_NONE) return true;
     application_native_q2_weapon_stage *o=calloc(1,sizeof(*o));
     if(!o) return fail(e,QA_ERROR_MEMORY,"Owning native declared weapon stage");
     o->options=*options; o->definition=definition;
-    if(!stage_prepare(o,e)) {
+    const qa_actor_registry *registry=qa_session_actors(options->session);
+    o->actor_chunk=qa_actors_capacity(registry);
+    o->actor_storage=application_control_storage_acquire(options->application,e);
+    qa_arena *storage=o->actor_storage?qa_unified_frame_lease_arena(o->actor_storage):NULL;
+    if(!o->actor_storage||!qa_actor_index_create(&o->actor_index,registry,storage,e)||
+        !qa_pool_prepare(&o->actor_pool,storage,o->actor_chunk,sizeof(stage_actor),_Alignof(stage_actor),e)||
+        !stage_prepare(o,e)) {
         qa_error cleanup={0};
         if(!application_native_q2_weapon_stage_destroy(&o,&cleanup)) *out=o;
         return false;
@@ -679,7 +702,11 @@ bool application_native_q2_weapon_stage_release(application_native_q2_weapon_sta
     }
     if(a->bound&&!qa_equipment_weapon_unbind(o->options.equipment,actor,o->options.owner,a,e)) return false;
     a->bound=false; a->releasing=true;
-    stage_actor **link=&o->actors; while(*link!=a) link=&(*link)->next; *link=a->next; free(a); return true;
+    if(a->previous)a->previous->next=a->next;else o->actors=a->next;
+    if(a->next)a->next->previous=a->previous;
+    qa_actor_index_remove(&o->actor_index,actor);
+    qa_pool_release(&o->actor_pool,a->storage_slot);
+    return true;
 }
 bool application_native_q2_weapon_stage_suspend(application_native_q2_weapon_stage *o,qa_error *e)
 {
@@ -716,6 +743,8 @@ bool application_native_q2_weapon_stage_destroy(application_native_q2_weapon_sta
         }
         free(rows->tests); free(rows->ends);
     }
+    qa_actor_index_destroy(&o->actor_index);
+    qa_unified_frame_lease_release(o->actor_storage);
     free(o->regions); free(o->choices); free(o->parameters); free(o); *owner=NULL; return true;
 }
 typedef struct stage_request_row { qa_actor_id actor; uint64_t id; qa_item_id item; qa_weapon_request_status status; } stage_request_row;

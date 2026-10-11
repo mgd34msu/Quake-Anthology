@@ -9,14 +9,12 @@ static bool slot(application_q3_component *c,int32_t pointer,uint32_t *out,qa_er
         return q3records_fail(e,QA_ERROR_FORMAT,"Component source lifecycle pointer is outside its declared row");
     *out=(at-record->address)/record->stride; return true;
 }
-static component_actor *actor_at(application_q3_component *c,uint32_t slot)
-{ for(size_t i=0;i<c->records->actor_count;++i) if(c->records->actors[i].slot==slot) return c->records->actors+i; return NULL; }
 bool q3component_lifecycle_begin(void *context,uint32_t entry,const int32_t *words,size_t count,qa_error *e)
 {
     application_q3_component *c=context; if(!c->has_source||entry!=c->release_entry) return true;
     uint32_t index;
     if(count<=c->release_argument||!slot(c,words[c->release_argument],&index,e)) return false;
-    component_actor *actor=actor_at(c,index);
+    component_actor *actor=q3records_slot(c->records,index);
     if(actor&&!actor->owned) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component source cannot release a foreign actor without its owner continuation");
     return !actor||application_q3_mod_actors_before_release(c->actor_semantics,actor->actor,e);
 }
@@ -28,7 +26,7 @@ bool q3component_lifecycle(void *context,uint32_t entry,const int32_t *words,siz
     if(!slot(c,pointer,&index,e)) return false;
     component_record *record=c->records->records+c->entity_record; uint8_t bytes[4];
     if(!qa_qvm_read(c->vm,record->address+index*record->stride+c->inuse,bytes,4,e)) return false;
-    component_actor *row=actor_at(c,index);
+    component_actor *row=q3records_slot(c->records,index);
     if(entry==c->allocate_entry) {
         if(index<c->maximum||row||!qa_load_i32le(bytes)) return q3records_fail(e,QA_ERROR_FORMAT,"Component allocator returned an occupied, inactive or reserved client row");
         for(size_t i=0;i<c->records->record_count;++i)

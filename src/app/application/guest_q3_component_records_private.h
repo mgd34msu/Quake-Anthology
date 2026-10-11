@@ -60,6 +60,8 @@ struct application_q3_component_records {
     size_t record_count;
     component_actor *actors;
     size_t actor_count,actor_capacity;
+    qa_actor_index actor_rows;
+    qa_id_index source_rows;
     component_frame *frame;
     uint32_t client_maximum,inuse;
     size_t entity_record,player_record;
@@ -69,6 +71,8 @@ bool q3records_fail(qa_error *,qa_status,const char *);
 bool q3records_raw(application_q3_component_records *,uint32_t,qa_bytes,qa_error *);
 bool q3records_live(const application_q3_component_records *,qa_actor_id);
 component_actor *q3records_actor(application_q3_component_records *,qa_actor_id);
+component_actor *q3records_slot(application_q3_component_records *,uint32_t);
+bool q3records_index_row(application_q3_component_records *,size_t,qa_error *);
 bool q3records_scalar(double,bool,uint8_t[4],qa_error *);
 bool q3records_finish_retired(application_q3_component_records *,qa_error *);
 bool q3records_reserve_actor(application_q3_component_records *,qa_error *);

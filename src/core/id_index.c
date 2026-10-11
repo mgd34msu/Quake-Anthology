@@ -22,18 +22,26 @@ bool qa_id_index_reserve(qa_id_index *index, size_t additional, qa_error *error)
         }
         capacity *= 2;
     }
-    qa_id_index_entry *entries = malloc(capacity * sizeof(*entries));
-    size_t *buckets = calloc(capacity * 2, sizeof(*buckets));
+    qa_id_index_entry *entries = index->storage ?
+        qa_arena_alloc(index->storage, capacity * sizeof(*entries), _Alignof(qa_id_index_entry), error) :
+        malloc(capacity * sizeof(*entries));
+    size_t *buckets = index->storage ?
+        qa_arena_alloc(index->storage, capacity * 2 * sizeof(*buckets), _Alignof(size_t), error) :
+        calloc(capacity * 2, sizeof(*buckets));
     if (!entries || !buckets) {
-        free(entries); free(buckets);
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating ID index"); return false;
+        if (!index->storage) {
+            free(entries); free(buckets);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating ID index");
+        }
+        return false;
     }
+    if (index->storage) memset(buckets, 0, capacity * 2 * sizeof(*buckets));
     if (index->count) memcpy(entries, index->entries, index->count * sizeof(*entries));
     for (size_t i = 0; i < index->count; ++i) {
         size_t slot = bucket(entries[i].key, entries[i].discriminator, capacity);
         entries[i].next = buckets[slot]; buckets[slot] = i + 1;
     }
-    free(index->entries); free(index->buckets);
+    if (!index->storage) { free(index->entries); free(index->buckets); }
     index->entries = entries; index->buckets = buckets; index->capacity = capacity;
     return true;
 }
@@ -71,6 +79,22 @@ qa_id_index_entry *qa_id_index_find(qa_id_index *index, qa_string_id key, uint64
     qa_id_index_cursor cursor = qa_id_index_begin(index, key, discriminator);
     return (qa_id_index_entry *)next_entry(index, &cursor);
 }
+bool qa_id_index_remove(qa_id_index *index, qa_string_id key, uint64_t discriminator)
+{
+    if (!qa_id_index_find(index, key, discriminator)) return false;
+    size_t count = 0;
+    memset(index->buckets, 0, index->capacity * 2 * sizeof(*index->buckets));
+    for (size_t i = 0; i < index->count; ++i) {
+        qa_id_index_entry entry = index->entries[i];
+        if (entry.key == key && entry.discriminator == discriminator) continue;
+        size_t slot = bucket(entry.key, entry.discriminator, index->capacity);
+        entry.next = index->buckets[slot];
+        index->entries[count] = entry;
+        index->buckets[slot] = ++count;
+    }
+    index->count = count;
+    return true;
+}
 void qa_id_index_clear(qa_id_index *index)
 {
     index->count = 0;
@@ -78,5 +102,6 @@ void qa_id_index_clear(qa_id_index *index)
 }
 void qa_id_index_destroy(qa_id_index *index)
 {
-    free(index->entries); free(index->buckets); *index = (qa_id_index){0};
+    if (!index->storage) { free(index->entries); free(index->buckets); }
+    *index = (qa_id_index){0};
 }

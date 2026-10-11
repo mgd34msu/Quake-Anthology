@@ -112,7 +112,8 @@ static bool decide(void *context,const qa_qvm_call *call,bool original,bool *tak
     uint32_t pointer=qa_load_u32le(bytes); component_record *record=c->records->records+c->entity_record; *taken=false;
     if(pointer<record->address||(uint64_t)pointer>=(uint64_t)record->address+(uint64_t)record->stride*record->capacity||(pointer-record->address)%record->stride) return true;
     uint32_t slot=(pointer-record->address)/record->stride;
-    for(size_t i=0;i<c->records->actor_count;++i) { component_actor row=c->records->actors[i]; if(row.slot==slot&&row.owned&&!row.retired&&q3records_live(c->records,row.actor)) { *taken=true; break; } }
+    component_actor *row=q3records_slot(c->records,slot);
+    if(row&&row->owned&&!row->retired&&q3records_live(c->records,row->actor)) *taken=true;
     return true;
 }
 /* Decisions live only through this genuine synchronous proceed. Branch

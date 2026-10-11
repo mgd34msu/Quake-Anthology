@@ -36,21 +36,24 @@ bool application_q3_mod_actors_restore(application_q3_mod_actors *o,qa_bytes byt
     size_t count=0; uint64_t sequence=0;
     size_t limit=o->present?o->options.profile->records[o->entity_record].capacity:0;
     bool ok=q3mod_saved_declaration(o->options.profile,&io,"QGMA")&&qa_source_save_u64(&io,&sequence)&&qa_source_save_count(&io,&count,limit);
-    mod_actor_row *head=NULL,**tail=&head;
+    mod_actor_row *head=NULL,**tail=&head,*previous=NULL;
     for(size_t i=0;ok&&i<count;++i) {
-        mod_actor_row *row=calloc(1,sizeof(*row)); if(!row) { ok=q3mod_fail(e,QA_ERROR_MEMORY,"Retaining detached actor semantic rows"); break; }
-        row->owner=o;
+        mod_actor_row *row=q3mod_actors_row_create(o,e);if(!row){ok=false;break;}
         ok=qa_source_save_actor(&io,&row->actor)&&qa_source_save_u32(&io,&row->pointer)&&qa_source_save_u64(&io,&row->serial)&&qa_source_save_bool(&io,&row->bound)&&row_valid(o,row,false,e);
+        if(ok&&q3mod_actors_find(o,row->actor))ok=q3mod_fail(e,QA_ERROR_FORMAT,"Saved actor semantics duplicate physical ownership");
         for(mod_actor_row *prior=head;ok&&prior;prior=prior->next)
-            if(qa_actor_id_equal(prior->actor,row->actor)||prior->pointer==row->pointer||(row->serial&&prior->serial==row->serial))
+            if(prior->pointer==row->pointer||(row->serial&&prior->serial==row->serial))
                 ok=q3mod_fail(e,QA_ERROR_FORMAT,"Saved actor semantics duplicate physical ownership");
-        if(!ok) { free(row); break; }
-        *tail=row; tail=&row->next;
+        if(!ok) { qa_pool_release(&o->actor_pool,row->storage_slot);break; }
+        qa_actor_index_put(&o->actor_index,row->actor,(size_t)(uintptr_t)row);
+        row->previous=previous;*tail=row;tail=&row->next;previous=row;
     }
     if(ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
-    if(!ok) { while(head) { mod_actor_row *next=head->next; free(head); head=next; } return false; }
-    o->actors=head; o->sequence=sequence; return true;
+    if(!ok) { qa_actor_index_clear(&o->actor_index);
+        while(head) { mod_actor_row *next=head->next;qa_pool_release(&o->actor_pool,head->storage_slot);head=next; }
+        return false; }
+    o->actors=head;o->actors_tail=previous;o->sequence=sequence;return true;
 }
 bool application_q3_mod_actors_finish_restore(application_q3_mod_actors *o,qa_error *e)
 {

@@ -73,13 +73,13 @@ static bool fields(application_native_q2_records *o,qa_source_save_io *io,nqr_ac
             nqr_fail(io->error,QA_ERROR_FORMAT,"Native borrowed actor continuation duplicates a full actor or private index"); goto failed;
         }
         if(io->direction==QA_SOURCE_SAVE_READ) {
-            nqr_actor *next=calloc(1,sizeof(*next)); if(!next) { nqr_fail(io->error,QA_ERROR_MEMORY,"Retaining decoded native full actor mapping"); goto failed; }
-            *next=row; next->next=NULL; *tail=next; tail=&next->next;
+            nqr_actor *next=nqr_actor_take(o,io->error); if(!next) goto failed;
+            row.storage_slot=next->storage_slot; *next=row; next->next=NULL; *tail=next; tail=&next->next;
         } else if(!nqr_actor_current(o,&row,io->error)||!nqr_capacity(o,&row,io->error)) goto failed;
     }
     *candidate=read; return true;
 failed:
-    while(read) { nqr_actor *row=read; read=row->next; free(row); }
+    while(read) { nqr_actor *row=read; read=row->next; nqr_actor_reclaim(o,row); }
     return false;
 }
 bool application_native_q2_records_checkpoint(application_native_q2_records *o,qa_buffer *out,qa_error *e)
@@ -98,8 +98,9 @@ bool application_native_q2_records_restore(application_native_q2_records *o,qa_b
     qa_source_save_io io={0}; nqr_actor *candidate=NULL;
     bool ok=qa_source_save_reader(&io,o->options.session,bytes,e)&&fields(o,&io,&candidate)&&qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
+    for(nqr_actor *row=candidate;ok&&row;row=row->next) ok=nqr_actor_publish(o,row,e);
     if(ok) { o->actors=candidate; o->restoring=true; }
-    else while(candidate) { nqr_actor *row=candidate; candidate=row->next; free(row); }
+    else while(candidate) { nqr_actor *row=candidate; candidate=row->next; nqr_actor_reclaim(o,row); }
     return ok;
 }
 bool application_native_q2_records_finish_restore(application_native_q2_records *o,qa_error *e)

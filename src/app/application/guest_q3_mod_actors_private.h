@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_MOD_ACTORS_PRIVATE_H
 #include "guest_q3_mod_actors.h"
 #include "guest_q3_mod_private.h"
+#include "qa/pool.h"
 
 enum { MOD_ACTOR_TOUCH,MOD_ACTOR_USE,MOD_ACTOR_PAIN,MOD_ACTOR_DIE,MOD_ACTOR_DAMAGE,MOD_ACTOR_CALLS };
 typedef struct mod_actor_call {
@@ -10,11 +11,12 @@ typedef struct mod_actor_call {
     size_t count,role_count;
 } mod_actor_call;
 typedef struct mod_actor_row {
-    struct mod_actor_row *next;
+    struct mod_actor_row *next,*previous,*retired_next;
     struct application_q3_mod_actors *owner;
     qa_actor_id actor;
     uint32_t pointer;
     uint64_t serial;
+    size_t storage_slot;
     bool bound,retired;
 } mod_actor_row;
 typedef struct mod_actor_damage_frame {
@@ -51,7 +53,11 @@ struct application_q3_mod_actors {
     size_t team_count;
     mod_actor_call calls[MOD_ACTOR_CALLS];
     application_q3_mod_call *globals;
-    mod_actor_row *actors;
+    qa_actor_index actor_index;
+    qa_unified_frame_lease *actor_storage;
+    qa_pool actor_pool;
+    size_t actor_chunk;
+    mod_actor_row *actors,*actors_tail,*retired;
     mod_actor_damage_frame *frames;
     mod_actor_incoming *incoming;
     uint64_t sequence;
@@ -61,6 +67,8 @@ struct application_q3_mod_actors {
 bool q3mod_actors_profile(application_q3_mod_actors *,qa_error *);
 bool q3mod_actors_current(application_q3_mod_actors *,qa_error *);
 mod_actor_row *q3mod_actors_find(application_q3_mod_actors *,qa_actor_id);
+mod_actor_row *q3mod_actors_row_create(application_q3_mod_actors *,qa_error *);
+void q3mod_actors_collect(application_q3_mod_actors *);
 bool q3mod_actors_word(application_q3_mod_actors *,uint32_t,int32_t *,qa_error *);
 bool q3mod_actors_write(application_q3_mod_actors *,uint32_t,int32_t,qa_error *);
 bool q3mod_actors_state(void *,qa_combat_state *,qa_error *);

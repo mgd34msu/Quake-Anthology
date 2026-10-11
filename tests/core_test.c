@@ -2317,6 +2317,42 @@ static void test_q3_send_admission(void)
     qa_q3_channel_destroy(receiver);
 }
 
+static void test_actor_index_lifetimes(void)
+{
+    qa_error error={0}; qa_actor_registry *registry=NULL; qa_actor_index index={0};
+    uint8_t bytes[16384]; qa_arena storage;
+    CHECK(qa_arena_init_buffer(&storage,bytes,sizeof(bytes),&error));
+    CHECK(qa_actors_create(2,NULL,NULL,&registry,&error));
+    CHECK(qa_actor_index_create(&index,registry,&storage,&error));
+    CHECK(qa_id_index_reserve(&index.retained,2,&error));
+    qa_actor_id first,second,reused;
+    CHECK(qa_actors_allocate(registry,1,1,&first,&error));
+    CHECK(qa_actors_allocate(registry,1,1,&second,&error));
+    qa_actor_index_put(&index,first,10); qa_actor_index_put(&index,second,20);
+    CHECK(qa_actor_index_remember(&index,first,10,&error));
+    CHECK(qa_actor_index_remember(&index,second,20,&error));
+    CHECK(qa_actors_release(registry,first,&error));
+    CHECK(qa_actors_allocate(registry,1,1,&reused,&error));
+    CHECK(reused.slot==first.slot && reused.generation!=first.generation);
+    qa_actor_index_put(&index,reused,30);
+    CHECK(qa_actor_index_remember(&index,reused,30,&error));
+    size_t value; qa_actor_id actor;
+    CHECK(!qa_actor_index_find(&index,first,&value));
+    CHECK(qa_actor_index_find(&index,reused,&value) && value==30);
+    CHECK(qa_actor_index_find_retained(&index,first,&value) && value==10);
+    qa_actor_index_forget_retained(&index,first);
+    CHECK(!qa_actor_index_find_retained(&index,first,&value));
+    CHECK(qa_actor_index_find_retained(&index,second,&value) && value==20);
+    CHECK(qa_actor_index_retained_at(&index,0,&actor,&value) && qa_actor_id_equal(actor,second));
+    CHECK(qa_id_index_reserve(&index.retained,64,&error));
+    CHECK(qa_actor_index_find_retained(&index,reused,&value) && value==30);
+    qa_actor_index_forget_retained(&index,second);
+    CHECK(qa_actor_index_retained_count(&index)==1);
+    CHECK(qa_actor_index_find_retained(&index,reused,&value) && value==30);
+    qa_actor_index_destroy(&index);
+    CHECK(qa_actors_destroy(registry,&error)); qa_arena_destroy(&storage);
+}
+
 static void test_q2_retained_records(void)
 {
     qa_error error={0};
@@ -2864,6 +2900,7 @@ int main(int argc, char **argv)
     test_q1_lightstyle_event();
     test_q2_owned_frames();
     test_q2_retained_records();
+    test_actor_index_lifetimes();
     test_q1_gameplay();
     test_guest();
     test_recovery(argv[0]);
