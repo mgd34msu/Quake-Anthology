@@ -21,7 +21,7 @@ static bool reset(qa_q1_game *g, q1_actor *hook, qa_error *error) {
     }
     if (q1_alive(g, q1_ref_actor(g, hook->owner))) {
         if (ctf && g->options.edition == QA_Q1_CLASSIC &&
-            !q1_sound(g, q1_ref_actor(g, hook->owner), "weapons/bounce2.wav", 1, 1, error))
+            !q1_sound_resource(g, q1_ref_actor(g, hook->owner), g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_BOUNCE2_WAV], 1, 1, 1, error))
             return false;
         if (!ctf && player && player->weapon == QA_Q1_ROGUE_GRAPPLE &&
             !q1_weapon_event(g, player, 0, 0, error))
@@ -236,7 +236,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
         !q1_link(g, hook, error) ||
         !q1_schedule(g, hook, ctf ? 0.1 : shape->lifetime, ctf ? Q1_THINK_HOOK_FLY : Q1_THINK_HOOK_RESET,
                      error) ||
-        !q1_sound(g, actor, "weapons/chain1.wav", 1, 1, error))
+        !q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_CHAIN1_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, hook->id))
         return true;
@@ -301,8 +301,7 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
     if (!player || !anchor) return reset(g, hook, error);
     if (q1_damageable(g, actor)) {
         if ((!ctf || !target_player) &&
-            !q1_sound(g, hook->id, target_player ? "player/axhit1.wav" : "player/axhit2.wav", 1, 1,
-                      error))
+            !q1_sound_resource(g, hook->id, target_player ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_AXHIT1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_AXHIT2_WAV], 1, 1, 1, error))
             return false;
         if (!q1_damage(g, actor, hook->id, player->id, ctf || target_player ? 10 : 1,
                        hook->state.projectile.weapon, error))
@@ -311,13 +310,13 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
             return reset(g, hook, error);
         if (ctf && !q1_effect(g, QA_BUILTIN_IMPACT, actor, body.origin, 20, 73, error))
             return false;
-    } else if (!q1_sound(g, hook->id, "player/axhit2.wav", 1, 1, error))
+    } else if (!q1_sound_resource(g, hook->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_AXHIT2_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, hook->id))
         return true;
     if (!ctf) {
         hook->frame = 2;
-        if (!q1_sound(g, player->id, "weapons/tink1.wav", 1, 1, error))
+        if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_TINK1_WAV], 1, 1, 1, error))
             return false;
     }
     if (!player->grapple_input.attack)
@@ -341,7 +340,7 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
             !qa_world_attach(g->services.world, hook->id, &attachment, error))
             return false;
         if (g->options.edition == QA_Q1_CLASSIC &&
-            !q1_sound(g, player->id, "weapons/chain2.wav", 1, 1, error))
+            !q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_CHAIN2_WAV], 1, 1, 1, error))
             return false;
         hook->state.projectile.damage = 2;
     } else {
@@ -424,7 +423,7 @@ bool q1_grapple_think(qa_q1_game *g, q1_actor *hook, q1_think_kind kind, qa_erro
             if (!qa_world_body_write(g->services.world, hook->id, &body, error))
                 return false;
         }
-        if (!q1_sound(g, hook->id, ctf ? "blob/land1.wav" : "pendulum/hit.wav", 1, 1, error) ||
+        if (!q1_sound_resource(g, hook->id, ctf ? g->runtime_names[Q1_NAME_RESOURCE_BLOB_LAND1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PENDULUM_HIT_WAV], 1, 1, 1, error) ||
             !q1_damage(g, enemy, hook->id, player->id, 1, hook->state.projectile.weapon, error))
             return false;
         if (!q1_alive(g, hook->id) || !q1_alive(g, enemy) || !q1_alive(g, player->id))
@@ -460,12 +459,12 @@ bool q1_grapple_think(qa_q1_game *g, q1_actor *hook, q1_think_kind kind, qa_erro
             return false;
         float traveled = qa_vec_length(qa_vec_sub(owner.origin, hook->state.projectile.right));
         float style = hook->state.projectile.damage;
-        const char *sound = traveled > 10 && style == 3   ? "weapons/chain2.wav"
-                            : traveled < 10 && style == 2 ? "weapons/chain3.wav"
-                                                          : NULL;
+        qa_string_id sound = traveled > 10 && style == 3   ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_CHAIN2_WAV]
+                            : traveled < 10 && style == 2 ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_CHAIN3_WAV]
+                                                          : 0;
         if (sound) {
             hook->state.projectile.damage = style == 2 ? 3 : 2;
-            if (g->options.edition == QA_Q1_CLASSIC && !q1_sound(g, player->id, sound, 1, 1, error))
+            if (g->options.edition == QA_Q1_CLASSIC && !q1_sound_resource(g, player->id, sound, 1, 1, 1, error))
                 return false;
         }
         hook->state.projectile.right = owner.origin;

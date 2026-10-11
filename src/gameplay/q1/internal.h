@@ -246,7 +246,273 @@
     X(CLASS_WIZARD_FASTFIRE, "wizard_fastfire") \
     X(CLASS_WIZARD_SPIKE, "wizard_spike") \
     X(CLASS_WRATH_MISSILE, "wrath_missile") \
-    X(CLASS_ZOMBIE_GRENADE, "zombie_grenade")
+    X(CLASS_ZOMBIE_GRENADE, "zombie_grenade") \
+    X(RESOURCE_AMBIENCE_WINDFLY_WAV, "ambience/windfly.wav") \
+    X(RESOURCE_ARMAGON_IDLE1_WAV, "armagon/idle1.wav") \
+    X(RESOURCE_ARMAGON_IDLE2_WAV, "armagon/idle2.wav") \
+    X(RESOURCE_ARMAGON_IDLE3_WAV, "armagon/idle3.wav") \
+    X(RESOURCE_ARMAGON_IDLE4_WAV, "armagon/idle4.wav") \
+    X(RESOURCE_ARMAGON_PAIN_WAV, "armagon/pain.wav") \
+    X(RESOURCE_ARMAGON_REPEL_WAV, "armagon/repel.wav") \
+    X(RESOURCE_ARMAGON_SIGHT2_WAV, "armagon/sight2.wav") \
+    X(RESOURCE_ARMAGON_SIGHT_WAV, "armagon/sight.wav") \
+    X(RESOURCE_BELT_FADEOUT_WAV, "belt/fadeout.wav") \
+    X(RESOURCE_BLOB_DEATH1_WAV, "blob/death1.wav") \
+    X(RESOURCE_BLOB_HIT1_WAV, "blob/hit1.wav") \
+    X(RESOURCE_BLOB_LAND1_WAV, "blob/land1.wav") \
+    X(RESOURCE_BLOB_SIGHT1_WAV, "blob/sight1.wav") \
+    X(RESOURCE_BOSS1_DEATH_WAV, "boss1/death.wav") \
+    X(RESOURCE_BOSS1_OUT1_WAV, "boss1/out1.wav") \
+    X(RESOURCE_BOSS1_PAIN_WAV, "boss1/pain.wav") \
+    X(RESOURCE_BOSS1_SIGHT1_WAV, "boss1/sight1.wav") \
+    X(RESOURCE_BOSS1_THROW_WAV, "boss1/throw.wav") \
+    X(RESOURCE_BOSS2_DEATH_WAV, "boss2/death.wav") \
+    X(RESOURCE_BOSS2_POP2_WAV, "boss2/pop2.wav") \
+    X(RESOURCE_BOSS2_SIGHT_WAV, "boss2/sight.wav") \
+    X(RESOURCE_BUTTONS_AIRBUT1_WAV, "buttons/airbut1.wav") \
+    X(RESOURCE_BUTTONS_SWITCH02_WAV, "buttons/switch02.wav") \
+    X(RESOURCE_BUTTONS_SWITCH04_WAV, "buttons/switch04.wav") \
+    X(RESOURCE_BUTTONS_SWITCH21_WAV, "buttons/switch21.wav") \
+    X(RESOURCE_BUZZ_BUZZ_WAV, "buzz/buzz.wav") \
+    X(RESOURCE_DEMON_DDEATH_WAV, "demon/ddeath.wav") \
+    X(RESOURCE_DEMON_DHIT2_WAV, "demon/dhit2.wav") \
+    X(RESOURCE_DEMON_DJUMP_WAV, "demon/djump.wav") \
+    X(RESOURCE_DEMON_DPAIN1_WAV, "demon/dpain1.wav") \
+    X(RESOURCE_DEMON_IDLE1_WAV, "demon/idle1.wav") \
+    X(RESOURCE_DEMON_SIGHT2_WAV, "demon/sight2.wav") \
+    X(RESOURCE_DOG_DATTACK1_WAV, "dog/dattack1.wav") \
+    X(RESOURCE_DOG_DDEATH_WAV, "dog/ddeath.wav") \
+    X(RESOURCE_DOG_DPAIN1_WAV, "dog/dpain1.wav") \
+    X(RESOURCE_DOG_DSIGHT_WAV, "dog/dsight.wav") \
+    X(RESOURCE_DOG_IDLE_WAV, "dog/idle.wav") \
+    X(RESOURCE_DOORS_AIRDOOR1_WAV, "doors/airdoor1.wav") \
+    X(RESOURCE_DOORS_AIRDOOR2_WAV, "doors/airdoor2.wav") \
+    X(RESOURCE_DOORS_BASESEC1_WAV, "doors/basesec1.wav") \
+    X(RESOURCE_DOORS_BASESEC2_WAV, "doors/basesec2.wav") \
+    X(RESOURCE_DOORS_BASETRY_WAV, "doors/basetry.wav") \
+    X(RESOURCE_DOORS_BASEUSE_WAV, "doors/baseuse.wav") \
+    X(RESOURCE_DOORS_DDOOR1_WAV, "doors/ddoor1.wav") \
+    X(RESOURCE_DOORS_DDOOR2_WAV, "doors/ddoor2.wav") \
+    X(RESOURCE_DOORS_DOORMV1_WAV, "doors/doormv1.wav") \
+    X(RESOURCE_DOORS_DRCLOS4_WAV, "doors/drclos4.wav") \
+    X(RESOURCE_DOORS_HYDRO1_WAV, "doors/hydro1.wav") \
+    X(RESOURCE_DOORS_HYDRO2_WAV, "doors/hydro2.wav") \
+    X(RESOURCE_DOORS_LATCH2_WAV, "doors/latch2.wav") \
+    X(RESOURCE_DOORS_MEDTRY_WAV, "doors/medtry.wav") \
+    X(RESOURCE_DOORS_MEDUSE_WAV, "doors/meduse.wav") \
+    X(RESOURCE_DOORS_RUNETRY_WAV, "doors/runetry.wav") \
+    X(RESOURCE_DOORS_RUNEUSE_WAV, "doors/runeuse.wav") \
+    X(RESOURCE_DOORS_STNDR1_WAV, "doors/stndr1.wav") \
+    X(RESOURCE_DOORS_STNDR2_WAV, "doors/stndr2.wav") \
+    X(RESOURCE_DOORS_WINCH2_WAV, "doors/winch2.wav") \
+    X(RESOURCE_DRAGON_ATTACK_WAV, "dragon/attack.wav") \
+    X(RESOURCE_DRAGON_DEATH_WAV, "dragon/death.wav") \
+    X(RESOURCE_DRAGON_PAIN_WAV, "dragon/pain.wav") \
+    X(RESOURCE_DRAGON_SEE_WAV, "dragon/see.wav") \
+    X(RESOURCE_EEL_EACTIVE1_WAV, "eel/eactive1.wav") \
+    X(RESOURCE_EEL_EATT1_WAV, "eel/eatt1.wav") \
+    X(RESOURCE_EEL_EDIE3R_WAV, "eel/edie3r.wav") \
+    X(RESOURCE_EEL_EELC5_WAV, "eel/eelc5.wav") \
+    X(RESOURCE_EEL_EPAIN3_WAV, "eel/epain3.wav") \
+    X(RESOURCE_ENFORCER_DEATH1_WAV, "enforcer/death1.wav") \
+    X(RESOURCE_ENFORCER_ENFIRE_WAV, "enforcer/enfire.wav") \
+    X(RESOURCE_ENFORCER_ENFSTOP_WAV, "enforcer/enfstop.wav") \
+    X(RESOURCE_ENFORCER_IDLE1_WAV, "enforcer/idle1.wav") \
+    X(RESOURCE_ENFORCER_PAIN1_WAV, "enforcer/pain1.wav") \
+    X(RESOURCE_ENFORCER_PAIN2_WAV, "enforcer/pain2.wav") \
+    X(RESOURCE_ENFORCER_SIGHT1_WAV, "enforcer/sight1.wav") \
+    X(RESOURCE_ENFORCER_SIGHT2_WAV, "enforcer/sight2.wav") \
+    X(RESOURCE_ENFORCER_SIGHT3_WAV, "enforcer/sight3.wav") \
+    X(RESOURCE_ENFORCER_SIGHT4_WAV, "enforcer/sight4.wav") \
+    X(RESOURCE_EQUAKE_RUMBLE_WAV, "equake/rumble.wav") \
+    X(RESOURCE_FISH_BITE_WAV, "fish/bite.wav") \
+    X(RESOURCE_FISH_DEATH_WAV, "fish/death.wav") \
+    X(RESOURCE_FISH_IDLE_WAV, "fish/idle.wav") \
+    X(RESOURCE_GREM_ATTACK_WAV, "grem/attack.wav") \
+    X(RESOURCE_GREM_DEATH_WAV, "grem/death.wav") \
+    X(RESOURCE_GREM_IDLE_WAV, "grem/idle.wav") \
+    X(RESOURCE_GREM_PAIN1_WAV, "grem/pain1.wav") \
+    X(RESOURCE_GREM_PAIN2_WAV, "grem/pain2.wav") \
+    X(RESOURCE_GREM_PAIN3_WAV, "grem/pain3.wav") \
+    X(RESOURCE_GREM_SIGHT1_WAV, "grem/sight1.wav") \
+    X(RESOURCE_GUARD_DEATH_WAV, "guard/death.wav") \
+    X(RESOURCE_GUARD_PAIN1_WAV, "guard/pain1.wav") \
+    X(RESOURCE_GUARD_SEE1_WAV, "guard/see1.wav") \
+    X(RESOURCE_HIPITEMS_SPIKMINE_WAV, "hipitems/spikmine.wav") \
+    X(RESOURCE_HIPWEAP_LASERG_WAV, "hipweap/laserg.wav") \
+    X(RESOURCE_HIPWEAP_LASERRIC_WAV, "hipweap/laserric.wav") \
+    X(RESOURCE_HIPWEAP_MJOLHIT_WAV, "hipweap/mjolhit.wav") \
+    X(RESOURCE_HIPWEAP_MJOLSLAP_WAV, "hipweap/mjolslap.wav") \
+    X(RESOURCE_HIPWEAP_MJOLTINK_WAV, "hipweap/mjoltink.wav") \
+    X(RESOURCE_HIPWEAP_PROXBOMB_WAV, "hipweap/proxbomb.wav") \
+    X(RESOURCE_HIPWEAP_PROXWARN_WAV, "hipweap/proxwarn.wav") \
+    X(RESOURCE_HKNIGHT_ATTACK1_WAV, "hknight/attack1.wav") \
+    X(RESOURCE_HKNIGHT_DEATH1_WAV, "hknight/death1.wav") \
+    X(RESOURCE_HKNIGHT_IDLE_WAV, "hknight/idle.wav") \
+    X(RESOURCE_HKNIGHT_PAIN1_WAV, "hknight/pain1.wav") \
+    X(RESOURCE_HKNIGHT_SIGHT1_WAV, "hknight/sight1.wav") \
+    X(RESOURCE_HKNIGHT_SLASH1_WAV, "hknight/slash1.wav") \
+    X(RESOURCE_INFECTED_DEATH1_REV_WAV, "infected/death1_rev.wav") \
+    X(RESOURCE_ITEMS_DAMAGE_WAV, "items/damage.wav") \
+    X(RESOURCE_ITEMS_ITEMBK2_WAV, "items/itembk2.wav") \
+    X(RESOURCE_ITEMS_PROTECT3_WAV, "items/protect3.wav") \
+    X(RESOURCE_ITEMS_SUIT2_WAV, "items/suit2.wav") \
+    X(RESOURCE_KNIGHT_IDLE_WAV, "knight/idle.wav") \
+    X(RESOURCE_KNIGHT_KDEATH_WAV, "knight/kdeath.wav") \
+    X(RESOURCE_KNIGHT_KHURT_WAV, "knight/khurt.wav") \
+    X(RESOURCE_KNIGHT_KSIGHT_WAV, "knight/ksight.wav") \
+    X(RESOURCE_KNIGHT_SWORD1_WAV, "knight/sword1.wav") \
+    X(RESOURCE_KNIGHT_SWORD2_WAV, "knight/sword2.wav") \
+    X(RESOURCE_MISC_H2OHIT1_WAV, "misc/h2ohit1.wav") \
+    X(RESOURCE_MISC_LONGEXPL_WAV, "misc/longexpl.wav") \
+    X(RESOURCE_MISC_NULL_WAV, "misc/null.wav") \
+    X(RESOURCE_MISC_OUTWATER_WAV, "misc/outwater.wav") \
+    X(RESOURCE_MISC_POWER_WAV, "misc/power.wav") \
+    X(RESOURCE_MISC_QUAKEEND_WAV, "misc/quakeend.wav") \
+    X(RESOURCE_MISC_QUAKE_WAV, "misc/quake.wav") \
+    X(RESOURCE_MISC_RUNEKEY_WAV, "misc/runekey.wav") \
+    X(RESOURCE_MISC_R_TELE1_WAV, "misc/r_tele1.wav") \
+    X(RESOURCE_MISC_R_TELE2_WAV, "misc/r_tele2.wav") \
+    X(RESOURCE_MISC_R_TELE3_WAV, "misc/r_tele3.wav") \
+    X(RESOURCE_MISC_R_TELE4_WAV, "misc/r_tele4.wav") \
+    X(RESOURCE_MISC_R_TELE5_WAV, "misc/r_tele5.wav") \
+    X(RESOURCE_MISC_SECRET_WAV, "misc/secret.wav") \
+    X(RESOURCE_MISC_TALK_WAV, "misc/talk.wav") \
+    X(RESOURCE_MISC_TESLA_WAV, "misc/tesla.wav") \
+    X(RESOURCE_MISC_TRIGGER1_WAV, "misc/trigger1.wav") \
+    X(RESOURCE_MISC_WETSUIT_WAV, "misc/wetsuit.wav") \
+    X(RESOURCE_OGRE_OGDRAG_WAV, "ogre/ogdrag.wav") \
+    X(RESOURCE_OGRE_OGDTH_WAV, "ogre/ogdth.wav") \
+    X(RESOURCE_OGRE_OGIDLE2_WAV, "ogre/ogidle2.wav") \
+    X(RESOURCE_OGRE_OGIDLE_WAV, "ogre/ogidle.wav") \
+    X(RESOURCE_OGRE_OGPAIN1_WAV, "ogre/ogpain1.wav") \
+    X(RESOURCE_OGRE_OGSAWATK_WAV, "ogre/ogsawatk.wav") \
+    X(RESOURCE_OGRE_OGWAKE_WAV, "ogre/ogwake.wav") \
+    X(RESOURCE_ORB_ORB_DEATH_WAV, "orb/orb_death.wav") \
+    X(RESOURCE_ORB_ORB_PAIN_WAV, "orb/orb_pain.wav") \
+    X(RESOURCE_PENDULUM_HIT_WAV, "pendulum/hit.wav") \
+    X(RESOURCE_PLASMA_EXPLODE_WAV, "plasma/explode.wav") \
+    X(RESOURCE_PLASMA_FLIGHT_WAV, "plasma/flight.wav") \
+    X(RESOURCE_PLATS_MEDPLAT1_WAV, "plats/medplat1.wav") \
+    X(RESOURCE_PLATS_MEDPLAT2_WAV, "plats/medplat2.wav") \
+    X(RESOURCE_PLATS_PLAT1_WAV, "plats/plat1.wav") \
+    X(RESOURCE_PLATS_PLAT2_WAV, "plats/plat2.wav") \
+    X(RESOURCE_PLATS_TRAIN1_WAV, "plats/train1.wav") \
+    X(RESOURCE_PLATS_TRAIN2_WAV, "plats/train2.wav") \
+    X(RESOURCE_PLAYER_AXHIT1_WAV, "player/axhit1.wav") \
+    X(RESOURCE_PLAYER_AXHIT2_WAV, "player/axhit2.wav") \
+    X(RESOURCE_PLAYER_DEATH1_WAV, "player/death1.wav") \
+    X(RESOURCE_PLAYER_DEATH2_WAV, "player/death2.wav") \
+    X(RESOURCE_PLAYER_DEATH3_WAV, "player/death3.wav") \
+    X(RESOURCE_PLAYER_DEATH4_WAV, "player/death4.wav") \
+    X(RESOURCE_PLAYER_DEATH5_WAV, "player/death5.wav") \
+    X(RESOURCE_PLAYER_DROWN1_WAV, "player/drown1.wav") \
+    X(RESOURCE_PLAYER_DROWN2_WAV, "player/drown2.wav") \
+    X(RESOURCE_PLAYER_GASP1_WAV, "player/gasp1.wav") \
+    X(RESOURCE_PLAYER_GASP2_WAV, "player/gasp2.wav") \
+    X(RESOURCE_PLAYER_GIB_WAV, "player/gib.wav") \
+    X(RESOURCE_PLAYER_H2ODEATH_WAV, "player/h2odeath.wav") \
+    X(RESOURCE_PLAYER_H2OJUMP_WAV, "player/h2ojump.wav") \
+    X(RESOURCE_PLAYER_INH2O_WAV, "player/inh2o.wav") \
+    X(RESOURCE_PLAYER_INLAVA_WAV, "player/inlava.wav") \
+    X(RESOURCE_PLAYER_LAND2_WAV, "player/land2.wav") \
+    X(RESOURCE_PLAYER_LAND_WAV, "player/land.wav") \
+    X(RESOURCE_PLAYER_LBURN1_WAV, "player/lburn1.wav") \
+    X(RESOURCE_PLAYER_LBURN2_WAV, "player/lburn2.wav") \
+    X(RESOURCE_PLAYER_PAIN1_WAV, "player/pain1.wav") \
+    X(RESOURCE_PLAYER_PAIN2_WAV, "player/pain2.wav") \
+    X(RESOURCE_PLAYER_PAIN3_WAV, "player/pain3.wav") \
+    X(RESOURCE_PLAYER_PAIN4_WAV, "player/pain4.wav") \
+    X(RESOURCE_PLAYER_PAIN5_WAV, "player/pain5.wav") \
+    X(RESOURCE_PLAYER_PAIN6_WAV, "player/pain6.wav") \
+    X(RESOURCE_PLAYER_SLIMBRN2_WAV, "player/slimbrn2.wav") \
+    X(RESOURCE_PLAYER_TELEDTH1_WAV, "player/teledth1.wav") \
+    X(RESOURCE_PLAYER_TORNOFF2_WAV, "player/tornoff2.wav") \
+    X(RESOURCE_PLAYER_UDEATH_WAV, "player/udeath.wav") \
+    X(RESOURCE_RKNIGHT_DEATH_01_WAV, "rknight/death_01.wav") \
+    X(RESOURCE_RKNIGHT_DEATH_02_WAV, "rknight/death_02.wav") \
+    X(RESOURCE_RKNIGHT_IDLE_02_WAV, "rknight/idle_02.wav") \
+    X(RESOURCE_RKNIGHT_IDLE_03_WAV, "rknight/idle_03.wav") \
+    X(RESOURCE_RKNIGHT_IDLE_05_WAV, "rknight/idle_05.wav") \
+    X(RESOURCE_RKNIGHT_PAIN_01_WAV, "rknight/pain_01.wav") \
+    X(RESOURCE_RKNIGHT_PAIN_02_WAV, "rknight/pain_02.wav") \
+    X(RESOURCE_RKNIGHT_PAIN_03_WAV, "rknight/pain_03.wav") \
+    X(RESOURCE_RKNIGHT_SIGHT_01_WAV, "rknight/sight_01.wav") \
+    X(RESOURCE_RKNIGHT_SIGHT_03_WAV, "rknight/sight_03.wav") \
+    X(RESOURCE_RUNES_END1_WAV, "runes/end1.wav") \
+    X(RESOURCE_RUNES_END2_WAV, "runes/end2.wav") \
+    X(RESOURCE_RUNES_END3_WAV, "runes/end3.wav") \
+    X(RESOURCE_RUNES_END4_WAV, "runes/end4.wav") \
+    X(RESOURCE_SCOURGE_IDLE_WAV, "scourge/idle.wav") \
+    X(RESOURCE_SCOURGE_PAIN2_WAV, "scourge/pain2.wav") \
+    X(RESOURCE_SCOURGE_PAIN_WAV, "scourge/pain.wav") \
+    X(RESOURCE_SCOURGE_SIGHT_WAV, "scourge/sight.wav") \
+    X(RESOURCE_SCOURGE_TAILSWNG_WAV, "scourge/tailswng.wav") \
+    X(RESOURCE_SCOURGE_WALK_WAV, "scourge/walk.wav") \
+    X(RESOURCE_SHALRATH_ATTACK2_WAV, "shalrath/attack2.wav") \
+    X(RESOURCE_SHALRATH_ATTACK_WAV, "shalrath/attack.wav") \
+    X(RESOURCE_SHALRATH_DEATH_WAV, "shalrath/death.wav") \
+    X(RESOURCE_SHALRATH_IDLE_WAV, "shalrath/idle.wav") \
+    X(RESOURCE_SHALRATH_PAIN_WAV, "shalrath/pain.wav") \
+    X(RESOURCE_SHALRATH_SIGHT_WAV, "shalrath/sight.wav") \
+    X(RESOURCE_SHAMBLER_MELEE1_WAV, "shambler/melee1.wav") \
+    X(RESOURCE_SHAMBLER_MELEE2_WAV, "shambler/melee2.wav") \
+    X(RESOURCE_SHAMBLER_SATTCK1_WAV, "shambler/sattck1.wav") \
+    X(RESOURCE_SHAMBLER_SBOOM_WAV, "shambler/sboom.wav") \
+    X(RESOURCE_SHAMBLER_SDEATH_WAV, "shambler/sdeath.wav") \
+    X(RESOURCE_SHAMBLER_SHURT2_WAV, "shambler/shurt2.wav") \
+    X(RESOURCE_SHAMBLER_SIDLE_WAV, "shambler/sidle.wav") \
+    X(RESOURCE_SHAMBLER_SMACK_WAV, "shambler/smack.wav") \
+    X(RESOURCE_SHAMBLER_SSIGHT_WAV, "shambler/ssight.wav") \
+    X(RESOURCE_SHIELD_FADEOUT_WAV, "shield/fadeout.wav") \
+    X(RESOURCE_SHIELD_HIT_WAV, "shield/hit.wav") \
+    X(RESOURCE_SOLDIER_DEATH1_WAV, "soldier/death1.wav") \
+    X(RESOURCE_SOLDIER_IDLE_WAV, "soldier/idle.wav") \
+    X(RESOURCE_SOLDIER_PAIN1_WAV, "soldier/pain1.wav") \
+    X(RESOURCE_SOLDIER_PAIN2_WAV, "soldier/pain2.wav") \
+    X(RESOURCE_SOLDIER_SATTCK1_WAV, "soldier/sattck1.wav") \
+    X(RESOURCE_SOLDIER_SIGHT1_WAV, "soldier/sight1.wav") \
+    X(RESOURCE_SPHERE_SPHERE_WAV, "sphere/sphere.wav") \
+    X(RESOURCE_S_WRATH_SMASH_WAV, "s_wrath/smash.wav") \
+    X(RESOURCE_WEAPONS_AX1_WAV, "weapons/ax1.wav") \
+    X(RESOURCE_WEAPONS_BOUNCE2_WAV, "weapons/bounce2.wav") \
+    X(RESOURCE_WEAPONS_BOUNCE_WAV, "weapons/bounce.wav") \
+    X(RESOURCE_WEAPONS_CHAIN1_WAV, "weapons/chain1.wav") \
+    X(RESOURCE_WEAPONS_CHAIN2_WAV, "weapons/chain2.wav") \
+    X(RESOURCE_WEAPONS_CHAIN3_WAV, "weapons/chain3.wav") \
+    X(RESOURCE_WEAPONS_GRENADE_WAV, "weapons/grenade.wav") \
+    X(RESOURCE_WEAPONS_GUNCOCK_WAV, "weapons/guncock.wav") \
+    X(RESOURCE_WEAPONS_LHIT_WAV, "weapons/lhit.wav") \
+    X(RESOURCE_WEAPONS_LOCK4_WAV, "weapons/lock4.wav") \
+    X(RESOURCE_WEAPONS_LSTART_WAV, "weapons/lstart.wav") \
+    X(RESOURCE_WEAPONS_PKUP_WAV, "weapons/pkup.wav") \
+    X(RESOURCE_WEAPONS_ROCKET1I_WAV, "weapons/rocket1i.wav") \
+    X(RESOURCE_WEAPONS_R_EXP3_WAV, "weapons/r_exp3.wav") \
+    X(RESOURCE_WEAPONS_SGUN1_WAV, "weapons/sgun1.wav") \
+    X(RESOURCE_WEAPONS_SHOTGN2_WAV, "weapons/shotgn2.wav") \
+    X(RESOURCE_WEAPONS_SPIKE2_WAV, "weapons/spike2.wav") \
+    X(RESOURCE_WEAPONS_TINK1_WAV, "weapons/tink1.wav") \
+    X(RESOURCE_WIZARD_WATTACK_WAV, "wizard/wattack.wav") \
+    X(RESOURCE_WIZARD_WDEATH_WAV, "wizard/wdeath.wav") \
+    X(RESOURCE_WIZARD_WIDLE1_WAV, "wizard/widle1.wav") \
+    X(RESOURCE_WIZARD_WIDLE2_WAV, "wizard/widle2.wav") \
+    X(RESOURCE_WIZARD_WPAIN_WAV, "wizard/wpain.wav") \
+    X(RESOURCE_WIZARD_WSIGHT_WAV, "wizard/wsight.wav") \
+    X(RESOURCE_WRATH_WATT_WAV, "wrath/watt.wav") \
+    X(RESOURCE_WRATH_WDTHC_WAV, "wrath/wdthc.wav") \
+    X(RESOURCE_WRATH_WPAIN_WAV, "wrath/wpain.wav") \
+    X(RESOURCE_WRATH_WSEE_WAV, "wrath/wsee.wav") \
+    X(RESOURCE_ZOMBIE_IDLE_W2_WAV, "zombie/idle_w2.wav") \
+    X(RESOURCE_ZOMBIE_Z_FALL_WAV, "zombie/z_fall.wav") \
+    X(RESOURCE_ZOMBIE_Z_GIB_WAV, "zombie/z_gib.wav") \
+    X(RESOURCE_ZOMBIE_Z_HIT_WAV, "zombie/z_hit.wav") \
+    X(RESOURCE_ZOMBIE_Z_IDLE1_WAV, "zombie/z_idle1.wav") \
+    X(RESOURCE_ZOMBIE_Z_IDLE_WAV, "zombie/z_idle.wav") \
+    X(RESOURCE_ZOMBIE_Z_MISS_WAV, "zombie/z_miss.wav") \
+    X(RESOURCE_ZOMBIE_Z_PAIN1_WAV, "zombie/z_pain1.wav") \
+    X(RESOURCE_ZOMBIE_Z_PAIN_WAV, "zombie/z_pain.wav") \
+    X(RESOURCE_ZOMBIE_Z_SHOT1_WAV, "zombie/z_shot1.wav") \
+    X(RESOURCE_DISCHARGE, "discharge")
 
 typedef enum q1_runtime_name {
 #define Q1_RUNTIME_NAME_ENUM(key, text) Q1_NAME_##key,
@@ -419,6 +685,7 @@ typedef struct q1_frame_operation {
     int32_t channel;
     bool greater;
     const char *text;
+    q1_runtime_name sound;
 } q1_frame_operation;
 typedef struct q1_frame {
     const char *name;
@@ -428,7 +695,9 @@ typedef struct q1_frame {
 } q1_frame;
 typedef struct q1_species {
     qa_q1_species species;
-    const char *classname, *model, *head, *sight, *stand, *walk, *run, *missile;
+    const char *classname, *model, *head;
+    q1_runtime_name sight;
+    const char *stand, *walk, *run, *missile;
     float health, gib_health;
     qa_bounds bounds;
     uint32_t flags;
@@ -854,9 +1123,8 @@ float q1_actor_view_height(const q1_actor *, bool player);
 bool q1_target(qa_q1_game *, qa_actor_id, qa_q1_target *);
 bool q1_classnamed(qa_q1_game *, qa_actor_id, qa_string_id);
 bool q1_model(qa_q1_game *, q1_actor *, const char *, qa_error *);
-const char *q1_door_key_sound(int32_t world_type, bool accepted);
-bool q1_sound(qa_q1_game *, qa_actor_id, const char *, int32_t channel, float attenuation,
-              qa_error *);
+const char *q1_runtime_name_text(q1_runtime_name);
+q1_runtime_name q1_door_key_sound(int32_t world_type, bool accepted);
 bool q1_sound_resource(qa_q1_game *, qa_actor_id, qa_string_id, int32_t channel, float attenuation,
                        float volume, qa_error *);
 bool q1_effect(qa_q1_game *, qa_builtin_event_kind, qa_actor_id, qa_vec3, float, int32_t,
@@ -886,7 +1154,7 @@ bool q1_damage_typed(qa_q1_game *, qa_actor_id, qa_actor_id, qa_actor_id, float,
 bool q1_radius(qa_q1_game *, qa_actor_id inflictor, qa_actor_id attacker, float, qa_actor_id ignore,
                qa_q1_weapon, qa_error *);
 bool q1_radius_typed(qa_q1_game *, qa_actor_id, qa_actor_id, float, qa_actor_id, qa_q1_weapon,
-                     const char *, qa_error *);
+                     qa_string_id, qa_error *);
 bool q1_can_damage(qa_q1_game *, qa_actor_id target, qa_actor_id from, bool *, qa_error *);
 double q1_ammo_count(qa_q1_game *, qa_actor_id, qa_q1_ammo);
 int q1_weapon_declared_ammo(qa_q1_weapon);

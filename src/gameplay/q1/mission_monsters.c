@@ -100,7 +100,7 @@ static bool mummy_fire(qa_q1_game *g, q1_actor *entity, qa_vec3 offset, qa_error
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &self, error))
         return false;
-    if (!q1_sound(g, entity->id, "zombie/z_shot1.wav", 1, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_SHOT1_WAV], 1, 1, 1, error))
         return false;
     qa_vec3 origin =
         qa_vec_add(qa_vec_add(qa_vec_add(self.origin, qa_vec_scale(g->forward, offset.x)),
@@ -194,7 +194,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
         if (!q1_monster_ai(g, entity, Q1_AI_CHARGE, 8, error) || !eel_pitch(g, entity, error))
             return false;
         return action != Q1_ACTION_EEL_EEL_ATTACK8 ||
-               q1_sound(g, entity->id, "eel/eatt1.wav", 1, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_EEL_EATT1_WAV], 1, 1, 1, error);
     case Q1_ACTION_EEL_EEL_ATTACK12: {
         entity->skin = 5;
         qa_body_state self, target;
@@ -214,7 +214,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
     case Q1_ACTION_EEL_EEL_DEATH1:
         entity->skin = 0;
         entity->effects = 0;
-        return q1_sound(g, entity->id, "eel/edie3r.wav", 2, 1, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_EEL_EDIE3R_WAV], 2, 1, 1, error);
     case Q1_ACTION_EEL_EEL_DEATH11:
         entity->physics.flags -= QA_PHYSICS_SWIMMING;
         return true;
@@ -223,7 +223,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
             return true;
         m->pain_finished = g->time + 1;
         entity->skin = 0;
-        return q1_sound(g, entity->id, "eel/epain3.wav", 2, 1, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_EEL_EPAIN3_WAV], 2, 1, 1, error);
     case Q1_ACTION_SWORD_PAUSE: {
         double delay = entity->delay;
         entity->delay = 0;
@@ -235,7 +235,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
         entity->effects = 8;
         return q1_monster_ai(g, entity, Q1_AI_RUN, 14, error);
     case Q1_ACTION_INVIS_SW_SWORD_ATK1:
-        return q1_sound(g, entity->id, "knight/sword1.wav", 0, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD1_WAV], 0, 1, 1, error) &&
                q1_monster_ai(g, entity, Q1_AI_CHARGE, 14, error);
     case Q1_ACTION_INVIS_SW_SWORD_DIE7: {
         qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
@@ -264,7 +264,7 @@ bool q1_mission_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action 
         return q1_schedule(g, entity, entity->next_think - g->time + 5, Q1_THINK_MONSTER_FRAME,
                            error);
     case Q1_ACTION_MUMMY_MUMMY_PAINE12: {
-        if (!q1_sound(g, entity->id, "zombie/z_idle.wav", 2, 2, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_IDLE_WAV], 2, 2, 1, error))
             return false;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
@@ -309,7 +309,7 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
         if (q1_health(g, entity->id) <= 0 || damage < 25 || m->pain_finished > g->time)
             return true;
         m->pain_finished = g->time + 2;
-        return q1_sound(g, entity->id, "armagon/pain.wav", 2, 1, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_PAIN_WAV], 2, 1, 1, error);
     case QA_Q1_DRAGON:
         return q1_dragon_pain(g, entity, error);
     case QA_Q1_MORPH:
@@ -323,7 +323,7 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
         m->pain_finished = g->time + 2;
         return q1_monster_play(g, entity, random < 0.15f ? "overlord_pn_a01" : "overlord_pn_b01",
                                error) &&
-               q1_sound(g, entity->id, "wrath/wpain.wav", 2, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WRATH_WPAIN_WAV], 2, 1, 1, error);
     }
     case QA_Q1_LAVA_MAN:
         if (g->options.program == QA_Q1_MG3 && entity->count == 0) {
@@ -348,14 +348,14 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
         m->pain_finished = g->time + 3;
         return q1_monster_play(g, entity, random < 0.07f ? "wrath_pn_a01" : "wrath_pn_b01",
                                error) &&
-               q1_sound(g, entity->id, "wrath/wpain.wav", 2, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WRATH_WPAIN_WAV], 2, 1, 1, error);
     }
     case QA_Q1_SCOURGE:
         if (q1_random(g) * 50 > damage || m->pain_finished > g->time)
             return true;
         (void)q1_random(g);
         m->pain_finished = g->time + 2;
-        return q1_sound(g, entity->id, "scourge/pain.wav", 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SCOURGE_PAIN_WAV], 2, 1, 1, error) &&
                q1_monster_play(g, entity, "scourge_pain1", error);
     case QA_Q1_EEL:
         return q1_monster_play(g, entity, "eel_pain1", error);
@@ -400,7 +400,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (m->species->species == QA_Q1_SUPER_WRATH)
         return q1_monster_play(g, entity, "overlord_die02", error);
     if (m->species->species == QA_Q1_MORPH) {
-        if (!q1_sound(g, entity->id, "guard/death.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_GUARD_DEATH_WAV], 2, 1, 1, error))
             return false;
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
         m->next_frame = q1_frame_index("morph_die1");
@@ -419,9 +419,9 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_scourge_action(g, entity, Q1_ACTION_SCOURGE_THINK, error))
             return false;
         if (q1_health(g, entity->id) >= -35)
-            return q1_sound(g, entity->id, "scourge/pain2.wav", 2, 1, error) &&
+            return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SCOURGE_PAIN2_WAV], 2, 1, 1, error) &&
                    q1_monster_play(g, entity, "scourge_die1", error);
-        if (!q1_sound(g, entity->id, "player/udeath.wav", 2, 1, error) ||
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error) ||
             !q1_gib(g, entity, "h_scourg", true, error))
             return false;
         return q1_gib(g, entity, "gib1", false, error) && q1_gib(g, entity, "gib2", false, error) &&
@@ -453,7 +453,7 @@ bool q1_mission_monster_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     if (m->species->species == QA_Q1_MUMMY) {
         if (!qa_combat_set_health(g->services.combat, entity->id, -35, error) ||
-            !q1_sound(g, entity->id, "zombie/z_gib.wav", 2, 1, error) ||
+            !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error) ||
             !q1_gib(g, entity, "h_zombie", true, error))
             return false;
         return q1_gib(g, entity, "gib1", false, error) && q1_gib(g, entity, "gib2", false, error) &&

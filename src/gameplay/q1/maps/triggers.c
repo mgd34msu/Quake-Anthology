@@ -223,11 +223,11 @@ bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, q
     if (!entity || !entity->map)
         return true;
     state = entity->map;
-    const char *sound = state->sounds == 1   ? "misc/secret.wav"
-                        : state->sounds == 2 ? "misc/talk.wav"
-                        : state->sounds == 3 ? "misc/trigger1.wav"
-                                             : NULL;
-    if (sound && !q1_sound(g, entity->id, sound, 0, 1, error))
+    qa_string_id sound = state->sounds == 1   ? g->runtime_names[Q1_NAME_RESOURCE_MISC_SECRET_WAV]
+                        : state->sounds == 2 ? g->runtime_names[Q1_NAME_RESOURCE_MISC_TALK_WAV]
+                        : state->sounds == 3 ? g->runtime_names[Q1_NAME_RESOURCE_MISC_TRIGGER1_WAV]
+                                             : 0;
+    if (sound && !q1_sound_resource(g, entity->id, sound, 0, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -513,7 +513,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
                     error))
                 return false;
             if (q1_alive(g, other))
-                return q1_sound(g, other, "misc/talk.wav", 4, 1, error);
+                return q1_sound_resource(g, other, g->runtime_names[Q1_NAME_RESOURCE_MISC_TALK_WAV], 4, 1, 1, error);
         }
         return true;
     case Q1_MAP_MONSTERJUMP: {

@@ -143,7 +143,7 @@ static bool launch(qa_q1_game *g, q1_actor *entity, float offset, unsigned turn_
         return q1_hipnotic_launch_laser(g, entity->id, QA_Q1_WEAPON_COUNT, origin, direction, false,
                                         error);
     q1_actor *shot;
-    return q1_sound(g, entity->id, "weapons/sgun1.wav", 1, 1, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error) &&
            q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ROCKET, origin,
                                qa_vec_scale(direction, 1000), &shot, error);
 }
@@ -225,7 +225,7 @@ static bool repulse(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!entity->state.monster.source.armagon.repulse_state) {
         attack_finished(g, entity, 0.5);
         entity->state.monster.source.armagon.repulse_state = 1;
-        return q1_sound(g, entity->id, "armagon/repel.wav", 4, 1, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_REPEL_WAV], 4, 1, 1, error);
     }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
@@ -404,7 +404,7 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
         part->state.effect.count = 0;
         return q1_schedule(g, part, 0.1, Q1_THINK_ARMAGON_EXPLOSION, error);
     }
-    if (!q1_sound(g, part->id, "misc/longexpl.wav", 0, 0.5f, error))
+    if (!q1_sound_resource(g, part->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_LONGEXPL_WAV], 0, 0.5f, 1, error))
         return false;
     const char *models[] = {"gib1", "gib2", "gib3"};
     for (unsigned i = 0; i < 9; ++i)

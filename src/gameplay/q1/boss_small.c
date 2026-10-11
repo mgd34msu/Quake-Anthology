@@ -108,7 +108,7 @@ bool q1_boss_pain_lightning(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error
     qa_trace_result trace;
     if (!q1_trace(g, origin, qa_vec_add(origin, qa_vec_scale(g->forward, 1000)), e->id, false,
                   &trace, error) ||
-        !q1_sound(g, e->id, "misc/power.wav", 4, 1, error))
+        !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_POWER_WAV], 4, 1, 1, error))
         return false;
     qa_builtin_event event = {.kind = QA_BUILTIN_BEAM,
                               .family = QA_GAME_Q1,
@@ -155,7 +155,7 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
     if (m->addon.boss == Q1_BOSS_ORB)
         return q1_monster_play(g, e, "orb_death1", error);
     qa_body_state value;
-    if (!body(g, e, &value, error) || !q1_sound(g, e->id, "zombie/z_gib.wav", 2, 1, error))
+    if (!body(g, e, &value, error) || !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error))
         return false;
     float health = q1_health(g, e->id);
     static const char *const models[] = {"gib1", "gib2", "gib3"};
@@ -242,14 +242,14 @@ static bool ghost_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_
             qa_body_state state = {.origin = value.origin};
             if (!qa_world_body_write(g->services.world, timer->id, &state, error) ||
                 !q1_schedule(g, timer, .1, Q1_THINK_GHOST_BUBBLES, error) ||
-                !q1_sound(g, e->id, "player/h2odeath.wav", 2, 0, error))
+                !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_H2ODEATH_WAV], 2, 0, 1, error))
                 return false;
         } else {
-            static const char *const sounds[] = {"player/death1.wav", "player/death2.wav",
-                                                 "player/death3.wav", "player/death4.wav",
-                                                 "player/death5.wav"};
+            static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_PLAYER_DEATH1_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH2_WAV,
+                                                 Q1_NAME_RESOURCE_PLAYER_DEATH3_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH4_WAV,
+                                                 Q1_NAME_RESOURCE_PLAYER_DEATH5_WAV};
             unsigned index = (unsigned)floorf(q1_random(g) * 4 + .5f);
-            if (!q1_sound(g, e->id, sounds[index], 2, 0, error))
+            if (!q1_sound_resource(g, e->id, g->runtime_names[sounds[index]], 2, 0, 1, error))
                 return false;
         }
         if (!q1_alive(g, e->id))
@@ -373,7 +373,7 @@ static bool orb_idle(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (m->idle_until >= g->time)
         return true;
     m->idle_until = g->time + 15 + q1_random(g) * 10;
-    return q1_sound(g, e->id, "boss2/sight.wav", 2, 2, error);
+    return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_SIGHT_WAV], 2, 2, 1, error);
 }
 static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_error *error) {
     q1_monster *m = &e->state.monster;
@@ -432,7 +432,7 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
         e->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         e->physics.solid = QA_PHYSICS_BOX;
         return qa_world_body_write(g->services.world, e->id, &value, error) &&
-               q1_link(g, e, error) && q1_sound(g, e->id, "orb/orb_death.wav", 2, 1, error);
+               q1_link(g, e, error) && q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ORB_ORB_DEATH_WAV], 2, 1, 1, error);
     }
     case Q1_ACTION_ORB_ORB_DEATH3:
         m->source.boss.touch = true;
@@ -445,7 +445,7 @@ static bool orb_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_er
     }
 }
 static bool shub_grenade(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error) {
-    if (!q1_monster_face(g, e, error) || !q1_sound(g, e->id, "zombie/z_shot1.wav", 1, 1, error))
+    if (!q1_monster_face(g, e, error) || !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_SHOT1_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, e->id))
         return true;
@@ -495,7 +495,7 @@ static bool shub_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_e
     case Q1_ACTION_SZOMBIE_SZOMBIE_WALK19:
         return q1_monster_ai(g, e, Q1_AI_WALK, 0, error) &&
                (!q1_alive(g, e->id) || q1_random(g) >= .2f ||
-                q1_sound(g, e->id, "zombie/z_idle.wav", 2, 2, error));
+                q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_IDLE_WAV], 2, 2, 1, error));
     case Q1_ACTION_SZOMBIE_SZOMBIE_RUN1:
         if (!q1_monster_ai(g, e, Q1_AI_RUN, 1, error))
             return false;
@@ -533,10 +533,10 @@ static bool shub_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_e
             return false;
         if (!q1_alive(g, e->id))
             return true;
-        if (q1_random(g) < .2f && !q1_sound(g, e->id, "zombie/z_idle.wav", 2, 2, error))
+        if (q1_random(g) < .2f && !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_IDLE_WAV], 2, 2, 1, error))
             return false;
         return !q1_alive(g, e->id) || q1_random(g) <= .8f ||
-               q1_sound(g, e->id, "zombie/z_idle1.wav", 2, 2, error);
+               q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_IDLE1_WAV], 2, 2, 1, error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_ATTA1:
         return q1_monster_face(g, e, error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_ATTA13:
@@ -546,9 +546,9 @@ static bool shub_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_e
     case Q1_ACTION_SZOMBIE_SZOMBIE_ATTC12:
         return shub_grenade(g, e, qa_v3(-12, -19, 29), error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINA1:
-        return q1_sound(g, e->id, "zombie/z_pain.wav", 2, 1, error);
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_PAIN_WAV], 2, 1, 1, error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINB1:
-        return q1_sound(g, e->id, "zombie/z_pain1.wav", 2, 1, error);
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_PAIN1_WAV], 2, 1, 1, error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINA2:
         ai = Q1_AI_PAINFORWARD;
         distance = 3;
@@ -573,15 +573,15 @@ static bool shub_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_e
         distance = 6;
         break;
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINB9:
-        return q1_sound(g, e->id, "zombie/z_fall.wav", 4, 1, error);
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_FALL_WAV], 4, 1, 1, error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINE1:
-        return q1_sound(g, e->id, "zombie/z_pain.wav", 2, 1, error) &&
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_PAIN_WAV], 2, 1, 1, error) &&
                qa_combat_set_health(g->services.combat, e->id, 60, error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINE3:
         distance = 5;
         break;
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINE10:
-        if (!q1_sound(g, e->id, "zombie/z_fall.wav", 4, 1, error))
+        if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_FALL_WAV], 4, 1, 1, error))
             return false;
         e->physics.solid = QA_PHYSICS_NOT_SOLID;
         return !q1_alive(g, e->id) || q1_link(g, e, error);
@@ -590,7 +590,7 @@ static bool shub_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_e
                qa_combat_set_health(g->services.combat, e->id, 60, error);
     case Q1_ACTION_SZOMBIE_SZOMBIE_PAINE12: {
         if (!qa_combat_set_health(g->services.combat, e->id, 60, error) ||
-            !q1_sound(g, e->id, "zombie/z_idle.wav", 2, 2, error))
+            !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_IDLE_WAV], 2, 2, 1, error))
             return false;
         if (!q1_alive(g, e->id))
             return true;
@@ -670,8 +670,8 @@ bool q1_shub_grenade_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_err
     if (q1_damageable(g, other))
         return q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 10, QA_Q1_WEAPON_COUNT, error) &&
                (!q1_alive(g, e->id) ||
-                (q1_sound(g, e->id, "zombie/z_hit.wav", 1, 1, error) && q1_remove(g, e, error)));
-    if (!q1_sound(g, e->id, "zombie/z_miss.wav", 1, 1, error))
+                (q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_HIT_WAV], 1, 1, 1, error) && q1_remove(g, e, error)));
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_MISS_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, e->id))
         return true;

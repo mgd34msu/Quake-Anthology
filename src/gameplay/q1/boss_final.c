@@ -74,7 +74,7 @@ bool q1_final_pain(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!frame)
         return true;
     m->source.boss.immune = true;
-    if (!q1_sound(g, e->id, "boss1/pain.wav", 1, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_PAIN_WAV], 1, 1, 1, error))
         return false;
     m->pain_finished = g->time + 3;
     return !q1_alive(g, e->id) || q1_monster_play(g, e, frame, error);
@@ -234,7 +234,7 @@ static bool missile(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error)
                       "progs/lavaball.mdl", Q1_ROCKET, &shot, error))
         return false;
     shot->physics.angular_velocity = qa_v3(200, 100, 300);
-    if (!q1_sound(g, e->id, "boss1/throw.wav", 1, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
         return false;
     return !q1_alive(g, e->id) || q1_health(g, q1_ref_actor(g, e->state.monster.enemy)) > 0 ||
            q1_monster_play(g, e, "boss_final_idle1", error);
@@ -275,7 +275,7 @@ static bool upgrade(qa_q1_game *g, q1_actor *e, qa_error *error) {
     return true;
 }
 static bool death_start(qa_q1_game *g, q1_actor *e, qa_error *error) {
-    if (!q1_sound(g, e->id, "boss1/death.wav", 2, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_DEATH_WAV], 2, 1, 1, error))
         return false;
     qa_body_state body;
     if (!read(g, e, &body, error))
@@ -306,7 +306,7 @@ static bool death_finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return true;
         ++m->source.boss.stage;
     }
-    if (!q1_sound(g, e->id, "boss2/pop2.wav", 2, 1, error) || !q1_boss_gib_vectors(g, e, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_POP2_WAV], 2, 1, 1, error) || !q1_boss_gib_vectors(g, e, error))
         return false;
     q1_actor *timer;
     return q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], Q1_CHILD_FINAL_END, (qa_actor_id){0}, &timer, error) &&
@@ -327,9 +327,9 @@ bool q1_final_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
             g, e, e->wait > 0 && q1_random(g) < .3f ? "boss_final_mg1" : "boss_final_missile1",
             error);
     case Q1_ACTION_BOSS_FINAL_RISE1:
-        return q1_sound(g, e->id, "boss1/out1.wav", 1, 1, error);
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_OUT1_WAV], 1, 1, 1, error);
     case Q1_ACTION_BOSS_FINAL_RISE2:
-        return q1_sound(g, e->id, "boss1/sight1.wav", 2, 1, error);
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_SIGHT1_WAV], 2, 1, 1, error);
     case Q1_ACTION_BOSS_FINAL_SHOCKA10:
     case Q1_ACTION_BOSS_FINAL_SHOCKB10:
         return upgrade(g, e, error);
@@ -376,7 +376,7 @@ bool q1_final_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         qa_body_state body;
         if (!read(g, e, &body, error))
             return false;
-        return q1_sound(g, e->id, "boss1/out1.wav", 4, 1, error) &&
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_OUT1_WAV], 4, 1, 1, error) &&
                q1_effect(g, QA_BUILTIN_IMPACT, e->id, body.origin, 0, 10, error);
     }
     case Q1_ACTION_BOSS_FINAL_DEATH10:

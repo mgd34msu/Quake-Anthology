@@ -169,7 +169,7 @@ bool q1_source_rogue_rune_touch(qa_q1_game *g, q1_actor *e, qa_actor_id actor, q
     uint32_t rune = value == 1 ? 1 : value == 2 ? 2 : value == 4 ? 4 : value == 8 ? 8 : 0;
     if (!rune) return fail(error, item, "Rogue rune lost its authored source number");
     row->rune |= rune;
-    return q1_sound(g, actor, "weapons/pkup.wav", 0, 1, error) && player_current(g, actor, row, error) &&
+    return q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_PKUP_WAV], 0, 1, 1, error) && player_current(g, actor, row, error) &&
         message(g, actor, (rune & 1) ? "$qc_rune_resistance" : (rune & 2) ? "$qc_rune_strength" :
             (rune & 4) ? "$qc_rune_haste" : "$qc_rune_regeneration", row, error) &&
         entity_current(g, item, e, error) && q1_remove(g, e, error);
@@ -219,7 +219,7 @@ static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     qa_combat_state health;
     if (!qa_combat_read(g->services.combat, actor, &health, error) || !player_current(g, actor, row, error)) return false;
     if (health.health >= 100) return true;
-    if (!q1_sound(g, actor, "runes/end4.wav", 0, 1, error) || !player_current(g, actor, row, error) ||
+    if (!q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_RUNES_END4_WAV], 0, 1, 1, error) || !player_current(g, actor, row, error) ||
         !qa_combat_read(g->services.combat, actor, &health, error) || !player_current(g, actor, row, error) ||
         !qa_combat_set_health(g->services.combat, actor, fminf(100, health.health + 5), error) ||
         !player_current(g, actor, row, error)) return false;
@@ -250,9 +250,9 @@ bool qa_q1_source_rogue_runes_drop(qa_q1_game *g, qa_actor_id actor, qa_error *e
 }
 static bool noise(qa_q1_game *g, qa_actor_id actor, q1_rogue_rune_player *row,
     unsigned rune, qa_error *error) {
-    char name[24];
-    snprintf(name, sizeof(name), "runes/end%u.wav", rune);
-    return q1_sound(g, actor, name, 0, 1, error) && player_current(g, actor, row, error);
+    static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_RUNES_END1_WAV, Q1_NAME_RESOURCE_RUNES_END2_WAV, Q1_NAME_RESOURCE_RUNES_END3_WAV, Q1_NAME_RESOURCE_RUNES_END4_WAV};
+    qa_string_id name = g->runtime_names[sounds[rune - 1]];
+    return q1_sound_resource(g, actor, name, 0, 1, 1, error) && player_current(g, actor, row, error);
 }
 static bool adjust(qa_q1_game *g, qa_actor_id actor, float *amount,
     unsigned kind, qa_error *error) {

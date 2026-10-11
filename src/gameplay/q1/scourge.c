@@ -22,9 +22,9 @@ static bool locomotion_sound(qa_q1_game *g, q1_actor *entity, qa_error *error) {
          previous = monster->source.scourge.previous_silent;
     monster->source.scourge.previous_silent = silent;
     if (!silent && previous)
-        return q1_sound(g, entity->id, "misc/null.wav", 4, 2, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_NULL_WAV], 4, 2, 1, error);
     if (silent && !previous)
-        return q1_sound(g, entity->id, "scourge/walk.wav", 4, 2, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SCOURGE_WALK_WAV], 4, 2, 1, error);
     return true;
 }
 static bool side(qa_q1_game *g, q1_actor *entity, bool right, float distance, qa_error *error) {
@@ -53,7 +53,7 @@ static bool shoot(qa_q1_game *g, q1_actor *entity, float offset, qa_error *error
                          qa_vec_add(target.origin, qa_vec_scale(g->forward, 200)), origin)),
                      1000);
     q1_actor *shot;
-    if (!q1_sound(g, entity->id, "weapons/rocket1i.wav", 1, 1, error) ||
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_ROCKET1I_WAV], 1, 1, 1, error) ||
         !q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin, velocity, &shot,
                              error))
         return false;
@@ -93,7 +93,7 @@ static bool tail(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     float a = q1_random(g), b = q1_random(g), c = q1_random(g);
     if (!q1_damage(g, enemy, entity->id, entity->id, (a + b + c) * 40, QA_Q1_WEAPON_COUNT, error) ||
-        !q1_sound(g, entity->id, "shambler/smack.wav", 1, 1, error))
+        !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SMACK_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -149,7 +149,7 @@ bool q1_scourge_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                locomotion_sound(g, entity, error);
     case Q1_ACTION_HIPSCRGE_SCOURGE_WALK1:
     case Q1_ACTION_HIPSCRGE_SCOURGE_RUN1:
-        if (q1_random(g) < 0.1f && !q1_sound(g, entity->id, "scourge/idle.wav", 2, 2, error))
+        if (q1_random(g) < 0.1f && !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SCOURGE_IDLE_WAV], 2, 2, 1, error))
             return false;
         monster->source.scourge.silent = true;
         return locomotion_sound(g, entity, error) &&

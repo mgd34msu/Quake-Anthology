@@ -166,7 +166,7 @@ static bool blast(qa_q1_game *g, q1_actor *e, qa_vec3 offset, bool hands, qa_err
             if (!q1_alive(g, e->id))
                 return true;
         }
-    return hands || q1_sound(g, e->id, "zombie/z_shot1.wav", 1, 1, error);
+    return hands || q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_SHOT1_WAV], 1, 1, 1, error);
 }
 static bool claw(qa_q1_game *g, q1_actor *e, float side, qa_error *error) {
     if (!q1_ref_present(e->state.monster.enemy))
@@ -184,7 +184,7 @@ static bool claw(qa_q1_game *g, q1_actor *e, float side, qa_error *error) {
         return false;
     if (!q1_alive(g, e->id))
         return true;
-    if (!q1_sound(g, e->id, "shambler/smack.wav", 2, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SMACK_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, e->id) || side == 0)
         return true;
@@ -217,7 +217,7 @@ static bool smash(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (!q1_alive(g, e->id))
         return true;
-    if (!q1_sound(g, e->id, "shambler/smack.wav", 2, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SMACK_WAV], 2, 1, 1, error))
         return false;
     for (unsigned i = 0; i < 2; ++i) {
         if (!q1_alive(g, e->id))
@@ -234,7 +234,7 @@ static bool smash(qa_q1_game *g, q1_actor *e, qa_error *error) {
 bool q1_heavy_melee(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (e->state.monster.addon.heavy == Q1_HEAVY_RUNE_KNIGHT) {
         g->rune_knight_melee = g->rune_knight_melee % 3 + 1;
-        if (!q1_sound(g, e->id, "hknight/slash1.wav", 1, 1, error))
+        if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_SLASH1_WAV], 1, 1, 1, error))
             return false;
         return !q1_alive(g, e->id) || q1_monster_play(g, e,
                                                       g->rune_knight_melee == 1   ? "rknight_slice1"
@@ -306,7 +306,7 @@ static bool rune_shot(qa_q1_game *g, q1_actor *e, float offset, unsigned variant
     value.velocity = qa_vec_scale(direction, bloody(g) ? 600 : 400);
     shot->effects = 64;
     if (qa_world_body_write(g->services.world, shot->id, &value, error) && q1_link(g, shot, error))
-        return q1_sound(g, e->id, "hknight/attack1.wav", 1, 1, error);
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_ATTACK1_WAV], 1, 1, 1, error);
 fail:
     q1_remove(g, shot, NULL);
     return false;
@@ -444,7 +444,7 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
     }
     case Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC1:
         if (!q1_monster_face(g, e, error) ||
-            !q1_sound(g, e->id, "shambler/sattck1.wav", 1, 1, error))
+            !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SATTCK1_WAV], 1, 1, 1, error))
             return false;
         e->count = 0;
         return true;
@@ -466,19 +466,15 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         if (q1_random(g) >= .2f)
             return true;
         float r = q1_random(g);
-        return q1_sound(g, e->id,
-                        r < .3f   ? "rknight/idle_02.wav"
-                        : r < .6f ? "rknight/idle_03.wav"
-                                  : "rknight/idle_05.wav",
-                        2, 1, error);
+        return q1_sound_resource(g, e->id, r < .3f   ? g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_IDLE_02_WAV]
+                        : r < .6f ? g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_IDLE_03_WAV]
+                                  : g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_IDLE_05_WAV], 2, 1, 1, error);
     }
     case Q1_ACTION_RKNIGHT_PAIN_SOUND: {
         float r = q1_random(g);
-        return q1_sound(g, e->id,
-                        r < .3f   ? "rknight/pain_01.wav"
-                        : r < .6f ? "rknight/pain_02.wav"
-                                  : "rknight/pain_03.wav",
-                        2, 1, error);
+        return q1_sound_resource(g, e->id, r < .3f   ? g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_PAIN_01_WAV]
+                        : r < .6f ? g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_PAIN_02_WAV]
+                                  : g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_PAIN_03_WAV], 2, 1, 1, error);
     }
     case Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB6:
         if (!q1_monster_face(g, e, error))
@@ -586,7 +582,7 @@ bool q1_heavy_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float damag
         return q1_monster_play(g, e, "rknight_pain1", error);
     }
     float health = q1_health(g, e->id);
-    if (!q1_sound(g, e->id, "shambler/shurt2.wav", 2, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SHURT2_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, e->id))
         return true;
@@ -620,7 +616,7 @@ bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     float health = q1_health(g, e->id);
     if (health < (shambler ? -60 : -40)) {
-        if (!q1_sound(g, e->id, "player/udeath.wav", 2, 1, error))
+        if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error))
             return false;
         if (!q1_alive(g, e->id))
             return true;
@@ -638,11 +634,9 @@ bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
         }
         return true;
     }
-    if (!q1_sound(g, e->id,
-                  shambler             ? "shambler/sdeath.wav"
-                  : q1_random(g) < .5f ? "rknight/death_01.wav"
-                                       : "rknight/death_02.wav",
-                  2, 1, error))
+    if (!q1_sound_resource(g, e->id, shambler             ? g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SDEATH_WAV]
+                  : q1_random(g) < .5f ? g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_DEATH_01_WAV]
+                                       : g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_DEATH_02_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, e->id))
         return true;

@@ -164,7 +164,7 @@ bool q1_map_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, qa_er
     if (!q1_alive(g, corner_id) || !read_path(g, actor, &mover) || mover.pause_until > g->time)
         return true;
     if (q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_OGRE]) &&
-        !q1_sound(g, actor, "ogre/ogdrag.wav", 2, 2, error))
+        !q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_OGRE_OGDRAG_WAV], 2, 2, 1, error))
         return false;
     corner = q1_entity(g, corner_id);
     if (!corner || !corner->map || corner->map->kind != Q1_MAP_PATH || !q1_alive(g, actor))
@@ -242,7 +242,7 @@ bool q1_map_hip_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, q
         mover.path != corner->targetname)
         return true;
     if (q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_OGRE]) &&
-        !q1_sound(g, actor, "ogre/ogdrag.wav", 2, 2, error))
+        !q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_OGRE_OGDRAG_WAV], 2, 2, 1, error))
         return false;
     corner = q1_entity(g, corner_id);
     if (!corner || !corner->map || corner->map->kind != Q1_MAP_PATH || !q1_alive(g, actor))

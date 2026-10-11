@@ -411,7 +411,7 @@ bool q1_map_addon_control_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, q
         }
         if (!control(g, id) || !q1_alive(g, other))
             return true;
-        if (expires <= g->time && !q1_sound(g, other, "items/damage.wav", 3, 1, error))
+        if (expires <= g->time && !q1_sound_resource(g, other, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_DAMAGE_WAV], 3, 1, 1, error))
             return false;
         if (!control(g, id) || !q1_alive(g, other))
             return true;

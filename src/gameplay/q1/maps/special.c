@@ -235,7 +235,7 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 static bool shooter_fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     bool laser = (entity->spawnflags & 2) != 0;
-    if (!q1_sound(g, entity->id, laser ? "enforcer/enfire.wav" : "weapons/spike2.wav", 2, 1, error))
+    if (!q1_sound_resource(g, entity->id, laser ? g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFIRE_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -281,7 +281,7 @@ bool q1_map_special_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa
         return false;
     if (!q1_alive(g, entity->id) || !q1_alive(g, other))
         return true;
-    if (!q1_sound(g, other, "misc/runekey.wav", 3, 1, error))
+    if (!q1_sound_resource(g, other, g->runtime_names[Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV], 3, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -380,12 +380,10 @@ bool q1_map_special_think(qa_q1_game *g, q1_actor *entity, q1_map_action action,
                q1_map_schedule(g, entity, q1_random(g) + .5, Q1_MAP_BUBBLES_MAKE, error);
     }
     case Q1_MAP_NOISE_REPEAT: {
-        static const char *const sounds[] = {"enfire", "enfstop", "sight1", "sight2",
-                                             "sight3", "sight4",  "pain1"};
+        static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_ENFORCER_ENFIRE_WAV, Q1_NAME_RESOURCE_ENFORCER_ENFSTOP_WAV, Q1_NAME_RESOURCE_ENFORCER_SIGHT1_WAV, Q1_NAME_RESOURCE_ENFORCER_SIGHT2_WAV, Q1_NAME_RESOURCE_ENFORCER_SIGHT3_WAV, Q1_NAME_RESOURCE_ENFORCER_SIGHT4_WAV, Q1_NAME_RESOURCE_ENFORCER_PAIN1_WAV};
         for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i) {
-            char path[40];
-            snprintf(path, sizeof(path), "enforcer/%s.wav", sounds[i]);
-            if (!q1_sound(g, entity->id, path, (int32_t)i + 1, 1, error))
+            qa_string_id path = g->runtime_names[sounds[i]];
+            if (!q1_sound_resource(g, entity->id, path, (int32_t)i + 1, 1, 1, error))
                 return false;
             if (!q1_alive(g, entity->id))
                 return true;

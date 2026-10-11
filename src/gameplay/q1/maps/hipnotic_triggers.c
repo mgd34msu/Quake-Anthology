@@ -88,20 +88,16 @@ static bool use_key(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
         }
         if (!q1_message(g, activator, message, error))
             return false;
-        return !trigger(g, id) || q1_sound(g, id,
-                                           world_type == 2   ? "doors/basetry.wav"
-                                           : world_type == 1 ? "doors/runetry.wav"
-                                                             : "doors/medtry.wav",
-                                           2, 1, error);
+        return !trigger(g, id) || q1_sound_resource(g, id, world_type == 2   ? g->runtime_names[Q1_NAME_RESOURCE_DOORS_BASETRY_WAV]
+                                           : world_type == 1 ? g->runtime_names[Q1_NAME_RESOURCE_DOORS_RUNETRY_WAV]
+                                                             : g->runtime_names[Q1_NAME_RESOURCE_DOORS_MEDTRY_WAV], 2, 1, 1, error);
     }
     entity->map->touch_enabled = entity->map->use_enabled = false;
     entity->message = QA_STRING_NONE;
     if (!q1_map_schedule(g, entity, .1, Q1_MAP_REMOVE, error) ||
-        !q1_sound(g, id,
-                  world_type == 2   ? "doors/baseuse.wav"
-                  : world_type == 1 ? "doors/runeuse.wav"
-                                    : "doors/meduse.wav",
-                  2, 1, error))
+        !q1_sound_resource(g, id, world_type == 2   ? g->runtime_names[Q1_NAME_RESOURCE_DOORS_BASEUSE_WAV]
+                  : world_type == 1 ? g->runtime_names[Q1_NAME_RESOURCE_DOORS_RUNEUSE_WAV]
+                                    : g->runtime_names[Q1_NAME_RESOURCE_DOORS_MEDUSE_WAV], 2, 1, 1, error))
         return false;
     entity = trigger(g, id);
     return !entity || q1_map_targets(g, entity, activator, error);

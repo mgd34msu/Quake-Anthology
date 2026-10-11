@@ -50,7 +50,7 @@ static bool quake_rumble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->map->active_until < g->time)
         return quake_stop(g, entity, error);
     qa_actor_id id = entity->id;
-    if (!q1_sound(g, id, "equake/rumble.wav", 2, 0, error))
+    if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_EQUAKE_RUMBLE_WAV], 2, 0, 1, error))
         return false;
     entity = hazard(g, id);
     return !entity || q1_map_schedule(g, entity, 1, Q1_MAP_ROGUE_QUAKE_RUMBLE, error);
@@ -141,7 +141,7 @@ static bool saw_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
     if (!entity || !q1_alive(g, other))
         return true;
     if (entity->map->active_until < g->time) {
-        if (!q1_sound(g, id, "buzz/buzz.wav", 1, 1, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_BUZZ_BUZZ_WAV], 1, 1, 1, error))
             return false;
         entity = hazard(g, id);
         if (!entity)
@@ -193,7 +193,7 @@ static bool saw_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
 static bool trail_fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id;
     if (entity->map->kind != Q1_MAP_LTRAIL_END) {
-        if (!q1_sound(g, id, "weapons/lhit.wav", 2, 1, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LHIT_WAV], 2, 1, 1, error))
             return false;
         entity = hazard(g, id);
         if (!entity)
@@ -283,7 +283,7 @@ bool q1_map_rogue_hazard_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id othe
         if (entity->delay == 0)
             return true;
         if (entity->map->active_until < g->time) {
-            if (!q1_sound(g, id, "equake/rumble.wav", 2, 1, error))
+            if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_EQUAKE_RUMBLE_WAV], 2, 1, 1, error))
                 return false;
             entity = hazard(g, id);
             if (!entity)

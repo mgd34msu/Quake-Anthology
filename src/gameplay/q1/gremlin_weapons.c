@@ -185,7 +185,7 @@ bool q1_gremlin_fire_nail(qa_q1_game *g, q1_actor *entity, bool laser, qa_error 
         return true;
     qa_actor_id source = entity->id;
     entity->effects |= 2;
-    if (!q1_sound(g, source, "weapons/rocket1i.wav", 1, 1, error))
+    if (!q1_sound_resource(g, source, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_ROCKET1I_WAV], 1, 1, 1, error))
         return false;
     entity = q1_entity(g, source);
     if (!entity)
@@ -215,8 +215,7 @@ static bool shotgun(qa_q1_game *g, q1_actor *entity, bool double_shot, qa_error 
         return true;
     qa_actor_id source = entity->id;
     entity->effects |= 2;
-    if (!q1_sound(g, entity->id, double_shot ? "weapons/shotgn2.wav" : "weapons/guncock.wav", 1, 1,
-                  error))
+    if (!q1_sound_resource(g, entity->id, double_shot ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SHOTGN2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GUNCOCK_WAV], 1, 1, 1, error))
         return false;
     entity = q1_entity(g, source);
     if (!entity)
@@ -239,8 +238,7 @@ static bool missile(qa_q1_game *g, q1_actor *entity, bool proximity, qa_error *e
         return true;
     qa_actor_id source = entity->id;
     entity->effects |= 2;
-    if (!q1_sound(g, entity->id, proximity ? "weapons/grenade.wav" : "weapons/sgun1.wav", 1, 1,
-                  error))
+    if (!q1_sound_resource(g, entity->id, proximity ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error))
         return false;
     entity = q1_entity(g, source);
     if (!entity)
@@ -276,7 +274,7 @@ bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return qa_inventory_configure(g->services.inventory, entity->id, &entry, NULL, NULL,
                                       error) &&
                q1_radius_typed(g, entity->id, entity->id, 35 * (float)cells,
-                               g->services.physics->world_actor, QA_Q1_LIGHTNING, "discharge",
+                               g->services.physics->world_actor, QA_Q1_LIGHTNING, g->runtime_names[Q1_NAME_RESOURCE_DISCHARGE],
                                error);
     }
     entity->effects |= 2;
@@ -379,7 +377,7 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
     if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
         entity->state.monster.attack_finished = g->time + 1;
     entity->state.monster.counter = 0;
-    return weapon != QA_Q1_LIGHTNING || q1_sound(g, entity->id, "weapons/lstart.wav", 0, 1, error);
+    return weapon != QA_Q1_LIGHTNING || q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LSTART_WAV], 0, 1, 1, error);
 }
 bool q1_gremlin_backpack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id source = entity->id;

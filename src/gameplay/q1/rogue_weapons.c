@@ -153,7 +153,7 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
     if (!qa_world_body_read(g->services.world, plasma->id, &self, error))
         return false;
     float damage = (q1_weapon_shape(QA_Q1_PLASMA)->damage-10) + q1_random(g)*20;
-    if (!q1_sound(g, plasma->id, "plasma/explode.wav", 1, 1, error))
+    if (!q1_sound_resource(g, plasma->id, g->runtime_names[Q1_NAME_RESOURCE_PLASMA_EXPLODE_WAV], 1, 1, 1, error))
         return false;
     if (q1_health(g, other) != 0) {
         if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_SHAMBLER]))
@@ -203,7 +203,7 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
                                  .end = self.origin,
                                  .code = 2};
         if (!qa_builtin_emit(&g->services, &beam, error) ||
-            !q1_sound(g, plasma->id, "weapons/lhit.wav", 2, 1, error) ||
+            !q1_sound_resource(g, plasma->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LHIT_WAV], 2, 1, 1, error) ||
             !plasma_damage(g, plasma, body.origin, error)) {
             result = false;
             break;
@@ -230,7 +230,7 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
         qa_q1_target target;
         if (q1_target(g, other, &target) && (target.player || target.aimed_damage))
             return grenade_explode(g, entity, p->mini || !is_player(g, q1_ref_actor(g, entity->owner)), error);
-        if (!q1_sound(g, entity->id, "weapons/bounce.wav", 1, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_BOUNCE_WAV], 1, 1, 1, error))
             return false;
         if (qa_vec_length(body.velocity) == 0)
             entity->physics.angular_velocity = qa_v3(0, 0, 0);
@@ -281,7 +281,7 @@ bool q1_rogue_launch_plasma(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa
     projectile->physics.angular_velocity = qa_v3(300, 300, 300);
     if (!g->options.coop && !g->options.deathmatch)
         projectile->effects = 4;
-    if (!q1_sound(g, projectile->id, "plasma/flight.wav", 1, 1, error) ||
+    if (!q1_sound_resource(g, projectile->id, g->runtime_names[Q1_NAME_RESOURCE_PLASMA_FLIGHT_WAV], 1, 1, 1, error) ||
         !q1_schedule(g, projectile, q1_weapon_shape(QA_Q1_PLASMA)->launch_delay,
                       Q1_THINK_PLASMA_LAUNCH, error) ||
         !q1_launch_behavior(g, projectile, QA_BUILTIN_PLASMA, error))
@@ -307,8 +307,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         qa_vec3 origin =
             qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, 16)),
                        qa_vec_scale(g->right, powered ? 0 : (float)player->nail_side * 4));
-        if (!q1_sound(g, player->id, powered ? "weapons/spike2.wav" : "weapons/rocket1i.wav", 1, 1,
-                      error) ||
+        if (!q1_sound_resource(g, player->id, powered ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_ROCKET1I_WAV], 1, 1, 1, error) ||
             !q1_aim(g, player->id, g->forward, &direction, error) ||
             !q1_projectile_spawn(
                 g, player->id, powered ? QA_Q1_LAVA_SUPER_NAILGUN : QA_Q1_LAVA_NAILGUN,
@@ -332,7 +331,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         projectile->physics.angular_velocity = qa_v3(300, 300, 300);
         if (!q1_schedule(g, projectile, q1_weapon_shape(QA_Q1_MULTI_GRENADE)->lifetime, Q1_THINK_MULTI_SPLIT, error) ||
             !q1_launch_behavior(g, projectile, QA_BUILTIN_GRENADE, error) ||
-            !q1_sound(g, player->id, "weapons/grenade.wav", 1, 1, error))
+            !q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error))
             return false;
         return finish(g, player, q1_weapon_interval(player->weapon), false, error);
     }
@@ -387,7 +386,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
                     return false;
             }
         }
-        return q1_sound(g, player->id, "weapons/sgun1.wav", 1, 1, error) &&
+        return q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error) &&
                finish(g, player, q1_weapon_interval(player->weapon), false, error);
     }
     case QA_Q1_PLASMA: {

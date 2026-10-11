@@ -69,7 +69,7 @@ bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator
         g->maps->electrodes[i] = q1_ref_from(g, electrodes[i]->id);
     }
     g->maps->lightning_end = g->time + 1;
-    if (!q1_sound(g, entity->id, "misc/power.wav", 2, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_POWER_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -82,7 +82,7 @@ bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator
     if (!q1_alive(g, electrodes[0]->id) ||
         electrodes[0]->map->pending.mover.position != Q1_MAP_TOP || q1_health(g, boss->id) <= 0)
         return true;
-    if (!q1_sound(g, boss->id, "boss1/pain.wav", 2, 1, error))
+    if (!q1_sound_resource(g, boss->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_PAIN_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, boss->id))
         return true;
@@ -202,7 +202,7 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, oldone->id, &body, error) ||
-        !q1_sound(g, oldone->id, "boss2/pop2.wav", 2, 1, error))
+        !q1_sound_resource(g, oldone->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_POP2_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, oldone->id))
         return true;
@@ -287,13 +287,13 @@ bool q1_map_boss_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
             return false;
         if (!q1_alive(g, oldone->id))
             return true;
-        return q1_sound(g, oldone->id, "misc/r_tele1.wav", 2, 1, error) &&
+        return q1_sound_resource(g, oldone->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_R_TELE1_WAV], 2, 1, 1, error) &&
                q1_map_finale_emit(g, 2, "", error) &&
                (!q1_alive(g, entity->id) ||
                 q1_map_schedule(g, entity, 2, Q1_MAP_FINALE_THREE, error));
     }
     if (action == Q1_MAP_FINALE_THREE) {
-        if (!q1_sound(g, oldone->id, "boss2/death.wav", 2, 1, error) ||
+        if (!q1_sound_resource(g, oldone->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_DEATH_WAV], 2, 1, 1, error) ||
             !style(g, "abcdefghijklmlkjihgfedcb", error) || !q1_map_finale_emit(g, 3, "", error))
             return false;
         if (q1_alive(g, oldone->id)) {

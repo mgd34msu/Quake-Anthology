@@ -45,7 +45,7 @@ bool q1_wrath_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
                                : random < 0.65f ? "wrath_at_b01"
                                                 : "wrath_at_c01",
                                error) &&
-               q1_sound(g, entity->id, "wrath/watt.wav", 2, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WRATH_WATT_WAV], 2, 1, 1, error);
     }
     case Q1_ACTION_WRATHMISSILE_1:
         return q1_wrath_launch(g, entity, 1, error);
@@ -119,7 +119,7 @@ bool q1_wrath_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, shot->id, &body, error) ||
-        !q1_sound(g, shot->id, "weapons/r_exp3.wav", 1, 1, error) ||
+        !q1_sound_resource(g, shot->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 1, 1, 1, error) ||
         !q1_effect(g, QA_BUILTIN_EXPLOSION, shot->id, body.origin, 0, 0, error))
         return false;
     if (!q1_alive(g, shot->id))

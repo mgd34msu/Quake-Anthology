@@ -178,8 +178,7 @@ bool q1_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id direct, qa_error *e
     if (!q1_alive(g, entity->id))
         return true;
     if (projectile.kind == Q1_OGRE_GRENADE || projectile.kind == Q1_VORE_BALL)
-        return q1_sound(g, entity->id, "weapons/r_exp3.wav",
-                       projectile.kind == Q1_OGRE_GRENADE ? 2 : 1, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], projectile.kind == Q1_OGRE_GRENADE ? 2 : 1, 1, 1, error) &&
                q1_sprite_explosion(g, entity, error);
     qa_vec3 origin = rocket
                          ? qa_vec_sub(body.origin, qa_vec_scale(qa_vec_normalize(body.velocity), 8))
@@ -245,7 +244,7 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
             return q1_explode(g, entity, (qa_actor_id){0}, error);
         if (projectile.kind == Q1_OGRE_GRENADE && qa_vec_dot(body.velocity, body.velocity) == 0)
             entity->physics.angular_velocity = qa_v3(0, 0, 0);
-        return q1_sound(g, entity->id, "weapons/bounce.wav", 1, 1, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_BOUNCE_WAV], 1, 1, 1, error);
     }
     case Q1_SPIKE:
     case Q1_SUPERSPIKE:
@@ -268,7 +267,7 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     }
     case Q1_ENFORCER_LASER: {
         qa_vec3 hit = qa_vec_sub(body.origin, qa_vec_scale(qa_vec_normalize(body.velocity), 8));
-        if (!q1_sound(g, entity->id, "enforcer/enfstop.wav", 1, 3, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFSTOP_WAV], 1, 3, 1, error))
             return false;
         if (q1_health(g, other) != 0) {
             if (!q1_effect(g, QA_BUILTIN_IMPACT, other, hit, 15, 1, error) ||
@@ -284,12 +283,12 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
                              q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MUMMY_GRENADE]) ? 15 + q1_random(g) * 15
                                                                            : 10,
                              projectile.weapon, error) &&
-                   q1_sound(g, entity->id, "zombie/z_hit.wav", 1, 1, error) &&
+                   q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_HIT_WAV], 1, 1, 1, error) &&
                    q1_remove(g, entity, error);
         body.velocity = qa_v3(0, 0, 0);
         entity->physics.angular_velocity = qa_v3(0, 0, 0);
         entity->state.projectile.remove_touch = true;
-        return q1_sound(g, entity->id, "zombie/z_miss.wav", 1, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_MISS_WAV], 1, 1, 1, error) &&
                qa_world_body_write(g->services.world, entity->id, &body, error);
     case Q1_VORE_BALL:
         if (target && target->kind == Q1_MONSTER &&
@@ -343,7 +342,7 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             qa_vec3 direction = qa_vec_normalize(qa_vec_sub(
                 qa_vec_sub(target.origin, qa_vec_scale(projectile.right, 13)), body.origin));
             q1_actor *missile;
-            if (!q1_sound(g, entity->id, "wizard/wattack.wav", 1, 1, error) ||
+            if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WATTACK_WAV], 1, 1, 1, error) ||
                 !q1_projectile_spawn(g, q1_ref_actor(g, entity->owner), QA_Q1_WEAPON_COUNT, Q1_WIZARD_SPIKE,
                                      body.origin, qa_vec_scale(direction, 600), &missile, error))
                 return false;

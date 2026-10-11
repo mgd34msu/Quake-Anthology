@@ -190,7 +190,7 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         excluded = g->forward;
         excluded2 = g->right;
     }
-    if (!q1_sound(g, e->id, "weapons/spike2.wav", 1, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV], 1, 1, 1, error))
         return false;
     if (!chunk && !q1_ref_present(state->enemy) && !q1_boss_first_player(g, &state->enemy, error))
         return false;

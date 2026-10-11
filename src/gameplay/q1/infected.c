@@ -5,7 +5,7 @@ const q1_species *q1_infected_form(qa_q1_species kind, unsigned corpse) {
                                           "monster_hell_knight",
                                           "progs/hknight.mdl",
                                           "h_hellkn",
-                                          "hknight/sight1.wav",
+                                          Q1_NAME_RESOURCE_HKNIGHT_SIGHT1_WAV,
                                           "hknight_corpse1",
                                           "hknight_walk1",
                                           "hknight_corpse1_rise0",
@@ -19,7 +19,7 @@ const q1_species *q1_infected_form(qa_q1_species kind, unsigned corpse) {
                                           "monster_hell_knight",
                                           "progs/hknight.mdl",
                                           "h_hellkn",
-                                          "hknight/sight1.wav",
+                                          Q1_NAME_RESOURCE_HKNIGHT_SIGHT1_WAV,
                                           "hknight_corpse2",
                                           "hknight_walk1",
                                           "hknight_corpse2_rise0",
@@ -56,7 +56,7 @@ bool q1_infected_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action,
                    q1_schedule(g, entity, 5, Q1_THINK_MONSTER_FRAME, error);
         }
         return q1_link(g, entity, error) &&
-               q1_sound(g, entity->id, "infected/death1_rev.wav", 2, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_INFECTED_DEATH1_REV_WAV], 2, 1, 1, error);
     }
     case Q1_ACTION_INFECTED_RISE_PAIN:
         m->pain_finished = g->time + 1.5;
@@ -121,7 +121,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     float health = q1_health(g, entity->id);
     if (m->addon.transformed) {
-        if (!q1_sound(g, entity->id, "zombie/z_gib.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error))
             return false;
         if (!q1_alive(g, entity->id))
             return true;
@@ -134,7 +134,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot, "Q1 monster birth epoch exhausted");
         return false;
     }
-    if (!q1_sound(g, entity->id, "player/udeath.wav", 2, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -191,7 +191,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_alive(g, entity->id))
         return true;
     if (!qa_combat_set_health(g->services.combat, entity->id, -100, error) ||
-        !q1_sound(g, entity->id, zombie ? "zombie/z_gib.wav" : "player/udeath.wav", 2, 1, error))
+        !q1_sound_resource(g, entity->id, zombie ? g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;

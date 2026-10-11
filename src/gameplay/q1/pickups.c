@@ -1330,7 +1330,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->model = item->original_model;
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         item->hidden = false;
-        return q1_sound(g, entity->id, "items/itembk2.wav", 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_ITEMBK2_WAV], 2, 1, 1, error) &&
                q1_link(g, entity, error);
     }
     if (kind == Q1_THINK_ITEM_PLACE) {
@@ -1373,7 +1373,7 @@ bool q1_pickup_use(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->model = item->original_model;
     entity->physics.solid = QA_PHYSICS_TRIGGER;
     item->hidden = false;
-    return q1_sound(g, entity->id, "items/itembk2.wav", 2, 1, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_ITEMBK2_WAV], 2, 1, 1, error) &&
            (!q1_alive(g, entity->id) || q1_link(g, entity, error));
 }
 bool q1_drop_backpack(qa_q1_game *g, q1_actor *source, qa_q1_weapon weapon,

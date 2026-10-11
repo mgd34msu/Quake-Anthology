@@ -111,7 +111,7 @@ bool q1_map_pendulum_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
     if (!entity)
         return true;
     if (entity->map->cooldown < g->time) {
-        if (!q1_sound(g, id, "pendulum/hit.wav", 2, 1, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_PENDULUM_HIT_WAV], 2, 1, 1, error))
             return false;
         entity = pendulum(g, id);
         if (!entity)

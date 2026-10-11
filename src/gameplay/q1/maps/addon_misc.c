@@ -117,8 +117,7 @@ bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!sacrifice(g, id))
             return true;
     }
-    if (!q1_sound(g, id, q1_random(g) < .5f ? "player/gib.wav" : "player/udeath.wav", 2, 0,
-                  error))
+    if (!q1_sound_resource(g, id, q1_random(g) < .5f ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_GIB_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 0, 1, error))
         return false;
     entity = sacrifice(g, id);
     if (!entity) return true;

@@ -119,7 +119,7 @@ bool q1_major_boss_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float 
     if (!trigger || !q1_alive(g, e->id))
         return true;
     m->source.boss.immune = true;
-    if (!q1_sound(g, e->id, "orb/orb_pain.wav", 2, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ORB_ORB_PAIN_WAV], 2, 1, 1, error))
         return false;
     m->pain_finished = g->time + 2.1;
     return !q1_alive(g, e->id) || q1_monster_play(g, e, "oldnew_thrash1", error);
@@ -197,7 +197,7 @@ static bool autogun(qa_q1_game *g, q1_actor *e, float side, float offset, unsign
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
     qa_vec3 origin =
         qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, 80)), qa_vec_scale(g->right, side * 64));
-    return q1_sound(g, e->id, "weapons/spike2.wav", 1, 1, error) &&
+    return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV], 1, 1, 1, error) &&
            (!q1_alive(g, e->id) || q1_boss_autogun(g, e, origin, offset, error));
 }
 static bool lightstyle(qa_q1_game *g, q1_actor *e, const char *pattern, qa_error *error) {
@@ -210,7 +210,7 @@ static bool lightstyle(qa_q1_game *g, q1_actor *e, const char *pattern, qa_error
            qa_builtin_emit(&g->services, &event, error);
 }
 static bool finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
-    if (!q1_sound(g, e->id, "boss2/pop2.wav", 2, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_POP2_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, e->id))
         return true;
@@ -260,7 +260,7 @@ bool q1_major_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa
         m->source.boss.immune = false;
         return true;
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH1:
-        return q1_sound(g, e->id, "boss2/death.wav", 2, 1, error);
+        return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS2_DEATH_WAV], 2, 1, 1, error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH15:
         if (++m->source.boss.cycles != 3)
             m->next_frame = q1_frame_index("oldnew_death1");

@@ -33,33 +33,33 @@ bool q1_map_move(qa_q1_game *g, q1_actor *entity, qa_vec3 destination, q1_map_ac
     return !entity || !entity->map ||
            q1_map_schedule(g, entity, fmax(.1, duration), Q1_MAP_MOVE_DONE, error);
 }
-const char *q1_door_key_sound(int32_t world_type, bool accepted) {
+q1_runtime_name q1_door_key_sound(int32_t world_type, bool accepted) {
     if (accepted)
-        return world_type == 2 ? "doors/baseuse.wav" :
-            world_type == 1 ? "doors/runeuse.wav" : "doors/meduse.wav";
-    return world_type == 2 ? "doors/basetry.wav" :
-        world_type == 1 ? "doors/runetry.wav" : "doors/medtry.wav";
+        return world_type == 2 ? Q1_NAME_RESOURCE_DOORS_BASEUSE_WAV :
+            world_type == 1 ? Q1_NAME_RESOURCE_DOORS_RUNEUSE_WAV : Q1_NAME_RESOURCE_DOORS_MEDUSE_WAV;
+    return world_type == 2 ? Q1_NAME_RESOURCE_DOORS_BASETRY_WAV :
+        world_type == 1 ? Q1_NAME_RESOURCE_DOORS_RUNETRY_WAV : Q1_NAME_RESOURCE_DOORS_MEDTRY_WAV;
 }
-const char *q1_map_door_sound(const q1_actor *entity, bool moving) {
-    static const char *const sounds[][2] = {{"misc/null.wav", "misc/null.wav"},
-                                            {"doors/drclos4.wav", "doors/doormv1.wav"},
-                                            {"doors/hydro2.wav", "doors/hydro1.wav"},
-                                            {"doors/stndr2.wav", "doors/stndr1.wav"},
-                                            {"doors/ddoor2.wav", "doors/ddoor1.wav"}};
+q1_runtime_name q1_map_door_sound(const q1_actor *entity, bool moving) {
+    static const q1_runtime_name sounds[][2] = {{Q1_NAME_RESOURCE_MISC_NULL_WAV, Q1_NAME_RESOURCE_MISC_NULL_WAV},
+                                            {Q1_NAME_RESOURCE_DOORS_DRCLOS4_WAV, Q1_NAME_RESOURCE_DOORS_DOORMV1_WAV},
+                                            {Q1_NAME_RESOURCE_DOORS_HYDRO2_WAV, Q1_NAME_RESOURCE_DOORS_HYDRO1_WAV},
+                                            {Q1_NAME_RESOURCE_DOORS_STNDR2_WAV, Q1_NAME_RESOURCE_DOORS_STNDR1_WAV},
+                                            {Q1_NAME_RESOURCE_DOORS_DDOOR2_WAV, Q1_NAME_RESOURCE_DOORS_DDOOR1_WAV}};
     unsigned selection = (unsigned)entity->map->sounds;
     return sounds[selection < 5 ? selection : 0][moving];
 }
-const char *q1_map_secret_sound(const q1_actor *entity, bool moving) {
-    return entity->map->sounds == 1   ? (moving ? "doors/winch2.wav" : "doors/drclos4.wav")
-           : entity->map->sounds == 2 ? (moving ? "doors/airdoor1.wav" : "doors/airdoor2.wav")
-                                      : (moving ? "doors/basesec1.wav" : "doors/basesec2.wav");
+q1_runtime_name q1_map_secret_sound(const q1_actor *entity, bool moving) {
+    return entity->map->sounds == 1   ? (moving ? Q1_NAME_RESOURCE_DOORS_WINCH2_WAV : Q1_NAME_RESOURCE_DOORS_DRCLOS4_WAV)
+           : entity->map->sounds == 2 ? (moving ? Q1_NAME_RESOURCE_DOORS_AIRDOOR1_WAV : Q1_NAME_RESOURCE_DOORS_AIRDOOR2_WAV)
+                                      : (moving ? Q1_NAME_RESOURCE_DOORS_BASESEC1_WAV : Q1_NAME_RESOURCE_DOORS_BASESEC2_WAV);
 }
-const char *q1_map_secret_first_sound(const q1_actor *entity) {
-    return entity->map->sounds == 1 ? "doors/latch2.wav" : q1_map_secret_sound(entity,false);
+q1_runtime_name q1_map_secret_first_sound(const q1_actor *entity) {
+    return entity->map->sounds == 1 ? Q1_NAME_RESOURCE_DOORS_LATCH2_WAV : q1_map_secret_sound(entity,false);
 }
-const char *q1_map_plat_sound(const q1_actor *entity, bool moving) {
-    return entity->map->sounds == 1 ? (moving ? "plats/plat1.wav" : "plats/plat2.wav")
-                                    : (moving ? "plats/medplat1.wav" : "plats/medplat2.wav");
+q1_runtime_name q1_map_plat_sound(const q1_actor *entity, bool moving) {
+    return entity->map->sounds == 1 ? (moving ? Q1_NAME_RESOURCE_PLATS_PLAT1_WAV : Q1_NAME_RESOURCE_PLATS_PLAT2_WAV)
+                                    : (moving ? Q1_NAME_RESOURCE_PLATS_MEDPLAT1_WAV : Q1_NAME_RESOURCE_PLATS_MEDPLAT2_WAV);
 }
 static bool rearm(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return entity->max_health <= 0 ||
@@ -71,7 +71,7 @@ static q1_actor *door_master(qa_q1_game *g, q1_actor *entity) {
     return group ? q1_entity(g, q1_ref_actor(g, group->members[0])) : entity;
 }
 bool q1_map_door_down(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    if (!q1_sound(g, entity->id, q1_map_door_sound(entity, true), 2, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[q1_map_door_sound(entity, true)], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -87,7 +87,7 @@ static bool door_up(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (move->position == Q1_MAP_TOP)
         return entity->wait < 0 || (entity->spawnflags & 32) ||
                q1_map_schedule(g, entity, entity->wait, Q1_MAP_DOOR_DOWN, error);
-    if (!q1_sound(g, entity->id, q1_map_door_sound(entity, true), 2, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[q1_map_door_sound(entity, true)], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -191,9 +191,9 @@ bool qa_q1_game_map_relay_mover(qa_q1_game *g, qa_actor_id actor, bool close,
     qa_q1_game_operation_end(&operation);
     return ok;
 }
-const char *q1_map_button_sound(const q1_actor *entity) {
-    static const char *const sounds[] = {"buttons/airbut1.wav", "buttons/switch21.wav",
-                                         "buttons/switch02.wav", "buttons/switch04.wav"};
+q1_runtime_name q1_map_button_sound(const q1_actor *entity) {
+    static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_BUTTONS_AIRBUT1_WAV, Q1_NAME_RESOURCE_BUTTONS_SWITCH21_WAV,
+                                         Q1_NAME_RESOURCE_BUTTONS_SWITCH02_WAV, Q1_NAME_RESOURCE_BUTTONS_SWITCH04_WAV};
     unsigned selection = (unsigned)entity->map->sounds;
     return sounds[selection < 4 ? selection : 0];
 }
@@ -203,7 +203,7 @@ static bool button_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
         return true;
     entity->activator = q1_ref_from(g, activator);
     move->position = Q1_MAP_UP;
-    return q1_sound(g, entity->id, q1_map_button_sound(entity), 2, 1, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_button_sound(entity)], 2, 1, 1, error) &&
            (!q1_alive(g, entity->id) ||
             q1_map_move(g, entity, move->pos2, Q1_MAP_BUTTON_TOP, error));
 }
@@ -240,20 +240,18 @@ static bool secret_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
                        : qa_vec_scale(right, width * (float)(1 - (int)(entity->spawnflags & 2)));
     move->dest1 = qa_vec_add(move->pos1, side);
     move->dest2 = qa_vec_add(move->dest1, qa_vec_scale(forward, length));
-    if (!q1_sound(g, entity->id,
-                  q1_map_secret_first_sound(entity), 2, 1,
-                  error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[q1_map_secret_first_sound(entity)], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
-    return q1_sound(g, entity->id, q1_map_secret_sound(entity, true), 2, 1, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_secret_sound(entity, true)], 2, 1, 1, error) &&
            (!q1_alive(g, entity->id) ||
             q1_map_move(g, entity, move->dest1, Q1_MAP_SECRET_FIRST, error));
 }
 static bool plat_move(qa_q1_game *g, q1_actor *entity, bool up, qa_error *error) {
     q1_map_movement *move = &entity->map->pending.mover;
     move->position = up ? Q1_MAP_UP : Q1_MAP_DOWN;
-    return q1_sound(g, entity->id, q1_map_plat_sound(entity, true), 2, 1, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_plat_sound(entity, true)], 2, 1, 1, error) &&
            (!q1_alive(g, entity->id) ||
             q1_map_move(g, entity, up ? move->pos1 : move->pos2,
                         up ? Q1_MAP_PLAT_TOP : Q1_MAP_PLAT_BOTTOM, error));
@@ -555,7 +553,7 @@ static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
             return false;
         if (!q1_alive(g, other) || !q1_alive(g, id) || !q1_alive(g, master_id))
             return true;
-        if (!q1_sound(g, other, "misc/talk.wav", 2, 1, error))
+        if (!q1_sound_resource(g, other, g->runtime_names[Q1_NAME_RESOURCE_MISC_TALK_WAV], 2, 1, 1, error))
             return false;
     }
     entity = q1_entity(g, id);
@@ -572,7 +570,7 @@ static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     if (!q1_alive(g, id) || !q1_alive(g, master_id) || !q1_alive(g, other))
         return true;
     if ((silver && !has_silver) || (gold && !has_gold)) {
-        if (!q1_sound(g, id, q1_door_key_sound(g->options.world_type, false), 2, 1, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[q1_door_key_sound(g->options.world_type, false)], 2, 1, 1, error))
             return false;
         if (silver == gold || !q1_alive(g, other))
             return true;
@@ -633,9 +631,7 @@ static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_er
         if (!q1_message(g, other, text, error))
             return false;
         return !q1_alive(g, entity->id) ||
-               q1_sound(g, entity->id,
-                        q1_door_key_sound(g->options.world_type, false),
-                        2, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[q1_door_key_sound(g->options.world_type, false)], 2, 1, 1, error);
     }
     const q1_door_group *group = master->map->pending.mover.group;
     if (group) {
@@ -646,9 +642,7 @@ static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_er
         }
     } else
         master->map->touch_enabled = false;
-    return q1_sound(g, entity->id,
-                    q1_door_key_sound(g->options.world_type, true),
-                    3, 1, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[q1_door_key_sound(g->options.world_type, true)], 3, 1, 1, error) &&
            (!q1_alive(g, master->id) || door_use(g, master, other, error));
 }
 bool q1_map_mover_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
@@ -778,10 +772,10 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         return q1_map_door_down(g, entity, error);
     case Q1_MAP_DOOR_BOTTOM:
         move->position = Q1_MAP_BOTTOM;
-        return q1_sound(g, entity->id, q1_map_door_sound(entity, false), 2, 1, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_door_sound(entity, false)], 2, 1, 1, error);
     case Q1_MAP_DOOR_TOP:
         move->position = Q1_MAP_TOP;
-        return q1_sound(g, entity->id, q1_map_door_sound(entity, false), 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_door_sound(entity, false)], 2, 1, 1, error) &&
                (!q1_alive(g, entity->id) || entity->wait < 0 || (entity->spawnflags & 32) ||
                 q1_map_schedule(g, entity, entity->wait, Q1_MAP_DOOR_DOWN, error));
     case Q1_MAP_BUTTON_TOP:
@@ -807,7 +801,7 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         return true;
     case Q1_MAP_SECRET_FIRST:
     case Q1_MAP_SECRET_LAST_WAIT:
-        return q1_sound(g, entity->id, q1_map_secret_sound(entity, false), 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_secret_sound(entity, false)], 2, 1, 1, error) &&
                (!q1_alive(g, entity->id) ||
                 q1_map_schedule(g, entity, 1,
                                 action == Q1_MAP_SECRET_FIRST ? Q1_MAP_SECRET_SECOND
@@ -824,12 +818,12 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         q1_map_action done = action == Q1_MAP_SECRET_SECOND   ? Q1_MAP_SECRET_TOP
                              : action == Q1_MAP_SECRET_RETURN ? Q1_MAP_SECRET_LAST_WAIT
                                                               : Q1_MAP_SECRET_BOTTOM;
-        return q1_sound(g, entity->id, q1_map_secret_sound(entity, true), 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_secret_sound(entity, true)], 2, 1, 1, error) &&
                (!q1_alive(g, entity->id) || q1_map_move(g, entity, destination, done, error));
     }
     case Q1_MAP_SECRET_TOP:
         move->position = Q1_MAP_TOP;
-        return q1_sound(g, entity->id, q1_map_secret_sound(entity, false), 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_secret_sound(entity, false)], 2, 1, 1, error) &&
                (!q1_alive(g, entity->id) || (entity->spawnflags & 1) ||
                 q1_map_schedule(g, entity, entity->wait, Q1_MAP_SECRET_RETURN, error));
     case Q1_MAP_SECRET_BOTTOM:
@@ -837,15 +831,15 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         return q1_map_damageable(g, entity, secret_shootable(g, entity), error) &&
                qa_combat_set_health(g->services.combat, entity->id, 10000, error) &&
                (!q1_alive(g, entity->id) ||
-                q1_sound(g, entity->id, q1_map_secret_sound(entity, false), 2, 1, error));
+                q1_sound_resource(g, entity->id, g->runtime_names[q1_map_secret_sound(entity, false)], 2, 1, 1, error));
     case Q1_MAP_PLAT_DOWN:
         return plat_move(g, entity, false, error);
     case Q1_MAP_PLAT_BOTTOM:
         move->position = Q1_MAP_BOTTOM;
-        return q1_sound(g, entity->id, q1_map_plat_sound(entity, false), 2, 1, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_plat_sound(entity, false)], 2, 1, 1, error);
     case Q1_MAP_PLAT_TOP:
         move->position = Q1_MAP_TOP;
-        return q1_sound(g, entity->id, q1_map_plat_sound(entity, false), 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_plat_sound(entity, false)], 2, 1, 1, error) &&
                (!q1_alive(g, entity->id) || q1_map_schedule(g, entity, 3, Q1_MAP_PLAT_DOWN, error));
     case Q1_MAP_TRAIN_FIND:
     case Q1_MAP_TRAIN_NEXT:

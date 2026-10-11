@@ -47,7 +47,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     if (m->addon.boss == Q1_BOSS_ORB) {
         if (m->pain_finished > g->time || q1_random(g) * 200 > damage)
             return true;
-        if (!q1_sound(g, entity->id, "orb/orb_pain.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ORB_ORB_PAIN_WAV], 2, 1, 1, error))
             return false;
         m->pain_finished = g->time + 8;
         return !q1_alive(g, entity->id) || q1_monster_play(g, entity, "orb_pain1", error);
@@ -61,7 +61,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     if (m->addon.rocket_ogre) {
         if (m->pain_finished > g->time || q1_random(g) * 200 > damage)
             return true;
-        if (!q1_sound(g, entity->id, "armagon/pain.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_PAIN_WAV], 2, 1, 1, error))
             return false;
         float choice = q1_random(g);
         m->pain_finished = g->time + (choice < 0.75f ? 3 : 4);
@@ -73,7 +73,8 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
                                                                             : "ogre_paine1",
                                                            error);
     }
-    const char *frame = NULL, *sound = NULL;
+    const char *frame = NULL;
+    qa_string_id sound = 0;
     float r;
     switch (species) {
     case QA_Q1_ARMY:
@@ -85,10 +86,10 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         r = q1_random(g);
         m->pain_finished = g->time + (r < 0.2f ? 0.6 : 1.1);
         frame = r < 0.2f ? "army_pain1" : r < 0.6f ? "army_painb1" : "army_painc1";
-        sound = r < 0.2f ? "soldier/pain1.wav" : "soldier/pain2.wav";
+        sound = r < 0.2f ? g->runtime_names[Q1_NAME_RESOURCE_SOLDIER_PAIN1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_SOLDIER_PAIN2_WAV];
         break;
     case QA_Q1_DOG:
-        if (!q1_sound(g, entity->id, "dog/dpain1.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DOG_DPAIN1_WAV], 2, 1, 1, error))
             return false;
         frame = m->addon.demodog      ? (q1_random(g) > 0.5f ? "demodog_pain1" : "demodog_painb1")
                 : q1_random(g) > 0.5f ? "dog_pain1"
@@ -119,14 +120,14 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         frame = "f_pain1";
         break;
     case QA_Q1_WIZARD:
-        if (!q1_sound(g, entity->id, "wizard/wpain.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WPAIN_WAV], 2, 1, 1, error))
             return false;
         if (q1_random(g) * 70 > damage)
             return true;
         frame = "wiz_pain1";
         break;
     case QA_Q1_SHAMBLER:
-        if (!q1_sound(g, entity->id, "shambler/shurt2.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SHURT2_WAV], 2, 1, 1, error))
             return false;
         if (q1_health(g, entity->id) <= 0 || q1_random(g) * 400 > damage ||
             m->pain_finished > g->time)
@@ -138,7 +139,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         if (m->jump_touch || m->pain_finished > g->time)
             return true;
         m->pain_finished = g->time + 1;
-        if (!q1_sound(g, entity->id, "demon/dpain1.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DEMON_DPAIN1_WAV], 2, 1, 1, error))
             return false;
         if (q1_random(g) * 200 > damage)
             return true;
@@ -148,7 +149,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         if (m->pain_finished > g->time)
             return true;
         r = q1_random(g);
-        sound = "knight/khurt.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_KHURT_WAV];
         m->pain_finished = g->time + 1;
         frame = r < 0.85f ? "knight_pain1" : "knight_painb1";
         break;
@@ -157,7 +158,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         if (m->pain_finished > g->time ||
             (m->addon.infected && g->options.skill > 2 && q1_random(g) * 200 > damage))
             return true;
-        sound = r < 0.5f ? "enforcer/pain1.wav" : "enforcer/pain2.wav";
+        sound = r < 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_PAIN1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_PAIN2_WAV];
         m->pain_finished = g->time + (r < 0.7f ? 1 : 2);
         frame = r < 0.2f   ? "enf_paina1"
                 : r < 0.4f ? "enf_painb1"
@@ -167,7 +168,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     case QA_Q1_OGRE:
         if (m->pain_finished > g->time)
             return true;
-        if (!q1_sound(g, entity->id, "ogre/ogpain1.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_OGRE_OGPAIN1_WAV], 2, 1, 1, error))
             return false;
         r = q1_random(g);
         m->pain_finished = g->time + (r < 0.75f ? 1 : 2);
@@ -180,7 +181,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     case QA_Q1_HELLKNIGHT:
         if (m->pain_finished > g->time)
             return true;
-        if (!q1_sound(g, entity->id, "hknight/pain1.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_PAIN1_WAV], 2, 1, 1, error))
             return false;
         if (g->time - m->pain_finished <= 5 && q1_random(g) * 30 > damage)
             return true;
@@ -190,7 +191,7 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     case QA_Q1_SHALRATH:
         if (m->pain_finished > g->time)
             return true;
-        sound = "shalrath/pain.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_SHALRATH_PAIN_WAV];
         m->pain_finished = g->time + 3;
         frame = "shal_pain1";
         break;
@@ -206,9 +207,9 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     if (species == QA_Q1_ARMY && m->addon.enabled) {
         if (!q1_monster_play(g, entity, frame, error))
             return false;
-        return !q1_alive(g, entity->id) || !sound || q1_sound(g, entity->id, sound, 2, 1, error);
+        return !q1_alive(g, entity->id) || !sound || q1_sound_resource(g, entity->id, sound, 2, 1, 1, error);
     }
-    if (sound && !q1_sound(g, entity->id, sound, 2, 1, error))
+    if (sound && !q1_sound_resource(g, entity->id, sound, 2, 1, 1, error))
         return false;
     return !q1_alive(g, entity->id) || q1_monster_play(g, entity, frame, error);
 }
@@ -294,9 +295,7 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity = q1_entity(g, source);
     if (!entity)
         return true;
-    if (!q1_sound(g, source,
-                  spec->species == QA_Q1_ZOMBIE ? "zombie/z_gib.wav" : "player/udeath.wav", 2, 1,
-                  error))
+    if (!q1_sound_resource(g, source, spec->species == QA_Q1_ZOMBIE ? g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error))
         return false;
     entity = q1_entity(g, source);
     if (!entity)
@@ -384,32 +383,33 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         return q1_mission_monster_die(g, entity, error);
     if (q1_health(g, entity->id) < spec->gib_health && spec->head)
         return gib_monster(g, entity, error);
-    const char *sound = NULL, *frame = NULL;
+    qa_string_id sound = 0;
+    const char *frame = NULL;
     switch (spec->species) {
     case QA_Q1_ARMY:
-        sound = "soldier/death1.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_SOLDIER_DEATH1_WAV];
         break;
     case QA_Q1_DOG:
-        sound = "dog/ddeath.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_DOG_DDEATH_WAV];
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
         break;
     case QA_Q1_KNIGHT:
-        sound = "knight/kdeath.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_KDEATH_WAV];
         break;
     case QA_Q1_ENFORCER:
-        sound = "enforcer/death1.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_DEATH1_WAV];
         break;
     case QA_Q1_DEMON:
         frame = "demon1_die1";
         break;
     case QA_Q1_OGRE:
-        sound = m->addon.rocket_ogre ? "armagon/sight2.wav" : "ogre/ogdth.wav";
+        sound = m->addon.rocket_ogre ? g->runtime_names[Q1_NAME_RESOURCE_ARMAGON_SIGHT2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_OGRE_OGDTH_WAV];
         break;
     case QA_Q1_HELLKNIGHT:
-        sound = "hknight/death1.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_DEATH1_WAV];
         break;
     case QA_Q1_SHAMBLER:
-        sound = "shambler/sdeath.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SDEATH_WAV];
         frame = "sham_death1";
         break;
     case QA_Q1_WIZARD:
@@ -417,7 +417,7 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         frame = "wiz_death1";
         break;
     case QA_Q1_SHALRATH:
-        sound = "shalrath/death.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_SHALRATH_DEATH_WAV];
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
         frame = "shal_death1";
         break;
@@ -437,7 +437,7 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
                      "Q1 monster death controller not admitted");
         return false;
     }
-    if (sound && !q1_sound(g, entity->id, sound, 2, 1, error))
+    if (sound && !q1_sound_resource(g, entity->id, sound, 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;

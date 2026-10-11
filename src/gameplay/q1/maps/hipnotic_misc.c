@@ -382,7 +382,7 @@ bool q1_map_hip_misc_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator,
         if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
             !q1_effect(g, QA_BUILTIN_TELEPORT, entity->id, body.origin, 1, 0, error))
             return false;
-        return !q1_alive(g, entity->id) || q1_sound(g, entity->id, "misc/r_tele1.wav", 2, 1, error);
+        return !q1_alive(g, entity->id) || q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_R_TELE1_WAV], 2, 1, 1, error);
     }
     case Q1_MAP_RUBBLE_SOURCE:
         return rubble(g, entity, error);
@@ -408,7 +408,7 @@ bool q1_map_hip_misc_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
         return false;
     if (!q1_alive(g, entity->id))
         return true;
-    if (!q1_sound(g, entity->id, "zombie/z_hit.wav", 1, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_HIT_WAV], 1, 1, 1, error))
         return false;
     if (q1_alive(g, entity->id))
         entity->map->cooldown = local_time + .1;
@@ -453,7 +453,7 @@ static bool after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (g->maps->earthquake_end <= g->time) {
         if (!g->maps->quake_active)
             return true;
-        if (!q1_sound(g, actor, "misc/quakeend.wav", 2, 0, error))
+        if (!q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_MISC_QUAKEEND_WAV], 2, 0, 1, error))
             return false;
         if (!q1_alive(g, world) || !q1_alive(g, actor))
             return true;
@@ -461,7 +461,7 @@ static bool after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         return true;
     }
     if (!g->maps->quake_active) {
-        if (!q1_sound(g, actor, "misc/quake.wav", 2, 0, error))
+        if (!q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_MISC_QUAKE_WAV], 2, 0, 1, error))
             return false;
         if (!q1_alive(g, world) || !q1_alive(g, actor))
             return true;

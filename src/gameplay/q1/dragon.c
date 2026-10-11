@@ -166,12 +166,12 @@ bool q1_dragon_fireball_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, 
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, shot->id, &body, error))
         return false;
-    return q1_sound(g, shot->id, "weapons/r_exp3.wav", 1, 1, error) &&
+    return q1_sound_resource(g, shot->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 1, 1, 1, error) &&
            q1_effect(g, QA_BUILTIN_EXPLOSION, shot->id, body.origin, 5, 228, error) &&
            q1_remove(g, shot, error);
 }
 static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    if (!q1_sound(g, entity->id, "dragon/attack.wav", 2, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DRAGON_ATTACK_WAV], 2, 1, 1, error))
         return false;
     qa_body_state body, target = {0};
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
@@ -293,7 +293,7 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         for (unsigned i = 0; i < 3; ++i)
             if (!q1_gib_at(g, entity->id, body.origin, -100, models[i], error))
                 return false;
-        if (!q1_sound(g, entity->id, "player/tornoff2.wav", 4, 0, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TORNOFF2_WAV], 4, 0, 1, error))
             return false;
         m->next_frame = q1_frame_index("dragon_boom2");
         return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
@@ -360,7 +360,7 @@ bool q1_dragon_pain(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
     if (m->pain_finished > g->time || q1_random(g) >= 0.25f)
         return true;
-    if (!stop_attack(g, entity, error) || !q1_sound(g, entity->id, "dragon/pain.wav", 2, 1, error))
+    if (!stop_attack(g, entity, error) || !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DRAGON_PAIN_WAV], 2, 1, 1, error))
         return false;
     m->pain_finished = g->time + 2;
     static const char *frames[] = {"dragon_painA1", "dragon_painF1", "dragon_painE1",
@@ -479,7 +479,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
         body.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
         entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&
-               q1_sound(g, entity->id, "dragon/death.wav", 2, 0, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DRAGON_DEATH_WAV], 2, 0, 1, error);
     }
     case Q1_ACTION_DRAGON_DRAGON_DEATH21:
         return finish_death(g, entity, 39, error);

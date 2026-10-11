@@ -116,7 +116,7 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
     e = campaign_actor(g, id);
     if (!e || !q1_alive(g, other))
         return true;
-    if (!q1_sound(g, other, "misc/runekey.wav", 3, 1, error))
+    if (!q1_sound_resource(g, other, g->runtime_names[Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV], 3, 1, 1, error))
         return false;
     if (!campaign_actor(g, id) || !q1_alive(g, other))
         return true;

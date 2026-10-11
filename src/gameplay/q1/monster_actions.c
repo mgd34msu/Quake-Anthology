@@ -80,10 +80,10 @@ bool q1_monster_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
             if (!q1_damage(g, other, entity->id, entity->id,
                            (tar || dog ? 10 : 40) + 10 * q1_random(g), QA_Q1_WEAPON_COUNT, error))
                 return false;
-            if (tar && !q1_sound(g, entity->id, "blob/hit1.wav", 1, 1, error))
+            if (tar && !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BLOB_HIT1_WAV], 1, 1, 1, error))
                 return false;
         }
-    } else if (tar && !q1_sound(g, entity->id, "blob/land1.wav", 1, 1, error))
+    } else if (tar && !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BLOB_LAND1_WAV], 1, 1, 1, error))
         return false;
     bool grounded;
     if (!qa_physics_check_bottom(g->services.physics, entity->id, body.origin, &grounded, error))
@@ -150,7 +150,7 @@ static bool knight_shot(qa_q1_game *g, q1_actor *entity, int offset, qa_error *e
     q1_actor *missile;
     return q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_KNIGHT_SPIKE, origin,
                                qa_vec_scale(direction, 300), &missile, error) &&
-           q1_sound(g, entity->id, "hknight/attack1.wav", 1, 1, error);
+           q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_ATTACK1_WAV], 1, 1, 1, error);
 }
 static bool wizard_fast(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id enemy = q1_ref_actor(g, entity->state.monster.enemy);
@@ -158,7 +158,7 @@ static bool wizard_fast(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     qa_body_state body;
     if (!state_body(g, entity, &body, error) ||
-        !q1_sound(g, entity->id, "wizard/wattack.wav", 1, 1, error))
+        !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WATTACK_WAV], 1, 1, 1, error))
         return false;
     axes(g, body);
     qa_vec3 forward = g->forward, right = g->right;
@@ -229,7 +229,7 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
     if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_LAVA_BALL, origin,
                              qa_vec_scale(qa_vec_normalize(qa_vec_sub(destination, origin)), 300),
                              &missile, error) ||
-        !q1_sound(g, entity->id, "boss1/throw.wav", 1, 1, error))
+        !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
         return false;
     return q1_health(g, q1_ref_actor(g, entity->state.monster.enemy)) > 0 ||
            q1_monster_play(g, entity, "boss_idle1", error);
@@ -313,9 +313,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                                                               : 5,
                              error);
     case Q1_ACTION_KNIGHT_RUNATK1:
-        return q1_sound(g, entity->id,
-                        q1_random(g) > 0.5f ? "knight/sword2.wav" : "knight/sword1.wav", 1, 1,
-                        error) &&
+        return q1_sound_resource(g, entity->id, q1_random(g) > 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD1_WAV], 1, 1, 1, error) &&
                q1_monster_ai(g, entity, Q1_AI_CHARGE, 20, error);
     case Q1_ACTION_ENF_ATK6:
     case Q1_ACTION_ENF_ATK10:
@@ -323,7 +321,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             return true;
         axes(g, body);
         return q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error) &&
-               q1_sound(g, entity->id, "enforcer/enfire.wav", 1, 1, error) &&
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFIRE_WAV], 1, 1, 1, error) &&
                q1_projectile_spawn(
                    g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ENFORCER_LASER,
                    qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(g->forward, 30),
@@ -362,7 +360,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             if (!q1_monster_face(g, entity, error) || !state_body(g, entity, &body, error))
                 return false;
         }
-        return q1_sound(g, entity->id, "soldier/sattck1.wav", 1, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SOLDIER_SATTCK1_WAV], 1, 1, 1, error) &&
                q1_bullets(g, entity->id,
                           qa_vec_normalize(qa_vec_sub(
                               qa_vec_sub(target.origin, qa_vec_scale(target.velocity, 0.2f)),
@@ -371,7 +369,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                           QA_Q1_WEAPON_COUNT, error) &&
                q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error);
     case Q1_ACTION_DOG_BITE:
-        return q1_sound(g, entity->id, "dog/dattack1.wav", 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DOG_DATTACK1_WAV], 2, 1, 1, error) &&
                q1_monster_melee(g, entity, 100, 8, 3, true, error);
     case Q1_ACTION_ROTTWEILER_DOG_LEAP2:
         return jump(g, entity, false, true, error);
@@ -390,7 +388,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             return true;
         if (!q1_can_damage(g, q1_ref_actor(g, m->enemy), entity->id, &visible, error))
             return false;
-        return !visible || (q1_sound(g, entity->id, "demon/dhit2.wav", 1, 1, error) &&
+        return !visible || (q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DEMON_DHIT2_WAV], 1, 1, 1, error) &&
                             q1_damage(g, q1_ref_actor(g, m->enemy), entity->id, entity->id, 10 + 5 * q1_random(g),
                                       QA_Q1_WEAPON_COUNT, error) &&
                             meat(g, entity, action == Q1_ACTION_DEMON1_ATTA5 ? 200 : -200, error));
@@ -428,7 +426,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             qa_vec_scale(qa_vec_normalize(qa_vec_sub(target.origin, body.origin)), 600);
         velocity.z = 200;
         return q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error) &&
-               q1_sound(g, entity->id, "weapons/grenade.wav", 1, 1, error) &&
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error) &&
                q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_OGRE_GRENADE, body.origin,
                                    velocity, &missile, error);
     }
@@ -439,7 +437,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     }
     case Q1_ACTION_HKNIGHT_WALK1:
     case Q1_ACTION_HKNIGHT_RUN1:
-        if (q1_random(g) < 0.2f && !q1_sound(g, entity->id, "hknight/idle.wav", 2, 1, error))
+        if (q1_random(g) < 0.2f && !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_IDLE_WAV], 2, 1, 1, error))
             return false;
         if (!q1_monster_ai(g, entity, action == Q1_ACTION_HKNIGHT_WALK1 ? Q1_AI_WALK : Q1_AI_RUN,
                            action == Q1_ACTION_HKNIGHT_WALK1 ? 2 : 20, error))
@@ -464,9 +462,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                 m->attack_finished = g->time + 3;
             if (!q1_monster_play(g, entity, "hknight_run1", error))
                 return false;
-        } else if (!q1_sound(g, entity->id,
-                             q1_random(g) > 0.5f ? "knight/sword2.wav" : "knight/sword1.wav", 1, 1,
-                             error))
+        } else if (!q1_sound_resource(g, entity->id, q1_random(g) > 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD1_WAV], 1, 1, 1, error))
             return false;
         return q1_monster_ai(g, entity, Q1_AI_CHARGE, 23, error) &&
                q1_monster_ai(g, entity, Q1_AI_MELEE, 0, error);
@@ -478,7 +474,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (!q1_can_damage(g, q1_ref_actor(g, m->enemy), entity->id, &visible, error))
             return false;
         return !visible || (q1_monster_melee(g, entity, 100, 40, 3, false, error) &&
-                            q1_sound(g, entity->id, "shambler/smack.wav", 2, 1, error) &&
+                            q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SMACK_WAV], 2, 1, 1, error) &&
                             meat(g, entity, 1, error) && meat(g, entity, 1, error));
     case Q1_ACTION_SHAM_SWINGL7:
     case Q1_ACTION_SHAM_SWINGR7:
@@ -488,7 +484,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             qa_vec_length(qa_vec_sub(body.origin, target.origin)) > 100)
             return true;
         return q1_monster_melee(g, entity, 100, 20, 3, false, error) &&
-               q1_sound(g, entity->id, "shambler/smack.wav", 2, 1, error) &&
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SMACK_WAV], 2, 1, 1, error) &&
                meat(g, entity, action == Q1_ACTION_SHAM_SWINGL7 ? 250 : -250, error);
     case Q1_ACTION_SHAM_SWINGL9:
     case Q1_ACTION_SHAM_SWINGR9:
@@ -517,7 +513,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (missile && !q1_remove(g, missile, error))
             return false;
         return lightning(g, entity, error) &&
-               q1_sound(g, entity->id, "shambler/sboom.wav", 1, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SHAMBLER_SBOOM_WAV], 1, 1, 1, error);
     case Q1_ACTION_SHAM_MAGIC9:
     case Q1_ACTION_SHAM_MAGIC10:
         return lightning(g, entity, error);
@@ -528,9 +524,9 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (m->idle_until < g->time) {
             m->idle_until = g->time + 2;
             if (r > 4.5f)
-                return q1_sound(g, entity->id, "wizard/widle1.wav", 2, 2, error);
+                return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WIDLE1_WAV], 2, 2, 1, error);
             if (r < 1.5f)
-                return q1_sound(g, entity->id, "wizard/widle2.wav", 2, 2, error);
+                return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WIDLE2_WAV], 2, 2, 1, error);
         }
         return true;
     }
@@ -552,7 +548,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         body.velocity = qa_v3(x, y, z);
         body.ground = (qa_actor_reference){0};
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&
-               q1_sound(g, entity->id, "wizard/wdeath.wav", 2, 1, error);
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WDEATH_WAV], 2, 1, 1, error);
     }
     case Q1_ACTION_SHAL_ATTACK9: {
         if (!has_target)
@@ -565,7 +561,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             return false;
         missile->state.projectile.enemy = m->enemy;
         return q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error) &&
-               q1_sound(g, entity->id, "shalrath/attack2.wav", 1, 1, error) &&
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SHALRATH_ATTACK2_WAV], 1, 1, 1, error) &&
                q1_schedule(g, missile,
                            fmax(0.1, qa_vec_length(qa_vec_sub(target.origin, body.origin)) * 0.002),
                            Q1_THINK_VORE, error);
@@ -579,7 +575,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     case Q1_ACTION_TBABY_DIE2:
         return q1_radius(g, entity->id, entity->id, 120, (qa_actor_id){0}, QA_Q1_WEAPON_COUNT,
                          error) &&
-               q1_sound(g, entity->id, "blob/death1.wav", 2, 1, error) &&
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BLOB_DEATH1_WAV], 2, 1, 1, error) &&
                q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id,
                          qa_vec_sub(body.origin, qa_vec_scale(qa_vec_normalize(body.velocity), 8)),
                          0, 1, error) &&
@@ -589,7 +585,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     case Q1_ACTION_F_ATTACK15:
         if (!has_target || qa_vec_length(qa_vec_sub(body.origin, target.origin)) > 60)
             return true;
-        return q1_sound(g, entity->id, "fish/bite.wav", 2, 1, error) &&
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_FISH_BITE_WAV], 2, 1, 1, error) &&
                q1_monster_melee(g, entity, 60, 3, 2, false, error);
     case Q1_ACTION_ZOMBIE_CRUC2:
     case Q1_ACTION_ZOMBIE_CRUC3:
@@ -612,7 +608,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(g->forward, offset.x),
                                                qa_vec_add(qa_vec_scale(g->right, offset.y),
                                                           qa_vec_scale(g->up, offset.z - 24))));
-        if (!q1_sound(g, entity->id, "zombie/z_shot1.wav", 1, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_SHOT1_WAV], 1, 1, 1, error))
             return false;
         axes(g, body);
         qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(qa_vec_sub(target.origin, origin)), 600);
@@ -627,7 +623,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
                q1_schedule(g, entity, 5.1, Q1_THINK_MONSTER_FRAME, error);
     case Q1_ACTION_ZOMBIE_PAINE12:
         if (!qa_combat_set_health(g->services.combat, entity->id, 60, error) ||
-            !q1_sound(g, entity->id, "zombie/z_idle.wav", 2, 2, error))
+            !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_IDLE_WAV], 2, 2, 1, error))
             return false;
         entity->physics.solid = QA_PHYSICS_BOX;
         if (!qa_physics_walk_move(g->services.physics, entity->id, 0, 0, (float)g->elapsed, true,

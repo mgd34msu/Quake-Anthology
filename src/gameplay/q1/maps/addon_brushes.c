@@ -411,7 +411,7 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
             return false;
         if (!brush(g,id))
             return true;
-        if (!q1_sound(g,id,"weapons/r_exp3.wav",0,1,error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 0, 1, 1, error))
             return false;
         if (!brush(g,id))
             return true;

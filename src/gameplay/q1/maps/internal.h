@@ -587,11 +587,11 @@ bool q1_map_trigger_use(qa_q1_game *, q1_actor *, qa_actor_id other, qa_actor_id
                         qa_error *);
 bool q1_map_multi_fire(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_is_mover(q1_map_kind);
-const char *q1_map_door_sound(const q1_actor *, bool moving);
-const char *q1_map_secret_sound(const q1_actor *, bool moving);
-const char *q1_map_secret_first_sound(const q1_actor *);
-const char *q1_map_button_sound(const q1_actor *);
-const char *q1_map_plat_sound(const q1_actor *, bool moving);
+q1_runtime_name q1_map_door_sound(const q1_actor *, bool moving);
+q1_runtime_name q1_map_secret_sound(const q1_actor *, bool moving);
+q1_runtime_name q1_map_secret_first_sound(const q1_actor *);
+q1_runtime_name q1_map_button_sound(const q1_actor *);
+q1_runtime_name q1_map_plat_sound(const q1_actor *, bool moving);
 bool q1_map_mover_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_mover_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_mover_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

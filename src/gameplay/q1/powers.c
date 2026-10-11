@@ -134,12 +134,13 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
     uint64_t frame_ns, qa_error *error) {
     static const struct {
         qa_q1_power power;
-        const char *warning, *lost, *sound;
-    } timers[] = {{QA_Q1_WETSUIT, "$qc_wetsuit_fade", "", "items/suit2.wav"},
-                  {QA_Q1_EMPATHY, "$qc_empathy_fade", "", "items/suit2.wav"},
-                  {QA_Q1_SHIELD, "$qc_shield_failing", "$qc_shield_lost", "shield/fadeout.wav"},
-                  {QA_Q1_ANTIGRAV, "$qc_antigrav_failing", "$qc_antigrav_lost", "belt/fadeout.wav"},
-                  {QA_Q1_LAVA_SUIT, "$mg3_qc_lavasuit_wearing_out", "", "items/suit2.wav"}};
+        const char *warning, *lost;
+        q1_runtime_name sound;
+    } timers[] = {{QA_Q1_WETSUIT, "$qc_wetsuit_fade", "", Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV},
+                  {QA_Q1_EMPATHY, "$qc_empathy_fade", "", Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV},
+                  {QA_Q1_SHIELD, "$qc_shield_failing", "$qc_shield_lost", Q1_NAME_RESOURCE_SHIELD_FADEOUT_WAV},
+                  {QA_Q1_ANTIGRAV, "$qc_antigrav_failing", "$qc_antigrav_lost", Q1_NAME_RESOURCE_BELT_FADEOUT_WAV},
+                  {QA_Q1_LAVA_SUIT, "$mg3_qc_lavasuit_wearing_out", "", Q1_NAME_RESOURCE_ITEMS_SUIT2_WAV}};
     qa_actor_id actor = player->id;
     if (!q1_enable_combos(g, player, error))
         return false;
@@ -154,7 +155,7 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
         if (expires < seconds + 3 && !(player->power_warned & (1u << power))) {
             if (!q1_message(g, actor, timers[i].warning, error) ||
                 !timer_current(g, actor, player, error) ||
-                !q1_sound(g, actor, timers[i].sound, 0, 1, error) ||
+                !q1_sound_resource(g, actor, g->runtime_names[timers[i].sound], 0, 1, 1, error) ||
                 !timer_current(g, actor, player, error))
                 return false;
             player->power_warned |= (uint16_t)(1u << power);
@@ -205,7 +206,7 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, double seconds,
         if (water >= 2) {
             if (player->scuba_at < seconds) {
                 player->scuba_at = seconds + 7;
-                if (!q1_sound(g, player->id, "misc/wetsuit.wav", 4, 1, error))
+                if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_WETSUIT_WAV], 4, 1, 1, error))
                     return false;
                 if (!q1_alive(g, player->id))
                     return true;
@@ -293,7 +294,7 @@ static bool shield_hit(qa_q1_game *g, q1_player *player, qa_error *error) {
     }
     if (player->shield_sound_at < g->time) {
         player->shield_sound_at = g->time + 0.5;
-        return q1_sound(g, player->id, "shield/hit.wav", 3, 1, error);
+        return q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_SHIELD_HIT_WAV], 3, 1, 1, error);
     }
     return true;
 }
@@ -461,7 +462,7 @@ bool q1_power_think(qa_q1_game *g, q1_actor *entity, q1_think_kind kind, qa_erro
         return q1_remove(g, entity, error);
     if (entity->wait < g->time) {
         entity->wait = (float)(g->time + 4);
-        if (!q1_sound(g, entity->id, "sphere/sphere.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_SPHERE_SPHERE_WAV], 2, 1, 1, error))
             return false;
         if (!q1_alive(g, entity->id))
             return true;

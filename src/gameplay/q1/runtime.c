@@ -5,6 +5,15 @@
 #include "wire_internal.h"
 #include <float.h>
 
+#define Q1_RUNTIME_NAME_TEXT(key, text) text,
+static const char *const q1_runtime_names[] = {
+    Q1_RUNTIME_NAME_LIST(Q1_RUNTIME_NAME_TEXT)
+};
+#undef Q1_RUNTIME_NAME_TEXT
+const char *q1_runtime_name_text(q1_runtime_name name) {
+    return q1_runtime_names[name];
+}
+
 static const char *const weapon_names[QA_Q1_WEAPON_COUNT] = {"q1:weapon/axe",
                                                              "q1:weapon/shotgun",
                                                              "q1:weapon/supershotgun",
@@ -412,12 +421,6 @@ bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, 
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
     return qa_builtin_emit(&g->services, &event, error);
 }
-bool q1_sound(qa_q1_game *g, qa_actor_id actor, const char *path, int32_t channel,
-              float attenuation, qa_error *error) {
-    qa_string_id resource;
-    return qa_builtin_resource(&g->services, path, &resource, error) &&
-           q1_sound_resource(g, actor, resource, channel, attenuation, 1, error);
-}
 bool q1_effect(qa_q1_game *g, qa_builtin_event_kind kind, qa_actor_id actor, qa_vec3 origin,
                float value, int32_t code, qa_error *error) {
     if (g->destroy_pending)
@@ -699,13 +702,8 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     g->time = (double)g->time_ns / 1000000000.0;
     if (host)
         g->host = *host;
-    static const char *const runtime_names[] = {
-#define Q1_RUNTIME_NAME_TEXT(key, text) text,
-        Q1_RUNTIME_NAME_LIST(Q1_RUNTIME_NAME_TEXT)
-#undef Q1_RUNTIME_NAME_TEXT
-    };
     for (unsigned i = 0; i < Q1_NAME_COUNT; ++i)
-        if (!qa_strings_intern_cstr(qa_session_strings(services->session), runtime_names[i], &g->runtime_names[i], error))
+        if (!qa_strings_intern_cstr(qa_session_strings(services->session), q1_runtime_names[i], &g->runtime_names[i], error))
             goto fail;
     if (!qa_builtin_resource(services, q1_body_queue_classname(g), &g->body_queue_class, error)) goto fail;
     if (!qa_targets_bind_field_keys(qa_session_strings(services->session), g->field_keys, error))
@@ -1340,10 +1338,10 @@ static bool radius_prepare(void *context, qa_damage_request *request, bool *allo
 }
 bool q1_radius(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker, float amount,
                qa_actor_id ignore, qa_q1_weapon weapon, qa_error *error) {
-    return q1_radius_typed(g, inflictor, attacker, amount, ignore, weapon, NULL, error);
+    return q1_radius_typed(g, inflictor, attacker, amount, ignore, weapon, 0, error);
 }
 bool q1_radius_typed(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker, float amount,
-                     qa_actor_id ignore, qa_q1_weapon weapon, const char *cause, qa_error *error) {
+                     qa_actor_id ignore, qa_q1_weapon weapon, qa_string_id cause, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, inflictor, &body, error))
         return false;
@@ -1362,9 +1360,7 @@ bool q1_radius_typed(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker,
                                 .adjust = radius_adjust,
                                 .prepare = radius_prepare};
     radius.trace.q1_move = QA_Q1_MOVE_NO_MONSTERS;
-    if (cause &&
-        !qa_builtin_resource(&g->services, cause, &radius.attack.cause.source.q1.death_type, error))
-        return false;
+    radius.attack.cause.source.q1.death_type = cause;
     qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
@@ -1918,7 +1914,7 @@ bool qa_q1_game_water_transition(qa_q1_game *g, qa_actor_id actor, qa_error *err
     if (value > -2 || value < -6) value = -1;
     qa_q1_water_transition_result transition =
         qa_q1_water_transition(entity->physics.water_type, value);
-    if (transition.splash && !q1_sound(g, actor, "misc/h2ohit1.wav", 0, 1, error))
+    if (transition.splash && !q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_MISC_H2OHIT1_WAV], 0, 1, 1, error))
         return false;
     entity = q1_entity(g, actor);
     if (entity) {

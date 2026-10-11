@@ -150,7 +150,7 @@ bool qa_q1_source_flag_return(qa_q1_game *game, qa_actor_id actor, qa_error *err
         body.angles = entity->state.source_flag.angles;
         okay = qa_world_body_write(game->services.world, actor, &body, error) &&
             q1_link(game, entity, error) && current(game, actor, entity, error) &&
-            q1_sound(game, actor, "items/itembk2.wav", 0, 1, error) &&
+            q1_sound_resource(game, actor, game->runtime_names[Q1_NAME_RESOURCE_ITEMS_ITEMBK2_WAV], 0, 1, 1, error) &&
             current(game, actor, entity, error);
     }
     qa_q1_game_operation_end(&operation);

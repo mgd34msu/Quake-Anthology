@@ -42,7 +42,7 @@ static bool chunk(qa_q1_game *g, qa_actor_id explosion, qa_actor_id machine, qa_
     if (!gib)
         return true;
     gib->physics.angular_velocity = qa_v3(300, 300, 300);
-    if (!q1_sound(g, explosion, "weapons/r_exp3.wav", 1, 0, error) ||
+    if (!q1_sound_resource(g, explosion, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 1, 0, 1, error) ||
         !qa_world_body_read(g->services.world, gib_id, &body, error) ||
         !q1_effect(g, QA_BUILTIN_EXPLOSION, (qa_actor_id){0}, body.origin, 1, 0, error))
         goto fail;
@@ -190,7 +190,7 @@ static bool boom(qa_q1_game *g, q1_actor *explosion, qa_error *error) {
     }
     if (!time_actor(g, id))
         return true;
-    if (!q1_sound(g, id, "weapons/r_exp3.wav", 1, 0, error))
+    if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 1, 0, 1, error))
         return false;
     bool ordinary = q1_random(g) < .5f;
     qa_body_state body;

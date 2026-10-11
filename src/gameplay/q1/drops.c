@@ -384,7 +384,7 @@ static bool touch_live(qa_q1_game *g, q1_actor *item, qa_actor_id actor) {
 static bool pickup_feedback(qa_q1_game *g, q1_actor *item, qa_actor_id actor, bool ammo, bool rogue,
                             qa_error *error) {
     qa_body_state body;
-    if (!q1_sound(g, actor, ammo ? "weapons/lock4.wav" : "weapons/pkup.wav", 3, 1, error))
+    if (!q1_sound_resource(g, actor, ammo ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LOCK4_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_PKUP_WAV], 3, 1, 1, error))
         return false;
     if (!touch_live(g, item, actor))
         return true;

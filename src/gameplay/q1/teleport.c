@@ -21,9 +21,9 @@ bool qa_q1_spawn_teleport_fog(qa_q1_game *g, qa_vec3 origin, qa_actor_id *out, q
 }
 bool q1_teleport_fog_think(qa_q1_game *g, q1_actor *fog, qa_error *error) {
     unsigned index = (unsigned)fminf(4, floorf(q1_random(g) * 5));
-    char sound[24];
-    snprintf(sound, sizeof(sound), "misc/r_tele%u.wav", index + 1);
-    return q1_sound(g, fog->id, sound, 2, 1, error) && q1_remove(g, fog, error);
+    static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_MISC_R_TELE1_WAV, Q1_NAME_RESOURCE_MISC_R_TELE2_WAV, Q1_NAME_RESOURCE_MISC_R_TELE3_WAV, Q1_NAME_RESOURCE_MISC_R_TELE4_WAV, Q1_NAME_RESOURCE_MISC_R_TELE5_WAV};
+    qa_string_id sound = g->runtime_names[sounds[index]];
+    return q1_sound_resource(g, fog->id, sound, 2, 1, 1, error) && q1_remove(g, fog, error);
 }
 bool qa_q1_spawn_teledeath(qa_q1_game *g, qa_vec3 origin, qa_actor_id owner, qa_actor_id *out,
                            qa_error *error) {

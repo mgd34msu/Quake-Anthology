@@ -736,6 +736,14 @@ body-queue checks compare the edition's bound ID. Authored external spawns
 and original-save import intern text at their parsing boundaries. The old
 per-spawn text conversion is deleted. Normal build and seven core suites pass.
 
+Names item 14, Q1 sound and damage: all compiled Q1 sound callers use the
+existing ID emitter, and the text wrapper is deleted. Species, animation
+sound operations, mover selectors and finite random sound variants select
+runtime-name indexes admitted at game creation. Authored noise IDs stay IDs.
+Radius damage receives a retained cause ID. Original-save projection converts
+the same mover definitions to text at its file boundary. The normal build
+and seven core suites pass; no live installation is claimed.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

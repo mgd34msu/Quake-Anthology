@@ -722,19 +722,19 @@ static bool pickup_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
 static bool mover_sounds(const q1_actor *entity, int32_t world_type, qa_q1_save_record *record, qa_error *error) {
     switch (entity->map->kind) {
     case Q1_MAP_DOOR:
-        return text(record,"noise1",q1_map_door_sound(entity,false),QA_Q1_SAVE_STRING,error) &&
-            text(record,"noise2",q1_map_door_sound(entity,true),QA_Q1_SAVE_STRING,error) &&
-            text(record,"noise3",q1_door_key_sound(world_type,false),QA_Q1_SAVE_STRING,error) &&
-            text(record,"noise4",q1_door_key_sound(world_type,true),QA_Q1_SAVE_STRING,error);
+        return text(record,"noise1",q1_runtime_name_text(q1_map_door_sound(entity,false)),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise2",q1_runtime_name_text(q1_map_door_sound(entity,true)),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise3",q1_runtime_name_text(q1_door_key_sound(world_type,false)),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise4",q1_runtime_name_text(q1_door_key_sound(world_type,true)),QA_Q1_SAVE_STRING,error);
     case Q1_MAP_SECRET_DOOR:
-        return text(record,"noise1",q1_map_secret_first_sound(entity),QA_Q1_SAVE_STRING,error) &&
-            text(record,"noise2",q1_map_secret_sound(entity,true),QA_Q1_SAVE_STRING,error) &&
-            text(record,"noise3",q1_map_secret_sound(entity,false),QA_Q1_SAVE_STRING,error);
+        return text(record,"noise1",q1_runtime_name_text(q1_map_secret_first_sound(entity)),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise2",q1_runtime_name_text(q1_map_secret_sound(entity,true)),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise3",q1_runtime_name_text(q1_map_secret_sound(entity,false)),QA_Q1_SAVE_STRING,error);
     case Q1_MAP_BUTTON:
-        return text(record,"noise",q1_map_button_sound(entity),QA_Q1_SAVE_STRING,error);
+        return text(record,"noise",q1_runtime_name_text(q1_map_button_sound(entity)),QA_Q1_SAVE_STRING,error);
     case Q1_MAP_PLAT:
-        return text(record,"noise",q1_map_plat_sound(entity,true),QA_Q1_SAVE_STRING,error) &&
-            text(record,"noise1",q1_map_plat_sound(entity,false),QA_Q1_SAVE_STRING,error);
+        return text(record,"noise",q1_runtime_name_text(q1_map_plat_sound(entity,true)),QA_Q1_SAVE_STRING,error) &&
+            text(record,"noise1",q1_runtime_name_text(q1_map_plat_sound(entity,false)),QA_Q1_SAVE_STRING,error);
     default: return true;
     }
 }

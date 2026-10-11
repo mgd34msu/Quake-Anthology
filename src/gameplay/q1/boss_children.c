@@ -105,7 +105,7 @@ bool q1_boss_child_spawn(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind
             goto fail;
     } else if (kind == Q1_CHILD_SWIPER) {
         body.angles = parent.angles;
-        if (!q1_sound(g, e->id, "weapons/lstart.wav", 1, 1, error))
+        if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LSTART_WAV], 1, 1, 1, error))
             goto fail;
         e->state.boss_child.sign = owner->state.monster.source.boss.swipe_side;
         owner->state.monster.source.boss.swipe_side = !owner->state.monster.source.boss.swipe_side;
@@ -204,7 +204,7 @@ static bool eye_chase(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if ((int32_t)e->count % 2 == 0) {
         e->effects |= 2;
-        if (!q1_sound(g, e->id, "misc/power.wav", 2, 1, error))
+        if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_POWER_WAV], 2, 1, 1, error))
             return false;
     }
     e->count++;
@@ -231,7 +231,7 @@ static bool blaster(qa_q1_game *g, q1_actor *e, qa_error *error) {
                       &shot, error))
         return false;
     shot->effects = 64;
-    if (!q1_sound(g, e->id, "weapons/spike2.wav", 1, 1, error))
+    if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV], 1, 1, 1, error))
         return false;
     shot->physics.angular_velocity = qa_vec_scale(qa_v3(300, 300, 300), 2 * q1_random(g) - 1);
     if (!q1_schedule(g, e, .2, Q1_THINK_BOSS_CHILD, error))
@@ -267,7 +267,7 @@ static bool spammer(qa_q1_game *g, q1_actor *e, qa_error *error) {
     body = (qa_body_state){.origin = origin, .velocity = velocity};
     if (!q1_model(g, shot, "progs/rogue/plasma.mdl", error) ||
         !qa_world_body_write(g->services.world, shot->id, &body, error) ||
-        !q1_sound(g, e->id, "weapons/grenade.wav", 1, 1, error))
+        !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error))
         return false;
     e->count++;
     return q1_link(g, shot, error) && q1_schedule(g, e, .1, Q1_THINK_BOSS_CHILD, error);
@@ -311,7 +311,7 @@ static bool swiper(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if ((int32_t)e->count % 2 == 0 && !beam(g, e, start, trace.end, 3, error))
         return false;
     if (e->state.boss_child.sound_after < g->time) {
-        if (!q1_sound(g, e->id, "weapons/lhit.wav", 1, 1, error))
+        if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LHIT_WAV], 1, 1, 1, error))
             return false;
         e->state.boss_child.sound_after = g->time + .6;
     }

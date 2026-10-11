@@ -134,7 +134,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, bool first, qa_error *error) {
     if (!q1_model(g, shot, "progs/lavaball.mdl", error) ||
         !qa_world_body_write(g->services.world, shot->id, &body, error) ||
         !q1_schedule(g, shot, 6, Q1_THINK_REMOVE, error) || !q1_link(g, shot, error) ||
-        !q1_sound(g, entity->id, "boss1/throw.wav", 1, 1, error))
+        !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
         return false;
     return q1_health(g, q1_ref_actor(g, entity->state.monster.enemy)) > 0 ||
            q1_monster_play(g, entity, "lavaman_idle1", error);
@@ -200,7 +200,7 @@ bool q1_lavaman_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     case Q1_ACTION_MG3_LAVAMAN_LAVAMAN_DEATH9: {
         qa_body_state body;
         return qa_world_body_read(g->services.world, entity->id, &body, error) &&
-               q1_sound(g, entity->id, "boss1/out1.wav", 4, 1, error) &&
+               q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_OUT1_WAV], 4, 1, 1, error) &&
                q1_effect(
                    g, QA_BUILTIN_IMPACT, entity->id,
                    qa_vec_sub(body.origin, qa_v3(0, 0, g->options.program == QA_Q1_MG3 ? 50 : 0)),

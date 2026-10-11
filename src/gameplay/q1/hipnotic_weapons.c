@@ -46,7 +46,7 @@ bool q1_hipnotic_launch_laser(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon wea
     laser->state.projectile.movedir = velocity;
     laser->state.projectile.expires = g->time + shape->lifetime;
     return q1_schedule(g, laser, 0, Q1_THINK_HIP_LASER, error) &&
-           q1_sound(g, owner, "hipweap/laserg.wav", 1, 1, error) &&
+           q1_sound_resource(g, owner, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_LASERG_WAV], 1, 1, 1, error) &&
            q1_launch_behavior(g, laser, QA_BUILTIN_BOLT, error);
 }
 bool q1_hipnotic_launch_proximity(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin,
@@ -106,7 +106,7 @@ bool q1_hipnotic_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         if (!q1_consume(g, player->id, QA_Q1_ROCKETS, 1, error) ||
             !q1_grenade_velocity(g, player, &velocity, error) ||
             !q1_hipnotic_launch_proximity(g, player->id, body.origin, velocity, error) ||
-            !q1_sound(g, player->id, "hipweap/proxbomb.wav", 1, 1, error))
+            !q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_PROXBOMB_WAV], 1, 1, 1, error))
             return false;
         player->continuous = false;
         player->animation_at = g->time;
@@ -166,7 +166,7 @@ bool q1_hipnotic_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
         bool aimed = q1_target(g, other, &target) && (target.player || target.aimed_damage);
         if (moving || aimed)
             return q1_proximity_arm(g, entity, 0.1, error) && proximity_explode(g, entity, error);
-        if (!q1_sound(g, entity->id, "weapons/bounce.wav", 1, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_BOUNCE_WAV], 1, 1, 1, error))
             return false;
         entity->physics.motion = QA_PHYSICS_STATIONARY;
         p->count = 1;
@@ -212,11 +212,11 @@ bool q1_hipnotic_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
         if (!q1_missile_velocity(g, entity, p->movedir, error))
             return false;
         (void)q1_random(g);
-        return q1_sound(g, entity->id, "hipweap/laserric.wav", 1, 3, error);
+        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_LASERRIC_WAV], 1, 3, 1, error);
     }
     if (!q1_alive(g, entity->id))
         return true;
-    return q1_sound(g, entity->id, "enforcer/enfstop.wav", 1, 3, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFSTOP_WAV], 1, 3, 1, error) &&
            q1_remove(g, entity, error);
 }
 static bool proximity_watch(qa_q1_game *g, q1_actor *mine, qa_error *error) {
@@ -277,7 +277,7 @@ static bool proximity_watch(qa_q1_game *g, q1_actor *mine, qa_error *error) {
     if (!result)
         return false;
     if (found)
-        return q1_sound(g, mine->id, "hipweap/proxwarn.wav", 1, 1, error) &&
+        return q1_sound_resource(g, mine->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_PROXWARN_WAV], 1, 1, 1, error) &&
                (!q1_alive(g, mine->id) || q1_proximity_arm(g, mine, 0.5, error));
     return q1_schedule(g, mine, 0.25, Q1_THINK_PROX_WATCH, error);
 }
@@ -302,8 +302,8 @@ bool q1_hipnotic_hammer_base(qa_q1_game *g, q1_player *player, qa_vec3 origin, q
     body.origin = origin;
     if (!qa_world_body_write(g->services.world, base->id, &body, error) ||
         !q1_schedule(g, base, 1, Q1_THINK_REMOVE, error) ||
-        !q1_sound(g, base->id, "hipweap/mjolslap.wav", 0, 1, error) ||
-        !q1_sound(g, base->id, "hipweap/mjolhit.wav", 1, 1, error))
+        !q1_sound_resource(g, base->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_MJOLSLAP_WAV], 0, 1, 1, error) ||
+        !q1_sound_resource(g, base->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_MJOLHIT_WAV], 1, 1, 1, error))
         return false;
     for (unsigned i = 0; i < 4; ++i) {
         q1_actor *bolt;
@@ -349,7 +349,7 @@ static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
             if (player->input.water_level > 1) {
                 if (!q1_consume(g, player->id, QA_Q1_CELLS, cells, error) ||
                     !q1_radius_typed(g, player->id, player->id, 35 * cells, (qa_actor_id){0},
-                                     strike->state.projectile.weapon, "discharge", error))
+                                     strike->state.projectile.weapon, g->runtime_names[Q1_NAME_RESOURCE_DISCHARGE], error))
                     return false;
             } else if (!q1_consume(g, player->id, QA_Q1_CELLS, 15, error) ||
                        !q1_hipnotic_hammer_base(g, player, trace.end,
@@ -370,10 +370,10 @@ static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
                        strike->state.projectile.weapon, error))
             return false;
     } else if (trace.fraction != 1) {
-        if (!q1_sound(g, player->id, "hipweap/mjoltink.wav", 1, 1, error) ||
+        if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_MJOLTINK_WAV], 1, 1, 1, error) ||
             !q1_effect(g, QA_BUILTIN_IMPACT, strike->id, origin, 0, 0, error))
             return false;
-    } else if (!q1_sound(g, player->id, "knight/sword1.wav", 1, 1, error))
+    } else if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_KNIGHT_SWORD1_WAV], 1, 1, 1, error))
         return false;
     return !q1_alive(g, strike->id) || q1_remove(g, strike, error);
 }

@@ -225,9 +225,9 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
                 return !q1_alive(g, other);
             if (row->fly_sound < g->time) {
                 row->fly_sound = g->time + (jump ? .5 : 1.5);
-                if (!q1_sound(g, other, jump ? "weapons/sgun1.wav"
+                if (!q1_sound_resource(g, other, jump ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV]
                                 : g->options.program == QA_Q1_MG3 && (flags & 8)
-                                    ? "player/inh2o.wav" : "ambience/windfly.wav", 0, 1, error))
+                                    ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_INH2O_WAV] : g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_WINDFLY_WAV], 0, 1, 1, error))
                     return false;
             }
         }

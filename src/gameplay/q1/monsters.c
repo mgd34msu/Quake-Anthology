@@ -142,26 +142,26 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
     }
     if (g->host.monster_found && !g->host.monster_found(g->host.context, entity->id, target, error))
         return false;
-    const char *sound = monster->species->sight;
+    qa_string_id sound = monster->species->sight == Q1_NAME_CLASS_EMPTY ? 0 :
+        g->runtime_names[monster->species->sight];
     if (monster->addon.heavy == Q1_HEAVY_RUNE_KNIGHT)
-        sound = q1_random(g) < 0.5f ? "rknight/sight_01.wav" : "rknight/sight_03.wav";
+        sound = q1_random(g) < 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_SIGHT_01_WAV] : g->runtime_names[Q1_NAME_RESOURCE_RKNIGHT_SIGHT_03_WAV];
     if (mg3 && monster->species->species == QA_Q1_HELLKNIGHT &&
         entity->physics.solid == QA_PHYSICS_NOT_SOLID && (entity->spawnflags & (65536u | 8388608u)))
-        sound = "";
+        sound = 0;
     if (monster->species->species == QA_Q1_ENFORCER &&
         (g->options.edition != QA_Q1_RERELEASE || g->options.program == QA_Q1_HIPNOTIC || mg3)) {
         int choice = (int)floorf(q1_random(g) * 3 + 0.5f);
-        sound = choice == 1   ? "enforcer/sight1.wav"
-                : choice == 2 ? "enforcer/sight2.wav"
-                : choice == 0 ? "enforcer/sight3.wav"
-                              : "enforcer/sight4.wav";
+        sound = choice == 1   ? g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_SIGHT1_WAV]
+                : choice == 2 ? g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_SIGHT2_WAV]
+                : choice == 0 ? g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_SIGHT3_WAV]
+                              : g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_SIGHT4_WAV];
     }
     if (g->options.program == QA_Q1_HIPNOTIC &&
         (monster->species->species == QA_Q1_FISH ||
          (monster->species->species == QA_Q1_GREMLIN && monster->source.gremlin.stolen)))
-        sound = "";
-    if (*sound && !q1_sound(g, entity->id, sound, 2,
-                            monster->species->species == QA_Q1_ARMAGON ? 0.1f : 1, error))
+        sound = 0;
+    if (sound && !q1_sound_resource(g, entity->id, sound, 2, monster->species->species == QA_Q1_ARMAGON ? 0.1f : 1, 1, error))
         return false;
     monster->next_frame = q1_frame_index(monster->species->run);
     if (monster->species->species == QA_Q1_SWORD && !monster->source.sword.awakened)
@@ -266,7 +266,7 @@ static bool melee_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         animation = q1_random(g) > 0.5f ? "ogre_smash1" : "ogre_swing1";
         break;
     case QA_Q1_HELLKNIGHT:
-        if (!q1_sound(g, entity->id, "hknight/slash1.wav", 1, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_SLASH1_WAV], 1, 1, 1, error))
             return false;
         g->hellknight_melee = g->hellknight_melee % 3 + 1;
         animation = g->hellknight_melee == 1   ? "hknight_slice1"
@@ -441,7 +441,7 @@ static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
         } else {
             if (horizontal < 100 || (horizontal > 200 && q1_random(g) < 0.9f))
                 return true;
-            if (!q1_sound(g, entity->id, "demon/djump.wav", 2, 1, error))
+            if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DEMON_DJUMP_WAV], 2, 1, 1, error))
                 return false;
         }
         m->attack_state = 2;
@@ -871,7 +871,7 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         case Q1_FRAME_SOUND: {
             float value = op->chance < 0 ? 0 : q1_random(g);
             if ((op->chance < 0 || (op->greater ? value > op->chance : value < op->chance)) &&
-                !q1_sound(g, entity->id, op->text, op->channel, op->attenuation, error))
+                !q1_sound_resource(g, entity->id, g->runtime_names[op->sound], op->channel, op->attenuation, 1, error))
                 return false;
             break;
         }

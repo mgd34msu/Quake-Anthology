@@ -68,7 +68,7 @@ static bool grenade(qa_q1_game *g, q1_actor *entity, bool vertical, qa_error *er
         return false;
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
     velocity = qa_vec_add(velocity, qa_vec_scale(g->forward, 100));
-    if (!q1_sound(g, entity->id, "weapons/grenade.wav", 1, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -113,7 +113,7 @@ bool q1_demodog_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     if (!q1_alive(g, entity->id))
         return true;
-    if (!q1_sound(g, entity->id, "player/udeath.wav", 2, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -160,7 +160,7 @@ bool q1_demodog_grenade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other
     if (qa_vec_length(body.velocity) == 0)
         entity->physics.angular_velocity = qa_v3(0, 0, 0);
     if (entity->state.projectile.expires < g->time &&
-        !q1_sound(g, entity->id, "weapons/bounce.wav", 1, 1, error))
+        !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_BOUNCE_WAV], 1, 1, 1, error))
         return false;
     entity->state.projectile.expires = g->time + 0.1;
     return true;

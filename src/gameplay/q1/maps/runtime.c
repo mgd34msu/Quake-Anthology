@@ -1700,7 +1700,7 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return true;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
-            !q1_sound(g, entity->id, "weapons/r_exp3.wav", 0, 1, error))
+            !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 0, 1, 1, error))
             return false;
         if (!q1_alive(g, entity->id))
             return true;

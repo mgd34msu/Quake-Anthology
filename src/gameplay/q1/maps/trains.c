@@ -9,14 +9,12 @@ static q1_actor *train(qa_q1_game *g, qa_actor_id id) {
                : NULL;
 }
 static bool train_sound(qa_q1_game *g, q1_actor *entity, bool moving, qa_error *error) {
-    const char *path = NULL;
-    if (entity->map->kind == Q1_MAP_TRAIN2)
-        path = qa_strings_cstr(qa_session_strings(g->services.session),
-                               entity->map->noise[moving ? 1 : 0]);
-    if (!path || !*path)
-        path = entity->map->sounds == 1 ? moving ? "plats/train1.wav" : "plats/train2.wav"
-                                        : "misc/null.wav";
-    return q1_sound(g, entity->id, path, 2, 1, error);
+    qa_string_id path = entity->map->kind == Q1_MAP_TRAIN2 ?
+        entity->map->noise[moving ? 1 : 0] : 0;
+    if (!path || path == g->runtime_names[Q1_NAME_CLASS_EMPTY])
+        path = entity->map->sounds == 1 ? moving ? g->runtime_names[Q1_NAME_RESOURCE_PLATS_TRAIN1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLATS_TRAIN2_WAV]
+            : g->runtime_names[Q1_NAME_RESOURCE_MISC_NULL_WAV];
+    return q1_sound_resource(g, entity->id, path, 2, 1, 1, error);
 }
 bool q1_map_train_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     bool hipnotic = entity->map->kind == Q1_MAP_TRAIN2;

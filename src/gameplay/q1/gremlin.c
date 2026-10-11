@@ -3,7 +3,7 @@
 
 static bool gib(qa_q1_game *g, q1_actor *entity, float damage, qa_error *error) {
     qa_actor_id id = entity->id;
-    if (!q1_sound(g, id, "player/udeath.wav", 2, 1, error))
+    if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error))
         return false;
     entity = q1_entity(g, id);
     if (!entity)
@@ -74,7 +74,7 @@ static bool melee(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     entity = melee_source(g, source);
     if (!entity || !visible)
         return true;
-    if (!q1_sound(g, source, "grem/attack.wav", 1, 1, error))
+    if (!q1_sound_resource(g, source, g->runtime_names[Q1_NAME_RESOURCE_GREM_ATTACK_WAV], 1, 1, 1, error))
         return false;
     entity = melee_source(g, source);
     if (!entity)
@@ -199,7 +199,7 @@ static bool gorge_damage(qa_q1_game *g, q1_actor *entity, qa_actor_id target, fl
     if (qa_combat_read(g->services.combat, target, &effective, NULL) && effective.invulnerable) {
         if (entity->state.monster.source.gremlin.protection_sound < g->time) {
             entity->state.monster.source.gremlin.protection_sound = g->time + 2;
-            return q1_sound(g, target, "items/protect3.wav", 3, 1, error);
+            return q1_sound_resource(g, target, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_PROTECT3_WAV], 3, 1, 1, error);
         }
         return true;
     }
@@ -214,7 +214,7 @@ static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     qa_actor_id target = q1_ref_actor(g, entity->state.monster.enemy);
     if (!q1_alive(g, target))
         return true;
-    if (!q1_sound(g, entity->id, "demon/dhit2.wav", 1, 1, error) ||
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_DEMON_DHIT2_WAV], 1, 1, 1, error) ||
         !gorge_damage(g, entity, target, 7 + 5 * q1_random(g), error))
         return false;
     qa_body_state body;
@@ -234,7 +234,7 @@ static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
             head = "gib1";
         if (!head)
             head = "h_player";
-        if (!q1_sound(g, entity->id, "player/udeath.wav", 2, 1, error) ||
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error) ||
             !q1_gib_head(g, victim, head, -15, error))
             return false;
         float amount = 150 + 100 * q1_random(g), health = q1_health(g, entity->id);
@@ -313,9 +313,9 @@ bool q1_gremlin_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_e
         return true;
     m->pain_finished = g->time + 1;
     float random = q1_random(g);
-    char path[24];
-    snprintf(path, sizeof(path), "grem/pain%u.wav", random < 0.33f ? 1 : random < 0.66f ? 2 : 3);
-    return q1_sound(g, entity->id, path, 2, 1, error) &&
+    qa_string_id path = random < 0.33f ? g->runtime_names[Q1_NAME_RESOURCE_GREM_PAIN1_WAV] :
+        random < 0.66f ? g->runtime_names[Q1_NAME_RESOURCE_GREM_PAIN2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_GREM_PAIN3_WAV];
+    return q1_sound_resource(g, entity->id, path, 2, 1, 1, error) &&
            q1_monster_play(g, entity,
                            m->source.gremlin.stolen ? "gremlin_gunpain1" : "gremlin_pain1", error);
 }
@@ -432,7 +432,7 @@ bool q1_gremlin_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (jump)
             m->source.gremlin.touch = 1;
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&
-               (jump || q1_sound(g, entity->id, "grem/death.wav", 2, 1, error));
+               (jump || q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_GREM_DEATH_WAV], 2, 1, 1, error));
     }
     case Q1_ACTION_HIPGREM_GREMLIN_JUMP11:
         return q1_schedule(g, entity, 3, Q1_THINK_MONSTER_FRAME, error);

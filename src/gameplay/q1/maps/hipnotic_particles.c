@@ -3,10 +3,7 @@
 #include <limits.h>
 
 static bool voice(qa_q1_game *g, q1_actor *entity, unsigned index, qa_error *error) {
-    return q1_sound(
-        g, entity->id,
-        qa_strings_cstr(qa_session_strings(g->services.session), entity->map->noise[index]), 2, 1,
-        error);
+    return q1_sound_resource(g, entity->id, entity->map->noise[index], 2, 1, 1, error);
 }
 
 bool q1_map_hip_particles_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {

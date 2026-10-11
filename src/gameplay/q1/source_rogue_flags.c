@@ -117,7 +117,7 @@ bool qa_q1_source_rogue_flag_return(qa_q1_game *g, qa_actor_id actor, qa_error *
     if (okay) {
         e->physics.motion = QA_PHYSICS_TOSS;
         e->physics.solid = QA_PHYSICS_TRIGGER;
-        okay = q1_sound(g, actor, "items/itembk2.wav", 2, 1, error) &&
+        okay = q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_ITEMBK2_WAV], 2, 1, 1, error) &&
             current(g, actor, e, error) && qa_world_body_read(g->services.world, actor, &body, error);
     }
     if (okay) {

@@ -200,8 +200,7 @@ static bool lightning_use(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     q1_map_state *s = e->map;
     if (g->time >= s->pending.hazard.sound_after) {
-        if (!q1_sound(g, id, e->spawnflags & 2 ? "weapons/lstart.wav" : "weapons/lhit.wav",
-                       0, 1, error))
+        if (!q1_sound_resource(g, id, e->spawnflags & 2 ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LSTART_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LHIT_WAV], 0, 1, 1, error))
             return false;
         if (!q1_alive(g, id))
             return true;
@@ -267,7 +266,7 @@ static bool tesla_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
                 qa_actor_id actor = list->snapshot.ids[i];
                 if (!q1_alive(g, actor))
                     continue;
-                ok = q1_sound(g, id, "hipweap/mjolhit.wav", 0, 1, error);
+                ok = q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_MJOLHIT_WAV], 0, 1, 1, error);
                 if (ok && q1_alive(g, id))
                     ok = make_bolt(g, e, true, body.origin, qa_v3(0, 0, 0), actor, error);
             }
@@ -280,7 +279,7 @@ static bool tesla_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return q1_map_schedule(g, e, 1, Q1_MAP_TESLA_TICK, error);
         }
         if (found) {
-            if (e->wait > 0 && !q1_sound(g, id, "misc/tesla.wav", 0, 1, error))
+            if (e->wait > 0 && !q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_MISC_TESLA_WAV], 0, 1, 1, error))
                 return false;
             if (!q1_alive(g, id))
                 return true;
@@ -309,7 +308,7 @@ static bool mine_explode(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (!q1_alive(g, id))
         return true;
-    if (!q1_sound(g, id, "weapons/r_exp3.wav", 1, 1, error))
+    if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, id))
         return true;
@@ -322,7 +321,7 @@ static bool mine_explode(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (!q1_alive(g, id))
         return true;
-    if (!q1_sound(g, id, "misc/null.wav", 2, 1, error))
+    if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_MISC_NULL_WAV], 2, 1, 1, error))
         return false;
     if (!q1_alive(g, id))
         return true;
@@ -365,7 +364,7 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_builtin_snapshot_release(list);
         if (!q1_alive(g, id))
             return true;
-        if (selected.registry && !q1_sound(g, id, "hipitems/spikmine.wav", 2, 1, error))
+        if (selected.registry && !q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_HIPITEMS_SPIKMINE_WAV], 2, 1, 1, error))
             return false;
         if (!q1_alive(g, id))
             return true;
@@ -376,7 +375,7 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_alive(g, id))
         return true;
     if (!target_exists) {
-        if (!q1_sound(g, id, "misc/null.wav", 2, 1, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_MISC_NULL_WAV], 2, 1, 1, error))
             return false;
         body.velocity = qa_v3(0, 0, 0);
     } else {

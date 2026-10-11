@@ -985,7 +985,7 @@ static bool lightning(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (player->input.water_level > 1)
         return q1_consume(g, player->id, QA_Q1_CELLS, cells, error) &&
                q1_radius_typed(g, player->id, player->id, 35 * cells, (qa_actor_id){0},
-                               QA_Q1_LIGHTNING, "discharge", error);
+                               QA_Q1_LIGHTNING, g->runtime_names[Q1_NAME_RESOURCE_DISCHARGE], error);
     if (!q1_consume(g, player->id, QA_Q1_CELLS, 1, error))
         return false;
     qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
@@ -1315,7 +1315,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
     switch (weapon) {
     case QA_Q1_AXE: {
         punch = 0;
-        if (!q1_sound(g, player->id, "weapons/ax1.wav", 1, 1, error))
+        if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_AX1_WAV], 1, 1, 1, error))
             return false;
         float choice = q1_random(g);
         attack = choice < 0.25f ? 0 : choice < 0.5f ? 1 : choice < 0.75f ? 2 : 3;
@@ -1334,8 +1334,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         shotgun_shape(player,weapon,shells,&shape);
         punch = super ? -4 : -2;
         if (!q1_consume(g, player->id, QA_Q1_SHELLS, (float)shape.ammo_per_shot, error) ||
-            !q1_sound(g, player->id, super ? "weapons/shotgn2.wav" : "weapons/guncock.wav", 1, 1,
-                      error) ||
+            !q1_sound_resource(g, player->id, super ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SHOTGN2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GUNCOCK_WAV], 1, 1, 1, error) ||
             !q1_aim(g, player->id, forward, &direction, error) ||
             !q1_bullets(g, player->id, direction, player->input.view_angles,shape.shots,
                         shape.horizontal_spread,shape.vertical_spread,weapon,error))
@@ -1349,8 +1348,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         qa_vec3 origin = qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, 16)),
                                     qa_vec_scale(right, super ? 0 : (float)player->nail_side * 4));
         if (!q1_consume(g, player->id, QA_Q1_NAILS, super ? 2 : 1, error) ||
-            !q1_sound(g, player->id, super ? "weapons/spike2.wav" : "weapons/rocket1i.wav", 1, 1,
-                      error) ||
+            !q1_sound_resource(g, player->id, super ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_ROCKET1I_WAV], 1, 1, 1, error) ||
             !q1_aim(g, player->id, forward, &direction, error) ||
             !nail_fire(g, player, error) ||
             !q1_projectile_spawn(g, player->id, weapon, super ? Q1_SUPERSPIKE : Q1_SPIKE, origin,
@@ -1374,7 +1372,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
                 forward,forward,right,up,x,y);
         }
         if (!q1_consume(g, player->id, QA_Q1_ROCKETS, 1, error) ||
-            !q1_sound(g, player->id, "weapons/grenade.wav", 1, 1, error) ||
+            !q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error) ||
             !q1_projectile_spawn(g, player->id, weapon, Q1_GRENADE, body.origin, velocity,
                                  &projectile, error))
             return false;
@@ -1382,7 +1380,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
     }
     case QA_Q1_ROCKET:
         if (!q1_consume(g, player->id, QA_Q1_ROCKETS, 1, error) ||
-            !q1_sound(g, player->id, "weapons/sgun1.wav", 1, 1, error) ||
+            !q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error) ||
             !q1_aim(g, player->id, forward, &direction, error) ||
             !q1_projectile_spawn(
                 g, player->id, weapon, Q1_ROCKET,
@@ -1392,12 +1390,12 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         break;
     case QA_Q1_LIGHTNING:
         if (player->lightning_sound_at < g->time) {
-            if (!q1_sound(g, player->id, "weapons/lhit.wav", 1, 1, error))
+            if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LHIT_WAV], 1, 1, 1, error))
                 return false;
             player->lightning_sound_at = g->time + 0.6;
         }
         if (!lightning(g, player, error) ||
-            (!repeating && !q1_sound(g, player->id, "weapons/lstart.wav", 0, 1, error)))
+            (!repeating && !q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_LSTART_WAV], 0, 1, 1, error)))
             return false;
         break;
     default:
@@ -1453,7 +1451,7 @@ bool q1_axe_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
             if (!q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, trace.end, shape->damage, 1, error) ||
                 !q1_damage(g, trace.actor, player->id, player->id, shape->damage, QA_Q1_AXE, error))
                 return false;
-        } else if (!q1_sound(g, player->id, "player/axhit2.wav", 1, 1, error) ||
+        } else if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_AXHIT2_WAV], 1, 1, 1, error) ||
                    !q1_effect(g, QA_BUILTIN_IMPACT, (qa_actor_id){0}, trace.end, 3, 2, error))
             return false;
     }

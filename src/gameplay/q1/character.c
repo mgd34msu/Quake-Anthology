@@ -237,29 +237,27 @@ static bool pain(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outc
         return true;
     if (!refresh_pose(g, player, error))
         return false;
-    const char *sound = NULL;
-    char buffer[64];
+    qa_string_id sound = 0;
     float attenuation = 1;
     if (cause_named(g, outcome->request.attack.attacker, "teledeath")) {
-        sound = "player/teledth1.wav";
+        sound = g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TELEDTH1_WAV];
         attenuation = 0;
     } else if (c->input.water_level == 3 && c->input.water_type == -3) {
         if (!bubbles(g, actor, 1, error))
             return false;
-        sound = q1_random(g) > 0.5f ? "player/drown1.wav" : "player/drown2.wav";
+        sound = q1_random(g) > 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_DROWN1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_DROWN2_WAV];
     } else if (c->input.water_type == -4 || c->input.water_type == -5)
-        sound = q1_random(g) > 0.5f ? "player/lburn1.wav" : "player/lburn2.wav";
+        sound = q1_random(g) > 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_LBURN1_WAV] : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_LBURN2_WAV];
     else if (c->pain_until <= g->time) {
         c->pain_until = g->time + 0.5;
         if (outcome->request.attack.weapon == g->weapons[QA_Q1_AXE])
-            sound = "player/axhit1.wav";
+            sound = g->runtime_names[Q1_NAME_RESOURCE_PLAYER_AXHIT1_WAV];
         else {
-            snprintf(buffer, sizeof(buffer), "player/pain%d.wav",
-                     (int)floorf(q1_random(g) * 5 + 1.5f));
-            sound = buffer;
+            static const q1_runtime_name pains[] = {Q1_NAME_RESOURCE_PLAYER_PAIN1_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN2_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN3_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN4_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN5_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN6_WAV};
+            sound = g->runtime_names[pains[(int)floorf(q1_random(g) * 5 + 1.5f) - 1]];
         }
     }
-    if (sound && !q1_sound(g, actor, sound, 2, attenuation, error))
+    if (sound && !q1_sound_resource(g, actor, sound, 2, attenuation, 1, error))
         return false;
     if (!q1_alive(g, actor))
         return true;
@@ -330,20 +328,18 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
                 return false;
         bool teledeath = cause_named(g, outcome->request.attack.attacker, "teledeath") ||
                          cause_named(g, outcome->request.attack.attacker, "teledeath2");
-        return q1_sound(g, actor,
-                        teledeath             ? "player/teledth1.wav"
-                        : q1_random(g) < 0.5f ? "player/gib.wav"
-                                              : "player/udeath.wav",
-                        2, 0, error);
+        return q1_sound_resource(g, actor, teledeath             ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TELEDTH1_WAV]
+                        : q1_random(g) < 0.5f ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_GIB_WAV]
+                                              : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 0, 1, error);
     }
     if (c->input.water_level == 3) {
         if (!bubbles(g, actor, 20, error) ||
-            !q1_sound(g, actor, "player/h2odeath.wav", 2, 0, error))
+            !q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_H2ODEATH_WAV], 2, 0, 1, error))
             return false;
     } else {
-        char sound[64];
-        snprintf(sound, sizeof(sound), "player/death%d.wav", (int)floorf(q1_random(g) * 4 + 1.5f));
-        if (!q1_sound(g, actor, sound, 2, 0, error))
+        static const q1_runtime_name deaths[] = {Q1_NAME_RESOURCE_PLAYER_DEATH1_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH2_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH3_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH4_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH5_WAV};
+        qa_string_id sound = g->runtime_names[deaths[(int)floorf(q1_random(g) * 4 + 1.5f) - 1]];
+        if (!q1_sound_resource(g, actor, sound, 2, 0, 1, error))
             return false;
     }
     if (!q1_alive(g, actor))
@@ -462,14 +458,14 @@ bool qa_q1_character_post_move(qa_q1_game *g, qa_actor_id actor, qa_error *error
         grounded = traits.grounded;
     if (c->fall_speed < -300 && grounded && q1_health(g, actor) > 0) {
         if (c->input.water_type == -3) {
-            if (!q1_sound(g, actor, "player/h2ojump.wav", 4, 1, error))
+            if (!q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_H2OJUMP_WAV], 4, 1, 1, error))
                 return false;
         } else if (c->fall_speed < -650 && (!g->host.fall_damage_allowed ||
                                             g->host.fall_damage_allowed(g->host.context, actor))) {
             if (!q1_environment_damage(g, actor, 5, QA_HAZARD_FALL, error) ||
-                !q1_sound(g, actor, "player/land2.wav", 2, 1, error))
+                !q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_LAND2_WAV], 2, 1, 1, error))
                 return false;
-        } else if (!q1_sound(g, actor, "player/land.wav", 2, 1, error))
+        } else if (!q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_LAND_WAV], 2, 1, 1, error))
             return false;
         c->fall_speed = 0;
     }
@@ -487,10 +483,10 @@ bool qa_q1_character_environment(qa_q1_game *g, qa_actor_id actor, bool suit, bo
         return true;
     bool lava_suit = player->power_expires[QA_Q1_LAVA_SUIT] > g->time;
     if (c->input.water_level != 3) {
-        const char *sound = c->air_until < g->time       ? "player/gasp2.wav"
-                            : c->air_until < g->time + 9 ? "player/gasp1.wav"
-                                                         : NULL;
-        if (sound && !q1_sound(g, actor, sound, 2, 1, error))
+        qa_string_id sound = c->air_until < g->time       ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_GASP2_WAV]
+                            : c->air_until < g->time + 9 ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_GASP1_WAV]
+                                                         : 0;
+        if (sound && !q1_sound_resource(g, actor, sound, 2, 1, 1, error))
             return false;
         c->air_until = g->time + 12;
         c->drown_damage = 2;
@@ -507,7 +503,7 @@ bool qa_q1_character_environment(qa_q1_game *g, qa_actor_id actor, bool suit, bo
     if (!q1_alive(g, actor))
         return true;
     if (!c->input.water_level) {
-        if (c->in_water && !q1_sound(g, actor, "misc/outwater.wav", 4, 1, error))
+        if (c->in_water && !q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_MISC_OUTWATER_WAV], 4, 1, 1, error))
             return false;
         c->in_water = false;
         return true;
@@ -524,10 +520,10 @@ bool qa_q1_character_environment(qa_q1_game *g, qa_actor_id actor, bool suit, bo
     if (!q1_alive(g, actor))
         return true;
     if (!c->in_water) {
-        const char *sound = c->input.water_type == -5   ? "player/inlava.wav"
-                            : c->input.water_type == -4 ? "player/slimbrn2.wav"
-                                                        : "player/inh2o.wav";
-        if (!q1_sound(g, actor, sound, 4, 1, error))
+        qa_string_id sound = c->input.water_type == -5   ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_INLAVA_WAV]
+                            : c->input.water_type == -4 ? g->runtime_names[Q1_NAME_RESOURCE_PLAYER_SLIMBRN2_WAV]
+                                                        : g->runtime_names[Q1_NAME_RESOURCE_PLAYER_INH2O_WAV];
+        if (!q1_sound_resource(g, actor, sound, 4, 1, 1, error))
             return false;
         c->in_water = true;
         c->hazard_at = 0;

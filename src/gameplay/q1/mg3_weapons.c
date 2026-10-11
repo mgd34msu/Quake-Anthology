@@ -42,7 +42,7 @@ bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     if (!attack_delay(g, player, 0.4f, error))
         return false;
     if (trace.hit == QA_TRACE_HIT_ACTOR && q1_damageable(g, trace.actor)) {
-        if (!q1_sound(g, player->id, "hipweap/mjolslap.wav", 1, 1, error) ||
+        if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_MJOLSLAP_WAV], 1, 1, 1, error) ||
             !q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, origin, 40, 1, error))
             return false;
         if (!q1_alive(g, player->id) || !q1_alive(g, strike->id))
@@ -87,10 +87,10 @@ bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
         }
     } else {
         if (trace.fraction != 1) {
-            if (!q1_sound(g, player->id, "hipweap/mjoltink.wav", 1, 1, error) ||
+            if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_HIPWEAP_MJOLTINK_WAV], 1, 1, 1, error) ||
                 !q1_effect(g, QA_BUILTIN_IMPACT, strike->id, origin, 1, 2, error))
                 return false;
-        } else if (!q1_sound(g, player->id, "weapons/ax1.wav", 1, 1, error))
+        } else if (!q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_AX1_WAV], 1, 1, 1, error))
             return false;
         player->mg3_hammer_target = (q1_ref){0};
     }

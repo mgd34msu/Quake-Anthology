@@ -123,7 +123,7 @@ static bool attack(qa_q1_game *g, q1_actor *entity, bool stab, qa_error *error) 
     float distance = qa_vec_length(delta);
     qa_vec3 direction = qa_vec_normalize(delta);
     if (stab && distance <= 90) {
-        if (!q1_sound(g, entity->id, "enforcer/enfstop.wav", 1, 3, error) ||
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFSTOP_WAV], 1, 3, 1, error) ||
             !q1_damage(g, enemy, entity->id, entity->id, q1_random(g) * 10 + 20, QA_Q1_WEAPON_COUNT,
                        error))
             return false;
@@ -211,7 +211,7 @@ bool q1_morph_pain(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     float random = q1_random(g);
     monster->pain_finished = g->time + 2;
     monster->next_frame = q1_frame_index(random > 0.6f ? "morph_painB1" : "morph_painA1");
-    return q1_sound(g, entity->id, "guard/pain1.wav", 2, 1, error) &&
+    return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_GUARD_PAIN1_WAV], 2, 1, 1, error) &&
            q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_morph_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
@@ -232,7 +232,7 @@ bool q1_morph_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
     case Q1_ACTION_MORPH_MORPH_DIE21:
         return q1_remove(g, entity, error);
     case Q1_ACTION_MORPH_MORPH_WAKE1: {
-        if (!q1_sound(g, entity->id, "guard/see1.wav", 2, 1, error))
+        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_GUARD_SEE1_WAV], 2, 1, 1, error))
             return false;
         q1_actor *owner = q1_entity(g, q1_ref_actor(g, entity->owner));
         if (!owner || owner->kind != Q1_MONSTER)

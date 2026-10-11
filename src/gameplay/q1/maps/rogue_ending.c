@@ -273,7 +273,7 @@ static bool fire_rocket(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     actor->map->pending.follower.view_angles = angles;
     actor->map->pending.follower.rockets -= 1;
     actor->map->current_ammo = actor->map->pending.follower.rockets;
-    if (!q1_sound(g, id, "weapons/sgun1.wav", 1, 1, error))
+    if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error))
         return false;
     if (!ending_actor(g, id))
         return true;

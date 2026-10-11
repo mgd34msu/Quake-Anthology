@@ -27,7 +27,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                               qa_vec_add(self.origin, qa_v3(0, 0, 16))),
                    qa_vec_scale(right, offset));
     entity->effects |= 2;
-    if (!q1_sound(g, entity->id, "weapons/sgun1.wav", 1, 1, error))
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -59,9 +59,9 @@ bool q1_rocket_ogre_frame(qa_q1_game *g, q1_actor *entity, const char *name, qa_
          !strcmp(name, "ogre_run1")) &&
         q1_random(g) < 0.2f) {
         unsigned index = (!strcmp(name, "ogre_walk3") ? 3u : 1u) + (q1_random(g) < 0.5f ? 0u : 1u);
-        char sound[32];
-        snprintf(sound, sizeof(sound), "armagon/idle%u.wav", index);
-        return q1_sound(g, entity->id, sound, 2, 2, error);
+        static const q1_runtime_name sounds[] = {Q1_NAME_RESOURCE_ARMAGON_IDLE1_WAV, Q1_NAME_RESOURCE_ARMAGON_IDLE2_WAV, Q1_NAME_RESOURCE_ARMAGON_IDLE3_WAV, Q1_NAME_RESOURCE_ARMAGON_IDLE4_WAV};
+        qa_string_id sound = g->runtime_names[sounds[index - 1]];
+        return q1_sound_resource(g, entity->id, sound, 2, 2, 1, error);
     }
     return true;
 }

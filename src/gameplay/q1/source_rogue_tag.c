@@ -145,7 +145,7 @@ bool q1_source_rogue_tag_touch(qa_q1_game *game, q1_actor *source,
         !current(game, actor, source, error)) return false;
     if (!found) return true;
     return take(game, source, player, 30, error) &&
-        q1_sound(game, actor, "runes/end1.wav", 0, 1, error) &&
+        q1_sound_resource(game, actor, game->runtime_names[Q1_NAME_RESOURCE_RUNES_END1_WAV], 0, 1, 1, error) &&
         current(game, actor, source, error) && announce(game, source, "$qc_got_token", player, error);
 }
 bool q1_source_rogue_tag_think(qa_q1_game *game, q1_actor *source,
@@ -238,7 +238,7 @@ bool qa_q1_source_rogue_tag_score(qa_q1_game *game, qa_actor_id victim,
             okay = announce(game, source, "$qc_lost_token", attacker, error) && respawn(game, source, error);
         result = 3;
     } else if (owner.registry && qa_actor_id_equal(victim, owner)) {
-        okay = q1_sound(game, victim, "runes/end1.wav", 0, 1, error) &&
+        okay = q1_sound_resource(game, victim, game->runtime_names[Q1_NAME_RESOURCE_RUNES_END1_WAV], 0, 1, 1, error) &&
             current(game, source->id, source, error);
         bool found;
         if (okay) okay = game->source_rogue_tag.player(game->source_rogue_tag.context, attacker, &found, error) &&

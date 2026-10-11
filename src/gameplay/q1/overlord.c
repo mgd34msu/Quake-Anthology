@@ -146,7 +146,7 @@ static bool smash(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (qa_vec_length(qa_vec_sub(target.origin, body.origin)) > 100)
         return true;
     float damage = 20 + q1_random(g) * 10;
-    if (!q1_sound(g, entity->id, "s_wrath/smash.wav", 1, 1, error) ||
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_S_WRATH_SMASH_WAV], 1, 1, 1, error) ||
         !q1_damage(g, enemy, entity->id, entity->id, damage, QA_Q1_WEAPON_COUNT, error))
         return false;
     qa_q1_target traits;
