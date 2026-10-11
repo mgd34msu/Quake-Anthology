@@ -4,6 +4,13 @@
 #include "remote_unified_media.h"
 #include "model_inventory.h"
 
+typedef struct unified_media_skin {
+    struct unified_media_skin *next;
+    qa_string_id path;
+    qa_scene_image_options options;
+    const qa_material *material;
+    uint8_t bytes[];
+} unified_media_skin;
 typedef struct unified_media_bank {
     struct unified_media_bank *next;
     qa_string_id content_name;
@@ -12,6 +19,7 @@ typedef struct unified_media_bank {
     const qa_product *product;
     qa_scene_resources *images;
     qa_material_library *materials;
+    unified_media_skin *skins;
     qa_media_library *media;
     struct frontend_material_movies *shader_movies;
     uint64_t cinematic_audio_owner;

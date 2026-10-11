@@ -676,7 +676,7 @@ static bool music_current(void *context,const frontend_music_origin *origin)
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     return linked && domain && origin->kind==FRONTEND_MUSIC_REMOTE && origin->context==b &&
         origin->receiver==domain->command_context.owner && origin->physical_seat==domain->physical_seat &&
-        origin->recipe==recipe && origin->recipe_content && !strcmp(origin->recipe_content,b->content) &&
+        origin->recipe==recipe &&
         origin->catalog==qa_executable_recipe_catalog(recipe) && origin->product==b->product->id && origin->files==b->files;
 }
 static bool music_origin(q2_bank *b,frontend_music_origin *out,qa_error *e)

@@ -47,7 +47,7 @@ typedef struct q1_continuation {
 } q1_continuation;
 typedef struct q1_activation {
     struct q1_activation *next;
-    char *provider;
+    qa_string_id provider;
     uint64_t generation;
     bool retired;
 } q1_activation;
@@ -83,6 +83,7 @@ typedef struct q1_group {
     const char *content;
     q1_activation *activation;
     const qa_product *product;
+    qa_vfs *files;
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_audio_bank *sounds;
@@ -307,14 +308,16 @@ static bool progress_record(frontend_unified_q1 *o,const q1_event *p,qa_error *e
 static bool activation(frontend_unified_q1 *o,const q1_event *p,q1_activation **out,qa_error *e)
 {
     *out=NULL;if(!p->provider.size)return true;
-    for(q1_activation *a=o->activations;a;a=a->next)if(a->generation==p->owner_generation && !strcmp(a->provider,(char *)p->provider.data)){*out=a;return true;}
+    qa_string_id provider=qa_strings_find(o->replica->strings,p->provider);
+    for(q1_activation *a=o->activations;a;a=a->next)if(a->generation==p->owner_generation && a->provider==provider){*out=a;return true;}
     q1_activation *a=calloc(1,sizeof(*a));if(!a)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q1 Source activation");
-    a->provider=malloc(p->provider.size+1);if(!a->provider){free(a);return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 Source provider identity");}
-    memcpy(a->provider,p->provider.data,p->provider.size+1);a->generation=p->owner_generation;a->next=o->activations;o->activations=a;*out=a;return true;
+    if(!qa_strings_intern(o->replica->strings,p->provider,&a->provider,e)){free(a);return false;}
+    a->generation=p->owner_generation;a->next=o->activations;o->activations=a;*out=a;return true;
 }
 static bool group(frontend_unified_q1 *o,const char *content,q1_activation *owner,q1_group **out,qa_error *e)
 {
-    for(q1_group *g=o->groups;g;g=g->next) if(g->activation==owner && !strcmp(g->content,content)) {*out=g;return true;}
+    qa_string_id name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
+    for(q1_group *g=o->groups;g;g=g->next) if(g->activation==owner && g->content_name==name) {*out=g;return true;}
     q1_group *g=calloc(1,sizeof(*g));qa_font_library *fonts;qa_vfs *files;
     if(!g) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 CLIENT content effects");
     if (!qa_strings_intern_cstr(o->replica->strings,content,&g->content_name,e)) {free(g);return false;}
@@ -322,7 +325,7 @@ static bool group(frontend_unified_q1 *o,const char *content,q1_activation *owne
     if(!g->content || !qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
         !frontend_unified_media_bank(o->media,g->content_name,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g);return false;}
     for (size_t i=0;i<4;++i) if (!qa_strings_intern_cstr(o->replica->strings,frontend_fx_q1_beam_model(q1_beam_types[i]),&g->beam_models[i],e)) {free(g);return false;}
-    g->parent=o;g->activation=owner;frontend_fx_q1_state_initialize(&g->effects,Q1_LIGHTS,Q1_BEAMS);q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
+    g->parent=o;g->files=files;g->activation=owner;frontend_fx_q1_state_initialize(&g->effects,Q1_LIGHTS,Q1_BEAMS);q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     frontend_q1_help_bind_source(o->frontend->seats+domain->physical_seat,g->images);return true;
 }
@@ -338,12 +341,11 @@ static bool music_current(void *context,const frontend_music_origin *origin)
             frontend_unified_media_recipe(o->media)!=o->replica->recipe || !frontend_unified_media_current(o->media))return false;
     }else if(!frontend_unified_q1_current(o))return false;
     bool linked=false;for(q1_group *actual=o->groups;actual;actual=actual->next)if(actual==g){linked=true;break;}
-    qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);qa_vfs *files=NULL;const qa_product *product=NULL;
+    qa_executable_recipe *recipe=frontend_remote_unified_recipe(o->replica);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     return linked && domain && origin->receiver==domain->command_context.owner && origin->physical_seat==domain->physical_seat &&
-        origin->recipe==recipe && origin->recipe_content && !strcmp(origin->recipe_content,g->content) &&
-        qa_executable_recipe_content_read(recipe,g->content,&files,&product) && product==g->product &&
-        origin->catalog==qa_executable_recipe_catalog(recipe) && origin->product==product->id && origin->files==files;
+        origin->recipe==recipe && origin->catalog==qa_executable_recipe_catalog(recipe) &&
+        origin->product==g->product->id && origin->files==g->files;
 }
 static bool music_origin(q1_group *g,frontend_music_origin *out,qa_error *e)
 {
@@ -983,11 +985,11 @@ bool frontend_unified_q1_hud(frontend_unified_q1 *o,qa_ui *ui,qa_scene_rect view
     if(count && !o->scores)return false;
     o->score_count=0;
     for(q1_group *g=o->groups;g;g=g->next){bool earlier=false;
-        for(q1_group *old=o->groups;old!=g;old=old->next)if(!strcmp(old->content,g->content)){earlier=true;break;}
+        for(q1_group *old=o->groups;old!=g;old=old->next)if(old->content_name==g->content_name){earlier=true;break;}
         if(earlier)continue;
         for(size_t i=0;i<256;++i){bool present=false,has_name=false,has_score=false,has_ping=false;
             const char *name="";double score=0,ping=0;uint64_t name_sequence=0,score_sequence=0,ping_sequence=0;
-            for(q1_group *received=g;received;received=received->next)if(!strcmp(received->content,g->content) && received->clients[i].present){
+            for(q1_group *received=g;received;received=received->next)if(received->content_name==g->content_name && received->clients[i].present){
                 present=true;
                 if(received->clients[i].name && (!has_name || received->clients[i].sequences[0]>=name_sequence)){
                     name=received->clients[i].name;name_sequence=received->clients[i].sequences[0];has_name=true;}
@@ -1032,7 +1034,7 @@ bool frontend_unified_q1_destroy(frontend_unified_q1 **slot,qa_error *e)
     for(q1_group *g=o->groups;g;g=g->next)for(q1_ambient *a=g->ambient;a;a=a->next)if(a->mixer){qa_audio_mixer_remove_static(a->mixer,a->identity);a->mixer=NULL;}
     o->hud=NULL;
     while(o->groups){q1_group *g=o->groups;o->groups=g->next;group_free(g);}
-    while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a->provider);free(a);}
+    while(o->activations){q1_activation *a=o->activations;o->activations=a->next;free(a);}
     prompt_clear(o);continuation_clear(&o->weapon);continuation_clear(&o->finale);qa_scene_image_release(o->finale_image);
     qa_localization_pool_destroy(o->localizations);qa_arena_destroy(&o->semantic_storage);free(o);*slot=NULL;return true;
 }

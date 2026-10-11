@@ -194,6 +194,34 @@ qa_material_library *frontend_unified_model_materials(const qa_scene_model *mode
     const qa_scene_image_options *options = qa_scene_model_image_options(model);
     return options && options->family == QA_GAME_Q3 ? qa_scene_model_material_owner(model) : NULL;
 }
+bool frontend_unified_media_skin(frontend_unified_media *owner, qa_string_id content,
+    qa_string_id path, const qa_scene_image_options *options, const qa_material **out, qa_error *error)
+{
+    unified_media_bank *files;
+    if (!bank(owner, content, &files, error)) return false;
+    for (unified_media_skin *row = files->skins; row; row = row->next)
+        if (row->path == path && same_options(&row->options, options)) { *out = row->material; return true; }
+    if (options->palette_rgb.size > SIZE_MAX - sizeof(unified_media_skin) ||
+        options->translation.size > SIZE_MAX - sizeof(unified_media_skin) - options->palette_rgb.size)
+        return frontend_unified_fail(error, QA_ERROR_MEMORY, "Skin binding exceeds storage extent");
+    unified_media_skin *row = calloc(1, sizeof(*row) + options->palette_rgb.size + options->translation.size);
+    if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining skin binding");
+    row->path = path; row->options = *options;
+    if (options->palette_rgb.size) {
+        memcpy(row->bytes, options->palette_rgb.data, options->palette_rgb.size);
+        row->options.palette_rgb.data = row->bytes;
+    }
+    if (options->translation.size) {
+        memcpy(row->bytes + options->palette_rgb.size, options->translation.data, options->translation.size);
+        row->options.translation.data = row->bytes + options->palette_rgb.size;
+    }
+    owner->busy = true;
+    bool okay = qa_material_register(files->materials, qa_strings_cstr(owner->strings, path),
+        &row->options, false, &row->material, error);
+    owner->busy = false;
+    if (!okay) { free(row); return false; }
+    row->next = files->skins; files->skins = row; *out = row->material; return true;
+}
 bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id content_name,
     qa_string_id path_name, qa_game_family family, const qa_scene_image_options *options,
     frontend_unified_model *out, qa_error *error)
@@ -412,6 +440,7 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
     }
     while (owner->banks) {
         unified_media_bank *row = owner->banks; owner->banks = row->next;
+        while (row->skins) { unified_media_skin *skin = row->skins; row->skins = skin->next; free(skin); }
         qa_buffer_free(&row->saved_assets);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images); free(row);

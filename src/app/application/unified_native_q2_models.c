@@ -23,9 +23,9 @@ static bool replacement_arsenal(qa_application *app, qa_actor_id actor,
     return true;
 }
 
-static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
+static void model(qa_unified_frame_visuals *out,
     const application_native_q2_appearance *view, unsigned index,
-    qa_string_id content, qa_string_id path, bool held, qa_error *error)
+    qa_string_id content, qa_string_id path, bool held)
 {
     const qa_q2_entity *state = &view->entity.state;
     bool rerelease = view->source.edition == QA_Q2_RERELEASE;
@@ -40,7 +40,7 @@ static bool model(qa_unified_frame_lease *lease, qa_unified_frame_visuals *out,
         .visual.alpha = rerelease ? state->alpha != 0 ? state->alpha : (state->renderfx & 32u) ? .3f : 1 : 1,
         .has_previous_origin = true, .has_alpha = true, .visual.visible = true, .native_held_weapon = held};
     row->path = path; row->content = content;
-    return application_unified_frame_string(lease, &row->skin_path, index || !qa_strings_text(qa_session_strings(view->source.session), path).size ? NULL : qa_strings_cstr(qa_session_strings(view->source.session), view->skin_path), error);
+    row->skin_path = index || !qa_strings_text(qa_session_strings(view->source.session), path).size ? QA_STRING_NONE : view->skin_path;
 }
 
 bool application_unified_native_q2_models(qa_application *app,
@@ -99,11 +99,11 @@ bool application_unified_native_q2_models(qa_application *app,
                 !qa_q2_model_beam(appearance.source.edition, appearance.entity.state.renderfx,
                     appearance.entity.state.modelindex > 1);
             if (ok && flat_beam)
-                ok = model(target->lease, out, &appearance, 0, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), app->ui_names.empty_model, false, error);
+                model(out, &appearance, 0, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), app->ui_names.empty_model, false);
             else for (unsigned i = 0; ok && i < 4; ++i) {
                 const char *path = qa_strings_cstr(qa_session_strings(app->session), appearance.models[i]);
                 if (path && *path)
-                    ok = model(target->lease, out, &appearance, i, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), appearance.models[i], i == 1 && replacement, error);
+                    model(out, &appearance, i, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), appearance.models[i], i == 1 && replacement);
             }
             if (ok && !application_native_q2_appearance_current(app, &appearance))
                 ok = application_fail(error, QA_ERROR_ARGUMENT, "Unified Q2 appearance changed while serializing");

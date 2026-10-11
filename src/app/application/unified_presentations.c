@@ -58,7 +58,7 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
         .previous_origin = v->previous_origin, .has_alpha = v->family != QA_GAME_Q3 && !view_weapon};
     if (row->visual.old_frame < 0) row->visual.old_frame = row->visual.frame;
     row->path = path; row->content = content;
-    if (!application_unified_frame_string(frame->lease, &row->skin_path, v->skin_path, error)) return false;
+    row->skin_path = v->skin_path;
     if (render_source) {
         row->render_source = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->render_source), error);
         if (!row->render_source) return application_fail(error, QA_ERROR_MEMORY, "Retaining model Source identity");

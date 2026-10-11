@@ -449,6 +449,26 @@ Normal production build and seven core suites pass:
 `/tmp/qa-ta3196-catalog-name-index-20261011-{build,core}.log`. Remaining finding 6
 render/media bindings are being checked next; no live or performance claim.
 
+Names finding 6, render bindings: model/content paths already use admitted
+session IDs and retained product pointers. Model banks compare the content ID;
+model rows compare bank, path ID, family and image options. Skin paths now use
+NAME fields in that same codec. Native Q2 forwards its bound skin ID instead
+of allocating a frame string; the receiver retains the material binding by
+content/path/options and places the material handle on the model input.
+Registration and option ownership happen when a binding is first admitted,
+not again on each frame. These derived bindings are not serialized.
+
+Q1 content groups and provider activations use the same session IDs; their
+private provider byte copies and scoreboard content strcmp scans are deleted.
+Q1/Q2 music ownership uses its retained recipe/catalog/product/VFS tuple rather
+than comparing content text. Q1 retains the VFS resolved during group admission
+instead of finding that content again during each ownership read.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-render-name-bindings-20261011-{build,core}.log`. Together with the
+catalog/recipe slice, this migrates names finding 6's listed sites. Names 7-17
+and other kinds remain. No live screenshot, audio, save/restore or timing claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
