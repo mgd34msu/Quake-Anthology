@@ -145,24 +145,28 @@ static bool transport_admitted(void *context,const qa_net_address *address,bool 
     *out=frontend_network_local_seat(host->options.frontend,address,&seat,&authored) ||
         qa_kex_lan_admitted(host->options.lobby,address); return true;
 }
-static void configs_dispose(char ***values,size_t *count)
+static void configs_reset(q2_host_peer *peer)
 {
-    for(size_t i=0;i<*count;++i) free((*values)[i]);
-    free(*values); *values=NULL; *count=0;
+    peer->config_count=peer->signon_config_count=0;
+    peer->config_revision=peer->signon_config_revision=0;
 }
-static void configs_free(q2_host_peer *peer)
+static void peer_reset(q2_host_peer *peer,bool reserved)
 {
-    configs_dispose(&peer->configs,&peer->config_count);
-    configs_dispose(&peer->signon_configs,&peer->signon_config_count);
+    frontend_network_q2_host *host=peer->host;
+    qa_string_id *configs=peer->configs,*signon=peer->signon_configs;
+    *peer=(q2_host_peer){.host=host,.reserved=reserved,.configs=configs,.signon_configs=signon};
 }
-static bool config_copy(char **out,const char *value,qa_error *error)
+static bool configs_snapshot(qa_application_network_q2 *source,
+    qa_string_id *values,size_t capacity,uint64_t *revision,qa_error *error)
 {
-    *out=NULL;
-    if(!value || !*value) return true;
-    size_t length=strlen(value);
-    char *copy=malloc(length+1);
-    if(!copy) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual Q2 configstring publication");
-    memcpy(copy,value,length+1); *out=copy; return true;
+    const qa_string_id *actual;size_t count;
+    if(!qa_application_network_q2_config_values(source,&actual,&count,revision,error)) return false;
+    for(size_t i=capacity;i<count;++i) if(actual[i])
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 config publication leaves its negotiated namespace");
+    size_t retained=count<capacity?count:capacity;
+    memcpy(values,actual,retained*sizeof(*values));
+    memset(values+retained,0,(capacity-retained)*sizeof(*values));
+    return true;
 }
 static bool source_game_state(void *context,qa_net_client_id id,qa_q2_game_state *out,qa_error *error)
 {
@@ -178,26 +182,18 @@ static bool source_game_state(void *context,qa_net_client_id id,qa_q2_game_state
     }
     if(!qa_q2_config_layout_read(&declared,&layout,error)) return false;
     size_t count=layout.max_configs;
-    char **configs=calloc(count,sizeof(*configs));
-    if(!configs) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining issued Q2 gamestate configstrings");
-    bool ok=true;
-    for(size_t i=0;ok && i<out->config_count;++i) {
-        uint16_t index=out->configs[i].index;
-        ok=index<count && !configs[index] && config_copy(&configs[index],out->configs[i].value,error);
-    }
-    if(!ok) {
-        for(size_t i=0;i<count;++i) free(configs[i]);
-        free(configs); return false;
-    }
-    configs_dispose(&peer->signon_configs,&peer->signon_config_count);
-    peer->signon_configs=configs; peer->signon_config_count=count; return true;
+    if(!configs_snapshot(peer->source,peer->signon_configs,count,
+        &peer->signon_config_revision,error)) return false;
+    peer->signon_config_count=count;return true;
 }
 static void source_game_state_accepted(void *context,qa_net_client_id id)
 {
     q2_host_peer *peer=context;
-    configs_dispose(&peer->configs,&peer->config_count);
-    peer->configs=peer->signon_configs; peer->config_count=peer->signon_config_count;
-    peer->signon_configs=NULL; peer->signon_config_count=0;
+    qa_string_id *previous=peer->configs;
+    peer->configs=peer->signon_configs;peer->signon_configs=previous;
+    peer->config_count=peer->signon_config_count;
+    peer->config_revision=peer->signon_config_revision;
+    peer->signon_config_count=0;peer->signon_config_revision=0;
     if(peer->source_hooks.game_state_accepted)
         peer->source_hooks.game_state_accepted(peer->source_hooks.context,id);
 }
@@ -254,10 +250,10 @@ static bool abort_claim(void *context,const qa_q2_server_admission *claim,qa_err
     if(peer->host!=host) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 cleanup names another Source claim");
     if(!retire_source(host,peer,error)) return false;
     qa_q2_unicast_remove_client(host->unicast,peer->client);
-    configs_free(peer); free(peer->event_storage);
+    configs_reset(peer); free(peer->event_storage);
     qa_application_network_q2_destroy(peer->source); qa_application_network_q2_destroy(peer->travel_source);
     qa_application_network_q2_destroy(peer->import_source);
-    *peer=(q2_host_peer){.host=host}; return true;
+    peer_reset(peer,false); return true;
 }
 static bool prepare(void *context,const qa_net_address *address,const qa_q2_connect_request *request,
     qa_q2_server_admission *out,bool *allowed,char reason[1024],qa_error *error)
@@ -277,7 +273,7 @@ static bool prepare(void *context,const qa_net_address *address,const qa_q2_conn
     q2_host_peer *peer=NULL;
     for(size_t i=0;i<host->capacity;++i) if(!host->peers[i].reserved) { peer=&host->peers[i]; break; }
     if(!peer) { snprintf(reason,1024,"Server is full."); return true; }
-    *peer=(q2_host_peer){.host=host,.reserved=true};
+    peer_reset(peer,true);
     out->source_claim=peer;
     size_t count=0;
     if(local) {
@@ -388,7 +384,17 @@ bool frontend_network_q2_host_create(const frontend_network_q2_host_options *opt
     host->capacity=256;
     host->peers=calloc(host->capacity,sizeof(*host->peers));
     if(!host->peers) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating actual Q2 Source claims");
-    for(size_t i=0;i<host->capacity;++i) host->peers[i].host=host;
+    host->config_capacity=QA_Q2_MAX_CONFIGSTRINGS;
+    size_t config_rows=host->capacity*2+2;
+    host->config_storage=calloc(config_rows*host->config_capacity,sizeof(*host->config_storage));
+    if(!host->config_storage) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating Q2 config publication storage");
+    for(size_t i=0;i<host->capacity;++i) {
+        host->peers[i].host=host;
+        host->peers[i].configs=host->config_storage+(i*2)*host->config_capacity;
+        host->peers[i].signon_configs=host->peers[i].configs+host->config_capacity;
+    }
+    host->demo_configs=host->config_storage+(host->capacity*2)*host->config_capacity;
+    host->demo_signon_configs=host->demo_configs+host->config_capacity;
     qa_network_q2_server_hooks source_hooks;
     if(!frontend_network_q2_host_bind_publisher(host,host->discovery,options->runtime,&source_hooks,error)) return false;
     qa_q2_server_bootstrap_options bootstrap=frontend_network_q2_host_bootstrap_options(host);
@@ -508,7 +514,7 @@ static bool refresh_source(frontend_network_q2_host *host,qa_error *error)
         peer->admission.policy.server_count=transport.server_count+1;
         peer->admission.policy.source_interval_ns=actual.source.clock_config.interval_ns;
         peer->admission.connection.composition=host->options.composition;
-        configs_free(peer); peer->event_packet=(qa_bytes){0}; peer->event_pending=false; peer->event_player=false;
+        configs_reset(peer); peer->event_packet=(qa_bytes){0}; peer->event_pending=false; peer->event_player=false;
         peer->event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
         peer->event_cursor=qa_application_events_local_first(host->options.frontend->application);
         peer->player_event_cursor=qa_application_events_local_first(host->options.frontend->application);
@@ -535,27 +541,25 @@ bool frontend_network_q2_host_tick(frontend_network_q2_host *host,uint64_t now,q
     --host->calls; return ok;
 }
 typedef bool (*config_emit_fn)(void *, const qa_q2_server_event *, qa_error *);
-static bool configs_publish(qa_application_network_q2 *source, char **values, size_t capacity,
-    config_emit_fn emit, void *context, qa_error *error)
+static bool configs_publish(frontend_network_q2_host *host,qa_application_network_q2 *source,
+    qa_string_id *values,size_t capacity,uint64_t *revision,
+    config_emit_fn emit,void *context,qa_error *error)
 {
-    const qa_q2_config_entry *entries=NULL; size_t count=0;
-    if(!values || !qa_application_network_q2_configs(source,&entries,&count,error)) return false;
-    for(size_t i=0;i<count;++i)
-        if(entries[i].index>=capacity || !entries[i].value ||
-            (i && entries[i-1].index>=entries[i].index))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Q2 config publication lost its ordered Source namespace");
-    bool ok=true; size_t entry=0;
-    for(size_t c=0;ok && c<capacity;++c) {
-        const char *next=entry<count && entries[entry].index==c?entries[entry++].value:"";
-        const char *old=values[c]?values[c]:"";
-        if(!strcmp(next,old)) continue;
-        char *copy=NULL;
-        if(!config_copy(&copy,next,error)) { ok=false; break; }
-        qa_q2_server_event event={.kind=QA_Q2_SVC_CONFIGSTRING,.data.config={(uint16_t)c,next}};
-        ok=emit(context,&event,error);
-        if(ok) { free(values[c]); values[c]=copy; } else free(copy);
+    const qa_string_id *actual;size_t count;uint64_t next_revision;
+    if(!qa_application_network_q2_config_values(source,&actual,&count,&next_revision,error)) return false;
+    if(*revision==next_revision) return true;
+    for(size_t i=capacity;i<count;++i) if(actual[i])
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q2 config publication leaves its negotiated namespace");
+    const qa_strings *strings=qa_session_strings(qa_application_session(host->options.frontend->application));
+    for(size_t c=0;c<capacity;++c) {
+        qa_string_id next=c<count?actual[c]:QA_STRING_NONE;
+        if(values[c]==next) continue;
+        const char *text=next?qa_strings_cstr(strings,next):"";
+        qa_q2_server_event event={.kind=QA_Q2_SVC_CONFIGSTRING,.data.config={(uint16_t)c,text}};
+        if(!emit(context,&event,error)) return false;
+        values[c]=next;
     }
-    return ok;
+    *revision=next_revision;return true;
 }
 static bool config_transport(void *context, const qa_q2_server_event *event, qa_error *error)
 {
@@ -564,7 +568,8 @@ static bool config_transport(void *context, const qa_q2_server_event *event, qa_
 }
 static bool publish_configs(q2_host_peer *peer,qa_error *error)
 {
-    return configs_publish(peer->source,peer->configs,peer->config_count,config_transport,peer,error);
+    return configs_publish(peer->host,peer->source,peer->configs,peer->config_count,
+        &peer->config_revision,config_transport,peer,error);
 }
 
 static bool event_drop(q2_host_peer *peer,qa_error *error)
@@ -858,7 +863,7 @@ bool frontend_network_q2_host_destroy(frontend_network_q2_host **owned,qa_error 
     qa_application_network_q2_destroy(host->import_discovery);
     qa_q2_unicast_cache_destroy(host->unicast);
     for (unsigned i = 0; i < 2; ++i) qa_q2_messages_destroy(host->event_decoders[i]);
-    free(host->peers); free(host); *owned=NULL; return true;
+    free(host->config_storage);free(host->peers); free(host); *owned=NULL; return true;
 }
 
 static const qa_net_client *demo_client(frontend_network_q2_host *host, qa_error *error)
@@ -899,15 +904,12 @@ static bool demo_host_seed(void *context,const frontend_demo_sink *sink,qa_error
     qa_q2_config_layout layout;
     if(!qa_q2_config_layout_read(&host->demo_codec,&layout,error)) return false;
     size_t config_count=layout.max_configs;
-    char **configs=calloc(config_count,sizeof(*configs));
-    if(!configs) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining Q2 demo config beforeimages");
-    bool ok=true;
-    for(size_t i=0;ok && i<state.config_count;++i)
-        ok=state.configs[i].index<layout.max_configs && config_copy(&configs[state.configs[i].index],state.configs[i].value,error);
-    if(ok) ok=frontend_remote_q2_demo_seed(&host->demo_codec,&state,&frame,sink,error);
-    if(!ok) { configs_dispose(&configs,&config_count); return false; }
-    configs_dispose(&host->demo_configs,&host->demo_config_count);
-    host->demo_configs=configs; host->demo_config_count=config_count;
+    uint64_t revision;
+    if(!configs_snapshot(host->discovery,host->demo_signon_configs,config_count,&revision,error) ||
+        !frontend_remote_q2_demo_seed(&host->demo_codec,&state,&frame,sink,error)) return false;
+    qa_string_id *previous=host->demo_configs;
+    host->demo_configs=host->demo_signon_configs;host->demo_signon_configs=previous;
+    host->demo_config_count=config_count;host->demo_config_revision=revision;
     host->demo_map_revision=host->source.source.map_revision;
     host->demo_frame=(uint32_t)frame.server_frame; host->demo_frame_set=true;
     host->demo_event_generation=qa_application_protocol_events_generation(host->options.frontend->application);
@@ -918,7 +920,7 @@ static bool demo_host_seed(void *context,const frontend_demo_sink *sink,qa_error
 static bool demo_host_attach(void *context,const frontend_demo_sink *sink,bool *attached,qa_error *error)
 {
     frontend_network_q2_host *host=context;
-    if(!attached || !sink || !sink->append || !demo_host_current(host) || host->demo_sink.append || !host->demo_configs)
+    if(!attached || !sink || !sink->append || !demo_host_current(host) || host->demo_sink.append || !host->demo_config_count)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 HOST demo sink lacks its actual seeded source");
     host->demo_sink=*sink; *attached=true;
     return true;
@@ -937,7 +939,7 @@ static bool demo_host_release(void **context,qa_error *error)
     if(!host) return true;
     if(host->calls || !host->demo_held || host->demo_sink.append)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 HOST demo still owns entered or attached work");
-    configs_dispose(&host->demo_configs,&host->demo_config_count);
+    host->demo_config_count=0;host->demo_config_revision=0;
     host->demo_held=false; host->demo_frame_set=false; host->demo_actor=(qa_actor_id){0};
     *context=NULL;
     return true;
@@ -976,7 +978,8 @@ static bool demo_publish(frontend_network_q2_host *host,qa_error *error)
     uint64_t source_frame=actual.source.clock.frame_number;
     if(host->demo_frame_set && host->demo_frame==source_frame) return true;
     const qa_net_client *client=demo_client(host,error);
-    if(!client || !configs_publish(host->discovery,host->demo_configs,host->demo_config_count,demo_host_config,host,error)) return false;
+    if(!client || !configs_publish(host,host->discovery,host->demo_configs,host->demo_config_count,
+        &host->demo_config_revision,demo_host_config,host,error)) return false;
     qa_application *app=host->options.frontend->application;
     uint64_t generation=qa_application_protocol_events_generation(app);
     uint64_t first=qa_application_events_local_first(app),next=qa_application_events_next(app);

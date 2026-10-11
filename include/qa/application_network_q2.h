@@ -71,6 +71,8 @@ bool qa_application_network_q2_game_state(qa_application_network_q2 *,
 /* Does not rebuild or invalidate a previously borrowed entity/frame span. */
 bool qa_application_network_q2_configs(qa_application_network_q2 *,
     const qa_q2_config_entry **, size_t *, qa_error *);
+bool qa_application_network_q2_config_values(qa_application_network_q2 *,
+    const qa_string_id **, size_t *, uint64_t *revision, qa_error *);
 bool qa_application_network_q2_frame(qa_application_network_q2 *,
     const qa_actor_id *, size_t seats, qa_q2_wire_frame *, qa_error *);
 bool qa_application_network_q2_motion(qa_application_network_q2 *,

@@ -101,6 +101,7 @@ struct qa_application_network_q2 {
     uint32_t checksum_index, clients_index, air_index, n64_index;
     application_q2_numeric_config numeric_configs[3];
     uint64_t observed_map_revision,observed_air_modification;
+    uint64_t config_revision;
     bool air_config_ready;
     uint32_t observed_client_slots;
     bool map_configs_ready, builtin_metadata_ready;

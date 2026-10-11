@@ -13,10 +13,12 @@ typedef struct q2_host_peer {
     uint32_t slots[QA_Q2_MAX_SEATS];
     qa_net_client_id client;
     char userinfo[8193],reason[1024];
-    char **configs;
+    qa_string_id *configs;
     size_t config_count;
-    char **signon_configs;
+    uint64_t config_revision;
+    qa_string_id *signon_configs;
     size_t signon_config_count;
+    uint64_t signon_config_revision;
     uint64_t event_generation;
     uint64_t event_cursor;
     uint64_t player_event_cursor;
@@ -44,6 +46,8 @@ struct frontend_network_q2_host {
     qa_q2_unicast_cache *unicast;
     qa_q2_messages *event_decoders[2];
     q2_host_peer *peers;
+    qa_string_id *config_storage;
+    size_t config_capacity;
     size_t capacity;
     unsigned calls;
     qa_application_network_q2 *travel_discovery;
@@ -61,8 +65,9 @@ struct frontend_network_q2_host {
     qa_actor_id demo_actor;
     qa_q2_codec demo_codec;
     uint8_t demo_bytes[65535];
-    char **demo_configs;
+    qa_string_id *demo_configs,*demo_signon_configs;
     size_t demo_config_count;
+    uint64_t demo_config_revision;
     uint64_t demo_event_cursor, demo_player_event_cursor;
     uint64_t demo_event_generation, demo_map_revision, demo_frame;
     bool demo_held, demo_frame_set;

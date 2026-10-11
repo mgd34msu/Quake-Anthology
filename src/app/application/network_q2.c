@@ -98,6 +98,7 @@ bool application_network_q2_config_id(qa_application_network_q2 *owner, uint32_t
         owner->host.source.edition == QA_RULESET_Q2_RERELEASE, &owner->layout_scratch,
         &references, error)) return false;
     owner->configs[index] = name;
+    ++owner->config_revision;
     if (index == 5) owner->status_references = references;
     owner->source_entities_ready = false;
     return true;
@@ -492,6 +493,18 @@ bool qa_application_network_q2_configs(qa_application_network_q2 *owner,
     for (uint32_t i = 0; i < owner->config_count; ++i)
         if (owner->configs[i]) owner->entries[found++] = (qa_q2_config_entry){(uint16_t)i, application_network_q2_config_text(owner, i)};
     *out = owner->entries; *count = found; return true;
+}
+
+bool qa_application_network_q2_config_values(qa_application_network_q2 *owner,
+    const qa_string_id **out, size_t *count, uint64_t *revision, qa_error *error)
+{
+    if (!out || !count || !revision || !application_network_q2_current(owner, error) ||
+        !application_network_q2_observe(owner, error) ||
+        !application_network_q2_source_resources(owner, error)) return false;
+    *out = owner->configs;
+    *count = owner->config_count;
+    *revision = owner->config_revision;
+    return true;
 }
 
 bool qa_application_network_q2_game_state(qa_application_network_q2 *owner,
