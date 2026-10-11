@@ -10,6 +10,7 @@
 #include "unified_q2_events.h"
 #include "unified_q2_native_events.h"
 #include "guest_q3_weapons_services.h"
+#include "guest_q3_components.h"
 #include "guest_native_q2_private.h"
 #include "native_q2_protocol_resources.h"
 #include "network_q2_private.h"
@@ -1201,6 +1202,8 @@ void application_events_retire(qa_application *app)
     if (app->event_peer_cursor < next) next = app->event_peer_cursor;
     if (app->event_audio_cursor < next) next = app->event_audio_cursor;
     if (app->event_source_cursor < next) next = app->event_source_cursor;
+    uint64_t component = application_q3_components_events_first(app->components);
+    if (component < next) next = component;
     qa_event_ring_retire(app->event_ring, next);
 }
 uint64_t qa_application_events_audio_first(const qa_application *app)

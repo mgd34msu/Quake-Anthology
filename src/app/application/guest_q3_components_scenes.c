@@ -6,7 +6,6 @@
 #include "guest_q3_components_video.h"
 #include <stdio.h>
 
-typedef struct component_pending_event { application_q3_scene_player_event event; uint64_t sequence; } component_pending_event;
 struct component_scene_row {
     component_scene_row *next;
     component_game_row *game;
@@ -26,23 +25,15 @@ struct component_scene_row {
     qa_q3_presentation_assets *assets;
     application_q3_component_scene_frontend frontend;
     uint64_t sequence,frontend_identity;
-    component_pending_event *events;
-    size_t event_count,event_cursor;
+    uint64_t event_cursor;
     bool initialized,host_entered,advanced;
 };
 bool q3components_player_event(void *context,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
 {
     component_game_row *game=context;
     if(!game||!event||!sequence||!q3components_current(game)) return application_fail(e,QA_ERROR_ARGUMENT,"Player event lost its admitted component Source");
-    if(!application_unified_q3_component_player(game->roster->options.application,&game->publication,event,e)) return false;
-    for(component_scene_row *row=game->scenes;row;row=row->next) {
-        if(!row->profile||!row->profile->player_events||!row->initialized) continue;
-        if(row->event_count==SIZE_MAX/sizeof(*row->events)) return application_fail(e,QA_ERROR_MEMORY,"Player event delivery queue overflows");
-        component_pending_event *events=realloc(row->events,(row->event_count+1)*sizeof(*events));
-        if(!events) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual component CG player event delivery");
-        row->events=events; events[row->event_count++]=(component_pending_event){*event,sequence};
-    }
-    return true;
+    return application_unified_q3_component_player(game->roster->options.application,
+        &game->publication,event,e);
 }
 static bool retained(void *context)
 { component_scene_row *row=context; return row&&q3components_storage(row->game); }
@@ -160,6 +151,7 @@ bool application_q3_components_scene_prepare(application_q3_components *owner,si
     if(!row) {
         row=calloc(1,sizeof(*row)); if(!row) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual component viewer scene");
         row->game=game; row->viewer=viewer; row->seat=seat;
+        row->event_cursor=qa_application_events_local_first(owner->options.application);
         row->next=game->scenes; game->scenes=row;
         row->view=(application_q3_component_view){.source=publication.source,.viewer=viewer,
             .weapon_presented=owner->options.weapon_presented,.weapon_context=owner->options.weapon_context};
@@ -179,12 +171,24 @@ bool application_q3_components_scene_advance(application_q3_components *owner,si
     if(!row) return application_fail(e,QA_ERROR_ARGUMENT,"Component advance lost its actual viewer row");
     if(!row->advanced||sequence>row->sequence) {
         if(!row->frontend.begin(row->frontend.owner,sequence,e)) return false;
-        while(row->event_cursor<row->event_count) {
-            const component_pending_event *event=row->events+row->event_cursor;
-            if(!application_q3_scene_consume(*scene,&event->event,event->sequence,e)) return false;
+        qa_application *app=owner->options.application;
+        if(!row->profile->player_events) row->event_cursor=qa_application_events_next(app);
+        while(row->event_cursor<qa_application_events_next(app)) {
+            const application_event_envelope *record=application_event_stream_at(app,row->event_cursor);
+            for(const application_event_view *view=record?record->views:NULL;view;view=view->next) {
+                const qa_unified_presentation_payload *payload=view->event.presentation;
+                if(view->event.provider!=row->game->publication.owner || !payload ||
+                    payload->kind!=QA_UNIFIED_PRESENTATION_Q3 ||
+                    payload->value.q3.kind!=QA_UNIFIED_Q3_PLAYER_EVENT) continue;
+                const qa_unified_q3_event *value=&payload->value.q3;
+                application_q3_scene_player_event event={.actor=value->actor,.player=value->player,
+                    .event=value->event,.parameter=value->parameter,.external=value->external,
+                    .source_sequence=value->source_sequence,.origin=value->origin,.time_ms=value->time_ms};
+                if(!application_q3_scene_consume(*scene,&event,view->event.presentation_sequence,e)) return false;
+            }
             ++row->event_cursor;
         }
-        free(row->events); row->events=NULL; row->event_count=row->event_cursor=0;
+        application_events_retire(app);
         if(!application_q3_scene_advance(*scene,sequence,e)) return false;
         row->sequence=sequence; row->advanced=true;
     } else if(sequence!=row->sequence) return application_fail(e,QA_ERROR_ARGUMENT,"Component advance sequence moved backwards");
@@ -209,7 +213,7 @@ bool q3components_scenes_destroy(component_game_row *game,qa_error *e)
         qa_cvars_detach_callbacks(row->cvars); qa_cvars_destroy(row->cvars);
         application_q3_scene_profile_destroy(row->profile); qa_qvm_image_release(row->image);
         qa_resource_release(row->artifact); qa_vfs_acquisition_dispose(&row->acquisition);
-        game->scenes=row->next; free(row->events); free(row);
+        game->scenes=row->next; free(row);
     }
     return true;
 }
@@ -389,4 +393,18 @@ bool application_q3_components_video_finish(application_q3_components_video **sl
 bool application_q3_components_video_abort(application_q3_components_video **slot,qa_error *e)
 {
     return !slot||!*slot||(application_q3_components_video_reopen(*slot,e)&&application_q3_components_video_finish(slot,e));
+}
+
+uint64_t application_q3_components_events_first(const application_q3_components *owner)
+{
+    uint64_t first=UINT64_MAX;
+    for(;owner;owner=owner->retired)
+        for(size_t i=0;i<owner->count;++i) {
+            const component_game_row *game=owner->rows[i];
+            if(!game) continue;
+            for(const component_scene_row *row=game->scenes;row;row=row->next)
+                if(row->initialized && row->profile && row->profile->player_events && row->event_cursor<first)
+                    first=row->event_cursor;
+        }
+    return first;
 }

@@ -10,6 +10,7 @@
 
 typedef struct application_q3_components application_q3_components;
 typedef struct application_q3_component_publication_lease application_q3_component_publication_lease;
+uint64_t application_q3_components_events_first(const application_q3_components *);
 typedef struct application_q3_components_options {
     application_q3_components *previous;
     qa_bytes saved;
