@@ -336,6 +336,25 @@ typedef enum qa_world_snapshot_order { QA_WORLD_ORDER_SPATIAL, QA_WORLD_ORDER_AC
  * nonsolid bodies. Callbacks may release actors; callers re-read each live id. */
 bool qa_world_snapshot_capture(qa_world *, qa_bounds, qa_collision_role,
     qa_world_snapshot_order, qa_world_actor_snapshot *, qa_error *);
+typedef enum qa_world_radius_metric { QA_WORLD_RADIUS_ORIGIN, QA_WORLD_RADIUS_BOUNDS_CENTER } qa_world_radius_metric;
+typedef enum qa_world_radius_read_policy {
+    QA_WORLD_RADIUS_SKIP_MISSING, QA_WORLD_RADIUS_SKIP_FAILED, QA_WORLD_RADIUS_READ_REQUIRED
+} qa_world_radius_read_policy;
+typedef bool (*qa_world_radius_include_fn)(void *, qa_actor_id);
+typedef struct qa_world_radius_query {
+    qa_vec3 origin;
+    float radius;
+    qa_world_radius_metric metric;
+    qa_world_radius_include_fn include;
+    void *context;
+    qa_world_radius_read_policy read_policy;
+} qa_world_radius_query;
+/* Current authoritative bodies, including unlinked/nonsolid bodies, in actor-
+ * slot order. Pure eligibility runs before sampling the stable captured IDs. */
+bool qa_world_radius_snapshot_capture(qa_world *, const qa_world_radius_query *,
+    qa_world_actor_snapshot *, qa_error *);
+typedef int (*qa_world_snapshot_compare_fn)(void *, qa_actor_id, qa_actor_id);
+void qa_world_snapshot_sort(qa_world_actor_snapshot *, qa_world_snapshot_compare_fn, void *);
 void qa_world_snapshot_release(qa_world_actor_snapshot *);
 /* CLIENT membership borrows decoded append order over the common linked
  * bodies. NULL actors retains the normal spatial candidate order. */

@@ -193,24 +193,12 @@ int qa_builtin_source_order(const qa_builtin_services *s, qa_actor_id a, qa_acto
         return left->owner < right->owner ? -1 : 1;
     return a.slot < b.slot ? -1 : a.slot > b.slot;
 }
+static int snapshot_source_compare(void *context,qa_actor_id left,qa_actor_id right) {
+    return qa_builtin_source_order(context,left,right);
+}
 static void sort_snapshot(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot) {
-    size_t count = snapshot->count;
-    qa_actor_id *ids = snapshot->ids, *temporary = snapshot->sort;
-    for (size_t width = 1; width < count; width *= 2) {
-        for (size_t start = 0; start < count; start += 2 * width) {
-            size_t middle = start + width < count ? start + width : count;
-            size_t end = middle + width < count ? middle + width : count;
-            size_t left = start, right = middle, target = start;
-            while (left < middle && right < end)
-                temporary[target++] = qa_builtin_source_order(s, ids[left], ids[right]) <= 0
-                                          ? ids[left++] : ids[right++];
-            while (left < middle)
-                temporary[target++] = ids[left++];
-            while (right < end)
-                temporary[target++] = ids[right++];
-        }
-        memcpy(ids, temporary, count * sizeof(*ids));
-    }
+    qa_world_actor_snapshot view={.actors=snapshot->ids,.count=snapshot->count};
+    qa_world_snapshot_sort(&view,snapshot_source_compare,(void *)s);
 }
 void qa_builtin_sort_observations(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot) {
     sort_snapshot(s, snapshot);
@@ -238,28 +226,20 @@ bool qa_builtin_nearby(const qa_builtin_services *s, qa_vec3 origin, float radiu
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native nearby query");
         return false;
     }
-    if (!qa_builtin_observations(s, snapshot, error))
+    qa_world_actor_snapshot nearby;
+    qa_world_radius_query query = {.origin = origin, .radius = radius,
+                                   .metric = QA_WORLD_RADIUS_ORIGIN};
+    if (!qa_world_radius_snapshot_capture(s->world, &query, &nearby, error)) {
+        snapshot->count = 0;
         return false;
-    const qa_actor_registry *actors = qa_session_actors(s->session);
-    size_t total = snapshot->count, accepted = 0;
-    for (size_t i = 0; i < total; ++i) {
-        qa_actor_id id = snapshot->ids[i];
-        if (!qa_actors_get(actors, id))
-            continue;
-        qa_body_state body;
-        qa_error read_error = {0};
-        if (!qa_world_body_read(s->world, id, &body, &read_error)) {
-            if (read_error.code == QA_ERROR_NOT_FOUND)
-                continue;
-            if (error)
-                *error = read_error;
-            snapshot->count = 0;
-            return false;
-        }
-        if (qa_vec_length(qa_vec_sub(body.origin, origin)) <= radius)
-            snapshot->ids[accepted++] = id;
     }
-    snapshot->count = accepted;
+    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(qa_session_actors(s->session)), error)) {
+        qa_world_snapshot_release(&nearby);
+        return false;
+    }
+    if (nearby.count) memcpy(snapshot->ids, nearby.actors, nearby.count * sizeof(*snapshot->ids));
+    snapshot->count = nearby.count;
+    qa_world_snapshot_release(&nearby);
     sort_snapshot(s, snapshot);
     return true;
 }

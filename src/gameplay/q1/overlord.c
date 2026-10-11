@@ -2,32 +2,28 @@
 #include <stdio.h>
 
 bool q1_spawnpoint_empty(qa_q1_game *g, qa_actor_id marker, qa_vec3 origin) {
-    uint32_t cursor = 0;
-    const qa_actor_record *record;
-    while (qa_actors_next(qa_session_actors(g->services.session), &cursor, &record)) {
-        if (qa_actor_id_equal(record->id, marker))
-            continue;
-        q1_actor *native = q1_entity(g, record->id);
-        if (native && native->physics.solid == QA_PHYSICS_NOT_SOLID)
-            continue;
-        qa_body_state body;
-        if (!qa_world_body_read(g->services.world, record->id, &body, NULL))
-            continue;
-        qa_vec3 center = qa_vec_add(
-            body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
-        if (qa_vec_length(qa_vec_sub(center, origin)) > 64)
+    qa_builtin_snapshot_frame *nearby;
+    if (!q1_radius_snapshot(g, origin, 64, &nearby, NULL))
+        return false;
+    bool empty = true;
+    for (size_t i = 0; i < nearby->snapshot.count; ++i) {
+        qa_actor_id actor = nearby->snapshot.ids[i];
+        if (!q1_alive(g, actor) || qa_actor_id_equal(actor, marker))
             continue;
         qa_q1_target traits;
         qa_physics_properties physics;
         bool monster = g->services.physics && g->services.physics->services.read &&
                        g->services.physics->services.read(g->services.physics->services.context,
-                                                          record->id, &physics) &&
+                                                          actor, &physics) &&
                        (physics.flags & QA_PHYSICS_MONSTER);
-        if (monster || (q1_target(g, record->id, &traits) && traits.player) ||
-            qa_scheduler_pending(qa_session_scheduler(g->services.session), record->id))
-            return false;
+        if (monster || (q1_target(g, actor, &traits) && traits.player) ||
+            qa_scheduler_pending(qa_session_scheduler(g->services.session), actor)) {
+            empty = false;
+            break;
+        }
     }
-    return true;
+    qa_builtin_snapshot_release(nearby);
+    return empty;
 }
 bool q1_overlord_destination(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     qa_body_state player = {0};

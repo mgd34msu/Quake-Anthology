@@ -27,17 +27,20 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
     if (!q1_alive(g, id))
         return true;
     qa_vec3 eye = qa_vec_add(self.origin, view_offset);
-    qa_builtin_snapshot_frame *list;
-    if (!q1_snapshot_actors(g, &list, error))
+    qa_world_actor_snapshot nearby;
+    qa_world_radius_query query = {.origin = self.origin, .radius = radius,
+        .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED};
+    if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error))
         return false;
-    for (size_t i = 0; i < list->snapshot.count / 2; ++i) {
-        qa_actor_id actor = list->snapshot.ids[i];
-        list->snapshot.ids[i] = list->snapshot.ids[list->snapshot.count - i - 1];
-        list->snapshot.ids[list->snapshot.count - i - 1] = actor;
+    qa_builtin_snapshot_frame *list = qa_builtin_snapshot_acquire(&g->snapshots,
+        qa_actors_capacity(qa_session_actors(g->services.session)), error);
+    if (!list) {
+        qa_world_snapshot_release(&nearby);
+        return false;
     }
     size_t count = 0;
-    for (size_t i = 0; i < list->snapshot.count; ++i) {
-        qa_actor_id actor = list->snapshot.ids[i];
+    for (size_t i = nearby.count; i > 0; --i) {
+        qa_actor_id actor = nearby.actors[i - 1];
         qa_q1_target target;
         qa_builtin_actor_traits traits = {0};
         const q1_actor *native = q1_entity_const(g, actor);
@@ -69,6 +72,7 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
                                                         ? native->map->view_offset.z :
                                                           native ? target.view_height : 0));
         if (!q1_trace(g, eye, end, id, false, &trace, error)) {
+            qa_world_snapshot_release(&nearby);
             qa_builtin_snapshot_release(list);
             return false;
         }
@@ -80,6 +84,7 @@ static bool scan(qa_q1_game *g, q1_actor *e, float radius, bool monsters, bool u
         if (unclaimed && (double)count == e->count)
             break;
     }
+    qa_world_snapshot_release(&nearby);
     list->snapshot.count = count;
     *out = list;
     return true;

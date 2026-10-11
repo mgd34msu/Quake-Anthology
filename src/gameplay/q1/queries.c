@@ -145,24 +145,32 @@ bool q1_snapshot_targets(qa_q1_game *g, qa_targets *targets, qa_string_id name,
     return true;
 }
 
+static bool radius_actor_include(void *context, qa_actor_id actor) {
+    const q1_actor *native = q1_entity_const(context, actor);
+    return native == NULL || native->physics.solid != QA_PHYSICS_NOT_SOLID;
+}
 bool q1_radius_snapshot(qa_q1_game *g, qa_vec3 origin, float radius, qa_builtin_snapshot_frame **out,
                         qa_error *error) {
-    qa_builtin_snapshot_frame *snapshot;
-    if (!q1_snapshot_actors(g, &snapshot, error))
+    qa_world_actor_snapshot nearby;
+    qa_world_radius_query query = {.origin = origin, .radius = radius,
+        .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .include = radius_actor_include,
+        .context = g, .read_policy = QA_WORLD_RADIUS_SKIP_FAILED};
+    if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, error))
         return false;
-    size_t count = 0;
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        qa_actor_id actor = snapshot->snapshot.ids[i];
-        const q1_actor *native = q1_entity_const(g, actor);
-        qa_body_state body;
-        if ((native && native->physics.solid == QA_PHYSICS_NOT_SOLID) ||
-            !qa_world_body_read(g->services.world, actor, &body, NULL))
-            continue;
-        qa_vec3 center = qa_vec_add(
-            body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
-        if (qa_vec_length(qa_vec_sub(origin, center)) <= radius)
-            snapshot->snapshot.ids[count++] = actor;
+    qa_builtin_snapshot_frame *snapshot = qa_builtin_snapshot_acquire(&g->snapshots,
+        qa_actors_capacity(qa_session_actors(g->services.session)), error);
+    if (!snapshot) {
+        qa_world_snapshot_release(&nearby);
+        return false;
     }
+    size_t count = 0;
+    for (size_t i = 0; i < nearby.count; ++i) {
+        qa_actor_id actor = nearby.actors[i];
+        if (!q1_alive(g, actor))
+            continue;
+        snapshot->snapshot.ids[count++] = actor;
+    }
+    qa_world_snapshot_release(&nearby);
     snapshot->snapshot.count = count;
     *out = snapshot;
     return true;

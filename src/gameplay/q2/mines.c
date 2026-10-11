@@ -969,31 +969,44 @@ bool qa_q2_projectile_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, 
     projectile_reaction_call call = {.game = g, .outcome = *outcome};
     return qa_q2_run_actor(g, call.outcome.request.target, projectile_reaction, &call, e);
 }
+typedef struct bad_area_query {
+    qa_q2_game *game;
+    qa_actor_id actor, hazard;
+    qa_bounds bounds;
+    uint64_t first_order;
+} bad_area_query;
+static qa_spatial_visit bad_area_visit(void *opaque, const qa_spatial_actor *spatial) {
+    bad_area_query *query = opaque;
+    qa_q2_game *g = query->game;
+    if (!q2_actor_live(g, query->actor))
+        return QA_SPATIAL_STOP;
+    qa_actor_id id = spatial->body.actor;
+    q2_actor *area = id.slot < g->capacity ? g->actors[id.slot] : NULL;
+    if (!q2_actor_live(g, id) || area == NULL || !qa_actor_id_equal(area->id, id) ||
+        area->projectile.kind != Q2_BAD_AREA || area->physics.solid != QA_PHYSICS_TRIGGER ||
+        (query->hazard.registry && area->source_order >= query->first_order))
+        return QA_SPATIAL_CONTINUE;
+    if (qa_bounds_overlap(query->bounds,
+                          qa_bounds_translate(spatial->body.state.bounds,
+                                              spatial->body.state.origin))) {
+        query->hazard = id;
+        query->first_order = area->source_order;
+    }
+    return QA_SPATIAL_CONTINUE;
+}
 bool qa_q2_bad_area(qa_q2_game *g, qa_actor_id actor, qa_vec3 origin, qa_actor_id *hazard,
                     qa_error *e) {
     qa_body_state body;
     if (hazard == NULL || !qa_world_body_read(g->services.world, actor, &body, e))
         return false;
-    qa_bounds bounds = qa_bounds_translate(body.bounds, origin);
     *hazard = (qa_actor_id){0};
-    for (q2_actor *a = g->first_actor; a; a = a->live_next) {
-        if (!q2_actor_live(g, actor))
-            return true;
-        if (!q2_actor_live(g, a->id) || a->projectile.kind != Q2_BAD_AREA ||
-            a->physics.solid != QA_PHYSICS_TRIGGER)
-            continue;
-        qa_body_state area;
-        if (!qa_world_body_read(g->services.world, a->id, &area, e))
-            return false;
-        if (!q2_actor_live(g, actor))
-            return true;
-        if (!q2_actor_live(g, a->id))
-            continue;
-        if (qa_bounds_overlap(bounds, qa_bounds_translate(area.bounds, area.origin))) {
-            *hazard = a->id;
-            break;
-        }
-    }
+    bad_area_query query = {.game = g, .actor = actor,
+                            .bounds = qa_bounds_translate(body.bounds, origin)};
+    if (!qa_world_visit(g->services.world, query.bounds, QA_COLLISION_TRIGGER,
+                        bad_area_visit, &query, e))
+        return false;
+    if (q2_actor_live(g, actor) && q2_actor_live(g, query.hazard))
+        *hazard = query.hazard;
     return true;
 }
 bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, qa_actor_id owner,
