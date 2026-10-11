@@ -6,31 +6,147 @@
 #include <string.h>
 #include <stdlib.h>
 
-struct qa_hud_q2_program { qa_strings *strings; qa_string_id *tokens; size_t count; };
+#define Q2_LAYOUT_COMMANDS(X) \
+    X(IF, "if", 1) \
+    X(IFGEF, "ifgef", 1) \
+    X(ENDIF, "endif", 0) \
+    X(XL, "xl", 1) \
+    X(XR, "xr", 1) \
+    X(XV, "xv", 1) \
+    X(YT, "yt", 1) \
+    X(YB, "yb", 1) \
+    X(YV, "yv", 1) \
+    X(PIC, "pic", 1) \
+    X(PICN, "picn", 1) \
+    X(NUM, "num", 2) \
+    X(LIVES_NUM, "lives_num", 1) \
+    X(HNUM, "hnum", 0) \
+    X(ANUM, "anum", 0) \
+    X(RNUM, "rnum", 0) \
+    X(STAT_STRING, "stat_string", 1) \
+    X(LOC_STAT_STRING, "loc_stat_string", 1) \
+    X(LOC_STAT_RSTRING, "loc_stat_rstring", 1) \
+    X(LOC_STAT_CSTRING, "loc_stat_cstring", 1) \
+    X(LOC_STAT_CSTRING2, "loc_stat_cstring2", 1) \
+    X(STRING, "string", 1) \
+    X(STRING2, "string2", 1) \
+    X(CSTRING, "cstring", 1) \
+    X(CSTRING2, "cstring2", 1) \
+    X(LOC_STRING, "loc_string", 1) \
+    X(LOC_STRING2, "loc_string2", 1) \
+    X(LOC_RSTRING, "loc_rstring", 1) \
+    X(LOC_RSTRING2, "loc_rstring2", 1) \
+    X(LOC_CSTRING, "loc_cstring", 1) \
+    X(LOC_CSTRING2, "loc_cstring2", 1) \
+    X(CLIENT, "client", 6) \
+    X(CTF, "ctf", 6) \
+    X(TIME_LIMIT, "time_limit", 1) \
+    X(DOGTAG, "dogtag", 1) \
+    X(START_TABLE, "start_table", 1) \
+    X(TABLE_ROW, "table_row", 1) \
+    X(DRAW_TABLE, "draw_table", 0) \
+    X(STAT_PNAME, "stat_pname", 1) \
+    X(HEALTH_BARS, "health_bars", 0) \
+    X(STORY, "story", 0)
+#define COMMAND_ENUM(name, text, arguments) Q2_HUD_##name,
+typedef enum q2_hud_command { Q2_HUD_UNKNOWN, Q2_LAYOUT_COMMANDS(COMMAND_ENUM) } q2_hud_command;
+#undef COMMAND_ENUM
+#define COMMAND_TEXT(name, text, arguments) text,
+static const char *const command_names[] = {"", Q2_LAYOUT_COMMANDS(COMMAND_TEXT)};
+#undef COMMAND_TEXT
+#define COMMAND_ARGUMENTS(name, text, arguments) arguments,
+static const uint8_t command_arguments[] = {0, Q2_LAYOUT_COMMANDS(COMMAND_ARGUMENTS)};
+#undef COMMAND_ARGUMENTS
+#undef Q2_LAYOUT_COMMANDS
 
-bool qa_hud_q2_program_create(qa_strings *strings,const char *source,qa_hud_q2_program **out,qa_error *error)
+typedef struct q2_hud_token {
+    uint32_t offset;
+    int32_t number;
+    qa_string_id picture;
+    q2_hud_command command;
+} q2_hud_token;
+struct qa_hud_q2_program {
+    qa_strings *strings;
+    qa_arena storage;
+    q2_hud_token *tokens;
+    char *text;
+    size_t count, token_capacity, text_capacity;
+};
+static int32_t decimal(const char *);
+
+static bool program_compile(qa_hud_q2_program *p, const char *source, bool rerelease, qa_error *error)
 {
-    *out=NULL; if (!source||!*source) return true;
-    qa_tokenizer parser; qa_token token; bool found; size_t count=0;
-    if (!qa_tokenizer_init(&parser,(qa_bytes){(const uint8_t *)source,strlen(source)},error)) return false;
-    for (;;) { if (!qa_tokenizer_next(&parser,&token,&found,error)) return false; if(!found)break; ++count; }
-    qa_hud_q2_program *p=calloc(1,sizeof(*p));
-    if (!p) return false;
-    p->tokens=count?calloc(count,sizeof(*p->tokens)):NULL;
-    if (count&&!p->tokens) {free(p);return false;}
-    p->strings=strings;qa_strings_retain(strings);
-    qa_tokenizer_init(&parser,(qa_bytes){(const uint8_t *)source,strlen(source)},error);
-    for (size_t i=0;i<count;++i) {
-        qa_tokenizer_next(&parser,&token,&found,error);
-        char *text=malloc(token.text.size+1);
-        bool okay=text&&qa_token_copy(&token,text,token.text.size+1,error)&&
-            qa_strings_intern_cstr(strings,text,p->tokens+i,error);
-        free(text); if (!okay) {qa_hud_q2_program_destroy(p);return false;}
+    if (!source) source = "";
+    size_t length = strlen(source);
+    if (length >= QA_HUD_Q2_LAYOUT_BYTES || length >= p->text_capacity) {
+        qa_error_set(error, QA_ERROR_FORMAT, length, "Q2 layout exceeds its protocol limit"); return false;
     }
-    p->count=count;*out=p;return true;
+    qa_tokenizer parser;
+    if (!qa_tokenizer_init(&parser, (qa_bytes){(const uint8_t *)source, length}, error)) return false;
+    p->count = 0;
+    size_t used = 0;
+    for (;;) {
+        qa_token token; bool found;
+        if (!qa_tokenizer_next(&parser, &token, &found, error)) return false;
+        if (!found) break;
+        if (p->count == p->token_capacity || token.text.size + 1 > p->text_capacity - used) {
+            qa_error_set(error, QA_ERROR_FORMAT, token.offset, "Q2 layout tokens exceed reserved storage"); return false;
+        }
+        if (!qa_token_copy(&token, p->text + used, p->text_capacity - used, error)) return false;
+        const char *text = p->text + used;
+        q2_hud_command command = Q2_HUD_UNKNOWN;
+        for (size_t i = 1; i < sizeof(command_names) / sizeof(command_names[0]); ++i)
+            if (!strcmp(text, command_names[i])) { command = (q2_hud_command)i; break; }
+        p->tokens[p->count++] = (q2_hud_token){.offset = (uint32_t)used, .number = decimal(text), .command = command};
+        used += strlen(text) + 1;
+    }
+    if (!p->strings) return true;
+    for (size_t i = 0; i < p->count;) {
+        q2_hud_command command = p->tokens[i++].command;
+        if (!rerelease && (command == Q2_HUD_IFGEF || command == Q2_HUD_LIVES_NUM ||
+            (command >= Q2_HUD_LOC_STAT_STRING && command <= Q2_HUD_LOC_STAT_CSTRING2) ||
+            (command >= Q2_HUD_LOC_STRING && command <= Q2_HUD_LOC_CSTRING2) ||
+            command >= Q2_HUD_TIME_LIMIT)) continue;
+        size_t arguments = command_arguments[command], picture = SIZE_MAX;
+        if (command == Q2_HUD_CLIENT) arguments = rerelease ? 5 : 6;
+        if (command == Q2_HUD_CTF) { arguments = rerelease ? 6 : 5; if (rerelease) picture = 5; }
+        if (command == Q2_HUD_PICN) picture = 0;
+        if ((command >= Q2_HUD_LOC_STRING && command <= Q2_HUD_LOC_CSTRING2) ||
+            command == Q2_HUD_START_TABLE || command == Q2_HUD_TABLE_ROW) {
+            int32_t count = i < p->count ? p->tokens[i].number : 0;
+            arguments = 1 + (count > 0 ? (size_t)count : 0) +
+                (command >= Q2_HUD_LOC_STRING && command <= Q2_HUD_LOC_CSTRING2);
+        }
+        if (picture < p->count - i &&
+            !qa_strings_intern_cstr(p->strings, p->text + p->tokens[i + picture].offset,
+                &p->tokens[i + picture].picture, error)) return false;
+        if (arguments > p->count - i) break;
+        i += arguments;
+    }
+    return true;
 }
+bool qa_hud_q2_program_create(qa_strings *strings, qa_hud_q2_program **out, qa_error *error)
+{
+    *out = NULL;
+    qa_hud_q2_program *p = calloc(1, sizeof(*p));
+    if (!p) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 layout program"); return false; }
+    p->strings = strings; qa_strings_retain(strings);
+    p->token_capacity = QA_HUD_Q2_LAYOUT_BYTES / 2 + 1;
+    p->text_capacity = QA_HUD_Q2_LAYOUT_BYTES;
+    if (!qa_arena_reserve(&p->storage, QA_HUD_Q2_LAYOUT_SCRATCH_BYTES, error)) {
+        qa_hud_q2_program_destroy(p); return false;
+    }
+    p->tokens = qa_arena_alloc(&p->storage, p->token_capacity * sizeof(*p->tokens), _Alignof(q2_hud_token), error);
+    p->text = qa_arena_alloc(&p->storage, p->text_capacity, 1, error);
+    qa_arena_seal(&p->storage);
+    if (!p->tokens || !p->text) { qa_hud_q2_program_destroy(p); return false; }
+    *out = p; return true;
+}
+bool qa_hud_q2_program_update(qa_hud_q2_program *p, const char *source, bool rerelease, qa_error *error)
+{ return program_compile(p, source, rerelease, error); }
+void qa_hud_q2_program_clear(qa_hud_q2_program *p) { if (p) p->count = 0; }
 void qa_hud_q2_program_destroy(qa_hud_q2_program *p)
-{ if(p) {qa_strings_destroy(p->strings);free(p->tokens);free(p);} }
+{ if (p) { qa_strings_destroy(p->strings); qa_arena_destroy(&p->storage); free(p); } }
 bool qa_hud_q2_picture_names_bind(qa_strings *strings,qa_hud_q2_picture_names *names,qa_error *error)
 {
     for(unsigned style=0;style<2;++style) for(unsigned n=0;n<11;++n) {
@@ -64,8 +180,9 @@ typedef struct layout_context {
     qa_scene_frame *scene;
     qa_arena *storage;
     qa_error *error;
-    qa_tokenizer parser;
     const qa_hud_q2_program *program;
+    q2_hud_command token_command;
+    int32_t token_number;
     size_t token;
     qa_string_id token_name;
     qa_hud_q2_table *table;
@@ -76,7 +193,7 @@ typedef struct layout_context {
 } layout_context;
 static const qa_vec4 white = {1, 1, 1, 1}, black = {0, 0, 0, 1};
 static void fail(layout_context *c, const char *message) {
-    if (!c->failed) qa_error_set(c->error, QA_ERROR_FORMAT, c->parser.offset, "%s", message);
+    if (!c->failed) qa_error_set(c->error, QA_ERROR_FORMAT, c->token, "%s", message);
     c->failed = true;
 }
 static char *allocate(layout_context *c, size_t bytes) {
@@ -98,17 +215,12 @@ static const char *config(layout_context *c, int32_t index) {
     return copy(c, c->options->configstring ? c->options->configstring(c->options->context, index) : NULL);
 }
 static const char *next(layout_context *c, bool *found) {
-    if(c->program) {
-        *found=c->token<c->program->count;
-        c->token_name=*found?c->program->tokens[c->token++]:QA_STRING_NONE;
-        return *found?qa_strings_cstr(c->program->strings,c->token_name):"";
-    }
-    qa_token token;
-    if (!qa_tokenizer_next(&c->parser, &token, found, c->error)) { c->failed = true; return ""; }
-    if (!*found) return "";
-    char *out = allocate(c, token.text.size + 1);
-    if (out && !qa_token_copy(&token, out, token.text.size + 1, c->error)) c->failed = true;
-    return out ? out : "";
+    *found = c->program && c->token < c->program->count;
+    const q2_hud_token *token = *found ? c->program->tokens + c->token++ : NULL;
+    c->token_name = token ? token->picture : QA_STRING_NONE;
+    c->token_command = token ? token->command : Q2_HUD_UNKNOWN;
+    c->token_number = token ? token->number : 0;
+    return token ? c->program->text + token->offset : "";
 }
 static const char *argument(layout_context *c) { bool found; return next(c, &found); }
 static int32_t decimal(const char *p) {
@@ -120,7 +232,7 @@ static int32_t decimal(const char *p) {
     if (negative) value = 0u - value;
     return value <= INT32_MAX ? (int32_t)value : -1 - (int32_t)(UINT32_MAX - value);
 }
-static int32_t integer(layout_context *c) { return decimal(argument(c)); }
+static int32_t integer(layout_context *c) { argument(c); return c->token_number; }
 static void stat_reference(layout_context *c, int32_t index, bool image) {
     if (!c->references) return;
     if (index < 0 || index >= QA_Q2_MAX_STATS) { fail(c, "HUD stat outside playerstate"); return; }
@@ -450,30 +562,27 @@ static void name12(layout_context *c, const char *value, bool alternate, float x
         classic_glyph(c, scalar | mask, x + (float)units++ * 8, y, false);
     }
 }
-static bool execute(layout_context *c, const qa_hud_q2_program *program, const char *source) {
-    c->program=program;c->token=0;
-    if (!program) {
-        if (!source) return true;
-        source=copy(c,source);
-        if(c->failed||!qa_tokenizer_init(&c->parser,(qa_bytes){(const uint8_t *)source,strlen(source)},c->error))return false;
-    }
+static bool execute(layout_context *c, const qa_hud_q2_program *program) {
+    if (!program) return true;
+    c->program = program; c->token = 0;
     c->x = c->y = 0;
     bool local_conditions[16], *conditions = local_conditions;
     size_t depth = 0, capacity = 16;
     for (;;) {
         bool found;
-        const char *command = next(c, &found);
+        next(c, &found);
+        q2_hud_command command = c->token_command;
         if (c->failed || !found) break;
         bool draw = !c->references && (!depth || conditions[depth - 1]);
-        if (!strcmp(command, "if") || (c->rerelease && !strcmp(command, "ifgef"))) {
+        if (command == Q2_HUD_IF || (c->rerelease && command == Q2_HUD_IFGEF)) {
             int32_t value = integer(c);
             if (c->references) continue;
             if (!c->rerelease) {
                 if (stat(c, value) == 0)
-                    do { command = next(c, &found); } while (!c->failed && found && strcmp(command, "endif"));
+                    do { next(c, &found); command = c->token_command; } while (!c->failed && found && command != Q2_HUD_ENDIF);
                 continue;
             }
-            bool enabled = draw && (!strcmp(command, "if") ? stat(c, value) != 0 : c->frame->server_frame >= value);
+            bool enabled = draw && (command == Q2_HUD_IF ? stat(c, value) != 0 : c->frame->server_frame >= value);
             if (depth == capacity) {
                 if (capacity > SIZE_MAX / (2 * sizeof(bool))) { fail(c, "HUD conditional nesting overflow"); break; }
                 bool *larger = qa_arena_alloc(c->storage, capacity * 2 * sizeof(bool), _Alignof(bool), c->error);
@@ -481,27 +590,27 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program, const c
                 memcpy(larger, conditions, depth * sizeof(bool)); conditions = larger; capacity *= 2;
             }
             conditions[depth++] = enabled;
-        } else if (!strcmp(command, "endif")) {
+        } else if (command == Q2_HUD_ENDIF) {
             if (c->references) continue;
             if (c->rerelease) { if (!depth) fail(c, "HUD endif without matching if"); else --depth; }
-        } else if (!strcmp(command, "xl") || !strcmp(command, "xr") || !strcmp(command, "xv")) {
+        } else if (command == Q2_HUD_XL || command == Q2_HUD_XR || command == Q2_HUD_XV) {
             int32_t value = integer(c);
-            if (draw) c->x = (float)value + (command[1] == 'r' ? c->width : command[1] == 'v' ? truncf(c->width / 2) - 160 : 0);
-        } else if (!strcmp(command, "yt") || !strcmp(command, "yb") || !strcmp(command, "yv")) {
+            if (draw) c->x = (float)value + (command == Q2_HUD_XR ? c->width : command == Q2_HUD_XV ? truncf(c->width / 2) - 160 : 0);
+        } else if (command == Q2_HUD_YT || command == Q2_HUD_YB || command == Q2_HUD_YV) {
             int32_t value = integer(c);
-            if (draw) c->y = (float)value + (command[1] == 'b' ? c->height : command[1] == 'v' ? truncf(c->height / 2) - 120 : 0);
-        } else if (!strcmp(command, "pic")) {
+            if (draw) c->y = (float)value + (command == Q2_HUD_YB ? c->height : command == Q2_HUD_YV ? truncf(c->height / 2) - 120 : 0);
+        } else if (command == Q2_HUD_PIC) {
             int32_t index = integer(c); stat_reference(c, index, true); if (draw) item_picture(c, index);
-        } else if (!strcmp(command, "picn")) {
+        } else if (command == Q2_HUD_PICN) {
             argument(c); if (draw) picture(c, c->token_name, c->x, c->y, 0, 0, false);
-        } else if (!strcmp(command, "num")) {
+        } else if (command == Q2_HUD_NUM) {
             int32_t digits = integer(c), index = integer(c); if (draw) field(c, stat(c, index), digits, false);
-        } else if (c->rerelease && !strcmp(command, "lives_num")) {
+        } else if (c->rerelease && command == Q2_HUD_LIVES_NUM) {
             int32_t index = integer(c);
             if (draw) { double value = stat(c, index); field(c, fmax(0, value - 2), 1, value <= 2 && c->frame->time_ns % UINT64_C(1000000000) < UINT64_C(500000000)); }
-        } else if (!strcmp(command, "hnum") || !strcmp(command, "anum") || !strcmp(command, "rnum")) {
+        } else if (command == Q2_HUD_HNUM || command == Q2_HUD_ANUM || command == Q2_HUD_RNUM) {
             if (!draw) continue;
-            int32_t index = command[0] == 'h' ? 1 : command[0] == 'a' ? 3 : 5;
+            int32_t index = command == Q2_HUD_HNUM ? 1 : command == Q2_HUD_ANUM ? 3 : 5;
             double value = stat(c, index);
             if (index != 1 && value < (c->rerelease || index == 3 ? 0 : 1)) continue;
             bool flash = c->rerelease ? c->frame->time_ns % UINT64_C(1000000000) < UINT64_C(500000000)
@@ -515,37 +624,37 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program, const c
             bool alternate = index == 1 ? value <= 0 || (value <= 25 && flash) : index == 3 && value <= warning && flash;
             if (stat_int(c, 15) & (index == 1 ? 1 : index == 3 ? 4 : 2)) picture(c, c->options->picture_names->field, c->x, c->y, 0, 0, false);
             field(c, value, 3, alternate);
-        } else if (!strcmp(command, "stat_string") || (c->rerelease && !strncmp(command, "loc_stat_", 9))) {
-            if (strcmp(command, "stat_string") && strcmp(command, "loc_stat_string") && strcmp(command, "loc_stat_rstring") &&
-                strcmp(command, "loc_stat_cstring") && strcmp(command, "loc_stat_cstring2")) continue;
+        } else if (command == Q2_HUD_STAT_STRING || (c->rerelease && (command >= Q2_HUD_LOC_STAT_STRING && command <= Q2_HUD_LOC_STAT_CSTRING2))) {
+            if (command != Q2_HUD_STAT_STRING && command != Q2_HUD_LOC_STAT_STRING && command != Q2_HUD_LOC_STAT_RSTRING &&
+                command != Q2_HUD_LOC_STAT_CSTRING && command != Q2_HUD_LOC_STAT_CSTRING2) continue;
             int32_t index = integer(c); stat_reference(c, index, false); if (!draw) continue;
             const qa_hud_q2_arsenal *a = c->frame->arsenal;
             bool selected = c->rerelease && index == 51 && stat(c, index) != 0 && a && a->has_selected_item;
             const char *raw = selected && a->selected_label ? a->selected_label : config_stat(c, index);
-            const char *value = !strcmp(command, "stat_string") ? raw : selected && a->selected_localized_label
+            const char *value = command == Q2_HUD_STAT_STRING ? raw : selected && a->selected_localized_label
                 ? a->selected_localized_label : localized(c, raw, NULL, 0);
-            if (!strncmp(command, "loc_stat_cstring", 16)) centered(c, value, command[strlen(command) - 1] == '2', c->x, c->y);
-            else text(c, value, false, c->x - (!strcmp(command, "loc_stat_rstring") ? measure(c, value, false) : 0), c->y, false);
-        } else if (!strcmp(command, "string") || !strcmp(command, "string2") || !strcmp(command, "cstring") || !strcmp(command, "cstring2")) {
+            if ((command == Q2_HUD_LOC_STAT_CSTRING || command == Q2_HUD_LOC_STAT_CSTRING2)) centered(c, value, (command == Q2_HUD_STRING2 || command == Q2_HUD_CSTRING2 || command == Q2_HUD_LOC_STAT_CSTRING2 || command == Q2_HUD_LOC_STRING2 || command == Q2_HUD_LOC_RSTRING2 || command == Q2_HUD_LOC_CSTRING2), c->x, c->y);
+            else text(c, value, false, c->x - (command == Q2_HUD_LOC_STAT_RSTRING ? measure(c, value, false) : 0), c->y, false);
+        } else if (command == Q2_HUD_STRING || command == Q2_HUD_STRING2 || command == Q2_HUD_CSTRING || command == Q2_HUD_CSTRING2) {
             const char *value = argument(c);
             if (draw) {
-                bool alternate = command[strlen(command) - 1] == '2';
-                if (command[0] == 'c') centered(c, value, alternate, c->x, c->y);
+                bool alternate = (command == Q2_HUD_STRING2 || command == Q2_HUD_CSTRING2 || command == Q2_HUD_LOC_STAT_CSTRING2 || command == Q2_HUD_LOC_STRING2 || command == Q2_HUD_LOC_RSTRING2 || command == Q2_HUD_LOC_CSTRING2);
+                if ((command == Q2_HUD_CSTRING || command == Q2_HUD_CSTRING2)) centered(c, value, alternate, c->x, c->y);
                 else text(c, value, alternate, c->x, c->y, false);
             }
-        } else if (c->rerelease && (!strcmp(command, "loc_string") || !strcmp(command, "loc_string2") ||
-                   !strcmp(command, "loc_rstring") || !strcmp(command, "loc_rstring2") ||
-                   !strcmp(command, "loc_cstring") || !strcmp(command, "loc_cstring2"))) {
+        } else if (c->rerelease && (command == Q2_HUD_LOC_STRING || command == Q2_HUD_LOC_STRING2 ||
+                   command == Q2_HUD_LOC_RSTRING || command == Q2_HUD_LOC_RSTRING2 ||
+                   command == Q2_HUD_LOC_CSTRING || command == Q2_HUD_LOC_CSTRING2)) {
             int32_t count = integer(c);
             if (count < 0 || count > 7) { fail(c, "HUD localized argument count exceeds source limit"); break; }
             const char *base = argument(c), *args[7];
             for (int32_t i = 0; i < count; ++i) args[i] = argument(c);
             if (!draw) continue;
             const char *value = localized(c, base, args, (size_t)count);
-            bool alternate = command[strlen(command) - 1] == '2';
-            if (command[4] == 'c') centered(c, value, alternate, c->x, c->y);
-            else text(c, value, alternate, c->x - (command[4] == 'r' ? measure(c, value, false) : 0), c->y, false);
-        } else if (!strcmp(command, "client")) {
+            bool alternate = (command == Q2_HUD_STRING2 || command == Q2_HUD_CSTRING2 || command == Q2_HUD_LOC_STAT_CSTRING2 || command == Q2_HUD_LOC_STRING2 || command == Q2_HUD_LOC_RSTRING2 || command == Q2_HUD_LOC_CSTRING2);
+            if ((command == Q2_HUD_LOC_CSTRING || command == Q2_HUD_LOC_CSTRING2)) centered(c, value, alternate, c->x, c->y);
+            else text(c, value, alternate, c->x - ((command == Q2_HUD_LOC_RSTRING || command == Q2_HUD_LOC_RSTRING2) ? measure(c, value, false) : 0), c->y, false);
+        } else if (command == Q2_HUD_CLIENT) {
             int32_t px = integer(c), py = integer(c), slot = integer(c), score = integer(c), ping = integer(c);
             int32_t time = c->rerelease ? 0 : integer(c);
             if (!draw) continue;
@@ -565,7 +674,7 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program, const c
                 text(c, join(c, "Time:  ", number_string(c, time, true), ""), false, c->x + 32, c->y + 24, false);
                 picture(c, c->options->config_picture(c->options->context,c->skins+slot,1), c->x, c->y, 0, 0, false);
             }
-        } else if (!strcmp(command, "ctf")) {
+        } else if (command == Q2_HUD_CTF) {
             int32_t px = integer(c), py = integer(c), slot = integer(c), score = integer(c), ping = integer(c);
             if (ping > 999) ping = 999;
             if(c->rerelease)argument(c);
@@ -585,7 +694,7 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program, const c
                 text(c, prefix, alternate, c->x, c->y, false);
                 name12(c, name, alternate, c->x + (float)utf16_length(prefix) * 8, c->y);
             }
-        } else if (c->rerelease && !strcmp(command, "time_limit")) {
+        } else if (c->rerelease && command == Q2_HUD_TIME_LIMIT) {
             int32_t end = integer(c); if (!draw || end < c->frame->server_frame) continue;
             double ns = c->frame->frame_ns ? (double)c->frame->frame_ns : 25000000.;
             double seconds = trunc(((double)end - c->frame->server_frame) * ns / 1.e9);
@@ -596,12 +705,12 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program, const c
             for (size_t i = 0; clock[i]; ++i) if (clock[i] == ' ') clock[i] = '0';
             const char *args[] = {clock}, *value = localized(c, "$g_score_time", args, 1);
             text(c, value, true, c->x - measure(c, value, false), c->y, false);
-        } else if (c->rerelease && !strcmp(command, "dogtag")) {
+        } else if (c->rerelease && command == Q2_HUD_DOGTAG) {
             int32_t slot = integer(c); if (!draw) continue;
             client_info(c,slot);
             picture(c, c->options->config_picture(c->options->context,c->skins+slot,2), c->x, c->y, 198, 32, false);
-        } else if (c->rerelease && (!strcmp(command, "start_table") || !strcmp(command, "table_row"))) {
-            bool start = !strcmp(command, "start_table");
+        } else if (c->rerelease && (command == Q2_HUD_START_TABLE || command == Q2_HUD_TABLE_ROW)) {
+            bool start = command == Q2_HUD_START_TABLE;
             int32_t count = integer(c); const char *values[6];
             if (count < 0 || count > (start ? 5 : 6)) { fail(c, "HUD table argument count exceeds source limit"); break; }
             for (int32_t i = 0; i < count; ++i) values[i] = argument(c);
@@ -616,11 +725,11 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program, const c
                 table_cell(c, c->table->cells[row][i], value);
                 if (i < c->table->column_count) c->table->columns[i] = fmaxf(c->table->columns[i], truncf(measure(c, c->table->cells[row][i], true)));
             }
-        } else if (c->rerelease && !strcmp(command, "draw_table")) {
+        } else if (c->rerelease && command == Q2_HUD_DRAW_TABLE) {
             if (draw) draw_table(c);
-        } else if (c->rerelease && !strcmp(command, "stat_pname")) {
+        } else if (c->rerelease && command == Q2_HUD_STAT_PNAME) {
             int32_t index = integer(c); if (draw) text(c, client_name(c, stat_int(c, index) - 1), false, c->x, c->y, false);
-        } else if (c->rerelease && !strcmp(command, "health_bars")) {
+        } else if (c->rerelease && command == Q2_HUD_HEALTH_BARS) {
             if (!draw) continue;
             centered(c, localized(c, config(c, c->skins + 256 + 266), NULL, 0), false, truncf(c->width / 2) - 160, c->y);
             c->y += c->options->font_line_height;
@@ -634,7 +743,7 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program, const c
                 if (fraction < 1) fill(c, left + w * fraction, c->y, w * (1 - fraction), 4, (qa_vec4){80.f / 255, 80.f / 255, 80.f / 255, 1});
                 c->y += 12;
             }
-        } else if (c->rerelease && !strcmp(command, "story")) {
+        } else if (c->rerelease && command == Q2_HUD_STORY) {
             if (c->references) continue;
             /* Source story deliberately ignores the conditional draw flag. */
             const char *raw = config(c, c->skins + 256 + 267); if (!*raw) continue;
@@ -661,7 +770,11 @@ bool qa_hud_q2_layout_stat_references(const char *source, bool rerelease, qa_are
     if (!source || !out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 layout reference input"); return false; }
     qa_hud_q2_stat_references value = {0};
     layout_context c = {.storage = scratch, .error = error, .rerelease = rerelease, .references = &value};
-    bool ok = execute(&c,NULL,source);
+    size_t length = strlen(source);
+    qa_hud_q2_program program = {.token_capacity = length / 2 + 1, .text_capacity = length + 1};
+    program.tokens = qa_arena_alloc(scratch, program.token_capacity * sizeof(*program.tokens), _Alignof(q2_hud_token), error);
+    program.text = qa_arena_alloc(scratch, program.text_capacity, 1, error);
+    bool ok = program.tokens && program.text && program_compile(&program, source, rerelease, error) && execute(&c, &program);
     qa_arena_reset(scratch);
     if (ok) *out = value;
     return ok;
@@ -739,17 +852,6 @@ static bool table_valid(const qa_hud_q2_table *table, qa_error *error) {
     }
     return true;
 }
-bool qa_hud_q2_layout(const qa_hud_q2_options *options, const qa_hud_q2_frame *frame,
-                      const qa_hud_q2_program *source, qa_scene_frame *scene, qa_error *error) {
-    layout_context c;
-    if (!initialize(&c, options, frame, scene, error)) {
-        return false;
-    }
-    qa_hud_q2_table table = {0};
-    if (!c.table) c.table = &table;
-    if (!table_valid(c.table, error)) return false;
-    return execute(&c,source,NULL);
-}
 bool qa_hud_q2_draw(const qa_hud_q2_options *options, const qa_hud_q2_frame *frame,
                     bool overlay_only, qa_scene_frame *scene, qa_error *error) {
     layout_context c;
@@ -758,8 +860,8 @@ bool qa_hud_q2_draw(const qa_hud_q2_options *options, const qa_hud_q2_frame *fra
     if (!c.table) c.table = &table;
     if (!table_valid(c.table, error)) return false;
     int32_t layouts = frame->stat_count > 13 ? frame->stats[13] : 0;
-    if (!overlay_only && !(c.rerelease && (layouts & 4)) && !execute(&c,options->status,NULL)) return false;
-    if ((layouts & 1) && !execute(&c,frame->layout,NULL)) return false;
+    if (!overlay_only && !(c.rerelease && (layouts & 4)) && !execute(&c,options->status)) return false;
+    if ((layouts & 1) && !execute(&c,frame->layout)) return false;
     if (!overlay_only && (layouts & 2)) return inventory_draw(&c);
     return !c.failed;
 }

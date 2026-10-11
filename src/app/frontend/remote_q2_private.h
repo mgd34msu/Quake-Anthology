@@ -166,7 +166,6 @@ struct frontend_remote_q2 {
     qa_hud_q2_program *hud_status, *hud_overlay;
     qa_string_id player_icons[256], player_tags[256];
     int32_t inventory[256];
-    char *overlay;
     qa_fs_stage *download_stage;
     qa_fs_root *download_root;
     char *download_path;

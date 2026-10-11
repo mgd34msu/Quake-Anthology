@@ -240,9 +240,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     qa_q2_codec codec;
     if (!qa_q2_codec_init(&codec, protocol, error) || !qa_q2_config_layout_read(&codec, &hud.config, error)) return false;
     if(seat->q2_hud_status_text!=source->statusbar||seat->q2_hud_config_revision!=source->config_revision) {
-        qa_hud_q2_program *program;
-        if(!qa_hud_q2_program_create((qa_strings *)source->strings,source->statusbar,&program,error))return false;
-        qa_hud_q2_program_destroy(seat->q2_hud_status);seat->q2_hud_status=program;
+        if(!qa_hud_q2_program_update(seat->q2_hud_status,source->statusbar,source->edition==QA_Q2_RERELEASE,error))return false;
         seat->q2_hud_status_text=source->statusbar;seat->q2_hud_config_revision=source->config_revision;
         for(unsigned slot=0;slot<256;++slot) {
             const char *info=local_q2_config(&hud,(int32_t)hud.config.player_skins+(int32_t)slot);
@@ -250,9 +248,8 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         }
     }
     if(seat->q2_hud_layout_revision!=source->layout_revision) {
-        qa_hud_q2_program *program;
-        if(!qa_hud_q2_program_create((qa_strings *)source->strings,source->layout,&program,error))return false;
-        qa_hud_q2_program_destroy(seat->q2_hud_layout);seat->q2_hud_layout=program;seat->q2_hud_layout_revision=source->layout_revision;
+        if(!qa_hud_q2_program_update(seat->q2_hud_layout,source->layout,source->edition==QA_Q2_RERELEASE,error))return false;
+        seat->q2_hud_layout_revision=source->layout_revision;
     }
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
@@ -767,6 +764,9 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
     for (unsigned i = first; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
         seat->client_clock_ns=frontend->wall_time_ns;
+        qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+        if (!qa_hud_q2_program_create(strings, &seat->q2_hud_status, error) ||
+            !qa_hud_q2_program_create(strings, &seat->q2_hud_layout, error)) return false;
         if (!seat_services_create(seat, error)) return false;
         qa_ui_preferences preferences;
         if (!seat->console || !qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), i, &preferences, error) ||
@@ -837,6 +837,8 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
         qa_seat_console_destroy(seat->console); seat->console = NULL;
         qa_input_seat_destroy(seat->input); seat->input = NULL;
         frontend_player_retire(seat);
+        qa_hud_q2_program_destroy(seat->q2_hud_status);
+        qa_hud_q2_program_destroy(seat->q2_hud_layout);
         frontend_bindings_destroy(seat);
         free(seat->player_source_titles); free(seat->player_source_products);
         seat->player_source_titles=NULL; seat->player_source_products=NULL;

@@ -111,7 +111,7 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
     owner->entries = calloc(owner->config_count, sizeof(*owner->entries));
     owner->layouts = calloc((size_t)owner->host.client_slots + 1, sizeof(*owner->layouts));
     if (!owner->configs || !owner->entries || !owner->layouts) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source configstrings");
-    if (!qa_arena_reserve(&owner->layout_scratch, 3u * APPLICATION_Q2_LAYOUT_BYTES, error)) return false;
+    if (!qa_arena_reserve(&owner->layout_scratch, QA_HUD_Q2_LAYOUT_SCRATCH_BYTES, error)) return false;
     qa_arena_seal(&owner->layout_scratch);
     for (unsigned i = 0; i < 3; ++i) {
         owner->resources[i] = (application_q2_resource_table){.base = bases[i], .maximum = maximum[i]};

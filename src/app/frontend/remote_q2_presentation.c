@@ -318,11 +318,8 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
             break;
         case QA_Q2_SVC_LAYOUT: {
             const char *text = event->data.print.text; if (!text) return false;
-            char *copy = malloc(strlen(text) + 1); if (!copy) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server layout");
-            qa_hud_q2_program *program;
-            if(!qa_hud_q2_program_create(qa_session_strings(qa_application_session(row->frontend->application)),text,&program,error)) {free(copy);return false;}
-            qa_hud_q2_program_destroy(row->hud_overlay);row->hud_overlay=program;
-            strcpy(copy, text); free(row->overlay); row->overlay = copy; break;
+            if (!qa_hud_q2_program_update(row->hud_overlay, text, remote_q2_rerelease_presentation(row), error)) return false;
+            break;
         }
         case QA_Q2_SVC_PRINT:
             qa_console_emit(row->options.domain.console, &row->options.domain.command_context,

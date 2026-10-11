@@ -24,7 +24,10 @@ typedef struct qa_hud_q2_picture_names {
 } qa_hud_q2_picture_names;
 bool qa_hud_q2_picture_names_bind(qa_strings *, qa_hud_q2_picture_names *, qa_error *);
 bool qa_hud_q2_player_picture_names(qa_strings *, const char *, qa_string_id *, qa_string_id *, qa_error *);
-bool qa_hud_q2_program_create(qa_strings *, const char *, qa_hud_q2_program **, qa_error *);
+enum { QA_HUD_Q2_LAYOUT_BYTES = 65536, QA_HUD_Q2_LAYOUT_SCRATCH_BYTES = 16 * QA_HUD_Q2_LAYOUT_BYTES };
+bool qa_hud_q2_program_create(qa_strings *, qa_hud_q2_program **, qa_error *);
+bool qa_hud_q2_program_update(qa_hud_q2_program *, const char *, bool rerelease, qa_error *);
+void qa_hud_q2_program_clear(qa_hud_q2_program *);
 void qa_hud_q2_program_destroy(qa_hud_q2_program *);
 typedef struct qa_hud_q2_frame {
     qa_net_protocol_id protocol;
@@ -65,8 +68,6 @@ typedef struct qa_hud_q2_options {
     qa_string_id (*config_picture)(void *, int32_t index, unsigned variant);
     const char *(*binding)(void *, const char *use_command);
 } qa_hud_q2_options;
-bool qa_hud_q2_layout(const qa_hud_q2_options *, const qa_hud_q2_frame *, const qa_hud_q2_program *source,
-                      qa_scene_frame *, qa_error *);
 typedef struct qa_hud_q2_stat_references {
     uint64_t images, configstrings;
 } qa_hud_q2_stat_references;

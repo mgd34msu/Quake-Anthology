@@ -117,7 +117,10 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
         free(row->config_names); row->config_names=names;
         free(row->model_slots); row->model_slots = model_slots;
     }
-    row->layout = layout; return true;
+    row->layout = layout;
+    qa_strings *strings = qa_session_strings(qa_application_session(row->options.domain.application));
+    return (row->hud_status || qa_hud_q2_program_create(strings, &row->hud_status, error)) &&
+        (row->hud_overlay || qa_hud_q2_program_create(strings, &row->hud_overlay, error));
 }
 const char *frontend_remote_q2_config(const frontend_remote_q2 *row, uint16_t index)
 { return row && row->configs && index < row->layout.max_configs && row->configs[index] ? row->configs[index] : ""; }
@@ -135,11 +138,7 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
         const char *appearance=strchr(value,'\\');
         if (!qa_strings_intern_cstr(strings,appearance?appearance+1:"",row->player_appearances+index-row->layout.players,error)) return false;
     }
-    if(index==5) {
-        qa_hud_q2_program *program;
-        if(!qa_hud_q2_program_create(strings,value,&program,error))return false;
-        qa_hud_q2_program_destroy(row->hud_status);row->hud_status=program;
-    }
+    if(index==5 && !qa_hud_q2_program_update(row->hud_status,value,remote_q2_rerelease_presentation(row),error)) return false;
     if(index>=row->layout.players&&index-row->layout.players<256&&
         !qa_hud_q2_player_picture_names(strings,value,row->player_icons+index-row->layout.players,
             row->player_tags+index-row->layout.players,error))return false;
@@ -173,7 +172,7 @@ static bool content_clear(frontend_remote_q2 *row, qa_error *error)
     qa_hud_q2_program_destroy(row->hud_status);row->hud_status=NULL;
     qa_hud_q2_program_destroy(row->hud_overlay);row->hud_overlay=NULL;
     free(row->baselines); row->baselines = NULL; row->baseline_count = 0;
-    free(row->overlay); row->overlay = NULL; memset(row->inventory, 0, sizeof(row->inventory));
+    memset(row->inventory, 0, sizeof(row->inventory));
     qa_vfs_destroy(row->content.mounts); qa_catalog_release(row->content.catalog);
     row->content = (frontend_remote_q2_content){0}; row->selected = row->content_admitted = false; row->height_set = false;
     row->sample_frame_seconds = 0;

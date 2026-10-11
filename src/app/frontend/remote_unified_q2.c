@@ -162,9 +162,8 @@ struct frontend_unified_q2 {
     qa_hud *hud;
     frontend_unified_q2_rr_hud *rr_hud;
     char *help,*help_text[2];
-    const char *layout;
     qa_hud_q2_program *layout_program;
-    qa_unified_document *layout_document;
+    bool layout_rerelease;
     bool help_visible;
     bool inventory_visible,score_visible;
     const qa_inventory_entry *items;
@@ -767,6 +766,11 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 normalized CLIENT state");
     o->frontend=f; o->replica=r; o->media=media; o->events=events;
     *out=o;
+    if (!qa_hud_q2_program_create(r->strings, &o->layout_program, e)) return false;
+    const qa_recipe_provider *hud_provider=frontend_remote_unified_provider(r,QA_ROLE_HUD,"");
+    const qa_product *hud_product=hud_provider?qa_catalog_product(qa_executable_recipe_catalog(
+        frontend_remote_unified_recipe(r)),hud_provider->selection.product):NULL;
+    o->layout_rerelease=hud_product && hud_product->edition==QA_EDITION_RERELEASE;
     o->effect_pose_capacity=r->options.identity_capacity;
     o->native_capacity=qa_executable_recipe_provider_count(frontend_remote_unified_recipe(r));
     size_t activation_capacity=2*(o->native_capacity+1);
@@ -793,6 +797,8 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
         if (!o->native_buffers[i]) {qa_arena_destroy(&o->pose_storage);qa_arena_destroy(&o->text_storage);
         qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*out=NULL;return false;}
         memset(o->native_buffers[i],0,o->native_capacity*sizeof(q2_native));
+        for (size_t j = 0; j < o->native_capacity; ++j)
+            if (!qa_hud_q2_program_create(r->strings, &o->native_buffers[i][j].layout_program, e)) return false;
     }
     qa_arena_seal(&o->pose_storage);qa_arena_seal(&o->text_storage);
     qa_arena_seal(&o->help_storage[0]);qa_arena_seal(&o->help_storage[1]);
@@ -822,10 +828,11 @@ static void native_clear(q2_native *v)
         q2_hud_names *names=*link;*link=names->next;
         qa_unified_document_destroy(names->document);qa_hud_q2_program_destroy(names->status);free(names->names);free(names);
     }
-    qa_hud_q2_program_destroy(v->layout_program);
+    qa_hud_q2_program *program = v->layout_program;
+    qa_hud_q2_program_clear(program);
     qa_unified_document_destroy(v->record_document);
     qa_unified_document_destroy(v->config_document);
-    *v=(q2_native){0};
+    *v=(q2_native){.layout_program=program};
 }
 static const char *native_config(void *context,int32_t index)
 {
@@ -904,7 +911,8 @@ static bool native_font(frontend_unified_q2 *o,q2_native *v,const qa_unified_doc
             const char *value=v->configuration?v->configuration->configstrings[i].value:v->config_source->configstrings[i].value;
             binding->names[i].index=index;
             if(value[0])okay=qa_strings_intern_cstr(o->replica->strings,value,&binding->names[i].name,e);
-            if(index==5)okay=okay&&qa_hud_q2_program_create(o->replica->strings,value,&binding->status,e);
+            if(index==5)okay=okay&&qa_hud_q2_program_create(o->replica->strings,&binding->status,e)&&
+                qa_hud_q2_program_update(binding->status,value,v->protocol.kind==QA_NET_Q2KEX_2023,e);
             if(index>=layout.player_skins&&index-layout.player_skins<256) {
                 size_t slot=index-layout.player_skins;
                 okay=okay&&qa_hud_q2_player_picture_names(o->replica->strings,value,binding->icons+slot,binding->tags+slot,e);
@@ -994,7 +1002,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     v->player_number=row->player_number;
     for (size_t i=0;i<256;++i) v->inventory[i]=row->inventory[i];
     if (!okay) return false;
-    return qa_hud_q2_program_create(o->replica->strings,v->layout,&v->layout_program,e)&&native_font(o,v,v->config_document,e);
+    return qa_hud_q2_program_update(v->layout_program,v->layout,v->protocol.kind==QA_NET_Q2KEX_2023,e)&&native_font(o,v,v->config_document,e);
 }
 bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -1548,12 +1556,7 @@ bool frontend_unified_q2_simulation(frontend_unified_q2 *o,const qa_unified_simu
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_MUZZLE_FLASH) return true;
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_INVENTORY){for(size_t i=0;i<256;++i)o->inventory[i]=v->counts[i];return true;}
     if (v->kind==QA_UNIFIED_MESSAGE_Q2_LAYOUT) {
-        qa_unified_document *document=NULL;
-        if (!qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e))return false;
-        qa_hud_q2_program *program;
-        if(!qa_hud_q2_program_create(o->replica->strings,v->text,&program,e)) {qa_unified_document_destroy(document);return false;}
-        qa_hud_q2_program_destroy(o->layout_program);o->layout_program=program;
-        qa_unified_document_destroy(o->layout_document);o->layout_document=document;o->layout=v->text;
+        if(!qa_hud_q2_program_update(o->layout_program,v->text,o->layout_rerelease,e)) return false;
     }
     /* Configstrings are already retained by reliable HUD metadata and native
      * components. This simulation notification has no second config store. */
@@ -2051,7 +2054,11 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next;qa_pool_release(&o->activation_pool,a->storage_slot); }
     while (o->loops) {q2_loop *l=o->loops;o->loops=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);}
     while (o->names) {q2_player_name *n=o->names;o->names=n->next;qa_unified_document_destroy(n->document);}
-    qa_hud_q2_program_destroy(o->layout_program);qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);
+    qa_hud_q2_program_destroy(o->layout_program);
+    for (size_t i = 0; i < 2; ++i)
+        if (o->native_buffers[i]) for (size_t j = 0; j < o->native_capacity; ++j)
+            qa_hud_q2_program_destroy(o->native_buffers[i][j].layout_program);
+    qa_arena_destroy(&o->pose_storage);
     qa_arena_destroy(&o->text_storage);qa_arena_destroy(&o->help_storage[0]);qa_arena_destroy(&o->help_storage[1]);free(o);*slot=NULL;return true;
 }
 bool frontend_unified_q2_visit(const frontend_unified_q2 *o,const qa_application_content_visitor *visitor,qa_error *e)
