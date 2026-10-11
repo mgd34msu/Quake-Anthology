@@ -54,6 +54,8 @@ typedef struct q2_companion {
 } q2_companion;
 typedef struct q2_items {
     qa_q2_item_definition *definitions;
+    const qa_q2_item_definition **by_id;
+    qa_item_id powers[QA_Q2_POWER_COUNT];
     size_t count;
     qa_item_definition *actions;
     qa_item_admission *admissions;

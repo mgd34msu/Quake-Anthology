@@ -225,10 +225,20 @@ const qa_q2_item_definition *qa_q2_item_lookup(const qa_q2_game *g, const char *
     }
     return NULL;
 }
+static int item_id_order(const void *left,const void *right) {
+    qa_item_id a=(*(const qa_q2_item_definition *const *)left)->item;
+    qa_item_id b=(*(const qa_q2_item_definition *const *)right)->item;
+    return (a>b)-(a<b);
+}
 const qa_q2_item_definition *q2_item_by_id(qa_q2_game *g, qa_item_id id) {
-    for (size_t i = 0; i < qa_q2_item_count(g); ++i)
-        if (g->item_runtime->definitions[i].item == id)
-            return &g->item_runtime->definitions[i];
+    q2_items *r=g->item_runtime;
+    size_t first=0,last=r->count;
+    while (first<last) {
+        size_t mid=first+(last-first)/2;
+        const qa_q2_item_definition *d=r->by_id[mid];
+        if (d->item==id) return d;
+        if (d->item<id) first=mid+1; else last=mid;
+    }
     return NULL;
 }
 bool q2_supplemental_find(qa_q2_game *g, const char *name, bool names_only,
@@ -340,8 +350,9 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             .console_give = i == QA_Q2_GRAPPLE || i == QA_Q2_LMCTF_HOOK ? QA_Q2_GIVE_INVENTORY_ONLY
                                                                         : QA_Q2_GIVE_PICKUP};
     }
+    r->by_id = calloc(r->count, sizeof(*r->by_id));
     r->actions = calloc(r->count, sizeof(*r->actions));
-    if (!r->actions) {
+    if (!r->actions || !r->by_id) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 native item actions");
         return false;
     }
@@ -379,6 +390,8 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             !qa_builtin_resource(&g->services, d->icon, &d->icon_id, e) ||
             !qa_builtin_resource(&g->services, d->name, &d->name_id, e) ||
             !qa_builtin_resource(&g->services, d->sound, &d->sound_id, e)) return false;
+        r->by_id[i]=d;
+        if (d->kind == QA_Q2_ITEM_POWER && !r->powers[d->powerup]) r->powers[d->powerup]=d->item;
         if (d->kind == QA_Q2_ITEM_HEALTH || d->kind == QA_Q2_ITEM_ARMOR ||
             d->kind == QA_Q2_ITEM_SHARD || d->kind == QA_Q2_ITEM_MAX_HEALTH ||
             d->kind == QA_Q2_ITEM_PACK || d->kind == QA_Q2_ITEM_FOOD)
@@ -392,6 +405,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             .weapon = d->weapon != QA_Q2_WEAPON_NONE,
             .actions = (use ? QA_ITEM_USE : 0) | (d->droppable ? QA_ITEM_DROP : 0)};
     }
+    qsort(r->by_id,r->count,sizeof(*r->by_id),item_id_order);
     r->admissions = r->action_count ? calloc(r->action_count, sizeof(*r->admissions)) : NULL;
     if (r->action_count && !r->admissions) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 source item declarations");

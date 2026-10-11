@@ -77,10 +77,9 @@ static q2_anchor anchor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind, 
         return ANCHOR_NONE;
     qa_string_id classname=traits.classname?traits.classname:record->definition;
     if (classname==g->runtime_names[Q2_NAME_BODYQUE]) return ANCHOR_CORPSE;
-    const char *name=kind==QA_Q2_LMCTF_GRAPPLE?
-        qa_strings_cstr(qa_session_strings(g->services.session),classname):NULL;
-    if (name != NULL &&
-        (strncmp(name, "info_flag", 9) == 0 || strncmp(name, "func", 4) == 0))
+    if (kind==QA_Q2_LMCTF_GRAPPLE &&
+        (qa_strings_name_flags(qa_session_strings(g->services.session),classname) &
+            (QA_NAME_INFO_FLAG|QA_NAME_FUNC)))
         return ANCHOR_BRUSH;
     qa_physics_properties physical;
     if (g->services.physics != NULL && g->services.physics->services.read != NULL &&

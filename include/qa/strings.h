@@ -10,6 +10,8 @@ typedef uint32_t qa_string_id;
 #define QA_NAME_ITEM_FLAG (1u << 2)
 #define QA_NAME_BRUSH_PATH (1u << 3)
 #define QA_NAME_SEXED_SOUND (1u << 4)
+#define QA_NAME_INFO_FLAG (1u << 5)
+#define QA_NAME_FUNC (1u << 6)
 typedef struct qa_strings qa_strings;
 
 /* Exact byte identity, with no case folding or path normalization. Normalize

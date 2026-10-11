@@ -238,6 +238,18 @@
     X(RESOURCE_MODELS_ITEMS_SPAWNGRO_TRIS_MD2, "models/items/spawngro/tris.md2") \
     X(RESOURCE_Q2_BLASTER, "q2:blaster") \
     X(RESOURCE_Q2_SPARKS, "q2:sparks") \
+    X(RESOURCE_I_POWERSCREEN, "i_powerscreen") \
+    X(RESOURCE_I_POWERSHIELD, "i_powershield") \
+    X(RESOURCE_I_HELP, "i_help") \
+    X(RESOURCE_Q2_GUNSHOT, "q2:gunshot") \
+    X(RESOURCE_Q2_SHOTGUN, "q2:shotgun") \
+    X(RESOURCE_Q2_BUBBLE_TRAIL, "q2:bubble-trail") \
+    X(RESOURCE_Q2_RAIL, "q2:rail") \
+    X(RESOURCE_Q2_RAIL_WATER, "q2:rail-water") \
+    X(RESOURCE_Q2_HEATBEAM, "q2:heatbeam") \
+    X(RESOURCE_Q2_MONSTER_HEATBEAM, "q2:monster-heatbeam") \
+    X(RESOURCE_Q2_HEATBEAM_SPARKS, "q2:heatbeam_sparks") \
+    X(RESOURCE_Q2_HEATBEAM_STEAM, "q2:heatbeam_steam") \
     X(RESOURCE_MODELS_OBJECTS_GHOOK_TRIS_MD2, "models/objects/ghook/tris.md2") \
     X(RESOURCE_MODELS_WEAPONS_GRAPPLE_HOOK_TRIS_MD2, "models/weapons/grapple/hook/tris.md2") \
     X(RESOURCE_SPRITES_S_PLASMA1_SP2, "sprites/s_plasma1.sp2") \
@@ -631,7 +643,7 @@ bool q2_actor_loop(qa_q2_game *, qa_actor_id, qa_string_id *current, qa_string_i
 bool q2_sound(q2_weapon_call *, q2_runtime_name, int, float attenuation, qa_error *);
 bool q2_loop(q2_weapon_call *, q2_runtime_name, qa_error *);
 bool q2_event(q2_weapon_call *, qa_builtin_event_kind, int, qa_vec3, qa_vec3, qa_error *);
-bool q2_event_named(q2_weapon_call *, qa_builtin_event_kind, const char *, int,
+bool q2_event_named(q2_weapon_call *, qa_builtin_event_kind, q2_runtime_name, int,
     qa_vec3, qa_vec3, qa_error *);
 bool q2_noise(q2_weapon_call *, qa_vec3, qa_error *);
 bool q2_animation(q2_weapon_call *, int priority, int first, int last, qa_error *);

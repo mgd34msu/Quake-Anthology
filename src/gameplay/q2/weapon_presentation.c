@@ -1,7 +1,7 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
 
-bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, const char *path,
+bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, q2_runtime_name name,
     int code, qa_vec3 origin, qa_vec3 end, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
@@ -15,31 +15,41 @@ bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, const char *p
                               .direction = kind == QA_BUILTIN_IMPACT ? end : qa_v3(0, 0, 0),
                               .code = code,
                               .flags = c->silenced ? 128u : 0u};
-    if (kind==QA_BUILTIN_BEAM && path) {
-        if (!strcmp(path,"q2:bubble-trail"))
+    if (kind==QA_BUILTIN_BEAM) {
+        switch (name) {
+        case Q2_NAME_RESOURCE_Q2_BUBBLE_TRAIL:
             event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,
                 qa_vec_scale(qa_vec_add(origin,end),.5f)};
-        else if (!strcmp(path,"q2:rail-water"))
+            break;
+        case Q2_NAME_RESOURCE_Q2_RAIL_WATER:
             event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS,end};
-        else if (c->rerelease && !strcmp(path,"q2:rail"))
-            event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS_LINE,
-                origin};
-        else if (!strcmp(path,"q2:heatbeam") || !strcmp(path,"q2:monster-heatbeam") ||
-                 (!c->rerelease && !strcmp(path,"q2:rail"))) {
+            break;
+        case Q2_NAME_RESOURCE_Q2_RAIL:
+            if (c->rerelease) {
+                event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS_LINE,origin};
+                break;
+            }
+            /* Classic rail shares the actor-origin path with heat beams. */
+            /* fall through */
+        case Q2_NAME_RESOURCE_Q2_HEATBEAM:
+        case Q2_NAME_RESOURCE_Q2_MONSTER_HEATBEAM: {
             qa_body_state body;
             if (!qa_world_body_read(c->game->services.world,c->actor->id,&body,e)) return false;
             if (!q2_actor_live(c->game,c->actor->id)) return true;
             event.q2_multicast=(qa_builtin_q2_multicast){
-                !strcmp(path,"q2:rail") ? QA_BUILTIN_Q2_MULTICAST_PHS : QA_BUILTIN_Q2_MULTICAST_ALL,
+                name==Q2_NAME_RESOURCE_Q2_RAIL ? QA_BUILTIN_Q2_MULTICAST_PHS : QA_BUILTIN_Q2_MULTICAST_ALL,
                 body.origin};
+            break;
+        }
+        default: break;
         }
     }
-    if (path && !qa_builtin_resource(&c->game->services, path, &event.resource, e)) return false;
+    event.resource=c->game->runtime_names[name];
     return qa_builtin_emit(&c->game->services, &event, e);
 }
 bool q2_event(q2_weapon_call *c, qa_builtin_event_kind kind, int code, qa_vec3 origin, qa_vec3 end,
     qa_error *e) {
-    return q2_event_named(c, kind, NULL, code, origin, end, e);
+    return q2_event_named(c, kind, Q2_NAME_NONE, code, origin, end, e);
 }
 bool q2_emit_sound(qa_q2_game *g, qa_actor_id actor, qa_builtin_event_kind kind, const qa_vec3 *origin,
     qa_string_id resource, int channel, float volume, float attenuation, uint32_t flags, qa_error *e) {

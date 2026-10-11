@@ -217,12 +217,10 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         }
     }
     qa_string_id loop = weapon->loop_sound;
-    const char *path = m->water_level && (m->water_type & 24) ? QA_Q2_SOUND_PLAYER_FRY
-                       : weapon->q2_weapon == QA_Q2_RAILGUN   ? QA_Q2_SOUND_WEAPONS_RG_HUM
-                       : weapon->q2_weapon == QA_Q2_BFG       ? QA_Q2_SOUND_WEAPONS_BFG_HUM
-                                                              : NULL;
-    if (path && !qa_builtin_resource(&g->services, path, &loop, e))
-        return false;
+    q2_runtime_name name = m->water_level && (m->water_type & 24) ? QA_Q2_SFX_PLAYER_FRY
+                       : weapon->q2_weapon == QA_Q2_RAILGUN ? QA_Q2_SFX_WEAPONS_RG_HUM
+                       : weapon->q2_weapon == QA_Q2_BFG ? QA_Q2_SFX_WEAPONS_BFG_HUM : Q2_NAME_NONE;
+    if (name) loop=g->runtime_names[name];
     return q2_player_loop(g, a, loop, e);
 }
 bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m, qa_error *e) {
@@ -363,13 +361,13 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     else if (mask & 32)
         view.blend = blend_add(view.blend, qa_v3(.5f, .3f, .2f), .4f);
     static const struct {
-        const char *item; q2_runtime_name sound;
+        qa_q2_powerup item; q2_runtime_name sound;
         qa_vec3 color;
         float alpha;
-    } table[] = {{"item_quad", QA_Q2_SFX_ITEMS_DAMAGE2, {0, 0, 1}, .08f},
-                 {"item_invulnerability", QA_Q2_SFX_ITEMS_PROTECT2, {1, 1, 0}, .08f},
-                 {"item_enviro", QA_Q2_SFX_ITEMS_AIROUT, {0, 1, 0}, .08f},
-                 {"item_breather", QA_Q2_SFX_ITEMS_AIROUT, {.4f, 1, .4f}, .04f}};
+    } table[] = {{QA_Q2_POWER_QUAD, QA_Q2_SFX_ITEMS_DAMAGE2, {0, 0, 1}, .08f},
+                 {QA_Q2_POWER_INVULNERABILITY, QA_Q2_SFX_ITEMS_PROTECT2, {1, 1, 0}, .08f},
+                 {QA_Q2_POWER_ENVIRO, QA_Q2_SFX_ITEMS_AIROUT, {0, 1, 0}, .08f},
+                 {QA_Q2_POWER_BREATHER, QA_Q2_SFX_ITEMS_AIROUT, {.4f, 1, .4f}, .04f}};
     uint64_t until[] = {powers.quad_until_ns, powers.invulnerability_until_ns,
                         powers.enviro_until_ns, powers.breather_until_ns};
     for (size_t i = 0; i < 4; i++)
@@ -383,8 +381,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
                 return true;
             if (flashing(until[i], g->now_ns))
                 view.blend = blend_add(view.blend, table[i].color, table[i].alpha);
-            const qa_q2_item_definition *d = qa_q2_item_lookup(g, table[i].item);
-            view.timer_item = d ? d->item : 0;
+            view.timer_item = g->item_runtime->powers[table[i].item];
             view.timer_seconds = (int)fmin((double)(remaining / Q2_NS), INT_MAX);
             break;
         }
@@ -400,15 +397,14 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     view.armor = combat.armor.regular.kind == QA_ARMOR_NONE ? 0 : combat.armor.regular.points;
     bool powered_armor = combat.armor.powered.kind != QA_POWER_NONE &&
         (view.armor == 0 || (rr ? g->now_ns % (3 * Q2_NS) < 1500 * Q2_MS : (g->wire_frame & 8) != 0));
-    const char *armor_icon = NULL;
     if (powered_armor) {
         view.armor = combat.armor.powered.cells;
-        armor_icon = rr && combat.armor.powered.kind == QA_POWER_SCREEN ? "i_powerscreen" : "i_powershield";
+        view.armor_icon = g->runtime_names[rr && combat.armor.powered.kind == QA_POWER_SCREEN ?
+            Q2_NAME_RESOURCE_I_POWERSCREEN : Q2_NAME_RESOURCE_I_POWERSHIELD];
     } else if (view.armor > 0 && combat.armor.regular.item) {
         const qa_q2_item_definition *armor = q2_item_by_id(g, combat.armor.regular.item);
-        if (armor && armor->kind == QA_Q2_ITEM_ARMOR) armor_icon = armor->icon;
+        if (armor && armor->kind == QA_Q2_ITEM_ARMOR) view.armor_icon = armor->icon_id;
     }
-    if (armor_icon && !qa_builtin_resource(&g->services, armor_icon, &view.armor_icon, e)) return false;
     if (!q2_actor_live(g, a->id)) return true;
     if (weapon.q2_weapon != QA_Q2_WEAPON_NONE && weapon.ammo) {
         const qa_q2_item_definition *definition = q2_item_by_id(g, weapon.ammo);
@@ -417,8 +413,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
             return false;
         if (!(rr && (g->options.deathmatch_flags & 8192) && definition && definition->infinite_quantity)) {
             view.ammo = (float)ammo; view.ammo_count = ammo;
-            if (definition && definition->icon &&
-                !qa_builtin_resource(&g->services, definition->icon, &view.ammo_icon, e)) return false;
+            if (definition) view.ammo_icon=definition->icon_id;
         }
     }
     if (!q2_actor_live(g, a->id)) return true;
@@ -428,18 +423,15 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     }
     if (rr && view.selected_item && g->now_ns <= a->selected_item_name_until_ns)
         view.selected_item_name = a->selected_item_name;
-    const char *help_icon = NULL;
     if (s->rule.mission_changed &&
         (rr ? s->rule.mission_changed <= 2 && g->now_ns % Q2_NS < 500 * Q2_MS
             : (g->wire_frame & 8) != 0))
-        help_icon = "i_help";
+        view.help_icon = g->runtime_names[Q2_NAME_RESOURCE_I_HELP];
     else if ((s->rule.hand == QA_Q2_CENTER_HAND || (!rr && view.fov > 91)) &&
              weapon.q2_weapon != QA_Q2_WEAPON_NONE) {
         const qa_q2_item_definition *definition = q2_item_by_id(g, g->items[weapon.q2_weapon]);
-        if (definition) help_icon = definition->icon;
+        if (definition) view.help_icon = definition->icon_id;
     }
-    if (help_icon && !qa_builtin_resource(&g->services, help_icon, &view.help_icon, e))
-        return false;
     if (!q2_actor_live(g, a->id)) return true;
     if (rr && !g->options.deathmatch) {
         /* The built-in catalogs contain 15 keys across all Q2 products. */
@@ -456,8 +448,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         size_t offset = keys_held > 3 ? (size_t)((g->now_ns / (5 * Q2_NS)) % keys_held) : 0;
         for (size_t i = 0; i < keys_held && i < 3; ++i) {
             const qa_q2_item_definition *definition = keys[(i + offset) % keys_held];
-            if (!qa_builtin_resource(&g->services, definition->icon, &view.key_icons[i], e))
-                return false;
+            view.key_icons[i]=definition->icon_id;
             if (!q2_actor_live(g, a->id)) return true;
         }
     }
