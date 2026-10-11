@@ -244,7 +244,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
         if (!qa_q1_weapon_source(program, UINT32_C(1) << bit, &weapon) ||
             !qa_q1_weapon_profile_identity(program, weapon, &profile)) continue;
         for (size_t i = 0; i < ui->item_count; ++i)
-            if (ui->items[i].owned && !strcmp(ui->items[i].id, profile.item)) client.items |= UINT32_C(1) << bit;
+            if (ui->items[i].owned && ui->items[i].id == r->replica->q1_weapon_names[weapon]) client.items |= UINT32_C(1) << bit;
         if (ui->active_weapon && !strcmp(ui->active_weapon, profile.item)) client.weapon = UINT32_C(1) << bit;
     }
     uint32_t *counts[] = {&client.shells, &client.nails, &client.rockets, &client.cells};

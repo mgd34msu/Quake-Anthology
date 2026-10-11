@@ -335,6 +335,15 @@ production build and seven core suites pass
 (`/tmp/qa-ta3192-surface-names-20261011-{build,core}.log`). These checks do not
 prove a live mod skin, combined presentation or timing improvement.
 
+TA-3192 Unified UI items now retain their existing `qa_item_id`; publication
+no longer copies their identity text into each frame. The NAME codec keeps the
+same nullable UTF-8 bytes and admits IDs on receive. The Q1 HUD compares those
+IDs with weapon names retained at replica creation. Its owned-weapon identity
+string comparisons are deleted. Active weapon, active ammunition and powerup
+presentation names remain open. The normal build and seven core suites pass
+(`/tmp/qa-ta3192-hud-items-20261011-{build,core}.log`). No installed HUD or live
+protocol-session claim is made by these checks.
+
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent
 selection. Numeric/save/command components preserve 125 role combinations and

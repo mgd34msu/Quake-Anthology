@@ -618,9 +618,10 @@ static bool ui_item(qa_unified_player_ui *out, player_observation *o,
 {
     qa_unified_ui_item *v = out->items + out->item_count++;
     *v = (qa_unified_ui_item){.kind = weapon ? QA_UNIFIED_UI_WEAPON : QA_UNIFIED_UI_POWERUP,
+        .id = id,
         .source_ordinal = ordinal, .owned = owned, .has_ammo = has_ammo, .has_count = finite,
         .count = value, .warning_count = warning};
-    return item(&v->id, o, id, e) && application_unified_frame_string(o->lease, &v->label, label, e);
+    return application_unified_frame_string(o->lease, &v->label, label, e);
 }
 static bool ui_gear(qa_unified_player_ui *out, player_observation *o, size_t ordinal, qa_error *e)
 {

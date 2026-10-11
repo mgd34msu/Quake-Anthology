@@ -640,7 +640,7 @@ static const qa_unified_field qa_unified_weapon_status_fields[] = {
 static const qa_unified_record_layout qa_unified_weapon_status_layout = QA_UNIFIED_LAYOUT(qa_unified_weapon_status, qa_unified_weapon_status_fields);
 
 static const qa_unified_field qa_unified_ui_item_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_ui_item, id, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_ui_item, id, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_ui_item, label, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_ui_item, kind, QA_UNIFIED_FIELD_I32),
     QA_UNIFIED_FIELD(qa_unified_ui_item, source_ordinal, QA_UNIFIED_FIELD_I64),

@@ -32,7 +32,8 @@ typedef struct qa_unified_powerup_state {
 } qa_unified_powerup_state;
 typedef enum qa_unified_ui_item_kind { QA_UNIFIED_UI_WEAPON, QA_UNIFIED_UI_POWERUP } qa_unified_ui_item_kind;
 typedef struct qa_unified_ui_item {
-    char *id, *label;
+    qa_item_id id;
+    char *label;
     qa_unified_ui_item_kind kind;
     int64_t source_ordinal;
     bool owned, has_ammo, has_count;

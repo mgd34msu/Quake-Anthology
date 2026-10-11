@@ -4,6 +4,7 @@
 #include "qa/pool.h"
 #include "remote_unified.h"
 #include "qa/strings.h"
+#include "qa/game_q1.h"
 #include "q1_sky.h"
 #include "remote_q2_effects.h"
 
@@ -41,6 +42,7 @@ struct frontend_remote_unified {
     qa_actor_registry *actors;
     qa_strings *strings;
     qa_string_id q1_ammo_names[7], q1_key_names[2];
+    qa_string_id q1_weapon_names[QA_Q1_WEAPON_COUNT];
     frontend_unified_metadata *metadata;
     qa_unified_frame_lease *metadata_lease;
     size_t metadata_count;

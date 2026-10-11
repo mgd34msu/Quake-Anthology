@@ -95,6 +95,9 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&owner->sky_controls);
     owner->strings=qa_session_strings(qa_application_session(d->application)); qa_strings_retain(owner->strings);
     bool names_ready = true;
+    for (unsigned i = 0; names_ready && i < QA_Q1_WEAPON_COUNT; ++i)
+        names_ready = qa_strings_intern_cstr(owner->strings, qa_q1_weapon_identity((qa_q1_weapon)i),
+            &owner->q1_weapon_names[i], error);
     for (unsigned i = 0; names_ready && i < 7; ++i)
         names_ready = qa_strings_intern_cstr(owner->strings, qa_q1_ammo_identity((qa_q1_ammo)i),
             &owner->q1_ammo_names[i], error);
