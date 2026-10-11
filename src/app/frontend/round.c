@@ -61,7 +61,7 @@ struct qa_application_q3_round_cut {
     qa_font_library *fonts;
     qa_material_order *order;
     uint64_t configuration, map_revision, render_revision, time, frame;
-    bool queued[64], resolved[64];
+    bool resolved[64];
     frontend_round_phase phase;
 };
 bool frontend_round_audio_pending(const qa_frontend *frontend)
@@ -274,11 +274,6 @@ bool frontend_events_flush(qa_frontend *f, qa_error *error)
         !frontend_particle_events(f, error) || !frontend_player_events(f, error))) return false;
     return frontend_events(f, error);
 }
-static bool deliver(qa_application_q3_round_cut *cut, qa_error *error)
-{
-    if (!cut_ready(cut, error) || cut->phase == FRONTEND_ROUND_FINISHED) return false;
-    return frontend_events_flush(cut->frontend, error);
-}
 static bool network_owned(qa_application_q3_round_cut *cut, bool *out, qa_error *error)
 {
     if (!out || !cut_ready(cut, error) || cut->phase != FRONTEND_ROUND_PREPARED)
@@ -330,19 +325,11 @@ static bool client_index(qa_application_q3_round_cut *cut,
         if (client == cut->clients + i && !cut->resolved[i]) { *index = i; return true; }
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round client is absent or already resolved");
 }
-static bool queue_client(qa_application_q3_round_cut *cut,
-    const qa_application_q3_round_client *client, qa_error *error)
-{
-    size_t i;
-    if (!client_index(cut, client, &i, error) || cut->queued[i]) return false;
-    if (client->remote && !frontend_network_q3_round_queue_client(cut->network, client->remote_client, error)) return false;
-    cut->queued[i] = true; return true;
-}
 static bool admit_client(qa_application_q3_round_cut *cut,
     const qa_application_q3_round_client *client, qa_actor_id actor, qa_error *error)
 {
     size_t i;
-    if (!client_index(cut, client, &i, error) || !cut->queued[i]) return false;
+    if (!client_index(cut, client, &i, error)) return false;
     uint32_t source_slot;
     if (!qa_application_q3_source_client_slot(cut->application, cut->source, actor, &source_slot, error) ||
         source_slot != client->source_slot ||
@@ -372,7 +359,7 @@ static bool reject_client(qa_application_q3_round_cut *cut,
     const qa_application_q3_round_client *client, const char *reason, qa_error *error)
 {
     size_t i;
-    if (!reason || !client_index(cut, client, &i, error) || !cut->queued[i]) return false;
+    if (!reason || !client_index(cut, client, &i, error)) return false;
     if (client->remote) {
         if (!frontend_network_q3_round_reject_client(cut->network, client->remote_client, reason, error)) return false;
     } else if (!client->bot && !cut->frontend->options.dedicated)
@@ -391,8 +378,8 @@ static bool finish(qa_application_q3_round_cut *cut, qa_error *error)
 const qa_application_q3_round_services *frontend_q3_round_services(void)
 {
     static const qa_application_q3_round_services services = {
-        .prepare = prepare, .deliver = deliver, .network_owned = network_owned,
-        .begin = begin, .bind = bind, .queue_client = queue_client,
+        .prepare = prepare, .network_owned = network_owned,
+        .begin = begin, .bind = bind,
         .admit_client = admit_client, .reject_client = reject_client,
         .finish = finish, .dispose = dispose
     };

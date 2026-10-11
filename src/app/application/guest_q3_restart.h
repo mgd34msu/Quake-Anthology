@@ -76,7 +76,6 @@ bool application_q3_guest_round_frame(application_provider *, qa_error *);
  * their own reliable projection through the qualified network owner. Client
  * publication and denial reads admit CONFIGURING or IDLE. Finish admits either
  * phase after all four source frames complete. */
-bool application_q3_guest_round_queue_client(application_provider *, uint32_t source_slot, qa_error *);
 bool application_q3_guest_round_reconnect(application_provider *, uint32_t source_slot,
     qa_actor_id, bool *accepted, qa_error *);
 bool application_q3_guest_round_denial_read(application_provider *, uint32_t source_slot,

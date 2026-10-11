@@ -136,8 +136,13 @@ bool q3g_output(application_provider *provider, const qa_unified_q3_event *event
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || !engine->game) return true;
-    if (event->kind == QA_UNIFIED_Q3_SERVER_COMMAND)
-        return output_command(engine->game, event->client, event->text, error);
+    if (event->kind == QA_UNIFIED_Q3_SERVER_COMMAND) {
+        if (!output_command(engine->game, event->client, event->text, error)) return false;
+        if (engine->round.phase == Q3G_ROUND_SETTLING && event->client >= 0 &&
+            !strcmp(event->text, "map_restart\n"))
+            engine->round.queued |= UINT64_C(1) << (uint32_t)event->client;
+        return true;
+    }
     if (event->kind == QA_UNIFIED_Q3_CONFIGSTRING)
         return qa_q3_configstring_commands(event->index, event->text,
             output_configstring_command, engine->game, error);

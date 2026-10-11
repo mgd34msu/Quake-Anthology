@@ -7,6 +7,7 @@
 #include "native_q3_console.h"
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
+#include "unified_q3_events.h"
 #include "native_q3_settings.h"
 #include "native_q3_ipfilters.h"
 #include "native_maps.h"
@@ -168,9 +169,9 @@ static bool source_compatible(qa_application *app,
         }
     }
     const qa_application_q3_round_services *services = app->q3_round_services;
-    if (!services || !services->prepare || !services->deliver || !services->begin ||
+    if (!services || !services->prepare || !services->begin ||
         !services->network_owned ||
-        !services->bind || !services->queue_client || !services->admit_client ||
+        !services->bind || !services->admit_client ||
         !services->reject_client || !services->finish || !services->dispose)
         return true;
     *out = true;
@@ -250,7 +251,7 @@ static bool source_epoch(application_round *cut, qa_error *error)
 
 static bool deliver(application_round *cut, qa_error *error)
 {
-    return cut->services->deliver(cut->frontend, error) && retained(cut, error);
+    return qa_application_q3_output_drain(cut->application, error) && retained(cut, error);
 }
 
 bool qa_application_q3_source_client_slot(qa_application *app, qa_actor_owner owner,
@@ -384,16 +385,13 @@ bool application_q3_round_restart(qa_application *app, application_provider *pro
         cut.services->bind(cut.frontend, error) && deliver(&cut, error);
     for (size_t frame = 0; okay && frame < 3; ++frame) okay = settle(&cut, error);
     for (size_t i = 0; okay && i < count; ++i) {
-        okay = cut.services->queue_client(cut.frontend, &clients[i], error);
-        if (okay && native && !clients[i].remote)
-            okay = application_native_q3_send_command(provider,
-                (int32_t)clients[i].source_slot, "map_restart\n", error);
+        okay = application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_COMMAND,
+            (int32_t)clients[i].source_slot, "map_restart\n", error) &&
+            qa_application_q3_output_drain(app, error);
         qa_actor_id actor = {0};
         bool accepted = false;
         const char *reason = NULL;
         app->operation = APPLICATION_CONFIGURING;
-        if (okay && !native && !clients[i].remote)
-            okay = application_q3_guest_round_queue_client(provider, clients[i].source_slot, error);
         if (okay) okay = application_q3_round_player_admit(app, provider,
             cut.players, i, &actor, &accepted, &reason, error);
         app->operation = APPLICATION_IDLE;

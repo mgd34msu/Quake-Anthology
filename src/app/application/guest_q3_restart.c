@@ -655,21 +655,6 @@ bool application_q3_guest_round_reconnect(application_provider *provider, uint32
     return true;
 }
 
-bool application_q3_guest_round_queue_client(application_provider *provider, uint32_t slot, qa_error *error)
-{
-    struct application_q3_guest *engine;
-    if (slot >= 64 || !owner_publication(provider, &engine, error)) return false;
-    uint64_t bit = UINT64_C(1) << slot;
-    if (engine->round.phase != Q3G_ROUND_SETTLING || engine->round.completed_frames != 3 ||
-        !(engine->round.carried & bit) || ((engine->round.queued | engine->round.reconnected) & bit) ||
-        engine->clients[slot].pending_retirement)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 restart command requires its waiting carried source client");
-    if (!qa_q3_reliable_add(&engine->clients[slot].reliable, QA_Q3_SERVER, "map_restart\n", error))
-        return q3g_round_fail(engine, error, error);
-    engine->round.queued |= bit;
-    return true;
-}
-
 bool application_q3_guest_round_denial_read(application_provider *provider, uint32_t slot,
     const char **out, qa_error *error)
 {

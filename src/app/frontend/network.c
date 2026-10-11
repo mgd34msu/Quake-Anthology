@@ -6839,14 +6839,6 @@ static bool round_client(qa_network_q3_round *cut, qa_net_client_id client, size
     }
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round client has no retained transport admission");
 }
-bool frontend_network_q3_round_queue_client(qa_network_q3_round *cut, qa_net_client_id client, qa_error *error)
-{
-    size_t i; frontend_q3_peer *peer;
-    if (!cut || !round_client(cut, client, &i, &peer, error)) return false;
-    if (cut->queued[i] || peer->retiring) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round client cannot reconnect twice or after retirement");
-    if (!qa_network_q3_command(cut->network->runtime, client, "map_restart\n", error)) return false;
-    cut->queued[i] = true; return true;
-}
 bool frontend_network_q3_round_activate_client(qa_network_q3_round *cut, qa_net_client_id client, qa_error *error)
 {
     size_t i; frontend_q3_peer *peer; qa_application_network_player row;
@@ -6941,6 +6933,11 @@ static bool server_send_command(void *context, int32_t slot, const char *text, q
         if (!server_round_peer(lease, peer, &owned, error)) return false;
         if (owned) {
             if (!qa_network_q3_command(n->runtime, peer->client, text, error)) return false;
+            if (!strcmp(text, "map_restart\n")) {
+                qa_network_q3_round *cut = n->round;
+                for (size_t index = 0; index < cut->count; ++index)
+                    if (cut->clients[index].source_slot == peer->slot) cut->queued[index] = true;
+            }
             continue;
         }
         if (!q3_actor(peer, &actor, error)) return false;

@@ -24,19 +24,12 @@ typedef struct qa_application_q3_round_services {
     bool (*prepare)(void *, qa_application *, qa_actor_owner,
         const qa_application_q3_round_client *, size_t,
         qa_application_q3_round_cut **empty, qa_error *);
-    /* Deliver actual retained event projections before resetting their
-     * owners, and after each source frame/client admission. */
-    bool (*deliver)(qa_application_q3_round_cut *, qa_error *);
     bool (*network_owned)(qa_application_q3_round_cut *, bool *, qa_error *);
     /* Call mark immediately before the first real mutation, before source or
      * service callbacks can observe the new epoch. */
     bool (*begin)(qa_application_q3_round_cut *,
         qa_application_q3_round_mutation_fn mark, void *mark_context, qa_error *);
     bool (*bind)(qa_application_q3_round_cut *, qa_error *);
-    /* Queue map_restart on the actual transport/local reliable owner before
-     * Connect(false)/Begin. The source client itself remains application-owned. */
-    bool (*queue_client)(qa_application_q3_round_cut *,
-        const qa_application_q3_round_client *, qa_error *);
     bool (*admit_client)(qa_application_q3_round_cut *,
         const qa_application_q3_round_client *, qa_actor_id, qa_error *);
     bool (*reject_client)(qa_application_q3_round_cut *,
