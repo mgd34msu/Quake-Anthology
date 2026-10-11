@@ -83,7 +83,7 @@ typedef struct application_q2_held_resource {
 typedef struct application_q2_resource_table {
     uint32_t base, maximum, count;
     qa_string_id *names;
-    qa_id_index weapon_ordinals;
+    qa_id_index name_indices, weapon_ordinals;
     qa_hud_q2_weapons weapons;
 } application_q2_resource_table;
 typedef struct application_q2_numeric_config {
@@ -93,6 +93,7 @@ typedef struct application_q2_numeric_config {
 struct qa_application_network_q2 {
     qa_application *app;
     qa_application_network_q2_host host;
+    qa_q2_config_layout config_layout;
     qa_cvar_handle sv_novis, sv_airaccelerate;
     char *source_instance, *source_map;
     int32_t server_count;

@@ -253,12 +253,10 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource does not match its original source config index");
             qa_string_id name = QA_STRING_NONE;
             if (ok) ok = qa_strings_intern_cstr(qa_session_strings(candidate->app->session), path, &name, error);
-            for (uint32_t k = 1; ok && k < index; ++k)
-                if (table->names[k] == name) ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource aliases an earlier index");
-            if (ok) { table->names[index]=name;
-                if (!i) ok=application_network_q2_weapon_admit(candidate,name,error);
-            }
-            if (ok) table->count = index;
+            uint32_t admitted = 0;
+            if (ok) ok = application_network_q2_resource_id(candidate, i, name, &admitted, error);
+            if (ok && admitted != index)
+                ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource aliases an earlier index");
             previous = index;
         }
         for (uint32_t j = 0; ok && j < table->maximum; ++j)

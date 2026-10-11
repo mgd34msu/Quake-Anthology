@@ -115,6 +115,7 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
 {
     qa_q2_codec codec; qa_q2_config_layout layout;
     if (!qa_q2_codec_init(&codec, owner->host.protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    owner->config_layout = layout;
     owner->config_count = layout.max_configs;
     owner->item_base = layout.items; owner->skin_base = layout.player_skins;
     owner->light_base = layout.lights; owner->checksum_index = layout.map_checksum;
@@ -133,6 +134,7 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
         owner->resources[i] = (application_q2_resource_table){.base = bases[i], .maximum = maximum[i]};
         owner->resources[i].names = calloc(maximum[i], sizeof(qa_string_id));
         if (!owner->resources[i].names) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q2 source resource indices");
+        if (!qa_id_index_reserve(&owner->resources[i].name_indices, maximum[i], error)) return false;
     }
     return qa_id_index_reserve(&owner->resources[0].weapon_ordinals,maximum[0],error);
 }
@@ -147,6 +149,7 @@ void application_network_q2_free_tables(qa_application_network_q2 *owner)
     for (unsigned i = 0; i < 3; ++i) {
         application_q2_resource_table *table = &owner->resources[i];
         free(table->names);
+        qa_id_index_destroy(&table->name_indices);
         qa_id_index_destroy(&table->weapon_ordinals); table->weapons=(qa_hud_q2_weapons){0};
         table->names = NULL; table->count = 0;
     }
@@ -157,9 +160,7 @@ bool application_network_q2_weapon_admit(qa_application_network_q2 *owner, qa_st
 {
     application_q2_resource_table *table = &owner->resources[0];
     size_t prior = table->weapons.count ? table->weapons.count : 1;
-    qa_q2_codec codec; qa_q2_config_layout layout;
-    if (!qa_q2_codec_init(&codec, owner->host.protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error) ||
-        !qa_hud_q2_weapon_add(qa_session_strings(owner->app->session), &layout, name, &table->weapons, error)) return false;
+    if (!qa_hud_q2_weapon_add(qa_session_strings(owner->app->session), &owner->config_layout, name, &table->weapons, error)) return false;
     if (table->weapons.count > prior) qa_id_index_insert(&table->weapon_ordinals, name, 0, prior);
     return true;
 }
@@ -170,8 +171,9 @@ bool application_network_q2_resource_id(qa_application_network_q2 *owner, unsign
     if (!out || kind > 2) return application_fail(error, QA_ERROR_ARGUMENT, "Invalid Q2 source resource kind");
     if (!name) { *out = 0; return true; }
     application_q2_resource_table *table = &owner->resources[kind];
-    for (uint32_t i = 1; i <= table->count; ++i)
-        if (table->names[i] == name) { *out = i; return true; }
+    size_t retained;
+    qa_id_index_cursor cursor = qa_id_index_begin(&table->name_indices, name, 0);
+    if (qa_id_index_next(&table->name_indices, &cursor, &retained)) { *out = (uint32_t)retained; return true; }
     uint32_t index = table->count + 1;
     /* 255 is the actual player/weapon appearance sentinel in both GAME APIs. */
     if (!kind && index == 255) ++index;
@@ -180,6 +182,7 @@ bool application_network_q2_resource_id(qa_application_network_q2 *owner, unsign
     if (!application_network_q2_config_id(owner, table->base + index, name, error)) return false;
     table->names[index] = name; table->count = index; *out = index;
     if (!kind && !application_network_q2_weapon_admit(owner,name,error)) return false;
+    qa_id_index_insert(&table->name_indices, name, 0, index);
     return true;
 }
 
