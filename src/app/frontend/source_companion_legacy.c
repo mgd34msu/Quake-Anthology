@@ -3,6 +3,60 @@
 #include "qa/q3_presentation_save.h"
 
 
+bool frontend_source_companion_lights_merge(qa_arena *storage,qa_scene_world_input *world,
+    size_t count,frontend_source_companion_light_read read,void *context,qa_error *error)
+{
+    if(!count) return true;
+    if((world->light_count && !world->lights) || world->projected_light_count>32 ||
+        (world->projected_light_count && !world->projected_lights) ||
+        count>SIZE_MAX/sizeof(qa_scene_light) || world->light_count>SIZE_MAX/sizeof(qa_scene_light)-count)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Companion lights exceed the recipient spans");
+    size_t total=world->light_count+count,projected=world->projected_light_count;
+    size_t added=count<32-projected?count:32-projected;
+    qa_scene_light *lights=qa_arena_alloc(storage,total*sizeof(*lights),_Alignof(qa_scene_light),error);
+    qa_scene_light *projected_lights=added?qa_arena_alloc(storage,(projected+added)*sizeof(*projected_lights),_Alignof(qa_scene_light),error):NULL;
+    if(!lights || (added && !projected_lights)) return false;
+    if(world->light_count) memcpy(lights,world->lights,world->light_count*sizeof(*lights));
+    if(added && projected) memcpy(projected_lights,world->projected_lights,projected*sizeof(*projected_lights));
+    for(size_t i=0;i<count;++i) {
+        qa_scene_light light;const qa_q3_refdef *definition;bool view;
+        if(!read(context,&light,&definition,&view,error)) return false;
+        if(view) light.origin=qa_axis_remap_point(definition->origin,definition->axis,world->view.origin,world->view.axis,light.origin);
+        lights[world->light_count+i]=light;
+        if(i<added) projected_lights[projected+i]=light;
+    }
+    world->lights=lights;world->light_count=total;
+    if(added) { world->projected_lights=projected_lights;world->projected_light_count=projected+added; }
+    return true;
+}
+
+typedef struct legacy_light_cursor {
+    qa_frontend *frontend;
+    const frontend_source_companion_view *capture;
+    qa_actor_id actor;
+    frontend_source_companion_packet packet;
+    size_t next_packet,next_light;
+    bool skip_view;
+} legacy_light_cursor;
+static bool legacy_light_read(void *context,qa_scene_light *light,const qa_q3_refdef **definition,
+    bool *view,qa_error *error)
+{
+    legacy_light_cursor *cursor=context;
+    for(;;) {
+        while(cursor->next_light<cursor->packet.light_count) {
+            size_t i=cursor->next_light++;
+            if(!cursor->packet.light_actors || !qa_actor_id_equal(cursor->packet.light_actors[i],cursor->actor)) continue;
+            *view=cursor->packet.light_views && cursor->packet.light_views[i];
+            if(*view && cursor->skip_view) continue;
+            *light=cursor->packet.lights[i];*definition=&cursor->packet.definition;return true;
+        }
+        if(cursor->next_packet>=cursor->capture->packet_count) return false;
+        if(!frontend_source_companion_packet_read(cursor->frontend,cursor->capture,cursor->next_packet++, &cursor->packet,error)) return false;
+        cursor->next_light=cursor->packet.definition.flags&1?cursor->packet.light_count:0;
+    }
+}
+
+
 static bool owned(const frontend_source_companion_legacy *owner,const frontend_source_companion_packet *packet,
     size_t ordinal,bool *view)
 {
@@ -57,37 +111,9 @@ bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,q
         }
     }
     if (!added) return frontend_source_companion_current(f,&capture);
-    if ((input->light_count && !input->lights) || (input->projected_light_count && !input->projected_lights) ||
-        input->projected_light_count>32 || added>SIZE_MAX/sizeof(*owner->lights) ||
-        input->light_count>SIZE_MAX/sizeof(*owner->lights)-added)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Legacy companion lights exceed the actual recipient spans");
-    size_t total=input->light_count+added,projected_added=added<32-input->projected_light_count?added:32-input->projected_light_count;
-    owner->lights=qa_arena_alloc(&f->frame.storage,total*sizeof(*owner->lights),_Alignof(qa_scene_light),error);
-    if (projected_added) owner->projected=qa_arena_alloc(&f->frame.storage,(input->projected_light_count+projected_added)*sizeof(*owner->projected),_Alignof(qa_scene_light),error);
-    if (!owner->lights || (projected_added && !owner->projected))
-        return frontend_fail(error,QA_ERROR_MEMORY,"Combining actual legacy recipient lights");
-    if (input->light_count) memcpy(owner->lights,input->lights,input->light_count*sizeof(*owner->lights));
-    if (projected_added && input->projected_light_count)
-        memcpy(owner->projected,input->projected_lights,input->projected_light_count*sizeof(*owner->projected));
-    size_t at=input->light_count,projected_at=0;
-    for (size_t i=0;i<capture.packet_count;++i) {
-        frontend_source_companion_packet packet;
-        if (!frontend_source_companion_packet_read(f,&capture,i,&packet,error)) return false;
-        if (packet.definition.flags&1) continue;
-        for (size_t j=0;j<packet.light_count;++j) {
-            if (!packet.light_actors || !qa_actor_id_equal(packet.light_actors[j],actor)) continue;
-            bool view=packet.light_views && packet.light_views[j];
-            if (view && input->view.clip_enabled) continue;
-            qa_scene_light light=packet.lights[j];
-            if (view) light.origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,input->view.origin,input->view.axis,light.origin);
-            owner->lights[at++]=light;
-            if (projected_at<projected_added) owner->projected[input->projected_light_count+projected_at]=light;
-            ++projected_at;
-        }
-    }
-    if (!frontend_source_companion_current(f,&capture)) return false;
-    input->lights=owner->lights; input->light_count=total;
-    if (projected_added) { input->projected_lights=owner->projected; input->projected_light_count+=projected_added; }
+    legacy_light_cursor cursor={.frontend=f,.capture=&capture,.actor=actor,.skip_view=input->view.clip_enabled};
+    if(!frontend_source_companion_lights_merge(&f->frame.storage,input,added,legacy_light_read,&cursor,error) ||
+        !frontend_source_companion_current(f,&capture)) return false;
     owner->options.world=*input; owner->options.world.identity_light=1;
     return frontend_q3_generic_recipient(f,&owner->options.world,error);
 }

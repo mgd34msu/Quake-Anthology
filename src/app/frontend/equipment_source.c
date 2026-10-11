@@ -84,7 +84,7 @@ struct frontend_equipment_source {
     size_t companion_polygon_count, companion_light_count;
     qa_application_q3_equipment_source_weapon *companion_weapons;
     size_t companion_weapon_count;
-    qa_scene_light *view_lights, *view_projected_lights;
+    const qa_scene_light *view_lights, *view_projected_lights;
     qa_model_transform view_transform;
     qa_q3_ref_entity view_entity;
     qa_vec3 view_offset;
@@ -1029,6 +1029,22 @@ static bool build_world(frontend_equipment_source *owner, qa_error *error)
     return true;
 }
 
+typedef struct equipment_light_cursor {
+    frontend_equipment_source *owner;
+    size_t next;
+} equipment_light_cursor;
+static bool companion_light_read(void *context,qa_scene_light *light,const qa_q3_refdef **definition,
+    bool *view,qa_error *error)
+{
+    (void)error;equipment_light_cursor *cursor=context;frontend_equipment_source *owner=cursor->owner;
+    while(cursor->next<owner->companion_light_count) {
+        const equipment_companion_light *captured=owner->companion_lights+cursor->next++;
+        if(captured->view && !owner->companion_view_requested) continue;
+        *light=captured->light;*definition=&captured->definition;*view=captured->view;return true;
+    }
+    return false;
+}
+
 static bool companion_lights_prepare(frontend_equipment_source *owner,
     qa_q3_scene_options *options, qa_error *error)
 {
@@ -1037,42 +1053,12 @@ static bool companion_lights_prepare(frontend_equipment_source *owner,
     for (size_t i = 0; i < owner->companion_light_count; ++i)
         if (!owner->companion_lights[i].view || owner->companion_view_requested) ++count;
     if (!count) return true;
-    if ((options->world.light_count && !options->world.lights) ||
-        options->world.projected_light_count > 32 ||
-        (options->world.projected_light_count && !options->world.projected_lights) ||
-        count > SIZE_MAX / sizeof(*owner->view_lights) ||
-        options->world.light_count > SIZE_MAX / sizeof(*owner->view_lights) - count)
-        return frontend_fail(error, QA_ERROR_FORMAT, "Source weapon lights leave the actual recipient span");
-    size_t total = options->world.light_count + count;
-    qa_arena *storage=&owner->options.frontend->frame.storage;
-    qa_scene_light *lights=qa_arena_alloc(storage,total*sizeof(*lights),_Alignof(qa_scene_light),error);
-    size_t projected = options->world.projected_light_count;
-    size_t added = count < 32 - projected ? count : 32 - projected;
-    qa_scene_light *projected_lights=added?qa_arena_alloc(storage,(projected+added)*sizeof(*projected_lights),_Alignof(qa_scene_light),error):NULL;
-    if (!lights || (added && !projected_lights)) {
-        return frontend_fail(error, QA_ERROR_MEMORY, "Combining genuine Source weapon lights");
-    }
-    if (options->world.light_count)
-        memcpy(lights, options->world.lights, options->world.light_count * sizeof(*lights));
-    if (added && projected)
-        memcpy(projected_lights, options->world.projected_lights, projected * sizeof(*projected_lights));
-    size_t at = options->world.light_count, emitted = 0;
-    for (size_t i = 0; i < owner->companion_light_count; ++i) {
-        const equipment_companion_light *captured = owner->companion_lights + i;
-        if (captured->view && !owner->companion_view_requested) continue;
-        qa_scene_light light = captured->light;
-        if (captured->view) light.origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,light.origin);
-        lights[at++] = light;
-        if (emitted < added) projected_lights[projected + emitted] = light;
-        ++emitted;
-    }
-    if (!frontend_source_companion_current(owner->options.frontend, &owner->companion)) {
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source weapon lights retired their completed Draw receipt");
-    }
-    owner->view_lights = lights;
-    owner->view_projected_lights = projected_lights;
-    options->world.lights = lights; options->world.light_count = total;
-    if (added) { options->world.projected_lights = projected_lights; options->world.projected_light_count = projected + added; }
+    equipment_light_cursor cursor={.owner=owner};
+    if(!frontend_source_companion_lights_merge(&owner->options.frontend->frame.storage,
+        &options->world,count,companion_light_read,&cursor,error) ||
+        !frontend_source_companion_current(owner->options.frontend,&owner->companion)) return false;
+    owner->view_lights=options->world.lights;
+    owner->view_projected_lights=options->world.projected_lights;
     return true;
 }
 

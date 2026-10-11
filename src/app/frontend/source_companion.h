@@ -36,4 +36,8 @@ bool frontend_source_companion_presentation_read(const qa_frontend *,const front
     qa_q3_presentation **,qa_error *);
 bool frontend_source_companion_packet_read(const qa_frontend *,const frontend_source_companion_view *,size_t,
     frontend_source_companion_packet *,qa_error *);
+typedef bool (*frontend_source_companion_light_read)(void *,qa_scene_light *,
+    const qa_q3_refdef **,bool *view,qa_error *);
+bool frontend_source_companion_lights_merge(qa_arena *,qa_scene_world_input *,size_t,
+    frontend_source_companion_light_read,void *,qa_error *);
 #endif
