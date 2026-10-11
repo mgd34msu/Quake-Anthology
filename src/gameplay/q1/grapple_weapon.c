@@ -74,8 +74,7 @@ static bool frame_event(qa_q1_game *g, q1_player *player, int32_t frame, qa_erro
                               .time_ns = g->time_ns,
                               .frame = frame,
                               .flags = QA_Q1_CTF_GRAPPLE};
-    if (!qa_builtin_resource(&g->services, "progs/v_star.mdl", &event.resource, error))
-        return false;
+    event.resource = g->runtime_names[Q1_NAME_RESOURCE_PROGS_V_STAR_MDL];
     return qa_builtin_emit(&g->services, &event, error);
 }
 bool q1_grapple_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) {

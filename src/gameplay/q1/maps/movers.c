@@ -143,9 +143,8 @@ bool q1_map_addon_egg_mover(qa_q1_game *g, q1_actor *e, qa_error *error) {
     move->position = Q1_MAP_BOTTOM;
     e->speed = 500;
     e->map->sounds = 1;
-    if (!qa_builtin_resource(&g->services, "doors/drclos4.wav", &e->map->noise[1], error) ||
-        !qa_builtin_resource(&g->services, "doors/doormv1.wav", &e->map->noise[2], error))
-        return false;
+    e->map->noise[1] = g->runtime_names[Q1_NAME_RESOURCE_DOORS_DRCLOS4_WAV];
+    e->map->noise[2] = g->runtime_names[Q1_NAME_RESOURCE_DOORS_DOORMV1_WAV];
     return door_up(g, e, error);
 }
 bool qa_q1_game_map_egg_mover(qa_q1_game *g, qa_actor_id actor, bool *handled,
@@ -524,9 +523,7 @@ static bool horde_key(qa_q1_game *g, qa_actor_id actor, bool gold, bool *has,
     *has = false;
     if (!qa_inventory_has(g->services.inventory, actor))
         return true;
-    qa_item_id item;
-    if (!qa_builtin_resource(&g->services, gold ? "q1:key/gold" : "q1:key/silver", &item, error))
-        return false;
+    qa_item_id item = g->runtime_names[gold ? Q1_NAME_KEY_GOLD : Q1_NAME_KEY_SILVER];
     qa_inventory_entry entry;
     qa_error missing = {0};
     if (!qa_inventory_entry_read(g->services.inventory, actor, item, &entry, &missing)) {
@@ -610,15 +607,13 @@ static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_er
         return false;
     if (!q1_alive(g, entity->id) || !q1_alive(g, master->id) || !q1_alive(g, other))
         return true;
-    const char *key = entity->spawnflags & 8    ? "q1:key/gold"
-                      : entity->spawnflags & 16 ? "q1:key/silver"
-                                                : NULL;
-    if (!key || !qa_inventory_has(g->services.inventory, other))
+    qa_item_id item = entity->spawnflags & 8    ? g->runtime_names[Q1_NAME_KEY_GOLD]
+                      : entity->spawnflags & 16 ? g->runtime_names[Q1_NAME_KEY_SILVER]
+                                                : 0;
+    if (!item || !qa_inventory_has(g->services.inventory, other))
         return true;
-    qa_item_id item;
     bool consumed;
-    if (!qa_builtin_resource(&g->services, key, &item, error) ||
-        !qa_inventory_consume(g->services.inventory, other, item, 1, &consumed, error))
+    if (!qa_inventory_consume(g->services.inventory, other, item, 1, &consumed, error))
         return false;
     if (!q1_alive(g, entity->id) || !q1_alive(g, master->id) || !q1_alive(g, other))
         return true;
@@ -694,10 +689,9 @@ bool q1_map_mover_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa
             return true;
         entity->map->cooldown = g->time + .5;
     }
-    qa_string_id crush;
-    if (!qa_builtin_resource(&g->services, "crush", &crush, error) ||
-        !q1_damage_typed(g, other, entity->id, entity->id, kind == Q1_MAP_PLAT ? 1 : entity->damage,
-                         QA_Q1_WEAPON_COUNT, QA_Q1_ARMOR_NORMAL, crush, error))
+    if (!q1_damage_typed(g, other, entity->id, entity->id, kind == Q1_MAP_PLAT ? 1 : entity->damage,
+                         QA_Q1_WEAPON_COUNT, QA_Q1_ARMOR_NORMAL,
+                         g->runtime_names[Q1_NAME_CRUSH], error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;

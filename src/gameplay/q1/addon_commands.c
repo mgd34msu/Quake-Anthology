@@ -1,10 +1,6 @@
 #include "boss_internal.h"
 #include "maps/internal.h"
 
-static bool source_class(qa_q1_game *g, qa_string_id classname, const char *name) {
-    qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), classname);
-    return text.size == strlen(name) && !memcmp(text.data, name, text.size);
-}
 static bool oldnew_credits(qa_q1_game *g, qa_error *error) {
     qa_builtin_event music = {.kind = QA_BUILTIN_EFFECT,
                               .family = QA_GAME_Q1,
@@ -57,9 +53,9 @@ bool q1_addon_omnicide(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         if (g->destroy_pending)
             break;
         if (g->options.program == QA_Q1_MG3) {
-            if (source_class(g, classname, "monster_oldone_new"))
+            if (classname == g->runtime_names[Q1_NAME_MONSTER_OLDONE_NEW])
                 ok = oldnew_credits(g, error);
-            else if (source_class(g, classname, "monster_boss"))
+            else if (classname == g->runtime_names[Q1_NAME_MONSTER_BOSS])
                 ok = q1_final_end(g, error);
         }
         if (!ok || !q1_alive(g, id))
@@ -81,6 +77,6 @@ bool q1_addon_omnicide(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
                               .provider = g->options.provider,
                               .count = (int32_t)g->killed_monsters,
                               .time_ns = g->time_ns};
-    return qa_builtin_resource(&g->services, "monster-count", &event.resource, error) &&
-           qa_builtin_emit(&g->services, &event, error);
+    event.resource = g->runtime_names[Q1_NAME_RESOURCE_MONSTER_COUNT];
+    return qa_builtin_emit(&g->services, &event, error);
 }

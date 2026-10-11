@@ -1,9 +1,5 @@
 #include "internal.h"
 
-static bool classname(qa_q1_game *g, qa_string_id id, const char *name) {
-    qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), id);
-    return text.size == strlen(name) && !memcmp(text.data, name, text.size);
-}
 static const q1_addon_contact *contact(const qa_q1_game *g, qa_actor_id actor) {
     if (!g || g->destroy_pending || !g->maps || !g->maps->addon_contacts ||
         actor.slot >= g->capacity || !q1_alive((qa_q1_game *)g, actor))
@@ -22,14 +18,14 @@ bool qa_q1_game_map_effects(const qa_q1_game *g, qa_actor_id actor, uint32_t *ou
     *out = row ? row->effects : 0;
     return true;
 }
-static bool cleanup_markers(qa_q1_game *g, const char *name, qa_error *error) {
+static bool cleanup_markers(qa_q1_game *g, qa_string_id name, qa_error *error) {
     qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     bool ok = true;
     for (size_t i = 0; ok && !g->destroy_pending && i < snapshot->snapshot.count; ++i) {
         q1_actor *marker = q1_entity(g, snapshot->snapshot.ids[i]);
-        if (marker && marker->native && classname(g, marker->classname, name))
+        if (marker && marker->native && marker->classname == name)
             ok = q1_remove(g, marker, error);
     }
     qa_builtin_snapshot_release(snapshot);
@@ -49,10 +45,10 @@ bool q1_map_mg3_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool 
     switch (impulse) {
     case 116:
         row->secret_hunter = !row->secret_hunter;
-        return row->secret_hunter || cleanup_markers(g, "secret_marker", error);
+        return row->secret_hunter || cleanup_markers(g, g->runtime_names[Q1_NAME_CLASS_SECRET_MARKER], error);
     case 117:
         row->exit_hunter = !row->exit_hunter;
-        return row->exit_hunter || cleanup_markers(g, "exit_marker", error);
+        return row->exit_hunter || cleanup_markers(g, g->runtime_names[Q1_NAME_CLASS_EXIT_MARKER], error);
     case 119:
         row->monster_hunter = !row->monster_hunter;
         return true;
@@ -68,16 +64,16 @@ bool q1_map_mg3_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool 
                                   .provider = g->options.provider, .actor = actor,
                                   .flags = native ? native->effects : row->effects,
                                   .time_ns = g->time_ns};
-        return qa_builtin_resource(&g->services, "actor-effects", &event.resource, error) &&
-               qa_builtin_emit(&g->services, &event, error);
+        event.resource = g->runtime_names[Q1_NAME_RESOURCE_ACTOR_EFFECTS];
+        return qa_builtin_emit(&g->services, &event, error);
     }
     }
     return true;
 }
-static bool target_class(qa_q1_game *g, qa_actor_id target, const char *name) {
+static bool target_class(qa_q1_game *g, qa_actor_id target, qa_string_id name) {
     qa_authored_target fields;
     return q1_alive(g, target) && qa_targets_read(g->maps->options.targets, target, &fields) &&
-           !g->destroy_pending && q1_alive(g, target) && classname(g, fields.classname, name);
+           !g->destroy_pending && q1_alive(g, target) && fields.classname == name;
 }
 static bool marker_update(qa_q1_game *g, qa_actor_id player, qa_actor_id target,
                            qa_vec3 eye, bool secret, qa_error *error) {
@@ -158,12 +154,12 @@ static bool marker_update(qa_q1_game *g, qa_actor_id player, qa_actor_id target,
 }
 static bool marker_frame(qa_q1_game *g, qa_actor_id player, qa_vec3 eye,
                           qa_builtin_snapshot_frame *snapshot, bool secret, qa_error *error) {
-    const char *target_name = secret ? "trigger_secret" : "trigger_changelevel";
-    const char *marker_name = secret ? "secret_marker" : "exit_marker";
+    qa_string_id target_name = g->runtime_names[secret ? Q1_NAME_TRIGGER_SECRET : Q1_NAME_TRIGGER_CHANGELEVEL];
+    qa_string_id marker_name = g->runtime_names[secret ? Q1_NAME_CLASS_SECRET_MARKER : Q1_NAME_CLASS_EXIT_MARKER];
     for (size_t i = 0; i < snapshot->snapshot.count && q1_alive(g, player); ++i) {
         qa_actor_id id = snapshot->snapshot.ids[i];
         q1_actor *marker = q1_entity(g, id);
-        if (marker && marker->native && classname(g, marker->classname, marker_name) &&
+        if (marker && marker->native && marker->classname == marker_name &&
             !target_class(g, q1_ref_actor(g, marker->owner), target_name)) {
             marker = q1_entity(g, id);
             if (marker && !q1_remove(g, marker, error))
@@ -177,9 +173,7 @@ static bool marker_frame(qa_q1_game *g, qa_actor_id player, qa_vec3 eye,
 }
 static bool monster_frame(qa_q1_game *g, qa_actor_id player, qa_builtin_snapshot_frame *snapshot,
                            qa_error *error) {
-    qa_string_id resource;
-    if (!qa_builtin_resource(&g->services, "debug-bounds", &resource, error))
-        return false;
+    qa_string_id resource = g->runtime_names[Q1_NAME_RESOURCE_DEBUG_BOUNDS];
     for (size_t i = 0; i < snapshot->snapshot.count && q1_alive(g, player); ++i) {
         qa_actor_id id = snapshot->snapshot.ids[i];
         q1_actor *native = q1_entity(g, id);

@@ -174,8 +174,7 @@ static bool inspect(void *opaque, qa_actor_id actor, qa_error *error) {
         view.navigation.destination = qa_vec_add(m->motion.destination, qa_vec_sub(body.origin, source.origin));
     }
     if (kind == QA_Q2_MOVER_ELEVATOR && m) {
-        const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
-        bool second = name && !strcmp(name, "func_plat2");
+        bool second = s->classname == g->runtime_names[Q2_NAME_FUNC_PLAT2];
         view.navigation.kind = QA_NAV_ENTITY_ELEVATOR;
         view.navigation.locked = second ? !m->activated : s->targetname && m->phase == 1 && !m->moving;
         view.navigation.data.elevator.origin = body.origin;

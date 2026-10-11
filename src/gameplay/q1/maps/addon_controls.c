@@ -100,8 +100,8 @@ static bool music(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
                               .provider = g->options.provider, .actor = id,
                               .code = track, .count = track, .time_ns = g->time_ns};
-    if (!qa_builtin_resource(&g->services, "music", &event.resource, error) ||
-        !qa_builtin_emit(&g->services, &event, error))
+    event.resource = g->runtime_names[Q1_NAME_MUSIC];
+    if (!qa_builtin_emit(&g->services, &event, error))
         return false;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
@@ -367,8 +367,8 @@ static bool cutscene(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
                               .provider = g->options.provider, .actor = id,
                               .origin = body.origin, .direction = angles, .time_ns = g->time_ns};
-    return qa_builtin_resource(&g->services, "cutscene", &event.resource, error) &&
-           qa_builtin_emit(&g->services, &event, error);
+    event.resource = g->runtime_names[Q1_NAME_RESOURCE_CUTSCENE];
+    return qa_builtin_emit(&g->services, &event, error);
 }
 bool q1_map_addon_control_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     qa_actor_id id = e->id;
