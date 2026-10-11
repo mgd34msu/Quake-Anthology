@@ -31,6 +31,7 @@
 #include "qa/network_q1_nq.h"
 #include "qa/network_q2_kex.h"
 #include "qa/network_q2_messages.h"
+#include "../src/app/frontend/selected_effects_q1_temporary.h"
 #include "../src/network/q2/session_internal.h"
 
 #include <fcntl.h>
@@ -67,6 +68,36 @@ static void test_json_caller_storage(void)
     CHECK(owned.size==decoded.size && !memcmp(owned.data,expected,sizeof(expected)));
     qa_buffer_free(&owned); qa_json_destroy(document);
 }
+static void test_q1_effect_state(void)
+{
+    frontend_fx_q1_state state;
+    frontend_fx_q1_state_initialize(&state, 2, 2);
+    qa_actor_id actor={.registry=1,.generation=1,.slot=7};
+    frontend_fx_q1_light_recipe recipe={.radius=200,.duration=.1,.color={1,1,1}};
+    frontend_fx_q1_light *first=frontend_fx_q1_state_light(&state,actor,0,qa_v3(1,2,3),1,&recipe);
+    uint64_t identity=first->identity;
+    frontend_fx_q1_state_light(&state,(qa_actor_id){0},8,qa_v3(4,5,6),1,&recipe);
+    CHECK(frontend_fx_q1_state_light(&state,actor,0,qa_v3(7,8,9),1.05,&recipe)==first);
+    CHECK(first->identity==identity && first->origin.x==7 && fabs(first->die-1.15)<1e-9);
+    qa_q1_temp beam={.kind=QA_Q1_TEMP_BEAM,.type=5,.entity=3,.origin={1,2,3},.end={4,5,6}};
+    CHECK(frontend_fx_q1_state_beam(&state,actor,true,&beam,2,0));
+    beam.entity=4;
+    CHECK(frontend_fx_q1_state_beam(&state,actor,true,&beam,2,0));
+    beam.entity=5;
+    CHECK(!frontend_fx_q1_state_beam(&state,actor,true,&beam,2,0));
+    beam.entity=3; beam.end[0]=10;
+    CHECK(frontend_fx_q1_state_beam(&state,actor,true,&beam,2.05,0));
+    CHECK(state.beams[0].end.x==10 && state.beams[1].source_entity==4);
+    beam.entity=5;
+    CHECK(frontend_fx_q1_state_beam(&state,actor,true,&beam,2.3,0));
+    qa_builtin_random random; qa_builtin_random_seed(&random,1);
+    qa_q1_temp explosion={.kind=QA_Q1_TEMP_POINT,.type=3,.origin={10,20,30}};
+    const char *sound=NULL;
+    CHECK(frontend_fx_q1_state_temporary(&state,&random,&explosion,(qa_actor_id){0},true,false,3,&sound));
+    CHECK(state.particles.count>0 && sound!=NULL);
+    CHECK(state.lights[0].radius==350 && state.lights[0].decay==300 && state.lights[0].die==3.5);
+}
+
 static void test_errors_and_buffers(void)
 {
     qa_error error;
@@ -1843,6 +1874,7 @@ int main(int argc, char **argv)
     test_campaign_unit();
     test_recovery_checkpoints();
     test_q1_original_codec();
+    test_q1_effect_state();
     test_q2_owned_frames();
     test_q2_retained_records();
     test_q1_gameplay();

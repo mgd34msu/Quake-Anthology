@@ -1,5 +1,76 @@
 #include "selected_effects_q1_temporary.h"
 #include <math.h>
+#include <string.h>
+
+void frontend_fx_q1_state_initialize(frontend_fx_q1_state *state, size_t lights, size_t beams)
+{
+    memset(state, 0, sizeof(*state));
+    state->particles.family = QA_GAME_Q1;
+    state->light_capacity = lights;
+    state->beam_capacity = beams;
+}
+
+frontend_fx_q1_light *frontend_fx_q1_state_light(frontend_fx_q1_state *state,
+    qa_actor_id actor, uint32_t source_entity, qa_vec3 origin, double seconds,
+    const frontend_fx_q1_light_recipe *recipe)
+{
+    size_t at = state->light_capacity;
+    if (actor.registry || source_entity)
+        for (size_t i = 0; i < state->light_capacity; ++i)
+            if (state->lights[i].active && (actor.registry ?
+                    qa_actor_id_equal(state->lights[i].actor, actor) :
+                    state->lights[i].source_entity == source_entity)) { at = i; break; }
+    if (at == state->light_capacity)
+        for (size_t i = 0; i < state->light_capacity; ++i)
+            if (!state->lights[i].active || state->lights[i].die < seconds) { at = i; break; }
+    if (at == state->light_capacity) at = 0;
+    frontend_fx_q1_light *light = state->lights + at;
+    uint64_t identity = light->identity ? light->identity : qa_scene_identity();
+    *light = (frontend_fx_q1_light){.actor = actor, .source_entity = source_entity,
+        .origin = origin, .color = recipe->color, .born = seconds,
+        .die = seconds + recipe->duration, .radius = recipe->radius,
+        .decay = recipe->decay, .minimum = recipe->minimum, .identity = identity, .active = true};
+    return light;
+}
+
+bool frontend_fx_q1_state_beam(frontend_fx_q1_state *state, qa_actor_id actor,
+    bool received, const qa_q1_temp *event, double seconds, uint32_t roll_seed)
+{
+    size_t at = state->beam_capacity;
+    for (size_t i = 0; i < state->beam_capacity; ++i)
+        if (state->beams[i].active && (received ?
+                state->beams[i].source_entity == event->entity :
+                qa_actor_id_equal(state->beams[i].actor, actor))) { at = i; break; }
+    if (at == state->beam_capacity)
+        for (size_t i = 0; i < state->beam_capacity; ++i)
+            if (!state->beams[i].active || state->beams[i].die < seconds) { at = i; break; }
+    if (at == state->beam_capacity) return false;
+    state->beams[at] = (frontend_fx_q1_beam){.actor = actor, .source_entity = event->entity,
+        .start = {event->origin[0], event->origin[1], event->origin[2]},
+        .end = {event->end[0], event->end[1], event->end[2]}, .die = seconds + .2,
+        .type = event->type, .roll_seed = roll_seed, .active = true};
+    return true;
+}
+
+bool frontend_fx_q1_state_temporary(frontend_fx_q1_state *state, qa_builtin_random *random,
+    const qa_q1_temp *event, qa_actor_id actor, bool received, bool quakeworld,
+    double seconds, const char **sound)
+{
+    *sound = NULL;
+    if (event->kind == QA_Q1_TEMP_BEAM) {
+        if (!frontend_fx_q1_beam_model(event->type)) return false;
+        (void)frontend_fx_q1_state_beam(state, actor, received, event, seconds, 0);
+        return true;
+    }
+    if (!frontend_fx_q1_temporary_particles(&state->particles, random, event, quakeworld, seconds))
+        return false;
+    frontend_fx_q1_light_recipe recipe;
+    if (frontend_fx_q1_temporary_light(event, &recipe))
+        frontend_fx_q1_state_light(state, (qa_actor_id){0}, 0,
+            qa_v3(event->origin[0], event->origin[1], event->origin[2]), seconds, &recipe);
+    *sound = frontend_fx_q1_temporary_sound(event, random);
+    return true;
+}
 
 bool frontend_fx_q1_temporary_light(const qa_q1_temp *event, frontend_fx_q1_light_recipe *out)
 {
@@ -91,15 +162,21 @@ bool frontend_fx_q1_entity_light(qa_builtin_random *random, qa_vec3 origin, qa_v
     return present;
 }
 
-const char *frontend_fx_q1_beam_model(uint8_t type)
+int frontend_fx_q1_beam_index(uint8_t type)
 {
     switch (type) {
-    case 5: return "progs/bolt.mdl";
-    case 6: return "progs/bolt2.mdl";
-    case 9: return "progs/bolt3.mdl";
-    case 13: return "progs/beam.mdl";
-    default: return NULL;
+    case 5: return 0;
+    case 6: return 1;
+    case 9: return 2;
+    case 13: return 3;
+    default: return -1;
     }
+}
+const char *frontend_fx_q1_beam_model(uint8_t type)
+{
+    static const char *const models[]={"progs/bolt.mdl","progs/bolt2.mdl","progs/bolt3.mdl","progs/beam.mdl"};
+    int index=frontend_fx_q1_beam_index(type);
+    return index<0?NULL:models[index];
 }
 
 /* CL_UpdateTEnts quantizes pitch/yaw, advances by 30 units and picks a fresh

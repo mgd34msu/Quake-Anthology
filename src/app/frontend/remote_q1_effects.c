@@ -14,21 +14,6 @@
 #include <string.h>
 
 enum { LIGHTS = 64, BEAMS = 32, EFFECT_RECORDS = 65536 };
-typedef struct remote_light {
-    qa_vec3 origin, color;
-    double birth, die;
-    float radius, decay, minimum;
-    uint32_t entity;
-    uint64_t identity;
-    bool active;
-} remote_light;
-typedef struct remote_beam {
-    qa_vec3 start, end;
-    double die;
-    uint32_t entity;
-    uint8_t type;
-    bool active;
-} remote_beam;
 typedef struct remote_trail {
     uint32_t entity, model;
     qa_vec3 origin;
@@ -45,15 +30,13 @@ struct frontend_remote_q1_effects {
     qa_arena storage;
     frontend_received_music *music;
     bool music_retiring;
-    frontend_fx_particles particles;
+    frontend_fx_q1_state state;
     qa_builtin_random random;
     qa_scene_image *image;
     remote_ambient *ambient;
     qa_audio_engine *audio;
     size_t ambient_count,ambient_capacity;
-    remote_light lights[LIGHTS];
     qa_scene_light scene_lights[LIGHTS];
-    remote_beam beams[BEAMS];
     remote_trail *trails;
     size_t trail_count, trail_capacity;
     uint64_t sample;
@@ -64,11 +47,10 @@ struct frontend_remote_q1_effects {
 
 static void reset(frontend_remote_q1_effects *fx)
 {
-    fx->particles=(frontend_fx_particles){.family=QA_GAME_Q1};
+    frontend_fx_q1_state_initialize(&fx->state, LIGHTS, BEAMS);
     qa_builtin_random_seed(&fx->random,1);
     fx->image=NULL;fx->audio=NULL;fx->ambient_count=fx->trail_count=0;
-    memset(fx->lights,0,sizeof(fx->lights));memset(fx->scene_lights,0,sizeof(fx->scene_lights));
-    memset(fx->beams,0,sizeof(fx->beams));fx->sample=0;
+    memset(fx->scene_lights,0,sizeof(fx->scene_lights));fx->sample=0;
     fx->sampled_seconds=fx->previous_sample=fx->bonus_until=0;fx->sampled=false;
 }
 bool remote_q1_effects_prepare(frontend_remote_q1 *row, qa_error *error)
@@ -166,50 +148,6 @@ static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
     qa_audio_asset_release(asset);
     return ok;
 }
-static void light_at(frontend_remote_q1 *row, uint32_t entity, qa_vec3 origin,
-    float radius, double duration, float decay, float minimum, qa_vec3 color,double seconds)
-{
-    frontend_remote_q1_effects *fx = row->effects;
-    size_t selected = LIGHTS;
-    if (entity) for (size_t i = 0; i < LIGHTS; ++i)
-        if (fx->lights[i].active && fx->lights[i].entity == entity) { selected = i; break; }
-    if (selected == LIGHTS) for (size_t i = 0; i < LIGHTS; ++i)
-        if (!fx->lights[i].active || fx->lights[i].die < seconds) { selected = i; break; }
-    if (selected == LIGHTS) selected = 0;
-    uint64_t identity=fx->lights[selected].identity;
-    if(!identity) identity=qa_scene_identity();
-    fx->lights[selected] = (remote_light){origin, color, seconds,
-        seconds + duration, radius, decay, minimum, entity, identity, true};
-}
-static void light(frontend_remote_q1 *row,uint32_t entity,qa_vec3 origin,
-    float radius,double duration,float decay,float minimum,qa_vec3 color)
-{ light_at(row,entity,origin,radius,duration,decay,minimum,color,row->seconds); }
-static bool temporary(frontend_remote_q1 *row, const qa_q1_temp *event, qa_error *error)
-{
-    frontend_remote_q1_effects *fx = row->effects;
-    qa_vec3 origin = vector(event->origin);
-    const char *path = NULL;
-    if (event->kind == QA_Q1_TEMP_BEAM) {
-        size_t slot = BEAMS;
-        for (size_t i = 0; i < BEAMS; ++i)
-            if (fx->beams[i].active && fx->beams[i].entity == event->entity) { slot = i; break; }
-        if (slot == BEAMS) for (size_t i = 0; i < BEAMS; ++i)
-            if (!fx->beams[i].active || fx->beams[i].die < row->seconds) { slot = i; break; }
-        if (slot == BEAMS) return true;
-        fx->beams[slot] = (remote_beam){origin, vector(event->end), row->seconds + .2,
-            event->entity, event->type, true};
-        return true;
-    }
-    if (!frontend_fx_q1_temporary_particles(&fx->particles, &fx->random, event,
-            qa_q1_is_qw(row->options.domain.protocol), row->seconds))
-        return remote_q1_fail(error, QA_ERROR_FORMAT, "Unsupported received Q1 temporary effect");
-    frontend_fx_q1_light_recipe recipe;
-    if (frontend_fx_q1_temporary_light(event, &recipe))
-        light(row, 0, origin, recipe.radius, recipe.duration, recipe.decay,
-            recipe.minimum, recipe.color);
-    path = frontend_fx_q1_temporary_sound(event, &fx->random);
-    return !path || sound(row, path, 0, origin, 0, 1, 1, false, false, error);
-}
 bool remote_q1_event_present(frontend_remote_q1 *row, const qa_nq_message *message, qa_error *error)
 {
     if (!row || !message || !remote_q1_mutable(row) || !remote_q1_live(row, error)) return false;
@@ -243,11 +181,19 @@ bool remote_q1_event_present(frontend_remote_q1 *row, const qa_nq_message *messa
         return remote_q1_live(row, error);
     }
     case QA_NQ_PARTICLE:
-        frontend_fx_q1_particle_event(&row->effects->particles, &row->effects->random,
+        frontend_fx_q1_particle_event(&row->effects->state.particles, &row->effects->random,
             vector(message->data.particle.origin), vector(message->data.particle.direction),
             message->data.particle.color, message->data.particle.count, row->seconds);
         return true;
-    case QA_NQ_TEMPENTITY: return temporary(row,&message->data.temporary,error);
+    case QA_NQ_TEMPENTITY: {
+        const char *path;
+        if (!frontend_fx_q1_state_temporary(&row->effects->state, &row->effects->random,
+                &message->data.temporary, (qa_actor_id){0}, true,
+                qa_q1_is_qw(row->protocol), row->seconds, &path))
+            return remote_q1_fail(error, QA_ERROR_FORMAT, "Unsupported received Q1 temporary effect");
+        return !path || sound(row, path, 0, vector(message->data.temporary.origin),
+            0, 1, 1, false, false, error);
+    }
     case QA_NQ_BONUSFLASH:
         row->effects->bonus_until = row->seconds + .5; return true;
     case QA_NQ_STUFFTEXT: {
@@ -375,11 +321,11 @@ static bool entities(frontend_remote_q1 *row, double seconds, qa_error *error)
         uint32_t flags=model->source?(uint32_t)model->source->flags:0;
         qa_vec3 light_origin;
         frontend_fx_q1_light_recipe recipe;
-        bool lit=frontend_fx_q1_entity_effects(&fx->particles,&fx->random,start,point,angles,
+        bool lit=frontend_fx_q1_entity_effects(&fx->state.particles,&fx->random,start,point,angles,
             entity->effects,flags,qa_q1_is_qw(row->protocol),
             product && product->edition==QA_EDITION_RERELEASE,seconds,&light_origin,&recipe);
-        if(lit) light_at(row,entity->number,light_origin,recipe.radius,recipe.duration,
-            recipe.decay,recipe.minimum,recipe.color,seconds);
+        if (lit) frontend_fx_q1_state_light(&fx->state, (qa_actor_id){0},
+            entity->number, light_origin, seconds, &recipe);
     }
     size_t retained=0;
     for(size_t i=0;i<fx->trail_count;++i) if(fx->trails[i].sample==fx->sample) fx->trails[retained++]=fx->trails[i];
@@ -399,8 +345,8 @@ bool remote_q1_effects_scene(frontend_remote_q1 *row,double seconds,
     }
     *count=0; *out=fx->scene_lights;
     for(size_t i=0;i<LIGHTS;++i) {
-        remote_light *value=fx->lights+i;
-        float radius=value->radius-value->decay*(float)fmax(0,seconds-value->birth);
+        frontend_fx_q1_light *value=fx->state.lights+i;
+        float radius=value->radius-value->decay*(float)fmax(0,seconds-value->born);
         if(!value->active || value->die<seconds || radius<=0) continue;
         fx->scene_lights[(*count)++]=(qa_scene_light){.origin=value->origin,.color=value->color,
             .radius=radius,.minimum=value->minimum,.additive=true,.scale=1,.family=QA_GAME_Q1,
@@ -408,7 +354,7 @@ bool remote_q1_effects_scene(frontend_remote_q1 *row,double seconds,
     }
     return true;
 }
-static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene_view *view,
+static bool beam(frontend_remote_q1 *row,const frontend_fx_q1_beam *value,const qa_scene_view *view,
     const qa_scene_world_input *world,qa_vec3 viewer_origin,qa_error *error)
 {
     const char *path=frontend_fx_q1_beam_model(value->type);
@@ -416,14 +362,14 @@ static bool beam(frontend_remote_q1 *row,const remote_beam *value,const qa_scene
     remote_q1_model *model;
     if(!remote_q1_model_read(row,&(frontend_remote_q1_entity_view){.model=path},&model,error)) return false;
     qa_vec3 start=value->start;
-    if(value->entity==row->view_entity) start=viewer_origin;
+    if(value->source_entity==row->view_entity) start=viewer_origin;
     frontend_fx_q1_beam_cursor cursor;
     frontend_fx_q1_beam_begin(&cursor,start,value->end);
     qa_model_transform transform;
     while(frontend_fx_q1_beam_next(&cursor,&row->effects->random,&transform)) {
         qa_vec3 point=qa_v3(transform.origin[0],transform.origin[1],transform.origin[2]);
         qa_scene_model_input input={.view=*view,.transform=transform,.previous_origin=point,.color={1,1,1,1},
-            .family=QA_GAME_Q1,.seconds=world->seconds,.source_path=path,.entity=value->entity,.identity_light=1};
+            .family=QA_GAME_Q1,.seconds=world->seconds,.source_path=path,.entity=value->source_entity,.identity_light=1};
         if(!frontend_legacy_model_input(row->world,world,&input,error) ||
             !remote_q1_model_lighting(row,world,&input,error) ||
             !qa_scene_model_submit(model->scene,&input,&row->frontend->frame,error)) return false;
@@ -436,8 +382,8 @@ bool remote_q1_effects_models(frontend_remote_q1 *row,const qa_scene_view *view,
     if(!row || !view || !world || !remote_q1_mutable(row) || !remote_q1_live(row,error)) return false;
     frontend_remote_q1_effects *fx=row->effects;
     if(!fx) return true;
-    for(size_t i=0;i<BEAMS;++i) if(fx->beams[i].active && fx->beams[i].die>=world->seconds &&
-        !beam(row,fx->beams+i,view,world,viewer_origin,error)) return false;
+    for(size_t i=0;i<BEAMS;++i) if(fx->state.beams[i].active && fx->state.beams[i].die>=world->seconds &&
+        !beam(row,fx->state.beams+i,view,world,viewer_origin,error)) return false;
     return remote_q1_live(row,error);
 }
 bool remote_q1_effects_blend(frontend_remote_q1 *row,const qa_scene_view *view,
@@ -482,11 +428,11 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
     if(!fx->image && !qa_scene_particle_image(row->images,QA_GAME_Q1,&fx->image,error)) return false;
     qa_bytes palette;
     if(!qa_scene_resources_palette(row->images,QA_GAME_Q1,&palette,error) || palette.size<768) return false;
-    qa_scene_particle_sample *particles=qa_scene_particles_alloc(&row->frontend->frame,fx->particles.count,error);
-    if(fx->particles.count && !particles) return false;
+    qa_scene_particle_sample *particles=qa_scene_particles_alloc(&row->frontend->frame,fx->state.particles.count,error);
+    if(fx->state.particles.count && !particles) return false;
     qa_scene_particle_batch batch={.view=*view,.family=QA_GAME_Q1,.image=fx->image,.samples=particles};
-    for(size_t i=fx->particles.count;i>0;--i) {
-        qa_scene_q1_particle_state *p=fx->particles.values.q1+i-1;
+    for(size_t i=fx->state.particles.count;i>0;--i) {
+        qa_scene_q1_particle_state *p=fx->state.particles.values.q1+i-1;
         if(p->die<world->seconds) continue;
         uint32_t n=(p->color&255)*3;
         qa_vec4 color={palette.data[n]/255.0f,palette.data[n+1]/255.0f,palette.data[n+2]/255.0f,1};
@@ -494,7 +440,7 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
     }
     if(!qa_scene_particles(&row->frontend->frame,&batch,error)) return false;
     double elapsed=fmax(0,fx->sampled_seconds-fx->previous_sample);
-    frontend_fx_q1_advance(&fx->particles,world->seconds,elapsed,800);
+    frontend_fx_q1_advance(&fx->state.particles,world->seconds,elapsed,800);
     fx->previous_sample=fx->sampled_seconds;
     return remote_q1_live(row,error);
 }
@@ -502,13 +448,13 @@ bool remote_q1_effects_draw(frontend_remote_q1 *row,const qa_scene_view *view,
 size_t remote_q1_effects_light_count(const frontend_remote_q1 *row)
 {
     if(!row || !row->effects) return 0;
-    for(size_t i=LIGHTS;i>0;--i) if(row->effects->lights[i-1].identity) return i;
+    for(size_t i=LIGHTS;i>0;--i) if(row->effects->state.lights[i-1].identity) return i;
     return 0;
 }
 bool remote_q1_effects_light_at(const frontend_remote_q1 *row,size_t at,uint64_t *out)
 {
-    if(!row || !row->effects || !out || at>=LIGHTS || !row->effects->lights[at].identity) return false;
-    *out=row->effects->lights[at].identity; return true;
+    if(!row || !row->effects || !out || at>=LIGHTS || !row->effects->state.lights[at].identity) return false;
+    *out=row->effects->state.lights[at].identity; return true;
 }
 size_t remote_q1_effects_static_count(const frontend_remote_q1 *row)
 { return row && row->effects?row->effects->ambient_count:0; }
