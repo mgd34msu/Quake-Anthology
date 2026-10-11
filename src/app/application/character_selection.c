@@ -433,9 +433,8 @@ static bool selection_current(void *context, const qa_native_q3_character_select
         if (!published(app, owner->seat, actor, &declaration, &found, NULL) || !found ||
             name_id(owner->names.strings, declaration.provider->instance) != owner->selection.owner ||
             !application_character_names_match(&owner->names, &declaration)) return false;
-        owner->actor = actor;
     }
-    return provider && provider->application == app && provider->constructed && provider->attached &&
+    bool valid = provider && provider->application == app && provider->constructed && provider->attached &&
         !provider->close_pending && provider->owner == owner->selection.owner && provider->launch &&
         provider->launch->storage == owner->selection.launch->storage && provider->launch->content == owner->selection.content &&
         provider->launch->selection.product == owner->selection.product &&
@@ -446,6 +445,11 @@ static bool selection_current(void *context, const qa_native_q3_character_select
         selection->skin == owner->selection.skin && selection->head_model == owner->selection.head_model &&
         selection->head_skin == owner->selection.head_skin && selection->lifetime == owner &&
         selection->current == selection_current;
+    if (valid) {
+        owner->actor = actor;
+        owner->choices = choices;
+    }
+    return valid;
 }
 
 static void selection_release(void *context)

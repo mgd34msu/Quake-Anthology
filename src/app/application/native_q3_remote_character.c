@@ -61,7 +61,7 @@ static bool current(void *context, const qa_native_q3_character_selection *selec
             !application_character_names_match(&owner->names, &declaration)) return false;
     }
     const qa_native_q3_character_selection *retained = &owner->selection;
-    return provider && provider->application == app && provider->constructed && provider->attached &&
+    bool valid = provider && provider->application == app && provider->constructed && provider->attached &&
         !provider->close_pending && provider->owner == retained->owner && provider->launch &&
         provider->launch->storage == retained->launch->storage && provider->launch->content == retained->content &&
         provider->launch->selection.product == retained->product &&
@@ -71,6 +71,8 @@ static bool current(void *context, const qa_native_q3_character_selection *selec
         selection->model == retained->model && selection->skin == retained->skin &&
         selection->head_model == retained->head_model && selection->head_skin == retained->head_skin &&
         selection->lifetime == owner && selection->current == current && selection->release == retained->release;
+    if (valid) owner->choices = choices;
+    return valid;
 }
 static void release(void *context)
 {

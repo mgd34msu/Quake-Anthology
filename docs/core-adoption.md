@@ -249,7 +249,7 @@ bounded ID-adoption evidence, not a frame-time claim.
 Confirmed hot identity bypasses remain in
 `remote_unified_render.c:257`,
 `remote_unified_media.c:40,116,192,200`,
-`src/render/scene/models.c:814` and `native_q3_remote_character.c:20,57`.
+`src/render/scene/models.c:814`.
 Move their already admitted identity into IDs or
 resource handles; do not replace comparisons with per-frame interning or hashes.
 Ordinary provider routing already caches the resolved actor/provider in
@@ -303,6 +303,16 @@ copied-path storage are deleted. Each visual owner retains the shared string
 table for its cached text views. The normal build and seven core suites pass
 (`/tmp/qa-ta3192-visual-names-20261011-{build,core}.log`). This does not close the
 separate Unified media, skin-surface or HUD identity callers.
+
+TA-3192 character bindings now retain the last successfully checked launch
+choices. Local and remote Q3 constructors intern their names once; their
+`current` callbacks compare retained IDs and handles during steady state.
+Changing launch choices or the local actor checks the new declaration once
+before retaining that binding. The old repeated lookup after successful
+reconfiguration is removed from both callbacks. Constructor and changed-choice
+text checks remain at admission. The normal build and seven core suites pass
+(`/tmp/qa-ta3192-character-binding-20261011-{build,core}.log`). No live
+reconfiguration or timing claim is made by these checks.
 
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent
