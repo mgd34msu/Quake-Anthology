@@ -74,21 +74,7 @@ static bool q2_configuration_same(const qa_unified_q2_hud_configuration *old,
             (hud->edition == QA_Q2_CLASSIC ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023);
 }
 
-typedef struct q2_image_name { qa_string_id id; const char *text; } q2_image_name;
-static int image_compare(const void *left, const void *right)
-{ return strcmp(((const q2_image_name *)left)->text, ((const q2_image_name *)right)->text); }
-static int configstring_compare(const void *left, const void *right)
-{
-    uint32_t a = ((const qa_q2_config_name *)left)->index;
-    uint32_t b = ((const qa_q2_config_name *)right)->index;
-    return a < b ? -1 : a > b;
-}
-static bool q2_configstring(qa_unified_q2_hud_configuration *out, uint32_t index, qa_string_id value)
-{
-    out->configstrings[out->configstring_count++] = (qa_q2_config_name){index,value};
-    return true;
-}
-static bool q2_configuration(qa_application *app, const application_unified_source *source, qa_unified_frame_lease *lease,
+static bool q2_configuration(qa_application *app, qa_unified_frame_lease *lease,
     qa_unified_configuration_state *row, qa_error *error)
 {
     qa_application_native_q2_hud_source hud; bool found;
@@ -100,46 +86,11 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
     out->data_provider = hud.data_provider; out->revision = hud.config_revision;
     out->deathmatch = hud.deathmatch; out->cooperative = hud.cooperative;
     out->protocol = qa_q2_default_protocol(hud.edition != QA_Q2_CLASSIC);
-    if (hud.original) {
-        out->configstrings = application_unified_frame_alloc(lease, hud.configstring_count, sizeof(*out->configstrings), error);
-        if (hud.configstring_count && !out->configstrings)
-            return application_fail(error, QA_ERROR_MEMORY, "Retaining changed Original Q2 configstrings");
-        for (uint32_t i = 0; i < hud.configstring_count; ++i) {
-            const char *text = qa_strings_cstr(hud.strings, hud.configstrings[i]);
-            if (text && *text) {
-                qa_q2_config_name *config = out->configstrings + out->configstring_count++;
-                config->index = i; config->value_id = hud.configstrings[i];
-            }
-        }
-        return true;
-    }
-    qa_q2_config_layout layout; qa_q2_codec codec = {.protocol = out->protocol};
-    if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
-    size_t count = qa_q2_item_count(hud.game), images = 2;
-    q2_image_name *names = application_unified_frame_alloc(lease, count + images, sizeof(*names), error);
-    if (!names) return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD image indices");
-    qa_strings *strings = qa_session_strings(app->session);
-    names[0] = (q2_image_name){app->ui_names.q2_health_icon, qa_strings_cstr(strings, app->ui_names.q2_health_icon)};
-    names[1] = (q2_image_name){app->ui_names.q2_help_icon, qa_strings_cstr(strings, app->ui_names.q2_help_icon)};
-    for (size_t i = 0; i < count; ++i) {
-        const qa_q2_item_definition *item = qa_q2_item_at(hud.game, i);
-        if (item->icon_id) names[images++] = (q2_image_name){item->icon_id, item->icon};
-    }
-    qsort(names, images, sizeof(*names), image_compare);
-    size_t unique = 0;
-    for (size_t i = 0; i < images; ++i)
-        if (!unique || names[i].id != names[unique - 1].id) names[unique++] = names[i];
-    out->configstrings = application_unified_frame_alloc(lease, 2 + unique + count, sizeof(*out->configstrings), error);
-    if (!out->configstrings) { if (!lease) free(names); return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD configstrings"); }
-    bool ok = q2_configstring(out, 5, hud.statusbar_id) &&
-        q2_configstring(out, layout.max_clients, app->ui_names.client_counts[source->max_clients]);
-    for (size_t i = 0; ok && i < unique; ++i)
-        ok = q2_configstring(out, layout.images + (uint32_t)i + 1, names[i].id);
-    for (size_t i = 0; ok && i < count; ++i)
-        ok = q2_configstring(out, layout.items + (uint32_t)i + 1, qa_q2_item_at(hud.game, i)->name_id);
-    if (!lease) free(names);
-    if (ok) qsort(out->configstrings, out->configstring_count, sizeof(*out->configstrings), configstring_compare);
-    return ok;
+    size_t capacity;
+    if (!qa_application_native_q2_hud_configs(app, &hud, NULL, 0, &capacity, error)) return false;
+    out->configstrings = application_unified_frame_alloc(lease, capacity, sizeof(*out->configstrings), error);
+    if (!out->configstrings) return application_fail(error, QA_ERROR_MEMORY, "Retaining chosen Q2 HUD configstrings");
+    return qa_application_native_q2_hud_configs(app, &hud, out->configstrings, capacity, &out->configstring_count, error);
 }
 
 typedef struct q2_stat_images {
@@ -194,7 +145,7 @@ static bool q2_hud_state(const qa_application_native_q2_hud *hud,
     return true;
 }
 
-static bool configurations(qa_application *app, const application_unified_source *source, qa_unified_frame_lease *lease,
+static bool configurations(qa_application *app, qa_unified_frame_lease *lease,
     qa_unified_frame_metadata *out, qa_error *error)
 {
     size_t count = app->players->count;
@@ -214,7 +165,7 @@ static bool configurations(qa_application *app, const application_unified_source
             !application_unified_provider_state(v->weapons, application_provider_for(app, row->actor, QA_ROLE_ARSENAL, ""), error) ||
             !application_unified_provider_state(&v->inventory, application_provider_for(app, row->actor, QA_ROLE_INVENTORY, ""), error) ||
             !application_unified_provider_state(&v->hud, application_provider_for(app, row->actor, QA_ROLE_HUD, ""), error) ||
-            !q2_configuration(app, source, lease, v, error)) return false;
+            !q2_configuration(app, lease, v, error)) return false;
     }
     if (out->configuration_count > 1)
         qsort(out->configurations, out->configuration_count, sizeof(*out->configurations), configuration_compare);
@@ -340,7 +291,7 @@ bool application_unified_output_metadata(qa_application *app, const application_
     metadata->replace_configurations = configuration_changed; metadata->replace_styles = styles_changed;
     metadata->replace_q3 = q3_changed;
     metadata->replace_q1 = q1_changed;
-    bool ok = (!configuration_changed || configurations(app, source, frame->lease, metadata, error)) &&
+    bool ok = (!configuration_changed || configurations(app, frame->lease, metadata, error)) &&
         (!styles_changed || styles(app, source, frame->lease, metadata, error)) &&
         (!q3_changed || application_unified_q3_sources_metadata(q3_sources, frame->lease, metadata, error)) &&
         (!q1_changed || q1_world_metadata(q1, frame->lease, metadata, error));

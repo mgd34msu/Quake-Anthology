@@ -3,6 +3,7 @@
 #include "qa/application_native_q2_presentation.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
+#include "qa/game_q2_items.h"
 #include <math.h>
 
 bool qa_application_native_q2_sound_resources(qa_application *app, qa_actor_owner owner,
@@ -102,6 +103,59 @@ bool qa_application_native_q2_hud_source_read(qa_application *app, qa_actor_id a
     if (!hud_select(app, actor, &selected, &present, error)) return false;
     *found = present;
     if (present) *out = selected.source;
+    return true;
+}
+
+static int config_index_compare(const void *left, const void *right)
+{
+    uint32_t a = ((const qa_q2_config_name *)left)->index, b = ((const qa_q2_config_name *)right)->index;
+    return a < b ? -1 : a > b;
+}
+static int config_name_compare(const void *left, const void *right)
+{
+    qa_string_id a = ((const qa_q2_config_name *)left)->value_id, b = ((const qa_q2_config_name *)right)->value_id;
+    return a < b ? -1 : a > b;
+}
+bool qa_application_native_q2_hud_configs(qa_application *app,
+    const qa_application_native_q2_hud_source *source, qa_q2_config_name *rows,
+    size_t capacity, size_t *count, qa_error *error)
+{
+    size_t items = source->original ? 0 : qa_q2_item_count(source->game);
+    size_t required = source->original ? source->configstring_count : 4 + items * 2;
+    if (!rows) { *count = required; return true; }
+    if (capacity < required) return application_fail(error, QA_ERROR_MEMORY, "Q2 HUD config storage is too small");
+    *count = 0;
+    if (source->original) {
+        for (uint32_t i = 0; i < source->configstring_count; ++i)
+            if (qa_strings_text(source->strings, source->configstrings[i]).size)
+                rows[(*count)++] = (qa_q2_config_name){i, source->configstrings[i]};
+        return true;
+    }
+    qa_q2_codec codec = {.protocol = qa_q2_default_protocol(source->edition == QA_Q2_RERELEASE)};
+    qa_q2_config_layout layout;
+    uint32_t actor_capacity, clients;
+    if (!qa_q2_config_layout_read(&codec, &layout, error) ||
+        !qa_q2_wire_policy(source->game, &actor_capacity, &clients, error)) return false;
+    rows[0] = (qa_q2_config_name){5, source->statusbar_id};
+    rows[1] = (qa_q2_config_name){layout.max_clients, app->ui_names.client_counts[clients]};
+    rows[2] = (qa_q2_config_name){0, app->ui_names.q2_health_icon};
+    rows[3] = (qa_q2_config_name){0, app->ui_names.q2_help_icon};
+    size_t images = 2;
+    for (size_t i = 0; i < items; ++i) {
+        qa_string_id icon = qa_q2_item_at(source->game, i)->icon_id;
+        if (icon) rows[2 + images++] = (qa_q2_config_name){0, icon};
+    }
+    qsort(rows + 2, images, sizeof(*rows), config_name_compare);
+    size_t unique = 0;
+    for (size_t i = 0; i < images; ++i)
+        if (!unique || rows[2 + i].value_id != rows[1 + unique].value_id) {
+            rows[2 + unique] = (qa_q2_config_name){layout.images + (uint32_t)unique + 1, rows[2 + i].value_id};
+            ++unique;
+        }
+    *count = 2 + unique;
+    for (size_t i = 0; i < items; ++i)
+        rows[(*count)++] = (qa_q2_config_name){layout.items + (uint32_t)i + 1, qa_q2_item_at(source->game, i)->name_id};
+    qsort(rows, *count, sizeof(*rows), config_index_compare);
     return true;
 }
 

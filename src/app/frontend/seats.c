@@ -155,36 +155,23 @@ typedef struct local_q2_hud {
     const qa_application_native_q2_hud *source;
     frontend_visual_owner_view media;
     qa_q2_config_layout config;
-    qa_string_id images[64];
-    uint32_t image_count;
     char binding[96];
 } local_q2_hud;
 static bool local_q2_image(void *context, qa_string_id name, uint32_t *out, qa_error *error)
 {
+    (void)error;
     local_q2_hud *hud = context;
-    for (uint32_t i = 1; i <= hud->image_count; ++i)
-        if (hud->images[i]==name) { *out = i; return true; }
-    if (hud->image_count + 1 >= sizeof(hud->images) / sizeof(hud->images[0]))
-        return frontend_fail(error, QA_ERROR_MEMORY, "Q2 HUD image stat roster is full");
-    *out = ++hud->image_count; hud->images[*out] = name;
+    const qa_hud_q2_names *names = &hud->seat->q2_hud_names;
+    for (uint32_t i = 1; i <= hud->seat->q2_hud_image_count; ++i)
+        if (names->values[names->layout.images + i] == name) { *out = i; return true; }
+    *out = 0;
     return true;
 }
 static const char *local_q2_config(void *context, int32_t index)
 {
     local_q2_hud *hud = context;
-    const qa_application_native_q2_hud *source = hud->source;
-    if (source->original)
-        return index >= 0 && (uint32_t)index < source->configstring_count ? qa_strings_cstr(source->strings, source->configstrings[index]) : NULL;
-    if (index == 5) return source->statusbar;
-    if (index == (int32_t)hud->config.max_clients) return "1";
-    if (index >= (int32_t)hud->config.images &&
-        (uint32_t)index - hud->config.images <= hud->image_count)
-        return qa_strings_cstr(source->strings,hud->images[(uint32_t)index - hud->config.images]);
-    if (index > (int32_t)hud->config.items) {
-        size_t ordinal = (uint32_t)index - hud->config.items - 1;
-        if (ordinal < qa_q2_item_count(source->game)) return qa_q2_item_at(source->game, ordinal)->name;
-    }
-    return NULL;
+    qa_string_id name = qa_hud_q2_names_picture(&hud->seat->q2_hud_names, index, 0);
+    return name ? qa_strings_cstr(hud->source->strings, name) : "";
 }
 static const qa_scene_image *local_q2_picture(void *context, qa_string_id name, qa_error *error)
 {
@@ -243,7 +230,22 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
                 link=rebound?link+1:source->config_changes->slots[i].newer;
             }
         } else {
-            if(!qa_hud_q2_names_set(&seat->q2_hud_names,5,source->statusbar_id,error)) return false;
+            qa_application_native_q2_hud_source selected = {
+                .provider=source->provider,.data_provider=source->data_provider,.config_revision=source->config_revision,
+                .edition=source->edition,.game=source->game,.statusbar_id=source->statusbar_id,.strings=source->strings};
+            size_t capacity, count;
+            if (!qa_application_native_q2_hud_configs(seat->frontend->application,&selected,NULL,0,&capacity,error)) return false;
+            qa_q2_config_name *rows=qa_arena_alloc(&scene->storage,capacity*sizeof(*rows),_Alignof(qa_q2_config_name),error);
+            if (!rows || !qa_application_native_q2_hud_configs(seat->frontend->application,&selected,rows,capacity,&count,error)) return false;
+            uint32_t images=0;
+            for(size_t i=0;i<count;++i) {
+                if(!qa_hud_q2_names_set(&seat->q2_hud_names,rows[i].index,rows[i].value_id,error)) return false;
+                if(rows[i].index>hud.config.images && rows[i].index-hud.config.images<hud.config.max_images)
+                    images=rows[i].index-hud.config.images;
+            }
+            for(uint32_t i=images+1;i<=seat->q2_hud_image_count;++i)
+                if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,QA_STRING_NONE,error)) return false;
+            seat->q2_hud_image_count=images;
         }
         seat->q2_hud_status_text=source->statusbar;seat->q2_hud_config_revision=source->config_revision;
         seat->q2_hud_config_provider=source->data_provider;
@@ -255,13 +257,6 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
             .image = local_q2_image}, source->stats, error)) return false;
-    if(!source->original) {
-        for(uint32_t i=1;i<=hud.image_count;++i)
-            if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,hud.images[i],error)) return false;
-        for(uint32_t i=hud.image_count+1;i<=seat->q2_hud_image_count;++i)
-            if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,QA_STRING_NONE,error)) return false;
-        seat->q2_hud_image_count=hud.image_count;
-    }
     if (!qa_hud_q2_program_prepare_images(seat->q2_hud_layout,hud.media.images,
         source->edition==QA_Q2_RERELEASE,QA_SCENE_NEAREST,error)) return false;
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,

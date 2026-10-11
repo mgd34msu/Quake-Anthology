@@ -108,6 +108,11 @@ typedef struct qa_application_native_q2_hud_source {
 /* Selects the actor's actual HUD/data owners without reading mutable player state. */
 bool qa_application_native_q2_hud_source_read(qa_application *, qa_actor_id,
     qa_application_native_q2_hud_source *, bool *found, qa_error *);
+/* A null output returns the required capacity. Written rows use one image
+ * roster for local and Unified clients, and carry interned names only. */
+bool qa_application_native_q2_hud_configs(qa_application *,
+    const qa_application_native_q2_hud_source *, qa_q2_config_name *rows,
+    size_t capacity, size_t *count, qa_error *);
 
 typedef struct qa_application_native_q2_hud {
     qa_actor_owner provider, data_provider;
