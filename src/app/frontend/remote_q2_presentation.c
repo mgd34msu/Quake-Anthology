@@ -5,6 +5,7 @@
 #include "remote_q2_material_movies_bridge.h"
 #include "legacy_render_policy.h"
 #include "qa/material.h"
+#include "qa/application_ui_names.h"
 #include "qa/scene_effects.h"
 #include "qa/game_q2.h"
 #include <stdlib.h>
@@ -212,19 +213,23 @@ static bool flare_standard_image(const char *path)
 static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
     const qa_scene_view *view, qa_vec3 origin, qa_error *error)
 {
-    const char *path = "misc/flare.tga";
+    const qa_application_ui_names *names=qa_application_ui_names_read(row->frontend->application);
+    qa_string_id path_id=names->flare_image;
     if ((packet->renderfx & 256u) && packet->frame < row->layout.max_images) {
-        const char *selected = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + packet->frame));
-        if (*selected) path = selected[0] == '/' || selected[0] == '\\' ? selected + 1 : selected;
+        qa_string_id selected=row->hud_names.values[row->layout.images+packet->frame];
+        if (selected) path_id=selected;
     }
     const qa_scene_image *image = NULL;
-    for (unsigned attempt = 0; attempt < 2; ++attempt) {
-        qa_error issue = {0}; image = remote_q2_sprite_read(row, path, &issue);
+    for (unsigned attempt=0;attempt<2;++attempt) {
+        qa_error issue={0};
+        image=qa_scene_q2_picture_read(row->images,row->hud_names.strings,path_id,
+            true,QA_SCENE_LINEAR,&issue);
         if (image) break;
-        if (issue.code != QA_ERROR_NOT_FOUND) { if (error) *error = issue; return false; }
-        if (!strcmp(path, "misc/flare.tga")) return true;
-        path = "misc/flare.tga";
+        if (issue.code!=QA_ERROR_NOT_FOUND && issue.code!=QA_OK) {if(error)*error=issue;return false;}
+        if (path_id==names->flare_image) return true;
+        path_id=names->flare_image;
     }
+    const char *path=qa_strings_cstr(row->hud_names.strings,path_id);
     if (!image) return true;
     uint32_t color = packet->skinnum;
     qa_scene_flare_options options = {.scale = packet->scale != 0 ? packet->scale : 1,
@@ -242,27 +247,14 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     qa_scene_rect viewport, qa_error *error)
 {
     if (!row->hit_marker_count) return true;
-    const qa_cvar_view *crosshair = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.crosshair);
-    if (!crosshair || crosshair->number == 0 || (player->stats[13] & (4 | 32))) return true;
-    const qa_cvar_view *duration = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.scr_hit_marker_time);
-    const qa_scene_image *image=remote_q2_picture_read(row,row->hud_pictures.marker,error);
-    double elapsed = row->sample_ns >= row->hit_marker_ns ? (double)(row->sample_ns - row->hit_marker_ns) / 1000000 : 0;
-    double limit = duration && isfinite(duration->number) ? trunc(duration->number) : 0;
-    if (!image || limit <= 0 || elapsed > limit) { row->hit_marker_count = 0; return true; }
-    float fraction = (float)(elapsed / limit), scale = fmaxf(1, 1.5f * (1 - fraction));
-    const qa_cvar_view *size = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_scale);
-    if (size && isfinite(size->number)) scale *= (float)fmax(.1, fmin(9, size->number));
-    const qa_cvar_view *alpha = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_alpha);
-    float opacity = alpha && isfinite(alpha->number) ? (float)fmax(0, fmin(1, alpha->number)) : 1;
-    const qa_cvar_view *x = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_x);
-    const qa_cvar_view *y = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.ch_y);
-    float dx = x && isfinite(x->number) ? (float)fmax(INT32_MIN, fmin(INT32_MAX, trunc(x->number))) : 0;
-    float dy = y && isfinite(y->number) ? (float)fmax(INT32_MIN, fmin(INT32_MAX, trunc(y->number))) : 0;
-    float width = truncf((float)image->logical_width * scale), height = truncf((float)image->logical_height * scale);
-    qa_scene_rect_f rect = {(float)viewport.x + truncf(((float)viewport.width - width) * .5f) + dx,
-        (float)viewport.y + truncf(((float)viewport.height - height) * .5f) + dy, width, height};
-    return qa_scene_frame_picture_f(&row->frontend->frame, image, viewport, rect,
-        (qa_vec4){0, 0, 1, 1}, (qa_vec4){1, 0, 0, opacity * (1 - fraction * fraction)}, error);
+    const qa_cvars *cvars=row->options.domain.cvars;
+    qa_hud_q2_marker marker={.image=remote_q2_picture_read(row,row->hud_pictures.marker,error),
+        .now_ns=row->sample_ns,.started_ns=row->hit_marker_ns,.layout_flags=(uint32_t)player->stats[13],
+        .crosshair=qa_cvars_read(cvars,row->cvar_handles.crosshair),
+        .duration=qa_cvars_read(cvars,row->cvar_handles.scr_hit_marker_time),
+        .scale=qa_cvars_read(cvars,row->cvar_handles.ch_scale),.alpha=qa_cvars_read(cvars,row->cvar_handles.ch_alpha),
+        .x=qa_cvars_read(cvars,row->cvar_handles.ch_x),.y=qa_cvars_read(cvars,row->cvar_handles.ch_y)};
+    return qa_hud_q2_marker_draw(&marker,&row->hit_marker_count,viewport,&row->frontend->frame,error);
 }
 static const char *hud_config(void *context, int32_t index)
 { return index >= 0 && index <= UINT16_MAX ? frontend_remote_q2_config(context, (uint16_t)index) : ""; }

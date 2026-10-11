@@ -7,7 +7,6 @@
 typedef struct policy_source {
     frontend_remote_q2 *owner;
     frontend_remote_q2_view view;
-    remote_q2_picture *pictures;
     qa_scene_resource_policy *bank;
     frontend_remote_q2_effects_policy *effects;
     bool held;
@@ -46,7 +45,7 @@ static bool current(const frontend_remote_q2_image_policy *ticket)
             row->content.base != view->content.base || row->content.mounts != view->content.mounts ||
             row->map != view->map || row->images != view->images || row->materials != view->materials ||
             row->sounds != view->sounds || row->world != view->world || row->geometry != view->geometry ||
-            row->media_ready != view->media_ready || row->retired != view->retired || row->pictures != saved->pictures) return false;
+            row->media_ready != view->media_ready || row->retired != view->retired) return false;
     }
     if (count != ticket->source_count) return false;
     for (size_t i = 0; i < ticket->image_count; ++i) {
@@ -80,17 +79,14 @@ bool frontend_remote_q2_image_policy_prepare(qa_frontend *f, qa_scene_resource_p
             if (ticket->image_count == SIZE_MAX / sizeof(*ticket->images)) goto failed;
             ++ticket->image_count;
         }
-        for (remote_q2_picture *picture = row->pictures; picture; picture = picture->next) {
-            if (ticket->image_count == SIZE_MAX / sizeof(*ticket->images)) goto failed;
-            ++ticket->image_count;
-        }
+
     }
     ticket->sources = ticket->source_count ? calloc(ticket->source_count, sizeof(*ticket->sources)) : NULL;
     ticket->images = ticket->image_count ? calloc(ticket->image_count, sizeof(*ticket->images)) : NULL;
     if ((ticket->source_count && !ticket->sources) || (ticket->image_count && !ticket->images)) goto failed;
     size_t row_index = 0, image_index = 0;
     for (frontend_remote_q2 *row = ticket->head; row; row = row->next, ++row_index) {
-        policy_source *saved = ticket->sources + row_index; saved->owner = row; saved->pictures = row->pictures;
+        policy_source *saved = ticket->sources + row_index; saved->owner = row;
         if (!frontend_remote_q2_metadata_read(row, &saved->view, error)) goto failed;
         for (size_t i = 0; i < count; ++i) if (row->images && qa_scene_resource_policy_source(banks[i]) == row->images) {
             if (saved->bank) goto failed;
@@ -103,13 +99,6 @@ bool frontend_remote_q2_image_policy_prepare(qa_frontend *f, qa_scene_resource_p
             image->slot = &row->white; image->original = row->white;
             qa_scene_image *prepared = NULL;
             if (!saved->bank || !qa_scene_resource_policy_image(saved->bank, row->white, &prepared, error)) goto failed;
-            image->prepared = prepared;
-        }
-        for (remote_q2_picture *picture = row->pictures; picture; picture = picture->next, ++image_index) {
-            policy_image *image = ticket->images + image_index;
-            image->slot = &picture->image; image->original = picture->image;
-            qa_scene_image *prepared = NULL;
-            if (!saved->bank || !qa_scene_resource_policy_image(saved->bank, picture->image, &prepared, error)) goto failed;
             image->prepared = prepared;
         }
         if (row->effects && (!saved->bank ||

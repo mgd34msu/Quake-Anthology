@@ -70,7 +70,34 @@ struct qa_hud_q2_program {
     q2_hud_token *tokens;
     char *text;
     size_t count, token_capacity, text_capacity;
+    qa_scene_resources *images;
+    qa_scene_filter filter;
+    bool rerelease, images_ready;
+    uint64_t image_generation;
 };
+static bool image_prepare(qa_scene_resources *images,qa_strings *strings,qa_string_id id,
+    bool rerelease,qa_scene_filter filter,qa_error *error)
+{
+    qa_error issue={0};
+    if (!id || qa_scene_q2_picture(images,strings,id,rerelease,filter,&issue) || issue.code==QA_OK || issue.code==QA_ERROR_NOT_FOUND) return true;
+    if (error) *error=issue;
+    return false;
+}
+bool qa_hud_q2_program_prepare_images(qa_hud_q2_program *program,qa_scene_resources *images,
+    bool rerelease,qa_scene_filter filter,qa_error *error)
+{
+    if (!program) return true;
+    uint64_t generation=qa_scene_resources_lookup_generation(images);
+    if (program->images_ready && program->images==images && program->filter==filter &&
+        program->rerelease==rerelease && program->image_generation==generation) return true;
+    program->images=images;program->filter=filter;program->rerelease=rerelease;
+    program->images_ready=false;
+    for (size_t i=0;i<program->count;++i)
+        if (program->tokens[i].picture && !image_prepare(images,program->strings,
+            program->tokens[i].picture,rerelease,filter,error)) return false;
+    program->image_generation=generation;program->images_ready=true;
+    return true;
+}
 static int32_t decimal(const char *);
 
 static bool program_compile(qa_hud_q2_program *p, const char *source, bool rerelease, qa_error *error)
@@ -139,8 +166,9 @@ bool qa_hud_q2_program_create(qa_strings *strings, qa_hud_q2_program **out, qa_e
     *out = p; return true;
 }
 bool qa_hud_q2_program_update(qa_hud_q2_program *p, const char *source, bool rerelease, qa_error *error)
-{ return program_compile(p, source, rerelease, error); }
-void qa_hud_q2_program_clear(qa_hud_q2_program *p) { if (p) p->count = 0; }
+{ p->images_ready=false;return program_compile(p, source, rerelease, error) && (!p->images ||
+    qa_hud_q2_program_prepare_images(p,p->images,rerelease,p->filter,error)); }
+void qa_hud_q2_program_clear(qa_hud_q2_program *p) { if (p) {p->count=0;p->images=NULL;p->images_ready=false;} }
 void qa_hud_q2_program_destroy(qa_hud_q2_program *p)
 { if (p) { qa_strings_destroy(p->strings); qa_arena_destroy(&p->storage); free(p); } }
 bool qa_hud_q2_picture_names_bind(qa_strings *strings,qa_hud_q2_picture_names *names,qa_error *error)
@@ -190,6 +218,8 @@ void qa_hud_q2_names_clear(qa_hud_q2_names *names)
     memset(names->appearances,0,sizeof(names->appearances));
     memset(names->icons,0,sizeof(names->icons));memset(names->tags,0,sizeof(names->tags));
     qa_hud_q2_program_clear(names->status);
+    names->images=NULL;
+    names->images_ready=false;
 }
 bool qa_hud_q2_names_configure(qa_hud_q2_names *names,qa_net_protocol_id protocol,qa_error *error)
 {
@@ -212,7 +242,36 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id valu
         uint32_t slot=index-names->layout.player_skins;
         if(!player_names(names->strings,text,names->appearances+slot,names->icons+slot,names->tags+slot,error)) return false;
     }
-    names->values[index]=value;return true;
+    names->values[index]=value;
+    if (names->images && index>names->layout.images && index-names->layout.images<names->layout.max_images)
+        return image_prepare(names->images,names->strings,value,names->rerelease,names->filter,error);
+    if (names->images && index>=names->layout.player_skins && index-names->layout.player_skins<256) {
+        uint32_t slot=index-names->layout.player_skins;
+        return image_prepare(names->images,names->strings,names->icons[slot],names->rerelease,names->filter,error) &&
+            image_prepare(names->images,names->strings,names->tags[slot],names->rerelease,names->filter,error);
+    }
+    return true;
+}
+bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *names,qa_scene_resources *images,
+    const qa_hud_q2_picture_names *pictures,qa_scene_filter filter,qa_error *error)
+{
+    uint64_t generation=qa_scene_resources_lookup_generation(images);
+    if (names->images_ready && names->images==images && names->filter==filter && names->image_generation==generation) return true;
+    names->images=images;names->filter=filter;names->images_ready=false;
+    if (!qa_hud_q2_program_prepare_images(names->status,images,names->rerelease,filter,error)) return false;
+    for (unsigned set=0;set<2;++set) for(unsigned digit=0;digit<11;++digit)
+        if (!image_prepare(images,names->strings,pictures->digits[set][digit],names->rerelease,filter,error)) return false;
+    const qa_string_id fixed[]={pictures->field,pictures->ping,pictures->inventory,pictures->conchars,
+        pictures->marker,pictures->player_icon,pictures->tag};
+    for(size_t i=0;i<sizeof(fixed)/sizeof(*fixed);++i)
+        if (!image_prepare(images,names->strings,fixed[i],names->rerelease,filter,error)) return false;
+    for(uint32_t index=1;index<names->layout.max_images;++index)
+        if (!image_prepare(images,names->strings,names->values[names->layout.images+index],names->rerelease,filter,error)) return false;
+    for(unsigned slot=0;slot<256;++slot)
+        if (!image_prepare(images,names->strings,names->icons[slot],names->rerelease,filter,error) ||
+            !image_prepare(images,names->strings,names->tags[slot],names->rerelease,filter,error)) return false;
+    names->image_generation=generation;names->images_ready=true;
+    return true;
 }
 qa_string_id qa_hud_q2_names_picture(const qa_hud_q2_names *names,int32_t index,unsigned variant)
 {
@@ -916,4 +975,26 @@ bool qa_hud_q2_draw(const qa_hud_q2_options *options, const qa_hud_q2_frame *fra
     if ((layouts & 1) && !execute(&c,frame->layout)) return false;
     if (!overlay_only && (layouts & 2)) return inventory_draw(&c);
     return !c.failed;
+}
+
+static double marker_value(const qa_cvar_view *view,double fallback)
+{ return view && isfinite(view->number)?view->number:fallback; }
+bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *marker,uint32_t *count,
+    qa_scene_rect viewport,qa_scene_frame *frame,qa_error *error)
+{
+    if (!*count || marker_value(marker->crosshair,0)==0 || (marker->layout_flags&(4|32))) return true;
+    double elapsed=marker->now_ns>=marker->started_ns?(double)(marker->now_ns-marker->started_ns)/1e6:0;
+    double limit=trunc(marker_value(marker->duration,0));
+    const qa_scene_image *image=marker->image;
+    if (!image || limit<=0 || elapsed>limit) {*count=0;return true;}
+    float fraction=(float)(elapsed/limit);
+    float scale=fmaxf(1,1.5f*(1-fraction))*(float)fmax(.1,fmin(9,marker_value(marker->scale,1)));
+    float opacity=(float)fmax(0,fmin(1,marker_value(marker->alpha,1)));
+    float dx=(float)fmax(INT32_MIN,fmin(INT32_MAX,trunc(marker_value(marker->x,0))));
+    float dy=(float)fmax(INT32_MIN,fmin(INT32_MAX,trunc(marker_value(marker->y,0))));
+    float width=truncf((float)image->logical_width*scale),height=truncf((float)image->logical_height*scale);
+    qa_scene_rect_f rect={(float)viewport.x+truncf(((float)viewport.width-width)*.5f)+dx,
+        (float)viewport.y+truncf(((float)viewport.height-height)*.5f)+dy,width,height};
+    return qa_scene_frame_picture_f(frame,image,viewport,rect,(qa_vec4){0,0,1,1},
+        (qa_vec4){1,0,0,opacity*(1-fraction*fraction)},error);
 }

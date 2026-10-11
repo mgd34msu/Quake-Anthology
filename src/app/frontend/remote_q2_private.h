@@ -23,14 +23,7 @@ typedef struct remote_q2_model {
     uint64_t saved_model, saved_scene;
     qa_scene_model *scene;
 } remote_q2_model;
-typedef struct remote_q2_picture {
-    struct remote_q2_picture *next;
-    char *name;
-    qa_string_id name_id;
-    bool sprite;
-    const qa_scene_image *image;
-    uint64_t saved_image;
-} remote_q2_picture;
+
 typedef struct remote_q2_missing_model {
     struct remote_q2_missing_model *next;
     char *path;
@@ -156,7 +149,6 @@ struct frontend_remote_q2 {
     struct remote_q2_footsteps *footsteps;
     remote_q2_model *models;
     remote_q2_missing_model *missing_models;
-    remote_q2_picture *pictures;
     struct frontend_remote_q2_image_policy *image_policy;
     struct frontend_remote_q2_effects *effects;
     qa_hud_q2_table hud_table;
@@ -200,7 +192,6 @@ bool remote_q2_map_validate(const frontend_remote_q2 *, const qa_resource *, qa_
 bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **, qa_error *);
 bool remote_q2_model_config(frontend_remote_q2 *, uint16_t, qa_error *);
 const qa_scene_image *remote_q2_picture_read(void *, qa_string_id, qa_error *);
-const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *, const char *, qa_error *);
 bool remote_q2_download_prepare(frontend_remote_q2 *, qa_q2_preparation *, qa_error *);
 bool remote_q2_download_receive(frontend_remote_q2 *, const qa_q2_server_event *, bool *, qa_error *);
 bool remote_q2_download_path_valid(const char *);

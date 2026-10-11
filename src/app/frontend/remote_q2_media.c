@@ -1,5 +1,6 @@
 #include "ui_features.h"
 #include "remote_q2_private.h"
+#include "qa/application_ui_names.h"
 #include "shared_resource_policy.h"
 #include "visual_access.h"
 #include "remote_q2_effects_bridge.h"
@@ -150,34 +151,9 @@ const qa_scene_image *remote_q2_picture_read(void *context, qa_string_id name_id
     if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring) {
         remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 picture registration requires its live resource owner"); return NULL;
     }
-    return qa_scene_q2_picture(row->images,
+    return qa_scene_q2_picture_read(row->images,
         qa_session_strings(qa_application_session(row->frontend->application)),name_id,
         remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,error);
-}
-const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *row, const char *path, qa_error *error)
-{
-    if (!row || !path || !*path || row->retiring || row->image_policy || row->frontend->resource_inventory ||
-        row->frontend->capture || row->frontend->source_restoring) {
-        remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 sprite registration requires its actual live media owner"); return NULL;
-    }
-    size_t length = strlen(path);
-    if (length > SIZE_MAX - 9) return NULL;
-    qa_string_id path_id;
-    if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
-        path, &path_id, error)) return NULL;
-    for (remote_q2_picture *p = row->pictures; p; p = p->next)
-        if (p->sprite && p->name_id == path_id) return p->image;
-    char *key = malloc(length + 9);
-    if (!key) { remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 sprite cache key"); return NULL; }
-    memcpy(key, "#sprite:", 8); memcpy(key + 8, path, length + 1);
-    remote_q2_picture *p = calloc(1, sizeof(*p));
-    if (!p) { free(key); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 sprite"); return NULL; }
-    qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SPRITE);
-    options.wrap = QA_SCENE_CLAMP; options.filter = QA_SCENE_LINEAR; options.mipmap = false; options.transparent_index = -1;
-    qa_scene_image *image = NULL;
-    if (!qa_scene_image_load(row->images, path, &options, &image, error)) { free(p); free(key); return NULL; }
-    p->name = key; p->name_id = path_id; p->sprite = true; p->image = image;
-    p->next = row->pictures; row->pictures = p; return image;
 }
 bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
 {
@@ -210,10 +186,6 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     while (row->missing_models) {
         remote_q2_missing_model *m = row->missing_models; row->missing_models = m->next;
         free(m->path); free(m);
-    }
-    while (row->pictures) {
-        remote_q2_picture *p = row->pictures; row->pictures = p->next;
-        qa_scene_image_release(p->image); free(p->name); free(p);
     }
     qa_font_library_destroy(row->fonts); row->fonts = NULL; row->classic = NULL;
     qa_scene_image_release(row->white); row->white = NULL;
@@ -280,18 +252,17 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     if (!qa_scene_world_source_resource_bind(row->world, row->map, error)) return false;
     if (!frontend_world_scratch_create(row->world, &row->world_scratch, error)) return false;
     if (!remote_q2_footsteps_prepare(row, error)) return false;
+    const qa_application_ui_names *ui_names=qa_application_ui_names_read(row->frontend->application);
+    qa_error flare_issue={0};
+    if (!qa_scene_q2_picture(row->images,row->hud_names.strings,ui_names->flare_image,true,QA_SCENE_LINEAR,&flare_issue) &&
+        flare_issue.code!=QA_OK && flare_issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=flare_issue;return false;}
     for (size_t i = 1; i < row->layout.max_models; ++i) {
         if (!remote_q2_model_config(row, (uint16_t)(row->layout.models + i), error)) return false;
     }
-    for (size_t i = 1; i < row->layout.max_images; ++i) {
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + i));
-        if (!*name) continue;
-        qa_error issue = {0};
-        if (!remote_q2_picture_read(row, row->hud_names.values[row->layout.images+i], &issue) && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) {
-            if (error) *error = issue;
-            return false;
-        }
-    }
+    if (!qa_hud_q2_names_prepare_images(&row->hud_names,row->images,&row->hud_pictures,
+        QA_SCENE_LINEAR_MIPMAP_LINEAR,error) ||
+        !qa_hud_q2_program_prepare_images(row->hud_overlay,row->images,remote_q2_rerelease_presentation(row),
+            QA_SCENE_LINEAR_MIPMAP_LINEAR,error)) return false;
     for (size_t i = 1; i < row->layout.max_sounds; ++i) {
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + i));
         if (!*name || name[0] == '*') continue;

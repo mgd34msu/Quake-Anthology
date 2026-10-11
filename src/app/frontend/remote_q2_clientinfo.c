@@ -119,7 +119,8 @@ static bool load(frontend_remote_q2 *row, const char *text, uint32_t weapon,
     char appearance[256]; snprintf(appearance, sizeof(appearance), "%s/%s", model, skin);
     qa_error issue = {0};qa_string_id icon_id;
     if(!qa_hud_q2_player_icon(row->hud_names.strings,appearance,strlen(appearance),&icon_id,error))return false;
-    const qa_scene_image *image = remote_q2_picture_read(row, icon_id, &issue);
+    const qa_scene_image *image = qa_scene_q2_picture(row->images,row->hud_names.strings,icon_id,
+        remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,&issue);
     if (!image && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) { if (error) *error = issue; return false; }
     out->icon=icon_id;
     bool default_weapon = false; char default_path[256];

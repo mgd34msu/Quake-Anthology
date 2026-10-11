@@ -42,6 +42,7 @@ struct frontend_native_q2 {
     frontend_native_q2_image_policy *image_policy;
     native_q2_string strings[8];
     size_t next_string;
+    char text_scratch[1048576];
     uint64_t frame_time_ns, previous_frame_time_ns;
     float frame_seconds;
     uint32_t seat;
@@ -71,6 +72,21 @@ static bool text_argument(const qa_native_host_q2_application_call *call, size_t
         return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 string argument has wrong type");
     return qa_native_read_string(call->instance, call->import->arguments[index].as.address,
         1048576, out, error);
+}
+static bool borrowed_text_argument(frontend_native_q2 *source,
+    const qa_native_host_q2_application_call *call,size_t index,const char **out,qa_error *error)
+{
+    if (index>=call->import->argument_count || call->import->arguments[index].type!=QA_NATIVE_ADDRESS)
+        return frontend_fail(error,QA_ERROR_FORMAT,"native Q2 string argument has wrong type");
+    qa_native_address address=call->import->arguments[index].as.address;
+    qa_bytes text;
+    if (!qa_native_string_span(call->instance,address,sizeof(source->text_scratch),&text,error)) return false;
+    if (text.data) *out=(const char *)text.data;
+    else {
+        if (!qa_native_read(call->instance,address,source->text_scratch,text.size+1,error)) return false;
+        *out=source->text_scratch;
+    }
+    return true;
 }
 static bool return_string(frontend_native_q2 *source, qa_native_instance *instance,
     const char *text, qa_native_value *result, qa_error *error)
@@ -154,15 +170,17 @@ static bool localize(frontend_native_q2 *source, const qa_native_host_q2_applica
     for (size_t i = 0; i < 8; ++i) qa_buffer_free(&arguments[i]);
     return ok;
 }
-static bool picture(frontend_native_q2 *source, const char *name,
+static bool picture(frontend_native_q2 *source, const char *name, bool admit,
     const qa_scene_image **out, qa_error *error)
 {
     if (!source_files(source,error)) return false;
     qa_strings *strings=qa_session_strings(qa_application_session(source->application));
-    qa_string_id id;
-    if (!qa_strings_intern_cstr(strings,name,&id,error)) return false;
+    qa_string_id id=qa_strings_find(strings,(qa_bytes){(const uint8_t *)name,strlen(name)});
+    if (!id && admit && !qa_strings_intern_cstr(strings,name,&id,error)) return false;
+    if (!id) { *out=NULL;return true; }
     qa_error issue={0};
-    *out=qa_scene_q2_picture(source->images,strings,id,true,QA_SCENE_LINEAR,&issue);
+    *out=admit?qa_scene_q2_picture(source->images,strings,id,true,QA_SCENE_LINEAR,&issue):
+        qa_scene_q2_picture_read(source->images,strings,id,true,QA_SCENE_LINEAR,&issue);
     if (*out || issue.code==QA_ERROR_NOT_FOUND || issue.code==QA_OK) return true;
     if (error) *error=issue;
     return false;
@@ -359,8 +377,9 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
     if ((dispatch == QA_NATIVE_Q2_IMPORT_Draw_RegisterPic) || (dispatch == QA_NATIVE_Q2_IMPORT_Draw_GetPicSize) ||
         (dispatch == QA_NATIVE_Q2_IMPORT_SCR_DrawPic) || (dispatch == QA_NATIVE_Q2_IMPORT_SCR_DrawColorPic)) {
         size_t index = (dispatch == QA_NATIVE_Q2_IMPORT_Draw_RegisterPic) ? 0 : (dispatch == QA_NATIVE_Q2_IMPORT_Draw_GetPicSize) ? 2 : 4;
-        qa_buffer name = {0}; const qa_scene_image *image = NULL;
-        bool ok = text_argument(call, index, &name, error) && picture(source, (const char *)name.data, &image, error);
+        const char *name=NULL; const qa_scene_image *image = NULL;
+        bool ok = borrowed_text_argument(source,call,index,&name,error) && picture(source,name,
+            dispatch==QA_NATIVE_Q2_IMPORT_Draw_RegisterPic || dispatch==QA_NATIVE_Q2_IMPORT_Draw_GetPicSize,&image,error);
         if (ok && import->slot == 21) result->as.u8 = image != NULL;
         else if (ok && import->slot == 22) {
             uint8_t width[4], height[4]; qa_store_u32le(width, image ? image->logical_width : UINT32_MAX); qa_store_u32le(height, image ? image->logical_height : UINT32_MAX);
@@ -373,20 +392,20 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
                 (qa_scene_rect_f){(float)args[0].as.i32, (float)args[1].as.i32,
                     (float)args[2].as.i32, (float)args[3].as.i32}, (qa_vec4){0, 0, 1, 1}, color, error);
         }
-        qa_buffer_free(&name); return ok;
+        return ok;
     }
     if (import->slot == 27 || import->slot == 28) {
-        qa_buffer text = {0}; bool ok = text_argument(call, 0, &text, error);
+        const char *text=NULL; bool ok = borrowed_text_argument(source,call,0,&text,error);
         if (ok && import->slot == 27) {
             qa_vec4 color; int32_t align = args[6].as.i32;
             if (align < 0 || align > 2) ok = frontend_fail(error, QA_ERROR_FORMAT, "native Q2 text alignment is invalid");
-            else if (color_argument(call, 4, &color, error)) ok = draw_text(source, (const char *)text.data,
+            else if (color_argument(call, 4, &color, error)) ok = draw_text(source, text,
                 args[1].as.i32, args[2].as.i32, args[3].as.i32, color, args[5].as.u8 != 0,
                 (qa_font_alignment)align, error);
             else ok = false;
         } else if (ok) {
             qa_arena scratch; qa_arena_init(&scratch, 16384); qa_font_layout layout;
-            ok = font_layout(source, (const char *)text.data, args[1].as.i32, (qa_vec4){1, 1, 1, 1}, QA_FONT_ALIGN_LEFT, &scratch, &layout, error);
+            ok = font_layout(source, text, args[1].as.i32, (qa_vec4){1, 1, 1, 1}, QA_FONT_ALIGN_LEFT, &scratch, &layout, error);
             if (ok && (result->type != QA_NATIVE_BYTES || result->as.bytes.size < 8 || !result->as.bytes.data))
                 ok = frontend_fail(error, QA_ERROR_FORMAT, "native Q2 text measurement result storage is invalid");
             if (ok) {
@@ -395,7 +414,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             }
             qa_arena_destroy(&scratch);
         }
-        qa_buffer_free(&text); return ok;
+        return ok;
     }
     if (import->slot == 29) {
         qa_arena scratch; qa_arena_init(&scratch, 4096); qa_font_layout layout;

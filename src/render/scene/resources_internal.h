@@ -54,7 +54,7 @@ struct owned_image {
     bool recipient_correspondence_canonical;
 };
 typedef struct image_cache {
-    uint64_t source, logical_source;
+    uint64_t source, logical_source, lookup_generation;
     qa_resource *source_record, *logical_record;
     qa_mount_id source_mount, logical_mount;
     char *logical_path;
@@ -80,18 +80,7 @@ typedef struct image_alias {
     bool palette_attempted;
     qa_status palette_error;
 } image_alias;
-enum { Q2_PICTURE_CACHE_CAPACITY = 32768 };
-typedef struct q2_picture_entry {
-    qa_strings *strings;
-    qa_string_id name;
-    qa_scene_image *image;
-    qa_scene_filter filter;
-    qa_status error;
-    bool rerelease;
-} q2_picture_entry;
 struct qa_scene_resources {
-    q2_picture_entry *q2_pictures;
-    uint64_t q2_picture_generation;
     size_t references;
     qa_vfs *vfs;
     const qa_scene_embedded_image *embedded_images;

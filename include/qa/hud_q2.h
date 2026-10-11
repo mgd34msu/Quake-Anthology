@@ -3,6 +3,7 @@
 #include "qa/font.h"
 #include "qa/localization.h"
 #include "qa/network_q2.h"
+#include "qa/console.h"
 
 typedef struct qa_hud_q2_item {
     const char *label;
@@ -34,8 +35,13 @@ typedef struct qa_hud_q2_names {
     qa_string_id values[QA_HUD_Q2_CONFIG_COUNT];
     qa_string_id appearances[256], icons[256], tags[256];
     qa_string_id default_icon, default_tag;
-    bool configured, rerelease;
+    qa_scene_resources *images;
+    uint64_t image_generation;
+    qa_scene_filter filter;
+    bool configured, rerelease, images_ready;
 } qa_hud_q2_names;
+bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *,qa_scene_resources *,const qa_hud_q2_picture_names *,qa_scene_filter,qa_error *);
+bool qa_hud_q2_program_prepare_images(qa_hud_q2_program *,qa_scene_resources *,bool,qa_scene_filter,qa_error *);
 bool qa_hud_q2_names_init(qa_hud_q2_names *, qa_strings *, qa_error *);
 bool qa_hud_q2_names_configure(qa_hud_q2_names *, qa_net_protocol_id, qa_error *);
 bool qa_hud_q2_names_set(qa_hud_q2_names *, uint32_t, qa_string_id, qa_error *);
@@ -48,6 +54,13 @@ bool qa_hud_q2_program_create(qa_strings *, qa_hud_q2_program **, qa_error *);
 bool qa_hud_q2_program_update(qa_hud_q2_program *, const char *, bool rerelease, qa_error *);
 void qa_hud_q2_program_clear(qa_hud_q2_program *);
 void qa_hud_q2_program_destroy(qa_hud_q2_program *);
+typedef struct qa_hud_q2_marker {
+    const qa_scene_image *image;
+    uint64_t now_ns, started_ns;
+    uint32_t layout_flags;
+    const qa_cvar_view *crosshair, *duration, *scale, *alpha, *x, *y;
+} qa_hud_q2_marker;
+bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *, uint32_t *, qa_scene_rect, qa_scene_frame *, qa_error *);
 typedef struct qa_hud_q2_frame {
     qa_net_protocol_id protocol;
     const int16_t *stats;

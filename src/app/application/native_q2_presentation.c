@@ -53,6 +53,7 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
     hud_selection selected = {.hud = hud, .character = character};
     qa_application_native_q2_hud_source *value = &selected.source;
     value->provider = value->data_provider = hud->owner;
+    value->strings = qa_session_strings(app->session);
     if (hud->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_combat_rules rules;
         if (!hud->state.q2 || !qa_q2_combat_rules_read(hud->state.q2, &rules)) return true;

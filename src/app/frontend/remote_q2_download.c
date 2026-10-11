@@ -374,10 +374,9 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
     for (size_t i = 1; i < row->layout.max_images; ++i) {
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + i));
         if (!*name) continue;
-        bool direct = qa_scene_q2_picture_direct(name, remote_q2_rerelease_presentation(row));
-        const char *relative = name + (name[0] == '/' || name[0] == '\\');
-        if (!path_join(row, direct ? "" : "pics/", direct ? relative : name,
-            direct ? "" : ".pcx", &waiting, error) || waiting) return waiting;
+        char path[4096];
+        if (!qa_scene_q2_picture_path(name,remote_q2_rerelease_presentation(row),path,sizeof(path),error) ||
+            !path_join(row,"",path,"",&waiting,error) || waiting) return waiting;
     }
     for (size_t i = 0; i < 256; ++i) {
         const char *value = frontend_remote_q2_config(row, (uint16_t)(row->layout.players + i));

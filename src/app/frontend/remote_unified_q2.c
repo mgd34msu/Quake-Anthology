@@ -168,10 +168,10 @@ struct frontend_unified_q2 {
     qa_actor_id view_actor;
     qa_vec4 view_blend,view_damage_blend;
     bool view_blend_present,view_damage_present;
-    uint64_t view_layouts, marker_frame, marker_wall_ns;
+    uint64_t view_layouts, marker_frame, marker_ns;
     uint32_t marker_count;
     bool marker_set;
-    qa_scene_image *marker_image;
+    q2_bank *marker_bank;
     q2_marker_cvars marker_cvars;
     uint64_t effects_wall_ns;
     float effects_frame_seconds;
@@ -501,20 +501,11 @@ static bool hit(void *ctx,int32_t damage,qa_error *e)
     frontend_unified_q2 *o=b->owner;
     if (damage<=0 || !current(o,e)) return false;
     if (o->marker_set && o->marker_frame==o->frame_number) return true;
-    if (!o->marker_image) {
-        qa_scene_image_options opts={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
-            .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
-        qa_error issue={0}; qa_scene_image *image=NULL;
-        if (!qa_scene_image_load(b->images,"pics/marker.pcx",&opts,&image,&issue) && issue.code!=QA_ERROR_NOT_FOUND) {
-            if (e) *e=issue;
-            return false;
-        }
-        o->marker_image=image;
-    }
+    o->marker_bank=b;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     const qa_cvar_view *mode=qa_cvars_read(domain->cvars,o->marker_cvars.mode);
     if (!mode) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 marker has no actual CLIENT mode row");
-    o->marker_set=true; o->marker_frame=o->frame_number; o->marker_wall_ns=o->frontend->wall_time_ns;
+    o->marker_set=true; o->marker_frame=o->frame_number; o->marker_ns=nanoseconds(o->seconds);
     if (o->marker_count<UINT32_MAX) ++o->marker_count;
     if (mode->integer>1) {
         const qa_unified_frame *frame=qa_unified_document_frame(o->frame);
@@ -629,8 +620,14 @@ static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activa
         bool okay=frontend_unified_media_files(o->media,content_name,&b->files,&b->product,e) &&
             b->product->family==QA_GAME_Q2 && frontend_unified_media_bank(o->media,b->content_name,&b->images,&b->materials,&fonts,&sounds,e);
         if (okay) b->sounds=sounds;
-        if (okay) okay = qa_hud_q2_names_init(&b->hud_names,o->replica->strings,e);
-        if (!okay) { free(b); return false; }
+        if (okay) okay = qa_hud_q2_names_init(&b->hud_names,o->replica->strings,e) &&
+            qa_hud_q2_picture_names_bind(o->replica->strings,&b->picture_names,e);
+        if (okay) {
+            qa_net_protocol_id protocol={.kind=profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?QA_NET_Q2KEX_2023:QA_NET_Q2_34};
+            okay=qa_hud_q2_names_configure(&b->hud_names,protocol,e) &&
+                qa_hud_q2_names_prepare_images(&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
+        }
+        if (!okay) { qa_hud_q2_names_destroy(&b->hud_names);free(b); return false; }
         q2_bank **tail=&o->banks;
         while (*tail) tail=&(*tail)->next;
         *tail=b;
@@ -822,7 +819,7 @@ static const char *native_config(void *context,int32_t index)
 static const qa_scene_image *native_picture(void *context,qa_string_id name_id,qa_error *e)
 {
     q2_native *v=context;
-    return qa_scene_q2_picture(v->bank->images,v->bank->owner->replica->strings,name_id,
+    return qa_scene_q2_picture_read(v->bank->images,v->bank->owner->replica->strings,name_id,
         v->protocol.kind==QA_NET_Q2KEX_2023,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
 }
 static qa_string_id native_config_picture(void *context,int32_t index,unsigned variant)
@@ -832,8 +829,10 @@ static qa_string_id native_config_picture(void *context,int32_t index,unsigned v
 }
 static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
 {
+    if (!qa_hud_q2_names_configure(&v->bank->hud_names,v->protocol,e) ||
+        !qa_hud_q2_names_prepare_images(&v->bank->hud_names,v->bank->images,&v->bank->picture_names,
+            QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     if (!v->bank->native_font) {
-        if(!qa_hud_q2_picture_names_bind(o->replica->strings,&v->bank->picture_names,e))return false;
         qa_font_library *fonts;qa_scene_resources *images;qa_material_library *materials;qa_audio_bank *sounds;
         const qa_scene_image *conchars=native_picture(v,v->bank->picture_names.conchars,e);
         if (!conchars || !frontend_unified_media_bank(o->media,v->bank->content_name,&images,&materials,&fonts,&sounds,e) ||
@@ -847,7 +846,8 @@ static bool native_hud_bind(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     const void *source=v->configuration?(const void *)v->configuration:(const void *)v->config_source;
     const qa_unified_document *document=v->configuration?o->status_metadata:v->config_document;
     if (b->hud_name_source==source && b->hud_name_document==document) return true;
-    if (!qa_hud_q2_names_configure(&b->hud_names,v->protocol,e)) return false;
+    if (!qa_hud_q2_names_configure(&b->hud_names,v->protocol,e) ||
+        !qa_hud_q2_names_prepare_images(&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     size_t count=v->configuration?v->configuration->configstring_count:v->config_source->configstring_count;
     const qa_q2_config_name *rows=v->configuration?v->configuration->configstrings:v->config_source->configstrings;
     size_t at=0;
@@ -1832,38 +1832,24 @@ static bool story_draw(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect viewport,q
 }
 static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
-    if (!o->marker_count) return true;
+    if (!o->marker_count || !o->marker_bank) return true;
+    q2_bank *b=o->marker_bank;
     const qa_cvars *registry=frontend_remote_unified_domain_read(o->replica)->cvars;
-    const qa_cvar_view *crosshair=qa_cvars_read(registry,o->marker_cvars.crosshair),
-        *duration=qa_cvars_read(registry,o->marker_cvars.duration),
-        *size=qa_cvars_read(registry,o->marker_cvars.scale),*alpha=qa_cvars_read(registry,o->marker_cvars.alpha),
-        *x=qa_cvars_read(registry,o->marker_cvars.x),*y=qa_cvars_read(registry,o->marker_cvars.y);
-    if (!crosshair || !duration || !size || !alpha || !x || !y)
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 marker draw has no admitted physical CLIENT crosshair controls");
-    if (crosshair->number == 0 || (o->view_layouts&(4|32))) return true;
-    double elapsed=o->frontend->wall_time_ns>=o->marker_wall_ns?
-        (double)(o->frontend->wall_time_ns-o->marker_wall_ns)/1e6:0;
-    if (!o->marker_image || duration->integer<=0 || elapsed>duration->integer) { o->marker_count=0; return true; }
-    if (!isfinite(size->number) || !isfinite(alpha->number) || !isfinite(x->number) || !isfinite(y->number))
-        return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 marker controls are not finite");
-    float fraction=(float)(elapsed/duration->integer),scale=fmaxf(1,1.5f*(1-fraction));
-    double base=fmax(.1,fmin(9,size->number));
-    float width=truncf((float)floor(o->marker_image->logical_width*base+.5)*scale),
-        height=truncf((float)floor(o->marker_image->logical_height*base+.5)*scale);
-    float dx=(float)fmax(INT32_MIN,fmin(INT32_MAX,trunc(x->number))),
-        dy=(float)fmax(INT32_MIN,fmin(INT32_MAX,trunc(y->number)));
-    qa_scene_rect_f rect={(float)viewport.x+truncf(((float)viewport.width-width)*.5f)+dx,
-        (float)viewport.y+truncf(((float)viewport.height-height)*.5f)+dy,width,height};
-    float opacity=(float)fmax(0,fmin(1,alpha->number));
-    return qa_scene_frame_picture_f(frame,o->marker_image,viewport,rect,(qa_vec4){0,0,1,1},
-        (qa_vec4){1,0,0,opacity*(1-fraction*fraction)},e);
+    qa_hud_q2_marker marker={.image=qa_scene_q2_picture_read(b->images,o->replica->strings,b->picture_names.marker,
+        b->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,QA_SCENE_LINEAR_MIPMAP_LINEAR,e),
+        .now_ns=nanoseconds(o->seconds),.started_ns=o->marker_ns,.layout_flags=(uint32_t)o->view_layouts,
+        .crosshair=qa_cvars_read(registry,o->marker_cvars.crosshair),.duration=qa_cvars_read(registry,o->marker_cvars.duration),
+        .scale=qa_cvars_read(registry,o->marker_cvars.scale),.alpha=qa_cvars_read(registry,o->marker_cvars.alpha),
+        .x=qa_cvars_read(registry,o->marker_cvars.x),.y=qa_cvars_read(registry,o->marker_cvars.y)};
+    return qa_hud_q2_marker_draw(&marker,&o->marker_count,viewport,frame,e);
 }
 static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_native_hud *state,
     const int32_t inventory[256],const qa_hud_q2_program *layout,int32_t player_number,
     qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    if (!native_hud_bind(o,v,e)) return false;
+    if (!native_hud_bind(o,v,e) || !qa_hud_q2_program_prepare_images((qa_hud_q2_program *)layout,
+        v->bank->images,v->protocol.kind==QA_NET_Q2KEX_2023,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
         .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
         .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture,
@@ -1948,6 +1934,7 @@ bool frontend_unified_q2_idle(const frontend_unified_q2 *o)
 { return (!o || !o->prepared_frame) && frontend_unified_q2_checkpoint_ready(o); }
 static bool bank_destroy(q2_bank *b,qa_error *e)
 {
+    if (b->owner->marker_bank==b) { b->owner->marker_bank=NULL;b->owner->marker_count=0; }
         if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
         if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
@@ -1976,7 +1963,6 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_localization_pool_destroy(o->localizations);
     inventory_clear(o); scores_clear(o);
     qa_unified_document_destroy(o->story_document);sky_clear(o);
-    qa_scene_image_release(o->marker_image);
     while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_clear(v); }
     while (o->activations) { q2_activation *a=o->activations; o->activations=a->next;qa_pool_release(&o->activation_pool,a->storage_slot); }
     while (o->loops) {q2_loop *l=o->loops;o->loops=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);}

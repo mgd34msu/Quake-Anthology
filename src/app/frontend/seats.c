@@ -189,7 +189,7 @@ static const char *local_q2_config(void *context, int32_t index)
 static const qa_scene_image *local_q2_picture(void *context, qa_string_id name, qa_error *error)
 {
     local_q2_hud *hud = context;
-    return qa_scene_q2_picture(hud->media.images,(qa_strings *)hud->source->strings,name,
+    return qa_scene_q2_picture_read(hud->media.images,(qa_strings *)hud->source->strings,name,
         hud->source->edition == QA_Q2_RERELEASE,QA_SCENE_NEAREST,error);
 }
 static qa_string_id local_q2_config_picture(void *context,int32_t index,unsigned variant)
@@ -220,6 +220,9 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         qa_hud_q2_names_clear(&seat->q2_hud_names);seat->q2_hud_image_count=0;
         if(!qa_hud_q2_picture_names_bind((qa_strings *)source->strings,&seat->q2_hud_pictures,error))return false;
     }
+    qa_net_protocol_id image_protocol={.kind=source->edition==QA_Q2_RERELEASE?QA_NET_Q2KEX_2023:QA_NET_Q2_34};
+    if (!qa_hud_q2_names_configure(&seat->q2_hud_names,image_protocol,error) ||
+        !qa_hud_q2_names_prepare_images(&seat->q2_hud_names,hud.media.images,&seat->q2_hud_pictures,QA_SCENE_NEAREST,error)) return false;
     if (!seat->q2_hud_classic) {
         const qa_scene_image *conchars = local_q2_picture(&hud, seat->q2_hud_pictures.conchars, error);
         if (!conchars) return false;
@@ -254,6 +257,8 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
             if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,QA_STRING_NONE,error)) return false;
         seat->q2_hud_image_count=hud.image_count;
     }
+    if (!qa_hud_q2_program_prepare_images(seat->q2_hud_layout,hud.media.images,
+        source->edition==QA_Q2_RERELEASE,QA_SCENE_NEAREST,error)) return false;
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,
         .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
