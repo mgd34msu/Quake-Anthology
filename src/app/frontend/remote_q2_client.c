@@ -119,9 +119,12 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
     qa_string_id id=QA_STRING_NONE;
     if (*value && !qa_strings_intern_cstr(row->hud_names.strings,value,&id,error)) return false;
     if (row->hud_names.values[index]==id) return true;
+    bool weapon_changed = index >= row->hud_names.layout.models &&
+        index - row->hud_names.layout.models < row->hud_names.layout.max_models &&
+        (*value == '#' || *frontend_remote_q2_config(row, index) == '#');
     if (!qa_hud_q2_names_set(&row->hud_names,index,id,error)) return false;
     remote_q2_prediction_config(row, index);
-    return !row->media_ready || (remote_q2_model_config(row, index, error) && remote_q2_clientinfo_config(row,index,error));
+    return !row->media_ready || (remote_q2_model_config(row, index, error) && remote_q2_clientinfo_config(row,index,weapon_changed,error));
 }
 typedef struct remote_q2_event_batch {
     const qa_q2_server_record *records;

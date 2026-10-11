@@ -13,6 +13,6 @@ typedef struct remote_q2_clientinfo {
 bool remote_q2_clientinfo_read(frontend_remote_q2 *, uint32_t player, uint32_t weapon,
     remote_q2_clientinfo *, qa_error *);
 bool remote_q2_clientinfo_prepare(frontend_remote_q2 *, qa_error *);
-bool remote_q2_clientinfo_config(frontend_remote_q2 *, uint32_t, qa_error *);
+bool remote_q2_clientinfo_config(frontend_remote_q2 *, uint32_t, bool weapon_changed, qa_error *);
 bool remote_q2_clientinfo_settings(frontend_remote_q2 *, qa_error *);
 #endif

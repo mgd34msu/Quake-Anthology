@@ -17,7 +17,7 @@
 #include <string.h>
 #include <stdio.h>
 
-static qa_scene_image_options image_options(qa_scene_image_usage usage)
+qa_scene_image_options remote_q2_image_options(qa_scene_image_usage usage)
 {
     return (qa_scene_image_options){.family = QA_GAME_Q2, .usage = usage,
         .wrap = usage == QA_IMAGE_USAGE_PICTURE ? QA_SCENE_CLAMP : QA_SCENE_REPEAT,
@@ -76,7 +76,7 @@ static bool model_materials(frontend_remote_q2 *row, const qa_model *model, qa_e
                 return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 model material was not explicitly negotiated");
             qa_resource *script = NULL; qa_vfs_acquisition opening = {0};
             if (!qa_vfs_acquire_receipt(row->content.mounts, name, &script, &opening, error)) return false;
-            qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN);
+            qa_scene_image_options options = remote_q2_image_options(QA_IMAGE_USAGE_SKIN);
             bool ok = qa_vfs_acquisition_retained(row->content.mounts, &opening, error);
             if (ok) ok = image_receipt ? qa_q2_material_image_import(row->images, row->content.mounts,
                 name, qa_resource_bytes(script), error) :
@@ -87,6 +87,25 @@ static bool model_materials(frontend_remote_q2 *row, const qa_model *model, qa_e
         }
     return true;
 }
+static bool model_index_reserve(frontend_remote_q2 *row, size_t additional, qa_error *error)
+{
+    if (!qa_id_index_reserve(&row->model_names, additional, error)) return false;
+    if (row->model_capacity >= row->model_names.capacity) return true;
+    remote_q2_model **models = realloc(row->model_rows, row->model_names.capacity * sizeof(*models));
+    if (!models) return remote_q2_fail(error, QA_ERROR_MEMORY, "Reserving Q2 model rows");
+    row->model_rows = models; row->model_capacity = row->model_names.capacity;
+    return true;
+}
+bool remote_q2_model_cached(frontend_remote_q2 *row, qa_string_id path, remote_q2_model **out)
+{
+    *out = NULL;
+    size_t index; qa_id_index_cursor cursor = qa_id_index_begin(&row->model_names, path, 0);
+    if (qa_id_index_next(&row->model_names, &cursor, &index)) {
+        *out = row->model_rows[index]; return true;
+    }
+    cursor = qa_id_index_begin(&row->model_names, path, 1);
+    return qa_id_index_next(&row->model_names, &cursor, &index);
+}
 bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_model **out, qa_error *error)
 {
     if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring)
@@ -95,16 +114,15 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
     qa_string_id path_id;
     if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
         path, &path_id, error)) return false;
-    for (remote_q2_model *m = row->models; m; m = m->next)
-        if (m->path_id == path_id) { *out = m; return true; }
-    for (remote_q2_missing_model *m = row->missing_models; m; m = m->next)
-        if (m->path_id == path_id) return remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 model has a retained missing-resource admission");
+    if (remote_q2_model_cached(row, path_id, out))
+        return *out != NULL || remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 model has a retained missing-resource admission");
+    if (!model_index_reserve(row, 1, error)) return false;
     remote_q2_model *m = calloc(1, sizeof(*m));
     if (!m) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining remote Q2 model");
     m->path_id = path_id;
     m->path = malloc(strlen(path) + 1);
     if (m->path) strcpy(m->path, path);
-    qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN);
+    qa_scene_image_options options = remote_q2_image_options(QA_IMAGE_USAGE_SKIN);
     qa_q2_material_model_scope scope;
     bool ok = m->path && qa_vfs_acquire_receipt(row->content.mounts, path, &m->resource, &m->opening, error) &&
         qa_model_load(qa_resource_bytes(m->resource), &m->decoded, error) && model_materials(row, &m->decoded, error) &&
@@ -117,19 +135,17 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
     if (ok) ok = remote_q2_model_scope_current(row, m, error);
     if (!ok) {
         if (!m->resource && m->path && error && error->code == QA_ERROR_NOT_FOUND) {
-            remote_q2_missing_model *missing = calloc(1, sizeof(*missing));
-            if (missing) {
-                missing->path = m->path; m->path = NULL;
-                missing->path_id = path_id;
-                missing->next = row->missing_models; row->missing_models = missing;
-            } else remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining absent Q2 model admission");
+            qa_id_index_insert(&row->model_names, path_id, 1, 0);
         }
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
         qa_resource_release(m->scope); qa_resource_release(m->palette);
         qa_vfs_acquisition_dispose(&m->scope_opening); qa_vfs_acquisition_dispose(&m->palette_opening);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m); return false;
     }
-    m->source = &m->decoded; m->next = row->models; row->models = m; *out = m; return true;
+    m->source = &m->decoded; m->next = row->models; row->models = m;
+    row->model_rows[row->model_count] = m;
+    qa_id_index_insert(&row->model_names, path_id, 0, row->model_count++);
+    *out = m; return true;
 }
 bool remote_q2_model_config(frontend_remote_q2 *row, uint32_t index, qa_error *error)
 {
@@ -184,10 +200,8 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
         qa_vfs_acquisition_dispose(&m->scope_opening); qa_vfs_acquisition_dispose(&m->palette_opening);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m);
     }
-    while (row->missing_models) {
-        remote_q2_missing_model *m = row->missing_models; row->missing_models = m->next;
-        free(m->path); free(m);
-    }
+    qa_id_index_destroy(&row->model_names);
+    free(row->model_rows); row->model_rows = NULL; row->model_count = row->model_capacity = 0;
     qa_font_library_destroy(row->fonts); row->fonts = NULL; row->classic = NULL;
     qa_scene_image_release(row->white); row->white = NULL;
     qa_audio_bank_destroy(row->sounds); row->sounds = NULL;
@@ -246,7 +260,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     if (!qa_scene_image_create(row->images, "remote-q2:white", QA_SCENE_RGBA8, &level, 1,
         QA_SCENE_CLAMP, QA_SCENE_NEAREST, (qa_vec4){1, 1, 1, 1}, &white, error)) return false;
     row->white = white;
-    qa_scene_world_options options = {.geometry = row->geometry, .images = image_options(QA_IMAGE_USAGE_WALL),
+    qa_scene_world_options options = {.geometry = row->geometry, .images = remote_q2_image_options(QA_IMAGE_USAGE_WALL),
         .subdivisions = 64, .q1_water_alpha = 1, .q2_light_modulate = 1,
         .q2_sky = frontend_remote_q2_config(row, 2)};
     if (!qa_scene_world_create(&bsp, row->images, row->materials, &options, &row->world, error)) return false;
@@ -257,6 +271,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     qa_error flare_issue={0};
     if (!qa_scene_q2_picture(row->images,row->hud_names.strings,ui_names->flare_image,true,QA_SCENE_LINEAR,&flare_issue) &&
         flare_issue.code!=QA_OK && flare_issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=flare_issue;return false;}
+    if (!model_index_reserve(row, row->hud_names.layout.max_models + 257 * 34, error)) return false;
     for (size_t i = 1; i < row->hud_names.layout.max_models; ++i) {
         if (!remote_q2_model_config(row, (uint16_t)(row->hud_names.layout.models + i), error)) return false;
     }

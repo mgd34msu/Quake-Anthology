@@ -55,9 +55,7 @@ static bool model_admit(frontend_remote_q2 *row, const char *path, remote_q2_mod
 }
 static bool skin_admit(frontend_remote_q2 *row, const char *path, const qa_material **out, qa_error *error)
 {
-    qa_scene_image_options options = {.family = QA_GAME_Q2, .usage = QA_IMAGE_USAGE_SKIN,
-        .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true,
-        .transparent = true, .transparent_index = 255};
+    qa_scene_image_options options = remote_q2_image_options(QA_IMAGE_USAGE_SKIN);
     if (!qa_material_register(row->materials, path, &options, false, out, error)) return false;
     if (*out && (*out)->default_shader) *out = NULL;
     return true;
@@ -154,12 +152,11 @@ bool remote_q2_clientinfo_prepare(frontend_remote_q2 *row, qa_error *error)
     row->clientinfo_noskins=setting?setting->number:0;
     return true;
 }
-bool remote_q2_clientinfo_config(frontend_remote_q2 *row, uint32_t index, qa_error *error)
+bool remote_q2_clientinfo_config(frontend_remote_q2 *row, uint32_t index, bool weapon_changed, qa_error *error)
 {
     if (index>=row->hud_names.layout.player_skins && index-row->hud_names.layout.player_skins<256)
         return prepare_player(row,index-row->hud_names.layout.player_skins,error);
-    if (index>=row->hud_names.layout.models && index-row->hud_names.layout.models<row->hud_names.layout.max_models)
-        return remote_q2_clientinfo_prepare(row,error);
+    if (weapon_changed) return remote_q2_clientinfo_prepare(row,error);
     return true;
 }
 bool remote_q2_clientinfo_settings(frontend_remote_q2 *row, qa_error *error)

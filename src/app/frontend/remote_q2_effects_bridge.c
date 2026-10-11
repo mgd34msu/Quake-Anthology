@@ -55,10 +55,11 @@ static bool model(void *context, const char *path, bool acquire, qa_scene_model 
     *out = NULL;
     qa_string_id path_id = qa_strings_find(qa_session_strings(qa_application_session(row->frontend->application)),
         (qa_bytes){(const uint8_t *)path, strlen(path)});
-    for (remote_q2_model *held = row->models; held; held = held->next)
-        if (held->path_id == path_id) { *out = held->scene; return held->scene != NULL; }
-    for (remote_q2_missing_model *held = row->missing_models; held; held = held->next)
-        if (held->path_id == path_id) return true;
+    remote_q2_model *cached;
+    if (remote_q2_model_cached(row, path_id, &cached)) {
+        *out = cached ? cached->scene : NULL;
+        return !cached || cached->scene != NULL;
+    }
     if (!acquire) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effect model has no retained acquisition admission");
     remote_q2_model *held = NULL; qa_error issue = {0};
     if (remote_q2_model_read(row, path, &held, &issue)) { *out = held->scene; return true; }

@@ -8,6 +8,7 @@
 #include "model_inventory.h"
 #include "q2_animation.h"
 #include "qa/event_ring.h"
+#include "qa/id_index.h"
 #include "remote_q2_clientinfo.h"
 
 typedef struct remote_q2_model {
@@ -25,11 +26,8 @@ typedef struct remote_q2_model {
     qa_scene_model *scene;
 } remote_q2_model;
 
-typedef struct remote_q2_missing_model {
-    struct remote_q2_missing_model *next;
-    char *path;
-    qa_string_id path_id;
-} remote_q2_missing_model;
+qa_scene_image_options remote_q2_image_options(qa_scene_image_usage);
+bool remote_q2_model_cached(frontend_remote_q2 *, qa_string_id, remote_q2_model **);
 bool remote_q2_model_scope_required(const char *, qa_bytes);
 bool remote_q2_model_scope_current(const frontend_remote_q2 *, const remote_q2_model *, qa_error *);
 struct frontend_remote_q2_image_policy;
@@ -150,7 +148,9 @@ struct frontend_remote_q2 {
     bool effects_imported;
     struct remote_q2_footsteps *footsteps;
     remote_q2_model *models;
-    remote_q2_missing_model *missing_models;
+    qa_id_index model_names;
+    remote_q2_model **model_rows;
+    size_t model_count, model_capacity;
     struct frontend_remote_q2_image_policy *image_policy;
     struct frontend_remote_q2_effects *effects;
     qa_hud_q2_table hud_table;
