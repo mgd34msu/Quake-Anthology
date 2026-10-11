@@ -1,7 +1,6 @@
 #ifndef QA_Q3_NATIVE_EVENTS_INTERNAL_H
 #define QA_Q3_NATIVE_EVENTS_INTERNAL_H
 #include "events.h"
-#include "qa/event_ring.h"
 #include "marks.h"
 #include "trajectory.h"
 #include <limits.h>
@@ -26,8 +25,6 @@ typedef struct q3n_stored_mark {
 struct q3n_events {
     q3n_event_options options;
     q3n_event_state state;
-    qa_event_ring *records;
-    uint64_t cursor;
     uint32_t seed, smoke_seed;
     qa_vec3 last_score_position;
     q3n_local_slot locals[Q3N_LOCAL_CAPACITY];

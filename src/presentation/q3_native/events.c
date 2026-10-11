@@ -5,20 +5,6 @@
 #include "../q3/internal.h"
 #include "qa/application_native_q3_wire.h"
 
-typedef struct q3n_detected_event {
-    qa_q3_entity state;
-    qa_vec3 position, sound_origin;
-    q3n_entity *entity;
-    q3n_remote_entity remote;
-    bool has_remote, position_sound;
-} q3n_detected_event;
-static bool records_create(q3n_events *owner,qa_error *error)
-{
-    owner->records=qa_event_ring_create(512*(sizeof(q3n_detected_event)+64),4096,512,error);
-    if(!owner->records) return false;
-    owner->cursor=qa_event_ring_first(owner->records);
-    return true;
-}
 bool q3n_events_create(const q3n_event_options *options, q3n_events **out, qa_error *error)
 {
     if(!options || !out || !options->assets || !options->print || !options->center_print ||
@@ -29,7 +15,6 @@ bool q3n_events_create(const q3n_event_options *options, q3n_events **out, qa_er
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 events require their genuine presentation services");
     q3n_events *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(error,QA_ERROR_MEMORY,"Allocating native Q3 event continuation");
-    if(!records_create(o,error)) { free(o);return false; }
     o->options=*options; o->smoke_seed=0x92; q3ne_local_reset(o);
     qa_hud_clear_pickup(options->messages); *out=o; return true;
 }
@@ -42,7 +27,6 @@ bool q3n_events_create_effects(const q3n_event_options *options, q3n_events **ou
         return q3ne_fail(error, QA_ERROR_ARGUMENT, "Standalone Q3 effects require only their genuine world services");
     q3n_events *owner = calloc(1, sizeof(*owner));
     if (!owner) return q3ne_fail(error, QA_ERROR_MEMORY, "Allocating standalone Q3 effects continuation");
-    if(!records_create(owner,error)) { free(owner);return false; }
     owner->options = *options; owner->standalone_effects = true;
     owner->smoke_seed = 0x92; q3ne_local_reset(owner); *out = owner; return true;
 }
@@ -61,7 +45,7 @@ bool q3n_events_create_compiled(const q3n_event_options *options,q3n_events **ou
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Compiled Q3 events require their actual source and assets");
     return q3n_events_create(options,out,error);
 }
-void q3n_events_destroy(q3n_events *o) { if(o && !o->busy) { qa_event_ring_destroy(&o->records);free(o); } }
+void q3n_events_destroy(q3n_events *o) { if(o && !o->busy) { free(o); } }
 bool q3n_events_idle(const q3n_events *o) { return !o || !o->busy; }
 const q3n_event_state *q3n_events_state(const q3n_events *o) { return o?&o->state:NULL; }
 void q3n_events_clear_killer(q3n_events *o) { if(o && !o->busy)o->state.killer_name[0]=0; }
@@ -71,7 +55,6 @@ float q3n_events_crandom(q3n_events *o) { return (2 * (q3n_events_random(o) + -0
 qa_vec3 q3n_events_direction(int32_t value)
 { return value>=0 && value<(int32_t)QA_BYTE_NORMAL_COUNT?qa_byte_normals[value]:qa_v3(0,0,0); }
 void q3n_events_round(q3n_events *o) { if(o && !o->busy) {
-    o->cursor=qa_event_ring_next(o->records);qa_event_ring_retire(o->records,o->cursor);
     q3ne_local_reset(o);o->mark_count=0;
 } }
 
@@ -571,33 +554,10 @@ static bool present(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_ve
 static bool event_publish(const q3n_frame *f,const qa_q3_entity *state,q3n_entity *cent,
     qa_vec3 position,const qa_vec3 *sound_origin,const q3n_remote_entity *remote,qa_error *error)
 {
-    q3n_events *owner=f->events;
-    qa_event_transaction transaction;
-    if(!qa_event_ring_begin(owner->records,&transaction))
-        return q3ne_fail(error,QA_ERROR_MEMORY,"Q3 presentation event pages are full");
-    q3n_detected_event *record=qa_event_ring_alloc(&transaction,sizeof(*record),
-        _Alignof(q3n_detected_event),error);
-    if(!record) { qa_event_ring_abort(&transaction);return false; }
-    *record=(q3n_detected_event){.state=*state,.entity=cent,.position=position,
-        .position_sound=sound_origin!=NULL,.has_remote=remote!=NULL};
-    if(sound_origin) record->sound_origin=*sound_origin;
-    if(remote) record->remote=*remote;
-    if(!qa_event_ring_commit(&transaction,record))
-        return q3ne_fail(error,QA_ERROR_MEMORY,"Q3 presentation event pages are full");
-    /* Snapshot callbacks lend their cache only for this frame. Consume admitted
-     * records before returning that borrow; effects never run at detection. */
-    bool okay=true;
-    while(okay && owner->cursor<qa_event_ring_next(owner->records)) {
-        const q3n_detected_event *row=qa_event_ring_at(owner->records,owner->cursor);
-        qa_q3_entity scratch=row->state;
-        ++owner->cursor;
-        if(row->position_sound) okay=qa_q3_presentation_sound_position(f->presentation,
-            scratch.number,row->sound_origin,error) && q3ne_current(f,error);
-        if(okay) okay=present(f,&scratch,row->entity,row->position,
-            row->has_remote ? &row->remote : NULL,error);
-        qa_event_ring_retire(owner->records,owner->cursor);
-    }
-    return okay;
+    qa_q3_entity scratch=*state;
+    if(sound_origin && (!qa_q3_presentation_sound_position(f->presentation,
+            scratch.number,*sound_origin,error) || !q3ne_current(f,error))) return false;
+    return present(f,&scratch,cent,position,remote,error);
 }
 bool q3n_events_player(const q3n_frame *f, const qa_q3_entity *source, q3n_entity *cent, qa_error *error)
 {
