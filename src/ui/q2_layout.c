@@ -224,8 +224,11 @@ bool qa_hud_q2_weapons_bind(qa_strings *strings, const qa_q2_config_layout *layo
     size_t limit = layout->wheel_weapons!=UINT32_MAX ? 32 : 20;
     for (uint32_t i = 1; i < layout->max_models && value.count < limit; ++i) {
         const char *name = qa_strings_cstr(strings, config[layout->models + i]);
-        if (name && name[0] == '#' && !qa_strings_intern_cstr(strings, name + 1,
-                value.names + value.count++, error)) return false;
+        if (name && name[0]=='#') {
+            value.configs[value.count]=config[layout->models+i];
+            if (!qa_strings_intern_cstr(strings,name+1,value.names+value.count,error)) return false;
+            ++value.count;
+        }
     }
     *out = value;
     return true;

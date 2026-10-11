@@ -242,26 +242,15 @@ static bool original_weapon_skin(qa_application_network_q2 *owner,
 {
     uint32_t ordinal = (*skin >> 8) & 255u;
     if (!ordinal) return true;
-    qa_string_id weapon = QA_STRING_NONE; uint32_t source_ordinal = 0;
-    for (uint32_t i = 1; i < application_native_q2_resource_range(engine, 0).count; ++i) {
-        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, 0).base + i]);
-        if (!path || path[0] != '#') continue;
-        if (++source_ordinal == ordinal) { weapon = engine->configstrings[application_native_q2_resource_range(engine, 0).base + i]; break; }
-    }
-    uint32_t target_ordinal = 0;
+    qa_string_id weapon=ordinal<engine->weapons.count?engine->weapons.configs[ordinal]:QA_STRING_NONE;
+    size_t target_ordinal=0;
     if (weapon) {
-        application_q2_resource_table *table = &owner->resources[0];
-        bool found = false;
-        for (uint32_t i = 1; i <= table->count; ++i) {
-            const char *path = qa_strings_cstr(qa_session_strings(owner->app->session), table->names[i]);
-            if (!path || path[0] != '#') continue;
-            ++target_ordinal;
-            if (table->names[i] == weapon) { found = true; break; }
-        }
-        if (!found || target_ordinal > 255)
-            return application_fail(error, QA_ERROR_FORMAT, "Q2 player weapon has no retained target appearance declaration");
+        application_q2_resource_table *table=&owner->resources[0];
+        qa_id_index_cursor cursor=qa_id_index_begin(&table->weapon_ordinals,weapon,0);
+        if (!qa_id_index_next(&table->weapon_ordinals,&cursor,&target_ordinal) || target_ordinal>255)
+            return application_fail(error,QA_ERROR_FORMAT,"Q2 player weapon has no retained target appearance declaration");
     }
-    *skin = (*skin & ~UINT32_C(0xff00)) | (target_ordinal << 8);
+    *skin = (*skin & ~UINT32_C(0xff00)) | ((uint32_t)target_ordinal << 8);
     return true;
 }
 

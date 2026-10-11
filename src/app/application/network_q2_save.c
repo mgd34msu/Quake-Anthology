@@ -255,7 +255,9 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
             if (ok) ok = qa_strings_intern_cstr(qa_session_strings(candidate->app->session), path, &name, error);
             for (uint32_t k = 1; ok && k < index; ++k)
                 if (table->names[k] == name) ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource aliases an earlier index");
-            if (ok) table->names[index] = name;
+            if (ok) { table->names[index]=name;
+                if (!i) application_network_q2_weapon_admit(table,qa_session_strings(candidate->app->session),name);
+            }
             if (ok) table->count = index;
             previous = index;
         }
@@ -369,8 +371,7 @@ bool qa_application_network_q2_restore(qa_application_network_q2 *owner, qa_byte
         owner->layout_text = candidate->layout_text; candidate->layout_text = NULL;
         for (unsigned i = 0; i < 3; ++i) {
             owner->resources[i] = candidate->resources[i];
-            candidate->resources[i].names = NULL;
-            candidate->resources[i].count = 0;
+            candidate->resources[i] = (application_q2_resource_table){0};
         }
         owner->event_actors = candidate->event_actors; candidate->event_actors = NULL;
         owner->events = candidate->events; candidate->events = NULL;

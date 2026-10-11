@@ -31,7 +31,7 @@ typedef struct qa_hud_q2_player_ids {
     qa_string_id name, appearance, model, skin, icon, tag, native_tag;
 } qa_hud_q2_player_ids;
 bool qa_hud_q2_player_ids_bind(qa_strings *, const char *, bool rerelease, qa_hud_q2_player_ids *, qa_error *);
-typedef struct qa_hud_q2_weapons { qa_string_id names[32]; size_t count; } qa_hud_q2_weapons;
+typedef struct qa_hud_q2_weapons { qa_string_id names[32], configs[32]; size_t count; } qa_hud_q2_weapons;
 bool qa_hud_q2_weapons_bind(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, qa_hud_q2_weapons *, qa_error *);
 bool qa_hud_q2_player_model_path(qa_bytes model, qa_bytes member, const char *suffix, char *, size_t, qa_error *);
 bool qa_hud_q2_player_icon_path(qa_bytes appearance, char *, size_t, qa_error *);
