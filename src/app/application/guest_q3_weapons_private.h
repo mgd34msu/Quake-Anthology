@@ -26,6 +26,7 @@ typedef struct q3_weapon_evaluation {
 } q3_weapon_evaluation;
 typedef struct q3_weapon_projection {
     struct q3_weapon_projection *next;
+    qa_unified_frame_lease *storage;
     qa_qvm_word_projection *lease;
     q3_weapon_actor actor;
     bool restore, actor_record;

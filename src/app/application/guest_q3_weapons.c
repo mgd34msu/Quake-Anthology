@@ -1,4 +1,5 @@
 #include "guest_q3_weapons_private.h"
+#include "control_frame.h"
 
 bool q3_weapons_read(application_q3_weapons *w, uint32_t address, int32_t *out, qa_error *error)
 {
@@ -23,7 +24,7 @@ static bool projection_end(application_q3_weapons *w, q3_weapon_projection **own
     if (!projection->lease) {
         q3_weapon_projection **cursor = &w->projections;
         while (*cursor != projection) cursor = &(*cursor)->next;
-        *cursor = projection->next; free(projection);
+        *cursor = projection->next; qa_unified_frame_lease_release(projection->storage);
     }
     /* A refused nested-owner close stays in this runtime's actual lifetime,
      * never in a vanished local variable. Destroy retries after scopes drain. */
@@ -33,8 +34,12 @@ static bool projection_begin(application_q3_weapons *w, const qa_qvm_source_word
     const uint32_t *capture, size_t count, bool observed, const q3_weapon_actor *actor,
     q3_weapon_projection **out, qa_error *error)
 {
-    q3_weapon_projection *projection = calloc(1, sizeof(*projection));
-    if (!projection) return application_fail(error, QA_ERROR_MEMORY, "Retaining original action restoration owner");
+    qa_unified_frame_lease *storage = application_control_storage_acquire(w->role->engine->provider->application, error);
+    if (!storage) return false;
+    q3_weapon_projection *projection = qa_unified_frame_lease_alloc(storage, 1, sizeof(*projection),
+        _Alignof(q3_weapon_projection), error);
+    if (!projection) { qa_unified_frame_lease_release(storage); return false; }
+    projection->storage = storage;
     projection->restore = true; projection->next = w->projections; w->projections = projection;
     if (actor) { projection->actor = *actor; projection->actor_record = true; }
     *out = projection;
@@ -176,9 +181,13 @@ static bool dispatch(void *context, const qa_qvm_call *call, int32_t *result, qa
     }
     if (!present) return qa_qvm_proceed(call, result, error);
     size_t count = w->profile.predicate_count;
-    qa_qvm_branch_binding *bindings = calloc(count, sizeof(*bindings));
-    weapon_branch_context *contexts = calloc(count, sizeof(*contexts));
-    if (!bindings || !contexts) { free(bindings); free(contexts); return application_fail(error, QA_ERROR_MEMORY, "Retaining invocation-owned original weapon decisions"); }
+    qa_unified_frame_lease *storage = application_control_storage_acquire(w->role->engine->provider->application, error);
+    if (!storage) return false;
+    qa_qvm_branch_binding *bindings = qa_unified_frame_lease_alloc(storage, count, sizeof(*bindings),
+        _Alignof(qa_qvm_branch_binding), error);
+    weapon_branch_context *contexts = qa_unified_frame_lease_alloc(storage, count, sizeof(*contexts),
+        _Alignof(weapon_branch_context), error);
+    if (!bindings || !contexts) { qa_unified_frame_lease_release(storage); return false; }
     q3_weapon_dispatch scope = {.previous = w->dispatch, .actor = actor, .call = call};
     w->dispatch = &scope;
     for (size_t i = 0; i < count; ++i) {
@@ -195,7 +204,7 @@ static bool dispatch(void *context, const qa_qvm_call *call, int32_t *result, qa
         ok = false;
     }
     if (ok && q3_weapons_current(w, &actor)) ok = w->services.completed(w->services.context, actor.actor, scope.reached, error);
-    w->dispatch = scope.previous; free(contexts); free(bindings); return ok;
+    w->dispatch = scope.previous; qa_unified_frame_lease_release(storage); return ok;
 }
 static bool request(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {
@@ -296,14 +305,17 @@ static bool drop_enter(void *context, const qa_qvm_call *call, bool *skip, qa_er
         (projected.word_count && !projected.words) || projected.word_count >= SIZE_MAX / sizeof(qa_qvm_source_word))
         return application_fail(error, QA_ERROR_FORMAT, "Selected death drop lacks its original inventory projection");
     size_t count = w->profile.drop.inventory ? projected.word_count + 1 : 2;
-    qa_qvm_source_word *words = malloc(count * sizeof(*words));
-    if (!words) return application_fail(error, QA_ERROR_MEMORY, "Retaining original selected death-drop words");
+    qa_unified_frame_lease *storage = application_control_storage_acquire(w->role->engine->provider->application, error);
+    if (!storage) return false;
+    qa_qvm_source_word *words = qa_unified_frame_lease_alloc(storage, count, sizeof(*words),
+        _Alignof(qa_qvm_source_word), error);
+    if (!words) { qa_unified_frame_lease_release(storage); return false; }
     words[0] = (qa_qvm_source_word){scope->actor.entity + w->profile.drop.weapon, projected.weapon};
     if (w->profile.drop.inventory) {
         if (projected.word_count) memcpy(words + 1, projected.words, projected.word_count * sizeof(*words));
     } else words[1] = (qa_qvm_source_word){scope->actor.player + w->profile.drop.ammo + (uint32_t)projected.weapon * 4, projected.ammo};
     bool ok = projection_begin(w, words, NULL, count, false, &scope->actor, &scope->projection, error);
-    free(words); return ok;
+    qa_unified_frame_lease_release(storage); return ok;
 }
 static bool drop(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {

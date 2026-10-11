@@ -1,4 +1,5 @@
 #include "guest_q3_component_private.h"
+#include "control_frame.h"
 
 static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error *e)
 {
@@ -122,12 +123,15 @@ bool q3component_frame_proceed(application_q3_component *c,const qa_qvm_call *ca
     qa_qvm_source_frame locals;
     if(!qa_qvm_call_source_frame(call,c->options.image,&locals,e)) return false;
     size_t count=c->frame_branch_count+1;
-    frame_decision *contexts=calloc(count,sizeof(*contexts)); qa_qvm_branch_binding *bindings=calloc(count,sizeof(*bindings));
-    if(!contexts||!bindings) { free(contexts); free(bindings); return q3records_fail(e,QA_ERROR_MEMORY,"Entering original component frame branch scope"); }
+    qa_unified_frame_lease *storage=application_control_storage_acquire(c->options.application,e);
+    if(!storage) return false;
+    frame_decision *contexts=qa_unified_frame_lease_alloc(storage,count,sizeof(*contexts),_Alignof(frame_decision),e);
+    qa_qvm_branch_binding *bindings=qa_unified_frame_lease_alloc(storage,count,sizeof(*bindings),_Alignof(qa_qvm_branch_binding),e);
+    if(!contexts||!bindings) { qa_unified_frame_lease_release(storage); return false; }
     for(size_t i=0;i<count;++i) {
         contexts[i]=(frame_decision){.scope={c,*call,locals},.index=i,.end=i==count-1};
         bindings[i]=(qa_qvm_branch_binding){.instruction=i==count-1?c->frame_end:c->frame_branches[i],.decide=decide,.context=contexts+i};
     }
     bool ok=qa_qvm_bind_branches(call,bindings,count,e)&&qa_qvm_proceed(call,result,e);
-    free(contexts); free(bindings); return ok;
+    qa_unified_frame_lease_release(storage); return ok;
 }
