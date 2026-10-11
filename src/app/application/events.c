@@ -92,13 +92,6 @@ static bool valid_event(qa_application *application,
         (event->q2_multicast.kind!=QA_BUILTIN_Q2_MULTICAST_NONE &&
          (event->family!=QA_GAME_Q2 || !event->provider)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Gameplay event has invalid Source multicast input");
-    if (event->kind == QA_BUILTIN_LOG &&
-        (!event->provider ||
-         event->text == QA_STRING_NONE || event->argument_count ||
-         !qa_actor_id_equal(event->actor, (qa_actor_id){0}) ||
-         !qa_actor_id_equal(event->other, (qa_actor_id){0})))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "Source log requires provider-owned text");
     if (event->has_muzzle_pose &&
         (event->family != QA_GAME_Q2 || event->kind != QA_BUILTIN_MUZZLE ||
          !event->provider || !qa_actors_get(qa_session_actors(application->session), event->actor) ||
@@ -769,22 +762,18 @@ bool qa_application_log_emit(qa_application *app,const qa_command_context *conte
         return application_event_stream_decline(app,&write,true,error);
     size_t bytes=strlen(text)+1;
     char *copy=application_event_stream_alloc(app,bytes,1,error);
-    application_event_view *view=copy?application_event_stream_alloc(app,sizeof(*view),
-        _Alignof(application_event_view),error):NULL;
-    if(!view) goto abort;
+    if(!copy) goto abort;
     memcpy(copy,text,bytes);
     qa_application_log_event *log=&write.envelope->raw.log;
     *log=(qa_application_log_event){.context=*context,.text=copy,
-        .flags=(console?QA_BUILTIN_LOG_CONSOLE:0) |
-            (console && qa_console_output_redirected(app->console)?QA_BUILTIN_LOG_REDIRECTED:0)};
+        .flags=(console?QA_APPLICATION_LOG_CONSOLE:0) |
+            (console && qa_console_output_redirected(app->console)?QA_APPLICATION_LOG_REDIRECTED:0)};
     if(context->script) {
         bytes=strlen(context->script)+1;
         char *script=application_event_stream_alloc(app,bytes,1,error);
         if(!script) goto abort;
         memcpy(script,context->script,bytes);log->context.script=script;
     }
-    *view=(application_event_view){.event={.log=log}};
-    write.envelope->views=write.envelope->last_view=view;
     if(application_event_stream_commit(app,&write,error)) return true;
     return application_event_stream_decline(app,&write,true,error);
 abort:
@@ -792,19 +781,42 @@ abort:
     return application_event_stream_decline(app,&write,true,error);
 }
 
-void qa_application_logs_deliver(qa_application *app,uint64_t first,uint64_t next,qa_console *console,
+void qa_application_log_deliver(qa_console *console,const qa_application_log_event *log,
     void (*print)(void *,const qa_command_context *,const char *),void *context)
 {
-    qa_application_event_range range={.next=first,.end=next};
-    const application_unified_event_record *record;
-    while((record=qa_application_event_range_next(app,&range,NULL))) {
-        qa_application_log_event *log=(qa_application_log_event *)record->log;
-        if(!log || log->delivered || !(log->flags&QA_BUILTIN_LOG_CONSOLE) ||
-            !!(log->flags&QA_BUILTIN_LOG_REDIRECTED)!=!!print) continue;
-        log->delivered=true;
-        if(print) print(context,&log->context,log->text);
-        else qa_console_emit(console,&log->context,log->text);
+    if(!(log->flags&QA_APPLICATION_LOG_CONSOLE) ||
+        !!(log->flags&QA_APPLICATION_LOG_REDIRECTED)!=!!print) return;
+    if(print) print(context,&log->context,log->text);
+    else qa_console_emit(console,&log->context,log->text);
+}
+typedef struct application_console_capture {
+    bool (*write)(void *,const char *,qa_error *);
+    void *context;
+    qa_error error;
+} application_console_capture;
+static void capture_print(void *context,const qa_command_context *command,const char *text)
+{
+    application_console_capture *capture=context; (void)command;
+    if(!capture->error.code) (void)capture->write(capture->context,text,&capture->error);
+}
+bool qa_application_console_execute_capture(qa_application *app,qa_console *console,
+    const qa_command_context *command,const char *text,bool (*write)(void *,const char *,qa_error *),
+    void *context,qa_error *error)
+{
+    application_console_capture capture={.write=write,.context=context};
+    qa_application_event_subscription reader={0};
+    qa_application_events_subscribe(app,&reader);
+    bool ok=qa_console_execute_capture(console,command,text,capture_print,&capture,error);
+    uint64_t next=qa_application_events_next(app);
+    for(uint64_t id=reader.next;id<next;++id) {
+        qa_application_event_view view;
+        if(qa_application_event_read(app,&(qa_application_event_cursor){.id=id},&view) &&
+            view.kind==QA_APPLICATION_EVENT_LOG)
+            qa_application_log_deliver(console,view.value.log,capture_print,&capture);
     }
+    qa_application_events_unsubscribe(&reader);
+    if(capture.error.code) { if(error) *error=capture.error; return false; }
+    return ok;
 }
 
 bool application_source_log(application_provider *provider,const char *text,bool console,qa_error *error)
@@ -1420,8 +1432,9 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
         break;
     case QA_APPLICATION_EVENT_AUDIO: out->value.audio=&record->raw.audio; break;
     case QA_APPLICATION_EVENT_Q3_EFFECT: out->value.q3_effect=&record->raw.q3_effect; break;
+    case QA_APPLICATION_EVENT_LOG: out->value.log=&record->raw.log; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
-    case QA_APPLICATION_EVENT_EQUIPMENT: case QA_APPLICATION_EVENT_LOG: break;
+    case QA_APPLICATION_EVENT_EQUIPMENT: break;
     }
     return true;
 }

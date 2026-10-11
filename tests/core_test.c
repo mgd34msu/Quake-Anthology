@@ -790,10 +790,10 @@ typedef struct log_delivery_test {
     size_t normal, captured;
     qa_command_context delivered;
 } log_delivery_test;
-static void log_test_output(void *context,const qa_command_context *command,const char *text)
+static bool log_test_output(void *context,const char *text,qa_error *error)
 {
-    log_delivery_test *test=context;
-    CHECK(text && *text=='v');test->delivered=*command;++test->captured;
+    log_delivery_test *test=context;(void)error;
+    CHECK(text && *text=='v');++test->captured;return true;
 }
 static void log_test_normal(void *context,const qa_command_context *command,const char *text)
 {
@@ -817,17 +817,20 @@ static void test_ring_console_capture(void)
     CHECK(test.app.console);
     CHECK(qa_console_register(test.app.console,"ringlog","",1,false,log_test_produce,&test,&error));
     uint64_t first=qa_application_events_next(&test.app);
-    CHECK(qa_console_execute_capture(test.app.console,&context,"ringlog",log_test_output,&test,&error));
-    CHECK(test.captured==0 && test.normal==0);
-    uint64_t next=qa_application_events_next(&test.app);
-    qa_application_logs_deliver(&test.app,first,next,test.app.console,log_test_output,&test);
-    CHECK(test.captured==1 && test.normal==0 && test.delivered.dialect==context.dialect && test.delivered.owner==1);
-    qa_application_logs_deliver(&test.app,first,next,test.app.console,log_test_output,&test);
-    qa_application_logs_deliver(&test.app,first,next,test.app.console,NULL,NULL);
+    CHECK(qa_application_console_execute_capture(&test.app,test.app.console,&context,"ringlog",log_test_output,&test,&error));
     CHECK(test.captured==1 && test.normal==0);
+    qa_application_event_view view;
+    CHECK(qa_application_event_read(&test.app,&(qa_application_event_cursor){.id=first},&view) &&
+        view.kind==QA_APPLICATION_EVENT_LOG);
+    const qa_application_log_event *log=view.value.log;
+    CHECK(log->context.dialect==context.dialect && log->context.owner==1 && log->text[0]=='v');
+    qa_application_log_deliver(test.app.console,log,NULL,NULL);
+    CHECK(test.captured==1 && test.normal==0);
+    uint64_t next=qa_application_events_next(&test.app);
     CHECK(qa_application_log_emit(&test.app,&context,"value",true,&error));
-    qa_application_logs_deliver(&test.app,next,qa_application_events_next(&test.app),test.app.console,NULL,NULL);
-    CHECK(test.normal==1);
+    CHECK(qa_application_event_read(&test.app,&(qa_application_event_cursor){.id=next},&view));
+    qa_application_log_deliver(test.app.console,view.value.log,NULL,NULL);
+    CHECK(test.normal==1 && test.delivered.dialect==context.dialect);
     qa_console_destroy(test.app.console);
     application_event_stream_dispose(&test.app);free(test.app.unified_persistent);
 }

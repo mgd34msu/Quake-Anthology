@@ -78,25 +78,14 @@ static void print(void *context,const char *text)
     frontend_source_admin *owner=context; qa_command_context command;
     if (command_current(owner,&command,NULL)) qa_console_emit(owner->console,&command,text);
 }
-typedef struct admin_output { qa_admin_write_fn write; void *context; qa_error error; } admin_output;
-static void output(void *context,const qa_command_context *command,const char *text)
-{
-    admin_output *capture=context; (void)command;
-    if (!capture->error.code) (void)capture->write(capture->context,text,&capture->error);
-}
 static bool execute(void *context,const qa_net_address *from,const char *text,bool limited,
     qa_admin_write_fn write,void *result,qa_error *error)
 {
     frontend_source_admin *owner=context; qa_command_context command; (void)from; (void)limited;
     if (!command_current(owner,&command,error)) return false;
     command.direct=true; command.console_text=true; command.script="remote-console";
-    admin_output capture={.write=write,.context=result};
-    uint64_t first=qa_application_events_next(owner->application);
-    bool ok=qa_console_execute_capture(owner->console,&command,text,output,&capture,error);
-    qa_application_logs_deliver(owner->application,first,qa_application_events_next(owner->application),
-        owner->console,output,&capture);
-    if (capture.error.code) { if (error) *error=capture.error; return false; }
-    return ok;
+    return qa_application_console_execute_capture(owner->application,owner->console,&command,
+        text,write,result,error);
 }
 static bool travel(void *context,const char *map,qa_error *error)
 {

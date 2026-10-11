@@ -1013,7 +1013,6 @@ static bool presentation_for(qa_application *app, const application_unified_even
     const qa_unified_presentation_payload *p = row->presentation;
     if (p->kind == QA_UNIFIED_PRESENTATION_BUILTIN) {
         const qa_builtin_event *v = &p->value.builtin;
-        if (v->kind == QA_BUILTIN_LOG) return false;
         if (v->family == QA_GAME_Q1) {
             if (v->kind == QA_BUILTIN_SOURCE_LOG || (v->kind == QA_BUILTIN_EFFECT && v->resource == app->ui_names.developer_message)) return false;
             if (v->kind == QA_BUILTIN_MESSAGE || v->kind == QA_BUILTIN_CENTERPRINT || v->kind == QA_BUILTIN_ANIMATION ||

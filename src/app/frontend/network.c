@@ -1481,12 +1481,6 @@ static void admin_print(void *context,const char *text)
     if (frontend_config_store_primary_server_read(n->frontend->config_store,&source,&present,NULL) && present)
         qa_console_emit(source.console,&source.command,text);
 }
-typedef struct captured_output { qa_admin_write_fn write; void *context; qa_error error; } captured_output;
-static void captured_print(void *context, const qa_command_context *source, const char *text)
-{
-    captured_output *out = context; (void)source;
-    if (!out->error.code) (void)out->write(out->context, text, &out->error);
-}
 static bool admin_execute(void *context, const qa_net_address *from, const char *text, bool limited,
     qa_admin_write_fn write, void *output, qa_error *error)
 {
@@ -1497,14 +1491,8 @@ static bool admin_execute(void *context, const qa_net_address *from, const char 
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Authenticated administration has no actual hosted Source console");
     qa_command_context command=source.command;
     command.direct=true; command.console_text=true; command.script="remote-console";
-    captured_output capture = {.write = write, .context = output};
-    qa_application *app=n->frontend->application;
-    uint64_t first=qa_application_events_next(app);
-    bool ok = qa_console_execute_capture(source.console, &command,
-        text, captured_print, &capture, error);
-    qa_application_logs_deliver(app,first,qa_application_events_next(app),source.console,captured_print,&capture);
-    if (capture.error.code) { if (error) *error = capture.error; return false; }
-    return ok;
+    return qa_application_console_execute_capture(n->frontend->application,source.console,&command,
+        text,write,output,error);
 }
 static bool travel(void *context, const char *map, qa_error *error)
 {

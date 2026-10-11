@@ -576,8 +576,8 @@ typedef struct qa_application_log_event {
     qa_command_context context;
     const char *text;
     uint32_t flags;
-    bool delivered;
 } qa_application_log_event;
+enum { QA_APPLICATION_LOG_CONSOLE=1u,QA_APPLICATION_LOG_REDIRECTED=2u };
 
 typedef struct qa_application_audio_event {
     qa_audio_engine *engine;
@@ -612,6 +612,7 @@ typedef struct qa_application_event_view {
         const qa_application_q2_player_event *q2_player;
         const qa_application_audio_event *audio;
         const qa_application_q3_effect_event *q3_effect;
+        const qa_application_log_event *log;
     } value;
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;
@@ -668,8 +669,10 @@ void qa_application_events_unsubscribe(qa_application_event_subscription *);
 void qa_application_events_consumed(qa_application_event_subscription *,uint64_t next);
 void qa_application_audio_discard(qa_application *, qa_audio_engine *, uint64_t owner, uint32_t audience, bool all);
 bool qa_application_log_emit(qa_application *,const qa_command_context *,const char *,bool console,qa_error *);
-void qa_application_logs_deliver(qa_application *,uint64_t first,uint64_t next,qa_console *,
+void qa_application_log_deliver(qa_console *,const qa_application_log_event *,
     void (*print)(void *,const qa_command_context *,const char *),void *context);
+bool qa_application_console_execute_capture(qa_application *,qa_console *,const qa_command_context *,const char *,
+    bool (*write)(void *,const char *,qa_error *),void *context,qa_error *);
 /* Module/protocol adapters consume committed Q3 output before client publication. */
 bool qa_application_q3_output_drain(qa_application *, qa_error *);
 bool qa_application_event_read(const qa_application *, qa_application_event_cursor *,

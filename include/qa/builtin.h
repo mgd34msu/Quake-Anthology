@@ -27,7 +27,7 @@ typedef enum qa_builtin_event_kind {
     QA_BUILTIN_ACHIEVEMENT,
     QA_BUILTIN_PARTICLES,
     QA_BUILTIN_EFFECT,
-    QA_BUILTIN_LOG,
+    QA_BUILTIN_RESERVED_LOG,
     QA_BUILTIN_CTF_STATUS,
     QA_BUILTIN_SOURCE_LOG,
     QA_BUILTIN_CTF_CAPTURE,
@@ -39,7 +39,6 @@ typedef enum qa_builtin_event_kind {
 } qa_builtin_event_kind;
 
 enum { QA_BUILTIN_SOUND_POSITIONED = 4u };
-enum { QA_BUILTIN_LOG_CONSOLE = 1u, QA_BUILTIN_LOG_REDIRECTED = 2u };
 
 typedef enum qa_builtin_message_arg_kind {
     QA_BUILTIN_MESSAGE_STRING,

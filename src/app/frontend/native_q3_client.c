@@ -96,7 +96,7 @@ static void print_row(void *context,const char *text)
     frontend_native_q3 *row=context;
     if(row->console) {
         qa_command_context origin=row->command; origin.actor=frontend_native_q3_actor(row);
-        qa_console_emit(row->console,&origin,text);
+        (void)qa_application_log_emit(row->frontend->application,&origin,text,true,NULL);
     }
 }
 static void print_client(void *context,const char *text)
