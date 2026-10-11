@@ -195,29 +195,15 @@ static int32_t frame_number(void *context)
         (int32_t)((uint64_t)view.revision&INT32_MAX):0;
 }
 static uint64_t audio_bus(void *context) { return ((struct frontend_component_scene *)context)->identity; }
-static qa_game_family music_family(const struct frontend_component_scene *owner)
-{
-    const qa_launch_instance *descriptor=qa_launch_instance_lease_view(owner->descriptor);
-    qa_product_id id=descriptor?descriptor->selection.product:owner->request.recipe_provider->selection.product;
-    const qa_product *product=qa_catalog_product(owner->request.catalog,id);
-    return product && product->family==QA_GAME_Q1?QA_GAME_Q1:
-        product && product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
-}
+
 static bool music_published(const struct frontend_component_scene *owner)
 { return retained(owner) && owner->request.published && owner->request.published(owner->request.context); }
-static bool music_stop(void *context,qa_error *e)
+static bool music_stop(void *context, qa_error *e)
 {
-    struct frontend_component_scene *owner=context;
-    qa_audio_music *attached=qa_audio_engine_bus_music(owner->frontend->audio,owner->identity);
-    if (attached && attached!=owner->music)
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component music bus contains another player");
-    qa_audio_engine_remove_music(owner->frontend->audio,owner->identity);
-    if (qa_audio_engine_bus_music(owner->frontend->audio,owner->identity))
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Component music stop retained its exact bus");
-    if (owner->music) qa_audio_music_stop(owner->music);
-    free(owner->music_intro); free(owner->music_loop);
-    owner->music_intro=owner->music_loop=NULL; owner->music_looping=owner->music_pending=false;
-    return true;
+    struct frontend_component_scene *owner = context;
+    frontend_music_cue_state cue = {&owner->music, &owner->music_intro, &owner->music_loop,
+        &owner->music_looping, NULL, &owner->music_pending};
+    return frontend_music_cue_stop(owner->frontend, cue, owner->identity, e);
 }
 static bool music_current(void *context,const frontend_music_origin *origin)
 {
@@ -262,7 +248,7 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
     if (!owner->frontend->audio) return frontend_fail(e, QA_ERROR_UNSUPPORTED, "Component music output is disabled");
     frontend_music_cue_state cue = {&owner->music, &owner->music_intro, &owner->music_loop,
         &owner->music_looping, NULL, &owner->music_pending};
-    return frontend_music_cue_start(owner->frontend, owner->sounds, music_family(owner), cue,
+    return frontend_music_cue_start(owner->frontend, owner->sounds, frontend_music_family(owner->request.catalog, music_origin(owner).product), cue,
         music_origin(owner), music_published(owner), intro, loop, e) &&
         owner->request.source.current(owner->request.source.context, &view);
 }

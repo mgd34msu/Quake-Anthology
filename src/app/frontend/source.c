@@ -516,12 +516,7 @@ static bool listener(void *context, const qa_audio_listener *value, qa_error *er
     source->has_listener = true;
     return true;
 }
-static qa_game_family music_family(const frontend_source *source)
-{
-    const qa_product *product=qa_catalog_product(source->music_catalog,source->music_product);
-    return product && product->family==QA_GAME_Q1?QA_GAME_Q1:
-        product && product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
-}
+
 static bool music_published(const frontend_source *source)
 {
     const qa_launch_instance *held=source?qa_launch_instance_lease_view(source->music_metadata):NULL;
@@ -550,18 +545,18 @@ static bool music_origin_current(void *context,const frontend_music_origin *orig
         (!qa_audio_engine_bus_music(source->frontend->audio,source->identity) ||
          qa_audio_engine_bus_music(source->frontend->audio,source->identity)==source->music);
 }
-static bool music_origin_stop(void *context,qa_error *error)
+static bool source_music_reset(frontend_source *source, qa_error *error)
 {
-    frontend_source *source=context;
+    frontend_music_cue_state cue = {&source->music, &source->music_intro, &source->music_loop,
+        &source->music_looping, &source->music_attached, &source->music_pending};
+    return frontend_music_cue_stop(source->frontend, cue, source->identity, error);
+}
+static bool music_origin_stop(void *context, qa_error *error)
+{
+    frontend_source *source = context;
     if (!source || !source->frontend || !source->music)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Music stop lost its retained Source player");
-    qa_audio_engine_remove_music(source->frontend->audio,source->identity);
-    if (qa_audio_engine_bus_music(source->frontend->audio,source->identity))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Music stop retained its actual engine bus");
-    qa_audio_music_stop(source->music); source->music_attached=false;
-    free(source->music_intro); free(source->music_loop);
-    source->music_intro=source->music_loop=NULL; source->music_looping=false;
-    return true;
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Music stop lost its retained Source player");
+    return source_music_reset(source, error);
 }
 static frontend_music_origin music_origin(frontend_source *source)
 {
@@ -577,7 +572,7 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
     if (!source->frontend->audio) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source music output is disabled");
     frontend_music_cue_state cue = {&source->music, &source->music_intro, &source->music_loop,
         &source->music_looping, &source->music_attached, &source->music_pending};
-    return frontend_music_cue_start(source->frontend, source->sounds, music_family(source), cue,
+    return frontend_music_cue_start(source->frontend, source->sounds, frontend_music_family(source->music_catalog, source->music_product), cue,
         music_origin(source), music_published(source), intro, loop, error);
 }
 bool frontend_source_publish_music(qa_frontend *frontend,qa_error *error)
@@ -1181,7 +1176,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
             qa_material_library_source_shaders_initialize(source->materials,&images,error))) &&
         qa_audio_bank_create(source->mounts, qa_session_strings(qa_application_session(frontend->application)), &source->sounds, error) &&
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
-    if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), music_family(source), true, &source->music, error);
+    if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), frontend_music_family(source->music_catalog, source->music_product), true, &source->music, error);
     if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);
     qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {source->mounts, source->images, source->materials, QA_GAME_Q3, qa_application_world(frontend->application)},
         .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source, .model_initialize = model_initialize};
@@ -2036,12 +2031,7 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
     }
     for (frontend_source *source = frontend->sources; source; source = source->next) {
         if (source->private_map) continue;
-        if (source->music_attached) {
-            qa_audio_engine_remove_music(frontend->audio, source->identity);
-            source->music_attached = false;
-        } else if (source->music) qa_audio_music_stop(source->music);
-        free(source->music_intro); free(source->music_loop);
-        source->music_intro=source->music_loop=NULL; source->music_looping=false;
+        if (!source_music_reset(source, error)) return false;
         source->has_listener = false;
     }
     return true;
@@ -2049,10 +2039,8 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 void frontend_source_audio_stopped(qa_frontend *frontend)
 {
     for (frontend_source *source=frontend->sources;source;source=source->next) {
-        if (source->music_attached) { source->music_attached=false; }
-        else if (source->music) qa_audio_music_stop(source->music);
-        free(source->music_intro); free(source->music_loop);
-        source->music_intro=source->music_loop=NULL; source->music_looping=false;
+        qa_error error = {0};
+        if (!source_music_reset(source, &error)) frontend_print(frontend, error.message);
     }
 }
 bool frontend_source_round_ready(const qa_frontend *frontend, qa_actor_owner owner, qa_error *error)
@@ -2091,11 +2079,7 @@ bool frontend_source_reset_round(qa_frontend *frontend, qa_actor_owner owner, qa
     for (frontend_source *source = frontend->sources; source; source = source->next) {
         if (!qa_q3_presentation_clear(source->presentation, error)) return false;
         source->has_listener = false;
-        if (source->music_attached) {
-            source->music_attached = false;
-        } else if (source->music) qa_audio_music_stop(source->music);
-        free(source->music_intro); free(source->music_loop);
-        source->music_intro=source->music_loop=NULL; source->music_looping=false;
+        if (!source_music_reset(source, error)) return false;
     }
     return true;
 }

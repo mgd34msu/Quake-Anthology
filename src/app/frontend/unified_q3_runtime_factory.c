@@ -113,14 +113,12 @@ static bool listener(void *context,const qa_audio_listener *value,qa_error *e)
         return fail(e,"Compiled listener requires its entered CG frame");
     o->listener=*value;o->listener.gain=1.0f/(float)o->options.frontend->options.seats;o->has_listener=true;return true;
 }
-static bool music_stop(void *context,qa_error *e)
+static bool music_stop(void *context, qa_error *e)
 {
-    frontend_unified_q3_runtime_factory *o=context;qa_audio_engine *engine=o->options.frontend->audio;
-    qa_audio_music *bus=qa_audio_engine_bus_music(engine,o->options.audio_owner);
-    if(!o->music || !qa_audio_music_idle(o->music) || (bus && bus!=o->music))return fail(e,"Compiled music stop lost its retained player");
-    qa_audio_music_stop(o->music);if(bus)qa_audio_engine_remove_music(engine,o->options.audio_owner);
-    if(qa_audio_engine_bus_music(engine,o->options.audio_owner))return fail(e,"Compiled soundtrack still has an engine attachment");
-    free(o->intro);free(o->loop);o->intro=o->loop=NULL;o->looping=false;return true;
+    frontend_unified_q3_runtime_factory *o = context;
+    if (!o->music || !qa_audio_music_idle(o->music)) return fail(e, "Compiled music stop lost its retained player");
+    frontend_music_cue_state cue = {&o->music, &o->intro, &o->loop, &o->looping, NULL, NULL};
+    return frontend_music_cue_stop(o->options.frontend, cue, o->options.audio_owner, e);
 }
 static bool music_current(void *context,const frontend_music_origin *origin)
 {

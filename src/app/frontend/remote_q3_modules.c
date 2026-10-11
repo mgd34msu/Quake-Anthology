@@ -416,20 +416,10 @@ static bool music_origin_current(void *context, const frontend_music_origin *ori
 }
 static bool music_stop(void *context, qa_error *error)
 {
-    remote_module_lease *lease = context; qa_audio_engine *engine = lease->owner->frontend->audio;
-    qa_audio_music *attached_player = qa_audio_engine_bus_music(engine, lease->service_owner);
-    if (attached_player && attached_player != lease->music)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Music retirement found another actual bus player");
-    lease->music_attached = attached_player != NULL;
-    if (lease->music_attached) {
-        qa_audio_engine_remove_music(engine, lease->service_owner);
-        if (qa_audio_engine_bus_music(engine, lease->service_owner) == lease->music)
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Music retirement retains its actual engine bus");
-        lease->music_attached = false;
-    }
-    qa_audio_music_stop(lease->music);
-    free(lease->music_intro); free(lease->music_loop); lease->music_intro = lease->music_loop = NULL;
-    lease->music_looping = false; return true;
+    remote_module_lease *lease = context;
+    frontend_music_cue_state cue = {&lease->music, &lease->music_intro, &lease->music_loop,
+        &lease->music_looping, &lease->music_attached, NULL};
+    return frontend_music_cue_stop(lease->owner->frontend, cue, lease->service_owner, error);
 }
 static frontend_music_origin music_origin(remote_module_lease *lease)
 {

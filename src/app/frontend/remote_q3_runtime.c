@@ -126,19 +126,14 @@ static bool music_origin_current(void *context,const frontend_music_origin *orig
         origin->files==r->mounts && origin->bus==r->identity && origin->physical_seat==r->physical_seat &&
         origin->receiver==r->domain.source.receiver.receiver;
 }
-static bool music_source_stop(void *context,qa_error *e)
+static bool music_source_stop(void *context, qa_error *e)
 {
-    frontend_remote_q3_runtime *o=context;
-    qa_audio_music *bus=qa_audio_engine_bus_music(o->frontend->audio,audio_bus(o));
-    if(!attached(o) || !o->music || !qa_audio_music_idle(o->music) || (bus && bus!=o->music))
-        return fail(e,QA_ERROR_ARGUMENT,"Remote music stop lost its actual retained player and bus");
-    qa_audio_music_stop(o->music);
-    if(bus)qa_audio_engine_remove_music(o->frontend->audio,audio_bus(o));
-    if(qa_audio_engine_bus_music(o->frontend->audio,audio_bus(o)))
-        return fail(e,QA_ERROR_ARGUMENT,"Remote music stop retains its actual engine attachment");
-    o->music_attached=false;
-    free(o->music_intro); free(o->music_loop); o->music_intro=o->music_loop=NULL; o->music_looping=false;
-    return true;
+    frontend_remote_q3_runtime *o = context;
+    if (!attached(o) || !o->music || !qa_audio_music_idle(o->music))
+        return fail(e, QA_ERROR_ARGUMENT, "Remote music stop lost its actual retained player");
+    frontend_music_cue_state cue = {&o->music, &o->music_intro, &o->music_loop,
+        &o->music_looping, &o->music_attached, NULL};
+    return frontend_music_cue_stop(o->frontend, cue, audio_bus(o), e);
 }
 static frontend_music_origin music_origin(frontend_remote_q3_runtime *o)
 {

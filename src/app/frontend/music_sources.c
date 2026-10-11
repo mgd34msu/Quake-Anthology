@@ -13,6 +13,21 @@ static void cue_names_clear(frontend_music_cue_state state)
     free(*state.intro); free(*state.loop);
     *state.intro = *state.loop = NULL; *state.looping = false;
 }
+bool frontend_music_cue_stop(qa_frontend *f, frontend_music_cue_state state,
+    uint64_t bus, qa_error *error)
+{
+    qa_audio_music *attached = qa_audio_engine_bus_music(f->audio, bus);
+    if (attached && attached != *state.player)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Music bus belongs to another player");
+    if (attached) qa_audio_engine_remove_music(f->audio, bus);
+    if (qa_audio_engine_bus_music(f->audio, bus))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Music stop retained its engine bus");
+    qa_audio_music_stop(*state.player);
+    if (state.attached) *state.attached = false;
+    if (state.pending) *state.pending = false;
+    cue_names_clear(state);
+    return true;
+}
 static bool cue_publish(qa_frontend *f, frontend_music_cue_state state,
     frontend_music_origin origin, qa_error *error)
 {
@@ -187,14 +202,16 @@ bool frontend_music_world_capture(frontend_music_sources *owner, qa_error *e) {
     owner->world.map = map.resource; qa_resource_retain(map.resource); owner->world.map_revision = map.revision;
     return frontend_music_world_current(owner) || fail(e, "WORLD music source changed during actual receipt acquisition");
 }
-static qa_game_family family(const qa_product *product) {
-    return product->family == QA_GAME_Q1 ? QA_GAME_Q1 : product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
+qa_game_family frontend_music_family(const qa_catalog *catalog, qa_product_id id) {
+    const qa_product *product = qa_catalog_product(catalog, id);
+    return product && product->family == QA_GAME_Q1 ? QA_GAME_Q1 :
+        product && product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
 }
 static bool attach(frontend_music_sources *owner, frontend_music_slot slot, const qa_product *source,
     const frontend_music_content *content, size_t count, const char *cue, qa_error *e) {
     qa_audio_music *music = NULL;
     if (!frontend_source_identity_allocate(owner->frontend, owner->buses + slot, e) ||
-        !qa_audio_music_create(qa_audio_engine_rate(owner->engine), family(source), slot == FRONTEND_MUSIC_WORLD, &music, e)) return false;
+        !qa_audio_music_create(qa_audio_engine_rate(owner->engine), frontend_music_family(content[0].catalog, source->id), slot == FRONTEND_MUSIC_WORLD, &music, e)) return false;
     if (!qa_audio_music_controls_bind(music, owner->controls, e)) { qa_audio_music_destroy(music); return false; }
     if (!qa_audio_engine_music_source(owner->engine, owner->buses[slot], QA_AUDIO_WORLD, 1, music,
         slot == FRONTEND_MUSIC_MENU ? QA_AUDIO_MUSIC_MENU : QA_AUDIO_MUSIC_WORLD, owner->output == slot, e)) {

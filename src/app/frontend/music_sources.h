@@ -48,6 +48,8 @@ bool frontend_music_cue_start(qa_frontend *, qa_audio_bank *, qa_game_family,
     const char *intro, const char *loop, qa_error *);
 bool frontend_music_cue_publish(qa_frontend *, frontend_music_cue_state,
     frontend_music_origin, qa_error *);
+bool frontend_music_cue_stop(qa_frontend *, frontend_music_cue_state, uint64_t bus, qa_error *);
+qa_game_family frontend_music_family(const qa_catalog *, qa_product_id);
 /* Fresh construction selects independent menu mounts from the actual initial
  * catalog/--game declaration. An empty catalog truthfully has no soundtrack.
  * WORLD selection reads the actual published ENTITIES binding and retained BSP.

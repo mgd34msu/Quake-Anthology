@@ -217,18 +217,14 @@ static bool music_origin_current(void *context,const frontend_music_origin *orig
         (!qa_audio_engine_bus_music(row->frontend->audio,v->identity) ||
          qa_audio_engine_bus_music(row->frontend->audio,v->identity)==v->music);
 }
-static bool music_origin_stop(void *context,qa_error *e)
+static bool music_origin_stop(void *context, qa_error *e)
 {
-    frontend_native_q3 *row=context;
+    frontend_native_q3 *row = context;
     if (!linked(row) || !row->owns_media || !row->view.music)
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Music stop lost its actual native player");
-    qa_audio_engine_remove_music(row->frontend->audio,row->view.identity);
-    if (qa_audio_engine_bus_music(row->frontend->audio,row->view.identity))
-        return frontend_fail(e,QA_ERROR_ARGUMENT,"Native music stop retained its engine bus");
-    qa_audio_music_stop(row->view.music); row->view.music_attached=false;
-    free(row->music_intro); free(row->music_loop);
-    row->music_intro=row->music_loop=NULL; row->music_looping=false;
-    return true;
+        return frontend_fail(e, QA_ERROR_ARGUMENT, "Music stop lost its actual native player");
+    frontend_music_cue_state cue = {&row->view.music, &row->music_intro, &row->music_loop,
+        &row->music_looping, &row->view.music_attached, NULL};
+    return frontend_music_cue_stop(row->frontend, cue, row->view.identity, e);
 }
 static frontend_music_origin music_origin(frontend_native_q3 *row)
 {
@@ -965,8 +961,10 @@ bool frontend_native_q3_video_row_close(frontend_native_q3 *row,qa_error *e)
     q3n_mission_hud_destroy(row->view.mission); row->view.mission=NULL;
     if(!q3n_native_video_close(&row->view.core,e) || !qa_native_q3_client_video_reset(row->view.client,e) ||
         !media_close(row,e))return false;
-    free(row->music_intro); free(row->music_loop); row->music_intro=row->music_loop=NULL;
-    row->music_looping=false; row->view.has_listener=false;
+    frontend_music_cue_state cue = {&row->view.music, &row->music_intro, &row->music_loop,
+        &row->music_looping, &row->view.music_attached, NULL};
+    if (!frontend_music_cue_stop(row->frontend, cue, row->view.identity, e)) return false;
+    row->view.has_listener=false;
     return true;
 }
 bool frontend_native_q3_video_row_reopen(frontend_native_q3 *row,qa_error *e)
