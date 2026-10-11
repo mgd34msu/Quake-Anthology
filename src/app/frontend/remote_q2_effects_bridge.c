@@ -180,13 +180,11 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
 {
     frontend_remote_q2 *row = context;
     if (!row || damage <= 0 || !remote_q2_live(row, error)) return false;
-    if (row->hit_marker_set && row->hit_marker_frame == row->frame.server_frame) return true;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(row->options.domain.runtime),
         row->options.domain.client);
     if (!client || qa_network_epoch(row->options.domain.runtime, client->id) != row->options.domain.epoch) return false;
-    row->hit_marker_set = true; row->hit_marker_frame = row->frame.server_frame;
-    row->hit_marker_ns = client->received_ns > row->sample_ns ? client->received_ns : row->sample_ns;
-    if (row->hit_marker_count < UINT32_MAX) ++row->hit_marker_count;
+    if (!qa_hud_q2_marker_hit(&row->hit_marker,(uint64_t)row->frame.server_frame,
+        client->received_ns>row->sample_ns?client->received_ns:row->sample_ns)) return true;
     const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.marker.mode);
     if (setting && setting->number > 1) {
         qa_vec3 position = qa_v3(0, 0, 0); uint32_t index;

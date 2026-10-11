@@ -25,8 +25,8 @@ typedef struct remote_q2_model {
     qa_scene_model *scene;
 } remote_q2_model;
 
-bool remote_q2_flare_prepare(frontend_remote_q2 *, const qa_q2_wire_frame *, qa_error *);
-bool remote_q2_flare_standard(const frontend_remote_q2 *, qa_string_id);
+bool remote_q2_flare_config(frontend_remote_q2 *, uint32_t, qa_error *);
+qa_string_id remote_q2_flare_image(const frontend_remote_q2 *, const qa_q2_entity *);
 qa_scene_image_options remote_q2_image_options(qa_scene_image_usage);
 bool remote_q2_model_cached(frontend_remote_q2 *, qa_string_id, remote_q2_model **);
 bool remote_q2_model_scope_required(const char *, qa_bytes);
@@ -110,10 +110,7 @@ struct frontend_remote_q2 {
     frontend_q2_animation gun_animation;
     remote_q2_entity_animation *entity_animations;
     size_t entity_animation_capacity;
-    uint32_t hit_marker_count;
-    int32_t hit_marker_frame;
-    uint64_t hit_marker_ns;
-    bool hit_marker_set;
+    qa_hud_q2_marker_state hit_marker;
     qa_scene_fog fog_start, fog_end;
     double fog_started_ms;
     uint16_t fog_duration_ms;
@@ -142,7 +139,8 @@ struct frontend_remote_q2 {
     qa_buffer saved_effects;
     bool effects_imported;
     struct remote_q2_footsteps *footsteps;
-    qa_id_index model_names, flare_names;
+    qa_id_index model_names;
+    bool *flare_standard;
     remote_q2_model **model_rows;
     size_t model_count, model_capacity;
     struct frontend_remote_q2_image_policy *image_policy;

@@ -100,6 +100,11 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
         }
         free(row->model_slots); row->model_slots = model_slots;
     }
+    if (layout.max_images!=row->hud_names.layout.max_images) {
+        bool *flags=calloc(layout.max_images,sizeof(*flags));
+        if (!flags) return remote_q2_fail(error,QA_ERROR_MEMORY,"Retaining Q2 image flags");
+        free(row->flare_standard); row->flare_standard=flags;
+    }
     qa_strings *strings = qa_session_strings(qa_application_session(row->options.domain.application));
     return qa_hud_q2_names_configure(&row->hud_names,protocol,error) &&
         (row->hud_overlay || qa_hud_q2_program_create(strings, &row->hud_overlay, error));
@@ -122,7 +127,7 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
         (*value == '#' || *frontend_remote_q2_config(row, index) == '#');
     if (!qa_hud_q2_names_set(&row->hud_names,index,id,error)) return false;
     remote_q2_prediction_config(row, index);
-    return !row->media_ready || (remote_q2_model_config(row, index, error) && remote_q2_clientinfo_config(row,index,weapon_changed,error));
+    return !row->media_ready || (remote_q2_model_config(row, index, error) && remote_q2_flare_config(row,index,error) && remote_q2_clientinfo_config(row,index,weapon_changed,error));
 }
 typedef struct remote_q2_event_batch {
     const qa_q2_server_record *records;
@@ -228,9 +233,10 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     remote_q2_cvars_bind(row);
     row->events = qa_event_ring_create(65536, 16384, 2, error);
     row->model_slots = calloc(row->hud_names.layout.max_models, sizeof(*row->model_slots));
-    if (!row->events || !row->model_slots || !qa_hud_q2_picture_names_bind(qa_session_strings(qa_application_session(f->application)),&row->hud_pictures,error) || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
+    row->flare_standard=calloc(row->hud_names.layout.max_images,sizeof(*row->flare_standard));
+    if (!row->events || !row->model_slots || !row->flare_standard || !qa_hud_q2_picture_names_bind(qa_session_strings(qa_application_session(f->application)),&row->hud_pictures,error) || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
         qa_event_ring_destroy(&row->events);
-        qa_arena_destroy(&row->effect_storage);qa_hud_q2_names_destroy(&row->hud_names); free(row->model_slots); free(row); return false;
+        qa_arena_destroy(&row->effect_storage);qa_hud_q2_names_destroy(&row->hud_names); free(row->model_slots); free(row->flare_standard); free(row); return false;
     }
     row->event_cursor = qa_event_ring_first(row->events);
     qa_catalog_retain(d->catalog); row->frame_ms = 100; row->fraction = 1;
@@ -354,7 +360,7 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
 {
     (void)records; (void)count; frontend_remote_q2 *row = context;
     if (!row || row->busy || !hook_current(row, id, error) || !frame || !frame->valid || !row->media_ready) return false;
-    if (!remote_q2_clientinfo_settings(row,error) || !remote_q2_flare_prepare(row,frame,error)) return false;
+    if (!remote_q2_clientinfo_settings(row,error)) return false;
     qa_q2_wire_frame held = {0};
     if (!qa_q2_frame_clone(frame, &held, error)) return false;
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
@@ -712,7 +718,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
     qa_event_ring_destroy(&row->events);
-    qa_catalog_release(row->options.domain.catalog); qa_hud_q2_names_destroy(&row->hud_names); free(row->model_slots); qa_arena_destroy(&row->effect_storage);
+    qa_catalog_release(row->options.domain.catalog); qa_hud_q2_names_destroy(&row->hud_names); free(row->model_slots); free(row->flare_standard); qa_arena_destroy(&row->effect_storage);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
     *link = row->next; qa_movement_result_free(&row->prediction_scratch); free(row); *owned = NULL; return true;

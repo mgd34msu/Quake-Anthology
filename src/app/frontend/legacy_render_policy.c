@@ -10,6 +10,24 @@
 #include "qa/ui_preferences.h"
 #include <string.h>
 
+bool frontend_q2_flare_standard(const char *path, const char *canonical)
+{
+    const char *const names[] = {canonical, "sprites/psx_flare"};
+    if (*path=='/' || *path=='\\') ++path;
+    for (size_t n=0;n<2;++n) {
+        size_t i=0;
+        while (names[n][i] && path[i]) {
+            unsigned char c=(unsigned char)path[i];
+            if (c>='A' && c<='Z') c=(unsigned char)(c+('a'-'A'));
+            if (c=='\\') c='/';
+            if (c!=(unsigned char)names[n][i]) break;
+            ++i;
+        }
+        if (!names[n][i] && (n==1 || !path[i])) return true;
+    }
+    return false;
+}
+
 float frontend_legacy_lightstyle_sample(qa_game_family family,const char *pattern,double seconds)
 {
     size_t length=pattern?strlen(pattern):0;

@@ -165,9 +165,8 @@ struct frontend_unified_q2 {
     qa_actor_id view_actor;
     qa_vec4 view_blend,view_damage_blend;
     bool view_blend_present,view_damage_present;
-    uint64_t view_layouts, marker_frame, marker_ns;
-    uint32_t marker_count;
-    bool marker_set;
+    uint64_t view_layouts;
+    qa_hud_q2_marker_state marker;
     q2_bank *marker_bank;
     qa_hud_q2_marker_cvars marker_cvars;
     uint64_t effects_wall_ns;
@@ -497,13 +496,11 @@ static bool hit(void *ctx,int32_t damage,qa_error *e)
     q2_bank *b=ctx;
     frontend_unified_q2 *o=b->owner;
     if (damage<=0 || !current(o,e)) return false;
-    if (o->marker_set && o->marker_frame==o->frame_number) return true;
-    o->marker_bank=b;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     const qa_cvar_view *mode=qa_cvars_read(domain->cvars,o->marker_cvars.mode);
     if (!mode) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 marker has no actual CLIENT mode row");
-    o->marker_set=true; o->marker_frame=o->frame_number; o->marker_ns=nanoseconds(o->seconds);
-    if (o->marker_count<UINT32_MAX) ++o->marker_count;
+    if (!qa_hud_q2_marker_hit(&o->marker,o->frame_number,nanoseconds(o->seconds))) return true;
+    o->marker_bank=b;
     if (mode->integer>1) {
         const qa_unified_frame *frame=qa_unified_document_frame(o->frame);
         if (!frame || !frame->player) return false;
@@ -1820,15 +1817,15 @@ static bool story_draw(frontend_unified_q2 *o,qa_ui *ui,qa_scene_rect viewport,q
 }
 static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
-    if (!o->marker_count || !o->marker_bank) return true;
+    if (!o->marker.count || !o->marker_bank) return true;
     q2_bank *b=o->marker_bank;
     const qa_cvars *registry=frontend_remote_unified_domain_read(o->replica)->cvars;
     qa_hud_q2_marker marker={.image=qa_scene_q2_picture_read(b->images,o->replica->strings,b->picture_names.marker,QA_IMAGE_USAGE_PICTURE,
         b->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,QA_SCENE_LINEAR_MIPMAP_LINEAR,e),
-        .now_ns=nanoseconds(o->seconds),.started_ns=o->marker_ns,.layout_flags=(uint32_t)o->view_layouts,
+        .now_ns=nanoseconds(o->seconds),.layout_flags=(uint32_t)o->view_layouts,
     };
     qa_hud_q2_marker_settings(registry,&o->marker_cvars,&marker);
-    return qa_hud_q2_marker_draw(&marker,&o->marker_count,viewport,frame,e);
+    return qa_hud_q2_marker_draw(&marker,&o->marker,viewport,frame,e);
 }
 static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_native_hud *state,
     const int32_t inventory[256],const qa_hud_q2_program *layout,int32_t player_number,
@@ -1921,7 +1918,7 @@ bool frontend_unified_q2_idle(const frontend_unified_q2 *o)
 { return (!o || !o->prepared_frame) && frontend_unified_q2_checkpoint_ready(o); }
 static bool bank_destroy(q2_bank *b,qa_error *e)
 {
-    if (b->owner->marker_bank==b) { b->owner->marker_bank=NULL;b->owner->marker_count=0; }
+    if (b->owner->marker_bank==b) { b->owner->marker_bank=NULL;b->owner->marker=(qa_hud_q2_marker_state){0}; }
         if (!frontend_remote_q2_effects_destroy(&b->effects,e)) return false;
         if (!frontend_q2_footsteps_destroy(&b->footsteps,e)) return false;
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }

@@ -32,6 +32,13 @@
 #include "qc_messages.h"
 #include <stdio.h>
 
+bool frontend_local_seat_present(const qa_launch_choices *choices,uint32_t logical)
+{
+    for (size_t i=0;choices && i<choices->seat_count;++i)
+        if (choices->seats[i].id==logical) return choices->seats[i].local && !choices->seats[i].bot;
+    return false;
+}
+
 static double now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->time_ns / 1000000.0; }
 static double input_now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->wall_time_ns / 1000000.0; }
 static const qa_scene_image *hud_video_frame(void *context, uint64_t initial, double seconds, qa_error *error)
@@ -274,12 +281,12 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         .player_number = source->player_number, .server_frame = source->server_frame,
         .time_ns = source->time_ns, .frame_ns = source->frame_ns};
     if (!qa_hud_q2_draw(&options, &received, false, scene, error)) return false;
-    if (!seat->q2_hit_marker_count) return true;
+    if (!seat->q2_hit_marker.count) return true;
     qa_hud_q2_marker marker={.image=local_q2_picture(&hud,seat->q2_hud_pictures.marker,error),
-        .now_ns=source->time_ns,.started_ns=seat->q2_hit_marker_ns,.layout_flags=(uint32_t)source->stats[13]};
+        .now_ns=source->time_ns,.layout_flags=(uint32_t)source->stats[13]};
     qa_hud_q2_marker_settings(qa_application_cvars(seat->frontend->application),
         &seat->frontend->engine_cvars.q2_marker,&marker);
-    return qa_hud_q2_marker_draw(&marker,&seat->q2_hit_marker_count,frame->safe_area,scene,error);
+    return qa_hud_q2_marker_draw(&marker,&seat->q2_hit_marker,frame->safe_area,scene,error);
 }
 static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_hud_data *out,
     bool native_status, bool aggregate, bool *source_slot, qa_error *error)

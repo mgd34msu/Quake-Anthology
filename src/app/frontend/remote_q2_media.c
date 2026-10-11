@@ -24,55 +24,35 @@ qa_scene_image_options remote_q2_image_options(qa_scene_image_usage usage)
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = usage != QA_IMAGE_USAGE_PICTURE,
         .transparent = true, .transparent_index = 255};
 }
-static bool flare_standard_image(const char *path, const char *canonical)
-{
-    const char *const names[] = {canonical, "sprites/psx_flare"};
-    if (*path=='/' || *path=='\\') ++path;
-    for (size_t n = 0; n < 2; ++n) {
-        size_t i = 0;
-        while (names[n][i] && path[i]) {
-            unsigned char c = (unsigned char)path[i];
-            if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
-            if (c == '\\') c = '/';
-            if (c != (unsigned char)names[n][i]) break;
-            ++i;
-        }
-        if (!names[n][i] && (n == 1 || !path[i])) return true;
-    }
-    return false;
-}
 static bool flare_admit(frontend_remote_q2 *row, qa_string_id path, qa_error *error)
 {
-    size_t flags; qa_id_index_cursor cursor=qa_id_index_begin(&row->flare_names,path,0);
-    if (!qa_id_index_next(&row->flare_names,&cursor,&flags)) {
-        if (!qa_id_index_reserve(&row->flare_names,1,error)) return false;
-        const qa_application_ui_names *names=qa_application_ui_names_read(row->frontend->application);
-        const char *text=qa_strings_cstr(row->hud_names.strings,path);
-        flags=text && flare_standard_image(text,qa_strings_cstr(row->hud_names.strings,names->flare_image));
-        qa_id_index_insert(&row->flare_names,path,0,flags);
-    }
     qa_error issue={0};
     if (qa_scene_q2_picture(row->images,row->hud_names.strings,path,QA_IMAGE_USAGE_SPRITE,
         true,QA_SCENE_LINEAR,&issue) || issue.code==QA_OK || issue.code==QA_ERROR_NOT_FOUND) return true;
     if(error) *error=issue;
     return false;
 }
-bool remote_q2_flare_standard(const frontend_remote_q2 *row, qa_string_id path)
+qa_string_id remote_q2_flare_image(const frontend_remote_q2 *row, const qa_q2_entity *entity)
 {
-    size_t flags; qa_id_index_cursor cursor=qa_id_index_begin(&row->flare_names,path,0);
-    return qa_id_index_next(&row->flare_names,&cursor,&flags) && flags != 0;
-}
-bool remote_q2_flare_prepare(frontend_remote_q2 *row, const qa_q2_wire_frame *frame, qa_error *error)
-{
-    if (!remote_q2_rerelease_presentation(row)) return true;
-    for(size_t i=0;i<frame->entity_count;++i) {
-        const qa_q2_entity *entity=frame->entities+i;
-        if (!(entity->renderfx&(UINT32_C(1)<<21)) || !(entity->renderfx&256u) ||
-            entity->frame>=row->hud_names.layout.max_images) continue;
-        qa_string_id path=row->hud_names.values[row->hud_names.layout.images+entity->frame];
-        if(path && !flare_admit(row,path,error)) return false;
+    if ((entity->renderfx&256u) && entity->frame<row->hud_names.layout.max_images) {
+        qa_string_id selected=row->hud_names.values[row->hud_names.layout.images+entity->frame];
+        if (selected) return selected;
     }
-    return true;
+    return qa_application_ui_names_read(row->frontend->application)->flare_image;
+}
+bool remote_q2_flare_config(frontend_remote_q2 *row, uint32_t index, qa_error *error)
+{
+    const qa_q2_config_layout *layout=&row->hud_names.layout;
+    if (index<layout->images || index-layout->images>=layout->max_images ||
+        !remote_q2_rerelease_presentation(row)) return true;
+    uint32_t slot=index-layout->images;
+    qa_string_id path=row->hud_names.values[index];
+    row->flare_standard[slot]=false;
+    if (!path) return true;
+    const qa_application_ui_names *names=qa_application_ui_names_read(row->frontend->application);
+    row->flare_standard[slot]=frontend_q2_flare_standard(qa_strings_cstr(row->hud_names.strings,path),
+        qa_strings_cstr(row->hud_names.strings,names->flare_image));
+    return flare_admit(row,path,error);
 }
 bool remote_q2_model_scope_required(const char *path, qa_bytes bytes)
 {
@@ -250,7 +230,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
         qa_vfs_acquisition_dispose(&m->scope_opening); qa_vfs_acquisition_dispose(&m->palette_opening);
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m);
     }
-    qa_id_index_destroy(&row->model_names); qa_id_index_destroy(&row->flare_names);
+    qa_id_index_destroy(&row->model_names);
     free(row->model_rows); row->model_rows = NULL; row->model_count = row->model_capacity = 0;
     qa_font_library_destroy(row->fonts); row->fonts = NULL; row->classic = NULL;
     qa_scene_image_release(row->white); row->white = NULL;
@@ -259,7 +239,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     qa_scene_resources_destroy(row->images); row->images = NULL;
     qa_resource_release(row->map); row->map = NULL;
     qa_vfs_acquisition_dispose(&row->map_opening); row->media_ready = false;
-    row->hit_marker_count = 0; row->hit_marker_frame = 0; row->hit_marker_ns = 0; row->hit_marker_set = false;
+    row->hit_marker=(qa_hud_q2_marker_state){0};
     return true;
 }
 bool remote_q2_map_validate(const frontend_remote_q2 *row, const qa_resource *resource, qa_bsp_view *bsp, qa_error *error)
@@ -318,8 +298,11 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     if (!frontend_world_scratch_create(row->world, &row->world_scratch, error)) return false;
     if (!remote_q2_footsteps_prepare(row, error)) return false;
     const qa_application_ui_names *ui_names=qa_application_ui_names_read(row->frontend->application);
-    if (!qa_id_index_reserve(&row->flare_names,row->hud_names.layout.max_images+1,error) ||
-        !flare_admit(row,ui_names->flare_image,error) || !remote_q2_flare_prepare(row,&row->frame,error)) return false;
+    if (remote_q2_rerelease_presentation(row)) {
+        if (!flare_admit(row,ui_names->flare_image,error)) return false;
+        for (uint32_t i=0;i<row->hud_names.layout.max_images;++i)
+            if (!remote_q2_flare_config(row,row->hud_names.layout.images+i,error)) return false;
+    }
     if (!model_index_reserve(row, row->hud_names.layout.max_models + 257 * 34, error)) return false;
     for (size_t i = 1; i < row->hud_names.layout.max_models; ++i) {
         if (!remote_q2_model_config(row, (uint16_t)(row->hud_names.layout.models + i), error)) return false;

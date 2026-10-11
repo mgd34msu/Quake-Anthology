@@ -198,11 +198,7 @@ static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
     const qa_scene_view *view, qa_vec3 origin, qa_error *error)
 {
     const qa_application_ui_names *names=qa_application_ui_names_read(row->frontend->application);
-    qa_string_id path_id=names->flare_image;
-    if ((packet->renderfx & 256u) && packet->frame < row->hud_names.layout.max_images) {
-        qa_string_id selected=row->hud_names.values[row->hud_names.layout.images+packet->frame];
-        if (selected) path_id=selected;
-    }
+    qa_string_id path_id=remote_q2_flare_image(row,packet);
     const qa_scene_image *image = NULL;
     for (unsigned attempt=0;attempt<2;++attempt) {
         qa_error issue={0};
@@ -223,19 +219,19 @@ static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
         .separate_rim = (packet->renderfx & (1024u | 2048u | 4096u)) != 0,
         .rim_color = {(packet->renderfx & 1024u) ? 1.f : 0.f, (packet->renderfx & 2048u) ? 1.f : 0.f,
             (packet->renderfx & 4096u) ? 1.f : 0.f},
-        .standard_image = remote_q2_flare_standard(row,path_id)};
+        .standard_image = path_id==names->flare_image || row->flare_standard[packet->frame]};
     return qa_scene_flare(&row->frontend->frame, view, origin, &options, image, error);
 }
 static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     qa_scene_rect viewport, qa_error *error)
 {
-    if (!row->hit_marker_count) return true;
+    if (!row->hit_marker.count) return true;
     const qa_cvars *cvars=row->options.domain.cvars;
     qa_hud_q2_marker marker={.image=remote_q2_picture_read(row,row->hud_pictures.marker,error),
-        .now_ns=row->sample_ns,.started_ns=row->hit_marker_ns,.layout_flags=(uint32_t)player->stats[13],
+        .now_ns=row->sample_ns,.layout_flags=(uint32_t)player->stats[13],
     };
     qa_hud_q2_marker_settings(cvars,&row->cvar_handles.marker,&marker);
-    return qa_hud_q2_marker_draw(&marker,&row->hit_marker_count,viewport,&row->frontend->frame,error);
+    return qa_hud_q2_marker_draw(&marker,&row->hit_marker,viewport,&row->frontend->frame,error);
 }
 static const char *hud_config(void *context, int32_t index)
 { return index >= 0 && index <= UINT16_MAX ? frontend_remote_q2_config(context, (uint16_t)index) : ""; }

@@ -70,12 +70,18 @@ typedef struct qa_hud_q2_marker_cvars {
 qa_hud_q2_marker_cvars qa_hud_q2_marker_bind(const qa_cvars *);
 typedef struct qa_hud_q2_marker {
     const qa_scene_image *image;
-    uint64_t now_ns, started_ns;
+    uint64_t now_ns;
     uint32_t layout_flags;
     const qa_cvar_view *mode, *crosshair, *duration, *scale, *alpha, *x, *y;
 } qa_hud_q2_marker;
 void qa_hud_q2_marker_settings(const qa_cvars *, const qa_hud_q2_marker_cvars *, qa_hud_q2_marker *);
-bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *, uint32_t *, qa_scene_rect, qa_scene_frame *, qa_error *);
+typedef struct qa_hud_q2_marker_state {
+    uint32_t count;
+    uint64_t started_ns, frame;
+    bool set;
+} qa_hud_q2_marker_state;
+bool qa_hud_q2_marker_hit(qa_hud_q2_marker_state *, uint64_t frame, uint64_t now_ns);
+bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *, qa_hud_q2_marker_state *, qa_scene_rect, qa_scene_frame *, qa_error *);
 typedef struct qa_hud_q2_frame {
     qa_net_protocol_id protocol;
     const int16_t *stats;

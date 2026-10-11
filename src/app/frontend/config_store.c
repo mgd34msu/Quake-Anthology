@@ -248,12 +248,6 @@ static size_t seat_index(const frontend_config_source *source,uint32_t logical)
     for (size_t i=0;i<source->seat_count;++i) if (source->seats[i].logical==logical) return i;
     return source->seat_count;
 }
-static bool local_seat_present(const qa_launch_choices *choices,uint32_t logical)
-{
-    for (size_t i=0;choices && i<choices->seat_count;++i)
-        if (choices->seats[i].id==logical) return choices->seats[i].local && !choices->seats[i].bot;
-    return false;
-}
 static bool seat_movement(const qa_launch_snapshot *snapshot,uint32_t logical,
     qa_ruleset_id *dialect,qa_error *error)
 {
@@ -2438,7 +2432,7 @@ bool frontend_config_store_local_seats_capture(frontend_config_store *manager,qa
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(source->application));
     for (size_t i=0;i<source->seat_count;++i) {
         config_seat *seat=source->seats+i;
-        if (!local_seat_present(choices,seat->logical) || seat->input) continue;
+        if (!frontend_local_seat_present(choices,seat->logical) || seat->input) continue;
         qa_input_seat *active=frontend_config_source_input(source,seat->logical);
         if (!active || qa_input_seat_has_held(active) || qa_input_seat_release_read(active))
             return fail(error,QA_ERROR_ARGUMENT,"Local profile capture requires its genuinely released physical input");
@@ -2482,7 +2476,7 @@ bool frontend_config_store_local_seats_retire(frontend_config_store *manager,qa_
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(source->application));
     for (size_t i=0;i<source->seat_count;) {
         config_seat *seat=source->seats+i;
-        if (local_seat_present(choices,seat->logical)) {
+        if (frontend_local_seat_present(choices,seat->logical)) {
             if (seat->input && (qa_input_seat_has_held(seat->input) || qa_input_seat_release_read(seat->input)))
                 return fail(error,QA_ERROR_ARGUMENT,"Captured local profile retains an actual input release");
             if (seat->input) {

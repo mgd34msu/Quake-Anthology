@@ -3,6 +3,7 @@
 #include "visual_access.h"
 #include "native_q3_client.h"
 #include "qa/persistence_content.h"
+#include "qa/application_ui_names.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_model_save.h"
 #include "qa/scene_resource_save.h"
@@ -1096,22 +1097,6 @@ static qa_model_transform transform(const qa_application_visual_view *view, qa_v
     }
     return value;
 }
-static bool flare_standard_image(const char *path)
-{
-    const char *names[] = {"misc/flare.tga", "sprites/psx_flare"};
-    for (unsigned n = 0; n < 2; ++n) {
-        size_t i = 0;
-        while (names[n][i] && path[i]) {
-            unsigned char c = (unsigned char)path[i];
-            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-            if (c == '\\') c = '/';
-            if (c != (unsigned char)names[n][i]) break;
-            ++i;
-        }
-        if (!names[n][i] && (n == 1 || !path[i])) return true;
-    }
-    return false;
-}
 static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view *view,
     const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
 {
@@ -1128,15 +1113,17 @@ static bool visual_flare(qa_frontend *frontend, const qa_application_visual_view
         binding->name=view->flare_image;
         qa_scene_image_options sampling = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
             .filter = QA_SCENE_LINEAR, .usage = QA_IMAGE_USAGE_SPRITE, .transparent_index = -1};
+        const qa_application_ui_names *names=qa_application_ui_names_read(frontend->application);
+        const char *canonical=qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),names->flare_image);
         const char *path=view->flare.image;
         for (unsigned attempt=0;attempt<2;++attempt) {
             qa_error load={0};
             if (qa_scene_image_load(owner->images,path,&sampling,&binding->image,&load)) break;
             if (load.code!=QA_ERROR_NOT_FOUND) { free(binding); if(error)*error=load; return false; }
-            if (!strcmp(path,"misc/flare.tga")) break;
-            path="misc/flare.tga";
+            if (path==canonical || view->flare_image==names->flare_image) break;
+            path=canonical;
         }
-        binding->standard=flare_standard_image(path);
+        binding->standard=frontend_q2_flare_standard(path,canonical);
         binding->next=owner->flares; owner->flares=binding;
     }
     if (!binding->image) return true;

@@ -221,7 +221,7 @@ bool qa_hud_q2_weapons_bind(qa_strings *strings, const qa_q2_config_layout *layo
     qa_hud_q2_weapons value = {0};
     if (!qa_strings_intern_cstr(strings, "weapon.md2", value.names, error)) return false;
     value.count = 1;
-    size_t limit = layout->extended ? 32 : 20;
+    size_t limit = layout->wheel_weapons!=UINT32_MAX ? 32 : 20;
     for (uint32_t i = 1; i < layout->max_models && value.count < limit; ++i) {
         const char *name = qa_strings_cstr(strings, config[layout->models + i]);
         if (name && name[0] == '#' && !qa_strings_intern_cstr(strings, name + 1,
@@ -290,7 +290,7 @@ bool qa_hud_q2_names_configure(qa_hud_q2_names *names,qa_net_protocol_id protoco
     if(!qa_q2_codec_init(&codec,protocol,error)||!qa_q2_config_layout_read(&codec,&layout,error)) return false;
     if(names->configured) qa_hud_q2_names_clear(names);
     names->layout=layout;names->protocol=protocol;names->configured=true;
-    names->rerelease=layout.extended;
+    names->rerelease=qa_q2_protocol_rerelease(protocol);
     return qa_hud_q2_weapons_bind(names->strings,&names->layout,names->values,&names->weapons,error);
 }
 bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id value,qa_error *error)
@@ -1068,14 +1068,21 @@ void qa_hud_q2_marker_settings(const qa_cvars *registry, const qa_hud_q2_marker_
     marker->alpha=qa_cvars_read(registry,handles->alpha);
     marker->x=qa_cvars_read(registry,handles->x); marker->y=qa_cvars_read(registry,handles->y);
 }
-bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *marker,uint32_t *count,
+bool qa_hud_q2_marker_hit(qa_hud_q2_marker_state *state,uint64_t frame,uint64_t now_ns)
+{
+    if (state->set && state->frame==frame) return false;
+    state->set=true; state->frame=frame; state->started_ns=now_ns;
+    if (state->count<UINT32_MAX) ++state->count;
+    return true;
+}
+bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *marker,qa_hud_q2_marker_state *state,
     qa_scene_rect viewport,qa_scene_frame *frame,qa_error *error)
 {
-    if (!*count || marker_value(marker->mode,0)<=0 || marker_value(marker->crosshair,0)==0 || (marker->layout_flags&(4|32))) return true;
-    double elapsed=marker->now_ns>=marker->started_ns?(double)(marker->now_ns-marker->started_ns)/1e6:0;
+    if (!state->count || marker_value(marker->mode,0)<=0 || marker_value(marker->crosshair,0)==0 || (marker->layout_flags&(4|32))) return true;
+    double elapsed=marker->now_ns>=state->started_ns?(double)(marker->now_ns-state->started_ns)/1e6:0;
     double limit=trunc(marker_value(marker->duration,0));
     const qa_scene_image *image=marker->image;
-    if (!image || limit<=0 || elapsed>limit) {*count=0;return true;}
+    if (!image || limit<=0 || elapsed>limit) {state->count=0;return true;}
     float fraction=(float)(elapsed/limit);
     float scale=fmaxf(1,1.5f*(1-fraction))*(float)fmax(.1,fmin(9,marker_value(marker->scale,1)));
     float opacity=(float)fmax(0,fmin(1,marker_value(marker->alpha,1)));

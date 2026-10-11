@@ -206,8 +206,7 @@ typedef struct frontend_seat {
     qa_hud_score *q2_scores;
     char *q2_score_names;
     size_t q2_score_count;
-    uint32_t q2_hit_marker_count;
-    uint64_t q2_hit_marker_ns;
+    qa_hud_q2_marker_state q2_hit_marker;
     bool q2_view_ready, q2_help, q2_inventory;
     bool chat_team;
 } frontend_seat;
@@ -409,6 +408,7 @@ bool frontend_commands(qa_frontend *, qa_error *);
 /* Physical input/audio slots follow the retained published seat array order.
  * An absent publication/row has no admitted application seat identity. */
 bool frontend_seat_launch_id_read(const qa_frontend *,uint32_t ordinal,uint32_t *);
+bool frontend_local_seat_present(const qa_launch_choices *, uint32_t logical);
 bool frontend_seat_ordinal_read(const qa_frontend *,uint32_t launch_seat,uint32_t *);
 bool frontend_seat_actor_read(const qa_frontend *,uint32_t ordinal,qa_actor_id *);
 bool frontend_command_seat_read(const qa_frontend *,const qa_command_context *,uint32_t *);
