@@ -6,12 +6,14 @@
 #include "qa/native_observe.h"
 #include "qa/source_save.h"
 #include "control_frame.h"
+#include "qa/pool.h"
 #include <math.h>
 
 typedef struct combat_record {
     application_q2_combat_actor source;
     struct combat_record *next, *previous;
     struct application_native_q2_combat *owner;
+    size_t storage_slot;
     unsigned calls;
     uint64_t serial;
     bool bound, fuel_bound, prepared, retired;
@@ -67,6 +69,9 @@ struct application_native_q2_combat {
     application_q2_combat_profile profile;
     combat_record *records;
     qa_actor_index record_index;
+    qa_unified_frame_lease *record_storage;
+    qa_pool record_pool;
+    size_t record_chunk;
     combat_reaction *reactions;
     qa_native_entry_observer *damage;
     combat_armor_hook armor[2];
@@ -88,9 +93,11 @@ static combat_record *record_for(struct application_native_q2_combat *p, qa_acto
 static combat_record *record_create(struct application_native_q2_combat *p, qa_actor_id actor,
     qa_error *error)
 {
-    combat_record *record = calloc(1, sizeof(*record));
+    if (p->record_pool.head == SIZE_MAX && !qa_pool_extend(&p->record_pool,
+        qa_unified_frame_lease_arena(p->record_storage), p->record_chunk, error)) return NULL;
+    size_t slot; combat_record *record = qa_pool_take(&p->record_pool, &slot);
     if (!record) { application_fail(error, QA_ERROR_MEMORY, "Retaining native combat actor context"); return NULL; }
-    *record = (combat_record){.owner = p, .next = p->records};
+    *record = (combat_record){.owner = p, .storage_slot = slot, .next = p->records};
     record->source.actor = actor;
     if (record->next) record->next->previous = record;
     p->records = record;
@@ -104,7 +111,7 @@ static void record_reclaim(combat_record *record)
     if (record->previous) record->previous->next = record->next;
     else p->records = record->next;
     if (record->next) record->next->previous = record->previous;
-    free(record);
+    qa_pool_release(&p->record_pool, record->storage_slot);
 }
 static void record_leave(combat_record *record)
 {
@@ -637,6 +644,11 @@ bool application_native_q2_combat_prepare(struct application_native_q2 *engine, 
     p->engine = engine; engine->source_combat = p;
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
     if (!qa_actor_index_create(&p->record_index, registry, NULL, error)) return false;
+    p->record_chunk = qa_actors_capacity(registry);
+    p->record_storage = application_control_storage_acquire(engine->provider->application, error);
+    if (!p->record_storage || !qa_pool_prepare(&p->record_pool,
+        qa_unified_frame_lease_arena(p->record_storage), p->record_chunk,
+        sizeof(combat_record), _Alignof(combat_record), error)) return false;
     if (!application_q2_combat_profile_read(engine, &p->profile, error)) return false;
     return !p->profile.kex || application_q2_kex_damage_prepare(&p->profile, &p->kex, error);
 }
@@ -792,8 +804,8 @@ bool application_native_q2_combat_close(struct application_native_q2 *engine, qa
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_q2_kex_damage_close(p->kex, error)) return false;
     p->kex = NULL;
-    while (p->records) { combat_record *record = p->records; p->records = record->next; free(record); }
     qa_actor_index_destroy(&p->record_index);
+    qa_unified_frame_lease_release(p->record_storage);
     application_q2_combat_profile_free(&p->profile); free(p); engine->source_combat = NULL; return true;
 }
 bool application_native_q2_combat_binding(application_provider *provider, qa_actor_id actor,
