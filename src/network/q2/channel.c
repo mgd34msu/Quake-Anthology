@@ -1,6 +1,7 @@
 #include "channel_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 static bool kex(const qa_q2_channel*c) {
     return c->options.protocol.kind==QA_NET_Q2KEX_2023;
 }
@@ -45,6 +46,16 @@ bool qa_q2_channel_create(const qa_q2_channel_options *o,qa_q2_channel**out,qa_e
         qa_error_set(e,QA_ERROR_MEMORY,0,"Q2 channel buffers allocation failed");
         return false;
     }
+    if (o->server && o->compress) {
+        c->compression_storage.size = (size_t)compressBound((uLong)c->capacity) + 5;
+        if (!qa_arena_reserve(&c->compression_backing, c->compression_storage.size, e) ||
+            !qa_q2_compression_create(true, &c->compression, e)) {
+            qa_q2_channel_destroy(c); return false;
+        }
+        c->compression_storage.data = qa_arena_alloc(&c->compression_backing,
+            c->compression_storage.size, 1, e);
+        qa_arena_seal(&c->compression_backing);
+    }
     *out=c;
     return true;
     invalid:free(c);
@@ -58,6 +69,8 @@ void qa_q2_channel_destroy(qa_q2_channel*c) {
         free(c->sending);
         free(c->receiving);
         free(c->packet);
+        qa_q2_compression_destroy(c->compression);
+        qa_arena_destroy(&c->compression_backing);
         free(c);
     }
 }
@@ -130,22 +143,21 @@ bool qa_q2_channel_transmit(qa_q2_channel*c,qa_bytes unrel,uint64_t now,qa_net_w
     if(c->sending_size)return fragment(c,w,now);
     bool reliable=c->incoming_ack>c->last_reliable&&c->incoming_reliable_ack!=c->reliable_bit;
     if(!c->reliable_size&&c->queued_size) {
-        qa_buffer wrapped= {
+        qa_bytes wrapped= {
             0
         };
         bool compressed=false;
         if(c->options.server&&c->options.compress) {
             uint8_t opcode=(c->options.protocol.kind==QA_NET_Q2REPRO_1038||c->options.protocol.kind==QA_NET_Q2PRIVATE_4038)?34:21;
-            if(!qa_q2_zpacket_wrap((qa_bytes) {
+            if(!qa_q2_zpacket_wrap(c->compression,(qa_bytes) {
                 c->queued,c->queued_size
-            },c->capacity,opcode,&wrapped,&compressed,w->error)) {
+            },c->capacity,opcode,c->compression_storage,&wrapped,&compressed,w->error)) {
                 w->failed=true;
                 return false;
             }
         }
         c->reliable_size=compressed?wrapped.size:c->queued_size;
         memcpy(c->reliable,compressed?wrapped.data:c->queued,c->reliable_size);
-        qa_buffer_free(&wrapped);
         c->receipt.inflight=c->queued_serial;
         c->queued_size=0;
         c->reliable_bit=!c->reliable_bit;

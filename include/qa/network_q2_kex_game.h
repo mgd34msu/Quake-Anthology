@@ -56,8 +56,8 @@ bool qa_q2_kex_write_splitclient(qa_net_writer *,uint8_t);
  * authoritative in KEX demos. Callbacks may reject a record through error. */
 typedef bool (*qa_q2_kex_config_fn)(void *,uint16_t,const char *,qa_error *);
 typedef bool (*qa_q2_kex_baseline_fn)(void *,const qa_q2_entity *,qa_error *);
-bool qa_q2_kex_read_configblast(qa_net_reader *,size_t max_inflated,qa_q2_kex_config_fn,void *);
-bool qa_q2_kex_read_baselineblast(qa_q2_codec *,qa_net_reader *,size_t max_inflated,qa_q2_kex_baseline_fn,void *);
+bool qa_q2_kex_read_configblast(qa_q2_compression *,qa_net_reader *,qa_buffer storage,qa_q2_kex_config_fn,void *);
+bool qa_q2_kex_read_baselineblast(qa_q2_compression *,qa_q2_codec *,qa_net_reader *,qa_buffer storage,qa_q2_kex_baseline_fn,void *);
 
 /* Q2repro duplicates are 0..2 (one to three frames), with 5-bit command counts.
  * Body begins after clc_move_batched / clc_move_nodelta. Read consumes padding

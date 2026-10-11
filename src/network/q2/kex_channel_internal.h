@@ -2,6 +2,7 @@
 #define QA_KEX_CHANNEL_INTERNAL_H
 
 #include "qa/network_q2_kex.h"
+#include "qa/pool.h"
 
 struct pending {
     struct pending *next;
@@ -10,7 +11,8 @@ struct pending {
     bool final;
     bool sent;
     size_t size;
-    uint8_t bytes[QA_KEX_DATAGRAM_BYTES];
+    size_t slot, payload;
+    bool is_reliable;
 };
 
 struct qa_kex_channel {
@@ -25,9 +27,18 @@ struct qa_kex_channel {
     unsigned retries;
     uint64_t retry_at, received_at;
     qa_network_reliable_receipt receipt;
-    uint8_t *fragments, *expanded;
+    uint8_t *fragments, *expanded, *compressed;
+    size_t compressed_capacity;
+    uint8_t packet[QA_KEX_DATAGRAM_BYTES];
+    qa_q2_compression *compression;
+    qa_arena pending_storage, payload_storage, buffer_storage;
+    qa_pool pending_pool, payload_pool;
 };
 
+struct pending *qa_kex_pending_take(qa_kex_channel *);
+bool qa_kex_pending_store(qa_kex_channel *, struct pending *, qa_bytes);
+void qa_kex_pending_read(const qa_kex_channel *, const struct pending *, uint8_t *);
+void qa_kex_pending_release(qa_kex_channel *, struct pending *);
 bool qa_kex_channel_valid(const qa_kex_channel *);
 bool qa_kex_channel_tick_expiry(qa_kex_channel *, uint64_t, bool *, qa_error *);
 

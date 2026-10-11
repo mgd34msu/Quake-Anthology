@@ -140,9 +140,18 @@ bool qa_q2_read_usercmd(qa_q2_codec *, qa_net_reader *, const qa_q2_usercmd *, q
 bool qa_q2_write_usercmd(qa_q2_codec *, qa_net_writer *, const qa_q2_usercmd *, const qa_q2_usercmd *);
 /* CRC byte used by classic clc_move, bounded to the first 60 bytes. */
 uint8_t qa_q2_sequence_checksum(qa_bytes, uint32_t sequence);
-/* zpacket payload starts after its opcode. Output is owned on success. */
-bool qa_q2_zpacket_read(qa_net_reader *, qa_buffer *);
-bool qa_q2_zpacket_wrap(qa_bytes, size_t max_output, uint8_t opcode, qa_buffer *, bool *wrapped, qa_error *);
+typedef struct qa_q2_compression qa_q2_compression;
+/* Connection-owned streams retain their load-sized arena until destroy. */
+bool qa_q2_compression_create(bool raw, qa_q2_compression **, qa_error *);
+void qa_q2_compression_destroy(qa_q2_compression *);
+bool qa_q2_compression_read(qa_q2_compression *, qa_bytes, qa_buffer storage,
+    qa_bytes *, qa_error *);
+bool qa_q2_compression_write(qa_q2_compression *, qa_bytes, qa_buffer storage,
+    qa_bytes *, qa_error *);
+/* zpacket payload starts after its opcode. Output borrows caller storage. */
+bool qa_q2_zpacket_read(qa_q2_compression *, qa_net_reader *, qa_buffer storage, qa_bytes *);
+bool qa_q2_zpacket_wrap(qa_q2_compression *, qa_bytes, size_t max_output, uint8_t opcode,
+    qa_buffer storage, qa_bytes *, bool *wrapped, qa_error *);
 
 /* Q2 frame transport. The KEX game channel is nested inside the KEX LAN channel. */
 typedef struct qa_q2_channel qa_q2_channel;

@@ -67,6 +67,9 @@ void qa_q2_messages_destroy(qa_q2_messages *m) {
     free(m->config_slots);
     free(m->inventory);
     free(m->baselines);
+    qa_q2_compression_destroy(m->compression);
+    qa_arena_destroy(&m->inflate_storage);
+    qa_arena_destroy(&m->blast_storage);
     free(m);
 }
 
@@ -102,6 +105,17 @@ bool qa_q2_messages_create(qa_net_protocol_id protocol, const qa_q2_message_opti
         !qa_q2_codec_init(&m->codec, protocol, error)) {
         if (!m->inventory) qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot allocate Q2 inventory buffer");
         qa_q2_messages_destroy(m); return false;
+    }
+    bool kex = qa_q2_protocol_kex(protocol);
+    if (!qa_q2_compression_create(!kex, &m->compression, error) ||
+        !qa_pool_reserve_pages(&m->inflate_slots, &m->inflate_storage, 33, 65536, 1, error) ||
+        (kex && !qa_arena_reserve(&m->blast_storage, m->options.max_inflated_bytes, error))) {
+        qa_q2_messages_destroy(m); return false;
+    }
+    if (kex) {
+        m->blast = (qa_buffer){qa_arena_alloc(&m->blast_storage, m->options.max_inflated_bytes, 1, error),
+            m->options.max_inflated_bytes};
+        qa_arena_seal(&m->blast_storage);
     }
     *out = m;
     return true;
@@ -391,16 +405,16 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
         }
         if ((opcode == 21 && (m->codec.protocol.kind == QA_NET_R1Q2_35 || m->codec.protocol.kind == QA_NET_Q2PRO_36)) ||
             (opcode == 34 && rerelease)) {
-            qa_buffer inflated = {0};
-            if (!qa_q2_zpacket_read(r, &inflated)) return false;
+            qa_bytes inflated = {0};
+            qa_buffer storage = {qa_pool_at(&m->inflate_slots, depth), 65536};
+            if (!qa_q2_zpacket_read(m->compression, r, storage, &inflated)) return false;
             if (inflated.size > m->options.max_inflated_bytes - m->inflated_this_read) {
-                qa_buffer_free(&inflated); return qa_net_reader_fail(r, "Q2 inflated message budget exceeded");
+                return qa_net_reader_fail(r, "Q2 inflated message budget exceeded");
             }
             m->inflated_this_read += inflated.size;
             qa_net_reader nested;
             qa_net_reader_init(&nested, (qa_bytes){inflated.data, inflated.size}, r->error);
             bool ok = parse_server(m, &nested, emit, user, depth + 1) && qa_net_reader_finish(&nested);
-            qa_buffer_free(&inflated);
             if (!ok) return qa_net_reader_fail(r, "Invalid nested Q2 zpacket");
             continue;
         }
@@ -474,14 +488,14 @@ static bool parse_server(qa_q2_messages *m, qa_net_reader *r, qa_q2_server_emit_
                 break;
             } else {
                 blast_context b = {m, r, start, opcode, emit, user};
-                if (!qa_q2_kex_read_configblast(r, m->options.max_inflated_bytes, blast_config, &b)) return false;
+                if (!qa_q2_kex_read_configblast(m->compression, r, m->blast, blast_config, &b)) return false;
                 continue;
             }
         case 23:
             if (!kex) { m->stream = STREAM_GAMESTATE; continue; }
             else {
                 blast_context b = {m, r, start, opcode, emit, user};
-                if (!qa_q2_kex_read_baselineblast(&m->codec, r, m->options.max_inflated_bytes, blast_baseline, &b)) return false;
+                if (!qa_q2_kex_read_baselineblast(m->compression, &m->codec, r, m->blast, blast_baseline, &b)) return false;
                 continue;
             }
         case 24:

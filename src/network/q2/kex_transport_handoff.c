@@ -21,9 +21,12 @@ static bool channel_equal(const qa_kex_channel *a, const qa_kex_channel *b)
         !bytes_equal(a->fragments, b->fragments, a->fragment_capacity) ||
         !bytes_equal(a->expanded, b->expanded, a->expanded_capacity)) return false;
     const struct pending *p = a->head, *q = b->head;
-    for (; p && q; p = p->next, q = q->next)
+    uint8_t pbytes[QA_KEX_DATAGRAM_BYTES], qbytes[QA_KEX_DATAGRAM_BYTES];
+    for (; p && q; p = p->next, q = q->next) {
+        qa_kex_pending_read(a, p, pbytes); qa_kex_pending_read(b, q, qbytes);
         if (p->reliable != q->reliable || p->sent != q->sent || p->size != q->size ||
-            !bytes_equal(p->bytes, q->bytes, p->size)) return false;
+            !bytes_equal(pbytes, qbytes, p->size)) return false;
+    }
     return !p && !q;
 }
 

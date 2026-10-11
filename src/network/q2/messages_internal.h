@@ -2,6 +2,7 @@
 #define QA_Q2_MESSAGES_INTERNAL_H
 #include "qa/network_q2_messages.h"
 #include <zlib.h>
+#include "qa/pool.h"
 typedef struct qa_q2_inflate_segment {
     struct qa_q2_inflate_segment *next;
     qa_buffer compressed;
@@ -23,6 +24,10 @@ struct qa_q2_messages {
     bool download_open, reading;
     qa_q2_inflate_segment *download_first, *download_last;
     size_t inflated_this_read;
+    qa_q2_compression *compression;
+    qa_arena inflate_storage, blast_storage;
+    qa_pool inflate_slots;
+    qa_buffer blast;
 };
 bool qa_q2_messages_config_capacity(qa_q2_messages *, size_t, qa_error *);
 /* Restores codec-private deflate state from the genuinely accepted compressed

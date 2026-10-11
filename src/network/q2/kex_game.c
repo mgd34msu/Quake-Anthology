@@ -1,8 +1,6 @@
 #include "kex_game_internal.h"
 #include "qa/network_q2_kex_game.h"
 #include "qa/network_q2_messages.h"
-#include <stdlib.h>
-#include <zlib.h>
 
 static const qa_q2_player zero_player;
 static const qa_q2_usercmd zero_usercmd;
@@ -333,22 +331,18 @@ bool qa_q2_kex_write_sound(qa_q2_codec *c,qa_net_writer *w,const qa_q2_kex_sound
     return !w->failed;
 }
 
-static bool read_blast(qa_net_reader *r,size_t limit,qa_buffer *out) {
-    uint16_t compressed=qa_net_read_u16(r);(void)qa_net_read_u16(r);
-    if(!limit||limit>UINT_MAX)return qa_net_reader_fail(r,"Invalid KEX blast expansion budget");
-    qa_bytes bytes;if(!qa_net_read_bytes(r,compressed,&bytes))return false;
-    uint8_t *data=malloc(limit);if(!data)return qa_net_reader_fail(r,"KEX blast allocation failed");
-    z_stream z={0};z.next_in=(Bytef *)bytes.data;z.avail_in=compressed;z.next_out=data;z.avail_out=(uInt)limit;
-    int status=inflateInit(&z);
-    if(status!=Z_OK){free(data);return qa_net_reader_fail(r,"KEX blast inflater initialization failed");}
-    status=inflate(&z,Z_FINISH);size_t size=(size_t)z.total_out;
-    bool valid=status==Z_STREAM_END&&z.total_in==compressed;inflateEnd(&z);
-    if(!valid){free(data);return qa_net_reader_fail(r,"Malformed or oversized KEX blast");}
-    out->data=data;out->size=size;return true;
+static bool read_blast(qa_q2_compression *compression, qa_net_reader *r, qa_buffer storage, qa_bytes *out)
+{
+    uint16_t compressed = qa_net_read_u16(r); (void)qa_net_read_u16(r);
+    if (!storage.size || storage.size > UINT_MAX) return qa_net_reader_fail(r, "Invalid KEX blast expansion budget");
+    qa_bytes bytes;
+    if (!qa_net_read_bytes(r, compressed, &bytes)) return false;
+    if (!qa_q2_compression_read(compression, bytes, storage, out, r->error)) { r->failed = true; return false; }
+    return true;
 }
-bool qa_q2_kex_read_configblast(qa_net_reader *r,size_t limit,qa_q2_kex_config_fn fn,void *user) {
+bool qa_q2_kex_read_configblast(qa_q2_compression *compression,qa_net_reader *r,qa_buffer storage,qa_q2_kex_config_fn fn,void *user) {
     if(!fn)return qa_net_reader_fail(r,"Missing KEX configblast callback");
-    qa_buffer data={0};if(!read_blast(r,limit,&data))return false;
+    qa_bytes data={0};if(!read_blast(compression,r,storage,&data))return false;
     qa_net_reader inner;qa_net_reader_init(&inner,(qa_bytes){data.data,data.size},r->error);
     bool ok=true;
     while(inner.bit/8<data.size&&!inner.failed){
@@ -360,20 +354,18 @@ bool qa_q2_kex_read_configblast(qa_net_reader *r,size_t limit,qa_q2_kex_config_f
         if(!fn(user,index,(const char *)data.data+start,r->error)){ok=false;break;}
     }
     if(inner.failed)ok=false;
-    free(data.data);
     if(!ok)return qa_net_reader_fail(r,"KEX configblast record rejected");
     return true;
 }
-bool qa_q2_kex_read_baselineblast(qa_q2_codec *c,qa_net_reader *r,size_t limit,qa_q2_kex_baseline_fn fn,void *user) {
+bool qa_q2_kex_read_baselineblast(qa_q2_compression *compression,qa_q2_codec *c,qa_net_reader *r,qa_buffer storage,qa_q2_kex_baseline_fn fn,void *user) {
     if(!c||!fn)return qa_net_reader_fail(r,"Missing KEX baselineblast codec or callback");
-    qa_buffer data={0};if(!read_blast(r,limit,&data))return false;
+    qa_bytes data={0};if(!read_blast(compression,r,storage,&data))return false;
     qa_net_reader inner;qa_net_reader_init(&inner,(qa_bytes){data.data,data.size},r->error);bool ok=true;
     while(inner.bit/8<data.size&&!inner.failed){
         uint32_t n;uint64_t b;qa_q2_entity zero={0},entity;
         if(!qa_q2_wide_read_header(c,&inner,&n,&b)||!read_entity(c,&inner,&zero,n,b,&entity)||!fn(user,&entity,r->error)){ok=false;break;}
     }
     if(inner.failed)ok=false;
-    free(data.data);
     if(!ok)return qa_net_reader_fail(r,"KEX baselineblast record rejected");
     return true;
 }
