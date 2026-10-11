@@ -118,7 +118,7 @@ static bool music_stop(void *context, qa_error *e)
     frontend_unified_q3_runtime_factory *o = context;
     if (!o->music || !qa_audio_music_idle(o->music)) return fail(e, "Compiled music stop lost its retained player");
     frontend_music_cue_state cue = {&o->music, &o->intro, &o->loop, &o->looping, NULL, NULL};
-    return frontend_music_cue_stop(o->options.frontend, cue, o->options.audio_owner, e);
+    return frontend_music_cue_cleanup(o->options.frontend, cue, o->options.audio_owner, e);
 }
 static bool music_current(void *context,const frontend_music_origin *origin)
 {
@@ -165,7 +165,7 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
     const q3n_compiled_frame *frame = entered(o);
     if (!frame || !q3n_compiled_frame_current(frame) || !f->audio) return fail(e, "Compiled music requires its actual entered audio Source");
     frontend_music_cue_state cue = {&o->music, &o->intro, &o->loop, &o->looping, NULL, NULL};
-    return frontend_music_cue_start(f, o->sounds, QA_GAME_Q3, cue, music_origin(o), true, intro, loop, e) &&
+    return frontend_music_cue_request(f, o->sounds, QA_GAME_Q3, cue, music_origin(o), true, intro, loop, e) &&
         q3n_compiled_frame_current(frame) && frontend_unified_q3_runtime_factory_current(o);
 }
 static bool timescale(void *context,int32_t elapsed,qa_error *e)
@@ -340,6 +340,7 @@ bool frontend_unified_q3_runtime_factory_destroy(frontend_unified_q3_runtime_fac
     if(!frontend_unified_q3_runtime_factory_idle(o))return fail(e,"Compiled factory retirement retains an entered child");
     if(!o->options.retirement_current(o->options.context,&o->options))
         return fail(e,"Compiled factory retirement lost its actual retained parent custody");
+    if(!frontend_music_cue_drain(o->options.frontend,e)) return false;
     o->retiring=true;o->cleanup_entered=true;
     bool okay=frontend_unified_q3_commands_destroy(&o->commands,e) &&
         frontend_music_sources_explicit_retire(o->options.frontend->music_sources,o,e) &&
@@ -389,7 +390,8 @@ bool frontend_unified_q3_runtime_factory_cinematic_read(const frontend_unified_q
 }
 
 bool frontend_unified_q3_runtime_factory_initialize(frontend_unified_q3_runtime_factory *o,qa_error *e)
-{ return o && frontend_unified_q3_runtime_initialize(o->runtime,e); }
+{ return o && frontend_unified_q3_runtime_initialize(o->runtime,e) &&
+    frontend_music_cue_drain(o->options.frontend,e); }
 bool frontend_unified_q3_runtime_factory_rebind_prepare(frontend_unified_q3_runtime_factory *o,const frontend_unified_q3_client_frame *f,qa_error *e)
 { return o && frontend_unified_q3_runtime_rebind_prepare(o->runtime,f,e); }
 bool frontend_unified_q3_runtime_factory_rebind_ready(const frontend_unified_q3_runtime_factory *o,const frontend_unified_q3_client_frame *f)
@@ -437,7 +439,8 @@ bool frontend_unified_q3_runtime_factory_scene_submit(frontend_unified_q3_runtim
 bool frontend_unified_q3_runtime_factory_hud(frontend_unified_q3_runtime_factory *o,bool *rendered,qa_error *e)
 { return o && frontend_unified_q3_runtime_hud(o->runtime,rendered,e); }
 bool frontend_unified_q3_runtime_factory_frame_end(frontend_unified_q3_runtime_factory *o,bool complete,qa_error *e)
-{ return o && frontend_unified_q3_runtime_frame_end(o->runtime,complete,e); }
+{ return o && frontend_unified_q3_runtime_frame_end(o->runtime,complete,e) &&
+    frontend_music_cue_drain(o->options.frontend,e); }
 bool frontend_unified_q3_runtime_factory_listener(const frontend_unified_q3_runtime_factory *o,qa_audio_listener *out,bool *present,qa_error *e)
 {
     if(!out || !present || !frontend_unified_q3_runtime_factory_idle(o) || !frontend_unified_q3_runtime_factory_current(o))

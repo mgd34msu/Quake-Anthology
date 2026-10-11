@@ -291,7 +291,12 @@ static bool namespace_entered(void *context, qa_application *app,
     *out = host; return true;
 }
 static void released(void *context)
-{ remote_module_lease *lease = context; lease->released = true; }
+{
+    remote_module_lease *lease=context;qa_error delivery={0};
+    if(!frontend_music_cue_drain(lease->owner->frontend,&delivery))
+        frontend_print(lease->owner->frontend,delivery.message);
+    lease->released=true;
+}
 static double milliseconds(void *context)
 { remote_module_lease *lease = context; return (double)lease->owner->frontend->wall_time_ns / 1000000.0; }
 static uint32_t common_milliseconds(void *context)
@@ -403,7 +408,7 @@ static bool music_stop(void *context, qa_error *error)
     remote_module_lease *lease = context;
     frontend_music_cue_state cue = {&lease->music, &lease->music_intro, &lease->music_loop,
         &lease->music_looping, &lease->music_attached, NULL};
-    return frontend_music_cue_stop(lease->owner->frontend, cue, lease->service_owner, error);
+    return frontend_music_cue_cleanup(lease->owner->frontend, cue, lease->service_owner, error);
 }
 static frontend_music_origin music_origin(remote_module_lease *lease)
 {
@@ -422,7 +427,7 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
     if (!f->audio) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Remote module music has no audio output owner");
     frontend_music_cue_state cue = {&lease->music, &lease->music_intro, &lease->music_loop,
         &lease->music_looping, &lease->music_attached, NULL};
-    return frontend_music_cue_start(f, sounds(lease->owner), QA_GAME_Q3, cue,
+    return frontend_music_cue_request(f, sounds(lease->owner), QA_GAME_Q3, cue,
         music_origin(lease), true, intro, loop, error) && entered(lease, NULL, NULL, error);
 }
 static qa_collision_geometry *geometry(void *context)
@@ -785,7 +790,8 @@ bool frontend_remote_q3_modules_create(frontend_remote_q3 *row, frontend_remote_
     qa_application_native_q3_client_modules_options options = {.source = resources.domain.source,
         .gamestate = resources.domain.gamestate, .context = owner, .current = current, .prepare = prepare};
     bool ok = qa_application_native_q3_client_modules_create(row->application, &options, &owner->modules, error);
-    owner->constructing = false; return ok;
+    owner->constructing = false;
+    return ok && frontend_music_cue_drain(owner->frontend,error);
 }
 
 bool frontend_remote_q3_modules_create_initial(qa_frontend *f, frontend_remote_q3_initial *initial,
@@ -809,7 +815,8 @@ bool frontend_remote_q3_modules_create_initial(qa_frontend *f, frontend_remote_q
     qa_application_native_q3_client_modules_options options = {.source = view.attempt.source,
         .context = owner, .current = current, .prepare = prepare};
     bool ok = qa_application_native_q3_client_modules_create(f->application, &options, &owner->modules, error);
-    owner->constructing = false; return ok;
+    owner->constructing = false;
+    return ok && frontend_music_cue_drain(owner->frontend,error);
 }
 frontend_remote_q3 *frontend_remote_q3_modules_parent(const frontend_remote_q3_modules *owner)
 { return owner && owner->kind == REMOTE_MODULE_DECODED ? owner->basis.decoded.row : NULL; }
@@ -931,6 +938,7 @@ bool frontend_remote_q3_modules_destroy(frontend_remote_q3_modules **owned, qa_e
     frontend_remote_q3_modules *owner = *owned; qa_frontend *f = owner->frontend;
     if (f->capture || f->resource_inventory || !frontend_remote_q3_modules_idle(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module retirement retains an actual entered child");
+    if(!frontend_music_cue_drain(f,error)) return false;
     for (remote_module_lease *lease = owner->leases; lease; lease = lease->next)
         if (f->music_sources && !frontend_music_sources_explicit_retire(f->music_sources, lease, error)) return false;
     owner->retiring = true;

@@ -133,7 +133,7 @@ static bool music_source_stop(void *context, qa_error *e)
         return fail(e, QA_ERROR_ARGUMENT, "Remote music stop lost its actual retained player");
     frontend_music_cue_state cue = {&o->music, &o->music_intro, &o->music_loop,
         &o->music_looping, &o->music_attached, NULL};
-    return frontend_music_cue_stop(o->frontend, cue, audio_bus(o), e);
+    return frontend_music_cue_cleanup(o->frontend, cue, audio_bus(o), e);
 }
 static frontend_music_origin music_origin(frontend_remote_q3_runtime *o)
 {
@@ -150,7 +150,7 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
         return fail(e, QA_ERROR_UNSUPPORTED, "Remote music requires its entered CLIENT and audio owner");
     frontend_music_cue_state cue = {&o->music, &o->music_intro, &o->music_loop, &o->music_looping,
         &o->music_attached, NULL};
-    return frontend_music_cue_start(f, o->services.resources.sounds, QA_GAME_Q3, cue,
+    return frontend_music_cue_request(f, o->services.resources.sounds, QA_GAME_Q3, cue,
         music_origin(o), true, intro, loop, e) && current(o, o->entered, e);
 }
 static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scene_options *options,qa_error *e)
@@ -235,6 +235,7 @@ static bool end(frontend_remote_q3_runtime *o,bool okay,qa_error *e)
 {
     if(okay)okay=current(o,o->entered,e);
     o->entered=NULL; o->trace_count=0; o->busy=false;
+    if(okay) okay=frontend_music_cue_drain(o->frontend,e);
     if(!okay)o->faulted=true;
     return okay;
 }
@@ -907,6 +908,7 @@ bool frontend_remote_q3_runtime_destroy(frontend_remote_q3_runtime **owner,qa_er
     if(!o)return true;
     if(!frontend_remote_q3_runtime_idle(o) || o->frames || o->frontend->capture)
         return fail(e,QA_ERROR_ARGUMENT,"Remote runtime retirement still retains actual frames or active children");
+    if(!frontend_music_cue_drain(o->frontend,e)) return false;
     o->retiring=true;
     if(o->music && !frontend_music_sources_explicit_retire(o->frontend->music_sources,o,e))return false;
     if(o->music && (o->music_intro || o->music_loop || qa_audio_music_playing(o->music) ||
@@ -1003,6 +1005,7 @@ bool frontend_remote_q3_runtime_frame_end(frontend_remote_q3_runtime *o,bool com
     if(!o || !o->prepared || o->busy || o->entered || !children_idle(o))
         return fail(e,QA_ERROR_ARGUMENT,"Remote draw end requires all actual child callbacks to return");
     o->prepared=false; o->prepared_old_time=0; o->prediction_prepared=o->information_prepared=false;
+    if(!frontend_music_cue_drain(o->frontend,e)) return false;
     if(!completed)o->faulted=true;
     return true;
 }

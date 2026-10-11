@@ -167,6 +167,8 @@ static bool status_visible(void *context)
 static void release_services(void *context)
 {
     frontend_native_q3 *row=context;
+    qa_error delivery={0};
+    if(!frontend_music_cue_drain(row->frontend,&delivery)) frontend_print(row->frontend,delivery.message);
     row->service_released=true; row->view.recipient=NULL;
     /* The real row keeps source registries alive through renderer teardown.
      * Service observers are already detached before this release callback. */
@@ -224,7 +226,7 @@ static bool music_origin_stop(void *context, qa_error *e)
         return frontend_fail(e, QA_ERROR_ARGUMENT, "Music stop lost its actual native player");
     frontend_music_cue_state cue = {&row->view.music, &row->music_intro, &row->music_loop,
         &row->music_looping, &row->view.music_attached, NULL};
-    return frontend_music_cue_stop(row->frontend, cue, row->view.identity, e);
+    return frontend_music_cue_cleanup(row->frontend, cue, row->view.identity, e);
 }
 static frontend_music_origin music_origin(frontend_native_q3 *row)
 {
@@ -240,7 +242,7 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
     if (!frontend_native_q3_current(row) || !f->audio) return frontend_fail(e, QA_ERROR_UNSUPPORTED, "Native music requires its actual audio owner");
     frontend_music_cue_state cue = {&row->view.music, &row->music_intro, &row->music_loop,
         &row->music_looping, &row->view.music_attached, NULL};
-    return frontend_music_cue_start(f, row->view.sounds, QA_GAME_Q3, cue, music_origin(row), true, intro, loop, e);
+    return frontend_music_cue_request(f, row->view.sounds, QA_GAME_Q3, cue, music_origin(row), true, intro, loop, e);
 }
 static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scene_options *options,qa_error *e)
 {
@@ -918,6 +920,7 @@ static bool media_close(frontend_native_q3 *row,qa_error *e)
 }
 static bool row_destroy(frontend_native_q3 *row,qa_error *e)
 {
+    if(!frontend_music_cue_drain(row->frontend,e)) return false;
     if(row->video || !row_idle(row) || (row->view.core && !q3n_native_retire_ready(row->view.core,e)) ||
         (row->view.presentation && !frontend_selected_effects_idle(row->frontend)) ||
         (row->owns_media && row->frontend->audio && !qa_audio_engine_round_ready(row->frontend->audio,e)))
@@ -950,6 +953,7 @@ bool frontend_native_q3_video_row_close(frontend_native_q3 *row,qa_error *e)
         (row->view.presentation && !frontend_selected_effects_idle(row->frontend)) ||
         (row->owns_media && row->frontend->audio && !qa_audio_engine_round_ready(row->frontend->audio,e)))
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native video close retains an entered actual client or media child");
+    if(!frontend_music_cue_drain(row->frontend,e)) return false;
     row->constructed=false;
     if(row->frontend->music_sources && !frontend_music_sources_explicit_retire(row->frontend->music_sources,row,e))return false;
     if(row->view.presentation && !frontend_selected_effects_retire_parent(row->frontend,row->view.presentation,e))return false;
@@ -963,7 +967,7 @@ bool frontend_native_q3_video_row_close(frontend_native_q3 *row,qa_error *e)
         !media_close(row,e))return false;
     frontend_music_cue_state cue = {&row->view.music, &row->music_intro, &row->music_loop,
         &row->music_looping, &row->view.music_attached, NULL};
-    if (!frontend_music_cue_stop(row->frontend, cue, row->view.identity, e)) return false;
+    if (!frontend_music_cue_cleanup(row->frontend, cue, row->view.identity, e)) return false;
     row->view.has_listener=false;
     return true;
 }
@@ -984,7 +988,7 @@ bool frontend_native_q3_video_row_reopen(frontend_native_q3 *row,qa_error *e)
         !q3n_native_initialize_video(row->view.core,publication.reached_command_sequence,e) ||
         !frontend_source_renderer_end_registration(row->frontend,e))return false;
     row->constructed=true;
-    return frontend_native_q3_current(row);
+    return frontend_music_cue_drain(row->frontend,e) && frontend_native_q3_current(row);
 }
 bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_presentation *source,uint32_t seat,
     const frontend_native_q3_factory *factory,frontend_native_q3 **out,qa_error *e)
@@ -1063,7 +1067,7 @@ bool frontend_native_q3_create(qa_frontend *f,const qa_application_native_q3_pre
         frontend_source_renderer_end_registration(f,e);
     if(ok) {
         row->constructed=true; *out=row;
-        return frontend_view_bindings_apply_restored(f,e);
+        return frontend_music_cue_drain(f,e) && frontend_view_bindings_apply_restored(f,e);
     }
     if(character.release)character.release(character.lifetime);
     if(!e || e->code==QA_OK)frontend_fail(e,QA_ERROR_ARGUMENT,"Native constructor lacks its actual retained CHARACTER declaration");
@@ -1285,7 +1289,8 @@ bool frontend_native_q3_frame(qa_frontend *f,uint32_t seat,qa_scene_rect viewpor
     selected->view.has_listener=false;
     bool ok=q3n_native_draw(selected->view.core,publication.latest_command_sequence,rendered,e);
     selected->frame_active=false;
-    return ok && (!*rendered || frontend_native_components_hud(selected,e));
+    return ok && frontend_music_cue_drain(f,e) &&
+        (!*rendered || frontend_native_components_hud(selected,e));
 }
 bool frontend_native_q3_listener(const qa_frontend *f,uint32_t seat,qa_audio_listener *out)
 {

@@ -962,6 +962,7 @@ static bool frontend_step(qa_frontend *frontend,
                     if (!ok) *playing=false;
                 }
             }
+            if(ok) ok=frontend_music_cue_drain(frontend,error);
             if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,error);
             frontend->stepping=false;
             if (ok) ok=frontend_cinematic_drain(frontend,error);
@@ -1009,6 +1010,8 @@ static bool frontend_step(qa_frontend *frontend,
                 if (ok) ok = frontend_profiler_end(profiler,
                     (replay || frontend_particle_advance(frontend, error)) && frontend_events(frontend, error), error);
             }
+            if(ok && !qa_application_should_stop(frontend->application))
+                ok=frontend_music_cue_drain(frontend,error);
             if (ok && !replay && !qa_application_should_stop(frontend->application) && frontend->audio) {
                 ok = qa_profiler_push(profiler, "audio", error);
                 if (ok) {
