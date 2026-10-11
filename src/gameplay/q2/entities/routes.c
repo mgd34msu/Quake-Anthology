@@ -47,7 +47,7 @@ static bool fields(qa_q2_game *g, qa_actor_id id, qa_string_id *name, qa_string_
 }
 static bool path_targets(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
     q2_entity_state *s = a->entity;
-    qa_string_id target = q2_field_id(g, s, "pathtarget");
+    qa_string_id target = q2_field_id(s, g->field_keys[QA_TARGET_KEY_PATHTARGET]);
     if (!target)
         return true;
     qa_string_id saved = s->target;

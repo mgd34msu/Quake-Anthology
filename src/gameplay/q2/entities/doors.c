@@ -8,16 +8,14 @@ bool q2_mover_portals(qa_q2_game *g, q2_actor *a, bool open, qa_error *e) {
         qa_authored_target fields;
         if (!qa_targets_read(g->entity_runtime->services.targets, id, &fields))
             continue;
-        const char *name =
-            qa_strings_cstr(qa_session_strings(g->services.session), fields.classname);
-        if (!name || strcmp(name, "func_areaportal"))
+        if (fields.classname != g->runtime_names[Q2_NAME_FUNC_AREAPORTAL])
             continue;
         qa_q2_entity_services *s = &g->entity_runtime->services;
         if (!s->area_portal) {
             qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 door requires area portal service");
             return false;
         }
-        if (!s->area_portal(s->context, q2_actor_field_flags(g, id, "style"), open, e))
+        if (!s->area_portal(s->context, q2_actor_field_flags(g, id, g->field_keys[QA_TARGET_KEY_STYLE]), open, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -28,7 +26,7 @@ static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
     q2_entity_state *s = a->entity;
     bool water = s->kind == Q2E_WATER, button = s->kind == Q2E_BUTTON;
-    int sounds = (int)q2_field_float(g, s, "sounds", 0);
+    int sounds = (int)q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SOUNDS], 0);
     bool enabled = water ? sounds == 1 || sounds == 2 : sounds != 1;
     const char *edge = water    ? (start ? QA_Q2_SOUND_WORLD_MOV_WATR : QA_Q2_SOUND_WORLD_STP_WATR)
                        : button ? (start ? QA_Q2_SOUND_SWITCHES_BUTN2 : "")
@@ -37,18 +35,18 @@ static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
     if (!enabled)
         edge = middle = "";
     if (g->options.edition == QA_Q2_RERELEASE) {
-        const char *key = start ? "noise_start" : "noise_end";
-        if (q2_field_id(g, s, key))
+        qa_string_id key = g->field_keys[start ? QA_TARGET_KEY_NOISE_START : QA_TARGET_KEY_NOISE_END];
+        if (q2_field_id(s, key))
             edge = q2_field_text(g, s, key);
-        if (q2_field_id(g, s, "noise_middle"))
-            middle = q2_field_text(g, s, "noise_middle");
+        if (q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE_MIDDLE]))
+            middle = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE_MIDDLE]);
         if (!strcmp(edge, "0") || !strcmp(edge, " "))
             edge = "";
         if (!strcmp(middle, "0") || !strcmp(middle, " "))
             middle = "";
     }
     float attenuation = g->options.edition == QA_Q2_RERELEASE && !water
-                            ? q2_field_float(g, s, "attenuation", 3)
+                            ? q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ATTENUATION], 3)
                             : 3;
     if (attenuation == -1)
         attenuation = 0;
@@ -350,7 +348,7 @@ bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
         s->damage = 2;
     qa_vec3 size = qa_vec_sub(b.bounds.maxs, b.bounds.mins),
             absolute = qa_v3(fabsf(s->direction.x), fabsf(s->direction.y), fabsf(s->direction.z));
-    float authored = q2_field_float(g, s, m->angular ? "distance" : "lip", 0);
+    float authored = q2_field_float(g, s, g->field_keys[m->angular ? QA_TARGET_KEY_DISTANCE : QA_TARGET_KEY_LIP], 0);
     m->distance = m->angular ? (authored != 0 ? authored : 90)
                              : qa_vec_dot(absolute, size) - (authored != 0 ? authored
                                                              : button ? 4

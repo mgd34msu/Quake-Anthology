@@ -5,23 +5,19 @@
 
 static qa_q2_fog fog_fields(qa_q2_game *g, q2_entity_state *s, bool off) {
     qa_q2_fog f = {0};
-    char key[48];
-    const char *suffix = off ? "_off" : "";
-#define SCALAR(field, name)                                                                        \
-    snprintf(key, sizeof(key), name "%s", suffix);                                                 \
-    f.field = q2_field_float(g, s, key, 0)
-#define VECTOR(field, name)                                                                        \
-    snprintf(key, sizeof(key), name "%s", suffix);                                                 \
-    f.field = q2_field_vec(g, s, key, qa_v3(0, 0, 0))
-    SCALAR(density, "fog_density");
-    SCALAR(sky_factor, "fog_sky_factor");
-    VECTOR(color, "fog_color");
-    VECTOR(start_color, "heightfog_start_color");
-    VECTOR(end_color, "heightfog_end_color");
-    SCALAR(start_distance, "heightfog_start_dist");
-    SCALAR(end_distance, "heightfog_end_dist");
-    SCALAR(height_density, "heightfog_density");
-    SCALAR(falloff, "heightfog_falloff");
+#define SCALAR(field, name) f.field = q2_field_float(g, s, \
+    g->field_keys[off ? QA_TARGET_KEY_##name##_OFF : QA_TARGET_KEY_##name], 0)
+#define VECTOR(field, name) f.field = q2_field_vec(g, s, \
+    g->field_keys[off ? QA_TARGET_KEY_##name##_OFF : QA_TARGET_KEY_##name], qa_v3(0, 0, 0))
+    SCALAR(density, FOG_DENSITY);
+    SCALAR(sky_factor, FOG_SKY_FACTOR);
+    VECTOR(color, FOG_COLOR);
+    VECTOR(start_color, HEIGHTFOG_START_COLOR);
+    VECTOR(end_color, HEIGHTFOG_END_COLOR);
+    SCALAR(start_distance, HEIGHTFOG_START_DIST);
+    SCALAR(end_distance, HEIGHTFOG_END_DIST);
+    SCALAR(height_density, HEIGHTFOG_DENSITY);
+    SCALAR(falloff, HEIGHTFOG_FALLOFF);
 #undef SCALAR
 #undef VECTOR
     return f;
@@ -370,7 +366,7 @@ bool q2_rerelease_poi(qa_q2_game *g, q2_actor *source, qa_actor_id activator, qa
                 r->poi_dynamic = m->id;
                 break;
             }
-    r->poi_image = q2_field_id(g, v, "image");
+    r->poi_image = q2_field_id(v, g->field_keys[QA_TARGET_KEY_IMAGE]);
     return r->poi_image || qa_builtin_resource(&g->services, "friend", &r->poi_image, e);
 }
 static bool world_text(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -378,9 +374,9 @@ static bool world_text(qa_q2_game *g, q2_actor *a, qa_error *e) {
         {1, 1, 1}, {1, 0, 0}, {0, 0, 1}, {0, 1, 0},
         {1, 1, 0}, {0, 0, 0}, {0, 1, 1}, {116.0f / 255, 61.0f / 255, 50.0f / 255}};
     q2_entity_state *s = a->entity;
-    float radius = q2_field_float(g, s, "radius", 0);
+    float radius = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_RADIUS], 0);
     if (radius >= 0) {
-        float color = q2_field_float(g, s, "sounds", 0);
+        float color = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SOUNDS], 0);
         unsigned index = color >= 0 && color < 8 && truncf(color) == color ? (unsigned)color : 0;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
@@ -431,16 +427,16 @@ static bool world_text(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool sky(qa_q2_game *g, q2_actor *a, bool initial, qa_error *e) {
     q2_entities *r = g->entity_runtime;
     q2_entity_state *s = a->entity;
-    if (initial || q2_field_id(g, s, "sky"))
-        r->sky = q2_field_id(g, s, "sky");
+    if (initial || q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKY]))
+        r->sky = q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKY]);
     if (initial && !r->sky && !qa_builtin_resource(&g->services, "unit1_", &r->sky, e))
         return false;
-    if (initial || q2_field_id(g, s, "skyrotate"))
-        r->sky_rotation = q2_field_float(g, s, "skyrotate", 0);
-    if (initial || q2_field_id(g, s, "skyautorotate"))
-        r->sky_auto = q2_field_float(g, s, "skyautorotate", 1) != 0;
-    if (initial || q2_field_id(g, s, "skyaxis"))
-        r->sky_axis = q2_field_vec(g, s, "skyaxis", qa_v3(0, 0, 1));
+    if (initial || q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKYROTATE]))
+        r->sky_rotation = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SKYROTATE], 0);
+    if (initial || q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKYAUTOROTATE]))
+        r->sky_auto = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SKYAUTOROTATE], 1) != 0;
+    if (initial || q2_field_id(s, g->field_keys[QA_TARGET_KEY_SKYAXIS]))
+        r->sky_axis = q2_field_vec(g, s, g->field_keys[QA_TARGET_KEY_SKYAXIS], qa_v3(0, 0, 1));
     return q2_map_event(g,
                         &(qa_q2_map_event){.kind = QA_Q2_MAP_SKY,
                                            .actor = a->id,
@@ -457,9 +453,9 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
     *handled = true;
     if (!strcmp(name, "worldspawn")) {
         r->world_fog = fog_fields(g, s, false);
-        r->goals = q2_field_id(g, s, "goals");
+        r->goals = q2_field_id(s, g->field_keys[QA_TARGET_KEY_GOALS]);
         r->has_goals = r->goals != 0;
-        if (q2_field_float(g, s, "hub_map", 0) != 0) {
+        if (q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_HUB_MAP], 0) != 0) {
             r->primary = r->secondary = 0;
             r->primary_changes = r->secondary_changes = 0;
             for (q2_actor *p = g->first_actor; p; p = p->live_next)
@@ -512,9 +508,9 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
     case Q2E_FLARE: {
         s->visual.render_flags = 0x200000 | ((s->spawnflags & 7) << 10) |
                                  ((s->spawnflags & 8) ? 1u : 0u) |
-                                 (q2_field_id(g, s, "image") ? 256u : 0u);
-        s->visual.scale = q2_field_float(g, s, "radius", 0);
-        s->visual.models[0] = q2_field_id(g, s, "image");
+                                 (q2_field_id(s, g->field_keys[QA_TARGET_KEY_IMAGE]) ? 256u : 0u);
+        s->visual.scale = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_RADIUS], 0);
+        s->visual.models[0] = q2_field_id(s, g->field_keys[QA_TARGET_KEY_IMAGE]);
         s->visual.visible = true;
         s->usable = s->targetname != 0;
         qa_body_state body;
@@ -542,7 +538,7 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
             return true;
         s->usable = false;
         if (s->kind == Q2E_FLASHLIGHT) {
-            s->direction.z = q2_field_float(g, s, "height", 0);
+            s->direction.z = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_HEIGHT], 0);
             return true;
         }
         if (s->kind == Q2E_FOG) {
@@ -614,7 +610,7 @@ bool q2_rerelease_entity_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_a
     case Q2E_POI:
         return q2_rerelease_poi(g, a, activator, e);
     case Q2E_MUSIC: {
-        qa_string_id track = q2_field_id(g, s, "sounds");
+        qa_string_id track = q2_field_id(s, g->field_keys[QA_TARGET_KEY_SOUNDS]);
         if (!track && !qa_builtin_resource(&g->services, "0", &track, e))
             return false;
         return q2_map_event(
@@ -643,7 +639,7 @@ bool q2_rerelease_entity_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_a
         return q2_map_event(g,
                             &(qa_q2_map_event){.kind = QA_Q2_MAP_ACHIEVEMENT,
                                                .actor = a->id,
-                                               .text = q2_field_id(g, s, "achievement")},
+                                               .text = q2_field_id(s, g->field_keys[QA_TARGET_KEY_ACHIEVEMENT])},
                             e);
     case Q2E_STORY:
         r->story = s->message;

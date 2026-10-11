@@ -394,6 +394,28 @@ events findings 1-4 are complete by source migration and normal build/core
 checks. Names findings 4-17 and the other audit kinds remain open; this does
 not claim complete foundation adoption or live gameplay qualification.
 
+Names finding 4: `QA_TARGET_KEY_LIST` in `include/qa/target_keys.h` is the one
+known-field spelling table. `qa_targets_bind_field_keys` binds it to the session
+string table at router/source construction. Q1, Q2 and Q3 keep only derived IDs,
+not another string store. The shared target field/number/vector API and all four
+source callbacks accept `qa_string_id`; their text-key dispatch bodies are
+replaced by numeric comparisons, preserving native branch order and values.
+Every current accessor caller uses the bound IDs. Custom authored keys retain
+their existing admitted IDs through the same accessors.
+
+Q2 field storage compares its existing key IDs directly; field and actor helpers
+no longer accept text keys. The public module/original-save boundaries resolve
+external names once per request. Q2 fog selects its normal/off handles without
+snprintf. Q1 mover-state text uses load-bound value IDs, removing field-read
+interning. Remaining rotating-brush/area-portal classname comparisons encountered
+in these callers use the existing runtime name bindings. Replaced name helper
+bodies and old string-key signatures are deleted in this slice.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-field-key-ids-20261011-{build,core}.log`. This migrates the listed
+sites in names finding 4. Names findings 5-17 and other kinds remain open;
+no live gameplay or performance result is claimed.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

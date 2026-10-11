@@ -1413,7 +1413,8 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   body.bounds.maxs = qa_vec_scale(bounds.maxs, scale);
   if (monster->definition->species == Q2M_TURRET) {
     monster->turret_orientation = (int)q2_actor_field_float(
-        game, actor->id, "angle", body.angles.y);
+        game, actor->id,
+        game->field_keys[QA_TARGET_KEY_ANGLE], body.angles.y);
     if (!(monster->spawnflags & 0x78u))
       monster->spawnflags |= 8u;
     if (monster->spawnflags & 64u) {

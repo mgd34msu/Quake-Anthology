@@ -357,7 +357,9 @@ static bool source_strings(qa_q2_game *g, q2_original_record_io *io, q2_actor *a
     (void)qa_q2_presentation_read(g, actor->id, &visual);
     for (size_t i = 0; i < sizeof(q2_original_edict_strings) / sizeof(q2_original_edict_strings[0]); ++i) {
         const q2_original_string_field *field = q2_original_edict_strings + i;
-        qa_string_id value = q2_actor_field(g, actor->id, field->name);
+        qa_string_id key = qa_strings_find(qa_session_strings(g->services.session),
+            (qa_bytes){(const uint8_t *)field->name, strlen(field->name)});
+        qa_string_id value = q2_actor_field(g, actor->id, key);
         if (i == 1 && !value && actor->entity && actor->entity->has_inline) value = visual.models[0];
         if (i == 0) value = actor->projectile.classname ? actor->projectile.classname :
             actor->entity ? actor->entity->classname : actor->item && actor->item->definition ?

@@ -129,7 +129,7 @@ bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         *handled = false;
         return true;
     }
-    if (s->kind == Q2E_GRAVITY && !q2_field_id(g, s, "gravity"))
+    if (s->kind == Q2E_GRAVITY && !q2_field_id(s, g->field_keys[QA_TARGET_KEY_GRAVITY]))
         return qa_session_release(g->services.session, a->id, e);
     if (s->kind == Q2E_TELEPORT && g->entity_runtime->services.ctf_map_rules) {
         if (!s->target)
@@ -187,7 +187,7 @@ bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (s->kind == Q2E_MONSTERJUMP) {
             if (s->speed == 0)
                 s->speed = 200;
-            s->direction.z = q2_field_float(g, s, "height", 200);
+            s->direction.z = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_HEIGHT], 200);
         }
         if (rr) {
             s->usable = (s->spawnflags & 3) != 0;
@@ -292,7 +292,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
         return services->disguise(services->context, id, (s->spawnflags & 4) == 0, e);
     }
     if (s->kind == Q2E_GRAVITY) {
-        float gravity = q2_field_float(g, s, "gravity", 0);
+        float gravity = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_GRAVITY], 0);
         if (!rr)
             gravity = truncf(gravity);
         if (native && native->physics_bound)

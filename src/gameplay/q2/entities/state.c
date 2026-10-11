@@ -13,7 +13,7 @@ q2_actor *q2_ent(qa_q2_game *g, qa_actor_id id) {
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     return a && a->entity ? a : NULL;
 }
-qa_string_id q2_actor_field(qa_q2_game *g, qa_actor_id id, const char *key) {
+qa_string_id q2_actor_field(qa_q2_game *g, qa_actor_id id, qa_string_id key) {
     qa_target_field value;
     qa_targets *targets = g->entity_runtime->services.targets;
     return targets && qa_targets_field(targets, id, key, &value) &&
@@ -21,14 +21,14 @@ qa_string_id q2_actor_field(qa_q2_game *g, qa_actor_id id, const char *key) {
                ? value.value.text
                : 0;
 }
-float q2_actor_field_float(qa_q2_game *g, qa_actor_id id, const char *key, float fallback) {
+float q2_actor_field_float(qa_q2_game *g, qa_actor_id id, qa_string_id key, float fallback) {
     double value;
     return qa_targets_number(g->entity_runtime->services.targets, id, key, &value) &&
                    value >= -FLT_MAX && value <= FLT_MAX
                ? (float)value
                : fallback;
 }
-uint32_t q2_actor_field_flags(qa_q2_game *g, qa_actor_id id, const char *key) {
+uint32_t q2_actor_field_flags(qa_q2_game *g, qa_actor_id id, qa_string_id key) {
     double value;
     if (!qa_targets_number(g->entity_runtime->services.targets, id, key, &value) ||
         value < INT32_MIN || value > UINT32_MAX)
@@ -98,30 +98,30 @@ static bool use(void *context, qa_actor_id target, qa_actor_id other, qa_actor_i
                 qa_error *e) {
     return qa_q2_entity_use(context, target, other, activator, e);
 }
-static bool field(void *context, qa_actor_id id, const char *key, qa_target_field *value) {
+static bool field(void *context, qa_actor_id id, qa_string_id key, qa_target_field *value) {
     qa_q2_game *g = context;
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a || (!a->entity && !a->item))
         return false;
     q2_entity_state *s = a->entity;
-    if (!strcmp(key, "origin") || !strcmp(key, "angles") || !strcmp(key, "velocity") ||
-        !strcmp(key, "mins") || !strcmp(key, "maxs")) {
+    if ((key == g->field_keys[QA_TARGET_KEY_ORIGIN]) || (key == g->field_keys[QA_TARGET_KEY_ANGLES]) || (key == g->field_keys[QA_TARGET_KEY_VELOCITY]) ||
+        (key == g->field_keys[QA_TARGET_KEY_MINS]) || (key == g->field_keys[QA_TARGET_KEY_MAXS])) {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, NULL))
             return false;
-        qa_vec3 vector = !strcmp(key, "origin")     ? body.origin
-                         : !strcmp(key, "angles")   ? body.angles
-                         : !strcmp(key, "velocity") ? body.velocity
-                         : !strcmp(key, "mins")     ? body.bounds.mins
+        qa_vec3 vector = (key == g->field_keys[QA_TARGET_KEY_ORIGIN])     ? body.origin
+                         : (key == g->field_keys[QA_TARGET_KEY_ANGLES])   ? body.angles
+                         : (key == g->field_keys[QA_TARGET_KEY_VELOCITY]) ? body.velocity
+                         : (key == g->field_keys[QA_TARGET_KEY_MINS])     ? body.bounds.mins
                                                     : body.bounds.maxs;
         *value = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = vector};
         return true;
     }
-    if (s && !strcmp(key, "movedir")) {
+    if (s && (key == g->field_keys[QA_TARGET_KEY_MOVEDIR])) {
         *value = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = s->direction};
         return true;
     }
-    if (!strcmp(key, "health")) {
+    if ((key == g->field_keys[QA_TARGET_KEY_HEALTH])) {
         qa_combat_state combat;
         bool has_combat = qa_combat_read(g->services.combat, id, &combat, NULL);
         if (q2_actor_get(g, id, false, NULL) != a || a->entity != s)
@@ -135,12 +135,12 @@ static bool field(void *context, qa_actor_id id, const char *key, qa_target_fiel
     if (a->item) {
         const qa_q2_item_spawn *spawn = &a->item->spawn;
         const struct {
-            const char *key;
+            qa_target_key key;
             double value;
         } item_numbers[] = {
-            {"spawnflags", spawn->spawnflags}, {"delay", spawn->delay}, {"count", spawn->count}};
+            {QA_TARGET_KEY_SPAWNFLAGS, spawn->spawnflags}, {QA_TARGET_KEY_DELAY, spawn->delay}, {QA_TARGET_KEY_COUNT, spawn->count}};
         for (size_t i = 0; i < sizeof(item_numbers) / sizeof(*item_numbers); ++i)
-            if (!strcmp(key, item_numbers[i].key)) {
+            if ((key == g->field_keys[item_numbers[i].key])) {
                 *value = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                            .value.number = item_numbers[i].value};
                 return true;
@@ -150,45 +150,45 @@ static bool field(void *context, qa_actor_id id, const char *key, qa_target_fiel
     if (!qa_q2_entity_authored(g, id, &authored))
         return false;
     const struct {
-        const char *key;
+        qa_target_key key;
         qa_string_id value;
     } texts[] = {
-        {"classname", authored.classname}, {"targetname", authored.targetname},
-        {"target", authored.target},       {"killtarget", authored.killtarget},
-        {"message", authored.message},     {"team", a->item ? a->item->spawn.team : s->team}};
+        {QA_TARGET_KEY_CLASSNAME, authored.classname}, {QA_TARGET_KEY_TARGETNAME, authored.targetname},
+        {QA_TARGET_KEY_TARGET, authored.target},       {QA_TARGET_KEY_KILLTARGET, authored.killtarget},
+        {QA_TARGET_KEY_MESSAGE, authored.message},     {QA_TARGET_KEY_TEAM, a->item ? a->item->spawn.team : s->team}};
     for (size_t i = 0; i < sizeof(texts) / sizeof(*texts); ++i)
-        if (!strcmp(key, texts[i].key)) {
+        if ((key == g->field_keys[texts[i].key])) {
             *value = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = texts[i].value};
             return true;
         }
     if (!s)
         return false;
     const struct {
-        const char *key;
+        qa_target_key key;
         double value;
-    } numbers[] = {{"spawnflags", s->spawnflags},
-                   {"speed", s->speed},
-                   {"accel", s->accel},
-                   {"decel", s->decel},
-                   {"wait", s->wait},
-                   {"delay", s->delay},
-                   {"dmg", s->damage},
-                   {"count", s->count},
-                   {"style", s->style},
-                   {"volume", s->volume},
-                   {"attenuation", s->attenuation}};
+    } numbers[] = {{QA_TARGET_KEY_SPAWNFLAGS, s->spawnflags},
+                   {QA_TARGET_KEY_SPEED, s->speed},
+                   {QA_TARGET_KEY_ACCEL, s->accel},
+                   {QA_TARGET_KEY_DECEL, s->decel},
+                   {QA_TARGET_KEY_WAIT, s->wait},
+                   {QA_TARGET_KEY_DELAY, s->delay},
+                   {QA_TARGET_KEY_DMG, s->damage},
+                   {QA_TARGET_KEY_COUNT, s->count},
+                   {QA_TARGET_KEY_STYLE, s->style},
+                   {QA_TARGET_KEY_VOLUME, s->volume},
+                   {QA_TARGET_KEY_ATTENUATION, s->attenuation}};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); i++)
-        if (!strcmp(key, numbers[i].key)) {
+        if ((key == g->field_keys[numbers[i].key])) {
             *value =
                 (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = numbers[i].value};
             return true;
         }
-    if (!strcmp(key, "map") || !strcmp(key, "noise")) {
+    if ((key == g->field_keys[QA_TARGET_KEY_MAP]) || (key == g->field_keys[QA_TARGET_KEY_NOISE])) {
         *value = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-                                   .value.text = !strcmp(key, "map") ? s->map : s->noise};
+                                   .value.text = (key == g->field_keys[QA_TARGET_KEY_MAP]) ? s->map : s->noise};
         return true;
     }
-    qa_string_id raw = q2_field_id(g, s, key);
+    qa_string_id raw = q2_field_id(s, key);
     if (!raw)
         return false;
     *value = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = raw};
@@ -272,25 +272,24 @@ bool qa_q2_entities_configure(qa_q2_game *g, const qa_q2_entity_services *s, qa_
     g->entity_runtime->services = *s;
     return true;
 }
-qa_string_id q2_field_id(qa_q2_game *g, const q2_entity_state *s, const char *key) {
-    qa_strings *strings = qa_session_strings(g->services.session);
+qa_string_id q2_field_id(const q2_entity_state *s, qa_string_id key) {
     for (size_t i = 0; i < s->field_count; i++)
-        if (!strcmp(qa_strings_cstr(strings, s->fields[i].key), key))
+        if (s->fields[i].key == key)
             return s->fields[i].value;
     return 0;
 }
-const char *q2_field_text(qa_q2_game *g, const q2_entity_state *s, const char *key) {
+const char *q2_field_text(qa_q2_game *g, const q2_entity_state *s, qa_string_id key) {
     const char *text =
-        qa_strings_cstr(qa_session_strings(g->services.session), q2_field_id(g, s, key));
+        qa_strings_cstr(qa_session_strings(g->services.session), q2_field_id(s, key));
     return text ? text : "";
 }
-float q2_field_float(qa_q2_game *g, const q2_entity_state *s, const char *key, float fallback) {
+float q2_field_float(qa_q2_game *g, const q2_entity_state *s, qa_string_id key, float fallback) {
     double value;
-    return number(g, q2_field_id(g, s, key), &value) && value >= -FLT_MAX && value <= FLT_MAX
+    return number(g, q2_field_id(s, key), &value) && value >= -FLT_MAX && value <= FLT_MAX
                ? (float)value
                : fallback;
 }
-qa_vec3 q2_field_vec(qa_q2_game *g, const q2_entity_state *s, const char *key, qa_vec3 fallback) {
+qa_vec3 q2_field_vec(qa_q2_game *g, const q2_entity_state *s, qa_string_id key, qa_vec3 fallback) {
     const char *text = q2_field_text(g, s, key);
     float values[3];
     for (size_t i = 0; i < 3; i++) {
@@ -679,7 +678,7 @@ bool q2_entity_pick(qa_q2_game *g, qa_string_id target, qa_actor_id *out) {
     return true;
 }
 uint32_t q2_map_flags(qa_q2_game *g, qa_actor_id id) {
-    return q2_actor_field_flags(g, id, "spawnflags");
+    return q2_actor_field_flags(g, id, g->field_keys[QA_TARGET_KEY_SPAWNFLAGS]);
 }
 bool qa_q2_entity_target(qa_q2_game *g, qa_actor_id id, qa_string_id *name, qa_string_id *target,
                          qa_string_id *kill, qa_error *e) {

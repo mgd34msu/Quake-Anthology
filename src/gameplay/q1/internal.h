@@ -4,6 +4,7 @@
 #include "boss_types.h"
 #include "frame_actions.h"
 #include "qa/game_q1.h"
+#include "qa/target_keys.h"
 #include "qa/game_q1_source_powers.h"
 #include "qa/game_q1_rogue.h"
 #include "qa/game_q1_source_flags.h"
@@ -152,7 +153,15 @@
     X(WORLDSPAWN, "worldspawn") \
     X(INFO_PLAYER_COOP, "info_player_coop") \
     X(MGE2M2_ELECTRODE_TARGET, "mge2m2_electrode_target") \
-    X(TRIGGER_MUSIC, "trigger_music")
+    X(TRIGGER_MUSIC, "trigger_music") \
+    X(BOTTOM, "bottom") \
+    X(UP, "up") \
+    X(TOP, "top") \
+    X(DOWN, "down") \
+    X(FUNC_MOVEWALL, "func_movewall") \
+    X(ROTATE_OBJECT, "rotate_object") \
+    X(TRIGGER_HURT, "trigger_hurt") \
+    X(PATH_ROTATE, "path_rotate")
 
 typedef enum q1_runtime_name {
 #define Q1_RUNTIME_NAME_ENUM(key, text) Q1_NAME_##key,
@@ -594,6 +603,7 @@ struct qa_q1_game {
     qa_q1_options options;
     qa_q1_host host;
     qa_string_id runtime_names[Q1_NAME_COUNT];
+    qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     qa_cvar_handle source_settings[QA_Q1_SOURCE_SETTING_COUNT];
     qa_q1_source_flags_services source_flags;
     qa_q1_source_runes_services source_runes;

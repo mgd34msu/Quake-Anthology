@@ -136,8 +136,8 @@ static bool train_stops(qa_q1_game *g, qa_actor_id actor, q1_map_kind kind,
         if (!q1_alive(g, node))
             return true;
         double speed = 0, flags = 0;
-        qa_targets_number(g->maps->options.targets, node, "speed", &speed);
-        qa_targets_number(g->maps->options.targets, node, "spawnflags", &flags);
+        qa_targets_number(g->maps->options.targets, node, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_SPEED], &speed);
+        qa_targets_number(g->maps->options.targets, node, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_SPAWNFLAGS], &flags);
         if (!mapped(g, actor))
             return true;
         if (!isfinite(speed) || fabs(speed) > FLT_MAX || !isfinite(fields.wait_seconds) ||

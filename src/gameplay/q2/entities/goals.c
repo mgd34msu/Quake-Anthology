@@ -36,7 +36,7 @@ bool q2_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
         return !rerelease || !q2_actor_live(g, a->id) || !(s->spawnflags & 2) ||
                q2_rerelease_poi(g, a, activator, e);
     }
-    const char *noise = q2_field_text(g, s, "noise");
+    const char *noise = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE]);
     if (!q2_entity_sound(g, a, *noise ? noise : QA_Q2_SOUND_MISC_SECRET, 2, 1, 1, 0, e))
         return false;
     if (!q2_actor_live(g, a->id))
@@ -47,7 +47,7 @@ bool q2_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
         r->found_goals++;
         if (r->found_goals == r->total_goals && !(s->spawnflags & 1)) {
             char number[32];
-            float value = q2_field_float(g, s, "sounds", 0);
+            float value = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SOUNDS], 0);
             snprintf(number, sizeof(number), "%.9g", value);
             qa_string_id track;
             if (!qa_builtin_resource(&g->services, number, &track, e) ||

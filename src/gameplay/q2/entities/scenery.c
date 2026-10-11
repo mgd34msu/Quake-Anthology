@@ -79,7 +79,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
         qa_vec_sub(from.origin, body.origin) : qa_vec_sub(body.origin, from.origin)), 150);
     if (!q2_entity_body(g, a, &body, false, e))
         return false;
-    float mass = q2_field_float(g, s, "mass", 75);
+    float mass = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MASS], 75);
     if (qa_combat_has(g->services.combat, a->id)) {
         qa_combat_state combat;
         if (!qa_combat_read_traits(g->services.combat, a->id, &combat, e)) return false;
@@ -308,7 +308,7 @@ static bool clock_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return true;
     if (((s->spawnflags & 1) && (float)s->clock_value > s->wait) ||
         ((s->spawnflags & 2) && (float)s->clock_value < s->wait)) {
-        qa_string_id path = q2_field_id(g, s, "pathtarget");
+        qa_string_id path = q2_field_id(s, g->field_keys[QA_TARGET_KEY_PATHTARGET]);
         if (path) {
             qa_string_id target = s->target, message = s->message;
             s->target = path;
@@ -469,7 +469,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             (g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 16))) {
             if (s->health == 0)
                 s->health = 100;
-            float mass = q2_field_float(g, s, "mass", 75);
+            float mass = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MASS], 75);
             if (!health(g, a, s->health, mass != 0 ? mass : 75, true, false, e))
                 return false;
         }
@@ -484,7 +484,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (s->damage == 0)
             s->damage = 150;
         float default_mass = g->options.edition == QA_Q2_RERELEASE ? 50 : 400;
-        float mass = q2_field_float(g, s, "mass", default_mass);
+        float mass = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MASS], default_mass);
         if (!health(g, a, s->health, mass != 0 ? mass : default_mass, true, false, e))
             return false;
         a->physics.motion = QA_PHYSICS_STEP;
@@ -709,8 +709,8 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
             /* Rogue and the rerelease arm an inactive brush only through its
              * named target; this use does not detonate it. */
             if (!s->targetname ||
-                (q2_actor_field(g, other, "target") != s->targetname &&
-                 q2_actor_field(g, activator, "target") != s->targetname))
+                (q2_actor_field(g, other, g->field_keys[QA_TARGET_KEY_TARGET]) != s->targetname &&
+                 q2_actor_field(g, activator, g->field_keys[QA_TARGET_KEY_TARGET]) != s->targetname))
                 return true;
             qa_combat_state combat;
             bool present = qa_combat_read(g->services.combat, a->id, &combat, NULL);

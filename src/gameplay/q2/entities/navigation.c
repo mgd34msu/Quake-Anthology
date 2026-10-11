@@ -128,7 +128,7 @@ static bool route(mover_query *query, qa_actor_id controller, qa_vec3 offset,
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, node, &body, error)) return false;
         if (!q2_ent(g, controller) || !q2_actor_live(g, node)) return true;
-        uint32_t flags = q2_actor_field_flags(g, node, "spawnflags");
+        uint32_t flags = q2_actor_field_flags(g, node, g->field_keys[QA_TARGET_KEY_SPAWNFLAGS]);
         if (!q2_ent(g, controller) || !q2_actor_live(g, node)) return true;
         qa_actor_id next = {0};
         bool has_next = unique_target(g, fields.target, &next, &view->route_ambiguous);

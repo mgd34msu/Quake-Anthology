@@ -199,16 +199,16 @@ static bool locate_portal(qa_q3_game *game, qa_q3_map_actor_state *state,
     qa_string_id camera_target = camera_state ? camera_state->target : 0;
     qa_target_field field;
     if (!camera_state) {
-        if (qa_targets_field(game->map->options.targets, camera, "spawnflags", &field) &&
+        if (qa_targets_field(game->map->options.targets, camera, qa_targets_field_keys(game->map->options.targets)[QA_TARGET_KEY_SPAWNFLAGS], &field) &&
             field.kind == QA_TARGET_FIELD_NUMBER && isfinite(field.value.number) &&
             field.value.number >= (double)INT32_MIN &&
             field.value.number < 2147483648.0)
             camera_flags = (uint32_t)(int32_t)field.value.number;
-        if (qa_targets_field(game->map->options.targets, camera, "roll", &field) &&
+        if (qa_targets_field(game->map->options.targets, camera, qa_targets_field_keys(game->map->options.targets)[QA_TARGET_KEY_ROLL], &field) &&
             field.kind == QA_TARGET_FIELD_NUMBER && isfinite(field.value.number) &&
             field.value.number >= -FLT_MAX && field.value.number <= FLT_MAX)
             roll = (float)field.value.number;
-        if (qa_targets_field(game->map->options.targets, camera, "target", &field) &&
+        if (qa_targets_field(game->map->options.targets, camera, qa_targets_field_keys(game->map->options.targets)[QA_TARGET_KEY_TARGET], &field) &&
             field.kind == QA_TARGET_FIELD_TEXT)
             camera_target = field.value.text;
     }

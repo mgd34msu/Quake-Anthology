@@ -1553,7 +1553,7 @@ static bool monster_teleport_staging(application_provider *map, const qa_body_st
             !qa_world_get_collision(map->application->world, trigger, &collision, NULL) ||
             collision.role != QA_COLLISION_TRIGGER ||
             !qa_targets_first(map->application->targets, fields.target, &destination)) continue;
-        (void)qa_targets_number(map->application->targets, trigger, "spawnflags", &flags);
+        (void)qa_targets_number(map->application->targets, trigger, qa_targets_field_keys(map->application->targets)[QA_TARGET_KEY_SPAWNFLAGS], &flags);
         if (!((uint32_t)flags & 1u) && qa_bounds_overlap(linked.absolute_bounds,
             qa_bounds_translate(body->bounds, body->origin))) return true;
     }

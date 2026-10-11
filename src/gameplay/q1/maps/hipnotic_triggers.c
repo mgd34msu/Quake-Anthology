@@ -197,7 +197,7 @@ bool q1_map_hip_trigger_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
         qa_actor_id id = entity->id;
         double value = 0;
         if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_FUNC_COUNTER]))
-            (void)qa_targets_number(g->maps->options.targets, other, "counter_state", &value);
+            (void)qa_targets_number(g->maps->options.targets, other, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_COUNTER_STATE], &value);
         entity = trigger(g, id);
         return !entity || value != entity->count || q1_map_targets(g, entity, other, error);
     }

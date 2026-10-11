@@ -50,7 +50,7 @@ static bool ramp_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_alive(g, owner))
         return q1_map_fail(error, "Q1 light ramp lost its light");
     double style = 0;
-    qa_targets_number(g->maps->options.targets, owner, "style", &style);
+    qa_targets_number(g->maps->options.targets, owner, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_STYLE], &style);
     if (!visual(g, id))
         return true;
     if (!isfinite(style) || floor(style) != style || style < INT32_MIN || style > INT32_MAX)
@@ -248,7 +248,7 @@ bool q1_map_addon_visual_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!qa_targets_first(g->maps->options.targets, e->target, &owner))
         return q1_map_fail(error, "Q1 light ramp has an unmatched target");
     double flags = 0;
-    qa_targets_number(g->maps->options.targets, owner, "spawnflags", &flags);
+    qa_targets_number(g->maps->options.targets, owner, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_SPAWNFLAGS], &flags);
     e = visual(g, id);
     if (!e)
         return true;

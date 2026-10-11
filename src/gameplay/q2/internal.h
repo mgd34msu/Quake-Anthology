@@ -1,6 +1,7 @@
 #ifndef QA_Q2_INTERNAL_H
 #define QA_Q2_INTERNAL_H
 #include "qa/game_q2.h"
+#include "qa/target_keys.h"
 #include "qa/game_q2_wire.h"
 #include "qa/game_q2_source.h"
 #include "qa/pool.h"
@@ -34,7 +35,8 @@
     X(INFO_PLAYER_TEAM2, "info_player_team2") \
     X(LIGHT, "light") \
     X(MISC_VIPER, "misc_viper") \
-    X(TARGET_CHANGELEVEL, "target_changelevel")
+    X(TARGET_CHANGELEVEL, "target_changelevel") \
+    X(FUNC_AREAPORTAL, "func_areaportal")
 
 typedef enum q2_runtime_name {
 #define Q2_RUNTIME_NAME_ENUM(key, text) Q2_NAME_##key,
@@ -207,6 +209,7 @@ struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
     qa_string_id runtime_names[Q2_NAME_COUNT];
+    qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     const qa_cvars *source_cvars;
     qa_cvar_handle source_settings[QA_Q2_SOURCE_SETTING_COUNT];
     qa_q2_options options;

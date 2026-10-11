@@ -357,6 +357,10 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
             close_game(g);
             return false;
         }
+    if (!qa_targets_bind_field_keys(qa_session_strings(services->session), g->field_keys, e)) {
+        close_game(g);
+        return false;
+    }
     g->widow_damage_multiplier = 1;
     g->grapple_options = (qa_q2_grapple_options){
         .fly_speed = 650, .pull_speed = 650, .damage = 10, .players_collide = true};

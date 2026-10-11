@@ -23,6 +23,7 @@ typedef enum target_name {
 } target_name;
 struct qa_targets {
     qa_target_options options;
+    qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     qa_string_id runtime_names[TARGET_NAME_COUNT];
     qa_target_binding *bindings;
     target_monster **monsters;

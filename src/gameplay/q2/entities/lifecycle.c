@@ -6,7 +6,7 @@ static int integer(float n) {
     return n >= 2147483647.0f ? INT_MAX : n <= -2147483648.0f ? INT_MIN : (int)n;
 }
 static uint32_t flags(qa_q2_game *g, q2_entity_state *s) {
-    const char *text = q2_field_text(g, s, "spawnflags");
+    const char *text = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_SPAWNFLAGS]);
     double v;
     if (!qa_parse_number((qa_bytes){(const uint8_t *)text, strlen(text)}, &v, NULL) ||
         !isfinite(v) || v < INT32_MIN || v > UINT32_MAX)
@@ -52,7 +52,7 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     }
     a->entity = s;
     a->entity_game = g;
-    s->classname = q2_field_id(g, s, "classname");
+    s->classname = q2_field_id(s, g->field_keys[QA_TARGET_KEY_CLASSNAME]);
     if (!s->classname) {
         const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
         s->classname = record->definition;
@@ -64,34 +64,34 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     }
     s->ordinal = fields->ordinal;
     s->spawnflags = flags(g, s);
-    s->targetname = q2_field_id(g, s, "targetname");
-    s->target = q2_field_id(g, s, "target");
-    s->killtarget = q2_field_id(g, s, "killtarget");
-    s->message = q2_field_id(g, s, "message");
-    s->team = q2_field_id(g, s, "team");
-    s->map = q2_field_id(g, s, "map");
-    s->noise = q2_field_id(g, s, "noise");
-    s->speed = q2_field_float(g, s, "speed", 0);
-    s->accel = q2_field_float(g, s, "accel", 0);
-    s->decel = q2_field_float(g, s, "decel", 0);
-    s->wait = q2_field_float(g, s, "wait", 0);
-    s->delay = q2_field_float(g, s, "delay", 0);
-    s->damage = q2_field_float(g, s, "dmg", 0);
-    s->health = q2_field_float(g, s, "health", 0);
-    s->count = integer(q2_field_float(g, s, "count", 0));
-    s->style = integer(q2_field_float(g, s, "style", 0));
-    s->volume = q2_field_float(g, s, "volume", 0);
-    s->attenuation = q2_field_float(g, s, "attenuation", 0);
-    s->visual = (qa_entity_visual){.scale = q2_field_float(g, s, "scale",
+    s->targetname = q2_field_id(s, g->field_keys[QA_TARGET_KEY_TARGETNAME]);
+    s->target = q2_field_id(s, g->field_keys[QA_TARGET_KEY_TARGET]);
+    s->killtarget = q2_field_id(s, g->field_keys[QA_TARGET_KEY_KILLTARGET]);
+    s->message = q2_field_id(s, g->field_keys[QA_TARGET_KEY_MESSAGE]);
+    s->team = q2_field_id(s, g->field_keys[QA_TARGET_KEY_TEAM]);
+    s->map = q2_field_id(s, g->field_keys[QA_TARGET_KEY_MAP]);
+    s->noise = q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]);
+    s->speed = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SPEED], 0);
+    s->accel = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ACCEL], 0);
+    s->decel = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_DECEL], 0);
+    s->wait = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_WAIT], 0);
+    s->delay = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_DELAY], 0);
+    s->damage = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_DMG], 0);
+    s->health = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_HEALTH], 0);
+    s->count = integer(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_COUNT], 0));
+    s->style = integer(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_STYLE], 0));
+    s->volume = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_VOLUME], 0);
+    s->attenuation = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ATTENUATION], 0);
+    s->visual = (qa_entity_visual){.scale = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SCALE],
             g->options.edition == QA_Q2_RERELEASE ? 0 : 1),
-                               .alpha = q2_field_float(g, s, "alpha", 1),
+                               .alpha = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ALPHA], 1),
                                .old_frame = -1};
-    s->visual.models[0] = q2_field_id(g, s, "model");
-    s->visual.skin = integer(q2_field_float(g, s, "skinnum", 0));
+    s->visual.models[0] = q2_field_id(s, g->field_keys[QA_TARGET_KEY_MODEL]);
+    s->visual.skin = integer(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SKINNUM], 0));
     if (g->options.edition == QA_Q2_RERELEASE) {
-        const char *color = q2_field_text(g, s, "rgba");
+        const char *color = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_RGBA]);
         if (!*color)
-            color = q2_field_text(g, s, "_color");
+            color = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY__COLOR]);
         if (*color)
             s->visual.skin = (int32_t)q2_entity_color(color);
     }
@@ -100,7 +100,7 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
         return false;
     if (q2_actor_get(g, id, false, NULL) != a || a->entity != s)
         return true;
-    const char *model = q2_field_text(g, s, "model");
+    const char *model = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_MODEL]);
     if (*model == '*') {
         char *end;
         errno = 0;
@@ -319,7 +319,9 @@ bool qa_q2_entity_field(qa_q2_game *g, qa_actor_id id, const char *key, qa_strin
     q2_actor *a = q2_ent(g, id);
     if (!a || !key || !value)
         return false;
-    *value = q2_field_id(g, a->entity, key);
+    qa_string_id name = qa_strings_find(qa_session_strings(g->services.session),
+        (qa_bytes){(const uint8_t *)key, strlen(key)});
+    *value = q2_field_id(a->entity, name);
     return true;
 }
 bool qa_q2_entity_team(qa_q2_game *g, qa_actor_id id, qa_actor_id *master, qa_actor_id *next) {

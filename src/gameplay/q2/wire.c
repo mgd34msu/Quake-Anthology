@@ -386,7 +386,7 @@ bool q2_wire_shadow_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error 
     if (g->options.edition != QA_Q2_RERELEASE || !a || !qa_actor_id_equal(a->id, event->actor) ||
         !a->entity || a->entity->kind != Q2E_DYNAMIC_LIGHT || a->entity->stage != 1) return true;
     if (event->radius <= 0) return true;
-    float cone = q2_field_float(g, a->entity, "shadowlightconeangle", 45);
+    float cone = q2_field_float(g, a->entity, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTCONEANGLE], 45);
     if (!a->wire_bound || a->wire_slot >= g->wire_extent ||
         !qa_actor_id_equal(g->wire_actors[a->wire_slot], a->id) ||
         !qa_vec_finite(event->direction) || !isfinite(event->radius) || !isfinite(event->intensity) ||
@@ -796,9 +796,9 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         }
         value.solid = a->entity->collision.inline_model ? QA_PHYSICS_BRUSH : value.solid;
         if (a->entity->kind == Q2E_FLARE) {
-            value.flare = true; value.flare_image = q2_field_id(g, a->entity, "image");
-            value.flare_start = q2_field_float(g, a->entity, "fade_start_dist", 96);
-            value.flare_end = q2_field_float(g, a->entity, "fade_end_dist", 384);
+            value.flare = true; value.flare_image = q2_field_id(a->entity, g->field_keys[QA_TARGET_KEY_IMAGE]);
+            value.flare_start = q2_field_float(g, a->entity, g->field_keys[QA_TARGET_KEY_FADE_START_DIST], 96);
+            value.flare_end = q2_field_float(g, a->entity, g->field_keys[QA_TARGET_KEY_FADE_END_DIST], 384);
         }
     }
     if (a->entity) value.precache_sound = a->entity->noise;

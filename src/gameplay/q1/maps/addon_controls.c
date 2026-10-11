@@ -32,7 +32,7 @@ static bool source_top(qa_q1_game *g, qa_actor_id actor) {
         return position == Q1_MAP_TOP || position == Q1_MAP_UP;
     }
     qa_target_field value;
-    if (!qa_targets_field(g->maps->options.targets, actor, "state", &value) ||
+    if (!qa_targets_field(g->maps->options.targets, actor, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_STATE], &value) ||
         value.kind != QA_TARGET_FIELD_TEXT)
         return false;
     const char *text = qa_strings_cstr(qa_session_strings(g->services.session), value.value.text);
@@ -79,12 +79,12 @@ static bool door_group(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_err
         qa_target_field field;
         if (!control(g, id))
             return true;
-        if (!qa_targets_field(g->maps->options.targets, actor, "category", &field) ||
+        if (!qa_targets_field(g->maps->options.targets, actor, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_CATEGORY], &field) ||
             field.kind != QA_TARGET_FIELD_TEXT || field.value.text != category)
             continue;
         bool top = source_top(g, actor);
         double goal = 0;
-        (void)qa_targets_number(g->maps->options.targets, actor, "goal_state", &goal);
+        (void)qa_targets_number(g->maps->options.targets, actor, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_GOAL_STATE], &goal);
         if (!control(g, id))
             return true;
         if ((!top && goal == 0) || (top && goal == 1))
@@ -348,7 +348,7 @@ static bool cutscene(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_vec3 angles = qa_v3(0, 0, 0);
     if (!qa_world_body_read(g->services.world, camera, &body, error))
         return false;
-    (void)qa_targets_vector(g->maps->options.targets, camera, "mangle", &angles);
+    (void)qa_targets_vector(g->maps->options.targets, camera, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_MANGLE], &angles);
     if (!control(g, id))
         return true;
     if (!g->maps->options.control_player)

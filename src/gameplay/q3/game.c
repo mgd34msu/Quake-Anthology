@@ -266,6 +266,8 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 actor extensions");
         return false;
     }
+    if (!qa_targets_bind_field_keys(qa_session_strings(options->services.session), game->field_keys, error))
+        goto fail;
     game->rng = options->random_seed;
     if (!q3_wire_create(game, error)) goto fail;
     q3_source_state_reset(game);

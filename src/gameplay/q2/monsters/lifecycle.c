@@ -24,7 +24,7 @@ bool q2m_health_target(q2m_context *context, qa_error *error) {
     q2_entity_state *entity = context->actor->entity;
     if (!entity)
         return true;
-    qa_string_id health_target = q2_field_id(context->game, entity, "healthtarget");
+    qa_string_id health_target = q2_field_id(entity, context->game->field_keys[QA_TARGET_KEY_HEALTHTARGET]);
     if (!health_target)
         return true;
     qa_string_id saved = entity->target;
@@ -60,7 +60,7 @@ bool q2m_lifecycle_admitted(q2m_context *context, bool automatic, bool reviving,
         monster->spawnflags = (monster->spawnflags & ~4u) | 1u;
     if (context->actor->entity) {
         context->actor->entity->spawnflags = monster->spawnflags;
-        monster->combat_target = q2_field_id(context->game, context->actor->entity, "combattarget");
+        monster->combat_target = q2_field_id(context->actor->entity, context->game->field_keys[QA_TARGET_KEY_COMBATTARGET]);
     }
     monster->start_phase = automatic ? Q2M_START_PENDING : Q2M_START_MANUAL;
     monster->start_due_ns = q2_deadline(context->game->now_ns, interval(context->game));
@@ -458,7 +458,7 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
     monster->touch_active = false;
     context->actor->physics.flags &= ~(uint32_t)(QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING);
     if (!present && context->actor->entity) {
-        const char *drop = q2_field_text(context->game, context->actor->entity, "item");
+        const char *drop = q2_field_text(context->game, context->actor->entity, context->game->field_keys[QA_TARGET_KEY_ITEM]);
         if (*drop) {
             qa_actor_id item;
             bool dropped;
@@ -467,7 +467,7 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
             if (!q2m_alive(context))
                 return true;
             if (dropped && context->game->options.edition == QA_Q2_RERELEASE) {
-                qa_string_id item_target = q2_field_id(context->game, context->actor->entity, "itemtarget");
+                qa_string_id item_target = q2_field_id(context->actor->entity, context->game->field_keys[QA_TARGET_KEY_ITEMTARGET]);
                 if (item_target && !qa_q2_entity_set_target(context->game, item, item_target, error)) return false;
             }
         }
@@ -477,13 +477,13 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
     q2_entity_state *entity = context->actor->entity;
     if (!entity)
         return true;
-    qa_string_id death_target = q2_field_id(context->game, entity, "deathtarget");
+    qa_string_id death_target = q2_field_id(entity, context->game->field_keys[QA_TARGET_KEY_DEATHTARGET]);
     if (death_target)
         entity->target = death_target;
     if (entity->target && !q2_entity_targets(context->game, context->actor, attacker, false, error)) return false;
     if (!q2m_alive(context) || context->game->options.edition != QA_Q2_RERELEASE) return true;
     entity = context->actor->entity;
-    qa_string_id health_target = q2_field_id(context->game, entity, "healthtarget");
+    qa_string_id health_target = q2_field_id(entity, context->game->field_keys[QA_TARGET_KEY_HEALTHTARGET]);
     if (!health_target) return true;
     entity->target = health_target;
     return q2_entity_targets(context->game, context->actor, attacker, false, error);

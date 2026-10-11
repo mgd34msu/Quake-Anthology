@@ -1,6 +1,7 @@
 #ifndef QA_Q3_INTERNAL_H
 #define QA_Q3_INTERNAL_H
 #include "qa/game_q3.h"
+#include "qa/target_keys.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_client_types.h"
 #include "qa/game_q3_source_types.h"
@@ -107,6 +108,7 @@ typedef struct q3_client_names {
 struct qa_q3_game {
     qa_q3_source_memory memory;
     qa_q3_options options;
+    qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     q3_actor *actors;
     q3_kamikaze_cooldown *kamikaze_cooldowns;
     uint64_t *player_binding_tokens;

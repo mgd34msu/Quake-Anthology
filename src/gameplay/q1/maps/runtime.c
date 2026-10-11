@@ -189,220 +189,217 @@ static bool target_set_delay(void *context, qa_actor_id actor, float value, qa_e
     entity->delay = value;
     return true;
 }
-static bool target_field(void *context, qa_actor_id actor, const char *key, qa_target_field *out) {
+static bool target_field(void *context, qa_actor_id actor, qa_string_id key, qa_target_field *out) {
     qa_q1_game *g = context;
     q1_actor *entity = q1_entity(g, actor);
     if (!entity)
         return false;
     if (entity->kind == Q1_ROGUE_TEAM_STATE) {
-        static const char *const names[QA_Q1_ROGUE_FIELDS] = {
-            "steam", "ctf_flags", "ctf_killed", "suicide_count", "ctf_lasthurtcarrier",
-            "ctf_lastfraggedcarrier", "ctf_lastreturnedflag", "ctf_flagsince", "fly_sound"};
+        static const qa_target_key names[QA_Q1_ROGUE_FIELDS] = {
+            QA_TARGET_KEY_STEAM, QA_TARGET_KEY_CTF_FLAGS, QA_TARGET_KEY_CTF_KILLED, QA_TARGET_KEY_SUICIDE_COUNT, QA_TARGET_KEY_CTF_LASTHURTCARRIER,
+            QA_TARGET_KEY_CTF_LASTFRAGGEDCARRIER, QA_TARGET_KEY_CTF_LASTRETURNEDFLAG, QA_TARGET_KEY_CTF_FLAGSINCE, QA_TARGET_KEY_FLY_SOUND};
         for (size_t i = 0; i < QA_Q1_ROGUE_FIELDS; ++i)
-            if (!strcmp(key, names[i])) {
+            if ((key == g->field_keys[names[i]])) {
                 *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                     .value.number = entity->state.rogue_fields[i]};
                 return true;
             }
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
-        !strcmp(key, "rogue:nextteamupdtime")) {
+        (key == g->field_keys[QA_TARGET_KEY_ROGUE_NEXTTEAMUPDTIME])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
             .value.number = entity->rogue_next_update};
         return true;
     }
     if (g->maps && g->options.program == QA_Q1_CTF &&
         qa_actor_id_equal(actor, g->maps->world_actor) &&
-        (!strcmp(key, "ctf.lastCapture") || !strcmp(key, "ctf.lastCaptureTeam"))) {
+        ((key == g->field_keys[QA_TARGET_KEY_CTF_LASTCAPTURE]) || (key == g->field_keys[QA_TARGET_KEY_CTF_LASTCAPTURETEAM]))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-            .value.number = !strcmp(key, "ctf.lastCapture") ?
+            .value.number = (key == g->field_keys[QA_TARGET_KEY_CTF_LASTCAPTURE]) ?
                 entity->ctf_last_capture : entity->ctf_last_capture_team};
         return true;
     }
     if (entity->kind == Q1_SOURCE_CTF_FLAG) {
-        if (!strcmp(key, "ctf.return")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_CTF_RETURN])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                 .value.number = entity->state.source_flag.return_time};
             return true;
         }
-        if (!strcmp(key, "ctf.base")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_CTF_BASE])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
                 .value.vector = entity->state.source_flag.base};
             return true;
         }
-        if (!strcmp(key, "mangle")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_MANGLE])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
                 .value.vector = entity->state.source_flag.angles};
             return true;
         }
     }
     if (entity->kind == Q1_SOURCE_ROGUE_TAG &&
-        (!strcmp(key, "tag_frags") || !strcmp(key, "tag_message_time"))) {
+        ((key == g->field_keys[QA_TARGET_KEY_TAG_FRAGS]) || (key == g->field_keys[QA_TARGET_KEY_TAG_MESSAGE_TIME]))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-            .value.number = !strcmp(key, "tag_frags") ? entity->state.source_tag.frags :
+            .value.number = (key == g->field_keys[QA_TARGET_KEY_TAG_FRAGS]) ? entity->state.source_tag.frags :
                 entity->state.source_tag.message_time};
         return true;
     }
-    if (entity->kind == Q1_SOURCE_ROGUE_RUNE && !strcmp(key, "rune")) {
+    if (entity->kind == Q1_SOURCE_ROGUE_RUNE && (key == g->field_keys[QA_TARGET_KEY_RUNE])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->state.rogue_rune};
         return true;
     }
-    if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) && !strcmp(key, "rogue:runes_spawned")) {
+    if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) && (key == g->field_keys[QA_TARGET_KEY_ROGUE_RUNES_SPAWNED])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->rogue_runes_spawned};
         return true;
     }
     if (entity->kind == Q1_SOURCE_ROGUE_FLAG || entity->kind == Q1_SOURCE_ROGUE_FLAG_BASE) {
-        const char *const names[] = {"team", "cnt", "super_time"};
-        for (size_t i = 0; i < 3; ++i) if (!strcmp(key, names[i])) {
+        const qa_target_key names[] = {QA_TARGET_KEY_TEAM, QA_TARGET_KEY_CNT, QA_TARGET_KEY_SUPER_TIME};
+        for (size_t i = 0; i < 3; ++i) if ((key == g->field_keys[names[i]])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                 .value.number = entity->state.rogue_flag.values[i]};
             return true;
         }
-        if (!strcmp(key, "oldorigin") || !strcmp(key, "mangle")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_OLDORIGIN]) || (key == g->field_keys[QA_TARGET_KEY_MANGLE])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
-                .value.vector = !strcmp(key, "oldorigin") ? entity->state.rogue_flag.origin :
+                .value.vector = (key == g->field_keys[QA_TARGET_KEY_OLDORIGIN]) ? entity->state.rogue_flag.origin :
                     entity->state.rogue_flag.angles};
             return true;
         }
     }
-    if (entity->kind == Q1_SOURCE_CTF_RUNE && !strcmp(key, "ctf.rune")) {
+    if (entity->kind == Q1_SOURCE_CTF_RUNE && (key == g->field_keys[QA_TARGET_KEY_CTF_RUNE])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
             .value.text = entity->state.source_rune.rune};
         return true;
     }
     if (g->maps && g->options.program == QA_Q1_CTF &&
-        qa_actor_id_equal(actor, g->maps->world_actor) && !strcmp(key, "ctf.runesSpawned")) {
+        qa_actor_id_equal(actor, g->maps->world_actor) && (key == g->field_keys[QA_TARGET_KEY_CTF_RUNESSPAWNED])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
             .value.number = entity->ctf_runes_spawned};
         return true;
     }
     if (entity->map && q1_map_is_fog(entity->map->kind)) {
-        if (!strcmp(key, "fog_density")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_FOG_DENSITY])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                      .value.number = entity->map->fog_density};
             return true;
         }
-        if (!strcmp(key, "fog_color")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_FOG_COLOR])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
                                      .value.vector = entity->map->fog_color};
             return true;
         }
-        if (!strcmp(key, "fog_info_entity")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_FOG_INFO_ENTITY])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
                                      .value.text = entity->map->fog_info_entity};
             return true;
         }
     }
-    if (!strcmp(key, "is_frozen") || !strcmp(key, "addon.frozenDamageable") ||
-        !strcmp(key, "storednextthink") || !strcmp(key, "alpha")) {
+    if ((key == g->field_keys[QA_TARGET_KEY_IS_FROZEN]) || (key == g->field_keys[QA_TARGET_KEY_ADDON_FROZENDAMAGEABLE]) ||
+        (key == g->field_keys[QA_TARGET_KEY_STOREDNEXTTHINK]) || (key == g->field_keys[QA_TARGET_KEY_ALPHA])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-            .value.number = !strcmp(key, "is_frozen") ? entity->frozen.active
-                            : !strcmp(key, "addon.frozenDamageable") ? entity->frozen.damageable
-                            : !strcmp(key, "alpha") ? entity->alpha
+            .value.number = (key == g->field_keys[QA_TARGET_KEY_IS_FROZEN]) ? entity->frozen.active
+                            : (key == g->field_keys[QA_TARGET_KEY_ADDON_FROZENDAMAGEABLE]) ? entity->frozen.damageable
+                            : (key == g->field_keys[QA_TARGET_KEY_ALPHA]) ? entity->alpha
                             : entity->map && entity->map->kind == Q1_MAP_ADDON_SHAKE
                                 ? entity->map->active_until : entity->frozen.next_think};
         return true;
     }
     static const struct {
-        const char *name;
+        qa_target_key name;
         size_t offset;
-    } strings[] = {{"classname", offsetof(q1_actor, classname)},
-                   {"targetname", offsetof(q1_actor, targetname)},
-                   {"target", offsetof(q1_actor, target)},
-                   {"killtarget", offsetof(q1_actor, killtarget)},
-                   {"message", offsetof(q1_actor, message)}},
-      numbers[] = {{"speed", offsetof(q1_actor, speed)},
-                   {"dmg", offsetof(q1_actor, damage)},
-                   {"damage", offsetof(q1_actor, damage)},
-                   {"wait", offsetof(q1_actor, wait)},
-                   {"delay", offsetof(q1_actor, delay)}};
+    } strings[] = {{QA_TARGET_KEY_CLASSNAME, offsetof(q1_actor, classname)},
+                   {QA_TARGET_KEY_TARGETNAME, offsetof(q1_actor, targetname)},
+                   {QA_TARGET_KEY_TARGET, offsetof(q1_actor, target)},
+                   {QA_TARGET_KEY_KILLTARGET, offsetof(q1_actor, killtarget)},
+                   {QA_TARGET_KEY_MESSAGE, offsetof(q1_actor, message)}},
+      numbers[] = {{QA_TARGET_KEY_SPEED, offsetof(q1_actor, speed)},
+                   {QA_TARGET_KEY_DMG, offsetof(q1_actor, damage)},
+                   {QA_TARGET_KEY_DAMAGE, offsetof(q1_actor, damage)},
+                   {QA_TARGET_KEY_WAIT, offsetof(q1_actor, wait)},
+                   {QA_TARGET_KEY_DELAY, offsetof(q1_actor, delay)}};
     for (size_t i = 0; i < sizeof(strings) / sizeof(*strings); ++i)
-        if (!strcmp(key, strings[i].name)) {
+        if ((key == g->field_keys[strings[i].name])) {
             const qa_string_id *value = (const void *)((const char *)entity + strings[i].offset);
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = *value};
             return true;
         }
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
-        if (!strcmp(key, numbers[i].name)) {
+        if ((key == g->field_keys[numbers[i].name])) {
             const float *value = (const void *)((const char *)entity + numbers[i].offset);
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = *value};
             return true;
         }
-    if (!strcmp(key, "spawnflags")) {
+    if ((key == g->field_keys[QA_TARGET_KEY_SPAWNFLAGS])) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->spawnflags};
         return true;
     }
-    if (entity->map && !strcmp(key, "style")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_STYLE])) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->map->style};
         return true;
     }
-    if (entity->map && !strcmp(key, "category")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_CATEGORY])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
                                  .value.text = entity->map->category};
         return true;
     }
-    if (entity->map && !strcmp(key, "goal_state")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_GOAL_STATE])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = entity->map->goal_state};
         return true;
     }
-    if (entity->map && !strcmp(key, "state")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_STATE])) {
         bool moving = q1_map_is_mover(entity->map->kind) || q1_map_is_rogue_plat(entity->map->kind);
         if (!moving) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                      .value.number = entity->map->field_state};
             return true;
         }
-        static const char *const states[] = {"bottom", "up", "top", "down"};
-        qa_string_id value;
-        if (!qa_strings_intern_cstr(qa_session_strings(g->services.session),
-                                    states[entity->map->pending.mover.position], &value, NULL))
-            return false;
+        static const q1_runtime_name states[] = {Q1_NAME_BOTTOM, Q1_NAME_UP, Q1_NAME_TOP, Q1_NAME_DOWN};
+        qa_string_id value = g->runtime_names[states[entity->map->pending.mover.position]];
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = value};
         return true;
     }
-    if (entity->map && entity->map->kind == Q1_MAP_COOP_POINT && !strcmp(key, "items")) {
+    if (entity->map && entity->map->kind == Q1_MAP_COOP_POINT && (key == g->field_keys[QA_TARGET_KEY_ITEMS])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = entity->map->coop_weapons};
         return true;
     }
     if (entity->map &&
-        (!strcmp(key, "currentammo") || !strcmp(key, "weapon") || !strcmp(key, "frags"))) {
+        ((key == g->field_keys[QA_TARGET_KEY_CURRENTAMMO]) || (key == g->field_keys[QA_TARGET_KEY_WEAPON]) || (key == g->field_keys[QA_TARGET_KEY_FRAGS]))) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                              .value.number = !strcmp(key, "weapon")  ? entity->map->weapon
-                                              : !strcmp(key, "frags") ? entity->map->frags
+                              .value.number = (key == g->field_keys[QA_TARGET_KEY_WEAPON])  ? entity->map->weapon
+                                              : (key == g->field_keys[QA_TARGET_KEY_FRAGS]) ? entity->map->frags
                                                                       : entity->map->current_ammo};
         return true;
     }
     if (entity->map && entity->map->kind == Q1_MAP_ENDING_ACTOR) {
-        if (!strcmp(key, "ammo_rockets1") || !strcmp(key, "pausetime")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_AMMO_ROCKETS1]) || (key == g->field_keys[QA_TARGET_KEY_PAUSETIME])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                                     .value.number = !strcmp(key, "ammo_rockets1")
+                                     .value.number = (key == g->field_keys[QA_TARGET_KEY_AMMO_ROCKETS1])
                                                          ? entity->map->pending.follower.rockets
                                                          : entity->map->pause_time};
             return true;
         }
-        if (!strcmp(key, "v_angle")) {
+        if ((key == g->field_keys[QA_TARGET_KEY_V_ANGLE])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
                                      .value.vector = entity->map->pending.follower.view_angles};
             return true;
         }
     }
-    if (entity->map && entity->map->kind == Q1_MAP_TIME_MACHINE && !strcmp(key, "pain_finished")) {
+    if (entity->map && entity->map->kind == Q1_MAP_TIME_MACHINE && (key == g->field_keys[QA_TARGET_KEY_PAIN_FINISHED])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = entity->map->cooldown};
         return true;
     }
     if (entity->map && q1_map_is_rogue_hazard(entity->map->kind)) {
         const q1_map_state *state = entity->map;
-        bool cooldown = (state->kind == Q1_MAP_BUZZSAW && !strcmp(key, "pain_finished")) ||
-                        (state->kind == Q1_MAP_LTRAIL_START && !strcmp(key, "ltrailLastUsed"));
-        bool active = (state->kind >= Q1_MAP_LTRAIL_START && !strcmp(key, "items")) ||
-                      (state->kind <= Q1_MAP_BUZZSAW && !strcmp(key, "attack_finished"));
-        if (cooldown || active || (state->kind == Q1_MAP_BUZZSAW && !strcmp(key, "pausetime"))) {
+        bool cooldown = (state->kind == Q1_MAP_BUZZSAW && (key == g->field_keys[QA_TARGET_KEY_PAIN_FINISHED])) ||
+                        (state->kind == Q1_MAP_LTRAIL_START && (key == g->field_keys[QA_TARGET_KEY_LTRAILLASTUSED]));
+        bool active = (state->kind >= Q1_MAP_LTRAIL_START && (key == g->field_keys[QA_TARGET_KEY_ITEMS])) ||
+                      (state->kind <= Q1_MAP_BUZZSAW && (key == g->field_keys[QA_TARGET_KEY_ATTACK_FINISHED]));
+        if (cooldown || active || (state->kind == Q1_MAP_BUZZSAW && (key == g->field_keys[QA_TARGET_KEY_PAUSETIME]))) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                      .value.number = cooldown ? state->cooldown
                                                      : active ? state->active_until
@@ -410,101 +407,101 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
             return true;
         }
     }
-    if (entity->map && (!strcmp(key, "height") ||
+    if (entity->map && ((key == g->field_keys[QA_TARGET_KEY_HEIGHT]) ||
                         ((entity->map->kind == Q1_MAP_ROGUE_PLAT ||
                           entity->map->kind == Q1_MAP_ELECTRODE_TARGET ||
-                          entity->map->electrode_button) && !strcmp(key, "cnt")))) {
+                          entity->map->electrode_button) && (key == g->field_keys[QA_TARGET_KEY_CNT])))) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                              .value.number = !strcmp(key, "height") ? entity->map->height
+                              .value.number = (key == g->field_keys[QA_TARGET_KEY_HEIGHT]) ? entity->map->height
                                                                      : entity->map->counter_value};
         return true;
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
-        !strcmp(key, "rogue:impactVelocity")) {
+        (key == g->field_keys[QA_TARGET_KEY_ROGUE_IMPACTVELOCITY])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = g->maps->pendulum_impact};
         return true;
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
-        !strcmp(key, "rogue:elvButnDir")) {
+        (key == g->field_keys[QA_TARGET_KEY_ROGUE_ELVBUTNDIR])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = g->maps->elevator_direction};
         return true;
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
-        (!strcmp(key, "rogue:earthquake_active") || !strcmp(key, "rogue:earthquake_intensity"))) {
+        ((key == g->field_keys[QA_TARGET_KEY_ROGUE_EARTHQUAKE_ACTIVE]) || (key == g->field_keys[QA_TARGET_KEY_ROGUE_EARTHQUAKE_INTENSITY]))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                                 .value.number = !strcmp(key, "rogue:earthquake_active")
+                                 .value.number = (key == g->field_keys[QA_TARGET_KEY_ROGUE_EARTHQUAKE_ACTIVE])
                                                      ? g->maps->rogue_quake_active
                                                      : g->maps->rogue_quake_intensity};
         return true;
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
-        (!strcmp(key, "rogue:cutscene_running") || !strcmp(key, "rogue:ending_started") ||
-         !strcmp(key, "rogue:actorStage"))) {
+        ((key == g->field_keys[QA_TARGET_KEY_ROGUE_CUTSCENE_RUNNING]) || (key == g->field_keys[QA_TARGET_KEY_ROGUE_ENDING_STARTED]) ||
+         (key == g->field_keys[QA_TARGET_KEY_ROGUE_ACTORSTAGE]))) {
         *out = (qa_target_field){
             .kind = QA_TARGET_FIELD_NUMBER,
-            .value.number = !strcmp(key, "rogue:actorStage")       ? g->maps->rogue_actor_stage
-                            : !strcmp(key, "rogue:ending_started") ? g->maps->rogue_ending_started
+            .value.number = (key == g->field_keys[QA_TARGET_KEY_ROGUE_ACTORSTAGE])       ? g->maps->rogue_actor_stage
+                            : (key == g->field_keys[QA_TARGET_KEY_ROGUE_ENDING_STARTED]) ? g->maps->rogue_ending_started
                                                                    : g->maps->rogue_cutscene};
         return true;
     }
     if (entity->map &&
-        ((entity->map->kind == Q1_MAP_HIP_COUNTER && !strcmp(key, "counter_state")) ||
-         !strcmp(key, "gravity"))) {
+        ((entity->map->kind == Q1_MAP_HIP_COUNTER && (key == g->field_keys[QA_TARGET_KEY_COUNTER_STATE])) ||
+         (key == g->field_keys[QA_TARGET_KEY_GRAVITY]))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                                 .value.number = !strcmp(key, "counter_state")
+                                 .value.number = (key == g->field_keys[QA_TARGET_KEY_COUNTER_STATE])
                                                      ? entity->map->counter_value
                                                      : entity->map->gravity};
         return true;
     }
-    if (entity->map && !strcmp(key, "event")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_EVENT])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->event};
         return true;
     }
-    if (entity->map && !strcmp(key, "mdl")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_MDL])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->mdl};
         return true;
     }
-    if (entity->map && (!strcmp(key, "group") || !strcmp(key, "path") ||
-                        !strcmp(key, "noise") || !strcmp(key, "noise1"))) {
+    if (entity->map && ((key == g->field_keys[QA_TARGET_KEY_GROUP]) || (key == g->field_keys[QA_TARGET_KEY_PATH]) ||
+                        (key == g->field_keys[QA_TARGET_KEY_NOISE]) || (key == g->field_keys[QA_TARGET_KEY_NOISE1]))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-                                 .value.text = !strcmp(key, "group") ? entity->map->group
-                                               : !strcmp(key, "path") ? entity->map->path
-                                               : entity->map->noise[!strcmp(key, "noise1")]};
+                                 .value.text = (key == g->field_keys[QA_TARGET_KEY_GROUP]) ? entity->map->group
+                                               : (key == g->field_keys[QA_TARGET_KEY_PATH]) ? entity->map->path
+                                               : entity->map->noise[(key == g->field_keys[QA_TARGET_KEY_NOISE1])]};
         return true;
     }
-    if (entity->map && !strcmp(key, "rotate")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_ROTATE])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
                                  .value.vector = entity->map->rotate};
         return true;
     }
-    if (entity->map && (!strcmp(key, "spawnfunction") || !strcmp(key, "spawnclassname"))) {
+    if (entity->map && ((key == g->field_keys[QA_TARGET_KEY_SPAWNFUNCTION]) || (key == g->field_keys[QA_TARGET_KEY_SPAWNCLASSNAME]))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
-                                 .value.text = !strcmp(key, "spawnfunction")
+                                 .value.text = (key == g->field_keys[QA_TARGET_KEY_SPAWNFUNCTION])
                                                    ? entity->map->spawn_function
                                                    : entity->map->spawn_classname};
         return true;
     }
-    if (entity->map && (!strcmp(key, "spawnmulti") || !strcmp(key, "spawnsilent"))) {
+    if (entity->map && ((key == g->field_keys[QA_TARGET_KEY_SPAWNMULTI]) || (key == g->field_keys[QA_TARGET_KEY_SPAWNSILENT]))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                                 .value.number = !strcmp(key, "spawnmulti")
+                                 .value.number = (key == g->field_keys[QA_TARGET_KEY_SPAWNMULTI])
                                                      ? entity->map->spawn_multi
                                                      : entity->map->spawn_silent};
         return true;
     }
-    if (entity->map && !strcmp(key, "mangle")) {
+    if (entity->map && (key == g->field_keys[QA_TARGET_KEY_MANGLE])) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = entity->map->mangle};
         return true;
     }
-    if (entity->map && entity->map->has_view_offset && !strcmp(key, "view_ofs")) {
+    if (entity->map && entity->map->has_view_offset && (key == g->field_keys[QA_TARGET_KEY_VIEW_OFS])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
                                  .value.vector = entity->map->view_offset};
         return true;
     }
-    if (entity->kind == Q1_MONSTER && !strcmp(key, "wetsuit_time")) {
+    if (entity->kind == Q1_MONSTER && (key == g->field_keys[QA_TARGET_KEY_WETSUIT_TIME])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = entity->state.monster.follow_until};
         return true;

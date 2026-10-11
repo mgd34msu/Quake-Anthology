@@ -46,14 +46,14 @@ static bool show(qa_q2_game *g, q2_actor *a, qa_error *e) {
                              .style = -1};
     if (s->stage == 1) {
         light.color = s->visual.skin ? light.color : qa_v3(1, 1, 1);
-        light.radius = q2_field_float(g, s, "shadowlightradius", 0);
-        light.intensity = q2_field_float(g, s, "shadowlightintensity", 1);
-        light.resolution = bits(q2_field_float(g, s, "shadowlightresolution", 0));
-        light.fade_start = q2_field_float(g, s, "shadowlightstartfadedistance", 0);
-        light.fade_end = q2_field_float(g, s, "shadowlightendfadedistance", 0);
-        light.style = qa_source_float_to_i32(q2_field_float(g, s, "shadowlightstyle", -1));
+        light.radius = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTRADIUS], 0);
+        light.intensity = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTINTENSITY], 1);
+        light.resolution = bits(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTRESOLUTION], 0));
+        light.fade_start = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTSTARTFADEDISTANCE], 0);
+        light.fade_end = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTENDFADEDISTANCE], 0);
+        light.style = qa_source_float_to_i32(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTSTYLE], -1));
         qa_actor_id style;
-        if (q2_map_find(g, 0, q2_field_id(g, s, "shadowlightstyletarget"), 0, &style)) {
+        if (q2_map_find(g, 0, q2_field_id(s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTSTYLETARGET]), 0, &style)) {
             q2_actor *owner = q2_ent(g, style);
             if (owner)
                 light.style = owner->entity->style;
@@ -65,7 +65,7 @@ static bool show(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 return false;
             light.direction = qa_vec_normalize(qa_vec_sub(to.origin, body.origin));
             light.cone_cosine =
-                cosf(q2_field_float(g, s, "shadowlightconeangle", 45) * .01745329251994329577f);
+                cosf(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTCONEANGLE], 45) * .01745329251994329577f);
             light.flags |= 1;
         }
     }
@@ -148,7 +148,7 @@ bool q2_light_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     s->stage = shadow ? 1 : 0;
     s->usable = target || s->targetname != 0;
     if (shadow) {
-        if (q2_field_float(g, s, "shadowlightradius", 0) > 0) {
+        if (q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTRADIUS], 0) > 0) {
             qa_body_state body;
             if (!qa_world_body_read(g->services.world, a->id, &body, e))
                 return false;
@@ -161,7 +161,7 @@ bool q2_light_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return true;
     }
     s->visual.visible = false;
-    float radius = q2_field_float(g, s, "radius", 150);
+    float radius = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_RADIUS], 150);
     s->visual.frame = (int32_t)bits(radius != 0 ? radius : 150);
     s->count = s->visual.skin;
     q2_entity_pick(g, s->target, &s->goal);

@@ -102,7 +102,7 @@ static bool particle_field(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
         qa_authored_target source;
         if (qa_targets_read(g->maps->options.targets, other, &source) &&
             source.classname == g->runtime_names[Q1_NAME_FUNC_COUNTER])
-            (void)qa_targets_number(g->maps->options.targets, other, "counter_state", &counter);
+            (void)qa_targets_number(g->maps->options.targets, other, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_COUNTER_STATE], &counter);
         if (counter != state->counter_value)
             return true;
     }

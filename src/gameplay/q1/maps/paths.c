@@ -271,7 +271,7 @@ static bool follow_eye(qa_q1_game *g, qa_actor_id actor, qa_vec3 *out) {
     if (!q1_alive(g, actor) || !qa_world_body_read(g->services.world, actor, &body, NULL))
         return false;
     qa_vec3 offset;
-    if (!qa_targets_vector(g->maps->options.targets, actor, "view_ofs", &offset)) {
+    if (!qa_targets_vector(g->maps->options.targets, actor, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_VIEW_OFS], &offset)) {
         qa_q1_target target;
         offset = qa_v3(0, 0, q1_target(g, actor, &target) ? target.view_height : 25);
     }

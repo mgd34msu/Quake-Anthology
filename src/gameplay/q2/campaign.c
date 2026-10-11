@@ -44,7 +44,7 @@ bool q2_campaign_enter(qa_q2_game *game, qa_error *error) {
     q2_actor *world = NULL;
     for (q2_actor *actor = game->first_actor; actor; actor = actor->live_next)
         if (actor->entity && actor->entity->kind == Q2E_WORLD) { world = actor; break; }
-    if (world && q2_field_float(game, world->entity, "hub_map", 0) != 0) return true;
+    if (world && q2_field_float(game, world->entity, game->field_keys[QA_TARGET_KEY_HUB_MAP], 0) != 0) return true;
     const char *name = game->player_runtime->rules.map_name;
     if (!name || !*name) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 campaign entry lacks its actual map name");

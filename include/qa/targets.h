@@ -1,6 +1,7 @@
 #ifndef QA_TARGETS_H
 #define QA_TARGETS_H
 #include "qa/session.h"
+#include "qa/target_keys.h"
 #include "qa/math.h"
 #include "qa/monster_mission.h"
 
@@ -57,7 +58,7 @@ typedef struct qa_target_binding {
     bool (*use)(void *, qa_actor_id target, qa_actor_id other, qa_actor_id activator, qa_error *);
     /* Optional source field lookup for authored path and mover metadata.
      * Text belongs to the shared session. Native numeric fields stay typed. */
-    bool (*field)(void *, qa_actor_id, const char *key, qa_target_field *value);
+    bool (*field)(void *, qa_actor_id, qa_string_id key, qa_target_field *value);
     bool (*set_targetname)(void *, qa_actor_id, qa_string_id, qa_error *);
     bool (*set_target)(void *, qa_actor_id, qa_string_id, qa_error *);
     bool (*set_delay)(void *, qa_actor_id, float seconds, qa_error *);
@@ -94,6 +95,7 @@ typedef struct qa_target_options {
     void (*diagnostic)(void *, qa_actor_id, const char *);
 } qa_target_options;
 qa_targets *qa_targets_create(const qa_target_options *, qa_error *);
+const qa_string_id *qa_targets_field_keys(const qa_targets *);
 void qa_targets_destroy(qa_targets *);
 bool qa_targets_bind(qa_targets *, const qa_target_binding *, qa_error *);
 void qa_targets_unbind(qa_targets *, qa_actor_id);
@@ -114,12 +116,12 @@ bool qa_targets_read(const qa_targets *, qa_actor_id, qa_authored_target *);
 bool qa_targets_set_targetname(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_targets_set_target(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_targets_set_delay(qa_targets *, qa_actor_id, float seconds, qa_error *);
-bool qa_targets_field(const qa_targets *, qa_actor_id, const char *key, qa_target_field *value);
+bool qa_targets_field(const qa_targets *, qa_actor_id, qa_string_id key, qa_target_field *value);
 /* Numeric native fields stay typed; authored text is parsed at this boundary. */
-bool qa_targets_number(const qa_targets *, qa_actor_id, const char *key, double *value);
+bool qa_targets_number(const qa_targets *, qa_actor_id, qa_string_id key, double *value);
 /* Native vectors or exactly three finite float-range text components.
  * Missing/invalid fields leave the output unchanged. */
-bool qa_targets_vector(const qa_targets *, qa_actor_id, const char *key, qa_vec3 *value);
+bool qa_targets_vector(const qa_targets *, qa_actor_id, qa_string_id key, qa_vec3 *value);
 bool qa_targets_first(qa_targets *, qa_string_id name, qa_actor_id *);
 /* Zero the cursor before traversal. Each call queries the current index;
  * callbacks may remove, add or rename targets between calls. Tied source slots

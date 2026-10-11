@@ -707,6 +707,8 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     for (unsigned i = 0; i < Q1_NAME_COUNT; ++i)
         if (!qa_strings_intern_cstr(qa_session_strings(services->session), runtime_names[i], &g->runtime_names[i], error))
             goto fail;
+    if (!qa_targets_bind_field_keys(qa_session_strings(services->session), g->field_keys, error))
+        goto fail;
     source_bind(g);
     qa_builtin_random_seed(&g->random, options->random_seed);
     for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)

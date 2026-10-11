@@ -49,7 +49,7 @@ static bool key_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error 
         !g->services.actor_traits(g->services.context, activator, &traits) || !traits.player)
         return true;
     q2_entity_state *s = a->entity;
-    const qa_q2_item_definition *d = qa_q2_item_lookup(g, q2_field_text(g, s, "item"));
+    const qa_q2_item_definition *d = qa_q2_item_lookup(g, q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_ITEM]));
     if (!d) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Q2 key trigger references unknown item");
         return false;
@@ -264,10 +264,10 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return q2_map_event(g,
                             &(qa_q2_map_event){.kind = QA_Q2_MAP_MUSIC,
                                                .actor = a->id,
-                                               .text = q2_field_id(g, s, "sounds")},
+                                               .text = q2_field_id(s, g->field_keys[QA_TARGET_KEY_SOUNDS])},
                             e);
     case Q2E_KEY:
-        s->usable = s->target && qa_q2_item_lookup(g, q2_field_text(g, s, "item"));
+        s->usable = s->target && qa_q2_item_lookup(g, q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_ITEM]));
         return true;
     case Q2E_COUNTER:
         if (!s->count)
@@ -277,16 +277,16 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     case Q2E_TIMER:
         if (s->wait == 0)
             s->wait = 1;
-        s->random = fminf(q2_field_float(g, s, "random", 0), s->wait - (float)g->frame_ns / Q2_NS);
+        s->random = fminf(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_RANDOM], 0), s->wait - (float)g->frame_ns / Q2_NS);
         if (s->spawnflags & 1) {
             s->activator = a->id;
             return q2_entity_schedule(g, a, Q2ET_TIMER,
-                                      1 + q2_field_float(g, s, "pausetime", 0) + s->delay +
+                                      1 + q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_PAUSETIME], 0) + s->delay +
                                           s->wait + q2_crandom(g) * s->random);
         }
         return true;
     case Q2E_SPEAKER: {
-        const char *noise = q2_field_text(g, s, "noise");
+        const char *noise = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE]);
         if (!*noise) {
             s->usable = false;
             return true;
@@ -305,7 +305,7 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             if (!okay)
                 return false;
         } else
-            s->noise = q2_field_id(g, s, "noise");
+            s->noise = q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]);
         if (s->volume == 0)
             s->volume = 1;
         bool loop = g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 3);
@@ -416,7 +416,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
     case Q2E_GOAL: {
         if (g->options.edition == QA_Q2_RERELEASE)
             return q2_goal_use(g, a, activator, e);
-        const char *noise = q2_field_text(g, s, "noise");
+        const char *noise = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE]);
         if (!q2_entity_sound(g, a, *noise ? noise : QA_Q2_SOUND_MISC_SECRET, 2, 1, 1, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
@@ -466,7 +466,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
                                                  .origin = b.origin,
                                                  .direction = s->direction,
                                                  .count = s->count,
-                                                 .code = (int)q2_field_float(g, s, "sounds", 0),
+                                                 .code = (int)q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SOUNDS], 0),
                                                  .time_ns = g->now_ns},
                              e))
             return false;

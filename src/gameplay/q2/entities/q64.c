@@ -112,7 +112,7 @@ out:
 }
 static bool look_at(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 *angles, qa_error *e) {
     qa_actor_id target;
-    qa_string_id path = q2_field_id(g, a->entity, "pathtarget");
+    qa_string_id path = q2_field_id(a->entity, g->field_keys[QA_TARGET_KEY_PATHTARGET]);
     if (!path || !q2_map_find(g, 0, path, 0, &target))
         return true;
     qa_body_state body;
@@ -220,7 +220,7 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
         !qa_world_body_read(g->services.world, target, &to, e))
         return false;
     if (v->remaining <= 0) {
-        if (q2_actor_field_flags(g, target, "hackflags") & 2) {
+        if (q2_actor_field_flags(g, target, g->field_keys[QA_TARGET_KEY_HACKFLAGS]) & 2) {
             q2_actor *dummy = q2_ent(g, s->enemy);
             if (dummy && dummy->entity->q64) {
                 if (!event(g, dummy, e))
@@ -244,7 +244,7 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
             q2_entity_pick(g, path.target, &next);
         s->goal = next;
         if (next.registry) {
-            v->speed = q2_actor_field_float(g, next, "speed", 0);
+            v->speed = q2_actor_field_float(g, next, g->field_keys[QA_TARGET_KEY_SPEED], 0);
             if (v->speed == 0)
                 v->speed = 55;
             if (!qa_world_body_read(g->services.world, next, &to, e))
@@ -312,7 +312,7 @@ static bool dummy(qa_q2_game *g, q2_actor *a, qa_error *e) {
 bool q2_q64_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
     q2_entity_state *s = a->entity;
     q2_q64 *v = s->q64;
-    float music = q2_field_float(g, s, "sounds", 0);
+    float music = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SOUNDS], 0);
     if (music != 0) {
         char text[32];
         snprintf(text, sizeof(text), "%.9g", music);
@@ -430,7 +430,7 @@ bool q2_q64_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         }
     }
     if (s->kind == Q2E_CAMERA) {
-        s->q64->hackflags = q2_actor_field_flags(g, a->id, "hackflags");
+        s->q64->hackflags = q2_actor_field_flags(g, a->id, g->field_keys[QA_TARGET_KEY_HACKFLAGS]);
         s->usable = true;
         s->visual.visible = false;
         return true;
@@ -448,7 +448,7 @@ bool q2_q64_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->damage = 2;
         return q2_entity_schedule(g, a, Q2ET_SPINNING, (float)g->frame_ns / Q2_NS);
     }
-    s->random = q2_field_float(g, s, "radius", 512);
+    s->random = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_RADIUS], 512);
     if (s->random == 0)
         s->random = 512;
     s->speed = (s->speed != 0 ? s->speed : 45) * (float)g->frame_ns / Q2_NS;
@@ -458,11 +458,11 @@ bool q2_q64_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return false;
     q2_q64 *v = s->q64;
     v->neutral = body.angles;
-    v->eye_position = q2_field_vec(g, s, "eye_position", qa_v3(0, 0, 0));
-    v->vision_cone = q2_field_float(g, s, "vision_cone", .5f);
+    v->eye_position = q2_field_vec(g, s, g->field_keys[QA_TARGET_KEY_EYE_POSITION], qa_v3(0, 0, 0));
+    v->vision_cone = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_VISION_CONE], .5f);
     if (v->vision_cone == 0)
         v->vision_cone = .5f;
-    if (q2_field_id(g, s, "pathtarget"))
+    if (q2_field_id(s, g->field_keys[QA_TARGET_KEY_PATHTARGET]))
         return q2_entity_schedule(g, a, Q2ET_EYE_SETUP, .1f);
     qa_vec3 forward, right, up;
     qa_builtin_angle_vectors(v->neutral, &forward, &right, &up);
@@ -482,7 +482,7 @@ bool q2_q64_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error *e
     switch (think) {
     case Q2ET_EYE_SETUP: {
         qa_actor_id target;
-        if (q2_entity_pick(g, q2_field_id(g, a->entity, "pathtarget"), &target)) {
+        if (q2_entity_pick(g, q2_field_id(a->entity, g->field_keys[QA_TARGET_KEY_PATHTARGET]), &target)) {
             qa_body_state from, to;
             if (!qa_world_body_read(g->services.world, a->id, &from, e) ||
                 !qa_world_body_read(g->services.world, target, &to, e))

@@ -9,11 +9,7 @@ static q1_actor *rotation(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
     return e && e->map && q1_map_is_rotation(e->map->kind) ? e : NULL;
 }
-static bool same_text(qa_q1_game *g, qa_string_id id, const char *text) {
-    qa_bytes value = qa_strings_text(qa_session_strings(g->services.session), id);
-    return value.size == strlen(text) && !memcmp(value.data, text, value.size);
-}
-static qa_string_id text_field(qa_q1_game *g, qa_actor_id actor, const char *key) {
+static qa_string_id text_field(qa_q1_game *g, qa_actor_id actor, qa_string_id key) {
     qa_target_field value;
     return qa_targets_field(g->maps->options.targets, actor, key, &value) &&
                    value.kind == QA_TARGET_FIELD_TEXT ? value.value.text : (qa_string_id){0};
@@ -87,9 +83,9 @@ static bool link_targets(qa_q1_game *g, qa_actor_id id, qa_error *error) {
             break;
         if (!q1_alive(g, actor))
             continue;
-        qa_string_id classname = text_field(g, actor, "classname");
-        bool wall = same_text(g, classname, "func_movewall");
-        bool object = same_text(g, classname, "rotate_object");
+        qa_string_id classname = text_field(g, actor, g->field_keys[QA_TARGET_KEY_CLASSNAME]);
+        bool wall = (classname == g->runtime_names[Q1_NAME_FUNC_MOVEWALL]);
+        bool object = (classname == g->runtime_names[Q1_NAME_ROTATE_OBJECT]);
         qa_vec3 center = wall ? qa_vec_add(body.origin,
             qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f)) : body.origin;
         qa_vec3 relative = qa_vec_sub(center, self.origin);
@@ -551,9 +547,9 @@ static bool damage_targets(qa_q1_game *g, qa_actor_id id, float damage, qa_error
     bool ok = true;
     for (size_t i = 0; ok && i < list->snapshot.count && rotation(g, id); ++i) {
         qa_actor_id actor = list->snapshot.ids[i];
-        qa_string_id classname = text_field(g, actor, "classname");
-        if (!same_text(g, classname, "trigger_hurt") &&
-            !same_text(g, classname, "func_movewall"))
+        qa_string_id classname = text_field(g, actor, g->field_keys[QA_TARGET_KEY_CLASSNAME]);
+        if (!(classname == g->runtime_names[Q1_NAME_TRIGGER_HURT]) &&
+            !(classname == g->runtime_names[Q1_NAME_FUNC_MOVEWALL]))
             continue;
         bool handled;
         ok = qa_q1_game_map_damage(g, actor, damage, &handled, error);
@@ -577,31 +573,31 @@ typedef struct rotate_path {
 static bool path_read(qa_q1_game *g, qa_actor_id id, rotate_path *path, qa_error *error) {
     *path = (rotate_path){.id = id};
     if (!qa_targets_read(g->maps->options.targets, id, &path->fields) ||
-        !same_text(g, path->fields.classname, "path_rotate"))
+        !(path->fields.classname == g->runtime_names[Q1_NAME_PATH_ROTATE]))
         return q1_map_fail(error, "Hipnotic rotating train goal is not path_rotate");
     if (!qa_world_body_read(g->services.world, id, &path->body, error))
         return false;
-    path->noise = text_field(g, id, "noise");
-    path->noise1 = text_field(g, id, "noise1");
-    path->event = text_field(g, id, "event");
-    qa_targets_vector(g->maps->options.targets, id, "rotate", &path->rate);
+    path->noise = text_field(g, id, g->field_keys[QA_TARGET_KEY_NOISE]);
+    path->noise1 = text_field(g, id, g->field_keys[QA_TARGET_KEY_NOISE1]);
+    path->event = text_field(g, id, g->field_keys[QA_TARGET_KEY_EVENT]);
+    qa_targets_vector(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_ROTATE], &path->rate);
     double value = 0;
-    qa_targets_number(g->maps->options.targets, id, "spawnflags", &value);
+    qa_targets_number(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_SPAWNFLAGS], &value);
     if (!isfinite(value) || value < 0 || value > UINT32_MAX || floor(value) != value)
         return q1_map_fail(error, "Invalid Hipnotic rotating path flags");
     path->flags = (uint32_t)value;
     value = 0;
-    qa_targets_number(g->maps->options.targets, id, "speed", &value);
+    qa_targets_number(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_SPEED], &value);
     if (!isfinite(value) || fabs(value) > FLT_MAX)
         return q1_map_fail(error, "Invalid Hipnotic rotating path speed");
     path->speed = (float)value;
     value = path->fields.wait_seconds;
-    qa_targets_number(g->maps->options.targets, id, "wait", &value);
+    qa_targets_number(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_WAIT], &value);
     if (!isfinite(value) || fabs(value) > FLT_MAX)
         return q1_map_fail(error, "Invalid Hipnotic rotating path wait");
     path->wait = (float)value;
     value = 0;
-    qa_targets_number(g->maps->options.targets, id, "dmg", &value);
+    qa_targets_number(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_DMG], &value);
     if (!isfinite(value) || fabs(value) > FLT_MAX)
         return q1_map_fail(error, "Invalid Hipnotic rotating path damage");
     path->damage = (float)value;

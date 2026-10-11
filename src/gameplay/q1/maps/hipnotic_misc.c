@@ -315,7 +315,7 @@ static bool effect_finale(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_vec3 angles = qa_v3(0, 0, 0);
     if (!qa_world_body_read(g->services.world, camera, &camera_body, error))
         return false;
-    (void)qa_targets_vector(g->maps->options.targets, camera, "mangle", &angles);
+    (void)qa_targets_vector(g->maps->options.targets, camera, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_MANGLE], &angles);
     qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
                               .provider = g->options.provider, .time_ns = g->time_ns,
                               .origin = camera_body.origin, .direction = angles};

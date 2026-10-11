@@ -76,7 +76,7 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->direction = qa_vec_scale(s->direction, -1);
         if (s->speed == 0)
             s->speed = 100;
-        if (g->options.edition == QA_Q2_RERELEASE ? !*q2_field_text(g, s, "dmg") : s->damage == 0)
+        if (g->options.edition == QA_Q2_RERELEASE ? !*q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_DMG]) : s->damage == 0)
             s->damage = 2;
         if (g->options.edition == QA_Q2_CLASSIC) s->noise = 0;
         a->physics.motion = (s->spawnflags & 32) ? QA_PHYSICS_STOP : QA_PHYSICS_PUSH;

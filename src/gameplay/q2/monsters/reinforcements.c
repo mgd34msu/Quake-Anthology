@@ -78,7 +78,7 @@ static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *e
         return true;
     qa_q2_game *game = context->game;
     qa_string_id authored =
-        context->actor->entity ? q2_field_id(game, context->actor->entity, "reinforcements") : 0;
+        context->actor->entity ? q2_field_id(context->actor->entity, game->field_keys[QA_TARGET_KEY_REINFORCEMENTS]) : 0;
     const char *text =
         authored ? qa_strings_cstr(qa_session_strings(game->services.session), authored) : NULL;
     size_t count = authored ? 0 : sizeof(medic_defaults) / sizeof(*medic_defaults);
@@ -161,7 +161,7 @@ bool q2m_medic_summon_initialize(q2m_context *context, q2m_summon_state *state, 
     if (!configure(context, state, error))
         return false;
     double slots = context->actor->entity
-                       ? q2_field_float(context->game, context->actor->entity, "monster_slots", 3)
+                       ? q2_field_float(context->game, context->actor->entity, context->game->field_keys[QA_TARGET_KEY_MONSTER_SLOTS], 3)
                        : 3;
     if (slots != 0 && entry_count(state))
         slots += floor(slots * context->game->options.skill / 2.0);

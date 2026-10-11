@@ -73,7 +73,7 @@ static bool corner_fields(qa_q1_game *g, qa_actor_id id, qa_authored_target *fie
 }
 static bool corner_speed(qa_q1_game *g, qa_actor_id id, float *speed, qa_error *error) {
     double value = 0;
-    qa_targets_number(g->maps->options.targets, id, "speed", &value);
+    qa_targets_number(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_SPEED], &value);
     if (!isfinite(value) || fabs(value) > FLT_MAX)
         return q1_map_fail(error, "Q1 train target has invalid speed");
     *speed = (float)value;
@@ -83,7 +83,7 @@ static bool departed_event(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id, goal = q1_ref_actor(g, entity->map->pending.mover.goal);
     qa_target_field field;
     qa_authored_target fields;
-    if (!qa_targets_field(g->maps->options.targets, goal, "event", &field) ||
+    if (!qa_targets_field(g->maps->options.targets, goal, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_EVENT], &field) ||
         field.kind != QA_TARGET_FIELD_TEXT || !q1_map_text(g, field.value.text) ||
         !qa_targets_read(g->maps->options.targets, goal, &fields))
         return true;

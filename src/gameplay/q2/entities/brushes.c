@@ -46,7 +46,7 @@ static bool platform_trigger(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
-    float lip = q2_field_float(g, s, "lip", 0);
+    float lip = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_LIP], 0);
     if (!second && lip == 0)
         lip = 8;
     qa_bounds box = {qa_vec_add(b.bounds.mins, qa_v3(25, 25, 0)),
@@ -90,10 +90,10 @@ static bool platform_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     s->decel = (s->decel != 0 ? s->decel * .1f : 5) * multiple;
     if (s->damage == 0)
         s->damage = 2;
-    float lip = q2_field_float(g, s, "lip", 0);
+    float lip = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_LIP], 0);
     if (!second && lip == 0)
         lip = 8;
-    float height = q2_field_float(g, s, "height", 0);
+    float height = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_HEIGHT], 0);
     if (height == 0)
         height = b.bounds.maxs.z - b.bounds.mins.z - (second ? 0 : lip);
     m->end = b.origin;
@@ -456,7 +456,7 @@ bool q2_brush_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id act
         q2_actor *train = q2_ent(g, s->enemy), *caller = q2_ent(g, other);
         qa_actor_id corner;
         if (!train || train->entity->think != Q2ET_NONE || !caller ||
-            !q2_entity_pick(g, q2_field_id(g, caller->entity, "pathtarget"), &corner))
+            !q2_entity_pick(g, q2_field_id(caller->entity, g->field_keys[QA_TARGET_KEY_PATHTARGET]), &corner))
             return true;
         return q2_train_resume(g, train, corner, e);
     }

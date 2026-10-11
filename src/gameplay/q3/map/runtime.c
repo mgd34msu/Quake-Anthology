@@ -286,53 +286,53 @@ static bool target_set_target(void *context, qa_actor_id actor, qa_string_id val
     return true;
 }
 
-static bool target_field(void *context, qa_actor_id actor, const char *key,
+static bool target_field(void *context, qa_actor_id actor, qa_string_id key,
                          qa_target_field *out) {
     qa_q3_game *game = context;
     const qa_q3_map_actor_state *state = q3_map_const(game, actor);
     if (!state || !key || !out)
         return false;
     static const struct {
-        const char *name;
+        qa_target_key name;
         size_t offset;
-    } texts[] = {{"classname", offsetof(qa_q3_map_actor_state, classname)},
-                 {"targetname", offsetof(qa_q3_map_actor_state, targetname)},
-                 {"target", offsetof(qa_q3_map_actor_state, target)},
-                 {"message", offsetof(qa_q3_map_actor_state, message)},
-                 {"team", offsetof(qa_q3_map_actor_state, team)},
-                 {"model", offsetof(qa_q3_map_actor_state, model)},
-                 {"model2", offsetof(qa_q3_map_actor_state, model2)}},
-      numbers[] = {{"speed", offsetof(qa_q3_map_actor_state, speed)},
-                   {"wait", offsetof(qa_q3_map_actor_state, wait)},
-                   {"random", offsetof(qa_q3_map_actor_state, random)},
-                   {"roll", offsetof(qa_q3_map_actor_state, roll)}};
+    } texts[] = {{QA_TARGET_KEY_CLASSNAME, offsetof(qa_q3_map_actor_state, classname)},
+                 {QA_TARGET_KEY_TARGETNAME, offsetof(qa_q3_map_actor_state, targetname)},
+                 {QA_TARGET_KEY_TARGET, offsetof(qa_q3_map_actor_state, target)},
+                 {QA_TARGET_KEY_MESSAGE, offsetof(qa_q3_map_actor_state, message)},
+                 {QA_TARGET_KEY_TEAM, offsetof(qa_q3_map_actor_state, team)},
+                 {QA_TARGET_KEY_MODEL, offsetof(qa_q3_map_actor_state, model)},
+                 {QA_TARGET_KEY_MODEL2, offsetof(qa_q3_map_actor_state, model2)}},
+      numbers[] = {{QA_TARGET_KEY_SPEED, offsetof(qa_q3_map_actor_state, speed)},
+                   {QA_TARGET_KEY_WAIT, offsetof(qa_q3_map_actor_state, wait)},
+                   {QA_TARGET_KEY_RANDOM, offsetof(qa_q3_map_actor_state, random)},
+                   {QA_TARGET_KEY_ROLL, offsetof(qa_q3_map_actor_state, roll)}};
     for (size_t i = 0; i < sizeof(texts) / sizeof(*texts); ++i)
-        if (!strcmp(key, texts[i].name)) {
+        if ((key == game->field_keys[texts[i].name])) {
             const qa_string_id *value = (const void *)((const char *)state + texts[i].offset);
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = *value};
             return true;
         }
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
-        if (!strcmp(key, numbers[i].name)) {
+        if ((key == game->field_keys[numbers[i].name])) {
             const float *value = (const void *)((const char *)state + numbers[i].offset);
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = *value};
             return true;
         }
-    if (!strcmp(key, "spawnflags")) {
+    if ((key == game->field_keys[QA_TARGET_KEY_SPAWNFLAGS])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = state->spawnflags};
         return true;
     }
-    if (!strcmp(key, "count") || !strcmp(key, "health") || !strcmp(key, "dmg")) {
-        int32_t value = !strcmp(key, "count") ? state->count
-                        : !strcmp(key, "health") ? state->health
+    if ((key == game->field_keys[QA_TARGET_KEY_COUNT]) || (key == game->field_keys[QA_TARGET_KEY_HEALTH]) || (key == game->field_keys[QA_TARGET_KEY_DMG])) {
+        int32_t value = (key == game->field_keys[QA_TARGET_KEY_COUNT]) ? state->count
+                        : (key == game->field_keys[QA_TARGET_KEY_HEALTH]) ? state->health
                                                   : state->damage;
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = value};
         return true;
     }
-    if (!strcmp(key, "origin") || !strcmp(key, "angles") || !strcmp(key, "movedir")) {
-        qa_vec3 value = !strcmp(key, "origin") ? state->origin
-                        : !strcmp(key, "angles") ? state->angles
+    if ((key == game->field_keys[QA_TARGET_KEY_ORIGIN]) || (key == game->field_keys[QA_TARGET_KEY_ANGLES]) || (key == game->field_keys[QA_TARGET_KEY_MOVEDIR])) {
+        qa_vec3 value = (key == game->field_keys[QA_TARGET_KEY_ORIGIN]) ? state->origin
+                        : (key == game->field_keys[QA_TARGET_KEY_ANGLES]) ? state->angles
                                                   : state->direction;
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = value};
         return true;
@@ -432,10 +432,10 @@ bool q3_map_target_pose(qa_q3_game *game, qa_actor_id actor, qa_vec3 *origin,
     *origin = body.origin;
     *angles = body.angles;
     qa_target_field field;
-    if (qa_targets_field(targets, actor, "origin", &field) &&
+    if (qa_targets_field(targets, actor, qa_targets_field_keys(targets)[QA_TARGET_KEY_ORIGIN], &field) &&
         field.kind == QA_TARGET_FIELD_VECTOR)
         *origin = field.value.vector;
-    if (qa_targets_field(targets, actor, "angles", &field) &&
+    if (qa_targets_field(targets, actor, qa_targets_field_keys(targets)[QA_TARGET_KEY_ANGLES], &field) &&
         field.kind == QA_TARGET_FIELD_VECTOR)
         *angles = field.value.vector;
     return true;

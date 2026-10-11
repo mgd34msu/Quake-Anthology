@@ -52,9 +52,9 @@ static bool fog_info(qa_q1_game *g, qa_string_id name, fog_value *out) {
         return true;
     }
     double density = 0, flags = 0;
-    (void)qa_targets_number(g->maps->options.targets, id, "fog_density", &density);
-    (void)qa_targets_number(g->maps->options.targets, id, "spawnflags", &flags);
-    (void)qa_targets_vector(g->maps->options.targets, id, "fog_color", &out->color);
+    (void)qa_targets_number(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_FOG_DENSITY], &density);
+    (void)qa_targets_number(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_SPAWNFLAGS], &flags);
+    (void)qa_targets_vector(g->maps->options.targets, id, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_FOG_COLOR], &out->color);
     out->density = (float)density;
     out->flags = flags >= 0 && flags <= UINT32_MAX ? (uint32_t)flags : 0;
     return true;

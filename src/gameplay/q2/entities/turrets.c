@@ -273,12 +273,12 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->visual.scale = 0;
         }
         t->goal = qa_v3(0, body.angles.y, 0);
-        float minimum = q2_field_float(g, s, "minpitch", -30),
-              maximum = q2_field_float(g, s, "maxpitch", 30);
+        float minimum = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MINPITCH], -30),
+              maximum = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MAXPITCH], 30);
         t->pitch_max = -(minimum != 0 ? minimum : -30);
         t->pitch_min = -(maximum != 0 ? maximum : 30);
-        t->yaw_min = q2_field_float(g, s, "minyaw", 0);
-        t->yaw_max = q2_field_float(g, s, "maxyaw", 360);
+        t->yaw_min = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MINYAW], 0);
+        t->yaw_max = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MAXYAW], 360);
         if (t->yaw_max == 0)
             t->yaw_max = 360;
         q2_entity_schedule(g, a, Q2ET_TURRET_INIT, (float)g->frame_ns / Q2_NS);

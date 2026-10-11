@@ -232,7 +232,7 @@ static bool steam_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
     s->count = (s->count ? s->count : 32) & 255;
     if (s->speed == 0)
         s->speed = 75;
-    uint32_t color = q2_actor_field_flags(g, a->id, "sounds");
+    uint32_t color = q2_actor_field_flags(g, a->id, g->field_keys[QA_TARGET_KEY_SOUNDS]);
     s->style = (int)((color ? color : 8) & 255);
     s->wait *= 1000;
     s->usable = true;
@@ -318,7 +318,7 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
         return s->target ? q2_entity_schedule(g, a, Q2ET_STEAM, 1) : steam_start(g, a, e);
     case Q2E_SOUND_FX: {
         const char *sound = NULL;
-        switch ((int)q2_field_float(g, s, "noise", 0)) {
+        switch ((int)q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_NOISE], 0)) {
         case 1:
             sound = QA_Q2_SOUND_WORLD_X_ALARM;
             break;
@@ -502,7 +502,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
             qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 world gravity service is not installed");
             return false;
         }
-        return services->world_gravity(services->context, q2_field_float(g, s, "gravity", 0), e);
+        return services->world_gravity(services->context, q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_GRAVITY], 0), e);
     }
     case Q2E_SOUND_FX:
         return q2_entity_schedule(g, a, Q2ET_SOUND_FX, s->delay);
@@ -512,7 +512,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
             r->steam_id %= 20000;
         r->steam_id++;
         if (s->wait == 0)
-            s->wait = other.registry ? q2_actor_field_float(g, other, "wait", 0) * 1000 : 1000;
+            s->wait = other.registry ? q2_actor_field_float(g, other, g->field_keys[QA_TARGET_KEY_WAIT], 0) * 1000 : 1000;
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
             return false;

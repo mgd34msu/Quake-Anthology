@@ -299,7 +299,7 @@ bool q1_map_addon_electrode_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         double target_count;
         if (!campaign_actor(g, id))
             return true;
-        if (!qa_targets_number(g->maps->options.targets, actor, "cnt", &target_count) ||
+        if (!qa_targets_number(g->maps->options.targets, actor, qa_targets_field_keys(g->maps->options.targets)[QA_TARGET_KEY_CNT], &target_count) ||
             target_count != count)
             continue;
         if (!campaign_actor(g, id))

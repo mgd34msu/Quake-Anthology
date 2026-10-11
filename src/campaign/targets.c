@@ -5,6 +5,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool qa_targets_bind_field_keys(qa_strings *strings, qa_string_id keys[QA_TARGET_KEY_TOTAL], qa_error *error) {
+    static const char *const names[] = {
+#define QA_TARGET_KEY_TEXT(key, text) text,
+        QA_TARGET_KEY_LIST(QA_TARGET_KEY_TEXT)
+#undef QA_TARGET_KEY_TEXT
+    };
+    for (unsigned i = 0; i < QA_TARGET_KEY_TOTAL; ++i)
+        if (!qa_strings_intern_cstr(strings, names[i], &keys[i], error)) return false;
+    return true;
+}
+const qa_string_id *qa_targets_field_keys(const qa_targets *targets) { return targets->field_keys; }
 static bool fail(qa_error *error, const char *text) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", text);
     return false;
@@ -54,6 +65,10 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
         return NULL;
     }
     targets->options = *options;
+    if (!qa_targets_bind_field_keys(qa_session_strings(options->session), targets->field_keys, error)) {
+        qa_targets_destroy(targets);
+        return NULL;
+    }
     static const char *const runtime_names[TARGET_NAME_COUNT] = {
         "monster_zombie", "func_areaportal", "func_door", "func_door_rotating"
     };
@@ -106,22 +121,22 @@ static bool monster_use(void *opaque, qa_actor_id actor, qa_actor_id other,
     qa_target_binding native = monster->native;
     return !native.use || native.use(native.context, actor, other, activator, error);
 }
-static bool monster_field(void *opaque, qa_actor_id actor, const char *key, qa_target_field *out) {
+static bool monster_field(void *opaque, qa_actor_id actor, qa_string_id key, qa_target_field *out) {
     target_monster *monster = opaque;
     const qa_authored_monster *row = &monster->authored;
-    const char *keys[] = {"classname", "targetname", "target", "killtarget", "message",
-        "deathtarget", "item", "itemtarget", "healthtarget", "combattarget"};
+    static const qa_target_key keys[] = {QA_TARGET_KEY_CLASSNAME, QA_TARGET_KEY_TARGETNAME, QA_TARGET_KEY_TARGET, QA_TARGET_KEY_KILLTARGET, QA_TARGET_KEY_MESSAGE,
+        QA_TARGET_KEY_DEATHTARGET, QA_TARGET_KEY_ITEM, QA_TARGET_KEY_ITEMTARGET, QA_TARGET_KEY_HEALTHTARGET, QA_TARGET_KEY_COMBATTARGET};
     const qa_string_id values[] = {row->fields.classname, row->fields.targetname,
         row->fields.target, row->fields.killtarget, row->fields.message,
         row->death_target, row->drop_item, row->item_target, row->health_target, row->combat_target};
     for (size_t i = 0; i < sizeof(keys) / sizeof(*keys); ++i)
-        if (!strcmp(key, keys[i])) {
+        if ((key == monster->targets->field_keys[keys[i]])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = values[i]};
             return true;
         }
-    if (!strcmp(key, "spawnflags") || !strcmp(key, "delay")) {
+    if ((key == monster->targets->field_keys[QA_TARGET_KEY_SPAWNFLAGS]) || (key == monster->targets->field_keys[QA_TARGET_KEY_DELAY])) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-            .value.number = !strcmp(key, "spawnflags") ? (double)row->spawnflags : (double)row->fields.delay_seconds};
+            .value.number = (key == monster->targets->field_keys[QA_TARGET_KEY_SPAWNFLAGS]) ? (double)row->spawnflags : (double)row->fields.delay_seconds};
         return true;
     }
     return monster->native.field && monster->native.field(monster->native.context, actor, key, out);
@@ -297,7 +312,7 @@ bool qa_targets_set_delay(qa_targets *targets, qa_actor_id actor, float seconds,
     }
     return true;
 }
-bool qa_targets_field(const qa_targets *targets, qa_actor_id actor, const char *key,
+bool qa_targets_field(const qa_targets *targets, qa_actor_id actor, qa_string_id key,
                       qa_target_field *out) {
     const qa_target_binding *entry = binding(targets, actor);
     qa_target_field value = {0};
@@ -322,7 +337,7 @@ bool qa_targets_field(const qa_targets *targets, qa_actor_id actor, const char *
     *out = value;
     return true;
 }
-bool qa_targets_number(const qa_targets *targets, qa_actor_id actor, const char *key, double *out) {
+bool qa_targets_number(const qa_targets *targets, qa_actor_id actor, qa_string_id key, double *out) {
     qa_target_field value;
     if (!targets || !qa_targets_field(targets, actor, key, &value))
         return false;
@@ -342,7 +357,7 @@ bool qa_targets_number(const qa_targets *targets, qa_actor_id actor, const char 
 static bool field_space(uint8_t c) {
     return c == ' ' || (c >= '\t' && c <= '\r');
 }
-bool qa_targets_vector(const qa_targets *targets, qa_actor_id actor, const char *key,
+bool qa_targets_vector(const qa_targets *targets, qa_actor_id actor, qa_string_id key,
                         qa_vec3 *out) {
     qa_target_field value;
     if (!targets || !key || !out || !qa_targets_field(targets, actor, key, &value))
