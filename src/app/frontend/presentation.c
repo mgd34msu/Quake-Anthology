@@ -473,7 +473,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 .view = view, .seconds = (double)frontend->time_ns / 1e9,
                 .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4,
                 .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend};
-            frontend_source_companion_legacy *companion=NULL;
+            frontend_source_companion_legacy companion={0};
             bool okay=frontend_event_world(frontend,i,&world,error);
             const qa_product *product=native_ready?
                 qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation):NULL;
@@ -481,8 +481,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 okay=frontend_source_companion_legacy_prepare(frontend,i,actor,frontend->scene_world,
                     product->family==QA_GAME_Q1?QA_GAME_Q1:QA_GAME_Q2,&world,&companion,error);
             if (okay) okay=frontend_legacy_scene_submit(frontend,i,0,&world,&frontend->frame,error);
-            if (okay) okay=frontend_source_companion_legacy_submit(companion,&frontend->frame,error);
-            frontend_source_companion_legacy_dispose(&companion);
+            if (okay) okay=frontend_source_companion_legacy_submit(&companion,&frontend->frame,error);
             if (!okay) return false;
         }
         if (!source.source_world && !native_rendered && (!frontend_event_debug(frontend, &view, error) ||

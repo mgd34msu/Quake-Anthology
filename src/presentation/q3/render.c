@@ -826,15 +826,22 @@ static bool selected_effect_ready(qa_q3_presentation *p, const qa_q3_presentatio
     return true;
 }
 
+void qa_q3_ref_entity_remap(qa_q3_ref_entity *entity,qa_vec3 from_origin,const qa_vec3 from_axis[3],
+    qa_vec3 to_origin,const qa_vec3 to_axis[3])
+{
+    entity->origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->origin);
+    entity->old_origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->old_origin);
+    entity->lighting_origin=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,entity->lighting_origin);
+    for(size_t i=0;i<3;++i) entity->axis[i]=qa_axis_remap(from_axis,to_axis,entity->axis[i]);
+}
+
 static void place_view_weapon(const qa_q3_scene_options *options,qa_q3_ref_entity *entity)
 {
     if(options->world.no_world || !(entity->flags&4))return;
     if(options->weapon_camera) {
         float previous_z=entity->origin.z;
-        entity->origin=qa_axis_remap_point(options->weapon_camera->origin,options->weapon_camera->axis,options->world.view.origin,options->world.view.axis,entity->origin);
-        entity->old_origin=qa_axis_remap_point(options->weapon_camera->origin,options->weapon_camera->axis,options->world.view.origin,options->world.view.axis,entity->old_origin);
-        entity->lighting_origin=qa_axis_remap_point(options->weapon_camera->origin,options->weapon_camera->axis,options->world.view.origin,options->world.view.axis,entity->lighting_origin);
-        for(size_t i=0;i<3;++i)entity->axis[i]=qa_axis_remap(options->weapon_camera->axis,options->world.view.axis,entity->axis[i]);
+        qa_q3_ref_entity_remap(entity,options->weapon_camera->origin,options->weapon_camera->axis,
+            options->world.view.origin,options->world.view.axis);
         entity->shadow_plane+=entity->origin.z-previous_z;
     }
     entity->origin=qa_vec_add(entity->origin,options->weapon_offset);

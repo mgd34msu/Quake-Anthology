@@ -2,6 +2,16 @@
 
 #include <math.h>
 
+void qa_scene_vertices_remap(qa_scene_vertex *out,const qa_scene_vertex *in,size_t count,
+    qa_vec3 from_origin,const qa_vec3 from_axis[3],qa_vec3 to_origin,const qa_vec3 to_axis[3])
+{
+    for(size_t i=0;i<count;++i) {
+        qa_scene_vertex vertex=in[i];
+        vertex.position=qa_axis_remap_point(from_origin,from_axis,to_origin,to_axis,vertex.position);
+        out[i]=vertex;
+    }
+}
+
 void qa_scene_matrix_identity(qa_scene_matrix *out)
 {
     if (out == NULL) return;

@@ -2,17 +2,7 @@
 #include "q3_color_policy.h"
 #include "qa/q3_presentation_save.h"
 
-struct frontend_source_companion_legacy {
-    qa_frontend *frontend;
-    qa_actor_id actor;
-    qa_scene_world *world;
-    frontend_source_companion_view capture;
-    qa_q3_presentation *presentation;
-    qa_application_q3_weapon_models models;
-    bool registered;
-    qa_q3_scene_options options;
-    qa_scene_light *lights,*projected;
-};
+
 static bool owned(const frontend_source_companion_legacy *owner,const frontend_source_companion_packet *packet,
     size_t ordinal,bool *view)
 {
@@ -25,18 +15,14 @@ static bool owned(const frontend_source_companion_legacy *owner,const frontend_s
         ref->model==owner->models.barrel || ref->model==owner->models.flash)) match=*view=true;
     return match;
 }
-void frontend_source_companion_legacy_dispose(frontend_source_companion_legacy **slot)
-{
-    if (!slot || !*slot) return;
-    free((*slot)->lights); free((*slot)->projected); free(*slot); *slot=NULL;
-}
 bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,qa_actor_id actor,
     qa_scene_world *world,qa_game_family family,qa_scene_world_input *input,
-    frontend_source_companion_legacy **out,qa_error *error)
+    frontend_source_companion_legacy *owner,qa_error *error)
 {
-    if (!f || !world || !input || !out || *out || input->view.seat!=physical ||
+    if (!f || !world || !input || !owner || input->view.seat!=physical ||
         (family!=QA_GAME_Q1 && family!=QA_GAME_Q2))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Legacy companion requires its actual recipient world and prepared view");
+    *owner=(frontend_source_companion_legacy){0};
     frontend_source_companion_view capture; bool present=false;
     if (!frontend_source_companion_read(f,physical,actor,&capture,&present,error)) return false;
     if (!present) return true;
@@ -44,9 +30,7 @@ bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,q
     if (!qa_application_equipment_read(f->application,actor,&selection,error) ||
         !selection.selected || !selection.original_qvm || selection.provider!=capture.receipt.client.source.source_owner)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Legacy companion left its actual selected GAME and full actor");
-    frontend_source_companion_legacy *owner=calloc(1,sizeof(*owner));
-    if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining completed legacy companion submission");
-    *out=owner; owner->frontend=f; owner->actor=actor; owner->world=world; owner->capture=capture;
+    owner->frontend=f; owner->actor=actor; owner->world=world; owner->capture=capture;
     if (!frontend_source_companion_presentation_read(f,&capture,&owner->presentation,error) ||
         !qa_application_equipment_q3_models_read(f->application,&selection,capture.receipt.client.source.receiver,
             capture.receipt.client.source.seat,&owner->models,&owner->registered,error)) return false;
@@ -78,8 +62,8 @@ bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,q
         input->light_count>SIZE_MAX/sizeof(*owner->lights)-added)
         return frontend_fail(error,QA_ERROR_FORMAT,"Legacy companion lights exceed the actual recipient spans");
     size_t total=input->light_count+added,projected_added=added<32-input->projected_light_count?added:32-input->projected_light_count;
-    owner->lights=malloc(total*sizeof(*owner->lights));
-    if (projected_added) owner->projected=malloc((input->projected_light_count+projected_added)*sizeof(*owner->projected));
+    owner->lights=qa_arena_alloc(&f->frame.storage,total*sizeof(*owner->lights),_Alignof(qa_scene_light),error);
+    if (projected_added) owner->projected=qa_arena_alloc(&f->frame.storage,(input->projected_light_count+projected_added)*sizeof(*owner->projected),_Alignof(qa_scene_light),error);
     if (!owner->lights || (projected_added && !owner->projected))
         return frontend_fail(error,QA_ERROR_MEMORY,"Combining actual legacy recipient lights");
     if (input->light_count) memcpy(owner->lights,input->lights,input->light_count*sizeof(*owner->lights));
@@ -109,7 +93,7 @@ bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,q
 }
 bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *owner,qa_scene_frame *frame,qa_error *error)
 {
-    if (!owner) return true;
+    if (!owner || !owner->frontend) return true;
     qa_frontend *f=owner->frontend;
     if (frame!=&f->frame || !frontend_source_companion_current(f,&owner->capture))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Legacy companion submission lost its actual retained output");
@@ -123,10 +107,8 @@ bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *o
             if (!owned(owner,&packet,j,&view) || (view && owner->options.world.view.clip_enabled)) continue;
             qa_q3_ref_entity ref=packet.entities[j];
             if (view) {
-                ref.origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,ref.origin);
-                ref.old_origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,ref.old_origin);
-                ref.lighting_origin=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,ref.lighting_origin);
-                for (size_t k=0;k<3;++k) ref.axis[k]=qa_axis_remap(packet.definition.axis,owner->options.world.view.axis,ref.axis[k]);
+                qa_q3_ref_entity_remap(&ref,packet.definition.origin,packet.definition.axis,
+                    owner->options.world.view.origin,owner->options.world.view.axis);
             }
             if (!qa_q3_presentation_completed_entity(owner->presentation,owner->capture.assets,owner->world,
                 &ref,packet.definition.time,&owner->options,order++,frame,error)) return false;
@@ -141,16 +123,15 @@ bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *o
             const qa_scene_vertex *vertices=polygon->count?packet.vertices+polygon->first:NULL;
             qa_scene_vertex *transformed=NULL;
             if (view && polygon->count) {
-                transformed=malloc(polygon->count*sizeof(*transformed));
+                transformed=qa_arena_alloc(&frame->storage,polygon->count*sizeof(*transformed),_Alignof(qa_scene_vertex),error);
                 if (!transformed) return frontend_fail(error,QA_ERROR_MEMORY,"Transforming actual Source view polygon");
-                memcpy(transformed,vertices,polygon->count*sizeof(*transformed));
-                for (size_t k=0;k<polygon->count;++k)
-                    transformed[k].position=qa_axis_remap_point(packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis,transformed[k].position);
+                qa_scene_vertices_remap(transformed,vertices,polygon->count,
+                    packet.definition.origin,packet.definition.axis,owner->options.world.view.origin,owner->options.world.view.axis);
                 vertices=transformed;
             }
             bool okay=qa_q3_presentation_completed_poly(owner->presentation,owner->capture.assets,owner->world,
                 polygon->shader,vertices,polygon->count,&polygon->fog,packet.definition.time,&owner->options,frame,error);
-            free(transformed); if (!okay) return false;
+            if (!okay) return false;
         }
     }
     return frontend_source_companion_current(f,&owner->capture);

@@ -110,6 +110,15 @@ static void test_shared_bounds_and_transform(void)
     CHECK(point.x==12 && point.y==-1 && point.z==8);
     CHECK(projected.x==point.x && projected.y==point.y && projected.z==point.z && projected.w==1);
     CHECK(qa_vec_dot_wide(qa_v3(1,2,3),qa_v3(4,5,6))==32);
+    qa_vec3 identity[3]={{1,0,0},{0,1,0},{0,0,1}};
+    qa_scene_vertex source={.position={11,12,13},.texcoord={.25f,.5f},.color={1,2,3,4}},remapped;
+    qa_scene_vertices_remap(&remapped,&source,1,qa_v3(10,10,10),identity,qa_v3(20,30,40),identity);
+    CHECK(remapped.position.x==21 && remapped.position.y==32 && remapped.position.z==43);
+    CHECK(source.position.x==11 && remapped.texcoord.x==source.texcoord.x &&
+        remapped.texcoord.y==source.texcoord.y && !memcmp(&remapped.color,&source.color,sizeof(source.color)));
+    qa_scene_vertices_remap(&remapped,&remapped,1,qa_v3(20,30,40),identity,qa_v3(10,10,10),identity);
+    CHECK(remapped.position.x==source.position.x && remapped.position.y==source.position.y &&
+        remapped.position.z==source.position.z);
 }
 static void test_shared_vector_geometry(void)
 {

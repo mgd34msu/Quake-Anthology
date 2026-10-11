@@ -1125,11 +1125,8 @@ static bool companion_submit(frontend_equipment_source *owner,
         if (captured->view && !owner->companion_view_requested) continue;
         qa_q3_ref_entity ref = captured->ref;
         if (captured->view) {
-            ref.origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,ref.origin);
-            ref.old_origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,ref.old_origin);
-            ref.lighting_origin = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,ref.lighting_origin);
-            for (size_t j = 0; j < 3; ++j)
-                ref.axis[j] = qa_axis_remap(captured->definition.axis,options->world.view.axis,ref.axis[j]);
+            qa_q3_ref_entity_remap(&ref,captured->definition.origin,captured->definition.axis,
+                options->world.view.origin,options->world.view.axis);
         }
         if (!frontend_source_companion_current(owner->options.frontend, &owner->companion) ||
             !qa_q3_presentation_source_component_entity(owner->options.presentation, owner->companion.assets,
@@ -1143,9 +1140,8 @@ static bool companion_submit(frontend_equipment_source *owner,
             transformed=qa_arena_alloc(&frame->storage,captured->polygon.count*sizeof(*transformed),
                 _Alignof(qa_scene_vertex),error);
             if (!transformed) return frontend_fail(error, QA_ERROR_MEMORY, "Transforming genuine Source view weapon polygon");
-            memcpy(transformed, vertices, captured->polygon.count * sizeof(*transformed));
-            for (size_t j = 0; j < captured->polygon.count; ++j)
-                transformed[j].position = qa_axis_remap_point(captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis,transformed[j].position);
+            qa_scene_vertices_remap(transformed,vertices,captured->polygon.count,
+                captured->definition.origin,captured->definition.axis,options->world.view.origin,options->world.view.axis);
             vertices = transformed;
         }
         bool okay = frontend_source_companion_current(owner->options.frontend, &owner->companion) &&
