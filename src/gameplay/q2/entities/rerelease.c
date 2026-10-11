@@ -79,7 +79,7 @@ static bool flashlight(qa_q2_game *g, qa_actor_id id, bool enabled, qa_error *e)
         return true;
     a->client->info.flashlight = enabled;
     if (!q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,
-        g->runtime_names[enabled?Q2_NAME_SOUND_ITEMS_FLASHLIGHT_ON:Q2_NAME_SOUND_ITEMS_FLASHLIGHT_OFF],0,1,3,0,e))
+        g->runtime_names[enabled?QA_Q2_SFX_ITEMS_FLASHLIGHT_ON:QA_Q2_SFX_ITEMS_FLASHLIGHT_OFF],0,1,3,0,e))
         return false;
     return !q2_actor_live(g, id) ||
            q2_player_emit(g,

@@ -398,7 +398,7 @@ static bool dispatch(hand_step *step, uint64_t revision, qa_error *e) {
         } else {
             if (!q2_emit_sound(g,c->actor->id,
                 pending->kind == HAND_COOK_STOP ? QA_BUILTIN_STOP_SOUND : QA_BUILTIN_SOUND,NULL,
-                g->runtime_names[pending->kind==HAND_COCK?Q2_NAME_SOUND_WEAPONS_HGRENA1B:Q2_NAME_SOUND_WEAPONS_HGRENC1B],
+                g->runtime_names[pending->kind==HAND_COCK?QA_Q2_SFX_WEAPONS_HGRENA1B:QA_Q2_SFX_WEAPONS_HGRENC1B],
                 1,1,1,pending->kind==HAND_COOK_START?1u:0u,e)) return false;
         }
     }

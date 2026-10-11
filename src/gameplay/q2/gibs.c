@@ -236,7 +236,7 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     p->armed = true;
     if (!contact->has_plane)
         return true;
-    if (!q2_projectile_event(g, a->id, QA_BUILTIN_SOUND, g->runtime_names[Q2_NAME_SOUND_MISC_FHIT3], 2, body.origin,
+    if (!q2_projectile_event(g, a->id, QA_BUILTIN_SOUND, g->runtime_names[QA_Q2_SFX_MISC_FHIT3], 2, body.origin,
                              body.origin, e))
         return false;
     if (!q2_actor_live(g, a->id))

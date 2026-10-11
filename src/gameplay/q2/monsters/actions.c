@@ -327,27 +327,27 @@ typedef struct source_sound {
 } source_sound;
 
 static const source_sound source_sounds[Q2M_CALLBACK_COUNT] = {
-    [Q2M_CALLBACK_TankStrike]={ Q2_NAME_SOUND_TANK_TNKATCK5, 1, 1, 1},
-    [Q2M_CALLBACK_TreadSound2]={ Q2_NAME_SOUND_BOSSTANK_BTKENGN1, 2, 1, 1},
-    [Q2M_CALLBACK_arachnid_footstep]={ Q2_NAME_SOUND_INSANE_INSANE11, 4, 2, .5f},
-    [Q2M_CALLBACK_guardian_footstep]={ Q2_NAME_SOUND_ZORTEMP_STEP, 4, 1, 1},
-    [Q2M_CALLBACK_guncmdr_idlesound]={ Q2_NAME_SOUND_GUNCMDR_GCDRIDLE1, 2, 2, 1},
-    [Q2M_CALLBACK_guncmdr_opengun]={ Q2_NAME_SOUND_GUNCMDR_GCDRATCK1, 2, 2, 1},
-    [Q2M_CALLBACK_insane_fist]={ Q2_NAME_SOUND_INSANE_INSANE11, 2, 2, 1},
-    [Q2M_CALLBACK_jorg_idle]={ Q2_NAME_SOUND_BOSS3_BS3IDLE1, 2, 1, 1},
-    [Q2M_CALLBACK_jorg_step_left]={ Q2_NAME_SOUND_BOSS3_STEP1, 4, 1, 1},
-    [Q2M_CALLBACK_jorg_step_right]={ Q2_NAME_SOUND_BOSS3_STEP2, 4, 1, 1},
-    [Q2M_CALLBACK_makron_hit]={ Q2_NAME_SOUND_MAKRON_BHIT, 0, 0, 1},
-    [Q2M_CALLBACK_makron_popup]={ Q2_NAME_SOUND_MAKRON_POPUP, 4, 0, 1},
-    [Q2M_CALLBACK_makron_step_left]={ Q2_NAME_SOUND_MAKRON_STEP1, 4, 1, 1},
-    [Q2M_CALLBACK_makron_step_right]={ Q2_NAME_SOUND_MAKRON_STEP2, 4, 1, 1},
-    [Q2M_CALLBACK_makron_brainsplorch]={ Q2_NAME_SOUND_MAKRON_BRAIN1, 2, 1, 1},
-    [Q2M_CALLBACK_makron_prerailgun]={ Q2_NAME_SOUND_MAKRON_RAIL_UP, 1, 1, 1},
-    [Q2M_CALLBACK_shambler_melee1]={ Q2_NAME_SOUND_SHAMBLER_MELEE1, 1, 1, 1},
-    [Q2M_CALLBACK_shambler_melee2]={ Q2_NAME_SOUND_SHAMBLER_MELEE2, 1, 1, 1},
-    [Q2M_CALLBACK_tank_footstep]={ Q2_NAME_SOUND_TANK_STEP, 4, 1, 1},
-    [Q2M_CALLBACK_tank_thud]={ Q2_NAME_SOUND_TANK_TNKDETH2, 4, 1, 1},
-    [Q2M_CALLBACK_tank_windup]={ Q2_NAME_SOUND_TANK_TNKATCK4, 1, 1, 1},
+    [Q2M_CALLBACK_TankStrike]={ QA_Q2_SFX_TANK_TNKATCK5, 1, 1, 1},
+    [Q2M_CALLBACK_TreadSound2]={ QA_Q2_SFX_BOSSTANK_BTKENGN1, 2, 1, 1},
+    [Q2M_CALLBACK_arachnid_footstep]={ QA_Q2_SFX_INSANE_INSANE11, 4, 2, .5f},
+    [Q2M_CALLBACK_guardian_footstep]={ QA_Q2_SFX_ZORTEMP_STEP, 4, 1, 1},
+    [Q2M_CALLBACK_guncmdr_idlesound]={ QA_Q2_SFX_GUNCMDR_GCDRIDLE1, 2, 2, 1},
+    [Q2M_CALLBACK_guncmdr_opengun]={ QA_Q2_SFX_GUNCMDR_GCDRATCK1, 2, 2, 1},
+    [Q2M_CALLBACK_insane_fist]={ QA_Q2_SFX_INSANE_INSANE11, 2, 2, 1},
+    [Q2M_CALLBACK_jorg_idle]={ QA_Q2_SFX_BOSS3_BS3IDLE1, 2, 1, 1},
+    [Q2M_CALLBACK_jorg_step_left]={ QA_Q2_SFX_BOSS3_STEP1, 4, 1, 1},
+    [Q2M_CALLBACK_jorg_step_right]={ QA_Q2_SFX_BOSS3_STEP2, 4, 1, 1},
+    [Q2M_CALLBACK_makron_hit]={ QA_Q2_SFX_MAKRON_BHIT, 0, 0, 1},
+    [Q2M_CALLBACK_makron_popup]={ QA_Q2_SFX_MAKRON_POPUP, 4, 0, 1},
+    [Q2M_CALLBACK_makron_step_left]={ QA_Q2_SFX_MAKRON_STEP1, 4, 1, 1},
+    [Q2M_CALLBACK_makron_step_right]={ QA_Q2_SFX_MAKRON_STEP2, 4, 1, 1},
+    [Q2M_CALLBACK_makron_brainsplorch]={ QA_Q2_SFX_MAKRON_BRAIN1, 2, 1, 1},
+    [Q2M_CALLBACK_makron_prerailgun]={ QA_Q2_SFX_MAKRON_RAIL_UP, 1, 1, 1},
+    [Q2M_CALLBACK_shambler_melee1]={ QA_Q2_SFX_SHAMBLER_MELEE1, 1, 1, 1},
+    [Q2M_CALLBACK_shambler_melee2]={ QA_Q2_SFX_SHAMBLER_MELEE2, 1, 1, 1},
+    [Q2M_CALLBACK_tank_footstep]={ QA_Q2_SFX_TANK_STEP, 4, 1, 1},
+    [Q2M_CALLBACK_tank_thud]={ QA_Q2_SFX_TANK_TNKDETH2, 4, 1, 1},
+    [Q2M_CALLBACK_tank_windup]={ QA_Q2_SFX_TANK_TNKATCK4, 1, 1, 1},
 };
 
 static bool source_sound_callback(q2m_context *context, q2m_callback_id callback,
@@ -363,9 +363,9 @@ static bool source_sound_callback(q2m_context *context, q2m_callback_id callback
                      context->body.origin, context->body.origin, 0, error);
   if (callback == Q2M_CALLBACK_makron_taunt) {
     float choice = q2m_random(context->game);
-    q2_runtime_name path = choice <= .3f ? Q2_NAME_SOUND_MAKRON_VOICE4
-                       : choice <= .6f ? Q2_NAME_SOUND_MAKRON_VOICE3
-                                         : Q2_NAME_SOUND_MAKRON_VOICE;
+    q2_runtime_name path = choice <= .3f ? QA_Q2_SFX_MAKRON_VOICE4
+                       : choice <= .6f ? QA_Q2_SFX_MAKRON_VOICE3
+                                         : QA_Q2_SFX_MAKRON_VOICE;
     return q2m_sound(context, path, 0, 0, error);
   }
   if ((callback == Q2M_CALLBACK_insane_shake) ||
@@ -377,12 +377,12 @@ static bool source_sound_callback(q2m_context *context, q2m_callback_id callback
         (!shake && context->monster->attack_ns >= context->game->now_ns)))
       return true;
     static const q2_runtime_name screams[] = {
-        Q2_NAME_SOUND_INSANE_INSANE1, Q2_NAME_SOUND_INSANE_INSANE2, Q2_NAME_SOUND_INSANE_INSANE3,
-        Q2_NAME_SOUND_INSANE_INSANE4, Q2_NAME_SOUND_INSANE_INSANE6, Q2_NAME_SOUND_INSANE_INSANE8,
-        Q2_NAME_SOUND_INSANE_INSANE9, Q2_NAME_SOUND_INSANE_INSANE10};
-    q2_runtime_name path = shake ? Q2_NAME_SOUND_INSANE_INSANE5
+        QA_Q2_SFX_INSANE_INSANE1, QA_Q2_SFX_INSANE_INSANE2, QA_Q2_SFX_INSANE_INSANE3,
+        QA_Q2_SFX_INSANE_INSANE4, QA_Q2_SFX_INSANE_INSANE6, QA_Q2_SFX_INSANE_INSANE8,
+        QA_Q2_SFX_INSANE_INSANE9, QA_Q2_SFX_INSANE_INSANE10};
+    q2_runtime_name path = shake ? QA_Q2_SFX_INSANE_INSANE5
                        : (callback == Q2M_CALLBACK_insane_moan)
-                           ? Q2_NAME_SOUND_INSANE_INSANE7
+                           ? QA_Q2_SFX_INSANE_INSANE7
                            : screams[q2_random_bounded(context->game, 8)];
     if (!q2m_sound(context, path, 2, 2, error))
       return false;
@@ -409,7 +409,7 @@ bool q2m_weapon_sound(q2m_context *context, q2_runtime_name path, qa_error *erro
 bool q2m_jorg_sound_end(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || !context->monster->weapon_sound) return true;
   if (context->game->options.edition == QA_Q2_RERELEASE &&
-      !q2m_sound(context, Q2_NAME_SOUND_BOSS3_BS3ATCK1_END, 1, 1, error)) return false;
+      !q2m_sound(context, QA_Q2_SFX_BOSS3_BS3ATCK1_END, 1, 1, error)) return false;
   return !q2m_alive(context) || q2m_weapon_sound(context, Q2_NAME_NONE, error);
 }
 
@@ -418,7 +418,7 @@ bool q2m_soldier_sound_end(q2m_context *context, qa_error *error) {
       !context->monster->weapon_sound)
     return true;
   if (context->monster->count >= 2 && context->monster->count < 4 &&
-      !q2m_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBD1A, 0, 1.0f, error))
+      !q2m_sound(context, QA_Q2_SFX_WEAPONS_HYPRBD1A, 0, 1.0f, error))
     return false;
   return !q2m_alive(context) || q2m_weapon_sound(context, Q2_NAME_NONE, error);
 }
@@ -432,7 +432,7 @@ static bool soldier_laser_sound(q2m_context *context, bool start,
   if (context->monster->style != 1 || context->monster->count < 2 ||
       context->monster->count >= 4)
     return true;
-  return q2m_weapon_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBL1A, error);
+  return q2m_weapon_sound(context, QA_Q2_SFX_WEAPONS_HYPRBL1A, error);
 }
 
 static bool visible_enemy(q2m_context *context, bool *visible,
@@ -714,7 +714,7 @@ static bool soldier_fire_exact(q2m_context *context, unsigned index,
     }
     if (context->game->options.edition == QA_Q2_CLASSIC &&
         q2m_random(context->game) > 0.8f &&
-        !q2m_sound(context, Q2_NAME_SOUND_MISC_LASFLY, 0, 3.0f, error))
+        !q2m_sound(context, QA_Q2_SFX_MISC_LASFLY, 0, 3.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -1045,25 +1045,25 @@ static bool soldier_callbacks(q2m_context *context, q2m_callback_id callback,
       if (visible)
         monster->frame = (q2m_callbacks[callback].flags & Q2M_CALLBACK_REFIRE1) != 0 ? 2 : 16;
     } else {
-      return q2m_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBD1A, 0, 1.0f, error);
+      return q2m_sound(context, QA_Q2_SFX_WEAPONS_HYPRBD1A, 0, 1.0f, error);
     }
     return true;
   }
   if (callback == Q2M_CALLBACK_soldierh_hyper_sound)
     return soldierh_hyper(monster)
-               ? q2m_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBL1A, 0, 1.0f, error)
+               ? q2m_sound(context, QA_Q2_SFX_WEAPONS_HYPRBL1A, 0, 1.0f, error)
                : true;
 
   if ((callback == Q2M_CALLBACK_soldier_idle) ||
       (callback == Q2M_CALLBACK_soldierh_idle))
     return q2m_random(context->game) > 0.8f
-               ? q2m_sound(context, Q2_NAME_SOUND_SOLDIER_SOLIDLE1, 2, 2.0f, error)
+               ? q2m_sound(context, QA_Q2_SFX_SOLDIER_SOLIDLE1, 2, 2.0f, error)
                : true;
   if ((callback == Q2M_CALLBACK_soldier_cock) ||
       (callback == Q2M_CALLBACK_soldierh_cock)) {
     if (base)
       monster->cocked = true;
-    return q2m_sound(context, Q2_NAME_SOUND_INFANTRY_INFATCK3, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_INFANTRY_INFATCK3, 1, 1.0f, error);
   }
   if ((callback == Q2M_CALLBACK_soldier_walk1_random) ||
       (callback == Q2M_CALLBACK_soldierh_walk1_random)) {
@@ -1316,7 +1316,7 @@ static bool infantry_callbacks(q2m_context *context, q2m_callback_id callback,
     } else {
       monster->cocked = true;
     }
-    return q2m_sound(context, Q2_NAME_SOUND_INFANTRY_INFATCK3, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_INFANTRY_INFATCK3, 1, 1.0f, error);
   }
   if (callback == Q2M_CALLBACK_infantry_set_firetime) {
     monster->fire_ns =
@@ -1357,7 +1357,7 @@ static bool infantry_callbacks(q2m_context *context, q2m_callback_id callback,
     return infantry_fire(context, error);
   }
   if (callback == Q2M_CALLBACK_infantry_swing)
-    return q2m_sound(context, Q2_NAME_SOUND_INFANTRY_INFATCK2, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_INFANTRY_INFATCK2, 1, 1.0f, error);
   if (callback == Q2M_CALLBACK_infantry_duck_down) {
     if (monster->ducked)
       return true;
@@ -1617,7 +1617,7 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  if (!q2m_sound(context, Q2_NAME_SOUND_MEDIC_COMMANDER_MONSTERSPAWN1, 4, 0.0f, error))
+  if (!q2m_sound(context, QA_Q2_SFX_MEDIC_COMMANDER_MONSTERSPAWN1, 4, 0.0f, error))
     return false;
   if (!q2m_alive(context) || child.registry == 0 ||
       child.slot >= context->game->capacity)
@@ -1994,7 +1994,7 @@ static bool widow2_tongue(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || !q2_actor_live(context->game, enemy_id) ||
       trace.hit != QA_TRACE_HIT_ACTOR || !qa_actor_id_equal(trace.actor, enemy_id))
     return true;
-  if (!q2m_sound(context, Q2_NAME_SOUND_BRAIN_BRNATCK3, 1, 1.0f, error))
+  if (!q2m_sound(context, QA_Q2_SFX_BRAIN_BRNATCK3, 1, 1.0f, error))
     return false;
   if (!q2m_alive(context) || !q2_actor_live(context->game, enemy_id))
     return true;
@@ -2082,7 +2082,7 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
     if (!q2m_set_move(context, Q2M_MOVE_guardian_atk1_out, true, error))
       return false;
     monster->weapon_sound = 0;
-    if (!stop_loop_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBL1A, error))
+    if (!stop_loop_sound(context, QA_Q2_SFX_WEAPONS_HYPRBL1A, error))
       return false;
     return true;
   }
@@ -2331,7 +2331,7 @@ static bool turret_ready_gun(q2m_context *context, qa_error *error) {
   if (!q2m_set_move(context, Q2M_MOVE_turret_move_ready_gun, false, error))
     return false;
   return !rerelease || !q2m_alive(context) ||
-      q2m_weapon_sound(context, Q2_NAME_SOUND_TURRET_MOVING, error);
+      q2m_weapon_sound(context, QA_Q2_SFX_TURRET_MOVING, error);
 }
 
 static bool callback_turret_run(q2m_context *context, q2m_callback_id callback, qa_error *error) {
@@ -2350,7 +2350,7 @@ static bool callback_turret_run(q2m_context *context, q2m_callback_id callback, 
   if (rerelease && q2m_alive(context) && context->monster->weapon_sound) {
     if (!q2m_weapon_sound(context, Q2_NAME_NONE, error)) return false;
     return !q2m_alive(context) ||
-        q2m_sound(context, Q2_NAME_SOUND_TURRET_MOVED, 1, 1, error);
+        q2m_sound(context, QA_Q2_SFX_TURRET_MOVED, 1, 1, error);
   }
   return true;
 }
@@ -2491,7 +2491,7 @@ static bool foundational_species_callback(q2m_context *context,
   *handled = true;
 
   if (callback == Q2M_CALLBACK_berserk_run_swing) {
-    if (!q2m_sound(context, Q2_NAME_SOUND_BERSERK_ATTACK, 1, 1, error)) return false;
+    if (!q2m_sound(context, QA_Q2_SFX_BERSERK_ATTACK, 1, 1, error)) return false;
     if (!q2m_alive(context)) return true;
     monster->melee_ns = q2m_after(context->game->now_ns, .6);
     if (monster->attack_state == Q2M_SLIDING) {
@@ -2501,7 +2501,7 @@ static bool foundational_species_callback(q2m_context *context,
     return true;
   }
   if (callback == Q2M_CALLBACK_berserk_swing)
-    return q2m_sound(context, Q2_NAME_SOUND_BERSERK_ATTACK, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_BERSERK_ATTACK, 1, 1.0f, error);
   if (callback == Q2M_CALLBACK_berserk_strike)
     return true;
   if (callback == Q2M_CALLBACK_berserk_high_gravity) {
@@ -2526,9 +2526,9 @@ static bool foundational_species_callback(q2m_context *context,
   }
 
   if (callback == Q2M_CALLBACK_brain_swing_right)
-    return q2m_sound(context, Q2_NAME_SOUND_BRAIN_MELEE1, 4, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_BRAIN_MELEE1, 4, 1.0f, error);
   if (callback == Q2M_CALLBACK_brain_swing_left)
-    return q2m_sound(context, Q2_NAME_SOUND_BRAIN_MELEE2, 4, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_BRAIN_MELEE2, 4, 1.0f, error);
   if (callback == Q2M_CALLBACK_brain_chest_open) {
     if (context->game->options.edition == QA_Q2_RERELEASE)
       monster->count = 0;
@@ -2544,7 +2544,7 @@ static bool foundational_species_callback(q2m_context *context,
                              &context->combat.armor, error))
       return false;
     return !q2m_alive(context) ||
-           q2m_sound(context, Q2_NAME_SOUND_BRAIN_BRNATCK1, 4, 1.0f, error);
+           q2m_sound(context, QA_Q2_SFX_BRAIN_BRNATCK1, 4, 1.0f, error);
   }
   if (callback == Q2M_CALLBACK_brain_chest_closed) {
     context->combat.armor.powered.kind = QA_POWER_SCREEN;
@@ -2568,13 +2568,13 @@ static bool foundational_species_callback(q2m_context *context,
 
   if (callback == Q2M_CALLBACK_ChickMoan)
     return q2m_sound(context,
-                     q2m_random(context->game) < 0.5f ? Q2_NAME_SOUND_CHICK_CHKIDLE1
-                                                      : Q2_NAME_SOUND_CHICK_CHKIDLE2,
+                     q2m_random(context->game) < 0.5f ? QA_Q2_SFX_CHICK_CHKIDLE1
+                                                      : QA_Q2_SFX_CHICK_CHKIDLE2,
                      2, 2.0f, error);
   if (callback == Q2M_CALLBACK_Chick_PreAttack1)
-    return q2m_sound(context, Q2_NAME_SOUND_CHICK_CHKATCK1, 2, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_CHICK_CHKATCK1, 2, 1.0f, error);
   if (callback == Q2M_CALLBACK_ChickReload)
-    return q2m_sound(context, Q2_NAME_SOUND_CHICK_CHKATCK5, 2, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_CHICK_CHKATCK5, 2, 1.0f, error);
   if (callback == Q2M_CALLBACK_ChickRocket) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
@@ -2695,7 +2695,7 @@ static bool foundational_species_callback(q2m_context *context,
                              1000.0f, true, effect ? 64u : 0u, error);
   }
   if (callback == Q2M_CALLBACK_floater_zap) {
-    if (!q2m_sound(context, Q2_NAME_SOUND_FLOATER_FLTATCK2, 1, 1.0f, error))
+    if (!q2m_sound(context, QA_Q2_SFX_FLOATER_FLTATCK2, 1, 1.0f, error))
       return false;
     return !q2m_alive(context) ||
            q2m_damage_enemy(context, FLT_MAX, 4, 0,
@@ -2704,7 +2704,7 @@ static bool foundational_species_callback(q2m_context *context,
   }
 
   if (callback == Q2M_CALLBACK_flyer_pop_blades)
-    return q2m_sound(context, Q2_NAME_SOUND_FLYER_FLYATCK1, 2, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_FLYER_FLYATCK1, 2, 1.0f, error);
   if ((callback == Q2M_CALLBACK_flyer_fireleft) ||
       (callback == Q2M_CALLBACK_flyer_fireright)) {
     int flash = (callback == Q2M_CALLBACK_flyer_fireleft) ? 58 : 59;
@@ -2718,7 +2718,7 @@ static bool foundational_species_callback(q2m_context *context,
 
   if ((callback == Q2M_CALLBACK_gladiator_cleaver_swing) ||
       (callback == Q2M_CALLBACK_gladb_cleaver_swing))
-    return q2m_sound(context, Q2_NAME_SOUND_GLADIATOR_MELEE1, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_GLADIATOR_MELEE1, 1, 1.0f, error);
   if (callback == Q2M_CALLBACK_GladiatorGun) {
     qa_vec3 start;
     if (!q2m_project_flash(context, 61, &start, error))
@@ -2731,9 +2731,9 @@ static bool foundational_species_callback(q2m_context *context,
   }
 
   if (callback == Q2M_CALLBACK_gunner_idlesound)
-    return q2m_sound(context, Q2_NAME_SOUND_GUNNER_GUNIDLE1, 2, 2.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_GUNNER_GUNIDLE1, 2, 2.0f, error);
   if (callback == Q2M_CALLBACK_gunner_opengun)
-    return q2m_sound(context, Q2_NAME_SOUND_GUNNER_GUNATCK1, 2, 2.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_GUNNER_GUNATCK1, 2, 2.0f, error);
   if (callback == Q2M_CALLBACK_GunnerGrenade) {
     return gunner_grenade(context, error);
   }
@@ -2856,8 +2856,8 @@ static bool foundational_species_callback(q2m_context *context,
     unsigned variant =
         ((unsigned)(q2m_random(context->game) * 3.0f) + 1u) % 3u + 1u;
     static const q2_runtime_name steps[2][3] = {
-        {Q2_NAME_SOUND_MUTANT_STEP1, Q2_NAME_SOUND_MUTANT_STEP2, Q2_NAME_SOUND_MUTANT_STEP3},
-        {Q2_NAME_SOUND_GEK_GK_STEP1, Q2_NAME_SOUND_GEK_GK_STEP2, Q2_NAME_SOUND_GEK_GK_STEP3}
+        {QA_Q2_SFX_MUTANT_STEP1, QA_Q2_SFX_MUTANT_STEP2, QA_Q2_SFX_MUTANT_STEP3},
+        {QA_Q2_SFX_GEK_GK_STEP1, QA_Q2_SFX_GEK_GK_STEP2, QA_Q2_SFX_GEK_GK_STEP3}
     };
     q2_runtime_name path=steps[callback==Q2M_CALLBACK_gekk_step][variant-1];
     return q2m_sound(context, path, 2, 1.0f, error);
@@ -2865,7 +2865,7 @@ static bool foundational_species_callback(q2m_context *context,
   if (callback == Q2M_CALLBACK_mutant_jump_takeoff) {
     qa_vec3 forward;
     qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
-    if (!q2m_sound(context, Q2_NAME_SOUND_MUTANT_MUTSGHT1, 2, 1.0f, error))
+    if (!q2m_sound(context, QA_Q2_SFX_MUTANT_MUTSGHT1, 2, 1.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -2886,7 +2886,7 @@ static bool foundational_species_callback(q2m_context *context,
       monster->attack_ns = 0;
       monster->ducked = false;
       monster->touch_active = false;
-      return q2m_sound(context, Q2_NAME_SOUND_MUTANT_THUD1, 1, 1.0f, error);
+      return q2m_sound(context, QA_Q2_SFX_MUTANT_THUD1, 1, 1.0f, error);
     }
     monster->next_frame = context->game->now_ns > monster->attack_ns ? 1 : 4;
     return true;
@@ -2914,7 +2914,7 @@ static bool foundational_species_callback(q2m_context *context,
       long_jump = overlaps && distance >= 100.0f &&
                   (distance == 100.0f || q2m_random(context->game) >= 0.9f);
     }
-    if (!q2m_sound(context, Q2_NAME_SOUND_GEK_GK_SGHT1, 2, 1.0f, error))
+    if (!q2m_sound(context, QA_Q2_SFX_GEK_GK_SGHT1, 2, 1.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -2944,7 +2944,7 @@ static bool foundational_species_callback(q2m_context *context,
       monster->touch_active = false;
       context->body.velocity = qa_v3(0, 0, 0);
       return q2m_write_body(context, false, error) &&
-             q2m_sound(context, Q2_NAME_SOUND_MUTANT_THUD1, 1, 1.0f, error);
+             q2m_sound(context, QA_Q2_SFX_MUTANT_THUD1, 1, 1.0f, error);
     }
     monster->next_frame = context->game->now_ns > monster->jump_ns ? 81 : 82;
     return true;
@@ -2983,21 +2983,21 @@ static bool foundational_species_callback(q2m_context *context,
   }
 
   if (callback == Q2M_CALLBACK_parasite_launch)
-    return q2m_sound(context, Q2_NAME_SOUND_PARASITE_PARATCK1, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_PARASITE_PARATCK1, 1, 1.0f, error);
   if (callback == Q2M_CALLBACK_parasite_reel_in)
-    return q2m_sound(context, Q2_NAME_SOUND_PARASITE_PARATCK4, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_PARASITE_PARATCK4, 1, 1.0f, error);
   if (callback == Q2M_CALLBACK_parasite_tap)
-    return q2m_sound(context, Q2_NAME_SOUND_PARASITE_PARIDLE1, 1, 2.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_PARASITE_PARIDLE1, 1, 2.0f, error);
   if (callback == Q2M_CALLBACK_parasite_scratch)
-    return q2m_sound(context, Q2_NAME_SOUND_PARASITE_PARIDLE2, 1, 2.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_PARASITE_PARIDLE2, 1, 2.0f, error);
   if (callback == Q2M_CALLBACK_parasite_drain_attack) {
     bool first = monster->frame == 41;
-    if (first && !q2m_sound(context, Q2_NAME_SOUND_PARASITE_PARATCK2, 0, 1.0f, error))
+    if (first && !q2m_sound(context, QA_Q2_SFX_PARASITE_PARATCK2, 0, 1.0f, error))
       return false;
     if (!q2m_alive(context))
       return true;
     if (monster->frame == 42 &&
-        !q2m_sound(context, Q2_NAME_SOUND_PARASITE_PARATCK3, 1, 1.0f, error))
+        !q2m_sound(context, QA_Q2_SFX_PARASITE_PARATCK3, 1, 1.0f, error))
       return false;
     return !q2m_alive(context) ||
            q2m_damage_enemy(context, 256.0f, 8, 0, first ? 5.0f : 2.0f, 0.0f,
@@ -3783,9 +3783,9 @@ static bool fixbot_welder(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || q2m_random(context->game) <= .8f)
     return true;
   float choice = q2m_random(context->game);
-  return q2m_sound(context, choice < .33f ? Q2_NAME_SOUND_MISC_WELDER1
-                            : choice < .66f ? Q2_NAME_SOUND_MISC_WELDER2
-                                            : Q2_NAME_SOUND_MISC_WELDER3, 2, 2, error);
+  return q2m_sound(context, choice < .33f ? QA_Q2_SFX_MISC_WELDER1
+                            : choice < .66f ? QA_Q2_SFX_MISC_WELDER2
+                                            : QA_Q2_SFX_MISC_WELDER3, 2, 2, error);
 }
 
 static bool shambler_lightning(q2m_context *context, qa_error *error) {
@@ -4008,7 +4008,7 @@ static bool turret_fire(q2m_context *context, bool blind, qa_error *error) {
       context->monster->duck_ns = q2m_after(context->game->now_ns,
           2 + q2m_random(context->game) * (float)context->game->options.skill);
       context->monster->next_duck_ns = q2m_after(context->game->now_ns, 1);
-      return q2m_sound(context, Q2_NAME_SOUND_WEAPONS_CHNGNU1A, 2, 1, error);
+      return q2m_sound(context, QA_Q2_SFX_WEAPONS_CHNGNU1A, 2, 1, error);
     }
     if (context->monster->duck_ns < context->game->now_ns)
       context->monster->hold_frame = false;
@@ -4233,13 +4233,13 @@ static bool heavy_weapon_callback(q2m_context *context, q2m_callback_id callback
   if (callback == Q2M_CALLBACK_jorgBFG) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
     if (!q2m_sound(context,
-                   rerelease ? Q2_NAME_SOUND_MAKRON_BFG_FIRE : Q2_NAME_SOUND_BOSS3_BS3ATCK2,
+                   rerelease ? QA_Q2_SFX_MAKRON_BFG_FIRE : QA_Q2_SFX_BOSS3_BS3ATCK2,
                    rerelease ? 1 : 2, 1.0f, error))
       return false;
     return !q2m_alive(context) || fire_bfg_exact(context, 132, 200.0f, error);
   }
   if (callback == Q2M_CALLBACK_makronBFG) {
-    if (!q2m_sound(context, Q2_NAME_SOUND_MAKRON_BFG_FIRE, 2, 1.0f, error))
+    if (!q2m_sound(context, QA_Q2_SFX_MAKRON_BFG_FIRE, 2, 1.0f, error))
       return false;
     return !q2m_alive(context) || fire_bfg_exact(context, 101, 300.0f, error);
   }
@@ -4544,7 +4544,7 @@ static bool callback_widow2_attack_beam_13(q2m_context *context, q2m_callback_id
                                            qa_error *error) {
     (void)callback;
     return q2m_set_move(context, Q2M_MOVE_widow2_move_attack_beam, false, error) &&
-           (!q2m_alive(context) || q2m_sound(context, Q2_NAME_SOUND_WIDOW_BWSTEP1, 4, 1, error));
+           (!q2m_alive(context) || q2m_sound(context, QA_Q2_SFX_WIDOW_BWSTEP1, 4, 1, error));
 }
 
 static bool callback_widow_attack_rail_14(q2m_context *context, q2m_callback_id callback,
@@ -4743,7 +4743,7 @@ static bool callback_ShamblerSaveLoc_33(q2m_context *context, q2m_callback_id ca
         return true;
     monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
     monster->next_frame = 73;
-    return q2m_sound(context, Q2_NAME_SOUND_SHAMBLER_SBOOM, 1, 1, error) &&
+    return q2m_sound(context, QA_Q2_SFX_SHAMBLER_SBOOM, 1, 1, error) &&
            (!q2m_alive(context) || q2m_shambler_lightning(context, false, error));
 }
 
@@ -4792,7 +4792,7 @@ static bool callback_brain_chest_open_38(q2m_context *context, q2m_callback_id c
     if (!qa_combat_set_armor(context->game->services.combat, context->actor->id,
                              &context->combat.armor, error))
         return false;
-    return !q2m_alive(context) || q2m_sound(context, Q2_NAME_SOUND_BRAIN_BRNATCK1, 4, 1, error);
+    return !q2m_alive(context) || q2m_sound(context, QA_Q2_SFX_BRAIN_BRNATCK1, 4, 1, error);
 }
 
 static bool callback_brain_chest_closed_39(q2m_context *context, q2m_callback_id callback,
@@ -4924,7 +4924,7 @@ static bool callback_soldier_cock_54(q2m_context *context, q2m_callback_id callb
     (void)callback;
     struct qa_q2_monster *monster = context->monster;
     monster->cocked = true;
-    return q2m_sound(context, Q2_NAME_SOUND_INFANTRY_INFATCK3, 1, monster->frame == 197 ? 2.0f : 1.0f,
+    return q2m_sound(context, QA_Q2_SFX_INFANTRY_INFATCK3, 1, monster->frame == 197 ? 2.0f : 1.0f,
                      error);
 }
 
@@ -4946,7 +4946,7 @@ static bool callback_soldierh_hyper_sound_57(q2m_context *context, q2m_callback_
     (void)callback;
     struct qa_q2_monster *monster = context->monster;
     return monster->definition->species == Q2M_SOLDIER_HYPER
-               ? q2m_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBL1A, 0, 1.0f, error)
+               ? q2m_sound(context, QA_Q2_SFX_WEAPONS_HYPRBL1A, 0, 1.0f, error)
                : true;
 }
 
@@ -5029,13 +5029,13 @@ static bool callback_reloogie_64(q2m_context *context, q2m_callback_id callback,
 static bool callback_widow_step_65(q2m_context *context, q2m_callback_id callback,
                                    qa_error *error) {
     (void)callback;
-    return q2m_sound(context, Q2_NAME_SOUND_WIDOW_BWSTEP3, 4, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_WIDOW_BWSTEP3, 4, 1.0f, error);
 }
 
 static bool callback_widow_stepshoot_66(q2m_context *context, q2m_callback_id callback,
                                         qa_error *error) {
     (void)callback;
-    return q2m_sound(context, Q2_NAME_SOUND_WIDOW_BWSTEP3, 4, 1.0f, error) &&
+    return q2m_sound(context, QA_Q2_SFX_WIDOW_BWSTEP3, 4, 1.0f, error) &&
            (!q2m_alive(context) || widow_blaster(context, error));
 }
 
@@ -5051,7 +5051,7 @@ static bool callback_arachnid_charge_rail_67(q2m_context *context, q2m_callback_
     if (!q2m_alive(context) || !available)
         return true;
     monster->saved_attack_position = qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height));
-    return q2m_sound(context, Q2_NAME_SOUND_GLADIATOR_RAILGUN, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_GLADIATOR_RAILGUN, 1, 1.0f, error);
 }
 
 static bool callback_berserk_run_attack_speed_68(q2m_context *context, q2m_callback_id callback,
@@ -5069,13 +5069,13 @@ static bool callback_berserk_run_attack_speed_68(q2m_context *context, q2m_callb
 static bool callback_arachnid_melee_charge_69(q2m_context *context, q2m_callback_id callback,
                                               qa_error *error) {
     (void)callback;
-    return q2m_sound(context, Q2_NAME_SOUND_GLADIATOR_MELEE3, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_GLADIATOR_MELEE3, 1, 1.0f, error);
 }
 
 static bool callback_flipper_preattack_70(q2m_context *context, q2m_callback_id callback,
                                           qa_error *error) {
     (void)callback;
-    return q2m_sound(context, Q2_NAME_SOUND_FLIPPER_FLPATCK1, 1, 1.0f, error);
+    return q2m_sound(context, QA_Q2_SFX_FLIPPER_FLPATCK1, 1, 1.0f, error);
 }
 
 static bool callback_gekk_preattack_71(q2m_context *context, q2m_callback_id callback,
@@ -5110,7 +5110,7 @@ static bool callback_shambler_maybe_idle_74(q2m_context *context, q2m_callback_i
                                             qa_error *error) {
     (void)callback;
     return q2m_random(context->game) > 0.8f
-               ? q2m_sound(context, Q2_NAME_SOUND_SHAMBLER_SIDLE, 2, 2.0f, error)
+               ? q2m_sound(context, QA_Q2_SFX_SHAMBLER_SIDLE, 2, 2.0f, error)
                : true;
 }
 
@@ -5121,7 +5121,7 @@ static bool callback_berserk_fidget_75(q2m_context *context, q2m_callback_id cal
     if (monster->stand_ground || monster->enemy.registry != 0 || q2m_random(context->game) > 0.15f)
         return true;
     return q2m_set_move(context, Q2M_MOVE_berserk_move_stand_fidget, false, error) &&
-           (!q2m_alive(context) || q2m_sound(context, Q2_NAME_SOUND_BERSERK_BERIDLE1, 1, 2.0f, error));
+           (!q2m_alive(context) || q2m_sound(context, QA_Q2_SFX_BERSERK_BERIDLE1, 1, 2.0f, error));
 }
 
 static bool callback_chick_fidget_76(q2m_context *context, q2m_callback_id callback,
@@ -5149,9 +5149,9 @@ static bool callback_guncmdr_fidget_77(q2m_context *context, q2m_callback_id cal
 static bool callback_guardian_atk1_charge_78(q2m_context *context, q2m_callback_id callback,
                                              qa_error *error) {
     (void)callback;
-    if (!q2m_weapon_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBL1A, error))
+    if (!q2m_weapon_sound(context, QA_Q2_SFX_WEAPONS_HYPRBL1A, error))
         return false;
-    return !q2m_alive(context) || q2m_sound(context, Q2_NAME_SOUND_WEAPONS_HYPRBU1A, 1, 1.0f, error);
+    return !q2m_alive(context) || q2m_sound(context, QA_Q2_SFX_WEAPONS_HYPRBU1A, 1, 1.0f, error);
 }
 
 static bool callback_guardian_fire_blaster_79(q2m_context *context, q2m_callback_id callback,
@@ -5196,7 +5196,7 @@ static bool callback_guardian_fire_blaster_79(q2m_context *context, q2m_callback
 static bool callback_guardian_laser_fire_80(q2m_context *context, q2m_callback_id callback,
                                             qa_error *error) {
     (void)callback;
-    return q2m_sound(context, Q2_NAME_SOUND_WEAPONS_LASER2, 1, 1.0f, error) &&
+    return q2m_sound(context, QA_Q2_SFX_WEAPONS_LASER2, 1, 1.0f, error) &&
            (!q2m_alive(context) || q2m_guardian_beam(context, error));
 }
 
@@ -5334,14 +5334,14 @@ static bool callback_gekk_search_94(q2m_context *context, q2m_callback_id callba
 
 static bool callback_TreadSound(q2m_context *context, q2m_callback_id callback, qa_error *error) {
     (void)callback;
-    return q2m_sound(context, Q2_NAME_SOUND_BOSSTANK_BTKENGN1,
+    return q2m_sound(context, QA_Q2_SFX_BOSSTANK_BTKENGN1,
                      context->game->options.edition == QA_Q2_RERELEASE ? 4 : 2, 1, error);
 }
 
 static bool callback_stalker_idle_noise(q2m_context *context, q2m_callback_id callback,
                                         qa_error *error) {
     (void)callback;
-    return q2m_sound_volume(context, Q2_NAME_SOUND_STALKER_IDLE,
+    return q2m_sound_volume(context, QA_Q2_SFX_STALKER_IDLE,
                             context->game->options.edition == QA_Q2_RERELEASE ? 2 : 1, 2, .5f,
                             error);
 }

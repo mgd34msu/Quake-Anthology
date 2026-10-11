@@ -206,7 +206,7 @@ bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float 
         return true;
     a->item->think = Q2_ITEM_IDLE;
     a->item->due_ns = 0;
-    if (!q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,g->runtime_names[Q2_NAME_SOUND_MISC_FHIT3],0,1,1,0,e))
+    if (!q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,g->runtime_names[QA_Q2_SFX_MISC_FHIT3],0,1,1,0,e))
         goto fail;
     return true;
 fail:

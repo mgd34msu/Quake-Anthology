@@ -108,8 +108,8 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
     }
     if (!q2_actor_live(g, id))
         return true;
-    if ((p.damage > 400 && !nuke_sound(g, a, Q2_NAME_SOUND_ITEMS_DAMAGE3, 3, 1, 1, e)) ||
-        !nuke_sound(g, a, Q2_NAME_SOUND_WEAPONS_GRENLX1A, 10, 1, 0, e) ||
+    if ((p.damage > 400 && !nuke_sound(g, a, QA_Q2_SFX_ITEMS_DAMAGE3, 3, 1, 1, e)) ||
+        !nuke_sound(g, a, QA_Q2_SFX_WEAPONS_GRENLX1A, 10, 1, 0, e) ||
         !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_EXPLOSION1_BIG_2], 0, body.origin,
                              qa_v3(0, 0, 0), e) ||
         !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_NUKEBLAST], 0, body.origin,
@@ -151,7 +151,7 @@ static bool nuke_explode(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool nuke_quake_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *players,
                            qa_error *e) {
     if (a->projectile.effect_ns < g->now_ns) {
-        if (!nuke_sound(g, a, Q2_NAME_SOUND_WORLD_RUMBLE, 0, 0.75f, 0, e))
+        if (!nuke_sound(g, a, QA_Q2_SFX_WORLD_RUMBLE, 0, 0.75f, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -256,7 +256,7 @@ bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return false;
     }
     if (p->effect_ns <= g->now_ns) {
-        if (!nuke_sound(g, a, Q2_NAME_SOUND_WEAPONS_NUKEWARN2, 10, 1, 1.8f / divisor, e))
+        if (!nuke_sound(g, a, QA_Q2_SFX_WEAPONS_NUKEWARN2, 10, 1, 1.8f / divisor, e))
             return false;
         p->effect_ns = q2_deadline(g->now_ns, remaining <= 3 * Q2_NS   ? 300 * Q2_MS
                                               : remaining <= 6 * Q2_NS ? 500 * Q2_MS

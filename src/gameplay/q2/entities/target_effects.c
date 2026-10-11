@@ -173,7 +173,7 @@ static bool ramp(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool quake(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
     if (s->sound_ns < g->now_ns) {
-        if (!q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_WORLD_QUAKE], 0, 1, 0, 0, e))
+        if (!q2_entity_sound(g, a, g->runtime_names[QA_Q2_SFX_WORLD_QUAKE], 0, 1, 0, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -476,7 +476,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
                                 effects, 33, false, e))
             return false;
         return !q2_actor_live(g, a->id) ||
-               q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_WEAPONS_LASER2], 2, 1, 1, 0, e);
+               q2_entity_sound(g, a, g->runtime_names[QA_Q2_SFX_WEAPONS_LASER2], 2, 1, 1, 0, e);
     }
     case Q2E_CROSS_TRIGGER: {
         uint32_t flags;

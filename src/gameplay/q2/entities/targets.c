@@ -63,9 +63,9 @@ static bool key_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error 
         if (!q2_entity_message(g, a, activator, message, e))
             return false;
         return !q2_actor_live(g, activator) ||
-               q2_player_sound(g, activator, Q2_NAME_SOUND_MISC_KEYTRY, 0, e);
+               q2_player_sound(g, activator, QA_Q2_SFX_MISC_KEYTRY, 0, e);
     }
-    if (!q2_player_sound(g, activator, Q2_NAME_SOUND_MISC_KEYUSE, 0, e))
+    if (!q2_player_sound(g, activator, QA_Q2_SFX_MISC_KEYUSE, 0, e))
         return false;
     if (!q2_actor_live(g, a->id) || !q2_actor_live(g, activator))
         return true;
@@ -377,7 +377,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
                 strcpy(text, "Sequence completed!");
             if (!q2_entity_message(g, a, activator, text, e) ||
                 (q2_actor_live(g, a->id) &&
-                 !q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_TALK1], 0, 1, 1, 0, e)))
+                 !q2_entity_sound(g, a, g->runtime_names[QA_Q2_SFX_MISC_TALK1], 0, 1, 1, 0, e)))
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;
@@ -413,7 +413,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         if (g->options.edition == QA_Q2_RERELEASE)
             return q2_goal_use(g, a, activator, e);
         qa_string_id noise = q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]);
-        if (!q2_entity_sound(g, a, noise && noise!=g->runtime_names[Q2_NAME_RESOURCE_EMPTY] ? noise : g->runtime_names[Q2_NAME_SOUND_MISC_SECRET], 2, 1, 1, 0, e))
+        if (!q2_entity_sound(g, a, noise && noise!=g->runtime_names[Q2_NAME_RESOURCE_EMPTY] ? noise : g->runtime_names[QA_Q2_SFX_MISC_SECRET], 2, 1, 1, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;

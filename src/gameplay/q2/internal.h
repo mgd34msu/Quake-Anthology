@@ -303,16 +303,15 @@
     X(RESOURCE_MODELS_ITEMS_HUNTER_TRIS_MD2, "models/items/hunter/tris.md2") \
     X(RESOURCE_MODELS_ITEMS_VENGNCE_TRIS_MD2, "models/items/vengnce/tris.md2")
 
-typedef enum q2_runtime_name {
-    Q2_NAME_NONE,
-#define Q2_RUNTIME_SOUND_ENUM(name) Q2_NAME_SOUND_##name,
-    QA_Q2_SOUND_LIST(Q2_RUNTIME_SOUND_ENUM)
-#undef Q2_RUNTIME_SOUND_ENUM
+typedef uint32_t q2_runtime_name;
+enum {
+    Q2_NAME_NONE = QA_Q2_SFX_NONE,
+    Q2_NAME_RESOURCE_BASE = QA_Q2_SFX_COUNT - 1,
 #define Q2_RUNTIME_NAME_ENUM(key, text) Q2_NAME_##key,
     Q2_RUNTIME_NAME_LIST(Q2_RUNTIME_NAME_ENUM)
 #undef Q2_RUNTIME_NAME_ENUM
     Q2_NAME_COUNT
-} q2_runtime_name;
+};
 
 #define Q2_NS UINT64_C(1000000000)
 #define Q2_MS UINT64_C(1000000)

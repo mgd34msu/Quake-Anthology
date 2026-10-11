@@ -371,7 +371,7 @@ static bool source_beam(q2m_context *context, float damage, int channel,
     return true;
   if (fresh && rerelease) {
     if (!q2_emit_sound(game,actor->id,QA_BUILTIN_SOUND,&origin,
-        game->runtime_names[Q2_NAME_SOUND_MISC_LASFLY],0,1,1,rerelease?1u:0u,error)) return false;
+        game->runtime_names[QA_Q2_SFX_MISC_LASFLY],0,1,1,rerelease?1u:0u,error)) return false;
     if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
       return true;
   }
@@ -389,7 +389,7 @@ bool q2m_soldier_laser_beam(q2m_context *context, int flash, qa_error *error) {
 bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
   if (context->game->options.edition == QA_Q2_CLASSIC &&
       q2m_random(context->game) > .8f &&
-      !q2m_sound(context, Q2_NAME_SOUND_MISC_LASFLY, 0, 3, error))
+      !q2m_sound(context, QA_Q2_SFX_MISC_LASFLY, 0, 3, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -399,7 +399,7 @@ bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
 
 bool q2m_fixbot_laser_beam(q2m_context *context, qa_error *error) {
   if (context->game->options.edition == QA_Q2_CLASSIC &&
-      !q2m_sound(context, Q2_NAME_SOUND_MISC_LASFLY, 0, 3, error))
+      !q2m_sound(context, QA_Q2_SFX_MISC_LASFLY, 0, 3, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -522,7 +522,7 @@ bool q2m_guardian_beam(q2m_context *context, qa_error *error) {
     if (!actor || !q2m_alive(context)) return true;
     fresh = true;
     if (!q2_emit_sound(game,actor->id,QA_BUILTIN_SOUND,&context->body.origin,
-        game->runtime_names[Q2_NAME_SOUND_MISC_LASFLY],0,1,1,1,error)) goto failed;
+        game->runtime_names[QA_Q2_SFX_MISC_LASFLY],0,1,1,1,error)) goto failed;
     if (!q2_actor_live(game, actor->id)) return true;
     if (!q2m_alive(context)) return qa_session_release(game->services.session, actor->id, error);
   }
@@ -837,7 +837,7 @@ bool q2m_shambler_lightning(q2m_context *context, bool windup, qa_error *error) 
   static const qa_vec3 right[] = {{28,-38,25},{31,-7,70},{20,0,80},{16,1.2f,81},{27,-11,83}};
   q2_actor *child = source_child(context, Q2M_CONTROLLER_VISUAL_CHILD, 0);
   if (windup) {
-    if (!q2m_sound(context, Q2_NAME_SOUND_SHAMBLER_SATTCK1, 1, 1, error))
+    if (!q2m_sound(context, QA_Q2_SFX_SHAMBLER_SATTCK1, 1, 1, error))
       return false;
     if (!q2m_alive(context))
       return true;

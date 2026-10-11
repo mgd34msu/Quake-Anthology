@@ -705,8 +705,8 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         if (!qa_world_body_read(g->services.world, id, &body, e))
             return false;
         return q2_projectile_event(g, id, QA_BUILTIN_SOUND,
-                                   q2_random(g) > 0.5f ? g->runtime_names[Q2_NAME_SOUND_WEAPONS_HGRENB1A]
-                                                       : g->runtime_names[Q2_NAME_SOUND_WEAPONS_HGRENB2A],
+                                   q2_random(g) > 0.5f ? g->runtime_names[QA_Q2_SFX_WEAPONS_HGRENB1A]
+                                                       : g->runtime_names[QA_Q2_SFX_WEAPONS_HGRENB2A],
                                    2, body.origin, body.origin, e);
     }
     if (qa_actor_id_equal(contact->other, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner)))
@@ -733,8 +733,8 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         if (hurt)
             return grenade_explode(g, id, contact->other, e);
         qa_string_id sound =
-            p.hand ? (q2_random(g) > 0.5f ? g->runtime_names[Q2_NAME_SOUND_WEAPONS_HGRENB1A] : g->runtime_names[Q2_NAME_SOUND_WEAPONS_HGRENB2A])
-                   : g->runtime_names[Q2_NAME_SOUND_WEAPONS_GRENLB1B];
+            p.hand ? (q2_random(g) > 0.5f ? g->runtime_names[QA_Q2_SFX_WEAPONS_HGRENB1A] : g->runtime_names[QA_Q2_SFX_WEAPONS_HGRENB2A])
+                   : g->runtime_names[QA_Q2_SFX_WEAPONS_GRENLB1B];
         return q2_projectile_event(g, id, QA_BUILTIN_SOUND, sound, 2, body.origin, qa_v3(0, 0, 0),
                                    e);
     }
@@ -785,7 +785,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         if (!live(g, id))
             return true;
         q2_actor *a = g->actors[id.slot];
-        if (!q2_projectile_event(g, id, QA_BUILTIN_SOUND, g->runtime_names[Q2_NAME_SOUND_WEAPONS_BFG__X1B], 2, body.origin,
+        if (!q2_projectile_event(g, id, QA_BUILTIN_SOUND, g->runtime_names[QA_Q2_SFX_WEAPONS_BFG__X1B], 2, body.origin,
                                  body.origin, e))
             return false;
         if (!live(g, id))
@@ -1152,13 +1152,13 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     }
     a->projectile.model = model;
     if (hand) {
-        if (!q2_projectile_loop(g, a, g->runtime_names[Q2_NAME_SOUND_WEAPONS_HGRENC1B], false, e))
+        if (!q2_projectile_loop(g, a, g->runtime_names[QA_Q2_SFX_WEAPONS_HGRENC1B], false, e))
             return false;
         if (!live(g, id))
             return true;
         if (fuse <= 0)
             return grenade_explode(g, id, (qa_actor_id){0}, e);
-        if (!q2_sound(c, Q2_NAME_SOUND_WEAPONS_HGRENT1A, 1, 1, e))
+        if (!q2_sound(c, QA_Q2_SFX_WEAPONS_HGRENT1A, 1, 1, e))
             return false;
         if (!live(g, id) || !live(g, c->actor->id))
             return true;
@@ -1194,10 +1194,10 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (!live(g, id))
         return true;
     qa_string_id loop = source_kind == Q2_GREEN_BOLT             ? 0
-                       : kind == Q2_BOLT || kind == Q2_ION      ? g->runtime_names[Q2_NAME_SOUND_MISC_LASFLY]
-                       : kind == Q2_ROCKET || kind == Q2_PLASMA ? g->runtime_names[Q2_NAME_SOUND_WEAPONS_ROCKFLY]
-                       : kind == Q2_BFG_BALL                    ? g->runtime_names[Q2_NAME_SOUND_WEAPONS_BFG__L1A]
-                       : kind == Q2_TRACKER                     ? g->runtime_names[Q2_NAME_SOUND_WEAPONS_DISRUPT]
+                       : kind == Q2_BOLT || kind == Q2_ION      ? g->runtime_names[QA_Q2_SFX_MISC_LASFLY]
+                       : kind == Q2_ROCKET || kind == Q2_PLASMA ? g->runtime_names[QA_Q2_SFX_WEAPONS_ROCKFLY]
+                       : kind == Q2_BFG_BALL                    ? g->runtime_names[QA_Q2_SFX_WEAPONS_BFG__L1A]
+                       : kind == Q2_TRACKER                     ? g->runtime_names[QA_Q2_SFX_WEAPONS_DISRUPT]
                                                                 : 0;
     if (loop != 0 && !q2_projectile_loop(g, a, loop, false, e))
         return false;

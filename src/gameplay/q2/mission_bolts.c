@@ -223,7 +223,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
         }
         if (rr && qa_actor_reference_present(p->enemy) == 0) {
             if (!q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,&body.origin,
-                g->runtime_names[Q2_NAME_SOUND_WEAPONS_RAILGR1A],1,1,.25f,0,e)) return false;
+                g->runtime_names[QA_Q2_SFX_WEAPONS_RAILGR1A],1,1,.25f,0,e)) return false;
             if (!q2_actor_live(g, a->id))
                 return true;
         }

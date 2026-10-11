@@ -57,10 +57,10 @@ static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                        : combat.health < 75 ? 75
                                             : 100;
         static const q2_runtime_name pain[4][2]={
-            {Q2_NAME_SOUND__PAIN25_1,Q2_NAME_SOUND__PAIN25_2},
-            {Q2_NAME_SOUND__PAIN50_1,Q2_NAME_SOUND__PAIN50_2},
-            {Q2_NAME_SOUND__PAIN75_1,Q2_NAME_SOUND__PAIN75_2},
-            {Q2_NAME_SOUND__PAIN100_1,Q2_NAME_SOUND__PAIN100_2}};
+            {QA_Q2_SFX__PAIN25_1,QA_Q2_SFX__PAIN25_2},
+            {QA_Q2_SFX__PAIN50_1,QA_Q2_SFX__PAIN50_2},
+            {QA_Q2_SFX__PAIN75_1,QA_Q2_SFX__PAIN75_2},
+            {QA_Q2_SFX__PAIN100_1,QA_Q2_SFX__PAIN100_2}};
         q2_runtime_name sound=pain[severity/25-1][(int)(q2_random(g)*2)];
         s->rule.pain_ns = q2_deadline(g->now_ns, 700 * Q2_MS);
         if (!q2_player_sound(g, a->id, sound, 2, e))
@@ -208,7 +208,7 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         (rr ? s->rule.mission_time_ns < g->now_ns : (g->wire_frame & 63) == 0)) {
         bool beep = !rr || s->rule.mission_changed == 1;
         if (!rr) ++s->rule.mission_changed;
-        if (beep && !q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_PC_UP], rr ? 0 : 2, 1, 3, 0, e))
+        if (beep && !q2_entity_sound(g, a, g->runtime_names[QA_Q2_SFX_MISC_PC_UP], rr ? 0 : 2, 1, 3, 0, e))
             return false;
         if (!q2_actor_live(g, a->id)) return true;
         if (rr) {
@@ -366,10 +366,10 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         const char *item; q2_runtime_name sound;
         qa_vec3 color;
         float alpha;
-    } table[] = {{"item_quad", Q2_NAME_SOUND_ITEMS_DAMAGE2, {0, 0, 1}, .08f},
-                 {"item_invulnerability", Q2_NAME_SOUND_ITEMS_PROTECT2, {1, 1, 0}, .08f},
-                 {"item_enviro", Q2_NAME_SOUND_ITEMS_AIROUT, {0, 1, 0}, .08f},
-                 {"item_breather", Q2_NAME_SOUND_ITEMS_AIROUT, {.4f, 1, .4f}, .04f}};
+    } table[] = {{"item_quad", QA_Q2_SFX_ITEMS_DAMAGE2, {0, 0, 1}, .08f},
+                 {"item_invulnerability", QA_Q2_SFX_ITEMS_PROTECT2, {1, 1, 0}, .08f},
+                 {"item_enviro", QA_Q2_SFX_ITEMS_AIROUT, {0, 1, 0}, .08f},
+                 {"item_breather", QA_Q2_SFX_ITEMS_AIROUT, {.4f, 1, .4f}, .04f}};
     uint64_t until[] = {powers.quad_until_ns, powers.invulnerability_until_ns,
                         powers.enviro_until_ns, powers.breather_until_ns};
     for (size_t i = 0; i < 4; i++)

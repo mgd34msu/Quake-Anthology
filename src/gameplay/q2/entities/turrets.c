@@ -53,7 +53,7 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
     if (!q2_actor_live(g, a->id))
         return true;
     return q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,&start,
-        g->runtime_names[Q2_NAME_SOUND_WEAPONS_ROCKLF1A],1,1,1,0,e);
+        g->runtime_names[QA_Q2_SFX_WEAPONS_ROCKLF1A],1,1,1,0,e);
 }
 static bool breach_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);

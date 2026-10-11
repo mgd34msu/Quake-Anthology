@@ -8,11 +8,11 @@ static bool platform_sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) 
     bool second = is_second(a, g->runtime_names[Q2_NAME_FUNC_PLAT2]);
     if (second && (a->physics.flags & QA_PHYSICS_TEAM_SLAVE))
         return true;
-    if (!q2_entity_sound(g, a, start ? g->runtime_names[Q2_NAME_SOUND_PLATS_PT1_STRT] : g->runtime_names[Q2_NAME_SOUND_PLATS_PT1_END], second ? 10 : 2,
+    if (!q2_entity_sound(g, a, start ? g->runtime_names[QA_Q2_SFX_PLATS_PT1_STRT] : g->runtime_names[QA_Q2_SFX_PLATS_PT1_END], second ? 10 : 2,
                          1, 3, 0, e))
         return false;
     return !q2_actor_live(g, a->id) ||
-           q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_PLATS_PT1_MID], second ? 0 : 2, 1, 3, start ? 1 : -1, e);
+           q2_entity_sound(g, a, g->runtime_names[QA_Q2_SFX_PLATS_PT1_MID], second ? 0 : 2, 1, 3, start ? 1 : -1, e);
 }
 static bool platform_move(qa_q2_game *g, q2_actor *a, bool up, qa_error *e) {
     q2_entity_state *s = a->entity;
@@ -611,7 +611,7 @@ bool q2_brush_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
                            qa_strings_cstr(qa_session_strings(g->services.session), s->message), e))
         return false;
     return second || !q2_actor_live(g, a->id) ||
-           q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_TALK1], 0, 1, 1, 0, e);
+           q2_entity_sound(g, a, g->runtime_names[QA_Q2_SFX_MISC_TALK1], 0, 1, 1, 0, e);
 }
 bool q2_brush_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     q2_entity_state *s = a->entity;

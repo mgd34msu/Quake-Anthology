@@ -132,9 +132,9 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     if (!q2_item_visual(g, a, e) || !q2_actor_live(g, id))
         goto fail;
     if (!loop(g, a,
-              kind == Q2_SPHERE_DEFENDER ? Q2_NAME_SOUND_SPHERES_D_IDLE
-              : kind == Q2_SPHERE_HUNTER ? Q2_NAME_SOUND_SPHERES_H_IDLE
-                                         : Q2_NAME_SOUND_SPHERES_V_IDLE,
+              kind == Q2_SPHERE_DEFENDER ? QA_Q2_SFX_SPHERES_D_IDLE
+              : kind == Q2_SPHERE_HUNTER ? QA_Q2_SFX_SPHERES_H_IDLE
+                                         : QA_Q2_SFX_SPHERES_V_IDLE,
               e))
         goto fail;
     if (!decoy && q2_actor_live(g, owner)) {
@@ -448,7 +448,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 speed = 0;
         }
         if (c->kind == Q2_SPHERE_HUNTER &&
-            !loop(g, a, speed > 0 ? Q2_NAME_SOUND_SPHERES_H_ACTIVE : Q2_NAME_SOUND_SPHERES_H_LURK, e))
+            !loop(g, a, speed > 0 ? QA_Q2_SFX_SPHERES_H_ACTIVE : QA_Q2_SFX_SPHERES_H_LURK, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
