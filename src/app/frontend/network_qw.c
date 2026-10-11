@@ -516,7 +516,6 @@ void frontend_qw_destroy(frontend_qw_host *host)
 {
     if (!host) return;
     qa_qw_challenges_destroy(host->challenges);
-    for (size_t i = 0; i < QW_PENDING; ++i) qa_buffer_free(&host->pending[i].reply);
     for (size_t i = 0; i < QW_CLIENTS; ++i) free(host->peers[i].userinfo);
     for (size_t i = 0; i < 255; ++i) { free(host->models[i]); free(host->sounds[i]); }
     for (size_t i = 0; i < 64; ++i) free(host->styles[i]);
@@ -706,27 +705,33 @@ static bool source_log(void *context,int32_t sequence,const char **out,qa_error 
     response.data[response.size]=0;
     qa_buffer_free(&host->status); host->status=response; *out=(const char *)response.data; return true;
 }
-typedef struct qw_reply { frontend_qw_host *host; qw_pending_control *pending; } qw_reply;
+typedef struct qw_reply { frontend_qw_host *host; const qa_net_address *address; } qw_reply;
 static bool send_reply(void *context, qa_bytes bytes, qa_error *error)
 {
-    qw_reply *reply=context; qw_pending_control *pending=reply->pending;
-    if (!bytes.size || bytes.size>65535)
-        return frontend_fail(error,QA_ERROR_FORMAT,"QuakeWorld connectionless response exceeds its datagram");
-    pending->reply.data=malloc(bytes.size);
-    if (!pending->reply.data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining QuakeWorld native reply");
-    pending->reply.size=bytes.size; memcpy(pending->reply.data,bytes.data,bytes.size);
-    if (!qa_network_send_address(reply->host->runtime,&pending->address,bytes,error)) return false;
-    qa_buffer_free(&pending->reply); return true;
+    qw_reply *reply = context;
+    return qa_network_send_address(reply->host->runtime, reply->address, bytes, error);
 }
 bool frontend_qw_receive(frontend_qw_host *host, const qa_net_datagram *packet, bool *recognized, qa_error *error)
 {
     if (!host || !packet || !recognized) return frontend_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld connectionless owner");
     *recognized = packet->payload.size >= 4 && qa_load_u32le(packet->payload.data) == UINT32_MAX;
-    if (!*recognized || blocked(host, &packet->from)) return true;
-    if (packet->payload.size > QW_MESSAGE || host->pending_count == QW_PENDING) return true;
-    qw_pending_control *pending = host->pending + host->pending_count++;
-    pending->address = packet->from; pending->time_ns = packet->received_ns; pending->size = packet->payload.size;
-    memcpy(pending->bytes, packet->payload.data, pending->size); return true;
+    if (!*recognized || blocked(host, &packet->from) || packet->payload.size > QW_MESSAGE) return true;
+    if (!frontend_qw_prepare(host, error)) return false;
+    qa_application_network_qw_world world;
+    if (!source_world(host, &world, error)) return false;
+    const qa_cvar_view *password = qa_cvars_read(world.source.cvars, host->password),
+        *spectator = qa_cvars_read(world.source.cvars, host->spectator_password),
+        *high = qa_cvars_read(world.source.cvars, host->high_chars),
+        *rcon = qa_cvars_read(qa_application_cvars(host->frontend->application), host->rcon_password);
+    if (!password || !spectator || !high || !rcon)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld authentication lacks its actual constructor policies");
+    qa_qw_connection_host hooks = {.context = host, .password = password->value,
+        .spectator_password = spectator->value, .rcon_password = rcon->value,
+        .high_characters = high->number != 0, .blocked = blocked, .connect = connect_source,
+        .status = source_status, .log = source_log};
+    qw_reply reply = {host, &packet->from};
+    return qa_qw_connectionless_receive(&hooks, host->challenges, packet->payload,
+        &packet->from, packet->received_ns, send_reply, &reply, error);
 }
 bool frontend_qw_prepare(frontend_qw_host *host, qa_error *error)
 {
@@ -799,34 +804,8 @@ bool frontend_qw_pump(frontend_qw_host *host, qa_error *error)
     if (!host) return true;
     if (!frontend_qw_prepare(host, error)) return false;
     bool log_present = false;
-    if (!qa_application_network_qw_log_check(host->frontend->application,
-        (double)host->frontend->wall_time_ns / 1000000000.0, &log_present, error)) return false;
-    qa_application_network_qw_world world;
-    if (!source_world(host, &world, error)) return false;
-    const qa_cvar_view *password = qa_cvars_read(world.source.cvars, host->password),
-        *spectator = qa_cvars_read(world.source.cvars, host->spectator_password),
-        *high = qa_cvars_read(world.source.cvars, host->high_chars),
-        *rcon = qa_cvars_read(qa_application_cvars(host->frontend->application), host->rcon_password);
-    if (!password || !spectator || !high || !rcon)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld authentication lacks its actual constructor policies");
-    qa_qw_connection_host hooks = {.context = host, .password = password->value,
-        .spectator_password = spectator->value, .rcon_password = rcon->value,
-        .high_characters = high->number != 0, .blocked = blocked, .connect = connect_source,
-        .status = source_status,.log=source_log};
-    while (host->pending_count) {
-        qw_pending_control *pending = host->pending; qw_reply reply = {host, pending};
-        if (!qa_net_transport_send_ready(qa_network_transport(host->runtime), &pending->address)) return true;
-        if (pending->reply.size) {
-            if (!qa_network_send_address(host->runtime,&pending->address,
-                (qa_bytes){pending->reply.data,pending->reply.size},error)) return false;
-            qa_buffer_free(&pending->reply);
-        } else if (!qa_qw_connectionless_receive(&hooks, host->challenges, (qa_bytes){pending->bytes, pending->size},
-            &pending->address, pending->time_ns, send_reply, &reply, error)) return false;
-        --host->pending_count;
-        memmove(host->pending, host->pending + 1, host->pending_count * sizeof(*host->pending));
-        host->pending[host->pending_count]=(qw_pending_control){0};
-    }
-    return true;
+    return qa_application_network_qw_log_check(host->frontend->application,
+        (double)host->frontend->wall_time_ns / 1000000000.0, &log_present, error);
 }
 
 typedef struct qw_physical_frame {
@@ -1145,7 +1124,7 @@ bool frontend_qw_qualified(const frontend_qw_host *host, bool complete, qa_error
         host->action_actor.registry || host->action_actor.generation || host->action_actor.slot ||
         host->generation != qa_application_configuration_generation(host->frontend->application) || !host->owner ||
         !host->active_limit || host->active_limit > 32 || host->server_count < 1 ||
-        host->baseline_count < 32 || host->baseline_count > 511 || host->pending_count > QW_PENDING || host->action_count > QW_ACTIONS ||
+        host->baseline_count < 32 || host->baseline_count > 511 || host->action_count > QW_ACTIONS ||
         host->model_count > 255 || host->sound_count > 255 || (host->signon_count && (!host->signon || !host->signon_views)))
         return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld continuation lacks its actual source factory inventory");
     qa_application_network_qw_world world;

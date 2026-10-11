@@ -99,11 +99,6 @@ typedef struct frontend_q3_peer {
     bool occupied, retiring;
     char reason[256];
 } frontend_q3_peer;
-typedef struct frontend_q3_pending {
-    qa_net_address address;
-    size_t size;
-    uint8_t bytes[QA_Q3_MESSAGE_BYTES];
-} frontend_q3_pending;
 typedef struct frontend_q3_attempt {
     struct frontend_q3_attempt *next;
     bool disconnect;
@@ -225,8 +220,6 @@ struct qa_frontend_network {
     uint64_t unified_map_revision;
     frontend_q3_packages *q3_packages;
     frontend_q3_peer q3_peers[64];
-    frontend_q3_pending q3_pending[32];
-    size_t q3_pending_count;
     uint64_t q3_generation;
     uint64_t server_cvar_view;
     qa_cvar_handle timeout, sv_fps, sv_maxRate, sv_allowDownload;
@@ -405,6 +398,7 @@ static bool nq_host_protocol(qa_net_protocol_id);
 static bool q1_client_protocol(qa_net_protocol_id);
 static bool q2_host_protocol(qa_net_protocol_id);
 static bool q3_prepare(qa_frontend_network *, qa_error *);
+static bool q3_receive(qa_frontend_network *, const qa_net_datagram *, qa_error *);
 static bool local_server_prepare(qa_frontend_network *, qa_error *);
 static bool local_q3_prepare(frontend_local_client *, qa_actor_id, qa_error *);
 static bool q3_client_receive(frontend_q3_client *, const qa_net_datagram *, bool *, qa_error *);
@@ -1402,10 +1396,8 @@ static bool connectionless(void *context, qa_network_runtime *runtime,
     }
     if (!n->q3_admission) return true;
     if (packet->payload.size < 4 || qa_load_u32le(packet->payload.data) != UINT32_MAX) return true;
-    if (packet->payload.size > QA_Q3_MESSAGE_BYTES || n->q3_pending_count == 32) return true;
-    frontend_q3_pending *pending = &n->q3_pending[n->q3_pending_count++];
-    pending->address = packet->from; pending->size = packet->payload.size;
-    memcpy(pending->bytes, packet->payload.data, pending->size); return true;
+    if (packet->payload.size > QA_Q3_MESSAGE_BYTES) return true;
+    return q3_receive(n, packet, error);
 }
 static bool q3_client_receive(frontend_q3_client *n, const qa_net_datagram *packet,
     bool *recognized, qa_error *error)
@@ -2027,47 +2019,49 @@ static bool q3_slots(qa_frontend_network *n, qa_q3_admission_slot slots[64], siz
     }
     return true;
 }
-static bool q3_drain(qa_frontend_network *n, qa_error *error)
+static bool q3_retire(qa_frontend_network *n, qa_error *error)
 {
     for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied && n->q3_peers[i].retiring)
         if (!qa_network_detach(n->runtime, n->q3_peers[i].client, n->q3_peers[i].reason, error)) return false;
-    size_t pending = n->q3_pending_count; n->q3_pending_count = 0;
-    for (size_t i = 0; i < pending; ++i) {
-        qa_q3_admission_slot slots[64]; size_t count;
-        if (!q3_slots(n, slots, &count, error)) return false;
-        frontend_q3_pending *packet = &n->q3_pending[i]; qa_error local = {0};
-        qa_net_seat_id local_seat; uint32_t application_seat;
-        bool local_player = frontend_network_local_seat(n->frontend, &packet->address,
-            &local_seat, &application_seat);
-        if (local_player) {
-            qa_actor_id actor; uint32_t slot; qa_q3_product product;
-            if (!qa_application_player_actor(n->frontend->application, application_seat, &actor) ||
-                !qa_application_network_q3_source(n->frontend->application, actor, &slot, &product, error)) return false;
-            slots[0] = slots[slot]; count = 1;
-            if (!n->q3_peers[slot].occupied) slots[0].phase = QA_Q3_FREE;
-        }
-        qa_actor_owner owner; qa_q3_product product;
-        if (!qa_application_network_q3_owner(n->frontend->application, &owner, &product, error)) return false;
-        qa_cvars *cvars = qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
-        if (!cvars) return false;
-        server_cvars_bind(n, cvars);
-        const qa_cvar_view *private_clients = qa_cvars_read(cvars, n->private_clients),
-            *private_password = qa_cvars_read(cvars, n->private_password), *reconnect = qa_cvars_read(cvars, n->reconnect_limit),
-            *minimum = qa_cvars_read(cvars, n->min_ping), *maximum = qa_cvars_read(cvars, n->max_ping);
-        qa_q3_product_policy policy;
-        if (!qa_application_q3_product_policy_read(n->frontend->application, &policy))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 admission lost its retained resolved demo policy");
-        qa_q3_admission_options options = {.private_clients = !local_player && private_clients && private_clients->integer > 0 ? (uint32_t)private_clients->integer : 0,
-            .private_password = private_password ? private_password->value : "",
-            .reconnect_limit_seconds = reconnect ? reconnect->integer : 3,
-            .minimum_ping = minimum ? (float)minimum->number : 0, .maximum_ping = maximum ? (float)maximum->number : 0,
-            .demo_restricted = policy.filesystem_restricted,
-            .authorize_address = qa_q3_server_authorization_address(n->q3_authorization)};
-        if (!qa_q3_server_admission_receive(n->q3_admission, &options, slots, count, &packet->address,
-            (qa_bytes){packet->bytes, packet->size}, (int64_t)(n->frontend->wall_time_ns / UINT64_C(1000000)), &local)) {
-            if (qa_application_get_state(n->frontend->application) == QA_APPLICATION_FAULTED) { if (error) *error = local; return false; }
-            frontend_print(n->frontend, local.message);
-        }
+    return true;
+}
+static bool q3_receive(qa_frontend_network *n, const qa_net_datagram *packet, qa_error *error)
+{
+    if (!q3_prepare(n, error) || !q3_retire(n, error)) return false;
+    qa_q3_admission_slot slots[64]; size_t count;
+    if (!q3_slots(n, slots, &count, error)) return false;
+    qa_error local = {0};
+    qa_net_seat_id local_seat; uint32_t application_seat;
+    bool local_player = frontend_network_local_seat(n->frontend, &packet->from,
+        &local_seat, &application_seat);
+    if (local_player) {
+        qa_actor_id actor; uint32_t slot; qa_q3_product product;
+        if (!qa_application_player_actor(n->frontend->application, application_seat, &actor) ||
+            !qa_application_network_q3_source(n->frontend->application, actor, &slot, &product, error)) return false;
+        slots[0] = slots[slot]; count = 1;
+        if (!n->q3_peers[slot].occupied) slots[0].phase = QA_Q3_FREE;
+    }
+    qa_actor_owner owner; qa_q3_product product;
+    if (!qa_application_network_q3_owner(n->frontend->application, &owner, &product, error)) return false;
+    qa_cvars *cvars = qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
+    if (!cvars) return false;
+    server_cvars_bind(n, cvars);
+    const qa_cvar_view *private_clients = qa_cvars_read(cvars, n->private_clients),
+        *private_password = qa_cvars_read(cvars, n->private_password), *reconnect = qa_cvars_read(cvars, n->reconnect_limit),
+        *minimum = qa_cvars_read(cvars, n->min_ping), *maximum = qa_cvars_read(cvars, n->max_ping);
+    qa_q3_product_policy policy;
+    if (!qa_application_q3_product_policy_read(n->frontend->application, &policy))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 admission lost its retained resolved demo policy");
+    qa_q3_admission_options options = {.private_clients = !local_player && private_clients && private_clients->integer > 0 ? (uint32_t)private_clients->integer : 0,
+        .private_password = private_password ? private_password->value : "",
+        .reconnect_limit_seconds = reconnect ? reconnect->integer : 3,
+        .minimum_ping = minimum ? (float)minimum->number : 0, .maximum_ping = maximum ? (float)maximum->number : 0,
+        .demo_restricted = policy.filesystem_restricted,
+        .authorize_address = qa_q3_server_authorization_address(n->q3_authorization)};
+    if (!qa_q3_server_admission_receive(n->q3_admission, &options, slots, count, &packet->from,
+        packet->payload, (int64_t)(n->frontend->wall_time_ns / UINT64_C(1000000)), &local)) {
+        if (qa_application_get_state(n->frontend->application) == QA_APPLICATION_FAULTED) { if (error) *error = local; return false; }
+        frontend_print(n->frontend, local.message);
     }
     return true;
 }
@@ -4779,7 +4773,7 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
             for (size_t j = 0; j < i; ++j) if (n->q3_peers[j].occupied && qa_net_client_id_equal(n->q3_peers[j].client, p->client))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source slots alias one runtime connection");
         }
-    } else if (n->q3_packages || n->q3_pending_count || n->q3_generation || n->q3_server_id || n->q3_restarted_server_id || n->q3_checksum_feed || n->q3_server_bit)
+    } else if (n->q3_packages || n->q3_generation || n->q3_server_id || n->q3_restarted_server_id || n->q3_checksum_feed || n->q3_server_bit)
         return frontend_fail(error, QA_ERROR_FORMAT, "absent hosting owner retains source state");
     if (n->q3_attempt_count && !n->q3_clients[0].q3_client_requested) {
         if (!n->frontend->options.network_connect || !q1_client_protocol(n->frontend->options.network_protocol) ||
@@ -6269,8 +6263,8 @@ bool frontend_network_event_ready(const qa_frontend *f, const qa_sys_event *even
         runtime = n->local_clients[physical].runtime;
     }
     return qa_network_receive_ready(runtime) &&
+        (runtime != n->runtime || (!n->round && frontend_nq_idle(n->nq_host) && frontend_qw_idle(n->qw_host))) &&
         (event->data.packet.result != QA_NET_POLL_PACKET ||
-         event->data.packet.from.kind != QA_NET_LOOPBACK ||
          qa_net_transport_send_ready(qa_network_transport(runtime), &event->data.packet.from));
 }
 bool frontend_network_local_input_owned(const qa_frontend *f, uint32_t physical)
@@ -6303,7 +6297,11 @@ bool frontend_network_receive(qa_frontend *f,const qa_sys_event *event,qa_bytes 
         qa_net_datagram packet; bool present;
         ok=qa_net_transport_dispatch(qa_network_transport(runtime),physical,&packet,&present,error);
         if(ok && present) {
-            ok=qa_network_receive(runtime,&packet,error);
+            bool control = runtime == n->runtime && (n->nq_host || n->qw_host || n->q3_admission) &&
+                packet.kind == QA_NET_POLL_PACKET && packet.payload.size >= 4 &&
+                (qa_load_u32le(packet.payload.data) == UINT32_MAX ||
+                 (n->nq_host && packet.payload.data[0] == 128 && packet.payload.data[1] == 0));
+            ok = control ? connectionless(n, runtime, &packet, error) : qa_network_receive(runtime, &packet, error);
             /* Keep the boundary until all saved logical deliveries have run. */
             if(!physical) *consumed=false;
         }
@@ -6323,9 +6321,9 @@ bool frontend_network_maintenance(qa_frontend *f,qa_error *error)
         q1_client_tick_returned(n,error) &&
         unified_tick(n,error) && local_clients_tick(n,error) &&
         (!n->q2_host || frontend_network_q2_host_tick(n->q2_host,f->wall_time_ns,error)) &&
-        (!n->q3_admission || q3_drain(n, error)) &&
+        (!n->q3_admission || q3_retire(n, error)) &&
         (!frontend_network_remote(f) || client_drain(&n->q3_clients[0], false, error)) &&
-        frontend_nq_pump(n->nq_host, error) && frontend_qw_pump(n->qw_host, error);
+        frontend_nq_prepare(n->nq_host, error) && frontend_qw_pump(n->qw_host, error);
 }
 static bool client_predictor_initial(frontend_q3_client *, bool *, qa_error *);
 static bool client_copied_prediction(frontend_q3_client *n, bool *copied, qa_error *error)
@@ -6613,7 +6611,7 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
                 ok = q3_snapshot(peer, error);
         }
         --n->busy;
-        return ok && q3_drain(n, error);
+        return ok && q3_retire(n, error);
     }
     uint32_t cursor = 0; const qa_net_client *client;
     if (qa_net_connections_next(qa_network_connections(f->network->runtime), &cursor, &client))
@@ -6681,8 +6679,8 @@ bool frontend_network_q3_round_prepare(qa_frontend *f, qa_network_q3_round **out
     if (n->q3_clients[0].q3_client_requested || n->nq_host || (f->options.network_host && !n->q3_admission))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Q3 source round cannot substitute another installed network dialect");
     if (!n->q3_admission) return true;
-    if (n->q3_pending_count || n->q3_server_id == INT32_MAX)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has pending admission or exhausted server identity");
+    if (n->q3_server_id == INT32_MAX)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has exhausted server identity");
     if (!network_runtime_valid(n, true, error)) return false;
     qa_network_q3_round *cut = calloc(1, sizeof(*cut));
     if (!cut) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q3 source round network cut");
@@ -6877,8 +6875,6 @@ bool frontend_network_q3_round_finish(qa_network_q3_round *cut, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has no complete bound network scope");
     for (size_t i = 0; i < cut->count; ++i)
         if (!cut->resolved[i]) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round did not resolve every retained client");
-    if (cut->network->q3_pending_count)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round acquired a new pending transport admission");
     for (size_t i = 0; i < cut->count; ++i) {
         frontend_q3_peer *peer; qa_q3_server_state state;
         if (!round_peer(cut, i, &peer, error)) return false;
@@ -6888,7 +6884,7 @@ bool frontend_network_q3_round_finish(qa_network_q3_round *cut, qa_error *error)
             !round_command_equal(&state.last_usercmd, &cut->clients[i].last_command))
             return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round lost its native active client or retained last command");
     }
-    if (!q3_drain(cut->network, error)) return false;
+    if (!q3_retire(cut->network, error)) return false;
     if (!network_runtime_check(cut->network, true, true, error)) return false;
     cut->finished = true; cut->network->round = NULL;
     return true;

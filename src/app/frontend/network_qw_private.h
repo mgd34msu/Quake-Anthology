@@ -3,7 +3,7 @@
 #include "network_qw.h"
 #include "qa/network_q1_connection_save.h"
 #include "../../network/event_receipts.h"
-enum { QW_CLIENTS = 32, QW_PENDING = 32, QW_MESSAGE = 1450, QW_SIGNON = 1400, QW_ACTIONS = 256 };
+enum { QW_CLIENTS = 32, QW_MESSAGE = 1450, QW_SIGNON = 1400, QW_ACTIONS = 256 };
 typedef struct qw_source_action {
     struct qw_source_action *next;
     qa_net_client_id client;
@@ -30,13 +30,6 @@ typedef struct qw_frontend_peer {
     bool occupied, retiring, spectator, begun;
     char reason[256];
 } qw_frontend_peer;
-typedef struct qw_pending_control {
-    qa_net_address address;
-    uint64_t time_ns;
-    size_t size;
-    uint8_t bytes[QW_MESSAGE];
-    qa_buffer reply;
-} qw_pending_control;
 struct frontend_qw_host {
     qa_frontend *frontend;
     qa_network_runtime *runtime;
@@ -52,8 +45,6 @@ struct frontend_qw_host {
     uint64_t composition;
     qa_qw_challenges *challenges;
     qw_frontend_peer peers[QW_CLIENTS];
-    qw_pending_control pending[QW_PENDING];
-    size_t pending_count;
     uint32_t drop_recipients[QW_CLIENTS];
     qa_net_client_id drop_clients[QW_CLIENTS][QW_CLIENTS];
     qa_qw_source_entity baselines[512];

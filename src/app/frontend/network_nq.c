@@ -582,11 +582,22 @@ bool frontend_nq_receive(frontend_nq_host *host, const qa_net_datagram *packet,
     if (!host || !packet || !recognized) return frontend_fail(error, QA_ERROR_ARGUMENT, "Missing NetQuake control owner");
     *recognized = packet->payload.size >= 5 && packet->payload.data[0] == 128 && packet->payload.data[1] == 0 &&
         packet->payload.data[4] >= QA_NQ_CONNECT_REQUEST && packet->payload.data[4] <= QA_NQ_RULE_INFO_REQUEST;
-    if (!*recognized) return true;
-    if (packet->payload.size > sizeof(host->pending[0].bytes) || host->pending_count == NQ_PENDING) return true;
-    nq_pending_control *pending = host->pending + host->pending_count++;
-    pending->address = packet->from; pending->received_ns = packet->received_ns; pending->size = packet->payload.size;
-    memcpy(pending->bytes, packet->payload.data, pending->size); return true;
+    if (!*recognized || packet->payload.size > NQ_DATAGRAM) return true;
+    if (!frontend_nq_prepare(host, error)) return false;
+    qa_nq_connection_host callbacks = {.context = host, .server_info = server_info,
+        .player_info = player_info, .next_rule = next_rule, .connect = connect_source};
+    uint8_t response[NQ_MESSAGE]; qa_error local = {0}; qa_net_writer writer; bool present;
+    qa_net_writer_init(&writer, response, sizeof(response), &local);
+    if (!qa_nq_control_answer(packet->payload, &packet->from, packet->received_ns,
+        &callbacks, &present, &writer, &local)) {
+        if (local.code == QA_ERROR_MEMORY || qa_application_get_state(host->frontend->application) == QA_APPLICATION_FAULTED) {
+            if (error) *error = local;
+            return false;
+        }
+        frontend_print(host->frontend, local.message); return true;
+    }
+    return !present || qa_network_send_address(host->runtime, &packet->from,
+        (qa_bytes){response, qa_net_writer_size(&writer)}, error);
 }
 bool frontend_nq_prepare(frontend_nq_host *host, qa_error *error)
 {
@@ -614,34 +625,6 @@ bool frontend_nq_prepare(frontend_nq_host *host, qa_error *error)
             peer->protocol_cursor = qa_application_events_local_first(host->frontend->application);
             qa_event_receipts_reset(&peer->event_receipts, peer->protocol_cursor);
         }
-    }
-    return true;
-}
-bool frontend_nq_pump(frontend_nq_host *host, qa_error *error)
-{
-    if (!host) return true;
-    if (!frontend_nq_prepare(host, error)) return false;
-    size_t count = host->pending_count; host->pending_count = 0;
-    qa_nq_connection_host callbacks = {.context = host, .server_info = server_info,
-        .player_info = player_info, .next_rule = next_rule, .connect = connect_source};
-    for (size_t i = 0; i < count; ++i) {
-        nq_pending_control *pending = host->pending + i; uint8_t response[NQ_MESSAGE];
-        if (!qa_net_transport_send_ready(qa_network_transport(host->runtime), &pending->address)) {
-            host->pending_count = count - i;
-            memmove(host->pending, pending, host->pending_count * sizeof(*host->pending));
-            return true;
-        }
-        qa_error local = {0}; qa_net_writer writer; qa_net_writer_init(&writer, response, sizeof(response), &local); bool present;
-        if (!qa_nq_control_answer((qa_bytes){pending->bytes, pending->size}, &pending->address,
-            pending->received_ns, &callbacks, &present, &writer, &local)) {
-            if (local.code == QA_ERROR_MEMORY || qa_application_get_state(host->frontend->application) == QA_APPLICATION_FAULTED) {
-                if (error) *error = local;
-                return false;
-            }
-            frontend_print(host->frontend, local.message); continue;
-        }
-        if (present && !qa_network_send_address(host->runtime, &pending->address,
-            (qa_bytes){response, qa_net_writer_size(&writer)}, error)) return false;
     }
     return true;
 }
@@ -999,7 +982,7 @@ bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
     if (!host) return true;
     if (host->busy || !qa_network_callbacks_idle(host->runtime))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake source publisher requires returned native callbacks");
-    if (!frontend_nq_pump(host, error)) return false;
+    if (!frontend_nq_prepare(host, error)) return false;
     qa_application_network_q1_world world;
     if (!host_source(host, error) || !qa_application_network_q1_world_read(host->frontend->application, host->owner, &world, error)) return false;
     qa_clock_state clock;
@@ -1177,7 +1160,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         host->frontend->options.network_protocol.kind > QA_NET_RMQ999 ||
         !qa_q1_profile_valid(host->frontend->options.network_protocol, error) || !host->owner ||
         host->generation != qa_application_configuration_generation(host->frontend->application) ||
-        host->submillisecond_ns >= UINT64_C(1000000) || host->pending_count > NQ_PENDING || !host->next_admission_order)
+        host->submillisecond_ns >= UINT64_C(1000000) || !host->next_admission_order)
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host lacks its actual source generation and idle policy");
     qa_application_network_q1_host source;
     if (!qa_application_network_q1_host_source(host->frontend->application, &source, error) ||
@@ -1232,16 +1215,6 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
                     (qa_nq_options){.standard_quake = true}, &message, NULL, 0))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake baseline lacks its original source wire admission");
         }
-    }
-    for (size_t i = 0; i < NQ_PENDING; ++i) {
-        const nq_pending_control *p = host->pending + i;
-        if (p->size > sizeof(p->bytes) || (i < host->pending_count && !p->size) ||
-            (p->size && (p->size < 5 || p->bytes[0] != 128 || p->bytes[1] != 0 ||
-                p->bytes[4] < QA_NQ_CONNECT_REQUEST || p->bytes[4] > QA_NQ_RULE_INFO_REQUEST ||
-                (p->address.kind != QA_NET_LOOPBACK && !p->address.port) ||
-                (p->address.kind != QA_NET_IPV4 && p->address.kind != QA_NET_IPV6 && p->address.kind != QA_NET_LOOPBACK))) ||
-            (complete_clock && p->received_ns > host->frontend->wall_time_ns))
-            return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake query queue differs from its actual receive producer");
     }
     for (size_t i = 0; i < 256; ++i) {
         const nq_status_cache *v = host->board + i;

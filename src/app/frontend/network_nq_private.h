@@ -3,7 +3,7 @@
 #include "network_nq.h"
 #include "../../network/event_receipts.h"
 
-enum { NQ_CLIENTS = 64, NQ_MESSAGE = 8000, NQ_DATAGRAM = 1024, NQ_PENDING = 32, NQ_PINGS = 16 };
+enum { NQ_CLIENTS = 64, NQ_MESSAGE = 8000, NQ_DATAGRAM = 1024, NQ_PINGS = 16 };
 typedef struct nq_frontend_peer {
     struct frontend_nq_host *host;
     qa_net_client_id client;
@@ -22,12 +22,6 @@ typedef struct nq_frontend_peer {
     bool occupied, retiring, command_present;
     char reason[256];
 } nq_frontend_peer;
-typedef struct nq_pending_control {
-    qa_net_address address;
-    uint64_t received_ns;
-    size_t size;
-    uint8_t bytes[1024];
-} nq_pending_control;
 typedef struct nq_status_cache {
     char *name;
     int32_t frags;
@@ -42,8 +36,6 @@ struct frontend_nq_host {
     qa_actor_owner owner;
     uint64_t generation, submillisecond_ns, published_source_time_ns, next_admission_order;
     nq_frontend_peer peers[NQ_CLIENTS];
-    nq_pending_control pending[NQ_PENDING];
-    size_t pending_count;
     unsigned busy;
     bool previous_pause;
     char reply_address[128];

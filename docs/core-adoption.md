@@ -254,6 +254,22 @@ The normal build and all seven existing core suites pass:
 `/tmp/qa-ta3196-kex-dispatch-20261011-build.log` and
 `/tmp/qa-ta3196-kex-dispatch-20261011-core.log`. No live LAN session claim.
 
+Events finding 2: `frontend_network_receive` handles host control datagrams
+before entering the runtime receive callback. `frontend_network_event_ready`
+keeps records in the platform queue while the runtime or host is busy, a Q3
+round is active, or the reply transport cannot accept a packet. The existing
+destination cursor preserves admission order while key releases can continue.
+NQ and QW answer the borrowed request directly; Q3 admission takes the borrowed
+datagram. Wire parsers and reply encoders are unchanged.
+
+The NQ/QW pending arrays and Q3 pending array, their fill/drain paths, pending
+reply allocation, and pending-queue validation/round guards are deleted.
+NQ preparation, QW log rotation and Q3 peer retirement remain maintenance
+operations. The normal production build and seven existing core suites pass:
+`/tmp/qa-ta3196-control-queues-20261011-build.log` and
+`/tmp/qa-ta3196-control-queues-20261011-core.log`. This does not claim a live
+legacy-server connection check. Events finding 4 remains open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
