@@ -45,6 +45,7 @@ typedef struct q2_visual {
     struct q2_visual *next;
     qa_actor_id actor;
     q2_activation *activation;
+    qa_string_id content_name;
     const char *content, *path, *source_provider;
     const qa_unified_presentation_event *model;
     qa_unified_document *model_document;
@@ -69,7 +70,8 @@ typedef struct q2_native_picture q2_native_picture;
 typedef struct q2_bank {
     struct q2_bank *next;
     struct frontend_unified_q2 *owner;
-    char *content;
+    qa_string_id content_name;
+    const char *content;
     qa_vfs *files;
     const qa_product *product;
     qa_scene_resources *images;
@@ -317,6 +319,7 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
         v->effects=0;v->event=0;v->event_frame=0;v->visible=true;
     }
     v->content=content;v->source_provider=provider;
+    v->content_name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
     if (is_model) {
         qa_unified_document_destroy(v->model_document);v->model_document=document;
         v->path=path;v->model=row;v->effects=m->visual.effects;
@@ -373,7 +376,7 @@ static bool model_name(q2_bank *b,qa_string_id path,bool acquire,qa_scene_model 
     frontend_unified_model actual;
     qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,
         .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255};
-    bool okay=frontend_unified_media_model(b->owner->media,b->content,path,QA_GAME_Q2,&options,&actual,e);
+    bool okay=frontend_unified_media_model(b->owner->media,b->content_name,path,QA_GAME_Q2,&options,&actual,e);
     if (!okay) { free(m); return false; }
     m->scene=actual.scene; m->next=b->models; b->models=m; *out=m->scene; return true;
 }
@@ -399,7 +402,7 @@ static bool pose_actor(q2_bank *b,qa_actor_id id,frontend_remote_q2_effects_pose
         frontend_remote_q2_effects_pose p={.actor=id,.origin=row->origin,.angles=row->angles,
             .frame=(int32_t)row->visual.frame,.scale=row->visual.scale};
         q2_visual *visual=visual_read(o,id);
-        if (visual && !strcmp(visual->content?visual->content:"",b->content)) {
+        if (visual && visual->content_name==b->content_name) {
             p.effects=visual->effects; p.event=visual->event_frame==o->frame_number?visual->event:0;
         }
         if (visual && visual->model) {
@@ -603,19 +606,18 @@ static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activ
         if (!b) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 CLIENT content");
         b->owner=o; b->activation=activation_owner; b->profile=profile;
         qa_builtin_random_seed(&b->entity_random,1);
-        b->content=malloc(strlen(content)+1);
-        if (!b->content) { free(b); return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 content identity"); }
-        strcpy(b->content,content);
+        if (!qa_strings_intern_cstr(o->replica->strings,content,&b->content_name,e)) {free(b);return false;}
+        b->content=qa_strings_cstr(o->replica->strings,b->content_name);
         if (source_provider) {
             b->source_provider=malloc(strlen(source_provider)+1);
-            if (!b->source_provider) { free(b->content); free(b); return false; }
+            if (!b->source_provider) { free(b); return false; }
             strcpy(b->source_provider,source_provider);
         }
         qa_font_library *fonts; qa_audio_bank *sounds;
         bool okay=qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&b->files,&b->product,e) &&
-            b->product->family==QA_GAME_Q2 && frontend_unified_media_bank(o->media,content,&b->images,&b->materials,&fonts,&sounds,e);
+            b->product->family==QA_GAME_Q2 && frontend_unified_media_bank(o->media,b->content_name,&b->images,&b->materials,&fonts,&sounds,e);
         if (okay) b->sounds=sounds;
-        if (!okay) { free(b->source_provider); free(b->content); free(b); return false; }
+        if (!okay) { free(b->source_provider); free(b); return false; }
         q2_bank **tail=&o->banks;
         while (*tail) tail=&(*tail)->next;
         *tail=b;
@@ -839,7 +841,7 @@ static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     if (!v->bank->native_font) {
         qa_font_library *fonts;qa_scene_resources *images;qa_material_library *materials;qa_audio_bank *sounds;
         const qa_scene_image *conchars=native_picture(v,"conchars",e);
-        if (!conchars || !frontend_unified_media_bank(o->media,v->bank->content,&images,&materials,&fonts,&sounds,e) ||
+        if (!conchars || !frontend_unified_media_bank(o->media,v->bank->content_name,&images,&materials,&fonts,&sounds,e) ||
             !qa_font_classic_create(fonts,"unified-native-q2:conchars",conchars,QA_FONT_BAKED_COLOR,&v->bank->native_font,e))return false;
     }
     v->font=v->bank->native_font;return true;
@@ -1583,7 +1585,7 @@ static bool sample_entities(q2_bank *b,frontend_remote_q2_effects_pose **out,siz
     size_t used=0; bool okay=true;
     for (size_t i=0;okay && i<n;++i) {
         const qa_unified_model_state *row=frame->visuals->models+i; qa_actor_id a;
-        if (row->family!=QA_GAME_Q2 || strcmp(row->content,b->content)) continue;
+        if (row->family!=QA_GAME_Q2 || row->content!=b->content_name) continue;
         okay=frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&a,e); if (!okay) break;
         q2_visual *v=visual_read(o,a);
         if (!v || !v->visible || v->activation!=b->activation || !v->source_provider ||
@@ -1931,7 +1933,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
         q2_native_picture *picture=b->native_pictures;
         while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture->name);free(picture);picture=next;}
-        o->banks=b->next; free(b->aliases); free(b->source_provider); free(b->content); free(b);
+        o->banks=b->next; free(b->aliases); free(b->source_provider); free(b);
     }
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);

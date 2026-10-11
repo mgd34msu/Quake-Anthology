@@ -24,6 +24,7 @@ typedef struct rr_record {
     qa_unified_document *event_document;
     qa_arena text_storage;
     rr_kind kind;
+    qa_string_id content_name;
     char *content, *source_provider, *owner_provider;
     uint64_t owner_generation;
     double seconds;
@@ -147,6 +148,7 @@ static bool parse(frontend_unified_q2_rr_hud *o, const qa_unified_presentation_e
         (row->owner.generation && (!row->owner.provider || !*row->owner.provider)))
         return fail(e,"RR HUD event lacks its actual Source clock and owner");
     r->content=row->content; r->source_provider=row->provider;
+    if (!qa_strings_intern_cstr(o->replica->strings,row->content,&r->content_name,e)) return false;
     r->owner_provider=row->owner.provider; r->owner_generation=row->owner.generation;
     r->seconds=row->seconds;
     const qa_q2_map_event *map=row->payload.kind==QA_UNIFIED_PRESENTATION_Q2_MAP?&row->payload.value.q2_map:NULL;
@@ -229,7 +231,7 @@ bool frontend_unified_q2_rr_validate(frontend_unified_q2_rr_hud *o,
     if (!o || !row || !current(o,e)) return false;
     rr_record record={0}; bool okay=parse(o,row,false,false,&record,e); record_clear(&record); return okay;
 }
-static bool media_bank(frontend_unified_q2_rr_hud *o, const char *content, bool fresh,
+static bool media_bank(frontend_unified_q2_rr_hud *o, qa_string_id content, bool fresh,
     frontend_unified_bank_view *out, qa_error *e)
 {
     if (fresh) {
@@ -237,7 +239,7 @@ static bool media_bank(frontend_unified_q2_rr_hud *o, const char *content, bool 
         if (!frontend_unified_media_bank(o->media,content,&images,&materials,&fonts,&sounds,e)) return false;
     }
     for (size_t i=0; i<frontend_unified_media_bank_count(o->media); ++i)
-        if (frontend_unified_media_bank_read(o->media,i,out) && !strcmp(out->content,content))
+        if (frontend_unified_media_bank_read(o->media,i,out) && out->content_name==content)
             return out->product && out->product->family==QA_GAME_Q2 && out->files && out->images;
     return fail(e,"RR HUD content has no genuine retained Q2 media bank");
 }
@@ -247,7 +249,7 @@ static bool localized(frontend_unified_q2_rr_hud *o, rr_record *r, const char *s
     frontend_unified_bank_view bank={0}; qa_ui_preferences prefs; qa_localization *catalog=NULL;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     qa_localization_options options={.profile=QA_LOCALIZATION_Q2_RERELEASE};
-    bool okay=domain && media_bank(o,r->content,true,&bank,e) &&
+    bool okay=domain && media_bank(o,r->content_name,true,&bank,e) &&
         qa_ui_preferences_read(qa_application_cvars(domain->application),qa_application_ui_preference_handles(domain->application),domain->physical_seat,&prefs,e) &&
         qa_localization_acquire(o->localizations,bank.files,prefs.language,&options,&catalog,e);
     if (okay) {
@@ -263,7 +265,7 @@ static bool picture(frontend_unified_q2_rr_hud *o, rr_record *r, const char *pat
     frontend_unified_bank_view bank={0};
     qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
         .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
-    return media_bank(o,r->content,true,&bank,e) && qa_scene_image_load(bank.images,path,&options,&r->image,e);
+    return media_bank(o,r->content_name,true,&bank,e) && qa_scene_image_load(bank.images,path,&options,&r->image,e);
 }
 static uint64_t nanoseconds(double seconds)
 {
@@ -339,7 +341,7 @@ static bool poi_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_error *e)
     snprintf(path,size+10,"pics/%s.pcx",r->value.poi.path);
     bool okay=picture(o,r,path,e);
     frontend_unified_bank_view bank={0}; qa_bytes palette={0};
-    if (okay) okay=media_bank(o,r->content,false,&bank,e);
+    if (okay) okay=media_bank(o,r->content_name,false,&bank,e);
     if (okay) {
         qa_error issue={0};
         if (!qa_scene_resources_palette(bank.images,QA_GAME_Q2,&palette,&issue) && issue.code!=QA_ERROR_NOT_FOUND) {
@@ -773,9 +775,9 @@ bool frontend_unified_q2_rr_draw(frontend_unified_q2_rr_hud *o, qa_ui *ui,
     if (!okay) return false;
     draw.scale=fminf((float)viewport.width/640.f,(float)viewport.height/480.f);
     draw.x=(float)viewport.x+((float)viewport.width-640*draw.scale)*.5f; draw.y=(float)viewport.y+((float)viewport.height-480*draw.scale)*.5f;
-    const char *content=o->report.event?o->report.content:o->bars?o->bars->row.content:
-        o->help.event?o->help.content:o->path.event?o->path.content:o->coop.event?o->coop.content:
-        o->poi_count?o->pois[0].content:o->damage_count?o->damage[0].row.content:NULL;
+    qa_string_id content=o->report.event?o->report.content_name:o->bars?o->bars->row.content_name:
+        o->help.event?o->help.content_name:o->path.event?o->path.content_name:o->coop.event?o->coop.content_name:
+        o->poi_count?o->pois[0].content_name:o->damage_count?o->damage[0].row.content_name:QA_STRING_NONE;
     if (content) { frontend_unified_bank_view bank={0};
         okay=media_bank(o,content,false,&bank,e); if (okay) draw.white=qa_scene_white(bank.images); }
     o->busy=true;

@@ -243,6 +243,13 @@ typedef struct application_feature_report {
     qa_error error;
 } application_feature_report;
 
+typedef struct application_content_names {
+    struct application_content_names *next;
+    const qa_catalog *catalog;
+    size_t count;
+    qa_string_id names[];
+} application_content_names;
+
 struct qa_application {
     struct qa_application_client_preparation *client_preparation;
     application_publication *failed_publications;
@@ -262,6 +269,7 @@ struct qa_application {
     qa_cvar_handle bot_minplayers;
     qa_ui_preference_handles ui_preference_handles;
     qa_application_ui_names ui_names;
+    application_content_names *content_names;
     qa_console *console;
     const qa_native_runtime_config *native_runtime_config;
     qa_native_runtime *native_runtime;

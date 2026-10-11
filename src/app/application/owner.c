@@ -771,6 +771,7 @@ bool qa_application_rediscover(qa_application *application, bool discover_mods,
     bool ok = discover(application, discover_mods, generation, &candidate, error);
     if (ok && application->q3_product.restriction_resolved && application->q3_product.filesystem_restricted)
         ok = qa_catalog_q3_restrict(candidate, error);
+    if (ok) ok=qa_application_content_names_bind(application,candidate,error);
     if (ok) {
         qa_catalog *previous = application->catalog;
         application->catalog = candidate;

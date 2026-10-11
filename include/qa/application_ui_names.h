@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_UI_NAMES_H
 #define QA_APPLICATION_UI_NAMES_H
 #include "qa/game_q1.h"
+#include "qa/catalog.h"
 #include "qa/game_q2.h"
 
 typedef struct qa_application_ui_names {
@@ -12,5 +13,7 @@ typedef struct qa_application_ui_names {
 } qa_application_ui_names;
 typedef struct qa_application qa_application;
 /* IDs belong to the application's retained session table. */
+bool qa_application_content_names_bind(qa_application *, const qa_catalog *, qa_error *);
+qa_string_id qa_application_content_name(const qa_application *, const qa_catalog *, qa_product_id);
 const qa_application_ui_names *qa_application_ui_names_read(const qa_application *);
 #endif

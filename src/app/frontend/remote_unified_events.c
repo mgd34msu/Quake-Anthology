@@ -483,7 +483,7 @@ static bool sound(frontend_unified_events *o,const qa_unified_sound_event *event
     if (actual.registry && !o->options.audio_actor(o->options.context,actual,&audio,e)) return false;
     if (!r->asset) {
         qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
-        if (!frontend_unified_media_bank(o->media,qa_strings_cstr(o->strings,r->content),&images,&materials,&fonts,&bank,e) ||
+        if (!frontend_unified_media_bank(o->media,r->content,&images,&materials,&fonts,&bank,e) ||
             !qa_audio_bank_register(bank,qa_strings_cstr(o->strings,r->path),r->family,&r->asset,e)) return false;
         if (!r->asset) return frontend_unified_fail(e,QA_ERROR_NOT_FOUND,"Declared Unified sound is absent from its actual bank");
         const qa_resource *resource=qa_audio_asset_resource(r->asset);
@@ -636,8 +636,10 @@ bool frontend_unified_events_sound_path(frontend_unified_events *o,const char *c
     if (!o || !content || !path || !isfinite(ms) || !isfinite(delay) || !execution_current(o,e)) return false;
     qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
     qa_vfs *files; const qa_product *product;
-    if (!qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&product,e) ||
-        !frontend_unified_media_bank(o->media,content,&images,&materials,&fonts,&bank,e)) return false;
+    qa_string_id content_name=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
+    if (
+        !frontend_unified_media_files(o->media,content_name,&files,&product,e) ||
+        !frontend_unified_media_bank(o->media,content_name,&images,&materials,&fonts,&bank,e)) return false;
     qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_audio_asset *asset=NULL;
     if (!qa_audio_bank_register(bank,path,family,&asset,e)) return false;
@@ -726,8 +728,10 @@ bool frontend_unified_events_sound_loop_path(frontend_unified_events *o,const ch
         !isfinite(volume) || !isfinite(attenuation) || !execution_current(o,e)) return false;
     qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
     qa_vfs *files; const qa_product *product;
-    if (!qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&product,e) ||
-        !frontend_unified_media_bank(o->media,content,&images,&materials,&fonts,&bank,e)) return false;
+    qa_string_id content_name=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
+    if (
+        !frontend_unified_media_files(o->media,content_name,&files,&product,e) ||
+        !frontend_unified_media_bank(o->media,content_name,&images,&materials,&fonts,&bank,e)) return false;
     qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_audio_asset *asset=NULL;
     if (!qa_audio_bank_register(bank,path,family,&asset,e)) return false;

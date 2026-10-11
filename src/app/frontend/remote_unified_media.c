@@ -15,6 +15,7 @@
 #include "remote_unified_material_movies_bridge.h"
 #include "qa/media_library_save.h"
 #include "qa/media_resource.h"
+#include "qa/application_ui_names.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -33,12 +34,12 @@ static qa_scene_world_options world_options(qa_game_family family)
     return (qa_scene_world_options){.images = image_options(family, QA_IMAGE_USAGE_WALL),
         .subdivisions = 64, .q1_water_alpha = 1, .q2_light_modulate = 1, .q3_overbright = 1};
 }
-static bool bank(frontend_unified_media *owner, const char *content, unified_media_bank **out, qa_error *error)
+static bool bank(frontend_unified_media *owner, qa_string_id content_name, unified_media_bank **out, qa_error *error)
 {
-    if (!owner || owner->importing || owner->busy || !content || !out || !frontend_unified_media_current(owner))
+    if (!owner || owner->importing || owner->busy || !content_name || !out || !frontend_unified_media_current(owner))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified media lost its retained recipe content");
     for (unified_media_bank *row = owner->banks; row; row = row->next)
-        if (row->content && !strcmp(row->content, content)) {
+        if (row->content_name == content_name) {
             if (row->constructing || row->construction_failed)
                 return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified content bank retains an incomplete construction");
             *out = row; return true;
@@ -47,11 +48,11 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified bank creation overlaps retained resource inventory");
     unified_media_bank *row = calloc(1, sizeof(*row));
     if (!row) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Retaining unified content media bank");
-    row->content = malloc(strlen(content) + 1);
-    if (row->content) strcpy(row->content, content);
+    row->content_name = content_name;
+    row->content = qa_strings_cstr(owner->strings, content_name);
     row->constructing = true;
     row->next = owner->banks; owner->banks = row;
-    bool okay = row->content && qa_executable_recipe_content(owner->recipe, content, &row->files, &row->product, error);
+    bool okay = row->content && qa_executable_recipe_content(owner->recipe, row->content, &row->files, &row->product, error);
     if (okay) row->images = qa_scene_resources_create(row->files, error);
     if (okay) okay = row->images && frontend_image_policy_initialize(owner->frontend, row->images, error);
     if (okay) {
@@ -83,30 +84,30 @@ static bool bank(frontend_unified_media *owner, const char *content, unified_med
         owner->banks = row->next;
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images);
-        free(row->content); free(row); return false;
+        free(row); return false;
     }
     row->constructing = false; *out = row; return true;
 }
-bool frontend_unified_media_bank(frontend_unified_media *owner, const char *content,
+bool frontend_unified_media_bank(frontend_unified_media *owner, qa_string_id content_name,
     qa_scene_resources **images, qa_material_library **materials, qa_font_library **fonts,
     qa_audio_bank **sounds, qa_error *error)
 {
     unified_media_bank *row;
-    if (!images || !materials || !fonts || !sounds || !bank(owner, content, &row, error)) return false;
+    if (!images || !materials || !fonts || !sounds || !bank(owner, content_name, &row, error)) return false;
     *images = row->images; *materials = row->materials; *fonts = row->fonts; *sounds = row->sounds; return true;
 }
-bool frontend_unified_media_files(frontend_unified_media *owner, const char *content,
+bool frontend_unified_media_files(frontend_unified_media *owner, qa_string_id content_name,
     qa_vfs **files, const qa_product **product, qa_error *error)
 {
     unified_media_bank *row;
-    if (!files || !product || !bank(owner, content, &row, error)) return false;
+    if (!files || !product || !bank(owner, content_name, &row, error)) return false;
     *files = row->files; *product = row->product; return true;
 }
-bool frontend_unified_media_q3_assets(frontend_unified_media *owner, const char *content,
+bool frontend_unified_media_q3_assets(frontend_unified_media *owner, qa_string_id content_name,
     qa_q3_presentation_assets **out, qa_error *error)
 {
     unified_media_bank *row;
-    if (!out || !bank(owner, content, &row, error)) return false;
+    if (!out || !bank(owner, content_name, &row, error)) return false;
     if (!row->q3_assets) {
         if (owner->frontend->resource_inventory)
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified Q3 registry creation overlaps resource inventory");
@@ -131,13 +132,15 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
     if (!frontend || !recipe || physical_seat >= frontend->options.seats || !out || *out || frontend->resource_inventory || !frontend->order ||
         !qa_executable_recipe_current(recipe, qa_executable_recipe_catalog(recipe)))
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified world preparation needs its actual admitted recipe");
+    if (!qa_application_content_names_bind(frontend->application,qa_executable_recipe_catalog(recipe),error)) return false;
     frontend_unified_media *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_unified_fail(error, QA_ERROR_MEMORY, "Allocating unified immutable scene owners");
     owner->frontend = frontend; owner->recipe = recipe; owner->physical_seat = physical_seat;
+    owner->strings = qa_session_strings(qa_application_session(frontend->application)); qa_strings_retain(owner->strings);
     const qa_recipe_choices *choices = qa_executable_recipe_choices(recipe);
     const qa_product *product = qa_catalog_product(qa_executable_recipe_catalog(recipe), choices->world.geometry);
     qa_resource *map = qa_executable_recipe_map(recipe); qa_bsp_view bsp;
-    bool okay = product && map && bank(owner, product->identity, &owner->world_bank, error) &&
+    bool okay = product && map && bank(owner, qa_application_content_name(frontend->application, qa_executable_recipe_catalog(recipe), product->id), &owner->world_bank, error) &&
         qa_bsp_open(qa_resource_bytes(map), &bsp, error) && qa_bsp_validate(&bsp, error);
     if (okay) {
         qa_game_family family = bsp.family == QA_BSP_Q1 ? QA_GAME_Q1 : bsp.family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
@@ -167,7 +170,7 @@ bool frontend_unified_media_create(qa_frontend *frontend, qa_executable_recipe *
             !resource.path || strncmp(resource.path, "sound/", 6)) continue;
         const qa_product *content = qa_catalog_product(qa_executable_recipe_catalog(recipe), resource.product);
         unified_media_bank *row = NULL;
-        okay = content && bank(owner, content->identity, &row, error) &&
+        okay = content && bank(owner, qa_application_content_name(frontend->application, qa_executable_recipe_catalog(recipe), content->id), &row, error) &&
             frontend_ui_audio_prepare_sound(frontend, row->sounds, resource.path, content->family, error);
     }
     if (!okay) {
@@ -191,7 +194,7 @@ qa_material_library *frontend_unified_model_materials(const qa_scene_model *mode
     const qa_scene_image_options *options = qa_scene_model_image_options(model);
     return options && options->family == QA_GAME_Q3 ? qa_scene_model_material_owner(model) : NULL;
 }
-bool frontend_unified_media_model(frontend_unified_media *owner, const char *content,
+bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id content_name,
     qa_string_id path_name, qa_game_family family, const qa_scene_image_options *options,
     frontend_unified_model *out, qa_error *error)
 {
@@ -208,15 +211,13 @@ bool frontend_unified_media_model(frontend_unified_media *owner, const char *con
                 return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model exceeds its received model domain");
             index = index * 10 + (uint32_t)(*p - '0');
         }
-        const qa_recipe_choices *choices = qa_executable_recipe_choices(owner->recipe);
-        const qa_product *world = qa_catalog_product(qa_executable_recipe_catalog(owner->recipe), choices->world.geometry);
-        if (!world || strcmp(content, world->identity))
+        if (content_name != owner->world_bank->content_name)
             return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model differs from the offered world content");
         *out = (frontend_unified_model){.brush_world = owner->world, .inline_model = index, .is_inline = true};
         return true;
     }
     unified_media_bank *files;
-    if (!bank(owner, content, &files, error)) return false;
+    if (!bank(owner, content_name, &files, error)) return false;
     for (unified_media_model *row = owner->models; row; row = row->next)
         if (row->bank == files && row->family == family && row->path == path_name && same_options(&row->options, options)) {
             *out = (frontend_unified_model){.resource=row->resource,.opening=&row->opening,
@@ -279,8 +280,9 @@ bool frontend_unified_media_bank_read(const frontend_unified_media *owner,size_t
     const unified_media_bank *row=owner->banks;
     while (row && index--) row=row->next;
     if (!row) return false;
-    *out=(frontend_unified_bank_view){row->content,row->files,row->product,row->images,row->materials,row->fonts,row->sounds,row->q3_assets,row->media,
-        owner->physical_seat,row->cinematic_audio_owner};
+    *out=(frontend_unified_bank_view){.content=row->content,.content_name=row->content_name,.files=row->files,.product=row->product,
+        .images=row->images,.materials=row->materials,.fonts=row->fonts,.sounds=row->sounds,.q3_assets=row->q3_assets,.movies=row->media,
+        .cinematic_seat=owner->physical_seat,.cinematic_audio_owner=row->cinematic_audio_owner};
     return true;
 }
 size_t frontend_unified_media_model_count(const frontend_unified_media *owner)
@@ -412,7 +414,8 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
         unified_media_bank *row = owner->banks; owner->banks = row->next;
         qa_buffer_free(&row->saved_assets);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
-        qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images); free(row->content); free(row);
+        qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images); free(row);
     }
+    qa_strings_destroy(owner->strings);
     free(owner); return true;
 }

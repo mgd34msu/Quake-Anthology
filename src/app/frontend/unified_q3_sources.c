@@ -169,7 +169,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_frame *
         v->visible_entities = r->visible_entities; v->area_mask = source->visibility->area_mask;
     }
     if (ok && restoring) ok = frontend_unified_media_q3_assets_read(o->media,v->content_product,&v->assets);
-    else if (ok) ok = frontend_unified_media_q3_assets(o->media,qa_strings_cstr(o->replica->strings,r->content),&v->assets,e);
+    else if (ok) ok = frontend_unified_media_q3_assets(o->media,r->content,&v->assets,e);
     if (ok) { v->entities = r->entities; v->players = r->players; v->player_count = source->client_count; }
     if (!ok) { source_free(r); return e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled Q3 received Source disagrees with its admitted recipe"); }
     *out = r; return true;

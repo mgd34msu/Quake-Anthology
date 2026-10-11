@@ -18,6 +18,7 @@ typedef struct frontend_unified_model {
 } frontend_unified_model;
 typedef struct frontend_unified_bank_view {
     const char *content;
+    qa_string_id content_name;
     qa_vfs *files;
     const qa_product *product;
     qa_scene_resources *images;
@@ -52,16 +53,16 @@ bool frontend_unified_media_create(qa_frontend *, qa_executable_recipe *, uint32
     frontend_unified_media **, qa_error *);
 /* Each content row borrows the admitted product lookup policy; children are
  * real private media owners, independent of the local Source scene. */
-bool frontend_unified_media_bank(frontend_unified_media *, const char *content,
+bool frontend_unified_media_bank(frontend_unified_media *, qa_string_id content,
     qa_scene_resources **, qa_material_library **, qa_font_library **,
     qa_audio_bank **, qa_error *);
-bool frontend_unified_media_files(frontend_unified_media *, const char *content,
+bool frontend_unified_media_files(frontend_unified_media *, qa_string_id content,
     qa_vfs **, const qa_product **, qa_error *);
-bool frontend_unified_media_q3_assets(frontend_unified_media *, const char *content,
+bool frontend_unified_media_q3_assets(frontend_unified_media *, qa_string_id content,
     qa_q3_presentation_assets **, qa_error *);
 bool frontend_unified_media_q3_assets_read(const frontend_unified_media *, const qa_product *,
     qa_q3_presentation_assets **);
-bool frontend_unified_media_model(frontend_unified_media *, const char *content,
+bool frontend_unified_media_model(frontend_unified_media *, qa_string_id content,
     qa_string_id path, qa_game_family, const qa_scene_image_options *,
     frontend_unified_model *, qa_error *);
 qa_material_library *frontend_unified_model_materials(const qa_scene_model *);

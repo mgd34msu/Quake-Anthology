@@ -246,10 +246,10 @@ reads and 82,507 comparisons; the new path makes none and does no interning.
 All three engine builds and seven core checks per configuration pass. This is
 bounded ID-adoption evidence, not a frame-time claim.
 
-Confirmed hot identity bypasses remain in
-`remote_unified_media.c:40,116,192,200`.
-Move their already admitted identity into IDs or
-resource handles; do not replace comparisons with per-frame interning or hashes.
+The named Unified media content/path cache bypasses have been migrated below.
+Source-instance rendering callbacks still require their final ID migration.
+Broader primitive/event adoption is queued under TA-3196; this section does not
+claim whole-tree adoption.
 Ordinary provider routing already caches the resolved actor/provider in
 `src/app/application/services.c:268`; selector/reconfiguration text is separate.
 
@@ -367,6 +367,19 @@ resource/register boundaries. The normal build and seven core suites pass
 (`/tmp/qa-ta3192-media-paths-20261011-{build,core}.log`). Content-bank identity and
 inline-world content comparisons remain open. No live model/mod, protocol-session
 or timing claim is made by these checks.
+
+TA-3192 Unified content banks now key on admitted IDs. One application-owned
+catalog binding admits each product name into the session table during creation,
+rediscovery, provider binding or recipe media creation. Bindings retain their
+catalogs so older launch and restored recipe indices stay in the correct scope.
+Model and Rogue face publication pass those IDs through the existing NAME codec.
+Media hits retain their product/VFS, and inline models compare the offered world
+content ID. Bank content copies, content identity comparisons and per-model
+recipe content-name resolution are deleted. Family adapters borrow text views
+for their existing external services; typed steady-state callers pass IDs.
+The normal build and seven core suites pass
+(`/tmp/qa-ta3192-media-content-20261011-{build,core}.log`). Source-instance render
+callbacks remain open. No installed gameplay or timing claim is made.
 
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent

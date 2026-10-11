@@ -192,7 +192,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     }
     qa_scene_resources *bank; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *sounds;
     qa_vfs *files;
-    if (okay) okay=qa_executable_recipe_content(frontend_remote_unified_recipe(r->replica),source->content,&files,&m->product,e) &&
+    if (okay) okay=frontend_unified_media_files(r->media,source->content,&files,&m->product,e) &&
         frontend_unified_media_bank(r->media,source->content,&bank,&materials,&fonts,&sounds,e) &&
         (m->flat_beam || frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e));
     m->path=qa_strings_cstr(r->replica->strings,source->path);
@@ -219,7 +219,7 @@ static bool q1_team_face_prepare(frontend_unified_render *r,const qa_unified_pla
         trunc(value->frags)!=value->frags || value->frags<INT32_MIN || value->frags>INT32_MAX)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Rogue team face differs from its received Source player");
     qa_scene_resources *images;qa_material_library *materials;qa_font_library *fonts;qa_audio_bank *sounds;
-    return frontend_unified_media_bank(r->media,product->identity,&images,&materials,&fonts,&sounds,e) &&
+    return frontend_unified_media_bank(r->media,value->content,&images,&materials,&fonts,&sounds,e) &&
         frontend_q1_hud_prepare(files,images,materials,QA_HUD_Q1_ROGUE,e) &&
         frontend_q1_team_face_read(images,materials,value->colors,(int32_t)value->frags,&r->team_face,e);
 }
@@ -232,8 +232,8 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     qa_vfs *files; const qa_product *admitted;
     qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *sounds;
     qa_hud_q1_variant variant = frontend_q1_hud_variant(product);
-    if (!domain || !frontend_unified_media_files(r->media, product->identity, &files, &admitted, e) ||
-        admitted != product || !frontend_unified_media_bank(r->media, product->identity,
+    if (!domain || !frontend_unified_media_files(r->media, qa_application_content_name(r->frontend->application, qa_executable_recipe_catalog(frontend_remote_unified_recipe(r->replica)), product->id), &files, &admitted, e) ||
+        admitted != product || !frontend_unified_media_bank(r->media, qa_application_content_name(r->frontend->application, qa_executable_recipe_catalog(frontend_remote_unified_recipe(r->replica)), product->id),
             &images, &materials, &fonts, &sounds, e) ||
         !frontend_q1_hud_prepare(files, images, materials, variant, e)) return false;
     qa_q1_program program = variant == QA_HUD_Q1_ROGUE ? QA_Q1_ROGUE :

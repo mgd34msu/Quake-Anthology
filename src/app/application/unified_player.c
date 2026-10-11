@@ -36,10 +36,27 @@ static bool ui_names_admit(qa_strings *strings, qa_item_id *ids,
     return true;
 }
 
+bool qa_application_content_names_bind(qa_application *app, const qa_catalog *catalog, qa_error *error)
+{
+    for (const application_content_names *row=app->content_names;row;row=row->next)
+        if (row->catalog==catalog) return true;
+    size_t count=qa_catalog_count(catalog)+1;
+    application_content_names *row=calloc(1,sizeof(*row)+count*sizeof(*row->names));
+    if (!row) return application_fail(error,QA_ERROR_MEMORY,"Admitting catalog content names");
+    row->catalog=catalog;row->count=count;
+    for (size_t i=0;i<count-1;++i) {
+        const qa_product *product=qa_catalog_at(catalog,i);
+        if (!qa_strings_intern_cstr(qa_session_strings(app->session),product->identity,&row->names[product->id],error)) {free(row);return false;}
+    }
+    qa_catalog_retain((qa_catalog *)catalog);
+    row->next=app->content_names;app->content_names=row;return true;
+}
+
 bool application_ui_names_prepare(qa_application *app, qa_error *error)
 {
     qa_application_ui_names *names = &app->ui_names;
     qa_strings *strings = qa_session_strings(app->session);
+    if (!qa_application_content_names_bind(app,app->catalog,error)) return false;
     for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
         if (!qa_strings_intern_cstr(strings, qa_q1_weapon_identity((qa_q1_weapon)i),
                 &names->q1_weapons[i], error)) return false;
@@ -64,6 +81,13 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
         ui_names_admit(strings, names->q2_powers, q2, sizeof(q2) / sizeof(*q2), error) &&
         ui_names_admit(strings, names->q3_powers, q3, sizeof(q3) / sizeof(*q3), error) &&
         qa_strings_intern_cstr(strings, "q3:holdable_invulnerability", &names->q3_invulnerability, error);
+}
+
+qa_string_id qa_application_content_name(const qa_application *app,const qa_catalog *catalog,qa_product_id product)
+{
+    for (const application_content_names *row=app->content_names;row;row=row->next)
+        if (row->catalog==catalog) return product<row->count?row->names[product]:QA_STRING_NONE;
+    return QA_STRING_NONE;
 }
 
 const qa_application_ui_names *qa_application_ui_names_read(const qa_application *app)
@@ -893,7 +917,8 @@ static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_er
         out->q1_team_face = application_unified_frame_alloc(o->lease, 1, sizeof(*out->q1_team_face), e);
         if (!out->q1_team_face) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual Rogue team face");
         out->q1_team_face->colors = players[i].colors; out->q1_team_face->frags = players[i].frags;
-        return application_unified_frame_string(o->lease, &out->q1_team_face->content, o->primary->product->identity, e);
+        out->q1_team_face->content = o->primary->content_name;
+        return true;
     }
     return application_fail(e, QA_ERROR_ARGUMENT, "Rogue team face lost its physical Source player");
 }

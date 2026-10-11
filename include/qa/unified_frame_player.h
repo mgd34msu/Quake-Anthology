@@ -68,7 +68,7 @@ typedef struct qa_unified_native_inventory {
     char *selected;
     qa_unified_inventory_presentation presentation;
 } qa_unified_native_inventory;
-typedef struct qa_unified_q1_team_face { char *content; uint8_t colors; double frags; } qa_unified_q1_team_face;
+typedef struct qa_unified_q1_team_face { qa_string_id content; uint8_t colors; double frags; } qa_unified_q1_team_face;
 typedef struct qa_unified_player_ui {
     double health;
     qa_armor armor;

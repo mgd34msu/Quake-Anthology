@@ -1,6 +1,7 @@
 #include "remote_unified_private.h"
 #include "remote_unified_metadata.h"
 #include "remote_unified_q3.h"
+#include "qa/application_ui_names.h"
 #include "remote_unified_events.h"
 #include "remote_unified_components.h"
 #include "remote_unified_save.h"
@@ -32,7 +33,8 @@ typedef struct unified_q3_ballistic unified_q3_ballistic;
 typedef struct unified_q3_bank {
     struct unified_q3_bank *next;
     struct frontend_unified_q3 *owner;
-    char *content;
+    qa_string_id content_name;
+    const char *content;
     char *activation;
     uint64_t generation;
     bool retired, component_recipient;
@@ -262,25 +264,25 @@ static bool bank_ballistics_prepare(unified_q3_bank *b,qa_error *e)
     memset(b->ballistics_by_slot,0,capacity*sizeof(*b->ballistics_by_slot));
     qa_arena_seal(&b->ballistic_storage);return true;
 }
-static bool bank_read(frontend_unified_q3 *o, const char *content,const char *instance,uint64_t generation,
+static bool bank_name(frontend_unified_q3 *o, qa_string_id content_name,const char *instance,uint64_t generation,
     unified_q3_bank **out, qa_error *e)
 {
-    for (unified_q3_bank *b=o->banks; b; b=b->next) if (b->content && !b->component_recipient && !strcmp(b->content,content) && b->generation==generation &&
+    const char *content=qa_strings_cstr(o->replica->strings,content_name);
+    for (unified_q3_bank *b=o->banks; b; b=b->next) if (b->content_name==content_name && !b->component_recipient && b->generation==generation &&
         ((!instance && !b->activation) || (instance && b->activation && !strcmp(instance,b->activation)))) {
         if(b->retired)return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q3 presentation event names a retired activation");
         *out=b; return true; }
     unified_q3_bank *b=calloc(1,sizeof(*b));
     if (!b) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining real Q3 CLIENT resource namespace");
-    b->owner=o; b->content=malloc(strlen(content)+1); b->provider=provider(o,content,instance);b->generation=generation;
-    if(b->content)memcpy(b->content,content,strlen(content)+1);
+    b->owner=o; b->content_name=content_name;b->content=content; b->provider=provider(o,content,instance);b->generation=generation;
     if(instance){b->activation=malloc(strlen(instance)+1);if(b->activation)memcpy(b->activation,instance,strlen(instance)+1);}
-    bool okay=b->content && (!instance || b->activation) && b->provider && frontend_unified_media_files(o->media,content,&b->files,&b->product,e) &&
-        b->product->family==QA_GAME_Q3 && frontend_unified_media_q3_assets(o->media,content,&b->assets,e);
+    bool okay=b->content && (!instance || b->activation) && b->provider && frontend_unified_media_files(o->media,b->content_name,&b->files,&b->product,e) &&
+        b->product->family==QA_GAME_Q3 && frontend_unified_media_q3_assets(o->media,b->content_name,&b->assets,e);
     qa_q3_product product=okay && b->product->campaign && !strcmp(b->product->campaign,"missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     if (okay) okay=bank_children(b,product,e) && bank_ballistics_prepare(b,e);
     if (!okay) { q3n_weapons_destroy(b->weapons); q3n_particles_destroy(b->particles);
         q3n_events_destroy(b->effects); q3n_media_destroy(b->media); qa_arena_destroy(&b->ballistic_storage);
-        free(b->content);free(b->activation); free(b); return false; }
+        free(b->activation); free(b); return false; }
     unified_q3_bank **tail=&o->banks;while(*tail)tail=&(*tail)->next;*tail=b;*out=b;return true;
 }
 static bool component_submit(void *context,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *e)
@@ -291,6 +293,12 @@ static bool component_submit(void *context,const qa_q3_scene_options *options,qa
         (options->world.view.mirror?
             frontend_unified_components_submit_reflected(o->components,b->backend,o->scene_bank,options,frame,e):
             frontend_unified_components_submit(o->components,b->backend,o->scene_bank,options,frame,e)) && effect_current(&b->source);
+}
+static bool bank_read(frontend_unified_q3 *o,const char *content,const char *instance,uint64_t generation,
+    unified_q3_bank **out,qa_error *e)
+{
+    qa_string_id name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
+    return bank_name(o,name,instance,generation,out,e);
 }
 static bool backend_read(unified_q3_bank *b, qa_scene_rect viewport, qa_error *e)
 {
@@ -383,12 +391,11 @@ static bool component_bank_read(frontend_unified_q3 *o,qa_error *e)
         if(!bank_children(b,product,e))return false;
         o->component_bank=b;return true;}
     unified_q3_bank *b=calloc(1,sizeof(*b));if(!b)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual component recipient namespace");
-    b->owner=o;b->provider=p->source_owner;b->component_recipient=true;b->content=malloc(strlen(content)+1);b->activation=malloc(strlen(p->selection.instance)+1);
-    if(b->content)memcpy(b->content,content,strlen(content)+1);
+    b->owner=o;b->provider=p->source_owner;b->component_recipient=true;b->content_name=p->content_name;b->content=qa_strings_cstr(o->replica->strings,b->content_name);b->activation=malloc(strlen(p->selection.instance)+1);
     if(b->activation)memcpy(b->activation,p->selection.instance,strlen(p->selection.instance)+1);
     unified_q3_bank **tail=&o->banks;while(*tail)tail=&(*tail)->next;*tail=b;
-    if(!b->content || !b->activation || !frontend_unified_media_files(o->media,content,&b->files,&b->product,e) ||
-        b->product->family!=QA_GAME_Q3 || !frontend_unified_media_q3_assets(o->media,content,&b->assets,e))return false;
+    if(!b->content || !b->activation || !frontend_unified_media_files(o->media,b->content_name,&b->files,&b->product,e) ||
+        b->product->family!=QA_GAME_Q3 || !frontend_unified_media_q3_assets(o->media,b->content_name,&b->assets,e))return false;
     qa_q3_product product=b->product->campaign && !strcmp(b->product->campaign,"missionpack")?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
     if(!bank_children(b,product,e) || !frontend_unified_components_current(o->components))return false;
     o->component_bank=b;return true;
@@ -509,7 +516,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
     qa_actor_id id;
     if (!actor(o,model->actor,&id,e) || !enter(o,id,e)) return false;
     unified_q3_bank *b=NULL;
-    bool okay=bank_read(o,model->content,model->render_equipment->instance,0,&b,e);
+    bool okay=bank_name(o,model->content,model->render_equipment->instance,0,&b,e);
     qa_q3_product product=okay?b->source.product:QA_Q3_ARENA;
     if (okay && !b->selected_media) {
         q3n_selected_media_options options={.content=b->files,.assets=b->assets,.product=product};
@@ -766,7 +773,7 @@ static bool character_read(frontend_unified_q3 *o,const qa_unified_character_sta
     if(!character_source(o,row,id,&source,&player,e))return false;
     if(!player)return true;
     unified_q3_bank *bank=NULL;
-    if(!bank_read(o,qa_strings_cstr(o->replica->strings,source.content),
+    if(!bank_name(o,source.content,
         qa_strings_cstr(o->replica->strings,source.instance),0,&bank,e))return false;
     if(bank->clients && (bank->character_publication!=source.publication ||
         bank->character_map_revision!=source.map_revision)) {
@@ -1191,7 +1198,7 @@ bool frontend_unified_q3_destroy(frontend_unified_q3 **address, qa_error *e)
         q3n_weapons_destroy(b->weapons); q3n_particles_destroy(b->particles);
         q3n_selected_media_destroy(b->selected_media);
         q3n_events_destroy(b->effects); q3n_media_destroy(b->media); q3n_clients_destroy(b->clients);
-        o->banks=b->next; qa_arena_destroy(&b->ballistic_storage);free(b->content);free(b->activation); free(b);
+        o->banks=b->next; qa_arena_destroy(&b->ballistic_storage);free(b->activation); free(b);
     }
     qa_arena_destroy(&o->character_storage);
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->candidate);

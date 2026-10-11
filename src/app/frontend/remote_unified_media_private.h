@@ -6,7 +6,8 @@
 
 typedef struct unified_media_bank {
     struct unified_media_bank *next;
-    char *content;
+    qa_string_id content_name;
+    const char *content;
     qa_vfs *files;
     const qa_product *product;
     qa_scene_resources *images;
@@ -38,6 +39,7 @@ typedef struct unified_media_model {
 } unified_media_model;
 struct frontend_unified_media {
     qa_frontend *frontend;
+    qa_strings *strings;
     qa_executable_recipe *recipe;
     unified_media_bank *banks;
     unified_media_model *models;

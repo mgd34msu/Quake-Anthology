@@ -924,8 +924,8 @@ static bool q3_console_prepare(application_provider *provider,
 static bool provider_product_bind(application_provider *provider, qa_catalog *catalog,
     const qa_product *product, qa_error *error)
 {
-    if (!qa_strings_intern_cstr(qa_session_strings(provider->application->session),
-        product->identity, &provider->content_name, error)) return false;
+    if (!qa_application_content_names_bind(provider->application,catalog,error)) return false;
+    provider->content_name=qa_application_content_name(provider->application,catalog,product->id);
     qa_catalog_retain(catalog);
     qa_catalog_release(provider->product_catalog);
     provider->product_catalog = catalog;
