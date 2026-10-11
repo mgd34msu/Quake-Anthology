@@ -247,6 +247,11 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
         return false;
     }
     game->options = *options;
+    static const char *const runtime_names[] = {
+#define Q3_RUNTIME_NAME_TEXT(key, text) text,
+        Q3_RUNTIME_NAME_LIST(Q3_RUNTIME_NAME_TEXT)
+#undef Q3_RUNTIME_NAME_TEXT
+    };
     game->capacity = qa_actors_capacity(qa_session_actors(options->services.session));
     game->actors = calloc(game->capacity, sizeof(*game->actors));
     game->kamikaze_cooldowns = calloc(game->capacity, sizeof(*game->kamikaze_cooldowns));
@@ -269,6 +274,9 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
             QA_Q3_SOURCE_ENTITIES, error)) goto fail;
     if (!qa_targets_bind_field_keys(qa_session_strings(options->services.session), game->field_keys, error))
         goto fail;
+    for (unsigned i = 0; i < Q3_NAME_COUNT; ++i)
+        if (!qa_strings_intern_cstr(qa_session_strings(options->services.session),
+                                    runtime_names[i], &game->runtime_names[i], error)) goto fail;
     game->rng = options->random_seed;
     if (!q3_wire_create(game, error)) goto fail;
     q3_source_state_reset(game);

@@ -243,7 +243,7 @@ bool mode_relic_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
                                         "$qc_rune_haste", "$qc_rune_regeneration"};
         const char *message = messages[o->spec.relic];
         *accepted = true;
-        if (!mode_sound(m, v, actor, "weapons/pkup.wav", 1, e) ||
+        if (!mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_WEAPONS_PKUP_WAV], 1, e) ||
             !rogue_message(m, v, actor, message, e)) return false;
         return !mode_live(m, rune) || qa_session_release(m->options.services.session, rune, e);
     }
@@ -291,34 +291,34 @@ bool qa_modes_tech_sound(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_relic
         if (!*handled || kind > QA_RELIC_HASTE ||
             p->rune_sound_ns[kind] >= v->value.time_ns) return true;
         p->rune_sound_ns[kind] = v->value.time_ns + MODE_SECOND;
-        static const char *sounds[] = {"runes/end1.wav", "runes/end2.wav", "runes/end3.wav"};
-        return mode_sound(m, v, actor, sounds[kind], 1, e);
+        static const mode_name sounds[] = {MODE_NAME_SOUND_RUNES_END1_WAV, MODE_NAME_SOUND_RUNES_END2_WAV, MODE_NAME_SOUND_RUNES_END3_WAV};
+        return mode_sound(m, v, actor, m->runtime_names[sounds[kind]], 1, e);
     }
     if (v && v->value.rules.source == QA_MODE_THREEWAVE) {
         if (!*handled || kind > QA_RELIC_REGENERATION ||
             p->rune_sound_ns[kind] >= v->value.time_ns) return true;
         p->rune_sound_ns[kind] = v->value.time_ns + MODE_SECOND;
-        const char *sound = kind == QA_RELIC_RESISTANCE ? "rune/rune1.wav"
-            : kind == QA_RELIC_STRENGTH ? (quad ? "rune/rune22.wav" : "rune/rune2.wav")
-            : kind == QA_RELIC_HASTE ? "rune/rune3.wav" : "rune/rune4.wav";
+        qa_string_id sound = kind == QA_RELIC_RESISTANCE ? m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE1_WAV]
+            : kind == QA_RELIC_STRENGTH ? (quad ? m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE22_WAV] : m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE2_WAV])
+            : kind == QA_RELIC_HASTE ? m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE3_WAV] : m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE4_WAV];
         return mode_sound_channel(m, v, actor, sound, 4, 1, e);
     }
     if (!*handled || v->value.time_ns < p->tech_sound_ns)
         return true;
     p->tech_sound_ns = v->value.time_ns + MODE_SECOND;
-    const char *sound = kind == QA_RELIC_STRENGTH ? (quad ? "ctf/tech2x.wav" : "ctf/tech2.wav")
-                        : kind == QA_RELIC_HASTE  ? "ctf/tech3.wav"
-                        : kind == QA_RELIC_REGENERATION ? "ctf/tech4.wav"
-                                                        : "ctf/tech1.wav";
+    qa_string_id sound = kind == QA_RELIC_STRENGTH ? (quad ? m->runtime_names[MODE_NAME_SOUND_CTF_TECH2X_WAV] : m->runtime_names[MODE_NAME_SOUND_CTF_TECH2_WAV])
+                        : kind == QA_RELIC_HASTE  ? m->runtime_names[MODE_NAME_SOUND_CTF_TECH3_WAV]
+                        : kind == QA_RELIC_REGENERATION ? m->runtime_names[MODE_NAME_SOUND_CTF_TECH4_WAV]
+                                                        : m->runtime_names[MODE_NAME_SOUND_CTF_TECH1_WAV];
     if (v->value.rules.source <= QA_MODE_Q1_HORDE)
-        sound = kind == QA_RELIC_RESISTANCE ? "rune/rune1.wav"
-                : kind == QA_RELIC_STRENGTH ? "rune/rune2.wav"
-                                            : "rune/rune4.wav";
+        sound = kind == QA_RELIC_RESISTANCE ? m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE1_WAV]
+                : kind == QA_RELIC_STRENGTH ? m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE2_WAV]
+                                            : m->runtime_names[MODE_NAME_SOUND_RUNE_RUNE4_WAV];
     if (v->value.rules.source == QA_MODE_LMCTF)
-        sound = kind == QA_RELIC_HASTE          ? "player/lava1.wav"
-                : kind == QA_RELIC_STRENGTH     ? "ctf/strength.wav"
-                : kind == QA_RELIC_REGENERATION ? "ctf/regen.wav"
-                                                : "ctf/resist.wav";
+        sound = kind == QA_RELIC_HASTE          ? m->runtime_names[MODE_NAME_SOUND_PLAYER_LAVA1_WAV]
+                : kind == QA_RELIC_STRENGTH     ? m->runtime_names[MODE_NAME_SOUND_CTF_STRENGTH_WAV]
+                : kind == QA_RELIC_REGENERATION ? m->runtime_names[MODE_NAME_SOUND_CTF_REGEN_WAV]
+                                                : m->runtime_names[MODE_NAME_SOUND_CTF_RESIST_WAV];
     return mode_sound(m, v, actor, sound, silenced ? .2f : 1, e);
 }
 bool qa_modes_attack_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float amount, float *out,
@@ -346,9 +346,9 @@ bool qa_modes_resist_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float
            : v->value.rules.source == QA_MODE_Q2_CTF ? truncf(amount * .5f)
                                                      : amount * .5f;
     if (v->value.rules.source == QA_MODE_Q2_CTF)
-        return mode_sound(m, v, actor, "ctf/tech1.wav", 1, e);
+        return mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_CTF_TECH1_WAV], 1, e);
     if (v->value.rules.source == QA_MODE_LMCTF)
-        return mode_sound(m, v, actor, "ctf/resist.wav", 1, e);
+        return mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_CTF_RESIST_WAV], 1, e);
     if (v->value.rules.source == QA_MODE_THREEWAVE || v->value.rules.source == QA_MODE_ROGUE) {
         bool handled;
         return qa_modes_tech_sound(m, id, actor, QA_RELIC_RESISTANCE, false, false, &handled, e);
@@ -380,7 +380,7 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
         return true;
     return qa_combat_set_health(m->options.services.combat, actor,
                                 fminf(250, state.health + (float)gain), e) &&
-           mode_sound(m, v, actor, "brain/brnatck3.wav", 1, e);
+           mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_BRAIN_BRNATCK3_WAV], 1, e);
 }
 bool mode_relic_source_current(qa_modes *m, mode_instance *v, qa_error *e) {
     if (v->value.rules.source != QA_MODE_ROGUE || !v->relics_started) return true;
@@ -425,7 +425,7 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         qa_combat_state state;
         if (!qa_combat_read(m->options.services.combat, actor, &state, e)) return false;
         if (state.health >= 100) return true;
-        if (!mode_sound(m, v, actor, "runes/end4.wav", 1, e)) return false;
+        if (!mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_RUNES_END4_WAV], 1, e)) return false;
         if (!mode_member_get(m, v, actor)) return mode_fail(e, "Rogue rune carrier retired during regeneration");
         if (!qa_combat_set_health(m->options.services.combat, actor, fminf(100, state.health + 5), e))
             return false;
@@ -467,7 +467,7 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
         } else
             armor.points = fminf(200, (float)armor.points + (float)(heart / 3));
         return qa_combat_set_regular_armor(m->options.services.combat, actor, &armor, e) &&
-               mode_sound(m, v, actor, "ctf/regen.wav", 1, e);
+               mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_CTF_REGEN_WAV], 1, e);
     }
     if (p->regen_ns >= now)
         return true;

@@ -41,8 +41,7 @@ bool q3_schedule_kamikaze(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, q
     }
     qa_builtin_spawn spawn = {.owner = game->options.owner,
                               .body = {.origin = native_source ? qa_v3(0, 0, 0) : origin}};
-    if (!qa_builtin_resource(&game->options.services, "kamikaze timer",
-                              &spawn.definition, error)) return false;
+    spawn.definition = game->runtime_names[Q3_NAME_KAMIKAZE_TIMER];
     qa_actor_id timer;
     if (!q3_spawn_actor(game, &spawn, &timer, error))
         return false;

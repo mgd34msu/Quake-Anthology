@@ -107,9 +107,7 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
         }
         if (stage == QA_DAMAGE_BEFORE_HEALTH && flags >= 0 && friendly) {
             if (flags & 4) {
-                qa_string_id type;
-                if (!qa_builtin_resource(&m->options.services, "ctf:reflection", &type, e))
-                    return false;
+                qa_string_id type = m->runtime_names[MODE_NAME_CTF_REFLECTION];
                 qa_damage_request reflected = {
                     .target = attacker->actor,
                     .amount = effect->amount,

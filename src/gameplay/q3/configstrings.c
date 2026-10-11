@@ -37,19 +37,17 @@ bool qa_q3_configstring_table_revision(const qa_q3_game *game, uint64_t *out, qa
     *out = game->configstring_table_revision;
     return true;
 }
-static bool write_value(qa_q3_game *game, uint32_t index, const char *text,
+static bool write_value(qa_q3_game *game, uint32_t index, qa_string_id value,
                          const qa_q3_map_event *event, qa_error *error) {
-    const char *prior = qa_strings_cstr(qa_session_strings(game->options.services.session),
-        game->configstrings[index]);
-    if (prior && !strcmp(prior, text)) return true;
-    bool changed = strcmp(prior ? prior : "", text) != 0;
+    qa_strings *strings = qa_session_strings(game->options.services.session);
+    qa_string_id prior = game->configstrings[index];
+    if (!value) value = game->runtime_names[Q3_NAME_EMPTY];
+    if (prior == value) return true;
+    bool changed = qa_strings_text(strings, prior).size || qa_strings_text(strings, value).size;
     if (game->configstring_revisions[index] == UINT64_MAX)
         return q3_fail(error, "Q3 configstring mutation identity exhausted");
-    qa_string_id value;
-    if (!qa_strings_intern_cstr(qa_session_strings(game->options.services.session), text, &value, error))
-        return false;
     game->configstrings[index] = value;
-    const char *notice = qa_strings_cstr(qa_session_strings(game->options.services.session), value);
+    const char *notice = qa_strings_cstr(strings, value);
     uint64_t revision = ++game->configstring_revisions[index];
     if (changed) ++game->configstring_table_revision;
     bool okay = !game->options.hooks.configstring_changed || game->options.hooks.configstring_changed(
@@ -64,60 +62,65 @@ bool q3_configstring_event(qa_q3_game *game, const qa_q3_map_event *event, qa_er
         game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 source configstring producer");
     qa_q3_map_event captured = *event;
-    const char *text = captured.text ? q3_map_cstr(game, captured.text) : "";
-    if (!text) return q3_fail(error, "Q3 configstring has no actual source text");
+    if (captured.text && !q3_map_cstr(game, captured.text))
+        return q3_fail(error, "Q3 configstring has no actual source text");
     ++game->observation_depth;
-    bool result = write_value(game, (uint32_t)captured.index, text, &captured, error);
+    bool result = write_value(game, (uint32_t)captured.index, captured.text, &captured, error);
+    --game->observation_depth;
+    return result;
+}
+static bool write_name(qa_q3_game *game, uint32_t index, qa_string_id name, qa_error *error) {
+    if (!game || index >= QA_Q3_NATIVE_CONFIGSTRINGS || game->source_restored ||
+        game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 source configstring write boundary");
+    qa_q3_map_event event = {.kind = QA_Q3_MAP_CONFIGSTRING, .index = (int32_t)index, .text = name};
+    ++game->observation_depth;
+    bool result = write_value(game, index, name, game->map ? &event : NULL, error);
     --game->observation_depth;
     return result;
 }
 bool qa_q3_configstring_write(qa_q3_game *game, uint32_t index,
                              const char *text, qa_error *error) {
-    if (!game || index >= QA_Q3_NATIVE_CONFIGSTRINGS || game->source_restored ||
-        game->observation_depth == SIZE_MAX)
+    if (!game)
         return q3_fail(error, "invalid Q3 source configstring write boundary");
-    if (!text) text = "";
-    const char *prior = qa_strings_cstr(qa_session_strings(game->options.services.session),
-        game->configstrings[index]);
-    if (prior && !strcmp(prior, text)) return true;
-    if (game->configstring_revisions[index] == UINT64_MAX)
-        return q3_fail(error, "Q3 configstring mutation identity exhausted");
-    qa_q3_map_event event = {.kind = QA_Q3_MAP_CONFIGSTRING, .index = (int32_t)index};
-    if (game->map && !q3_map_intern_cstr(game, text, &event.text, error)) return false;
-    ++game->observation_depth;
-    bool result = write_value(game, index, text, game->map ? &event : NULL, error);
-    --game->observation_depth;
-    return result;
+    qa_string_id name;
+    if (!qa_strings_intern_cstr(qa_session_strings(game->options.services.session),
+                                text ? text : "", &name, error)) return false;
+    return write_name(game, index, name, error);
 }
-static bool find_index(qa_q3_game *game, const char *name, uint32_t start,
-                        int32_t *out, qa_error *error) {
-    if (!game || !out || game->source_restored)
-        return q3_fail(error, "Q3 configstring index needs its actual source owner");
-    if (!name || !*name) {
+bool q3_configstring_index(qa_q3_game *game, qa_string_id name, uint32_t start,
+                           int32_t *out, qa_error *error) {
+    qa_strings *strings = qa_session_strings(game->options.services.session);
+    qa_bytes wanted = qa_strings_text(strings, name);
+    if (!wanted.size) {
         *out = 0;
         return true;
     }
     uint32_t index = 1;
     for (; index < 256; ++index) {
-        const char *value = qa_strings_cstr(qa_session_strings(game->options.services.session),
-            game->configstrings[start + index]);
-        if (!value || !*value) break;
-        char source_value[1024];
-        size_t length = 0;
-        while (length < sizeof(source_value) - 1 && value[length]) {
-            source_value[length] = value[length];
-            ++length;
-        }
-        source_value[length] = 0;
-        if (!strcmp(source_value, name)) {
+        qa_string_id slot = game->configstrings[start + index];
+        qa_bytes value = qa_strings_text(strings, slot);
+        if (!value.size) break;
+        /* G_FindConfigstringIndex compares a MAX_STRING_CHARS-sized copy. */
+        size_t length = value.size < 1023 ? value.size : 1023;
+        if (wanted.size == length && (slot == name || (value.size > length && !memcmp(value.data, wanted.data, length)))) {
             *out = (int32_t)index;
             return true;
         }
     }
     if (index == 256) return q3_fail(error, "G_FindConfigstringIndex: overflow");
-    if (!qa_q3_configstring_write(game, start + index, name, error)) return false;
+    if (!write_name(game, start + index, name, error)) return false;
     *out = (int32_t)index;
     return true;
+}
+static bool find_index(qa_q3_game *game, const char *name, uint32_t start,
+                        int32_t *out, qa_error *error) {
+    if (!game || !out || game->source_restored)
+        return q3_fail(error, "Q3 configstring index needs its actual source owner");
+    qa_string_id id = 0;
+    if (name && *name && !qa_strings_intern_cstr(
+            qa_session_strings(game->options.services.session), name, &id, error)) return false;
+    return q3_configstring_index(game, id, start, out, error);
 }
 bool qa_q3_model_index(qa_q3_game *game, const char *name, int32_t *out, qa_error *error) {
     return find_index(game, name, 32, out, error);

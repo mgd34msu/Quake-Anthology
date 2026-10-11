@@ -19,9 +19,7 @@ static bool team_death(qa_modes *m, mode_instance *v, qa_actor_id actor, bool cl
                                                                       : QA_GAME_Q2;
     if (family == QA_GAME_Q1) {
         request.attack.cause.kind = QA_CAUSE_Q1;
-        if (!qa_builtin_resource(&m->options.services, "ctf:teamchange",
-                                 &request.attack.cause.source.q1.death_type, e))
-            return false;
+        request.attack.cause.source.q1.death_type = m->runtime_names[MODE_NAME_CTF_TEAMCHANGE];
     } else if (family == QA_GAME_Q2) {
         request.amount = 100000;
         request.attack.cause.kind = QA_CAUSE_Q2;

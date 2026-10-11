@@ -219,8 +219,7 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                               .body = body,
                               .collision = &collision,
                               .combat = &combat};
-    if (!qa_builtin_resource(&game->options.services,
-            source ? "hi_portal source" : "hi_portal destination", &spawn.definition, error)) return false;
+    spawn.definition = game->runtime_names[source ? Q3_NAME_PORTAL_SOURCE : Q3_NAME_PORTAL_DESTINATION];
     qa_actor_id portal;
     if (!q3_spawn_actor(game, &spawn, &portal, error))
         return false;
@@ -239,9 +238,8 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                          .source = source}};
     q3_postgame_native_think_assigned(game, portal);
     int32_t model_index;
-    if (!qa_q3_model_index(game, source ? "models/powerups/teleporter/tele_enter.md3"
-                                       : "models/powerups/teleporter/tele_exit.md3",
-                           &model_index, error))
+    if (!q3_configstring_index(game, game->model_names.portals[source ? 1 : 0],
+                               32, &model_index, error))
         return q3_rollback_spawn(game, portal, error);
     q3_wire_entity_source *wire = q3_wire_entity(game, portal);
     if (!wire)
@@ -281,12 +279,7 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         entry->state.player.holdable = QA_Q3_H_PORTAL;
     } else
         entry->state.player.portal_id = 0;
-    qa_string_id resource;
-    if (!qa_builtin_resource(&game->options.services,
-                             source ? "models/powerups/teleporter/tele_enter.md3"
-                                    : "models/powerups/teleporter/tele_exit.md3",
-                             &resource, error))
-        return false;
+    qa_string_id resource = game->model_names.portals[source ? 1 : 0];
     qa_builtin_event event = {.kind = QA_BUILTIN_ITEM,
                               .family = QA_GAME_Q3,
                               .provider = game->options.owner,
@@ -379,7 +372,7 @@ bool q3_start_kamikaze(qa_q3_game *game, qa_actor_id source, qa_actor_id attacke
     body.bounds = (qa_bounds){0};
     body.ground = (qa_actor_reference){0};
     qa_builtin_spawn spawn = {.owner = game->options.owner, .body = body};
-    if (!qa_builtin_resource(&game->options.services, "kamikaze", &spawn.definition, error)) return false;
+    spawn.definition = game->runtime_names[Q3_NAME_KAMIKAZE];
     qa_actor_id explosion;
     if (!q3_spawn_actor(game, &spawn, &explosion, error))
         return false;
