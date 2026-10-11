@@ -858,6 +858,14 @@ slot and record ordinal changes remain the sole selectors. Normal build and
 seven core suites pass. This closes the expanded item 16 sites by source,
 build and core evidence; names 5, 6, 10 and 14 still have listed leftovers.
 
+Names leftovers item 5: received event admission binds provider/content/owner
+and Q3 module/artifact IDs in the existing ring record. Component event checks
+and Q2 owner activation routing compare those retained IDs and generations;
+module string comparisons and copied activation provider strings are deleted.
+Saved components bind the same IDs on load. Explicit wire layouts retain their
+original fields; receiver bindings are not serialized. Normal build and seven
+core suites pass. Expanded item 5 is migrated; items 6, 10 and 14 remain open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

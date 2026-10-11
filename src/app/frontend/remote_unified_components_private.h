@@ -12,7 +12,7 @@
 typedef struct remote_component_state {
     qa_unified_component_identity identity;
     qa_source_owner presentation_owner;
-    qa_string_id provider_name, content_name;
+    qa_string_id provider_name, content_name, module_name, module_artifact;
     char *provider; /* Borrowed from the replica's retained session strings. */
     uint64_t owner_generation,generation;
     int64_t game_state_revision;

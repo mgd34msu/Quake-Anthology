@@ -53,7 +53,9 @@ bool q3remote_component_state_qualify(frontend_unified_components *owner,remote_
             if(!ok) return false;
             if(!equal) continue;
             s->mod=mod; s->provider_row=provider;
-            return qa_strings_intern_cstr(owner->replica->strings,product->identity,&s->content_name,e)&&runtime_qualify(s,e);
+            return qa_strings_intern_cstr(owner->replica->strings,product->identity,&s->content_name,e)&&
+                qa_strings_intern_cstr(owner->replica->strings,s->identity.module.id,&s->module_name,e)&&
+                qa_strings_intern_cstr(owner->replica->strings,s->identity.module.artifact_path,&s->module_artifact,e)&&runtime_qualify(s,e);
         }
     }
     return q3remote_component_fail(e,QA_ERROR_FORMAT,"Saved component has no genuine admitted recipe identity");
@@ -121,7 +123,9 @@ bool q3remote_component_state_read(frontend_unified_components *owner,const qa_u
         .abi=row->abi,.player_events=!row->scene,.game_state_revision=row->game_state_revision};
     bool ok=qa_strings_intern_cstr(owner->replica->strings,row->owner.provider,&s.provider_name,e);
     s.provider=(char *)qa_strings_cstr(owner->replica->strings,s.provider_name);
-    if(ok) ok=qa_unified_component_identity_clone(&row->identity,&s.identity,e);
+    if(ok) ok=qa_unified_component_identity_clone(&row->identity,&s.identity,e)&&
+        qa_strings_intern_cstr(owner->replica->strings,row->identity.module.id,&s.module_name,e)&&
+        qa_strings_intern_cstr(owner->replica->strings,row->identity.module.artifact_path,&s.module_artifact,e);
     s.presentation_owner=(qa_source_owner){s.provider,s.owner_generation};
     if(ok&&previous) {
         ok=s.owner_generation==previous->state.owner_generation&&s.generation==previous->state.generation&&
@@ -169,10 +173,6 @@ void q3remote_component_frame_free(remote_component_frame *f)
     qa_unified_document_destroy(f->packet);
     if(lease) qa_unified_frame_lease_release(lease); else free(f);
 }
-static bool module_matches(const qa_unified_mod_identity *a,const qa_unified_mod_identity *b)
-{
-    return !strcmp(a->id,b->id)&&!strcmp(a->artifact_path,b->artifact_path);
-}
 static bool player_event_read(frontend_unified_components *o,const qa_unified_presentation_event *row,
     remote_component **target,remote_component_event *out,bool *handled,qa_error *e)
 {
@@ -181,21 +181,17 @@ static bool player_event_read(frontend_unified_components *o,const qa_unified_pr
         return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component event lost its actual replica roster");
     if(row->payload.kind!=QA_UNIFIED_PRESENTATION_Q3||row->payload.value.q3.kind!=QA_UNIFIED_Q3_PLAYER_EVENT) return true;
     const qa_unified_q3_event *event=&row->payload.value.q3;
-    qa_string_id provider=qa_strings_find(o->replica->strings,
-        (qa_bytes){(const uint8_t *)row->provider,strlen(row->provider)});
-    qa_string_id content=qa_strings_find(o->replica->strings,
-        (qa_bytes){(const uint8_t *)row->content,strlen(row->content)});
+    qa_string_id provider=row->provider_id,content=row->content_id;
     remote_component *r=NULL; bool known=false;
     for(size_t i=0;!r&&i<q3remote_component_physical_count(o);++i) {
         remote_component *candidate=q3remote_component_physical_at(o,i);
         if(!candidate||!candidate->state.player_events||provider!=candidate->state.provider_name) continue;
         known=true;
-        if(module_matches(&event->module,&candidate->state.identity.module)&&content==candidate->state.content_name&&event->abi==candidate->state.abi) r=candidate;
+        if(row->module_id==candidate->state.module_name&&row->module_artifact_id==candidate->state.module_artifact&&content==candidate->state.content_name&&event->abi==candidate->state.abi) r=candidate;
     }
     if(!r) return !known||q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event has no actual admitted gameplay identity");
     *handled=true;
-    if(row->owner.provider&&(qa_strings_find(o->replica->strings,
-        (qa_bytes){(const uint8_t *)row->owner.provider,strlen(row->owner.provider)})!=r->state.provider_name||!row->owner.generation))
+    if(row->owner.provider&&(row->owner_provider_id!=r->state.provider_name||!row->owner.generation))
         return q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event lost its genuine presentation token domain");
     const qa_unified_frame *frame=qa_unified_document_frame(frontend_remote_unified_frame(o->replica));
     if(row->recipient.registry) {

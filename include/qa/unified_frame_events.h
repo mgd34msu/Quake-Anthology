@@ -153,6 +153,9 @@ typedef struct qa_unified_presentation_event {
     int32_t source_entity;
     bool has_source_entity;
     qa_unified_presentation_payload payload;
+    /* Receiver-local bindings; wire layouts contain the original names only. */
+    qa_string_id content_id, provider_id, owner_provider_id;
+    qa_string_id module_id, module_artifact_id, payload_owner_id;
 } qa_unified_presentation_event;
 
 typedef struct qa_unified_sound_event {

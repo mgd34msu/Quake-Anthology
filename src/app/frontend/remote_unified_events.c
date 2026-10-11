@@ -113,9 +113,8 @@ static bool actor(frontend_unified_events *o,qa_actor_id source,qa_actor_id *out
     return frontend_remote_unified_source_actor(o->replica,frame,source,
         o->frontend->capture || o->frontend->source_restoring,out,e);
 }
-static unified_component_owner *component_find(const frontend_unified_events *o,const char *provider,uint64_t generation)
+static unified_component_owner *component_find(const frontend_unified_events *o,qa_string_id id,uint64_t generation)
 {
-    qa_string_id id=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)provider,strlen(provider)});
     for (unified_component_owner *c=o->components;c;c=c->next)
         if (c->generation==generation && c->provider==id) return c;
     return NULL;
@@ -138,7 +137,7 @@ bool frontend_unified_events_component_current(const frontend_unified_events *o,
 {
     if (!o || !owner || !owner->provider || !owner->generation || !content || !active)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component qualification needs its retained owner and content");
-    unified_component_owner *c=component_find(o,owner->provider,owner->generation);
+    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
     if (!c || c->content!=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)content,strlen(content)}))
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Component presentation token has no matching reliable content admission");
     *active=!c->retired && !c->cancelled; return true;
@@ -152,7 +151,7 @@ bool frontend_unified_events_component_admit_created(frontend_unified_events *o,
     *created=false;
     unified_component_owner candidate={0};
     if (!component_read(o,owner,content,&candidate,e)) return false;
-    unified_component_owner *c=component_find(o,owner->provider,owner->generation);
+    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
     if (c) {
         bool okay=c->content==candidate.content ||
             frontend_unified_fail(e,QA_ERROR_FORMAT,"Reliable component token changed its admitted content");
@@ -170,7 +169,7 @@ bool frontend_unified_events_component_cancel(frontend_unified_events *o,const q
 {
     if (!o || o->busy || o->prepared || !owner || !owner->provider || !owner->generation)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component cancellation needs returned retained event storage");
-    unified_component_owner *c=component_find(o,owner->provider,owner->generation);
+    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
     if (!c || c->retired) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Component cancellation has no unpublished admission");
     c->cancelled=true; return true;
 }
@@ -178,7 +177,7 @@ bool frontend_unified_events_component_retire(frontend_unified_events *o,const q
 {
     if (!o || o->busy || o->prepared || !owner || !owner->provider || !owner->generation)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component retirement needs returned retained event storage");
-    unified_component_owner *c=component_find(o,owner->provider,owner->generation);
+    unified_component_owner *c=component_find(o,qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)owner->provider,strlen(owner->provider)}),owner->generation);
     if (!c) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Retiring component has no reliable presentation admission");
     c->retired=true; c->cancelled=false; return true;
 }
@@ -295,8 +294,8 @@ static bool rows_valid(frontend_unified_events *o,const qa_unified_frame_events 
                 return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified presentation changed its admitted full actor recipient");
         }
         if (row->owner.provider) {
-            unified_component_owner *c=component_find(o,row->owner.provider,row->owner.generation);
-            if (c && qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)row->content,strlen(row->content)})!=c->content)
+            unified_component_owner *c=component_find(o,row->owner_provider_id,row->owner.generation);
+            if (c && row->content_id!=c->content)
                 return frontend_unified_fail(e,QA_ERROR_FORMAT,"Component event changed its reliable content identity");
         }
         if (children && !o->options.presentation_validate(o->options.context,row,e)) return false;
@@ -325,6 +324,19 @@ static bool record_finish(frontend_unified_events *o,qa_event_transaction *trans
     unified_received_event *record,qa_unified_document *document,qa_error *error)
 {
     qa_unified_frame_events *events=(qa_unified_frame_events *)qa_unified_document_events(document);
+    for (size_t i=0;i<events->presentation_count;++i) {
+        qa_unified_presentation_event *row=events->presentation+i;
+        if (!qa_strings_intern_cstr(o->strings,row->content,&row->content_id,error)||
+            !qa_strings_intern_cstr(o->strings,row->provider,&row->provider_id,error)) return false;
+        if (row->owner.provider&&!qa_strings_intern_cstr(o->strings,row->owner.provider,&row->owner_provider_id,error)) return false;
+        if (row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER) {
+            if (!qa_strings_intern_cstr(o->strings,row->payload.value.owner.owner.provider,&row->payload_owner_id,error)) return false;
+        } else if (row->payload.kind==QA_UNIFIED_PRESENTATION_Q3&&row->payload.value.q3.kind==QA_UNIFIED_Q3_PLAYER_EVENT) {
+            const qa_unified_mod_identity *module=&row->payload.value.q3.module;
+            if (!qa_strings_intern_cstr(o->strings,module->id,&row->module_id,error)||
+                !qa_strings_intern_cstr(o->strings,module->artifact_path,&row->module_artifact_id,error)) return false;
+        }
+    }
     if (events->presentation_count) {
         record->mirrored=qa_event_ring_alloc(transaction,
             events->presentation_count*sizeof(*record->mirrored),_Alignof(bool),error);
@@ -374,8 +386,9 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
     if (events) {
         /* Reliable events precede their FRAME. Source actor aliases and family
          * owners are qualified when that actual committed frame releases them. */
-        if (!rows_valid(o,events,false,e) || !current(o,e)) return false;
+        if (!current(o,e)) return false;
         if (events->received) {
+            if (!rows_valid(o,events,false,e)) return false;
             unified_received_event *record=(unified_received_event *)qa_event_lease_record(events->received);
             record->published=true;
             return true;
@@ -399,6 +412,9 @@ bool frontend_unified_events_control(frontend_unified_events *o,const qa_unified
             qa_unified_frame_events_destroy(copy);
             qa_unified_document_destroy(document); qa_event_ring_abort(&transaction);
             return false;
+        }
+        if (!rows_valid(o,qa_unified_document_events(document),false,e)) {
+            qa_unified_document_destroy(document); return false;
         }
         record->published=true;
         qa_unified_document_destroy(document);
@@ -517,7 +533,7 @@ static bool apply_presentation(frontend_unified_events *o,const qa_unified_prese
     if (!o->options.presentation(o->options.context,row,mirrors,e)) return false;
     if (row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER) {
         const qa_unified_owner_event *event=&row->payload.value.owner;
-        unified_component_owner *c=component_find(o,event->owner.provider,event->owner.generation);
+        unified_component_owner *c=component_find(o,row->payload_owner_id,event->owner.generation);
         if (c) { c->retired=event->kind==QA_UNIFIED_OWNER_RETIRED; c->cancelled=false; }
     }
     return true;

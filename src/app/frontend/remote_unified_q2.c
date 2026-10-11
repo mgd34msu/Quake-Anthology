@@ -38,7 +38,7 @@ typedef struct q2_model {
 typedef struct q2_alias { uint32_t number; qa_actor_id actor; } q2_alias;
 typedef struct q2_activation {
     struct q2_activation *next;
-    char *provider;
+    qa_string_id provider;
     uint64_t generation;
     bool retired;
 } q2_activation;
@@ -238,15 +238,15 @@ static void sky_clear(frontend_unified_q2 *o)
     free(o->sky_name); free(o->sky_content); o->sky_name=NULL; o->sky_content=NULL;
     o->sky_owner=NULL; o->sky_axis=qa_v3(0,0,0); o->sky_rotation=0; o->sky_auto_rotate=false;
 }
-static bool activation(frontend_unified_q2 *o,const qa_source_owner *token,q2_activation **out,qa_error *e)
+static bool activation(frontend_unified_q2 *o,qa_string_id provider,uint64_t generation,q2_activation **out,qa_error *e)
 {
-    if (!token->generation) { *out=NULL; return true; }
+    if (!generation) { *out=NULL; return true; }
     q2_activation *a=o->activations;
-    while (a && (a->generation!=token->generation || strcmp(a->provider,token->provider))) a=a->next;
+    while (a && (a->generation!=generation || a->provider!=provider)) a=a->next;
     if (!a) {
         a=calloc(1,sizeof(*a)); if (!a) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 Source owner");
-        a->provider=text_copy(token->provider); if (!a->provider) { free(a); return false; }
-        a->generation=token->generation; a->next=o->activations; o->activations=a;
+        a->provider=provider;
+        a->generation=generation; a->next=o->activations; o->activations=a;
     }
     *out=a; return true;
 }
@@ -261,7 +261,7 @@ static q2_visual *visual_read(frontend_unified_q2 *o,qa_actor_id a)
 static bool visual_prepare(frontend_unified_q2 *o,const qa_unified_presentation_event *row,qa_actor_id a,q2_visual **out,qa_error *e)
 {
     q2_activation *owner=NULL;
-    if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired))
+    if (!activation(o,row->owner_provider_id,row->owner.generation,&owner,e) || (owner && owner->retired))
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 presentation uses a retired actual Source owner");
     q2_visual *v=visual_read(o,a);
     if (!v) {
@@ -346,7 +346,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     if (!frontend_unified_q2_owner_validate(o,row,e) || !frontend_unified_q2_idle(o) ||
         !frontend_unified_q2_rr_owner_retire(o->rr_hud,row,e)) return false;
     const qa_unified_owner_event *event=&row->payload.value.owner; q2_activation *a=NULL;
-    if (!activation(o,&event->owner,&a,e)) return false;
+    if (!activation(o,row->payload_owner_id,event->owner.generation,&a,e)) return false;
     if (event->kind!=QA_UNIFIED_OWNER_RETIRED || a->retired) return true;
     q2_loop **loop=&o->loops;
     while (*loop) { q2_loop *l=*loop;
@@ -662,7 +662,7 @@ static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *owner
 static bool source_bank(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool effects,q2_bank **out,qa_error *e)
 {
     q2_activation *a=NULL; frontend_remote_q2_effects_profile profile; q2_bank *b=NULL;
-    if (!activation(o,&row->owner,&a,e) || (a && a->retired) || !source_profile(row,true,&profile,e) ||
+    if (!activation(o,row->owner_provider_id,row->owner.generation,&a,e) || (a && a->retired) || !source_profile(row,true,&profile,e) ||
         !bank(o,row->content,a,row->provider,profile,false,&b,e)) return false;
     b->frame_milliseconds=(double)row->q2_interval_ns/1e6;
     return bank(o,row->content,a,row->provider,profile,effects,out,e);
@@ -1154,7 +1154,7 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
     bool matches;qa_actor_id a;q2_activation *owner=NULL;
     if (!viewer_matches(o,event->actor,&matches,e))return false;
         if (!matches)return true;
-    if (!source_actor(o,event->actor,&a,e) || !activation(o,&row->owner,&owner,e) || (owner && owner->retired))return false;
+    if (!source_actor(o,event->actor,&a,e) || !activation(o,row->owner_provider_id,row->owner.generation,&owner,e) || (owner && owner->retired))return false;
     if (event->kind==QA_Q2_PLAYER_VIEW){const qa_q2_player_view *view=&event->view;
         qa_string_id selected=row->provider?qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)row->provider,strlen(row->provider)}):QA_STRING_NONE;
         if (!selected_view_provider(o,selected)) return true;
@@ -1216,7 +1216,7 @@ static qa_scene_fog fog_sample(frontend_unified_q2 *o,double seconds)
 static bool sky_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,const qa_q2_map_event *event,qa_error *e)
 {
     q2_activation *owner=NULL;q2_bank *b=NULL;qa_scene_image *images[6]={0};
-    bool okay=activation(o,&row->owner,&owner,e) && !(owner && owner->retired) && bank(o,row->content,NULL,NULL,0,false,&b,e);
+    bool okay=activation(o,row->owner_provider_id,row->owner.generation,&owner,e) && !(owner && owner->retired) && bank(o,row->content,NULL,NULL,0,false,&b,e);
     const char *name=qa_strings_cstr(o->replica->strings,event->resource);
     if (!name) name="";
     size_t n=strlen(name);
@@ -1256,7 +1256,7 @@ static bool sound_receive(frontend_unified_q2 *o,const qa_unified_presentation_e
     qa_actor_id a;if (!source_actor(o,source,&a,e))return false;
     bool paired=false,okay=true;q2_loop *retained=NULL;q2_activation *owner=NULL;
     if (!loop)okay=frontend_unified_events_sound_mirrored(o->events,row,&paired,e);
-    else if (loop==1){okay=activation(o,&row->owner,&owner,e) && !(owner && owner->retired);
+    else if (loop==1){okay=activation(o,row->owner_provider_id,row->owner.generation,&owner,e) && !(owner && owner->retired);
         if (okay){size_t slot;retained=qa_pool_take(&o->loop_pool,&slot);okay=retained!=NULL;
             if (okay)*retained=(q2_loop){.storage_slot=slot,.actor=a,.activation=owner};}}
     double ms=row->seconds*1000;
@@ -1275,7 +1275,7 @@ static bool fog_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
     bool matches;q2_activation *owner=NULL;
     if (!viewer_matches(o,source,&matches,e))return false;
         if (!matches)return true;
-    if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired))return false;
+    if (!activation(o,row->owner_provider_id,row->owner.generation,&owner,e) || (owner && owner->retired))return false;
     if (duration!=0){o->fog_start=o->fog_target;o->fog_started_ms=row->seconds*1000;}
     o->fog_target=fog_record(fog);o->fog_duration_ms=duration;o->fog_received=true;o->fog_owner=owner;return true;
 }
@@ -1290,12 +1290,12 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
         b->styles[v->style]=event_text?event_text:"";b->style_sequences[v->style]=row->sequence;return true;}
     case QA_Q2_MAP_SKY:return sky_receive(o,row,v,e);
     case QA_Q2_MAP_STORY:{qa_unified_document *document=NULL;
-        if (!activation(o,&row->owner,&owner,e) || (owner && owner->retired) ||
+        if (!activation(o,row->owner_provider_id,row->owner.generation,&owner,e) || (owner && owner->retired) ||
             !qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e)) return false;
         qa_unified_document_destroy(o->story_document);o->story_document=document;o->story=row;o->story_owner=owner;return true;}
     case QA_Q2_MAP_FOG:return fog_receive(o,row,v->recipient,&v->fog,(double)v->duration*1000,e);
     case QA_Q2_MAP_HELP:{qa_buffer text={0};
-        if (v->slot<1 || v->slot>2 || !activation(o,&row->owner,&owner,e) || (owner && owner->retired))return false;
+        if (v->slot<1 || v->slot>2 || !activation(o,row->owner_provider_id,row->owner.generation,&owner,e) || (owner && owner->retired))return false;
         qa_arena *storage=o->help_storage+v->slot-1;qa_arena_reset(storage);
         if (!localized(o,row,event_text,v->arguments,v->argument_count,storage,&text,e))return false;
         char *copy=qa_arena_alloc(storage,text.size+1,1,e),*print=qa_arena_alloc(storage,text.size+2,1,e);
@@ -1306,7 +1306,7 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
         qa_console_emit(domain->console,&domain->command_context,print);*mirrored=true;return true;}
     case QA_Q2_MAP_SCREEN_BLEND:{bool matches;
-        if (!viewer_matches(o,v->recipient,&matches,e) || !activation(o,&row->owner,&owner,e))return false;
+        if (!viewer_matches(o,v->recipient,&matches,e) || !activation(o,row->owner_provider_id,row->owner.generation,&owner,e))return false;
         if (matches && o->view_provider && row->provider && o->view_provider==qa_strings_find(o->replica->strings,
             (qa_bytes){(const uint8_t *)row->provider,strlen(row->provider)}) && o->view_owner==owner){
             o->view_blend=(qa_vec4){v->color.x,v->color.y,v->color.z,v->alpha};o->view_blend_present=true;}return true;}
@@ -1977,7 +1977,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     qa_unified_document_destroy(o->story_document);sky_clear(o);
     qa_scene_image_release(o->marker_image);
     while (o->visuals) { q2_visual *v=o->visuals; o->visuals=v->next; visual_clear(v); }
-    while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a->provider); free(a); }
+    while (o->activations) { q2_activation *a=o->activations; o->activations=a->next; free(a); }
     while (o->loops) {q2_loop *l=o->loops;o->loops=l->next;qa_pool_release(&o->loop_pool,l->storage_slot);}
     while (o->names) {q2_player_name *n=o->names;o->names=n->next;qa_unified_document_destroy(n->document);}
     qa_unified_document_destroy(o->layout_document);qa_arena_destroy(&o->pose_storage);
