@@ -314,6 +314,15 @@ text checks remain at admission. The normal build and seven core suites pass
 (`/tmp/qa-ta3192-character-binding-20261011-{build,core}.log`). No live
 reconfiguration or timing claim is made by these checks.
 
+TA-3192 Q1 HUD inventory counts and keys compare admitted IDs directly. Replica
+creation interns the seven ammunition names and two key names into the retained
+session string table; restore uses that same constructor. Per-frame inventory
+string conversions and comparisons for those fields are deleted. Weapon,
+active-ammunition and powerup presentation names still require migration. The
+normal build and seven core suites pass
+(`/tmp/qa-ta3192-hud-inventory-20261011-{build,core}.log`). No live HUD proof or
+timing claim is made by these checks.
+
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent
 selection. Numeric/save/command components preserve 125 role combinations and

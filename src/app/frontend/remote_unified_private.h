@@ -40,6 +40,7 @@ struct frontend_remote_unified {
     qa_pool metadata_cuts;
     qa_actor_registry *actors;
     qa_strings *strings;
+    qa_string_id q1_ammo_names[7], q1_key_names[2];
     frontend_unified_metadata *metadata;
     qa_unified_frame_lease *metadata_lease;
     size_t metadata_count;

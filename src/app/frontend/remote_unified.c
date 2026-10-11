@@ -6,6 +6,7 @@
 #include "qa/unified_frame_player.h"
 #include "qa/unified_frame_events.h"
 #include "qa/ruleset.h"
+#include "qa/game_q1.h"
 #include "remote_unified_save.h"
 #include "remote_unified_presentation.h"
 #include "remote_unified_metadata.h"
@@ -92,14 +93,22 @@ bool frontend_remote_unified_create(qa_frontend *frontend, const frontend_remote
     frontend_legacy_cvars_bind(d->cvars,&owner->legacy_cvars);
     frontend_remote_q2_effects_cvars_bind(d->cvars,&owner->q2_effect_cvars);
     frontend_q1_sky_controls_bind(qa_application_cvars(d->application),&owner->sky_controls);
+    owner->strings=qa_session_strings(qa_application_session(d->application)); qa_strings_retain(owner->strings);
+    bool names_ready = true;
+    for (unsigned i = 0; names_ready && i < 7; ++i)
+        names_ready = qa_strings_intern_cstr(owner->strings, qa_q1_ammo_identity((qa_q1_ammo)i),
+            &owner->q1_ammo_names[i], error);
+    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
+    for (unsigned i = 0; names_ready && i < 2; ++i)
+        names_ready = qa_strings_intern_cstr(owner->strings, keys[i], &owner->q1_key_names[i], error);
+    if (!names_ready) { qa_strings_destroy(owner->strings); free(owner); return false; }
     if (!qa_pool_prepare(&owner->identity_records, &owner->identity_storage,
             (size_t)options->identity_capacity * 4, sizeof(frontend_unified_identity),
             _Alignof(frontend_unified_identity), error) ||
         !qa_actors_create(options->identity_capacity, NULL, NULL, &owner->actors, error)) {
-        qa_arena_destroy(&owner->identity_storage); free(owner); return false;
+        qa_arena_destroy(&owner->identity_storage); qa_strings_destroy(owner->strings); free(owner); return false;
     }
     qa_arena_seal(&owner->identity_storage);
-    owner->strings=qa_session_strings(qa_application_session(d->application)); qa_strings_retain(owner->strings);
     qa_catalog_retain(d->catalog);
     owner->next = frontend->remote_unified; frontend->remote_unified = owner; *out = owner; return true;
 }

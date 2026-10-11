@@ -251,7 +251,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     for (unsigned i = 0; i < 7; ++i) {
         const char *identity = qa_q1_ammo_identity((qa_q1_ammo)i);
         if (i < 4) for (size_t j = 0; j < ui->inventory_count; ++j)
-            if (!strcmp(qa_strings_cstr(r->replica->strings,ui->inventory[j].item), identity)) *counts[i] =
+            if (ui->inventory[j].item == r->replica->q1_ammo_names[i]) *counts[i] =
                 (uint32_t)qa_source_float_to_i32((float)ui->inventory[j].count);
         if (ui->ammo_item && !strcmp(ui->ammo_item, identity)) {
             unsigned bit = i < 4 ? (variant == QA_HUD_Q1_ROGUE ? 7u : 8u) + i :
@@ -259,9 +259,8 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
             client.items |= UINT32_C(1) << bit;
         }
     }
-    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
     for (size_t j = 0; j < ui->inventory_count; ++j) for (unsigned i = 0; i < 2; ++i)
-        if (ui->inventory[j].count > 0 && !strcmp(qa_strings_cstr(r->replica->strings,ui->inventory[j].item), keys[i])) client.items |= 131072u << i;
+        if (ui->inventory[j].count > 0 && ui->inventory[j].item == r->replica->q1_key_names[i]) client.items |= 131072u << i;
     static const struct { const char *id; unsigned bit; } powers[] = {
         {"q1:item_artifact_invisibility", 19}, {"q1:item_artifact_invulnerability", 20},
         {"q1:item_artifact_envirosuit", 21}, {"q1:item_artifact_super_damage", 22},
