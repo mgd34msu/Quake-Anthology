@@ -239,6 +239,21 @@ The normal production build and seven existing core suites pass:
 `/tmp/qa-ta3196-frame-clock-20261011-core.log`. This is build/core evidence, not
 a new live recovery or gameplay claim. Other audit items remain open.
 
+Events finding 1: `qa_kex_lan_dispatch` returns one completed game datagram
+directly from the channel/input storage to `game_dispatch`. Control messages
+retain their lobby handlers and non-packet poll results pass through directly.
+The common platform packet event owns the physical bytes until dispatch and
+delivery finish. The private `queued` list, receive/pop API, eviction flag,
+payload copies, cleanup loops, checkpoint list and handoff comparisons are
+deleted. KEX wire codecs and channel arithmetic are unchanged. The lobby's
+internal checkpoint now records lobby/channel state without the deleted queue.
+
+The core fixture delivers a real join record, fragmented game payload,
+compressed game payload and a non-packet result through the direct adapter.
+The normal build and all seven existing core suites pass:
+`/tmp/qa-ta3196-kex-dispatch-20261011-build.log` and
+`/tmp/qa-ta3196-kex-dispatch-20261011-core.log`. No live LAN session claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

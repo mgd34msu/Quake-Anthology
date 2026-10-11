@@ -35,13 +35,6 @@ static bool attributes_equal(const struct attributes *a, const struct attributes
     return true;
 }
 
-static bool queued_equal(const struct queued *a, const struct queued *b)
-{
-    if (!a || !b) return a == b;
-    return a->kind == b->kind && a->received == b->received && a->size == b->size &&
-        qa_net_address_equal(&a->address, &b->address, true) && bytes_equal(a->bytes, b->bytes, a->size);
-}
-
 static bool lan_equal(const qa_kex_lan *a, const qa_kex_lan *b)
 {
     if (!qa_net_address_equal(&a->local_address, &b->local_address, true) ||
@@ -52,9 +45,7 @@ static bool lan_equal(const qa_kex_lan *a, const qa_kex_lan *b)
         a->next_id != b->next_id || a->clock != b->clock || a->retry_at != b->retry_at ||
         a->joined != b->joined || a->retried != b->retried || a->local_first != b->local_first ||
         !bytes_equal(a->local_ids, b->local_ids, sizeof(a->local_ids)) ||
-        !attributes_equal(&a->attributes, &b->attributes) || a->queued_count != b->queued_count ||
-        a->dropped != b->dropped || !qa_net_address_equal(&a->dropped_from, &b->dropped_from, true) ||
-        !queued_equal(a->borrowed, b->borrowed)) return false;
+        !attributes_equal(&a->attributes, &b->attributes)) return false;
     for (size_t i = 0; i < a->player_count; ++i)
         if (a->players[i].id != b->players[i].id ||
             !attributes_equal(&a->players[i].attributes, &b->players[i].attributes)) return false;
@@ -63,9 +54,7 @@ static bool lan_equal(const qa_kex_lan *a, const qa_kex_lan *b)
         if (p->count != q->count || !qa_net_address_equal(&p->address, &q->address, true) ||
             !bytes_equal(p->players, q->players, sizeof(p->players)) || !channel_equal(p->channel, q->channel)) return false;
     }
-    const struct queued *p = a->head, *q = b->head;
-    for (; p && q; p = p->next, q = q->next) if (!queued_equal(p, q)) return false;
-    return !p && !q;
+    return true;
 }
 
 bool qa_kex_transport_handoff_ready(const qa_kex_transport *active, const qa_kex_transport *candidate, qa_error *e)

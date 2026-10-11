@@ -57,7 +57,9 @@ bool qa_kex_lan_open(qa_net_transport *, const qa_kex_lan_options *, qa_kex_lan 
 void qa_kex_lan_close(qa_kex_lan *);
 bool qa_kex_lan_tick(qa_kex_lan *, uint64_t now_ns, qa_error *);
 qa_net_send_result qa_kex_lan_send(qa_kex_lan *, const qa_net_address *, qa_bytes, qa_error *);
-bool qa_kex_lan_receive(qa_kex_lan *, qa_net_datagram *, qa_error *);
+/* Completed payload borrows the input or channel storage until the next
+ * dispatch. The caller consumes it before retiring the common packet event. */
+bool qa_kex_lan_dispatch(qa_kex_lan *, const qa_net_datagram *, qa_net_datagram *, bool *present, qa_error *);
 bool qa_kex_lan_admitted(const qa_kex_lan *, const qa_net_address *);
 bool qa_kex_lan_ready(const qa_kex_lan *);
 bool qa_kex_lan_idle(const qa_kex_lan *);

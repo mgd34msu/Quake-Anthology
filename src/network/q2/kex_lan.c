@@ -206,12 +206,6 @@ void qa_kex_lan_close(qa_kex_lan*l) {
     }
     for(size_t i=0;i<l->player_count;i++)attrs_free(&l->players[i].attributes);
     attrs_free(&l->attributes);
-    while(l->head) {
-        struct queued*q=l->head;
-        l->head=q->next;
-        free(q);
-    }
-    free(l->borrowed);
     qa_net_transport_close(l->transport);
     free(l);
 }
@@ -243,67 +237,6 @@ static qa_net_send_result send_body(qa_kex_lan*l,const qa_net_address*to,qa_byte
     if(!p)return false;
     bool reliable=b.size>=8&&b.data[0]==0&&b.data[1]==0&&b.data[2]==0&&b.data[3]==128&&b.data[4]==0&&b.data[5]==0&&b.data[6]==0&&b.data[7]==128;
     return qa_kex_channel_send(p->channel,0,b,reliable?QA_KEX_RELIABLE:QA_KEX_SEQUENCED,l->clock,e);
-}
-static bool queue(qa_kex_lan*l,const qa_net_address*a,qa_bytes b,qa_error*e) {
-    if(b.size>65535) {
-        qa_error_set(e,QA_ERROR_FORMAT,0,"KEX game datagram exceeds capacity");
-        return false;
-    }
-    if(l->queued_count==256) {
-        struct queued*old=l->head;
-        l->dropped=true;
-        l->dropped_from=old->address;
-        l->head=old->next;
-        if(!l->head)l->tail=NULL;
-        free(old);
-        l->queued_count--;
-    }
-    struct queued*q=malloc(sizeof(*q)+b.size);
-    if(!q) {
-        qa_error_set(e,QA_ERROR_MEMORY,0,"KEX receive queue allocation failed");
-        return false;
-    }
-    q->next=NULL;
-    q->address=*a;
-    q->received=l->clock;
-    q->size=b.size;
-    q->kind=QA_NET_POLL_PACKET;
-    if(b.size)memcpy(q->bytes,b.data,b.size);
-    if(l->tail)l->tail->next=q;
-    else l->head=q;
-    l->tail=q;
-    l->queued_count++;
-    return true;
-}
-static bool receive_body(qa_kex_lan*l,qa_net_datagram*out,qa_error*e) {
-    if(!l||!out) {
-        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid KEX receive queue arguments");
-        return false;
-    }
-    free(l->borrowed);
-    l->borrowed=NULL;
-    memset(out,0,sizeof(*out));
-    if(l->dropped) {
-        out->kind=QA_NET_POLL_DROPPED;
-        out->from=l->dropped_from;
-        l->dropped=false;
-        return true;
-    }
-    if(!l->head) {
-        out->kind=QA_NET_POLL_EMPTY;
-        return true;
-    }
-    l->borrowed=l->head;
-    l->head=l->head->next;
-    if(!l->head)l->tail=NULL;
-    l->queued_count--;
-    out->kind=l->borrowed->kind;
-    out->from=l->borrowed->address;
-    out->received_ns=l->borrowed->received;
-    out->payload=(qa_bytes) {
-        l->borrowed->bytes,l->borrowed->size
-    };
-    return true;
 }
 static bool send_attribute(struct peer*p,const char*key,const char*value,qa_error*e) {
     char text[5121];
@@ -458,7 +391,6 @@ static bool player_message(qa_kex_lan*l,struct peer*p,qa_bytes bytes,qa_error*e)
     return qa_net_reader_fail(&r,"Invalid KEX player operation");
 }
 static bool message(qa_kex_lan*l,struct peer*p,const qa_kex_message*m,qa_error*e) {
-    if(m->kind<127)return !qa_kex_lan_admitted(l,&p->address)||queue(l,&p->address,m->payload,e);
     if(m->kind==128)return join(l,p,m->payload,e);
     if(m->kind==129) {
         if(!m->payload.size||!l->options.host)return true;
@@ -507,13 +439,14 @@ static bool message(qa_kex_lan*l,struct peer*p,const qa_kex_message*m,qa_error*e
     if(m->kind==253)return player_message(l,p,m->payload,e);
     return true;
 }
-static bool dispatch_body(qa_kex_lan*l,const qa_net_datagram *event,qa_error*e) {
+static bool dispatch_body(qa_kex_lan*l,const qa_net_datagram *event,qa_net_datagram *out,bool *present,qa_error*e) {
+    *out=(qa_net_datagram){0};
+    *present=false;
     l->clock=event->received_ns;
     if(event->kind==QA_NET_POLL_EMPTY)return true;
     if(event->kind!=QA_NET_POLL_PACKET) {
-        if(!queue(l,&event->from,(qa_bytes){0},e))return false;
-        l->tail->kind=event->kind;
-        l->tail->received=event->received_ns;
+        *out=*event;
+        *present=true;
         return true;
     }
     if(!l->options.host&&!qa_net_address_equal(&event->from,&l->options.server,true))return true;
@@ -528,18 +461,26 @@ static bool dispatch_body(qa_kex_lan*l,const qa_net_datagram *event,qa_error*e) 
         if(!p)return false;
     }
     qa_kex_message m;
-    bool present;
+    bool completed;
     qa_error parse= {
         0
     };
-    if(!qa_kex_channel_receive(p->channel,event->payload,event->received_ns,&m,&present,&parse)) {
+    if(!qa_kex_channel_receive(p->channel,event->payload,event->received_ns,&m,&completed,&parse)) {
         if(parse.code==QA_ERROR_MEMORY||parse.code==QA_ERROR_IO) {
             if(e)*e=parse;
             return false;
         }
         return true;
     }
-    if(present&&!message(l,p,&m,&parse)) {
+    if(completed && m.kind<127) {
+        if(qa_kex_lan_admitted(l,&p->address) && m.payload.size<=65535) {
+            *out=*event;
+            out->payload=m.payload;
+            *present=true;
+        }
+        return true;
+    }
+    if(completed&&!message(l,p,&m,&parse)) {
         if(parse.code==QA_ERROR_MEMORY||parse.code==QA_ERROR_IO) {
             if(e)*e=parse;
             return false;
@@ -595,17 +536,10 @@ qa_net_send_result qa_kex_lan_send(qa_kex_lan *l, const qa_net_address *to, qa_b
     l->entered = false;
     return ok;
 }
-bool qa_kex_lan_receive(qa_kex_lan *l, qa_net_datagram *out, qa_error *e)
+bool qa_kex_lan_dispatch(qa_kex_lan *l, const qa_net_datagram *event, qa_net_datagram *out, bool *present, qa_error *e)
 {
     if (!enter(l, e)) return false;
-    bool ok = receive_body(l, out, e);
-    l->entered = false;
-    return ok;
-}
-bool qa_kex_lan_dispatch(qa_kex_lan *l, const qa_net_datagram *event, qa_error *e)
-{
-    if (!enter(l, e)) return false;
-    bool ok = dispatch_body(l, event, e);
+    bool ok = dispatch_body(l, event, out, present, e);
     l->entered = false;
     return ok;
 }

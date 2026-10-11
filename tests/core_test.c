@@ -1571,6 +1571,53 @@ static qa_net_send_result kex_capture(void *context, qa_bytes bytes, qa_error *e
     ++out->accepted;
     return QA_NET_SEND_ACCEPTED;
 }
+static void test_kex_direct_delivery(void)
+{
+    qa_error error={0};qa_net_loopback *hub;qa_net_transport *server,*client;
+    CHECK(qa_net_loopback_create((qa_net_limits){65535,8},&hub,&error));
+    CHECK(qa_net_loopback_bind(hub,"server",&server,&error));
+    CHECK(qa_net_loopback_bind(hub,"client",&client,&error));
+    qa_net_address remote=*qa_net_transport_address(server);
+    qa_kex_lan *lobby;
+    CHECK(qa_kex_lan_open(client,&(qa_kex_lan_options){.local_players=1,.server=remote},&lobby,&error));
+    kex_delivery wire={0};qa_kex_channel *sender;
+    CHECK(qa_kex_channel_create(kex_capture,&wire,&sender,&error));
+    uint8_t join[64];qa_net_writer writer;
+    qa_net_writer_init(&writer,join,sizeof(join),&error);
+    CHECK(qa_kex_write_string(&writer,"CRANTIME") && qa_kex_write_varint(&writer,0) && qa_kex_write_varint(&writer,1));
+    CHECK(qa_kex_channel_send(sender,128,(qa_bytes){join,qa_net_writer_size(&writer)},QA_KEX_UNSEQUENCED,1,&error)==QA_NET_SEND_ACCEPTED);
+    qa_net_datagram event={.kind=QA_NET_POLL_PACKET,.from=remote,.received_ns=1,.payload={wire.bytes,wire.size}},result;
+    bool present;
+    CHECK(qa_kex_lan_dispatch(lobby,&event,&result,&present,&error) && !present);
+    CHECK(qa_kex_lan_admitted(lobby,&remote));
+    wire.occupied=false;
+    uint8_t message[5000];uint32_t random=1;
+    for(size_t i=0;i<sizeof(message);++i) { random=random*1664525u+1013904223u;message[i]=(uint8_t)(random>>24); }
+    CHECK(qa_kex_channel_send(sender,0,(qa_bytes){message,sizeof(message)},QA_KEX_SEQUENCED,2,&error)==QA_NET_SEND_ACCEPTED);
+    unsigned deliveries=0;
+    for(unsigned fragment=0;fragment<4;++fragment) {
+        CHECK(qa_kex_channel_tick(sender,fragment+3,&error) && wire.occupied);
+        event.received_ns=fragment+3;event.payload=(qa_bytes){wire.bytes,wire.size};
+        CHECK(qa_kex_lan_dispatch(lobby,&event,&result,&present,&error));
+        if(present) {
+            ++deliveries;
+            CHECK(result.kind==QA_NET_POLL_PACKET && result.received_ns==event.received_ns);
+            CHECK(qa_net_address_equal(&result.from,&remote,true));
+            CHECK(result.payload.size==sizeof(message) && !memcmp(result.payload.data,message,sizeof(message)));
+        }
+        wire.occupied=false;
+    }
+    CHECK(deliveries==1);
+    memset(message,42,512);
+    CHECK(qa_kex_channel_send(sender,0,(qa_bytes){message,512},QA_KEX_SEQUENCED,7,&error)==QA_NET_SEND_ACCEPTED && wire.occupied);
+    event.received_ns=7;event.payload=(qa_bytes){wire.bytes,wire.size};
+    CHECK(qa_kex_lan_dispatch(lobby,&event,&result,&present,&error) && present);
+    CHECK(result.payload.size==512 && !memcmp(result.payload.data,message,512));
+    event.kind=QA_NET_POLL_DROPPED;event.payload=(qa_bytes){0};
+    CHECK(qa_kex_lan_dispatch(lobby,&event,&result,&present,&error) && present && result.kind==QA_NET_POLL_DROPPED);
+    qa_kex_channel_destroy(sender);qa_kex_lan_close(lobby);
+    qa_net_transport_close(server);qa_net_loopback_close(hub);
+}
 static void test_kex_send_admission(void)
 {
     qa_error error = {0};
@@ -1773,6 +1820,7 @@ int main(int argc, char **argv)
     test_loopback_admission();
     test_loopback_nq_signon();
     test_kex_send_admission();
+    test_kex_direct_delivery();
     test_nq_send_admission();
     test_q3_send_admission();
     test_shared_cvar_archive();

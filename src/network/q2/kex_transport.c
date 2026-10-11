@@ -118,14 +118,10 @@ static bool game_dispatch(void *context, const qa_net_transport_event *event,
         qa_net_datagram packet;
         bool packet_present;
         ok = qa_net_transport_dispatch(o->dispatch, event ? &child : NULL, &packet, &packet_present, e);
-        if (ok && packet_present) ok = qa_kex_lan_dispatch(o->lobby, &packet, e);
+        if (ok && packet_present) ok = qa_kex_lan_dispatch(o->lobby, &packet, out, present, e);
     }
     if (ok && o->discovery && (!event || (event->source & 3u) == 1u))
         ok = qa_kex_mdns_owner_dispatch(o->discovery, event ? &child : NULL, e);
-    if (ok) {
-        ok = qa_kex_lan_receive(o->lobby, out, e);
-        *present = ok && out->kind != QA_NET_POLL_EMPTY;
-    }
     o->entered = false;
     return ok;
 }

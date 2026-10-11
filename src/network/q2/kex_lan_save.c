@@ -25,23 +25,16 @@ static bool roster_contains(const qa_kex_lan *l, uint64_t id)
     return false;
 }
 
-static bool queued_valid(const struct queued *q)
-{
-    return q && q->size <= 65535 && q->kind >= QA_NET_POLL_PACKET && q->kind <= QA_NET_POLL_DROPPED &&
-        (q->kind == QA_NET_POLL_PACKET || q->size == 0) &&
-        qa_kex_save_address_valid(&q->address, q->kind == QA_NET_POLL_PACKET);
-}
-
 bool qa_kex_lan_valid(const qa_kex_lan *l)
 {
-    if (!l || l->entered || l->peer_count > 256 || l->player_count > 255 || l->queued_count > 256 ||
+    if (!l || l->entered || l->peer_count > 256 || l->player_count > 255 ||
         l->options.name != l->name || !memchr(l->name, 0, sizeof(l->name)) ||
         !qa_kex_text_valid((qa_bytes){(const uint8_t *)l->name, strlen(l->name)}) ||
         !qa_kex_save_address_valid(&l->local_address, true) || l->options.local_players > 8 ||
         (l->options.host && l->options.max_players < l->options.local_players) ||
         (l->options.host && !l->joined) ||
         (!l->options.host && (!l->options.local_players || !qa_kex_save_address_valid(&l->options.server, true))) ||
-        !attributes_valid(&l->attributes) || !qa_kex_save_address_valid(&l->dropped_from, false)) return false;
+        !attributes_valid(&l->attributes)) return false;
     if (l->transport && !qa_net_address_equal(&l->local_address, qa_net_transport_address(l->transport), true)) return false;
     for (size_t i = 0; i < l->player_count; ++i) {
         if (!l->players[i].id || !attributes_valid(&l->players[i].attributes)) return false;
@@ -73,14 +66,7 @@ bool qa_kex_lan_valid(const qa_kex_lan *l)
             for (unsigned j = 0; j < i; ++j) if (l->local_ids[i] == l->local_ids[j]) return false;
         }
     }
-    size_t count = 0;
-    const struct queued *last = NULL;
-    for (const struct queued *q = l->head; q; q = q->next) {
-        if (++count > l->queued_count || !queued_valid(q)) return false;
-        last = q;
-    }
-    return count == l->queued_count && last == l->tail &&
-        (!l->borrowed || queued_valid(l->borrowed));
+    return true;
 }
 
 void qa_kex_lan_destroy_detached(qa_kex_lan *l)
@@ -92,8 +78,6 @@ void qa_kex_lan_destroy_detached(qa_kex_lan *l)
     }
     for (size_t i = 0; i < l->player_count; ++i) free(l->players[i].attributes.data);
     free(l->attributes.data);
-    while (l->head) { struct queued *q = l->head; l->head = q->next; free(q); }
-    free(l->borrowed);
     free(l);
 }
 
@@ -130,32 +114,6 @@ static bool attributes_read(qa_net_reader *r, struct attributes *a, qa_error *e)
     return attributes_valid(a) || qa_net_reader_fail(r, "Invalid KEX retained attributes");
 }
 
-static bool queued_write(qa_net_writer *w, const struct queued *q)
-{
-    return qa_kex_save_address_write(w, &q->address) && qa_net_write_u64(w, q->received) &&
-        qa_net_write_u8(w, (uint8_t)q->kind) && qa_net_write_u32(w, (uint32_t)q->size) &&
-        qa_net_write_data(w, q->bytes, q->size);
-}
-
-static bool queued_read(qa_net_reader *r, struct queued **out, qa_error *e)
-{
-    qa_net_address address = {0};
-    bool ok = qa_kex_save_address_read(r, &address);
-    uint64_t received = qa_net_read_u64(r);
-    qa_net_poll_kind kind = (qa_net_poll_kind)qa_net_read_u8(r);
-    uint32_t size = qa_net_read_u32(r);
-    if (!ok || r->failed || size > 65535 || size > qa_net_reader_remaining(r))
-        return qa_net_reader_fail(r, "Invalid KEX queued game extent");
-    struct queued *q = malloc(sizeof(*q) + size);
-    if (!q) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring KEX queued game record"); return false; }
-    *q = (struct queued){.address = address, .received = received, .kind = kind, .size = size};
-    if (!qa_net_read_data(r, q->bytes, size) || !queued_valid(q)) {
-        free(q); return qa_net_reader_fail(r, "Invalid KEX queued game record");
-    }
-    *out = q;
-    return true;
-}
-
 bool qa_kex_lan_checkpoint(const qa_kex_lan *l, qa_buffer *out, qa_error *e)
 {
     if (!out || !qa_kex_lan_valid(l)) {
@@ -172,16 +130,6 @@ bool qa_kex_lan_checkpoint(const qa_kex_lan *l, qa_buffer *out, qa_error *e)
             qa_error_set(e, QA_ERROR_MEMORY, 0, "KEX LAN continuation extent overflow"); ok = false;
         }
         if (ok) capacity += addition;
-    }
-    for (const struct queued *q = l->head; ok && q; q = q->next) {
-        size_t addition = 256 + q->size;
-        if (capacity > SIZE_MAX - addition) { qa_error_set(e, QA_ERROR_MEMORY, 0, "KEX game continuation extent overflow"); ok = false; }
-        else capacity += addition;
-    }
-    if (ok && l->borrowed) {
-        size_t addition = 256 + l->borrowed->size;
-        if (capacity > SIZE_MAX - addition) { qa_error_set(e, QA_ERROR_MEMORY, 0, "KEX borrowed game extent overflow"); ok = false; }
-        else capacity += addition;
     }
     uint8_t *bytes = ok ? malloc(capacity) : NULL;
     if (ok && !bytes) { qa_error_set(e, QA_ERROR_MEMORY, 0, "Encoding KEX LAN continuation"); ok = false; }
@@ -204,10 +152,6 @@ bool qa_kex_lan_checkpoint(const qa_kex_lan *l, qa_buffer *out, qa_error *e)
         for (unsigned j = 0; ok && j < 8; ++j) ok = qa_net_write_u64(&w, p->players[j]);
         ok = ok && qa_net_write_u32(&w, (uint32_t)channels[i].size) && qa_net_write_data(&w, channels[i].data, channels[i].size);
     }
-    ok = ok && qa_net_write_u16(&w, (uint16_t)l->queued_count);
-    for (const struct queued *q = l->head; ok && q; q = q->next) ok = queued_write(&w, q);
-    ok = ok && qa_net_write_u8(&w, l->borrowed != NULL) && (!l->borrowed || queued_write(&w, l->borrowed)) &&
-        qa_net_write_u8(&w, l->dropped) && qa_kex_save_address_write(&w, &l->dropped_from);
     for (size_t i = 0; i < l->peer_count; ++i) qa_buffer_free(&channels[i]);
     if (!ok || w.failed) { free(bytes); return false; }
     *out = (qa_buffer){bytes, qa_net_writer_size(&w)};
@@ -261,23 +205,6 @@ bool qa_kex_lan_restore(qa_bytes bytes, qa_kex_lan **out, qa_error *e)
         ok = ok && !r.failed && qa_net_read_bytes(&r, extent, &channel) &&
             qa_kex_channel_restore(channel, qa_kex_lan_emit, p, &p->channel, e);
     }
-    uint16_t queued_count = qa_net_read_u16(&r);
-    ok = ok && !r.failed && queued_count <= 256 && queued_count <= qa_net_reader_remaining(&r) / 18;
-    for (unsigned i = 0; ok && i < queued_count; ++i) {
-        struct queued *q = NULL;
-        ok = queued_read(&r, &q, e);
-        if (ok) {
-            if (l->tail) l->tail->next = q;
-            else l->head = q;
-            l->tail = q;
-            ++l->queued_count;
-        }
-    }
-    uint8_t borrowed = qa_net_read_u8(&r);
-    ok = ok && borrowed <= 1 && (!borrowed || queued_read(&r, &l->borrowed, e));
-    uint8_t dropped = qa_net_read_u8(&r);
-    l->dropped = dropped != 0;
-    ok = ok && dropped <= 1 && qa_kex_save_address_read(&r, &l->dropped_from);
     if (!ok || !qa_net_reader_finish(&r) || !qa_kex_lan_valid(l)) {
         qa_kex_lan_destroy_detached(l);
         if (!e || e->code == QA_OK) qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid KEX LAN retained state");
