@@ -795,7 +795,7 @@ static bool client_disconnect(application_provider *provider,
         int32_t game_type;
         if (ok) ok = application_native_q3_settings_integer_at(provider, APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
         if (ok && game_type == 7 && provider->product &&
-            !strcmp(provider->product->campaign, "missionpack"))
+            (provider->product->campaign_id == QA_CAMPAIGN_MISSIONPACK))
             ok = toss_cube(provider, actor, sess.team, error);
     }
     if (ok) {
@@ -1536,7 +1536,7 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
                 !qa_q3_player_read(equipment->state.q3, actor, &speed_player) ||
                 !(speed_player.selections & QA_Q3_EQUIPMENT))
                 return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 movement lost its selected equipment state");
-            double multiplier = equipment->product && !strcmp(equipment->product->campaign, "missionpack") &&
+            double multiplier = equipment->product && (equipment->product->campaign_id == QA_CAMPAIGN_MISSIONPACK) &&
                 speed_player.persistent == QA_Q3_P_SCOUT ? 1.5 : speed_player.powerups[QA_Q3_P_HASTE] ? 1.3 : 1.0;
             if (multiplier != 1.0) {
                 double scaled = *speed * multiplier;

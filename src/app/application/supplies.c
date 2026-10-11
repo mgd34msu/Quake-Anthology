@@ -589,8 +589,8 @@ static bool profile_build(supply_pair *pair, qa_error *error) {
                 owned_ammo[i].source, owned_ammo[i].source, error);
         ammo_owner_count = profile.ammo_owner_count;
     }
-    const char *campaign = pair->arsenal->product->campaign;
-    if (ok && target == QA_GAME_Q1 && !strcmp(campaign, "hipnotic")) {
+    qa_campaign_id campaign = pair->arsenal->product->campaign_id;
+    if (ok && target == QA_GAME_Q1 && (campaign == QA_CAMPAIGN_HIPNOTIC)) {
         const supply_row *rows = source == QA_GAME_Q1 ? q1_hipnotic_weapons :
             source == QA_GAME_Q2 ? q2_hipnotic_weapons : q3_hipnotic_weapons;
         size_t count = source == QA_GAME_Q1 ? sizeof(q1_hipnotic_weapons)/sizeof(*q1_hipnotic_weapons) :
@@ -603,14 +603,14 @@ static bool profile_build(supply_pair *pair, qa_error *error) {
     }
     size_t selected[2], selected_count = 0;
     if (target == QA_GAME_Q1) {
-        if (!strcmp(campaign, "rogue")) selected[selected_count++] = 0;
-        else if (!strcmp(campaign, "mg3")) selected[selected_count++] = 1;
+        if ((campaign == QA_CAMPAIGN_ROGUE)) selected[selected_count++] = 0;
+        else if ((campaign == QA_CAMPAIGN_MG3)) selected[selected_count++] = 1;
     } else if (target == QA_GAME_Q2) {
         if (pair->arsenal->product->edition == QA_EDITION_RERELEASE) {
             selected[selected_count++] = 2; selected[selected_count++] = 3;
-        } else if (!strcmp(campaign, "xatrix")) selected[selected_count++] = 2;
-        else if (!strcmp(campaign, "rogue")) selected[selected_count++] = 3;
-    } else if (!strcmp(campaign, "missionpack")) selected[selected_count++] = 4;
+        } else if ((campaign == QA_CAMPAIGN_XATRIX)) selected[selected_count++] = 2;
+        else if ((campaign == QA_CAMPAIGN_ROGUE)) selected[selected_count++] = 3;
+    } else if ((campaign == QA_CAMPAIGN_MISSIONPACK)) selected[selected_count++] = 4;
     char profile_name[160];
     int length = snprintf(profile_name, sizeof(profile_name), "%s", name);
     if (length < 0 || (size_t)length >= sizeof(profile_name))
@@ -1247,7 +1247,7 @@ static bool arsenal_item(supply_pair *pair, qa_item_id item) {
                 (definition->ammo && existing_item(pair->owner, definition->ammo) == item))) return true;
         }
     } else if (arsenal->kind == APPLICATION_PROVIDER_Q3) {
-        int limit = !strcmp(arsenal->product->campaign, "missionpack")
+        int limit = (arsenal->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)
             ? QA_Q3_WEAPON_COUNT : QA_Q3_W_GRAPPLE + 1;
         for (int weapon = QA_Q3_W_GAUNTLET; weapon < limit; ++weapon)
             if (qa_q3_weapon_item(arsenal->state.q3, (qa_q3_weapon)weapon, false) == item ||
@@ -1531,7 +1531,7 @@ static bool q2_weapon_receipts(supply_pair *pair, qa_actor_id actor,
     return true;
 }
 static int q3_weapon_limit(const supply_pair *pair) {
-    return !strcmp(pair->arsenal->product->campaign, "missionpack")
+    return (pair->arsenal->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)
         ? QA_Q3_WEAPON_COUNT : QA_Q3_W_GRAPPLE + 1;
 }
 static bool q3_best_weapon(supply_pair *pair, qa_actor_id actor,
@@ -1664,7 +1664,7 @@ static bool q3_descriptor_current(application_provider *source,
         !qa_q3_client_read(source->state.q3, descriptor->recipient, &client, error) ||
         !qa_q3_rules_read(source->state.q3, &rules, error)) return false;
     size_t count;
-    const qa_q3_item *items = qa_q3_items(!strcmp(source->product->campaign, "missionpack")
+    const qa_q3_item *items = qa_q3_items((source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)
         ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA, &count);
     if (!finished || !spawn.item_index || spawn.item_index >= count ||
         descriptor->item != items + spawn.item_index || descriptor->count != spawn.count ||
@@ -1687,7 +1687,7 @@ static bool q3_offer(application_provider *source, const qa_q3_supply_descriptor
     supply_pair *pair = pair_find(owner, source, arsenal);
     *out = (q3_supply_offer){.pair = pair};
     int tag = descriptor->item->tag;
-    int limit = !strcmp(source->product->campaign, "missionpack")
+    int limit = (source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)
         ? QA_Q3_WEAPON_COUNT : QA_Q3_W_GRAPPLE + 1;
     *kind = QA_Q3_SUPPLY_REJECTED;
     if (tag <= QA_Q3_W_NONE || tag >= limit) return true;

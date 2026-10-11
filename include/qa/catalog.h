@@ -21,10 +21,16 @@ typedef enum qa_program_kind {
     QA_PROGRAM_BUILTIN, QA_PROGRAM_QUAKEC, QA_PROGRAM_QVM, QA_PROGRAM_NATIVE
 } qa_program_kind;
 
+typedef enum qa_campaign_id {
+    QA_CAMPAIGN_OTHER,
+    QA_CAMPAIGN_ID1, QA_CAMPAIGN_HIPNOTIC, QA_CAMPAIGN_ROGUE, QA_CAMPAIGN_DOPA, QA_CAMPAIGN_MG1, QA_CAMPAIGN_MG2, QA_CAMPAIGN_MG3, QA_CAMPAIGN_CTF, QA_CAMPAIGN_LMCTF, QA_CAMPAIGN_QUAKE64, QA_CAMPAIGN_N64, QA_CAMPAIGN_BASEQ2, QA_CAMPAIGN_XATRIX, QA_CAMPAIGN_BASEQ3, QA_CAMPAIGN_MISSIONPACK, QA_CAMPAIGN_DEMOTA
+} qa_campaign_id;
+
 typedef struct qa_product {
     qa_product_id id, base;
     const char *key, *identity, *title, *campaign, *directory;
     qa_game_family family;
+    qa_campaign_id campaign_id;
     qa_product_edition edition;
     qa_content_availability availability;
     bool builtin;

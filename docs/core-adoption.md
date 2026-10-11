@@ -753,6 +753,14 @@ stop uses zero. Public variable-model arguments are interned at their entry
 boundary. Normal build and seven core suites pass. Names item 14's audited
 sites are migrated; campaign, guest-record and bot-variable items remain.
 
+Names item 15: catalog admission resolves campaign text to one campaign ID
+on `qa_product`. Snapshot import and catalog clones use the same binder.
+The audited supply, QC UI, Q1 HUD/team-face, Q3 objective/client, bot and
+Unified presentation callers now compare that ID. Unclassified external
+campaigns retain the previous stock fallback. Campaign text stays at config
+and UI boundaries; the on-disk layout is unchanged. Normal build and seven
+core suites pass. Names item 16's guest record readers and item 17 remain.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

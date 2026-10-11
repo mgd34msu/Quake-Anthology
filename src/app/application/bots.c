@@ -885,7 +885,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
         .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write,
             .borrow_span=application_bots_memory_span},
         .team_arena=source && source->product && source->product->family==QA_GAME_Q3 &&
-            !strcmp(source->product->campaign,"missionpack"),
+            (source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
         .shared=application_builtin_services(application,application->world,application->physics),
         .modes=application->modes,.player=application_bot_player,.inventory=application_bot_inventory_update,
         .entity=application_bot_entity,.entity_actor=application_bot_actor,
@@ -1262,7 +1262,7 @@ bool application_bots_native_q3_connect(application_provider *provider,qa_actor_
     }
     qa_bot_admission admission={.actor=actor,.client=seat->library_client,.entity=(int32_t)source_client,
         .character_file=character,.name=name,.team=team,.skill=skill,.mode=app->primary_mode,
-        .team_arena=bots->population && provider->product && !strcmp(provider->product->campaign,"missionpack"),
+        .team_arena=bots->population && provider->product && (provider->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
         .restart=restart};
     ++bots->calls;
     bool okay=qa_bots_admit_source(bots->population,&admission,accepted,error);

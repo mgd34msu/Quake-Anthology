@@ -117,6 +117,30 @@ bool catalog_requirement(qa_catalog *catalog, catalog_product *product,
 
 bool catalog_bind_product_names(qa_catalog *catalog, catalog_product *product, qa_error *error)
 {
+    static const struct { const char *name; qa_campaign_id id; } campaigns[] = {
+        {"id1", QA_CAMPAIGN_ID1},
+        {"hipnotic", QA_CAMPAIGN_HIPNOTIC},
+        {"rogue", QA_CAMPAIGN_ROGUE},
+        {"dopa", QA_CAMPAIGN_DOPA},
+        {"mg1", QA_CAMPAIGN_MG1},
+        {"mg2", QA_CAMPAIGN_MG2},
+        {"mg3", QA_CAMPAIGN_MG3},
+        {"ctf", QA_CAMPAIGN_CTF},
+        {"lmctf", QA_CAMPAIGN_LMCTF},
+        {"quake64", QA_CAMPAIGN_QUAKE64},
+        {"n64", QA_CAMPAIGN_N64},
+        {"baseq2", QA_CAMPAIGN_BASEQ2},
+        {"xatrix", QA_CAMPAIGN_XATRIX},
+        {"baseq3", QA_CAMPAIGN_BASEQ3},
+        {"missionpack", QA_CAMPAIGN_MISSIONPACK},
+        {"demota", QA_CAMPAIGN_DEMOTA},
+    };
+    product->view.campaign_id = QA_CAMPAIGN_OTHER;
+    for (size_t i = 0; i < sizeof(campaigns) / sizeof(*campaigns); ++i)
+        if (product->view.campaign && !strcmp(product->view.campaign, campaigns[i].name)) {
+            product->view.campaign_id = campaigns[i].id;
+            break;
+        }
     qa_string_id key, identity;
     if (!qa_strings_intern_cstr(catalog->strings, product->view.key, &key, error) ||
         !qa_strings_intern_cstr(catalog->strings, product->view.identity, &identity, error)) return false;

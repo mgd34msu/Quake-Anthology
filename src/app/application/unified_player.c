@@ -1019,7 +1019,7 @@ static const char *arsenal_warning(player_observation *o)
 
 static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
-    if (o->source->family != QA_GAME_Q1 || strcmp(o->primary->product->campaign, "rogue")) return true;
+    if (o->source->family != QA_GAME_Q1 || (o->primary->product->campaign_id != QA_CAMPAIGN_ROGUE)) return true;
     qa_cvars *cvars = qa_application_network_q1_cvars(o->app, o->primary->owner, e);
     if (!cvars) return false;
     const qa_cvar_view *teamplay = qa_cvars_read(cvars, o->primary->teamplay);

@@ -110,7 +110,7 @@ static bool actual_actor(objective_call *call, qa_actor_id actor, uint32_t *slot
 
 static qa_q3_product product(const objective_call *call)
 {
-    return !strcmp(call->provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    return (call->provider->product->campaign_id == QA_CAMPAIGN_MISSIONPACK) ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
 }
 
 static bool definition(const objective_call *call, uint32_t index,
@@ -816,7 +816,7 @@ bool application_native_q3_objective_bound(void *opaque, qa_mode_id mode,
         return false;
     }
     size_t count;
-    qa_q3_product product = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    qa_q3_product product = (provider->product->campaign_id == QA_CAMPAIGN_MISSIONPACK) ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     const qa_q3_item *items = qa_q3_items(product, &count);
     if (!spawn.item_index || spawn.item_index >= count)
         return application_fail(error, QA_ERROR_ARGUMENT, "TEAM source object has an invalid true item index");

@@ -216,7 +216,7 @@ static bool q1_team_face_prepare(frontend_unified_render *r,const qa_unified_pla
     if (!value) return true;
     qa_vfs *files;const qa_product *product;
     if (!frontend_unified_media_files(r->media,value->content,&files,&product,e)) return false;
-    if (product->family!=QA_GAME_Q1 || strcmp(product->campaign,"rogue") ||
+    if (product->family!=QA_GAME_Q1 || (product->campaign_id != QA_CAMPAIGN_ROGUE) ||
         trunc(value->frags)!=value->frags || value->frags<INT32_MIN || value->frags>INT32_MAX)
         return frontend_unified_fail(e,QA_ERROR_FORMAT,"Rogue team face differs from its received Source player");
     qa_scene_resources *images;qa_material_library *materials;qa_font_library *fonts;qa_audio_bank *sounds;

@@ -276,7 +276,7 @@ static bool bank_name(frontend_unified_q3 *o, qa_string_id content_name,qa_strin
     b->activation=instance;
     bool okay=b->content && (!instance || b->activation) && b->provider && frontend_unified_media_files(o->media,b->content_name,&b->files,&b->product,e) &&
         b->product->family==QA_GAME_Q3 && frontend_unified_media_q3_assets(o->media,b->content_name,&b->assets,e);
-    qa_q3_product product=okay && b->product->campaign && !strcmp(b->product->campaign,"missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    qa_q3_product product=okay && b->product->campaign && (b->product->campaign_id == QA_CAMPAIGN_MISSIONPACK) ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     if (okay) okay=bank_children(b,product,e) && bank_ballistics_prepare(b,e);
     if (!okay) { q3n_weapons_destroy(b->weapons); q3n_particles_destroy(b->particles);
         q3n_events_destroy(b->effects); q3n_media_destroy(b->media); qa_arena_destroy(&b->ballistic_storage);
@@ -386,7 +386,7 @@ static bool component_bank_read(frontend_unified_q3 *o,qa_error *e)
     for(unified_q3_bank *b=o->banks;b;b=b->next)if(b->component_recipient && b->provider==p->source_owner &&
         b->content_name==p->content_name && b->activation==p->instance_name){
         if(!b->files || !b->assets || !b->product)return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Component recipient construction did not retain its resource tuple");
-        qa_q3_product product=b->product->campaign && !strcmp(b->product->campaign,"missionpack")?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
+        qa_q3_product product=b->product->campaign && (b->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
         if(!bank_children(b,product,e))return false;
         o->component_bank=b;return true;}
     unified_q3_bank *b=calloc(1,sizeof(*b));if(!b)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual component recipient namespace");
@@ -394,7 +394,7 @@ static bool component_bank_read(frontend_unified_q3 *o,qa_error *e)
     unified_q3_bank **tail=&o->banks;while(*tail)tail=&(*tail)->next;*tail=b;
     if(!b->content || !b->activation || !frontend_unified_media_files(o->media,b->content_name,&b->files,&b->product,e) ||
         b->product->family!=QA_GAME_Q3 || !frontend_unified_media_q3_assets(o->media,b->content_name,&b->assets,e))return false;
-    qa_q3_product product=b->product->campaign && !strcmp(b->product->campaign,"missionpack")?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
+    qa_q3_product product=b->product->campaign && (b->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
     if(!bank_children(b,product,e) || !frontend_unified_components_current(o->components))return false;
     o->component_bank=b;return true;
 }

@@ -116,8 +116,8 @@ bool qa_application_qc_message_source_read(qa_application *app,qa_actor_owner id
     if(!qa_q1_profile_valid(engine->protocol,error)) return false;
     *out=(qa_application_qc_message_source){.provider=id,.descriptor=p->launch,.program=p->state.qc.program,
         .instance=p->state.qc.instance,.protocol=engine->protocol,.client_slots=engine->max_clients,
-        .map_revision=app->map_revision,.options={.standard_quake=strcmp(p->product->campaign,"hipnotic") &&
-            strcmp(p->product->campaign,"rogue"),.private_rerelease=engine->profile==QA_QC_RERELEASE}};
+        .map_revision=app->map_revision,.options={.standard_quake=(p->product->campaign_id != QA_CAMPAIGN_HIPNOTIC) &&
+            (p->product->campaign_id != QA_CAMPAIGN_ROGUE),.private_rerelease=engine->profile==QA_QC_RERELEASE}};
     *found=true; return true;
 }
 bool qa_application_qc_message_source_current(qa_application *app,const qa_application_qc_message_source *view)
@@ -409,9 +409,9 @@ static bool player_ui_read(qa_application *app,application_provider *p,
         }
     }
     value.power_items=value.items & (4194304u | 1048576u | 524288u | 2097152u);
-    const char *campaign=p->product->campaign;
-    value.power_items2=value.items2 & (campaign && !strcmp(campaign,"hipnotic")?6u:
-        campaign && !strcmp(campaign,"rogue")?192u:0u);
+    qa_campaign_id campaign = p->product->campaign_id;
+    value.power_items2=value.items2 & ((campaign == QA_CAMPAIGN_HIPNOTIC)?6u:
+        (campaign == QA_CAMPAIGN_ROGUE)?192u:0u);
     const qa_qc_game_fields *fields=p->state.qc.engine->field_bindings;
     const struct { const qa_qc_definition *field; const char *label; } timers[]={
         {fields->super_damage_finished,"Quad Damage"}, {fields->invincible_finished,"Invulnerability"},
@@ -452,8 +452,8 @@ bool qa_application_qc_selected_player_ui_read(qa_application *app,qa_actor_id a
     if(!qa_q1_profile_valid(engine->protocol,error)) return false;
     qa_application_qc_message_source source={.provider=p->owner,.descriptor=p->launch,.program=p->state.qc.program,
         .instance=p->state.qc.instance,.protocol=engine->protocol,.client_slots=engine->max_clients,
-        .map_revision=app->map_revision,.options={.standard_quake=strcmp(p->product->campaign,"hipnotic") &&
-            strcmp(p->product->campaign,"rogue"),.private_rerelease=engine->profile==QA_QC_RERELEASE}};
+        .map_revision=app->map_revision,.options={.standard_quake=(p->product->campaign_id != QA_CAMPAIGN_HIPNOTIC) &&
+            (p->product->campaign_id != QA_CAMPAIGN_ROGUE),.private_rerelease=engine->profile==QA_QC_RERELEASE}};
     return player_ui_read(app,p,&source,actor,slot,role,out,error);
 }
 bool qa_application_qc_message_player_ui_current(qa_application *app,const qa_application_qc_player_ui *view)
