@@ -702,6 +702,16 @@ cache reads. Normal build and seven core suites pass:
 `/tmp/qa-ta3196-q2-model-slots-20261011-build.log` and
 `/tmp/qa-ta3196-q2-model-slots-20261011-core.log`.
 
+Names item 13, skin mappings: the shared skin map retains a per-mesh mapping
+index array for each admitted scene-model identity. A model/skin pairing
+resolves shared surface IDs once, preserving the first matching declaration;
+subsequent submissions read those indexes. Model IDs are the existing scene
+serials, and skin retirement releases the arrays. The per-mesh mapping scan
+is deleted. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-skin-mesh-indexes-20261011-build.log` and
+`/tmp/qa-ta3196-skin-mesh-indexes-20261011-core.log`.
+Non-source skin image binding is the remaining related draw-time reader.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

@@ -311,6 +311,7 @@ static bool register_source_skin(qa_q3_presentation_assets *a, const char *path,
             }
         }
     }
+    if (ok) ok = qa_model_skin_map_prepare(&skin->map, error);
     if (ok && skin->map.count) {
         skin->materials = calloc(skin->map.count, sizeof(*skin->materials));
         if (!skin->materials) ok = q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source skin shader receipts");

@@ -179,12 +179,50 @@ static bool skin_token(model_reader *r, char out[1025], bool *present) {
     out[length] = '\0';
     return true;
 }
+typedef struct model_skin_binding {
+    struct model_skin_binding *next;
+    uint64_t model;
+    size_t indexes[];
+} model_skin_binding;
+struct qa_model_skin_cache { model_skin_binding *models; };
+bool qa_model_skin_map_prepare(qa_model_skin_map *map, qa_error *error) {
+    if (map->cache || !map->count) return true;
+    map->cache = calloc(1, sizeof(*map->cache));
+    if (map->cache) return true;
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining skin mesh bindings"); return false;
+}
+bool qa_model_skin_map_resolve(const qa_model_skin_map *map, uint64_t model,
+    const qa_string_id *surfaces, size_t stride, size_t count, const size_t **indexes, qa_error *error) {
+    *indexes = NULL;
+    if (!map->count || !count) return true;
+    for (model_skin_binding *binding = map->cache->models; binding; binding = binding->next)
+        if (binding->model == model) { *indexes = binding->indexes; return true; }
+    if (count > (SIZE_MAX - sizeof(model_skin_binding)) / sizeof(size_t)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Skin mesh binding extent overflows"); return false;
+    }
+    model_skin_binding *binding = malloc(sizeof(*binding) + count * sizeof(*binding->indexes));
+    if (!binding) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining skin mesh indexes"); return false; }
+    for (size_t mesh = 0; mesh < count; ++mesh) {
+        qa_string_id surface;
+        memcpy(&surface, (const uint8_t *)surfaces + mesh * stride, sizeof(surface));
+        binding->indexes[mesh] = SIZE_MAX;
+        for (size_t i = 0; i < map->count; ++i)
+            if (map->mappings[i].surface == surface) { binding->indexes[mesh] = i; break; }
+    }
+    binding->model = model; binding->next = map->cache->models;
+    map->cache->models = binding; *indexes = binding->indexes; return true;
+}
 void qa_model_skin_map_free(qa_model_skin_map *map) {
     if (!map)
         return;
     for (size_t i = 0; i < map->count; ++i)
         free(map->mappings[i].shader);
     free(map->mappings);
+    if (map->cache) {
+        model_skin_binding *binding = map->cache->models;
+        while (binding) { model_skin_binding *next = binding->next; free(binding); binding = next; }
+        free(map->cache);
+    }
     qa_strings_destroy(map->strings);
     memset(map, 0, sizeof(*map));
 }
@@ -243,6 +281,7 @@ bool qa_model_skin_map_load(qa_bytes text, qa_strings *strings, qa_model_skin_ma
         memcpy(entry->shader, shader, shader_length + 1);
     }
     map.capacity = capacity;
+    if (!qa_model_skin_map_prepare(&map, error)) goto fail;
     *out = map;
     return true;
 fail:

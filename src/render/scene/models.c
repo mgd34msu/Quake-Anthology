@@ -830,7 +830,8 @@ static void repair_frames(const qa_scene_model *model, qa_scene_model_input *inp
 }
 
 static bool select_image(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
-                          scene_model_image *external, qa_scene_frame *frame, scene_model_image **out, qa_error *error) {
+                          const size_t *skin_mappings, scene_model_image *external,
+                          qa_scene_frame *frame, scene_model_image **out, qa_error *error) {
     const qa_model_mesh *mesh = &model->source->meshes[index];
     *out = NULL;
     if (input->indexed_skin && model->source->format == QA_MODEL_MDL)
@@ -840,20 +841,19 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
         (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MD5);
     if ((input->custom_material && custom_allowed) || shell_image) return true;
     if (input->custom_skin && custom_allowed) {
-        qa_string_id name = model->meshes[index].surface;
-        for (size_t i = 0; i < input->custom_skin->count; ++i)
-            if (input->custom_skin->mappings[i].surface == name) {
-                if (input->custom_skin_materials) {
-                    external->material = input->custom_skin_materials[i];
-                    *out = external; return true;
-                }
-                if (input->material_library) {
-                    if (!scene_model_material(model, input->material_library,
-                        input->custom_skin->mappings[i].shader_id, &external->material, error)) return false;
-                    *out = external; return true;
-                }
-                return scene_model_external(model, input->custom_skin->mappings[i].shader, frame, out, error);
+        size_t i = skin_mappings ? skin_mappings[index] : SIZE_MAX;
+        if (i != SIZE_MAX) {
+            if (input->custom_skin_materials) {
+                external->material = input->custom_skin_materials[i];
+                *out = external; return true;
             }
+            if (input->material_library) {
+                if (!scene_model_material(model, input->material_library,
+                    input->custom_skin->mappings[i].shader_id, &external->material, error)) return false;
+                *out = external; return true;
+            }
+            return scene_model_external(model, input->custom_skin->mappings[i].shader, frame, out, error);
+        }
         return true;
     }
     const qa_model *skin_source = input->replacement ? input->replacement->source : model->source;
@@ -1619,6 +1619,13 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         if (!scene_model_sprite_submit(model, &input, input.frame, frame, error)) return false;
     } else if (visible) {
         uint32_t first = 0, count = model->source->mesh_count;
+        const size_t *skin_mappings = NULL;
+        if (input.custom_skin && model->source->format != QA_MODEL_MDL &&
+            !input.custom_material && !(scene_model_has_shell(&input) &&
+                (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MD5)) &&
+            !qa_model_skin_map_resolve(input.custom_skin, model->identity,
+                count ? &model->meshes[0].surface : NULL, sizeof(*model->meshes), count,
+                &skin_mappings, error)) return false;
         if (model->source->lod_count) {
             uint32_t lod = input.lod < model->source->lod_count ? input.lod : model->source->lod_count - 1;
             first = model->source->lods[lod].first_mesh; count = model->source->lods[lod].mesh_count;
@@ -1646,7 +1653,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 if (!deferred_mesh && !mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
             }
             if (!mesh_visible) continue;
-            if (!select_image(model, &input, i, &external, frame, &image, error)) return false;
+            if (!select_image(model, &input, i, skin_mappings, &external, frame, &image, error)) return false;
             if (deferred_mesh) {
                 if (image && image->material && !scene_model_has_shell(&input)) {
                     if (!mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
