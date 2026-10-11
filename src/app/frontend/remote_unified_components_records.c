@@ -184,11 +184,9 @@ void q3remote_component_frame_free(remote_component_frame *f)
     if(lease) qa_unified_frame_lease_release(lease); else free(f);
 }
 static bool player_event_read(frontend_unified_components *o,const qa_unified_presentation_event *row,
-    remote_component **target,remote_component_event *out,bool *handled,qa_error *e)
+    remote_component **target,application_q3_scene_player_event *out,bool *handled,qa_error *e)
 {
     *handled=false; *target=NULL;
-    if(!o||!row||!frontend_unified_components_current(o)||o->busy)
-        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component event lost its actual replica roster");
     if(row->payload.kind!=QA_UNIFIED_PRESENTATION_Q3||row->payload.value.q3.kind!=QA_UNIFIED_Q3_PLAYER_EVENT) return true;
     const qa_unified_q3_event *event=&row->payload.value.q3;
     qa_string_id provider=row->provider_id,content=row->content_id;
@@ -197,6 +195,7 @@ static bool player_event_read(frontend_unified_components *o,const qa_unified_pr
         remote_component *candidate=q3remote_component_physical_at(o,i);
         if(!candidate||!candidate->state.player_events||provider!=candidate->state.provider_name) continue;
         known=true;
+        if(row->owner.provider&&row->owner.generation!=candidate->state.owner_generation) continue;
         if(row->module_id==candidate->state.module_name&&row->module_artifact_id==candidate->state.module_artifact&&content==candidate->state.content_name&&event->abi==candidate->state.abi) r=candidate;
     }
     if(!r) return !known||q3remote_component_fail(e,QA_ERROR_FORMAT,"Component event has no actual admitted gameplay identity");
@@ -210,9 +209,9 @@ static bool player_event_read(frontend_unified_components *o,const qa_unified_pr
             !frontend_remote_unified_player(o->replica,&viewer,&slot)) return false;
         if(!qa_actor_id_equal(receiver,viewer)) return true;
     }
-    application_q3_scene_player_event *v=&out->value;
+    application_q3_scene_player_event *v=out;
     if(!frontend_remote_unified_source_actor(o->replica,frame,event->actor,false,&v->actor,e)) return false;
-    out->sequence=row->sequence; v->event=event->event; v->parameter=event->parameter;
+    v->event=event->event; v->parameter=event->parameter;
     v->time_ms=event->time_ms; v->player=event->player; v->external=event->external;
     v->source_sequence=event->source_sequence; v->origin=event->origin;
     *target=r->retired?NULL:r; return true;
@@ -221,22 +220,32 @@ bool frontend_unified_components_player_event_validate(frontend_unified_componen
     bool *handled,qa_error *e)
 {
     if(!handled) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component event requires a reached-handler result");
-    remote_component *target=NULL; remote_component_event event={0};
+    if(!o||!row||!frontend_unified_components_current(o)||o->busy)
+        return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component event lost its actual replica roster");
+    remote_component *target=NULL; application_q3_scene_player_event event={0};
     return player_event_read(o,row,&target,&event,handled,e);
 }
-bool frontend_unified_components_player_event(frontend_unified_components *o,const qa_unified_presentation_event *row,
-    bool *handled,qa_error *e)
+bool q3remote_component_events_consume(remote_component *component,qa_error *e)
 {
-    if(!handled) return q3remote_component_fail(e,QA_ERROR_ARGUMENT,"Component event requires a reached-handler result");
-    remote_component *target=NULL; remote_component_event event={0};
-    if(!player_event_read(o,row,&target,&event,handled,e)) return false;
-    if(!target||(target->event_present&&event.sequence<=target->event_sequence)) return true;
-    size_t slot;
-    remote_component_event *owned=qa_pool_take(&o->event_records,&slot);
-    if(!owned) return q3remote_component_fail(e,QA_ERROR_MEMORY,"Retaining reached original component player event");
-    *owned=event; owned->slot=slot; remote_component_event **tail=&target->events;
-    while(*tail) tail=&(*tail)->next;
-    *tail=owned; target->event_sequence=event.sequence; target->event_present=true; return true;
+    const qa_unified_presentation_event *row;
+    while((row=frontend_unified_events_cursor_read(&component->event_cursor))) {
+        if(row->payload.kind==QA_UNIFIED_PRESENTATION_Q3 &&
+            row->payload.value.q3.kind==QA_UNIFIED_Q3_PLAYER_EVENT &&
+            row->provider_id==component->state.provider_name &&
+            (!row->owner.provider||row->owner.generation==component->state.owner_generation) &&
+            (!component->event_present||row->sequence>component->event_sequence)) {
+            remote_component *target=NULL;
+            application_q3_scene_player_event event={0};
+            bool handled;
+            if(!player_event_read(component->parent,row,&target,&event,&handled,e)) return false;
+            if(target==component) {
+                if(!application_q3_scene_consume(component->scene,&event,row->sequence,e)) return false;
+                component->event_sequence=row->sequence; component->event_present=true;
+            }
+        }
+        frontend_unified_events_cursor_advance(&component->event_cursor);
+    }
+    return true;
 }
 bool q3remote_component_frame_read(frontend_unified_components *o,remote_component *row,const qa_unified_document *d,
     const qa_unified_component_source *source,remote_component_frame **out,qa_error *e)

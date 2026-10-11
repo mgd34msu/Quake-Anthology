@@ -8,7 +8,6 @@
 #include "component_scene.h"
 #include "qa/network_unified_control.h"
 #include "qa/network_unified_frame_pool.h"
-#include "qa/pool.h"
 
 typedef struct remote_component_state {
     qa_unified_component_identity identity;
@@ -39,12 +38,6 @@ typedef struct remote_component_frame {
     remote_component_state source;
     bool has_scene;
 } remote_component_frame;
-typedef struct remote_component_event {
-    application_q3_scene_player_event value;
-    uint64_t sequence;
-    size_t slot;
-    struct remote_component_event *next;
-} remote_component_event;
 typedef struct remote_component_polygon_admission {
     uint32_t ordinal;
     bool reached,admitted,emitted;
@@ -88,7 +81,7 @@ typedef struct remote_component {
     uint64_t picture_sequence;
     size_t pictures_submitted;
     bool pictures_present;
-    remote_component_event *events;
+    frontend_unified_presentation_cursor event_cursor;
     uint64_t event_sequence;
     bool event_present;
     qa_q3_source_scene_bank *submission_bank;
@@ -105,8 +98,6 @@ struct frontend_unified_components {
     frontend_unified_media *media;
     qa_executable_recipe *recipe;
     frontend_unified_events *events;
-    qa_arena event_storage;
-    qa_pool event_records;
     remote_component **rows;
     size_t count;
     remote_component *retired;
@@ -136,6 +127,7 @@ bool q3remote_component_close(remote_component **,qa_error *);
 bool q3remote_component_retire(remote_component *,qa_error *);
 bool q3remote_component_open(remote_component *,qa_error *);
 bool q3remote_component_state_qualify(frontend_unified_components *,remote_component_state *,qa_error *);
+bool q3remote_component_events_consume(remote_component *,qa_error *);
 bool q3remote_component_packet_read(remote_component *,size_t,frontend_component_scene_packet *,qa_error *);
 void q3remote_component_admissions_clear(remote_component *);
 size_t q3remote_component_physical_count(const frontend_unified_components *);

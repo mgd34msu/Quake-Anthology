@@ -42,6 +42,7 @@ struct frontend_unified_events {
     unified_received_event *retained;
     uint64_t presentation_cursor, simulation_cursor;
     size_t presentation_at, simulation_at;
+    frontend_unified_presentation_cursor *consumers;
     unified_received_event *delivery;
     unified_event_resource *resources;
     unified_component_owner *components;
@@ -57,6 +58,62 @@ struct frontend_unified_events {
 
 const qa_unified_document *frontend_unified_events_document(const frontend_unified_events *o)
 { return o && o->delivery ? o->delivery->delivery.document : NULL; }
+
+static void records_retire(frontend_unified_events *o)
+{
+    uint64_t next=o->presentation_cursor<o->simulation_cursor?
+        o->presentation_cursor:o->simulation_cursor;
+    for(const frontend_unified_presentation_cursor *c=o->consumers;c;c=c->next)
+        if(c->record<next) next=c->record;
+    for(uint64_t id=qa_event_ring_first(o->records);id<next;++id) {
+        unified_received_event *record=(unified_received_event *)qa_event_ring_at(o->records,id);
+        qa_unified_document *document=record->delivery.document;
+        record->delivery.document=NULL;
+        qa_unified_document_destroy(document);
+    }
+    qa_event_ring_retire(o->records,next);
+}
+
+void frontend_unified_events_cursor_bind(frontend_unified_events *o,
+    frontend_unified_presentation_cursor *cursor)
+{
+    if(cursor->owner==o) return;
+    frontend_unified_events_cursor_release(cursor);
+    *cursor=(frontend_unified_presentation_cursor){.owner=o,.next=o->consumers,
+        .record=o->presentation_cursor,.at=o->presentation_at};
+    o->consumers=cursor;
+}
+void frontend_unified_events_cursor_release(frontend_unified_presentation_cursor *cursor)
+{
+    frontend_unified_events *o=cursor->owner;
+    if(!o) return;
+    frontend_unified_presentation_cursor **slot=&o->consumers;
+    while(*slot!=cursor) slot=&(*slot)->next;
+    *slot=cursor->next;
+    *cursor=(frontend_unified_presentation_cursor){0};
+    records_retire(o);
+}
+const qa_unified_presentation_event *frontend_unified_events_cursor_read(
+    frontend_unified_presentation_cursor *cursor)
+{
+    frontend_unified_events *o=cursor->owner;
+    if(!o) return NULL;
+    while(cursor->record<o->presentation_cursor ||
+        (cursor->record==o->presentation_cursor && cursor->at<o->presentation_at)) {
+        const unified_received_event *record=qa_event_ring_at(o->records,cursor->record);
+        const qa_unified_frame_events *events=qa_unified_document_events(record->delivery.document);
+        if(events && cursor->at<events->presentation_count)
+            return events->presentation+cursor->at;
+        ++cursor->record; cursor->at=0;
+        records_retire(o);
+    }
+    return NULL;
+}
+void frontend_unified_events_cursor_advance(frontend_unified_presentation_cursor *cursor)
+{
+    ++cursor->at;
+    (void)frontend_unified_events_cursor_read(cursor);
+}
 
 static unified_received_event *record_begin(frontend_unified_events *o,
     qa_event_transaction *transaction,qa_error *error)
@@ -74,13 +131,16 @@ static unified_received_event *record_begin(frontend_unified_events *o,
 }
 static void metadata_retire(frontend_unified_events *o)
 {
-    uint64_t first=qa_event_ring_first(o->records),next=qa_event_ring_next(o->records);
-    while (first<next) {
-        const unified_received_event *record=qa_event_ring_at(o->records,first);
+    uint64_t next=qa_event_ring_next(o->records);
+    while (o->presentation_cursor<next || o->simulation_cursor<next) {
+        uint64_t id=o->presentation_cursor<o->simulation_cursor?
+            o->presentation_cursor:o->simulation_cursor;
+        const unified_received_event *record=qa_event_ring_at(o->records,id);
         if (record->delivery.document) break;
-        o->presentation_cursor=o->simulation_cursor=++first;
-        qa_event_ring_retire(o->records,first);
+        if(o->presentation_cursor==id) { ++o->presentation_cursor; o->presentation_at=0; }
+        if(o->simulation_cursor==id) { ++o->simulation_cursor; o->simulation_at=0; }
     }
+    records_retire(o);
 }
 static void metadata_commit(frontend_unified_events *o,qa_event_transaction *transaction,
     unified_received_event *record)
@@ -572,7 +632,8 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
     o->busy=true; bool okay=true;
     while (okay && !o->replica->retired) {
         metadata_retire(o);
-        uint64_t id=qa_event_ring_first(o->records);
+        uint64_t id=o->presentation_cursor<o->simulation_cursor?
+            o->presentation_cursor:o->simulation_cursor;
         if (id==qa_event_ring_next(o->records)) break;
         unified_received_event *record=(unified_received_event *)qa_event_ring_at(o->records,id);
         const qa_unified_frame_events *events=qa_unified_document_events(record->delivery.document);
@@ -606,11 +667,7 @@ bool frontend_unified_events_enter(frontend_unified_events *o,qa_error *e)
             ++o->simulation_cursor; o->simulation_at=0;
         }
         o->delivery=NULL;
-        if (o->presentation_cursor>id && o->simulation_cursor>id) {
-            qa_unified_document_destroy(record->delivery.document);
-            qa_event_ring_retire(o->records,o->presentation_cursor<o->simulation_cursor?
-                o->presentation_cursor:o->simulation_cursor);
-        }
+        records_retire(o);
     }
     o->delivery=NULL; o->busy=false; return okay;
 }
@@ -637,6 +694,11 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
     if (!frontend_unified_events_idle(o)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event owner still has a live callback");
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (o->owns_audio && o->frontend->audio && !frontend_audio_stop_owner(o->frontend,o->options.audio_owner,d->physical_seat,e)) return false;
+    while(o->consumers) {
+        frontend_unified_presentation_cursor *cursor=o->consumers;
+        o->consumers=cursor->next;
+        *cursor=(frontend_unified_presentation_cursor){0};
+    }
     for (uint64_t id=qa_event_ring_first(o->records);id<qa_event_ring_next(o->records);++id) {
         const unified_received_event *record=qa_event_ring_at(o->records,id);
         qa_unified_document_destroy(record->delivery.document);

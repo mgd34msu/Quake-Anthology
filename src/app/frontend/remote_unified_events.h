@@ -6,6 +6,12 @@
 #include "qa/unified_frame_components.h"
 
 typedef struct frontend_unified_events frontend_unified_events;
+typedef struct frontend_unified_presentation_cursor {
+    frontend_unified_events *owner;
+    struct frontend_unified_presentation_cursor *next;
+    uint64_t record;
+    size_t at;
+} frontend_unified_presentation_cursor;
 typedef struct frontend_unified_event_options {
     uint64_t audio_owner;
     void *context;
@@ -25,6 +31,13 @@ bool frontend_unified_events_create(qa_frontend *, frontend_remote_unified *,
 /* Borrow the currently delivered immutable event document. A persistent
  * presentation owner retains it instead of copying the event and its payload. */
 const qa_unified_document *frontend_unified_events_document(const frontend_unified_events *);
+/* Delayed consumers borrow released presentation rows from the received store.
+ * Binding starts at the current delivery frontier; advancing after a successful
+ * callback releases custody. The minimum subscribed cursor retires records. */
+void frontend_unified_events_cursor_bind(frontend_unified_events *, frontend_unified_presentation_cursor *);
+void frontend_unified_events_cursor_release(frontend_unified_presentation_cursor *);
+const qa_unified_presentation_event *frontend_unified_events_cursor_read(frontend_unified_presentation_cursor *);
+void frontend_unified_events_cursor_advance(frontend_unified_presentation_cursor *);
 bool frontend_unified_events_control(frontend_unified_events *, const qa_unified_document *, qa_error *);
 bool frontend_unified_events_decode(frontend_unified_events *, qa_bytes, qa_unified_held **, bool *ready, qa_error *);
 /* Literal reliable component metadata is retained independently of the live

@@ -155,7 +155,7 @@ static bool presentation(void *context,const qa_unified_presentation_event *row,
     }
     if (p->components) {
         bool handled=false;
-        if (!frontend_unified_components_player_event(p->components,row,&handled,error)) return false;
+        if (!frontend_unified_components_player_event_validate(p->components,row,&handled,error)) return false;
         if (handled) { *mirrored=false; return true; }
     }
     if (row->family==QA_GAME_Q1) {
