@@ -320,7 +320,7 @@ bool q2m_widow_death_action(q2m_context *context, q2m_callback_id name,
           start ? context->game->runtime_names[Q2_NAME_RESOURCE_Q2_WIDOWBEAMOUT] : context->game->runtime_names[Q2_NAME_RESOURCE_Q2_WIDOWSPLASH], start ? 20001 + (int)i : 1, error)) return false;
       if (!q2m_alive(context)) return true;
     }
-    if (start) return q2m_sound(context, QA_Q2_SOUND_MISC_BWIDOWBEAMOUT, 2, 1, error);
+    if (start) return q2m_sound(context, Q2_NAME_RESOURCE_MISC_BWIDOWBEAMOUT_WAV, 2, 1, error);
     qa_vec3 point = context->body.origin; point.z += 36;
     if (!effect(context->game, context->actor->id, point, context->game->runtime_names[Q2_NAME_RESOURCE_Q2_BOSSTPORT], 1, error) ||
         !spawn_legs(context, error)) return false;

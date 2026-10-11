@@ -461,7 +461,7 @@ bool q2m_parasite_callback(q2m_context *context, q2m_callback_id name, bool *han
             monster->next_frame = 18;
         else if (q2_random_bounded(context->game, 2)) {
             monster->next_frame = 30;
-            return q2m_sound(context, QA_Q2_SOUND_PARASITE_PARATCK4, 1, 1, error);
+            return q2m_sound(context, Q2_NAME_RESOURCE_PARASITE_PARATCK4_WAV, 1, 1, error);
         }
     } else if ((name == Q2M_CALLBACK_parasite_run) || (name == Q2M_CALLBACK_parasite_start_run)) {
         bool start = (name == Q2M_CALLBACK_parasite_start_run);
@@ -470,16 +470,15 @@ bool q2m_parasite_callback(q2m_context *context, q2m_callback_id name, bool *han
         return !q2m_alive(context) || q2m_set_move(context, monster->stand_ground ? Q2M_MOVE_parasite_move_stand
              : start ? Q2M_MOVE_parasite_move_start_run : Q2M_MOVE_parasite_move_run, false, error);
     } else if (name == Q2M_CALLBACK_parasite_break_noise) {
-        return q2m_sound(context, QA_Q2_SOUND_PARASITE_PARSRCH1, 2, 1, error);
+        return q2m_sound(context, Q2_NAME_RESOURCE_PARASITE_PARSRCH1_WAV, 2, 1, error);
     } else if (name == Q2M_CALLBACK_parasite_break_sound) {
         monster->pain_ns = q2m_after(context->game->now_ns, 3);
-        return q2m_sound(context, q2m_random(context->game) < .5f ? QA_Q2_SOUND_PARASITE_PARPAIN1
-                                                               : QA_Q2_SOUND_PARASITE_PARPAIN2, 2, 1, error);
+        return q2m_sound(context, q2m_random(context->game) < .5f ? Q2_NAME_RESOURCE_PARASITE_PARPAIN1_WAV
+                                                               : Q2_NAME_RESOURCE_PARASITE_PARPAIN2_WAV, 2, 1, error);
     } else if ((name == Q2M_CALLBACK_parasite_tap) || (name == Q2M_CALLBACK_parasite_scratch)) {
-        const char *path = (name == Q2M_CALLBACK_parasite_tap) ? QA_Q2_SOUND_PARASITE_PARIDLE1 : QA_Q2_SOUND_PARASITE_PARIDLE2;
-        qa_string_id resource;
-        return qa_builtin_resource(&context->game->services, path, &resource, error) &&
-            qa_builtin_emit(&context->game->services, &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
+        q2_runtime_name path = (name == Q2M_CALLBACK_parasite_tap) ? Q2_NAME_RESOURCE_PARASITE_PARIDLE1_WAV : Q2_NAME_RESOURCE_PARASITE_PARIDLE2_WAV;
+        qa_string_id resource=context->game->runtime_names[path];
+        return qa_builtin_emit(&context->game->services, &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
                 .family = QA_GAME_Q2, .provider = context->game->options.owner,
                 .actor = context->actor->id, .resource = resource, .channel = 1,
                 .origin = context->body.origin, .volume = .75f, .attenuation = 2.75f,

@@ -347,11 +347,12 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
     g->services = *services;
     g->options = *options;
     static const char *const runtime_names[] = {
+        NULL,
 #define Q2_RUNTIME_NAME_TEXT(key, text) text,
         Q2_RUNTIME_NAME_LIST(Q2_RUNTIME_NAME_TEXT)
 #undef Q2_RUNTIME_NAME_TEXT
     };
-    for (unsigned i = 0; i < Q2_NAME_COUNT; ++i)
+    for (unsigned i = 1; i < Q2_NAME_COUNT; ++i)
         if (!qa_strings_intern_cstr(qa_session_strings(services->session), runtime_names[i],
                                     &g->runtime_names[i], e)) {
             close_game(g);

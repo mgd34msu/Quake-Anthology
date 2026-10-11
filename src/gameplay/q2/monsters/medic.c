@@ -327,11 +327,11 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
     return q2m_found_target(c, best, error);
 }
 
-static bool sound(q2m_context *c, const char *normal, const char *commander,
+static bool sound(q2m_context *c, q2_runtime_name normal, q2_runtime_name commander,
                    int channel, float attenuation, qa_error *error) {
     if (!q2m_alive(c))
         return true;
-    const char *path = normal;
+    q2_runtime_name path = normal;
     if (rogue(c)) {
         qa_combat_state combat;
         if (!qa_combat_read(c->game->services.combat, c->actor->id, &combat, error))
@@ -649,8 +649,8 @@ static bool cable(q2m_context *c, qa_error *error) {
             if (!q2m_alive(c) || !q2m_alive(&target))
                 return true;
         }
-        const char *path = rogue(c) && c->combat.mass != 400
-                               ? QA_Q2_SOUND_MEDIC_COMMANDER_MEDATCK3A : QA_Q2_SOUND_MEDIC_MEDATCK3;
+        q2_runtime_name path = rogue(c) && c->combat.mass != 400
+                               ? Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDATCK3A_WAV : Q2_NAME_RESOURCE_MEDIC_MEDATCK3_WAV;
         if (rogue(c)) {
             if (!qa_world_body_read(c->game->services.world, target_id, &target.body, error))
                 return !q2m_alive(c) || !q2m_alive(&target);
@@ -695,8 +695,8 @@ static bool cable(q2m_context *c, qa_error *error) {
             return !q2m_alive(c);
         if (!q2m_alive(c) || !q2m_alive(&target))
             return true;
-        const char *path = rogue(c) && c->combat.mass != 400
-                               ? QA_Q2_SOUND_MEDIC_COMMANDER_MEDATCK4A : QA_Q2_SOUND_MEDIC_MEDATCK4;
+        q2_runtime_name path = rogue(c) && c->combat.mass != 400
+                               ? Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDATCK4A_WAV : Q2_NAME_RESOURCE_MEDIC_MEDATCK4_WAV;
         if (!q2m_sound_at(c, path, 1, 1, c->body.origin, error))
             return false;
     }
@@ -719,7 +719,7 @@ static bool cable(q2m_context *c, qa_error *error) {
     qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
     qa_vec3 end = body.origin;
     end.z += (body.bounds.mins.z + body.bounds.maxs.z) * .5f;
-    return q2m_emit(c, QA_BUILTIN_BEAM, "q2:medic-cable", 0,
+    return q2m_emit(c, QA_BUILTIN_BEAM, Q2_NAME_RESOURCE_Q2_MEDIC_CABLE, 0,
                      qa_vec_add(start, qa_vec_scale(forward, 8)), end, 1, error);
 }
 
@@ -891,9 +891,9 @@ bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
     if (name == Q2M_CALLBACK_medic_cable_attack)
         return cable(c, error);
     if (name == Q2M_CALLBACK_medic_hook_launch)
-        return sound(c, QA_Q2_SOUND_MEDIC_MEDATCK2, QA_Q2_SOUND_MEDIC_COMMANDER_MEDATCK2C, 1, 1, error);
+        return sound(c, Q2_NAME_RESOURCE_MEDIC_MEDATCK2_WAV, Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDATCK2C_WAV, 1, 1, error);
     if (name == Q2M_CALLBACK_medic_hook_retract) {
-        bool ok = q2m_sound(c, QA_Q2_SOUND_MEDIC_MEDATCK5, 1, 1, error);
+        bool ok = q2m_sound(c, Q2_NAME_RESOURCE_MEDIC_MEDATCK5_WAV, 1, 1, error);
         if (!ok || !q2m_alive(c))
             return ok;
         if (!rogue(c)) {
@@ -957,8 +957,8 @@ bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
     if (run || search || (name == Q2M_CALLBACK_medic_idle)) {
         if (run && (rogue(c) || c->game->options.product != QA_Q2_XATRIX))
             finish_dodge(c);
-        if (!run && !sound(c, search ? QA_Q2_SOUND_MEDIC_MEDSRCH1 : QA_Q2_SOUND_MEDIC_IDLE,
-                           search ? QA_Q2_SOUND_MEDIC_COMMANDER_MEDSRCH : QA_Q2_SOUND_MEDIC_COMMANDER_MEDIDLE,
+        if (!run && !sound(c, search ? Q2_NAME_RESOURCE_MEDIC_MEDSRCH1_WAV : Q2_NAME_RESOURCE_MEDIC_IDLE_WAV,
+                           search ? Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDSRCH_WAV : Q2_NAME_RESOURCE_MEDIC_COMMANDER_MEDIDLE_WAV,
                            2, 2, error))
             return false;
         if (!q2m_alive(c))

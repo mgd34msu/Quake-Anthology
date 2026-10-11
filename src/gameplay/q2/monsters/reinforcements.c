@@ -466,7 +466,7 @@ bool q2m_widow_attack_move(q2m_context *context, bool second, float distance, q2
         }
     }
     return !*move || (*move != Q2M_MOVE_widow_move_attack_pre_rail) ||
-           q2m_sound(context, QA_Q2_SOUND_GLADIATOR_RAILGUN, 1, 1, error);
+           q2m_sound(context, Q2_NAME_RESOURCE_GLADIATOR_RAILGUN_WAV, 1, 1, error);
 }
 
 bool q2m_widow_summon(q2m_context *context, bool second, bool grow, qa_error *error) {
@@ -678,7 +678,7 @@ bool q2m_summon_callback(q2m_context *context, q2m_callback_id callback, bool *h
                          qa_error *error) {
     *handled = true;
     if (callback == Q2M_CALLBACK_medic_start_spawn) {
-        if (!q2m_sound(context, QA_Q2_SOUND_MEDIC_COMMANDER_MONSTERSPAWN1, 1, 1, error))
+        if (!q2m_sound(context, Q2_NAME_RESOURCE_MEDIC_COMMANDER_MONSTERSPAWN1_WAV, 1, 1, error))
             return false;
         if (q2m_alive(context))
             context->monster->next_frame = 224;

@@ -127,7 +127,7 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
     if (c->game->now_ns < m->pain_ns)
         return true;
     m->pain_ns = q2m_after(c->game->now_ns, 3);
-    if (rerelease && !q2m_sound(c, QA_Q2_SOUND_STALKER_PAIN, 2, 1, error))
+    if (rerelease && !q2m_sound(c, Q2_NAME_RESOURCE_STALKER_PAIN_WAV, 2, 1, error))
         return false;
     if (!q2m_alive(c) || (m->pending_damage <= 10 && (!rerelease || !chainfist)))
         return true;
@@ -136,7 +136,7 @@ bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *err
             return false;
     } else if ((!rerelease || reacts) && !q2m_set_move(c, Q2M_MOVE_stalker_move_pain, true, error))
         return false;
-    return rerelease || !q2m_alive(c) || q2m_sound(c, QA_Q2_SOUND_STALKER_PAIN, 1, 1, error);
+    return rerelease || !q2m_alive(c) || q2m_sound(c, Q2_NAME_RESOURCE_STALKER_PAIN_WAV, 1, 1, error);
 }
 static bool jump_straight(q2m_context *c, qa_error *error) {
     if (c->monster->dead)
@@ -580,7 +580,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
         return true;
     if (name == Q2M_CALLBACK_stalker_footstep)
         return !qa_actor_reference_present(c->body.ground) ||
-               q2m_emit(c, QA_BUILTIN_EFFECT, "q2:entity-event", 8, c->body.origin,
+               q2m_emit(c, QA_BUILTIN_EFFECT, Q2_NAME_RESOURCE_Q2_ENTITY_EVENT, 8, c->body.origin,
                           qa_v3(0, 0, 0), 0, error);
     if (name == Q2M_CALLBACK_stalker_heal) {
         int skill = c->game->options.skill;

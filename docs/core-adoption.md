@@ -866,6 +866,15 @@ Saved components bind the same IDs on load. Explicit wire layouts retain their
 original fields; receiver bindings are not serialized. Normal build and seven
 core suites pass. Expanded item 5 is migrated; items 6, 10 and 14 remain open.
 
+Names leftovers item 14, Q2 monsters: sound/effect helpers use the game runtime
+name selectors admitted at construction. Pain/death/footstep variants use fixed
+selectors with the original random choices, rather than formatted paths.
+Monster callbacks, weapon loops, environment sounds, laser sparks, beam sound,
+boss explosion and lightning model emitters read retained IDs. Their listed
+per-event interning and beam-name comparisons are deleted. Normal build and
+seven core suites pass. All expanded item 14 emitter sites are migrated; names
+items 6 and 10 remain open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

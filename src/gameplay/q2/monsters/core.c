@@ -92,7 +92,7 @@ bool q2m_link(q2m_context *context, qa_error *error) {
 }
 
 bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
-              const char *resource, int code, qa_vec3 origin, qa_vec3 end,
+              q2_runtime_name resource, int code, qa_vec3 origin, qa_vec3 end,
               float value, qa_error *error) {
   if (!q2m_alive(context))
     return true;
@@ -113,7 +113,7 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
       .frame = context->monster->frame,
   };
   if (kind==QA_BUILTIN_BEAM && resource &&
-      (!strcmp(resource,"q2:parasite") || !strcmp(resource,"q2:medic-cable")))
+      (resource==Q2_NAME_RESOURCE_Q2_PARASITE || resource==Q2_NAME_RESOURCE_Q2_MEDIC_CABLE))
     event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PVS,context->body.origin};
   if (kind == QA_BUILTIN_MUZZLE) {
     qa_body_state body;
@@ -129,14 +129,11 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
                              ? context->monster->entity_scale
                              : 1.0f;
   }
-  if (resource != NULL &&
-      !qa_builtin_resource(&context->game->services, resource, &event.resource,
-                           error))
-    return false;
+  event.resource=context->game->runtime_names[resource];
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
-static bool sound_at(q2m_context *context, const char *path, int channel,
+static bool sound_at(q2m_context *context, q2_runtime_name path, int channel,
                      float attenuation, float volume, qa_vec3 origin,
                      qa_error *error) {
   if (!q2m_alive(context))
@@ -154,18 +151,16 @@ static bool sound_at(q2m_context *context, const char *path, int channel,
       .channel = channel,
       .frame = context->monster->frame,
   };
-  if (!qa_builtin_resource(&context->game->services, path, &event.resource,
-                           error))
-    return false;
+  event.resource=context->game->runtime_names[path];
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
-bool q2m_sound_at(q2m_context *context, const char *path, int channel,
+bool q2m_sound_at(q2m_context *context, q2_runtime_name path, int channel,
                   float attenuation, qa_vec3 origin, qa_error *error) {
   return sound_at(context, path, channel, attenuation, 1.0f, origin, error);
 }
 
-bool q2m_sound_volume(q2m_context *context, const char *path, int channel,
+bool q2m_sound_volume(q2m_context *context, q2_runtime_name path, int channel,
                        float attenuation, float volume, qa_error *error) {
   if (!q2m_alive(context))
     return true;
@@ -179,7 +174,7 @@ bool q2m_sound_volume(q2m_context *context, const char *path, int channel,
                   error);
 }
 
-bool q2m_sound(q2m_context *context, const char *path, int channel,
+bool q2m_sound(q2m_context *context, q2_runtime_name path, int channel,
                float attenuation, qa_error *error) {
   return q2m_sound_volume(context, path, channel, attenuation, 1.0f, error);
 }

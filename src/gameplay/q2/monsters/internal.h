@@ -275,7 +275,7 @@ typedef struct q2m_definition {
   q2m_move_id attack_move, attack2_move, melee_move;
   q2m_move_id pain1_move, pain2_move, pain3_move;
   q2m_move_id death1_move, death2_move;
-  const char *sight_sound, *pain_sound, *death_sound, *idle_sound;
+  q2_runtime_name sight_sound, pain_sound, death_sound, idle_sound;
 } q2m_definition;
 
 typedef struct q2m_sound_target {
@@ -393,12 +393,12 @@ bool q2m_refresh(q2m_context *, qa_error *);
 bool q2m_damageable(q2m_context *, bool enabled, qa_error *);
 bool q2m_write_body(q2m_context *, bool link, qa_error *);
 bool q2m_link(q2m_context *, qa_error *);
-bool q2m_emit(q2m_context *, qa_builtin_event_kind, const char *, int, qa_vec3,
+bool q2m_emit(q2m_context *, qa_builtin_event_kind, q2_runtime_name , int, qa_vec3,
               qa_vec3, float, qa_error *);
-bool q2m_sound(q2m_context *, const char *, int, float, qa_error *);
-bool q2m_sound_volume(q2m_context *, const char *, int channel, float attenuation,
+bool q2m_sound(q2m_context *, q2_runtime_name , int, float, qa_error *);
+bool q2m_sound_volume(q2m_context *, q2_runtime_name , int channel, float attenuation,
                        float volume, qa_error *);
-bool q2m_sound_at(q2m_context *, const char *, int, float, qa_vec3, qa_error *);
+bool q2m_sound_at(q2m_context *, q2_runtime_name , int, float, qa_vec3, qa_error *);
 bool q2_player_print(qa_q2_game *, qa_actor_id, int, const char *, qa_error *);
 bool q2m_animation(q2m_context *, qa_error *);
 const q2m_frame *q2m_frame_at(const struct qa_q2_monster *, const q2m_move *, int, qa_error *);
@@ -449,7 +449,7 @@ bool q2m_melee(q2m_context *, float range, float damage, float kick,
                qa_error *);
 bool q2m_hit(q2m_context *, qa_vec3 aim, float damage, float kick, bool *, qa_error *);
 bool q2m_species_melee(q2m_context *, q2m_callback_id, bool *, qa_error *);
-bool q2m_weapon_sound(q2m_context *, const char *path, qa_error *);
+bool q2m_weapon_sound(q2m_context *, q2_runtime_name path, qa_error *);
 bool q2m_jorg_sound_end(q2m_context *, qa_error *);
 bool q2m_soldier_sound_end(q2m_context *, qa_error *);
 bool q2m_stalker_callback(q2m_context *, q2m_callback_id, bool *, qa_error *);

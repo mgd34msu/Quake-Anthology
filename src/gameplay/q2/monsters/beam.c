@@ -51,9 +51,7 @@ static bool spark_event(qa_q2_game *game, q2_actor *actor,
       .count = 10,
       .code = actor->monster->controller_medic ? 0xf1 : 0xf0,
   };
-  if (!qa_builtin_resource(&game->services, "q2:laser-sparks",
-                           &event.resource, error))
-    return false;
+  event.resource=game->runtime_names[Q2_NAME_LASER_SPARKS];
   return qa_builtin_emit(&game->services, &event, error);
 }
 
@@ -378,8 +376,8 @@ static bool source_beam(q2m_context *context, float damage, int channel,
       .provider = game->options.owner, .actor = actor->id,
       .time_ns = game->now_ns, .origin = origin, .volume = 1, .attenuation = 1,
       .flags = rerelease ? 1u : 0u};
-    if (!qa_builtin_resource(&game->services, QA_Q2_SOUND_MISC_LASFLY, &sound.resource, error) ||
-        !qa_builtin_emit(&game->services, &sound, error))
+    sound.resource=game->runtime_names[Q2_NAME_RESOURCE_MISC_LASFLY_WAV];
+    if (!qa_builtin_emit(&game->services, &sound, error))
       return false;
     if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
       return true;
@@ -398,7 +396,7 @@ bool q2m_soldier_laser_beam(q2m_context *context, int flash, qa_error *error) {
 bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
   if (context->game->options.edition == QA_Q2_CLASSIC &&
       q2m_random(context->game) > .8f &&
-      !q2m_sound(context, QA_Q2_SOUND_MISC_LASFLY, 0, 3, error))
+      !q2m_sound(context, Q2_NAME_RESOURCE_MISC_LASFLY_WAV, 0, 3, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -408,7 +406,7 @@ bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
 
 bool q2m_fixbot_laser_beam(q2m_context *context, qa_error *error) {
   if (context->game->options.edition == QA_Q2_CLASSIC &&
-      !q2m_sound(context, QA_Q2_SOUND_MISC_LASFLY, 0, 3, error))
+      !q2m_sound(context, Q2_NAME_RESOURCE_MISC_LASFLY_WAV, 0, 3, error))
     return false;
   if (!q2m_alive(context))
     return true;
@@ -530,8 +528,7 @@ bool q2m_guardian_beam(q2m_context *context, qa_error *error) {
       return false;
     if (!actor || !q2m_alive(context)) return true;
     fresh = true;
-    qa_string_id sound;
-    if (!qa_builtin_resource(&game->services, QA_Q2_SOUND_MISC_LASFLY, &sound, error)) goto failed;
+    qa_string_id sound=game->runtime_names[Q2_NAME_RESOURCE_MISC_LASFLY_WAV];
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
         .provider = game->options.owner, .actor = actor->id, .resource = sound,
         .time_ns = game->now_ns, .origin = context->body.origin,
@@ -724,11 +721,8 @@ static bool boss_exploder_tick(qa_q2_game *game, q2_actor *actor,
       .value = 1.0f,
       .code = controller->count,
   };
-  const char *effect = controller->count % 3 == 0 ? "q2:explosion1"
-                                                   : "q2:explosion1-nl";
-  if (!qa_builtin_resource(&game->services, effect, &event.resource, error) ||
-      !qa_builtin_emit(&game->services, &event, error))
-    return false;
+  event.resource=game->runtime_names[controller->count % 3 == 0 ? Q2_NAME_RESOURCE_Q2_EXPLOSION1 : Q2_NAME_RESOURCE_Q2_EXPLOSION1_NL];
+  if (!qa_builtin_emit(&game->services, &event, error)) return false;
   if (!controller_live(game, actor, controller, Q2M_CONTROLLER_BOSS_EXPLODER))
     return true;
   ++controller->count;
@@ -858,7 +852,7 @@ bool q2m_shambler_lightning(q2m_context *context, bool windup, qa_error *error) 
   static const qa_vec3 right[] = {{28,-38,25},{31,-7,70},{20,0,80},{16,1.2f,81},{27,-11,83}};
   q2_actor *child = source_child(context, Q2M_CONTROLLER_VISUAL_CHILD, 0);
   if (windup) {
-    if (!q2m_sound(context, QA_Q2_SOUND_SHAMBLER_SATTCK1, 1, 1, error))
+    if (!q2m_sound(context, Q2_NAME_RESOURCE_SHAMBLER_SATTCK1_WAV, 1, 1, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -868,11 +862,7 @@ bool q2m_shambler_lightning(q2m_context *context, bool windup, qa_error *error) 
       return false;
     if (!child)
       return true;
-    if (!qa_builtin_resource(&context->game->services, "models/proj/lightning/tris.md2",
-        &child->entity->visual.models[0], error)) {
-      qa_session_release(context->game->services.session, child->id, NULL);
-      return false;
-    }
+    child->entity->visual.models[0]=context->game->runtime_names[Q2_NAME_RESOURCE_MODELS_PROJ_LIGHTNING_TRIS_MD2];
     child->entity->visual.render_flags = 128;
     child->entity->visual.visible = true;
   }

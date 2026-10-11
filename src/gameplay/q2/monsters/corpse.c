@@ -31,9 +31,7 @@ static bool flies(q2m_context *c, bool enabled, qa_error *error) {
                               .volume = 1,
                               .attenuation = 1,
                               .flags = enabled ? 1u : 0u};
-    if (!qa_builtin_resource(&c->game->services, QA_Q2_SOUND_INFANTRY_INFLIES1,
-                             &event.resource, error))
-        return false;
+    event.resource=c->game->runtime_names[Q2_NAME_RESOURCE_INFANTRY_INFLIES1_WAV];
     if (!q2m_alive(c))
         return true;
     if (!qa_builtin_emit(&c->game->services, &event, error))
@@ -272,7 +270,7 @@ bool q2m_hover_dying(q2m_context *c, qa_error *error) {
         return q2m_hover_explode(c, error);
     if (q2_random_bounded(c->game, 2))
         return true;
-    if (!q2m_emit(c, QA_BUILTIN_EXPLOSION, "q2:plain-explosion", 0,
+    if (!q2m_emit(c, QA_BUILTIN_EXPLOSION, Q2_NAME_RESOURCE_Q2_PLAIN_EXPLOSION, 0,
                   c->body.origin, c->body.origin, 1, error))
         return false;
     if (!q2m_alive(c))
