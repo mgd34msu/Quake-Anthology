@@ -86,6 +86,7 @@ bool application_unified_q3_component_output(qa_application *app, qa_actor_owner
 bool application_unified_q3_text(application_provider *p, application_unified_q3_text_kind kind,
     int32_t client, const char *value, qa_error *e)
 {
+    if(kind==APPLICATION_Q3_SOURCE_RESTART) value="map_restart\n";
     if ((unsigned)kind > APPLICATION_Q3_SOURCE_RESTART || !value || !p || !p->application)
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 engine event lost its authored text");
     static const qa_unified_q3_event_kind kinds[] = {QA_UNIFIED_Q3_SERVER_COMMAND,
@@ -138,13 +139,13 @@ typedef struct q3_output_delivery {
     qa_event_lease *lease;
     application_q3_output_recipient recipient;
     void *context;
-    uint32_t fragment;
+    uint32_t config_index,fragment;
 } q3_output_delivery;
 static bool q3_output_fragment(void *context,const char *text,qa_error *error)
 {
     q3_output_delivery *delivery=context;
     bool ok=delivery->recipient(delivery->context,-1,text,delivery->event,
-        delivery->lease,delivery->fragment,error);
+        delivery->lease,delivery->config_index,delivery->fragment,error);
     if(ok) ++delivery->fragment;
     return ok;
 }
@@ -152,9 +153,9 @@ bool application_q3_output_fanout(const qa_unified_q3_event *event,qa_event_leas
     application_q3_output_recipient recipient,void *context,qa_error *error)
 {
     if(event->kind==QA_UNIFIED_Q3_SERVER_COMMAND)
-        return recipient(context,event->client,event->text,event,lease,0,error);
+        return recipient(context,event->client,event->text,event,lease,UINT32_MAX,0,error);
     if(event->kind==QA_UNIFIED_Q3_CONFIGSTRING) {
-        q3_output_delivery delivery={event,lease,recipient,context,0};
+        q3_output_delivery delivery={event,lease,recipient,context,event->index,0};
         return qa_q3_configstring_commands(event->index,event->text,q3_output_fragment,&delivery,error);
     }
     return true;

@@ -134,7 +134,7 @@ typedef enum q3g_round_phase {
 } q3g_round_phase;
 typedef struct q3g_round {
     q3g_round_phase phase;
-    uint64_t carried, roster_carried, queued, reconnected;
+    uint64_t carried, roster_carried, reconnected;
     uint64_t start_ns, last_frame;
     uint32_t completed_frames;
     bool source_entry, shutdown_completed;

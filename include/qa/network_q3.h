@@ -462,7 +462,6 @@ bool qa_q3_server_peer_reset_pure(qa_q3_server_peer *, qa_error *);
 bool qa_q3_server_peer_fragment(qa_q3_server_peer *, bool *sent, qa_error *);
 bool qa_q3_server_peer_pure(qa_q3_server_peer *, const qa_q3_pure_server *, const qa_q3_tokens *,
                             qa_q3_pure_result *, qa_error *);
-bool qa_q3_server_peer_configstring(qa_q3_server_peer *, unsigned, const char *, qa_error *);
 
 typedef struct qa_q3_client_hooks {
     void *context;

@@ -16,7 +16,7 @@ bool application_unified_q3_attack_providers(void *, qa_actor_id, qa_item_id,
     qa_actor_owner *, qa_actor_owner *, qa_error *);
 
 typedef bool (*application_q3_output_recipient)(void *,int32_t,const char *,
-    const qa_unified_q3_event *,qa_event_lease *,uint32_t,qa_error *);
+    const qa_unified_q3_event *,qa_event_lease *,uint32_t config_index,uint32_t fragment,qa_error *);
 bool application_q3_output_fanout(const qa_unified_q3_event *,qa_event_lease *,
     application_q3_output_recipient,void *,qa_error *);
 

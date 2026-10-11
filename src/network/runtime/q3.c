@@ -395,15 +395,12 @@ bool qa_network_q3_snapshot_write(qa_network_runtime *runtime, qa_net_client_id 
     return p && qa_q3_server_peer_snapshot_write(p->source, snapshot, rate, write_downloads, context, error);
 }
 bool qa_network_q3_command(qa_network_runtime *runtime,qa_net_client_id id,const qa_unified_q3_event *event,
-    qa_event_lease *lease,uint32_t fragment,qa_error *error)
+    qa_event_lease *lease,uint32_t config_index,uint32_t fragment,qa_error *error)
 {
     q3_runtime_peer *p=get(runtime,id,error);
     return p && qa_q3_server_peer_command(p->source,event->text,lease,
-        event->kind==QA_UNIFIED_Q3_CONFIGSTRING?event->index:UINT32_MAX,fragment,error);
+        config_index,fragment,error);
 }
-bool qa_network_q3_configstring(qa_network_runtime *runtime, qa_net_client_id id,
-    unsigned index, const char *text, qa_error *error)
-{ q3_runtime_peer *p = get(runtime, id, error); return p && qa_q3_server_peer_configstring(p->source, index, text, error); }
 bool qa_network_q3_pure(qa_network_runtime *runtime, qa_net_client_id id,
     const qa_q3_pure_server *pure, const qa_q3_tokens *tokens, qa_q3_pure_result *result, qa_error *error)
 { q3_runtime_peer *p = get(runtime, id, error); return p && qa_q3_server_peer_pure(p->source, pure, tokens, result, error); }

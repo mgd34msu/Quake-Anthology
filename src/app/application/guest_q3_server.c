@@ -99,7 +99,7 @@ static bool retained_command_recipient(const struct application_q3_guest *engine
 }
 static bool drop_client(void *,uint32_t,const char *,qa_error *);
 static bool output_command(void *context,int32_t client,const char *text,
-    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t config_index,uint32_t fragment,qa_error *error)
 {
     q3g_role *role=context;
     if(client < -1 || client >= 64 || strlen(text)>=QA_Q3_COMMAND_CHARS)
@@ -108,16 +108,16 @@ static bool output_command(void *context,int32_t client,const char *text,
         if((client>=0 && i!=(size_t)client) || !retained_command_recipient(role->engine,i)) continue;
         bool overflow;
         if(!qa_q3_reliable_server_admit(&role->engine->clients[i].reliable,lease,event->text,
-            event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? event->index : UINT32_MAX,fragment,&overflow,error)) return false;
+            config_index,fragment,&overflow,error)) return false;
         if(overflow && !drop_client(role,(uint32_t)i,"Server command overflow",error)) return false;
     }
     return !role->server.send_command || role->server.send_command(role->server.context,
-        client,text,event,lease,fragment,error);
+        client,text,event,lease,config_index,fragment,error);
 }
 static bool send_command(void *context,int32_t client,const char *text,
-    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t config_index,uint32_t fragment,qa_error *error)
 {
-    (void)event;(void)lease;(void)fragment;
+    (void)event;(void)lease;(void)config_index;(void)fragment;
     q3g_role *role = context;
     if (client < -1 || client >= 64 || !text || strlen(text) >= QA_Q3_COMMAND_CHARS)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 server command recipient or size");
@@ -130,10 +130,7 @@ bool q3g_output(application_provider *provider,const qa_unified_q3_event *event,
 {
     struct application_q3_guest *engine=q3g_engine(provider);
     if(!engine || !engine->game) return true;
-    if(!application_q3_output_fanout(event,lease,output_command,engine->game,error)) return false;
-    if(engine->round.phase==Q3G_ROUND_SETTLING && event->round_restart && event->client>=0)
-        engine->round.queued |= UINT64_C(1) << (uint32_t)event->client;
-    return true;
+    return application_q3_output_fanout(event,lease,output_command,engine->game,error);
 }
 
 bool q3g_set_configstring(q3g_role *role, uint32_t index, const char *text, qa_error *error)

@@ -998,7 +998,7 @@ bool application_native_q3_wire_map_finish(application_provider *provider, qa_er
 }
 
 static bool send_command_transport(void *context,int32_t slot,const char *text,
-    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t config_index,uint32_t fragment,qa_error *error)
 {
     application_provider *provider=context;
     struct application_native_q3_wire *wire = wire_owner(provider, error);
@@ -1028,8 +1028,6 @@ static bool send_command_transport(void *context,int32_t slot,const char *text,
         if ((!local && !client->bot) || client->drop_pending) continue;
         retain |= UINT64_C(1) << i;
     }
-    char retained[QA_Q3_COMMAND_CHARS];memcpy(retained,text,strlen(text)+1);
-    text = retained;
     ++wire->calls;
     bool ok = true;
     /* Retain the authored source command before transport callbacks. Nested
@@ -1039,7 +1037,7 @@ static bool send_command_transport(void *context,int32_t slot,const char *text,
         native_q3_wire_client *client = &wire->clients[i];
         bool overflow;
         ok=qa_q3_reliable_server_admit(&client->reliable,lease,event->text,
-            event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? event->index : UINT32_MAX,fragment,&overflow,error);
+            config_index,fragment,&overflow,error);
         if(ok && overflow) {
             client->drop_reason="Server command overflow";
             client->drop_reason_static=true;
@@ -1048,7 +1046,7 @@ static bool send_command_transport(void *context,int32_t slot,const char *text,
     }
     bool bot_target = slot >= 0 && wire->clients[slot].admitted && wire->clients[slot].bot;
     if (ok && !bot_target && wire->server.send_command)
-        ok = wire->server.send_command(wire->server.context,slot,text,event,lease,fragment,error);
+        ok = wire->server.send_command(wire->server.context,slot,text,event,lease,config_index,fragment,error);
     if (ok && (wire_owner(provider, error) != wire || provider->state.q3 != game ||
         wire->max_clients != maximum || wire->round_pending != round_pending ||
         wire->replacement_pending != replacement_pending))

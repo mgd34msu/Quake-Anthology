@@ -35,7 +35,7 @@ q3_service_result q3_information(q3_call *call, int32_t *result, qa_error *error
             ok = services->drop_client(services->context, (uint32_t)index,
                                          (const char *)text.data, error);
         else if (ok && trap == 17 && services->send_command)
-            ok = services->send_command(services->context,index,(const char *)text.data,NULL,NULL,0,error);
+            ok = services->send_command(services->context,index,(const char *)text.data,NULL,NULL,UINT32_MAX,0,error);
         else if (ok) ok = q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 server transport is unbound");
     } else if (trap == 18) {
         ok = config_index(call, index, &index, error) &&

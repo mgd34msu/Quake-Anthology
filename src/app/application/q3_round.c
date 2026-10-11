@@ -386,7 +386,7 @@ bool application_q3_round_restart(qa_application *app, application_provider *pro
     for (size_t frame = 0; okay && frame < 3; ++frame) okay = settle(&cut, error);
     for (size_t i = 0; okay && i < count; ++i) {
         okay = application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_RESTART,
-            (int32_t)clients[i].source_slot, "map_restart\n", error) &&
+            (int32_t)clients[i].source_slot, NULL, error) &&
             qa_application_q3_output_drain(app, error);
         qa_actor_id actor = {0};
         bool accepted = false;

@@ -86,9 +86,7 @@ bool qa_network_q3_snapshot_write(qa_network_runtime *, qa_net_client_id,
     const qa_q3_snapshot *, const qa_q3_server_rate *, qa_q3_server_download_write_fn, void *, qa_error *);
 struct qa_unified_q3_event;
 bool qa_network_q3_command(qa_network_runtime *,qa_net_client_id,const struct qa_unified_q3_event *,
-    qa_event_lease *,uint32_t fragment,qa_error *);
-bool qa_network_q3_configstring(qa_network_runtime *, qa_net_client_id,
-    unsigned index, const char *, qa_error *);
+    qa_event_lease *,uint32_t config_index,uint32_t fragment,qa_error *);
 bool qa_network_q3_pure(qa_network_runtime *, qa_net_client_id,
     const qa_q3_pure_server *, const qa_q3_tokens *, qa_q3_pure_result *, qa_error *);
 bool qa_network_q3_reset_pure(qa_network_runtime *, qa_net_client_id, qa_error *);

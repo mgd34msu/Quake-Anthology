@@ -82,7 +82,7 @@ qa_actor_id application_bot_transport_actor(const application_bot_transport *tra
     bot_connection *entry=connection(transport,client);return entry?entry->actor:(qa_actor_id){0};
 }
 static bool bot_output(void *context,int32_t client,const char *text,
-    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t fragment,qa_error *error)
+    const qa_unified_q3_event *event,qa_event_lease *lease,uint32_t config_index,uint32_t fragment,qa_error *error)
 {
     application_bot_transport *transport=context;
     (void)text;
@@ -91,7 +91,7 @@ static bool bot_output(void *context,int32_t client,const char *text,
         if(!entry->active || (client>=0 && entry->client!=(uint32_t)client)) continue;
         bool overflow;
         if(!qa_q3_reliable_server_admit(&entry->reliable,lease,event->text,
-            event->kind==QA_UNIFIED_Q3_CONFIGSTRING ? event->index : UINT32_MAX,fragment,&overflow,error)) return false;
+            config_index,fragment,&overflow,error)) return false;
         if(overflow) {
             entry->active=false;
             if(!transport->services.drop(transport->services.context,entry->client,"Server command overflow",error)) return false;

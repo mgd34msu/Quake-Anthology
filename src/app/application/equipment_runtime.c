@@ -198,9 +198,9 @@ static bool event(equipment_source *source, qa_application_equipment_event_kind 
 static bool configstring(void *context, uint32_t index, const char *text, qa_error *error)
 { return event(context, QA_APPLICATION_EQUIPMENT_CONFIGSTRING, (int32_t)index, text, error); }
 static bool server_command(void *context,int32_t index,const char *text,
-    const qa_unified_q3_event *record,qa_event_lease *lease,uint32_t fragment,qa_error *error)
+    const qa_unified_q3_event *record,qa_event_lease *lease,uint32_t config_index,uint32_t fragment,qa_error *error)
 {
-    (void)record;(void)lease;(void)fragment;
+    (void)record;(void)lease;(void)config_index;(void)fragment;
     return event(context,QA_APPLICATION_EQUIPMENT_SERVER_COMMAND,index,text,error);
 }
 static void print(void *context, const char *text)

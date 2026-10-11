@@ -377,14 +377,3 @@ bool qa_q3_configstring_commands(unsigned index,const char *text,
     } while((size_t)fragment*999<length);
     return true;
 }
-static bool configstring_command(void *context, const char *text, qa_error *error)
-{ return qa_q3_server_peer_command(context,text,NULL,UINT32_MAX,0,error); }
-bool qa_q3_server_peer_configstring(qa_q3_server_peer *p, unsigned index, const char *text, qa_error *e) {
-    if (!p || !text || index >= QA_Q3_CONFIGSTRINGS || strlen(text) >= 8192 || strpbrk(text, "\"\r\n"))
-        return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 configstring update");
-    const char *old = qa_q3_configstring(&p->gamestate, index);
-    if (old && !strcmp(old, text)) return true;
-    if (!qa_q3_configstring_set(&p->gamestate, index, text, e)) return false;
-    if (p->state.phase < QA_Q3_PRIMED) return true;
-    return qa_q3_configstring_commands(index, text, configstring_command, p, e);
-}

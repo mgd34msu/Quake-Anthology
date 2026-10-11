@@ -56,7 +56,7 @@ typedef struct qa_q3_host_server_services {
     bool (*user_command)(void *, uint32_t, qa_q3_usercmd *, qa_error *);
     bool (*drop_client)(void *, uint32_t, const char *, qa_error *);
     bool (*send_command)(void *, int32_t, const char *, const struct qa_unified_q3_event *,
-        qa_event_lease *,uint32_t fragment,qa_error *);
+        qa_event_lease *,uint32_t config_index,uint32_t fragment,qa_error *);
     bool (*allocate_bot)(void *, int32_t *client, qa_error *);
     bool (*free_bot)(void *, int32_t client, qa_error *);
     bool (*bot_snapshot_entity)(void *, int32_t client, int32_t sequence, int32_t *, qa_error *);
