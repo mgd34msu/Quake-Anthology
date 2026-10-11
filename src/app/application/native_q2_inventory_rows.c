@@ -614,7 +614,6 @@ static bool rows(void *context, qa_actor_id actor,
         }
     }
     if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
-    qa_inventory_source_snapshot_free(&snapshot);
     --owner->engine->calls; --owner->calls;
     if (!okay) return false;
     cache->rows=result;cache->actor=actor;cache->arsenal=arsenal->owner;

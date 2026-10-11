@@ -776,6 +776,7 @@ bool application_q3_weapons_services_selected_client_effects(void *context, qa_a
 }
 
 typedef struct selected_inventory {
+    qa_arena storage;
     application_provider *provider;
     qa_inventory_source_snapshot definitions;
     qa_item_definition *weapons;
@@ -785,8 +786,7 @@ typedef struct selected_inventory {
 } selected_inventory;
 static void inventory_free(selected_inventory *view)
 {
-    qa_inventory_source_snapshot_free(&view->definitions);
-    free(view->weapons); free(view->entries); *view = (selected_inventory){0};
+    qa_arena_destroy(&view->storage); *view = (selected_inventory){0};
 }
 static bool selection_current(application_q3_weapons_services *s, qa_actor_id actor,
     application_provider *p, qa_error *error)
@@ -801,25 +801,28 @@ static bool inventory_read(application_q3_weapons_services *s, qa_actor_id actor
     if (!native_selected(s, actor, &out->provider, present, error)) return false;
     if (!*present) return true;
     qa_inventory *inventory = application(s)->inventory;
-    if (!qa_inventory_source_items(inventory, actor, NULL, &out->definitions, error)) return false;
+    qa_arena_init_pool(&out->storage, &s->inventory_pages);
+    if (!qa_inventory_source_items(inventory, actor, &out->storage, &out->definitions, error)) return false;
+    size_t weapons = 0;
+    for (size_t i = 0; i < out->definitions.group_count; ++i)
+        if (out->definitions.groups[i].owner == out->provider->owner) weapons += out->definitions.groups[i].count;
+    out->weapons = weapons ? qa_arena_alloc(&out->storage, weapons * sizeof(*out->weapons),
+        _Alignof(qa_item_definition), error) : NULL;
+    if (weapons && !out->weapons) return false;
     for (size_t i = 0; i < out->definitions.group_count; ++i) {
         const qa_inventory_source_group *group = out->definitions.groups + i;
         if (group->owner != out->provider->owner) continue;
         for (size_t j = 0; j < group->count; ++j) {
             const qa_item_definition *item = &group->items[j].definition;
             if (!item->weapon) continue;
-            if (out->weapon_count == SIZE_MAX / sizeof(*out->weapons))
-                return application_fail(error, QA_ERROR_MEMORY, "Selected weapon declarations exceed native extent");
-            qa_item_definition *grown = realloc(out->weapons, (out->weapon_count + 1) * sizeof(*grown));
-            if (!grown) return application_fail(error, QA_ERROR_MEMORY, "Reading actual selected weapon declarations");
-            out->weapons = grown; grown[out->weapon_count++] = *item;
+            out->weapons[out->weapon_count++] = *item;
         }
     }
     size_t count = 0;
     if (!out->weapon_count || !qa_inventory_entries(inventory, actor, NULL, 0, &count, error) ||
         count > SIZE_MAX / sizeof(*out->entries))
         return application_fail(error, QA_ERROR_FORMAT, "Selected arsenal has no bounded actual inventory declarations");
-    out->entries = count ? malloc(count * sizeof(*out->entries)) : NULL;
+    out->entries = count ? qa_arena_alloc(&out->storage, count * sizeof(*out->entries), _Alignof(qa_inventory_entry), error) : NULL;
     if (count && !out->entries) return application_fail(error, QA_ERROR_MEMORY, "Retaining selected Source grant entries");
     return qa_inventory_entries(inventory, actor, out->entries, count, &out->entry_count, error) &&
         selection_current(s, actor, out->provider, error);
@@ -835,7 +838,7 @@ static bool arsenal_item(const selected_inventory *view, qa_item_id item)
         if (view->weapons[i].item == item || view->weapons[i].ammo == item) return true;
     return false;
 }
-static bool catalog_read(application_q3_weapons_services *s,
+static bool catalog_read(application_q3_weapons_services *s, qa_arena *storage,
     application_q3_weapon_catalog_entry **out, size_t *count, qa_error *error)
 {
     if (!application_q3_catalog_current(s->role->catalog, s->image, s->vm, s->abi))
@@ -844,7 +847,7 @@ static bool catalog_read(application_q3_weapons_services *s,
     if (!application_q3_catalog_weapons(s->role->catalog, &borrowed, count, error)) return false;
     if (*count > SIZE_MAX / sizeof(**out))
         return application_fail(error, QA_ERROR_MEMORY, "Actual Source catalog exceeds its retained roster extent");
-    *out = *count ? malloc(*count * sizeof(**out)) : NULL;
+    *out = *count ? qa_arena_alloc(storage, *count * sizeof(**out), _Alignof(application_q3_weapon_catalog_entry), error) : NULL;
     if (*count && !*out) return application_fail(error, QA_ERROR_MEMORY, "Retaining original catalog across inventory callbacks");
     for (size_t i = 0; i < *count; ++i)
         (*out)[i] = (application_q3_weapon_catalog_entry){borrowed[i].weapon, borrowed[i].item, borrowed[i].ammo};
@@ -856,7 +859,7 @@ static bool give_category(void *context, qa_actor_id actor, application_q3_weapo
     ++s->calls;
     bool ok = inventory_read(s, actor, &view, &present, error);
     application_q3_weapon_catalog_entry *catalog = NULL; size_t count = 0;
-    if (ok && present) ok = catalog_read(s, &catalog, &count, error);
+    if (ok && present) ok = catalog_read(s, &view.storage, &catalog, &count, error);
     for (size_t i = 0; ok && present && i < view.entry_count; ++i) {
         qa_inventory_entry entry = view.entries[i]; bool original = false;
         if (!arsenal_item(&view, entry.item) || ((category == APPLICATION_Q3_GIVE_WEAPONS) != weapon_item(&view, entry.item))) continue;
@@ -867,7 +870,7 @@ static bool give_category(void *context, qa_actor_id actor, application_q3_weapo
         ok = qa_inventory_configure(application(s)->inventory, actor, &entry, NULL, NULL, error) &&
             selection_current(s, actor, view.provider, error);
     }
-    free(catalog); inventory_free(&view); --s->calls; return ok;
+    inventory_free(&view); --s->calls; return ok;
 }
 static bool normalized(const char *name, const char *requested)
 {
@@ -958,14 +961,14 @@ static bool drop_selected(void *context, qa_actor_id actor, application_q3_weapo
     application_q3_weapon_catalog_entry *catalog = NULL; size_t count = 0;
     qa_supply_weapon *selected_roster = NULL, *original_roster = NULL;
     qa_item_id *sources = NULL;
-    if (ok && present && active) ok = catalog_read(s, &catalog, &count, error);
+    if (ok && present && active) ok = catalog_read(s, &view.storage, &catalog, &count, error);
     if (ok && present && active) {
         if (view.weapon_count > SIZE_MAX / sizeof(*selected_roster) || count > SIZE_MAX / sizeof(*original_roster))
             ok = application_fail(error, QA_ERROR_MEMORY, "Selected death-drop rosters exceed native extent");
         if (ok) {
-            selected_roster = calloc(view.weapon_count, sizeof(*selected_roster));
-            original_roster = count ? calloc(count, sizeof(*original_roster)) : NULL;
-            sources = calloc(view.weapon_count, sizeof(*sources));
+            selected_roster = qa_arena_alloc(&view.storage, view.weapon_count * sizeof(*selected_roster), _Alignof(qa_supply_weapon), error);
+            original_roster = count ? qa_arena_alloc(&view.storage, count * sizeof(*original_roster), _Alignof(qa_supply_weapon), error) : NULL;
+            sources = qa_arena_alloc(&view.storage, view.weapon_count * sizeof(*sources), _Alignof(qa_item_id), error);
             if (!selected_roster || (count && !original_roster) || !sources)
                 ok = application_fail(error, QA_ERROR_MEMORY, "Retaining actual selected death-drop roster relationships");
         }
@@ -1005,7 +1008,6 @@ static bool drop_selected(void *context, qa_actor_id actor, application_q3_weapo
             }
         }
     }
-    free(catalog); free(selected_roster); free(original_roster); free(sources);
     inventory_free(&view); --s->calls; return ok;
 }
 application_q3_weapon_services application_q3_weapons_services_callbacks(application_q3_weapons_services *s)
@@ -1023,7 +1025,20 @@ bool application_q3_weapons_services_create(q3g_role *role, application_q3_weapo
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon services require a retained GAME constructor");
     application_q3_weapons_services *s = calloc(1, sizeof(*s));
     if (!s) return application_fail(error, QA_ERROR_MEMORY, "Retaining original weapon application services");
-    s->role = role; s->image = role->image; s->vm = role->vm; s->abi = role->abi; *out = s; return true;
+    s->role = role; s->image = role->image; s->vm = role->vm; s->abi = role->abi;
+    qa_strings *strings = qa_session_strings(application(s)->session);
+    size_t items = qa_strings_count(strings), text_bytes = 0;
+    if (items < 4096) items = 4096;
+    for (qa_string_id i = 1; i <= qa_strings_count(strings); ++i) text_bytes += qa_strings_text(strings, i).size + 1;
+    size_t bytes = items * (sizeof(qa_item_admission) + sizeof(qa_inventory_entry) +
+        sizeof(qa_inventory_source_group) + sizeof(qa_item_definition) + sizeof(qa_supply_weapon) * 2) + text_bytes;
+    size_t pages = (bytes * 4 + 4095) / 4096;
+    if (!qa_arena_reserve(&s->inventory_storage, pages * (4096 + sizeof(size_t)) + 128, error) ||
+        !qa_pool_prepare(&s->inventory_pages, &s->inventory_storage, pages, 4096, _Alignof(max_align_t), error)) {
+        qa_arena_destroy(&s->inventory_storage); free(s); return false;
+    }
+    qa_arena_seal(&s->inventory_storage);
+    *out = s; return true;
 }
 bool application_q3_weapons_services_destroy(application_q3_weapons_services **owner, qa_error *error)
 {
@@ -1032,5 +1047,6 @@ bool application_q3_weapons_services_destroy(application_q3_weapons_services **o
     if (!application_q3_weapons_services_idle(s))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon services retain an actual Source action");
     if (!application_q3_weapons_services_match_close(s, error)) return false;
+    qa_arena_destroy(&s->inventory_storage);
     free(s->requests); free(s); *owner = NULL; return true;
 }

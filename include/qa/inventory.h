@@ -135,13 +135,12 @@ typedef struct qa_inventory_source_group { qa_actor_owner owner; qa_item_admissi
 typedef struct qa_inventory_source_snapshot {
     qa_inventory_entry *primary;
     size_t primary_count, primary_native_count;
-    bool primary_external, arena_storage;
+    bool primary_external;
     qa_inventory_source_group *groups;
     size_t group_count;
 } qa_inventory_source_snapshot;
-/* NULL storage returns an owned heap snapshot; otherwise storage owns all rows/text. */
+/* Caller storage owns every row and label until its arena is reset. */
 bool qa_inventory_source_items(qa_inventory *, qa_actor_id, qa_arena *storage, qa_inventory_source_snapshot *, qa_error *);
-void qa_inventory_source_snapshot_free(qa_inventory_source_snapshot *);
 
 typedef struct qa_pickup_grant { qa_item_id item; double amount; } qa_pickup_grant;
 typedef struct qa_pickup_receipt { qa_item_id item; double before, given; } qa_pickup_receipt;

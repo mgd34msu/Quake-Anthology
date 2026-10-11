@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_WEAPONS_SERVICES_PRIVATE_H
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_weapons_private.h"
+#include "qa/pool.h"
 
 typedef struct q3_weapon_request { qa_actor_id actor; int32_t weapon; } q3_weapon_request;
 typedef struct q3_weapon_match {
@@ -18,6 +19,8 @@ struct application_q3_weapons_services {
     qa_qvm_abi abi;
     q3_weapon_request *requests;
     size_t request_count, calls;
+    qa_arena inventory_storage;
+    qa_pool inventory_pages;
     qa_qvm_source_word drop_words[2];
     q3_weapon_match *matches;
     bool closing_match;

@@ -1326,28 +1326,15 @@ void qa_inventory_pickup_release(qa_inventory *table, qa_actor_id actor, const v
     release_store(table, store);
 }
 
-void qa_inventory_source_snapshot_free(qa_inventory_source_snapshot *snapshot)
-{
-    if (!snapshot) return;
-    if (snapshot->arena_storage) { *snapshot=(qa_inventory_source_snapshot){0}; return; }
-    for (size_t i = 0; i < snapshot->group_count; ++i) {
-        qa_inventory_source_group *group = &snapshot->groups[i];
-        for (size_t j = 0; j < group->count; ++j) free((void *)group->items[j].definition.label);
-        free(group->items);
-    }
-    free(snapshot->groups); free(snapshot->primary);
-    *snapshot = (qa_inventory_source_snapshot){0};
-}
-
 bool qa_inventory_source_items(qa_inventory *table, qa_actor_id actor, qa_arena *storage,
                                 qa_inventory_source_snapshot *out, qa_error *e)
 {
-    if (!out) return fail(e, QA_ERROR_ARGUMENT, "Missing source inventory snapshot output");
+    if (!out || !storage) return fail(e, QA_ERROR_ARGUMENT, "Source inventory requires caller storage and output");
     inventory_store *store = acquire(table, actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Source inventory actor retired");
     uint64_t revision = store->revision;
     qa_inventory_source_snapshot result = {.primary_native_count = store->count,
-                                           .primary_external = !store->local, .arena_storage=storage!=NULL};
+                                           .primary_external = !store->local};
     size_t groups = 0;
     for (item_group *g = store->groups; g; g = g->next) if (g->active) ++groups;
     bool ok = true;
@@ -1356,8 +1343,8 @@ bool qa_inventory_source_items(qa_inventory *table, qa_actor_id actor, qa_arena 
     if (result.primary_count > SIZE_MAX / sizeof(*result.primary) || groups > SIZE_MAX / sizeof(*result.groups)) {
         ok = fail(e, QA_ERROR_MEMORY, "Source inventory snapshot size overflow"); goto done;
     }
-    result.primary = result.primary_count ? (storage?qa_arena_alloc(storage,result.primary_count*sizeof(*result.primary),_Alignof(qa_inventory_entry),e):malloc(result.primary_count*sizeof(*result.primary))) : NULL;
-    result.groups = groups ? (storage?qa_arena_alloc(storage,groups*sizeof(*result.groups),_Alignof(qa_inventory_source_group),e):calloc(groups,sizeof(*result.groups))) : NULL;
+    result.primary = result.primary_count ? qa_arena_alloc(storage,result.primary_count*sizeof(*result.primary),_Alignof(qa_inventory_entry),e) : NULL;
+    result.groups = groups ? qa_arena_alloc(storage,groups*sizeof(*result.groups),_Alignof(qa_inventory_source_group),e) : NULL;
     if (result.groups) memset(result.groups,0,groups*sizeof(*result.groups));
     if ((!result.primary && result.primary_count) || (groups && !result.groups)) {
         ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate source inventory snapshot"); goto done;
@@ -1368,13 +1355,11 @@ bool qa_inventory_source_items(qa_inventory *table, qa_actor_id actor, qa_arena 
         qa_inventory_source_group *group = &result.groups[result.group_count++];
         group->owner = g->owner;
         group->definitions_only = g->definitions_only;
-        group->items = g->count?(storage?qa_arena_alloc(storage,g->count*sizeof(*group->items),_Alignof(qa_item_admission),e):calloc(g->count,sizeof(*group->items))):NULL;
+        group->items = g->count?qa_arena_alloc(storage,g->count*sizeof(*group->items),_Alignof(qa_item_admission),e):NULL;
         if (g->count && !group->items) { ok = fail(e, QA_ERROR_MEMORY, "Cannot copy source inventory group"); break; }
         for (size_t i = 0; i < g->count; ++i) {
-            size_t length = strlen(g->items[i].definition.label);
-            char *label = storage?qa_arena_alloc(storage,length+1,1,e):malloc(length+1);
+            char *label = qa_arena_text(storage, g->items[i].definition.label, e);
             if (!label) { ok = fail(e, QA_ERROR_MEMORY, "Cannot copy source item label"); break; }
-            memcpy(label, g->items[i].definition.label, length + 1);
             group->items[i] = g->items[i]; group->items[i].definition.label = label; ++group->count;
         }
     }
@@ -1384,6 +1369,5 @@ done:
         ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during source snapshot");
     release_store(table, store);
     if (ok) *out = result;
-    else qa_inventory_source_snapshot_free(&result);
     return ok;
 }
