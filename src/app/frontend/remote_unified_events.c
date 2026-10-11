@@ -661,16 +661,6 @@ bool frontend_unified_events_audio_actor(frontend_unified_events *o,qa_actor_id 
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified audio actor is outside its private received ledger");
     return o->options.audio_actor(o->options.context,actor_id,id,e);
 }
-bool frontend_unified_events_sound_path(frontend_unified_events *o,const char *content,const char *path,
-    qa_actor_id actor_id,qa_vec3 origin,double ms,int32_t channel,float volume,float attenuation,double delay,qa_error *e)
-{
-    if (!o || !content || !path) return false;
-    qa_string_id content_name, path_name;
-    return qa_strings_intern_cstr(o->strings,content,&content_name,e) &&
-        qa_strings_intern_cstr(o->strings,path,&path_name,e) &&
-        frontend_unified_events_sound_name(o,content_name,path_name,actor_id,origin,ms,
-            channel,volume,attenuation,delay,e);
-}
 bool frontend_unified_events_sound_name(frontend_unified_events *o,qa_string_id content_name,qa_string_id path,
     qa_actor_id actor_id,qa_vec3 origin,double ms,int32_t channel,float volume,float attenuation,double delay,qa_error *e)
 {

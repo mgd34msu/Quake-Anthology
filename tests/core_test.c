@@ -93,9 +93,9 @@ static void test_q1_effect_state(void)
     CHECK(frontend_fx_q1_state_beam(&state,actor,true,&beam,2.3,0));
     qa_builtin_random random; qa_builtin_random_seed(&random,1);
     qa_q1_temp explosion={.kind=QA_Q1_TEMP_POINT,.type=3,.origin={10,20,30}};
-    const char *sound=NULL;
+    frontend_fx_q1_sound sound=FRONTEND_FX_Q1_SOUND_NONE;
     CHECK(frontend_fx_q1_state_temporary(&state,&random,&explosion,(qa_actor_id){0},true,false,3,&sound));
-    CHECK(state.particles.count>0 && sound!=NULL);
+    CHECK(state.particles.count>0 && sound==FRONTEND_FX_Q1_SOUND_EXPLOSION);
     CHECK(state.lights[0].radius==350 && state.lights[0].decay==300 && state.lights[0].die==3.5);
 }
 

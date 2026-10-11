@@ -55,10 +55,13 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
         !frontend_q1_hud_prepare(row->content.mounts,row->images,row->materials,
             frontend_q1_hud_variant(product),error)) return false;
     row->sound_available = row->sound_count ? calloc(row->sound_count, sizeof(*row->sound_available)) : NULL;
-    if (row->sound_count && !row->sound_available) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received sound availability");
+    row->sound_ids = row->sound_count ? calloc(row->sound_count,sizeof(*row->sound_ids)) : NULL;
+    if (row->sound_count && (!row->sound_available || !row->sound_ids)) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received sound availability");
     for (size_t i = 0; i < row->sound_count; ++i) {
         qa_audio_asset *asset = NULL;
-        if (!qa_audio_bank_register(row->sound_bank, row->sounds[i], QA_GAME_Q1, &asset, error)) return false;
+        if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
+                row->sounds[i],row->sound_ids+i,error) ||
+            !qa_audio_bank_register_id(row->sound_bank, row->sound_ids[i], QA_GAME_Q1, &asset, error)) return false;
         row->sound_available[i] = asset != NULL;
         qa_audio_asset_release(asset);
     }

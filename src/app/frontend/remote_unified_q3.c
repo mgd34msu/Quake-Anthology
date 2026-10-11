@@ -292,13 +292,6 @@ static bool component_submit(void *context,const qa_q3_scene_options *options,qa
             frontend_unified_components_submit_reflected(o->components,b->backend,o->scene_bank,options,frame,e):
             frontend_unified_components_submit(o->components,b->backend,o->scene_bank,options,frame,e)) && effect_current(&b->source);
 }
-static bool bank_read(frontend_unified_q3 *o,const char *content,const char *instance,uint64_t generation,
-    unified_q3_bank **out,qa_error *e)
-{
-    qa_string_id name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
-    qa_string_id instance_name=instance?qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)instance,strlen(instance)}):QA_STRING_NONE;
-    return bank_name(o,name,instance_name,generation,out,e);
-}
 static bool backend_read(unified_q3_bank *b, qa_scene_rect viewport, qa_error *e)
 {
     if (b->backend) return true;
@@ -408,7 +401,7 @@ bool frontend_unified_q3_owner_retire(frontend_unified_q3 *o,const qa_unified_pr
     bool okay=frontend_unified_q3_owner_validate(o,row,e)&&frontend_unified_q3_idle(o);
     const qa_unified_owner_event *v=row?&row->payload.value.owner:NULL;
     if(okay&&v->kind==QA_UNIFIED_OWNER_RETIRED)for(unified_q3_bank *b=o->banks;b;b=b->next)
-        if(b->activation==qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)v->owner.provider,strlen(v->owner.provider)})&&b->generation==v->owner.generation&&!b->retired){
+        if(b->activation==row->payload_owner_id&&b->generation==v->owner.generation&&!b->retired){
             for(unified_q3_ballistic *state=o->ballistics;state;state=state->next)if(state->bank==b){
                 if(o->events&&(state->bolt||state->projectile)&&!frontend_unified_events_sound_stop_loop(o->events,state->actor,e)){okay=false;break;}
                 state->projectile=state->flash=state->bolt=state->last_fire=false;}
@@ -720,7 +713,7 @@ static bool character_event(frontend_unified_q3 *o,const qa_unified_presentation
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q3 character event requires actual cgame snapshot context");
     unified_q3_bank *b=NULL;
     bool okay=enter(o,id,e);
-    if (okay) okay=bank_read(o,row->content,row->owner.provider,row->owner.generation,&b,e);
+    if (okay) okay=bank_name(o,row->content_id,row->owner_provider_id,row->owner.generation,&b,e);
     if (okay) {
         q3n_frame frame=effect_frame(o,b,time); frame.event_settings=&effect_settings;
         okay=q3n_media_load_unified_effects(b->media,&b->source,e);

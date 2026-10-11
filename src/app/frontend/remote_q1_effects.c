@@ -31,6 +31,7 @@ struct frontend_remote_q1_effects {
     frontend_received_music *music;
     bool music_retiring;
     frontend_fx_q1_state state;
+    frontend_fx_q1_resources resources;
     qa_builtin_random random;
     qa_scene_image *image;
     remote_ambient *ambient;
@@ -59,7 +60,8 @@ bool remote_q1_effects_prepare(frontend_remote_q1 *row, qa_error *error)
     frontend_remote_q1_effects *fx = calloc(1, sizeof(*fx));
     if (!fx) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 effects");
     size_t ambient_bytes=EFFECT_RECORDS*sizeof(*fx->ambient),trail_bytes=EFFECT_RECORDS*sizeof(*fx->trails);
-    bool okay=qa_arena_reserve(&fx->storage,ambient_bytes+trail_bytes+256,error);
+    bool okay=frontend_fx_q1_resources_bind(qa_session_strings(qa_application_session(row->frontend->application)),&fx->resources,error) &&
+        qa_arena_reserve(&fx->storage,ambient_bytes+trail_bytes+256,error);
     if (okay) {
         fx->ambient=qa_arena_alloc(&fx->storage,ambient_bytes,_Alignof(remote_ambient),error);
         fx->trails=qa_arena_alloc(&fx->storage,trail_bytes,_Alignof(remote_trail),error);
@@ -105,16 +107,16 @@ static bool music_track(frontend_remote_q1 *row,uint8_t track,qa_error *error)
     char cue[4];snprintf(cue,sizeof(cue),"%u",(unsigned)track);
     return frontend_received_music_play(row->effects->music,cue,error);
 }
-static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
+static bool sound(frontend_remote_q1 *row, qa_string_id name, uint32_t number,
     qa_vec3 origin, uint32_t channel, float volume, float attenuation, bool ambient,
     bool required, qa_error *error)
 {
     qa_frontend *f = row->frontend;
     if (!f->audio) return true;
-    if (!row->sound_bank || !name || !*name)
+    if (!row->sound_bank || !name)
         return remote_q1_fail(error, QA_ERROR_FORMAT, "Received Q1 sound lacks its real precache bank");
     qa_audio_asset *asset = NULL;
-    if (!qa_audio_bank_register(row->sound_bank, name, QA_GAME_Q1, &asset, error)) return false;
+    if (!qa_audio_bank_register_id(row->sound_bank, name, QA_GAME_Q1, &asset, error)) return false;
     if (!asset) return !required || remote_q1_fail(error,QA_ERROR_IO,"Unresolved received NetQuake sound");
     uint64_t actor = QA_AUDIO_NO_ACTOR;
     if (number && !ambient) {
@@ -127,7 +129,7 @@ static bool sound(frontend_remote_q1 *row, const char *name, uint32_t number,
         }
     }
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = name,
+        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = qa_audio_asset_name(asset),
         .family = QA_GAME_Q1, .actor = actor, .owner = row->options.domain.actor_owner,
         .audience = row->options.domain.physical_seat, .origin_kind = QA_AUDIO_FIXED,
         .origin = origin, .channel = (int32_t)channel, .volume = volume,
@@ -163,7 +165,7 @@ bool remote_q1_event_present(frontend_remote_q1 *row, const qa_nq_message *messa
     case QA_NQ_SOUND: case QA_NQ_STATICSOUND:
         if (!message->data.sound.index || message->data.sound.index > row->sound_count)
             return remote_q1_fail(error, QA_ERROR_FORMAT, "Unknown received Q1 sound index");
-        return sound(row, row->sounds[message->data.sound.index - 1], message->data.sound.entity,
+        return sound(row, row->sound_ids[message->data.sound.index - 1], message->data.sound.entity,
             vector(message->data.sound.origin), message->data.sound.channel,
             message->data.sound.volume / 255.0f, message->data.sound.attenuation,
             message->op == QA_NQ_STATICSOUND, message->op == QA_NQ_SOUND, error);
@@ -186,12 +188,12 @@ bool remote_q1_event_present(frontend_remote_q1 *row, const qa_nq_message *messa
             message->data.particle.color, message->data.particle.count, row->seconds);
         return true;
     case QA_NQ_TEMPENTITY: {
-        const char *path;
+        frontend_fx_q1_sound sound_kind;
         if (!frontend_fx_q1_state_temporary(&row->effects->state, &row->effects->random,
                 &message->data.temporary, (qa_actor_id){0}, true,
-                qa_q1_is_qw(row->protocol), row->seconds, &path))
+                qa_q1_is_qw(row->protocol), row->seconds, &sound_kind))
             return remote_q1_fail(error, QA_ERROR_FORMAT, "Unsupported received Q1 temporary effect");
-        return !path || sound(row, path, 0, vector(message->data.temporary.origin),
+        return !sound_kind || sound(row, row->effects->resources.sounds[sound_kind], 0, vector(message->data.temporary.origin),
             0, 1, 1, false, false, error);
     }
     case QA_NQ_BONUSFLASH:

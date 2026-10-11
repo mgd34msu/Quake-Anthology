@@ -81,6 +81,7 @@ struct frontend_remote_q1 {
     remote_q1_entities current, previous, statics, qw_entities, qw_nails, qw_batch_players;
     char **models, **sounds;
     bool *sound_available;
+    qa_string_id *sound_ids;
     size_t model_count, sound_count;
     uint32_t spike_model;
     char *styles[256], *skybox;

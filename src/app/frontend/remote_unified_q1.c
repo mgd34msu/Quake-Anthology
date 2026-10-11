@@ -95,7 +95,7 @@ typedef struct q1_group {
     char language[64];
     frontend_fx_q1_state effects;
     qa_scene_image *particle_image;
-    qa_string_id beam_models[4];
+    frontend_fx_q1_resources resources;
     q1_static *statics;
     q1_ambient *ambient;
     const char *styles[256];
@@ -205,7 +205,8 @@ static bool parse(frontend_unified_q1 *o,const qa_unified_presentation_event *ro
     p->actor=v->actor; p->actor_present=v->actor.registry!=0;
     p->origin=v->origin; p->end=v->end; p->angles=v->muzzle_angles;
     if (!text_view(row->content,&p->content,e) || !owner_parse(&row->owner,p,e)) return false;
-    const qa_product *product=qa_catalog_find(qa_executable_recipe_catalog(frontend_remote_unified_recipe(o->replica)),(char *)p->content.data);
+    qa_vfs *files; const qa_product *product=NULL;
+    if (!frontend_unified_media_files(o->media,row->content_id,&files,&product,e)) return false;
     if (!product || product->family!=QA_GAME_Q1) return fail(e,"Q1 event content is absent from its admitted Source");
     const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
     p->kind=Q1_EFFECT;
@@ -313,23 +314,23 @@ static bool progress_record(frontend_unified_q1 *o,const q1_event *p,qa_error *e
 static bool activation(frontend_unified_q1 *o,const q1_event *p,q1_activation **out,qa_error *e)
 {
     *out=NULL;if(!p->provider.size)return true;
-    qa_string_id provider=qa_strings_find(o->replica->strings,p->provider);
+    qa_string_id provider=p->row->payload.kind==QA_UNIFIED_PRESENTATION_OWNER ?
+        p->row->payload_owner_id : p->row->owner_provider_id;
     for(q1_activation *a=o->activations;a;a=a->next)if(a->generation==p->owner_generation && a->provider==provider){*out=a;return true;}
     q1_activation *a=calloc(1,sizeof(*a));if(!a)return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q1 Source activation");
-    if(!qa_strings_intern(o->replica->strings,p->provider,&a->provider,e)){free(a);return false;}
+    a->provider=provider;
     a->generation=p->owner_generation;a->next=o->activations;o->activations=a;*out=a;return true;
 }
-static bool group(frontend_unified_q1 *o,const char *content,q1_activation *owner,q1_group **out,qa_error *e)
+static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,q1_group **out,qa_error *e)
 {
-    qa_string_id name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
     for(q1_group *g=o->groups;g;g=g->next) if(g->activation==owner && g->content_name==name) {*out=g;return true;}
     q1_group *g=calloc(1,sizeof(*g));qa_font_library *fonts;qa_vfs *files;
     if(!g) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q1 CLIENT content effects");
-    if (!qa_strings_intern_cstr(o->replica->strings,content,&g->content_name,e)) {free(g);return false;}
+    g->content_name=name;
     g->content=qa_strings_cstr(o->replica->strings,g->content_name);
-    if(!g->content || !qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
+    if(!g->content || !frontend_unified_media_files(o->media,name,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
         !frontend_unified_media_bank(o->media,g->content_name,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g);return false;}
-    for (size_t i=0;i<4;++i) if (!qa_strings_intern_cstr(o->replica->strings,frontend_fx_q1_beam_model(q1_beam_types[i]),&g->beam_models[i],e)) {free(g);return false;}
+    if (!frontend_fx_q1_resources_bind(o->replica->strings,&g->resources,e)) {free(g);return false;}
     g->parent=o;g->files=files;g->activation=owner;frontend_fx_q1_state_initialize(&g->effects,Q1_LIGHTS,Q1_BEAMS);q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     frontend_q1_help_bind_source(o->frontend->seats+domain->physical_seat,g->images);return true;
@@ -381,10 +382,10 @@ static bool retain_row(frontend_unified_q1 *o,const qa_unified_presentation_even
 }
 static qa_scene_image_options model_options(void)
 { return (qa_scene_image_options){.family=QA_GAME_Q1,.usage=QA_IMAGE_USAGE_SKIN,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255}; }
-static bool effect_sound(frontend_unified_q1 *o,const q1_event *p,const char *path,qa_error *e)
+static bool effect_sound(frontend_unified_q1 *o,q1_group *g,const q1_event *p,frontend_fx_q1_sound sound,qa_error *e)
 {
     if(!o->events)return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 effect sound lost its actual CLIENT event/audio owner");
-    return frontend_unified_events_sound_path(o->events,(char *)p->content.data,path,
+    return frontend_unified_events_sound_name(o->events,g->content_name,g->resources.sounds[sound],
         (qa_actor_id){0},p->origin,p->seconds*1000,0,1,1,0,e);
 }
 static bool pose_angles(frontend_unified_q1 *o,qa_actor_id actor,qa_vec3 *angles,bool *found,qa_error *e)
@@ -421,11 +422,11 @@ static bool effect(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_error
     }
     qa_q1_temp temporary={.kind=QA_Q1_TEMP_POINT,.type=p->index,.count=1,
         .origin={p->origin.x,p->origin.y,p->origin.z}};
-    const char *path;
+    frontend_fx_q1_sound sound;
     if(!frontend_fx_q1_state_temporary(&g->effects,&o->random,&temporary,
-            (qa_actor_id){0},false,false,time,&path))
+            (qa_actor_id){0},false,false,time,&sound))
         return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 effect recipe is not installed");
-    return !path || effect_sound(o,p,path,e);
+    return !sound || effect_sound(o,g,p,sound,e);
 }
 static bool hud_read(void *context,const qa_hud_frame *frame,qa_hud_data *out,qa_error *e)
 {
@@ -507,7 +508,7 @@ static bool retirement_parse(const qa_unified_presentation_event *row,q1_event *
 {
     if (!row || row->payload.kind!=QA_UNIFIED_PRESENTATION_OWNER) return fail(e,"Q1 retirement has no typed owner record");
     const qa_unified_owner_event *v=&row->payload.value.owner;
-    *retired=v->kind==QA_UNIFIED_OWNER_RETIRED;p->seconds=row->seconds;p->sequence=row->sequence;
+    *retired=v->kind==QA_UNIFIED_OWNER_RETIRED;p->row=row;p->seconds=row->seconds;p->sequence=row->sequence;
     return owner_parse(&v->owner,p,e) && p->provider.size>0;
 }
 bool frontend_unified_q1_owner_validate(frontend_unified_q1 *o,const qa_unified_presentation_event *row,qa_error *e)
@@ -595,13 +596,13 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         return ok && mutable(o,e);
     }
     if(p.kind==Q1_SELL_SCREEN){const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-        ok=group(o,(char *)p.content.data,owner,&g,e);
+        ok=group(o,row->content_id,owner,&g,e);
         if(ok){frontend_q1_help_bind_source(o->frontend->seats+d->physical_seat,g->images);
             ok=frontend_remote_unified_command_text(o->replica,"help\n",e);}
         return ok && mutable(o,e);}
     bool persistent=p.kind==Q1_BEAM || p.kind==Q1_STYLE || p.kind==Q1_STATIC || p.kind==Q1_AMBIENT || p.kind==Q1_SKY ||
         p.kind==Q1_MUSIC || p.kind==Q1_PAUSE || p.kind==Q1_FINALE;
-    if(!group(o,(char *)p.content.data,persistent?owner:NULL,&g,e)){return false;}
+    if(!group(o,row->content_id,persistent?owner:NULL,&g,e)){return false;}
     bool local=true;
     if(p.kind==Q1_WEAPON || p.kind==Q1_POWER || p.kind==Q1_MESSAGE || p.kind==Q1_CTF_STATUS || p.kind==Q1_PROMPT || p.kind==Q1_CLEAR_PROMPT || p.kind==Q1_LOG || p.kind==Q1_ACHIEVEMENT || p.kind==Q1_FOG || p.kind==Q1_FOUND) {
         local=owns(o,&p,e);if(!local && e && e->code!=QA_OK) {return false;}}
@@ -614,10 +615,10 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(p.kind==Q1_EFFECT)ok=effect(o,g,&p,e);
         else {qa_q1_temp temporary={.kind=QA_Q1_TEMP_COLORS,.origin={p.origin.x,p.origin.y,p.origin.z},
                 .color_start=(uint8_t)p.a,.color_length=(uint8_t)p.b};
-            const char *path=NULL;
+            frontend_fx_q1_sound sound=FRONTEND_FX_Q1_SOUND_NONE;
             ok=frontend_fx_q1_state_temporary(&g->effects,&o->random,&temporary,
-                (qa_actor_id){0},false,false,p.seconds,&path);
-            if(ok && path)ok=effect_sound(o,&p,path,e);}
+                (qa_actor_id){0},false,false,p.seconds,&sound);
+            if(ok && sound)ok=effect_sound(o,g,&p,sound,e);}
         if(!ok){g->effects.particles.count=original_count;o->random=original_random;memcpy(g->effects.lights,original_lights,sizeof(original_lights));}
         if(ok && p.kind==Q1_EFFECT && p.effect==Q1_FX_PICKUP && owns(o,&p,e))o->bonus_until=p.seconds+.5;
         break;}
@@ -630,12 +631,11 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
     case Q1_STYLE:g->styles[(uint32_t)p.a]=(char *)p.text.data;g->style_sequences[(uint32_t)p.a]=p.sequence;p.text=(qa_bytes){0};break;
     case Q1_STATIC: {if(!p.text.size)break;
         q1_static *s=calloc(1,sizeof(*s));qa_scene_image_options images=model_options();
-        qa_string_id path;
-        ok=s && qa_strings_intern(o->replica->strings,p.text,&path,e) && frontend_unified_media_model(o->media,g->content_name,path,QA_GAME_Q1,&images,&s->model,e);
+        ok=s && frontend_unified_media_model(o->media,g->content_name,row->payload.value.builtin.resource,QA_GAME_Q1,&images,&s->model,e);
         if(ok) {s->path=(char *)p.text.data;p.text=(qa_bytes){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
             q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}else free(s);break;}
-    case Q1_WEAPON: {q1_continuation next={0};ok=retain_row(o,row,&next,e) &&
-        qa_strings_intern(o->replica->strings,p.content,&next.content,e) && qa_strings_intern(o->replica->strings,p.text,&next.path,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}else continuation_clear(&next);break;}
+    case Q1_WEAPON: {q1_continuation next={.content=row->content_id,.path=row->payload.value.builtin.resource};
+        ok=retain_row(o,row,&next,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}else continuation_clear(&next);break;}
     case Q1_POWER:o->powers[p.index]=p.a;o->power_activations[p.index]=owner;break;
     case Q1_MESSAGE: {qa_buffer message={0};ok=localized(o,g,&p,&message,e);
         if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=40},e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
@@ -647,7 +647,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(ok && o->frontend->audio) {uint64_t audio;ok=o->options.audio_actor(o->options.context,actor,&audio,e);
             if(ok) qa_audio_engine_stop_channel(o->frontend->audio,audio,o->options.audio_owner,QA_GAME_Q1,(int32_t)p.a); }break;}
     case Q1_SOUND:ok=frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q1 sound must be paired with the real declared simulation sound route");break;
-    case Q1_AMBIENT: {q1_ambient *a=calloc(1,sizeof(*a));ok=a && qa_audio_bank_register(g->sounds,(char *)p.text.data,QA_GAME_Q1,&a->asset,e);
+    case Q1_AMBIENT: {q1_ambient *a=calloc(1,sizeof(*a));ok=a && qa_audio_bank_register_id(g->sounds,row->payload.value.builtin.resource,QA_GAME_Q1,&a->asset,e);
         if(ok && a->asset && qa_audio_asset_sample(a->asset)->loop_start!=QA_AUDIO_NO_LOOP) {a->path=(char *)p.text.data;p.text=(qa_bytes){0};a->origin=p.origin;a->volume=(float)p.a;a->attenuation=(float)p.b;a->identity=qa_scene_identity();
             q1_ambient **tail=&g->ambient;while(*tail) tail=&(*tail)->next;*tail=a;}
         else {if(a) qa_audio_asset_release(a->asset);free(a);}break;}
@@ -702,9 +702,9 @@ bool frontend_unified_q1_sound_presentation(frontend_unified_q1 *o,const qa_unif
     q1_event p={0};bool ok=parse(o,row,&p,e);q1_group *g=NULL;
     if(ok && p.kind!=Q1_SOUND) ok=fail(e,"Q1 sound pairing received a different Source event");
     if(ok && !simulation_owned) {
-        ok=group(o,(char *)p.content.data,NULL,&g,e);qa_audio_asset *asset=NULL;qa_actor_id actor;uint64_t audio;
+        ok=group(o,row->content_id,NULL,&g,e);qa_audio_asset *asset=NULL;qa_actor_id actor;uint64_t audio;
         if(ok) ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&actor,e) &&
-            o->options.audio_actor(o->options.context,actor,&audio,e) && qa_audio_bank_register(g->sounds,(char *)p.text.data,QA_GAME_Q1,&asset,e);
+            o->options.audio_actor(o->options.context,actor,&audio,e) && qa_audio_bank_register_id(g->sounds,row->payload.value.builtin.resource,QA_GAME_Q1,&asset,e);
         int32_t c=(int32_t)p.c;
         if(ok && asset && o->frontend->audio) {
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
@@ -767,7 +767,7 @@ bool frontend_unified_q1_entity_effects(frontend_unified_q1 *o,
         if (!product || product->family!=QA_GAME_Q1) return true;
     }
     q1_group *g;
-    if (!group(o,product->identity,NULL,&g,e)) return false;
+    if (!group(o,qa_application_content_name(o->frontend->application,qa_executable_recipe_catalog(frontend_remote_unified_recipe(o->replica)),product->id),NULL,&g,e)) return false;
     size_t slot=entity->actor.slot;
     if(slot>=o->trail_capacity)return fail(e,"Q1 trail actor lies outside its loaded registry");
     q1_entity_trail *trail=o->trails+slot;
@@ -866,7 +866,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
         }
         for(size_t i=0;ok && i<Q1_BEAMS;++i) {frontend_fx_q1_beam *b=g->effects.beams+i;if(b->die<=world->seconds)continue;qa_actor_id actual;
             ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),b->actor,false,&actual,e);if(!ok)break;
-            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content_name,g->beam_models[frontend_fx_q1_beam_index(b->type)],QA_GAME_Q1,&images,&model,e);if(!ok)break;
+            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content_name,g->resources.beams[frontend_fx_q1_beam_index(b->type)],QA_GAME_Q1,&images,&model,e);if(!ok)break;
             frontend_fx_q1_beam_cursor cursor;frontend_fx_q1_beam_begin(&cursor,b->start,b->end);
             qa_builtin_random roll;qa_builtin_random_seed(&roll,b->roll_seed);
             qa_model_transform placement;

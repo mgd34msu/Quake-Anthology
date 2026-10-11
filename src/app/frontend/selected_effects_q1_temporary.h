@@ -1,6 +1,19 @@
 #ifndef QA_FRONTEND_SELECTED_EFFECTS_Q1_TEMPORARY_H
 #define QA_FRONTEND_SELECTED_EFFECTS_Q1_TEMPORARY_H
 #include "selected_effects_particles.h"
+#include "qa/strings.h"
+
+typedef enum frontend_fx_q1_sound {
+    FRONTEND_FX_Q1_SOUND_NONE, FRONTEND_FX_Q1_SOUND_EXPLOSION,
+    FRONTEND_FX_Q1_SOUND_TINK, FRONTEND_FX_Q1_SOUND_RIC1,
+    FRONTEND_FX_Q1_SOUND_RIC2, FRONTEND_FX_Q1_SOUND_RIC3,
+    FRONTEND_FX_Q1_SOUND_WIZARD, FRONTEND_FX_Q1_SOUND_KNIGHT,
+    FRONTEND_FX_Q1_SOUND_COUNT
+} frontend_fx_q1_sound;
+typedef struct frontend_fx_q1_resources {
+    qa_string_id sounds[FRONTEND_FX_Q1_SOUND_COUNT], beams[4];
+} frontend_fx_q1_resources;
+bool frontend_fx_q1_resources_bind(qa_strings *, frontend_fx_q1_resources *, qa_error *);
 
 typedef struct frontend_fx_q1_light_recipe {
     float radius, decay, minimum;
@@ -38,9 +51,9 @@ bool frontend_fx_q1_state_beam(frontend_fx_q1_state *, qa_actor_id,
     bool received, const qa_q1_temp *, double seconds, uint32_t roll_seed);
 bool frontend_fx_q1_state_temporary(frontend_fx_q1_state *, qa_builtin_random *,
     const qa_q1_temp *, qa_actor_id, bool received, bool quakeworld, double seconds,
-    const char **sound);
+    frontend_fx_q1_sound *sound);
 bool frontend_fx_q1_temporary_light(const qa_q1_temp *, frontend_fx_q1_light_recipe *);
-const char *frontend_fx_q1_temporary_sound(const qa_q1_temp *, qa_builtin_random *);
+frontend_fx_q1_sound frontend_fx_q1_temporary_sound(const qa_q1_temp *, qa_builtin_random *);
 int frontend_fx_q1_model_trail(uint32_t flags, bool quakeworld);
 bool frontend_fx_q1_entity_light(qa_builtin_random *, qa_vec3 origin, qa_vec3 angles,
     uint32_t effects, uint32_t model_flags, bool quakeworld, bool rerelease, double seconds,

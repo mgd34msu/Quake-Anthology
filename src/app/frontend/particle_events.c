@@ -40,6 +40,7 @@ typedef struct frontend_particle_owner {
     uint64_t q2_interval_ns;
     qa_q2_edition q2_edition;
     frontend_fx_q1_state *q1;
+    frontend_fx_q1_resources q1_resources;
     bool q1_quakeworld, q1_rerelease;
     qa_scene_model *q1_beam_models[4]; /* borrowed from the actual appearance owner */
     qa_frontend *frontend;
@@ -741,6 +742,7 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
     }
     bool ok=particle_images(frontend,provider,family,&owner->images,error);
     if (ok) ok=family==QA_GAME_Q1 ? owner->q1 &&
+        frontend_fx_q1_resources_bind(qa_session_strings(qa_application_session(frontend->application)),&owner->q1_resources,error) &&
         qa_scene_particle_image(owner->images,QA_GAME_Q1,&owner->particle_image,error) :
         local_q2_create(frontend,owner,error);
     if (!ok) { particle_owner_free(owner);return false; }
@@ -1008,21 +1010,17 @@ static bool q1_temporary_apply(qa_frontend *frontend, frontend_particle_owner *o
         uint8_t model_index = (uint8_t)frontend_fx_q1_beam_index(event->type);
         if (!owner->q1_beam_models[model_index]) {
             frontend_visual_model_view model;
-            qa_string_id path_name;
-            if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),path,&path_name,error) ||
-                !frontend_visual_model_acquire(frontend, owner->provider, QA_GAME_Q1,
-                    path_name, NULL, &model, error)) return false;
+            if (!frontend_visual_model_acquire(frontend, owner->provider, QA_GAME_Q1,
+                    owner->q1_resources.beams[model_index], NULL, &model, error)) return false;
             owner->q1_beam_models[model_index] = model.scene;
         }
     }
-    const char *path;
+    frontend_fx_q1_sound sound_kind;
     if (!frontend_fx_q1_state_temporary(owner->q1, &owner->random, event, actor,
-            received, quakeworld, seconds, &path))
+            received, quakeworld, seconds, &sound_kind))
         return frontend_fail(error, QA_ERROR_FORMAT, "Q1 temporary effect has no Source recipe");
-    if (path) {
-        qa_string_id resource;
-        if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),
-                path, &resource, error)) return false;
+    if (sound_kind) {
+        qa_string_id resource=owner->q1_resources.sounds[sound_kind];
         qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q1,
             .provider = owner->provider, .resource = resource,
             .origin = {event->origin[0], event->origin[1], event->origin[2]}, .volume = 1, .attenuation = 1};

@@ -264,6 +264,7 @@ void remote_q1_clear(frontend_remote_q1 *row)
     names_free(&row->models, &row->model_count); names_free(&row->sounds, &row->sound_count);
     row->spike_model = 0;
     free(row->sound_available); row->sound_available = NULL;
+    free(row->sound_ids); row->sound_ids = NULL;
     for (size_t i = 0; i < 256; ++i) { free(row->styles[i]); row->styles[i] = NULL; }
     for (size_t i = 0; i < 256; ++i) {
         free(row->clients[i].name); free(row->clients[i].social); free(row->clients[i].player_info); free(row->clients[i].userinfo);

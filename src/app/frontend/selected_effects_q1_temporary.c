@@ -2,6 +2,19 @@
 #include <math.h>
 #include <string.h>
 
+bool frontend_fx_q1_resources_bind(qa_strings *strings, frontend_fx_q1_resources *out, qa_error *error)
+{
+    static const char *const sounds[FRONTEND_FX_Q1_SOUND_COUNT]={NULL,
+        "weapons/r_exp3.wav", "weapons/tink1.wav", "weapons/ric1.wav",
+        "weapons/ric2.wav", "weapons/ric3.wav", "wizard/hit.wav", "hknight/hit.wav"};
+    static const uint8_t beams[]={5,6,9,13};
+    for (size_t i=1;i<FRONTEND_FX_Q1_SOUND_COUNT;++i)
+        if (!qa_strings_intern_cstr(strings,sounds[i],out->sounds+i,error)) return false;
+    for (size_t i=0;i<4;++i)
+        if (!qa_strings_intern_cstr(strings,frontend_fx_q1_beam_model(beams[i]),out->beams+i,error)) return false;
+    return true;
+}
+
 void frontend_fx_q1_state_initialize(frontend_fx_q1_state *state, size_t lights, size_t beams)
 {
     memset(state, 0, sizeof(*state));
@@ -54,9 +67,9 @@ bool frontend_fx_q1_state_beam(frontend_fx_q1_state *state, qa_actor_id actor,
 
 bool frontend_fx_q1_state_temporary(frontend_fx_q1_state *state, qa_builtin_random *random,
     const qa_q1_temp *event, qa_actor_id actor, bool received, bool quakeworld,
-    double seconds, const char **sound)
+    double seconds, frontend_fx_q1_sound *sound)
 {
-    *sound = NULL;
+    *sound = FRONTEND_FX_Q1_SOUND_NONE;
     if (event->kind == QA_Q1_TEMP_BEAM) {
         if (!frontend_fx_q1_beam_model(event->type)) return false;
         (void)frontend_fx_q1_state_beam(state, actor, received, event, seconds, 0);
@@ -81,22 +94,22 @@ bool frontend_fx_q1_temporary_light(const qa_q1_temp *event, frontend_fx_q1_ligh
     return true;
 }
 
-const char *frontend_fx_q1_temporary_sound(const qa_q1_temp *event, qa_builtin_random *random)
+frontend_fx_q1_sound frontend_fx_q1_temporary_sound(const qa_q1_temp *event, qa_builtin_random *random)
 {
-    if (event->kind == QA_Q1_TEMP_COLORS) return "weapons/r_exp3.wav";
-    if (event->kind != QA_Q1_TEMP_POINT) return NULL;
+    if (event->kind == QA_Q1_TEMP_COLORS) return FRONTEND_FX_Q1_SOUND_EXPLOSION;
+    if (event->kind != QA_Q1_TEMP_POINT) return FRONTEND_FX_Q1_SOUND_NONE;
     switch (event->type) {
     case 0: case 1:
-        if (qa_builtin_random_integer(random) % 5) return "weapons/tink1.wav";
+        if (qa_builtin_random_integer(random) % 5) return FRONTEND_FX_Q1_SOUND_TINK;
         switch (qa_builtin_random_integer(random) & 3) {
-        case 1: return "weapons/ric1.wav";
-        case 2: return "weapons/ric2.wav";
-        default: return "weapons/ric3.wav";
+        case 1: return FRONTEND_FX_Q1_SOUND_RIC1;
+        case 2: return FRONTEND_FX_Q1_SOUND_RIC2;
+        default: return FRONTEND_FX_Q1_SOUND_RIC3;
         }
-    case 3: case 4: return "weapons/r_exp3.wav";
-    case 7: return "wizard/hit.wav";
-    case 8: return "hknight/hit.wav";
-    default: return NULL;
+    case 3: case 4: return FRONTEND_FX_Q1_SOUND_EXPLOSION;
+    case 7: return FRONTEND_FX_Q1_SOUND_WIZARD;
+    case 8: return FRONTEND_FX_Q1_SOUND_KNIGHT;
+    default: return FRONTEND_FX_Q1_SOUND_NONE;
     }
 }
 
