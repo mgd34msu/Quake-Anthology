@@ -305,18 +305,15 @@ bool q2_server_drop_progress(q2_session *session, uint64_t now, bool *complete, 
     *complete = false;
     if (server->drop_notice && !server->drop_queued) {
         size_t length = strlen(server->drop_reason);
-        if (length > SIZE_MAX - 2) return q2_fail(error, QA_ERROR_MEMORY, "Q2 disconnect text extent overflows");
-        char *text = malloc(length + 2);
         uint8_t *bytes = session->encode;
-        if (!text) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 server disconnect packet");
-        memcpy(text, server->drop_reason, length); text[length] = '\n'; text[length + 1] = 0;
-        qa_q2_server_event print = {.kind = QA_Q2_SVC_PRINT, .data.print = {.level = 2, .text = text}};
+        server->drop_reason[length] = '\n'; server->drop_reason[length + 1] = 0;
+        qa_q2_server_event print = {.kind = QA_Q2_SVC_PRINT, .data.print = {.level = 2, .text = server->drop_reason}};
         qa_q2_server_event disconnect = {.kind = QA_Q2_SVC_DISCONNECT};
         qa_net_writer writer; qa_net_writer_init(&writer, bytes, session->channel->capacity, error);
         bool ok = qa_q2_server_event_write(&session->codec, &writer, &print) &&
             qa_q2_server_event_write(&session->codec, &writer, &disconnect) &&
             q2_queue_bytes(session, (qa_bytes){bytes, qa_net_writer_size(&writer)}, 0, true, error);
-        free(text);
+        server->drop_reason[length] = 0;
         if (!ok) return false;
         server->drop_queued = true;
     }
@@ -338,10 +335,10 @@ bool q2_server_drop_request(q2_session *session, const char *reason, qa_error *e
     if (!server->drop_reason) {
         if (!reason) reason = "server disconnected";
         size_t length = strlen(reason);
-        if (length == SIZE_MAX) return q2_fail(error, QA_ERROR_MEMORY, "Q2 disconnect reason extent overflows");
-        server->drop_reason = malloc(length + 1);
-        if (!server->drop_reason) return q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 disconnect source reason");
-        memcpy(server->drop_reason, reason, length + 1);
+        if (length > sizeof(server->drop_storage) - 2)
+            return q2_fail(error, QA_ERROR_CAPACITY, "Q2 disconnect reason exceeds the protocol packet extent");
+        memcpy(server->drop_storage, reason, length + 1);
+        server->drop_reason = server->drop_storage;
         server->drop_notice = true;
         session->retiring = true; session->active = false; q2_download_close(server);
     }
@@ -391,5 +388,5 @@ void q2_server_clear(q2_server *server)
     q2_download_close(server); q2_game_state_free(&server->signon);
     qa_q2_frame_history_destroy(server->frames);
     if (!server->datagram_reserved) qa_buffer_free(&server->datagram);
-    free(server->drop_reason);
+    if (server->drop_reason != server->drop_storage) free(server->drop_reason);
 }

@@ -223,6 +223,16 @@ const qa_network_peer_ops qa_network_q2_peer_ops = {
 
 bool q2_session_storage_prepare(q2_session *session,qa_error *error)
 {
+    if (session->server) {
+        q2_server *server=&session->state.server;
+        if (server->drop_reason && server->drop_reason!=server->drop_storage) {
+            size_t length=strlen(server->drop_reason);
+            if (length>sizeof(server->drop_storage)-2)
+                return q2_fail(error,QA_ERROR_FORMAT,"Saved Q2 disconnect reason exceeds the protocol packet extent");
+            memcpy(server->drop_storage,server->drop_reason,length+1);
+            free(server->drop_reason);server->drop_reason=server->drop_storage;
+        }
+    }
     if (!session->server) {
         q2_client *client=&session->state.client;
         client->record_pool=qa_unified_frame_pool_create(0,2,error);
