@@ -398,7 +398,7 @@ static bool observer_move(qa_modes *m, mode_instance *v, mode_member *member,
     if (!qa_world_body_read(m->options.services.world, actor, &body, e))
         return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(input->view_angles, &forward, NULL, NULL);
+    qa_angle_vectors(input->view_angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 horizontal = forward;
     horizontal.z = 0;
     float cosine = qa_vec_length(horizontal), inverse = cosine == 0 ? 0 : 1 / cosine;

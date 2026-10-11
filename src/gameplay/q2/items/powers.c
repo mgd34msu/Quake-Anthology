@@ -218,8 +218,8 @@ static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
         if (!a)
             return false;
         qa_vec3 forward;
-        qa_builtin_angle_vectors(a->weapon_bound ? a->input.angles : body.angles, &forward, NULL,
-                                 NULL);
+        qa_angle_vectors(a->weapon_bound ? a->input.angles : body.angles, &forward, NULL,
+                                 NULL,QA_ANGLE_FLOAT_MATH);
         float multiplier = p->values.quad_until_ns > g->now_ns ? 4 : 1;
         if (p->values.double_until_ns > g->now_ns && !(multiplier > 1 && a->input.no_stack_double))
             multiplier *= 2;

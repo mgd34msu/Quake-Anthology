@@ -178,7 +178,7 @@ static bool muzzle(q2_projection *p, const qa_q2_server_event *event, qa_unified
         const qa_vec3 *offsets = classic ? q2m_classic_muzzle_offsets : q2m_rerelease_muzzle_offsets;
         size_t count = classic ? sizeof(q2m_classic_muzzle_offsets) / sizeof(*offsets) : sizeof(q2m_rerelease_muzzle_offsets) / sizeof(*offsets);
         if (event->data.muzzle.flash >= count) return application_fail(e, QA_ERROR_FORMAT, "Q2 monster muzzle exceeds its authentic Source offset table");
-        qa_vec3 right; qa_builtin_angle_vectors(angles, &direction, &right, NULL);
+        qa_vec3 right; qa_angle_vectors(angles, &direction, &right, NULL,QA_ANGLE_FLOAT_MATH);
         qa_vec3 offset = qa_vec_scale(offsets[event->data.muzzle.flash], scale == 0 ? 1 : scale);
         origin = qa_vec_add(origin, qa_vec_add(qa_vec_scale(direction, offset.x), qa_vec_scale(right, offset.y))); origin.z += offset.z;
     }

@@ -95,7 +95,7 @@ static bool selected_changed(qa_q1_game *g, qa_actor_id actor, qa_item_id acquir
 static bool launch_body(qa_q1_game *g, qa_actor_id actor, qa_vec3 angles, qa_body_state *out,
                         qa_error *error) {
     qa_vec3 forward, direction;
-    qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+    qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (!qa_world_body_read(g->services.world, actor, out, error) ||
         !q1_aim(g, actor, forward, &direction, error))
         return false;

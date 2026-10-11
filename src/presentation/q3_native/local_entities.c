@@ -100,7 +100,7 @@ static bool fragment(const q3n_frame *f, int32_t index, qa_error *error)
         r->origin=destination;
         if(v->flags&Q3N_LE_TUMBLE) {
             qa_vec3 angles; if(!q3n_trajectory(&v->angles,f->time,&angles,error))return false;
-            q3n_angles_axis(angles,r->axis);
+            qa_angle_axis(angles,r->axis,QA_ANGLE_VM_MATH);
         }
         if(!entity(f,r,error))return false;
         return v->bounce_sound==Q3N_BOUNCE_BLOOD?blood_trail(f,index,error):true;
@@ -198,7 +198,7 @@ static bool kamikaze(const q3n_frame *f, q3n_local_entity *v, qa_error *error)
     if(t>2000 && t<3000) {
         if(v->angles.base[0]==0 && v->angles.base[1]==0 && v->angles.base[2]==0)
             for(unsigned i=0;i<3;++i)v->angles.base[i]=(q3n_events_random(f->events) * 360);
-        q3n_angles_axis(q3ne_array(v->angles.base),axis);
+        qa_angle_axis(q3ne_array(v->angles.base),axis,QA_ANGLE_VM_MATH);
         if(!shockwave(f,v,axis,t,2000,3000,2500,704,error))return false;
     }
     return true;

@@ -108,7 +108,7 @@ static bool q3_position_blocked(q3_mover_transaction *transaction, qa_actor_id a
 }
 static qa_vec3 q3_rotation(qa_vec3 origin, qa_vec3 pusher_origin, qa_vec3 angular) {
     qa_vec3 forward, right, up;
-    ph_axes(angular, &forward, &right, &up);
+    qa_angle_vectors(angular, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     right = qa_vec_scale(right, -1);
     qa_vec3 relative = qa_vec_sub(origin, pusher_origin);
     qa_vec3 rotated = qa_v3(
@@ -263,7 +263,7 @@ static bool q3_proximity_push(q3_mover_transaction *transaction, qa_actor_id act
         read = q3_read(transaction, pusher, &support);
         if (read <= 0) return read == 0;
         qa_vec3 forward, right, up;
-        ph_axes(qa_vec_scale(angular, -1), &forward, &right, &up);
+        qa_angle_vectors(qa_vec_scale(angular, -1), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 translated = qa_vec_add(mine.source.position.base, move);
         qa_vec3 relative = qa_vec_sub(translated, support.body.origin);
         qa_vec3 rotated = qa_v3(qa_vec_dot(relative, forward), -qa_vec_dot(relative, right), qa_vec_dot(relative, up));

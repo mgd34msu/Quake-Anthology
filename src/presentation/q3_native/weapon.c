@@ -116,7 +116,7 @@ static bool weapon(const q3n_frame *f,int32_t number,bool ready,const q3n_weapon
 }
 static bool brass(const q3n_frame *f,q3n_entity *cent,q3n_brass kind,qa_error *e)
 {
-    qa_vec3 axis[3]; q3n_angles_axis(cent->lerp_angles,axis);
+    qa_vec3 axis[3]; qa_angle_axis(cent->lerp_angles,axis,QA_ANGLE_VM_MATH);
     const q3n_media_view *media=q3n_media_read(f->media);
     if (kind==Q3N_BRASS_NAILGUN) {
         q3n_smoke puff={.origin=plus(cent->lerp_origin,transform(qa_v3(0,-12,24),axis)),.velocity={0,0,64},
@@ -191,7 +191,7 @@ static bool lightning(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *st
             if (*actual[i]>360) *actual[i]=(*actual[i] + -360);
         }
     }
-    qa_vec3 axis[3]; q3n_angles_axis(angles,axis);
+    qa_vec3 axis[3]; qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH);
     qa_vec3 muzzle=ma(plus(cent->lerp_origin,qa_v3(0,0,26)),14,axis[0]);
     qa_trace_result trace; qa_bounds bounds={0};
     if (!q3n_events_trace(f,muzzle,ma(muzzle,768,axis[0]),bounds,state->number,1u|0x2000000u|0x4000000u,&trace,e)) return false;
@@ -206,7 +206,7 @@ static bool lightning(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *st
         random_angles.x=(float)(q3n_events_rand(f->events)%360);
         random_angles.y=(float)(q3n_events_rand(f->events)%360);
         random_angles.z=(float)(q3n_events_rand(f->events)%360);
-        q3n_angles_axis(random_angles,hit.axis);
+        qa_angle_axis(random_angles,hit.axis,QA_ANGLE_VM_MATH);
         if (!emit(f,&hit,e)) return false;
     }
     return true;
@@ -284,7 +284,7 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
     if (w->barrel_model) {
         qa_q3_ref_entity barrel=attached(parent,w->barrel_model); float angle;
         if (!spin(f,cent,state,&angle,e)) return false;
-        q3n_angles_axis(qa_v3(0,0,angle),barrel.axis);
+        qa_angle_axis(qa_v3(0,0,angle),barrel.axis,QA_ANGLE_VM_MATH);
         if (!attach(f,&barrel,&gun,"tag_barrel",true,e) || !powered(f,&barrel,state->powerups,e)) return false;
     }
     qa_q3_entity non_predicted;
@@ -294,7 +294,7 @@ static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *pa
         if (difference(f->time,cent->muzzle_flash_time)>20 && !cent->railgun_flash) return true;
     qa_q3_ref_entity flash=attached(parent,w->flash_model);
     if (!flash.model) return true;
-    q3n_angles_axis(qa_v3(0,0,(q3n_events_crandom(f->events) * 10)),flash.axis);
+    qa_angle_axis(qa_v3(0,0,(q3n_events_crandom(f->events) * 10)),flash.axis,QA_ANGLE_VM_MATH);
     if (state->weapon==7) {
         const q3n_client_info *ci=state->clientNum>=0 && state->clientNum<64?q3n_clients_get(f->clients,(uint32_t)state->clientNum):NULL;
         if (!ci) return q3p_fail(e,QA_ERROR_FORMAT,"Rail flash requires its actual client-info row");
@@ -431,7 +431,7 @@ bool q3n_weapons_view(const q3n_frame *f,const q3n_weapon_view *view,qa_error *e
     float offset=settings->fov>90?(-.2f * (float)(settings->fov-90)):0;
     qa_q3_ref_entity hands=reference(QA_Q3_REF_MODEL,w->hands_model);
     hands.origin=ma(ma(ma(origin,settings->gun_x,f->refdef.axis[0]),settings->gun_y,f->refdef.axis[1]),(settings->gun_z + offset),f->refdef.axis[2]);
-    q3n_angles_axis(angles,hands.axis);
+    qa_angle_axis(angles,hands.axis,QA_ANGLE_VM_MATH);
     if (settings->gun_frame) hands.frame=hands.old_frame=settings->gun_frame;
     else {
         int32_t number=view->predicted_state->clientNum;
@@ -538,13 +538,13 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
     if (!selected_attach(held->parent_assets,&gun,held->torso,"tag_weapon",false,&gun_found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->world_barrel.time,&state->world_barrel.angle,&state->world_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,flags,held->lighting_origin);
-    q3n_angles_axis(qa_v3(0,0,spin_angle),barrel.axis);
+    qa_angle_axis(qa_v3(0,0,spin_angle),barrel.axis,QA_ANGLE_VM_MATH);
     if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
     qa_q3_ref_entity flash=selected_part(media->flash,flags,held->lighting_origin);
     if (media->flash && selected_flash(draw)) {
         if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
         if (have_flash) {
-            q3n_angles_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis);
+            qa_angle_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis,QA_ANGLE_VM_MATH);
             if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
         }
     }
@@ -582,11 +582,11 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
     if (!q3n_lerp_run(view->animations,&state->torso,draw->player->torsoAnim,draw->time,1,false,e)) return selected_end(owner,false);
     qa_vec3 angles=selected_view_angles(view,draw->time);
     qa_q3_ref_entity hands=selected_part(media->hands,1|4|8,view->origin);
-    qa_vec3 camera_axis[3];q3n_angles_axis(view->angles,camera_axis);
+    qa_vec3 camera_axis[3];qa_angle_axis(view->angles,camera_axis,QA_ANGLE_VM_MATH);
     float fov_offset=view->field_of_view>90?-.2f*(view->field_of_view-90):0;
     hands.origin=ma(ma(ma(view->origin,view->gun_offset.x,camera_axis[0]),
         view->gun_offset.y,camera_axis[1]),view->gun_offset.z+fov_offset,camera_axis[2]);
-    hands.old_origin=hands.origin;q3n_angles_axis(angles,hands.axis);
+    hands.old_origin=hands.origin;qa_angle_axis(angles,hands.axis,QA_ANGLE_VM_MATH);
     if (view->gun_frame) hands.frame=hands.old_frame=view->gun_frame;
     else {
         if (!torso_frame(view->animations,state->torso.frame,&hands.frame,e) ||
@@ -597,11 +597,11 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
     if (!selected_attach(media->assets,&gun,&hands,"tag_weapon",true,&found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,1|4|8,view->origin); bool have_barrel=false;
-    q3n_angles_axis(qa_v3(0,0,spin_angle),barrel.axis);
+    qa_angle_axis(qa_v3(0,0,spin_angle),barrel.axis,QA_ANGLE_VM_MATH);
     if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
     qa_q3_ref_entity flash=selected_part(media->flash,1|4|8,view->origin); bool have_flash=false;
     if (media->flash && selected_flash(draw)) {
-        q3n_angles_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis);
+        qa_angle_axis(qa_v3(0,0,(selected_random(state) * 10)),flash.axis,QA_ANGLE_VM_MATH);
         if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
     }
     bool okay=selected_parts(media,draw,&gun,&barrel,have_barrel,0,submitted,e);
@@ -629,13 +629,13 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
             return selected_end(owner,q3p_fail(e,QA_ERROR_FORMAT,"Authored Q3 attachment lost its retained model or tag"));
         if (!q3p_model_get(media->assets,attachment->model,&model,e)) return selected_end(owner,false);
     }
-    qa_vec3 camera_axis[3]; q3n_angles_axis(view->camera.angles,camera_axis);
+    qa_vec3 camera_axis[3]; qa_angle_axis(view->camera.angles,camera_axis,QA_ANGLE_VM_MATH);
     float fov_offset=(view->fov_scale * fmaxf(0,(view->field_of_view + -view->fov_above)));
     qa_q3_ref_entity hands=selected_part(media->hands,1|4|8,view->camera.origin);
     hands.origin=plus(view->camera.origin,plus(plus(scale(camera_axis[0],view->anchor_offset.x),
         scale(camera_axis[1],view->anchor_offset.y)),scale(camera_axis[2],(view->anchor_offset.z + fov_offset))));
     hands.old_origin=hands.origin;
-    q3n_angles_axis(selected_view_angles(&view->camera,draw->time),hands.axis);
+    qa_angle_axis(selected_view_angles(&view->camera,draw->time),hands.axis,QA_ANGLE_VM_MATH);
     hands.frame=view->frame; hands.old_frame=view->old_frame; hands.back_lerp=view->back_lerp;
     qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->camera.origin); bool found;
     if (!selected_attach(media->assets,&gun,&hands,view->anchor_tag,true,&found,e)) return selected_end(owner,false);
@@ -716,7 +716,7 @@ static bool plasma_at(const q3n_frame *f,int32_t number,qa_vec3 origin,qa_vec3 a
     velocity.y=(40 + -(80 * q3n_events_crandom(f->events)));
     velocity.z=(100 + -(200 * q3n_events_crandom(f->events)));
     le->flags=Q3N_LE_TUMBLE; le->start_time=f->time; le->end_time=sum(f->time,600);
-    qa_vec3 axis[3]; q3n_angles_axis(angles,axis); le->ref.origin=plus(origin,transform(qa_v3(2,2,2),axis));
+    qa_vec3 axis[3]; qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH); le->ref.origin=plus(origin,transform(qa_v3(2,2,2),axis));
     uint32_t contents;
     if (!q3n_events_point_contents(f,le->ref.origin,-1,&contents,e)) return false;
     le->pos.type=5; le->pos.time=f->time; vector(le->pos.base,le->ref.origin);
@@ -750,7 +750,7 @@ bool q3n_weapons_trail(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *s
     if (grapple || w->trail==Q3N_TRAIL_GRAPPLE) {
         cent->trail_time=f->time; qa_q3_entity owner;
         if (!source_entity(f,state->otherEntityNum,&owner,e)) return false;
-        q3n_entity *client=&f->entities[state->otherEntityNum]; qa_vec3 axis[3]; q3n_angles_axis(client->lerp_angles,axis);
+        q3n_entity *client=&f->entities[state->otherEntityNum]; qa_vec3 axis[3]; qa_angle_axis(client->lerp_angles,axis,QA_ANGLE_VM_MATH);
         qa_vec3 start=ma(plus(client->lerp_origin,qa_v3(0,0,26)),-6,axis[2]);
         if (length(minus(start,origin))<64) return true;
         qa_q3_ref_entity beam=reference(QA_Q3_REF_LIGHTNING,0);
@@ -880,7 +880,7 @@ static bool muzzle_point(const q3n_frame *f,int32_t number,qa_vec3 *out,bool *fo
         origin=from(row.pos.base); angles=from(row.apos.base);
         int32_t animation=row.legsAnim&~128; height=animation==13 || animation==23?12:26;
     }
-    qa_vec3 axis[3]; q3n_angles_axis(angles,axis); origin.z=(origin.z + height);
+    qa_vec3 axis[3]; qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH); origin.z=(origin.z + height);
     *out=ma(origin,14,axis[0]); *found=true; return true;
 }
 static bool water_bubbles(const q3n_frame *f,qa_vec3 start,qa_vec3 end,float spacing,qa_error *e)

@@ -135,7 +135,7 @@ static inline qa_vec3 q2_movedir(qa_vec3 v) {
     if (v.x == 0 && v.y == -2 && v.z == 0)
         return qa_v3(0, 0, -1);
     qa_vec3 forward;
-    qa_builtin_angle_vectors(v, &forward, NULL, NULL);
+    qa_angle_vectors(v, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     return forward;
 }
 bool q2_target_extra_spawn(qa_q2_game *, q2_actor *, bool *, qa_error *);

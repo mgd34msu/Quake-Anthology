@@ -40,6 +40,5 @@ bool q3n_player_angles(q3n_player_pose *, const qa_player_animation_config *,
 bool q3n_player_angles_pose(q3n_player_pose *, const qa_player_animation_config *,
     const q3n_pose_entity *, qa_vec3 lerp_angles, int32_t time,
     int32_t frame_milliseconds, float swing_speed, q3n_pose_axes *, qa_error *);
-void q3n_angles_axis(qa_vec3, qa_vec3 axis[3]);
 
 #endif

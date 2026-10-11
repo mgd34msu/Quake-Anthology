@@ -148,7 +148,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     float nearest = 0, old_dot = 1;
     qa_actor_id best = {0};

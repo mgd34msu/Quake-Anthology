@@ -28,30 +28,7 @@ static inline float q3_source_vec_component(qa_vec3 vector, unsigned axis) {
 
 
 
-static inline void q3_source_angle_vectors(qa_vec3 angles, qa_vec3 *forward,
-                                           qa_vec3 *right, qa_vec3 *up) {
-    const float radians = Q3_PI * 2 / 360;
-    float yaw = (angles.y * radians);
-    float pitch = (angles.x * radians);
-    float roll = (angles.z * radians);
-    float sy = (float)sin((double)yaw), cy = (float)cos((double)yaw);
-    float sp = (float)sin((double)pitch), cp = (float)cos((double)pitch);
-    float sr = (float)sin((double)roll), cr = (float)cos((double)roll);
-    if (forward)
-        *forward = qa_v3((cp * cy), (cp * sy), -sp);
-    if (right) {
-        float roll_pitch = (-sr * sp);
-        *right = qa_v3(((roll_pitch * cy) + (-cr * -sy)),
-                       ((roll_pitch * sy) + (-cr * cy)),
-                       (-sr * cp));
-    }
-    if (up) {
-        float roll_pitch = (cr * sp);
-        *up = qa_v3(((roll_pitch * cy) + (-sr * -sy)),
-                    ((roll_pitch * sy) + (-sr * cy)),
-                    (cr * cp));
-    }
-}
+
 
 static inline int32_t q3_source_float_schedule(int32_t now, float seconds) {
     float milliseconds = (seconds * 1000.0f);

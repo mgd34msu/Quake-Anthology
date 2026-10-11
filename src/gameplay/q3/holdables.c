@@ -92,7 +92,7 @@ static bool teleport_player(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin,
     body.angles = angles;
     body.ground = (qa_actor_reference){0};
     qa_vec3 forward;
-    q3_source_angle_vectors(angles, &forward, NULL, NULL);
+    qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_VM_MATH);
     body.velocity = qa_vec_scale(forward, 400);
     if (!qa_world_body_write(game->options.services.world, actor, &body, error))
         return false;

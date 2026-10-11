@@ -213,7 +213,7 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     qa_vec3 right=f->refdef.axis[1],up=f->refdef.axis[2];
     if (p->roll) {
         qa_vec3 angles=vector_angles(f->refdef.axis[0]),axis[3]; angles.z=(angles.z + (float)p->roll);
-        q3n_angles_axis(angles,axis); right=scale(axis[1],-1); up=axis[2];
+        qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH); right=scale(axis[1],-1); up=axis[2];
     }
     qa_q3_poly_vertex vertices[4]={0};
     vertices[0].position=ma(ma(origin,-height,up),-width,right);
@@ -231,7 +231,7 @@ bool q3n_particles_add(const q3n_frame *f, qa_error *error)
     memcpy(o->view_axes,f->refdef.axis,sizeof(o->view_axes));
     qa_vec3 angles=vector_angles(o->view_axes[0]);
     o->view_roll=(o->view_roll + (((float)f->time + -o->old_time) * 0.1f));
-    angles.z=(angles.z + (o->view_roll * 0.9f)); q3n_angles_axis(angles,o->rotated_axes);
+    angles.z=(angles.z + (o->view_roll * 0.9f)); qa_angle_axis(angles,o->rotated_axes,QA_ANGLE_VM_MATH);
     o->rotated_axes[1]=scale(o->rotated_axes[1],-1); o->old_time=(float)f->time;
     bool ok=true; int32_t *link=&o->active;
     while (*link!=-1 && ok) {

@@ -240,7 +240,7 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
     return true;
   q2m_species species = context->monster->definition->species;
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   if (species == Q2M_FIXBOT) {
     if (context->game->options.edition == QA_Q2_CLASSIC) {
       *direction = qa_vec_normalize(qa_vec_sub(enemy.origin, context->body.origin));
@@ -263,8 +263,8 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
   }
   if (species == Q2M_BRAIN) {
     if (context->game->options.edition == QA_Q2_CLASSIC)
-      qa_builtin_angle_vectors(q2m_vector_angles(qa_vec_sub(enemy.origin,
-          context->body.origin)), &forward, &right, &up);
+      qa_angle_vectors(q2m_vector_angles(qa_vec_sub(enemy.origin,
+          context->body.origin)), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     static const qa_vec3 eyes[2][11] = {
       {{.746700f,.238370f,34.167690f},{-1.076390f,.238370f,33.386372f},
        {-1.335500f,5.334300f,32.177170f},{-.175360f,8.846370f,30.635479f},
@@ -297,8 +297,8 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
     if (!q2m_muzzle_offset(context, flash, &offset, error))
       return false;
     if (context->game->options.edition == QA_Q2_CLASSIC) {
-      qa_builtin_angle_vectors(q2m_vector_angles(qa_vec_sub(enemy.origin,
-          context->body.origin)), &forward, &right, &up);
+      qa_angle_vectors(q2m_vector_angles(qa_vec_sub(enemy.origin,
+          context->body.origin)), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
       *origin = qa_vec_add(context->body.origin,
           qa_vec_add(qa_vec_scale(right, offset.x + (flash == 85 ? -14 : 2)),
               qa_vec_add(qa_vec_scale(up, offset.z + 8),
@@ -880,7 +880,7 @@ bool q2m_turret_lasersight(q2m_context *context, qa_error *error) {
     child->entity->visual.visible = true;
   }
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   qa_trace_query query = {.start = context->body.origin,
     .end = qa_vec_add(context->body.origin, qa_vec_scale(forward, 8192)),
     .pass_actor = context->actor->id, .policy = qa_collision_default_policy(QA_GAME_Q2)};

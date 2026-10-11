@@ -114,7 +114,7 @@ static bool attack(qa_q1_game *g, q1_actor *entity, bool stab, qa_error *error) 
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 delta = qa_vec_sub(target.origin, body.origin);
     if (stab) {
         qa_q1_target traits;
@@ -178,7 +178,7 @@ static bool smack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
         !qa_world_body_read(g->services.world, enemy, &target, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     target.velocity = qa_vec_add(qa_vec_scale(g->forward, 100), qa_v3(0, 0, 100));
     if (!qa_world_body_write(g->services.world, enemy, &target, error))
         return false;

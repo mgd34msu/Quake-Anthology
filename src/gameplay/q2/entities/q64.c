@@ -87,7 +87,7 @@ static bool eye(qa_q2_game *g, q2_actor *a, qa_error *e) {
             s->spawnflags |= 0x20000;
         }
         qa_vec3 forward, right, up;
-        qa_builtin_angle_vectors(body.angles, &forward, &right, &up);
+        qa_angle_vectors(body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 point =
             qa_vec_add(body.origin, qa_vec_add(qa_vec_add(qa_vec_scale(forward, v->eye_position.x),
                                                           qa_vec_scale(right, v->eye_position.y)),
@@ -465,7 +465,7 @@ bool q2_q64_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     if (q2_field_id(s, g->field_keys[QA_TARGET_KEY_PATHTARGET]))
         return q2_entity_schedule(g, a, Q2ET_EYE_SETUP, .1f);
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(v->neutral, &forward, &right, &up);
+    qa_angle_vectors(v->neutral, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     s->direction = forward;
     v->eye_position = qa_vec_add(qa_vec_add(qa_vec_scale(forward, v->eye_position.x),
                                             qa_vec_scale(right, v->eye_position.y)),

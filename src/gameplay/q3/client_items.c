@@ -22,7 +22,7 @@ bool qa_q3_client_toss_cube(qa_q3_game *game, qa_actor_id actor, int32_t team,
         return q3_fail(error, "Q3 cube tossing has no actual source cube item");
     ++game->observation_depth;
     qa_vec3 forward;
-    q3_source_angle_vectors(qa_v3(0, (float)(source_time % 360), 0), &forward, NULL, NULL);
+    qa_angle_vectors(qa_v3(0, (float)(source_time % 360), 0), &forward, NULL, NULL,QA_ANGLE_VM_MATH);
     qa_vec3 velocity = qa_v3((forward.x * 150),
                             (forward.y * 150),
                             (forward.z * 150));

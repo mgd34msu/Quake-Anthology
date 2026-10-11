@@ -18,14 +18,7 @@ static qa_vec3 angles_lerp(const float a[3], const float b[3], float t)
 {
     return frontend_q2_lerp_angles(vector(a),vector(b),t);
 }
-static void axes(qa_vec3 angles, qa_vec3 out[3])
-{
-    float pitch = angles.x * 0.017453292519943295f, yaw = angles.y * 0.017453292519943295f, roll = angles.z * 0.017453292519943295f;
-    float sp = sinf(pitch), cp = cosf(pitch), sy = sinf(yaw), cy = cosf(yaw), sr = sinf(roll), cr = cosf(roll);
-    out[0] = qa_v3(cp * cy, cp * sy, -sp);
-    out[1] = qa_v3(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
-    out[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
-}
+
 static frontend_remote_q2 *seat_owner(qa_frontend *f, uint32_t seat, qa_error *error)
 {
     frontend_remote_q2 *found = NULL;
@@ -389,7 +382,7 @@ static bool submit_model(frontend_remote_q2 *row, uint32_t model_index, const ch
 {
     if (!*path || path[0] == '#') return true;
     qa_model_transform transform; qa_model_transform_identity(&transform);
-    qa_vec3 basis[3]; axes(angles, basis);
+    qa_vec3 basis[3]; qa_angle_axis(angles, basis,QA_ANGLE_FLOAT_MATH);
     transform.origin[0] = origin.x; transform.origin[1] = origin.y; transform.origin[2] = origin.z;
     for (size_t i = 0; i < 3; ++i) {
         transform.axes[i][0] = basis[i].x; transform.axes[i][1] = basis[i].y; transform.axes[i][2] = basis[i].z;
@@ -545,7 +538,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     }
     qa_scene_view view = {.viewport = frontend_viewport(f, seat), .origin = origin,
         .clear_color = policy.lighting.clear, .clear_depth = true, .depth = 1, .seat = seat};
-    axes(angles, view.axis); view.origin = qa_vec_add(view.origin, qa_vec_scale(view.axis[1], stereo));
+    qa_angle_axis(angles, view.axis,QA_ANGLE_FLOAT_MATH); view.origin = qa_vec_add(view.origin, qa_vec_scale(view.axis[1], stereo));
     float fov = continuous ? before->player.fov + (frame->player.fov - before->player.fov) * row->fraction : frame->player.fov;
     if (!(fov > 0 && fov < 180) || !view.viewport.width || !view.viewport.height) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 decoded camera has no valid projection");
     float fovy = atan2f((float)view.viewport.height, (float)view.viewport.width / tanf(fov * 0.008726646259971648f)) * 114.59155902616465f;

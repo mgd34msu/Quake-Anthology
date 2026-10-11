@@ -135,7 +135,7 @@ bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1
     qa_body_state body;
     if (!qa_world_body_read(game->services.world, actor, &body, error)) return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(input->view_angles, &forward, NULL, NULL);
+    qa_angle_vectors(input->view_angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 horizontal = qa_v3(forward.x, forward.y, 0);
     float cosine = qa_vec_length(horizontal), inverse = cosine == 0 ? 0 : 1 / cosine;
     qa_vec3 facing = qa_vec_scale(horizontal, inverse);
@@ -205,7 +205,7 @@ bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1
                 if (!qa_world_body_read(game->services.world, destination->id, &target, error)) return false;
                 body.origin = target.origin;
                 *view_angles = destination->map->mangle;
-                qa_builtin_angle_vectors(*view_angles, &forward, NULL, NULL);
+                qa_angle_vectors(*view_angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
                 body.velocity = qa_vec_scale(forward, 300);
                 *until = game->time + .7;
                 *teleported = true;

@@ -126,7 +126,7 @@ bool frontend_fx_q1_entity_light(qa_builtin_random *random, qa_vec3 origin, qa_v
     *out = (frontend_fx_q1_light_recipe){.color = {1, 1, 1}};
     if (effects & 2u) {
         qa_vec3 forward;
-        qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+        qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         *light_origin = qa_vec_add(qa_vec_add(origin, qa_v3(0, 0, 16)), qa_vec_scale(forward, 18));
         out->radius = 200 + (float)(qa_builtin_random_integer(random) & 31);
         out->minimum = 32; out->duration = .1; present = true;
@@ -203,7 +203,7 @@ bool frontend_fx_q1_beam_next(frontend_fx_q1_beam_cursor *cursor, qa_builtin_ran
     if (cursor->remaining <= 0) return false;
     cursor->angles.z = (float)(qa_builtin_random_integer(random) % 360);
     qa_vec3 axes[3], right;
-    qa_builtin_angle_vectors(cursor->angles, axes, &right, axes + 2);
+    qa_angle_vectors(cursor->angles, axes, &right, axes + 2,QA_ANGLE_FLOAT_MATH);
     axes[1] = qa_vec_scale(right, -1);
     qa_model_transform_identity(transform);
     transform->origin[0] = cursor->origin.x;

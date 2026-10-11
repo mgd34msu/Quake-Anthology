@@ -207,7 +207,7 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     qa_vec3 forward;
     q2_actor *player = q2_actor_get(g, owner, false, NULL);
     float yaw = player && player->weapon_bound ? player->input.angles.y : body.angles.y;
-    qa_builtin_angle_vectors(qa_v3(0, yaw, 0), &forward, NULL, NULL);
+    qa_angle_vectors(qa_v3(0, yaw, 0), &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 point = qa_vec_add(body.origin, qa_vec_scale(forward, 48));
     bool found, grounded;
     if (!qa_q2_rogue_find_spawn_point(g, point, body.bounds, 32, &found, &point, e))

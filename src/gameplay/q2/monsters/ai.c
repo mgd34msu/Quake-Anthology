@@ -833,7 +833,7 @@ static bool in_front(q2m_context *context, qa_actor_id id) {
   if (!qa_world_body_read(context->game->services.world, id, &target, &ignored))
     return false;
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   return qa_vec_dot(forward, qa_vec_normalize(qa_vec_sub(
                                  target.origin, context->body.origin))) > 0.3f;
 }
@@ -1189,7 +1189,7 @@ bool qa_q2_before_monster_step(qa_q2_game *game, qa_actor_id id, qa_vec3 *displa
       if (!q2m_alive(&context) || !q2_actor_live(game, area_id))
         return true;
       qa_vec3 forward;
-      qa_builtin_angle_vectors(context.body.angles, &forward, NULL, NULL);
+      qa_angle_vectors(context.body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
       float bad_dot = qa_vec_dot(forward, qa_vec_normalize(qa_vec_sub(area.origin, context.body.origin)));
       float move_dot = qa_vec_dot(forward, qa_vec_normalize(*displacement));
       if ((bad_dot < 0 && move_dot < 0) || (bad_dot > 0 && move_dot > 0))
@@ -2015,7 +2015,7 @@ static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *e
   bool melee = distance <= 100.0f;
   if (second) {
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+    qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 tongue = qa_vec_add(context->body.origin,
         qa_vec_add(qa_vec_scale(forward, 17.48f),
             qa_vec_add(qa_vec_scale(right, .10f), qa_vec_scale(up, 68.92f))));
@@ -2498,7 +2498,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     qa_vec3 direction =
         qa_vec_normalize(qa_vec_sub(target.origin, context->body.origin));
     qa_vec3 forward;
-    qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     float facing = qa_vec_dot(direction, forward);
     bool front = facing > 0.3f;
     bool back = facing < -0.3f;
@@ -2822,7 +2822,7 @@ static bool alternate_fly(q2m_context *context, bool *handled,
           &context->body.bounds, &obstruction, error))
     return false;
   qa_vec3 forward, right;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, NULL);
+  qa_angle_vectors(context->body.angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
   if (obstruction.fraction < 0.25f) {
     qa_vec3 bottom_start = qa_vec_add(context->body.origin,
                                       qa_v3(0, 0, context->body.bounds.mins.z));
@@ -3039,7 +3039,7 @@ static bool pursuit_goal(q2m_context *context, float distance, qa_vec3 *goal,
       qa_vec3 forward, right;
       qa_vec3 angles = context->body.angles;
       angles.y = monster->ideal_yaw;
-      qa_builtin_angle_vectors(angles, &forward, &right, NULL);
+      qa_angle_vectors(angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
       qa_vec3 left_goal = qa_vec_add(
           context->body.origin,
           qa_vec_add(qa_vec_scale(forward, probe_distance),
@@ -3296,7 +3296,7 @@ static bool prone_shot(q2m_context *context, bool *eligible, qa_error *error) {
   qa_vec3 difference = qa_vec_sub(target.origin, context->body.origin);
   difference.z = 0;
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   *eligible = qa_vec_dot(forward, qa_vec_normalize(difference)) >= 0.8f;
   return true;
 }

@@ -30,7 +30,7 @@ bool q1_boss_damageable(qa_q1_game *g, q1_actor *e, bool enabled, qa_error *erro
     return qa_combat_set_traits(g->services.combat, e->id, &traits, error);
 }
 static void ghost_destination(qa_q1_game *g, q1_actor *e) {
-    qa_builtin_angle_vectors(qa_v3(0, q1_random(g) * 360, 0), &g->forward, &g->right, &g->up);
+    qa_angle_vectors(qa_v3(0, q1_random(g) * 360, 0), &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     e->state.monster.source.boss.destination =
         qa_vec_add(e->state.monster.source.boss.anchor, qa_vec_scale(g->forward, e->wait));
 }
@@ -98,7 +98,7 @@ bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
 }
 bool q1_boss_pain_lightning(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error) {
     float pitch = q1_random(g) * 180 + 180, yaw = q1_random(g) * 360;
-    qa_builtin_angle_vectors(qa_v3(pitch, yaw, 0), &g->forward, &g->right, &g->up);
+    qa_angle_vectors(qa_v3(pitch, yaw, 0), &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_body_state value;
     if (!body(g, e, &value, error))
         return false;
@@ -317,8 +317,8 @@ static bool orb_blast(qa_q1_game *g, q1_actor *e, qa_error *error) {
     (void)qa_world_body_read(g->services.world, q1_ref_actor(g, e->state.monster.enemy), &target, NULL);
     float speed = g->options.skill > 2 ? 500 : g->options.skill > 0 ? 450 : 400;
     unsigned count = 4 + (unsigned)floorf(q1_random(g) * 2 + .5f);
-    qa_builtin_angle_vectors(q1_boss_angles(qa_vec_sub(target.origin, value.origin)), &g->forward,
-                             &g->right, &g->up);
+    qa_angle_vectors(q1_boss_angles(qa_vec_sub(target.origin, value.origin)), &g->forward,
+                             &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin = qa_vec_add(value.origin, qa_vec_scale(g->forward, 15));
     float time = qa_vec_length(qa_vec_sub(target.origin, origin)) / speed;
     target.velocity.z = 0;
@@ -449,7 +449,7 @@ static bool shub_grenade(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *e
         qa_vec_add(value.origin, qa_vec_add(qa_vec_scale(g->forward, offset.x),
                                             qa_vec_add(qa_vec_scale(g->right, offset.y),
                                                        qa_vec_scale(g->up, offset.z - 24))));
-    qa_builtin_angle_vectors(value.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(value.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(qa_vec_sub(enemy_origin(g, e), origin)), 600);
     velocity.z = 200;
     q1_actor *shot;

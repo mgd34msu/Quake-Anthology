@@ -22,7 +22,7 @@ static bool chunk(qa_q1_game *g, qa_actor_id explosion, qa_actor_id machine, qa_
     if (!qa_world_body_read(g->services.world, machine, &source, error))
         return false;
     qa_vec3 forward, up;
-    qa_builtin_angle_vectors(source.angles, &forward, NULL, &up);
+    qa_angle_vectors(source.angles, &forward, NULL, &up,QA_ANGLE_FLOAT_MATH);
     q1_actor *gib;
     if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_TIME_MACHINE_GIB], Q1_GIB, (qa_actor_id){0}, &gib, error))
         return false;
@@ -77,7 +77,7 @@ static bool pain(qa_q1_game *g, q1_actor *machine, qa_error *error) {
         if (!machine)
             return true;
         qa_vec3 forward, right, up;
-        qa_builtin_angle_vectors(body.angles, &forward, &right, &up);
+        qa_angle_vectors(body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
         q1_actor *explosion;
         if (!create_time_actor(g, g->runtime_names[Q1_NAME_CLASS_TIME_MACHINE_PAIN], Q1_MAP_TIME_BOOM, id, &explosion, error))
             return false;

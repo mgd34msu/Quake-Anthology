@@ -34,7 +34,7 @@ static bool armed_eye(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind, f
     q1_actor *e;
     if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_OLDNEW_CHILD], kind, owner->id, &e, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     body.origin =
         qa_vec_add(body.origin,
                    qa_vec_add(qa_vec_scale(g->right, side * 300),
@@ -251,8 +251,8 @@ static bool spammer(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (e->count < 0 || e->count >= (float)(sizeof(offsets) / sizeof(*offsets)))
         return q1_remove(g, e, error);
-    qa_builtin_angle_vectors(qa_vec_add(body.angles, qa_v3(0, offsets[(unsigned)e->count] * 6, 0)),
-                             &g->forward, &g->right, &g->up);
+    qa_angle_vectors(qa_vec_add(body.angles, qa_v3(0, offsets[(unsigned)e->count] * 6, 0)),
+                             &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin =
         qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, 50)), qa_vec_scale(g->forward, 48));
     float oomph = fmaxf(200, qa_vec_length(qa_vec_sub(q1_boss_target(g, e), body.origin)) * .8f);
@@ -290,12 +290,12 @@ static bool swiper(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     float fraction = e->count / 50;
     fraction *= fraction;
-    qa_builtin_angle_vectors(
+    qa_angle_vectors(
         qa_vec_add(body.angles,
                    qa_v3(0,
                          e->state.boss_child.sign == 0 ? -60 + fraction * 180 : 60 - fraction * 180,
                          0)),
-        &g->forward, &g->right, &g->up);
+        &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 start = qa_vec_add(body.origin, qa_vec_scale(g->forward, 130));
     qa_trace_result trace;
     if (!q1_trace(g, start, qa_vec_add(body.origin, qa_vec_scale(g->forward, 1000)), e->id, true,

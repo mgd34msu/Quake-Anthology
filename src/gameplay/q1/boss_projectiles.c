@@ -75,7 +75,7 @@ bool q1_boss_sphere_manager(qa_q1_game *g, q1_actor *source, int32_t maximum, bo
         qa_vec3 direction = qa_vec_sub(q1_boss_target(g, source), owner.origin);
         direction.z = 0;
         direction = qa_vec_normalize(direction);
-        qa_builtin_angle_vectors(owner.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(owner.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         state->sign = q1_boss_flat_dot(g->right, qa_vec_cross(direction, qa_v3(0, 0, 1))) > 1;
         body.angles = q1_boss_angles(direction);
         manager->count = (float)maximum;
@@ -138,7 +138,7 @@ static bool actual_sphere(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, e->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 direction = g->forward;
     for (unsigned i = 0; i < 100; ++i) {
         if (!q1_alive(g, e->id))
@@ -179,14 +179,14 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         body.angles = q1_boss_angles(attack);
         if (!qa_world_body_write(g->services.world, e->id, &body, error))
             return false;
-        qa_builtin_angle_vectors(qa_vec_add(body.angles, qa_v3(0, 22.5f, 0)), &g->forward,
-                                 &g->right, &g->up);
+        qa_angle_vectors(qa_vec_add(body.angles, qa_v3(0, 22.5f, 0)), &g->forward,
+                                 &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         excluded = g->forward;
-        qa_builtin_angle_vectors(qa_vec_add(body.angles, qa_v3(0, -22.5f, 0)), &g->forward,
-                                 &g->right, &g->up);
+        qa_angle_vectors(qa_vec_add(body.angles, qa_v3(0, -22.5f, 0)), &g->forward,
+                                 &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         excluded2 = g->forward;
     } else {
-        qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         excluded = g->forward;
         excluded2 = g->right;
     }
@@ -198,8 +198,8 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         for (int x = 0; x < (!chunk && y == 0 ? 44 : 45); ++x) {
             if (!q1_alive(g, e->id))
                 return true;
-            qa_builtin_angle_vectors(qa_vec_add(body.angles, qa_v3(0, (float)x * 8, 0)),
-                                     &g->forward, &g->right, &g->up);
+            qa_angle_vectors(qa_vec_add(body.angles, qa_v3(0, (float)x * 8, 0)),
+                                     &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
             float first = q1_boss_flat_dot(g->forward, excluded),
                   second = q1_boss_flat_dot(g->forward, excluded2);
             if (chunk

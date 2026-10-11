@@ -231,7 +231,7 @@ static bool secret_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     qa_vec3 forward, right, up, size = qa_vec_sub(body.bounds.maxs, body.bounds.mins);
-    qa_builtin_angle_vectors(state->mangle, &forward, &right, &up);
+    qa_angle_vectors(state->mangle, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     float width =
         state->width != 0 ? state->width : fabsf(qa_vec_dot(entity->spawnflags & 4 ? up : right, size));
     float length = state->length != 0 ? state->length : fabsf(qa_vec_dot(forward, size));

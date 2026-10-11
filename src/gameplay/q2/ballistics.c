@@ -116,7 +116,7 @@ static qa_vec3 spread(q2_weapon_call *c, qa_vec3 origin, qa_vec3 direction, floa
     qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
                            atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
     qa_vec3 f, r, u;
-    qa_builtin_angle_vectors(angles, &f, &r, &u);
+    qa_angle_vectors(angles, &f, &r, &u,QA_ANGLE_FLOAT_MATH);
     float x = q2_crandom(c->game) * hs, y = q2_crandom(c->game) * vs;
     return qa_vec_add(qa_vec_add(qa_vec_add(origin, qa_vec_scale(f, q2_hitscan_range())), qa_vec_scale(r, x)),
                       qa_vec_scale(u, y));
@@ -460,7 +460,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         return false;
     if (!c->rerelease) {
         qa_vec3 f, u;
-        qa_builtin_angle_vectors(c->input.angles, &f, NULL, &u);
+        qa_angle_vectors(c->input.angles, &f, NULL, &u,QA_ANGLE_FLOAT_MATH);
         q2_kick(c, qa_vec_scale(f, -2), qa_v3(-1, 0, 0), 0);
         qa_trace_query query = {.start = start,
                                 .end = qa_vec_add(start, qa_vec_scale(dir, spec.range)),

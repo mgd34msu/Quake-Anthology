@@ -265,14 +265,7 @@ static double random_unit(frontend_remote_q2_effects *o) { return (double)(rando
 static float random_signed(frontend_remote_q2_effects *o) { return (float)(2 * random_unit(o) - 1); }
 qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *o)
 { return frontend_q2_effect_random_direction(&o->random,o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE); }
-static void axes(qa_vec3 a, qa_vec3 out[3])
-{
-    float p = a.x * .017453292519943295f, y = a.y * .017453292519943295f, r = a.z * .017453292519943295f;
-    float sp = sinf(p), cp = cosf(p), sy = sinf(y), cy = cosf(y), sr = sinf(r), cr = cosf(r);
-    out[0] = qa_v3(cp * cy, cp * sy, -sp);
-    out[1] = qa_v3(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
-    out[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
-}
+
 static qa_vec3 direction_angles(qa_vec3 d)
 {
     float yaw = d.x != 0 ? atan2f(d.y, d.x) * 57.29577951308232f : d.y > 0 ? 90 : d.y < 0 ? 270 : 0;
@@ -748,7 +741,7 @@ static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_i
         else if (flash==74 || flash==134) muzzle_scale=12;
         else if (flash==227) muzzle_scale=16;
         if (!q2fx_model_admit(o,model,e)) return false;
-        qa_vec3 axis[3]; axes(*angles,axis);
+        qa_vec3 axis[3]; qa_angle_axis(*angles,axis,QA_ANGLE_FLOAT_MATH);
         qa_vec3 flash_origin=qa_vec_add(origin,qa_vec_scale(axis[0],4*scale)), rotation=*angles;
         if (model!=Q2FX_MUZZLE_BOOMER) rotation.z=(float)(random_word(o)%360);
         explosion(o,4,model,flash_origin,server-interval,2,0,8|32|8192,skin,0,qa_v3(0,0,0),rotation,muzzle_scale*scale);
@@ -764,7 +757,7 @@ static bool monster_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_eff
     if (!flash || flash>=size-1) return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle leaves its source offset table");
     float scale=rerelease && pose.scale!=0?pose.scale:1;
     if (!isfinite(scale) || scale<=0) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 monster muzzle has invalid received scale");
-    qa_vec3 axis[3]; axes(pose.angles,axis); qa_vec3 offset=qa_vec_scale(offsets[flash],scale);
+    qa_vec3 axis[3]; qa_angle_axis(pose.angles,axis,QA_ANGLE_FLOAT_MATH); qa_vec3 offset=qa_vec_scale(offsets[flash],scale);
     qa_vec3 origin=qa_vec_sub(qa_vec_add(pose.origin,qa_vec_scale(axis[0],offset.x)),qa_vec_scale(axis[1],offset.y)); origin.z+=offset.z;
     return monster_muzzle_at(o,pose.actor,origin,&pose.angles,scale,flash,time,server,e);
 }
@@ -843,7 +836,7 @@ static bool player_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effe
 {
     if (!((flash<=20 && flash!=15) || (flash>=30 && flash<=39)))
         return q2fx_fail(e,QA_ERROR_FORMAT,"Received player muzzle lacks its source effect definition");
-    qa_vec3 axis[3]; axes(pose.angles,axis);
+    qa_vec3 axis[3]; qa_angle_axis(pose.angles,axis,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin=qa_vec_sub(qa_vec_add(pose.origin,qa_vec_scale(axis[0],18)),qa_vec_scale(axis[1],16));
     bool extended=o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE;
     frontend_remote_q2_effects_controls controls;
@@ -1088,7 +1081,7 @@ bool frontend_remote_q2_effects_draw(frontend_remote_q2_effects *o,
         o->frame_sequence!=s->frame_sequence || !q2fx_source_current(o,e)) return false;
     ++o->busy; bool ok=true;
     if (entities) for (size_t i=0;ok && i<o->draw_count;++i) {
-        const q2fx_model_draw *row=&o->draws[i]; qa_vec3 basis[3]; axes(row->angles,basis);
+        const q2fx_model_draw *row=&o->draws[i]; qa_vec3 basis[3]; qa_angle_axis(row->angles,basis,QA_ANGLE_FLOAT_MATH);
         qa_model_transform transform; qa_model_transform_identity(&transform);
         transform.origin[0]=row->origin.x; transform.origin[1]=row->origin.y; transform.origin[2]=row->origin.z;
         for (size_t j=0;j<3;++j) { transform.axes[j][0]=basis[j].x; transform.axes[j][1]=basis[j].y; transform.axes[j][2]=basis[j].z;

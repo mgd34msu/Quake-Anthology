@@ -87,20 +87,7 @@ static float angle_subtract(float first, float second) {
     while (angle < -180) angle = (angle + 360);
     return angle;
 }
-void q3n_angles_axis(qa_vec3 angles, qa_vec3 axis[3]) {
-    const float radians = 0.01745329251994329577f;
-    float yaw = (angles.y * radians), pitch = (angles.x * radians), roll = (angles.z * radians);
-    float sy = (float)sin((double)yaw), cy = (float)cos((double)yaw);
-    float sp = (float)sin((double)pitch), cp = (float)cos((double)pitch);
-    float sr = (float)sin((double)roll), cr = (float)cos((double)roll);
-    axis[0] = qa_v3((cp * cy), (cp * sy), -sp);
-    float rp = (-sr * sp);
-    axis[1] = qa_v3(-((rp * cy) + (-cr * -sy)),
-        -((rp * sy) + (-cr * cy)), -(-sr * cp));
-    rp = (cr * sp);
-    axis[2] = qa_v3(((rp * cy) + (-sr * -sy)),
-        ((rp * sy) + (-sr * cy)), (cr * cp));
-}
+
 static void swing(float destination, float tolerance, float clamp, float speed,
     int32_t milliseconds, float *angle, bool *swinging) {
     if (!*swinging) {
@@ -152,7 +139,7 @@ bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_co
         float inverse_length = (1 / velocity_length);
         qa_vec3 velocity = qa_v3((source_velocity.x * inverse_length),
             (source_velocity.y * inverse_length), (source_velocity.z * inverse_length));
-        float lean = (velocity_length * 0.05f); qa_vec3 axis[3]; q3n_angles_axis(legs, axis);
+        float lean = (velocity_length * 0.05f); qa_vec3 axis[3]; qa_angle_axis(legs, axis,QA_ANGLE_VM_MATH);
         legs.x = (legs.x + (lean * dot(velocity, axis[0])));
         legs.z = (legs.z + -(lean * dot(velocity, axis[1])));
     }
@@ -162,9 +149,9 @@ bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_co
         float roll = (20 * (1 + -((float)elapsed / 200)));
         torso.z = (torso.z + (state->pain_direction ? roll : -roll));
     }
-    q3n_angles_axis(legs, out->legs);
-    q3n_angles_axis(subtract_angles(torso, legs), out->torso);
-    q3n_angles_axis(subtract_angles(head, torso), out->head);
+    qa_angle_axis(legs, out->legs,QA_ANGLE_VM_MATH);
+    qa_angle_axis(subtract_angles(torso, legs), out->torso,QA_ANGLE_VM_MATH);
+    qa_angle_axis(subtract_angles(head, torso), out->head,QA_ANGLE_VM_MATH);
     return true;
 }
 

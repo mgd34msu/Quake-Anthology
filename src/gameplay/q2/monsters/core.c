@@ -687,7 +687,7 @@ static bool source_dodge(q2m_context *context, qa_actor_id attacker,
       }
       if (trace) {
         qa_vec3 right;
-        qa_builtin_angle_vectors(context->body.angles, NULL, &right, NULL);
+        qa_angle_vectors(context->body.angles, NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
         m->lefty = qa_vec_dot(right, qa_vec_sub(trace->end, context->body.origin)) >= 0;
       } else m->lefty = q2_random_bounded(g, 2) == 0;
       if (!rerelease) {
@@ -836,7 +836,7 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
       monster->lefty = q2m_random(game) < 0.5f;
     } else {
       qa_vec3 right;
-      qa_builtin_angle_vectors(context.body.angles, NULL, &right, NULL);
+      qa_angle_vectors(context.body.angles, NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
       monster->lefty =
           qa_vec_dot(right, qa_vec_sub(trace->end, context.body.origin)) >=
           0.0f;
@@ -2132,7 +2132,7 @@ static bool check_dodge_projectiles(q2m_context *context, qa_error *error) {
     return true;
 
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   qa_vec3 minimum =
       qa_vec_add(qa_vec_add(context->body.origin, context->body.bounds.mins),
                  qa_v3(-512.0f, -512.0f, -512.0f));

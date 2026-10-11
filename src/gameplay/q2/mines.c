@@ -363,7 +363,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
 
 static bool trap_gibs(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_error *e) {
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(body->angles, &forward, &right, &up);
+    qa_angle_vectors(body->angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     for (int i = 0; i < 3; ++i) {
         float radians = ((float)(120 * i) + a->projectile.delay) * 0.017453292519943295f;
         qa_vec3 rotated =
@@ -544,7 +544,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
                 target.angles = turned.angles;
             }
             qa_vec3 forward;
-            qa_builtin_angle_vectors(target.angles, &forward, NULL, NULL);
+            qa_angle_vectors(target.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
             target.velocity = qa_vec_scale(forward, 256);
         }
         if (!qa_world_body_write(g->services.world, best, &target, e) ||
@@ -791,7 +791,7 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
 qa_vec3 q2_mine_velocity(qa_vec3 direction, float speed, float lift, float side) {
     qa_vec3 angles = qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
                            atan2f(direction.y, direction.x) * 57.29577951308232f, 0), right, up;
-    qa_builtin_angle_vectors(angles, NULL, &right, &up);
+    qa_angle_vectors(angles, NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
     return qa_vec_add(qa_vec_add(qa_vec_scale(direction, speed), qa_vec_scale(up, lift)),
                       qa_vec_scale(right, side));
 }

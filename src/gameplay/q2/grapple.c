@@ -547,7 +547,7 @@ static bool project_pose(q2_weapon_call *call, bool lm, const qa_q2_grapple_pose
     qa_body_state body;
     qa_vec3 right;
     if (!qa_world_body_read(call->game->services.world, call->actor->id, &body, error)) return false;
-    qa_builtin_angle_vectors(p->angles, direction, &right, NULL);
+    qa_angle_vectors(p->angles, direction, &right, NULL,QA_ANGLE_FLOAT_MATH);
     float side = p->hand == QA_Q2_LEFT_HAND ? -spec.offset.y :
         p->hand == QA_Q2_CENTER_HAND ? 0 : spec.offset.y;
     *start = qa_vec_add(qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(*direction, spec.offset.x)),
@@ -667,7 +667,7 @@ bool q2_grapple_fire(q2_weapon_call *c, qa_error *e) {
         qa_vec3 forward;
         if (!pose(c->game, c->actor, lm ? QA_Q2_LMCTF_GRAPPLE : QA_Q2_CTF_GRAPPLE, &p, e))
             return false;
-        qa_builtin_angle_vectors(p.angles, &forward, NULL, NULL);
+        qa_angle_vectors(p.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         qa_vec3 previous_origin, angles;
         q2_recoil(c, &previous_origin, &angles);
         angles.x = -1;
@@ -748,7 +748,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
         }
     } else {
         qa_vec3 forward, right;
-        qa_builtin_angle_vectors(p.angles, &forward, &right, NULL);
+        qa_angle_vectors(p.angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
         float side = p.hand == QA_Q2_LEFT_HAND ? -16 : p.hand == QA_Q2_CENTER_HAND ? 0 : 16;
         qa_vec3 offset =
             qa_vec_add(qa_vec_add(qa_vec_scale(forward, 16), qa_vec_scale(right, side)),

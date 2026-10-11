@@ -395,7 +395,7 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
     bool fixbot = c->monster->definition->species == Q2M_FIXBOT;
     if (fixbot && !rerelease(c)) {
         qa_vec3 up;
-        qa_builtin_angle_vectors(target->body.angles, NULL, NULL, &up);
+        qa_angle_vectors(target->body.angles, NULL, NULL, &up,QA_ANGLE_FLOAT_MATH);
         qa_trace_query query = {
             .start = target->body.origin, .end = qa_vec_scale(up, 48),
             .shape = {.kind = QA_SHAPE_BOX, .bounds = target->body.bounds},
@@ -716,7 +716,7 @@ static bool cable(q2m_context *c, qa_error *error) {
     if (!q2m_alive(c) || !q2_actor_live(c->game, target_id))
         return true;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(c->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 end = body.origin;
     end.z += (body.bounds.mins.z + body.bounds.maxs.z) * .5f;
     return q2m_emit(c, QA_BUILTIN_BEAM, Q2_NAME_RESOURCE_Q2_MEDIC_CABLE, 0,

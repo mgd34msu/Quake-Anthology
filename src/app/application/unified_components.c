@@ -118,7 +118,7 @@ static bool camera(const qa_unified_frame_player *player, qa_vec3 *origin, qa_ve
     if (!qa_vec_finite(view->origin) || !qa_vec_finite(view->angles) || !isfinite(view->view_height))
         return application_fail(e, QA_ERROR_FORMAT, "Component receiver camera contains a nonfinite scalar");
     *origin = view->origin; origin->z += view->view_height;
-    qa_builtin_angle_vectors(view->angles, axis, axis + 1, axis + 2);
+    qa_angle_vectors(view->angles, axis, axis + 1, axis + 2,QA_ANGLE_FLOAT_MATH);
     axis[1] = qa_vec_scale(axis[1], -1);
     return qa_vec_finite(*origin) || application_fail(e, QA_ERROR_FORMAT, "Component receiver camera leaves its Source scalar extent");
 }

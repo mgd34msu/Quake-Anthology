@@ -106,7 +106,7 @@ static bool mummy_fire(qa_q1_game *g, q1_actor *entity, qa_vec3 offset, qa_error
         qa_vec_add(qa_vec_add(qa_vec_add(self.origin, qa_vec_scale(g->forward, offset.x)),
                               qa_vec_scale(g->right, offset.y)),
                    qa_vec_scale(g->up, offset.z - 24));
-    qa_builtin_angle_vectors(self.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(self.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(qa_vec_sub(target.origin, origin)), 600);
     velocity.z = 200;
     q1_actor *grenade;

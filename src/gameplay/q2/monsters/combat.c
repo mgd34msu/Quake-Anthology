@@ -142,7 +142,7 @@ bool q2m_hit(q2m_context *context, qa_vec3 aim, float damage, float kick,
     }
   }
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   qa_vec3 impact = qa_vec_add(context->body.origin,
       qa_vec_add(qa_vec_scale(forward, range),
           qa_vec_add(qa_vec_scale(right, side), qa_vec_scale(up, aim.z))));
@@ -219,7 +219,7 @@ static float monster_bfg_radius(const q2m_context *context) {
 
 qa_vec3 q2m_project_offset(const q2m_context *context, qa_vec3 offset) {
   qa_vec3 forward, right;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, NULL);
+  qa_angle_vectors(context->body.angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
   float scale = context->game->options.edition == QA_Q2_RERELEASE &&
                         context->monster->entity_scale != 0
                     ? context->monster->entity_scale
@@ -1489,7 +1489,7 @@ static bool pain_gun_commander(q2m_context *context, qa_error *error) {
   if (!qa_world_body_read(g->services.world, attacker, &other, error)) return false;
   if (!q2m_alive(context) || !q2_actor_live(g, attacker)) return true;
   qa_vec3 forward, difference = qa_vec_sub(other.origin, context->body.origin);
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   difference.z = 0;
   q2m_move_id move;
   if (damage < 35) {
@@ -3154,7 +3154,7 @@ static bool berserk_slam_damage(q2m_context *context, qa_vec3 point,
 
 bool q2m_berserk_land(q2m_context *context, qa_error *error) {
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   qa_vec3 impact = qa_vec_add(context->body.origin,
                               qa_vec_add(qa_vec_scale(forward, 20.0f),
                                          qa_vec_add(qa_vec_scale(right, -14.3f),

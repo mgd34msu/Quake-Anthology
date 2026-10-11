@@ -227,7 +227,7 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
     qa_vec3 angles = self.angles;
     if (g->options.edition == QA_Q1_RERELEASE && !mg3)
         angles.x = -angles.x;
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     bool front = qa_vec_dot(qa_vec_normalize(delta), g->forward) >
                  (mg3 && (entity->spawnflags & 8192) ? 0.866f : 0.3f);
     if ((category == 2 && !front) ||
@@ -743,7 +743,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
         if (!q1_monster_face(g, entity, error) || !body(g, entity, &self, error))
             return false;
         if (target_body(g, entity, &target)) {
-            qa_builtin_angle_vectors(self.angles, &g->forward, &g->right, &g->up);
+            qa_angle_vectors(self.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
             qa_vec3 delta =
                 qa_vec_sub(qa_vec_sub(target.origin, qa_vec_scale(g->right, 30)), self.origin);
             float yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;

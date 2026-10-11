@@ -434,7 +434,7 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
         if (input.view_model && input.family==QA_GAME_Q1) { position.z+=2; previous.z+=2; }
         qa_vec3 angles = input.view_model ? m->angles : frontend_legacy_entity_angles(input.family,
             m->product->edition, m->media.model, m->effects, m->angles, world->seconds, world->milliseconds);
-        qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; frontend_camera_axes(angles,axes);
+        qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; qa_angle_axis(angles,axes,QA_ANGLE_FLOAT_MATH);
         input.transform.origin[0]=position.x;input.transform.origin[1]=position.y;input.transform.origin[2]=position.z;
         for (unsigned a=0;a<3;++a) { input.transform.axes[a][0]=axes[a].x; input.transform.axes[a][1]=axes[a].y;
             input.transform.axes[a][2]=axes[a].z; input.transform.scale[a]=scale; }
@@ -611,8 +611,8 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         !children->view_origin(children->context,player,view.origin,(float)fov,e)) return false;
     if (native_view && !native_camera->rerelease)view.origin.z=(float)(native_origin_z+native_camera->view_height);
     else view.origin.z+=height;
-    frontend_camera_axes(angles,view.axis); qa_vec3 local[3],basis[3]; memcpy(basis,view.axis,sizeof(basis));
-    frontend_camera_axes(kick,local);
+    qa_angle_axis(angles,view.axis,QA_ANGLE_FLOAT_MATH); qa_vec3 local[3],basis[3]; memcpy(basis,view.axis,sizeof(basis));
+    qa_angle_axis(kick,local,QA_ANGLE_FLOAT_MATH);
     for (unsigned i=0;i<3;++i) view.axis[i]=qa_vec_add(qa_vec_add(qa_vec_scale(basis[0],local[i].x),
         qa_vec_scale(basis[1],local[i].y)),qa_vec_scale(basis[2],local[i].z));
     if (!(fov>0 && fov<180) || !view.viewport.width || !view.viewport.height)

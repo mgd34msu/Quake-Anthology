@@ -6,7 +6,7 @@ static bool state_body(qa_q1_game *g, q1_actor *entity, qa_body_state *body, qa_
 static void axes(qa_q1_game *g, qa_body_state body) {
     if (g->options.edition == QA_Q1_RERELEASE && g->options.program != QA_Q1_MG3)
         body.angles.x = -body.angles.x;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
 }
 static bool meat(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) {
     qa_body_state body;
@@ -141,7 +141,7 @@ static bool knight_shot(qa_q1_game *g, q1_actor *entity, int offset, qa_error *e
     qa_vec3 delta = qa_vec_sub(target.origin, body.origin);
     qa_vec3 angles = qa_v3(atan2f(delta.z, hypotf(delta.x, delta.y)) * 57.29577951308232f,
                            atan2f(delta.y, delta.x) * 57.29577951308232f + (float)offset * 6, 0);
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin = qa_vec_add(
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f)),
         qa_vec_scale(g->forward, 20));
@@ -213,7 +213,7 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
     qa_vec3 delta = qa_vec_sub(target.origin, self.origin);
     qa_vec3 angles = qa_v3(atan2f(delta.z, hypotf(delta.x, delta.y)) * 57.29577951308232f,
                            atan2f(delta.y, delta.x) * 57.29577951308232f, 0);
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin = qa_vec_add(
         self.origin, qa_vec_add(qa_vec_scale(g->forward, 100),
                                 qa_vec_add(qa_vec_scale(g->right, side), qa_v3(0, 0, 200))));

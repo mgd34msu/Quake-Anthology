@@ -151,7 +151,7 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     ref.kind=QA_Q3_REF_MODEL; ref.model=visual->models[0];
     float yaw=definition->kind==QA_Q3_ITEM_HEALTH ? (float)((f->time&1023)*360)/1024
         : (float)((f->time&2047)*360)/2048;
-    entity->lerp_angles=qa_v3(0,yaw,0); q3n_angles_axis(entity->lerp_angles,ref.axis);
+    entity->lerp_angles=qa_v3(0,yaw,0); qa_angle_axis(entity->lerp_angles,ref.axis,QA_ANGLE_VM_MATH);
     const q3n_weapon_media *weapon=NULL;
     if(definition->kind==QA_Q3_ITEM_WEAPON) {
         if(!range(definition->tag,16,"weapon",error)) return false;
@@ -183,7 +183,7 @@ static bool item(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     if(!options->simple_items && (definition->kind==QA_Q3_ITEM_HEALTH || definition->kind==QA_Q3_ITEM_POWERUP) && visual->models[1]) {
         ref.model=visual->models[1]; yaw=0;
         if(definition->kind==QA_Q3_ITEM_POWERUP) { ref.origin.z=(ref.origin.z + 12); yaw=((float)((f->time&1023)*360) / -1024); }
-        q3n_angles_axis(qa_v3(0,yaw,0),ref.axis);
+        qa_angle_axis(qa_v3(0,yaw,0),ref.axis,QA_ANGLE_VM_MATH);
         if(fraction!=1) { scale_axis(ref.axis,fraction); ref.non_normalized_axes=true; }
         if(!body(f,source,entity,imports,&ref,error)) return false;
     }
@@ -220,7 +220,7 @@ static bool missile(const q3n_frame *f,const packet_source *source,q3n_entity *e
     qa_vec3 direction=missile_direction(&s->pos);
     if(grapple) { ref.axis[0]=direction; return body(f,source,entity,imports,&ref,error); }
     if(s->pos.type!=0) direction_axis(direction,f->time/4,ref.axis);
-    else if(product==QA_Q3_TEAM_ARENA && s->weapon==QA_Q3_W_PROX) q3n_angles_axis(entity->lerp_angles,ref.axis);
+    else if(product==QA_Q3_TEAM_ARENA && s->weapon==QA_Q3_W_PROX) qa_angle_axis(entity->lerp_angles,ref.axis,QA_ANGLE_VM_MATH);
     else direction_axis(direction,s->time,ref.axis);
     return powerups(f,source,entity,imports,&ref,0,error);
 }
@@ -228,7 +228,7 @@ static bool team(const q3n_frame *f,const packet_source *source,q3n_entity *enti
     const q3n_packet_options *options,const packet_imports *imports,qa_error *error) {
     const qa_q3_entity *s=source->state; const q3n_media_view *media=q3n_media_read(f->media);
     qa_q3_ref_entity ref={.kind=QA_Q3_REF_MODEL,.origin=entity->lerp_origin,.lighting_origin=entity->lerp_origin};
-    q3n_angles_axis(vector(s->angles),ref.axis); int32_t game_type=q3n_frame_game_type(f);
+    qa_angle_axis(vector(s->angles),ref.axis,QA_ANGLE_VM_MATH); int32_t game_type=q3n_frame_game_type(f);
     if(game_type==4 || (q3n_frame_product(f)==QA_Q3_TEAM_ARENA && game_type==5)) {
         ref.model=media->graphics[s->modelindex==1 ? Q3N_G_RED_FLAG_BASE : s->modelindex==2 ? Q3N_G_BLUE_FLAG_BASE : Q3N_G_NEUTRAL_FLAG_BASE];
         return body(f,source,entity,imports,&ref,error);
@@ -261,7 +261,7 @@ static bool team(const q3n_frame *f,const packet_source *source,q3n_entity *enti
             entity->muzzle_flash_time=1;
         }
         float spin=(((16 * (float)acos((double)(1 + -amount))) * 180) / 3.14159265358979323846f);
-        qa_vec3 angles=vector(s->angles); angles.y=(angles.y + spin); q3n_angles_axis(angles,ref.axis); scale_axis(ref.axis,amount);
+        qa_vec3 angles=vector(s->angles); angles.y=(angles.y + spin); qa_angle_axis(angles,ref.axis,QA_ANGLE_VM_MATH); scale_axis(ref.axis,amount);
         memset(ref.color,255,sizeof(ref.color)); ref.origin.z=(ref.origin.z + 56); ref.model=media->graphics[Q3N_G_OVERLOAD_TARGET];
         if(!body(f,source,entity,imports,&ref,error)) return false;
     }
@@ -278,7 +278,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
         if(!s->modelindex) return true;
         if(!range(s->modelindex,256,"game model",error)) return false;
         ref.model=media->game_models[s->modelindex]; ref.frame=ref.old_frame=s->frame;
-        ref.origin=ref.old_origin=entity->lerp_origin; q3n_angles_axis(entity->lerp_angles,ref.axis);
+        ref.origin=ref.old_origin=entity->lerp_origin; qa_angle_axis(entity->lerp_angles,ref.axis,QA_ANGLE_VM_MATH);
         if(q3n_frame_snapshot_player(f) && s->number==q3n_frame_snapshot_player(f)->clientNum) ref.flags|=2;
         return body(f,source,entity,imports,&ref,error);
     case 1: return player(f,source,entity,imports,error);
@@ -287,7 +287,7 @@ static bool packet_entity(const q3n_frame *f,const packet_source *source,q3n_ent
     case 4:
         if(s->solid==0xffffff) { if(!range(s->modelindex,media->inline_count,"inline model",error)) return false; ref.model=media->inline_models[s->modelindex].model; }
         else { if(!range(s->modelindex,256,"game model",error)) return false; ref.model=media->game_models[s->modelindex]; }
-        ref.origin=ref.old_origin=entity->lerp_origin; q3n_angles_axis(entity->lerp_angles,ref.axis); ref.flags=64; ref.skin=(f->time>>6)&1;
+        ref.origin=ref.old_origin=entity->lerp_origin; qa_angle_axis(entity->lerp_angles,ref.axis,QA_ANGLE_VM_MATH); ref.flags=64; ref.skin=(f->time>>6)&1;
         if(!body(f,source,entity,imports,&ref,error)) return false;
         if(!s->modelindex2) return true;
         if(!range(s->modelindex2,256,"game model",error)) return false;

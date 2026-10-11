@@ -181,15 +181,8 @@ static bool makevectors(qa_qc_instance *instance, qa_error *error)
 {
     qa_vec3 angles;
     if (!qa_qc_arg_vector(instance, 0, &angles, error)) return false;
-    const float degrees = 0.01745329251994329577f;
-    float sy = sinf(angles.y * degrees), cy = cosf(angles.y * degrees);
-    float sp = sinf(angles.x * degrees), cp = cosf(angles.x * degrees);
-    float sr = sinf(angles.z * degrees), cr = cosf(angles.z * degrees);
-    qa_vec3 forward = qa_v3(cp * cy, cp * sy, -sp);
-    qa_vec3 right = qa_v3((-sr * sp * cy) + cr * sy,
-                          (-sr * sp * sy) - cr * cy, -sr * cp);
-    qa_vec3 up = qa_v3((cr * sp * cy) + sr * sy,
-                       (cr * sp * sy) - sr * cy, cr * cp);
+    qa_vec3 forward,right,up;
+    qa_angle_vectors(angles,&forward,&right,&up,QA_ANGLE_FLOAT_MATH);
     return set_vector(instance, instance->program->engine_globals.v_forward, forward, error)
         && set_vector(instance, instance->program->engine_globals.v_right, right, error)
         && set_vector(instance, instance->program->engine_globals.v_up, up, error);

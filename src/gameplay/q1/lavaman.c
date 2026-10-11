@@ -102,7 +102,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, bool first, qa_error *error) {
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin =
         qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(g->forward, 40),
                                            qa_vec_add(qa_vec_scale(g->right, first ? 65

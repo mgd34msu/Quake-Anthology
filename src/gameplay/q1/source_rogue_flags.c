@@ -292,7 +292,7 @@ bool q1_source_rogue_flag_think(qa_q1_game *g, q1_actor *e,
     if (frame >= 29 && frame <= 40 && floor(frame) == frame) distance += (float)offsets[(size_t)frame - 29];
     else if (frame >= 103 && frame <= 118) distance += frame <= 106 ? 6 : 7;
     qa_vec3 forward, right;
-    qa_builtin_angle_vectors(held.angles, &forward, &right, NULL);
+    qa_angle_vectors(held.angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
     forward.z = -forward.z;
     body.origin = qa_vec_add(qa_vec_sub(qa_vec_add(held.origin, qa_v3(0, 0, -16)),
         qa_vec_scale(forward, distance)), qa_vec_scale(right, 22));

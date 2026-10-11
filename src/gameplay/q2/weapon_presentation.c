@@ -212,7 +212,7 @@ bool q2_present(q2_weapon_call *c, qa_error *e) {
 bool q2_project(q2_weapon_call *c, qa_vec3 angles, qa_vec3 offset, qa_vec3 *start,
                 qa_vec3 *direction, qa_error *e) {
     qa_vec3 f, r, u;
-    qa_builtin_angle_vectors(angles, &f, &r, &u);
+    qa_angle_vectors(angles, &f, &r, &u,QA_ANGLE_FLOAT_MATH);
     qa_body_state body;
     if (!qa_world_body_read(c->game->services.world, c->actor->id, &body, e))
         return false;

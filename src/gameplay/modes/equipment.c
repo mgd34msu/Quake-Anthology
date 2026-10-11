@@ -863,8 +863,8 @@ static bool equipment_q3_pull(qa_equipment *g, qa_actor_id actor, qa_vec3 *veloc
     if (!p || p->state.selection.grapple != QA_GRAPPLE_Q3)
         return true;
     qa_vec3 angles = p->state.controls.view_angles;
-    float yaw = angles.y * .01745329251994329577f, pitch = angles.x * .01745329251994329577f;
-    qa_vec3 forward = {cosf(pitch) * cosf(yaw), cosf(pitch) * sinf(yaw), -sinf(pitch)};
+    qa_vec3 forward;
+    qa_angle_vectors(angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
     if (p->grapple.pull) return p->grapple.pull(p->grapple.context, actor, forward, velocity, apply, e);
     qa_q3_grapple_state hook;
     if (!qa_q3_grapple_read(p->grapple.q3, actor, &hook) || !hook.active)

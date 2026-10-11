@@ -340,7 +340,7 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
             continue;
         qa_builtin_player_control control;
         if (!q3_player_control(game, actor, &control, error)) return false;
-        q3_source_angle_vectors(*control.view_angles, &forward, NULL, NULL);
+        qa_angle_vectors(*control.view_angles, &forward, NULL, NULL,QA_ANGLE_VM_MATH);
         if (qa_vec_dot(qa_vec_normalize(delta), forward) < 0.4f)
             continue;
         qa_trace_result trace;

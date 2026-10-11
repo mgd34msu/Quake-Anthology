@@ -84,7 +84,7 @@ static bool muzzle(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_vec3 angles, q
     qa_body_state body;
     if (!read(g, e, &body, error))
         return false;
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     *out = qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(g->forward, offset.x)),
                       qa_vec_add(qa_vec_scale(g->right, offset.y), qa_v3(0, 0, offset.z)));
     return true;
@@ -135,7 +135,7 @@ static bool blast(qa_q1_game *g, q1_actor *e, qa_vec3 offset, float spread, bool
     qa_vec3 angles = q1_boss_angles(qa_vec_sub(target.origin, body.origin)), origin;
     if (!muzzle(g, e, offset, angles, &origin, error))
         return false;
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 right = g->right, up = g->up;
     float time = qa_vec_length(qa_vec_sub(target.origin, origin)) / speed;
     target.velocity.z = 0;
@@ -176,7 +176,7 @@ static bool line(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error) {
     qa_vec3 origin;
     if (!muzzle(g, e, offset, body.angles, &origin, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 right = g->right;
     qa_vec3 direction = qa_vec_sub(q1_boss_target(g, e), origin);
     direction.z = 0;
@@ -503,7 +503,7 @@ bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         body.angles.y += 5;
         if (!qa_world_body_write(g->services.world, e->id, &body, error))
             return false;
-        qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         if (g->options.skill < 2 && (int32_t)e->count % 10 < 5) {
             e->count--;
             return q1_schedule(g, e, e->delay, Q1_THINK_BOSS_CHILD, error);
@@ -512,7 +512,7 @@ bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     for (unsigned remaining = spiral ? 4 : 72; remaining; --remaining) {
         qa_vec3 angles = spiral ? qa_vec_add(body.angles, qa_v3(0, 90 * (float)(remaining - 1), 0))
                                 : qa_v3(0, (72 - (float)remaining) * 5, 0);
-        qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 direction = g->forward;
         q1_actor *shot;
         qa_vec3 origin =
@@ -649,7 +649,7 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
             ok = false;
             break;
         }
-        qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         ok = qa_q1_spawn_teleport_fog(g, qa_vec_add(body.origin, qa_vec_scale(g->forward, 32)),
                                       NULL, error);
     }

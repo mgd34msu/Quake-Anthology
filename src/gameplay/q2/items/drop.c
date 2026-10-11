@@ -16,7 +16,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
                          : body.angles;
     angles.y += options->yaw_offset;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+    qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_bounds bounds = {{-15, -15, -15}, {15, 15, 15}};
     qa_vec3 origin = body.origin;
     qa_builtin_actor_traits traits = {0};

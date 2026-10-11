@@ -497,7 +497,7 @@ static void q3_run_step(qa_q3_step *step) {
     }
     state->command_time_ms = command->server_time_ms;
     q3_view(step);
-    qa_move_angles(state->view_angles, &step->forward, &step->right, NULL);
+    qa_angle_vectors(state->view_angles, &step->forward, &step->right, NULL,QA_ANGLE_FLOAT_MATH);
     if (command->up_move < 10) state->movement_flags &= ~(uint32_t)Q3_JUMP_HELD;
     if (command->forward_move < 0) state->movement_flags |= Q3_BACKWARDS_RUN;
     else if (command->forward_move > 0 || (command->forward_move == 0 && command->side_move != 0))

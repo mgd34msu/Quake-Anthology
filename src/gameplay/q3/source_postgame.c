@@ -35,7 +35,7 @@ static bool podium_origin(qa_q3_game *game, qa_vec3 *out, qa_error *error)
     if (!game->options.hooks.postgame_podium_parameters)
         return q3_fail(error, "podium placement has no actual live engine cvar trap");
     qa_vec3 forward;
-    q3_source_angle_vectors(game->match_state.intermission_angles, &forward, NULL, NULL);
+    qa_angle_vectors(game->match_state.intermission_angles, &forward, NULL, NULL,QA_ANGLE_VM_MATH);
     qa_vec3 origin = game->match_state.intermission_origin;
     int32_t distance, drop;
     if (!game->options.hooks.postgame_podium_parameters(game->options.hooks.context,&distance,&drop,error)) return false;
@@ -96,7 +96,7 @@ static bool place_model(qa_q3_game *game, uint32_t model, qa_actor_id podium,
     qa_trajectory angular = trajectory(&entity.apos);
     angular.base = angles;
     qa_vec3 forward, right, up;
-    q3_source_angle_vectors(angles, &forward, &right, &up);
+    qa_angle_vectors(angles, &forward, &right, &up,QA_ANGLE_VM_MATH);
     qa_vec3 origin = qa_vec_add(pad.origin, qa_vec_scale(forward, offset.x));
     origin = qa_vec_add(origin, qa_vec_scale(right, offset.y));
     origin = qa_vec_add(origin, qa_vec_scale(up, offset.z));

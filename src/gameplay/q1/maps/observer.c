@@ -118,7 +118,7 @@ static bool through_teleport(qa_q1_game *g, qa_actor_id actor, q1_actor *telepor
     body.origin = destination.origin;
     body.angles = native && native->map ? native->map->mangle : destination.angles;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     body.velocity = qa_vec_scale(forward, 300);
     return commit(g, actor, &body, true, error);
 }

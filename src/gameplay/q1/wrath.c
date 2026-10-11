@@ -9,7 +9,7 @@ bool q1_wrath_launch(qa_q1_game *g, q1_actor *entity, unsigned attack, qa_error 
         return false;
     qa_vec3 direction =
         qa_vec_normalize(qa_vec_sub(qa_vec_add(target.origin, qa_v3(0, 0, 10)), body.origin));
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     entity->effects |= 2;
     float forward = attack == 1 || attack == 4 ? 20 : attack == 2 ? 18 : 12;
     float up = attack == 4 ? 16 : attack == 2 ? 10 : 12;

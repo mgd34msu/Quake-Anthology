@@ -175,7 +175,7 @@ bool q2_weapon_fired(qa_q2_game *g, qa_actor_id actor, qa_q2_weapon weapon, qa_e
 
 static qa_vec3 forward(q2_weapon_call *c) {
     qa_vec3 f;
-    qa_builtin_angle_vectors(c->input.angles, &f, NULL, NULL);
+    qa_angle_vectors(c->input.angles, &f, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     return f;
 }
 static bool flash(q2_weapon_call *c, int code, qa_error *e) {
@@ -237,14 +237,14 @@ bool q2_weapon_muzzle(q2_weapon_call *c, const q2_shot_spec *spec, qa_vec3 angle
     if (weapon == QA_Q2_PHALANX) {
         projected.y += spec->yaw_offset;
         if (!q2_project(c, c->rerelease ? projected : angles, offset, start, direction, error)) return false;
-        if (!c->rerelease) qa_builtin_angle_vectors(projected, direction, NULL, NULL);
+        if (!c->rerelease) qa_angle_vectors(projected, direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         return true;
     }
     if (!c->rerelease && (weapon == QA_Q2_ETF_RIFLE || weapon == QA_Q2_TESLA)) {
         qa_body_state body;
         qa_vec3 forward, right, up;
         if (!qa_world_body_read(c->game->services.world, c->actor->id, &body, error)) return false;
-        qa_builtin_angle_vectors(angles, &forward, &right, &up);
+        qa_angle_vectors(angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
         float side = c->input.hand == QA_Q2_LEFT_HAND ? -offset.y :
             c->input.hand == QA_Q2_CENTER_HAND ? 0 : offset.y;
         if (weapon == QA_Q2_TESLA) {
@@ -465,7 +465,7 @@ static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
             if (c->rerelease)
                 result = q2_project(c, angles, qa_v3(0, 0, -8), &start, &dir, e);
             else
-                qa_builtin_angle_vectors(angles, &dir, NULL, NULL);
+                qa_angle_vectors(angles, &dir, NULL, NULL,QA_ANGLE_FLOAT_MATH);
             if (result) {
                 float damage_factor, kick_factor;
                 result = q2_multiplier(c, &damage_factor, e) && q2_multiplier(c, &kick_factor, e) &&
@@ -522,7 +522,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
                     &start, &dir, e))
         return false;
     if (w == QA_Q2_PHALANX && !c->rerelease)
-        qa_builtin_angle_vectors(angles, &dir, NULL, NULL);
+        qa_angle_vectors(angles, &dir, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (w == QA_Q2_DISINTEGRATOR) {
         if (!q2_tracker_target(c, start, dir, &c->projectile_enemy, e))
             return false;
@@ -531,7 +531,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
     q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-1, 0, 0), c->rerelease ? 0.2f : 0);
     if (w == QA_Q2_IONRIPPER) {
         qa_vec3 aim;
-        qa_builtin_angle_vectors(c->rerelease ? c->input.angles : angles, &aim, NULL, NULL);
+        qa_angle_vectors(c->rerelease ? c->input.angles : angles, &aim, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         q2_kick(c, qa_vec_scale(aim, -3), qa_v3(-3, 0, 0), c->rerelease ? 0.2f : 0);
     } else if (w == QA_Q2_PHALANX)
         q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-2, 0, 0), c->rerelease ? 0.2f : 0);

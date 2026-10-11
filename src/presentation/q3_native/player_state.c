@@ -90,8 +90,8 @@ void q3n_damage_feedback_latch(q3n_damage_feedback *g,int32_t client_time,
     if(yaw==255 && pitch==255) {
         g->x=g->y=g->roll=0; g->pitch=-kick;
     } else {
-        qa_vec3 dir; q3nh_vectors(qa_v3((((float)pitch / 255) * 360),
-            (((float)yaw / 255) * 360),0),&dir,NULL,NULL);
+        qa_vec3 dir; qa_angle_vectors(qa_v3((((float)pitch / 255) * 360),
+            (((float)yaw / 255) * 360),0),&dir,NULL,NULL,QA_ANGLE_VM_MATH);
         dir=q3ne_scale(dir,-1);
         float front=q3ne_dot(dir,axis[0]),left=q3ne_dot(dir,axis[1]),up=q3ne_dot(dir,axis[2]);
         float distance=fmaxf(0.1f,q3ne_length(qa_v3(front,left,0)));

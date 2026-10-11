@@ -256,13 +256,13 @@ static bool kamikaze(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
     direction=qa_v3(((float)cos((double)angle) * 20),((float)sin((double)angle) * 20),((float)cos((double)angle) * 20));
     skull.origin=q3ne_sum(torso->origin,direction);
     float yaw=(((angle * 180) / pi) + 90); if(yaw>360)yaw=(yaw + -360);
-    q3n_angles_axis(qa_v3(((float)sin((double)angle) * 30),yaw,0),skull.axis);
+    qa_angle_axis(qa_v3(((float)sin((double)angle) * 30),yaw,0),skull.axis,QA_ANGLE_VM_MATH);
     if(!skull_pair(p,&skull,true,e))return false;
     angle=(sphere_angle(time,4) + pi); if(angle>two_pi)angle=(angle + -two_pi);
     direction=qa_v3(((float)sin((double)angle) * 20),((float)cos((double)angle) * 20),((float)cos((double)angle) * 20));
     skull.origin=q3ne_sum(torso->origin,direction);
     yaw=(360 + -((angle * 180) / pi)); if(yaw>360)yaw=(yaw + -360);
-    q3n_angles_axis(qa_v3(((float)cos((double)(angle + -(0.5f * pi))) * 30),yaw,0),skull.axis);
+    qa_angle_axis(qa_v3(((float)cos((double)(angle + -(0.5f * pi))) * 30),yaw,0),skull.axis,QA_ANGLE_VM_MATH);
     if(!skull_pair(p,&skull,false,e))return false;
     angle=(sphere_angle(time,3) + (0.5f * pi)); if(angle>two_pi)angle=(angle + -two_pi);
     direction=qa_v3(((float)sin((double)angle) * 20),((float)cos((double)angle) * 20),0);
@@ -337,7 +337,7 @@ static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_erro
     }
     if(!q3n_lerp_run(&p->client.animations,&s->flag,idle||walk?FX_FLAG_STAND:FX_FLAG_RUN,p->frame->time,1,p->settings->animations_disabled,e))return false;
     r.old_frame=s->flag.old_frame; r.frame=s->flag.frame; r.back_lerp=s->flag.back_lerp;
-    q3n_angles_axis(qa_v3(0,s->flag_yaw,0),r.axis);
+    qa_angle_axis(qa_v3(0,s->flag_yaw,0),r.axis,QA_ANGLE_VM_MATH);
     return q3n_attach(p->frame->assets,&r,&pole,"tag_flag",true,e) && current(p,e) && emit(p,&r,e);
 }
 static bool light(player_fx *p,qa_vec3 color,qa_error *e)
@@ -359,9 +359,9 @@ static bool powerups(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
         if(p->client.new_anims) { if(!flag(p,p->media->graphics[skins[i]],torso,e))return false; }
         else {
             qa_q3_ref_entity r=reference(QA_Q3_REF_MODEL,p->media->graphics[models[i]]); qa_vec3 axis[3];
-            q3n_angles_axis(qa_v3(0,p->cent->lerp_angles.y,0),axis);
+            qa_angle_axis(qa_v3(0,p->cent->lerp_angles.y,0),axis,QA_ANGLE_VM_MATH);
             r.origin=q3ne_sum(q3ne_sum(p->cent->lerp_origin,q3ne_scale(axis[0],-16)),qa_v3(0,0,16));
-            q3n_angles_axis(qa_v3(0,(p->cent->lerp_angles.y + 90),0),r.axis);
+            qa_angle_axis(qa_v3(0,(p->cent->lerp_angles.y + 90),0),r.axis,QA_ANGLE_VM_MATH);
             if(!emit(p,&r,e))return false;
         }
         if(!light(p,colors[i],e))return false;

@@ -468,7 +468,7 @@ bool q2m_widow_summon(q2m_context *context, bool second, bool grow, qa_error *er
         if (!q2m_refresh(context, error))
             return !q2m_alive(context);
         qa_vec3 forward, right, up;
-        qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+        qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 point =
             qa_vec_add(context->body.origin,
                        qa_vec_add(qa_vec_scale(forward, 30),

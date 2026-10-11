@@ -268,7 +268,7 @@ static bool fire_rocket(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         return true;
     actor->effects = 2;
     angles.x = -angles.x;
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward;
     actor->map->pending.follower.view_angles = angles;
     actor->map->pending.follower.rockets -= 1;

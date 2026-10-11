@@ -180,7 +180,7 @@ bool q2_client_item_action(qa_q2_game *g, qa_actor_id id, bool flashlight, bool 
     if (!q2_player_observe(g, a, &m, e))
         return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(m.view_angles, &forward, NULL, NULL);
+    qa_angle_vectors(m.view_angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (qa_vec_dot(qa_vec_normalize(qa_vec_sub(s->rule.help_points[s->rule.help_index], body.origin)),
                    forward) < .3f) {
         qa_trace_result hit;

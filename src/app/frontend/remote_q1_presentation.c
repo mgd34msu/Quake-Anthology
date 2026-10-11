@@ -70,7 +70,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
     if (model && !entity->view_weapon && entity->entity.number < 65536)
         angles = frontend_legacy_entity_angles(QA_GAME_Q1, QA_EDITION_CLASSIC, model->source,
             0, angles, world->seconds, 0);
-    frontend_camera_axes(angles, axes);
+    qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
     transform.origin[0] = origin.x; transform.origin[1] = origin.y; transform.origin[2] = origin.z;
     for (unsigned i = 0; i < 3; ++i) {
         transform.axes[i][0] = axes[i].x; transform.axes[i][1] = axes[i].y; transform.axes[i][2] = axes[i].z;

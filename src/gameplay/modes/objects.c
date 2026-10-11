@@ -669,7 +669,7 @@ bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
     qa_vec3 angles = player.angles, forward;
     if (m->options.hooks.player_view)
         m->options.hooks.player_view(m->options.hooks.context, actor, &angles);
-    qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+    qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin = qa_vec_add(player.origin, qa_vec_scale(forward, 24));
     origin.z -= 16;
     if (family(v) == QA_GAME_Q1) {
@@ -845,7 +845,7 @@ static bool follow_flag(qa_modes *m, mode_instance *v, mode_object *o, qa_error 
         !qa_world_body_read(m->options.services.world, o->actor, &body, e))
         return false;
     qa_vec3 forward, right;
-    qa_builtin_angle_vectors(carrier.angles, &forward, &right, NULL);
+    qa_angle_vectors(carrier.angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
     forward.z = -forward.z;
     int32_t frame = 0;
     float distance = 14;

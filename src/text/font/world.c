@@ -138,15 +138,7 @@ bool qa_font_world_store_snapshot(qa_font_world_store *store, double now_seconds
     return true;
 }
 
-static void fixed_axis(qa_vec3 angles, qa_vec3 axis[3]) {
-    const float radians = 0.01745329251994329577f;
-    float sy = sinf(angles.y * radians), cy = cosf(angles.y * radians);
-    float sp = sinf(angles.x * radians), cp = cosf(angles.x * radians);
-    float sr = sinf(angles.z * radians), cr = cosf(angles.z * radians);
-    axis[0] = qa_v3(cp * cy, cp * sy, -sp);
-    axis[1] = qa_v3(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
-    axis[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
-}
+
 
 static bool world_quad(qa_scene_frame *frame, const qa_scene_view *view, const qa_font_glyph *glyph,
                        qa_vec4 color, qa_vec3 origin, qa_vec3 right, qa_vec3 down,
@@ -259,7 +251,7 @@ bool qa_font_world_draw(qa_scene_frame *frame, const qa_scene_view *view,
             axis[1] = view->axis[1];
             axis[2] = view->axis[2];
         } else {
-            fixed_axis(text->angles, axis);
+            qa_angle_axis(text->angles, axis,QA_ANGLE_FLOAT_MATH);
         }
         qa_vec3 right = qa_vec_scale(axis[1], -text->cell_size);
         qa_vec3 down = qa_vec_scale(axis[2], -text->cell_size);

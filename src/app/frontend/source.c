@@ -696,7 +696,7 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
         if(found) {
             options->weapon_camera=definition;
             options->world.view.origin=qa_vec_add(camera.origin,camera.view_offset);
-            frontend_camera_axes(camera.angles,options->world.view.axis);
+            qa_angle_axis(camera.angles,options->world.view.axis,QA_ANGLE_FLOAT_MATH);
         }
     }
     if (!frontend_source_prepare_scene(source->frontend,source->application,source->seat,definition,options,error)) return false;
@@ -1537,7 +1537,7 @@ static bool body_prepare(void *context,qa_actor_owner receiver,uint32_t seat,
         if (!draw->components) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual component Draw roster");
         memset(draw->components,0,count*sizeof(*draw->components));
         qa_vec3 origin=qa_vec_add(camera.origin,camera.view_offset),axis[3];
-        frontend_camera_axes(camera.angles,axis);
+        qa_angle_axis(camera.angles,axis,QA_ANGLE_FLOAT_MATH);
         for (size_t i=0;i<count;++i) {
             source_body_component *child=draw->components+i;
             if (!qa_application_q3_component_draw_prepare(source->application,i,source->seat,camera.actor,&origin,axis,

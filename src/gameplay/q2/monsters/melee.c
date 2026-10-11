@@ -123,7 +123,7 @@ bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *han
         if (!qa_world_body_read(context->game->services.world, enemy, &body, error))
             return false;
         qa_vec3 forward;
-        qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+        qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         body.velocity = qa_vec_scale(forward, -1200);
         return qa_world_body_write(context->game->services.world, enemy, &body, error);
     }

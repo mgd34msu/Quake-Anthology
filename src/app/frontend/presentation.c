@@ -64,15 +64,7 @@ qa_scene_rect frontend_viewport(const qa_frontend *frontend, unsigned seat)
     uint32_t bottom = ((seat / columns) + 1) * frontend->height / rows;
     return (qa_scene_rect){(int32_t)x, (int32_t)y, right - x, bottom - y};
 }
-void frontend_camera_axes(qa_vec3 angles, qa_vec3 axis[3])
-{
-    float yaw = angles.y * .017453292519943295f, pitch = angles.x * .017453292519943295f;
-    float roll = angles.z * .017453292519943295f;
-    float sy = sinf(yaw), cy = cosf(yaw), sp = sinf(pitch), cp = cosf(pitch), sr = sinf(roll), cr = cosf(roll);
-    axis[0] = qa_v3(cp * cy, cp * sy, -sp);
-    axis[1] = qa_v3(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
-    axis[2] = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
-}
+
 bool frontend_view_background(qa_frontend *frontend, qa_scene_rect output,
     const qa_scene_view *view, qa_error *error)
 {
@@ -151,7 +143,7 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     if (settings.chase && !player.intermission &&
         !frontend_remote_q1_chase_camera(selected,&settings,view.origin,player.angles,
             &view.origin,&angles,error)) return false;
-    frontend_camera_axes(angles,view.axis);
+    qa_angle_axis(angles,view.axis,QA_ANGLE_FLOAT_MATH);
     view.viewport = q1_view_rectangle(view.viewport, &settings, player.intermission, preferences->hud_scale);
     if (!q1_view_projection(f, &view, fov, error)) return false;
     if (!frontend_view_background(f, fallback->viewport, &view, error)) return false;
@@ -268,7 +260,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         qa_world_trace_scratch(qa_application_world(f->application),qa_world_geometry(qa_application_world(f->application))),
         scene->origin,input.angles,
         &scene->origin,&angles,error)) return false;
-    frontend_camera_axes(angles, scene->axis);
+    qa_angle_axis(angles, scene->axis,QA_ANGLE_FLOAT_MATH);
     qa_collision_leaf leaf;
     if (!qa_collision_point_leaf(qa_world_geometry(qa_application_world(f->application)),
         scene->origin,QA_LEAF_Q1,&leaf,error)) return false;
@@ -308,7 +300,7 @@ static bool local_q3_damage(qa_frontend *f,frontend_seat *seat,qa_actor_id actor
     qa_vec3 angles=q3n_damage_feedback_angles(&seat->q3_damage,source.source_time_ms,camera->angles);
     if(!qa_application_selected_q3_character_current(f->application,&source))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Selected Q3 camera changed its actual character");
-    frontend_camera_axes(angles,view->axis); *changed=true; return true;
+    qa_angle_axis(angles,view->axis,QA_ANGLE_FLOAT_MATH); *changed=true; return true;
 }
 static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
 {
@@ -415,7 +407,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 view.origin=qa_vec_add(origin,offset);
                 if (character && character->edition == QA_EDITION_RERELEASE) view.origin.z += camera.view_height;
             }
-            frontend_camera_axes(angles, view.axis);
+            qa_angle_axis(angles, view.axis,QA_ANGLE_FLOAT_MATH);
         }
         else { view.axis[0] = qa_v3(1, 0, 0); view.axis[1] = qa_v3(0, 1, 0); view.axis[2] = qa_v3(0, 0, 1); }
         double ordinary_fov; bool explicit_override;

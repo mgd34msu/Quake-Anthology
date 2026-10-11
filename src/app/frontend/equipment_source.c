@@ -959,7 +959,7 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
         .origin = origin, .old_origin = origin, .lighting_origin = origin,
         .frame = owner->selection.frame, .old_frame = owner->selection.frame,
         .skin = owner->selection.has_skin ? owner->selection.skin : 0};
-    memset(entity->color, 255, sizeof(entity->color)); frontend_camera_axes(angles, entity->axis);
+    memset(entity->color, 255, sizeof(entity->color)); qa_angle_axis(angles, entity->axis,QA_ANGLE_FLOAT_MATH);
     qa_model_transform_identity(&owner->view_transform);
     for (size_t i = 0; i < 3; ++i) {
         owner->view_transform.axes[i][0] = entity->axis[i].x;

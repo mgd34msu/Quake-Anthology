@@ -274,7 +274,7 @@ static bool jump_action(q2m_context *context, q2m_callback_id callback,
     if (!qa_actor_reference_present(context->body.ground) &&
         context->game->options.edition == QA_Q2_RERELEASE) {
       qa_vec3 forward;
-      qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+      qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
       qa_vec3 projected = qa_v3(context->body.velocity.x * forward.x,
                                context->body.velocity.y * forward.y,
                                context->body.velocity.z * forward.z);
@@ -296,7 +296,7 @@ static bool jump_action(q2m_context *context, q2m_callback_id callback,
     return true;
   }
   qa_vec3 forward, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, &up);
+  qa_angle_vectors(context->body.angles, &forward, NULL, &up,QA_ANGLE_FLOAT_MATH);
   if (jumps[callback].name != callback) {
     qa_error_set(error, QA_ERROR_FORMAT, 0, "Unknown authored Q2 jump callback %s", q2m_callbacks[callback].name);
     return false;
@@ -457,7 +457,7 @@ qa_vec3 q2m_vector_angles(qa_vec3 direction) {
 static qa_vec3 spread_direction(q2m_context *context, qa_vec3 direct,
                                 float horizontal, float vertical) {
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(q2m_vector_angles(direct), &forward, &right, &up);
+  qa_angle_vectors(q2m_vector_angles(direct), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   float r = q2m_crandom(context->game) * horizontal;
   float u = q2m_crandom(context->game) * vertical;
   return qa_vec_normalize(
@@ -511,7 +511,7 @@ static bool fire_forward_exact(q2m_context *context, q2m_attack_kind kind,
   if (!q2m_project_flash(context, flash, &start, error))
     return false;
   qa_vec3 direction;
-  qa_builtin_angle_vectors(context->body.angles, &direction, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   q2m_fire_spec spec =
       q2m_fire_default(context, kind, damage, flash, start, direction);
   if (speed > 0.0f)
@@ -552,7 +552,7 @@ static bool project_flash_angles(q2m_context *context, int flash,
                     ? context->monster->entity_scale
                     : 1.0f;
   qa_vec3 forward, right;
-  qa_builtin_angle_vectors(angles, &forward, &right, NULL);
+  qa_angle_vectors(angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
   *start = qa_vec_add(
       context->body.origin,
       qa_vec_add(qa_vec_scale(forward, offset.x * scale),
@@ -609,7 +609,7 @@ static bool soldier_aim(q2m_context *context, int flash, unsigned index,
   if (!q2m_project_flash(context, flash, start, error))
     return false;
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   if (index == 5 || index == 6) {
     if (!heavy && !rogue &&
         context->game->options.edition == QA_Q2_RERELEASE &&
@@ -818,7 +818,7 @@ static bool enemy_in_front(q2m_context *context) {
                           context->monster->enemy, &target, &ignored))
     return false;
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   return qa_vec_dot(forward, qa_vec_normalize(qa_vec_sub(
                                  target.origin, context->body.origin))) > 0.3f;
 }
@@ -1179,7 +1179,7 @@ static bool infantry_machinegun(q2m_context *context, qa_error *error) {
   if (!q2m_project_flash(context, flash, &start, error))
     return false;
   qa_vec3 direction;
-  qa_builtin_angle_vectors(context->body.angles, &direction, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
 
   qa_body_state enemy;
   qa_error ignored = {0};
@@ -1239,7 +1239,7 @@ static bool infantry_machinegun(q2m_context *context, qa_error *error) {
   } else if (!normal) {
     qa_vec3 angles = qa_vec_sub(context->body.angles,
                                 infantry_death_aim[frame - 155]);
-    qa_builtin_angle_vectors(angles, &direction, NULL, NULL);
+    qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   }
   q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_BULLET, 3.0f,
                                         flash, start, direction);
@@ -1383,7 +1383,7 @@ static bool infantry_callbacks(q2m_context *context, q2m_callback_id callback,
 
 static qa_vec3 carrier_spawn_start(const q2m_context *context) {
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   return qa_vec_add(context->body.origin,
                     qa_vec_add(qa_vec_scale(forward, 105.0f),
                                qa_vec_add(qa_vec_scale(right, 0.0f),
@@ -1399,7 +1399,7 @@ static bool carrier_rocket(q2m_context *context, qa_error *error) {
     return true;
   bool predictive = traits.player && q2m_random(context->game) < 0.5f;
   qa_vec3 right;
-  qa_builtin_angle_vectors(context->body.angles, NULL, &right, NULL);
+  qa_angle_vectors(context->body.angles, NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
   static const float spreads[] = {0.4f, 0.025f, -0.025f, -0.4f};
   for (unsigned index = 0; index < 4; ++index) {
     int flash = 191 + (int)index;
@@ -1481,7 +1481,7 @@ static bool carrier_grenade(q2m_context *context, qa_error *error) {
   if (!q2m_project_flash(context, 140, &start, error))
     return false;
   qa_vec3 right, up;
-  qa_builtin_angle_vectors(context->body.angles, NULL, &right, &up);
+  qa_angle_vectors(context->body.angles, NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
   qa_vec3 direction = qa_vec_add(
       qa_vec_add(qa_vec_normalize(qa_vec_sub(enemy.origin, start)),
                  qa_vec_scale(right, right_spread)),
@@ -1536,7 +1536,7 @@ static bool carrier_coop_check(q2m_context *context, qa_error *error) {
   bool result = true;
   size_t eligible = 0;
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   for (size_t index = 0; index < players->snapshot.count; ++index) {
     qa_actor_id target = players->snapshot.ids[index];
     qa_body_state body;
@@ -1816,7 +1816,7 @@ static bool widow_blaster(q2m_context *context, qa_error *error) {
     qa_vec3 angles = context->body.angles;
     angles.x += q2m_vector_angles(qa_vec_sub(enemy.origin, start)).x;
     angles.y -= sweep[index];
-    qa_builtin_angle_vectors(angles, &direction, NULL, NULL);
+    qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   } else if (frame >= 61 && frame <= 79) {
     monster->manual_steering = true;
     bool turned;
@@ -1850,7 +1850,7 @@ static bool widow_blaster(q2m_context *context, qa_error *error) {
       angles.y = yaw - aim + 15.0f;
     else if (deviation < -15.0f)
       angles.y = yaw - aim - 15.0f;
-    qa_builtin_angle_vectors(angles, &direction, NULL, NULL);
+    qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   } else if (frame >= 24 && frame <= 31) {
     flash = 183 + frame - 24;
     if (!q2m_project_flash(context, flash, &start, error))
@@ -1925,7 +1925,7 @@ static bool widow2_beam(q2m_context *context, qa_error *error) {
     qa_vec3 angles = context->body.angles;
     angles.x += q2m_vector_angles(qa_vec_sub(enemy.origin, start)).x;
     angles.y -= -40.0f + (float)index * 8.0f;
-    qa_builtin_angle_vectors(angles, &direction, NULL, NULL);
+    qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   } else {
     monster->widow_previous_target = monster->saved_attack_position;
     monster->saved_attack_position = enemy.origin;
@@ -1954,7 +1954,7 @@ static bool widow2_tongue_point(q2m_context *context, qa_vec3 *start) {
   if (index < 0 || (size_t)index >= sizeof(offsets) / sizeof(offsets[0]))
     return false;
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   qa_vec3 offset = offsets[index];
   *start = qa_vec_add(context->body.origin,
       qa_vec_add(qa_vec_scale(forward, offset.x),
@@ -2049,7 +2049,7 @@ static bool widow2_pull(q2m_context *context, qa_error *error) {
       enemy.angles = target.body.angles;
     }
     qa_vec3 forward;
-    qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     enemy.velocity = qa_vec_scale(forward, 1000.0f);
   }
   enemy.ground = (qa_actor_reference){0};
@@ -2865,7 +2865,7 @@ static bool foundational_species_callback(q2m_context *context,
   }
   if (callback == Q2M_CALLBACK_mutant_jump_takeoff) {
     qa_vec3 forward;
-    qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (!q2m_sound(context, QA_Q2_SFX_MUTANT_MUTSGHT1, 2, 1.0f, error))
       return false;
     if (!q2m_alive(context))
@@ -2920,7 +2920,7 @@ static bool foundational_species_callback(q2m_context *context,
     if (!q2m_alive(context))
       return true;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (from_water && has_enemy)
       context->body.origin.z = enemy.origin.z;
     else
@@ -2971,7 +2971,7 @@ static bool foundational_species_callback(q2m_context *context,
     context->body.angles.y =
         atan2f(direction.y, direction.x) * 57.29577951308232f;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     context->body.origin.z += 1.0f;
     context->body.velocity = qa_vec_scale(forward, speed);
     context->body.velocity.z = 450.0f;
@@ -3059,7 +3059,7 @@ static bool boss2_rockets(q2m_context *context, bool force_predictive,
   static const float spread[4] = {0.4f, 0.025f, -0.025f, -0.4f};
   static const float rerelease_lead[4] = {-0.1f, -0.05f, 0.05f, 0.1f};
   qa_vec3 right;
-  qa_builtin_angle_vectors(context->body.angles, NULL, &right, NULL);
+  qa_angle_vectors(context->body.angles, NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
   for (unsigned index = 0; index < 4; ++index) {
     int flash = 78 + (int)index;
     qa_vec3 start, direction;
@@ -3111,7 +3111,7 @@ static bool boss2_rocket64(q2m_context *context, qa_error *error) {
   if (!q2m_project_flash(context, 78, &start, error))
     return false;
   qa_vec3 right;
-  qa_builtin_angle_vectors(context->body.angles, NULL, &right, NULL);
+  qa_angle_vectors(context->body.angles, NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
   float scale = context->monster->entity_scale != 0 ? context->monster->entity_scale : 1;
   unsigned barrel = (unsigned)context->monster->count++ % 4u;
   start.z += 10.0f * scale;
@@ -3217,7 +3217,7 @@ static bool makron_hyperblaster(q2m_context *context, qa_error *error) {
   yaw += frame <= 221 ? -10.0f * (float)(frame - 221)
                       : 10.0f * (float)(frame - 229);
   qa_vec3 direction;
-  qa_builtin_angle_vectors(qa_v3(pitch, yaw, 0.0f), &direction, NULL, NULL);
+  qa_angle_vectors(qa_v3(pitch, yaw, 0.0f), &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   int emitted_flash =
       context->game->options.edition == QA_Q2_RERELEASE ? source_flash : 102;
   q2m_fire_spec spec = q2m_fire_default(
@@ -3251,7 +3251,7 @@ static bool supertank_machinegun(q2m_context *context, qa_error *error) {
   qa_builtin_actor_traits traits;
   if (!target_body(context, &enemy, &traits, &available) || !q2m_alive(context))
     return true;
-  qa_builtin_angle_vectors(angles, &direction, NULL, NULL);
+  qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   if (available) {
     qa_vec3 eye = enemy.origin;
     eye.z += traits.view_height;
@@ -3298,7 +3298,7 @@ static bool blind_direction(q2m_context *context, qa_vec3 start,
                             qa_vec3 *direction, bool *available,
                             qa_error *error) {
   qa_vec3 right;
-  qa_builtin_angle_vectors(context->body.angles, NULL, &right, NULL);
+  qa_angle_vectors(context->body.angles, NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
   static const float factors[3] = {0.0f, -1.0f, 1.0f};
   *available = false;
   for (unsigned index = 0; index < 3; ++index) {
@@ -3380,7 +3380,7 @@ static bool tank_machinegun(q2m_context *context, qa_error *error) {
   yaw += frame <= 182 ? -8.0f * (float)(frame - 178)
                       : 8.0f * (float)(frame - 186);
   qa_vec3 direction;
-  qa_builtin_angle_vectors(qa_v3(pitch, yaw, 0.0f), &direction, NULL, NULL);
+  qa_angle_vectors(qa_v3(pitch, yaw, 0.0f), &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   return fire_bullet_exact(context, flash, start, direction, 20.0f, 300.0f,
                            500.0f, error);
 }
@@ -3414,8 +3414,8 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
     if (mortar && pitch >= -30.0f)
       break;
     qa_vec3 velocity;
-    qa_builtin_angle_vectors(qa_v3(pitch, angles.y, angles.z), &velocity, NULL,
-                             NULL);
+    qa_angle_vectors(qa_v3(pitch, angles.y, angles.z), &velocity, NULL,
+                             NULL,QA_ANGLE_FLOAT_MATH);
     velocity = qa_vec_scale(velocity, speed);
     qa_vec3 origin = start;
     for (unsigned step = 0; step < 25; ++step) {
@@ -3470,8 +3470,8 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
   }
   if (best_distance == FLT_MAX)
     return true;
-  qa_builtin_angle_vectors(qa_v3(best_pitch, angles.y, angles.z), direction,
-                           NULL, NULL);
+  qa_angle_vectors(qa_v3(best_pitch, angles.y, angles.z), direction,
+                           NULL, NULL,QA_ANGLE_FLOAT_MATH);
   *available = true;
   return true;
 }
@@ -3530,7 +3530,7 @@ static bool gunner_grenade(q2m_context *context, qa_error *error) {
   if (!q2m_project_flash(context, flash, &start, error))
     return false;
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   qa_vec3 delta = qa_vec_sub(target, context->body.origin);
   float distance = qa_vec_length(delta);
   if (distance > 512.0f && delta.z < 64.0f && delta.z > -64.0f)
@@ -3606,7 +3606,7 @@ static bool guncmdr_grenade(q2m_context *context, qa_error *error) {
   qa_vec3 start, forward, right, up, aim;
   if (!q2m_project_flash(context, flash, &start, error))
     return false;
-  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   if (crouch) {
     if (!q2m_predict_from(context, start, 800, false, 0, NULL, &aim,
                           &available, error))
@@ -3703,7 +3703,7 @@ static bool actor_fire(q2m_context *context, qa_error *error) {
   qa_vec3 start, direction;
   if (!q2m_project_flash(context, 63, &start, error))
     return false;
-  qa_builtin_angle_vectors(context->body.angles, &direction, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   qa_body_state enemy;
   qa_builtin_actor_traits traits;
   bool available;
@@ -3942,7 +3942,7 @@ static bool turret_fire(q2m_context *context, bool blind, qa_error *error) {
   qa_vec3 point = blind || (rerelease && context->monster->lost_sight)
                      ? context->monster->blind_fire_target : enemy.origin;
   qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   if (qa_vec_dot(qa_vec_normalize(qa_vec_sub(point, context->body.origin)), forward) < .98f)
     return true;
   float speed = flags & 32u ? 650 : flags & 8u ? 800 : 0;
@@ -4295,7 +4295,7 @@ static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *err
     .policy = qa_collision_default_policy(QA_GAME_Q2)};
   if (vertical) {
     qa_vec3 up;
-    qa_builtin_angle_vectors(context->body.angles, NULL, NULL, &up);
+    qa_angle_vectors(context->body.angles, NULL, NULL, &up,QA_ANGLE_FLOAT_MATH);
     query.end = qa_vec_add(context->body.origin, qa_vec_scale(up, vertical < 0 ? -8096 : 128));
     query.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX, .bounds = bounds};
     query.policy.contents_mask = qa_collision_contents_mask(Q2M_MONSTER_MASK, QA_GAME_Q2);
@@ -4310,7 +4310,7 @@ static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *err
     for (int i = 0; i < 12; ++i) {
       qa_vec3 angles = context->body.angles, forward;
       angles.y += (float)(i < 6 ? 30 * i : -30 * (i - 6));
-      qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+      qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
       query.end = qa_vec_add(context->body.origin, qa_vec_scale(forward, 8192));
       qa_trace_result trace;
       if (!qa_world_trace(context->game->services.world, &query, &trace, error))
@@ -4423,7 +4423,7 @@ static bool fixbot_vertical(q2m_context *context, bool approach, qa_error *error
   if (!q2m_alive(context) || approach) return true;
   qa_vec3 angles = context->body.angles, forward;
   angles.x += 90;
-  qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+  qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   q2m_fire_spec shot = {.kind = Q2M_ATTACK_SHOTGUN, .flash = -1,
     .start = context->body.origin, .direction = forward, .damage = 2, .kick = 1,
     .horizontal_spread = (float)(1000 + frame - 105),
@@ -4594,7 +4594,7 @@ static bool callback_loogie_17(q2m_context *context, q2m_callback_id callback, q
     if (!enemy_view_height(context, &height))
         return true;
     qa_vec3 up;
-    qa_builtin_angle_vectors(context->body.angles, NULL, NULL, &up);
+    qa_angle_vectors(context->body.angles, NULL, NULL, &up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 start =
         qa_vec_add(q2m_project_offset(context, qa_v3(-18, -.8f, 24)), qa_vec_scale(up, 2));
     qa_vec3 eye = enemy.origin;

@@ -293,7 +293,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
                         0);
                     qa_vec3 end = target.origin;
                     for (unsigned i = 0; i < 10; ++i) {
-                        qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+                        qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
                         end = qa_vec_add(target.origin, qa_vec_scale(g->forward, 350));
                         qa_trace_result trace;
                         if (!q1_trace(g, target.origin, end, entity->id, true, &trace, error))

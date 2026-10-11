@@ -62,7 +62,7 @@ bool qa_modes_classify_entity(qa_modes *m, qa_mode_id id, const qa_mode_map_enti
             spec->value = spec->kind == QA_MODE_OBJECT_GOAL ? entity->wait : entity->speed;
             if (spec->kind == QA_MODE_OBJECT_GOAL)
                 spec->team = v->value.rules.teams[entity->spawnflags & 1u ? 0 : 1];
-            qa_builtin_angle_vectors(entity->angles, &spec->direction, NULL, NULL);
+            qa_angle_vectors(entity->angles, &spec->direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
             return true;
         }
     }

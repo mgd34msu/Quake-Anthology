@@ -285,18 +285,7 @@ bool qa_builtin_players(const qa_builtin_services *s, qa_builtin_actor_snapshot 
     return true;
 }
 
-void qa_builtin_angle_vectors(qa_vec3 angles, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up) {
-    const float radians = 0.01745329251994329577f;
-    float sy = sinf(angles.y * radians), cy = cosf(angles.y * radians);
-    float sp = sinf(angles.x * radians), cp = cosf(angles.x * radians);
-    float sr = sinf(angles.z * radians), cr = cosf(angles.z * radians);
-    if (forward)
-        *forward = qa_v3(cp * cy, cp * sy, -sp);
-    if (right)
-        *right = qa_v3(-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp);
-    if (up)
-        *up = qa_v3(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
-}
+
 
 float qa_builtin_angle_mod(float angle) {
     float result = fmodf(angle, 360.0f);

@@ -21,7 +21,7 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
                  qa_error *e) {
     q2_turret *s = a->entity->turret;
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(body->angles, &forward, &right, &up);
+    qa_angle_vectors(body->angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 start = qa_vec_add(
         body->origin,
         qa_vec_add(qa_vec_add(qa_vec_scale(forward, s->muzzle.x), qa_vec_scale(right, s->muzzle.y)),

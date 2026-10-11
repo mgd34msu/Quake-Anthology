@@ -592,7 +592,6 @@ bool frontend_native_q2_world_text(qa_frontend *, uint32_t, const qa_scene_view 
 void frontend_native_q2_retire_world(qa_frontend *);
 void frontend_visuals_destroy(qa_frontend *);
 bool frontend_visuals_submit(qa_frontend *, uint32_t, qa_actor_owner exclude, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
-void frontend_camera_axes(qa_vec3, qa_vec3 [3]);
 qa_scene_rect frontend_viewport(const qa_frontend *, unsigned);
 bool frontend_view_background(qa_frontend *, qa_scene_rect, const qa_scene_view *, qa_error *);
 #endif

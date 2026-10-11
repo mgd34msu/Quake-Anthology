@@ -112,7 +112,7 @@ static bool transform_targets(qa_q1_game *g, qa_actor_id id, target_transform mo
     if (!rotation(g, id))
         return true;
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(self.angles, &forward, &right, &up);
+    qa_angle_vectors(self.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_builtin_snapshot_frame *list;
     if (!target_snapshot(g, name, &list, error))
         return false;

@@ -6,7 +6,7 @@ static const q2_runtime_name metal = Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SM_MET
 
 static qa_vec3 project(const qa_body_state *body, qa_vec3 offset) {
   qa_vec3 forward, right, up;
-  qa_builtin_angle_vectors(body->angles, &forward, &right, &up);
+  qa_angle_vectors(body->angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   return qa_vec_add(body->origin,
       qa_vec_add(qa_vec_scale(forward, offset.x),
           qa_vec_add(qa_vec_scale(right, offset.y), qa_vec_scale(up, offset.z))));

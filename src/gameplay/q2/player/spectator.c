@@ -78,7 +78,7 @@ bool q2_player_update_chase(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_vec3 eye = qa_vec_add(body.origin, qa_v3(0, 0, info.view_height)), forward,
             angles = m.view_angles;
     angles.x = fminf(angles.x, 56);
-    qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+    qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 desired = qa_vec_add(eye, qa_vec_scale(forward, -30));
     desired.z = fmaxf(desired.z, body.origin.z + 20) + (m.grounded ? 0 : 16);
     qa_trace_result hit;
@@ -156,7 +156,7 @@ static bool squad_spot(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *
         if (hit.start_solid || hit.all_solid || danger)
             continue;
         qa_vec3 forward;
-        qa_builtin_angle_vectors(qa_v3(0, body.angles.y + 180 + yaws[i], 0), &forward, NULL, NULL);
+        qa_angle_vectors(qa_v3(0, body.angles.y + 180 + yaws[i], 0), &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         if (!q2_player_trace(g, a->id, hit.end, qa_vec_add(hit.end, qa_vec_scale(forward, 128)),
                              &m->standing_bounds, mask, &hit, e))
             return false;

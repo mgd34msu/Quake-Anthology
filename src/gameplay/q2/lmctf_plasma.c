@@ -63,7 +63,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         if (i != 0) {
             qa_vec3 shot = angles;
             shot.y += yaw_offsets[i];
-            qa_builtin_angle_vectors(shot, &forward, NULL, NULL);
+            qa_angle_vectors(shot, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         }
         qa_vec3 velocity = qa_vec_scale(forward, spec.speed);
         qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
@@ -135,7 +135,7 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
         qa_vec3 start, direction, forward, kick_origin, kick_angles;
         if (!q2_project(c, c->input.angles, qa_v3(8, 8, -8), &start, &direction, e))
             return false;
-        qa_builtin_angle_vectors(c->input.angles, &forward, NULL, NULL);
+        qa_angle_vectors(c->input.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         q2_recoil(c, &kick_origin, &kick_angles);
         q2_kick(c, qa_vec_scale(forward, -2), kick_angles, c->rerelease ? 0.2f : 0);
         bool bounce = c->actor->lmctf_plasma_bounce;

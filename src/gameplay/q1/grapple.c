@@ -147,7 +147,7 @@ static bool pull_velocity(qa_q1_game *g, q1_actor *hook, q1_player *player, bool
     if (!q1_alive(g, player->id) || !q1_alive(g, hook->id))
         return true;
     qa_vec3 forward, up;
-    qa_builtin_angle_vectors(body.angles, &forward, NULL, &up);
+    qa_angle_vectors(body.angles, &forward, NULL, &up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 delta = qa_vec_sub(
         head.origin,
         qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(up, player->grapple_input.jump ? 0 : 16),
@@ -177,7 +177,7 @@ static bool position_link(qa_q1_game *g, q1_actor *link, qa_error *error) {
         !qa_world_body_read(g->services.world, link->id, &chain, error))
         return false;
     qa_vec3 forward, up;
-    qa_builtin_angle_vectors(body.angles, &forward, NULL, &up);
+    qa_angle_vectors(body.angles, &forward, NULL, &up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 end =
         qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(up, player->grapple_input.jump ? 0 : 16),
                                            qa_vec_scale(forward, 16)));
@@ -204,7 +204,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
     qa_vec3 forward, direction;
-    qa_builtin_angle_vectors(input->view_angles, &forward, NULL, NULL);
+    qa_angle_vectors(input->view_angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     direction = forward;
     if (ctf && !q1_aim(g, actor, forward, &direction, error))
         return false;
@@ -495,7 +495,7 @@ bool q1_grapple_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     qa_vec3 start = head.origin;
     if (ctf) {
         qa_vec3 forward;
-        qa_builtin_angle_vectors(head.angles, &forward, NULL, NULL);
+        qa_angle_vectors(head.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         qa_vec3 offset = qa_vec_scale(forward, -7);
         offset.z = -offset.z;
         start = qa_vec_add(start, offset);

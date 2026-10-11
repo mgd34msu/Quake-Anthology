@@ -705,7 +705,7 @@ static void rr_pmove(rr_move *p)
     else if (angles.x > 89.0f && angles.x < 180.0f) angles.x = 89.0f;
     else if (angles.x < 271.0f && angles.x >= 180.0f) angles.x = 271.0f;
     p->result->view_angles = angles;
-    qa_move_angles(angles, &p->forward, &p->right, &p->up);
+    qa_angle_vectors(angles, &p->forward, &p->right, &p->up,QA_ANGLE_FLOAT_MATH);
     const qa_movement_environment *env = &p->move->input->environment;
     if (env->flight && env->health > 0 && p->state->type == RR_NORMAL) {
         p->state->flags &= ~(uint32_t)(RR_ON_GROUND | RR_DUCKED | RR_WATERJUMP);
@@ -771,7 +771,7 @@ static void rr_pmove(rr_move *p)
             angles = p->result->view_angles;
             if (angles.x > 180.0f) angles.x -= 360.0f;
             angles.x /= 3.0f;
-            qa_move_angles(angles, &p->forward, &p->right, &p->up);
+            qa_angle_vectors(angles, &p->forward, &p->right, &p->up,QA_ANGLE_FLOAT_MATH);
             rr_air_move(p);
         }
     }

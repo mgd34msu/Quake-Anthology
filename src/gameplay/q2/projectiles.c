@@ -138,7 +138,7 @@ static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, flo
         !qa_world_body_read(g->services.world, c->actor->id, &owner, e))
         return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(target.angles, &forward, NULL, NULL);
+    qa_angle_vectors(target.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (qa_vec_dot(qa_vec_normalize(qa_vec_sub(owner.origin, target.origin)), forward) <= 0.3f)
         return true;
     float eta = (qa_vec_length(qa_vec_sub(trace.end, start)) - target.bounds.maxs.x) / speed;
@@ -948,7 +948,7 @@ qa_vec3 q2_launch_velocity(qa_vec3 direction, float speed, float lift, float sid
     float horizontal = sqrtf(direction.x * direction.x + direction.y * direction.y);
     qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
                            atan2f(direction.y, direction.x) * 57.29577951308232f, 0), right, up;
-    qa_builtin_angle_vectors(angles, NULL, &right, &up);
+    qa_angle_vectors(angles, NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
     return qa_vec_add(qa_vec_add(qa_vec_scale(direction, speed), qa_vec_scale(up, lift)),
                       qa_vec_scale(right, side));
 }

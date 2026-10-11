@@ -367,7 +367,7 @@ static bool movement_result(qa_bots *b,bot_ai_state *s,bool activate,
     if(result->blocked) {
         if(result->type==8) {
             float random;DECISION_CALL(bot_ai_random(b,&random,e));
-            qa_vec3 direction;qa_builtin_angle_vectors(qa_v3(0,random*360,0),&direction,NULL,NULL);
+            qa_vec3 direction;qa_angle_vectors(qa_v3(0,random*360,0),&direction,NULL,NULL,QA_ANGLE_FLOAT_MATH);
             bool moved;DECISION_CALL(qa_bot_moves_direction(moves(b),s->movement,direction,400,
                 QA_BOT_DIRECTION_WALK,&moved,e));
             result->failure=false;result->direction=direction;return true;
@@ -416,7 +416,7 @@ static bool movement_result(qa_bots *b,bot_ai_state *s,bool activate,
         if(length!=0) direction=qa_vec_scale(direction,1.0f/length);
         if(length<.1f) {
             float random;DECISION_CALL(bot_ai_random(b,&random,e));
-            qa_builtin_angle_vectors(qa_v3(0,random*360,0),&direction,NULL,NULL);
+            qa_angle_vectors(qa_v3(0,random*360,0),&direction,NULL,NULL,QA_ANGLE_FLOAT_MATH);
         }
         qa_vec3 sideward=qa_vec_cross(direction,qa_v3(0,0,1));
         if(bot_ai_flag(s,BOT_AI_AVOID_RIGHT)) sideward=qa_vec_scale(sideward,-1);

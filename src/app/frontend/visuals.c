@@ -1089,7 +1089,7 @@ static qa_model_transform transform(const qa_application_visual_view *view, qa_v
 {
     qa_model_transform value;
     qa_model_transform_identity(&value);
-    qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
+    qa_vec3 axes[3]; qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
     value.origin[0] = view->body.origin.x; value.origin[1] = view->body.origin.y; value.origin[2] = view->body.origin.z;
     for (unsigned i = 0; i < 3; ++i) {
         value.axes[i][0] = axes[i].x; value.axes[i][1] = axes[i].y; value.axes[i][2] = axes[i].z;
@@ -1206,7 +1206,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
         !frontend_visual_model_acquire(frontend, weapon.provider, weapon.family,
             weapon.view_model, weapon.view_source, &model, error)) return false;
     if (media.shader_movies && !frontend_material_movies_frame(media.shader_movies, frame, error)) return false;
-    qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
+    qa_vec3 axes[3]; qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
     qa_model_transform placement; qa_model_transform_identity(&placement);
     placement.origin[0] = origin.x; placement.origin[1] = origin.y; placement.origin[2] = origin.z;
     for (size_t i = 0; i < 3; ++i) {
@@ -1262,7 +1262,7 @@ static bool static_model_prepare(qa_frontend *frontend, frontend_visual_owner *o
     row->baseline = *baseline;
     qa_model_transform_identity(&row->transform);
     qa_vec3 axes[3];
-    frontend_camera_axes(qa_v3(baseline->angles[0], baseline->angles[1], baseline->angles[2]), axes);
+    qa_angle_axis(qa_v3(baseline->angles[0], baseline->angles[1], baseline->angles[2]), axes,QA_ANGLE_FLOAT_MATH);
     for (unsigned i = 0; i < 3; ++i) {
         row->transform.origin[i] = baseline->origin[i];
         row->transform.axes[i][0] = axes[i].x;

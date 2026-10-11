@@ -39,15 +39,15 @@ qa_ruleset_id qa_collision_source_rules(qa_game_family family)
 
 void qa_collision_pose_basis(const qa_collision_target *target, bool transformed, qa_vec3 basis[3])
 {
-    qa_collision_basis(transformed && qa_collision_roles[target->pose_rules].rotates
-        ? target->angles : qa_v3(0, 0, 0), basis);
+    qa_angle_axis(transformed && qa_collision_roles[target->pose_rules].rotates
+        ? target->angles : qa_v3(0, 0, 0), basis,QA_ANGLE_FLOAT_MATH);
 }
 
 qa_vec3 qa_collision_pose_normal(qa_vec3 normal, const qa_collision_target *target, bool transformed, const qa_vec3 basis[3])
 {
     if (transformed && qa_collision_roles[target->pose_rules].inverse_normal) {
         qa_vec3 inverse[3];
-        qa_collision_basis(qa_vec_scale(target->angles, -1), inverse);
+        qa_angle_axis(qa_vec_scale(target->angles, -1), inverse,QA_ANGLE_FLOAT_MATH);
         return qa_collision_to_local(normal, inverse);
     }
     return qa_collision_from_local(normal, basis);

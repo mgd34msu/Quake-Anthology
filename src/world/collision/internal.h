@@ -104,13 +104,7 @@ void qa_collision_pose_basis(const qa_collision_target *, bool transformed, qa_v
 qa_vec3 qa_collision_pose_normal(qa_vec3, const qa_collision_target *, bool transformed, const qa_vec3 basis[3]);
 
 /* Quake angle basis: forward, negative-right, up. */
-static inline void qa_collision_basis(qa_vec3 angles, qa_vec3 basis[3]) {
-    const float radians=0.017453292519943295769f;
-    float sy=sinf(angles.y*radians),cy=cosf(angles.y*radians),sp=sinf(angles.x*radians),cp=cosf(angles.x*radians),sr=sinf(angles.z*radians),cr=cosf(angles.z*radians);
-    basis[0]=qa_v3(cp*cy,cp*sy,-sp);
-    basis[1]=qa_v3(sr*sp*cy-cr*sy,sr*sp*sy+cr*cy,sr*cp);
-    basis[2]=qa_v3(cr*sp*cy+sr*sy,cr*sp*sy-sr*cy,cr*cp);
-}
+
 static inline qa_vec3 qa_collision_to_local(qa_vec3 v,const qa_vec3 basis[3]) { return qa_v3(qa_vec_dot(v,basis[0]),qa_vec_dot(v,basis[1]),qa_vec_dot(v,basis[2])); }
 static inline qa_vec3 qa_collision_from_local(qa_vec3 v,const qa_vec3 basis[3]) { return qa_vec_add(qa_vec_add(qa_vec_scale(basis[0],v.x),qa_vec_scale(basis[1],v.y)),qa_vec_scale(basis[2],v.z)); }
 

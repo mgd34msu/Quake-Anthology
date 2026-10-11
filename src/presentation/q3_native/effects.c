@@ -187,7 +187,7 @@ bool q3n_effect_mission(const q3n_frame *f, int32_t event, qa_vec3 origin, qa_ve
         return q3ne_sound(f,hit_sound(o,m,Q3N_S_OBELISK_HIT1,Q3N_S_OBELISK_HIT2,Q3N_S_OBELISK_HIT3),&origin,1023,5,false,error);
     case Q3N_EV_INVUL_IMPACT:
         v=q3n_local_allocate(o,Q3N_LE_INVUL_IMPACT,QA_Q3_REF_MODEL);
-        v->ref.model=m->graphics[Q3N_G_INVULNERABILITY_IMPACT]; v->end_time=q3ne_plus(f->time,1000); q3n_angles_axis(angles,v->ref.axis); break;
+        v->ref.model=m->graphics[Q3N_G_INVULNERABILITY_IMPACT]; v->end_time=q3ne_plus(f->time,1000); qa_angle_axis(angles,v->ref.axis,QA_ANGLE_VM_MATH); break;
     case Q3N_EV_JUICED:
         v=q3n_local_allocate(o,Q3N_LE_INVUL_JUICED,QA_Q3_REF_MODEL);
         v->ref.model=m->graphics[Q3N_G_INVULNERABILITY_JUICED]; v->end_time=q3ne_plus(f->time,10000); q3ne_identity(v->ref.axis); break;

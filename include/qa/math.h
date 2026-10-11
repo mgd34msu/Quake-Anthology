@@ -13,6 +13,13 @@ typedef struct qa_vec2 { float x, y; } qa_vec2;
 typedef struct qa_vec3 { float x, y, z; } qa_vec3;
 typedef struct qa_vec4 { float x, y, z, w; } qa_vec4;
 typedef struct qa_bounds { qa_vec3 mins, maxs; } qa_bounds;
+typedef enum qa_angle_math_rule {
+    QA_ANGLE_FLOAT_MATH, QA_ANGLE_NATIVE_MATH, QA_ANGLE_VM_MATH
+} qa_angle_math_rule;
+/* Native qsrc rounds a double radian product to float before sin/cos;
+ * compiled VM code uses a float product. FLOAT retains sinf/cosf consumers. */
+void qa_angle_vectors(qa_vec3,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up,qa_angle_math_rule);
+void qa_angle_axis(qa_vec3,qa_vec3 axis[3],qa_angle_math_rule);
 
 #define QA_BYTE_NORMAL_COUNT 162u
 extern const qa_vec3 qa_byte_normals[QA_BYTE_NORMAL_COUNT];

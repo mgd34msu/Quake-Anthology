@@ -536,9 +536,8 @@ static bool absorb_stage(struct application_native_q2_combat *p, combat_frame *f
         !vector_read(p, normal, &geometry.normal, error) ||
         !qa_world_body_read(p->engine->world, frame->request->target, &body, error) ||
         !state_read(frame->record, &state, error)) return false;
-    float pitch = body.angles.x * (3.14159265358979323846f / 180.f),
-        yaw = body.angles.y * (3.14159265358979323846f / 180.f);
-    qa_vec3 forward = qa_v3(cosf(pitch) * cosf(yaw), cosf(pitch) * sinf(yaw), -sinf(pitch));
+    qa_vec3 forward;
+    qa_angle_vectors(body.angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
     qa_armor_context context = {.q2_profile = true, .rerelease = p->profile.kex,
         .ctf = qa_json_string_equal(p->profile.document, qa_json_get(p->profile.document, p->profile.world, "game"), "ctf"),
         .alive = state.health > 0, .screen_facing_dot = qa_vec_dot(

@@ -31,7 +31,7 @@ static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geome
     qa_q3_player_state *player = &entry->state.player;
     qa_builtin_player_control control;
     if (!q3_player_control(game, actor, &control, error)) return false;
-    q3_source_angle_vectors(*control.view_angles, &out->forward, &out->right, &out->up);
+    qa_angle_vectors(*control.view_angles, &out->forward, &out->right, &out->up,QA_ANGLE_VM_MATH);
     out->muzzle = qa_vec_add(body.origin, qa_v3(0, 0, *control.view_height));
     out->muzzle = qa_physics_q3_snap(qa_vec_add(out->muzzle, qa_vec_scale(out->forward, 14)));
     bool handled = false;

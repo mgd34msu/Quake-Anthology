@@ -282,7 +282,7 @@ void frontend_view_q1_damage(const frontend_q1_motion_settings *settings, qa_vec
     from = qa_vec_sub(from, origin);
     float length = (float)sqrt(qa_vec_dot(from, from));
     if (length != 0) from = qa_vec_scale(from, 1 / length);
-    qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
+    qa_vec3 axes[3]; qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
     state->damage_roll = count * -qa_vec_dot(from, axes[1]) * settings->kick_roll;
     state->damage_pitch = count * qa_vec_dot(from, axes[0]) * settings->kick_pitch;
     state->damage_time = settings->kick_time;
@@ -440,7 +440,7 @@ bool frontend_view_q1_chase(const frontend_q1_view_settings *settings, qa_collis
 {
     if (!settings || !geometry || !origin || !angles)
         return fail(error, "Q1 chase requires its actual world hull and view");
-    qa_vec3 axes[3]; frontend_camera_axes(aim_angles, axes);
+    qa_vec3 axes[3]; qa_angle_axis(aim_angles, axes,QA_ANGLE_FLOAT_MATH);
     qa_vec3 destination = qa_v3(eye.x - axes[0].x * (float)settings->back + axes[1].x * (float)settings->right,
         eye.y - axes[0].y * (float)settings->back + axes[1].y * (float)settings->right, eye.z);
     destination.z = eye.z + (float)settings->up;
@@ -494,7 +494,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
         if (bob > 4) bob = 4; else if (bob < -7) bob = -7;
         state->bob = bob;
     }
-    qa_vec3 axes[3]; frontend_camera_axes(input->quakeworld ? input->angles : input->entity_angles, axes);
+    qa_vec3 axes[3]; qa_angle_axis(input->quakeworld ? input->angles : input->entity_angles, axes,QA_ANGLE_FLOAT_MATH);
     float side = -qa_vec_dot(input->velocity, axes[1]);
     float sign = side < 0 ? -1 : 1;
     side = fabsf(side);
@@ -514,7 +514,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     if (input->quakeworld) origin.z += input->view_height;
     qa_vec3 aim = input->angles;
     if (!input->quakeworld) aim.z = input->entity_angles.z;
-    frontend_camera_axes(aim, axes);
+    qa_angle_axis(aim, axes,QA_ANGLE_FLOAT_MATH);
     if (!input->quakeworld) {
         origin = qa_vec_add(origin, qa_vec_add(qa_vec_add(qa_vec_scale(axes[0], settings->offset.x),
             qa_vec_scale(axes[1], -settings->offset.y)), qa_vec_scale(axes[2], settings->offset.z)));

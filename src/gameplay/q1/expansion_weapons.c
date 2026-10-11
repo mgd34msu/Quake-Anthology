@@ -48,7 +48,7 @@ bool q1_missile_velocity(qa_q1_game *g, q1_actor *entity, qa_vec3 velocity, qa_e
 bool q1_grenade_velocity(qa_q1_game *g, q1_player *player, qa_vec3 *out, qa_error *error) {
     const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_GRENADE);
     qa_vec3 direction;
-    qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     if (!q1_aim(g, player->id, g->forward, &direction, error))
         return false;
     if (player->input.view_angles.x == 0) {

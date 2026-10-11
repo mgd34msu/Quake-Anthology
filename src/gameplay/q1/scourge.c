@@ -44,7 +44,7 @@ static bool shoot(qa_q1_game *g, q1_actor *entity, float offset, qa_error *error
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin =
         qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, -19)),
                    qa_vec_add(qa_vec_scale(g->right, offset), qa_vec_scale(g->forward, 14)));
@@ -110,7 +110,7 @@ bool q1_scourge_trigger(qa_q1_game *g, q1_actor *trigger, qa_actor_id actor, qa_
         !qa_world_body_read(g->services.world, trigger->id, &body, error))
         return false;
     if (!actor.registry) {
-        qa_builtin_angle_vectors(source.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(source.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         body.origin = qa_vec_add(source.origin, qa_vec_scale(g->forward, 300));
         return qa_world_body_write(g->services.world, trigger->id, &body, error) &&
                q1_link(g, trigger, error) &&

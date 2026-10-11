@@ -221,7 +221,7 @@ static bool lightning_use(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
         end = target.origin;
     } else {
-        qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         s->movedir = g->forward;
         qa_trace_result trace;
         if (!q1_trace(g, start, qa_vec_add(start, qa_vec_scale(s->movedir, 600)), id,
@@ -379,7 +379,7 @@ static bool mine_home(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
         body.velocity = qa_v3(0, 0, 0);
     } else {
-        qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 delta = qa_vec_sub(target.origin, body.origin);
         bool in_front = qa_vec_dot(qa_vec_normalize(delta), g->forward) > .3f;
         body.velocity = qa_vec_scale(qa_vec_normalize(qa_vec_add(delta, qa_v3(0, 0, 10))),

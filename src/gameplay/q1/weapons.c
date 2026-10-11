@@ -66,7 +66,7 @@ qa_vec3 q1_grenade_launch_velocity(const qa_q1_weapon_view *shape,bool level,
 }
 qa_vec3 qa_q1_weapon_launch_velocity(const qa_q1_weapon_view *view,qa_vec3 angles) {
     qa_vec3 forward,right,up;
-    qa_builtin_angle_vectors(angles,&forward,&right,&up);
+    qa_angle_vectors(angles,&forward,&right,&up,QA_ANGLE_FLOAT_MATH);
     return view->thrown ? q1_grenade_launch_velocity(view,angles.x==0,forward,
         forward,right,up,0,0) : qa_vec_scale(forward,view->speed);
 }
@@ -941,7 +941,7 @@ bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 ang
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 source = qa_vec_add(body.origin, qa_vec_scale(g->forward, 10));
     source.z =
         body.origin.z + body.bounds.mins.z + (body.bounds.maxs.z - body.bounds.mins.z) * 0.7f;
@@ -988,7 +988,7 @@ static bool lightning(qa_q1_game *g, q1_player *player, qa_error *error) {
                                QA_Q1_LIGHTNING, g->runtime_names[Q1_NAME_RESOURCE_DISCHARGE], error);
     if (!q1_consume(g, player->id, QA_Q1_CELLS, 1, error))
         return false;
-    qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 16));
     qa_trace_result wall;
     const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_LIGHTNING);
@@ -1139,7 +1139,7 @@ static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon
     view.conditional_trajectory=view.speed>0 && !view.grapple && g->services.weapon_launch;
     view.launch_angles = player->input.view_angles;
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(view.launch_angles, &forward, &right, &up);
+    qa_angle_vectors(view.launch_angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     view.muzzle_count = 1;
     if (weapon == QA_Q1_SHOTGUN || weapon == QA_Q1_SUPER_SHOTGUN) {
         shotgun_shape(player,weapon,view.ammo_count,&view);
@@ -1295,7 +1295,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
     if (!before_fire(g, player, error))
         return false;
     bool repeating = player->continuous;
-    qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward, right = g->right, up = g->up;
     qa_q1_weapon_parameters parameters;
     if (!base_parameters(g, player, weapon, &parameters, error))
@@ -1439,7 +1439,7 @@ bool q1_axe_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, player->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 16));
     qa_trace_result trace;
     const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_AXE);

@@ -93,7 +93,7 @@ bool q1_map_bob_water(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!entity)
         return true;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(qa_v3(entity->count, 0, 0), &forward, NULL, NULL);
+    qa_angle_vectors(qa_v3(entity->count, 0, 0), &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     body.origin.z = forward.z * entity->map->pending.bob.amplitude;
     if (!qa_world_body_write(g->services.world, id, &body, error))
         return false;

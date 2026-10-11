@@ -203,7 +203,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
     }
     qa_bounds bounds = rotating ? linked.absolute_bounds : qa_bounds_translate(original_bounds, input->displacement);
     qa_vec3 pusher_origin = body.origin, forward, right, up;
-    ph_axes(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up);
+    qa_angle_vectors(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_actor_id *list;
     size_t count;
     if (!candidates(p, frame, &list, &count, error)) return false;
@@ -319,7 +319,7 @@ static bool q2_push(qa_physics *p, const qa_physics_push *input,
     }
     qa_bounds bounds = linked.absolute_bounds;
     qa_vec3 forward, right, up;
-    ph_axes(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up);
+    qa_angle_vectors(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_actor_id *list;
     size_t count;
     if (!candidates(p, frame, &list, &count, error)) return false;

@@ -418,7 +418,7 @@ static bool effect(frontend_unified_q1 *o,q1_group *g,const q1_event *p,qa_error
         qa_vec3 axes[3],angles=p->angles,origin=p->muzzle?p->end:qa_vec_add(p->origin,qa_v3(0,0,16));
         bool direction=p->muzzle;
         if(!p->muzzle && p->actor_present && !pose_angles(o,p->actor,&angles,&direction,e))return false;
-        if(direction){frontend_camera_axes(angles,axes);origin=qa_vec_add(origin,qa_vec_scale(axes[0],18));}
+        if(direction){qa_angle_axis(angles,axes,QA_ANGLE_FLOAT_MATH);origin=qa_vec_add(origin,qa_vec_scale(axes[0],18));}
         frontend_fx_q1_light_recipe recipe={.radius=200+(float)(qa_builtin_random_integer(&o->random)&31),
             .duration=.1,.minimum=32,.color={1,1,1}};
         frontend_fx_q1_state_light(&g->effects,(qa_actor_id){0},0,origin,time,&recipe);
@@ -847,7 +847,7 @@ bool frontend_unified_q1_model(frontend_unified_q1 *o,qa_actor_id actor,qa_strin
 }
 static void transform(qa_model_transform *out,qa_vec3 origin,qa_vec3 angles)
 {
-    qa_model_transform_identity(out);qa_vec3 axes[3];frontend_camera_axes(angles,axes);
+    qa_model_transform_identity(out);qa_vec3 axes[3];qa_angle_axis(angles,axes,QA_ANGLE_FLOAT_MATH);
     out->origin[0]=origin.x;out->origin[1]=origin.y;out->origin[2]=origin.z;
     for(unsigned i=0;i<3;++i){out->axes[i][0]=axes[i].x;out->axes[i][1]=axes[i].y;out->axes[i][2]=axes[i].z;}
 }

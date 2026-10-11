@@ -27,22 +27,8 @@ static inline int q3nh_weapons_stat(qa_q3_product p) { return p==QA_Q3_TEAM_AREN
 static inline int q3nh_armor_stat(qa_q3_product p) { return p==QA_Q3_TEAM_ARENA?4:3; }
 static inline int q3nh_dead_yaw_stat(qa_q3_product p) { return p==QA_Q3_TEAM_ARENA?5:4; }
 static inline float q3nh_clamp(float x,float low,float high) { return x<low?low:x>high?high:x; }
-static inline void q3nh_vectors(qa_vec3 a,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up)
-{
-    float yaw=(a.y * (3.14159274101257324219f / 180));
-    float pitch=(a.x * (3.14159274101257324219f / 180));
-    float roll=(a.z * (3.14159274101257324219f / 180));
-    float sy=(float)sin((double)yaw),cy=(float)cos((double)yaw);
-    float sp=(float)sin((double)pitch),cp=(float)cos((double)pitch);
-    float sr=(float)sin((double)roll),cr=(float)cos((double)roll);
-    if(forward)*forward=qa_v3((cp * cy),(cp * sy),-sp);
-    if(right)*right=qa_v3((-((sr * sp) * cy) + (cr * sy)),
-        (-((sr * sp) * sy) + -(cr * cy)),-(sr * cp));
-    if(up)*up=qa_v3((((cr * sp) * cy) + (sr * sy)),
-        (((cr * sp) * sy) + -(sr * cy)),(cr * cp));
-}
-static inline void q3nh_axis(qa_vec3 a,qa_vec3 axis[3])
-{ q3nh_vectors(a,&axis[0],&axis[1],&axis[2]); axis[1]=q3ne_scale(axis[1],-1); }
+
+
 static inline bool q3nh_float(qa_source_save_io *io,float *v)
 { return qa_source_save_f32(io,v) && isfinite(*v); }
 static inline bool q3nh_vector(qa_source_save_io *io,qa_vec3 *v)

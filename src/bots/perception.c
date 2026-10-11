@@ -15,9 +15,8 @@ qa_bot_awareness qa_bot_awareness_new(qa_actor_id actor,double now,qa_vec3 origi
 }
 qa_bot_sight_geometry qa_bot_sight(qa_vec3 eye,float pitch,float yaw,qa_vec3 target,bool invisible,const qa_bot_senses *s,const qa_bot_weapon_senses *w)
 {
-    const float radians=0.017453292519943295f;
-    float cp=cosf(pitch*radians);
-    qa_vec3 forward=qa_v3(cp*cosf(yaw*radians),cp*sinf(yaw*radians),-sinf(pitch*radians)),direction=qa_vec_sub(target,eye);
+    qa_vec3 forward,direction=qa_vec_sub(target,eye);
+    qa_angle_vectors(qa_v3(pitch,yaw,0),&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
     float distance=qa_vec_length(direction),angle=distance==0 ? 90 : acosf(clamp(qa_vec_dot(forward,direction)/distance,-1,1))*57.29577951308232f;
     return (qa_bot_sight_geometry){.in_sight_fov=angle<=s->fov_angle/2,.in_weapon_fov=angle<=w->fov_angle/2,.distance=distance,
         .within_invisible_range=!invisible || s->maximum_invisible_distance<=0 || distance<=s->maximum_invisible_distance};

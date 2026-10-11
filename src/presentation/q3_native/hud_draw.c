@@ -126,7 +126,7 @@ bool q3nh_model(q3n_hud_draw *d,float x,float y,float w,float h,int32_t model,in
 {
     if(!d->settings->draw_3d_icons || !d->settings->draw_icons)return true;
     qa_q3_ref_entity r={.kind=QA_Q3_REF_MODEL,.model=model,.custom_skin=skin,.flags=64,.origin=origin};
-    q3nh_axis(angles,r.axis);
+    qa_angle_axis(angles,r.axis,QA_ANGLE_VM_MATH);
     qa_q3_refdef view={.flags=1,.fov_x=30,.fov_y=30,.time=d->frame->time};
     qa_scene_rect_f rect=q3nh_rect(d,(qa_scene_rect_f){x,y,w,h});
     view.x=q3ne_int(rect.x); view.y=q3ne_int(rect.y);

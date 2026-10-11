@@ -328,7 +328,7 @@ static bool qw_step_physics(qw_move *m) {
     if (!qa_move_apply_stance(c)) return false;
     qa_qw_movement_state *s = &c->state->data.qw;
     if (c->input->prediction) s->angles = c->command.angles;
-    qa_move_angles(s->angles, &m->forward, &m->right, NULL);
+    qa_angle_vectors(s->angles, &m->forward, &m->right, NULL,QA_ANGLE_FLOAT_MATH);
     if (e->has_mode && e->health > 0 && e->mode == QA_MOVEMENT_MODE_FREEZE) {
         s->velocity = qa_v3(0, 0, 0);
         return true;

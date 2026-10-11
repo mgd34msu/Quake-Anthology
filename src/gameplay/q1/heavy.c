@@ -123,7 +123,7 @@ static bool shambler_shot(qa_q1_game *g, q1_actor *e, float y, float z, qa_vec3 
         aim.x += z * (12 + signed_random(g) * 4);
     } else
         aim.y += y * 5;
-    qa_builtin_angle_vectors(aim, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(aim, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin = qa_vec_add(
         qa_vec_add(qa_vec_add(value.origin,
                               qa_vec_scale(qa_vec_add(value.bounds.mins, value.bounds.maxs), .5f)),
@@ -188,7 +188,7 @@ static bool claw(qa_q1_game *g, q1_actor *e, float side, qa_error *error) {
         return true;
     if (!body(g, e, &value, error))
         return false;
-    qa_builtin_angle_vectors(value.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(value.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     return q1_meat_spray(g, e, qa_vec_add(value.origin, qa_vec_scale(g->forward, 16)),
                          qa_vec_scale(g->right, side), error);
 }
@@ -251,7 +251,7 @@ bool q1_heavy_melee(qa_q1_game *g, q1_actor *e, qa_error *error) {
                 : q1_random(g) < .5f ? Q1_FRAME_supsham_swingl1
                                      : Q1_FRAME_supsham_swingr1;
     else if (distance < 200 || e->wait > g->time) {
-        qa_builtin_angle_vectors(value.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(value.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         float chance = qa_vec_dot(g->right, qa_vec_normalize(delta));
         frame = chance < .45f  ? Q1_FRAME_supsham_swingr1
                 : chance < .9f ? Q1_FRAME_supsham_swingl1
@@ -276,12 +276,12 @@ static bool rune_shot(qa_q1_game *g, q1_actor *e, float offset, unsigned variant
     if (!variant) {
         qa_vec3 aim = angles(delta);
         aim.y += offset * 6;
-        qa_builtin_angle_vectors(aim, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(aim, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         origin = qa_vec_add(center, qa_vec_scale(g->forward, 20));
         direction = qa_vec_normalize(g->forward);
         direction.z = -direction.z + (q1_random(g) - .5f) * .1f;
     } else {
-        qa_builtin_angle_vectors(value.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(value.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         origin = qa_vec_add(center, qa_vec_scale(g->forward, 10));
         direction = qa_vec_normalize(delta);
         if (variant == 1) {
@@ -433,7 +433,7 @@ bool q1_heavy_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_erro
         qa_body_state value;
         if (!body(g, e, &value, error))
             return false;
-        qa_builtin_angle_vectors(value.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(value.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         if (attack_check(g, e))
             m->next_frame = (Q1_FRAME_supsham_magic1);
         else if (q1_random(g) < .5f)

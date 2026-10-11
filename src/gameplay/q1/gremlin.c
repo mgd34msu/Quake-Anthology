@@ -77,7 +77,7 @@ static bool melee(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
         return !melee_source(g, source);
     if (!melee_source(g, source))
         return true;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward, right = g->right;
     if (!qa_world_body_read(g->services.world, source, &body, error))
         return !melee_source(g, source);
@@ -96,7 +96,7 @@ static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_vec3 angles = body.angles, position = body.origin;
     bool found = false;
     for (unsigned attempt = 0; attempt < 10; ++attempt) {
-        qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         position = qa_vec_add(body.origin, qa_vec_scale(g->forward, 80));
         qa_builtin_snapshot_frame *snapshot;
         if (!q1_radius_snapshot(g, position, 35, &snapshot, error))
@@ -209,7 +209,7 @@ static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     if (!q1_meat_spray(g, entity, qa_vec_add(body.origin, qa_vec_scale(g->forward, 16)),
                        qa_vec_scale(g->right, side), error))
         return false;
@@ -338,7 +338,7 @@ bool q1_gremlin_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         return false;
     if (!q1_entity(g, id))
         return true;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward;
     if (attacker.registry)
         (void)qa_world_body_read(g->services.world, attacker, &target, NULL);
@@ -413,7 +413,7 @@ bool q1_gremlin_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
-        qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         body.origin.z += 1;
         body.velocity =
             qa_vec_add(qa_vec_scale(g->forward, jump ? 300 : -200), qa_v3(0, 0, jump ? 300 : 350));

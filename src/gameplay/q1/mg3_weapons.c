@@ -32,7 +32,7 @@ bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     if (!qa_world_body_read(g->services.world, player->id, &body, error))
         return false;
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(player->input.view_angles, &forward, &right, &up);
+    qa_angle_vectors(player->input.view_angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 source = qa_vec_add(body.origin, qa_v3(0, 0, 16));
     qa_trace_result trace;
     if (!q1_trace(g, source, qa_vec_add(source, qa_vec_scale(forward, 64)), player->id, true,

@@ -20,7 +20,7 @@ bool q1_meat_spray(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 veloc
     spray->physics.angular_velocity = qa_v3(3000, 1000, 2000);
     if (g->options.edition == QA_Q1_RERELEASE)
         body.angles.x = -body.angles.x;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     velocity.z += 250 + 50 * q1_random(g);
     body = (qa_body_state){.origin = origin, .velocity = velocity};
     ok = q1_model(g, spray, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ZOM_GIB_MDL], error) &&
@@ -338,7 +338,7 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             qa_vec3 angles = target.angles;
             if (g->options.edition == QA_Q1_RERELEASE)
                 angles.x = -angles.x;
-            qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+            qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
             qa_vec3 direction = qa_vec_normalize(qa_vec_sub(
                 qa_vec_sub(target.origin, qa_vec_scale(projectile.right, 13)), body.origin));
             q1_actor *missile;

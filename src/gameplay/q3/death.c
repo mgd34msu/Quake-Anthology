@@ -225,8 +225,8 @@ static bool source_drop_item(qa_q3_game *game, qa_actor_id player, uint32_t inde
     if (!q3_actor_get(game, player))
         return true;
     qa_vec3 forward;
-    q3_source_angle_vectors(qa_v3(0, (angles.y + yaw), angles.z),
-                             &forward, NULL, NULL);
+    qa_angle_vectors(qa_v3(0, (angles.y + yaw), angles.z),
+                             &forward, NULL, NULL,QA_ANGLE_VM_MATH);
     qa_vec3 velocity = qa_vec_scale(forward, 150);
     velocity.z = (velocity.z + (200 + (q3_crandom(game) * 50)));
     qa_q3_item_spawn spawn = {.item_index = index,

@@ -52,7 +52,6 @@ static inline bool ph_grounded(const qa_body_state *body, const qa_physics_prope
         qa_actor_reference_present(body->ground);
 }
 qa_vec3 ph_normal(const qa_trace_result *);
-void ph_axes(qa_vec3, qa_vec3 *, qa_vec3 *, qa_vec3 *);
 bool ph_ground(qa_physics *, qa_actor_id, qa_actor_id ground, qa_error *);
 bool ph_test_position(qa_physics *, qa_actor_id, bool *blocked, qa_error *);
 static inline bool ph_moving(qa_vec3 v) { return v.x != 0 || v.y != 0 || v.z != 0; }

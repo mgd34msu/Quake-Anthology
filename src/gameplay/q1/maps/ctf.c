@@ -47,7 +47,7 @@ static bool vote_teleport(qa_q1_game *g, qa_actor_id trigger, qa_actor_id player
     const q1_actor *native = q1_entity_const(g, target);
     qa_vec3 angles = native && native->map ? native->map->mangle : destination.angles;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+    qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (!qa_q1_spawn_teleport_fog(g, body.origin, NULL, error))
         return false;
     if (!q1_alive(g, player) || !q1_alive(g, target))

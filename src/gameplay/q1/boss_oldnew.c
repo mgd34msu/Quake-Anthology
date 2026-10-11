@@ -194,7 +194,7 @@ static bool autogun(qa_q1_game *g, q1_actor *e, float side, float offset, unsign
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, e->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin =
         qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, 80)), qa_vec_scale(g->right, side * 64));
     return q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV], 1, 1, 1, error) &&

@@ -199,7 +199,7 @@ static bool camera(application_q3_scene *s, qa_error *e)
     const double degrees = 57.295779513082320876;
     float angles[] = {(float)(atan2(-c->axis[0].z, hypot(c->axis[0].x,c->axis[0].y))*degrees),
         (float)(atan2(c->axis[0].y,c->axis[0].x)*degrees),0};
-    qa_vec3 right, up; qa_builtin_angle_vectors(qa_v3(angles[0],angles[1],0), NULL, &right, &up);
+    qa_vec3 right, up; qa_angle_vectors(qa_v3(angles[0],angles[1],0), NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
     angles[2] = (float)(atan2(qa_vec_dot(c->axis[1],up),-qa_vec_dot(c->axis[1],right))*degrees);
     for (size_t i = 0; i < p->origin.count; ++i) if (!words(s,p->origin.rows[i],origin,3,e)) return false;
     for (size_t i = 0; i < p->angles.count; ++i) if (!words(s,p->angles.rows[i],angles,3,e)) return false;

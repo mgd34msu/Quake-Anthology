@@ -24,7 +24,7 @@ qa_vec3 qa_q2_bot_weapon_launch_velocity(const qa_q2_bot_weapon_fact *fact, qa_v
     angles.z = 0;
     angles.y += fact->launch_yaw_offset;
     if (fact->pitch_clamped) angles.x = q2_launch_pitch(angles.x);
-    qa_builtin_angle_vectors(angles, &direction, NULL, NULL);
+    qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     return fact->ballistic && fact->deployable ?
         q2_mine_velocity(direction, fact->speed, fact->extra_z_velocity, 0) :
         q2_launch_velocity(direction, fact->speed, fact->extra_z_velocity, 0);

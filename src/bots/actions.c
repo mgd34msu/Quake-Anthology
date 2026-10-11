@@ -411,8 +411,8 @@ void qa_bot_input_intent(const qa_bot_input *input, qa_input_command_intent *out
     for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
         if (flags & actions[i].source) intent.actions |= UINT64_C(1) << actions[i].action;
     qa_vec3 forward, right;
-    qa_builtin_angle_vectors(qa_v3(input->direction.z != 0 ? input->view_angles.x : 0,
-                                  input->view_angles.y, 0), &forward, &right, NULL);
+    qa_angle_vectors(qa_v3(input->direction.z != 0 ? input->view_angles.x : 0,
+                                  input->view_angles.y, 0), &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
     int32_t vertical = qa_source_float_to_i32(forward.z);
     float up = vertical == INT32_MIN ? (float)INT32_MIN : (float)abs(vertical);
     intent.direction = qa_v3(qa_vec_dot(forward, input->direction), qa_vec_dot(right, input->direction),

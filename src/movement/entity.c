@@ -131,15 +131,7 @@ qa_vec3 ph_normal(const qa_trace_result *trace) {
     return trace->contact ? trace->contact_plane.normal : trace->plane.normal;
 }
 
-void ph_axes(qa_vec3 angles, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up) {
-    const float radians = 0.01745329251994329577f;
-    float sy = sinf(angles.y*radians), cy = cosf(angles.y*radians);
-    float sp = sinf(angles.x*radians), cp = cosf(angles.x*radians);
-    float sr = sinf(angles.z*radians), cr = cosf(angles.z*radians);
-    *forward = qa_v3(cp*cy, cp*sy, -sp);
-    *right = qa_v3(-sr*sp*cy+cr*sy, -sr*sp*sy-cr*cy, -sr*cp);
-    *up = qa_v3(cr*sp*cy+sr*sy, cr*sp*sy-sr*cy, cr*cp);
-}
+
 
 bool ph_event(qa_physics *p, qa_actor_id actor, qa_physics_event_kind kind,
                qa_vec3 origin, qa_error *error) {

@@ -66,15 +66,7 @@ static bool memory_call(const qa_q3_abi_memory *memory, const uint64_t *words,
     return true;
 }
 
-static void angle_vectors(qa_vec3 angles, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up)
-{
-    const double to_radians = 0.017453292519943295769236907684886;
-    float yaw = (float)(angles.y * to_radians), pitch = (float)(angles.x * to_radians), roll = (float)(angles.z * to_radians);
-    float sy = (float)sin(yaw), cy = (float)cos(yaw), sp = (float)sin(pitch), cp = (float)cos(pitch), sr = (float)sin(roll), cr = (float)cos(roll);
-    *forward = qa_v3(cp * cy,cp * sy,-sp);
-    *right = qa_v3((-sr * sp) * cy + (-cr * -sy),(-sr * sp) * sy + (-cr * cy),-sr * cp);
-    *up = qa_v3((cr * sp) * cy + (-sr * -sy),(cr * sp) * sy + (-sr * cy),cr * cp);
-}
+
 
 static bool vector_call(const qa_q3_abi_memory *memory, const uint64_t *words,
                           int32_t trap, uint64_t *result, qa_error *error)
@@ -103,7 +95,7 @@ static bool vector_call(const qa_q3_abi_memory *memory, const uint64_t *words,
     if (trap == 108) {
         qa_vec3 values[3], angles;
         if (!vector(memory,offsets[0],&angles,error)) return false;
-        angle_vectors(angles,&values[0],&values[1],&values[2]);
+        qa_angle_vectors(angles,&values[0],&values[1],&values[2],QA_ANGLE_NATIVE_MATH);
         for (size_t i = 1; i < 4; ++i)
             if (words[i] != 0 && !write_vector(memory,offsets[i],values[i - 1],error)) return false;
         return true;

@@ -217,7 +217,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
             float best = FLT_MAX, chosen = 0;
             for (size_t i = 0; i < sizeof(pitches) / sizeof(pitches[0]); ++i) {
                 qa_vec3 direction;
-                qa_builtin_angle_vectors(qa_v3(pitches[i], angles.y, angles.z), &direction, NULL, NULL);
+                qa_angle_vectors(qa_v3(pitches[i], angles.y, angles.z), &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
                 qa_vec3 velocity = qa_vec_scale(direction, speed), origin = c->body.origin;
                 for (unsigned step = 0; step < 30; ++step) {
                     velocity.z -= gravity * .1f;
@@ -256,7 +256,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
                 }
             }
             if (best != FLT_MAX) {
-                qa_builtin_angle_vectors(qa_v3(chosen, angles.y, angles.z), &c->body.velocity, NULL, NULL);
+                qa_angle_vectors(qa_v3(chosen, angles.y, angles.z), &c->body.velocity, NULL, NULL,QA_ANGLE_FLOAT_MATH);
                 c->body.velocity = qa_vec_scale(c->body.velocity, speed);
                 return q2m_write_body(c, true, error);
             }
@@ -292,7 +292,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
     if (isnan(chosen))
         return true;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(c->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     c->body.velocity = qa_vec_scale(qa_vec_normalize(forward), speed * cosf(chosen));
     float gravity = c->game->services.physics ? c->game->services.physics->gravity : 800;
     c->body.velocity.z = speed * sinf(chosen) + .5f * gravity * .1f;
@@ -337,7 +337,7 @@ bool q2m_blocked_platform(q2m_context *c, const qa_body_state *enemy, float dist
     q2_actor *platform = q2_actor_get(c->game, qa_actor_reference_resolve(qa_session_actors(c->game->services.session), c->body.ground), false, NULL);
     if (!platform || !platform->entity || platform->entity->kind != Q2E_PLAT) {
         qa_vec3 forward;
-        qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
+        qa_angle_vectors(c->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         qa_vec3 start = qa_vec_add(c->body.origin, qa_vec_scale(forward, distance));
         qa_vec3 end = start;
         end.z -= 384;
@@ -377,7 +377,7 @@ static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accep
     if (!position)
         return true;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(c->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 ahead = qa_vec_add(c->body.origin, qa_vec_scale(forward, 48));
     qa_vec3 start = ahead, end = ahead;
     qa_trace_result result;
@@ -608,7 +608,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
     if ((name == Q2M_CALLBACK_stalker_jump_up) || (name == Q2M_CALLBACK_stalker_jump_down)) {
         bool up = (name == Q2M_CALLBACK_stalker_jump_up);
         qa_vec3 forward, vertical;
-        qa_builtin_angle_vectors(c->body.angles, &forward, NULL, &vertical);
+        qa_angle_vectors(c->body.angles, &forward, NULL, &vertical,QA_ANGLE_FLOAT_MATH);
         if (c->game->options.edition == QA_Q2_CLASSIC) {
             c->monster->timestamp_ns = c->game->now_ns;
         }
@@ -634,7 +634,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
                 finished = c->game->now_ns > q2m_after(c->monster->timestamp_ns, 3);
             else {
                 qa_vec3 forward;
-                qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
+                qa_angle_vectors(c->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
                 qa_vec3 projected = qa_v3(c->body.velocity.x * forward.x,
                                           c->body.velocity.y * forward.y,
                                           c->body.velocity.z * forward.z);

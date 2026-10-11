@@ -185,7 +185,7 @@ bool frontend_q2_beams_prepare(frontend_q2_beam_context *o, frontend_q2_temporar
         if (rerelease && b->player && !local) {
             if (offset.x!=0 || offset.y!=0 || offset.z!=0) {
                 qa_vec3 rotation=beam_angles(o,delta), axis[3];
-                frontend_camera_axes(qa_v3(-rotation.x,rotation.y+180,0),axis);
+                qa_angle_axis(qa_v3(-rotation.x,rotation.y+180,0),axis,QA_ANGLE_FLOAT_MATH);
                 start=qa_vec_add(start,qa_vec_scale(axis[1],offset.x-1));
                 start=qa_vec_sub(start,qa_vec_scale(axis[0],offset.y));
                 start=qa_vec_add(start,qa_vec_scale(axis[2],-offset.z-10));
@@ -210,7 +210,7 @@ bool frontend_q2_beams_prepare(frontend_q2_beam_context *o, frontend_q2_temporar
         qa_vec3 direction=qa_vec_normalize(delta);
         if (!rerelease && heat && !local) {
             if (!b->monster) {
-                qa_vec3 axis[3]; frontend_camera_axes(qa_v3(-pitch,yaw+180,0),axis);
+                qa_vec3 axis[3]; qa_angle_axis(qa_v3(-pitch,yaw+180,0),axis,QA_ANGLE_FLOAT_MATH);
                 start=qa_vec_add(start,qa_vec_scale(axis[1],offset.x-1));
                 start=qa_vec_sub(start,qa_vec_scale(axis[0],offset.y));
                 start=qa_vec_add(start,qa_vec_scale(axis[2],-offset.z-10));

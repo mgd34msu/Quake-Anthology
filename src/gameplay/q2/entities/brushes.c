@@ -201,7 +201,7 @@ static bool secret_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(b.angles, &forward, &right, &up);
+    qa_angle_vectors(b.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 size = qa_vec_sub(b.bounds.maxs, b.bounds.mins);
     if (second) {
         if (b.angles.y != 0 && b.angles.y != 90 && b.angles.y != 180 && b.angles.y != 270)

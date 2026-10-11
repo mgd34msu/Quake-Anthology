@@ -410,7 +410,6 @@ typedef struct qa_builtin_projectile_step {
 bool qa_builtin_projectile_move(const qa_builtin_services *, const qa_builtin_projectile_step *,
                                 qa_trace_result *, qa_error *);
 
-void qa_builtin_angle_vectors(qa_vec3 angles, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up);
 float qa_builtin_angle_mod(float);
 float qa_builtin_angle_delta(float target, float current);
 

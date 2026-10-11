@@ -14,7 +14,7 @@ bool q1_demodog_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     entity->state.monster.jump_touch = true;
     entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
     body.origin.z += 1;
@@ -66,7 +66,7 @@ static bool grenade(qa_q1_game *g, q1_actor *entity, bool vertical, qa_error *er
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     velocity = qa_vec_add(velocity, qa_vec_scale(g->forward, 100));
     if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error))
         return false;

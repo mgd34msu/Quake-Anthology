@@ -124,9 +124,9 @@ static bool third_person(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,flo
     r->origin.z=(r->origin.z + (float)p->viewheight); qa_vec3 focus_angles=f->view_angles;
     if(p->stats[0]<=0)focus_angles.y=f->view_angles.y=(float)p->stats[q3nh_dead_yaw_stat(o->product)];
     if(focus_angles.x>45)focus_angles.x=45;
-    qa_vec3 forward,right; q3nh_vectors(focus_angles,&forward,NULL,NULL);
+    qa_vec3 forward,right; qa_angle_vectors(focus_angles,&forward,NULL,NULL,QA_ANGLE_VM_MATH);
     qa_vec3 focus=q3ne_sum(r->origin,q3ne_scale(forward,512)),view=r->origin; view.z=(view.z + 8);
-    f->view_angles.x=(f->view_angles.x * 0.5f); q3nh_vectors(f->view_angles,&forward,&right,NULL);
+    f->view_angles.x=(f->view_angles.x * 0.5f); qa_angle_vectors(f->view_angles,&forward,&right,NULL,QA_ANGLE_VM_MATH);
     float radians=((angle / 180) * 3.14159274101257324219f);
     view=q3ne_sum(view,q3ne_scale(forward,(-s->third_person_range * (float)cos((double)radians))));
     view=q3ne_sum(view,q3ne_scale(right,(-s->third_person_range * (float)sin((double)radians))));
@@ -222,7 +222,7 @@ bool q3n_view_frame(q3n_view *o,q3n_frame *f,const q3n_view_settings *s,const q3
             f->view_angles=camera.angles;
         }
     }
-    q3nh_axis(f->view_angles,r->axis);
+    qa_angle_axis(f->view_angles,r->axis,QA_ANGLE_VM_MATH);
     if(ok)ok=fov(o,f,s,in_water,e) && q3ne_current(f,e);
     o->busy=false; return ok;
 }
@@ -255,7 +255,7 @@ bool q3n_view_test_model(q3n_view *o,const q3n_frame *f,const char *name,const f
         if(ok && !o->test_model.model)o->options.print(o->options.context,"Can't register model\n");
         else if(ok) {
             o->test_model.origin=q3ne_sum(f->refdef.origin,q3ne_scale(f->refdef.axis[0],100));
-            q3nh_axis(qa_v3(0,(180 + f->view_angles.y),0),o->test_model.axis);
+            qa_angle_axis(qa_v3(0,(180 + f->view_angles.y),0),o->test_model.axis,QA_ANGLE_VM_MATH);
             o->state.test_gun=false;
         }
     }

@@ -17,7 +17,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &self, error))
         return false;
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(self.angles, &forward, &right, &up);
+    qa_angle_vectors(self.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     float offset = (float)(monster->addon.projectile_max - monster->addon.projectiles) *
                    (q1_random(g) > 0.5f ? -64 : 64);
     qa_vec3 lead = qa_vec_scale(qa_v3(target.velocity.x, target.velocity.y, 0),

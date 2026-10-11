@@ -9,7 +9,7 @@ qa_vec3 q1_map_direction(qa_vec3 angles) {
     if (angles.x == 0 && angles.z == 0 && angles.y == -2)
         return qa_v3(0, 0, -1);
     qa_vec3 forward;
-    qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+    qa_angle_vectors(angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     return forward;
 }
 bool q1_map_trigger_init(qa_q1_game *g, q1_actor *entity, bool zero_direction, qa_error *error) {

@@ -75,7 +75,7 @@ bool q1_hipnotic_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (player->weapon == QA_Q1_LASER || player->weapon == QA_Q1_MG3_LASER) {
         if (!q1_consume(g, player->id, QA_Q1_CELLS, 1, error))
             return false;
-        qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 forward = g->forward, right = g->right, up = g->up, direction;
         qa_vec3 outward = qa_vec_normalize(qa_v3(forward.x, forward.y, 0));
         qa_vec3 origin =
@@ -293,7 +293,7 @@ bool q1_hipnotic_hammer_base(qa_q1_game *g, q1_player *player, qa_vec3 origin, q
     q1_actor *base;
     if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_HIPNOTIC_MJOLNIR_BASE], Q1_TIMER, player->id, &base, error))
         return false;
-    qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     base->state.projectile.movedir = g->forward;
     base->state.projectile.weapon = weapon;
     qa_body_state body;
@@ -329,7 +329,7 @@ static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, player->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward, up = g->up, source = qa_vec_add(body.origin, qa_v3(0, 0, 16));
     qa_trace_result trace;
     if (!q1_trace(g, source, qa_vec_add(source, qa_vec_scale(forward, 32)), player->id, true,
@@ -422,7 +422,7 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
         if (!result)
             return false;
         if (!q1_ref_present(p->enemy)) {
-            qa_builtin_angle_vectors(p->launch_angles, &g->forward, &g->right, &g->up);
+            qa_angle_vectors(p->launch_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
             qa_vec3 end = qa_vec_add(qa_vec_add(origin, qa_vec_scale(g->forward, 200)),
                                      qa_vec_scale(g->right, 400 * q1_random(g) - 200));
             qa_trace_result trace;

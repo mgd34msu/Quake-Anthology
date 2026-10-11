@@ -216,7 +216,7 @@ static bool describe(void *opaque, const qa_damage_request *request,
     qa_body_state body;
     if (!qa_world_body_read(app->world, request->target, &body, error)) return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 contact = qa_vec_normalize(qa_vec_sub(request->point, body.origin));
     bool defender = target_q2.defender_sphere;
     application_provider *effects = application_provider_for(app, request->target, QA_ROLE_EFFECTS, "");
@@ -481,7 +481,7 @@ bool application_native_q2_armor_context(void *opaque, const qa_damage_request *
     bool ctf, lmctf, railgun;
     if (!mode_teams(app, &ctf, &lmctf, &railgun, error)) return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(body.angles, &forward, NULL, NULL);
+    qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 contact = qa_vec_normalize(qa_vec_sub(geometry->point, body.origin));
     *out = (qa_armor_context){.q2_profile = true,
         .rerelease = state->armor.powered.source_edition == QA_Q2_POWER_ARMOR_RERELEASE,

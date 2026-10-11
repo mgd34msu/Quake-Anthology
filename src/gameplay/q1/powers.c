@@ -343,7 +343,7 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
                 !qa_world_body_read(g->services.world, request->attack.inflictor, &incoming, error))
                 return false;
             qa_vec3 delta = qa_vec_sub(incoming.origin, body.origin), forward;
-            qa_builtin_angle_vectors(body.angles, &forward, NULL, NULL);
+            qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
             float angle = qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f) -
                           qa_builtin_angle_mod(atan2f(forward.y, forward.x) * 57.29577951308232f);
             if (!(angle > 90 && angle < 270) && !(angle < -90 && angle > -270)) {

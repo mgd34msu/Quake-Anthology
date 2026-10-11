@@ -416,7 +416,7 @@ bool qa_camera_sample_view(const qa_camera_sample *sample, const qa_scene_view *
         qa_vec3 dir = sample->direction;
         qa_vec3 angles = {-(float)(atan2(dir.z, hypot(dir.x, dir.y)) * 57.295779513082320877),
                           (float)(atan2(dir.y, dir.x) * 57.295779513082320877), 0};
-        qa_vec3 right; qa_builtin_angle_vectors(angles, &view.axis[0], &right, &view.axis[2]);
+        qa_vec3 right; qa_angle_vectors(angles, &view.axis[0], &right, &view.axis[2],QA_ANGLE_FLOAT_MATH);
         view.axis[1] = qa_vec_scale(right, -1);
     }
     float fov_y = (float)(atan(tan(sample->fov * .00872664625997164788) / aspect) * 114.59155902616464175);

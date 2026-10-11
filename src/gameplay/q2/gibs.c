@@ -242,7 +242,7 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     if (!q2_actor_live(g, a->id))
         return true;
     qa_vec3 right;
-    qa_builtin_angle_vectors(angles_for(contact->plane.normal), NULL, &right, NULL);
+    qa_angle_vectors(angles_for(contact->plane.normal), NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
     body.angles = angles_for(right);
     if (!qa_world_body_write(g->services.world, a->id, &body, e))
         return false;
@@ -314,7 +314,7 @@ bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
             !qa_world_body_read(g->services.world, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), &owner, e))
             return false;
         qa_vec3 up;
-        qa_builtin_angle_vectors(owner.angles, NULL, NULL, &up);
+        qa_angle_vectors(owner.angles, NULL, NULL, &up,QA_ANGLE_FLOAT_MATH);
         float seconds = (float)((double)g->frame_ns / 1e9),
               degrees = 150 * seconds + trap->projectile.delay,
               radians = degrees * 0.017453292519943295f;

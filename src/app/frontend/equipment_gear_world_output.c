@@ -23,19 +23,7 @@ static float length(qa_vec3 vector)
 }
 static qa_vec3 scaled(qa_vec3 vector, double scale)
 { return qa_v3(((float)(vector.x * scale)), ((float)(vector.y * scale)), ((float)(vector.z * scale))); }
-static void model_axis(qa_vec3 angles, qa_vec3 axis[3])
-{
-    const double radians = 6.28318530717958647693 / 360.0;
-    float yaw = ((float)(angles.y * radians)), pitch = ((float)(angles.x * radians)), roll = ((float)(angles.z * radians));
-    float sy = ((float)(sin(yaw))), cy = ((float)(cos(yaw))), sp = ((float)(sin(pitch))), cp = ((float)(cos(pitch)));
-    float sr = ((float)(sin(roll))), cr = ((float)(cos(roll))), rp = (-sr * sp);
-    axis[0] = qa_v3((cp * cy), (cp * sy), -sp);
-    axis[1] = qa_v3(-((rp * cy) + (-cr * -sy)),
-        -((rp * sy) + (-cr * cy)), -(-sr * cp));
-    rp = (cr * sp);
-    axis[2] = qa_v3(((rp * cy) + (-sr * -sy)),
-        ((rp * sy) + (-sr * cy)), (cr * cp));
-}
+
 static qa_vec3 vector_angles(qa_vec3 vector)
 {
     float yaw, pitch, pi = 3.14159274101257324219f;
@@ -107,7 +95,7 @@ static qa_q3_ref_entity model_ref(int32_t handle, qa_vec3 origin, qa_vec3 angles
 {
     qa_q3_ref_entity ref = {.kind = QA_Q3_REF_MODEL, .model = handle,
         .origin = origin, .old_origin = origin, .lighting_origin = origin, .color = {255, 255, 255, 255}};
-    model_axis(angles, ref.axis); return ref;
+    qa_angle_axis(angles, ref.axis,QA_ANGLE_NATIVE_MATH); return ref;
 }
 
 bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
@@ -144,7 +132,7 @@ bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
     output->start = qa_vec_add(source->player_body.origin, qa_v3(0, 0,
         source->offhand ? 26 : local ? source->view_height : 0));
     if (source->offhand) {
-        qa_vec3 aim[3]; q3n_angles_axis(source->player_angles, aim);
+        qa_vec3 aim[3]; qa_angle_axis(source->player_angles, aim,QA_ANGLE_VM_MATH);
         output->start = qa_vec_add(output->start, scaled(aim[1], local ? 10 : 6));
         if (local) output->start = qa_vec_add(output->start, scaled(aim[0], 3));
     }

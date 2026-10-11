@@ -551,7 +551,7 @@ static void q2_clamp_angles(q2_classic_move *pm)
         if (pm->angles.x > 89.0f && pm->angles.x < 180.0f) pm->angles.x = 89.0f;
         else if (pm->angles.x < 271.0f && pm->angles.x >= 180.0f) pm->angles.x = 271.0f;
     }
-    qa_move_angles(pm->angles, &pm->forward, &pm->right, &pm->up);
+    qa_angle_vectors(pm->angles, &pm->forward, &pm->right, &pm->up,QA_ANGLE_FLOAT_MATH);
 }
 
 static bool q2_run(q2_classic_move *pm)
@@ -603,7 +603,7 @@ static bool q2_run(q2_classic_move *pm)
             qa_vec3 angles = pm->angles;
             if (angles.x > 180.0f) angles.x -= 360.0f;
             angles.x /= 3.0f;
-            qa_move_angles(angles, &pm->forward, &pm->right, &pm->up);
+            qa_angle_vectors(angles, &pm->forward, &pm->right, &pm->up,QA_ANGLE_FLOAT_MATH);
             if (!q2_air_move(pm)) return false;
         }
     }

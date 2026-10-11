@@ -291,7 +291,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                 qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
                       atan2f(direction.y, direction.x) * 57.29577951308232f, 0),
             right, up;
-    qa_builtin_angle_vectors(angles, NULL, &right, &up);
+    qa_angle_vectors(angles, NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
     float lift = 200 + q2_crandom(g) * 10, side = q2_crandom(g) * 10;
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     qa_actor_collision collision = {.family = QA_GAME_Q2,

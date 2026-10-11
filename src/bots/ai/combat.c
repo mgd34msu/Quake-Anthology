@@ -23,7 +23,7 @@ static qa_vec3 weapon_muzzle(const qa_bot_weapon_knowledge *weapon,
                              const bot_ai_state *state,qa_vec3 angles) {
     if(weapon->muzzle_count) return qa_vec_add(bot_ai_origin(state),weapon->muzzle_offsets[0]);
     qa_vec3 forward,right;
-    qa_builtin_angle_vectors(angles,&forward,&right,NULL);
+    qa_angle_vectors(angles,&forward,&right,NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 muzzle=qa_vec_add(bot_ai_eye(state),qa_vec_add(qa_vec_scale(forward,weapon->weapon.offset.x),
                                                      qa_vec_scale(right,weapon->weapon.offset.y)));
     muzzle.z+=weapon->weapon.offset.z;
@@ -653,7 +653,7 @@ static bool selected_fire_path(qa_bots *b,bot_ai_state *s,const qa_bot_weapon_kn
         } else {
             qa_vec3 forward;
             if(weapon->weapon.speed>0) forward=qa_vec_normalize(velocity);
-            else qa_builtin_angle_vectors(bot_ai_view_angles(s),&forward,NULL,NULL);
+            else qa_angle_vectors(bot_ai_view_angles(s),&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
             float reach=weapon->ranged_limit?fminf(weapon->maximum_range,1000):1000;
             end=weapon->melee?bot_ai_aim_target(s):qa_vec_add(start,qa_vec_scale(forward,reach));
         }
@@ -829,7 +829,7 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         if(!allowed) return true;
     } else {
         qa_vec3 forward;
-        qa_builtin_angle_vectors(bot_ai_view_angles(s),&forward,NULL,NULL);
+        qa_angle_vectors(bot_ai_view_angles(s),&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
         muzzle=weapon_muzzle(&selected,s,bot_ai_view_angles(s));
         qa_vec3 end=qa_vec_add(muzzle,qa_vec_scale(forward,1000));
         muzzle=qa_vec_add(muzzle,qa_vec_scale(forward,-12));
@@ -1206,7 +1206,7 @@ bool bot_ai_source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
         int32_t view_height;
         SOURCE_ATTACK_CALL(bot_ai_source_player_word(b,s,BOT_PS_VIEW_HEIGHT,&view_height,e));
         qa_vec3 start=bot_ai_origin(s);start.z+=(float)view_height;
-        qa_vec3 forward,right;qa_builtin_angle_vectors(bot_ai_view_angles(s),&forward,&right,NULL);
+        qa_vec3 forward,right;qa_angle_vectors(bot_ai_view_angles(s),&forward,&right,NULL,QA_ANGLE_FLOAT_MATH);
         start.x+=forward.x*selected.weapon.offset.x+right.x*selected.weapon.offset.y;
         start.y+=forward.y*selected.weapon.offset.x+right.y*selected.weapon.offset.y;
         start.z+=(forward.z*selected.weapon.offset.x+right.z*selected.weapon.offset.y)+selected.weapon.offset.z;

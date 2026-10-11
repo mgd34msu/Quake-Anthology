@@ -87,7 +87,7 @@ static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         float kick = q2_clamp(fabsf(s->rule.damage_knockback) * 100 / combat.health, count * .5f, 50);
         qa_vec3 direction = qa_vec_normalize(qa_vec_sub(s->rule.damage_from, body.origin)), forward,
                 right;
-        qa_builtin_angle_vectors(m->view_angles, &forward, &right, NULL);
+        qa_angle_vectors(m->view_angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
         s->rule.damage_roll = kick * qa_vec_dot(direction, right) * .3f;
         s->rule.damage_pitch = -kick * qa_vec_dot(direction, forward) * .3f;
         uint64_t duration =
@@ -265,7 +265,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     int cycle = (int)fmodf(truncf(bob_time), 2);
     float bob = fabsf(sinf(bob_time * 3.14159265358979323846f)), sign = cycle ? -1 : 1;
     qa_vec3 forward, right, up;
-    qa_builtin_angle_vectors(m->view_angles, &forward, &right, &up);
+    qa_angle_vectors(m->view_angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     float fall = kick_ratio(s->rule.fall_ns, g->now_ns, .3f, rr ? .1f - dt : 0),
           damage = kick_ratio(s->rule.damage_ns, g->now_ns, .5f, rr ? .1f - dt : 0);
     if (damage == 0)

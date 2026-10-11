@@ -88,7 +88,7 @@ static bool nq_check_water(nq_move *m) {
 static void nq_wall_friction(nq_move *m, const qa_trace_result *trace) {
     qa_nq_movement_state *s = &m->base.c->state->data.nq;
     qa_vec3 forward;
-    qa_move_angles(s->view_angles, &forward, NULL, NULL);
+    qa_angle_vectors(s->view_angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     float d = qa_vec_dot(trace->plane.normal, forward) + 0.5f;
     if (d >= 0) return;
     qa_vec3 into = qa_vec_scale(trace->plane.normal, qa_vec_dot(trace->plane.normal, s->velocity));
@@ -188,7 +188,7 @@ static void nq_water_move(nq_move *m) {
     qa_nq_movement_state *s = &c->state->data.nq;
     const qa_q1_movement_parameters *p = &c->input->profile.data.nq.parameters;
     qa_vec3 forward, right;
-    qa_move_angles(s->view_angles, &forward, &right, NULL);
+    qa_angle_vectors(s->view_angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 wish = qa_vec_add(qa_vec_scale(forward, q1_speed(&m->base, (float)c->command.forward_move)),
                                qa_vec_scale(right, q1_speed(&m->base, (float)c->command.side_move)));
     wish.z += c->command.forward_move == 0 && c->command.side_move == 0 && c->command.up_move == 0 ?
@@ -212,7 +212,7 @@ static bool nq_air_move(nq_move *m) {
     qa_nq_movement_state *s = &c->state->data.nq;
     const qa_q1_movement_parameters *p = &c->input->profile.data.nq.parameters;
     qa_vec3 forward, right;
-    qa_move_angles(s->angles, &forward, &right, NULL);
+    qa_angle_vectors(s->angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
     float forward_move = m->time < s->teleport_time_seconds && c->command.forward_move < 0 ? 0 : c->command.forward_move;
     qa_vec3 wish = qa_vec_add(qa_vec_scale(forward, q1_speed(&m->base, (float)forward_move)),
                                qa_vec_scale(right, q1_speed(&m->base, (float)c->command.side_move)));
@@ -231,7 +231,7 @@ static bool nq_air_move(nq_move *m) {
 static void nq_alternate_noclip(nq_move *m) {
     qa_move_context *c = m->base.c;
     qa_vec3 forward, right;
-    qa_move_angles(c->state->data.nq.view_angles, &forward, &right, NULL);
+    qa_angle_vectors(c->state->data.nq.view_angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
     qa_vec3 wish = qa_vec_add(qa_vec_scale(forward, q1_speed(&m->base, (float)c->command.forward_move)),
                                qa_vec_scale(right, q1_speed(&m->base, (float)c->command.side_move)));
     wish.z += q1_speed(&m->base, (float)c->command.up_move) * 2;
@@ -250,7 +250,7 @@ static bool nq_client_think(nq_move *m) {
     }
     if (s->health <= 0) return true;
     qa_vec3 angles = qa_vec_add(s->view_angles, s->punch_angles), right;
-    qa_move_angles(s->angles, NULL, &right, NULL);
+    qa_angle_vectors(s->angles, NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
     float side = qa_vec_dot(s->velocity, right), sign = side < 0 ? -1 : 1;
     float roll_speed = c->input->profile.data.nq.roll_speed, roll_angle = c->input->profile.data.nq.roll_angle;
     float roll = (fabsf(side) < roll_speed ? fabsf(side) * roll_angle / roll_speed : roll_angle) * sign * 4;
@@ -275,7 +275,7 @@ static bool nq_check_water_jump(nq_move *m) {
     qa_move_context *c = m->base.c;
     qa_nq_movement_state *s = &c->state->data.nq;
     qa_vec3 forward;
-    qa_move_angles(s->angles, &forward, NULL, NULL);
+    qa_angle_vectors(s->angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     /* Original QC discards normalize's result after clearing forward.z. */
     forward.z = 0;
     qa_vec3 start = qa_vec_add(s->origin, qa_v3(0, 0, 8));

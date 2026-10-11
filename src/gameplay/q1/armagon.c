@@ -109,7 +109,7 @@ static bool launch(qa_q1_game *g, q1_actor *entity, float offset, unsigned turn_
     angles.y += entity->state.monster.source.armagon.torso_yaw + (turn_direction == 1   ? 165
                                                                   : turn_direction == 2 ? -165
                                                                                         : 0);
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward;
     qa_vec3 origin = qa_vec_add(
         body.origin, qa_vec_add(qa_v3(0, 0, 66), qa_vec_add(qa_vec_scale(g->right, offset),

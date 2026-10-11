@@ -46,7 +46,7 @@ static bool check_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 delta = qa_vec_sub(enemy.origin, body.origin);
     if (qa_vec_dot(qa_vec_normalize(delta), g->forward) <= 0.3f)
         return true;
@@ -176,7 +176,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body, target = {0};
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin =
         qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(g->forward, 112), qa_vec_scale(g->up, 32)));
     bool plasma = q1_random(g) > 0.66f;
@@ -189,7 +189,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         target = (qa_body_state){0};
         (void)qa_world_body_read(g->services.world, q1_ref_actor(g, entity->state.monster.enemy), &target, NULL);
         qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target.origin, origin));
-        qa_builtin_angle_vectors(direction, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(direction, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 aim = qa_vec_add(direction, qa_vec_scale(g->right, distortion));
         if (plasma ? !q1_rogue_launch_plasma(g, entity->id, origin, aim, NULL, error)
                    : !q1_dragon_launch_fireball(g, entity->id, origin, aim, error))
@@ -249,7 +249,7 @@ static bool finish_death(qa_q1_game *g, q1_actor *entity, unsigned count, qa_err
             if (!qa_world_body_read(g->services.world, entity->id, &body, error))
                 return false;
             qa_vec3 velocity = qa_vec_scale(body.velocity, -1.25f);
-            qa_builtin_angle_vectors(velocity, &g->forward, &g->right, &g->up);
+            qa_angle_vectors(velocity, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
             float right = q1_random(g) * 300 - 150, up = q1_random(g) * 300 - 150;
             velocity = qa_vec_add(
                 velocity, qa_vec_add(qa_vec_scale(g->right, right), qa_vec_scale(g->up, up)));
@@ -295,7 +295,7 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         m->next_frame = (Q1_FRAME_dragon_boom2);
         return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
     }
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     body.velocity = qa_vec_sub(body.velocity, qa_vec_scale(g->up, 40));
     m->source.dragon.last_velocity = body.velocity;
     return qa_world_body_write(g->services.world, entity->id, &body, error);
@@ -461,7 +461,7 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
-        qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         body.velocity = qa_vec_sub(qa_vec_scale(g->forward, 300), qa_vec_scale(g->up, 40));
         body.ground = (qa_actor_reference){0};
         body.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};

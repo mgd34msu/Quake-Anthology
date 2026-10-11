@@ -326,7 +326,7 @@ static bool accompany(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa
                a->origin.z+a->maxs.z>(c->origin.z+c->mins.z)-4.0f &&
                a->origin.z+a->mins.z<(c->origin.z+c->maxs.z)+4.0f) {
                 qa_vec3 forward;
-                qa_builtin_angle_vectors(c->angles,&forward,NULL,NULL);forward.z=0;
+                qa_angle_vectors(c->angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);forward.z=0;
                 qa_vec3 horizontal=qa_vec_normalize(forward);
                 qa_vec3 away=qa_vec_normalize(qa_vec_sub(bot_ai_origin(s),c->origin));
                 if(qa_vec_dot(horizontal,away)>.7f) {

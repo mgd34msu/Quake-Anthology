@@ -78,7 +78,7 @@ bool q1_map_hip_particles_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error
                 body.angles = qa_v3(90, 0, 0);
         }
         qa_vec3 forward;
-        qa_builtin_angle_vectors(body.angles, &forward, NULL, NULL);
+        qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         body.origin = qa_vec_sub(body.origin, qa_vec_scale(forward, .2f));
         return qa_world_body_write(g->services.world, entity->id, &body, error) &&
                q1_map_make_static(g, entity, error);

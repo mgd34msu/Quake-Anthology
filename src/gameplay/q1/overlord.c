@@ -39,7 +39,7 @@ bool q1_overlord_destination(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
                                                  : (qa_actor_id){0};
     (void)qa_world_body_read(g->services.world, observer, &player, NULL);
     qa_builtin_snapshot_release(players);
-    qa_builtin_angle_vectors(player.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 forward = g->forward;
     qa_actor_id best = {0}, farthest = {0};
     float distance = 0;
@@ -80,7 +80,7 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     if (!q1_alive(g, entity->id))
         return true;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     if (!qa_q1_spawn_teleport_fog(g, qa_vec_add(target.origin, qa_vec_scale(g->forward, 32)), NULL,
                                   error) ||
         !qa_q1_spawn_teledeath(g, target.origin, entity->id, NULL, error))
@@ -97,7 +97,7 @@ static bool toss(qa_q1_game *g, q1_actor *entity, qa_string_id model, qa_error *
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(body.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     float z = q1_random(g) * 100 - 50, side = q1_random(g) * 200 - 100;
     qa_vec3 velocity =
         qa_vec_add(qa_vec_add(qa_vec_scale(g->forward, 250), qa_vec_scale(g->up, 300 + z)),

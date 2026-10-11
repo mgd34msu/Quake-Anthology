@@ -89,8 +89,8 @@ static bool rocket_acquire(qa_q1_game *g, q1_actor *rocket, qa_error *error) {
         return false;
     qa_vec3 direction = qa_vec_normalize(body.velocity);
     if (q1_alive(g, q1_ref_actor(g, rocket->owner))) {
-        qa_builtin_angle_vectors(rocket->state.projectile.launch_angles, &g->forward, &g->right,
-                                 &g->up);
+        qa_angle_vectors(rocket->state.projectile.launch_angles, &g->forward, &g->right,
+                                 &g->up,QA_ANGLE_FLOAT_MATH);
         if (!q1_aim(g, rocket->id, g->forward, &direction, error))
             return false;
     }
@@ -114,7 +114,7 @@ static bool split_grenade(qa_q1_game *g, q1_actor *grenade, qa_error *error) {
     for (unsigned i = 0; i < 5; ++i) {
         qa_vec3 angles = grenade->state.projectile.launch_angles;
         angles.y += (float)i * 72;
-        qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+        qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         qa_vec3 velocity = qa_vec_add(qa_vec_scale(g->forward, 100), qa_vec_scale(g->up, 400));
         velocity = qa_vec_add(velocity, qa_vec_scale(g->forward, (q1_random(g) * 2 - 1) * 60 - 30));
         velocity = qa_vec_add(velocity, qa_vec_scale(g->right, (q1_random(g) * 2 - 1) * 40 - 20));
@@ -294,7 +294,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, player->id, &body, error))
         return false;
-    qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
+    qa_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 direction;
     q1_actor *projectile;
     switch (player->weapon) {
@@ -348,7 +348,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             qa_vec3 angles = player->input.view_angles;
             if (multiplayer)
                 angles.y += offsets[i] * 0.66f;
-            qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
+            qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
             qa_vec3 velocity;
             if (multiplayer) {
                 if (!q1_aim(g, player->id, g->forward, &direction, error))

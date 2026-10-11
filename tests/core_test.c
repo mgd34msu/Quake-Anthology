@@ -69,6 +69,30 @@ static void test_compiled_sound_names(void)
         CHECK(!strcmp(qa_strings_cstr(strings,first[i]),qa_q2_sound_path(i-1)));
     qa_strings_destroy(strings);
 }
+static void test_shared_angle_basis(void)
+{
+    for(int rule=QA_ANGLE_FLOAT_MATH;rule<=QA_ANGLE_VM_MATH;++rule) {
+        qa_vec3 forward,right,up,axis[3];
+        qa_angle_vectors(qa_v3(0,90,0),&forward,&right,&up,(qa_angle_math_rule)rule);
+        CHECK(fabsf(forward.x)<1e-6f && fabsf(forward.y-1)<1e-6f && forward.z==0);
+        CHECK(fabsf(right.x-1)<1e-6f && fabsf(right.y)<1e-6f && right.z==0);
+        CHECK(up.x==0 && up.y==0 && up.z==1);
+        qa_vec3 angles=qa_v3(17.5f,83.125f,-42.75f);
+        qa_angle_vectors(angles,&forward,&right,&up,(qa_angle_math_rule)rule);
+        qa_angle_axis(angles,axis,(qa_angle_math_rule)rule);
+        CHECK(qa_vec_length(qa_vec_sub(axis[0],forward))==0);
+        CHECK(qa_vec_length(qa_vec_add(axis[1],right))==0);
+        CHECK(qa_vec_length(qa_vec_sub(axis[2],up))==0);
+        CHECK(fabsf(qa_vec_length(forward)-1)<1e-6f && fabsf(qa_vec_length(right)-1)<1e-6f);
+        CHECK(fabsf(qa_vec_dot(forward,right))<1e-6f && fabsf(qa_vec_dot(forward,up))<1e-6f);
+        CHECK(qa_vec_length(qa_vec_sub(qa_vec_cross(axis[0],axis[1]),axis[2]))<1e-6f);
+        qa_vec3 only;
+        qa_angle_vectors(angles,&only,NULL,NULL,(qa_angle_math_rule)rule);
+        CHECK(qa_vec_length(qa_vec_sub(only,forward))==0);
+        qa_angle_vectors(qa_v3(90,0,0),&only,NULL,NULL,(qa_angle_math_rule)rule);
+        CHECK(fabsf(only.x)<1e-6f && only.y==0 && fabsf(only.z+1)<1e-6f);
+    }
+}
 static void test_source_text(void)
 {
     uint8_t source[256],roundtrip[257];char utf8[513];size_t size,restored;qa_error error={0};
@@ -2279,6 +2303,7 @@ int main(int argc, char **argv)
     test_source_text();
     test_q2_hud_configuration();
     test_compiled_sound_names();
+    test_shared_angle_basis();
     test_native_import_slot_identity();
     test_q2_weapon_names();
     test_q2_player_media();
