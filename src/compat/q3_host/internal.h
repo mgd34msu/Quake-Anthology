@@ -72,6 +72,7 @@ typedef struct q3_game_data {
     uint64_t entities, clients;
     uint32_t entity_count, entity_stride, client_stride;
     q3_entity_slot slots[1024];
+    qa_actor_index actor_slots;
     qa_entity_references references;
     q3_portal_reference *portals;
     size_t portal_count, portal_capacity;

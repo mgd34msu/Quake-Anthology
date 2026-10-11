@@ -48,16 +48,28 @@ qa_id_index_cursor qa_id_index_begin(const qa_id_index *index, qa_string_id key,
     return (qa_id_index_cursor){key, discriminator,
         index->capacity ? index->buckets[bucket(key, discriminator, index->capacity)] : 0};
 }
-bool qa_id_index_next(const qa_id_index *index, qa_id_index_cursor *cursor, size_t *value)
+static const qa_id_index_entry *next_entry(const qa_id_index *index, qa_id_index_cursor *cursor)
 {
     while (cursor->next) {
         const qa_id_index_entry *entry = index->entries + cursor->next - 1;
         cursor->next = entry->next;
         if (entry->key == cursor->key && entry->discriminator == cursor->discriminator) {
-            *value = entry->value; return true;
+            return entry;
         }
     }
-    return false;
+    return NULL;
+}
+bool qa_id_index_next(const qa_id_index *index, qa_id_index_cursor *cursor, size_t *value)
+{
+    const qa_id_index_entry *entry = next_entry(index, cursor);
+    if (!entry) return false;
+    *value = entry->value;
+    return true;
+}
+qa_id_index_entry *qa_id_index_find(qa_id_index *index, qa_string_id key, uint64_t discriminator)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(index, key, discriminator);
+    return (qa_id_index_entry *)next_entry(index, &cursor);
 }
 void qa_id_index_clear(qa_id_index *index)
 {

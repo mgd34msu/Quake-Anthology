@@ -297,6 +297,7 @@ typedef struct qa_native_entity_event {
     uint32_t slot;
     qa_native_address address;
     size_t bytes;
+    qa_actor_id previous_actor;
 } qa_native_entity_event;
 /* Cold admission/release notifications. TABLE/SLOT follow actual commits;
  * INVALIDATE precedes restore, unload and storage retirement. Non-slot events

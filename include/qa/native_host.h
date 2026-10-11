@@ -311,6 +311,7 @@ bool qa_native_host_q3_memory(qa_native_host *, qa_qvm_role, qa_qvm_abi,
 /* Dispatch after the shared registry invalidates the released ID. Clears only
  * matching owned/borrowed bindings; repeated notifications are harmless. */
 bool qa_native_host_actor_released(qa_native_host *, qa_actor_record, qa_error *);
+bool qa_native_host_slot_for_actor(const qa_native_host *, qa_actor_id, uint32_t *);
 bool qa_native_host_detach_actor(qa_native_host *, uint32_t source_slot,
                                   qa_actor_id, qa_error *);
 bool qa_native_host_world_actor_bind(qa_native_host *, qa_actor_id, qa_error *);

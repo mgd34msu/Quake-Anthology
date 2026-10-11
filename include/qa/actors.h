@@ -3,6 +3,7 @@
 
 #include "qa/common.h"
 #include "qa/strings.h"
+#include "qa/id_index.h"
 
 typedef uint32_t qa_actor_owner;
 typedef uint32_t qa_actor_definition;
@@ -15,6 +16,36 @@ typedef struct qa_actor_id {
     uint64_t generation;
     uint32_t slot;
 } qa_actor_id;
+
+typedef struct qa_actor_index_entry {
+    qa_actor_id actor;
+    size_t value;
+} qa_actor_index_entry;
+/* Binding metadata belongs to a consumer; actor lifetime belongs to the
+ * registry. A retained binding can therefore be read after actor release. */
+typedef struct qa_actor_index {
+    qa_actor_index_entry *entries;
+    qa_actor_id *sources;
+    size_t capacity, source_capacity;
+    uint64_t registry;
+    qa_id_index retained;
+} qa_actor_index;
+
+bool qa_actor_index_create(qa_actor_index *, const qa_actor_registry *, qa_error *);
+void qa_actor_index_destroy(qa_actor_index *);
+void qa_actor_index_clear(qa_actor_index *);
+void qa_actor_index_put(qa_actor_index *, qa_actor_id, size_t value);
+void qa_actor_index_remove(qa_actor_index *, qa_actor_id);
+bool qa_actor_index_find(const qa_actor_index *, qa_actor_id, size_t *value);
+bool qa_actor_index_reverse_reserve(qa_actor_index *, size_t values, qa_error *);
+qa_actor_id qa_actor_index_at_source(const qa_actor_index *, size_t value);
+/* Protocol references retain all generations in admission order until clear.
+ * They grant a number, never live actor access. */
+bool qa_actor_index_remember(qa_actor_index *, qa_actor_id, size_t value, qa_error *);
+bool qa_actor_index_find_retained(const qa_actor_index *, qa_actor_id, size_t *value);
+size_t qa_actor_index_retained_count(const qa_actor_index *);
+bool qa_actor_index_retained_at(const qa_actor_index *, size_t ordinal,
+    qa_actor_id *actor, size_t *value);
 
 /* Source entity pointers name a physical slot, including while it is free.
  * Lifetime references retain the exact actor for cross-Source services. */
@@ -123,6 +154,7 @@ bool qa_actors_set_metadata(qa_actor_registry *, qa_actor_id,
 /* Record addresses remain fixed until destruction. Contents belong to the
  * current occupant and change on release/reuse; retain IDs for authority. */
 const qa_actor_record *qa_actors_get(const qa_actor_registry *registry, qa_actor_id actor);
+const qa_actor_record *qa_actors_at(const qa_actor_registry *, uint32_t host_slot);
 /* Borrowed current component; invalid/retired actors have no component. */
 qa_actor_player *qa_actors_player(const qa_actor_registry *, qa_actor_id);
 const qa_actor_record *qa_actors_at_source(const qa_actor_registry *registry,

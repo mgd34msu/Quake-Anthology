@@ -24,6 +24,7 @@ static bool portal_extent(size_t count, size_t capacity)
 void q3_game_checkpoint_free(q3_game_data *game)
 {
     if (!game) return;
+    qa_actor_index_destroy(&game->actor_slots);
     for (size_t i = 0; i < game->portal_count; ++i) free(game->portals[i].targets);
     free(game->portals); free(game);
 }
@@ -131,7 +132,8 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
     game->entity_count = qa_load_u32le(bytes.data + 4); game->entity_stride = qa_load_u32le(bytes.data + 8);
     game->client_stride = qa_load_u32le(bytes.data + 12); game->entities = qa_load_u64le(bytes.data + 20);
     game->clients = qa_load_u64le(bytes.data + 28);
-    bool ok = descriptor(host, game, error);
+    bool ok = qa_actor_index_create(&game->actor_slots, qa_session_actors(host->options.session), error)
+        && descriptor(host, game, error);
     for (uint32_t i = 0; i < 1024; ++i) game->slots[i] = (q3_entity_slot){.host = host, .number = i};
     const uint8_t *row = bytes.data + GAME_HEADER;
     for (uint32_t i = 0; ok && i < actors; ++i, row += ACTOR_BYTES) {
@@ -144,12 +146,13 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
             (!(flags & 1u) && (actor->owner != host->options.owner || !actor->has_source || actor->source_slot != number))) {
             ok = q3_fail(error, QA_ERROR_FORMAT, i, "Q3 checkpoint actor ownership or source slot is invalid"); break;
         }
-        for (uint32_t j = 0; j < 1022; ++j) if (qa_actor_id_equal(game->slots[j].actor, actor->id)) {
+        size_t existing;
+        if (qa_actor_index_find(&game->actor_slots, actor->id, &existing)) {
             ok = q3_fail(error, QA_ERROR_FORMAT, i, "Q3 checkpoint actor has duplicate source projections"); break;
         }
-        if (!ok) break;
         q3_entity_slot *slot = game->slots + number;
         slot->actor = actor->id; slot->borrowed = (flags & 1u) != 0; slot->has_visibility = (flags & 2u) != 0;
+        qa_actor_index_put(&game->actor_slots, actor->id, number);
         slot->input_retired = (flags & 4u) != 0;
         if (!slot->borrowed && number < host->options.server.maximum_clients) {
             uint64_t displacement = (uint64_t)number * game->client_stride;

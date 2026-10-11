@@ -142,17 +142,18 @@ struct qa_native_instance {
 };
 
 static inline void native_entity_notify(qa_native_instance *instance,
-    qa_native_entity_change change, uint32_t slot, qa_native_address address, size_t bytes) {
+    qa_native_entity_change change, uint32_t slot, qa_native_address address, size_t bytes,
+    qa_actor_id previous_actor) {
     if (change == QA_NATIVE_ENTITIES_INVALIDATE && !address) instance->entity_views_retired = true;
     else if (change == QA_NATIVE_ENTITIES_TABLE) instance->entity_views_retired = false;
     if (instance->options.entity_changed) {
-        const qa_native_entity_event event = {change, slot, address, bytes};
+        const qa_native_entity_event event = {change, slot, address, bytes, previous_actor};
         instance->options.entity_changed(instance->options.context, instance, &event);
     }
 }
 static inline void native_entity_changed(qa_native_instance *instance,
     qa_native_entity_change change, uint32_t slot) {
-    native_entity_notify(instance, change, slot, 0, 0);
+    native_entity_notify(instance, change, slot, 0, 0, (qa_actor_id){0});
 }
 
 struct qa_native_write_scope {

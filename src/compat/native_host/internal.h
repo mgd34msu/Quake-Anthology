@@ -107,6 +107,7 @@ struct qa_native_host {
     qa_native_process_platform *owned_platform;
     qa_native_host_engine_services engine;
     qa_native_host_world_services world;
+    qa_actor_index actor_slots;
     /* Borrowed only while a checked completed-boundary observation is active. */
     const qa_source_frame *q2_observation_frame;
     qa_native_host_movement_services movement;

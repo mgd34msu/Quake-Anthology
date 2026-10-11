@@ -85,20 +85,23 @@ bool qa_native_host_actor_released(qa_native_host *host, qa_actor_record release
                    : qa_native_entity_table_get(host->instance, &table, error))) return false;
     ++host->callback_depth;
     bool ok = true;
-    for (uint32_t slot = 0; slot < table.capacity; ++slot) {
+    uint32_t slot;
+    if (qa_native_host_slot_for_actor(host, released.id, &slot)) {
         qa_native_slot_binding binding;
-        if (!qa_native_slot(host->instance, slot, &binding, error)) { ok = false; break; }
-        if ((binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED &&
-             !(terminal && binding.kind == QA_NATIVE_SLOT_WORLD)) ||
-            !qa_actor_id_equal(binding.actor, released.id)) continue;
-        qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = slot};
-        if (!qa_native_bind_slot(host->instance, &cleared, error)) { ok = false; break; }
-        if (slot < host->q2_lifetime_capacity) host->q2_lifetimes[slot] = (native_host_q2_lifetime){0};
-        if (slot < host->retained_capacity) host->retained_clients[slot] = false;
-        if (binding.kind == QA_NATIVE_SLOT_OWNED && host->world.release_actor) {
-            host->world.release_actor(host->world.binding_context, host, slot, released.id);
-            if (!(terminal ? qa_native_terminal_entity_table(host->instance, &table, error)
-                           : qa_native_entity_table_get(host->instance, &table, error))) { ok = false; break; }
+        ok = qa_native_slot(host->instance, slot, &binding, error);
+        if (ok && (binding.kind == QA_NATIVE_SLOT_OWNED || binding.kind == QA_NATIVE_SLOT_BORROWED ||
+            (terminal && binding.kind == QA_NATIVE_SLOT_WORLD))) {
+            qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = slot};
+            ok = qa_native_bind_slot(host->instance, &cleared, error);
+            if (ok) {
+                if (slot < host->q2_lifetime_capacity) host->q2_lifetimes[slot] = (native_host_q2_lifetime){0};
+                if (slot < host->retained_capacity) host->retained_clients[slot] = false;
+                if (binding.kind == QA_NATIVE_SLOT_OWNED && host->world.release_actor) {
+                    host->world.release_actor(host->world.binding_context, host, slot, released.id);
+                    ok = terminal ? qa_native_terminal_entity_table(host->instance, &table, error)
+                        : qa_native_entity_table_get(host->instance, &table, error);
+                }
+            }
         }
     }
     --host->callback_depth;
@@ -429,22 +432,23 @@ bool native_host_actor_for_address(qa_native_host *host, qa_native_address addre
     return true;
 }
 
+bool qa_native_host_slot_for_actor(const qa_native_host *host, qa_actor_id actor, uint32_t *out)
+{
+    size_t slot;
+    if (!host || !out || !qa_actor_index_find(&host->actor_slots, actor, &slot)) return false;
+    *out = (uint32_t)slot;
+    return true;
+}
+
 bool native_host_address_for_actor(qa_native_host *host, qa_actor_id actor,
                                    qa_native_address *out, qa_error *error)
 {
     if (!host || !out || !actor_live(host, actor))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live actor and native address output are required");
-    qa_native_entity_table table;
-    if (!qa_native_entity_table_get(host->instance, &table, error))
-        return false;
-    for (uint32_t slot = 0; slot < table.capacity; ++slot) {
-        qa_native_slot_binding binding;
-        if (!qa_native_slot(host->instance, slot, &binding, error))
-            return false;
-        if (binding.kind != QA_NATIVE_SLOT_FREE && qa_actor_id_equal(binding.actor, actor))
-            return qa_native_entity_address(host->instance, slot, out, error);
-    }
+    uint32_t slot;
+    if (qa_native_host_slot_for_actor(host, actor, &slot))
+        return qa_native_entity_address(host->instance, slot, out, error);
     if (host->world.address_for_actor) {
         bool present = false;
         if (!host->world.address_for_actor(host->world.binding_context, host, actor, out,

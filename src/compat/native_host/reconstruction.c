@@ -13,6 +13,7 @@ typedef struct reconstruction_services {
 struct qa_native_host_reconstruction {
     qa_native_host *target, *baseline;
     reconstruction_services saved;
+    qa_actor_index actor_slots;
     bool *retained;
     size_t retained_capacity;
 };
@@ -78,8 +79,13 @@ bool qa_native_host_reconstruction_begin(qa_native_host *target, qa_native_host 
         if (!retained) { free(phase); return native_host_fail(error, QA_ERROR_MEMORY, 0, "Retaining baseline client slots"); }
         memcpy(retained, baseline->retained_clients, baseline->retained_capacity * sizeof(*retained));
     }
-    if (!clear_slots(target, error)) { free(retained); free(phase); return false; }
+    qa_actor_index actor_slots = {0};
+    if (!qa_actor_index_create(&actor_slots, actors, error)) { free(retained); free(phase); return false; }
+    if (!clear_slots(target, error)) {
+        qa_actor_index_destroy(&actor_slots); free(retained); free(phase); return false;
+    }
     phase->target = target; phase->baseline = baseline; phase->saved = services(target);
+    phase->actor_slots = target->actor_slots; target->actor_slots = actor_slots;
     phase->retained = target->retained_clients; phase->retained_capacity = target->retained_capacity;
     reconstruction_services temporary = services(baseline); apply(target, &temporary);
     target->retained_clients = retained; target->retained_capacity = baseline->retained_capacity;
@@ -93,6 +99,8 @@ bool qa_native_host_reconstruction_end(qa_native_host_reconstruction *phase, qa_
         !qa_world_idle(phase->target->world.world) || !qa_session_safe(phase->target->world.session))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native reconstruction still owns active source services");
     if (!clear_slots(phase->target, error)) return false;
+    qa_actor_index_destroy(&phase->target->actor_slots);
+    phase->target->actor_slots = phase->actor_slots;
     free(phase->target->retained_clients);
     phase->target->retained_clients = phase->retained;
     phase->target->retained_capacity = phase->retained_capacity;
@@ -112,5 +120,6 @@ bool qa_native_host_reconstruction_destroy(qa_native_host_reconstruction *phase,
         phase->target->reconstruction = phase->baseline->reconstruction = phase;
         return false;
     }
+    qa_actor_index_destroy(&phase->actor_slots);
     free(phase->retained); free(phase); *consumed = true; return ok;
 }

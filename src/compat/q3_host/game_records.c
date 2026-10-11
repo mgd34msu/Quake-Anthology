@@ -488,16 +488,18 @@ bool qa_q3_host_bind_actor(qa_q3_host *host, uint32_t number, qa_actor_id actor,
         bool same = qa_actor_id_equal(slot->actor, actor) && slot->borrowed == borrowed;
         return q3_game_end(&call, same || q3_fail(error, QA_ERROR_ARGUMENT, number, "Q3 source slot is already bound"));
     }
-    for (size_t i = 0; i < 1022; ++i)
-        if (qa_actor_id_equal(host->game->slots[i].actor, actor))
-            return q3_game_end(&call, q3_fail(error, QA_ERROR_ARGUMENT, number, "Q3 actor already has a projection"));
+    size_t existing;
+    if (qa_actor_index_find(&host->game->actor_slots, actor, &existing))
+        return q3_game_end(&call, q3_fail(error, QA_ERROR_ARGUMENT, number, "Q3 actor already has a projection"));
     slot->actor = actor; slot->borrowed = borrowed;
+    qa_actor_index_put(&host->game->actor_slots, actor, number);
     bool ok = true;
     if (!borrowed) {
         qa_body_binding body = {.context = slot, .fields = &slot->body_fields, .write = body_write};
         qa_collision_binding collision = {.context = slot, .fields = &slot->collision_fields};
         ok = slot_fields(slot, error) && qa_world_body_bind(host->options.world, actor, &body, false, error);
         if (!ok) {
+            qa_actor_index_remove(&host->game->actor_slots, actor);
             slot->actor = (qa_actor_id){0}; slot->borrowed = false;
             return q3_game_end(&call, false);
         }
@@ -550,13 +552,9 @@ bool qa_q3_host_actor_slot(const qa_q3_host *host, qa_actor_id actor, uint32_t *
 {
     if (host && !host->retired && host->game && out &&
         qa_actors_get(qa_session_actors(host->options.session), actor)) {
-        const qa_actor_record *source = qa_actors_get(qa_session_actors(host->options.session), actor);
-        if (source->owner == host->options.owner && source->has_source && source->source_slot < 1022 &&
-            qa_actor_id_equal(host->game->slots[source->source_slot].actor, actor)) {
-            *out = source->source_slot; return true;
-        }
-        for (uint32_t i = 0; i < 1022; ++i) if (qa_actor_id_equal(host->game->slots[i].actor, actor)) {
-            *out = i; return true;
+        size_t number;
+        if (qa_actor_index_find(&host->game->actor_slots, actor, &number)) {
+            *out = (uint32_t)number; return true;
         }
     }
     return q3_fail(error, QA_ERROR_ARGUMENT, 0, "shared actor has no current Q3 source projection");
@@ -568,13 +566,13 @@ bool qa_q3_host_actor_released(qa_q3_host *host, qa_actor_record released, qa_er
     if (!host->game) return true;
     if (qa_actors_get(qa_session_actors(host->options.session), released.id))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 reverse release requires an invalidated actor");
-    for (uint32_t i = 0; i < 1022; ++i) {
-        q3_entity_slot *slot = &host->game->slots[i];
-        if (qa_actor_id_equal(slot->actor, released.id)) {
-            uint32_t motion = slot->input_motion;
-            *slot = (q3_entity_slot){.host = host, .number = i,
-                .input_motion = motion, .input_retired = motion != 0};
-        }
+    size_t number;
+    if (qa_actor_index_find(&host->game->actor_slots, released.id, &number)) {
+        q3_entity_slot *slot = &host->game->slots[number];
+        uint32_t motion = slot->input_motion;
+        qa_actor_index_remove(&host->game->actor_slots, released.id);
+        *slot = (q3_entity_slot){.host = host, .number = (uint32_t)number,
+            .input_motion = motion, .input_retired = motion != 0};
     }
     return true;
 }

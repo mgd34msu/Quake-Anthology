@@ -320,23 +320,24 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         if (!host->options.server.maximum_clients) host->options.server.maximum_clients = 64;
         host->game = calloc(1, sizeof(*host->game));
         if (!host->game) { free(host); return q3_fail(error, QA_ERROR_MEMORY, 0, "allocating Q3 game record bindings"); }
-        if (!qa_strings_intern_cstr(qa_session_strings(options->session), "q3:guest-slot", &host->slot_definition, error)) {
-            free(host->game); free(host); return false;
+        if (!qa_actor_index_create(&host->game->actor_slots, qa_session_actors(options->session), error) ||
+            !qa_strings_intern_cstr(qa_session_strings(options->session), "q3:guest-slot", &host->slot_definition, error)) {
+            q3_game_checkpoint_free(host->game); free(host); return false;
         }
         for (uint32_t i = 0; i < 1024; ++i) host->game->slots[i] = (q3_entity_slot){.host = host, .number = i};
     }
     if (!host->options.maximum_string_bytes) host->options.maximum_string_bytes = 1024u * 1024u;
     if (!qa_common_cursor_init(&host->entity_cursor, options->entity_text, QA_COMMON_TERMINATED, error)) {
-        free(host->game); free(host); return false;
+        q3_game_checkpoint_free(host->game); free(host); return false;
     }
     qa_arena_init(&host->scratch, 16384);
     if (host->options.maximum_string_bytes > SIZE_MAX / 16 ||
         !qa_arena_reserve(&host->scratch, host->options.maximum_string_bytes * 16, error)) {
-        qa_arena_destroy(&host->scratch); free(host->game); free(host); return false;
+        qa_arena_destroy(&host->scratch); q3_game_checkpoint_free(host->game); free(host); return false;
     }
     qa_arena_seal(&host->scratch);
     if (!q3_script_namespace_bind(host, options->script_globals, error)) {
-        qa_arena_destroy(&host->scratch); free(host->game); free(host); return false;
+        qa_arena_destroy(&host->scratch); q3_game_checkpoint_free(host->game); free(host); return false;
     }
     qa_fs_root_retain(write_root); host->options.write_view.root=write_root;
     *out = host; return true;
@@ -429,6 +430,7 @@ bool qa_q3_host_round_reset(qa_q3_host *host, qa_bytes entity_text, qa_error *er
     q3_game_fields_clear(host);
     host->game->entities = host->game->clients = 0;
     host->game->entity_count = host->game->entity_stride = host->game->client_stride = 0;
+    qa_actor_index_clear(&host->game->actor_slots);
     for (uint32_t i = 0; i < 1024; ++i)
         host->game->slots[i] = (q3_entity_slot){.host = host, .number = i};
     host->options.entity_text = entity_text;
@@ -514,8 +516,7 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
         qa_nav_crossings_free(&lease->storage); free(lease);
     }
     qa_arena_destroy(&host->scratch);
-    if (host->game) free(host->game->portals);
-    free(host->game);
+    q3_game_checkpoint_free(host->game);
     q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);
     free(host->cvar_caches);
     free(host->cvar_status.previous_value);

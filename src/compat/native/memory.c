@@ -324,12 +324,14 @@ bool qa_native_bind_slot(qa_native_instance *instance, const qa_native_slot_bind
         return native_fail(error, QA_ERROR_ARGUMENT, binding->slot,
                            "occupied native source slot requires an actor identity");
     native_slot *row = instance->slots + binding->slot;
+    qa_actor_id previous_actor = row->actor;
     bool changed = row->kind != binding->kind || row->actor.registry != binding->actor.registry ||
         row->actor.generation != binding->actor.generation || row->actor.slot != binding->actor.slot ||
         row->owner != binding->owner || row->source_slot != binding->source_slot;
     *row =
         (native_slot){binding->kind, binding->actor, binding->owner, binding->source_slot};
-    if (changed) native_entity_changed(instance, QA_NATIVE_ENTITIES_SLOT, binding->slot);
+    if (changed) native_entity_notify(instance, QA_NATIVE_ENTITIES_SLOT, binding->slot,
+        0, 0, previous_actor);
     return true;
 }
 

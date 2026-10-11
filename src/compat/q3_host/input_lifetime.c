@@ -81,6 +81,7 @@ bool qa_q3_host_detach_actor(qa_q3_host *host, uint32_t number, qa_actor_id acto
         return q3_fail(error, QA_ERROR_NOT_FOUND, number, "Q3 borrowed projection generation changed");
     if (slot->input_motion)
         return q3_fail(error, QA_ERROR_ARGUMENT, number, "Q3 borrowed projection still owns input motion");
+    qa_actor_index_remove(&host->game->actor_slots, actor);
     *slot = (q3_entity_slot){.host = host, .number = number};
     return true;
 }

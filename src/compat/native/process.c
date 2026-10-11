@@ -5,7 +5,8 @@
 
 static void process_memory_retiring(void *context, uint64_t address, size_t bytes)
 {
-    native_entity_notify(context, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX, address, bytes);
+    native_entity_notify(context, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX, address, bytes,
+        (qa_actor_id){0});
 }
 
 static void observe_memory(qa_native_instance *instance)

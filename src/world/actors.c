@@ -66,6 +66,105 @@ bool qa_actor_id_equal(qa_actor_id left, qa_actor_id right)
         && left.slot == right.slot;
 }
 
+bool qa_actor_index_create(qa_actor_index *index, const qa_actor_registry *registry, qa_error *error)
+{
+    size_t capacity = qa_actors_capacity(registry);
+    qa_actor_index_entry *entries = calloc(capacity, sizeof(*entries));
+    if (!entries) return fail(error, QA_ERROR_MEMORY, "Allocating actor binding index");
+    *index = (qa_actor_index){.entries = entries, .capacity = capacity,
+        .registry = qa_actors_identity(registry)};
+    return true;
+}
+
+void qa_actor_index_destroy(qa_actor_index *index)
+{
+    free(index->entries);
+    free(index->sources);
+    qa_id_index_destroy(&index->retained);
+    *index = (qa_actor_index){0};
+}
+
+void qa_actor_index_clear(qa_actor_index *index)
+{
+    if (index->capacity) memset(index->entries, 0, index->capacity * sizeof(*index->entries));
+    if (index->source_capacity) memset(index->sources, 0, index->source_capacity * sizeof(*index->sources));
+    qa_id_index_clear(&index->retained);
+}
+
+void qa_actor_index_put(qa_actor_index *index, qa_actor_id actor, size_t value)
+{
+    qa_actor_index_entry *entry = index->entries + actor.slot;
+    if (index->source_capacity && entry->actor.registry &&
+        qa_actor_id_equal(index->sources[entry->value], entry->actor))
+        index->sources[entry->value] = (qa_actor_id){0};
+    *entry = (qa_actor_index_entry){actor, value};
+    if (index->source_capacity) index->sources[value] = actor;
+}
+
+void qa_actor_index_remove(qa_actor_index *index, qa_actor_id actor)
+{
+    size_t value;
+    if (!qa_actor_index_find(index, actor, &value)) return;
+    index->entries[actor.slot] = (qa_actor_index_entry){0};
+    if (index->source_capacity && qa_actor_id_equal(index->sources[value], actor))
+        index->sources[value] = (qa_actor_id){0};
+}
+
+bool qa_actor_index_find(const qa_actor_index *index, qa_actor_id actor, size_t *value)
+{
+    if (!actor.registry || actor.registry != index->registry || actor.slot >= index->capacity) return false;
+    const qa_actor_index_entry *entry = index->entries + actor.slot;
+    if (!qa_actor_id_equal(entry->actor, actor)) return false;
+    *value = entry->value;
+    return true;
+}
+
+bool qa_actor_index_reverse_reserve(qa_actor_index *index, size_t values, qa_error *error)
+{
+    if (values <= index->source_capacity) return true;
+    qa_actor_id *sources = calloc(values, sizeof(*sources));
+    if (!sources) return fail(error, QA_ERROR_MEMORY, "Allocating source binding index");
+    for (size_t i = 0; i < index->capacity; ++i)
+        if (index->entries[i].actor.registry) sources[index->entries[i].value] = index->entries[i].actor;
+    free(index->sources);
+    index->sources = sources;
+    index->source_capacity = values;
+    return true;
+}
+
+qa_actor_id qa_actor_index_at_source(const qa_actor_index *index, size_t value)
+{
+    return value < index->source_capacity ? index->sources[value] : (qa_actor_id){0};
+}
+
+bool qa_actor_index_remember(qa_actor_index *index, qa_actor_id actor, size_t value, qa_error *error)
+{
+    qa_id_index_entry *entry = qa_id_index_find(&index->retained, actor.slot, actor.generation);
+    if (entry) { entry->value = value; return true; }
+    if (!qa_id_index_reserve(&index->retained, 1, error)) return false;
+    qa_id_index_insert(&index->retained, actor.slot, actor.generation, value);
+    return true;
+}
+
+bool qa_actor_index_find_retained(const qa_actor_index *index, qa_actor_id actor, size_t *value)
+{
+    if (!actor.registry || actor.registry != index->registry) return false;
+    qa_id_index_cursor cursor = qa_id_index_begin(&index->retained, actor.slot, actor.generation);
+    return qa_id_index_next(&index->retained, &cursor, value);
+}
+
+size_t qa_actor_index_retained_count(const qa_actor_index *index) { return index->retained.count; }
+
+bool qa_actor_index_retained_at(const qa_actor_index *index, size_t ordinal,
+    qa_actor_id *actor, size_t *value)
+{
+    if (ordinal >= index->retained.count) return false;
+    const qa_id_index_entry *entry = index->retained.entries + ordinal;
+    *actor = (qa_actor_id){index->registry, entry->discriminator, entry->key};
+    *value = entry->value;
+    return true;
+}
+
 qa_actor_reference qa_actor_reference_lifetime(qa_actor_id actor)
 {
     return actor.registry ? (qa_actor_reference){.kind = QA_ACTOR_REFERENCE_LIFETIME,
@@ -266,6 +365,13 @@ const qa_actor_record *qa_actors_get(const qa_actor_registry *registry, qa_actor
     if (registry == NULL || actor.registry != registry->identity || actor.slot >= registry->high_water) return NULL;
     const qa_actor_record *record = record_at(registry, actor.slot);
     return record != NULL && qa_actor_id_equal(record->id, actor) ? record : NULL;
+}
+
+const qa_actor_record *qa_actors_at(const qa_actor_registry *registry, uint32_t host_slot)
+{
+    if (!registry || host_slot >= registry->high_water) return NULL;
+    const qa_actor_record *record = record_at(registry, host_slot);
+    return record->id.registry ? record : NULL;
 }
 
 qa_actor_player *qa_actors_player(const qa_actor_registry *registry, qa_actor_id actor)

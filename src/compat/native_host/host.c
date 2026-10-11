@@ -60,6 +60,21 @@ static void entity_changed(void *context, qa_native_instance *instance,
     if (host->kind != NATIVE_HOST_Q2_GAME) return;
     bool bootstrap = host->instance == NULL;
     if (bootstrap) host->instance = instance;
+    if (event->change == QA_NATIVE_ENTITIES_SLOT) {
+        qa_actor_index_remove(&host->actor_slots, event->previous_actor);
+        qa_native_slot_binding binding;
+        if (qa_native_slot(instance, event->slot, &binding, NULL) && binding.kind != QA_NATIVE_SLOT_FREE)
+            qa_actor_index_put(&host->actor_slots, binding.actor, event->slot);
+    } else if (event->change == QA_NATIVE_ENTITIES_TABLE) {
+        qa_native_entity_table table;
+        qa_actor_index_clear(&host->actor_slots);
+        if (qa_native_entity_table_get(instance, &table, NULL))
+            for (uint32_t slot = 0; slot < table.capacity; ++slot) {
+                qa_native_slot_binding binding;
+                if (qa_native_slot(instance, slot, &binding, NULL) && binding.kind != QA_NATIVE_SLOT_FREE)
+                    qa_actor_index_put(&host->actor_slots, binding.actor, slot);
+            }
+    }
     if (event->change == QA_NATIVE_ENTITIES_INVALIDATE) {
         for (uint32_t slot = 1; slot < host->q2_field_capacity; ++slot) {
             uint64_t address = host->q2_references.base +
@@ -190,6 +205,8 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
                                const qa_native_host_instance_options *options,
                                qa_error *error)
 {
+    if (host->kind == NATIVE_HOST_Q2_GAME &&
+        !qa_actor_index_create(&host->actor_slots, qa_session_actors(host->world.session), error)) return false;
     if (host->world.session) host->string_names = qa_session_strings(host->world.session);
     else host->string_names = host->engine.strings;
     if (host->string_names) qa_strings_retain(host->string_names);
@@ -383,6 +400,7 @@ bool qa_native_host_create_q3(qa_native_module *module,
 
 static void free_records(qa_native_host *host)
 {
+    qa_actor_index_destroy(&host->actor_slots);
     native_host_movement_dispose(host);
     qa_arena_destroy(&host->call_storage);
     qa_arena_destroy(&host->text_storage);
