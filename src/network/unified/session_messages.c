@@ -16,35 +16,32 @@ qa_json_id qa_unified_session_value(const qa_unified_document *d)
         qa_json_get(json, qa_unified_document_root(d), "value") : qa_unified_document_root(d);
 }
 
-bool qa_unified_session_kind(const qa_unified_document *d, const char *kind)
-{
-    static const char *const names[] = {"ready", "admitted", "resources", "userinfo", "command",
-        "source-command", "disconnect", "offer", "components", "component-command", "events", "metadata"};
-    qa_unified_control_kind actual=qa_unified_document_control_type(d);
-    return actual<QA_UNIFIED_CONTROL_INVALID && !strcmp(kind,names[actual]);
-}
-
-
 static bool server_control(const qa_unified_document *d)
 {
-    return qa_unified_session_kind(d, "offer") || qa_unified_session_kind(d, "admitted") ||
-        qa_unified_session_kind(d, "resources") || qa_unified_session_kind(d, "components") ||
-        qa_unified_session_kind(d, "events") || qa_unified_session_kind(d, "metadata");
+    switch (qa_unified_document_control_type(d)) {
+    case QA_UNIFIED_CONTROL_OFFER: case QA_UNIFIED_CONTROL_ADMITTED:
+    case QA_UNIFIED_CONTROL_RESOURCES: case QA_UNIFIED_CONTROL_COMPONENTS:
+    case QA_UNIFIED_CONTROL_EVENTS: case QA_UNIFIED_CONTROL_METADATA: return true;
+    default: return false;
+    }
 }
 
 static bool client_control(const qa_unified_document *d)
 {
-    return qa_unified_session_kind(d, "ready") || qa_unified_session_kind(d, "userinfo") ||
-        qa_unified_session_kind(d, "command") || qa_unified_session_kind(d, "component-command") ||
-        qa_unified_session_kind(d, "source-command");
+    switch (qa_unified_document_control_type(d)) {
+    case QA_UNIFIED_CONTROL_READY: case QA_UNIFIED_CONTROL_USERINFO:
+    case QA_UNIFIED_CONTROL_COMMAND: case QA_UNIFIED_CONTROL_COMPONENT_COMMAND:
+    case QA_UNIFIED_CONTROL_SOURCE_COMMAND: return true;
+    default: return false;
+    }
 }
 
 bool qa_unified_session_reply_valid(const qa_unified_session *s, const qa_unified_document *d, qa_error *e)
 {
-    if (!d || qa_unified_document_type(d) != QA_UNIFIED_CONTROL_DOCUMENT || qa_unified_session_kind(d, "offer") ||
-        (!qa_unified_session_kind(d, "disconnect") && !(s->server ? server_control(d) : client_control(d))))
+    if (!d || qa_unified_document_type(d) != QA_UNIFIED_CONTROL_DOCUMENT || qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_OFFER ||
+        (qa_unified_document_control_type(d) != QA_UNIFIED_CONTROL_DISCONNECT && !(s->server ? server_control(d) : client_control(d))))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its authenticated control direction");
-    if (qa_unified_session_kind(d, "disconnect")) return true;
+    if (qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_DISCONNECT) return true;
     uint32_t epoch;
     if (!qa_unified_document_epoch(d, &epoch, e)) return false;
     return epoch == s->epoch || qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its retained control epoch");
@@ -54,9 +51,9 @@ static bool outgoing_control(const qa_unified_session *s, const qa_unified_docum
     uint32_t *epoch, bool *offer, bool *disconnect, qa_error *e)
 {
     if (!s || !d || qa_unified_document_type(d) != QA_UNIFIED_CONTROL_DOCUMENT || s->disconnected || s->closing ||
-        (!qa_unified_session_kind(d, "disconnect") && !(s->server ? server_control(d) : client_control(d))))
+        (qa_unified_document_control_type(d) != QA_UNIFIED_CONTROL_DISCONNECT && !(s->server ? server_control(d) : client_control(d))))
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production control changes its authenticated direction");
-    *offer = qa_unified_session_kind(d, "offer"); *disconnect = qa_unified_session_kind(d, "disconnect");
+    *offer = qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_OFFER; *disconnect = qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_DISCONNECT;
     *epoch = s->epoch;
     if (!*disconnect && !qa_unified_document_epoch(d, epoch, e)) return false;
     if (!*disconnect && (*offer ? *epoch <= s->epoch : *epoch != s->epoch))
@@ -177,7 +174,7 @@ static bool commit_queue(qa_unified_session *s, qa_unified_held *held, bool *wai
     for (size_t i = 0; ok && i < count; ++i) {
         const qa_unified_document *d = commit->reply && !i ? commit->reply :
             commit->followups[i - (commit->reply != NULL)];
-        bool next_disconnect = qa_unified_session_kind(d, "disconnect");
+        bool next_disconnect = qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_DISCONNECT;
         if (disconnect || s->closing || s->disconnected) {
             ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source reply changes its authenticated control direction"); break;
         }
@@ -242,7 +239,7 @@ void qa_unified_session_delivery_free(qa_unified_held *held)
 static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *waiting, qa_error *e)
 {
     const qa_unified_document *d = held->document;
-    bool disconnect = qa_unified_session_kind(d, "disconnect"), offer = qa_unified_session_kind(d, "offer");
+    bool disconnect = qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_DISCONNECT, offer = qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_OFFER;
     if (!disconnect && s->server && !client_control(d))
         return qa_unified_session_close(s, "Client sent a server-only control message", e);
     if (!disconnect && !s->server && !server_control(d))
@@ -252,15 +249,15 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *
     bool ok = true;
     if (!held->source_finished) {
         if (!disconnect && (offer ? epoch <= s->epoch : epoch != s->epoch)) return true;
-        if (s->server && s->admitted && qa_unified_session_kind(d, "ready")) return true;
+        if (s->server && s->admitted && qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_READY) return true;
         qa_unified_session_commit commit = {.acknowledged_input = -1};
         ok = s->hooks.control(s->hooks.context, s->runtime, s->id, epoch, d, &commit, e);
         if (ok && offer && !commit.applied)
             ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Prepared production offer was not published by its Source owner");
         if (ok && commit.followup_count > 8)
             ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source control followups exceed their actual return extent");
-        if (ok && commit.applied && qa_unified_session_kind(d, "ready") &&
-            (!commit.reply || !qa_unified_session_kind(commit.reply, "admitted")))
+        if (ok && commit.applied && qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_READY &&
+            (!commit.reply || qa_unified_document_control_type(commit.reply) != QA_UNIFIED_CONTROL_ADMITTED))
             ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Source admission did not produce its real admitted control");
         if (!ok) { commit_free(&commit); return false; }
         held->commit = commit; held->source_finished = true;
@@ -273,11 +270,11 @@ static bool process_control(qa_unified_session *s, qa_unified_held *held, bool *
     }
     ok = commit_queue(s, held, waiting, e);
     if (!ok || *waiting) return ok;
-    if (ok && !s->closing && held->commit.applied && qa_unified_session_kind(d, "ready")) {
+    if (ok && !s->closing && held->commit.applied && qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_READY) {
         ok = phase(s, QA_NET_ACTIVE, e);
         if (ok) s->admitted = true;
     }
-    if (ok && held->commit.applied && qa_unified_session_kind(d, "admitted")) {
+    if (ok && held->commit.applied && qa_unified_document_control_type(d) == QA_UNIFIED_CONTROL_ADMITTED) {
         ok = phase(s, QA_NET_PRIMED, e);
         if (ok) s->admitted = true;
     }
@@ -377,7 +374,7 @@ bool qa_unified_session_offer_ready(const qa_unified_session *s, const qa_unifie
     bool *ready, qa_error *e)
 {
     if (!ready || !qa_unified_session_idle(s) || !s->bound_source || !s->server ||
-        qa_unified_session_retiring(s) || !qa_unified_session_kind(offer, "offer") || s->epoch == UINT32_MAX)
+        qa_unified_session_retiring(s) || qa_unified_document_control_type(offer) != QA_UNIFIED_CONTROL_OFFER || s->epoch == UINT32_MAX)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production offer admission lacks its returned server epoch");
     uint32_t epoch;
     if (!qa_unified_document_epoch(offer, &epoch, e)) return false;
@@ -424,14 +421,14 @@ bool qa_unified_session_process(qa_unified_session *s, bool *waiting, qa_error *
             }
         }
         bool obsolete = false;
-        if (!skipped && !held->source_finished && !s->server && !qa_unified_session_kind(held->document, "disconnect")) {
+        if (!skipped && !held->source_finished && !s->server && qa_unified_document_control_type(held->document) != QA_UNIFIED_CONTROL_DISCONNECT) {
             uint32_t epoch;
             ok = qa_unified_document_epoch(held->document, &epoch, e);
             if (!ok) break;
-            obsolete = qa_unified_session_kind(held->document, "offer") ? epoch <= s->epoch : epoch != s->epoch;
+            obsolete = qa_unified_document_control_type(held->document) == QA_UNIFIED_CONTROL_OFFER ? epoch <= s->epoch : epoch != s->epoch;
             if (kind == QA_UNIFIED_FRAME_DOCUMENT && !s->admitted) obsolete = true;
         }
-        if (!skipped && !held->source_finished && !s->server && !obsolete && !qa_unified_session_kind(held->document, "disconnect")) {
+        if (!skipped && !held->source_finished && !s->server && !obsolete && qa_unified_document_control_type(held->document) != QA_UNIFIED_CONTROL_DISCONNECT) {
             bool ready = false;
             ok = s->hooks.prepare(s->hooks.context, s->id, held->document, &ready, e);
             if (!ok || !ready) { *waiting = ok; break; }

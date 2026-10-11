@@ -29,15 +29,15 @@ bool qa_unified_session_continuation_valid(const qa_unified_session *s, const qa
     for (size_t i = commit->followup_count; i < 8; ++i) if (commit->followups[i])
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Source commit retains a reply outside its actual return extent");
     if (kind == QA_UNIFIED_CONTROL_DOCUMENT) {
-        if (qa_unified_session_kind(held->document, "offer")) {
+        if (qa_unified_document_control_type(held->document) == QA_UNIFIED_CONTROL_OFFER) {
             uint32_t epoch;
             if (!commit->applied || s->server || !qa_unified_document_epoch(held->document, &epoch, e) || epoch != s->epoch)
                 return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained offer commit changes its published epoch");
         }
-        if (qa_unified_session_kind(held->document, "ready") && commit->applied &&
-            (!s->server || !commit->reply || !qa_unified_session_kind(commit->reply, "admitted")))
+        if (qa_unified_document_control_type(held->document) == QA_UNIFIED_CONTROL_READY && commit->applied &&
+            (!s->server || !commit->reply || qa_unified_document_control_type(commit->reply) != QA_UNIFIED_CONTROL_ADMITTED))
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained readiness commit loses its admitted reply");
-        if (qa_unified_session_kind(held->document, "disconnect") && commit->applied && s->admitted)
+        if (qa_unified_document_control_type(held->document) == QA_UNIFIED_CONTROL_DISCONNECT && commit->applied && s->admitted)
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained disconnect commit still admits its retired Source player");
     } else if (commit->applied) {
         const qa_unified_frame *frame=qa_unified_document_frame(held->document);
@@ -55,7 +55,7 @@ bool qa_unified_session_continuation_valid(const qa_unified_session *s, const qa
         if (disconnect)
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Source reply continuation follows a queued disconnect");
         if (!qa_unified_session_reply_valid(s, document, e)) return false;
-        disconnect = qa_unified_session_kind(document, "disconnect");
+        disconnect = qa_unified_document_control_type(document) == QA_UNIFIED_CONTROL_DISCONNECT;
         qa_buffer wire = {0};
         if (!qa_unified_document_encode(document, &wire, e)) return false;
         bool okay = wire.size <= s->limits.message_bytes;

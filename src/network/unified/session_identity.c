@@ -28,7 +28,7 @@ bool qa_unified_session_restart_admit(const qa_unified_session *s, const qa_netw
         request->attachment != client->attachment ||
         request->protocol.kind != QA_NET_UNIFIED_1 || request->protocol.flags || request->protocol.revision ||
         request->seats != client->seats || request->seat_count != 1 || client->seat_count != 1 ||
-        !qa_net_address_equal(&request->endpoint, &client->endpoint, true) || !qa_unified_session_kind(offer, "offer"))
+        !qa_net_address_equal(&request->endpoint, &client->endpoint, true) || qa_unified_document_control_type(offer) != QA_UNIFIED_CONTROL_OFFER)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart admission lacks its actual canonical peer and offer");
     if (!qa_unified_session_qualified(s, client, e)) return false;
     uint32_t epoch;
@@ -42,7 +42,7 @@ bool qa_unified_session_restart_admit(const qa_unified_session *s, const qa_netw
     } else {
         const qa_unified_held *held = s->held;
         if (!s->processing || !held || held->source_finished || held->kind != QA_UNIFIED_CONTROL_DOCUMENT ||
-            !qa_unified_session_kind(held->document, "offer") || epoch <= s->epoch)
+            qa_unified_document_control_type(held->document) != QA_UNIFIED_CONTROL_OFFER || epoch <= s->epoch)
             return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Client restart admission has no actual unfinished received offer");
         qa_bytes actual = qa_json_source(qa_unified_document_json(held->document), qa_unified_document_root(held->document));
         qa_bytes proposed = qa_json_source(qa_unified_document_json(offer), qa_unified_document_root(offer));
@@ -65,9 +65,9 @@ bool qa_unified_session_client_disconnect_pending(const qa_unified_session *s,
     if (!s || s->server || s->runtime != runtime || !s->bound_source || !s->processing ||
         s->entered || s->closing || s->disconnected || !s->timeout_pending || epoch != s->epoch ||
         !qa_net_client_id_equal(id, s->id) || !s->timeout_delivery || s->timeout_delivery->source_finished ||
-        s->timeout_delivery->document != disconnect || !qa_unified_session_kind(disconnect, "disconnect") ||
+        s->timeout_delivery->document != disconnect || qa_unified_document_control_type(disconnect) != QA_UNIFIED_CONTROL_DISCONNECT ||
         !held || held->source_finished || held->kind != QA_UNIFIED_CONTROL_DOCUMENT ||
-        !qa_unified_session_kind(held->document, "offer") || !qa_unified_session_kind(offer, "offer") ||
+        qa_unified_document_control_type(held->document) != QA_UNIFIED_CONTROL_OFFER || qa_unified_document_control_type(offer) != QA_UNIFIED_CONTROL_OFFER ||
         !qa_unified_session_find(runtime, id, &installed, e) || installed != s)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "CLIENT retirement lacks its actual unfinished offer and local disconnect callback");
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(runtime), id);

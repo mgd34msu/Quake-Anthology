@@ -486,6 +486,16 @@ Normal production build and seven core suites pass:
 are migrated against their listed sites; findings 8-17 and other kinds remain.
 No live pickup, coop, campaign or performance result is claimed.
 
+Names finding 8, control dispatch slice: Unified server/client direction dispatch
+switches on `qa_unified_document_control_type`. All 34 remaining session,
+continuation, identity and restore callers read that same typed discriminator.
+`qa_unified_session_kind`, its spelling table and declaration are deleted.
+Wire records and control-direction rules are unchanged.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-control-kind-20261011-{build,core}.log`. Effect, beam and
+persistence-name selectors in finding 8 remain; this is not a full-item closure.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

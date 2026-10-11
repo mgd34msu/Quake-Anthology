@@ -16,9 +16,9 @@ bool qa_unified_session_client_receipt(const qa_unified_session *s, uint32_t epo
     if (!qa_unified_session_idle(s) || s->server || epoch < s->epoch)
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source changed its actual lower epoch");
     const qa_unified_held *head = s->held;
-    bool receiving_offer = head && qa_unified_session_kind(head->document, "offer");
-    bool receiving_admission = head && qa_unified_session_kind(head->document, "admitted");
-    bool receiving_disconnect = head && qa_unified_session_kind(head->document, "disconnect");
+    bool receiving_offer = head && qa_unified_document_control_type(head->document) == QA_UNIFIED_CONTROL_OFFER;
+    bool receiving_admission = head && qa_unified_document_control_type(head->document) == QA_UNIFIED_CONTROL_ADMITTED;
+    bool receiving_disconnect = head && qa_unified_document_control_type(head->document) == QA_UNIFIED_CONTROL_DISCONNECT;
     if (offer && (!receiving_offer || !qa_unified_document_equal(offer, head->document)))
         return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Readonly Source pending offer differs from its actual receive head");
     if (epoch > s->epoch) {
@@ -113,7 +113,7 @@ bool qa_unified_session_qualified(const qa_unified_session *s, const qa_net_clie
         if (!s->timeout_pending || held->next || held->sequence || held->required || !held->wire.data ||
             held->kind != QA_UNIFIED_CONTROL_DOCUMENT ||
             held->wire.size != held->bytes || held->wire.size > s->limits.message_bytes ||
-            !qa_unified_session_kind(held->document, "disconnect") ||
+            qa_unified_document_control_type(held->document) != QA_UNIFIED_CONTROL_DISCONNECT ||
             !local_reason(s, held->document, e) ||
             !qa_unified_session_continuation_valid(s, held, e))
             return qa_unified_session_fail(e, QA_ERROR_FORMAT, "Retained timeout is not the actual local closure continuation");
@@ -234,7 +234,7 @@ bool qa_unified_session_source_close_pending(const qa_unified_session *s)
     return qa_unified_session_idle(s) && s->server && s->timeout_pending &&
         s->close_cause == 2 && !s->closing && !s->disconnected && s->timeout_delivery &&
         !s->timeout_delivery->source_finished &&
-        qa_unified_session_kind(s->timeout_delivery->document, "disconnect");
+        qa_unified_document_control_type(s->timeout_delivery->document) == QA_UNIFIED_CONTROL_DISCONNECT;
 }
 
 static bool flag(qa_net_reader *r, bool *out)

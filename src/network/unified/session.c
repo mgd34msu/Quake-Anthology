@@ -282,7 +282,7 @@ static bool restart_peer(void *state, uint64_t epoch, const uint64_t *compositio
     qa_unified_document *offer = NULL;
     uint32_t next_wire_epoch = s->epoch + 1;
     bool ok = s->hooks.restart(s->hooks.context, s->runtime, s->id, next_wire_epoch, composition, &offer, e);
-    if (ok && (!offer || !qa_unified_session_kind(offer, "offer")))
+    if (ok && (!offer || qa_unified_document_control_type(offer) != QA_UNIFIED_CONTROL_OFFER))
         ok = qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production restart did not produce an actual offer");
     uint32_t offered = 0;
     if (ok) ok = qa_unified_document_epoch(offer, &offered, e);
