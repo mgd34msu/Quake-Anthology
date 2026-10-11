@@ -12,6 +12,16 @@ static const qa_q2_player *player(const frontend_remote_q2 *row)
 }
 void remote_q2_prediction_config(frontend_remote_q2 *row, uint32_t index)
 {
+    if (index == row->hud_names.layout.air_accelerate) {
+        const char *text = frontend_remote_q2_config(row, index);
+        char *end;
+        double value = strtod(text, &end);
+        while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') ++end;
+        row->prediction_air_invalid = (*text && (*end || !isfinite(value))) || value < -FLT_MAX || value > FLT_MAX;
+        row->prediction_air_accelerate = row->prediction_air_invalid ? 0 : (float)value;
+    }
+    if (index == row->hud_names.layout.n64_physics)
+        row->prediction_n64 = strtod(frontend_remote_q2_config(row, index), NULL) != 0;
     if (index == row->hud_names.layout.max_clients) {
         row->collision_clients = strtoul(frontend_remote_q2_config(row, index), NULL, 10);
         row->collision_dirty = true;
@@ -186,14 +196,11 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
         }
     }
     qa_movement_profile profile = qa_movement_profile_default(kind);
-    const char *air_text = frontend_remote_q2_config(row, row->hud_names.layout.air_accelerate); char *end;
-    double air = strtod(air_text, &end);
-    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') ++end;
-    if ((*air_text && (*end || !isfinite(air))) || air < -FLT_MAX || air > FLT_MAX)
+    if (row->prediction_air_invalid)
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 prediction air acceleration is not a finite source number");
-    if (rerelease) { profile.data.q2r.air_accelerate = (float)air;
-        profile.data.q2r.n64_physics = strtod(frontend_remote_q2_config(row, row->hud_names.layout.n64_physics), NULL) != 0; }
-    else { profile.data.q2.air_accelerate = (float)air; profile.data.q2.strafejump_hack = row->data.strafejump_hack; }
+    if (rerelease) { profile.data.q2r.air_accelerate = row->prediction_air_accelerate;
+        profile.data.q2r.n64_physics = row->prediction_n64; }
+    else { profile.data.q2.air_accelerate = row->prediction_air_accelerate; profile.data.q2.strafejump_hack = row->data.strafejump_hack; }
     qa_movement_services services = {.context = row, .trace = remote_q2_trace, .point_contents = contents, .is_bsp = is_brush};
     qa_movement_result *result = &row->prediction_scratch; bool ok = true; qa_vec3 pml = row->prediction_pml;
     result->command_sequence = 0; result->contact_count = 0;

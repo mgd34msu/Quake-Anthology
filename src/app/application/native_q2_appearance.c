@@ -57,6 +57,7 @@ bool application_native_q2_config_update(struct application_native_q2 *engine,
     if (previous==name) return true;
     qa_strings *strings=qa_session_strings(engine->provider->application->session);
     engine->configstrings[index]=name;
+    qa_hud_q2_weapons_warning(strings,&engine->config_layout,engine->configstrings,index,&engine->weapons);
     bool ok=true;
     if (index>=engine->config_layout.player_skins && index-engine->config_layout.player_skins<256) {
         uint32_t slot=index-engine->config_layout.player_skins;

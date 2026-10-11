@@ -134,6 +134,8 @@ struct frontend_remote_q2 {
     qa_actor_id collision_viewer;
     qa_entity_model_field *collision_models;
     unsigned long collision_clients;
+    float prediction_air_accelerate;
+    bool prediction_air_invalid, prediction_n64;
     bool collision_dirty;
     uint64_t saved_world, saved_classic, saved_white;
     qa_buffer saved_effects;

@@ -1837,7 +1837,7 @@ static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_nat
     qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
         .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
         .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture,
-        .config_picture=native_config_picture,.picture_names=&v->bank->picture_names,.status=v->bank->hud_names.status};
+        .config_picture=native_config_picture,.picture_names=&v->bank->picture_names,.weapons=&v->bank->hud_names.weapons,.status=v->bank->hud_names.status};
     options.fonts.classic=v->font;
     const qa_cvar_view *use_font=qa_cvars_read(d->cvars,o->replica->legacy_cvars.hud.use_font);
     options.use_font=v->protocol.kind==QA_NET_Q2KEX_2023 && use_font && use_font->integer!=0;

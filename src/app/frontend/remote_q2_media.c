@@ -220,6 +220,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     free(row->collision_models); row->collision_models = NULL;
     row->collision_count = row->collision_capacity = 0;
     row->collision_viewer = (qa_actor_id){0}; row->collision_clients = 0;
+    row->prediction_air_accelerate = 0; row->prediction_air_invalid = row->prediction_n64 = false;
     qa_collision_destroy(row->geometry); row->geometry = NULL;
     memset(row->clientinfo,0,sizeof(row->clientinfo));
     if (row->model_slots) memset(row->model_slots, 0, row->hud_names.layout.max_models * sizeof(*row->model_slots));
@@ -274,6 +275,8 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     for (size_t i = 0; i < row->hud_names.layout.max_models; ++i)
         remote_q2_prediction_config(row, (uint16_t)(row->hud_names.layout.models + i));
     remote_q2_prediction_config(row, row->hud_names.layout.max_clients);
+    remote_q2_prediction_config(row, row->hud_names.layout.air_accelerate);
+    remote_q2_prediction_config(row, row->hud_names.layout.n64_physics);
     qa_world_query_rules query_rules = {.actors = row->collision_actors,
         .brush_contents_only = true, .contents_ignore_pass = true};
     qa_world_set_query_rules(row->collision_world, &query_rules);

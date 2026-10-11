@@ -215,6 +215,25 @@ bool qa_hud_q2_player_model_path(qa_bytes model, qa_bytes member, const char *su
     if (n < 0 || (size_t)n >= capacity) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 player model path is too long"); return false; }
     return true;
 }
+void qa_hud_q2_weapons_warning(qa_strings *strings, const qa_q2_config_layout *layout,
+    const qa_string_id *config, uint32_t index, qa_hud_q2_weapons *weapons)
+{
+    if (layout->wheel_weapons == UINT32_MAX || index < layout->wheel_weapons ||
+        index - layout->wheel_weapons >= 32) return;
+    int32_t warning = 0;
+    const char *text = qa_strings_cstr(strings, config[index]);
+    for (size_t i = 0; text && i < 6; ++i) {
+        text = strchr(text, '|');
+        if (text) ++text;
+    }
+    if (text && *text) {
+        char *end;
+        long long value = strtoll(text, &end, 10);
+        if (end != text && (!*end || *end == '|') && value >= INT32_MIN && value <= INT32_MAX)
+            warning = (int32_t)value;
+    }
+    weapons->warnings[index - layout->wheel_weapons] = warning;
+}
 bool qa_hud_q2_weapons_bind(qa_strings *strings, const qa_q2_config_layout *layout,
     const qa_string_id *config, qa_hud_q2_weapons *out, qa_error *error)
 {
@@ -230,6 +249,9 @@ bool qa_hud_q2_weapons_bind(qa_strings *strings, const qa_q2_config_layout *layo
             ++value.count;
         }
     }
+    if (layout->wheel_weapons != UINT32_MAX)
+        for (uint32_t i = 0; i < 32; ++i)
+            qa_hud_q2_weapons_warning(strings, layout, config, layout->wheel_weapons + i, &value);
     *out = value;
     return true;
 }
@@ -308,6 +330,7 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id valu
     }
     qa_string_id prior = names->values[index];
     names->values[index]=value;
+    qa_hud_q2_weapons_warning(names->strings, &names->layout, names->values, index, &names->weapons);
     if (index >= names->layout.models && index - names->layout.models < names->layout.max_models) {
         const char *old = prior ? qa_strings_cstr(names->strings, prior) : "";
         if ((*text == '#' || *old == '#') &&
@@ -370,7 +393,7 @@ typedef struct layout_context {
     qa_string_id token_name;
     qa_hud_q2_table *table;
     float x, y, width, height;
-    int32_t images, items, skins, max_images, max_strings, max_clients, wheel_weapons;
+    int32_t images, items, skins, max_images, max_strings, max_clients;
     bool rerelease, failed;
     qa_hud_q2_stat_references *references;
 } layout_context;
@@ -665,7 +688,6 @@ static bool initialize(layout_context *c, const qa_hud_q2_options *options,
     c->rerelease = qa_q2_protocol_rerelease(frame->protocol);
     qa_q2_codec codec; qa_q2_config_layout layout;
     if (!qa_q2_codec_init(&codec, frame->protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
-    c->wheel_weapons = (int32_t)layout.wheel_weapons;
     c->images = (int32_t)layout.images; c->items = (int32_t)layout.items;
     c->skins = (int32_t)layout.player_skins; c->max_clients = (int32_t)layout.max_clients;
     c->max_images = (int32_t)layout.max_images; c->max_strings = (int32_t)layout.max_configs;
@@ -801,10 +823,10 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program) {
             bool flash = c->rerelease ? c->frame->time_ns % UINT64_C(1000000000) < UINT64_C(500000000)
                                       : (((uint32_t)c->frame->server_frame >> 2) & 1) != 0;
             int32_t warning = 5;
-            if (c->rerelease) {
-                const char *weapon = config(c, c->wheel_weapons + stat_int(c, 53));
-                for (size_t i = 0; i < 6; ++i) { const char *bar = strchr(weapon, '|'); weapon = bar ? bar + 1 : ""; }
-                int32_t parsed = decimal(weapon); if (parsed) warning = parsed;
+            if (c->rerelease && c->options->weapons) {
+                int32_t weapon = stat_int(c, 53);
+                if (weapon >= 0 && weapon < 32 && c->options->weapons->warnings[weapon])
+                    warning = c->options->weapons->warnings[weapon];
             }
             bool alternate = index == 1 ? value <= 0 || (value <= 25 && flash) : index == 3 && value <= warning && flash;
             if (stat_int(c, 15) & (index == 1 ? 1 : index == 3 ? 4 : 2)) picture(c, c->options->picture_names->field, c->x, c->y, 0, 0, false);

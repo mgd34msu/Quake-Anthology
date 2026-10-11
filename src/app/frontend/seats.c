@@ -270,7 +270,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
         .binding = local_q2_binding,.status=seat->q2_hud_names.status,
-        .picture_names=&seat->q2_hud_pictures,.config_picture=local_q2_config_picture};
+        .picture_names=&seat->q2_hud_pictures,.weapons=&seat->q2_hud_names.weapons,.config_picture=local_q2_config_picture};
     options.fonts.classic = seat->q2_hud_classic;
     const qa_cvar_view *use_font = source->hud_cvars ?
         qa_cvars_read(source->cvars, source->hud_cvars->use_font) : NULL;

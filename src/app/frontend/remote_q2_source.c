@@ -31,8 +31,7 @@ struct frontend_remote_q2_source {
 static bool profile_protocol(const qa_product *profile, qa_net_protocol_id protocol, qa_error *error)
 {
     qa_q2_codec codec;
-    bool rerelease = protocol.kind == QA_NET_Q2REPRO_1038 || protocol.kind == QA_NET_Q2PRIVATE_4038 || protocol.kind == QA_NET_Q2KEX_2023 ||
-        protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+    bool rerelease = qa_q2_protocol_rerelease(protocol);
     return profile && qa_q2_codec_init(&codec, protocol, error) &&
         profile->family == QA_GAME_Q2 && profile->edition == (rerelease ? QA_EDITION_RERELEASE : QA_EDITION_CLASSIC);
 }
@@ -44,8 +43,7 @@ bool frontend_remote_q2_source_recipe(qa_catalog *catalog, qa_net_protocol_id pr
     if (!catalog || !instance || !*instance || !out || !prepared || *prepared ||
         !qa_q2_codec_init(&codec, protocol, error))
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 CLIENT recipe requires its actual negotiated protocol and catalog");
-    bool rerelease = protocol.kind == QA_NET_Q2REPRO_1038 || protocol.kind == QA_NET_Q2PRIVATE_4038 || protocol.kind == QA_NET_Q2KEX_2023 ||
-        protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+    bool rerelease = qa_q2_protocol_rerelease(protocol);
     const qa_product *profile = compiled ? qa_catalog_product(catalog, compiled) :
         qa_catalog_find(catalog, rerelease ? "q2-rerelease-baseq2" : "q2-classic-baseq2");
     if (!profile || !profile->builtin || profile->family != QA_GAME_Q2 ||
