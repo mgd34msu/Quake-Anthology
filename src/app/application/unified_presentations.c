@@ -46,6 +46,7 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
     }
     qa_unified_model_state *row = out->models + out->model_count++;
     *row = (qa_unified_model_state){.actor = v->actor, .family = v->family, .visual = v->visual,
+        .body_provider = render_source ? render_source->owner : v->provider,
         .q1_effects = v->q1_effects, .origin = v->body.origin, .angles = v->body.angles,
         .view_weapon = view_weapon, .has_previous_origin = (v->visual.render_flags & 128u) && v->family == QA_GAME_Q2,
         .previous_origin = v->previous_origin, .has_alpha = v->family != QA_GAME_Q3 && !view_weapon};

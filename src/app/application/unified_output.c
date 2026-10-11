@@ -326,22 +326,39 @@ bool application_unified_output_world(qa_application *app, const application_uni
     if (!qa_application_effects_producer_read(app,source->owner,&clock,error)) {
         qa_unified_world_frame_destroy(v);return false;
     }
-    if (source->family==QA_GAME_Q3) {
-        int32_t milliseconds=clock.q3_time_ms;
-        if (clock.kind!=QA_APPLICATION_EFFECTS_Q3) {
-            uint32_t bits=(uint32_t)(clock.source_time_ns/UINT64_C(1000000));
-            memcpy(&milliseconds,&bits,sizeof(milliseconds));
-        }
-        v->presentation_seconds=(double)milliseconds/1000;
-    } else v->presentation_seconds=(double)clock.source_time_ns/1000000000.0;
-    if (source->family==QA_GAME_Q1 && clock.launch->selection.clock.kind!=QA_RULESET_QUAKEWORLD)
-        v->presentation_seconds=(float)v->presentation_seconds;
     v->actors = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->actors), error) : NULL;
     v->bodies = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->bodies), error) : NULL;
     v->collisions = count ? application_unified_frame_alloc(v->lease, count, sizeof(*v->collisions), error) : NULL;
     v->world = application_unified_frame_alloc(v->lease, 1, sizeof(*v->world), error);
     bool ok = (!count || (v->actors && v->bodies && v->collisions)) && v->world;
     if (!ok) application_fail(error, QA_ERROR_MEMORY, "Retaining actual Source world rows");
+    qa_error optional = {0};
+    if (ok && v->lease && app->provider_count)
+        v->producer_samples = qa_unified_frame_lease_alloc(v->lease, app->provider_count,
+            sizeof(*v->producer_samples), _Alignof(qa_unified_producer_sample), &optional);
+    for (size_t i = 0; i <= app->provider_count; ++i) {
+        if (i) {
+            if (!v->producer_samples) break;
+            application_provider *provider = app->providers[i - 1];
+            if (provider->owner == source->owner || !provider->constructed ||
+                !provider->attached || provider->close_pending) continue;
+            if (!qa_application_effects_producer_read(app, provider->owner, &clock, &optional)) continue;
+        }
+        double seconds;
+        if (clock.family == QA_GAME_Q3) {
+            int32_t milliseconds = clock.q3_time_ms;
+            if (clock.kind != QA_APPLICATION_EFFECTS_Q3) {
+                uint32_t bits = (uint32_t)(clock.source_time_ns / UINT64_C(1000000));
+                memcpy(&milliseconds, &bits, sizeof(milliseconds));
+            }
+            seconds = (double)milliseconds / 1000;
+        } else seconds = (double)clock.source_time_ns / 1000000000.0;
+        if (clock.family == QA_GAME_Q1 && clock.launch->selection.clock.kind != QA_RULESET_QUAKEWORLD)
+            seconds = (float)seconds;
+        if (!i) v->presentation_seconds = seconds;
+        else v->producer_samples[v->producer_sample_count++] = (qa_unified_producer_sample){
+            .provider = clock.provider, .seconds = seconds};
+    }
     uint32_t cursor = 0; const qa_actor_record *record;
     while (ok && qa_actors_next(registry, &cursor, &record)) {
         if (qa_actors_revision(registry) != revision) {

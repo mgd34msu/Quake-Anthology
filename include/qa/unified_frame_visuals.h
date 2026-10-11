@@ -13,6 +13,7 @@ typedef struct qa_unified_q3_weapon_view {
 typedef struct qa_unified_model_state {
     qa_actor_id actor;
     qa_game_family family;
+    qa_string_id body_provider;
     qa_string_id content, path;
     qa_string_id skin_path;
     char *weapon_item;

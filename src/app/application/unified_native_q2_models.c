@@ -28,6 +28,7 @@ static void model(qa_unified_frame_visuals *out,
     bool rerelease = view->source.edition == QA_RULESET_Q2_RERELEASE;
     qa_unified_model_state *row = out->models + out->model_count++;
     *row = (qa_unified_model_state){.actor = view->entity.binding.actor, .family = QA_GAME_Q2,
+        .body_provider = view->source.source_owner,
         .visual.frame = (int32_t)state->frame, .visual.old_frame = (int32_t)(rerelease ? state->old_frame : state->frame),
         .visual.skin = index ? 0 : (int32_t)view->skin, .visual.effects = state->effects, .visual.render_flags = state->renderfx,
         .origin = qa_v3(state->origin[0], state->origin[1], state->origin[2]),
