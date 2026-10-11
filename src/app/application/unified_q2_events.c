@@ -121,8 +121,8 @@ static const char *resource_path(const q2_projection *p, qa_native_host_resource
 {
     const qa_application_protocol_resource_reference *receipt = resource_receipt(p, kind, index);
     if (receipt) return receipt->name;
-    uint32_t base = p->engine->resource_base[kind];
-    if (index >= p->engine->resource_limit[kind] || base + index >= p->engine->configstring_count ||
+    uint32_t base = application_native_q2_resource_range(p->engine, kind).base;
+    if (index >= application_native_q2_resource_range(p->engine, kind).count || base + index >= p->engine->config_layout.max_configs ||
         !p->engine->configstrings[base + index]) {
         application_fail(e, QA_ERROR_FORMAT, "Q2 service resource has no actual Source configstring"); return NULL;
     }

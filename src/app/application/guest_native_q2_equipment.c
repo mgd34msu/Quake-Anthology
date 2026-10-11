@@ -67,11 +67,11 @@ bool application_q2_guest_equipment_read(application_provider *provider, qa_acto
     }
     bool okay = qa_vec_finite(view.view_kick_angles) && qa_vec_finite(view.gun_angles) &&
         qa_vec_finite(view.gun_offset) && view.gun_index >= 0 &&
-        (uint32_t)view.gun_index < engine->resource_limit[QA_NATIVE_HOST_MODEL];
+        (uint32_t)view.gun_index < application_native_q2_resource_range(engine, QA_NATIVE_HOST_MODEL).count;
     if (!okay) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 equipment public state is invalid");
     if (view.gun_index) {
-        uint32_t index = engine->resource_base[QA_NATIVE_HOST_MODEL] + (uint32_t)view.gun_index;
-        if (index >= engine->configstring_count || !engine->configstrings[index] ||
+        uint32_t index = application_native_q2_resource_range(engine, QA_NATIVE_HOST_MODEL).base + (uint32_t)view.gun_index;
+        if (index >= engine->config_layout.max_configs || !engine->configstrings[index] ||
             !qa_strings_text(qa_session_strings(provider->application->session), engine->configstrings[index]).size ||
             !provider->launch->content)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 gunindex has no retained MODEL configstring and content owner");

@@ -904,7 +904,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
         v->camera=qa_json_string_equal(declaration,get(declaration,policy,"view"),"playerstate");
         v->hud=hud!=QA_UNIFIED_COMPONENT_HUD_NONE; v->replace_status=hud==QA_UNIFIED_COMPONENT_HUD_REPLACE;
         qa_json_destroy(declaration);
-        v->protocol=(qa_net_protocol_id){.kind=product->edition==QA_EDITION_CLASSIC?QA_NET_Q2_34:QA_NET_Q2KEX_2023};
+        v->protocol=qa_q2_default_protocol(product->edition!=QA_EDITION_CLASSIC);
         qa_string_id content_name;
         if (!qa_strings_intern_cstr(o->replica->strings,product->identity,&content_name,e))return false;
         if (!bank_name(o,content_name,NULL,v->provider_name,

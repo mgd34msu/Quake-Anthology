@@ -9,7 +9,7 @@ bool application_native_q2_feedback_geometry(bool rerelease, uint8_t type,
         return false;
     }
     qa_q2_codec codec;
-    qa_net_protocol_id protocol = {.kind = rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
+    qa_net_protocol_id protocol = qa_q2_default_protocol(rerelease);
     if (!qa_q2_codec_init(&codec, protocol, error)) return false;
     qa_q2_temp_entity source = {.type = type, .field_count = 2, .fields = {
         {.name = QA_Q2_TEMP_POSITION1, .kind = QA_Q2_TEMP_VECTOR,

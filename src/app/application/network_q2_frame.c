@@ -243,10 +243,10 @@ static bool original_weapon_skin(qa_application_network_q2 *owner,
     uint32_t ordinal = (*skin >> 8) & 255u;
     if (!ordinal) return true;
     qa_string_id weapon = QA_STRING_NONE; uint32_t source_ordinal = 0;
-    for (uint32_t i = 1; i < engine->resource_limit[0]; ++i) {
-        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[0] + i]);
+    for (uint32_t i = 1; i < application_native_q2_resource_range(engine, 0).count; ++i) {
+        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, 0).base + i]);
         if (!path || path[0] != '#') continue;
-        if (++source_ordinal == ordinal) { weapon = engine->configstrings[engine->resource_base[0] + i]; break; }
+        if (++source_ordinal == ordinal) { weapon = engine->configstrings[application_native_q2_resource_range(engine, 0).base + i]; break; }
     }
     uint32_t target_ordinal = 0;
     if (weapon) {

@@ -71,7 +71,7 @@ static bool q2_configuration_same(const qa_unified_q2_hud_configuration *old,
     return !found ? !old : old && old->data_provider == hud->data_provider &&
         old->revision == hud->config_revision && old->deathmatch == hud->deathmatch &&
         old->cooperative == hud->cooperative && old->protocol.kind ==
-            (hud->edition == QA_Q2_CLASSIC ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023);
+            qa_q2_default_protocol(hud->edition != QA_Q2_CLASSIC).kind;
 }
 
 static bool q2_configuration(qa_application *app, qa_unified_frame_lease *lease,

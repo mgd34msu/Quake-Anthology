@@ -377,23 +377,16 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     bool rerelease = engine->profile != QA_NATIVE_Q2_GAME_API3;
     qa_q2_codec codec = {.protocol = qa_q2_default_protocol(rerelease)};
     if (!qa_q2_config_layout_read(&codec, &engine->config_layout, error)) return false;
-    engine->resource_base[0] = engine->config_layout.models;
-    engine->resource_base[1] = engine->config_layout.sounds;
-    engine->resource_base[2] = engine->config_layout.images;
-    engine->resource_limit[0] = engine->config_layout.max_models;
-    engine->resource_limit[1] = engine->config_layout.max_sounds;
-    engine->resource_limit[2] = engine->config_layout.max_images;
-    engine->configstring_count = engine->config_layout.max_configs;
+    engine->protocol = codec.protocol;
     engine->lightstyles.count = 256;
-    engine->configstrings = calloc(engine->configstring_count, sizeof(*engine->configstrings));
-    engine->config_changes.slots = calloc(engine->configstring_count, sizeof(*engine->config_changes.slots));
+    engine->configstrings = calloc(engine->config_layout.max_configs, sizeof(*engine->configstrings));
+    engine->config_changes.slots = calloc(engine->config_layout.max_configs, sizeof(*engine->config_changes.slots));
     if (!engine->configstrings || !engine->config_changes.slots)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 source configstring table");
     if (!cgame) {
-        qa_net_protocol_id protocol = {.kind = rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
-        qa_q2_message_options options = {.config_strings = engine->configstring_count,
+        qa_q2_message_options options = {.config_strings = engine->config_layout.max_configs,
             .inventory_slots = 256, .native_api2023 = rerelease};
-        if (!qa_q2_messages_create(protocol, &options, &engine->event_decoder, error)) return false;
+        if (!qa_q2_messages_create(engine->protocol, &options, &engine->event_decoder, error)) return false;
     }
     if (!qa_strings_intern_cstr(qa_session_strings(app->session),
             "native-q2:entity", &engine->definition, error)) return false;

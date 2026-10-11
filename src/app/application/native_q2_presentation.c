@@ -27,8 +27,8 @@ bool qa_application_native_q2_sound_resources(qa_application *app, qa_actor_owne
         }
     } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
         const struct application_native_q2 *engine = provider->state.native.q2_engine;
-        for (uint32_t i = 1; i < engine->resource_limit[1]; ++i) {
-            qa_string_id sound = engine->configstrings[engine->resource_base[1] + i];
+        for (uint32_t i = 1; i < application_native_q2_resource_range(engine, 1).count; ++i) {
+            qa_string_id sound = engine->configstrings[application_native_q2_resource_range(engine, 1).base + i];
             if (sound && !visit(context, qa_strings_cstr(strings, sound), error)) return false;
         }
     }
@@ -80,7 +80,7 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         value->original = true; value->strings = qa_session_strings(app->session);
         value->configstrings = engine->configstrings;
         value->config_changes = &engine->config_changes;
-        value->configstring_count = engine->configstring_count;
+        value->configstring_count = engine->config_layout.max_configs;
         value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
         value->statusbar_id = value->configstring_count > 5 ? value->configstrings[5] : QA_STRING_NONE;
         value->statusbar = value->configstring_count > 5 && value->configstrings[5] ?

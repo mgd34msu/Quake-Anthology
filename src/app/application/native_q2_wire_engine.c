@@ -157,7 +157,7 @@ bool application_native_q2_wire_resource(struct application_native_q2 *engine, u
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine resource requires its actual GAME table");
     *out = 0;
     if (!*path) return true;
-    uint32_t base = engine->resource_base[kind], maximum = engine->resource_limit[kind];
+    uint32_t base = application_native_q2_resource_range(engine, kind).base, maximum = application_native_q2_resource_range(engine, kind).count;
     uint32_t free_index = 0;
     for (uint32_t i = 1; i < maximum; ++i) {
         const char *current = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + i]);

@@ -67,7 +67,7 @@ static bool retain(resource_capture *capture, size_t ordinal, qa_native_host_res
     uint32_t index, qa_string_id name_id, const char *name, qa_error *error)
 {
     application_native_q2_protocol_resources *resources = capture->out;
-    if (!name || index >= capture->engine->resource_limit[kind])
+    if (!name || index >= application_native_q2_resource_range(capture->engine, kind).count)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 protocol resource leaves its actual Source table");
     if (capture->counting) { ++resources->capacity; return true; }
     qa_application_protocol_resource_reference row = {.record_ordinal = ordinal, .kind = kind, .source_index = index};
@@ -95,16 +95,16 @@ static bool capture_record(void *context, const qa_q2_server_record *record, qa_
         qa_native_host_resource_kind kind = event->kind == QA_Q2_SVC_SOUND ? QA_NATIVE_HOST_SOUND : QA_NATIVE_HOST_IMAGE;
         uint32_t index = event->kind == QA_Q2_SVC_SOUND ? event->data.sound.index : event->data.poi.image;
         if (event->kind == QA_Q2_SVC_POI && event->data.poi.time == UINT16_MAX) return true;
-        if (index >= capture->engine->resource_limit[kind])
+        if (index >= application_native_q2_resource_range(capture->engine, kind).count)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 emitted resource index exceeds its Source namespace");
-        qa_string_id name_id=capture->engine->configstrings[capture->engine->resource_base[kind]+index];
+        qa_string_id name_id=capture->engine->configstrings[application_native_q2_resource_range(capture->engine, kind).base+index];
         const char *name = qa_strings_cstr(qa_session_strings(capture->engine->provider->application->session), name_id);
         return retain(capture, ordinal, kind, index, name_id, name ? name : "", error);
     }
     if (event->kind == QA_Q2_SVC_CONFIGSTRING) {
         uint32_t slot = event->data.config.index;
         for (unsigned kind = 0; kind <= QA_NATIVE_HOST_IMAGE; ++kind) {
-            uint32_t base = capture->engine->resource_base[kind], count = capture->engine->resource_limit[kind];
+            uint32_t base = application_native_q2_resource_range(capture->engine, kind).base, count = application_native_q2_resource_range(capture->engine, kind).count;
             if (slot >= base && slot - base < count)
                 return retain(capture, ordinal, (qa_native_host_resource_kind)kind, slot - base, QA_STRING_NONE, event->data.config.value, error);
         }

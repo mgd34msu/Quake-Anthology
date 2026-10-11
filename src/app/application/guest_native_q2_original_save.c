@@ -338,7 +338,7 @@ static bool restore_engine_level(application_provider *provider,const qa_q2_save
     qa_application *app=provider->application;
     if (provider->kind==APPLICATION_PROVIDER_NATIVE) {
         struct application_native_q2 *engine=provider->state.native.q2_engine;
-        if (!engine || engine->profile!=QA_NATIVE_Q2_GAME_API3 || engine->configstring_count!=QA_Q2_SAVE_CONFIGSTRINGS)
+        if (!engine || engine->profile!=QA_NATIVE_Q2_GAME_API3 || engine->config_layout.max_configs!=QA_Q2_SAVE_CONFIGSTRINGS)
             return application_fail(error,QA_ERROR_FORMAT,"Original Q2 level differs from its real engine table");
         for (uint32_t i=0;i<qa_q2_save_configstring_count(level);++i) {
             const char *text=qa_q2_save_configstring(level,i);

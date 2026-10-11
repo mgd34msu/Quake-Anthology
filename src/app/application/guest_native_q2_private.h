@@ -77,7 +77,7 @@ struct application_native_q2 {
     uint32_t client_actor_capacity;
     qa_string_id *configstrings;
     qa_q2_messages *event_decoder;
-    uint32_t configstring_count, resource_base[3], resource_limit[3];
+    qa_net_protocol_id protocol;
     qa_q2_config_layout config_layout;
     qa_source_frame frame;
     qa_string_id map_name, spawn_point;
@@ -103,6 +103,19 @@ struct application_native_q2 {
     qa_error activation_error;
 };
 
+typedef struct application_native_q2_resource_span { uint32_t base, count; } application_native_q2_resource_span;
+static inline application_native_q2_resource_span application_native_q2_resource_range(
+    const struct application_native_q2 *engine, qa_native_host_resource_kind kind)
+{
+    const qa_q2_config_layout *layout = &engine->config_layout;
+    switch (kind) {
+    case QA_NATIVE_HOST_MODEL: return (application_native_q2_resource_span){layout->models, layout->max_models};
+    case QA_NATIVE_HOST_SOUND: return (application_native_q2_resource_span){layout->sounds, layout->max_sounds};
+    case QA_NATIVE_HOST_IMAGE: return (application_native_q2_resource_span){layout->images, layout->max_images};
+    }
+    return (application_native_q2_resource_span){0};
+}
+
 static inline void application_native_q2_config_update(struct application_native_q2 *engine,
     uint32_t index, qa_string_id name)
 {
@@ -112,7 +125,7 @@ static inline void application_native_q2_config_update(struct application_native
 }
 static inline void application_native_q2_config_clear(struct application_native_q2 *engine)
 {
-    for (uint32_t i = 0; i < engine->configstring_count; ++i)
+    for (uint32_t i = 0; i < engine->config_layout.max_configs; ++i)
         application_native_q2_config_update(engine, i, QA_STRING_NONE);
 }
 

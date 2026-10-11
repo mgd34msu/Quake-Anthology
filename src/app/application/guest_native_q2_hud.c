@@ -146,7 +146,7 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
     }
     bool rebound = engine->hud_source_owner != source->provider->owner;
     uint32_t link = rebound ? 1 : qa_q2_config_changes_begin(&source->config_changes, engine->hud_config_revision);
-    while (ok && link && link <= engine->configstring_count) {
+    while (ok && link && link <= engine->config_layout.max_configs) {
         uint32_t i = link - 1;
         qa_string_id value = source->configstrings[i], prior = engine->configstrings[i];
         qa_strings *strings = qa_session_strings(engine->provider->application->session);

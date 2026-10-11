@@ -192,20 +192,20 @@ bool application_network_q2_source_resource(qa_application_network_q2 *owner, un
     uint32_t index, uint32_t *out, qa_error *error)
 {
     struct application_native_q2 *engine = source_engine(owner);
-    if (!engine || !out || kind > 2 || index >= engine->resource_limit[kind])
+    if (!engine || !out || kind > 2 || index >= application_native_q2_resource_range(engine, kind).count)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 resource lost its actual Source API index");
     if (!index) { *out = 0; return true; }
-    const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[kind] + index]);
+    const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, kind).base + index]);
     if (!path || !*path)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 published resource has no actual Source registration");
-    return application_network_q2_resource_id(owner, kind, engine->configstrings[engine->resource_base[kind] + index], out, error);
+    return application_network_q2_resource_id(owner, kind, engine->configstrings[application_native_q2_resource_range(engine, kind).base + index], out, error);
 }
 
 bool application_network_q2_source_config(qa_application_network_q2 *owner, uint32_t index,
     uint32_t *out, qa_error *error)
 {
     struct application_native_q2 *engine = source_engine(owner);
-    if (!engine || !out || index >= engine->configstring_count)
+    if (!engine || !out || index >= engine->config_layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 config lost its actual Source API index");
     bool rr = engine->profile == QA_NATIVE_Q2_GAME_API2023;
     uint32_t air = rr ? 59u : 29u;
@@ -214,8 +214,8 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
     if (index == air + 1) { *out = owner->clients_index; return true; }
     if (index == air + 2) { *out = owner->checksum_index; return true; }
     for (unsigned kind = 0; kind < 3; ++kind) {
-        uint32_t base = engine->resource_base[kind];
-        if (index >= base && index - base < engine->resource_limit[kind]) {
+        uint32_t base = application_native_q2_resource_range(engine, kind).base;
+        if (index >= base && index - base < application_native_q2_resource_range(engine, kind).count) {
             uint32_t resource;
             if (!application_network_q2_source_resource(owner, kind, index - base, &resource, error)) return false;
             *out = owner->resources[kind].base + resource; return true;
@@ -236,7 +236,7 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
     if (rr && owner->item_base - owner->light_base >= 512 && index >= 11070 && index < 11326) {
         *out = owner->light_base + index - 10814; return true;
     }
-    if (rr && owner->config_count == engine->configstring_count && index >= 12350) {
+    if (rr && owner->config_count == engine->config_layout.max_configs && index >= 12350) {
         *out = index; return true;
     }
     return application_fail(error, QA_ERROR_FORMAT, "Q2 Source config has no field in the admitted wire layout");
@@ -267,15 +267,15 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
     if (rr && owner->item_base - owner->light_base >= 512)
         for (uint32_t i = 0; ok && i < 256; ++i)
             ok = application_network_q2_config_id(owner, owner->light_base + 256 + i, engine->configstrings[11070 + i], error);
-    if (rr && owner->config_count == engine->configstring_count)
+    if (rr && owner->config_count == engine->config_layout.max_configs)
         for (uint32_t i = 12350; ok && i < owner->config_count; ++i)
             ok = application_network_q2_config_id(owner, i, engine->configstrings[i], error);
     /* The map and vwep declarations establish actual client constructors before frames. */
     uint32_t mapped;
-    if (ok && engine->configstrings[engine->resource_base[0] + 1])
+    if (ok && engine->configstrings[application_native_q2_resource_range(engine, 0).base + 1])
         ok = application_network_q2_source_resource(owner, 0, 1, &mapped, error);
-    for (uint32_t i = 1; ok && i < engine->resource_limit[0]; ++i) {
-        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[0] + i]);
+    for (uint32_t i = 1; ok && i < application_native_q2_resource_range(engine, 0).count; ++i) {
+        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, 0).base + i]);
         if (path && path[0] == '#') ok = application_network_q2_source_resource(owner, 0, i, &mapped, error);
     }
     return ok;

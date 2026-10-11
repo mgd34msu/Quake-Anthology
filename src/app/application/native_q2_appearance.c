@@ -1,8 +1,7 @@
 #include "native_q2_appearance.h"
 #include "guest_native_q2_private.h"
 
-enum { Q2_CLIENT_MODEL = 255, Q2_CLASSIC_PLAYERSKINS = 1312,
-    Q2_RERELEASE_PLAYERSKINS = 11582, Q2_CLASSIC_WEAPON_MODELS = 20 };
+enum { Q2_CLIENT_MODEL = 255, Q2_CLASSIC_WEAPON_MODELS = 20 };
 
 static struct application_native_q2 *engine_read(qa_application *app,
     const qa_application_native_q2_presentation *source)
@@ -20,9 +19,9 @@ static struct application_native_q2 *engine_read(qa_application *app,
 
 static const char *resource(const struct application_native_q2 *engine, uint32_t index)
 {
-    if (!index || engine->resource_base[0] >= engine->configstring_count || index >= engine->resource_limit[0] ||
-        index >= engine->configstring_count - engine->resource_base[0]) return "";
-    const char *value = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[engine->resource_base[0] + index]);
+    if (!index || application_native_q2_resource_range(engine, 0).base >= engine->config_layout.max_configs || index >= application_native_q2_resource_range(engine, 0).count ||
+        index >= engine->config_layout.max_configs - application_native_q2_resource_range(engine, 0).base) return "";
+    const char *value = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, 0).base + index]);
     return value ? value : "";
 }
 
@@ -50,7 +49,7 @@ static const char *weapon(const struct application_native_q2 *engine,
 {
     if (!ordinal) return "weapon.md2";
     uint32_t count = 1;
-    for (uint32_t i = 1; i < engine->resource_limit[0]; ++i) {
+    for (uint32_t i = 1; i < application_native_q2_resource_range(engine, 0).count; ++i) {
         const char *name = resource(engine, i);
         if (name[0] != '#') continue;
         if (edition == QA_Q2_CLASSIC && count >= Q2_CLASSIC_WEAPON_MODELS) break;
@@ -81,9 +80,9 @@ bool application_native_q2_appearance_read(qa_application *app,
     const char *model = "male", *skin = "grunt", *held = "weapon.md2";
     size_t model_size = 4;
     if (custom) {
-        uint32_t base = source->edition == QA_Q2_CLASSIC ? Q2_CLASSIC_PLAYERSKINS : Q2_RERELEASE_PLAYERSKINS;
+        uint32_t base = engine->config_layout.player_skins;
         uint32_t index = base + (state->skinnum & 255u);
-        if (index >= engine->configstring_count) ok = application_fail(error, QA_ERROR_FORMAT,
+        if (index >= engine->config_layout.max_configs) ok = application_fail(error, QA_ERROR_FORMAT,
             "Original Q2 player skin exceeds its actual configstring table");
         else {
             const char *info = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[index]);
@@ -102,10 +101,10 @@ bool application_native_q2_appearance_read(qa_application *app,
                 value.skin = 0;
                 ok = player_path(strings, &value.skin_path, model, model_size, skin, ".pcx", error);
             }
-        } else if (indexes[i] && indexes[i] < engine->resource_limit[0] &&
-            engine->resource_base[0] < engine->configstring_count &&
-            indexes[i] < engine->configstring_count - engine->resource_base[0])
-            value.models[i] = engine->configstrings[engine->resource_base[0] + indexes[i]];
+        } else if (indexes[i] && indexes[i] < application_native_q2_resource_range(engine, 0).count &&
+            application_native_q2_resource_range(engine, 0).base < engine->config_layout.max_configs &&
+            indexes[i] < engine->config_layout.max_configs - application_native_q2_resource_range(engine, 0).base)
+            value.models[i] = engine->configstrings[application_native_q2_resource_range(engine, 0).base + indexes[i]];
     }
     if (ok && !application_native_q2_appearance_current(app, &value))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 appearance changed its physical Source or configstrings");

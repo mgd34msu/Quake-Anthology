@@ -237,17 +237,17 @@ bool application_unified_q2_component_state(qa_application *app,
     *state=(qa_unified_component_q2){.owner={(char *)name,v->publication.activation_generation},
         .identity=*v->publication.identity,.generation=v->publication.generation,
         .hud=(qa_unified_component_hud)v->publication.hud,
-        .protocol={.kind=v->source.physical.edition==QA_Q2_CLASSIC?QA_NET_Q2_34:QA_NET_Q2KEX_2023}};
+        .protocol=qa_q2_default_protocol(v->source.physical.edition!=QA_Q2_CLASSIC)};
     if (state->hud==QA_UNIFIED_COMPONENT_HUD_NONE) return true;
     struct application_native_q2 *native=engine(app,&v->source);
     state->replace_configstrings=configs; state->layout=(char *)v->source.layout;
     state->player_number=(int32_t)v->source.player.source_slot-1;
     memcpy(state->inventory,v->source.inventory,sizeof(state->inventory));
     if (configs) {
-        state->configstrings=qa_unified_frame_lease_alloc(lease,native->configstring_count,
+        state->configstrings=qa_unified_frame_lease_alloc(lease,native->config_layout.max_configs,
             sizeof(*state->configstrings),_Alignof(qa_q2_config_name),e);
-        if (native->configstring_count && !state->configstrings) return false;
-        for (uint32_t i=0;i<native->configstring_count;++i) if (native->configstrings[i])
+        if (native->config_layout.max_configs && !state->configstrings) return false;
+        for (uint32_t i=0;i<native->config_layout.max_configs;++i) if (native->configstrings[i])
             state->configstrings[state->configstring_count++]=(qa_q2_config_name){i,native->configstrings[i]};
     }
     return application_unified_q2_component_documents_current(app,v);

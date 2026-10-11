@@ -1205,9 +1205,9 @@ bool application_unified_player_values(qa_application *app, const application_un
         o.has_q2 = ok;
         if (ok && o.q2.gunindex) {
             struct application_native_q2 *engine = o.primary->state.native.q2_engine;
-            uint32_t base = engine->resource_base[QA_NATIVE_HOST_MODEL];
-            if (o.q2.gunindex >= engine->resource_limit[QA_NATIVE_HOST_MODEL] ||
-                base > UINT32_MAX - (uint32_t)o.q2.gunindex || base + (uint32_t)o.q2.gunindex >= engine->configstring_count)
+            uint32_t base = application_native_q2_resource_range(engine, QA_NATIVE_HOST_MODEL).base;
+            if (o.q2.gunindex >= application_native_q2_resource_range(engine, QA_NATIVE_HOST_MODEL).count ||
+                base > UINT32_MAX - (uint32_t)o.q2.gunindex || base + (uint32_t)o.q2.gunindex >= engine->config_layout.max_configs)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 UI gun model leaves its real source namespace");
             else o.native_weapon = qa_q2_base_weapon_view_model(qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + (uint32_t)o.q2.gunindex]));
         }
