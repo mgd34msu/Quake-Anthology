@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_inventory_source.h"
 #include "guest_native_q2_attack.h"
+#include "unified_frame_private.h"
 #include "qa/text.h"
 #include "qa/json.h"
 #include <math.h>
@@ -587,16 +588,8 @@ bool application_native_q2_inventory_close(struct application_native_q2 *engine,
     return true;
 }
 
-void application_native_q2_inventory_ui_free(application_native_q2_ui_inventory *value)
-{
-    if (!value) return;
-    for (size_t i = 0; i < value->count; ++i) free(value->items[i].label);
-    free(value->items);
-    *value = (application_native_q2_ui_inventory){0};
-}
-
 bool application_native_q2_inventory_ui_read(application_provider *provider, qa_actor_id actor,
-    application_native_q2_ui_inventory *out, qa_error *error)
+    qa_unified_frame_lease *lease, application_native_q2_ui_inventory *out, qa_error *error)
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || !out || !engine->map_ready || engine->shutting_down || engine->calls ||
@@ -625,7 +618,7 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
     if (p->count > SIZE_MAX / sizeof(application_native_q2_ui_item))
         return application_fail(error, QA_ERROR_MEMORY, "Native Q2 UI inventory exceeds its host extent");
     application_native_q2_ui_inventory value = {0};
-    value.items = p->count ? calloc(p->count, sizeof(*value.items)) : NULL;
+    value.items = p->count ? application_unified_frame_alloc(lease, p->count, sizeof(*value.items), error) : NULL;
     if (p->count && !value.items)
         return application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 UI inventory");
     uint32_t label_base = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
@@ -648,7 +641,7 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
         *item = (application_native_q2_ui_item){.item = row->item, .count = count, .source_index = row->index};
         size_t maximum=engine->profile==QA_NATIVE_Q2_GAME_API3?length*2:length;
         if(maximum<length||maximum==SIZE_MAX) { ok=application_fail(error,QA_ERROR_MEMORY,"Native source label extent overflows"); break; }
-        item->label = malloc(maximum + 1);
+        item->label = application_unified_frame_alloc(lease, maximum + 1, 1, error);
         if (!item->label) { ok = application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 source item label"); break; }
         if(engine->profile==QA_NATIVE_Q2_GAME_API3) {
             size_t used;
@@ -667,7 +660,7 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
             qa_actor_id_equal(client->actor, actor) && source_client_address(engine, slot, actor, &after, error) && after == base;
     }
     --engine->calls;
-    if (!ok) { application_native_q2_inventory_ui_free(&value); return false; }
+    if (!ok) return false;
     *out = value;
     return true;
 }

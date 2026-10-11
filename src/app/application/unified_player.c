@@ -1054,7 +1054,8 @@ static bool native_inventory_item(qa_unified_native_inventory *out, player_obser
 {
     qa_unified_native_inventory_item *row = out->items + out->item_count++;
     row->count = amount;
-    return item(&row->item, o, id, e) && application_unified_frame_string(o->lease, &row->label, label, e);
+    row->label = (char *)label;
+    return item(&row->item, o, id, e);
 }
 static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
@@ -1099,8 +1100,11 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
                     v->items = application_unified_frame_alloc(o->lease, mixed.count, sizeof(*v->items), e);
                     if (!v->items) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory rows");
                 }
-                for (size_t i = 0; ok && i < mixed.count; ++i)
-                    ok = native_inventory_item(v, o, mixed.rows[i].item, mixed.rows[i].label, mixed.rows[i].count, e);
+                for (size_t i = 0; ok && i < mixed.count; ++i) {
+                    char *label = NULL;
+                    ok = application_unified_frame_string(o->lease, &label, mixed.rows[i].label, e) &&
+                        native_inventory_item(v, o, mixed.rows[i].item, label, mixed.rows[i].count, e);
+                }
                 if (ok) ok = item(&v->selected, o, mixed.selected, e) &&
                     native_inventory_presentation(&v->presentation, o, &mixed.selected_presentation, e);
             }
@@ -1108,8 +1112,8 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
             if (!ok) return false;
         } else if (engine->primary_inventory) {
             application_native_q2_ui_inventory native = {0};
-            if (!application_native_q2_inventory_ui_read(o->primary, o->ui_actor, &native, e) || !current(o, e)) {
-                application_native_q2_inventory_ui_free(&native); return false;
+            if (!application_native_q2_inventory_ui_read(o->primary, o->ui_actor, o->lease, &native, e) || !current(o, e)) {
+                return false;
             }
             out->native_inventory = application_unified_frame_alloc(o->lease, 1, sizeof(*out->native_inventory), e);
             bool ok = out->native_inventory != NULL;
@@ -1122,7 +1126,6 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
             for (size_t i = 0; ok && i < native.count; ++i)
                 ok = native_inventory_item(v, o, native.items[i].item, native.items[i].label, native.items[i].count, e);
             if (ok) ok = item(&v->selected, o, native.selected, e);
-            application_native_q2_inventory_ui_free(&native);
             if (!ok) return false;
         }
     }

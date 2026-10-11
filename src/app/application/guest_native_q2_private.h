@@ -175,8 +175,7 @@ typedef struct application_native_q2_ui_inventory {
     qa_item_id selected;
 } application_native_q2_ui_inventory;
 bool application_native_q2_inventory_ui_read(application_provider *, qa_actor_id,
-    application_native_q2_ui_inventory *, qa_error *);
-void application_native_q2_inventory_ui_free(application_native_q2_ui_inventory *);
+    qa_unified_frame_lease *, application_native_q2_ui_inventory *, qa_error *);
 uint32_t application_native_q2_client_slot(const struct application_native_q2 *,qa_actor_id);
 bool application_native_q2_client_admitted(const struct application_native_q2 *, qa_actor_id);
 bool application_native_q2_client_begun(const struct application_native_q2 *, qa_actor_id);
