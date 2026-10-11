@@ -6,6 +6,7 @@
 #include "qa/world.h"
 #include "qa/movement.h"
 #include "qa/arena.h"
+#include "qa/stamp.h"
 #include <string.h>
 
 #define QA_Q3_PROTOCOL 68
@@ -634,7 +635,7 @@ typedef struct qa_q3_visible_entities {
     qa_q3_entity entities[256];
 } qa_q3_visible_entities;
 bool qa_q3_select_snapshot_entities(const qa_q3_player *, const qa_q3_visibility_entity *, size_t,
-                                     const qa_q3_visibility_world *, bool dead,
+                                     const qa_q3_visibility_world *, qa_stamp_set *, bool dead,
                                      qa_q3_visible_entities *, qa_error *);
 
 #define QA_Q3_SEARCH_PATHS 4096

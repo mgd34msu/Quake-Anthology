@@ -34,12 +34,12 @@ typedef struct visibility_search {
     size_t entity_count;
     const qa_q3_visibility_world *world;
     qa_q3_visible_entities *result;
-    bool visited[QA_Q3_ENTITIES];
+    qa_stamp_set *visited;
     uint8_t area_bits[32];
     qa_error *error;
 } visibility_search;
 static void add(visibility_search *s, size_t number) {
-    s->visited[number] = true;
+    qa_stamp_set_mark(s->visited, number);
     if (s->result->count == 256) { s->result->capacity_reached = true; return; }
     qa_q3_entity *out = &s->result->entities[s->result->count++];
     *out = *s->entities[number].state; out->number = (int32_t)number;
@@ -62,7 +62,7 @@ static bool visible_from(visibility_search *s, const float origin[3]) {
             if (s->player->clientNum >= 32) { qa_error_set(s->error, QA_ERROR_FORMAT, number, "Q3 client mask cannot address player 32 or higher"); return false; }
             if (!((uint32_t)entity->single_client & (UINT32_C(1) << s->player->clientNum))) continue;
         }
-        if (s->visited[number]) continue;
+        if (qa_stamp_set_test(s->visited, number)) continue;
         if (number == QA_Q3_ENTITY_NONE) { qa_error_set(s->error, QA_ERROR_FORMAT, number, "Q3 entity sentinel cannot be transmitted"); return false; }
         if (flags & QA_Q3_SVF_BROADCAST) { add(s, number); continue; }
         if (!entity->cluster_count || !entity->clusters
@@ -99,14 +99,18 @@ static int entity_order(const void *a, const void *b) {
     return left->number < right->number ? -1 : left->number > right->number ? 1 : 0;
 }
 bool qa_q3_select_snapshot_entities(const qa_q3_player *player, const qa_q3_visibility_entity *entities, size_t count,
-                                     const qa_q3_visibility_world *world, bool dead, qa_q3_visible_entities *out, qa_error *error) {
+                                     const qa_q3_visibility_world *world, qa_stamp_set *visited,
+                                     bool dead, qa_q3_visible_entities *out, qa_error *error) {
     if (!player || !out || !world || !world->point || !world->area_bits || !world->areas_connected || !world->cluster_visible
-        || (count && !entities) || count > QA_Q3_ENTITIES || player->clientNum < 0 || player->clientNum >= QA_Q3_ENTITIES) {
+        || (count && !entities) || count > QA_Q3_ENTITIES || player->clientNum < 0 || player->clientNum >= QA_Q3_ENTITIES
+        || !visited || !visited->marks || visited->count < count || (size_t)player->clientNum >= visited->count) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 visibility source"); return false;
     }
     memset(out, 0, sizeof(*out));
-    visibility_search search = {.player = player, .entities = entities, .entity_count = count, .world = world, .result = out, .error = error};
-    search.visited[player->clientNum] = true;
+    qa_stamp_set_begin(visited);
+    visibility_search search = {.player = player, .entities = entities, .entity_count = count, .world = world,
+        .result = out, .visited = visited, .error = error};
+    qa_stamp_set_mark(visited, (size_t)player->clientNum);
     float origin[3] = {player->origin[0], player->origin[1], player->origin[2] + (float)player->viewheight};
     if (!dead && !visible_from(&search, origin)) return false;
     if (out->count > 1) qsort(out->entities, out->count, sizeof(out->entities[0]), entity_order);

@@ -55,6 +55,7 @@ bool application_q3_component_source_create(const application_q3_component_sourc
     application_q3_component_source *s=calloc(1,sizeof(*s));
     if(!s) return q3scene_fail(e,QA_ERROR_MEMORY,"Retaining real component GAME publication owner");
     s->options=*options;
+    qa_stamp_set_init(&s->visibility_marks,s->visibility_storage,QA_Q3_ENTITIES);
     if((options->vm||options->host)&&!current(s)) { free(s); return q3scene_fail(e,QA_ERROR_ARGUMENT,"Component publication does not own its actual GAME"); }
     s->game_state=calloc(1,sizeof(*s->game_state));
     s->actors=calloc(QA_Q3_ENTITIES,sizeof(*s->actors));
@@ -243,7 +244,8 @@ static bool view_acquire(void *context,bool baseline,application_q3_scene_contex
             .single_client=r->shared.single_client,.area=r->visibility.area,.area2=r->visibility.area2,
             .last_cluster=r->visibility.last_cluster,.clusters=r->visibility.clusters,.cluster_count=r->visibility.cluster_count};
     }
-    bool ok=qa_q3_select_snapshot_entities(&client->state,visibility,QA_Q3_ENTITIES,&s->options.visibility,false,&b->visible,e);
+    bool ok=qa_q3_select_snapshot_entities(&client->state,visibility,QA_Q3_ENTITIES,&s->options.visibility,
+        &s->visibility_marks,false,&b->visible,e);
     b->actors=ok?qa_unified_frame_lease_alloc(storage,p->entity_count,sizeof(*b->actors),_Alignof(application_q3_scene_actor),e):NULL;
     if(!ok || (p->entity_count && !b->actors)) { qa_unified_frame_lease_release(storage);return false; }
     for(size_t i=0;i<p->entity_count;++i) b->actors[i]=p->entities[i].actor;

@@ -71,7 +71,8 @@ bool application_native_q3_wire_bind_sources(application_provider *provider, qa_
     qa_q3_wire_services services = {.context = provider,
         .mode = native_mode, .movement_flags = native_movement_flags,
         .movement_policy = native_movement_policy};
-    return qa_q3_wire_bind_services(provider->state.q3, &services, error);
+    return application_q3_wire_capture_prepare(provider, error) &&
+        qa_q3_wire_bind_services(provider->state.q3, &services, error);
 }
 
 typedef struct q3_wire_visibility {
@@ -96,6 +97,8 @@ struct application_q3_wire_capture {
     qa_session *session;
     qa_world *world;
     qa_collision_geometry *geometry;
+    qa_stamp_set visibility_marks;
+    uint32_t visibility_storage[QA_Q3_ENTITIES];
     bool ready, paused;
     qa_application_network_q3_frame candidate;
 };
@@ -115,8 +118,20 @@ static struct application_q3_wire_capture *capture_workspace(application_provide
         provider->q3_wire_capture = calloc(1, sizeof(*provider->q3_wire_capture));
         if (!provider->q3_wire_capture)
             application_fail(error, QA_ERROR_MEMORY, "Retaining Q3 source snapshot workspace");
+        else qa_stamp_set_init(&provider->q3_wire_capture->visibility_marks,
+            provider->q3_wire_capture->visibility_storage, QA_Q3_ENTITIES);
     }
     return provider->q3_wire_capture;
+}
+
+bool application_q3_wire_capture_prepare(application_provider *provider, qa_error *error)
+{
+    return capture_workspace(provider, error) != NULL;
+}
+
+qa_stamp_set *application_q3_wire_visibility_scratch(application_provider *provider)
+{
+    return provider->q3_wire_capture ? &provider->q3_wire_capture->visibility_marks : NULL;
 }
 
 static bool capture_entities(application_provider *provider, qa_q3_game *game,
@@ -341,7 +356,7 @@ bool application_native_q3_wire_current_view(application_provider *provider, uin
         .area_bits = wire_area_bits, .areas_connected = wire_connected,
         .cluster_visible = wire_cluster_visible};
     if (ok) ok = qa_q3_select_snapshot_entities(&player,
-        capture->entities, count, &world, false, &capture->candidate.visible, error);
+        capture->entities, count, &world, &capture->visibility_marks, false, &capture->candidate.visible, error);
     if (ok && owner.failure.code) {
         if (error) *error = owner.failure;
         ok = false;
@@ -478,7 +493,7 @@ bool application_q3_wire_host_snapshot(application_provider *provider, uint32_t 
         .area_bits = wire_area_bits, .areas_connected = wire_connected,
         .cluster_visible = wire_cluster_visible};
     if (ok) ok = qa_q3_select_snapshot_entities(&candidate->snapshot.player,
-        capture->entities, data.entity_count, &world, false, &candidate->visible, error);
+        capture->entities, data.entity_count, &world, &capture->visibility_marks, false, &candidate->visible, error);
     if (ok && owner.failure.code) {
         if (error) *error = owner.failure;
         ok = false;

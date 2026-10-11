@@ -43,6 +43,8 @@ struct application_q3_component_source {
     int64_t game_state_revision,revision;
     int32_t time_ms,command_sequence;
     component_source_publication current,baseline,pending;
+    qa_stamp_set visibility_marks;
+    uint32_t visibility_storage[QA_Q3_ENTITIES];
     component_source_borrow *borrows;
     bool dirty,restored;
 };

@@ -3,6 +3,7 @@
 #include "qa/unified_frame_q3.h"
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
+#include "native_q3_wire.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
@@ -217,7 +218,8 @@ static bool source_visibility(qa_unified_q3_source *out, application_unified_q3_
     qa_q3_visibility_world queries = {.context=&world,.point=visibility_point,.area_bits=visibility_bits,
         .areas_connected=visibility_connected,.cluster_visible=visibility_cluster};
     qa_q3_visible_entities visible;
-    if (ok) ok = qa_q3_select_snapshot_entities(&player,entities,r->entities,&queries,false,&visible,e);
+    if (ok) ok = qa_q3_select_snapshot_entities(&player,entities,r->entities,&queries,
+        application_q3_wire_visibility_scratch(r->provider),false,&visible,e);
     if (world.failure.code) { if (e) *e = world.failure; ok = false; }
     if (ok) ok = stable(v,r,e) && qa_world_geometry(v->source.world) == geometry;
     if (ok) {

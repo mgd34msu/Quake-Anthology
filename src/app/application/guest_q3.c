@@ -10,6 +10,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_pickups.h"
+#include "native_q3_wire.h"
 #include "qa/game_q3_source_types.h"
 
 struct application_q3_guest *q3g_engine(application_provider *provider)
@@ -230,7 +231,7 @@ bool application_guest_q3_create_empty(qa_application *application, application_
         free(engine); return application_fail(error, QA_ERROR_ARGUMENT, "Q3 guest exceeds the source client limit");
     }
     for (size_t i = 0; i < choices->seat_count; ++i) engine->seats[i] = choices->seats[i].id;
-    if (!q3g_clients_prepare(engine, error)) {
+    if (!q3g_clients_prepare(engine, error) || !application_q3_wire_capture_prepare(provider, error)) {
         q3g_clients_destroy(engine); free(engine); return false;
     }
     if (q3g_primary_role(provider->launch->selection.artifact) == QA_QVM_GAME &&

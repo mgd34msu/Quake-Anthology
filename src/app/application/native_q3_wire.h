@@ -6,6 +6,8 @@
 
 bool application_q3_wire_time(const application_provider *, int32_t *, qa_error *);
 void application_q3_wire_capture_dispose(application_provider *);
+bool application_q3_wire_capture_prepare(application_provider *, qa_error *);
+qa_stamp_set *application_q3_wire_visibility_scratch(application_provider *);
 bool application_native_q3_wire_bind_sources(application_provider *, qa_error *);
 bool application_native_q3_wire_current_view(application_provider *, uint32_t source_client,
     qa_q3_player *, qa_q3_visible_entities *, qa_error *);
