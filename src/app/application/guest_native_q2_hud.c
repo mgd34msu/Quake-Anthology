@@ -53,7 +53,7 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         if (dispatch!=QA_NATIVE_Q2_IMPORT_CL_GetClientName) {
             bool present=qa_strings_text(qa_session_strings(source->provider->application->session),
                 source->hud_names.values[source->hud_names.layout.player_skins+(uint32_t)index]).size!=0;
-            name=present?(dispatch==QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag?names->native_tag:names->icon):QA_STRING_NONE;
+            name=present?(dispatch==QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag?names->native_tag:source->player_media[(uint32_t)index].icon):QA_STRING_NONE;
         }
         return qa_native_host_q2_retain_string(call->host,name,&result->as.address,error);
     }

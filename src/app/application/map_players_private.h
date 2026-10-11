@@ -112,6 +112,21 @@ static inline application_player_record *application_player_record_find(
         if(qa_actor_id_equal(roster->records[i].actor,actor)) return roster->records+i;
     return NULL;
 }
+static inline bool application_player_connection_equal(const application_player_record *record,
+    qa_net_client_id client,qa_net_seat_id seat)
+{
+    return qa_net_client_id_equal(record->remote_client,client) &&
+        record->remote_seat.owner==seat.owner && record->remote_seat.index==seat.index;
+}
+static inline application_player_record *application_player_record_remote(
+    const struct application_player_roster *roster,qa_net_client_id client,qa_net_seat_id seat,bool retiring)
+{
+    for(size_t i=0;roster && i<roster->count;++i) {
+        application_player_record *record=roster->records+i;
+        if((retiring || !record->retiring) && application_player_connection_equal(record,client,seat)) return record;
+    }
+    return NULL;
+}
 static inline application_player_record *application_player_record_live(
     const struct application_player_roster *roster,qa_actor_id actor)
 {

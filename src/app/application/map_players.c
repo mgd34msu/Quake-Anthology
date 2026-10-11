@@ -3747,13 +3747,7 @@ const application_player_record *application_players_connection_read(
     const qa_application *application, qa_net_client_id client, qa_net_seat_id seat)
 {
     if (!application || !application->players || !client.owner || !seat.owner) return NULL;
-    for (size_t i = 0; i < application->players->count; ++i) {
-        const application_player_record *record = application->players->records + i;
-        if (!record->retiring && qa_net_client_id_equal(record->remote_client, client) &&
-            record->remote_seat.owner == seat.owner && record->remote_seat.index == seat.index)
-            return record;
-    }
-    return NULL;
+    return application_player_record_remote(application->players,client,seat,false);
 }
 
 bool qa_application_network_local_bind(qa_application *application,
@@ -3766,8 +3760,7 @@ bool qa_application_network_local_bind(qa_application *application,
         application_player_record *record = application->players->records + i;
         if (record->remote || application_player_identity(record)->bot || record->retiring || record->seat != application_seat ||
             !qa_actors_get(qa_session_actors(application->session), record->actor)) continue;
-        if (!qa_net_client_id_equal(record->remote_client, peer->id) ||
-            record->remote_seat.owner != seat.owner || record->remote_seat.index != seat.index) {
+        if (!application_player_connection_equal(record,peer->id,seat)) {
             if (!qa_net_client_id_equal(record->remote_client, peer->id)) record->output_incomplete = 0;
             record->remote_client = peer->id;
             record->remote_seat = seat;
@@ -4134,7 +4127,7 @@ static bool player_attach(qa_application *application,
         const application_player_record *record = &application->players->records[i];
         if (record->retiring) continue;
         if (record->seat == request->seat->id || (request->remote && record->remote &&
-            qa_net_client_id_equal(record->remote_client, request->client) && (record->remote_seat.owner == request->network_seat.owner && record->remote_seat.index == request->network_seat.index)))
+            application_player_connection_equal(record,request->client,request->network_seat)))
             return application_fail(error, QA_ERROR_ARGUMENT, "player seat is already admitted");
     }
     const qa_launch_seat *seat = request->seat;
@@ -4292,13 +4285,9 @@ bool qa_application_remote_player_detach(qa_application *application,
     qa_net_client_id client, qa_net_seat_id seat, qa_error *error)
 {
     if (!player_detach_ready(application, error)) return false;
-    for (size_t i=0; i<application->players->count; ++i) {
-        const application_player_record *record=application->players->records+i;
-        if (record->remote && qa_net_client_id_equal(record->remote_client, client) &&
-            record->remote_seat.owner==seat.owner && record->remote_seat.index==seat.index)
-            return player_detach(application, i, error);
-    }
-    return true;
+    application_player_record *record=application_player_record_remote(application->players,client,seat,true);
+    return !record || !record->remote || player_detach(application,
+        (size_t)(record-application->players->records),error);
 }
 
 bool application_players_campaign_prepare(qa_application *application,
@@ -5105,14 +5094,7 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
         !application_rankings_idle(application) ||
         application->state == QA_APPLICATION_FAULTED || application->state == QA_APPLICATION_STOPPING)
         return application_fail(error, QA_ERROR_ARGUMENT, "remote player begin requires an idle healthy roster");
-    application_player_record *record = NULL;
-    for (size_t i = 0; i < application->players->count; ++i) {
-        application_player_record *candidate = &application->players->records[i];
-        if (!candidate->retiring && qa_net_client_id_equal(candidate->remote_client, client) &&
-            candidate->remote_seat.owner == seat.owner && candidate->remote_seat.index == seat.index) {
-            record = candidate; break;
-        }
-    }
+    application_player_record *record=application_player_record_remote(application->players,client,seat,false);
     if (!record || !qa_actors_get(qa_session_actors(application->session), record->actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "remote player begin has no live admitted actor");
     if (!record->source_begin_pending) return true;

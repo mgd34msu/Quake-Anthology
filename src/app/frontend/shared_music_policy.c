@@ -1,4 +1,5 @@
 #include "shared_music_policy.h"
+#include "music_sources.h"
 #include "qa/pool.h"
 #include "capture.h"
 #include "shared_audio.h"
@@ -102,8 +103,7 @@ static const qa_product *product(const music_source *source) {
     return qa_catalog_product(source->catalog, source->product);
 }
 static qa_game_family family(const music_source *source) {
-    const qa_product *row = product(source);
-    return row->family == QA_GAME_Q1 ? QA_GAME_Q1 : row->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
+    return frontend_music_family(source->catalog,source->product);
 }
 static bool whitespace(const char *);
 static char *file_cue(const char *, qa_error *);

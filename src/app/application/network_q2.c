@@ -746,8 +746,11 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     }
     owner->map_configs_ready = true;
     const qa_cvar_view *air = qa_cvars_read(owner->host.cvars, owner->sv_airaccelerate);
-    if (!air || !application_network_q2_config(owner, owner->air_index, air->value, error))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");
+    if (!air) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");
+    if(!owner->air_config_ready || owner->observed_air_modification!=air->modification_count) {
+        if(!application_network_q2_config(owner,owner->air_index,air->value,error)) return false;
+        owner->observed_air_modification=air->modification_count;owner->air_config_ready=true;
+    }
     if (owner->n64_index != UINT32_MAX && owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
         if (!owner->builtin_metadata_ready && !config_number(owner, owner->n64_index,
             provider->product->campaign_id == QA_CAMPAIGN_N64, owner->numeric_configs + 2, error)) return false;
