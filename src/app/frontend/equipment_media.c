@@ -225,7 +225,7 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
             row->held_parent.model, &row->held, error)) return false;
     const qa_scene_image_options *options = qa_scene_model_image_options(row->held_parent.scene);
     if (!options) return frontend_fail(error, QA_ERROR_FORMAT, "Held parent has no actual scene image policy");
-    return qa_scene_model_create(row->held.model, row->owner.images, row->owner.materials,
+    return qa_scene_model_create(row->held.model, row->held_parent.path, row->owner.images, row->owner.materials,
         options, row->strings, &row->held_scene, error) &&
         qa_scene_model_source_resource_bind(row->held_scene, row->held_parent.resource, error);
 }
@@ -363,7 +363,7 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
         if(ok)ok=qa_strings_intern_cstr(row->strings,path,&name,error);
         row->held_parent.path=qa_strings_cstr(row->strings,name);row->held_parent.model=row->source_model;
         if(ok)ok=frontend_held_model_prepare(&row->declaration,path,resource,row->source_model,&row->held,error)&&
-            qa_scene_model_create(row->held.model,row->owner.images,row->owner.materials,&images,row->strings,&row->held_scene,error)&&
+            qa_scene_model_create(row->held.model,path,row->owner.images,row->owner.materials,&images,row->strings,&row->held_scene,error)&&
             qa_scene_model_source_resource_bind(row->held_scene,resource,error);
     }
     if(ok)ok=qa_application_equipment_current(f->application,view)&&frontend_equipment_media_namespace_current(f,row);

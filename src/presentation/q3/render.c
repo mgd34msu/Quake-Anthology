@@ -294,7 +294,7 @@ static void model_fog(qa_q3_presentation *p, const qa_q3_scene_options *options,
 }
 
 static void selected_lighting(qa_q3_presentation *, const qa_q3_scene_options *,
-    qa_game_family, const qa_q3_ref_entity *, qa_scene_model_input *);
+    qa_game_family, const qa_scene_model *, const qa_q3_ref_entity *, qa_scene_model_input *);
 static bool source_model_lighting(qa_q3_presentation *p, const qa_q3_scene_options *options,
     const qa_q3_ref_entity *entity, qa_scene_model_input *input, bool calculate, qa_error *error)
 {
@@ -491,12 +491,12 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
         bool calculate = selected->format == QA_MODEL_MD3 &&
             (!(entity->flags & 2) || input.view.clip_enabled || options->shadow_mode > 1);
         if (!source_model_lighting(p, options, entity, &input, calculate, error)) return false;
-    } else selected_lighting(p, options, model->provider.family, entity, &input);
+    } else selected_lighting(p, options, model->provider.family, scene, entity, &input);
     return qa_scene_model_submit(scene, &input, p->frame, error);
 }
 
 static void selected_lighting(qa_q3_presentation *p, const qa_q3_scene_options *options,
-    qa_game_family content, const qa_q3_ref_entity *entity, qa_scene_model_input *input)
+    qa_game_family content, const qa_scene_model *scene, const qa_q3_ref_entity *entity, qa_scene_model_input *input)
 {
     model_lighting(p, options, entity, input);
     if (content == QA_GAME_Q3) return;
@@ -524,15 +524,15 @@ static void selected_lighting(qa_q3_presentation *p, const qa_q3_scene_options *
     }
     float sampled[3] = {ambient.x, ambient.y, ambient.z};
     const float added[3] = {dynamic.x, dynamic.y, dynamic.z};
+    uint32_t path_flags = qa_scene_model_path_flags(scene);
     for (unsigned i = 0; i < 3; ++i) {
         float base = sampled[i] * 255;
         if (input->view_model) base = fmaxf(base, 24);
         float total = base + added[i] * 255;
         float clamped = fminf(total, 128);
         float shade = fminf(total, 192 - clamped);
-        if (input->source_path && !strcmp(input->source_path, "progs/player.mdl") && clamped < 8) shade = 8;
-        if (input->source_path && (!strcmp(input->source_path, "progs/flame.mdl") ||
-                !strcmp(input->source_path, "progs/flame2.mdl"))) shade = 256;
+        if ((path_flags & QA_MODEL_PATH_PLAYER_SHADE) && clamped < 8) shade = 8;
+        if (path_flags & QA_MODEL_PATH_FLAME_FULLBRIGHT) shade = 256;
         sampled[i] = shade / 200 * 2;
     }
     input->alias_light = qa_v3(sampled[0], sampled[1], sampled[2]);
@@ -571,7 +571,7 @@ static bool selected_model(qa_q3_presentation *p, qa_scene_model *scene,
         placed.axis[i] = qa_vec_scale(qa_v3(transform->axes[i][0], transform->axes[i][1], transform->axes[i][2]),
             transform->scale[i]);
     model_fog(p, options, &placed, source, &input, radius);
-    selected_lighting(p, options, images->family, &placed, &input);
+    selected_lighting(p, options, images->family, scene, &placed, &input);
     if (view_lighting && view_lighting->content == QA_GAME_Q2 && (view_lighting->flags & 1) &&
         input.alias_light.x <= .1f && input.alias_light.y <= .1f && input.alias_light.z <= .1f)
         input.alias_light = qa_v3(.1f, .1f, .1f);

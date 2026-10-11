@@ -40,6 +40,11 @@ void qa_scene_model_capture_end(qa_scene_model_capture *capture)
     free(capture);
 }
 const qa_model *qa_scene_model_source(const qa_scene_model *model) { return model ? model->source : NULL; }
+uint32_t qa_scene_model_path_flags(const qa_scene_model *model) {
+    if (!model) return 0;
+    while (model->replacement_parent) model = model->replacement_parent;
+    return model->path_flags;
+}
 const qa_scene_image_options *qa_scene_model_image_options(const qa_scene_model *model) { return model ? &model->options : NULL; }
 qa_scene_resources *qa_scene_model_resource_owner(const qa_scene_model *model) { return model ? model->resources : NULL; }
 qa_material_library *qa_scene_model_material_owner(const qa_scene_model *model) { return model ? model->materials : NULL; }
@@ -86,7 +91,7 @@ static bool model_array(size_t count, size_t size, void **out, qa_error *error) 
     return true;
 }
 
-bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources,
+bool qa_scene_model_create(const qa_model *source, const char *source_path, qa_scene_resources *resources,
                            qa_material_library *materials, const qa_scene_image_options *options,
                            qa_strings *strings, qa_scene_model **out, qa_error *error) {
     if (!source || !resources || !options || !strings || !out ||
@@ -98,6 +103,12 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
     qa_scene_model *model = calloc(1, sizeof(*model));
     if (!model) { qa_error_set(error, QA_ERROR_MEMORY, 0, "retained model allocation failed"); return false; }
     model->source = source; model->resources = resources; model->materials = materials;
+    if (source_path) {
+        if (!strcmp(source_path, "progs/player.mdl")) model->path_flags = QA_MODEL_PATH_PLAYER_SHADE;
+        else if (!strcmp(source_path, "progs/flame.mdl") || !strcmp(source_path, "progs/flame2.mdl"))
+            model->path_flags = QA_MODEL_PATH_FLAME_FULLBRIGHT;
+        else if (!strcmp(source_path, "progs/eyes.mdl")) model->path_flags = QA_MODEL_PATH_DOUBLE_EYES;
+    }
     model->strings = strings; qa_strings_retain(strings);
     model->identity = qa_scene_identity(); model->options = *options;
     model->options.usage = source->format == QA_MODEL_SPR || source->format == QA_MODEL_SP2 ?
@@ -124,6 +135,7 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
         model->options.mipmap = false;
     }
     if (options->family == QA_GAME_Q3 && !qa_material_library_has_source_profile(materials) &&
+        qa_material_library_builtin(materials, QA_MATERIAL_BUILTIN_DEFAULT) &&
         !qa_material_library_builtin(materials, QA_MATERIAL_BUILTIN_PROJECTION_SHADOW)) {
         const qa_material *shadow;
         if (!qa_material_register_kind(materials, "projectionShadow", &model->options,
@@ -320,7 +332,7 @@ static bool replacement_build(const qa_model *source, qa_scene_resources *resour
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "replacement does not belong to this retained model"); return false;
     }
     qa_scene_model *next = NULL;
-    if (!qa_scene_model_create(replacement->mesh, resources, materials, options, strings, &next, error)) return false;
+    if (!qa_scene_model_create(replacement->mesh, NULL, resources, materials, options, strings, &next, error)) return false;
     next->replacement_description = *replacement;
     next->replacement_source = &next->replacement_description;
     next->replacement_skin_count = replacement->source->skin_count;
@@ -1141,7 +1153,8 @@ static bool md5_deferred_skin(qa_scene_model *model, const qa_scene_model_input 
     qa_scene_skinning *skin = qa_arena_alloc(&frame->storage, sizeof(*skin), _Alignof(qa_scene_skinning), error);
     if (!skin) return false;
     bool shell = scene_model_has_shell(input);
-    qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ? input->alias_light : scene_model_alias_light(input);
+    qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ? input->alias_light :
+        scene_model_alias_light(input, qa_scene_model_path_flags(model));
     scene_model_shading shading = {0};
     if (!shell) shading = scene_model_shade_prepare(input);
     *skin = (qa_scene_skinning){.pose = pose, .sample = &sample->skin,
@@ -1245,7 +1258,7 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         lighting.flags = 0;
     }
     qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ?
-        input->alias_light : scene_model_alias_light(&lighting);
+        input->alias_light : scene_model_alias_light(&lighting, qa_scene_model_path_flags(model));
     scene_model_shading shading = {0};
     if (!input->shadow_only && input->alias_lighting != QA_ALIAS_Q3_DIFFUSE &&
         lighting.family != QA_GAME_Q3 && !shell)

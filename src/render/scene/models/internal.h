@@ -77,6 +77,7 @@ struct qa_scene_model {
     qa_material_library *materials;
     bool source_topology;
     qa_scene_image_options options;
+    uint32_t path_flags;
     uint8_t palette[768], translation[256];
     uint64_t identity;
     scene_model_mesh *meshes;
@@ -131,7 +132,7 @@ void scene_model_frame_release(qa_scene_model_pin *);
 uint8_t scene_model_normal_index(const float normal[3]);
 qa_vec3 scene_model_shell_color(uint32_t flags);
 bool scene_model_has_shell(const qa_scene_model_input *);
-qa_vec3 scene_model_alias_light(const qa_scene_model_input *);
+qa_vec3 scene_model_alias_light(const qa_scene_model_input *, uint32_t path_flags);
 typedef struct scene_model_shading {
     unsigned row;
     qa_vec3 direction;

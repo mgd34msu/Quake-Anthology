@@ -566,7 +566,7 @@ static bool model_palette_admission(qa_application_network_q2 *owner,
         if (ok && images.family == QA_GAME_Q3) {
             materials = qa_material_library_create_detached(bank, error); ok = materials != NULL;
         }
-        if (ok) ok = qa_scene_model_create(&model, bank, materials, &images, qa_session_strings(owner->app->session), &scene, error);
+        if (ok) ok = qa_scene_model_create(&model, qa_resource_path(held->resource), bank, materials, &images, qa_session_strings(owner->app->session), &scene, error);
         const qa_scene_image_options *actual = ok ? qa_scene_model_image_options(scene) : NULL;
         if (ok) ok = actual && qa_scene_resources_palette_read(bank, QA_GAME_Q1, &admission.palette_rgb) &&
             qa_scene_resources_palette_source_read(bank, QA_GAME_Q1, &admission.palette_source);

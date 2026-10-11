@@ -289,7 +289,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
             qa_scene_world_source_resource_bind(row->world, row->resource, error);
         if (created) qa_collision_destroy(geometry);
     } else if (okay) okay = qa_model_load(qa_resource_bytes(row->resource), &row->decoded, error) &&
-        qa_scene_model_create(&row->decoded, files->images, files->materials, &row->options, qa_session_strings(qa_application_session(owner->frontend->application)), &row->scene, error) &&
+        qa_scene_model_create(&row->decoded, path, files->images, files->materials, &row->options, qa_session_strings(qa_application_session(owner->frontend->application)), &row->scene, error) &&
         qa_scene_model_source_resource_bind(row->scene, row->resource, error) &&
         frontend_visual_model_opening_initialize(owner->frontend, family, files->files, row->resource,
             &row->opening, &row->decoded, row->scene, error);

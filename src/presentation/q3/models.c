@@ -179,14 +179,14 @@ static bool decode(qa_q3_presentation_assets *assets, q3p_model *model, const ch
             const qa_model *lod = qa_model_at_lod(&model->lods, i);
             for (unsigned j = 0; lod && j < i; ++j)
                 if (qa_model_at_lod(&model->lods, j) == lod) { model->scene[i] = model->scene[j]; break; }
-            if (lod && !model->scene[i] && !qa_scene_model_create(lod, model->provider.images, model->provider.materials,
+            if (lod && !model->scene[i] && !qa_scene_model_create(lod, path, model->provider.images, model->provider.materials,
                                                &images, assets->options.strings, &model->scene[i], error)) return false;
         }
         return true;
     }
     if (!qa_model_load(bytes, &model->model, error)) return false;
     model->bounds = bounds(&model->model.bounds);
-    return qa_scene_model_create(&model->model, model->provider.images, model->provider.materials,
+    return qa_scene_model_create(&model->model, path, model->provider.images, model->provider.materials,
                                   &images, assets->options.strings, &model->scene[0], error);
 }
 
@@ -262,7 +262,7 @@ static bool source_model_lods(qa_q3_presentation_assets *assets, q3p_model *mode
         }
         /* Material admission is reached before the next file read, preserving
          * the Source physical shader registration order. */
-        if (!qa_scene_model_create(retained, model->provider.images, model->provider.materials,
+        if (!qa_scene_model_create(retained, path, model->provider.images, model->provider.materials,
             &images, assets->options.strings, scene, error) || !source_primary(model, (unsigned)slot, error)) return false;
         model->source_kind = md3 ? QA_MODEL_MD3 : QA_MODEL_MD4;
         model->lods.lod_count = ++model->source_num_lods;

@@ -661,6 +661,19 @@ suites pass:
 Names findings 1-12 are migrated at the listed sites; 13-17 and the other
 adoption kinds remain open. This records source/build/core checks only.
 
+Names item 13, model path flags: the one scene-model constructor admits the
+source path and records player shading, fullbright flame and doubled-eyes
+flags. All constructors supply their existing path; replacements read their
+root model's flags. Alias lighting, model emission and Q3 foreign-model
+lighting read those flags. The draw-time path comparisons are deleted.
+Detached metadata-only material libraries do not initialize draw materials.
+Normal build and seven core suites pass:
+`/tmp/qa-ta3196-model-path-flags-20261011-build.log` and
+`/tmp/qa-ta3196-model-path-flags-20261011-core.log`.
+The listed visual model/brush caches already use shared IDs and resource
+pointers from names item 6. Item 13's skin mapping and legacy precache/media
+readers remain open; no new live renderer claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

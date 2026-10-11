@@ -122,7 +122,7 @@ static bool apply_shadow_lights(qa_scene_draw *draw, const qa_scene_model_input 
     qa_scene_shadow_light *lights = qa_arena_alloc(&frame->storage,
         input->shadow_light_count * sizeof(*lights), _Alignof(qa_scene_shadow_light), error);
     if (!lights) return false;
-    qa_vec3 shade = scene_model_alias_light(input);
+    qa_vec3 shade = scene_model_alias_light(input, 0);
     bool cones = false, shadows = false;
     for (size_t i = 0; i < input->shadow_light_count; ++i) {
         lights[i] = input->shadow_lights[i];
@@ -233,7 +233,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     qa_scene_model_input eyes;
     qa_model_format format = model->source->format;
     if (format == QA_MODEL_MDL && input->family == QA_GAME_Q1 && input->q1_double_eyes &&
-        input->source_path && !strcmp(input->source_path, "progs/eyes.mdl")) {
+        (qa_scene_model_path_flags(model) & QA_MODEL_PATH_DOUBLE_EYES)) {
         eyes = *input;
         for (unsigned axis = 0; axis < 3; ++axis) {
             float shift = -model->source->translation[axis] - (axis == 2 ? 30 : 0);

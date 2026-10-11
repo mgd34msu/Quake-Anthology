@@ -591,7 +591,7 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
     }
     if (ok && colored && model->model->format == QA_MODEL_MDL)
         images.translation = (qa_bytes){translation, sizeof(translation)};
-    if (ok) ok=qa_scene_model_create(model->model, owner->images, owner->materials, &images, owner->strings, &model->scene, error);
+    if (ok) ok=qa_scene_model_create(model->model, path, owner->images, owner->materials, &images, owner->strings, &model->scene, error);
     qa_scene_model_content_lease native = {0};
     if (ok) ok = visual_content_lease(model->content, false, &native, error) && qa_scene_model_source_bind(model->scene, &native, error);
     if (native.release) native.release(native.context);

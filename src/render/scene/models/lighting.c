@@ -22,7 +22,7 @@ qa_vec3 scene_model_shell_color(uint32_t flags) {
     return qa_v3(half ? 0.56f : 0, green ? 1 : half ? 0.59f : 0, half ? 0.45f : 0);
 }
 
-qa_vec3 scene_model_alias_light(const qa_scene_model_input *input) {
+qa_vec3 scene_model_alias_light(const qa_scene_model_input *input, uint32_t path_flags) {
     qa_vec3 light = input->ambient;
     if (input->family == QA_GAME_Q2) {
         bool shell = scene_model_has_shell(input);
@@ -43,8 +43,8 @@ qa_vec3 scene_model_alias_light(const qa_scene_model_input *input) {
         if (input->infrared && (input->flags & 32768)) light = qa_v3(1, 0, 0);
     } else if (input->family == QA_GAME_Q1) {
         float sampled[3] = {light.x, light.y, light.z};
-        bool player = input->player || (input->source_path && !strcmp(input->source_path, "progs/player.mdl"));
-        bool flame = input->source_path && (!strcmp(input->source_path, "progs/flame.mdl") || !strcmp(input->source_path, "progs/flame2.mdl"));
+        bool player = input->player || (path_flags & QA_MODEL_PATH_PLAYER_SHADE);
+        bool flame = (path_flags & QA_MODEL_PATH_FLAME_FULLBRIGHT) != 0;
         float overbright = input->q1_overbright > 0 ? input->q1_overbright : 2;
         for (unsigned k = 0; k < 3; ++k) {
             float ambient = sampled[k] * 255, shade = ambient;
