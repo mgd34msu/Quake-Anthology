@@ -210,7 +210,7 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
         !qa_material_library_load_scripts(owner->materials,owner->mounts,&options.images,error) ||
         !qa_scene_world_create(&bsp,owner->images,owner->materials,&options,&owner->world,error) ||
         !qa_scene_world_source_resource_bind(owner->world,owner->map,error) ||
-        (f->audio && !qa_audio_bank_create(owner->mounts,&owner->sounds,error))) goto fail;
+        (f->audio && !qa_audio_bank_create(owner->mounts, qa_session_strings(qa_application_session(f->application)),&owner->sounds,error))) goto fail;
     for (unsigned i=0;i<f->options.seats;++i)
         if (!frontend_world_scratch_create(owner->world,owner->scratch+i,error) ||
             !qa_application_visual_visibility_create(f->application,&owner->visibility[i][0],error) ||

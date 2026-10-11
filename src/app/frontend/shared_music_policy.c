@@ -272,7 +272,7 @@ static bool list_tracks(music_source *source, qa_error *e) {
     if (ok && source->track_count) qsort(source->tracks, source->track_count, sizeof(*source->tracks), name_compare);
     return ok;
 }
-static bool source_create(const frontend_music_content *receipt, music_source *out, bool enumerate, qa_error *e) {
+static bool source_create(const frontend_music_content *receipt, qa_strings *strings, music_source *out, bool enumerate, qa_error *e) {
     const qa_product *row = receipt && receipt->catalog ? qa_catalog_product(receipt->catalog, receipt->product) : NULL;
     if (!row || row->availability != QA_CONTENT_INSTALLED || !receipt->files ||
         (row->family != QA_GAME_Q1 && row->family != QA_GAME_Q2 && row->family != QA_GAME_Q3) ||
@@ -286,8 +286,8 @@ static bool source_create(const frontend_music_content *receipt, music_source *o
     out->files = qa_vfs_clone(receipt->files, e);
     if (receipt->fallback_files) out->fallback_files = qa_vfs_clone(receipt->fallback_files, e);
     return out->files && (!receipt->fallback_files || out->fallback_files) &&
-        qa_audio_bank_create(out->files, &out->bank, e) &&
-        (!out->fallback_files || qa_audio_bank_create(out->fallback_files, &out->fallback_bank, e)) && (!enumerate || list_tracks(out, e));
+        qa_audio_bank_create(out->files, strings, &out->bank, e) &&
+        (!out->fallback_files || qa_audio_bank_create(out->fallback_files, strings, &out->fallback_bank, e)) && (!enumerate || list_tracks(out, e));
 }
 bool frontend_music_policy_create(qa_frontend *f, const frontend_music_policy_options *options,
     frontend_music_policy **out, qa_error *e) {
@@ -320,7 +320,7 @@ bool frontend_music_policy_create(qa_frontend *f, const frontend_music_policy_op
         if (owner->menu && (receipt->fallback_product || receipt->fallback_files ||
             !qa_catalog_product_view_current(receipt->catalog, receipt->product, receipt->files)))
             ok = fail(e, "Menu music requires the actual independent selected product mount plan");
-        if (ok) ok = source_create(receipt, owner->sources + i, !owner->external_player, e);
+        if (ok) ok = source_create(receipt, owner->names, owner->sources + i, !owner->external_player, e);
     }
     size_t largest=1;
     for (size_t i=0;ok && i<owner->source_count;++i) {

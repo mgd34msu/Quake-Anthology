@@ -196,7 +196,7 @@ bool frontend_selected_effects_empty(frontend_selected_effects_group *group,
 {
     if (!binding->options.audio)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects need the actual shared audio owner");
-    bool okay = qa_audio_bank_create(group->view.content.mounts, &group->view.sounds, error);
+    bool okay = qa_audio_bank_create(group->view.content.mounts, qa_session_strings(qa_application_session(group->owner->frontend->application)), &group->view.sounds, error);
     qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(group->owner->frontend->application)),.provider = {group->view.content.mounts,
         group->view.content.images, group->view.content.materials, QA_GAME_Q3, qa_application_world(group->owner->frontend->application)}, .sounds = group->view.sounds};
     if (okay) okay = qa_q3_presentation_assets_create(&assets, &group->view.assets, error);

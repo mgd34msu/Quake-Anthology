@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_Q2_FOOTSTEPS_H
 #define QA_FRONTEND_REMOTE_Q2_FOOTSTEPS_H
 #include "remote_q2_effects.h"
+#include "qa/audio.h"
 #include "qa/persistence_content.h"
 struct frontend_remote_q2;
 struct remote_q2_footsteps;
@@ -16,7 +17,7 @@ typedef struct frontend_q2_footstep_source {
     void *context;
     bool (*current)(void *, const struct frontend_q2_footstep_source *);
     bool (*trace)(void *, const qa_trace_query *, qa_trace_result *, qa_error *);
-    bool (*sound)(void *, const char *, qa_vec3, qa_actor_id, double,
+    bool (*sound)(void *, qa_audio_asset *, qa_vec3, qa_actor_id, double,
         int32_t, float, float, double, qa_error *);
 } frontend_q2_footstep_source;
 typedef struct frontend_q2_footstep_sample {

@@ -58,7 +58,7 @@ static bool bank(frontend_unified_media *owner, qa_string_id content_name, unifi
     if (okay) {
         row->materials = qa_material_library_create(row->images, owner->frontend->order, error);
         row->fonts = qa_font_library_create(row->files, row->images, error);
-        okay = row->materials && row->fonts && qa_audio_bank_create(row->files, &row->sounds, error);
+        okay = row->materials && row->fonts && qa_audio_bank_create(row->files, owner->strings, &row->sounds, error);
     }
     if (okay && row->product->family == QA_GAME_Q2) {
         okay = frontend_ui_audio_prepare_q2_source(owner->frontend, row->sounds, 0, error);

@@ -71,13 +71,13 @@ static bool source_current(void *context, const frontend_q2_footstep_source *sou
         source->product == row->content.selected && source->map == row->map && source->files == row->content.mounts &&
         source->geometry == row->geometry && source->sounds == row->sounds &&
         !strcmp(source->map_name, frontend_remote_q2_config(row, row->layout.models + 1)) &&
-        source->current == source_current && source->trace == remote_q2_trace && source->sound == remote_q2_effect_sound;
+        source->current == source_current && source->trace == remote_q2_trace && source->sound == remote_q2_effect_asset;
 }
 static frontend_q2_footstep_source source_read(frontend_remote_q2 *row)
 {
     return (frontend_q2_footstep_source){row->content.catalog, row->content.selected,
         frontend_remote_q2_config(row, row->layout.models + 1), row->map, row->content.mounts,
-        row->geometry, row->sounds, row, source_current, remote_q2_trace, remote_q2_effect_sound};
+        row->geometry, row->sounds, row, source_current, remote_q2_trace, remote_q2_effect_asset};
 }
 bool frontend_q2_footsteps_destroy(frontend_q2_footsteps **owned, qa_error *error)
 {
@@ -199,17 +199,15 @@ bool frontend_q2_footsteps_emit(frontend_q2_footsteps *owner, const frontend_q2_
         do draw = qa_builtin_random_integer(random); while (draw < threshold);
         index = draw % table->count;
     }
-    char name[128]; path(table, index, name);
     if (table->resources[index] == owner->last_resource) index = (index + 1) % table->count;
-    path(table, index, name);
     qa_audio_asset *asset = qa_audio_bank_get(source->sounds, table->resources[index], QA_GAME_Q2);
     if (!asset) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 footstep lost its actual retained sound handle");
     ++owner->calls;
-    ok = source->sound(source->context, name, sample->pose.origin, sample->pose.actor, sample->milliseconds,
+    ok = source->sound(source->context, asset, sample->pose.origin, sample->pose.actor, sample->milliseconds,
         4, sample->event == 2 ? 1 : .5f, sample->event == 2 ? 1 : 2, 0, error);
     --owner->calls;
     if (!ok || !frontend_q2_footsteps_current(owner, source, error)) return false;
-    strcpy(owner->last, name); owner->last_resource = table->resources[index]; return true;
+    owner->last[0] = '#'; strcpy(owner->last + 1, qa_audio_asset_name(asset)); owner->last_resource = table->resources[index]; return true;
 }
 bool frontend_q2_footsteps_current(const frontend_q2_footsteps *owner, const frontend_q2_footstep_source *source, qa_error *error)
 {

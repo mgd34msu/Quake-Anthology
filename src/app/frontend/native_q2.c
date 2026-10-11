@@ -68,7 +68,7 @@ static bool source_files(frontend_native_q2 *source, qa_error *error)
         }
         source->images = images;
     }
-    return source->images && (source->sounds || qa_audio_bank_create(source->mounts, &source->sounds, error));
+    return source->images && (source->sounds || qa_audio_bank_create(source->mounts, qa_session_strings(qa_application_session(source->frontend->application)), &source->sounds, error));
 }
 static bool text_argument(const qa_native_host_q2_application_call *call, size_t index,
     qa_buffer *out, qa_error *error)

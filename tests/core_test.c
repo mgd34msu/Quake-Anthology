@@ -623,12 +623,18 @@ static void test_shared_audio_preparation(void)
     qa_vfs *view = qa_vfs_create(resources, &error); CHECK(view);
     qa_mount_id mount;
     CHECK(qa_vfs_mount_directory(view, directory, QA_ARCHIVE_EXACT, false, &mount, &error));
-    qa_audio_bank *bank = NULL; CHECK(qa_audio_bank_create(view, &bank, &error));
+    qa_strings *names = NULL; CHECK(qa_strings_create(&names, &error));
+    qa_audio_bank *bank = NULL; CHECK(qa_audio_bank_create(view, names, &bank, &error));
     qa_audio_sample *held = NULL; int16_t held_samples[32];
     qa_game_family families[] = {QA_GAME_Q1, QA_GAME_Q2, QA_GAME_Q3};
     for (size_t i = 0; i < sizeof(families) / sizeof(*families); ++i) {
         qa_audio_asset *asset = NULL; qa_audio_sample *first = NULL, *again = NULL, *expected = NULL, *changed = NULL;
         CHECK(qa_audio_bank_register(bank, "test.wav", families[i], &asset, &error) && asset);
+        const char *aliases[] = {"test.wav", "sound/test.wav", "#sound/test.wav"};
+        for (size_t j = 0; j < 3; ++j) {
+            qa_string_id id = qa_strings_find(names, (qa_bytes){(const uint8_t *)aliases[j], strlen(aliases[j])});
+            CHECK(id && qa_audio_bank_get_id(bank, id, families[i]) == asset);
+        }
         CHECK(qa_audio_asset_resample(asset, 44100, families[i], &first, &error));
         CHECK(qa_audio_asset_resample(asset, 44100, families[i], &again, &error));
         CHECK(first == again);
@@ -703,7 +709,7 @@ static void test_shared_audio_preparation(void)
     CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&first,&error) && first);
     CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&again,&error) && again==first);
     qa_audio_asset_release(first);qa_audio_asset_release(again);
-    qa_audio_bank_destroy(bank); qa_vfs_destroy(view); qa_resource_pool_destroy(resources);
+    qa_audio_bank_destroy(bank); qa_strings_destroy(names); qa_vfs_destroy(view); qa_resource_pool_destroy(resources);
     CHECK(unlink(jump)==0);CHECK(rmdir(male)==0);CHECK(rmdir(player)==0);CHECK(unlink(optional)==0);
     CHECK(!memcmp(held->samples, held_samples, sizeof(held_samples))); qa_audio_sample_release(held);
     CHECK(unlink(path) == 0); CHECK(rmdir(folder) == 0); CHECK(rmdir(directory) == 0);

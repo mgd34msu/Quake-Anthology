@@ -35,7 +35,7 @@ bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual UI feature owner");
     owner->frontend = f; f->ui_features = owner;
     owner->tracks = qa_caption_library_create(error); owner->catalogs = qa_localization_pool_create(error);
-    if (!owner->tracks || !owner->catalogs || !qa_audio_bank_create(f->ui_mounts, &owner->sounds, error)) return false;
+    if (!owner->tracks || !owner->catalogs || !qa_audio_bank_create(f->ui_mounts, qa_session_strings(qa_application_session(f->application)), &owner->sounds, error)) return false;
     for (unsigned i = 0; !f->options.dedicated && i < QA_INPUT_LOCAL_SEATS; ++i) {
         qa_sound_caption_options options = {.captions = {.seat = i, .kind = QA_CAPTION_SOUND,
             .tracks = owner->tracks, .catalogs = owner->catalogs,

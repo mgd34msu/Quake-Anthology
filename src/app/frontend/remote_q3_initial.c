@@ -169,7 +169,7 @@ static bool build_media(frontend_remote_q3_initial *owner,qa_error *error)
         !qa_material_library_load_scripts(v->materials,v->mounts,&images,error) ||
         !qa_material_library_source_shaders_initialize(v->materials,&images,error) ||
         !frontend_material_remaps(f,v->materials,error) ||
-        !qa_audio_bank_create(v->mounts,&v->sounds,error)) return false;
+        !qa_audio_bank_create(v->mounts, qa_session_strings(qa_application_session(f->application)),&v->sounds,error)) return false;
     assets.sounds=v->sounds; assets.movies=v->movies;
     if(!qa_q3_presentation_assets_create(&assets,&v->assets,error) ||
         !frontend_network_client_attempt_current(f,&v->attempt))

@@ -557,6 +557,14 @@ static bool render_clock(void *ctx,uint64_t *wall,uint64_t *sequence,qa_error *e
     *wall=b->owner->frontend->wall_time_ns/UINT64_C(1000000);
     *sequence=b->owner->frontend->frame_number; return true;
 }
+static bool footstep_sound(void *ctx, qa_audio_asset *asset, qa_vec3 origin,
+    qa_actor_id actor, double ms, int32_t channel, float volume, float attenuation,
+    double delay, qa_error *error)
+{
+    q2_bank *bank = ctx;
+    return frontend_unified_events_sound_asset(bank->owner->events, asset, actor,
+        origin, ms, channel, volume, attenuation, delay, error);
+}
 static bool footstep_current(void *ctx,const frontend_q2_footstep_source *s)
 {
     q2_bank *b=ctx; frontend_q2_footstep_source actual=footstep_source(b);
@@ -571,7 +579,7 @@ static frontend_q2_footstep_source footstep_source(q2_bank *b)
     return (frontend_q2_footstep_source){.catalog=qa_executable_recipe_catalog(recipe),.product=b->product->id,
         .map_name=qa_executable_recipe_choices(recipe)->world.map,.map=qa_executable_recipe_map(recipe),
         .files=b->files,.geometry=qa_executable_recipe_geometry(recipe),.sounds=b->sounds,.context=b,
-        .current=footstep_current,.trace=trace,.sound=sound};
+        .current=footstep_current,.trace=trace,.sound=footstep_sound};
 }
 static bool footstep(void *ctx,const frontend_remote_q2_effects_pose *pose_value,uint32_t event,double ms,
     qa_builtin_random *random,qa_error *e)

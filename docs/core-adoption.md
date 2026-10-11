@@ -570,6 +570,31 @@ Normal production build and seven core suites pass:
 migrated at the audited sites by source/build/core proof. Findings 10-17 remain;
 no new live legacy-wire, save/session, installation or performance claim.
 
+Names item 10 now binds every audio bank to the constructor's existing session
+string table (`qa_audio_bank_create`). `src/audio/bank.c` indexes admitted
+aliases by `(qa_string_id, family)`; the former byte-hash and substring-comparison
+lookup are deleted. `sound/`, bare sound names and `#` literal paths are resolved
+at registration, including optional misses and view-generation invalidation.
+`qa_audio_bank_register_id` is the retained-reference entry point over the same
+index as `qa_audio_bank_get_id`; text registration interns at the external
+name boundary. Built-in particle and sound consumers in `map_events.c` retain
+the event's ID. All bank constructors, including music, local/legacy/Unified
+clients and component media, supply the existing shared name table.
+
+Q2 footstep callbacks take the decoded `qa_audio_asset` already selected from
+the bank, in legacy and Unified clients. The return to text registration and
+second bank lookup are deleted; both adapters submit it to `qa_audio_engine_play`.
+No separate bank implementation or game-owned name store was added. The
+existing audio-bank core fixture checks the three sound aliases against the
+same asset and retains its optional-miss, invalidation, resampling and sexed
+fallback checks. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-sound-bank-ids-20261011-build.log` and
+`/tmp/qa-ta3196-sound-bank-ids-20261011-core.log`.
+
+The ancillary Unified simulation/presentation sound mirror still compares
+normalized path text; that remaining item-10 consumer is next. Findings 11-17
+remain. This is source/build/core proof, with no live-play, install or timing claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

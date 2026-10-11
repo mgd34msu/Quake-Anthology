@@ -5,6 +5,7 @@
 #include "qa/common.h"
 #include "qa/math.h"
 #include "qa/vfs.h"
+#include "qa/strings.h"
 #include <stdatomic.h>
 
 #define QA_AUDIO_NO_LOOP UINT64_MAX
@@ -88,7 +89,7 @@ typedef struct qa_audio_asset qa_audio_asset;
  * surviving bank pruning/destruction. Register returns an owned asset
  * reference; a missing optional asset succeeds with *out == NULL. Calls are
  * serialized; final asset/stream release follows the VFS owner-thread contract. */
-bool qa_audio_bank_create(qa_vfs *view, qa_audio_bank **out, qa_error *error);
+bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out, qa_error *error);
 const qa_vfs *qa_audio_bank_files(const qa_audio_bank *bank);
 void qa_audio_bank_destroy(qa_audio_bank *bank);
 void qa_audio_bank_begin(qa_audio_bank *bank);
@@ -96,6 +97,9 @@ void qa_audio_bank_end(qa_audio_bank *bank);
 void qa_audio_bank_clear(qa_audio_bank *bank);
 bool qa_audio_bank_register(qa_audio_bank *bank, const char *name, qa_game_family family,
                             qa_audio_asset **out, qa_error *error);
+bool qa_audio_bank_register_id(qa_audio_bank *, qa_string_id, qa_game_family, qa_audio_asset **, qa_error *);
+/* Borrowed entry by a name admitted at registration, including sound/ and # aliases. */
+qa_audio_asset *qa_audio_bank_get_id(qa_audio_bank *, qa_string_id, qa_game_family);
 bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *model,
                          qa_audio_asset **out, qa_error *error);
 /* Borrowed cached entry, or NULL; acquiring ownership requires retain. */

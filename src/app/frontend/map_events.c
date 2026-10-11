@@ -397,7 +397,7 @@ static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_ga
     entry->images = entry->files ? qa_scene_resources_create(entry->files, error) : NULL;
     bool ok = entry->files && entry->images &&
         frontend_image_policy_initialize(frontend, entry->images, error) &&
-        (!frontend->audio || (qa_audio_bank_create(entry->files, &entry->sounds, error) &&
+        (!frontend->audio || (qa_audio_bank_create(entry->files, qa_session_strings(qa_application_session(frontend->application)), &entry->sounds, error) &&
             (family != QA_GAME_Q2 || frontend_ui_audio_prepare_q2_source(frontend, entry->sounds, provider, error)))) &&
         (!gear || gear_resources_bind(frontend->application, entry, error));
     if (!ok) {
@@ -927,7 +927,7 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
         if (actor == QA_AUDIO_NO_ACTOR) { if (error) *error = identity; return false; }
     }
     qa_audio_asset *asset = NULL;
-    if (!qa_audio_bank_register(resources->sounds, name, family, &asset, error)) return false;
+    if (!qa_audio_bank_register_id(resources->sounds, event->resource, family, &asset, error)) return false;
     if (!asset) return true;
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset, .name = name,
         .family = family, .actor = actor, .owner = event->provider, .audience = seat,
@@ -1145,7 +1145,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
         (void)qa_application_player_info_read(frontend->application, event->actor, &player);
         if (!qa_audio_bank_sexed(resources->sounds, name, player.skin ? player.skin : "", &asset, error))
             return false;
-    } else if (!qa_audio_bank_register(resources->sounds, name, family, &asset, error)) return false;
+    } else if (!qa_audio_bank_register_id(resources->sounds, event->resource, family, &asset, error)) return false;
     if (resources->gear && !resources_current(frontend->application, resources)) {
         qa_audio_asset_release(asset);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear sound source retired during registration");

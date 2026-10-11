@@ -896,7 +896,7 @@ static bool make_media(frontend_native_q3 *row,qa_error *e)
     bool ok=v->mounts && v->images && v->materials && v->fonts && v->movies &&
         qa_material_library_load_scripts(v->materials,v->mounts,&images,e) &&
         qa_material_library_source_shaders_initialize(v->materials,&images,e) &&
-        frontend_material_remaps(f,v->materials,e) && qa_audio_bank_create(v->mounts,&v->sounds,e);
+        frontend_material_remaps(f,v->materials,e) && qa_audio_bank_create(v->mounts, qa_session_strings(qa_application_session(f->application)),&v->sounds,e);
     qa_q3_presentation_asset_options assets; qa_q3_presentation_options backend;
     if(ok)ok=frontend_native_q3_asset_options(row,&assets,e) && qa_q3_presentation_assets_create(&assets,&v->assets,e) &&
         frontend_native_q3_backend_options(row,&backend,e) && qa_q3_presentation_create(&backend,&v->presentation,e) &&

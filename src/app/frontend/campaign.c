@@ -233,7 +233,7 @@ static bool campaign_music(qa_frontend *f,const qa_application_q3_campaign *view
     qa_audio_music_stop(music);
     qa_audio_bank *bank=NULL; qa_audio_stream *intro=NULL;
     bool ok=qa_application_q3_campaign_current(f->application,view) &&
-        qa_audio_bank_create(view->content,&bank,error) &&
+        qa_audio_bank_create(view->content, qa_session_strings(qa_application_session(f->application)),&bank,error) &&
         qa_audio_bank_music_cue(bank,cue,QA_GAME_Q3,NULL,NULL,&intro,error) &&
         qa_application_q3_campaign_current(f->application,view);
     qa_audio_bank_destroy(bank);

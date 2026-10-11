@@ -1254,7 +1254,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
     bool ok = source->mounts && source->images && source->materials && source->fonts && source->movies &&
         (restoring || (qa_material_library_load_scripts(source->materials, source->mounts, &images, error) &&
             qa_material_library_source_shaders_initialize(source->materials,&images,error))) &&
-        qa_audio_bank_create(source->mounts, &source->sounds, error) &&
+        qa_audio_bank_create(source->mounts, qa_session_strings(qa_application_session(frontend->application)), &source->sounds, error) &&
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
     if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), music_family(source), true, &source->music, error);
     if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);

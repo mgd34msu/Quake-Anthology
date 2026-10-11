@@ -835,7 +835,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     owner->fonts=owner->images?qa_font_library_create(owner->files,owner->images,e):NULL;
     owner->media=owner->images?qa_media_library_create(owner->images,e):NULL;
     if (!owner->files || !owner->images || !owner->materials || !owner->fonts || !owner->media ||
-        !qa_audio_bank_create(owner->files,&owner->sounds,e)) return false;
+        !qa_audio_bank_create(owner->files, qa_session_strings(qa_application_session(f->application)),&owner->sounds,e)) return false;
     qa_scene_image_options images={.family=QA_GAME_Q3,.wrap=QA_SCENE_REPEAT,.filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=-1};
     if (!request->restoring) {
         frontend_material_movie_source movie={.frontend=f,.files=owner->files,.images=owner->images,.materials=owner->materials,

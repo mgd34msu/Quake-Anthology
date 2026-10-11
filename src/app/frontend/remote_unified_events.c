@@ -643,6 +643,15 @@ bool frontend_unified_events_sound_path(frontend_unified_events *o,const char *c
     qa_audio_asset *asset=NULL;
     if (!qa_audio_bank_register(bank,path,family,&asset,e)) return false;
     if (!asset) return true; /* Retains the genuine bank's optional-miss policy. */
+    bool okay = frontend_unified_events_sound_asset(o, asset, actor_id, origin, ms,
+        channel, volume, attenuation, delay, e);
+    qa_audio_asset_release(asset); return okay;
+}
+bool frontend_unified_events_sound_asset(frontend_unified_events *o, qa_audio_asset *asset,
+    qa_actor_id actor_id, qa_vec3 origin, double ms, int32_t channel, float volume,
+    float attenuation, double delay, qa_error *e)
+{
+    if (!o || !asset || !isfinite(ms) || !isfinite(delay) || !execution_current(o,e)) return false;
     uint64_t audio;
     bool okay=frontend_unified_events_audio_actor(o,actor_id,&audio,e) && current(o,e);
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
@@ -650,14 +659,14 @@ bool frontend_unified_events_sound_path(frontend_unified_events *o,const char *c
     if (okay) {
         int32_t signed_tick;
         qa_audio_play play={.sample=qa_audio_asset_sample(asset),.asset=asset,
-            .resource_id=qa_resource_id(qa_audio_asset_resource(asset)),.name=path,.family=family,
+            .resource_id=qa_resource_id(qa_audio_asset_resource(asset)),.name=qa_audio_asset_name(asset),.family=qa_audio_asset_family(asset),
             .actor=audio,.owner=o->options.audio_owner,.audience=d->physical_seat,.origin_kind=QA_AUDIO_FIXED,
             .origin=origin,.channel=channel,.volume=volume,.attenuation=attenuation,.delay_seconds=delay,
             .has_server_time=true,.server_milliseconds=ms};
         okay=qa_audio_source_milliseconds(ms,&signed_tick,e) &&
             qa_audio_engine_play(o->frontend->audio,&play,signed_tick,e);
     }
-    qa_audio_asset_release(asset); return okay;
+    return okay;
 }
 bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_unified_presentation_event *row,
     bool *out,qa_error *e)

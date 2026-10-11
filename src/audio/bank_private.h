@@ -19,15 +19,21 @@ struct qa_audio_asset {
 typedef struct bank_entry {
     qa_audio_asset *asset;
     uint64_t touched;
-    char *missing_name;
+    qa_string_id aliases[3];
     qa_game_family missing_family;
 } bank_entry;
 
+typedef struct bank_name {
+    qa_string_id id;
+    size_t row;
+} bank_name;
+
 struct qa_audio_bank {
+    qa_strings *strings;
     qa_vfs *view;
     bank_entry *entries;
     size_t count, capacity;
-    size_t *names;
+    bank_name *names;
     size_t name_capacity;
     uint64_t registration;
     uint64_t lookup_generation;

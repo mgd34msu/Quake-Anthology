@@ -45,6 +45,8 @@ bool frontend_unified_events_draw(frontend_unified_events *, qa_scene_rect, bool
 bool frontend_unified_events_idle(const frontend_unified_events *);
 bool frontend_unified_events_destroy(frontend_unified_events **, qa_error *);
 bool frontend_unified_events_sound_mirrored(frontend_unified_events *, const qa_unified_presentation_event *, bool *, qa_error *);
+bool frontend_unified_events_sound_asset(frontend_unified_events *, qa_audio_asset *, qa_actor_id,
+    qa_vec3, double, int32_t, float, float, double, qa_error *);
 bool frontend_unified_events_sound_path(frontend_unified_events *, const char *content, const char *path,
     qa_actor_id, qa_vec3, double milliseconds, int32_t channel, float volume, float attenuation,
     double delay_seconds, qa_error *);

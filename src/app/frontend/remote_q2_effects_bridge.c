@@ -125,11 +125,11 @@ bool remote_q2_sound_asset(frontend_remote_q2 *row, const char *path, uint32_t e
     return qa_audio_bank_sexed(row->sounds, path, appearance ? appearance + 1 : "", out, error);
 }
 
-bool remote_q2_effect_sound(void *context, const char *path, qa_vec3 origin, qa_actor_id actor_id,
+bool remote_q2_effect_asset(void *context, qa_audio_asset *asset, qa_vec3 origin, qa_actor_id actor_id,
     double time, int32_t channel, float volume, float attenuation, double delay, qa_error *error)
 {
     frontend_remote_q2 *row = context;
-    if (!row || !row->sounds || !path || !qa_vec_finite(origin) || !isfinite(time) || !isfinite(delay)) return false;
+    if (!row || !asset || !qa_vec_finite(origin) || !isfinite(time) || !isfinite(delay)) return false;
     uint64_t actor_number = QA_AUDIO_NO_ACTOR;
     if (actor_id.registry) {
         const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
@@ -141,16 +141,30 @@ bool remote_q2_effect_sound(void *context, const char *path, qa_vec3 origin, qa_
         actor_number = record->source_slot;
     }
     if (!row->frontend->audio) return true;
-    qa_audio_asset *asset = NULL;
-    if (!remote_q2_sound_asset(row, path, (uint32_t)actor_number, &asset, error)) return false;
-    if (!asset) return true;
     qa_audio_play play = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = path, .family = QA_GAME_Q2,
+        .resource_id = qa_resource_id(qa_audio_asset_resource(asset)), .name = qa_audio_asset_name(asset), .family = QA_GAME_Q2,
         .actor = actor_number, .owner = row->identity, .audience = row->options.domain.physical_seat,
         .origin_kind = QA_AUDIO_FIXED, .origin = origin, .channel = channel, .volume = volume,
         .attenuation = attenuation, .delay_seconds = delay, .server_milliseconds = time, .has_server_time = true};
     bool ok = qa_audio_engine_play(row->frontend->audio, &play, (int32_t)(row->sample_ns / 1000000), error);
-    qa_audio_asset_release(asset); return ok;
+    return ok;
+}
+bool remote_q2_effect_sound(void *context, const char *path, qa_vec3 origin, qa_actor_id actor_id,
+    double time, int32_t channel, float volume, float attenuation, double delay, qa_error *error)
+{
+    frontend_remote_q2 *row = context;
+    if (!row || !row->sounds || !path) return false;
+    uint32_t entity = 0;
+    if (path[0] == '*' && actor_id.registry) {
+        const qa_actor_record *record = qa_actors_get(qa_session_actor_registry(
+            qa_application_session(row->options.domain.application)), actor_id);
+        if (record && record->has_source) entity = record->source_slot;
+    }
+    qa_audio_asset *asset = NULL;
+    if (!remote_q2_sound_asset(row, path, entity, &asset, error)) return false;
+    bool okay = !asset || remote_q2_effect_asset(row, asset, origin, actor_id,
+        time, channel, volume, attenuation, delay, error);
+    qa_audio_asset_release(asset); return okay;
 }
 static bool actor_pose(void *context, qa_actor_id id, frontend_remote_q2_effects_pose *out, qa_error *error)
 {

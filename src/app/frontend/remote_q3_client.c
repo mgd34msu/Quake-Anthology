@@ -177,7 +177,7 @@ static bool build_media(frontend_remote_q3 *row,qa_error *error)
     if(!v->mounts || !v->images || !v->materials || !v->fonts || !v->movies ||
         !qa_material_library_load_scripts(v->materials,v->mounts,&images,error) ||
         !qa_material_library_source_shaders_initialize(v->materials,&images,error) ||
-        !frontend_material_remaps(f,v->materials,error) || !qa_audio_bank_create(v->mounts,&v->sounds,error) ||
+        !frontend_material_remaps(f,v->materials,error) || !qa_audio_bank_create(v->mounts, qa_session_strings(qa_application_session(f->application)),&v->sounds,error) ||
         !qa_bsp_open(qa_resource_bytes(row->map),&bsp,error)) return false;
     if(bsp.family!=QA_BSP_Q3)
         return frontend_fail(error,QA_ERROR_FORMAT,"Native remote CLIENT requires its actual Q3 BSP map");

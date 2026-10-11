@@ -8,6 +8,8 @@ bool remote_q2_effects_frame(frontend_remote_q2 *, qa_error *);
 bool remote_q2_hit_marker_sample(frontend_remote_q2 *, qa_error *);
 bool remote_q2_sound_asset(frontend_remote_q2 *, const char *, uint32_t source_entity,
     qa_audio_asset **, qa_error *);
+bool remote_q2_effect_asset(void *, qa_audio_asset *, qa_vec3, qa_actor_id, double,
+    int32_t, float, float, double, qa_error *);
 bool remote_q2_effect_sound(void *, const char *, qa_vec3, qa_actor_id, double,
     int32_t, float, float, double, qa_error *);
 bool remote_q2_effects_source_read(frontend_remote_q2 *, frontend_remote_q2_effects_source *, qa_error *);

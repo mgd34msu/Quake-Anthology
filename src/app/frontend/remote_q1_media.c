@@ -51,7 +51,7 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
         !qa_scene_world_create(&bsp, row->images, row->materials, &options, &row->world, error) ||
         !qa_scene_world_source_resource_bind(row->world, row->map, error) ||
         !frontend_world_scratch_create(row->world, &row->world_scratch, error) ||
-        !qa_audio_bank_create(row->content.mounts, &row->sound_bank, error) ||
+        !qa_audio_bank_create(row->content.mounts, qa_session_strings(qa_application_session(row->frontend->application)), &row->sound_bank, error) ||
         !frontend_q1_hud_prepare(row->content.mounts,row->images,row->materials,
             frontend_q1_hud_variant(product),error)) return false;
     row->sound_available = row->sound_count ? calloc(row->sound_count, sizeof(*row->sound_available)) : NULL;
