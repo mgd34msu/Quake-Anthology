@@ -3,12 +3,6 @@
 #include "../entities/internal.h"
 #include "qa/game_q2_wire.h"
 
-static qa_vec3 beam_angles(qa_vec3 direction) {
-  return qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) *
-                   57.29577951308232f,
-               atan2f(direction.y, direction.x) * 57.29577951308232f, 0.0f);
-}
-
 static bool controller_live(qa_q2_game *game, q2_actor *actor,
                             const struct qa_q2_monster *expected,
                             q2m_controller_kind kind) {
@@ -180,7 +174,7 @@ static bool spawn_beam(q2m_context *context, qa_actor_id target,
   qa_vec3 aim = direction;
   qa_body_state body = {
       .origin = origin,
-      .angles = beam_angles(aim),
+      .angles = qa_vec_angles(aim,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH),
       .bounds = {.mins = {-8.0f, -8.0f, -8.0f},
                  .maxs = {8.0f, 8.0f, 8.0f}},
   };
@@ -263,8 +257,8 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
   }
   if (species == Q2M_BRAIN) {
     if (context->game->options.edition == QA_Q2_CLASSIC)
-      qa_angle_vectors(q2m_vector_angles(qa_vec_sub(enemy.origin,
-          context->body.origin)), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
+      qa_angle_vectors(qa_vec_angles(qa_vec_sub(enemy.origin,
+          context->body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     static const qa_vec3 eyes[2][11] = {
       {{.746700f,.238370f,34.167690f},{-1.076390f,.238370f,33.386372f},
        {-1.335500f,5.334300f,32.177170f},{-.175360f,8.846370f,30.635479f},
@@ -297,8 +291,8 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
     if (!q2m_muzzle_offset(context, flash, &offset, error))
       return false;
     if (context->game->options.edition == QA_Q2_CLASSIC) {
-      qa_angle_vectors(q2m_vector_angles(qa_vec_sub(enemy.origin,
-          context->body.origin)), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
+      qa_angle_vectors(qa_vec_angles(qa_vec_sub(enemy.origin,
+          context->body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
       *origin = qa_vec_add(context->body.origin,
           qa_vec_add(qa_vec_scale(right, offset.x + (flash == 85 ? -14 : 2)),
               qa_vec_add(qa_vec_scale(up, offset.z + 8),
@@ -363,7 +357,7 @@ static bool source_beam(q2m_context *context, float damage, int channel,
   if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
     return true;
   body.origin = origin;
-  body.angles = beam_angles(direction);
+  body.angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH);
   if (!qa_world_body_write(game->services.world, actor->id, &body, error) ||
       !qa_world_link(game->services.world, actor->id, NULL, error))
     return false;
@@ -491,7 +485,7 @@ static bool guardian_update(qa_q2_game *game, q2_actor *actor, qa_error *error) 
   if (!qa_world_body_read(game->services.world, actor->id, &body, error)) return false;
   if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
   body.origin = origin;
-  body.angles = beam_angles(direction);
+  body.angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH);
   beam->controller_direction = direction;
   beam->controller_target = context.monster->enemy;
   return qa_world_body_write(game->services.world, actor->id, &body, error) &&
@@ -1007,7 +1001,7 @@ bool q2m_controller_postthink(qa_q2_game *game, q2_actor *actor, qa_error *error
   if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
     return true;
   body.origin = origin;
-  body.angles = beam_angles(direction);
+  body.angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH);
   beam->controller_direction = direction;
   beam->controller_target = context.monster->enemy;
   return qa_world_body_write(game->services.world, actor->id, &body, error) &&

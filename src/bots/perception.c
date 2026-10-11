@@ -2,12 +2,6 @@
 
 static float clamp(float value,float minimum,float maximum) { return fmaxf(minimum,fminf(value,maximum)); }
 static float angle_delta(float from,float to) { float value=qa_angle_wrap(to-from); return value>180 ? value-360 : value; }
-static qa_vec3 view_angles(qa_vec3 direction)
-{
-    if (direction.x==0 && direction.y==0) return qa_v3(direction.z>0 ? -90 : 90,0,0);
-    return qa_v3(-atan2f(direction.z,hypotf(direction.x,direction.y))*57.29577951308232f,
-        qa_angle_wrap(atan2f(direction.y,direction.x)*57.29577951308232f),0);
-}
 qa_bot_awareness qa_bot_awareness_new(qa_actor_id actor,double now,qa_vec3 origin)
 {
     return (qa_bot_awareness){.actor=actor,.last_contact=now,.last_seen=-1,.last_heard=-1,.last_known_origin=origin};
@@ -59,7 +53,7 @@ static void advance(float *angle,float *velocity,float error,float stiffness,flo
 void qa_bot_aim_step(qa_bot_aim_state *state,qa_vec3 direction,const qa_bot_aiming *s,float dt,double now)
 {
     if (dt<=0) return;
-    qa_vec3 ideal=view_angles(direction);
+    qa_vec3 ideal=qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW|QA_VECTOR_VERTICAL_SIGNED);
     float pitch_error=angle_delta(state->pitch,ideal.x),yaw_error=angle_delta(state->yaw,ideal.y);
     if (s->modifier_apply_time>0 && s->modifier_maximum_angle>0 && fmaxf(fabsf(pitch_error),fabsf(yaw_error))>s->modifier_maximum_angle)
         state->modifier_until=now+s->modifier_apply_time;
@@ -76,5 +70,5 @@ void qa_bot_aim_step(qa_bot_aim_state *state,qa_vec3 direction,const qa_bot_aimi
 }
 float qa_bot_aim_error(const qa_bot_aim_state *state,qa_vec3 direction)
 {
-    qa_vec3 ideal=view_angles(direction); return fmaxf(fabsf(angle_delta(state->pitch,ideal.x)),fabsf(angle_delta(state->yaw,ideal.y)));
+    qa_vec3 ideal=qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW|QA_VECTOR_VERTICAL_SIGNED); return fmaxf(fabsf(angle_delta(state->pitch,ideal.x)),fabsf(angle_delta(state->yaw,ideal.y)));
 }

@@ -77,7 +77,7 @@ bool q1_boss_sphere_manager(qa_q1_game *g, q1_actor *source, int32_t maximum, bo
         direction = qa_vec_normalize(direction);
         qa_angle_vectors(owner.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         state->sign = q1_boss_flat_dot(g->right, qa_vec_cross(direction, qa_v3(0, 0, 1))) > 1;
-        body.angles = q1_boss_angles(direction);
+        body.angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED);
         manager->count = (float)maximum;
     }
     if (!qa_world_body_write(g->services.world, manager->id, &body, error) ||
@@ -176,7 +176,7 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         attack = qa_vec_sub(q1_boss_target(g, e), body.origin);
         attack.z = 0;
         attack = qa_vec_normalize(attack);
-        body.angles = q1_boss_angles(attack);
+        body.angles = qa_vec_angles(attack,QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED);
         if (!qa_world_body_write(g->services.world, e->id, &body, error))
             return false;
         qa_angle_vectors(qa_vec_add(body.angles, qa_v3(0, 22.5f, 0)), &g->forward,

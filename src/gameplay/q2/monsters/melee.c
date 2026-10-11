@@ -81,7 +81,7 @@ bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *han
         for (size_t i = 0; i < sizeof(endpoints) / sizeof(*endpoints); ++i) {
             qa_vec3 delta = qa_vec_sub(start, endpoints[i]);
             if (qa_vec_length(delta) <= 512 &&
-                fabsf(q2m_vector_angles(delta).x) <= 30) {
+                fabsf(qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x) <= 30) {
                 reachable = true;
                 break;
             }

@@ -268,7 +268,7 @@ qa_vec3 q2fx_random_direction(frontend_remote_q2_effects *o)
 
 static qa_vec3 direction_angles(qa_vec3 d)
 {
-    float yaw = d.x != 0 ? atan2f(d.y, d.x) * 57.29577951308232f : d.y > 0 ? 90 : d.y < 0 ? 270 : 0;
+    float yaw=qa_vec_yaw(d,QA_DIRECTION_FLOAT,d.x==0);
     return qa_v3(acosf(fminf(1, fmaxf(-1, d.z))) * 57.29577951308232f, yaw, 0);
 }
 static bool sound(frontend_remote_q2_effects *o, qa_q2_sound_index path, qa_vec3 origin,

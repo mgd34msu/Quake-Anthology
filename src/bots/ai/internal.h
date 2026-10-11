@@ -153,5 +153,4 @@ bool bot_ai_order_active(const bot_ai_state *);
 bool bot_ai_order_goal(qa_bots *, bot_ai_state *, qa_bot_goal *, bool *, qa_error *);
 bool bot_ai_point_area(qa_bots *, bot_ai_state *, qa_vec3, uint32_t *, qa_error *);
 bool bot_ai_random(qa_bots *, float *, qa_error *);
-qa_vec3 bot_ai_angles(qa_vec3);
 #endif

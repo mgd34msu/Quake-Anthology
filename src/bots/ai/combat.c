@@ -30,28 +30,8 @@ static qa_vec3 weapon_muzzle(const qa_bot_weapon_knowledge *weapon,
     return muzzle;
 }
 
-qa_vec3 bot_ai_angles(qa_vec3 direction) {
-    float yaw,pitch;const float pi=3.14159265358979323846f;
-    if(direction.x==0 && direction.y==0) {yaw=0;pitch=direction.z>0?90:270;}
-    else {
-        if(direction.x!=0) {
-            float radians=(float)atan2((double)direction.y,(double)direction.x);
-            float degrees=radians*180;
-            yaw=degrees/pi;
-        } else yaw=direction.y>0?90:270;
-        if(yaw<0) yaw+=360;
-        float x_squared=direction.x*direction.x,y_squared=direction.y*direction.y;
-        float squared=x_squared+y_squared;
-        float horizontal=(float)sqrt((double)squared);
-        float radians=(float)atan2((double)direction.z,(double)horizontal);
-        float degrees=radians*180;
-        pitch=degrees/pi;
-        if(pitch<0) pitch+=360;
-    }
-    return qa_v3(-pitch,yaw,0);
-}
 static bool in_view(qa_vec3 angles, qa_vec3 direction, float fov) {
-    qa_vec3 target = bot_ai_angles(direction);
+    qa_vec3 target = qa_vec_angles(direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE);
     return fabsf(qa_angle_delta(target.x, angles.x)) <= fov*.5f &&
            fabsf(qa_angle_delta(target.y, angles.y)) <= fov*.5f;
 }
@@ -372,7 +352,7 @@ bool bot_ai_find_enemy(qa_bots *b,bot_ai_state *s,int32_t current_enemy,bool *fo
         if(visible<=0 || !bot_ai_live(b,actor)) continue;
         if(current_enemy<0 && distance>100*100 && !hurt && !firing &&
            !qa_bot_field_of_vision(info.state.angles,90,
-               bot_ai_angles(qa_vec_sub(bot_ai_origin(s),info.state.origin)))) {
+               qa_vec_angles(qa_vec_sub(bot_ai_origin(s),info.state.origin),QA_DIRECTION_VM,QA_VECTOR_SOURCE))) {
             if(!bot_ai_battle_inventory(b,s,client,e)) return false;
             bool retreat;
             if(!bot_ai_retreat(b,s,&retreat,e)) return false;
@@ -787,7 +767,7 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         if(!bot_ai_random(b,&random,e)) return false;
         direction.z+=.3f*(random*2-1)*(1-accuracy);
     }
-    qa_vec3 ideal=bot_ai_angles(direction);
+    qa_vec3 ideal=qa_vec_angles(direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE);
     if(selected_predictable(&selected)) {
         qa_vec3 noisy=qa_vec_add(muzzle,qa_vec_scale(qa_vec_normalize(direction),aim_distance));
         float flight;
@@ -978,7 +958,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
         qa_vec3 target=info.state.origin;
         if(s->team_arena && (bot_ai_enemy_number(s)==b->source_goals.red_obelisk.entity ||
                             bot_ai_enemy_number(s)==b->source_goals.blue_obelisk.entity)) target.z+=32;
-        bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(target,bot_ai_eye(s))));
+        bot_ai_view_ideal_set(s,qa_vec_angles(qa_vec_sub(target,bot_ai_eye(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE));
         bot_ai_aim_target_set(s,target);return true;
     }
     float skill,accuracy;
@@ -1132,7 +1112,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
         SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));direction.y+=(.3f*(random*2-1))*(1-accuracy);
         SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));direction.z+=(.3f*(random*2-1))*(1-accuracy);
     }
-    qa_vec3 ideal=bot_ai_angles(direction);
+    qa_vec3 ideal=qa_vec_angles(direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE);
     if(selected_predictable(&selected)) {
         qa_vec3 noisy=qa_vec_add(muzzle,qa_vec_scale(qa_vec_normalize(direction),aim_distance));
         float flight;
@@ -1189,7 +1169,7 @@ bool bot_ai_source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
                 bot_ai_aim_target(s),&angles,&flight)) return true;
         if(enemy>=64) bot_ai_view_ideal_set(s,angles);
         if(!qa_bot_field_of_vision(bot_ai_view_angles(s),distance<100*100?120:50,angles)) return true;
-    } else if(!qa_bot_field_of_vision(bot_ai_view_angles(s),distance<100*100?120:50,bot_ai_angles(direction))) return true;
+    } else if(!qa_bot_field_of_vision(bot_ai_view_angles(s),distance<100*100?120:50,qa_vec_angles(direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE))) return true;
     qa_trace_result hit;
     qa_actor_id client=b->services.entity_actor(b->services.context,
         bot_source_i32_read(s->source_span.data+QA_BOT_SOURCE_CLIENT));

@@ -368,7 +368,6 @@ typedef struct q2m_context {
   float elapsed;
 } q2m_context;
 
-qa_vec3 q2m_vector_angles(qa_vec3);
 bool q2m_mission(q2m_context *, qa_monster_mission *, bool *, qa_error *);
 bool q2m_count(q2m_context *, qa_q2_monster_count, qa_error *);
 bool q2m_lifecycle_admitted(q2m_context *, bool automatic, bool reviving, qa_error *);

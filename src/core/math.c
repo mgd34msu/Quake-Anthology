@@ -6,7 +6,7 @@ void qa_angle_vectors(qa_vec3 angles,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up
     const float radians=0.01745329251994329577f;
     const double native_radians=0.017453292519943295769236907684886;
     float yaw,pitch,roll;
-    if(rule==QA_ANGLE_NATIVE_MATH) {
+    if(rule==QA_ANGLE_NATIVE_MATH || rule==QA_ANGLE_FLOAT_NATIVE_MATH) {
         yaw=(float)(angles.y*native_radians);
         pitch=(float)(angles.x*native_radians);
         roll=(float)(angles.z*native_radians);
@@ -14,7 +14,7 @@ void qa_angle_vectors(qa_vec3 angles,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up
         yaw=angles.y*radians;pitch=angles.x*radians;roll=angles.z*radians;
     }
     float sy,cy,sp,cp,sr,cr;
-    if(rule==QA_ANGLE_FLOAT_MATH) {
+    if(rule==QA_ANGLE_FLOAT_MATH || rule==QA_ANGLE_FLOAT_NATIVE_MATH) {
         sy=sinf(yaw);cy=cosf(yaw);sp=sinf(pitch);cp=cosf(pitch);sr=sinf(roll);cr=cosf(roll);
     } else {
         sy=(float)sin((double)yaw);cy=(float)cos((double)yaw);
@@ -64,4 +64,43 @@ float qa_inverse_sqrt(float square)
     float inverse;memcpy(&inverse,&bits,sizeof(inverse));
     float product=(square*.5f)*inverse;product*=inverse;
     return inverse*(1.5f-product);
+}
+static double direction_degrees(double y,double x,qa_direction_math_rule rule)
+{
+    const float pi=3.14159274101257324219f;
+    switch(rule) {
+    case QA_DIRECTION_FLOAT:return atan2f((float)y,(float)x)*57.29577951308232f;
+    case QA_DIRECTION_FLOAT_RATIO:return atan2f((float)y,(float)x)*(180.f/pi);
+    case QA_DIRECTION_FLOAT_DIVIDE:return atan2f((float)y,(float)x)*180.f/pi;
+    case QA_DIRECTION_VM:return (float)atan2(y,x)*180.f/pi;
+    case QA_DIRECTION_GEAR:return (float)((float)atan2(y,x)*180.f/(double)pi);
+    default: {
+        double degrees=atan2(y,x)*180/3.14159265358979323846264338327950288;
+        return rule==QA_DIRECTION_INTEGER?trunc(degrees):degrees;
+    }
+    }
+}
+static double direction_wrap(double angle,qa_direction_math_rule rule)
+{
+    if(angle<0) return rule==QA_DIRECTION_NATIVE?angle+360:(float)((float)angle+360);
+    return angle;
+}
+float qa_vec_yaw(qa_vec3 v,qa_direction_math_rule rule,bool wrap)
+{
+    double yaw=direction_degrees(v.y,v.x,rule);
+    return (float)(wrap?direction_wrap(yaw,rule):yaw);
+}
+qa_vec3 qa_vec_angles(qa_vec3 v,qa_direction_math_rule rule,unsigned flags)
+{
+    bool vertical=v.x==0 && v.y==0;
+    double horizontal=flags&QA_VECTOR_SQUARED_HORIZONTAL?sqrtf(v.x*v.x+v.y*v.y):
+        flags&QA_VECTOR_WIDE_HORIZONTAL?hypot((double)v.x,v.y):hypotf(v.x,v.y);
+    double pitch=vertical && (flags&QA_VECTOR_VERTICAL_CARDINAL)?(v.z>0?90:270):
+        vertical && (flags&QA_VECTOR_VERTICAL_SIGNED)?(v.z>0?90:-90):direction_degrees(v.z,horizontal,rule);
+    if(flags&QA_VECTOR_NEGATE_BEFORE_WRAP) pitch=-pitch;
+    if(flags&QA_VECTOR_WRAP_PITCH) pitch=direction_wrap(pitch,rule);
+    if((flags&QA_VECTOR_NEGATIVE_PITCH) && !(flags&QA_VECTOR_NEGATE_BEFORE_WRAP)) pitch=-pitch;
+    float yaw=vertical && (flags&(QA_VECTOR_VERTICAL_CARDINAL|QA_VECTOR_VERTICAL_SIGNED))?0:
+        qa_vec_yaw(v,rule,(flags&QA_VECTOR_WRAP_YAW)!=0);
+    return qa_v3((float)pitch,yaw,0);
 }

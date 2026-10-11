@@ -71,7 +71,7 @@ static void test_compiled_sound_names(void)
 }
 static void test_shared_angle_basis(void)
 {
-    for(int rule=QA_ANGLE_FLOAT_MATH;rule<=QA_ANGLE_VM_MATH;++rule) {
+    for(int rule=QA_ANGLE_FLOAT_MATH;rule<=QA_ANGLE_FLOAT_NATIVE_MATH;++rule) {
         qa_vec3 forward,right,up,axis[3];
         qa_angle_vectors(qa_v3(0,90,0),&forward,&right,&up,(qa_angle_math_rule)rule);
         CHECK(fabsf(forward.x)<1e-6f && fabsf(forward.y-1)<1e-6f && forward.z==0);
@@ -145,6 +145,23 @@ static void test_shared_angle_wrapping(void)
     CHECK(qa_angle_subtract(1,359)==2 && qa_angle_subtract(359,1)==-2);
     CHECK(qa_angle_subtract(180,0)==180 && qa_angle_subtract(-180,0)==-180);
     CHECK(qa_angle_delta(719,1)==-2);
+}
+static void test_shared_direction_angles(void)
+{
+    qa_vec3 input=qa_v3(3,-4,5);
+    qa_vec3 signed_angles=qa_vec_angles(input,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH);
+    qa_vec3 wrapped=qa_vec_angles(input,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
+    CHECK(signed_angles.x== -45 && signed_angles.y<0);
+    CHECK(wrapped.x==signed_angles.x && wrapped.y==signed_angles.y+360);
+    CHECK(qa_vec_yaw(input,QA_DIRECTION_FLOAT,true)==wrapped.y);
+    qa_vec3 source=qa_vec_angles(qa_v3(0,0,-1),QA_DIRECTION_VM,QA_VECTOR_SOURCE);
+    CHECK(source.x== -270 && source.y==0 && source.z==0);
+    qa_vec3 view=qa_vec_angles(qa_v3(0,0,-1),QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH|QA_VECTOR_VERTICAL_SIGNED);
+    CHECK(view.x==90 && view.y==0);
+    qa_vec3 integral=qa_vec_angles(input,QA_DIRECTION_INTEGER,QA_VECTOR_SOURCE);
+    CHECK(integral.x== -45 && integral.y==307);
+    qa_vec3 axis[3];qa_angle_axis(wrapped,axis,QA_ANGLE_FLOAT_MATH);
+    CHECK(qa_vec_length(qa_vec_sub(axis[0],qa_vec_normalize(input)))<1e-6f);
 }
 static void test_source_text(void)
 {
@@ -2360,6 +2377,7 @@ int main(int argc, char **argv)
     test_shared_bounds_and_transform();
     test_shared_vector_geometry();
     test_shared_angle_wrapping();
+    test_shared_direction_angles();
     test_native_import_slot_identity();
     test_q2_weapon_names();
     test_q2_player_media();

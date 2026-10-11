@@ -197,7 +197,7 @@ static bool eye_chase(qa_q1_game *g, q1_actor *e, qa_error *error) {
         velocity.z = 0;
         velocity = qa_vec_normalize(velocity);
     }
-    body.angles = q1_boss_angles(velocity);
+    body.angles = qa_vec_angles(velocity,QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED);
     body.velocity = qa_vec_scale(velocity, e->speed);
     if (!qa_world_body_write(g->services.world, e->id, &body, error) ||
         !q1_schedule(g, e, .1, Q1_THINK_BOSS_CHILD, error))
@@ -222,7 +222,7 @@ static bool blaster(qa_q1_game *g, q1_actor *e, qa_error *error) {
     direction = qa_vec_normalize(
         qa_vec_add(direction, qa_vec_scale(qa_vec_cross(direction, qa_v3(0, 0, 1)),
                                            cosf(e->count * 15) * .5f * e->state.boss_child.sign)));
-    body.angles = q1_boss_angles(direction);
+    body.angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED);
     if (!qa_world_body_write(g->services.world, e->id, &body, error))
         return false;
     q1_actor *shot;

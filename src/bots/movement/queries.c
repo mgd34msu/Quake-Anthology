@@ -280,21 +280,6 @@ uint32_t bot_area_presence(bot_travel *t, uint32_t area) {
         qa_navigation_node(t->runtime, qa_bot_navigation_node(t->navigation, area));
     return node && node->source.kind == QA_NAV_ORIGIN_NAV3 && (node->flags & 512) ? 4 : 2;
 }
-qa_vec3 bot_vector_angles(qa_vec3 v) {
-    float yaw, pitch;
-    if (v.x == 0 && v.y == 0) {
-        yaw = 0;
-        pitch = v.z > 0 ? 90 : 270;
-    } else {
-        yaw = v.x != 0.0f ? atan2f(v.y, v.x) * (180.0f / 3.14159265358979323846f) : v.y > 0 ? 90 : 270;
-        if (yaw < 0)
-            yaw += 360;
-        pitch = atan2f(v.z, sqrtf(v.x * v.x + v.y * v.y)) * (180.0f / 3.14159265358979323846f);
-        if (pitch < 0)
-            pitch += 360;
-    }
-    return qa_v3(-pitch, yaw, 0);
-}
 static bool action_client(bot_travel *t, uint32_t *out, qa_error *e) {
     int32_t client=bot_move_integer(t->state,BM_CLIENT);
     if(t->moves->services.source_action_client)

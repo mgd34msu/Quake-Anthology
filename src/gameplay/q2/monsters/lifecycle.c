@@ -145,7 +145,7 @@ static bool set_route(q2m_context *context, qa_actor_id goal, bool spawn_dead, q
         monster->pause_ns = q2m_after(context->game->now_ns, 100000000.0);
         return spawn_dead || q2m_set_move(context, monster->definition->stand_move, false, error);
     }
-    qa_vec3 angles = q2m_vector_angles(qa_vec_sub(target.origin, context->body.origin));
+    qa_vec3 angles = qa_vec_angles(qa_vec_sub(target.origin, context->body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
     monster->ideal_yaw = context->body.angles.y = angles.y;
     if (!q2m_write_body(context, false, error))
         return false;

@@ -1366,25 +1366,10 @@ bool scene_model_source_pose_read(void *context, int32_t current, int32_t previo
 static bool model_submit(qa_scene_model *, const qa_scene_model_input *, qa_scene_frame *, unsigned, qa_error *);
 
 static void beam_axes(qa_vec3 direction, uint32_t roll_degrees, qa_model_transform *transform) {
-    const float pi = 3.14159265358979323846f;
-    float yaw = 0, pitch;
-    if (direction.x == 0 && direction.y == 0) pitch = direction.z > 0 ? 90 : 270;
-    else {
-        yaw = direction.x != 0 ? atan2f(direction.y, direction.x) * 180 / pi : direction.y > 0 ? 90 : 270;
-        if (yaw < 0) yaw += 360;
-        float forward = sqrtf(direction.x * direction.x + direction.y * direction.y);
-        pitch = atan2f(direction.z, forward) * 180 / pi;
-        if (pitch < 0) pitch += 360;
-    }
-    float yaw_radians = (float)(yaw * 0.01745329251994329577);
-    float pitch_radians = (float)(-pitch * 0.01745329251994329577);
-    float roll_radians = (float)(roll_degrees * 0.01745329251994329577);
-    float sy = sinf(yaw_radians), cy = cosf(yaw_radians), sp = sinf(pitch_radians), cp = cosf(pitch_radians);
-    float sr = sinf(roll_radians), cr = cosf(roll_radians);
-    model_store(transform->axes[0], qa_v3(cp * cy, cp * sy, -sp));
-    model_store(transform->axes[1], qa_v3(-((-sr * sp) * cy + (-cr * -sy)),
-        -((-sr * sp) * sy + (-cr * cy)), sr * cp));
-    model_store(transform->axes[2], qa_v3((cr * sp) * cy + (-sr * -sy), (cr * sp) * sy + (-sr * cy), cr * cp));
+    qa_vec3 angles=qa_vec_angles(direction,QA_DIRECTION_FLOAT_DIVIDE,QA_VECTOR_SOURCE),axis[3];
+    angles.z=(float)roll_degrees;
+    qa_angle_axis(angles,axis,QA_ANGLE_FLOAT_NATIVE_MATH);
+    for(size_t i=0;i<3;++i) model_store(transform->axes[i],axis[i]);
 }
 
 static bool model_beam(qa_scene_model *model, const qa_scene_model_input *input,

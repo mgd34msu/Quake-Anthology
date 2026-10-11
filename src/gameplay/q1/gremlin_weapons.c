@@ -132,15 +132,6 @@ static qa_vec3 aim_normalize(qa_vec3 value) {
     float magnitude = aim_float(sqrt((double)squared));
     return magnitude == 0 ? qa_v3(0, 0, 0) : aim_scale(value, 1.0 / (double)magnitude);
 }
-static qa_vec3 aim_angles(qa_vec3 direction) {
-    const double pi = 3.14159265358979323846264338327950288;
-    bool vertical = direction.x == 0 && direction.y == 0;
-    double yaw = vertical ? 0 : atan2((double)direction.y, direction.x) * 180 / pi;
-    double pitch = vertical ? (direction.z > 0 ? 90 : 270)
-        : atan2((double)direction.z, hypot((double)direction.x, direction.y)) * 180 / pi;
-    return qa_v3(aim_float(pitch < 0 ? pitch + 360 : pitch),
-                 aim_float(yaw < 0 ? yaw + 360 : yaw), 0);
-}
 static void aim_vectors(qa_q1_game *g, qa_vec3 angles) {
     const double pi = 3.14159265358979323846264338327950288;
     double yaw = (double)angles.y * pi / 180;
@@ -169,7 +160,7 @@ static bool aim(qa_q1_game *g, q1_actor **source, double spread, qa_vec3 *out, q
     if (!entity)
         return true;
     qa_vec3 direction = aim_normalize(qa_vec_sub(target.origin, body.origin));
-    qa_vec3 angles = aim_angles(direction);
+    qa_vec3 angles = qa_vec_angles(direction,QA_DIRECTION_NATIVE,QA_VECTOR_WRAPPED|QA_VECTOR_VERTICAL_CARDINAL|QA_VECTOR_WIDE_HORIZONTAL);
     entity->state.monster.source.gremlin.view_angles = angles;
     aim_vectors(g, angles);
     double right = ((double)q1_random(g) * 2 - 1) * spread;
@@ -225,7 +216,7 @@ static bool shotgun(qa_q1_game *g, q1_actor *entity, bool double_shot, qa_error 
         return false;
     if (!entity)
         return true;
-    qa_vec3 angles = aim_angles(direction);
+    qa_vec3 angles = qa_vec_angles(direction,QA_DIRECTION_NATIVE,QA_VECTOR_WRAPPED|QA_VECTOR_VERTICAL_CARDINAL|QA_VECTOR_WIDE_HORIZONTAL);
     entity->state.monster.source.gremlin.view_angles = angles;
     return q1_bullets(g, entity->id, direction, angles, double_shot ? 14 : 6,
                       double_shot ? 0.14f : 0.04f, double_shot ? 0.08f : 0.04f,

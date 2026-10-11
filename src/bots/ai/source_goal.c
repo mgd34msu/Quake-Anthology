@@ -85,7 +85,7 @@ static bool travel_time(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,uint3
     *time=route.travel_time;return true;
 }
 static void look_at(bot_ai_state *s,qa_vec3 target) {
-    qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,bot_ai_origin(s)));ideal.z*=.5f;
+    qa_vec3 ideal=qa_vec_angles(qa_vec_sub(target,bot_ai_origin(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);ideal.z*=.5f;
     bot_ai_view_ideal_set(s,ideal);
 }
 static bool crouch(qa_bots *b,bot_ai_state *s,qa_error *e) {
@@ -124,7 +124,7 @@ bool bot_ai_source_entity_visible(qa_bots *b,bot_ai_state *s,int32_t entity,
     qa_vec3 middle=qa_vec_add(info.state.origin,
         qa_vec_scale(qa_vec_add(info.state.mins,info.state.maxs),.5f));
     if(!qa_bot_field_of_vision(bot_ai_view_angles(s),fov,
-        bot_ai_angles(qa_vec_sub(middle,bot_ai_eye(s))))) return true;
+        qa_vec_angles(qa_vec_sub(middle,bot_ai_eye(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE))) return true;
     qa_bot_navigation *nav=navigation(b,s);
     int32_t point_contents;
     SOURCE_CALL(bot_ai_source_point_contents(b,bot_ai_eye(s),(qa_actor_id){0},&point_contents,e));

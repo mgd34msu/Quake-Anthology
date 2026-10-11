@@ -767,7 +767,7 @@ bool q2m_perception_alert(q2m_context *context, qa_actor_id target,
 }
 
 static float vector_yaw(qa_vec3 direction) {
-  return q2m_vector_angles(direction).y;
+  return qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).y;
 }
 
 static bool actor_traits(q2m_context *context, qa_actor_id id,
@@ -2020,7 +2020,7 @@ static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *e
         qa_vec_add(qa_vec_scale(forward, 17.48f),
             qa_vec_add(qa_vec_scale(right, .10f), qa_vec_scale(up, 68.92f))));
     qa_vec3 delta = qa_vec_sub(tongue, target.origin);
-    float pitch = q2m_vector_angles(delta).x;
+    float pitch = qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x;
     if (pitch < -180.0f)
       pitch += 360.0f;
     melee = monster->timestamp_ns < game->now_ns && distance < 300.0f &&

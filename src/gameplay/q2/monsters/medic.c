@@ -612,7 +612,7 @@ static bool cable(q2m_context *c, qa_error *error) {
     qa_vec3 direction = qa_vec_sub(start, target.body.origin);
     float distance = qa_vec_length(direction);
     if (!rogue(c)) {
-        float pitch = q2m_vector_angles(direction).x;
+        float pitch = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x;
         if (pitch < -180)
             pitch += 360;
         if (distance > 256 || fabsf(pitch) > 45)

@@ -222,7 +222,7 @@ static bool clear_path(qa_bots *b,bot_ai_state *s,qa_bot_move_result *result,qa_
     if(bot_ai_kamikaze_body(s)!=0 && !(result->flags&movement_aim)) {
         qa_q3_entity body;DECISION_CALL(bot_ai_source_current_entity(b,bot_ai_kamikaze_body(s),&body,e));
         qa_vec3 target=qa_v3(body.pos.base[0],body.pos.base[1],body.pos.base[2]+8);
-        result->ideal_view_angles=bot_ai_angles(qa_vec_sub(target,bot_ai_eye(s)));
+        result->ideal_view_angles=qa_vec_angles(qa_vec_sub(target,bot_ai_eye(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);
         DECISION_CALL(activation_weapon(b,s,false,&result->weapon,e));
         DECISION_CALL(clear_path_attack(b,s,&body,target,result,e));
     }
@@ -240,7 +240,7 @@ static bool clear_path(qa_bots *b,bot_ai_state *s,qa_bot_move_result *result,qa_
         if(best>=0) {
             qa_q3_entity mine;DECISION_CALL(bot_ai_source_current_entity(b,bot_ai_prox_mine(s,(uint32_t)best),&mine,e));
             qa_vec3 target=qa_v3(mine.pos.base[0],mine.pos.base[1],mine.pos.base[2]+2);
-            result->ideal_view_angles=bot_ai_angles(qa_vec_sub(target,bot_ai_eye(s)));
+            result->ideal_view_angles=qa_vec_angles(qa_vec_sub(target,bot_ai_eye(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);
             DECISION_CALL(activation_weapon(b,s,true,&result->weapon,e));
             DECISION_CALL(clear_path_attack(b,s,&mine,target,result,e));
         }
@@ -450,7 +450,7 @@ static bool movement_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
         float random;DECISION_CALL(bot_ai_random(b,&random,e));
         if(random<bot_ai_think_time(s)*.8f) {
             qa_vec3 target;DECISION_CALL(bot_ai_source_roam_goal(b,s,&target,e));
-            qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,bot_ai_origin(s)));ideal.z*=.5f;
+            qa_vec3 ideal=qa_vec_angles(qa_vec_sub(target,bot_ai_origin(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);ideal.z*=.5f;
             bot_ai_view_ideal_set(s,ideal);
         }
     } else if(!seeking || !bot_ai_flag(s,BOT_AI_IDEAL_VIEW_SET)) {
@@ -462,16 +462,16 @@ static bool movement_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
             if(!found) view_goal=*goal;
         }
         DECISION_CALL(qa_bot_moves_view_target(moves(b),s->movement,&view_goal,bot_ai_travel_flags(s),300,&target,&found,e));
-        if(found) bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(target,seeking?bot_ai_origin(s):bot_ai_eye(s))));
+        if(found) bot_ai_view_ideal_set(s,qa_vec_angles(qa_vec_sub(target,seeking?bot_ai_origin(s):bot_ai_eye(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE));
         else if(node==QA_BOT_SEEK_LONG_TERM && qa_vec_dot(result->direction,result->direction)==0) {
             float random;DECISION_CALL(bot_ai_random(b,&random,e));
             if(random<bot_ai_think_time(s)*.8f) {
                 DECISION_CALL(bot_ai_source_roam_goal(b,s,&target,e));
-                qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,bot_ai_origin(s)));ideal.z*=.5f;
+                qa_vec3 ideal=qa_vec_angles(qa_vec_sub(target,bot_ai_origin(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);ideal.z*=.5f;
                 bot_ai_view_ideal_set(s,ideal);
             }
         } else if(seeking || qa_vec_length(result->direction)>0)
-            bot_ai_view_ideal_set(s,bot_ai_angles(result->direction));
+            bot_ai_view_ideal_set(s,qa_vec_angles(result->direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE));
         qa_vec3 ideal=bot_ai_view_ideal(s);bot_ai_view_ideal_axis_set(s,2,ideal.z*.5f);
     }
     if(result->flags&QA_BOT_MOVE_WEAPON) bot_ai_weapon_number_set(s,result->weapon);
@@ -494,7 +494,7 @@ static bool source_battle_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goa
         else {
             qa_vec3 target;bool found;
             DECISION_CALL(qa_bot_moves_view_target(moves(b),s->movement,goal,bot_ai_travel_flags(s),300,&target,&found,e));
-            bot_ai_view_ideal_set(s,bot_ai_angles(found?qa_vec_sub(target,bot_ai_origin(s)):result->direction));
+            bot_ai_view_ideal_set(s,qa_vec_angles(found?qa_vec_sub(target,bot_ai_origin(s)):result->direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE));
         }
         if(node==QA_BOT_CHASING || !aim) {
             qa_vec3 ideal=bot_ai_view_ideal(s);bot_ai_view_ideal_axis_set(s,2,ideal.z*.5f);
@@ -682,7 +682,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                         DECISION_CALL(bot_ai_source_player_word(b,s,BOT_PS_WEAPON,&held,e));
                         activation=bot_ai_activation_read(s,index);
                         if(held==activation.weapon) {
-                            qa_vec3 aim=bot_ai_angles(qa_vec_sub(activation.target,bot_ai_eye(s)));
+                            qa_vec3 aim=qa_vec_angles(qa_vec_sub(activation.target,bot_ai_eye(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);
                             if(qa_bot_field_of_vision(bot_ai_view_angles(s),20,aim))
                                 DECISION_CALL(bot_ai_source_action(b,s,QA_BOT_ATTACK,e));
                         }
@@ -718,7 +718,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 activation=bot_ai_activation_read(s,index);
                 if(activation.shoot) {
                     if(!(result.flags&QA_BOT_MOVE_VIEW)) {
-                        result.ideal_view_angles=bot_ai_angles(qa_vec_sub(activation.target,bot_ai_eye(s)));
+                        result.ideal_view_angles=qa_vec_angles(qa_vec_sub(activation.target,bot_ai_eye(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);
                         result.flags|=QA_BOT_MOVE_VIEW;
                     }
                     if(!(result.flags&QA_BOT_MOVE_WEAPON)) {

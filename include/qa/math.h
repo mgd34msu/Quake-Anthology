@@ -14,7 +14,7 @@ typedef struct qa_vec3 { float x, y, z; } qa_vec3;
 typedef struct qa_vec4 { float x, y, z, w; } qa_vec4;
 typedef struct qa_bounds { qa_vec3 mins, maxs; } qa_bounds;
 typedef enum qa_angle_math_rule {
-    QA_ANGLE_FLOAT_MATH, QA_ANGLE_NATIVE_MATH, QA_ANGLE_VM_MATH
+    QA_ANGLE_FLOAT_MATH, QA_ANGLE_NATIVE_MATH, QA_ANGLE_VM_MATH, QA_ANGLE_FLOAT_NATIVE_MATH
 } qa_angle_math_rule;
 /* Native qsrc rounds a double radian product to float before sin/cos;
  * compiled VM code uses a float product. FLOAT retains sinf/cosf consumers. */
@@ -24,6 +24,21 @@ void qa_axis_multiply(const qa_vec3 left[3],const qa_vec3 right[3],qa_vec3 out[3
 qa_vec3 qa_vec_perpendicular(qa_vec3);
 qa_vec3 qa_vec_rotate_around(qa_vec3 axis,qa_vec3 point,float degrees);
 float qa_inverse_sqrt(float);
+typedef enum qa_direction_math_rule {
+    QA_DIRECTION_FLOAT, QA_DIRECTION_FLOAT_RATIO, QA_DIRECTION_FLOAT_DIVIDE,
+    QA_DIRECTION_VM, QA_DIRECTION_NATIVE, QA_DIRECTION_INTEGER, QA_DIRECTION_GEAR
+} qa_direction_math_rule;
+enum qa_vector_angle_flags {
+    QA_VECTOR_NEGATIVE_PITCH=1u, QA_VECTOR_WRAP_YAW=2u, QA_VECTOR_WRAP_PITCH=4u,
+    QA_VECTOR_SQUARED_HORIZONTAL=8u, QA_VECTOR_VERTICAL_CARDINAL=16u,
+    QA_VECTOR_VERTICAL_SIGNED=32u, QA_VECTOR_WIDE_HORIZONTAL=64u,
+    QA_VECTOR_NEGATE_BEFORE_WRAP=128u,
+    QA_VECTOR_VIEW=QA_VECTOR_NEGATIVE_PITCH|QA_VECTOR_WRAP_YAW,
+    QA_VECTOR_WRAPPED=QA_VECTOR_WRAP_YAW|QA_VECTOR_WRAP_PITCH,
+    QA_VECTOR_SOURCE=QA_VECTOR_VIEW|QA_VECTOR_WRAP_PITCH|QA_VECTOR_SQUARED_HORIZONTAL|QA_VECTOR_VERTICAL_CARDINAL
+};
+float qa_vec_yaw(qa_vec3,qa_direction_math_rule,bool wrap);
+qa_vec3 qa_vec_angles(qa_vec3,qa_direction_math_rule,unsigned flags);
 
 #define QA_BYTE_NORMAL_COUNT 162u
 extern const qa_vec3 qa_byte_normals[QA_BYTE_NORMAL_COUNT];

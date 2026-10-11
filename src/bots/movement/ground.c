@@ -92,7 +92,7 @@ static bool water_jump(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_
             return false;
     }
     out->direction = direction;
-    out->ideal_view_angles = bot_vector_angles(direction);
+    out->ideal_view_angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
     out->flags |= QA_BOT_MOVE_VIEW;
     return true;
 }
@@ -169,7 +169,7 @@ bool bot_ground_travel(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_
         direction = qa_vec_normalize(qa_vec_sub(r->start, bot_move_vector(s,BM_ORIGIN)));
         if (!bot_blocked(t, direction, true, out, e))
             return false;
-        out->ideal_view_angles = bot_vector_angles(direction);
+        out->ideal_view_angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
         out->flags |= QA_BOT_MOVE_SWIM_VIEW;
         break;
     case BOT_WATER_JUMP:
@@ -211,7 +211,7 @@ bool bot_ground_travel(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_
     case BOT_LADDER:
         direction = qa_vec_normalize(qa_vec_sub(r->end, bot_move_vector(s,BM_ORIGIN)));
         out->ideal_view_angles =
-            bot_vector_angles(qa_v3(direction.x, direction.y, 3 * direction.z));
+            qa_vec_angles(qa_v3(direction.x, direction.y, 3 * direction.z),QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
         if (!bot_move_action(t, qa_v3(0, 0, 0), 0, e) ||
             !bot_flag_action(t, QA_BOT_MOVE_FORWARD, e))
             return false;

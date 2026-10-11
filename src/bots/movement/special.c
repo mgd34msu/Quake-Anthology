@@ -251,7 +251,7 @@ static bool weapon_jump(bot_travel *t, const bot_reach *r, bool airborne, qa_bot
         qa_vec3 offset = bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->start);
         float distance = qa_vec_length(offset);
         direction = qa_vec_normalize(offset);
-        out->ideal_view_angles = bot_vector_angles(direction);
+        out->ideal_view_angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
         out->ideal_view_angles.x = 90;
         if (distance < 5 &&
             fabsf(qa_angle_subtract(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 5 &&
@@ -263,7 +263,7 @@ static bool weapon_jump(bot_travel *t, const bot_reach *r, bool airborne, qa_bot
             bot_move_write_word(state,BM_JUMP_REACH,bot_move_word(state,BM_LAST_REACHABILITY));
         } else if (!bot_move_action(t, direction, 400 - (400 - 5 * fminf(distance, 80)), e))
             return false;
-        out->ideal_view_angles = bot_vector_angles(direction);
+        out->ideal_view_angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
         out->ideal_view_angles.x = 90;
         if (!bot_view_action(t,out->ideal_view_angles,e))
             return false;
@@ -380,7 +380,7 @@ static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, 
     qa_vec3 direction = qa_vec_normalize(offset);
     float distance = qa_vec_length(offset);
     qa_vec3 eye = qa_vec_add(bot_move_vector(s,BM_ORIGIN), bot_move_vector(s,BM_VIEW_OFFSET));
-    out->ideal_view_angles = bot_vector_angles(qa_vec_sub(r->end, eye));
+    out->ideal_view_angles = qa_vec_angles(qa_vec_sub(r->end, eye),QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
     out->flags |= QA_BOT_MOVE_VIEW;
     if (distance < 5 &&
         fabsf(qa_angle_subtract(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 2 &&

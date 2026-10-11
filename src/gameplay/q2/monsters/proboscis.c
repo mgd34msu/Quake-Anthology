@@ -258,7 +258,7 @@ static bool think(qa_q2_game *game, q2_actor *tip, qa_error *error) {
             return false;
         if (!q2_actor_live(game, id) || !q2m_alive(&owner))
             return true;
-        body.angles = q2m_vector_angles(qa_vec_normalize(qa_vec_sub(body.origin, from)));
+        body.angles = qa_vec_angles(qa_vec_normalize(qa_vec_sub(body.origin, from)),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
         if (!move_part(game, id, &body, error))
             return false;
         if (!q2_actor_live(game, id) || !q2m_alive(&owner))
@@ -338,7 +338,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
                                     .contents = qa_collision_q2_source_contents(2, 128, true), .owner = owner_reference, .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
     qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = classname,
-        .body = {.origin = from, .angles = q2m_vector_angles(direction),
+        .body = {.origin = from, .angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW),
                   .velocity = segment ? qa_v3(0, 0, 0) : qa_vec_scale(direction, 1250)},
         .collision = segment ? NULL : &collision, .combat = segment ? NULL : &combat};
     qa_actor_id id;

@@ -3,10 +3,6 @@
 #include "qa/game_q2_source.h"
 #include "qa/text.h"
 
-static qa_vec3 angles_for(qa_vec3 direction) {
-    return qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-                 atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
-}
 static bool show_frame(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_ANIMATION,
                               .family = QA_GAME_Q2,
@@ -242,8 +238,8 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
     if (!q2_actor_live(g, a->id))
         return true;
     qa_vec3 right;
-    qa_angle_vectors(angles_for(contact->plane.normal), NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
-    body.angles = angles_for(right);
+    qa_angle_vectors(qa_vec_angles(contact->plane.normal,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH), NULL, &right, NULL,QA_ANGLE_FLOAT_MATH);
+    body.angles = qa_vec_angles(right,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH);
     if (!qa_world_body_write(g->services.world, a->id, &body, e))
         return false;
     if (!q2_actor_live(g, a->id))

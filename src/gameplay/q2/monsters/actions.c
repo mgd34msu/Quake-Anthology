@@ -443,21 +443,10 @@ static bool visible_enemy(q2m_context *context, bool *visible,
   return q2m_visible(context, context->monster->enemy, visible, error);
 }
 
-qa_vec3 q2m_vector_angles(qa_vec3 direction) {
-  float yaw = direction.x == 0.0f && direction.y == 0.0f
-                  ? 0.0f
-                  : atan2f(direction.y, direction.x) * 57.29577951308232f;
-  if (yaw < 0.0f)
-    yaw += 360.0f;
-  return qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) *
-                   57.29577951308232f,
-               yaw, 0.0f);
-}
-
 static qa_vec3 spread_direction(q2m_context *context, qa_vec3 direct,
                                 float horizontal, float vertical) {
   qa_vec3 forward, right, up;
-  qa_angle_vectors(q2m_vector_angles(direct), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
+  qa_angle_vectors(qa_vec_angles(direct,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   float r = q2m_crandom(context->game) * horizontal;
   float u = q2m_crandom(context->game) * vertical;
   return qa_vec_normalize(
@@ -1814,7 +1803,7 @@ static bool widow_blaster(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
       return true;
     qa_vec3 angles = context->body.angles;
-    angles.x += q2m_vector_angles(qa_vec_sub(enemy.origin, start)).x;
+    angles.x += qa_vec_angles(qa_vec_sub(enemy.origin, start),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x;
     angles.y -= sweep[index];
     qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   } else if (frame >= 61 && frame <= 79) {
@@ -1837,7 +1826,7 @@ static bool widow_blaster(q2m_context *context, qa_error *error) {
       return false;
     if (!q2m_alive(context) || !available)
       return true;
-    qa_vec3 angles = q2m_vector_angles(direction);
+    qa_vec3 angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
     float yaw = context->body.angles.y;
     float aim = 100.0f - 10.0f * (float)(flash - 165);
     if (aim <= 0.0f)
@@ -1923,7 +1912,7 @@ static bool widow2_beam(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
       return true;
     qa_vec3 angles = context->body.angles;
-    angles.x += q2m_vector_angles(qa_vec_sub(enemy.origin, start)).x;
+    angles.x += qa_vec_angles(qa_vec_sub(enemy.origin, start),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x;
     angles.y -= -40.0f + (float)index * 8.0f;
     qa_angle_vectors(angles, &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   } else {
@@ -1965,7 +1954,7 @@ static bool widow2_tongue_point(q2m_context *context, qa_vec3 *start) {
 static bool widow2_tongue_reaches(qa_vec3 start, qa_vec3 end) {
   qa_vec3 delta = qa_vec_sub(start, end);
   return qa_vec_length(delta) <= 256.0f &&
-         fabsf(q2m_vector_angles(delta).x) <= 30.0f;
+         fabsf(qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x) <= 30.0f;
 }
 
 static bool widow2_tongue(q2m_context *context, qa_error *error) {
@@ -2041,7 +2030,7 @@ static bool widow2_pull(q2m_context *context, qa_error *error) {
         return !q2m_alive(context) || !q2m_alive(&target);
       if (!q2m_alive(context))
         return true;
-      target.monster->ideal_yaw = q2m_vector_angles(delta).y;
+      target.monster->ideal_yaw = qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).y;
       if (!q2m_change_yaw(&target, error))
         return false;
       if (!q2m_alive(context) || !q2_actor_live(context->game, enemy_id))
@@ -3211,7 +3200,7 @@ static bool makron_hyperblaster(q2m_context *context, qa_error *error) {
   if (available) {
     qa_vec3 eye = enemy.origin;
     eye.z += traits.view_height;
-    pitch = q2m_vector_angles(qa_vec_sub(eye, start)).x;
+    pitch = qa_vec_angles(qa_vec_sub(eye, start),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x;
   }
   float yaw = context->body.angles.y;
   yaw += frame <= 221 ? -10.0f * (float)(frame - 221)
@@ -3374,7 +3363,7 @@ static bool tank_machinegun(q2m_context *context, qa_error *error) {
   if (available) {
     qa_vec3 eye = enemy.origin;
     eye.z += traits.view_height;
-    pitch = q2m_vector_angles(qa_vec_sub(eye, start)).x;
+    pitch = qa_vec_angles(qa_vec_sub(eye, start),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).x;
   }
   float yaw = context->body.angles.y;
   yaw += frame <= 182 ? -8.0f * (float)(frame - 178)
@@ -3404,7 +3393,7 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
                              bool *available, qa_error *error) {
   static const float pitches[] = {-80.0f, -70.0f, -60.0f, -50.0f, -40.0f,
                                   -30.0f, -20.0f, -10.0f, -5.0f};
-  qa_vec3 angles = q2m_vector_angles(aim);
+  qa_vec3 angles = qa_vec_angles(aim,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
   float best_pitch = 0.0f;
   float best_distance = FLT_MAX;
   *available = false;
@@ -3873,7 +3862,7 @@ static bool turret_aim(q2m_context *context, qa_error *error) {
                                          : enemy.bounds.mins.z - 10;
   } else if (traits.player)
     point.z += traits.view_height;
-  qa_vec3 ideal = q2m_vector_angles(qa_vec_sub(point, context->body.origin));
+  qa_vec3 ideal = qa_vec_angles(qa_vec_sub(point, context->body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
   switch (context->monster->turret_orientation) {
   case -1:
     if (ideal.x < -90) ideal.x += 360;
@@ -4414,7 +4403,7 @@ static bool fixbot_vertical(q2m_context *context, bool approach, qa_error *error
   if (!qa_world_body_read(context->game->services.world, goal, &body, error))
     return !q2_actor_live(context->game, goal);
   qa_vec3 difference = qa_vec_sub(body.origin, context->body.origin);
-  context->monster->ideal_yaw = q2m_vector_angles(difference).y;
+  context->monster->ideal_yaw = qa_vec_angles(difference,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).y;
   if (!q2m_change_yaw(context, error)) return false;
   if (!q2m_alive(context)) return true;
   int frame = context->monster->frame;
@@ -4559,7 +4548,7 @@ static bool callback_widow_attack_rail_14(q2m_context *context, q2m_callback_id 
     if (!q2m_alive(context) || !available)
         return true;
     float angle = context->body.angles.y -
-                  q2m_vector_angles(qa_vec_sub(context->body.origin, enemy.origin)).y;
+                  qa_vec_angles(qa_vec_sub(context->body.origin, enemy.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).y;
     if (angle < 0)
         angle += 360;
     angle -= 180;

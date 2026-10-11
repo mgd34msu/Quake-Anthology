@@ -7,10 +7,6 @@ static float normalize_angle(float a) {
     return v < 0 ? v + 360 : v == 0 && a > 0 ? 360 : v;
 }
 static float short_angle(float a) { return a < -180 ? a + 360 : a > 180 ? a - 360 : a; }
-static qa_vec3 vector_angles(qa_vec3 direction) {
-    return qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-                 atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
-}
 static float snap(float value) { return truncf(value * 8 + (value > 0 ? .5f : -.5f)) * .125f; }
 static q2_actor *master(qa_q2_game *g, q2_actor *a) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
@@ -150,7 +146,7 @@ static bool driver_link(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     qa_vec3 delta = qa_vec_sub(body.origin, target.origin);
     t->radius = hypotf(delta.x, delta.y);
-    t->yaw_offset = normalize_angle(vector_angles(delta).y);
+    t->yaw_offset = normalize_angle(qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH).y);
     t->height = delta.z;
     body.angles = target.angles;
     a->physics.flags |= QA_PHYSICS_TEAM_SLAVE;
@@ -205,7 +201,7 @@ bool q2_turret_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error
     if (g->services.actor_traits)
         g->services.actor_traits(g->services.context, enemy, &traits);
     to.origin.z += traits.view_height;
-    breach->entity->turret->goal = vector_angles(qa_vec_sub(to.origin, from.origin));
+    breach->entity->turret->goal = qa_vec_angles(qa_vec_sub(to.origin, from.origin),QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH);
     if (ready)
         breach->entity->spawnflags |= 65536;
     return true;

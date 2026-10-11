@@ -87,7 +87,7 @@ static bool goal_area(bot_travel *t, const qa_bot_move_goal_source *goal, qa_bot
         return false;
     out->direction = direction;
     if (swimming) {
-        out->ideal_view_angles = bot_vector_angles(direction);
+        out->ideal_view_angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
         out->flags |= QA_BOT_MOVE_SWIM_VIEW;
     }
     bot_move_set_reach(state, 0);

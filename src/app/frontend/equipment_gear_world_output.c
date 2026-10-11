@@ -19,21 +19,6 @@ struct frontend_equipment_gear_world_output {
 static qa_vec3 scaled(qa_vec3 vector, double scale)
 { return qa_v3(((float)(vector.x * scale)), ((float)(vector.y * scale)), ((float)(vector.z * scale))); }
 
-static qa_vec3 vector_angles(qa_vec3 vector)
-{
-    float yaw, pitch, pi = 3.14159274101257324219f;
-    if (vector.x == 0 && vector.y == 0) {
-        yaw = 0; pitch = vector.z > 0 ? 90 : 270;
-    } else {
-        yaw = vector.x != 0 ? ((float)((((float)(atan2(vector.y, vector.x))) * 180) / (double)pi)) :
-            vector.y > 0 ? 90 : 270;
-        if (yaw < 0) yaw = (yaw + 360);
-        float forward = ((float)(sqrt(((vector.x * vector.x) + (vector.y * vector.y)))));
-        pitch = ((float)((((float)(atan2(vector.z, forward))) * 180) / (double)pi));
-        if (pitch < 0) pitch = (pitch + 360);
-    }
-    return qa_v3(-pitch, yaw, 0);
-}
 static bool source_current(const frontend_equipment_gear_world_output *output)
 {
     return output && output->owner && output->current(output->context) &&
@@ -158,7 +143,7 @@ bool frontend_equipment_gear_world_prepare(qa_frontend *frontend,
         }
         if (okay) {
             qa_vec3 direction = distance == 0 ? qa_v3(0, 0, 0) : scaled(delta, ((float)(1.0 / distance)));
-            qa_q3_ref_entity ref = model_ref(handle, source->tether_body.origin, vector_angles(direction));
+            qa_q3_ref_entity ref = model_ref(handle, source->tether_body.origin, qa_vec_angles(direction,QA_DIRECTION_GEAR,QA_VECTOR_SOURCE));
             for (size_t i = 0; i < output->segment_count; ++i) {
                 ref.origin = qa_vec_sub(output->start, scaled(direction, (double)(i + 1) * segment));
                 if (!qa_vec_finite(ref.origin)) { okay = frontend_fail(error, QA_ERROR_FORMAT, "World cable segment leaves finite scene coordinates"); break; }

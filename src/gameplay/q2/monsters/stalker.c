@@ -199,7 +199,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
             return true;
     }
     qa_vec3 delta = qa_vec_sub(enemy->origin, c->body.origin);
-    qa_vec3 angles = q2m_vector_angles(delta);
+    qa_vec3 angles = qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
     if (!isfinite(angles.y) ||
         (c->game->options.edition == QA_Q2_RERELEASE
              ? fabsf(angles.y - c->body.angles.y)
@@ -439,7 +439,7 @@ static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accep
         if (!q2m_alive(c))
             return true;
         if (wall.fraction < 1 && !wall.all_solid && !wall.start_solid && wall.contact) {
-            c->monster->ideal_yaw = q2m_vector_angles(wall.contact_plane.normal).y + 180;
+            c->monster->ideal_yaw = qa_vec_angles(wall.contact_plane.normal,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW).y + 180;
             if (c->monster->ideal_yaw > 360)
                 c->monster->ideal_yaw -= 360;
             if (!q2m_change_yaw(c, error))

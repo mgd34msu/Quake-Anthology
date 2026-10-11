@@ -20,14 +20,6 @@ static int32_t source_milliseconds(float seconds) {
     return qa_source_float_to_i32(seconds * 1000.0f);
 }
 
-static qa_vec3 vector_angles(qa_vec3 direction) {
-    float horizontal = sqrtf(direction.x * direction.x + direction.y * direction.y);
-    if (horizontal == 0)
-        return qa_v3(direction.z > 0 ? -90.0f : 90.0f, 0, 0);
-    return qa_v3(-atan2f(direction.z, horizontal) * (180.0f / Q3_PI),
-                 atan2f(direction.y, direction.x) * (180.0f / Q3_PI), 0);
-}
-
 static bool player_spectator(qa_q3_game *game, qa_actor_id actor) {
     q3_actor *player = q3_actor_get(game, actor);
     if (player && player->kind == Q3_ACTOR_PLAYER)
@@ -945,7 +937,7 @@ static bool door_trigger_touch(qa_q3_game *game, qa_q3_map_actor_state *trigger,
                                                  trigger->bounds.maxs), 0.5f);
         origin = with_component(origin, axis,
                                 toward_minimum ? minimum - 10 : maximum + 10);
-        return qa_q3_teleport(game, other, origin, vector_angles(direction), error);
+        return qa_q3_teleport(game, other, origin, qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_NEGATIVE_PITCH|QA_VECTOR_SQUARED_HORIZONTAL|QA_VECTOR_VERTICAL_SIGNED), error);
     }
     return mover->state.mover.state_index == 2 ||
            qa_q3_use_mover(game, parent->actor, other, error);

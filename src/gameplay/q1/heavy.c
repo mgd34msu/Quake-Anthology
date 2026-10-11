@@ -10,11 +10,6 @@ static qa_vec3 target(qa_q1_game *g, q1_actor *e) {
                ? value.origin
                : qa_v3(0, 0, 0);
 }
-static qa_vec3 angles(qa_vec3 direction) {
-    return qa_v3(qa_angle_wrap(atan2f(direction.z, hypotf(direction.x, direction.y)) *
-                                      57.29577951308232f),
-                 qa_angle_wrap(atan2f(direction.y, direction.x) * 57.29577951308232f), 0);
-}
 static float signed_random(qa_q1_game *g) { return 2 * q1_random(g) - 1; }
 static bool bloody(qa_q1_game *g) { return (qa_q1_game_campaign_flags(g) & 64) != 0; }
 static bool remove_child(qa_q1_game *g, q1_actor *e, qa_error *error) {
@@ -117,7 +112,7 @@ static bool shambler_shot(qa_q1_game *g, q1_actor *e, float y, float z, qa_vec3 
     qa_body_state value;
     if (!body(g, e, &value, error))
         return false;
-    qa_vec3 aim = angles(qa_vec_sub(target(g, e), value.origin));
+    qa_vec3 aim = qa_vec_angles(qa_vec_sub(target(g, e), value.origin),QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED);
     if (hands) {
         aim.y += y * (12 + signed_random(g) * 4);
         aim.x += z * (12 + signed_random(g) * 4);
@@ -274,7 +269,7 @@ static bool rune_shot(qa_q1_game *g, q1_actor *e, float offset, unsigned variant
     qa_vec3 center = qa_vec_add(
         value.origin, qa_vec_scale(qa_vec_add(value.bounds.mins, value.bounds.maxs), .5f));
     if (!variant) {
-        qa_vec3 aim = angles(delta);
+        qa_vec3 aim = qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED);
         aim.y += offset * 6;
         qa_angle_vectors(aim, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
         origin = qa_vec_add(center, qa_vec_scale(g->forward, 20));

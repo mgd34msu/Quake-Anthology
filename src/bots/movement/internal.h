@@ -156,7 +156,6 @@ bool bot_air_control(bot_travel *, qa_vec3, bool *, qa_vec3 *, float *, qa_error
 bool bot_jump_speed(bot_travel *, qa_vec3, qa_vec3, float, float *, qa_error *);
 bool bot_jump_run_start(bot_travel *, const bot_reach *, qa_vec3 *, qa_error *);
 uint32_t bot_area_presence(bot_travel *, uint32_t);
-qa_vec3 bot_vector_angles(qa_vec3);
 bool bot_move_action(bot_travel *, qa_vec3, float, qa_error *);
 bool bot_flag_action(bot_travel *, uint32_t, qa_error *);
 bool bot_jump_action(bot_travel *, bool, qa_error *);

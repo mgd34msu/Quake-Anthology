@@ -180,19 +180,6 @@ bool q3n_particles_weapon_explosion(void *context, const q3n_frame *f, const cha
     if (!f || context!=f->particles) return q3np_fail(error,QA_ERROR_ARGUMENT,"Native rocket requires its real particle child");
     return q3n_particles_explosion(f,name,origin,velocity,duration,start_size,end_size,error);
 }
-static qa_vec3 vector_angles(qa_vec3 v)
-{
-    float yaw,pitch;
-    if (v.x==0 && v.y==0) { yaw=0; pitch=v.z>0?90:270; }
-    else {
-        yaw=v.x!=0?(((float)atan2((double)v.y,(double)v.x) * 180) / 3.14159274101257324219f):v.y>0?90:270;
-        if (yaw<0) yaw=(yaw + 360);
-        float forward=(float)sqrt((double)((v.x * v.x) + (v.y * v.y)));
-        pitch=(((float)atan2((double)v.z,(double)forward) * 180) / 3.14159274101257324219f);
-        if (pitch<0) pitch=(pitch + 360);
-    }
-    return qa_v3(-pitch,yaw,0);
-}
 static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *error)
 {
     float ratio=(((float)f->time + -p->time) / (p->end_time + -p->time));
@@ -209,7 +196,7 @@ static bool draw(const q3n_frame *f, q3n_particle *p, qa_vec3 origin, qa_error *
     p->shader=f->particles->shaders[index];
     qa_vec3 right=f->refdef.axis[1],up=f->refdef.axis[2];
     if (p->roll) {
-        qa_vec3 angles=vector_angles(f->refdef.axis[0]),axis[3]; angles.z=(angles.z + (float)p->roll);
+        qa_vec3 angles=qa_vec_angles(f->refdef.axis[0],QA_DIRECTION_VM,QA_VECTOR_SOURCE),axis[3]; angles.z=(angles.z + (float)p->roll);
         qa_angle_axis(angles,axis,QA_ANGLE_VM_MATH); right=qa_vec_scale(axis[1],-1); up=axis[2];
     }
     qa_q3_poly_vertex vertices[4]={0};
@@ -226,7 +213,7 @@ bool q3n_particles_add(const q3n_frame *f, qa_error *error)
     if (!current(f,error) || !q3n_particles_idle(f->particles)) return false;
     q3n_particles *o=f->particles; o->busy=true;
     memcpy(o->view_axes,f->refdef.axis,sizeof(o->view_axes));
-    qa_vec3 angles=vector_angles(o->view_axes[0]);
+    qa_vec3 angles=qa_vec_angles(o->view_axes[0],QA_DIRECTION_VM,QA_VECTOR_SOURCE);
     o->view_roll=(o->view_roll + (((float)f->time + -o->old_time) * 0.1f));
     angles.z=(angles.z + (o->view_roll * 0.9f)); qa_angle_axis(angles,o->rotated_axes,QA_ANGLE_VM_MATH);
     o->rotated_axes[1]=qa_vec_scale(o->rotated_axes[1],-1); o->old_time=(float)f->time;

@@ -1,11 +1,5 @@
 #include "internal.h"
 
-static qa_vec3 angles_for(qa_vec3 direction) {
-    float planar = hypotf(direction.x, direction.y);
-    return qa_v3(planar == 0 ? (direction.z > 0 ? -90 : 90)
-                             : -atan2f(direction.z, planar) * 57.29577951308232f,
-                 planar == 0 ? 0 : atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
-}
 static float turn(float current, float ideal, float speed) {
     current = qa_angle_mod(current,QA_ANGLE_WORD_PRECISE);
     float move = ideal - current;
@@ -92,7 +86,7 @@ static bool eye(qa_q2_game *g, q2_actor *a, qa_error *e) {
             qa_vec_add(body.origin, qa_vec_add(qa_vec_add(qa_vec_scale(forward, v->eye_position.x),
                                                           qa_vec_scale(right, v->eye_position.y)),
                                                qa_vec_scale(up, v->eye_position.z)));
-        wanted = angles_for(qa_vec_normalize(qa_vec_sub(target.origin, point)));
+        wanted = qa_vec_angles(qa_vec_normalize(qa_vec_sub(target.origin, point)),QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH|QA_VECTOR_VERTICAL_SIGNED);
         s->visual.frame = 2;
         s->timestamp_ns = q2_deadline(g->now_ns, q2_item_seconds(s->wait));
     } else if (s->timestamp_ns <= g->now_ns) {
@@ -118,7 +112,7 @@ static bool look_at(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 *angles,
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, target, &body, e))
         return false;
-    *angles = angles_for(qa_vec_sub(body.origin, origin));
+    *angles = qa_vec_angles(qa_vec_sub(body.origin, origin),QA_DIRECTION_FLOAT,QA_VECTOR_NEGATIVE_PITCH|QA_VECTOR_VERTICAL_SIGNED);
     return true;
 }
 static bool event(qa_q2_game *g, q2_actor *a, qa_error *e) {

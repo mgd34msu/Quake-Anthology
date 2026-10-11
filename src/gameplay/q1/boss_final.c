@@ -132,7 +132,7 @@ static bool blast(qa_q1_game *g, q1_actor *e, qa_vec3 offset, float spread, bool
     float speed = g->options.skill > 2 ? 500 : g->options.skill > 0 ? 450 : 400;
     float width = .15f + .2f * fabsf(spread);
     unsigned count = (unsigned)floorf(q1_random(g) * 6 + .5f);
-    qa_vec3 angles = q1_boss_angles(qa_vec_sub(target.origin, body.origin)), origin;
+    qa_vec3 angles = qa_vec_angles(qa_vec_sub(target.origin, body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED), origin;
     if (!muzzle(g, e, offset, angles, &origin, error))
         return false;
     qa_angle_vectors(angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
@@ -226,7 +226,7 @@ static bool missile(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error)
     if (!read(g, e, &body, error))
         return false;
     qa_vec3 target = q1_boss_target(g, e), origin;
-    if (!muzzle(g, e, offset, q1_boss_angles(qa_vec_sub(target, body.origin)), &origin, error))
+    if (!muzzle(g, e, offset, qa_vec_angles(qa_vec_sub(target, body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED), &origin, error))
         return false;
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target, origin));
     q1_actor *shot;
@@ -263,7 +263,7 @@ static bool upgrade(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_vec3 direction = qa_vec_sub(q1_boss_target(g, e), body.origin);
         direction.z = 0;
         qa_body_state spawn = {.origin = qa_vec_add(body.origin, qa_v3(0, 0, 60)),
-                               .angles = q1_boss_angles(qa_vec_normalize(direction))};
+                               .angles = qa_vec_angles(qa_vec_normalize(direction),QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED)};
         q1_actor *spiral;
         if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], Q1_CHILD_FINAL_SPIRAL, e->id, &spiral, error))
             return false;

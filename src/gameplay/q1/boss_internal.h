@@ -6,7 +6,6 @@
 extern const qa_vec3 q1_boss_sphere_points[100];
 bool q1_boss_first_player(qa_q1_game *, q1_ref *, qa_error *);
 bool q1_final_end(qa_q1_game *, qa_error *);
-qa_vec3 q1_boss_angles(qa_vec3);
 bool q1_boss_colored_explosion(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_boss_damageable(qa_q1_game *, q1_actor *, bool, qa_error *);
 bool q1_boss_child_create(qa_q1_game *, qa_string_id, q1_boss_child_kind, qa_actor_id owner,

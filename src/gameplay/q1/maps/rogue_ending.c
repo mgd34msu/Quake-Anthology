@@ -4,16 +4,6 @@ static q1_actor *ending_actor(qa_q1_game *g, qa_actor_id id) {
     q1_actor *actor = q1_entity(g, id);
     return actor && actor->map && actor->map->kind == Q1_MAP_ENDING_ACTOR ? actor : NULL;
 }
-static qa_vec3 velocity_angles(qa_vec3 direction) {
-    float yaw = 0, pitch;
-    if (direction.x == 0 && direction.y == 0)
-        pitch = direction.z > 0 ? 90 : 270;
-    else {
-        yaw = atan2f(direction.y, direction.x) * 57.29577951308232f;
-        pitch = atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f;
-    }
-    return qa_v3(pitch < 0 ? pitch + 360 : pitch, yaw < 0 ? yaw + 360 : yaw, 0);
-}
 static bool first_target(qa_q1_game *g, const char *name, qa_actor_id *out, qa_error *error) {
     qa_string_id target;
     if (!qa_builtin_resource(&g->services, name, &target, error))
@@ -259,7 +249,7 @@ static bool fire_rocket(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         return false;
     if (!ending_actor(g, id))
         return true;
-    qa_vec3 angles = velocity_angles(qa_vec_sub(target_body.origin, body.origin));
+    qa_vec3 angles = qa_vec_angles(qa_vec_sub(target_body.origin, body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED|QA_VECTOR_VERTICAL_CARDINAL);
     body.angles = angles;
     if (!qa_world_body_write(g->services.world, id, &body, error))
         return false;
@@ -390,7 +380,7 @@ bool q1_map_ending_think(qa_q1_game *g, q1_actor *actor, q1_map_action action, q
             return qa_session_release(g->services.session, id, error);
         qa_vec3 delta = qa_vec_sub(actor_body.origin, player_body.origin);
         delta.z = -delta.z;
-        if (!control_player(g, player, player_body.origin, velocity_angles(delta), error))
+        if (!control_player(g, player, player_body.origin, qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED|QA_VECTOR_VERTICAL_CARDINAL), error))
             return false;
         actor = q1_entity(g, id);
         return !actor || q1_map_schedule(g, actor, .1, Q1_MAP_CAMERA_TRACK, error);
@@ -486,7 +476,7 @@ bool q1_map_rogue_ending(qa_q1_game *g, qa_actor_id player, qa_error *error) {
     if (!qa_world_body_read(g->services.world, camera, &camera_body, error) ||
         !qa_world_body_read(g->services.world, id, &actor_body, error) ||
         !control_player(g, player, camera_body.origin,
-                        velocity_angles(qa_vec_sub(actor_body.origin, camera_body.origin)), error))
+                        qa_vec_angles(qa_vec_sub(actor_body.origin, camera_body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED|QA_VECTOR_VERTICAL_CARDINAL), error))
         return false;
     if (!q1_alive(g, player))
         return true;

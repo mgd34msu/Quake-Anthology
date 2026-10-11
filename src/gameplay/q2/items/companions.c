@@ -9,13 +9,6 @@ static q2_actor *companion_actor(qa_q2_game *g, qa_actor_id id) {
                ? a
                : NULL;
 }
-static qa_vec3 angles_for(qa_vec3 direction) {
-    float yaw = atan2f(direction.y, direction.x) * (180.0f / 3.14159265358979323846f);
-    float pitch =
-        atan2f(direction.z, sqrtf(direction.x * direction.x + direction.y * direction.y)) *
-        (180.0f / 3.14159265358979323846f);
-    return qa_v3(-pitch, yaw < 0 ? yaw + 360 : yaw, 0);
-}
 static bool set_body(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_error *e) {
     return qa_world_body_write(g->services.world, a->id, body, e) &&
            (!q2_actor_live(g, a->id) || qa_world_link(g->services.world, a->id, NULL, e));
@@ -453,7 +446,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (!q2_actor_live(g, a->id))
             return true;
         body.velocity = qa_vec_scale(direction, speed);
-        body.angles = angles_for(direction);
+        body.angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_VIEW|QA_VECTOR_SQUARED_HORIZONTAL);
     } else if (owner_live) {
         qa_vec3 destination = qa_vec_add(owner.origin, qa_v3(0, 0, owner.bounds.maxs.z + 4));
         if (g->now_ns % Q2_NS == 0) {

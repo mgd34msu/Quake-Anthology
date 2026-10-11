@@ -9,10 +9,6 @@ static qa_vec3 enemy_origin(qa_q1_game *g, q1_actor *e) {
                ? value.origin
                : qa_v3(0, 0, 0);
 }
-qa_vec3 q1_boss_angles(qa_vec3 v) {
-    return qa_v3(qa_angle_wrap(atan2f(v.z, hypotf(v.x, v.y)) * 57.29577951308232f),
-                 qa_angle_wrap(atan2f(v.y, v.x) * 57.29577951308232f), 0);
-}
 bool q1_boss_first_player(qa_q1_game *g, q1_ref *out, qa_error *error) {
     qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_players(g, &snapshot, error)) return false;
@@ -219,7 +215,7 @@ static bool ghost_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_
         qa_vec3 direction = qa_vec_sub(m->source.boss.destination, value.origin);
         direction.z = 0;
         direction = qa_vec_normalize(direction);
-        value.angles = q1_boss_angles(direction);
+        value.angles = qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED);
         value.velocity = qa_vec_scale(direction, 150);
         return qa_world_body_write(g->services.world, e->id, &value, error);
     }
@@ -317,7 +313,7 @@ static bool orb_blast(qa_q1_game *g, q1_actor *e, qa_error *error) {
     (void)qa_world_body_read(g->services.world, q1_ref_actor(g, e->state.monster.enemy), &target, NULL);
     float speed = g->options.skill > 2 ? 500 : g->options.skill > 0 ? 450 : 400;
     unsigned count = 4 + (unsigned)floorf(q1_random(g) * 2 + .5f);
-    qa_angle_vectors(q1_boss_angles(qa_vec_sub(target.origin, value.origin)), &g->forward,
+    qa_angle_vectors(qa_vec_angles(qa_vec_sub(target.origin, value.origin),QA_DIRECTION_FLOAT,QA_VECTOR_WRAPPED), &g->forward,
                              &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
     qa_vec3 origin = qa_vec_add(value.origin, qa_vec_scale(g->forward, 15));
     float time = qa_vec_length(qa_vec_sub(target.origin, origin)) / speed;
