@@ -248,7 +248,7 @@ bounded ID-adoption evidence, not a frame-time claim.
 
 Confirmed hot identity bypasses remain in
 `remote_unified_render.c:257`,
-`remote_unified_media.c:40,116,192,200`, `visuals.c:505,537`,
+`remote_unified_media.c:40,116,192,200`,
 `src/render/scene/models.c:814` and `native_q3_remote_character.c:20,57`.
 Move their already admitted identity into IDs or
 resource handles; do not replace comparisons with per-frame interning or hashes.
@@ -293,6 +293,16 @@ The normal production build and seven core suites pass
 (`/tmp/qa-ta3192-q3-names-20261011-{build,core}.log`). Text-based media/event
 adapters and the other listed name callers remain open; no gameplay or timing
 claim is made by this slice.
+
+TA-3192 local model and standalone-brush caches now use their admitted path
+IDs. `frontend_visual_model_acquire` accepts the common ID; entity, particle
+model-observation and view-weapon callers pass their existing IDs. BODY model,
+held declaration, static signon and first effect-model admission intern text
+once at those admission boundaries. The old path comparisons and private
+copied-path storage are deleted. Each visual owner retains the shared string
+table for its cached text views. The normal build and seven core suites pass
+(`/tmp/qa-ta3192-visual-names-20261011-{build,core}.log`). This does not close the
+separate Unified media, skin-surface or HUD identity callers.
 
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent

@@ -945,7 +945,7 @@ static bool entity_effects_prepare(qa_frontend *frontend,uint32_t seat,qa_actor_
             if (!view.visual.has_inline_model && path && *path && path[0] != '*' &&
                 !(length >= 4 && !strcmp(path + length - 4, ".bsp"))) {
                 frontend_visual_model_view model;
-                if (!frontend_visual_model_acquire(frontend,view.provider,view.family,path,
+                if (!frontend_visual_model_acquire(frontend,view.provider,view.family,view.visual.models[0],
                         view.model_resources[0],&model,error)) return false;
                 source = model.model;
             }
@@ -1004,8 +1004,11 @@ static bool impact_model(qa_frontend *frontend, frontend_particle_owner *owner,
     if (owner->impact_models[kind - 1]) { *out = owner->impact_models[kind - 1]; return true; }
     if (acquire) {
         frontend_visual_model_view model;
-        if (!frontend_visual_model_acquire(frontend, owner->provider, QA_GAME_Q2,
-                impact_path(owner,kind), NULL, &model, error)) return false;
+        qa_string_id path;
+        if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),
+                impact_path(owner,kind),&path,error) ||
+            !frontend_visual_model_acquire(frontend, owner->provider, QA_GAME_Q2,
+                path, NULL, &model, error)) return false;
         owner->impact_models[kind - 1] = model.scene; *out = model.scene; return true;
     }
     size_t count = frontend_visual_owner_count(frontend);
@@ -1188,8 +1191,10 @@ static bool q1_temporary_apply(qa_frontend *frontend, frontend_particle_owner *o
         uint8_t model_index = event->type == 5 ? 0 : event->type == 6 ? 1 : event->type == 9 ? 2 : 3;
         if (!owner->q1_beam_models[model_index]) {
             frontend_visual_model_view model;
-            if (!frontend_visual_model_acquire(frontend, owner->provider, QA_GAME_Q1,
-                    path, NULL, &model, error)) return false;
+            qa_string_id path_name;
+            if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),path,&path_name,error) ||
+                !frontend_visual_model_acquire(frontend, owner->provider, QA_GAME_Q1,
+                    path_name, NULL, &model, error)) return false;
             owner->q1_beam_models[model_index] = model.scene;
         }
         size_t slot = 24;
@@ -1613,8 +1618,11 @@ static bool q2_temporary_beam_admit(qa_frontend *frontend,frontend_particle_owne
 {
     if (!owner->beam_models[recipe->model]) {
         frontend_visual_model_view model;
-        if (!frontend_visual_model_acquire(frontend,owner->provider,QA_GAME_Q2,
-            q2fx_model_paths[recipe->model],NULL,&model,error)) return false;
+        qa_string_id path;
+        if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(frontend->application)),
+            q2fx_model_paths[recipe->model],&path,error) ||
+            !frontend_visual_model_acquire(frontend,owner->provider,QA_GAME_Q2,
+                path,NULL,&model,error)) return false;
         owner->beam_models[recipe->model]=model.scene;
     }
     bool rerelease=owner->q2_edition==QA_Q2_RERELEASE;

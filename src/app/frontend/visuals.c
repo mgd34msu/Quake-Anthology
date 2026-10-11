@@ -111,13 +111,15 @@ typedef struct frontend_model {
     const qa_model *model;
     frontend_model_lease *lease;
     qa_scene_model *scene;
-    char path[];
+    qa_string_id path_name;
+    const char *path;
 } frontend_model;
 typedef struct frontend_brush {
     struct frontend_brush *next;
     qa_resource *resource;
     qa_scene_world *world;
-    char path[];
+    qa_string_id path_name;
+    const char *path;
 } frontend_brush;
 typedef struct visual_model_recipe {
     char *path;
@@ -153,6 +155,7 @@ struct frontend_visual_owner {
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_frontend *frontend;
+    qa_strings *strings;
     qa_media_library *media;
     frontend_material_movies *shader_movies;
     frontend_model *models;
@@ -300,7 +303,8 @@ void frontend_visuals_destroy(qa_frontend *frontend)
         qa_media_library_destroy(owner->media);
         qa_scene_resources_destroy(owner->images); qa_vfs_destroy(owner->mounts);
         recipes_free(owner->recipes, owner->recipe_count);
-        recipes_free(owner->brush_recipes,owner->brush_recipe_count); free(owner);
+        recipes_free(owner->brush_recipes,owner->brush_recipe_count);
+        qa_strings_destroy(owner->strings); free(owner);
     }
 }
 static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view *view,
@@ -312,7 +316,9 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     if (!files) return frontend_fail(error, QA_ERROR_NOT_FOUND, "appearance owner has no active content view");
     qa_game_family family = view->family == QA_GAME_Q2 ? QA_GAME_Q2 : view->family == QA_GAME_Q3 ? QA_GAME_Q3 : QA_GAME_Q1;
     for (frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next)
-        if (owner->owner == view->provider && owner->family == family && qa_vfs_lookup_equal(owner->mounts,files)) {
+        if (owner->owner == view->provider && owner->family == family &&
+            owner->strings == qa_session_strings(qa_application_session(frontend->application)) &&
+            qa_vfs_lookup_equal(owner->mounts,files)) {
             if (owner->construction_failed)
                 return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual resource construction retains refused cleanup");
             *out = owner; return true;
@@ -323,6 +329,8 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "allocating appearance resources");
     owner->owner = view->provider;
     owner->frontend = frontend;
+    owner->strings = qa_session_strings(qa_application_session(frontend->application));
+    qa_strings_retain(owner->strings);
     owner->family = family;
     owner->mounts = qa_vfs_clone(files, error);
     owner->images = owner->mounts ? qa_scene_resources_create(owner->mounts, error) : NULL;
@@ -346,7 +354,7 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
         qa_material_library_destroy(owner->materials);
         qa_media_library_destroy(owner->media);
         qa_scene_resources_destroy(owner->images);
-        qa_vfs_destroy(owner->mounts); free(owner); return false;
+        qa_vfs_destroy(owner->mounts); qa_strings_destroy(owner->strings); free(owner); return false;
     }
     owner->next = frontend->visuals; frontend->visuals = owner; *out = owner;
     return true;
@@ -498,18 +506,15 @@ static bool brush_path(const char *path)
         (path[length-2]=='s' || path[length-2]=='S') &&
         (path[length-1]=='p' || path[length-1]=='P');
 }
-static bool brush_read(frontend_visual_owner *owner, const char *path, const qa_resource *source,
+static bool brush_read(frontend_visual_owner *owner, qa_string_id path_name, const qa_resource *source,
     frontend_brush **out, qa_error *error)
 {
     for (frontend_brush *brush=owner->brushes;brush;brush=brush->next)
-        if (!strcmp(brush->path,path) && (!source || brush->resource==source)) { *out=brush; return true; }
-    size_t length=strlen(path);
-    if (length>SIZE_MAX-sizeof(frontend_brush)-1) {
-        frontend_fail(error,QA_ERROR_MEMORY,"Brush path exceeds native storage"); return false;
-    }
-    frontend_brush *brush=calloc(1,sizeof(*brush)+length+1);
+        if (brush->path_name==path_name && (!source || brush->resource==source)) { *out=brush; return true; }
+    const char *path=qa_strings_cstr(owner->strings,path_name);
+    frontend_brush *brush=calloc(1,sizeof(*brush));
     if (!brush) { frontend_fail(error,QA_ERROR_MEMORY,"Allocating standalone brush world"); return false; }
-    memcpy(brush->path,path,length+1);
+    brush->path_name=path_name; brush->path=path;
     bool ok;
     if (source) {
         ok=qa_resource_pool_find(qa_vfs_resources(owner->mounts),qa_resource_id(source))==source;
@@ -536,13 +541,13 @@ static bool brush_read(frontend_visual_owner *owner, const char *path, const qa_
     }
     brush->next=owner->brushes; owner->brushes=brush; *out=brush; return true;
 }
-static frontend_model *model_cached(frontend_visual_owner *owner, const char *path,
+static frontend_model *model_cached(frontend_visual_owner *owner, qa_string_id path_name,
     const qa_resource *source, bool colored, uint8_t colors)
 {
     uint8_t translation[256];
     if (colored) player_translation(colors, translation);
     for (frontend_model *model = owner->models; model; model = model->next) {
-        if (strcmp(model->path, path) || (source && model->resource != source)) continue;
+        if (model->path_name!=path_name || (source && model->resource != source)) continue;
         const qa_scene_image_options *options = qa_scene_model_image_options(model->scene);
         bool translated = colored && model->model->format == QA_MODEL_MDL;
         if (options && options->translation.size == (translated ? sizeof(translation) : 0) &&
@@ -552,21 +557,19 @@ static frontend_model *model_cached(frontend_visual_owner *owner, const char *pa
     }
     return NULL;
 }
-static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, const char *path, const qa_resource *source,
+static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_string_id path_name, const qa_resource *source,
     const qa_vfs_acquisition *source_opening, bool colored, uint8_t colors, frontend_model **out, qa_error *error)
 {
-    frontend_model *cached = model_cached(owner, path, source, colored, colors);
+    frontend_model *cached = model_cached(owner, path_name, source, colored, colors);
     if (cached) { *out = cached; return true; }
     if (!frontend_visuals_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Decoded appearance requires idle admission owners");
     uint8_t translation[256];
     if (colored) player_translation(colors, translation);
-    size_t length = strlen(path);
-    if (length > SIZE_MAX - sizeof(frontend_model) - 1)
-        return frontend_fail(error, QA_ERROR_MEMORY, "appearance path exceeds native storage");
-    frontend_model *model = calloc(1, sizeof(*model) + length + 1);
+    const char *path=qa_strings_cstr(owner->strings,path_name);
+    frontend_model *model = calloc(1, sizeof(*model));
     if (!model) return frontend_fail(error, QA_ERROR_MEMORY, "allocating decoded appearance");
-    memcpy(model->path, path, length + 1);
+    model->path_name=path_name; model->path=path;
     qa_scene_image_options images = {.family = owner->family, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .usage = QA_IMAGE_USAGE_SKIN,
         .transparent_index = owner->family == QA_GAME_Q1 ? 255 : -1};
@@ -1007,10 +1010,10 @@ bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner prov
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read has no previously admitted source owner");
 }
 bool frontend_visual_model_acquire(qa_frontend *frontend, qa_actor_owner provider,
-    qa_game_family family, const char *path, const qa_resource *source,
+    qa_game_family family, qa_string_id path, const qa_resource *source,
     frontend_visual_model_view *out, qa_error *error)
 {
-    if (!path || !*path || !out)
+    if (!path || !out)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission requires its actual path and output");
     frontend_visual_owner *owner;
     if (!live_owner(frontend, provider, family, &owner, error)) return false;
@@ -1035,7 +1038,9 @@ bool frontend_visual_model_admission(void *context, qa_application *application,
     if (!qa_vfs_lookup_equal(request->view, owner->mounts))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission differs from its actual appearance scope");
     frontend_model *model;
-    if (!model_read(frontend, owner, request->request, request->resource, request->opening,
+    qa_string_id path;
+    if (!qa_strings_intern_cstr(owner->strings, request->request, &path, error) ||
+        !model_read(frontend, owner, path, request->resource, request->opening,
         request->family == QA_GAME_Q1 && request->has_player_colors, request->player_colors, &model, error)) return false;
     const qa_scene_image_options *images = qa_scene_model_image_options(model->scene);
     if (!images) return frontend_fail(error, QA_ERROR_ARGUMENT, "Model palette admission lost its real scene constructor");
@@ -1203,8 +1208,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     frontend_visual_model_view model;
     if (!frontend_visual_media_acquire(frontend, weapon.provider, weapon.family, &media, error) ||
         !frontend_visual_model_acquire(frontend, weapon.provider, weapon.family,
-            qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)),
-                weapon.view_model), weapon.view_source, &model, error)) return false;
+            weapon.view_model, weapon.view_source, &model, error)) return false;
     if (media.shader_movies && !frontend_material_movies_frame(media.shader_movies, frame, error)) return false;
     qa_vec3 axes[3]; frontend_camera_axes(angles, axes);
     qa_model_transform placement; qa_model_transform_identity(&placement);
@@ -1271,8 +1275,12 @@ static bool static_model_prepare(qa_frontend *frontend, frontend_visual_owner *o
     }
     bool okay = true;
     if (asset.has_inline_model) { row->is_inline = true; row->inline_model = asset.inline_model; }
-    else if (brush_path(path)) okay = brush_read(owner, path, asset.resource, &row->brush, error);
-    else okay = model_read(frontend, owner, path, asset.resource, asset.opening, false, 0, &row->model, error);
+    else {
+        qa_string_id path_name;
+        okay=qa_strings_intern_cstr(owner->strings,path,&path_name,error);
+        if (okay) okay=brush_path(path) ? brush_read(owner, path_name, asset.resource, &row->brush, error) :
+            model_read(frontend, owner, path_name, asset.resource, asset.opening, false, 0, &row->model, error);
+    }
     if (!okay) { free(row); return false; }
     if (owner->static_tail) owner->static_tail->next = row;
     else owner->statics = row;
@@ -1448,12 +1456,12 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
             if (owner->shader_movies && !frontend_material_movies_frame(owner->shader_movies, frame, error)) return false;
             if (brush_path(path)) {
                 frontend_brush *brush;
-                if (!brush_read(owner,path,view.model_resources[part],&brush,error) ||
+                if (!brush_read(owner,view.visual.models[part],view.model_resources[part],&brush,error) ||
                     !qa_scene_world_submit_model(brush->world,0,&placement,world,actor.slot,color,frame,error)) return false;
                 continue;
             }
             frontend_model *model;
-            if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
+            if (!model_read(frontend, owner, view.visual.models[part], view.model_resources[part], view.model_openings[part],
                 view.family == QA_GAME_Q1 && view.visual.has_player_colors, view.visual.player_colors, &model, error)) return false;
             if (part == 0 && (view.family == QA_GAME_Q1 || view.q1_effects || model->model->format == QA_MODEL_MDL) &&
                 !frontend_particle_q1_entity(frontend, &view, model->model, error)) return false;

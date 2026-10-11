@@ -204,7 +204,9 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
         if (!qa_vfs_probe(row->owner.mounts, path, &found, &size, error)) return false;
     }
     if (!found) return frontend_fail(error, QA_ERROR_NOT_FOUND, "Actual source held model is absent");
-    if (!frontend_visual_model_acquire(frontend, row->provider, row->family, path, NULL,
+    qa_string_id path_name;
+    if (!qa_strings_intern_cstr(row->strings,path,&path_name,error) ||
+        !frontend_visual_model_acquire(frontend, row->provider, row->family, path_name, NULL,
             &row->held_parent, error)) return false;
     qa_resource_retain((qa_resource *)row->held_parent.resource);
     if (row->family == QA_GAME_Q1 && !row->declaration.source) {
@@ -262,7 +264,7 @@ static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_
     bool ok = frontend_visual_media_acquire(frontend, view->provider, view->family, &row->owner, error);
     if (ok && view->family != QA_GAME_Q3)
         ok = frontend_visual_model_acquire(frontend, view->provider, view->family,
-            qa_strings_cstr(row->strings, view->view_model),
+            view->view_model,
             view->view_source, &row->view, error);
     if (ok) {
         qa_resource_retain((qa_resource *)row->view.resource);
