@@ -242,6 +242,9 @@ static bool reset_player(void *ctx,const q3n_compiled_frame *r,const q3n_compile
 static bool event(void *ctx,const q3n_compiled_frame *r,const q3n_compiled_entity *row,const qa_q3_entity *scratch,qa_vec3 position,qa_error *e)
 { frontend_unified_q3_runtime *o=ctx; q3n_frame f; return begin(o,r,&f,e) &&
     end(o,q3n_events_apply_compiled(&f,row,scratch,position,e),e); }
+static bool events_ready(void *ctx,const q3n_compiled_frame *r,qa_error *e)
+{ frontend_unified_q3_runtime *o=ctx; q3n_frame f; return begin(o,r,&f,e) &&
+    end(o,q3n_events_deliver(&f,e),e); }
 static bool transition(void *ctx,const q3n_compiled_frame *r,const qa_q3_player *p,const qa_q3_player *before,qa_error *e)
 {
     frontend_unified_q3_runtime *o=ctx; q3n_frame f; if(!begin(o,r,&f,e))return false;
@@ -249,7 +252,8 @@ static bool transition(void *ctx,const q3n_compiled_frame *r,const qa_q3_player 
     bool okay=s && cvar_read(o,QA_NATIVE_Q3_CVAR_cg_showmiss,&miss,e);
     q3n_player_state_context settings={0};
     if(okay)settings=(q3n_player_state_context){s->warmup,s->timelimit,s->fraglimit,s->scores1,s->intermission_started,miss.integer!=0};
-    return end(o,okay && q3n_player_state_transition_compiled(o->children.player_state,&f,p,before,&settings,e),e);
+    return end(o,okay && q3n_player_state_transition_compiled(o->children.player_state,&f,p,before,&settings,e) &&
+        q3n_events_deliver(&f,e),e);
 }
 static bool lagometer(void *ctx,const qa_q3_snapshot *s,qa_error *e)
 { frontend_unified_q3_runtime *o=ctx; if(!parent_current(o))return fail(e,"Unified lagometer lost its physical CLIENT");
@@ -259,7 +263,7 @@ static bool prediction_finished(void *ctx,const q3n_compiled_frame *r,qa_error *
     frontend_unified_q3_runtime *o=ctx; q3n_frame f; if(!begin(o,r,&f,e))return false;
     qa_native_q3_client_cvar miss;
     return end(o,cvar_read(o,QA_NATIVE_Q3_CVAR_cg_showmiss,&miss,e) &&
-        q3n_player_state_prediction_finish(o->children.player_state,&f,miss.integer!=0,e),e);
+        q3n_player_state_prediction_finish(o->children.player_state,&f,miss.integer!=0,e) && q3n_events_deliver(&f,e),e);
 }
 static bool transition_teleport(void *ctx,const q3n_compiled_frame *r,bool *out,qa_error *e)
 {
@@ -286,7 +290,7 @@ static bool draw_reason(void *ctx,q3n_compiled_stage stage)
 }
 frontend_unified_q3_snapshots_options frontend_unified_q3_runtime_cache_options(frontend_unified_q3_runtime *o)
 { return (frontend_unified_q3_snapshots_options){.client=o->options.client,.context=o,.reached=reached,.respawn=respawn,
-    .reset_player=reset_player,.event=event,.transition_player=transition,.transition_teleport=transition_teleport,
+    .reset_player=reset_player,.event=event,.events_ready=events_ready,.transition_player=transition,.transition_teleport=transition_teleport,
     .prediction_finished=prediction_finished,
     .lagometer=lagometer,.warning=warning,
     .trace_number=trace_number,.draw_reason=draw_reason}; }

@@ -419,7 +419,8 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
     if(!qa_native_q3_client_cvar_read(o->options.client,QA_NATIVE_Q3_CVAR_cg_showmiss,&show_miss,e))return false;
     transition.show_miss=show_miss.integer!=0;
     bool in_water;
-    if(!q3n_player_state_transition(o->player_state,f,&transition,e) ||
+    if(!q3n_events_deliver(f,e) || !q3n_player_state_transition(o->player_state,f,&transition,e) ||
+        !q3n_events_deliver(f,e) ||
         !q3n_view_frame(o->view,f,&settings->view,o->player_state,backend.options.viewport,&in_water,e) ||
         !required_media(o,f,&local.visible,e))return false;
     memcpy(f->refdef.area_mask,local.visible.area_mask,sizeof(f->refdef.area_mask));

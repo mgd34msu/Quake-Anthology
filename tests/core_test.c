@@ -834,6 +834,41 @@ static void test_ring_console_capture(void)
 static void test_audio_event_discard(void *context,qa_audio_engine *engine,uint64_t owner,uint32_t audience,bool all)
 { qa_application_audio_discard(context,engine,owner,audience,all); }
 
+static void test_shared_effect_cursor(void)
+{
+    qa_application app={0}; qa_error error={0};
+    CHECK(application_event_stream_create(&app,16,&error));
+    qa_application_event_subscription first={0},second={0};
+    qa_application_events_subscribe(&app,&first);
+    qa_application_events_subscribe(&app,&second);
+    qa_application_q3_effect_event event={.recipient=&first,.physical=11,
+        .entity={.number=11,.event=14,.eventParm=7},.position={1,2,3},
+        .has_sound_origin=true,.sound_origin={4,5,6}};
+    CHECK(qa_application_q3_effect_emit(&app,&event,&error));
+    event.entity.event=21; event.recipient=&second;
+    CHECK(qa_application_q3_effect_emit(&app,&event,&error));
+    app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
+    application_events_retire(&app);
+    CHECK(qa_application_events_first(&app)==1);
+    qa_application_event_cursor cursor={.id=1}; qa_application_event_view view;
+    CHECK(qa_application_event_read(&app,&cursor,&view) && view.kind==QA_APPLICATION_EVENT_Q3_EFFECT);
+    CHECK(view.value.q3_effect->recipient==&first && view.value.q3_effect->entity.event==14 &&
+        view.value.q3_effect->entity.eventParm==7 && view.value.q3_effect->physical==11 &&
+        view.value.q3_effect->has_sound_origin && view.value.q3_effect->sound_origin.z==6);
+    qa_application_events_consumed(&first,3);
+    CHECK(qa_application_events_first(&app)==1);
+    qa_application_events_consumed(&second,2);
+    CHECK(qa_application_events_first(&app)==2);
+    cursor=(qa_application_event_cursor){.id=2};
+    CHECK(qa_application_event_read(&app,&cursor,&view) && view.value.q3_effect->recipient==&second &&
+        view.value.q3_effect->entity.event==21);
+    qa_application_events_unsubscribe(&second);
+    CHECK(qa_application_events_first(&app)==3 && !second.application);
+    application_event_stream_dispose(&app);
+    CHECK(!first.application);
+    free(app.unified_persistent);
+}
+
 static void test_shared_audio_preparation(void)
 {
     qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
@@ -2539,6 +2574,7 @@ int main(int argc, char **argv)
     test_files();
     test_localization_lookup_generation();
     test_ring_console_capture();
+    test_shared_effect_cursor();
     test_shared_audio_preparation();
     test_retained_movement_result();
     test_campaign_unit();

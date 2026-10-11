@@ -13,6 +13,7 @@ typedef struct frontend_remote_q3_frame_callbacks {
     bool (*reset_player)(void *, const q3n_remote_frame *, frontend_remote_centity *, qa_error *);
     bool (*event)(void *, const q3n_remote_frame *, frontend_remote_centity *,
         const qa_q3_entity *, qa_vec3, int32_t, qa_error *);
+    bool (*events_ready)(void *,const q3n_remote_frame *,qa_error *);
     bool (*transition_player)(void *, const q3n_remote_frame *, const qa_q3_player *,
         const qa_q3_player *, qa_error *);
     bool (*prediction_completed)(void *, const q3n_remote_frame *, frontend_remote_prediction_status, qa_error *);

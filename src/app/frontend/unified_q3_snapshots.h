@@ -24,6 +24,7 @@ typedef struct frontend_unified_q3_snapshots_options {
     bool (*reset_player)(void *, const q3n_compiled_frame *, const q3n_compiled_entity *, qa_error *);
     bool (*event)(void *, const q3n_compiled_frame *, const q3n_compiled_entity *,
         const qa_q3_entity *, qa_vec3, qa_error *);
+    bool (*events_ready)(void *,const q3n_compiled_frame *,qa_error *);
     bool (*transition_player)(void *, const q3n_compiled_frame *, const qa_q3_player *, const qa_q3_player *, qa_error *);
     bool (*transition_teleport)(void *, const q3n_compiled_frame *, bool *, qa_error *);
     bool (*prediction_finished)(void *, const q3n_compiled_frame *, qa_error *);

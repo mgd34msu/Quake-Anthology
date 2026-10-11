@@ -71,6 +71,8 @@ bool q3n_events_apply_compiled(const q3n_frame *, const q3n_compiled_entity *,
 /* Playerstate transitions use the same source dispatcher but own their event
  * sequence deduplication in the caller's retained playerstate continuation. */
 bool q3n_events_player(const q3n_frame *, const qa_q3_entity *, q3n_entity *, qa_error *);
+/* Consume detected entity/player effects at the snapshot or prediction phase boundary. */
+bool q3n_events_deliver(const q3n_frame *,qa_error *);
 bool q3n_events_pain(const q3n_frame *, q3n_entity *, int32_t source_number, int32_t health, qa_error *);
 bool q3n_events_trace(const q3n_frame *, qa_vec3, qa_vec3, qa_bounds,
     int32_t skip, uint32_t mask, qa_trace_result *, qa_error *);

@@ -27,6 +27,7 @@ typedef struct frontend_remote_snapshots_options {
         frontend_remote_centity *, qa_error *);
     bool (*event)(void *, const q3n_remote_source_view *,
         frontend_remote_centity *, const qa_q3_entity *, qa_vec3 position, int32_t time, qa_error *);
+    bool (*events_ready)(void *,const q3n_remote_source_view *,qa_error *);
     bool (*transition_player)(void *, const q3n_remote_source_view *,
         const qa_q3_player *, const qa_q3_player *, qa_error *);
     bool (*lagometer)(void *, const qa_q3_snapshot *, int32_t ping, qa_error *);

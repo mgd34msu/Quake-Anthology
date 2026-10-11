@@ -1246,13 +1246,50 @@ void application_events_retire(qa_application *app)
     if (app->event_source_cursor < next) next = app->event_source_cursor;
     uint64_t component = application_q3_components_events_first(app->components);
     if (component < next) next = component;
+    for(const qa_application_event_subscription *reader=app->event_subscribers;reader;reader=reader->following)
+        if(reader->next<next) next=reader->next;
     event_records_release(app,next);
     qa_event_ring_retire(app->event_ring, next);
 }
 void application_event_stream_dispose(qa_application *app)
 {
+    while(app->event_subscribers) {
+        qa_application_event_subscription *reader=app->event_subscribers;
+        app->event_subscribers=reader->following;
+        *reader=(qa_application_event_subscription){0};
+    }
     event_records_release(app,qa_application_events_next(app));
     qa_event_ring_destroy(&app->event_ring);
+}
+void qa_application_events_subscribe(qa_application *app,qa_application_event_subscription *reader)
+{
+    if(reader->application==app) return;
+    qa_application_events_unsubscribe(reader);
+    *reader=(qa_application_event_subscription){app,qa_application_events_next(app),app->event_subscribers};
+    app->event_subscribers=reader;
+}
+void qa_application_events_unsubscribe(qa_application_event_subscription *reader)
+{
+    qa_application *app=reader->application;
+    if(!app) return;
+    qa_application_event_subscription **at=&app->event_subscribers;
+    while(*at && *at!=reader) at=&(*at)->following;
+    if(*at) *at=reader->following;
+    *reader=(qa_application_event_subscription){0};
+    application_events_retire(app);
+}
+void qa_application_events_consumed(qa_application_event_subscription *reader,uint64_t next)
+{
+    reader->next=next;
+    if(reader->application) application_events_retire(reader->application);
+}
+bool qa_application_q3_effect_emit(qa_application *app,const qa_application_q3_effect_event *event,qa_error *error)
+{
+    application_event_write write;
+    if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_Q3_EFFECT,&write,error))
+        return application_event_stream_decline(app,&write,true,error);
+    write.envelope->raw.q3_effect=*event;
+    return application_event_stream_commit(app,&write,error) || application_event_stream_decline(app,&write,true,error);
 }
 uint64_t qa_application_events_audio_first(const qa_application *app)
 { return app->event_audio_cursor; }
@@ -1382,6 +1419,7 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
         out->sound_recipient = record->raw.client_sound.recipient;
         break;
     case QA_APPLICATION_EVENT_AUDIO: out->value.audio=&record->raw.audio; break;
+    case QA_APPLICATION_EVENT_Q3_EFFECT: out->value.q3_effect=&record->raw.q3_effect; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
     case QA_APPLICATION_EVENT_EQUIPMENT: case QA_APPLICATION_EVENT_LOG: break;
     }

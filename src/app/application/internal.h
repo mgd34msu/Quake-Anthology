@@ -354,6 +354,7 @@ struct qa_application {
     application_provider *live_providers;
     size_t provider_states;
     qa_event_ring *event_ring;
+    qa_application_event_subscription *event_subscribers;
     struct application_q2_audience_scratch *event_q2_capture;
     application_event_write *event_write;
     uint64_t event_transient_declines;

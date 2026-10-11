@@ -567,7 +567,13 @@ static bool transition_player(void *context,const q3n_remote_frame *r,const qa_q
     q3n_player_state_context settings={0};
     if(okay)settings=(q3n_player_state_context){.warmup=state->warmup,.timelimit=state->timelimit,.fraglimit=state->fraglimit,
         .scores1=state->scores1,.intermission_started=state->intermission_started,.show_miss=miss.integer!=0};
-    return end(o,okay && q3n_player_state_transition_remote(o->children.player_state,&f,player,previous,&settings,e),e);
+    return end(o,okay && q3n_player_state_transition_remote(o->children.player_state,&f,player,previous,&settings,e) &&
+        q3n_events_deliver(&f,e),e);
+}
+static bool events_ready(void *context,const q3n_remote_frame *r,qa_error *e)
+{
+    frontend_remote_q3_runtime *o=context; q3n_frame f;
+    return begin(o,r,&f,e) && end(o,q3n_events_deliver(&f,e),e);
 }
 static bool prediction_completed(void *context,const q3n_remote_frame *r,frontend_remote_prediction_status status,qa_error *e)
 {
@@ -578,6 +584,7 @@ static bool prediction_completed(void *context,const q3n_remote_frame *r,fronten
         qa_native_q3_remote_client_cvar_read(o->services.client,QA_NATIVE_Q3_CVAR_cg_showmiss,&miss,e);
     if(okay && status==FRONTEND_REMOTE_PREDICTION_PREDICTED)
         okay=q3n_player_state_prediction_finish(o->children.player_state,&f,miss.integer!=0,e);
+    if(okay) okay=q3n_events_deliver(&f,e);
     return end(o,okay,e);
 }
 static bool lagometer(void *context,const qa_q3_snapshot *snapshot,int32_t ping,qa_error *e)
@@ -739,7 +746,7 @@ bool frontend_remote_q3_runtime_cinematics_restore(frontend_remote_q3_runtime *o
 static frontend_remote_q3_frame_callbacks frame_callbacks(frontend_remote_q3_runtime *o)
 {
     return (frontend_remote_q3_frame_callbacks){.context=o,.reached=reached,.respawn=respawn,.reset_player=reset_player,
-        .event=event,.transition_player=transition_player,.prediction_completed=prediction_completed,
+        .event=event,.events_ready=events_ready,.transition_player=transition_player,.prediction_completed=prediction_completed,
         .lagometer=lagometer,.warning=warning,.trace_number=trace_number,.teleport_take=teleport_take};
 }
 bool frontend_remote_q3_runtime_callbacks_read(frontend_remote_q3_runtime *o,frontend_remote_q3_frame_callbacks *out,qa_error *e)

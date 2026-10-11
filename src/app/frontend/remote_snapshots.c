@@ -182,6 +182,14 @@ static bool commands(frontend_remote_snapshots *s,int32_t sequence,qa_error *e)
     }
     return true;
 }
+static bool events_ready(frontend_remote_snapshots *s,qa_error *e)
+{
+    if(!s->options.events_ready) return true;
+    if(!callback_begin(s,e)) return false;
+    bool ok=s->options.events_ready(s->options.context,&s->source,e);
+    s->in_callback=false;
+    return ok && source_current(s);
+}
 static bool initial(frontend_remote_snapshots *s,qa_error *e)
 {
     s->has_snap=true;
@@ -197,7 +205,7 @@ static bool initial(frontend_remote_snapshots *s,qa_error *e)
         row->current=*entry; published(row,&s->snap.value); row->presentation->valid=true; row->interpolate=false;
         if(!reset(s,row,&s->snap.value,e) || !events(s,row,e)) return false;
     }
-    return true;
+    return events_ready(s,e);
 }
 static void set_next(frontend_remote_snapshots *s)
 {
@@ -227,6 +235,7 @@ static bool transition(frontend_remote_snapshots *s,const frontend_remote_snapsh
         if(!events(s,row,e)) return false;
         row->presentation->snapshot_time=s->snap.value.server_time;
     }
+    if(!events_ready(s,e)) return false;
     s->has_next=false;
     if((s->snap.value.player.eFlags^previous.eFlags)&4) s->this_teleport=true;
     if(!(settings->demo_playback || (s->snap.value.player.pmFlags&4096) || settings->no_predict || settings->synchronous_clients)) return true;

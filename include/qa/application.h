@@ -568,7 +568,8 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_EQUIPMENT,
     QA_APPLICATION_EVENT_CLIENT_SOUND,
     QA_APPLICATION_EVENT_AUDIO,
-    QA_APPLICATION_EVENT_LOG
+    QA_APPLICATION_EVENT_LOG,
+    QA_APPLICATION_EVENT_Q3_EFFECT
 } qa_application_event_kind;
 
 typedef struct qa_application_log_event {
@@ -584,6 +585,22 @@ typedef struct qa_application_audio_event {
     bool cancelled;
 } qa_application_audio_event;
 
+typedef struct qa_application_q3_effect_event {
+    const void *recipient;
+    qa_q3_entity entity;
+    qa_vec3 position, sound_origin;
+    qa_actor_id actor;
+    uint32_t physical;
+    bool predicted, has_sound_origin;
+} qa_application_q3_effect_event;
+
+/* Caller-owned cursor. Unread records stay in the application ring. */
+typedef struct qa_application_event_subscription {
+    qa_application *application;
+    uint64_t next;
+    struct qa_application_event_subscription *following;
+} qa_application_event_subscription;
+
 struct qa_application_q2_audience;
 struct qa_application_q2_protocol_delivery;
 typedef struct qa_application_event_view {
@@ -594,6 +611,7 @@ typedef struct qa_application_event_view {
         const qa_application_q3_map_event *q3_map;
         const qa_application_q2_player_event *q2_player;
         const qa_application_audio_event *audio;
+        const qa_application_q3_effect_event *q3_effect;
     } value;
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;
@@ -644,6 +662,10 @@ void qa_application_player_feedback_read(const qa_application *, qa_actor_id,
 /* Client-generated effect sounds have no network projection. */
 bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
 bool qa_application_audio_emit(qa_application *, qa_audio_engine *, const qa_audio_event *, qa_error *);
+bool qa_application_q3_effect_emit(qa_application *,const qa_application_q3_effect_event *,qa_error *);
+void qa_application_events_subscribe(qa_application *,qa_application_event_subscription *);
+void qa_application_events_unsubscribe(qa_application_event_subscription *);
+void qa_application_events_consumed(qa_application_event_subscription *,uint64_t next);
 void qa_application_audio_discard(qa_application *, qa_audio_engine *, uint64_t owner, uint32_t audience, bool all);
 bool qa_application_log_emit(qa_application *,const qa_command_context *,const char *,bool console,qa_error *);
 void qa_application_logs_deliver(qa_application *,uint64_t first,uint64_t next,qa_console *,

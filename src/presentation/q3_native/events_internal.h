@@ -23,6 +23,7 @@ typedef struct q3n_stored_mark {
     qa_q3_poly_vertex vertices[Q3N_MARK_VERTICES];
 } q3n_stored_mark;
 struct q3n_events {
+    qa_application_event_subscription delivery;
     q3n_event_options options;
     q3n_event_state state;
     uint32_t seed, smoke_seed;

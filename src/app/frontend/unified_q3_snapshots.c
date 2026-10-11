@@ -276,6 +276,13 @@ static bool event(frontend_unified_q3_snapshots *s,uint32_t number,qa_error *e)
         s->options.event(s->options.context,&f,&entity,&scratch,cent->lerp_origin,e);
     return end(s,&f,ok);
 }
+static bool events_ready(frontend_unified_q3_snapshots *s,qa_error *e)
+{
+    if(!s->options.events_ready) return true;
+    q3n_compiled_frame f;
+    return begin(s,Q3N_COMPILED_SNAPSHOT_CALLBACK,&f,e) &&
+        end(s,&f,s->options.events_ready(s->options.context,&f,e));
+}
 static bool initial(frontend_unified_q3_snapshots *s,qa_error *e)
 {
     s->has_snap = true; uint32_t local = (uint32_t)s->snap.value.player.clientNum;
@@ -289,7 +296,7 @@ static bool initial(frontend_unified_q3_snapshots *s,qa_error *e)
         s->rows[number].current = *state; published(s,number,&s->snap); s->entities[number].valid = true; s->rows[number].interpolate = false;
         if (!reset(s,number,e) || !event(s,number,e)) return false;
     }
-    return true;
+    return events_ready(s,e);
 }
 static void next(frontend_unified_q3_snapshots *s)
 {
@@ -321,6 +328,7 @@ static bool transition(frontend_unified_q3_snapshots *s,bool no_predict,bool syn
         if (!event(s,number,e)) return false;
         s->entities[number].snapshot_time = s->snap.value.server_time;
     }
+    if(!events_ready(s,e)) return false;
     s->has_next = false; s->transition_alias = false;
     if ((s->snap.value.player.eFlags^s->previous_player.eFlags)&4) s->this_teleport = true;
     if (!(no_predict || synchronous || (s->snap.value.player.pmFlags&4096))) return true;

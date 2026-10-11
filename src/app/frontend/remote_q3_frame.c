@@ -280,6 +280,14 @@ static bool transition_player(void *context,const q3n_remote_source_view *source
     bool okay=owner->callbacks.transition_player(owner->callbacks.context,&frame,player,previous,e);
     leave(owner); return okay;
 }
+static bool events_ready(void *context,const q3n_remote_source_view *source,qa_error *e)
+{
+    frontend_remote_q3_frame *owner=context; q3n_remote_frame frame;
+    if(!owner->callbacks.events_ready) return true;
+    if(!enter(owner,source,Q3N_REMOTE_SNAPSHOT_CALLBACK,NULL,NULL,&frame,e)) return false;
+    bool okay=owner->callbacks.events_ready(owner->callbacks.context,&frame,e);
+    leave(owner); return okay;
+}
 static bool lagometer(void *context,const qa_q3_snapshot *snapshot,int32_t ping,qa_error *e)
 {
     frontend_remote_q3_frame *owner=context;
@@ -294,7 +302,7 @@ static frontend_remote_snapshots_options snapshot_options(frontend_remote_q3_fra
 {
     return (frontend_remote_snapshots_options){.frontend=owner->row->frontend,.source=owner->source,
         .product=product,.context=owner,.reached=reached,.respawn=respawn,.reset_player=reset_player,
-        .event=event,.transition_player=transition_player,.lagometer=lagometer,.warning=warning};
+        .event=event,.events_ready=events_ready,.transition_player=transition_player,.lagometer=lagometer,.warning=warning};
 }
 static bool create_frame(frontend_remote_q3 *row,const frontend_remote_q3_frame_callbacks *callbacks,
     bool video,frontend_remote_q3_frame **out,qa_error *e)
