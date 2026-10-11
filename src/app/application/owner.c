@@ -5,6 +5,7 @@
 #include "guest_native_q2_private.h"
 #include "save_content.h"
 #include "control_frame.h"
+#include "unified_player.h"
 #include "bots_round.h"
 #include "rankings.h"
 #include "native_q3_clients.h"
@@ -362,6 +363,7 @@ static bool create_application(const qa_application_options *options,
     }
     if (!session_created)
         goto fail;
+    if (!application_ui_names_prepare(application, error)) goto fail;
     application->campaign_unit=qa_campaign_unit_create(qa_session_strings(application->session),error);
     if (!application->campaign_unit) goto fail;
     if (!qa_inventory_create(qa_session_actor_registry(application->session),

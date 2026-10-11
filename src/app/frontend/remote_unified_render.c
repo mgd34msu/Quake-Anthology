@@ -9,6 +9,7 @@
 #include "menu_fonts.h"
 #include "qa/game_q2.h"
 #include "qa/game_q1.h"
+#include "qa/application_ui_names.h"
 #include "qa/ui_preferences.h"
 #include "qa/text.h"
 #include "qa/scene_world_save.h"
@@ -226,6 +227,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     const qa_product *product, qa_error *e)
 {
     if (!product || product->family != QA_GAME_Q1) return true;
+    const qa_application_ui_names *names = qa_application_ui_names_read(r->frontend->application);
     const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(r->replica);
     qa_vfs *files; const qa_product *admitted;
     qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *sounds;
@@ -244,30 +246,27 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
         if (!qa_q1_weapon_source(program, UINT32_C(1) << bit, &weapon) ||
             !qa_q1_weapon_profile_identity(program, weapon, &profile)) continue;
         for (size_t i = 0; i < ui->item_count; ++i)
-            if (ui->items[i].owned && ui->items[i].id == r->replica->q1_weapon_names[weapon]) client.items |= UINT32_C(1) << bit;
-        if (ui->active_weapon && !strcmp(ui->active_weapon, profile.item)) client.weapon = UINT32_C(1) << bit;
+            if (ui->items[i].owned && ui->items[i].id == names->q1_weapons[weapon]) client.items |= UINT32_C(1) << bit;
+        if (ui->active_weapon && ui->active_weapon == names->q1_weapons[weapon]) client.weapon = UINT32_C(1) << bit;
     }
     uint32_t *counts[] = {&client.shells, &client.nails, &client.rockets, &client.cells};
     for (unsigned i = 0; i < 7; ++i) {
-        const char *identity = qa_q1_ammo_identity((qa_q1_ammo)i);
         if (i < 4) for (size_t j = 0; j < ui->inventory_count; ++j)
-            if (ui->inventory[j].item == r->replica->q1_ammo_names[i]) *counts[i] =
+            if (ui->inventory[j].item == names->q1_ammo[i]) *counts[i] =
                 (uint32_t)qa_source_float_to_i32((float)ui->inventory[j].count);
-        if (ui->ammo_item && !strcmp(ui->ammo_item, identity)) {
+        if (ui->ammo_item && ui->ammo_item == names->q1_ammo[i]) {
             unsigned bit = i < 4 ? (variant == QA_HUD_Q1_ROGUE ? 7u : 8u) + i :
                 i == QA_Q1_LAVA_NAILS ? 26u : i == QA_Q1_MULTI_ROCKETS ? 28u : 27u;
             client.items |= UINT32_C(1) << bit;
         }
     }
     for (size_t j = 0; j < ui->inventory_count; ++j) for (unsigned i = 0; i < 2; ++i)
-        if (ui->inventory[j].count > 0 && ui->inventory[j].item == r->replica->q1_key_names[i]) client.items |= 131072u << i;
-    static const struct { const char *id; unsigned bit; } powers[] = {
-        {"q1:item_artifact_invisibility", 19}, {"q1:item_artifact_invulnerability", 20},
-        {"q1:item_artifact_envirosuit", 21}, {"q1:item_artifact_super_damage", 22},
-        {"q1:item_artifact_wetsuit", 24}, {"q1:item_artifact_empathy_shields", 25},
-        {"q1:item_powerup_shield", 29}, {"q1:item_powerup_belt", 30}};
+        if (ui->inventory[j].count > 0 && ui->inventory[j].item == names->q1_keys[i]) client.items |= 131072u << i;
+    static const struct { qa_q1_power power; unsigned bit; } powers[] = {
+        {QA_Q1_INVISIBILITY, 19}, {QA_Q1_INVULNERABILITY, 20}, {QA_Q1_SUIT, 21}, {QA_Q1_QUAD, 22},
+        {QA_Q1_WETSUIT, 24}, {QA_Q1_EMPATHY, 25}, {QA_Q1_SHIELD, 29}, {QA_Q1_ANTIGRAV, 30}};
     for (size_t j = 0; j < ui->powerup_count; ++j) for (size_t i = 0; i < sizeof(powers) / sizeof(*powers); ++i)
-        if (ui->powerups[j].seconds > 0 && !strcmp(ui->powerups[j].id, powers[i].id))
+        if (ui->powerups[j].seconds > 0 && ui->powerups[j].id == names->q1_powers[powers[i].power])
             client.items |= UINT32_C(1) << powers[i].bit;
     if (ui->armor.regular.kind == QA_ARMOR_Q1 && ui->armor.regular.points > 0) {
         unsigned grade = ui->armor.regular.protection.q1_absorption >= .8f ? 2u : ui->armor.regular.protection.q1_absorption >= .6f ? 1u : 0u;
@@ -338,7 +337,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     r->vitals[0]=(qa_hud_value){.label="Health",.value=ui->health,.warning=ui->health<=25};
     r->vitals[1]=(qa_hud_value){.label="Armor",.value=ui->armor.regular.points};
     if (okay && ui->has_ammo) {
-        const char *label=ui->weapon_status?ui->weapon_status->label:ui->ammo_item;
+        const char *label=ui->weapon_status?ui->weapon_status->label:qa_strings_cstr(replica->strings,ui->ammo_item);
         r->ammo_label=label;
         r->vitals[2]=(qa_hud_value){.label=r->ammo_label,.value=ui->ammo_count,
             .warning=ui->arsenal_warning==QA_AMMO_EMPTY || ui->arsenal_warning==QA_AMMO_LOW};

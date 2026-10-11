@@ -579,8 +579,8 @@ static const qa_unified_field qa_unified_player_ui_fields[] = {
     QA_UNIFIED_ARRAY(qa_unified_player_ui, items, item_count, qa_unified_ui_item_layout, 65536),
     QA_UNIFIED_POINTER(qa_unified_player_ui, weapon_status, qa_unified_weapon_status_layout),
     QA_UNIFIED_FIELD(qa_unified_player_ui, arsenal_warning, QA_UNIFIED_FIELD_I32),
-    QA_UNIFIED_FIELD(qa_unified_player_ui, active_weapon, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_player_ui, ammo_item, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_player_ui, active_weapon, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_player_ui, ammo_item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_player_ui, has_ammo, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_player_ui, selected_arsenal, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_player_ui, ammo_count, QA_UNIFIED_FIELD_F64),
@@ -629,9 +629,9 @@ static const qa_unified_record_layout qa_unified_native_inventory_item_layout = 
 
 static const qa_unified_field qa_unified_weapon_status_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_weapon_status, source, qa_unified_provider_layout),
-    QA_UNIFIED_FIELD(qa_unified_weapon_status, item, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_weapon_status, item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_weapon_status, label, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_weapon_status, ammo_item, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_weapon_status, ammo_item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_weapon_status, finite, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_weapon_status, has_ammo_to_start, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_weapon_status, low, QA_UNIFIED_FIELD_BOOL),
@@ -653,7 +653,7 @@ static const qa_unified_field qa_unified_ui_item_fields[] = {
 static const qa_unified_record_layout qa_unified_ui_item_layout = QA_UNIFIED_LAYOUT(qa_unified_ui_item, qa_unified_ui_item_fields);
 
 static const qa_unified_field qa_unified_powerup_state_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_powerup_state, id, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_powerup_state, id, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_powerup_state, label, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_powerup_state, seconds, QA_UNIFIED_FIELD_F64),
 };

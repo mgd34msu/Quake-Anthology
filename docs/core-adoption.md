@@ -247,7 +247,6 @@ All three engine builds and seven core checks per configuration pass. This is
 bounded ID-adoption evidence, not a frame-time claim.
 
 Confirmed hot identity bypasses remain in
-`remote_unified_render.c:257`,
 `remote_unified_media.c:40,116,192,200`.
 Move their already admitted identity into IDs or
 resource handles; do not replace comparisons with per-frame interning or hashes.
@@ -343,6 +342,18 @@ string comparisons are deleted. Active weapon, active ammunition and powerup
 presentation names remain open. The normal build and seven core suites pass
 (`/tmp/qa-ta3192-hud-items-20261011-{build,core}.log`). No installed HUD or live
 protocol-session claim is made by these checks.
+
+TA-3192 active weapons, ammunition, weapon-status items and powerup timers now
+carry IDs through publication and the existing NAME codec. Application creation
+and restore admit the UI names once in `application_ui_names_prepare`; replica
+and Q1 HUD callers borrow that bundle from the common session table. This
+supersedes the replica-owned HUD constants described above. QC ammo and timers,
+original Q2 weapon definitions, and native Q1/Q2/Q3 timers use those IDs without
+per-frame name interning. Active-weapon, ammo and powerup HUD comparisons and
+identity frame-string copies are deleted. Labels remain text. The normal
+production build and seven core suites pass
+(`/tmp/qa-ta3192-hud-names-20261011-{build,core}.log`). The separate Unified media
+callers remain open; this is not live HUD or protocol-session proof.
 
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent

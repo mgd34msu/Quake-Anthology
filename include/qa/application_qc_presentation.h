@@ -105,7 +105,8 @@ typedef struct qa_application_qc_weapon_ui_binding {
     int32_t impulse;
 } qa_application_qc_weapon_ui_binding;
 typedef struct qa_application_qc_power_timer {
-    const char *item, *label;
+    qa_item_id item;
+    const char *label;
     double expires_seconds;
 } qa_application_qc_power_timer;
 typedef struct qa_application_qc_player_ui {

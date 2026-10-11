@@ -27,7 +27,8 @@ typedef struct qa_unified_client_presentation {
     float view_height;
 } qa_unified_client_presentation;
 typedef struct qa_unified_powerup_state {
-    char *id, *label;
+    qa_item_id id;
+    char *label;
     double seconds;
 } qa_unified_powerup_state;
 typedef enum qa_unified_ui_item_kind { QA_UNIFIED_UI_WEAPON, QA_UNIFIED_UI_POWERUP } qa_unified_ui_item_kind;
@@ -41,7 +42,8 @@ typedef struct qa_unified_ui_item {
 } qa_unified_ui_item;
 typedef struct qa_unified_weapon_status {
     qa_unified_provider_state source;
-    char *item, *label, *ammo_item;
+    qa_item_id item, ammo_item;
+    char *label;
     bool finite, has_ammo_to_start, low;
     double count;
 } qa_unified_weapon_status;
@@ -78,7 +80,7 @@ typedef struct qa_unified_player_ui {
     size_t item_count;
     qa_unified_weapon_status *weapon_status;
     qa_ammo_warning arsenal_warning;
-    char *active_weapon, *ammo_item;
+    qa_item_id active_weapon, ammo_item;
     bool has_ammo, selected_arsenal;
     double ammo_count;
     qa_unified_native_inventory *native_inventory;

@@ -5,6 +5,8 @@
 #include "qa/application_qc_presentation.h"
 #include "qa/unified_frame_player.h"
 
+bool application_ui_names_prepare(qa_application *, qa_error *);
+
 typedef struct application_unified_player_camera {
     qa_application_qc_message_source source;
     qa_actor_id recipient, view_entity;

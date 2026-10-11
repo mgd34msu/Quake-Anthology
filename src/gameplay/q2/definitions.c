@@ -255,6 +255,11 @@ const qa_q2_weapon_definition *qa_q2_base_weapon_view_model(const char *model) {
             if (!strcmp(base[i].view_model, model)) return base + i;
     return NULL;
 }
+const qa_q2_weapon_definition *qa_q2_base_weapon_definition(qa_q2_weapon weapon) {
+    for (size_t i = 0; i < sizeof(base) / sizeof(*base); ++i)
+        if (base[i].weapon == weapon) return base + i;
+    return NULL;
+}
 bool qa_q2_weapon_definition_ordinal(const qa_q2_game *game, qa_q2_weapon weapon, size_t *out) {
     if (game && out)
         for (size_t i = 0; i < game->definition_count; ++i)

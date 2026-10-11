@@ -28,6 +28,46 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool ui_names_admit(qa_strings *strings, qa_item_id *ids,
+    const char *const *names, size_t count, qa_error *error)
+{
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_strings_intern_cstr(strings, names[i], ids + i, error)) return false;
+    return true;
+}
+
+bool application_ui_names_prepare(qa_application *app, qa_error *error)
+{
+    qa_application_ui_names *names = &app->ui_names;
+    qa_strings *strings = qa_session_strings(app->session);
+    for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
+        if (!qa_strings_intern_cstr(strings, qa_q1_weapon_identity((qa_q1_weapon)i),
+                &names->q1_weapons[i], error)) return false;
+    for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+        if (!qa_strings_intern_cstr(strings, qa_q1_ammo_identity((qa_q1_ammo)i),
+                &names->q1_ammo[i], error)) return false;
+    for (unsigned i = 0; i < QA_Q2_WEAPON_COUNT; ++i) {
+        const qa_q2_weapon_definition *weapon = qa_q2_base_weapon_definition((qa_q2_weapon)i);
+        if (weapon && (!qa_strings_intern_cstr(strings, weapon->item, &names->q2_weapons[i], error) ||
+            (weapon->ammo && !qa_strings_intern_cstr(strings, weapon->ammo, &names->q2_ammo[i], error)))) return false;
+    }
+    static const char *const keys[] = {"q1:key/silver", "q1:key/gold"};
+    static const char *const q1[] = {"q1:item_artifact_super_damage", "q1:item_artifact_invulnerability",
+        "q1:item_artifact_invisibility", "q1:item_artifact_envirosuit", "q1:item_artifact_wetsuit",
+        "q1:item_artifact_empathy_shields", "q1:item_powerup_shield", "q1:item_powerup_belt", "q1:item_artifact_lavasuit"};
+    static const char *const q2[] = {"q2:item_quad", "q2:item_quadfire", "q2:item_double", "q2:item_invulnerability",
+        "q2:item_enviro", "q2:item_breather", "q2:item_ir_goggles"};
+    static const char *const q3[] = {"q3:item_quad", "q3:item_enviro", "q3:item_haste", "q3:item_invis", "q3:item_regen", "q3:item_flight"};
+    return ui_names_admit(strings, names->q1_keys, keys, sizeof(keys) / sizeof(*keys), error) &&
+        ui_names_admit(strings, names->q1_powers, q1, sizeof(q1) / sizeof(*q1), error) &&
+        ui_names_admit(strings, names->q2_powers, q2, sizeof(q2) / sizeof(*q2), error) &&
+        ui_names_admit(strings, names->q3_powers, q3, sizeof(q3) / sizeof(*q3), error) &&
+        qa_strings_intern_cstr(strings, "q3:holdable_invulnerability", &names->q3_invulnerability, error);
+}
+
+const qa_application_ui_names *qa_application_ui_names_read(const qa_application *app)
+{ return &app->ui_names; }
+
 typedef struct player_observation {
     qa_application *app;
     qa_unified_frame_lease *lease;
@@ -156,13 +196,12 @@ static const qa_application_qc_weapon_ui_binding *qc_active(const player_observa
         if (o->qc_bindings[i].bit == qc_weapons(o)->weapon) return o->qc_bindings + i;
     return NULL;
 }
-static const char *qc_ammo_item(const player_observation *o)
+static qa_item_id qc_ammo_item(const player_observation *o)
 {
     static const uint32_t bits[] = {256, 512, 1024, 2048};
-    static const char *const names[] = {"q1:ammo/shells", "q1:ammo/nails", "q1:ammo/rockets", "q1:ammo/cells"};
     for (size_t i = 0; i < sizeof(bits) / sizeof(bits[0]); ++i)
-        if (qc_weapons(o)->items & bits[i]) return names[i];
-    return NULL;
+        if (qc_weapons(o)->items & bits[i]) return o->app->ui_names.q1_ammo[i];
+    return QA_STRING_NONE;
 }
 
 static void q3_catalog_clear(player_observation *o)
@@ -323,13 +362,13 @@ static bool inventory(qa_unified_player_ui *out, player_observation *o, qa_error
     return true;
 }
 
-static bool timer(qa_unified_player_ui *out, player_observation *o, const char *id,
+static bool timer(qa_unified_player_ui *out, player_observation *o, qa_item_id id,
     const char *label, double seconds, qa_error *e)
 {
     if (!(seconds > 0)) return true;
     qa_unified_powerup_state *row = out->powerups + out->powerup_count++;
-    *row = (qa_unified_powerup_state){.seconds = seconds};
-    return application_unified_frame_string(o->lease, &row->id, id, e) && application_unified_frame_string(o->lease, &row->label, label, e);
+    *row = (qa_unified_powerup_state){.id = id, .seconds = seconds};
+    return application_unified_frame_string(o->lease, &row->label, label, e);
 }
 
 static bool timers(qa_unified_player_ui *out, player_observation *o, qa_error *e)
@@ -344,34 +383,28 @@ static bool timers(qa_unified_player_ui *out, player_observation *o, qa_error *e
             if (!timer(out, o, power->item, power->label, power->expires_seconds - o->qc.now_seconds, e)) return false;
         }
     } else if (o->primary->kind == APPLICATION_PROVIDER_Q1) {
-        static const char *const ids[QA_Q1_POWER_COUNT] = {"q1:item_artifact_super_damage", "q1:item_artifact_invulnerability",
-            "q1:item_artifact_invisibility", "q1:item_artifact_envirosuit", "q1:item_artifact_wetsuit",
-            "q1:item_artifact_empathy_shields", "q1:item_powerup_shield", "q1:item_powerup_belt", "q1:item_artifact_lavasuit"};
         static const char *const labels[QA_Q1_POWER_COUNT] = {"Quad Damage", "Invulnerability", "Invisibility",
             "Environment Suit", "Wetsuit", "Empathy Shields", "Power Shield", "Anti-gravity Belt", "Lava Suit"};
         qa_q1_ui_powers powers;
         if (!qa_q1_player_ui_powers_read(o->primary->state.q1, o->ui_actor, &powers, e) || !current(o, e)) return false;
         for (size_t i = 0; i < powers.count; ++i) {
             qa_q1_ui_power power = powers.powers[i];
-            if (!timer(out, o, ids[power.power], labels[power.power], power.expires - powers.seconds, e)) return false;
+            if (!timer(out, o, o->app->ui_names.q1_powers[power.power], labels[power.power], power.expires - powers.seconds, e)) return false;
         }
     } else if (o->primary->kind == APPLICATION_PROVIDER_Q2) {
         qa_q2_powerups powers;
         if (!qa_q2_powerups_read(o->primary->state.q2, o->ui_actor, &powers, e) || !current(o, e)) return false;
         const uint64_t expires[] = {powers.quad_until_ns, powers.quad_fire_until_ns, powers.double_until_ns,
             powers.invulnerability_until_ns, powers.enviro_until_ns, powers.breather_until_ns, powers.ir_until_ns};
-        static const char *const ids[] = {"q2:item_quad", "q2:item_quadfire", "q2:item_double", "q2:item_invulnerability",
-            "q2:item_enviro", "q2:item_breather", "q2:item_ir_goggles"};
         static const char *const labels[] = {"Quad Damage", "DualFire Damage", "Double Damage", "Invulnerability",
             "Environment Suit", "Rebreather", "IR Goggles"};
         qa_clock_state clock;
         if (!qa_session_clock(o->source->session, o->primary->owner, &clock))
             return application_fail(e, QA_ERROR_NOT_FOUND, "Q2 UI powers have no actual source clock");
         for (size_t i = 0; i < sizeof(expires) / sizeof(expires[0]); ++i)
-            if (expires[i] > clock.frame.time_ns && !timer(out, o, ids[i], labels[i],
+            if (expires[i] > clock.frame.time_ns && !timer(out, o, o->app->ui_names.q2_powers[i], labels[i],
                 (double)(expires[i] - clock.frame.time_ns) / 1e9, e)) return false;
     } else if (o->has_q3) {
-        static const char *const ids[] = {"q3:item_quad", "q3:item_enviro", "q3:item_haste", "q3:item_invis", "q3:item_regen", "q3:item_flight"};
         static const char *const labels[] = {"Quad Damage", "Battle Suit", "Haste", "Invisibility", "Regeneration", "Flight"};
         qa_q3_player viewed = o->q3;
         qa_actor_id actor = o->ui_actor;
@@ -383,13 +416,13 @@ static bool timers(qa_unified_player_ui *out, player_observation *o, qa_error *e
                 !current(o, e)) return false;
             actor = binding.actor;
         }
-        for (size_t i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i)
-            if (!timer(out, o, ids[i], labels[i], ((double)viewed.powerups[i + 1] - o->q3_time) / 1000, e)) return false;
+        for (size_t i = 0; i < sizeof(labels) / sizeof(labels[0]); ++i)
+            if (!timer(out, o, o->app->ui_names.q3_powers[i], labels[i], ((double)viewed.powerups[i + 1] - o->q3_time) / 1000, e)) return false;
         if (o->primary->kind == APPLICATION_PROVIDER_Q3) {
             qa_q3_player_state state;
             if (!qa_q3_player_read(o->primary->state.q3, actor, &state))
                 return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 UI invulnerability lost its viewed source client");
-            if (!timer(out, o, "q3:holdable_invulnerability", "Invulnerability",
+            if (!timer(out, o, o->app->ui_names.q3_invulnerability, "Invulnerability",
                 ((double)state.invulnerability_until - o->q3_time) / 1000, e)) return false;
         }
     } /* Original Q2's public PS exposes no complete source timer collection. */
@@ -644,7 +677,7 @@ static bool ui_items(qa_unified_player_ui *out, player_observation *o, qa_error 
     if (native_original(o)) return ui_gear(out, o, 0, e);
     if (qc_arsenal(o)) {
         const qa_application_qc_weapon_ui_binding *active = qc_active(o);
-        const char *ammo = qc_ammo_item(o);
+        qa_item_id ammo = qc_ammo_item(o);
         for (size_t i = 0; i < o->qc_binding_count; ++i) {
             const qa_application_qc_weapon_ui_binding *w = o->qc_bindings + i;
             if (o->has_gear && w->item == o->gear.item) continue;
@@ -757,7 +790,7 @@ static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_e
     qa_unified_weapon_status value = {0};
     application_provider *owner = NULL;
     qa_item_id selected = 0, ammo = 0;
-    const char *label = NULL, *direct_item = NULL, *direct_ammo = NULL;
+    const char *label = NULL;
     if (o->has_gear && o->gear.active) {
         for (size_t i = 0; i < o->app->provider_count; ++i)
             if (o->app->providers[i]->owner == o->gear.source.owner) { owner = o->app->providers[i]; break; }
@@ -773,9 +806,9 @@ static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_e
     } else if (native_original(o)) {
         const qa_q2_weapon_definition *w = o->native_weapon;
         if (!w) return true;
-        owner = o->primary; direct_item = w->item; label = qa_q2_weapon_display_name(w->weapon);
+        owner = o->primary; selected = o->app->ui_names.q2_weapons[w->weapon]; label = qa_q2_weapon_display_name(w->weapon);
         if (w->ammo) {
-            value.finite = true; direct_ammo = w->ammo; value.count = o->q2.stats[3];
+            value.finite = true; ammo = o->app->ui_names.q2_ammo[w->weapon]; value.count = o->q2.stats[3];
             value.has_ammo_to_start = value.count >= w->quantity; value.low = value.count <= w->warning;
         }
     } else if (qc_arsenal(o)) return true;
@@ -799,10 +832,9 @@ static bool weapon_status(qa_unified_player_ui *out, player_observation *o, qa_e
     if (!out->weapon_status) return application_fail(e, QA_ERROR_MEMORY, "Retaining actual selected weapon status");
     *out->weapon_status = value;
     qa_unified_weapon_status *v = out->weapon_status;
+    v->item = selected; v->ammo_item = ammo;
     return application_unified_provider_state(&v->source, owner, e) &&
-        application_unified_frame_string(o->lease, &v->item, direct_item ? direct_item : selected ? identity(o, selected) : NULL, e) &&
-        application_unified_frame_string(o->lease, &v->label, label, e) &&
-        application_unified_frame_string(o->lease, &v->ammo_item, direct_ammo ? direct_ammo : ammo ? identity(o, ammo) : NULL, e);
+        application_unified_frame_string(o->lease, &v->label, label, e);
 }
 static const char *original_q3_warning(player_observation *o)
 {
@@ -882,28 +914,27 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
         o->has_q3 && o->primary->kind != APPLICATION_PROVIDER_Q3 ? (double)o->q3.stats[0] : (double)o->combat.health;
     if (!armor(&out->armor, o, e) || !inventory(out, o, e) || !timers(out, o, e) ||
         !ui_items(out, o, e) || !weapon_status(out, o, e)) return false;
-    const char *active = NULL, *ammo = NULL;
+    qa_item_id active = QA_STRING_NONE, ammo = QA_STRING_NONE;
     if (o->has_gear && o->gear.active) {
-        out->arsenal_warning = warning_kind(arsenal_warning(o)); active = identity(o, o->gear.item);
+        out->arsenal_warning = warning_kind(arsenal_warning(o)); active = o->gear.item;
     } else if (catalog_q3(o)) {
         const application_q3_catalog_weapon *w = q3_active(o);
-        out->arsenal_warning = warning_kind(original_q3_warning(o)); active = o->q3_active ? identity(o, o->q3_active) : NULL;
-        if (w && w->ammo) { ammo = identity(o, w->ammo); out->ammo_count = count(o, w->ammo); }
+        out->arsenal_warning = warning_kind(original_q3_warning(o)); active = o->q3_active;
+        if (w && w->ammo) { ammo = w->ammo; out->ammo_count = count(o, w->ammo); }
     } else if (native_original(o)) {
         const qa_q2_weapon_definition *w = o->native_weapon;
-        if (w) { active = w->item; ammo = w->ammo; out->ammo_count = o->q2.stats[3]; }
+        if (w) { active = o->app->ui_names.q2_weapons[w->weapon]; ammo = o->app->ui_names.q2_ammo[w->weapon]; out->ammo_count = o->q2.stats[3]; }
     } else if (qc_arsenal(o)) {
         const qa_application_qc_weapon_ui_binding *w = qc_active(o);
-        active = w ? identity(o, w->item) : NULL; ammo = qc_ammo_item(o); out->ammo_count = o->qc_ammo;
+        active = w ? w->item : QA_STRING_NONE; ammo = qc_ammo_item(o); out->ammo_count = o->qc_ammo;
     } else {
         out->arsenal_warning = o->equipment.warning;
-        active = o->equipment.item ? identity(o, o->equipment.item) : NULL;
-        ammo = o->equipment.ammo ? identity(o, o->equipment.ammo) : NULL;
+        active = o->equipment.item;
+        ammo = o->equipment.ammo;
         out->ammo_count = o->equipment.ammo_count;
     }
-    out->has_ammo = ammo != NULL; out->selected_arsenal = o->arsenal != o->primary;
-    if (!application_unified_frame_string(o->lease, &out->active_weapon, active, e) ||
-        !application_unified_frame_string(o->lease, &out->ammo_item, ammo, e)) return false;
+    out->has_ammo = ammo != QA_STRING_NONE; out->selected_arsenal = o->arsenal != o->primary;
+    out->active_weapon = active; out->ammo_item = ammo;
     if (o->primary->kind == APPLICATION_PROVIDER_NATIVE && o->primary->state.native.q2_engine) {
         struct application_native_q2 *engine = o->primary->state.native.q2_engine;
         if (engine->inventory_scanner) {

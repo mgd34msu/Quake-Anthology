@@ -1,5 +1,6 @@
 #ifndef QA_APPLICATION_INTERNAL_H
 #define QA_APPLICATION_INTERNAL_H
+#include "qa/application_ui_names.h"
 
 #include "qa/arena.h"
 #include "qa/application.h"
@@ -260,6 +261,7 @@ struct qa_application {
     qa_cvars *cvars;
     qa_cvar_handle bot_minplayers;
     qa_ui_preference_handles ui_preference_handles;
+    qa_application_ui_names ui_names;
     qa_console *console;
     const qa_native_runtime_config *native_runtime_config;
     qa_native_runtime *native_runtime;

@@ -414,11 +414,9 @@ static bool player_ui_read(qa_application *app,application_provider *p,
     const char *campaign=p->product->campaign;
     value.power_items2=value.items2 & (campaign && !strcmp(campaign,"hipnotic")?6u:
         campaign && !strcmp(campaign,"rogue")?192u:0u);
-    static const struct { const char *field,*item,*label; } timers[]={
-        {"super_damage_finished","q1:item_artifact_super_damage","Quad Damage"},
-        {"invincible_finished","q1:item_artifact_invulnerability","Invulnerability"},
-        {"invisible_finished","q1:item_artifact_invisibility","Invisibility"},
-        {"radsuit_finished","q1:item_artifact_envirosuit","Environment Suit"}};
+    static const struct { const char *field,*label; } timers[]={
+        {"super_damage_finished","Quad Damage"}, {"invincible_finished","Invulnerability"},
+        {"invisible_finished","Invisibility"}, {"radsuit_finished","Environment Suit"}};
     for(size_t i=0;i<4;++i) {
         const qa_qc_definition *field=qa_qc_program_find_field(p->state.qc.program,timers[i].field);
         if(!field || field->type!=QA_QC_FLOAT) continue;
@@ -427,7 +425,8 @@ static bool player_ui_read(qa_application *app,application_provider *p,
         if(!declared) continue;
         double expires;
         if(!scalar(p,slot,actor,timers[i].field,field,&expires,error)) return false;
-        value.timers[value.timer_count++]=(qa_application_qc_power_timer){timers[i].item,timers[i].label,expires};
+        value.timers[value.timer_count++]=(qa_application_qc_power_timer){
+            app->ui_names.q1_powers[i],timers[i].label,expires};
     }
     if(!(selected?selected_ui_basis(app,p,actor,slot,role):qa_application_qc_message_source_current(app,source)))
         return application_fail(error,QA_ERROR_ARGUMENT,"QC UI source changed during observation");

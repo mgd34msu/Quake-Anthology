@@ -322,6 +322,7 @@ qa_item_id qa_q2_weapon_item(const qa_q2_game *, qa_q2_weapon, bool ammo);
 /* The original public CLIENT UI matches its gun model against the immutable
  * base source catalog, independently of a selected compiled GAME. */
 const qa_q2_weapon_definition *qa_q2_base_weapon_view_model(const char *);
+const qa_q2_weapon_definition *qa_q2_base_weapon_definition(qa_q2_weapon);
 const char *qa_q2_weapon_display_name(qa_q2_weapon);
 bool qa_q2_weapon_definition_ordinal(const qa_q2_game *, qa_q2_weapon, size_t *);
 qa_q2_weapon qa_q2_weapon_from_classname(const qa_q2_game *, const char *);
