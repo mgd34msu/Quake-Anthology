@@ -8,6 +8,7 @@
 #include "model_inventory.h"
 #include "q2_animation.h"
 #include "qa/event_ring.h"
+#include "remote_q2_clientinfo.h"
 
 typedef struct remote_q2_model {
     struct remote_q2_model *next;
@@ -77,7 +78,11 @@ struct frontend_remote_q2 {
     qa_frontend *frontend;
     frontend_remote_q2_options options;
     remote_q2_cvar_handles cvar_handles;
-    qa_string_id client_icons[257];
+    struct {
+        remote_q2_clientinfo value;
+        remote_q2_model *weapons[32];
+    } clientinfo[257];
+    double clientinfo_noskins;
     qa_input_tuning_handles input_tuning;
     uint64_t identity, loading_generation, content_generation, received_ns, sample_ns;
     uint32_t acknowledged;

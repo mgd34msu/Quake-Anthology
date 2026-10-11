@@ -407,7 +407,7 @@ bool frontend_remote_q2_input(qa_frontend *f, uint32_t seat, const qa_seat_input
     *command_ready = true;
     return true;
 }
-static bool submit_model(frontend_remote_q2 *row, uint32_t model_index, const char *path, const char *skin_path,
+static bool submit_model(frontend_remote_q2 *row, uint32_t model_index, const char *path, remote_q2_model *prepared, const qa_material *skin,
     const qa_scene_view *view, const qa_scene_world_input *world, const qa_q2_entity *current,
     const qa_q2_entity *previous, bool view_model, qa_vec3 origin, qa_vec3 angles, qa_error *error)
 {
@@ -431,18 +431,12 @@ static bool submit_model(frontend_remote_q2 *row, uint32_t model_index, const ch
         if (end == path + 1 || *end || index > UINT32_MAX) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 inline model has no actual model index");
         return qa_scene_world_submit_model(row->world, (uint32_t)index, &transform, world, current->number, color, &row->frontend->frame, error);
     }
-    remote_q2_model *model = model_index ? row->model_slots[model_index] : NULL; qa_error issue = {0};
+    remote_q2_model *model = model_index ? row->model_slots[model_index] : prepared; qa_error issue = {0};
     if (model_index && !model) return true;
     if (!model && !remote_q2_model_read(row, path, &model, &issue)) {
         if (issue.code == QA_ERROR_NOT_FOUND) return true;
         if (error) *error = issue;
         return false;
-    }
-    const qa_material *skin = NULL;
-    if (skin_path && *skin_path) {
-        qa_scene_image_options options = {.family = QA_GAME_Q2, .usage = QA_IMAGE_USAGE_SKIN,
-            .wrap = QA_SCENE_REPEAT, .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = 255};
-        if (!qa_material_register(row->materials, skin_path, &options, false, &skin, error)) return false;
     }
     const qa_scene_image_options *model_options = qa_scene_model_image_options(model->scene);
     qa_scene_model_input input = {.view = *view, .transform = transform,
@@ -635,7 +629,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 if (current->modelindex < row->layout.max_models) {
                     const char *path = frontend_remote_q2_config(row,
                         (uint16_t)(row->layout.models + current->modelindex));
-                    ok = submit_model(row, current->modelindex, path, NULL, &view, &world, current, NULL, false,
+                    ok = submit_model(row, current->modelindex, path, NULL, NULL, &view, &world, current, NULL, false,
                         vector(current->origin), vector(current->angles), error);
                 }
                 continue;
@@ -679,15 +673,16 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             }
         }
         const char *path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + current->modelindex));
-        remote_q2_clientinfo info = {0}; const char *skin = NULL;
+        remote_q2_clientinfo info = {0}; const qa_material *skin = NULL;
+        remote_q2_model *prepared=NULL;
         if (current->modelindex == 255) {
             ok = remote_q2_clientinfo_read(row, current->skinnum & 255, current->skinnum >> 8, &info, error);
             if (!ok) break;
             if (!info.valid) continue;
-            path = info.model; skin = info.skin;
+            path = info.model; skin = info.skin_material; prepared=info.model_resource;
         }
         uint32_t model_index = current->modelindex == 255 ? 0 : current->modelindex;
-        ok = submit_model(row, model_index, path, skin, &view, &world, &packet, prior, false, position, direction, error);
+        ok = submit_model(row, model_index, path, prepared, skin, &view, &world, &packet, prior, false, position, direction, error);
         if (ok && shell) {
             if (!strcmp(row->data.gamedir, "rogue")) {
                 if ((shell_flags & 131072) && (shell_flags & (1024 | 4096 | 65536))) shell_flags &= ~UINT32_C(131072);
@@ -701,17 +696,18 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 }
             }
             packet.renderfx = shell_flags | 32; packet.alpha = current->alpha != 0 ? current->alpha : .3f;
-            ok = submit_model(row, model_index, path, skin, &view, &world, &packet, prior, false, position, direction, error);
+            ok = submit_model(row, model_index, path, prepared, skin, &view, &world, &packet, prior, false, position, direction, error);
         }
         uint32_t linked[] = {current->modelindex2, current->modelindex3, current->modelindex4};
         for (size_t j = 0; ok && j < 3; ++j) if (linked[j] && linked[j] < row->layout.max_models) {
             const char *linked_path;
             uint32_t linked_index = linked[j];
+            remote_q2_model *linked_model=NULL;
             if (!j && linked[j] == 255) {
                 if (current->modelindex != 255 && !remote_q2_clientinfo_read(row,
                     current->skinnum & 255, current->skinnum >> 8, &info, error)) { ok = false; break; }
                 linked_path = info.weapon;
-                linked_index = 0;
+                linked_index = 0; linked_model=info.weapon_resource;
             } else {
                 if (!j && !remote_q2_rerelease_presentation(row) && (linked[j] & 128)) linked_index &= 127;
                 linked_path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + linked_index));
@@ -721,7 +717,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 attachment.alpha = .32f; attachment.renderfx = 32;
             }
             qa_q2_entity attachment_old = prior ? *prior : attachment; attachment_old.alpha = 0;
-            ok = submit_model(row, linked_index, linked_path, NULL, &view, &world, &attachment,
+            ok = submit_model(row, linked_index, linked_path, linked_model, NULL, &view, &world, &attachment,
                 prior ? &attachment_old : NULL, false, position, direction, error);
         }
     }
@@ -737,7 +733,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             vector(frame->player.gunoffset);
         qa_vec3 gun_angles = continuous ? angles_lerp(before->player.gunangles, frame->player.gunangles, row->fraction) :
             vector(frame->player.gunangles);
-        ok = submit_model(row, frame->player.gunindex, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + frame->player.gunindex)), NULL,
+        ok = submit_model(row, frame->player.gunindex, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + frame->player.gunindex)), NULL, NULL,
             &view, &world, &gun, &old, true, qa_vec_add(origin, gun_offset), qa_vec_add(angles, gun_angles), error);
     }
     const qa_cvar_view *particles_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_particles);

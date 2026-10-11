@@ -1,4 +1,5 @@
 #include "remote_q2_private.h"
+#include "remote_q2_clientinfo.h"
 #include "remote_q2_source.h"
 #include "q2_client_lerp.h"
 #include "qa/persistence_content.h"
@@ -128,9 +129,10 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 configstring leaves the actual protocol layout");
     qa_string_id id=QA_STRING_NONE;
     if (*value && !qa_strings_intern_cstr(row->hud_names.strings,value,&id,error)) return false;
+    if (row->hud_names.values[index]==id) return true;
     if (!qa_hud_q2_names_set(&row->hud_names,index,id,error)) return false;
     remote_q2_prediction_config(row, index);
-    return !row->media_ready || remote_q2_model_config(row, index, error);
+    return !row->media_ready || (remote_q2_model_config(row, index, error) && remote_q2_clientinfo_config(row,index,error));
 }
 typedef struct remote_q2_event_batch {
     const qa_q2_server_record *records;
@@ -364,6 +366,7 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
 {
     (void)records; (void)count; frontend_remote_q2 *row = context;
     if (!row || row->busy || !hook_current(row, id, error) || !frame || !frame->valid || !row->media_ready) return false;
+    if (!remote_q2_clientinfo_settings(row,error)) return false;
     qa_q2_wire_frame held = {0};
     if (!qa_q2_frame_clone(frame, &held, error)) return false;
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;

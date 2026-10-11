@@ -175,6 +175,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     row->collision_count = row->collision_capacity = 0;
     row->collision_viewer = (qa_actor_id){0}; row->collision_clients = 0;
     qa_collision_destroy(row->geometry); row->geometry = NULL;
+    memset(row->clientinfo,0,sizeof(row->clientinfo));
     if (row->model_slots) memset(row->model_slots, 0, row->layout.max_models * sizeof(*row->model_slots));
     while (row->models) {
         remote_q2_model *m = row->models; row->models = m->next;
