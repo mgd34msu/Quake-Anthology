@@ -139,6 +139,7 @@ struct application_native_q2_callbacks {
     native_address_descriptor *addresses;
     native_call_descriptor *call_descriptors;
     native_protection_descriptor *protection_descriptors;
+    struct { qa_json_id *calls; size_t count; } stages[NATIVE_CALLBACK_STAGE_COUNT];
     bool descriptors_bound;
     qa_arena storage;
     qa_pool receipts, scratch_pages, region_values;
@@ -1189,20 +1190,15 @@ bool application_native_q2_callbacks_input_write(application_native_q2_callbacks
     if(!cleaned) { o->pending=allocations; if(ok&&e) *e=cleanup_error; }
     return ok&&cleaned;
 }
-bool application_native_q2_callbacks_run(struct application_native_q2 *n,const char *section,
+bool application_native_q2_callbacks_run(struct application_native_q2 *n,application_native_callback_stage stage,
     const application_native_callback_inputs *in,bool *accepted,qa_error *e)
 {
-    if(!n||!section||!accepted) return application_fail(e,QA_ERROR_ARGUMENT,"Native callback stage requires its actual owner");
+    if(!n||!accepted) return application_fail(e,QA_ERROR_ARGUMENT,"Native callback stage requires its actual owner");
     *accepted=true; application_native_q2_callbacks *o=n->callbacks;
     if(!o) return true;
-    qa_json_id object=qa_json_root(o->document);
-    if(!strncmp(section,"clients.",8)) { object=qa_json_get(o->document,object,"clients"); section+=8; }
-    qa_json_id list=qa_json_get(o->document,object,section);
-    if(list==QA_JSON_NONE&&object!=qa_json_root(o->document)) return true;
-    if(qa_json_type(o->document,list)!=QA_JSON_ARRAY) return fail(e,"Native callback stage is not a declared array");
-    for(size_t i=0;i<qa_json_size(o->document,list);++i) {
-        qa_json_id call=qa_json_at(o->document,list,i); double value;
-        if(!call_native(o,call,in,&value,strcmp(section,"initialize")!=0,NULL,e)) return false;
+    for(size_t i=0;i<o->stages[stage].count;++i) {
+        qa_json_id call=o->stages[stage].calls[i]; double value;
+        if(!call_native(o,call,in,&value,stage!=NATIVE_CALLBACK_INITIALIZE,NULL,e)) return false;
         if(o->call_descriptors[call].accepts_nonzero&&value==0) { *accepted=false; return true; }
     }
     return true;
@@ -1432,6 +1428,9 @@ static bool weapon_source_inputs(void *context,qa_actor_id actor,
 { return application_native_q2_input_values(context,actor,values,inputs,e); }
 static void descriptors_clear(application_native_q2_callbacks *o)
 {
+    for(size_t i=0;i<NATIVE_CALLBACK_STAGE_COUNT;++i) {
+        free(o->stages[i].calls); o->stages[i].calls=NULL; o->stages[i].count=0;
+    }
     for(size_t i=0;i<o->record_node_count;++i) {
         if(o->arguments) qa_buffer_free(&o->arguments[i].string);
         if(o->addresses) free(o->addresses[i].indirections);
@@ -1616,6 +1615,18 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
             !qa_pool_prepare(&o->region_values,&o->storage,max_values*64,sizeof(qa_native_value),_Alignof(qa_native_value),e)||
             !qa_native_allocate(instance(o),o->scratch_bytes,INT32_MIN+13,&o->scratch,e)) return false;
         qa_arena_seal(&o->storage);
+    }
+    static const char *const stage_names[]={"initialize","admit","userinfo","disconnect","command","frame","endFrame"};
+    qa_json_id root=qa_json_root(d),clients=qa_json_get(d,root,"clients");
+    for(size_t i=0;i<NATIVE_CALLBACK_STAGE_COUNT;++i) {
+        qa_json_id list=qa_json_get(d,i==NATIVE_CALLBACK_INITIALIZE?root:clients,stage_names[i]);
+        if(list==QA_JSON_NONE && i!=NATIVE_CALLBACK_INITIALIZE) continue;
+        if(qa_json_type(d,list)!=QA_JSON_ARRAY) return fail(e,"Native callback stage is not a declared array");
+        size_t count=qa_json_size(d,list);
+        o->stages[i].calls=count?malloc(count*sizeof(*o->stages[i].calls)):NULL;
+        if(count&&!o->stages[i].calls) return application_fail(e,QA_ERROR_MEMORY,"Binding native callback stages");
+        o->stages[i].count=count;
+        for(size_t j=0;j<count;++j) o->stages[i].calls[j]=qa_json_at(d,list,j);
     }
     o->descriptors_bound=true;
     return true;

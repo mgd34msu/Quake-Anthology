@@ -567,7 +567,7 @@ static bool declared_initialize(struct application_native_q2 *engine,qa_error *e
     };
     application_native_callback_inputs inputs={values,{0}};
     bool accepted;
-    return application_native_q2_callbacks_run(engine,"initialize",&inputs,&accepted,error)&&
+    return application_native_q2_callbacks_run(engine,NATIVE_CALLBACK_INITIALIZE,&inputs,&accepted,error)&&
         (accepted||application_fail(error,QA_ERROR_ARGUMENT,"Declared native source rejected initialization"));
 }
 

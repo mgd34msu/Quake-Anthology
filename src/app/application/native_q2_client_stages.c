@@ -220,7 +220,7 @@ static bool clock_write(struct application_native_q2_stages *o,qa_error *e)
 typedef struct native_client_frame {
     struct application_native_q2 *engine;
     qa_actor_id actor;
-    const char *section;
+    application_native_callback_stage section;
 } native_client_frame;
 static bool invoke_client_frame(void *context,qa_session *session,qa_error *e)
 {
@@ -231,7 +231,7 @@ static bool invoke_client_frame(void *context,qa_session *session,qa_error *e)
     application_native_callback_inputs inputs={values,{0}};bool accepted;
     return application_native_q2_callbacks_run(n,call->section,&inputs,&accepted,e);
 }
-static bool client_frame(struct application_native_q2 *n,uint32_t slot,const char *section,qa_error *e)
+static bool client_frame(struct application_native_q2 *n,uint32_t slot,application_native_callback_stage section,qa_error *e)
 {
     application_native_q2_client *client=n->clients+slot;
     if(!client->reserved||!client->connected||client->denied||client->disconnect_started||
@@ -298,7 +298,7 @@ bool application_native_q2_stages_advance(struct application_native_q2 *n,const 
             ok=qa_native_entity_table_refresh(instance(n),&table,e);
             if(!ok||o->cursor>=table.count) break;
             if(o->cursor&&o->cursor<257&&n->clients[o->cursor].reserved&&n->clients[o->cursor].actor.registry) {
-                ok=client_frame(n,o->cursor,"clients.frame",e);continue;
+                ok=client_frame(n,o->cursor,NATIVE_CALLBACK_FRAME,e);continue;
             }
             qa_native_slot_binding binding;qa_native_address address;
             ok=qa_native_slot(instance(n),o->cursor,&binding,e);
@@ -309,8 +309,8 @@ bool application_native_q2_stages_advance(struct application_native_q2 *n,const 
                 ok=qa_session_invoke(n->provider->application->session,binding.actor,QA_INVOKE_THINK,invoke_update,&call,e);
             }
         }
-        if(!actors)for(uint32_t slot=1;ok&&slot<257;++slot)ok=client_frame(n,slot,"clients.frame",e);
-        for(uint32_t slot=1;ok&&slot<257;++slot) ok=client_frame(n,slot,"clients.endFrame",e);
+        if(!actors)for(uint32_t slot=1;ok&&slot<257;++slot)ok=client_frame(n,slot,NATIVE_CALLBACK_FRAME,e);
+        for(uint32_t slot=1;ok&&slot<257;++slot) ok=client_frame(n,slot,NATIVE_CALLBACK_END_FRAME,e);
         if(ok&&actors) ok=qa_native_host_source_frame_end(n->provider->state.native.host,e);
         o->ticking=false;
     }

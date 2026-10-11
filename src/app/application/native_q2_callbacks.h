@@ -15,6 +15,11 @@ typedef struct application_native_callback_inputs {
     const application_q3_mod_value *values;
     qa_bytes user_command;
 } application_native_callback_inputs;
+typedef enum application_native_callback_stage {
+    NATIVE_CALLBACK_INITIALIZE, NATIVE_CALLBACK_ADMIT, NATIVE_CALLBACK_USERINFO,
+    NATIVE_CALLBACK_DISCONNECT, NATIVE_CALLBACK_COMMAND, NATIVE_CALLBACK_FRAME,
+    NATIVE_CALLBACK_END_FRAME, NATIVE_CALLBACK_STAGE_COUNT
+} application_native_callback_stage;
 typedef struct application_native_q2_source_authority {
     void *context;
     bool (*current)(void *, qa_error *);
@@ -28,7 +33,7 @@ bool application_native_q2_callbacks_prepare(struct application_native_q2 *, qa_
 bool application_native_q2_callbacks_validate(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_register(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_suspend(struct application_native_q2 *, qa_error *);
-bool application_native_q2_callbacks_run(struct application_native_q2 *, const char *section,
+bool application_native_q2_callbacks_run(struct application_native_q2 *, application_native_callback_stage,
     const application_native_callback_inputs *, bool *accepted, qa_error *);
 bool application_native_q2_callbacks_call(application_native_q2_callbacks *, qa_json_id,
     const application_native_callback_inputs *, double *, qa_error *);

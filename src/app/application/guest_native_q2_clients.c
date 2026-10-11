@@ -454,7 +454,7 @@ static struct application_native_q2 *client_owner(application_provider *provider
 }
 
 static bool declared_client(struct application_native_q2 *engine,uint32_t slot,
-    const char *stage,qa_bytes command,bool *accepted,qa_error *error)
+    application_native_callback_stage stage,qa_bytes command,bool *accepted,qa_error *error)
 {
     qa_source_frame frame;
     if(!application_native_q2_stages_time_read(engine,&frame,error))return false;
@@ -498,7 +498,7 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
         memcpy(client->userinfo,userinfo,bytes+1); client->userinfo_present=true;
         bool ok=application_native_q2_callbacks_components_project(engine,actor,error)&&
             qa_native_host_client_retained_set(provider->state.native.host,slot,true,error)&&
-            declared_client(engine,slot,"clients.admit",(qa_bytes){0},accepted,error);
+            declared_client(engine,slot,NATIVE_CALLBACK_ADMIT,(qa_bytes){0},accepted,error);
         if(ok&&*accepted) {
             if(!qa_actor_id_equal(client->actor,actor)||!qa_actors_get(qa_session_actors(provider->application->session),actor))
                 return application_fail(error,QA_ERROR_ARGUMENT,"Declared native admission retired its actual actor");
@@ -604,7 +604,7 @@ bool application_native_q2_client_userinfo(application_provider *provider, uint3
         if(!application_native_q2_callbacks_userinfo_validate(engine,userinfo,error)||bytes>=sizeof(engine->clients[slot].userinfo)) return false;
         memcpy(engine->clients[slot].userinfo,userinfo,bytes+1); engine->clients[slot].userinfo_present=true;
         bool accepted;
-        return declared_client(engine,slot,"clients.userinfo",(qa_bytes){0},&accepted,error);
+        return declared_client(engine,slot,NATIVE_CALLBACK_USERINFO,(qa_bytes){0},&accepted,error);
     }
     qa_buffer returned = {0};
     ++engine->calls;
@@ -641,7 +641,7 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
             ++engine->calls;
             if(engine->callbacks) {
                 bool accepted;
-                ok=declared_client(engine,slot,"clients.disconnect",(qa_bytes){0},&accepted,&first);
+                ok=declared_client(engine,slot,NATIVE_CALLBACK_DISCONNECT,(qa_bytes){0},&accepted,&first);
             } else {
                 application_native_q2_visibility_invalidate(engine);
                 ok = qa_native_host_client_disconnect(provider->state.native.host, slot, &first);
@@ -791,7 +791,7 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
         qa_json_id clients=qa_json_get(d,qa_json_root(d),"clients");
         declared_handled=qa_json_size(d,qa_json_get(d,clients,"command"))!=0;
         bool accepted;
-        ok=declared_client(engine,slot,"clients.command",(qa_bytes){0},&accepted,error);
+        ok=declared_client(engine,slot,NATIVE_CALLBACK_COMMAND,(qa_bytes){0},&accepted,error);
     } else {
         application_native_q2_visibility_invalidate(engine);
         ok = event ? qa_native_host_client_command_region(provider->state.native.host, slot, event, error) :
