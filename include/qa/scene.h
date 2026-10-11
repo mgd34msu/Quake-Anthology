@@ -769,6 +769,7 @@ qa_scene_matrix qa_scene_matrix_multiply(qa_scene_matrix, qa_scene_matrix);
 qa_scene_matrix qa_scene_view_matrix(const qa_scene_view *);
 qa_scene_matrix qa_scene_projection(float fov_x, float fov_y, float near_clip, float far_clip);
 qa_vec4 qa_scene_matrix_point(qa_scene_matrix, qa_vec3);
+qa_vec3 qa_scene_matrix_point3(qa_scene_matrix, qa_vec3);
 qa_scene_matrix qa_scene_model_matrix(const qa_model_transform *);
 /* Four lateral planes plus the optional portal plane; near/far clipping belongs
  * to rasterization. Q3 source traversal deliberately selects only the first4. */

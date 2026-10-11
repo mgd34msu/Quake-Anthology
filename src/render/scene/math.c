@@ -41,18 +41,25 @@ qa_scene_matrix qa_scene_projection(float fov_x, float fov_y, float near_clip, f
         0,0,-(far_clip + near_clip) / depth,-1, 0,0,-2 * far_clip * near_clip / depth,0}};
 }
 
-qa_vec4 qa_scene_matrix_point(qa_scene_matrix matrix, qa_vec3 point)
+static void matrix_point(qa_scene_matrix matrix,qa_vec3 point,float *out,size_t rows)
 {
-    qa_vec4 result;
-    float *out[4] = {&result.x, &result.y, &result.z, &result.w};
-    for (size_t row = 0; row < 4; ++row) {
+    for (size_t row = 0; row < rows; ++row) {
         float value = point.x * matrix.m[row];
         value += point.y * matrix.m[4 + row];
         value += point.z * matrix.m[8 + row];
         value += matrix.m[12 + row];
-        *out[row] = value;
+        out[row] = value;
     }
-    return result;
+}
+qa_vec4 qa_scene_matrix_point(qa_scene_matrix matrix,qa_vec3 point)
+{
+    float out[4];matrix_point(matrix,point,out,4);
+    return (qa_vec4){out[0],out[1],out[2],out[3]};
+}
+qa_vec3 qa_scene_matrix_point3(qa_scene_matrix matrix,qa_vec3 point)
+{
+    float out[3];matrix_point(matrix,point,out,3);
+    return qa_v3(out[0],out[1],out[2]);
 }
 
 qa_scene_matrix qa_scene_model_matrix(const qa_model_transform *transform)

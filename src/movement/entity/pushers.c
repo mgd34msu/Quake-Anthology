@@ -166,10 +166,6 @@ static bool restore_q2(qa_physics *p, ph_pushed saved, qa_error *error) {
     return ph_link(p, saved.actor, false, error);
 }
 
-static bool overlaps_strict(qa_bounds a, qa_bounds b) {
-    return a.mins.x < b.maxs.x && a.mins.y < b.maxs.y && a.mins.z < b.maxs.z &&
-           a.maxs.x > b.mins.x && a.maxs.y > b.mins.y && a.maxs.z > b.mins.z;
-}
 
 static qa_vec3 rotated_delta(qa_vec3 origin, qa_vec3 pusher_origin, qa_vec3 move,
                               qa_vec3 forward, qa_vec3 right, qa_vec3 up) {
@@ -219,7 +215,7 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         bool rider = qa_actor_id_equal(qa_physics_actor_reference(p, body.ground), input->actor) &&
                      (props.family != QA_GAME_Q1 || (props.flags & QA_PHYSICS_ONGROUND));
         if (!rider) {
-            if (!qa_world_linked(p->world, actor, &linked) || !overlaps_strict(linked.absolute_bounds, bounds)) continue;
+            if (!qa_world_linked(p->world, actor, &linked) || !qa_bounds_overlap_strict(linked.absolute_bounds, bounds)) continue;
             bool blocked;
             if (!ph_test_position(p, actor, &blocked, error)) { ok = false; break; }
             if (!blocked) continue;

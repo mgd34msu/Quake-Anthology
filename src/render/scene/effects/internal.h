@@ -23,13 +23,6 @@ static inline qa_vec3 qa_effect_rotate(qa_vec3 point, qa_vec3 axis, float degree
                       qa_vec_scale(axis, qa_vec_dot(axis, point) * (1.0f - cosine)));
 }
 
-static inline qa_vec3 qa_effect_point(qa_scene_matrix matrix, qa_vec3 point)
-{
-    return qa_v3(matrix.m[0] * point.x + matrix.m[4] * point.y + matrix.m[8] * point.z + matrix.m[12],
-                 matrix.m[1] * point.x + matrix.m[5] * point.y + matrix.m[9] * point.z + matrix.m[13],
-                 matrix.m[2] * point.x + matrix.m[6] * point.y + matrix.m[10] * point.z + matrix.m[14]);
-}
-
 bool qa_effect_mesh(qa_scene_frame *, size_t vertices, size_t indices,
                     qa_scene_mesh *, qa_scene_vertex **, uint32_t **, qa_error *);
 void qa_effect_draw(qa_scene_draw *, const qa_scene_view *, const qa_scene_mesh *,

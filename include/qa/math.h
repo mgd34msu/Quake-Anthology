@@ -39,6 +39,7 @@ static inline qa_vec3 qa_vec_add(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x+b.x, a
 static inline qa_vec3 qa_vec_sub(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x-b.x, a.y-b.y, a.z-b.z); }
 static inline qa_vec3 qa_vec_scale(qa_vec3 a, float b) { return qa_v3(a.x*b, a.y*b, a.z*b); }
 static inline float qa_vec_dot(qa_vec3 a, qa_vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline double qa_vec_dot_wide(qa_vec3 a,qa_vec3 b) { return (double)a.x*b.x+(double)a.y*b.y+(double)a.z*b.z; }
 static inline qa_vec3 qa_vec_cross(qa_vec3 a, qa_vec3 b) {
     return qa_v3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x);
 }
@@ -66,6 +67,14 @@ static inline bool qa_bounds_overlap(qa_bounds a, qa_bounds b) {
     return a.mins.x <= b.maxs.x && a.maxs.x >= b.mins.x &&
            a.mins.y <= b.maxs.y && a.maxs.y >= b.mins.y &&
            a.mins.z <= b.maxs.z && a.maxs.z >= b.mins.z;
+}
+static inline bool qa_bounds_overlap_strict(qa_bounds a,qa_bounds b) {
+    return a.mins.x<b.maxs.x && a.mins.y<b.maxs.y && a.mins.z<b.maxs.z &&
+        a.maxs.x>b.mins.x && a.maxs.y>b.mins.y && a.maxs.z>b.mins.z;
+}
+static inline bool qa_bounds_expands(qa_bounds previous,qa_bounds requested) {
+    return requested.mins.x<previous.mins.x || requested.mins.y<previous.mins.y || requested.mins.z<previous.mins.z ||
+        requested.maxs.x>previous.maxs.x || requested.maxs.y>previous.maxs.y || requested.maxs.z>previous.maxs.z;
 }
 static inline bool qa_bounds_contains(qa_bounds b, qa_vec3 p) {
     return p.x >= b.mins.x && p.x <= b.maxs.x &&

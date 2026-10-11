@@ -103,7 +103,7 @@ static bool raw_store(control_frame *frame,uint8_t *bytes,const qa_movement_resu
 {
     store_vector(bytes+4,qa_movement_origin(&result->state)); store_vector(bytes+16,qa_movement_velocity(&result->state));
     if(!isfinite(result->view_height)||result->view_height<INT8_MIN||result->view_height>INT8_MAX||
-        result->water_level<0||result->water_level>3||!valid_bounds(result->bounds))
+        result->water_level<0||result->water_level>3||!qa_bounds_valid(result->bounds))
         return raw_fail(error,QA_ERROR_FORMAT,"Selected movement output exceeds its physical Source SDK domain");
     bytes[48]=(uint8_t)(int8_t)result->view_height;
     store_vector(bytes+RR_PM_VIEW,result->view_angles);

@@ -57,10 +57,6 @@ static qa_scene_matrix multiply(qa_scene_matrix a, qa_scene_matrix b)
     return result;
 }
 
-static double dot(qa_vec3 a, qa_vec3 b)
-{
-    return (double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z;
-}
 
 static qa_scene_matrix perspective(double fov, float radius)
 {
@@ -74,7 +70,7 @@ static qa_scene_matrix shadow_view(qa_vec3 origin, shadow_basis basis)
 {
     qa_vec3 r = basis.right, u = basis.up, v = basis.forward;
     return (qa_scene_matrix){{r.x, u.x, -v.x, 0, r.y, u.y, -v.y, 0, r.z, u.z, -v.z, 0,
-        (float)-dot(r, origin), (float)-dot(u, origin), (float)dot(v, origin), 1}};
+        (float)-qa_vec_dot_wide(r, origin), (float)-qa_vec_dot_wide(u, origin), (float)qa_vec_dot_wide(v, origin), 1}};
 }
 
 static shadow_basis cone_basis(qa_vec3 direction)
@@ -161,12 +157,12 @@ static void fit(shadow_candidate *candidates, size_t count, const qa_scene_shado
 static caster_sphere caster_bounds(const qa_scene_shadow_caster *caster)
 {
     qa_vec3 center = qa_vec_scale(qa_vec_add(caster->bounds.mins, caster->bounds.maxs), 0.5f);
-    caster_sphere sphere = {qa_effect_point(caster->transform, center), 0};
+    caster_sphere sphere = {qa_scene_matrix_point3(caster->transform, center), 0};
     for (unsigned i = 0; i < 8; ++i) {
         qa_vec3 point = qa_v3(i & 1 ? caster->bounds.maxs.x : caster->bounds.mins.x,
                               i & 2 ? caster->bounds.maxs.y : caster->bounds.mins.y,
                               i & 4 ? caster->bounds.maxs.z : caster->bounds.mins.z);
-        float radius = qa_vec_length(qa_vec_sub(qa_effect_point(caster->transform, point), sphere.origin));
+        float radius = qa_vec_length(qa_vec_sub(qa_scene_matrix_point3(caster->transform, point), sphere.origin));
         sphere.radius = fmaxf(sphere.radius, radius);
     }
     return sphere;
@@ -175,11 +171,11 @@ static caster_sphere caster_bounds(const qa_scene_shadow_caster *caster)
 static bool light_contains(const qa_scene_light *light, caster_sphere sphere)
 {
     qa_vec3 delta = qa_vec_sub(sphere.origin, light->origin);
-    double distance = sqrt(dot(delta, delta));
+    double distance = sqrt(qa_vec_dot_wide(delta, delta));
     if (distance > (double)light->radius + sphere.radius) return false;
     if (light->spot && distance > sphere.radius) {
         double diagonal = atan(sqrt(2) * tan(fmin(cone_fov(light->cos_half_angle) * QA_EFFECT_PI / 360, 87 * QA_EFFECT_PI / 180)));
-        double angle = acos(fmin(1, fmax(-1, dot(delta, light->direction) / distance)));
+        double angle = acos(fmin(1, fmax(-1, qa_vec_dot_wide(delta, light->direction) / distance)));
         double separation = angle - asin(fmin(1, sphere.radius / distance));
         if (cos(fmin(QA_EFFECT_PI, fmax(0, separation))) < cos(diagonal)) return false;
     }
@@ -192,9 +188,9 @@ static bool world_mesh_visible(const qa_scene_mesh *mesh, qa_scene_matrix transf
     bool in_radius = false, in_front = forward == NULL;
     double radius = fmax(light->radius, 8), radius_squared = radius * radius;
     for (size_t i = 0; i < mesh->vertex_count; ++i) {
-        qa_vec3 delta = qa_vec_sub(qa_effect_point(transform, mesh->vertices[i].position), light->origin);
-        in_radius |= dot(delta, delta) <= radius_squared;
-        if (forward) in_front |= dot(delta, *forward) > 0;
+        qa_vec3 delta = qa_vec_sub(qa_scene_matrix_point3(transform, mesh->vertices[i].position), light->origin);
+        in_radius |= qa_vec_dot_wide(delta, delta) <= radius_squared;
+        if (forward) in_front |= qa_vec_dot_wide(delta, *forward) > 0;
         if (in_radius && in_front) return true;
     }
     return false;
@@ -343,7 +339,7 @@ static bool depth_pass(qa_scene_frame *frame, const qa_scene_light *light,
         if (caster->world_geometry != (pass == 0)) continue;
         if (!caster->world_geometry) {
             if (!light_contains(light, spheres[i])) continue;
-            if (point && dot(qa_vec_sub(spheres[i].origin, light->origin), basis.forward) + spheres[i].radius <= 0) continue;
+            if (point && qa_vec_dot_wide(qa_vec_sub(spheres[i].origin, light->origin), basis.forward) + spheres[i].radius <= 0) continue;
         }
         for (size_t j = 0; j < caster->mesh_count; ++j) {
             const qa_scene_mesh *mesh = &caster->meshes[j];

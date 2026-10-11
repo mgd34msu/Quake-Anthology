@@ -93,6 +93,24 @@ static void test_shared_angle_basis(void)
         CHECK(fabsf(only.x)<1e-6f && only.y==0 && fabsf(only.z+1)<1e-6f);
     }
 }
+static void test_shared_bounds_and_transform(void)
+{
+    qa_bounds unit={qa_v3(0,0,0),qa_v3(1,1,1)};
+    qa_bounds contact=qa_bounds_translate(unit,qa_v3(1,0,0));
+    CHECK(qa_bounds_overlap(unit,contact) && !qa_bounds_overlap_strict(unit,contact));
+    CHECK(qa_bounds_overlap_strict(unit,qa_bounds_translate(unit,qa_v3(.5f,0,0))));
+    CHECK(!qa_bounds_overlap(unit,qa_bounds_translate(unit,qa_v3(2,0,0))));
+    CHECK(!qa_bounds_expands(unit,unit));
+    qa_bounds smaller={qa_v3(.25f,.25f,.25f),qa_v3(.75f,.75f,.75f)};
+    CHECK(!qa_bounds_expands(unit,smaller) && qa_bounds_expands(smaller,unit));
+    qa_scene_matrix matrix;qa_scene_matrix_identity(&matrix);
+    matrix.m[4]=2;matrix.m[12]=7;matrix.m[13]=-3;matrix.m[14]=5;
+    qa_vec3 point=qa_scene_matrix_point3(matrix,qa_v3(1,2,3));
+    qa_vec4 projected=qa_scene_matrix_point(matrix,qa_v3(1,2,3));
+    CHECK(point.x==12 && point.y==-1 && point.z==8);
+    CHECK(projected.x==point.x && projected.y==point.y && projected.z==point.z && projected.w==1);
+    CHECK(qa_vec_dot_wide(qa_v3(1,2,3),qa_v3(4,5,6))==32);
+}
 static void test_source_text(void)
 {
     uint8_t source[256],roundtrip[257];char utf8[513];size_t size,restored;qa_error error={0};
@@ -2304,6 +2322,7 @@ int main(int argc, char **argv)
     test_q2_hud_configuration();
     test_compiled_sound_names();
     test_shared_angle_basis();
+    test_shared_bounds_and_transform();
     test_native_import_slot_identity();
     test_q2_weapon_names();
     test_q2_player_media();

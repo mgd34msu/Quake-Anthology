@@ -93,7 +93,7 @@ bool qaw_q1_sky_collect(qa_scene_q1_sky *sky, const qa_scene_mesh *source,
         &polygon->mesh, &vertices, &indices, error)) return false;
     for (size_t i = 0; i < source->vertex_count; ++i) {
         vertices[i] = source->vertices[i];
-        vertices[i].position = qa_effect_point(context->model, vertices[i].position);
+        vertices[i].position = qa_scene_matrix_point3(context->model, vertices[i].position);
         vertices[i].color = sky->flat;
     }
     if (source->index_count) memcpy(indices, source->indices, source->index_count * sizeof(*indices));

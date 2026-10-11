@@ -511,10 +511,6 @@ static qa_bounds bsp_bounds(qa_bsp_bounds bounds)
     return (qa_bounds){bounds.min, bounds.max};
 }
 
-static double precise_dot(qa_vec3 a, qa_vec3 b)
-{
-    return (double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z;
-}
 
 static bool world_visibility_topology(qa_scene_world *world, qa_error *error)
 {
@@ -880,10 +876,10 @@ static bool remaining_planes(qa_bounds bounds, const qa_scene_plane *planes,
         qa_vec3 n = planes[i].normal;
         qa_vec3 front = qa_v3(n.x < 0 ? bounds.mins.x : bounds.maxs.x,
             n.y < 0 ? bounds.mins.y : bounds.maxs.y, n.z < 0 ? bounds.mins.z : bounds.maxs.z);
-        if ((float)(precise_dot(front, n) - planes[i].distance) < 0) return false;
+        if ((float)(qa_vec_dot_wide(front, n) - planes[i].distance) < 0) return false;
         qa_vec3 back = qa_v3(n.x < 0 ? bounds.maxs.x : bounds.mins.x,
             n.y < 0 ? bounds.maxs.y : bounds.mins.y, n.z < 0 ? bounds.maxs.z : bounds.mins.z);
-        if ((float)(precise_dot(back, n) - planes[i].distance) >= 0) *bits &= ~bit;
+        if ((float)(qa_vec_dot_wide(back, n) - planes[i].distance) >= 0) *bits &= ~bit;
     }
     return true;
 }
@@ -1034,11 +1030,11 @@ static bool world_visible(const qa_scene_world *world, const qa_scene_world_inpu
                 for (size_t i = 0; i < light_count; ++i) {
                     uint32_t bit = UINT32_C(1) << i;
                     if ((item.lights & bit) == 0) continue;
-                    float distance = (float)(precise_dot(lights[i].origin, plane->normal) - plane->distance);
+                    float distance = (float)(qa_vec_dot_wide(lights[i].origin, plane->normal) - plane->distance);
                     if (distance > -lights[i].radius) masks[0] |= bit;
                     if (distance < lights[i].radius) masks[1] |= bit;
                 }
-            } else front = precise_dot(input->view.origin, plane->normal) >= plane->distance ? 0u : 1u;
+            } else front = qa_vec_dot_wide(input->view.origin, plane->normal) >= plane->distance ? 0u : 1u;
             scratch->pending[pending++] = (qaw_pending){node->children[front ^ 1], masks[front ^ 1], item.planes};
             scratch->pending[pending++] = (qaw_pending){node->children[front], masks[front], item.planes};
             continue;
@@ -1268,7 +1264,7 @@ static bool local_bounds_visible(qa_bounds bounds, const qa_model_transform *tra
                 corner & 2 ? bounds.maxs.y : bounds.mins.y, corner & 4 ? bounds.maxs.z : bounds.mins.z};
             float point[3] = {local[0], local[1], local[2]};
             if (transform != NULL) qa_model_transform_point(transform, local, point);
-            if (precise_dot(qa_v3(point[0], point[1], point[2]), planes[plane].normal) > planes[plane].distance) {
+            if (qa_vec_dot_wide(qa_v3(point[0], point[1], point[2]), planes[plane].normal) > planes[plane].distance) {
                 visible = true;
                 break;
             }
@@ -1300,7 +1296,7 @@ static bool surface_culled(const qa_scene_world *world, const qaw_surface *surfa
         }
         bool clipped = false;
         for (size_t i = 0; i < count; ++i) {
-            float distance = (float)(precise_dot(center, planes[i].normal) - planes[i].distance);
+            float distance = (float)(qa_vec_dot_wide(center, planes[i].normal) - planes[i].distance);
             if (distance < -radius) {
                 if (input->source_scratch) ++input->source_scratch->owner->counters.patch_sphere[2];
                 return true;
@@ -1316,7 +1312,7 @@ static bool surface_culled(const qa_scene_world *world, const qaw_surface *surfa
                 corner&4?surface->mesh.bounds.maxs.z:surface->mesh.bounds.mins.z};
             float point[3]={local[0],local[1],local[2]};
             if (transform) qa_model_transform_point(transform,local,point);
-            if (precise_dot(qa_v3(point[0],point[1],point[2]),planes[plane].normal)<=planes[plane].distance) inside=false;
+            if (qa_vec_dot_wide(qa_v3(point[0],point[1],point[2]),planes[plane].normal)<=planes[plane].distance) inside=false;
         }
         if (input->source_scratch) ++input->source_scratch->owner->counters.patch_box[!visible?2:inside?0:1];
         return !visible;
@@ -1324,7 +1320,7 @@ static bool surface_culled(const qa_scene_world *world, const qaw_surface *surfa
     if (input->source_order && input->disable_face_plane_cull) return false;
     const qa_material *material = input->source_order ? surface->material : effective_material(surface->material);
     if (!surface->has_plane || material == NULL || material->cull == QA_CULL_NONE) return false;
-    double viewer = precise_dot(context->local_view_origin, surface->plane.normal);
+    double viewer = qa_vec_dot_wide(context->local_view_origin, surface->plane.normal);
     return material->cull == QA_CULL_FRONT ? viewer < (float)(surface->plane.distance - 8.0f)
         : viewer > (float)(surface->plane.distance + 8.0f);
 }
@@ -1339,7 +1335,7 @@ static uint32_t surface_light_mask(const qaw_surface *surface, uint32_t mask,
         if ((mask & bit) == 0) continue;
         const qa_scene_light *light = &lights[i];
         if (surface->has_plane && surface->type != QA_BSP_SURFACE_PATCH) {
-            float distance = (float)(precise_dot(light->origin, surface->plane.normal) - surface->plane.distance);
+            float distance = (float)(qa_vec_dot_wide(light->origin, surface->plane.normal) - surface->plane.distance);
             if (distance < -light->radius || distance > light->radius) mask &= ~bit;
         } else {
             qa_vec3 o = light->origin, min = surface->mesh.bounds.mins, max = surface->mesh.bounds.maxs;
@@ -2092,7 +2088,7 @@ bool qa_scene_world_portal_view(qa_scene_world *world, const qa_scene_world_inpu
         if (!surface->has_plane || material == NULL || material->sort != 1) continue;
         const qa_scene_portal *portal = NULL;
         for (size_t j = 0; j < portal_count; ++j) {
-            float distance = (float)(precise_dot(portals[j].origin, surface->plane.normal) - surface->plane.distance);
+            float distance = (float)(qa_vec_dot_wide(portals[j].origin, surface->plane.normal) - surface->plane.distance);
             if (fabsf(distance) <= 64) { portal = &portals[j]; break; }
         }
         if (portal == NULL) continue;
