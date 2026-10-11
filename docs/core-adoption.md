@@ -850,6 +850,14 @@ spray emitters read those IDs directly. Their per-call interning is deleted.
 Normal build and seven core suites pass. The expanded list's Q1 model and map
 emitter sites are migrated; Q2 monster emitters remain open in item 14.
 
+Names leftovers item 16: native Q2 callback admission compiles argument kinds,
+input slots, constants, address indirections and record extents/private ranges
+once. Lowering, record access and pickup context checks read those descriptors;
+their per-call JSON field/kind lookups are deleted. The earlier retained input
+slot and record ordinal changes remain the sole selectors. Normal build and
+seven core suites pass. This closes the expanded item 16 sites by source,
+build and core evidence; names 5, 6, 10 and 14 still have listed leftovers.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

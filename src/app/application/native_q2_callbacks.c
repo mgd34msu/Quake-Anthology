@@ -71,12 +71,49 @@ typedef struct native_call {
     application_native_q2_item_receipt *items;
     struct application_native_q2_source_invocation *source;
 } native_call;
+typedef enum native_record_base { NATIVE_RECORD_CLIENTS, NATIVE_RECORD_ENTITIES, NATIVE_RECORD_ADDRESS } native_record_base;
+typedef struct native_private_range { uint32_t offset; size_t size; } native_private_range;
+typedef struct native_record_descriptor {
+    qa_json_id node, base;
+    uint32_t first, stride, capacity;
+    native_record_base kind;
+    native_private_range *private_ranges;
+    size_t private_count;
+    bool client_storage, public_record;
+} native_record_descriptor;
+typedef enum native_argument_kind {
+    NATIVE_ARGUMENT_OTHER, NATIVE_ARGUMENT_SCALAR, NATIVE_ARGUMENT_TIME,
+    NATIVE_ARGUMENT_ADDRESS, NATIVE_ARGUMENT_ACTOR, NATIVE_ARGUMENT_CLIENT,
+    NATIVE_ARGUMENT_USERINFO, NATIVE_ARGUMENT_USER_COMMAND, NATIVE_ARGUMENT_VECTOR,
+    NATIVE_ARGUMENT_STRING
+} native_argument_kind;
+typedef struct native_address_descriptor {
+    uint32_t rva;
+    uint32_t *indirections;
+    size_t count;
+    bool null;
+} native_address_descriptor;
+typedef struct native_argument_descriptor {
+    native_argument_kind kind;
+    application_q3_mod_input input;
+    qa_native_value_type type;
+    size_t storage, record;
+    qa_json_id address;
+    double scale, number;
+    qa_vec3 vector;
+    qa_buffer string;
+} native_argument_descriptor;
 struct application_native_q2_callbacks {
     struct application_native_q2 *engine;
     qa_json_document *document;
     application_q3_mod_input *input_nodes;
     size_t *record_nodes;
     size_t record_node_count;
+    native_record_descriptor *record_descriptors;
+    size_t descriptor_count;
+    native_argument_descriptor *arguments;
+    native_address_descriptor *addresses;
+    bool descriptors_bound;
     const qa_native_module *module;
     const qa_native_declaration *declaration;
     qa_native_target target;
@@ -195,15 +232,12 @@ bool application_native_q2_callbacks_address(application_native_q2_callbacks *o,
     qa_native_address *out, qa_error *e)
 {
     if(!out||!current(o,e)) return false;
-    if(qa_json_type(o->document,id)==QA_JSON_NULL) { *out=0; return true; }
-    uint32_t rva;
-    if(!word(o->document,id,"rva",&rva,e)||!qa_native_rva(instance(o),rva,1,out,e)) return false;
-    qa_json_id list=qa_json_get(o->document,id,"indirections");
-    if(qa_json_type(o->document,list)!=QA_JSON_ARRAY) return fail(e,"Native address has no declared indirection roster");
-    for(size_t i=0;i<qa_json_size(o->document,list);++i) {
-        uint64_t offset;
-        if(!qa_json_u64(o->document,qa_json_at(o->document,list,i),&offset,e)||offset>UINT32_MAX||
-            !pointer_read(o,*out,out,e)||!*out||*out>UINT64_MAX-offset)
+    const native_address_descriptor *address=o->addresses+id;
+    if(address->null) { *out=0; return true; }
+    if(!qa_native_rva(instance(o),address->rva,1,out,e)) return false;
+    for(size_t i=0;i<address->count;++i) {
+        uint32_t offset=address->indirections[i];
+        if(!pointer_read(o,*out,out,e)||!*out||*out>UINT64_MAX-offset)
             return fail(e,"Native address indirection is null or overflows");
         *out+=offset;
     }
@@ -222,24 +256,23 @@ static bool record_source(void *context,size_t name,uint32_t index,qa_native_add
 {
     application_native_q2_callbacks *o=context;
     if(!name||!out||!current(o,e)) return false;
-    qa_json_id r=record_find(o,name),base=qa_json_get(o->document,r,"base");
-    uint32_t first,stride,capacity;
-    if(r==QA_JSON_NONE||!word(o->document,r,"firstSlot",&first,e)||!word(o->document,r,"stride",&stride,e)||
-        !word(o->document,r,"capacity",&capacity,e)) return false;
+    const native_record_descriptor *r=o->record_descriptors+name-1;
+    uint32_t first=r->first,stride=r->stride,capacity=r->capacity;
+    qa_json_id base=r->base;
     if(index>=capacity) return fail(e,"Native actor exceeds its declared record capacity");
-    if(qa_json_string_equal(o->document,qa_json_get(o->document,base,"kind"),"clients")) {
+    if(r->kind==NATIVE_RECORD_CLIENTS) {
         qa_native_address entity;
         uint32_t physical=first+index+1;
         if(physical<first||!qa_native_entity_address(instance(o),physical,&entity,e)) return false;
         size_t public_pointer=o->target.pointer_bytes==4?84u:o->engine->profile==QA_NATIVE_Q2_GAME_API2023?120u:88u;
         if(!pointer_read(o,entity+public_pointer,out,e)||!*out) return fail(e,"Native client record has no original storage");
-    } else if(qa_json_string_equal(o->document,qa_json_get(o->document,base,"kind"),"entities")) {
+    } else if(r->kind==NATIVE_RECORD_ENTITIES) {
         qa_native_entity_table table;
         if(!qa_native_entity_table_get(instance(o),&table,e)||table.stride!=stride||
             (uint64_t)first+capacity>table.capacity||(uint64_t)first+index>=table.count)
             return fail(e,"Native actor declaration differs from the actual export table");
         *out=table.base+((uint64_t)first+index)*stride;
-    } else if(qa_json_string_equal(o->document,qa_json_get(o->document,base,"kind"),"address")) {
+    } else if(r->kind==NATIVE_RECORD_ADDRESS) {
         if(!application_native_q2_callbacks_address(o,base,out,e)) return false;
         uint64_t delta=((uint64_t)first+index)*stride;
         if(*out>UINT64_MAX-delta) return fail(e,"Native record address overflows");
@@ -250,20 +283,21 @@ static bool record_source(void *context,size_t name,uint32_t index,qa_native_add
 }
 static bool record_validate(void *context,size_t name,qa_native_address *out,uint64_t *bytes,qa_error *e)
 {
-    application_native_q2_callbacks *o=context; qa_json_id r=record_find(o,name),base=qa_json_get(o->document,r,"base");
-    uint32_t first,stride,capacity;
-    if(!out||!bytes||!current(o,e)||r==QA_JSON_NONE||!word(o->document,r,"firstSlot",&first,e)||
-        !word(o->document,r,"stride",&stride,e)||!word(o->document,r,"capacity",&capacity,e)) return false;
+    application_native_q2_callbacks *o=context;
+    if(!out||!bytes||!current(o,e)||!name||name>o->descriptor_count) return false;
+    const native_record_descriptor *r=o->record_descriptors+name-1;
+    uint32_t first=r->first,stride=r->stride,capacity=r->capacity;
+    qa_json_id base=r->base;
     *out=0; *bytes=0;
-    if(qa_json_string_equal(o->document,qa_json_get(o->document,base,"kind"),"clients")) return true;
+    if(r->kind==NATIVE_RECORD_CLIENTS) return true;
     uint64_t extent=(uint64_t)capacity*stride,delta=(uint64_t)first*stride;
-    if(qa_json_string_equal(o->document,qa_json_get(o->document,base,"kind"),"entities")) {
+    if(r->kind==NATIVE_RECORD_ENTITIES) {
         qa_native_entity_table table;
         if(!qa_native_entity_table_get(instance(o),&table,e)||table.stride!=stride||(uint64_t)first+capacity>table.capacity)
             return fail(e,"Native declared array differs from the actual export capacity");
         if(table.base>UINT64_MAX-delta) return fail(e,"Native source array address overflows");
         *out=table.base+delta;
-    } else if(qa_json_string_equal(o->document,qa_json_get(o->document,base,"kind"),"address")) {
+    } else if(r->kind==NATIVE_RECORD_ADDRESS) {
         if(!application_native_q2_callbacks_address(o,base,out,e)||*out>UINT64_MAX-delta) return false;
         *out+=delta;
     } else return fail(e,"Native record has no actual declared array source");
@@ -508,33 +542,20 @@ bool application_native_q2_callbacks_pickup_context_address(application_native_q
     qa_actor_id actor,size_t name,uint32_t offset,size_t bytes,qa_native_address *out,qa_error *e)
 {
     if(!name||!out||!bytes||!pickup_actor_foreign(o,actor,e)) return false;
-    qa_json_id record=record_find(o,name),base=qa_json_get(o->document,record,"base"); uint32_t stride;
-    if(record==QA_JSON_NONE||!word(o->document,record,"stride",&stride,e)||
-        qa_json_string_equal(o->document,qa_json_get(o->document,base,"kind"),"clients")||
-        offset>stride||bytes>stride-offset)
+    const native_record_descriptor *record=o->record_descriptors+name-1;
+    uint32_t stride=record->stride;
+    if(record->kind==NATIVE_RECORD_CLIENTS||offset>stride||bytes>stride-offset)
         return fail(e,"Native pickup context exceeds its declared nonclient record");
-    qa_json_id clients=qa_json_get(o->document,qa_json_root(o->document),"clients");
-    qa_json_id client_records=qa_json_get(o->document,clients,"records");
-    for(size_t i=0;i<qa_json_size(o->document,client_records);++i)
-        if(application_native_q2_callbacks_record_index(o,qa_json_at(o->document,client_records,i))==name)
-            return fail(e,"Native pickup context cannot borrow declared client storage");
-    qa_json_id fields=qa_json_get(o->document,record,"fields"); bool private_field=false;
-    for(size_t i=0;i<qa_json_size(o->document,fields);++i) {
-        qa_json_id field=qa_json_at(o->document,fields,i),binding=qa_json_get(o->document,field,"binding");
-        uint32_t start; size_t length=0; qa_native_value_type type;
-        if(!word(o->document,field,"offset",&start,e)) return false;
-        if(qa_json_string_equal(o->document,binding,"private")) {
-            uint32_t extent; if(!word(o->document,field,"byteLength",&extent,e)) return false; length=extent;
-        } else if(qa_json_string_equal(o->document,binding,"constant"))
-            length=scalar_type(o->document,qa_json_get(o->document,field,"encoding"),&type);
-        else if(qa_json_string_equal(o->document,binding,"address")) length=o->target.pointer_bytes;
-        else if(qa_json_string_equal(o->document,binding,"constant-vector")) length=12;
-        if(length&&start<=offset&&(uint64_t)offset+bytes<=(uint64_t)start+length) private_field=true;
+    if(record->client_storage) return fail(e,"Native pickup context cannot borrow declared client storage");
+    bool private_field=false;
+    for(size_t i=0;i<record->private_count;++i) {
+        const native_private_range *field=record->private_ranges+i;
+        if(field->offset<=offset&&(uint64_t)offset+bytes<=(uint64_t)field->offset+field->size) private_field=true;
     }
     if(!private_field) return fail(e,"Native pickup context lacks exclusive declared source storage");
     qa_native_address address;
     if(!application_native_q2_callbacks_record(o,actor,name,&address,e)||!address||!pickup_actor_foreign(o,actor,e)) return false;
-    if(application_native_q2_callbacks_record_index(o,qa_json_get(o->document,qa_json_root(o->document),"entityRecord"))==name) {
+    if(record->public_record) {
         uint32_t slot; size_t public_bytes; qa_native_slot_binding binding;
         if(!qa_native_entity_slot(instance(o),address,&slot,e)||!qa_native_slot(instance(o),slot,&binding,e)||
             !qa_native_host_source_public_bytes(o->engine->provider->state.native.host,slot,&public_bytes,e)) return false;
@@ -605,41 +626,36 @@ bool application_native_q2_callbacks_userinfo_validate(struct application_native
 static bool lower(application_native_q2_callbacks *o,qa_json_id id,const application_native_callback_inputs *in,
     qa_native_value *out,size_t *storage,native_temporary **owned,native_userinfo **corrections,qa_error *e)
 {
-    const qa_json_document *d=o->document; qa_json_id kind=qa_json_get(d,id,"kind"),raw=qa_json_get(d,id,"value");
-    qa_native_value_type type; size_t size=scalar_type(d,kind,&type); *storage=size;
-    qa_buffer name={0}; const application_q3_mod_value *value=NULL;
-    if(qa_json_string_equal(d,kind,"actor")||qa_json_string_equal(d,kind,"client")||qa_json_string_equal(d,kind,"userinfo")||qa_json_string_equal(d,kind,"time")) {
-        value=input(in,application_native_q2_callbacks_input_index(o,qa_json_get(d,id,"input")));
-        if(!value) return fail(e,"Native callback omitted its declared input");
-    } else if(qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"input")) {
-        value=input(in,application_native_q2_callbacks_input_index(o,qa_json_get(d,raw,"name")));
-        if(!value) return fail(e,"Native callback omitted its value input");
-    }
-    if(qa_json_string_equal(d,kind,"time")) {
+    const native_argument_descriptor *argument=o->arguments+id;
+    qa_native_value_type type=argument->type;
+    size_t size=argument->kind==NATIVE_ARGUMENT_SCALAR?argument->storage:0; *storage=size;
+    const application_q3_mod_value *value=input(in,argument->input);
+    if(argument->input<Q3_MOD_VALUE_COUNT&&!value) return fail(e,"Native callback omitted its declared input");
+    if(argument->kind==NATIVE_ARGUMENT_TIME) {
         if(value->kind!=Q3_MOD_VALUE_SCALAR) return fail(e,"Native time input has the wrong type");
-        *storage=scalar_type(d,qa_json_get(d,id,"encoding"),&type);
-        double scale=qa_json_string_equal(d,qa_json_get(d,id,"units"),"milliseconds")?1000:1;
+        *storage=argument->storage;
+        double scale=argument->scale;
         return *storage&&number_value(type,value->as.scalar*scale,out,e);
     }
     if(size) {
         double number;
         if(value) { if(value->kind!=Q3_MOD_VALUE_SCALAR) return fail(e,"Native scalar input has the wrong type"); number=value->as.scalar; }
-        else if(!qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"float")||!qa_json_number(d,qa_json_get(d,raw,"value"),&number,e)) return false;
+        else number=argument->number;
         return number_value(type,number,out,e);
     }
     *out=(qa_native_value){.type=QA_NATIVE_ADDRESS}; *storage=o->target.pointer_bytes;
-    if(qa_json_string_equal(d,kind,"address")) return application_native_q2_callbacks_address(o,raw,&out->as.address,e);
-    if(qa_json_string_equal(d,kind,"actor")) {
+    if(argument->kind==NATIVE_ARGUMENT_ADDRESS) return application_native_q2_callbacks_address(o,argument->address,&out->as.address,e);
+    if(argument->kind==NATIVE_ARGUMENT_ACTOR) {
         if(value->kind!=Q3_MOD_VALUE_ACTOR) return fail(e,"Native actor input has the wrong type");
-        bool ok=application_native_q2_callbacks_record(o,value->as.actor,application_native_q2_callbacks_record_index(o,qa_json_get(d,id,"record")),&out->as.address,e);
-        qa_buffer_free(&name); return ok;
+        bool ok=application_native_q2_callbacks_record(o,value->as.actor,argument->record,&out->as.address,e);
+        return ok;
     }
-    if(qa_json_string_equal(d,kind,"client")||qa_json_string_equal(d,kind,"userinfo")) {
+    if(argument->kind==NATIVE_ARGUMENT_CLIENT||argument->kind==NATIVE_ARGUMENT_USERINFO) {
         if(value->kind!=Q3_MOD_VALUE_ACTOR) return fail(e,"Native client input has the wrong type");
         uint32_t slot=0;
         for(uint32_t i=1;i<257;++i) if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,value->as.actor)) { slot=i; break; }
         if(!slot) return fail(e,"Native client input has no retained physical client");
-        if(qa_json_string_equal(d,kind,"client")) { *storage=4; *out=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=(int32_t)slot-1}; return true; }
+        if(argument->kind==NATIVE_ARGUMENT_CLIENT) { *storage=4; *out=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=(int32_t)slot-1}; return true; }
         size_t capacity=o->engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;
         const char *userinfo=o->engine->clients[slot].userinfo; qa_buffer source_string={0};
         bool source_ok=o->engine->profile==QA_NATIVE_Q2_GAME_API3?classic_string(userinfo,&source_string,e):true;
@@ -653,29 +669,25 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
         qa_buffer_free(&source_string);
         c->address=out->as.address; return ok;
     }
-    if(qa_json_string_equal(d,kind,"user-command"))
+    if(argument->kind==NATIVE_ARGUMENT_USER_COMMAND)
         return in&&in->user_command.data&&in->user_command.size&&temporary(o,in->user_command,in->user_command.size,owned,&out->as.address,e);
-    if(qa_json_string_equal(d,kind,"vector")) {
+    if(argument->kind==NATIVE_ARGUMENT_VECTOR) {
         qa_vec3 v; uint8_t bytes[12];
         if(value) { if(value->kind!=Q3_MOD_VALUE_VECTOR) return fail(e,"Native vector input has the wrong type"); v=value->as.vector; }
-        else { double x,y,z; qa_json_id at=qa_json_get(d,raw,"value");
-            if(!qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"vector")||!qa_json_number(d,qa_json_get(d,at,"x"),&x,e)||
-                !qa_json_number(d,qa_json_get(d,at,"y"),&y,e)||!qa_json_number(d,qa_json_get(d,at,"z"),&z,e)) return false;
-            v=qa_v3((float)x,(float)y,(float)z);
-        }
+        else v=argument->vector;
         if(!qa_vec_finite(v)) return fail(e,"Native vector exceeds binary32 storage");
         float axes[]={v.x,v.y,v.z}; for(size_t i=0;i<3;++i) encoded((qa_native_value){.type=QA_NATIVE_F32,.as.f32=axes[i]},bytes+i*4);
         *storage=12; return temporary(o,(qa_bytes){bytes,12},12,owned,&out->as.address,e);
     }
-    if(qa_json_string_equal(d,kind,"string")) {
+    if(argument->kind==NATIVE_ARGUMENT_STRING) {
         const char *string;
         if(value) { if(value->kind!=Q3_MOD_VALUE_STRING||!value->as.string) return fail(e,"Native string input has the wrong type"); string=value->as.string; }
-        else { if(!qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"string")||!text(d,qa_json_get(d,raw,"value"),&name,e)) return false; string=(char *)name.data; }
+        else string=(char *)argument->string.data;
         qa_buffer classic={0}; bool ok=classic_string(string,&classic,e);
         if(ok&&classic.size>SIZE_MAX-4095) ok=application_fail(e,QA_ERROR_MEMORY,"Native classic allocation extent overflows");
         if(ok) ok=temporary(o,(qa_bytes){classic.data,classic.size},((classic.size+4095)/4096)*4096,owned,&out->as.address,e);
         qa_buffer_free(&classic);
-        qa_buffer_free(&name); return ok;
+        return ok;
     }
     return fail(e,"Unknown native callback value kind");
 }
@@ -905,7 +917,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
         s->next=saved; saved=s;
         uint8_t encoded_value[12]={0};
         if(v.type==QA_NATIVE_ADDRESS) {
-            if(qa_json_string_equal(d,qa_json_get(d,definition,"kind"),"vector"))
+            if(o->arguments[definition].kind==NATIVE_ARGUMENT_VECTOR)
                 ok=qa_native_read(instance(o),v.as.address,encoded_value,12,e);
             else if(o->target.pointer_bytes==4) qa_store_u32le(encoded_value,(uint32_t)v.as.address);
             else qa_store_u64le(encoded_value,v.as.address);
@@ -1500,6 +1512,111 @@ static bool weapon_actor_current(void *context,qa_actor_id actor,qa_error *e)
 static bool weapon_source_inputs(void *context,qa_actor_id actor,
     application_q3_mod_value values[Q3_MOD_VALUE_COUNT],application_native_callback_inputs *inputs,qa_error *e)
 { return application_native_q2_input_values(context,actor,values,inputs,e); }
+static void descriptors_clear(application_native_q2_callbacks *o)
+{
+    for(size_t i=0;o->record_descriptors&&i<o->descriptor_count;++i) free(o->record_descriptors[i].private_ranges);
+    for(size_t i=0;i<o->record_node_count;++i) {
+        if(o->arguments) qa_buffer_free(&o->arguments[i].string);
+        if(o->addresses) free(o->addresses[i].indirections);
+    }
+    free(o->record_descriptors); free(o->arguments); free(o->addresses);
+    o->record_descriptors=NULL; o->arguments=NULL; o->addresses=NULL; o->descriptors_bound=false;
+}
+static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
+{
+    if(o->descriptors_bound) return true;
+    descriptors_clear(o);
+    const qa_json_document *d=o->document;
+    qa_json_id root=qa_json_root(d),records=qa_json_get(d,root,"actorRecords");
+    o->descriptor_count=qa_json_size(d,records);
+    o->record_descriptors=calloc(o->descriptor_count,sizeof(*o->record_descriptors));
+    o->arguments=calloc(o->record_node_count,sizeof(*o->arguments));
+    o->addresses=calloc(o->record_node_count,sizeof(*o->addresses));
+    if((o->descriptor_count&&!o->record_descriptors)||!o->arguments||!o->addresses)
+        return application_fail(e,QA_ERROR_MEMORY,"Binding native callback declarations");
+    qa_json_id clients=qa_json_get(d,root,"clients"),client_records=qa_json_get(d,clients,"records");
+    size_t public_record=application_native_q2_callbacks_record_index(o,qa_json_get(d,root,"entityRecord"));
+    for(size_t i=0;i<o->descriptor_count;++i) {
+        native_record_descriptor *r=o->record_descriptors+i;
+        r->node=qa_json_at(d,records,i); r->base=qa_json_get(d,r->node,"base");
+        if(!word(d,r->node,"firstSlot",&r->first,e)||!word(d,r->node,"stride",&r->stride,e)||
+            !word(d,r->node,"capacity",&r->capacity,e)) return false;
+        qa_json_id kind=qa_json_get(d,r->base,"kind");
+        r->kind=qa_json_string_equal(d,kind,"clients")?NATIVE_RECORD_CLIENTS:
+            qa_json_string_equal(d,kind,"entities")?NATIVE_RECORD_ENTITIES:NATIVE_RECORD_ADDRESS;
+        r->public_record=public_record==i+1;
+        for(size_t j=0;j<qa_json_size(d,client_records);++j)
+            r->client_storage|=application_native_q2_callbacks_record_index(o,qa_json_at(d,client_records,j))==i+1;
+        qa_json_id fields=qa_json_get(d,r->node,"fields"); size_t count=qa_json_size(d,fields);
+        r->private_ranges=count?calloc(count,sizeof(*r->private_ranges)):NULL;
+        if(count&&!r->private_ranges) return application_fail(e,QA_ERROR_MEMORY,"Binding native private field ranges");
+        for(size_t j=0;j<count;++j) {
+            qa_json_id field=qa_json_at(d,fields,j),binding=qa_json_get(d,field,"binding");
+            size_t length=0; qa_native_value_type type;
+            if(qa_json_string_equal(d,binding,"private")) {
+                uint32_t extent; if(!word(d,field,"byteLength",&extent,e)) return false; length=extent;
+            } else if(qa_json_string_equal(d,binding,"constant")) length=scalar_type(d,qa_json_get(d,field,"encoding"),&type);
+            else if(qa_json_string_equal(d,binding,"address")) length=o->target.pointer_bytes;
+            else if(qa_json_string_equal(d,binding,"constant-vector")) length=12;
+            if(length) {
+                native_private_range *range=r->private_ranges+r->private_count++;
+                if(!word(d,field,"offset",&range->offset,e)) return false;
+                range->size=length;
+            }
+        }
+    }
+    for(size_t i=0;i<o->record_node_count;++i) {
+        native_argument_descriptor *a=o->arguments+i; a->input=Q3_MOD_VALUE_COUNT;
+        native_address_descriptor *address=o->addresses+i;
+        address->null=qa_json_type(d,(qa_json_id)i)==QA_JSON_NULL;
+        if(qa_json_type(d,(qa_json_id)i)!=QA_JSON_OBJECT) continue;
+        qa_json_id rva=qa_json_get(d,(qa_json_id)i,"rva");
+        if(rva!=QA_JSON_NONE) {
+            qa_json_id offsets=qa_json_get(d,(qa_json_id)i,"indirections");
+            if(!word(d,(qa_json_id)i,"rva",&address->rva,e)) return false;
+            address->count=qa_json_size(d,offsets);
+            address->indirections=address->count?calloc(address->count,sizeof(*address->indirections)):NULL;
+            if(address->count&&!address->indirections) return application_fail(e,QA_ERROR_MEMORY,"Binding native address indirections");
+            for(size_t j=0;j<address->count;++j) {
+                uint64_t offset;
+                if(!qa_json_u64(d,qa_json_at(d,offsets,j),&offset,e)||offset>UINT32_MAX) return false;
+                address->indirections[j]=(uint32_t)offset;
+            }
+        }
+        qa_json_id node=(qa_json_id)i,kind=qa_json_get(d,node,"kind"),raw=qa_json_get(d,node,"value");
+        a->storage=scalar_type(d,kind,&a->type);
+        if(a->storage) a->kind=NATIVE_ARGUMENT_SCALAR;
+        else {
+            static const char *const names[]={"time","address","actor","client","userinfo","user-command","vector","string"};
+            for(size_t j=0;j<sizeof(names)/sizeof(*names);++j)
+                if(qa_json_string_equal(d,kind,names[j])) {a->kind=(native_argument_kind)(NATIVE_ARGUMENT_TIME+j);break;}
+        }
+        if(a->kind==NATIVE_ARGUMENT_OTHER) continue;
+        if(a->kind==NATIVE_ARGUMENT_TIME||a->kind==NATIVE_ARGUMENT_ACTOR||a->kind==NATIVE_ARGUMENT_CLIENT||a->kind==NATIVE_ARGUMENT_USERINFO)
+            a->input=application_native_q2_callbacks_input_index(o,qa_json_get(d,node,"input"));
+        else if(qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"input"))
+            a->input=application_native_q2_callbacks_input_index(o,qa_json_get(d,raw,"name"));
+        a->record=application_native_q2_callbacks_record_index(o,qa_json_get(d,node,"record")); a->address=raw;
+        if(a->kind==NATIVE_ARGUMENT_TIME) {
+            a->storage=scalar_type(d,qa_json_get(d,node,"encoding"),&a->type);
+            a->scale=qa_json_string_equal(d,qa_json_get(d,node,"units"),"milliseconds")?1000:1;
+        } else if(a->input==Q3_MOD_VALUE_COUNT) {
+            qa_json_id value=qa_json_get(d,raw,"value");
+            if(a->kind==NATIVE_ARGUMENT_SCALAR&&qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"float")) {
+                if(!qa_json_number(d,value,&a->number,e)) return false;
+            } else if(a->kind==NATIVE_ARGUMENT_VECTOR&&qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"vector")) {
+                double x,y,z;
+                if(!qa_json_number(d,qa_json_get(d,value,"x"),&x,e)||!qa_json_number(d,qa_json_get(d,value,"y"),&y,e)||
+                    !qa_json_number(d,qa_json_get(d,value,"z"),&z,e)) return false;
+                a->vector=qa_v3((float)x,(float)y,(float)z);
+            } else if(a->kind==NATIVE_ARGUMENT_STRING&&qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"string")) {
+                if(!text(d,value,&a->string,e)) return false;
+            }
+        }
+    }
+    o->descriptors_bound=true;
+    return true;
+}
 static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
 {
     struct application_native_q2 *n=o->engine;
@@ -1551,7 +1668,7 @@ bool application_native_q2_callbacks_validate(struct application_native_q2 *n,qa
     if(!n->callbacks) return true;
     application_native_q2_callbacks *o=n->callbacks;
     if(!current(o,e)||!records_validate(o,e)||!admission_validate(o,e)||!validate_calls(o,qa_json_root(o->document),e)||
-        !records_prepare(o,e)||!components_prepare(o,e)) return false;
+        !descriptors_bind(o,e)||!records_prepare(o,e)||!components_prepare(o,e)) return false;
     o->validated=true; return true;
 }
 bool application_native_q2_callbacks_idle(const application_native_q2_callbacks *o)
@@ -1615,6 +1732,7 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     if(!application_native_q2_records_destroy(&o->records,e)) return false;
     while(o->skips) {native_skip *skip=o->skips;o->skips=skip->next;free(skip);}
     qa_buffer_free(&o->restored_weapons);
+    descriptors_clear(o);
     free(o->registrations); free(o->record_nodes); free(o->input_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
 }
 const qa_json_document *application_native_q2_callbacks_document(const application_native_q2_callbacks *o)
@@ -1801,7 +1919,7 @@ bool application_native_q2_callbacks_restore(struct application_native_q2 *n,qa_
     if(ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if(!ok) return e&&e->code!=QA_OK?false:application_fail(e,QA_ERROR_FORMAT,"Native callback component continuation is malformed");
-    if(!records_prepare(o,e)||!components_prepare(o,e)) return false;
+    if(!descriptors_bind(o,e)||!records_prepare(o,e)||!components_prepare(o,e)) return false;
     if(!children[0].size||(children[1].size!=0)!=(o->protection!=NULL)||
         (children[2].size!=0)!=(o->weapons!=NULL)||(children[3].size!=0)!=(o->pickups!=NULL))
         return fail(e,"Native saved components differ from their acquired declaration");
