@@ -1,6 +1,7 @@
 #ifndef QA_AUDIO_BANK_PRIVATE_H
 #define QA_AUDIO_BANK_PRIVATE_H
 #include "qa/audio.h"
+#include "qa/id_index.h"
 
 struct qa_audio_asset {
     atomic_uint references;
@@ -23,11 +24,6 @@ typedef struct bank_entry {
     qa_game_family missing_family;
 } bank_entry;
 
-typedef struct bank_name {
-    qa_string_id id;
-    size_t row;
-} bank_name;
-
 typedef struct bank_sexed_name {
     struct bank_sexed_name *next;
     qa_string_id base, model, path;
@@ -40,8 +36,7 @@ struct qa_audio_bank {
     qa_vfs *view;
     bank_entry *entries;
     size_t count, capacity;
-    bank_name *names;
-    size_t name_capacity;
+    qa_id_index names;
     uint64_t registration;
     uint64_t lookup_generation;
 };

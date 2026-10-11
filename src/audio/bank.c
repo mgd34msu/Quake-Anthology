@@ -101,55 +101,34 @@ bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out
 
 static qa_game_family bank_entry_family(const bank_entry *entry)
 { return entry->asset ? entry->asset->family : entry->missing_family; }
-static size_t bank_name_slot(const qa_audio_bank *bank, qa_string_id id, qa_game_family family)
-{ return ((size_t)id * 2654435761u + (size_t)family) & (bank->name_capacity - 1); }
-static void bank_name_insert(qa_audio_bank *bank, size_t index)
+static void bank_index_bind(qa_audio_bank *bank, size_t index)
 {
-    const bank_entry *entry = bank->entries + index;
-    for (size_t i = 0; i < 3; ++i) {
-        qa_string_id id = entry->aliases[i];
-        if (!id) continue;
-        size_t slot = bank_name_slot(bank, id, bank_entry_family(entry));
-        while (bank->names[slot].row) slot = (slot + 1) & (bank->name_capacity - 1);
-        bank->names[slot] = (bank_name){id, index + 1};
-    }
+    const bank_entry *entry=bank->entries+index;
+    for (size_t i=0;i<3;++i)
+        if (entry->aliases[i]) qa_id_index_insert(&bank->names,entry->aliases[i],bank_entry_family(entry),index);
 }
-static void bank_name_rebuild(qa_audio_bank *bank) {
-    if (!bank->name_capacity) return;
-    memset(bank->names, 0, bank->name_capacity * sizeof(*bank->names));
-    for (size_t i = 0; i < bank->count; ++i) bank_name_insert(bank, i);
-}
-static bool bank_name_reserve(qa_audio_bank *bank, size_t count, qa_error *error) {
-    if (!count || count <= bank->name_capacity / 6) return true;
-    size_t capacity = bank->name_capacity ? bank->name_capacity : 32;
-    while (count > capacity / 6) {
-        if (capacity > SIZE_MAX / sizeof(*bank->names) / 2) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Audio name index overflows storage"); return false;
-        }
-        capacity *= 2;
-    }
-    bank_name *names = calloc(capacity, sizeof(*names));
-    if (!names) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating audio name index"); return false; }
-    free(bank->names); bank->names = names; bank->name_capacity = capacity;
-    bank_name_rebuild(bank); return true;
-}
-static bank_entry *bank_name_find(const qa_audio_bank *bank, qa_string_id id, qa_game_family family)
+static void bank_index_reset(qa_audio_bank *bank)
 {
-    if (!bank->count || !id) return NULL;
-    size_t slot = bank_name_slot(bank, id, family);
-    while (bank->names[slot].row) {
-        const bank_name *name = bank->names + slot;
-        bank_entry *entry = bank->entries + name->row - 1;
-        if (name->id == id && bank_entry_family(entry) == family) return entry;
-        slot = (slot + 1) & (bank->name_capacity - 1);
-    }
-    return NULL;
+    qa_id_index_clear(&bank->names);
+    for (size_t i=0;i<bank->count;++i) bank_index_bind(bank,i);
+}
+static bool bank_index_prepare(qa_audio_bank *bank, size_t count, qa_error *error)
+{
+    if (count>SIZE_MAX/3) {qa_error_set(error,QA_ERROR_MEMORY,0,"Audio name index overflows storage");return false;}
+    size_t required=count*3;
+    return qa_id_index_reserve(&bank->names,required>bank->names.count?required-bank->names.count:0,error);
+}
+static bank_entry *bank_find_name(const qa_audio_bank *bank, qa_string_id id, qa_game_family family)
+{
+    if (!id) return NULL;
+    qa_id_index_cursor cursor=qa_id_index_begin(&bank->names,id,family);size_t row;
+    return qa_id_index_next(&bank->names,&cursor,&row)?bank->entries+row:NULL;
 }
 qa_audio_asset *qa_audio_bank_get_id(qa_audio_bank *bank, qa_string_id id, qa_game_family family)
 {
     if (!bank) return NULL;
     qa_audio_bank_sync(bank);
-    bank_entry *entry = bank_name_find(bank, id, family);
+    bank_entry *entry = bank_find_name(bank, id, family);
     if (entry) entry->touched = bank->registration;
     return entry ? entry->asset : NULL;
 }
@@ -171,7 +150,7 @@ static void bank_clear_entries(qa_audio_bank *bank)
 {
     while (bank->sexed) { bank_sexed_name *entry=bank->sexed; bank->sexed=entry->next; free(entry); }
     for(size_t i=0;i<bank->count;++i)bank_entry_release(bank->entries+i);
-    bank->count=0;bank_name_rebuild(bank);
+    bank->count=0;bank_index_reset(bank);
 }
 
 void qa_audio_bank_sync(qa_audio_bank *bank) {
@@ -194,7 +173,7 @@ void qa_audio_bank_destroy(qa_audio_bank *bank) {
         return;
     qa_audio_bank_clear(bank);
     free(bank->entries);
-    free(bank->names);
+    qa_id_index_destroy(&bank->names);
     qa_strings_destroy(bank->strings);
     free(bank);
 }
@@ -222,7 +201,7 @@ void qa_audio_bank_end(qa_audio_bank *bank) {
             bank_entry_release(bank->entries+i);
     }
     bank->count = retained;
-    bank_name_rebuild(bank);
+    bank_index_reset(bank);
 }
 
 static bank_entry *bank_find(const qa_audio_bank *bank, uint64_t resource_id,
@@ -291,7 +270,7 @@ bool qa_audio_bank_register_id(qa_audio_bank *bank, qa_string_id id, qa_game_fam
         return false;
     }
     qa_audio_bank_sync(bank);
-    bank_entry *registered = bank_name_find(bank, id, family);
+    bank_entry *registered = bank_find_name(bank, id, family);
     if (registered) {
         registered->touched = bank->registration;
         *out = qa_audio_asset_retain(registered->asset);
@@ -330,11 +309,11 @@ bool qa_audio_bank_register_id(qa_audio_bank *bank, qa_string_id id, qa_game_fam
         return false;
     }
     if (resource == NULL) {
-        bool okay = bank_reserve(bank, error) && bank_name_reserve(bank, bank->count + 1, error);
+        bool okay = bank_reserve(bank, error) && bank_index_prepare(bank, bank->count + 1, error);
         if (okay) {
             bank->entries[bank->count] = (bank_entry){.touched=bank->registration, .missing_family=family};
             memcpy(bank->entries[bank->count].aliases, aliases, sizeof(aliases));
-            bank_name_insert(bank, bank->count++);
+            bank_index_bind(bank, bank->count++);
         }
         free(prefixed); *out = NULL; return okay;
     }
@@ -407,7 +386,7 @@ bool qa_audio_bank_register_id(qa_audio_bank *bank, qa_string_id id, qa_game_fam
         qa_audio_asset_release(asset);
         return false;
     }
-    if (prior == NULL && (!bank_reserve(bank, error) || !bank_name_reserve(bank, bank->count + 1, error))) {
+    if (prior == NULL && (!bank_reserve(bank, error) || !bank_index_prepare(bank, bank->count + 1, error))) {
         qa_audio_asset_release(asset);
         return false;
     }
@@ -422,11 +401,11 @@ bool qa_audio_bank_register_id(qa_audio_bank *bank, qa_string_id id, qa_game_fam
         *prior = (bank_entry){.asset=asset,.touched=bank->registration};
         memcpy(prior->aliases, aliases, sizeof(aliases));
         qa_audio_asset_release(previous);
-        bank_name_rebuild(bank);
+        bank_index_reset(bank);
     } else {
         bank->entries[bank->count] = (bank_entry){.asset=asset,.touched=bank->registration};
         memcpy(bank->entries[bank->count].aliases, aliases, sizeof(aliases));
-        bank_name_insert(bank, bank->count++);
+        bank_index_bind(bank, bank->count++);
     }
     *out = owned;
     return true;

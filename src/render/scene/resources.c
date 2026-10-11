@@ -943,9 +943,9 @@ void qa_scene_resources_destroy(qa_scene_resources *resources)
         qa_vfs_acquisition_dispose(&resources->cache[i].palette_opening);
     }
     free(resources->cache);
-    for (size_t i=0;i<resources->request_count;++i)
+    for (size_t i=0;i<resources->request_index.count;++i)
         if (resources->requests[i].picture) qa_strings_destroy(resources->requests[i].strings);
-    free(resources->requests); free(resources->request_buckets);
+    free(resources->requests); qa_id_index_destroy(&resources->request_index);
     while (resources->aliases) {
         image_alias *alias = resources->aliases; resources->aliases = alias->next; scene_resource_alias_free(alias);
     }
@@ -1429,7 +1429,7 @@ bool qa_scene_resource_policy_ready(qa_scene_resource_policy *ticket, qa_error *
                 if (!recipient_binding_prepare(ticket, root, binding->source, error)) return false;
         }
     }
-    for (size_t i=0;i<ticket->owner->request_count;++i) {
+    for (size_t i=0;i<ticket->owner->request_index.count;++i) {
         const image_request *request=ticket->owner->requests+i;
         if (!request->picture) continue;
         qa_error issue={0};
@@ -1496,18 +1496,15 @@ void qa_scene_resource_policy_publish(qa_scene_resource_policy *ticket)
     owner->cache = destination->cache; owner->cache_count = destination->cache_count;
     owner->cache_capacity = destination->cache_capacity;
     destination->cache = cache; destination->cache_count = count; destination->cache_capacity = capacity;
-    image_request *requests=owner->requests; size_t *buckets=owner->request_buckets;
-    size_t request_count=owner->request_count, request_capacity=owner->request_capacity,
-        bucket_count=owner->request_bucket_count;
-    owner->requests=destination->requests; owner->request_buckets=destination->request_buckets;
-    owner->request_count=destination->request_count; owner->request_capacity=destination->request_capacity;
-    owner->request_bucket_count=destination->request_bucket_count;
-    destination->requests=requests; destination->request_buckets=buckets;
-    destination->request_count=request_count; destination->request_capacity=request_capacity;
-    destination->request_bucket_count=bucket_count;
+    image_request *requests=owner->requests; qa_id_index request_index=owner->request_index;
+    size_t request_capacity=owner->request_capacity;
+    owner->requests=destination->requests; owner->request_index=destination->request_index;
+    owner->request_capacity=destination->request_capacity;
+    destination->requests=requests; destination->request_index=request_index;
+    destination->request_capacity=request_capacity;
     uint64_t lookup_generation=qa_vfs_lookup_generation(owner->vfs);
     for (size_t i=0;i<owner->cache_count;++i) owner->cache[i].lookup_generation=lookup_generation;
-    for (size_t i=0;i<owner->request_count;++i) owner->requests[i].lookup_generation=lookup_generation;
+    for (size_t i=0;i<owner->request_index.count;++i) owner->requests[i].lookup_generation=lookup_generation;
     image_alias *aliases = owner->aliases; owner->aliases = destination->aliases; destination->aliases = aliases;
     owned_image *variants = owner->variants;
     if (!ticket->source_restart) {
@@ -2824,63 +2821,45 @@ static bool same_options(const image_cache *entry, const qa_scene_image_options 
         (options->translation.size == 0 || memcmp(entry->translation, options->translation.data, 256) == 0);
 }
 
-/* Bucket selection uses interned IDs; content is never fingerprinted. */
-static size_t request_bucket(qa_string_id name,size_t count)
-{ return ((size_t)name * UINT32_C(2654435761)) & (count-1); }
-static bool request_reserve(qa_scene_resources *resources,qa_error *error)
+static bool image_requests_prepare(qa_scene_resources *resources,qa_error *error)
 {
-    if (resources->request_count<resources->request_capacity) return true;
-    size_t capacity=resources->request_capacity?resources->request_capacity*2:64;
-    if (capacity<resources->request_capacity || capacity>SIZE_MAX/2/sizeof(size_t) ||
-        capacity>SIZE_MAX/sizeof(*resources->requests)) {
-        qa_error_set(error,QA_ERROR_MEMORY,0,"Image request index overflow");return false;
+    if (!qa_id_index_reserve(&resources->request_index,1,error)) return false;
+    if (resources->request_capacity>=resources->request_index.capacity) return true;
+    size_t capacity=resources->request_index.capacity;
+    if (capacity>SIZE_MAX/sizeof(*resources->requests)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Image request storage overflow");return false;
     }
     image_request *rows=realloc(resources->requests,capacity*sizeof(*rows));
-    if (!rows) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating image request index");return false;}
-    resources->requests=rows;
-    size_t count=capacity*2;
-    size_t *buckets=calloc(count,sizeof(*buckets));
-    if (!buckets) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating image request buckets");return false;}
-    for (size_t i=0;i<resources->request_count;++i) {
-        size_t bucket=request_bucket(rows[i].name,count);
-        rows[i].next=buckets[bucket];buckets[bucket]=i+1;
-    }
-    free(resources->request_buckets);resources->request_buckets=buckets;
-    resources->request_bucket_count=count;resources->request_capacity=capacity;
-    return true;
+    if (!rows) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating image requests");return false;}
+    resources->requests=rows;resources->request_capacity=capacity;return true;
 }
-static size_t request_add(qa_scene_resources *resources,image_request value)
+static size_t image_request_store(qa_scene_resources *resources,image_request value)
 {
-    size_t index=resources->request_count++,bucket=request_bucket(value.name,resources->request_bucket_count);
-    value.next=resources->request_buckets[bucket];resources->requests[index]=value;
-    resources->request_buckets[bucket]=index+1;return index;
+    size_t index=resources->request_index.count;resources->requests[index]=value;
+    qa_id_index_insert(&resources->request_index,value.name,(uint64_t)(uintptr_t)value.strings,index);
+    return index;
 }
 static image_cache *cache_find(qa_scene_resources *resources,qa_string_id name,
     const qa_scene_image_options *options,bool exact_file)
 {
-    if (!name || !resources->request_bucket_count) return NULL;
-    size_t row=resources->request_buckets[request_bucket(name,resources->request_bucket_count)];
-    while (row) {
-        const image_request *request=resources->requests+row-1;
-        if (!request->picture && request->name==name && request->exact_file==exact_file) {
-            image_cache *entry=resources->cache+request->cache_index;
-            if (same_options(entry,options)) return entry;
-        }
-        row=request->next;
+    qa_id_index_cursor cursor=qa_id_index_begin(&resources->request_index,name,0);size_t row;
+    image_cache *first=NULL;
+    while (qa_id_index_next(&resources->request_index,&cursor,&row)) {
+        const image_request *request=resources->requests+row;
+        if (request->exact_file!=exact_file) continue;
+        image_cache *entry=resources->cache+request->cache_index;
+        if (options && same_options(entry,options)) return entry;
+        if (!options && entry->options.source_q3) first=entry;
     }
-    return NULL;
+    return first;
 }
 static size_t picture_request_find(const qa_scene_resources *resources,const qa_strings *strings,
     qa_string_id name,bool rerelease,qa_scene_filter filter)
 {
-    if (resources->request_bucket_count) {
-        size_t row=resources->request_buckets[request_bucket(name,resources->request_bucket_count)];
-        while (row) {
-            const image_request *request=resources->requests+row-1;
-            if (request->picture && request->strings==strings && request->name==name &&
-                request->rerelease==rerelease && request->filter==filter) return row-1;
-            row=request->next;
-        }
+    qa_id_index_cursor cursor=qa_id_index_begin(&resources->request_index,name,(uint64_t)(uintptr_t)strings);size_t row;
+    while (qa_id_index_next(&resources->request_index,&cursor,&row)) {
+        const image_request *request=resources->requests+row;
+        if (request->rerelease==rerelease && request->filter==filter) return row;
     }
     return SIZE_MAX;
 }
@@ -2911,7 +2890,7 @@ static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resou
                       const qa_scene_image_options *options, bool exact_file,
                       qa_scene_image *image, qa_error *error)
 {
-    if (!request_reserve(resources,error)) return false;
+    if (!image_requests_prepare(resources,error)) return false;
     if (resources->cache_count == resources->cache_capacity) {
         size_t capacity = resources->cache_capacity == 0 ? 64 : resources->cache_capacity * 2;
         if (capacity < resources->cache_capacity || capacity > (size_t)PTRDIFF_MAX / sizeof(*resources->cache)) {
@@ -2954,7 +2933,7 @@ static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resou
     if (options->translation.size != 0) memcpy(entry->translation, options->translation.data, 256);
     qa_scene_image_retain(image);
     qa_resource_retain(source); qa_resource_retain(logical_source);
-    request_add(resources,(image_request){.name=name,.cache_index=resources->cache_count,.exact_file=exact_file});
+    image_request_store(resources,(image_request){.name=name,.cache_index=resources->cache_count,.exact_file=exact_file});
     ++resources->cache_count;
     /* The completed recipe now owns the immutable decoder inputs. Only
      * uncached Source constructors need a separate pre-upload pixel copy. */
@@ -3184,16 +3163,14 @@ static bool image_load(qa_scene_resources *resources, const char *name,
     if (options->source_q3 && !exact_file) {
         qa_string_id cached_name = qa_strings_find(resources->names->strings,
             (qa_bytes){(const uint8_t *)name, strlen(name)});
-        for (size_t i = 0; cached_name && i < resources->cache_count; ++i) {
-            const image_cache *entry = resources->cache + i;
-            if (entry->name == cached_name && entry->options.source_q3 && !entry->exact_file) {
-                if (!image_load_receipt(receipt, entry->source_record, entry->source_mount,
-                    &entry->source_opening, entry->logical_record, entry->logical_mount,
-                    &entry->logical_opening, entry->logical_path, error)) return false;
-                if (!image_palette_receipt(receipt, entry->palette_source, &entry->palette_opening,
-                    entry->palette_attempted, entry->palette_error, error)) return false;
-                qa_scene_image_retain(entry->image); *out = entry->image; return true;
-            }
+        const image_cache *entry=cache_find(resources,cached_name,NULL,false);
+        if (entry) {
+            if (!image_load_receipt(receipt, entry->source_record, entry->source_mount,
+                &entry->source_opening, entry->logical_record, entry->logical_mount,
+                &entry->logical_opening, entry->logical_path, error)) return false;
+            if (!image_palette_receipt(receipt, entry->palette_source, &entry->palette_opening,
+                entry->palette_attempted, entry->palette_error, error)) return false;
+            qa_scene_image_retain(entry->image); *out=entry->image; return true;
         }
     }
     if (!exact_file) for (const image_alias *alias = resources->aliases; alias; alias = alias->next)
@@ -3410,9 +3387,9 @@ static const qa_scene_image *q2_picture(qa_scene_resources *resources, qa_string
     }
     size_t cache_index=status==QA_OK?(size_t)(entry-resources->cache):0;
     if (index==SIZE_MAX) {
-        if (!request_reserve(resources,error)) return NULL;
+        if (!image_requests_prepare(resources,error)) return NULL;
         qa_strings_retain(strings);
-        index=request_add(resources,(image_request){.strings=strings,.name=name_id,.path=path_id,
+        index=image_request_store(resources,(image_request){.strings=strings,.name=name_id,.path=path_id,
             .picture=true,.rerelease=rerelease,.filter=filter});
     }
     image_request *request=resources->requests+index;

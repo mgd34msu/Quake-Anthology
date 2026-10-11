@@ -1,5 +1,6 @@
 #ifndef QA_SCENE_RESOURCES_INTERNAL_H
 #define QA_SCENE_RESOURCES_INTERNAL_H
+#include "qa/id_index.h"
 #include "qa/scene.h"
 #include "qa/strings.h"
 
@@ -72,7 +73,7 @@ typedef struct image_cache {
 typedef struct image_request {
     qa_strings *strings;
     qa_string_id name, path;
-    size_t next, cache_index;
+    size_t cache_index;
     uint64_t lookup_generation;
     qa_status status;
     qa_scene_filter filter;
@@ -106,8 +107,8 @@ struct qa_scene_resources {
     owned_image *variants;
     image_cache *cache;
     image_request *requests;
-    size_t *request_buckets;
-    size_t request_count, request_capacity, request_bucket_count;
+    qa_id_index request_index;
+    size_t request_capacity;
     image_alias *aliases;
     size_t cache_count, cache_capacity;
     qa_buffer palettes[3];
