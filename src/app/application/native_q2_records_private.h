@@ -52,7 +52,6 @@ typedef struct nqr_observation {
     bool count_present,capacity_present;
     double count,capacity;
 } nqr_observation;
-enum { NQR_CALL_DEPTH = 64 };
 typedef struct nqr_snapshot {
     size_t storage_slot, rows_slot, count, references;
     nqr_observation *rows;

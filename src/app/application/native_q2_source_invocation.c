@@ -45,10 +45,10 @@ bool application_native_q2_source_invocation_prepare(struct application_native_q
         storage->declared |= qa_json_string_equal(d,
             qa_json_get(d, qa_json_get(d, qa_json_at(d, rows, i), "absorb"), "abi"), "source-region");
     qa_arena_init(&storage->arena, 0);
-    if (regions > SIZE_MAX / 64 ||
-        !qa_pool_prepare(&storage->scopes, &storage->arena, storage->declared ? 64 : 0,
+    if (regions > SIZE_MAX / NQR_CALL_DEPTH ||
+        !qa_pool_prepare(&storage->scopes, &storage->arena, storage->declared ? NQR_CALL_DEPTH : 0,
             sizeof(struct application_native_q2_source_invocation), _Alignof(struct application_native_q2_source_invocation), e) ||
-        !qa_pool_prepare(&storage->retirements, &storage->arena, storage->declared ? regions * 64 : 0,
+        !qa_pool_prepare(&storage->retirements, &storage->arena, storage->declared ? regions * NQR_CALL_DEPTH : 0,
             sizeof(source_retirement), _Alignof(source_retirement), e)) {
         qa_arena_destroy(&storage->arena); free(storage); return false;
     }
@@ -132,8 +132,7 @@ bool application_native_q2_source_invocation_guard(struct application_native_q2 
         !retirement||retirement->code==QA_OK)
         return application_fail(e,QA_ERROR_ARGUMENT,"Source region has no owning invocation and exact authority error");
     source_retirement *r=s->root->retirements;
-    while(r&&(r->error.code!=retirement->code||r->error.offset!=retirement->offset||
-        strcmp(r->error.message,retirement->message)))r=r->next;
+    while(r&&!qa_error_same(&r->error,retirement))r=r->next;
     if(!r) {
         size_t slot;
         r=qa_pool_take(&n->source_storage->retirements,&slot);
@@ -155,11 +154,9 @@ void application_native_q2_source_invocation_unguard(struct application_native_q
     source_retirement **link=&s->root->retirements;
     while(*link) {
         source_retirement *r=*link;
-        if(r->error.code!=retirement->code||r->error.offset!=retirement->offset||
-            strcmp(r->error.message,retirement->message)) {link=&r->next;continue;}
+        if(!qa_error_same(&r->error,retirement)) {link=&r->next;continue;}
         qa_error ignored={0};
-        if(!r->consumed&&failure&&failure->code==r->error.code&&failure->offset==r->error.offset&&
-            !strcmp(failure->message,r->error.message)&&!r->authority.current(r->authority.context,&ignored))return;
+        if(!r->consumed&&failure&&qa_error_same(failure,&r->error)&&!r->authority.current(r->authority.context,&ignored))return;
         *link=r->next;
         retirement_release(n,r);return;
     }
@@ -174,7 +171,7 @@ bool application_native_q2_source_invocation_accepts(void *context,const qa_erro
     if(!present)return false;
     for(source_retirement **link=&s->root->retirements;*link;link=&(*link)->next) {
         source_retirement *r=*link;
-        if(r->consumed||e->code!=r->error.code||e->offset!=r->error.offset||strcmp(e->message,r->error.message))continue;
+        if(r->consumed||!qa_error_same(e,&r->error))continue;
         qa_error ignored={0};
         if(r->authority.current(r->authority.context,&ignored))return false;
         struct application_native_q2_source_invocation *selected=NULL;

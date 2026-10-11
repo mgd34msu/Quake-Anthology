@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -11,6 +12,12 @@
 #else
 #include <sys/sysinfo.h>
 #endif
+
+bool qa_error_same(const qa_error *a, const qa_error *b)
+{
+    return a && b && a->code == b->code && a->offset == b->offset &&
+        !strcmp(a->message, b->message);
+}
 
 void qa_error_set(qa_error *error, qa_status code, size_t offset,
                   const char *format, ...)

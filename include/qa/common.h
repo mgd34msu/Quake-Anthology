@@ -32,6 +32,7 @@ typedef struct qa_buffer {
     size_t size;
 } qa_buffer;
 
+bool qa_error_same(const qa_error *, const qa_error *);
 void qa_error_set(qa_error *error, qa_status code, size_t offset,
                   const char *format, ...);
 /* Frees owned data and clears the buffer. Passing NULL is permitted. */

@@ -434,7 +434,7 @@ bool application_native_q2_items_create(const application_native_q2_items_option
         (void)application_native_q2_items_destroy(&o,NULL);return false;
     }
     qa_arena_init(&o->receipt_storage, 0);
-    if (!qa_pool_prepare(&o->receipt_pool, &o->receipt_storage, 64,
+    if (!qa_pool_prepare(&o->receipt_pool, &o->receipt_storage, NQR_CALL_DEPTH,
         sizeof(application_native_q2_item_receipt), _Alignof(application_native_q2_item_receipt), e)) {
         (void)application_native_q2_items_destroy(&o, NULL);
         return false;
@@ -544,8 +544,7 @@ bool application_native_q2_items_receipt_retired(const application_native_q2_ite
 { return r&&r->retired&&r->entry&&r->lease.serial==r->entry->lease.serial&&qa_actor_id_equal(r->lease.actor,r->entry->actor); }
 bool application_native_q2_items_receipt_accepts_error(const application_native_q2_item_receipt *r,const qa_error *e)
 {
-    return e&&application_native_q2_items_receipt_retired(r)&&e->code==r->failure.code&&
-        e->offset==r->failure.offset&&!strcmp(e->message,r->failure.message);
+    return application_native_q2_items_receipt_retired(r)&&qa_error_same(e,&r->failure);
 }
 bool application_native_q2_items_receipt_source_current(const application_native_q2_item_receipt *r,qa_error *e)
 {

@@ -772,13 +772,12 @@ bool application_q1_music_cue(qa_application *application, bool fresh, qa_error 
         if (!application_qc_float(source->state.qc.engine, 0, source->state.qc.engine->field_bindings->sounds, &sounds, error)) return false;
         cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(sounds);
     } else return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 level cue has no native or QC Source");
-    qa_clock_state clock; qa_string_id music;
+    qa_clock_state clock;
     if (!qa_session_clock(application->session, source->owner, &clock))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 level cue has no completed Source clock");
-    return qa_strings_intern_cstr(qa_session_strings(application->session), "music", &music, error) &&
-        application_emit(application, &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
+    return application_emit(application, &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
             .family = QA_GAME_Q1, .provider = source->owner, .time_ns = clock.frame.time_ns,
-            .resource = music, .code = cd_track, .count = cd_track}, error);
+            .resource = application->ui_names.music, .code = cd_track, .count = cd_track}, error);
 }
 
 static bool event_text(qa_application *application, const char *source,
