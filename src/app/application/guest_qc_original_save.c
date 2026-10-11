@@ -184,7 +184,7 @@ bool qa_application_q1_save_capture(qa_application *app,const qa_q1_save_client 
             save->time=(double)engine->source_time_ns/1e9;
             int32_t reference=0;float health=0;
             ok=qa_qc_slot_reference(provider->state.qc.instance,1,&reference,error) &&
-                application_qc_float(engine,reference,"health",&health,error);
+                application_qc_float(engine,reference, engine->field_bindings->health,&health,error);
             if (ok && !(health>0)) ok=application_fail(error,QA_ERROR_ARGUMENT,"Cannot save a dead original Quake player");
         }
         for (size_t i=0;ok && i<16;++i) {
@@ -228,7 +228,7 @@ static bool restore_think(struct application_qc_state *engine,uint32_t slot,qa_e
     qa_qc_slot_binding binding; int32_t reference; float next;
     if (!qa_qc_slot(engine->provider->state.qc.instance,slot,&binding) ||
         !qa_qc_slot_reference(engine->provider->state.qc.instance,slot,&reference,error) ||
-        !application_qc_float(engine,reference,"nextthink",&next,error)) return false;
+        !application_qc_float(engine,reference, engine->field_bindings->nextthink,&next,error)) return false;
     qa_scheduler_cancel(qa_session_scheduler(engine->services.session),binding.actor);
     if (!isfinite(next)) return application_fail(error,QA_ERROR_FORMAT,"Saved source think is nonfinite");
     if (!(next>0) || (double)next*1e9>=(double)UINT64_MAX) return true;
@@ -309,7 +309,7 @@ static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_dat
         control->player.water_level=control->player.state.data.nq.water_level;
         control->player.water_type=control->player.state.data.nq.water_type;
     }
-    const qa_qc_definition *offset=qa_qc_program_find_field(engine->provider->state.qc.program,"view_ofs");
+    const qa_qc_definition *offset=engine->field_bindings->view_ofs;
     int32_t reference;
     if (offset && (offset->type!=QA_QC_VECTOR || !qa_qc_slot_reference(vm,1,&reference,error) ||
         !qa_qc_entity_vector(vm,reference,offset->offset,&control->player.view_offset,error))) return false;

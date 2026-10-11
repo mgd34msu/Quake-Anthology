@@ -104,10 +104,10 @@ bool qa_application_network_q1_extents(qa_application *app, qa_actor_owner owner
     *clients = engine->max_clients; *entities = qa_qc_entity_count(engine->provider->state.qc.instance); return true;
 }
 static bool q1_wire_scalar(struct application_qc_state *engine, int32_t reference,
-    const char *name, uint32_t maximum, uint32_t *out, qa_error *error)
+    const qa_qc_definition *definition, uint32_t maximum, uint32_t *out, qa_error *error)
 {
     float value;
-    if (!application_qc_float(engine, reference, name, &value, error)) return false;
+    if (!application_qc_float(engine, reference, definition, &value, error)) return false;
     double integer = trunc((double)value);
     if (!isfinite(value) || integer < 0 || integer > maximum)
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source field exceeds its admitted original wire range");
@@ -122,9 +122,9 @@ qa_cvars *qa_application_network_q1_cvars(qa_application *app, qa_actor_owner ow
     return engine ? engine->cvars : NULL;
 }
 static bool q1_wire_vector(struct application_qc_state *engine, int32_t reference,
-    const char *name, float out[3], qa_error *error)
+    const qa_qc_definition *definition, float out[3], qa_error *error)
 {
-    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_VECTOR, error); qa_vec3 value;
+    const qa_qc_definition *field = application_qc_field(definition, QA_QC_VECTOR, error); qa_vec3 value;
     if (!field || !qa_qc_entity_vector(engine->provider->state.qc.instance, reference, field->offset, &value, error)) return false;
     if (!qa_vec_finite(value)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source network vector");
     out[0] = value.x; out[1] = value.y; out[2] = value.z; return true;
@@ -145,14 +145,14 @@ bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, q
     if (!application_network_q1_qc_entity(engine, entity, &physical, &reference, error)) return false;
     qa_q1_entity value; qa_q1_entity_init(&value); value.number = physical;
     float movetype;
-    if (!q1_wire_scalar(engine, reference, "modelindex", 255, &value.model, error) ||
-        !q1_wire_scalar(engine, reference, "frame", 255, &value.frame, error) ||
-        !q1_wire_scalar(engine, reference, "colormap", 255, &value.colormap, error) ||
-        !q1_wire_scalar(engine, reference, "skin", 255, &value.skin, error) ||
-        !q1_wire_scalar(engine, reference, "effects", 255, &value.effects, error) ||
-        !q1_wire_vector(engine, reference, "origin", value.origin, error) ||
-        !q1_wire_vector(engine, reference, "angles", value.angles, error) ||
-        !application_qc_float(engine, reference, "movetype", &movetype, error) || !isfinite(movetype)) return false;
+    if (!q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, 255, &value.model, error) ||
+        !q1_wire_scalar(engine, reference, engine->field_bindings->frame, 255, &value.frame, error) ||
+        !q1_wire_scalar(engine, reference, engine->field_bindings->colormap, 255, &value.colormap, error) ||
+        !q1_wire_scalar(engine, reference, engine->field_bindings->skin, 255, &value.skin, error) ||
+        !q1_wire_scalar(engine, reference, engine->field_bindings->effects, 255, &value.effects, error) ||
+        !q1_wire_vector(engine, reference, engine->field_bindings->origin, value.origin, error) ||
+        !q1_wire_vector(engine, reference, engine->field_bindings->angles, value.angles, error) ||
+        !application_qc_float(engine, reference, engine->field_bindings->movetype, &movetype, error) || !isfinite(movetype)) return false;
     value.step = movetype == 4;
     if (!qa_actors_get(qa_session_actors(app->session), entity))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 source entity retired during observation");
@@ -211,8 +211,8 @@ bool qa_application_network_q1_eye(qa_application *app, qa_actor_id player,
     if (!engine) return false;
     int32_t reference; float origin[3], offset[3];
     if (!q1_entity_reference(engine, player, &reference, error) ||
-        !q1_wire_vector(engine, reference, "origin", origin, error) ||
-        !q1_wire_vector(engine, reference, "view_ofs", offset, error)) return false;
+        !q1_wire_vector(engine, reference, engine->field_bindings->origin, origin, error) ||
+        !q1_wire_vector(engine, reference, engine->field_bindings->view_ofs, offset, error)) return false;
     qa_vec3 eye = qa_v3(origin[0] + offset[0], origin[1] + offset[1], origin[2] + offset[2]);
     if (!qa_vec_finite(eye))
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source eye exceeds its finite spatial range");
@@ -220,9 +220,9 @@ bool qa_application_network_q1_eye(qa_application *app, qa_actor_id player,
 }
 
 static bool q1_wire_string(struct application_qc_state *engine, int32_t reference,
-    const char *name, const char **out, qa_error *error)
+    const qa_qc_definition *definition, const char **out, qa_error *error)
 {
-    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_STRING, error);
+    const qa_qc_definition *field = application_qc_field(definition, QA_QC_STRING, error);
     int32_t id;
     return field && qa_qc_entity_int(engine->provider->state.qc.instance, reference, field->offset, &id, error) &&
         qa_qc_string(engine->provider->state.qc.instance, id, out, error);
@@ -236,10 +236,10 @@ bool qa_application_network_q1_bounds(qa_application *app, qa_actor_id player,
     if (!engine) return false;
     int32_t reference; float minimum[3], maximum[3]; uint32_t index; const char *name;
     if (!q1_entity_reference(engine, entity, &reference, error) ||
-        !q1_wire_vector(engine, reference, "absmin", minimum, error) ||
-        !q1_wire_vector(engine, reference, "absmax", maximum, error) ||
-        !q1_wire_scalar(engine, reference, "modelindex", 255, &index, error) ||
-        !q1_wire_string(engine, reference, "model", &name, error)) return false;
+        !q1_wire_vector(engine, reference, engine->field_bindings->absmin, minimum, error) ||
+        !q1_wire_vector(engine, reference, engine->field_bindings->absmax, maximum, error) ||
+        !q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, 255, &index, error) ||
+        !q1_wire_string(engine, reference, engine->field_bindings->model, &name, error)) return false;
     for (unsigned axis = 0; axis < 3; ++axis)
         if (minimum[axis] > maximum[axis])
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source absolute bounds are inverted");
@@ -247,9 +247,9 @@ bool qa_application_network_q1_bounds(qa_application *app, qa_actor_id player,
         qa_v3(maximum[0], maximum[1], maximum[2])};
     *has_model = index && *name; return true;
 }
-static bool q1_wire_global(struct application_qc_state *engine, const char *name, float *out, qa_error *error)
+static bool q1_wire_global(struct application_qc_state *engine, const qa_qc_definition *definition, float *out, qa_error *error)
 {
-    const qa_qc_definition *field = qa_qc_program_find_global(engine->provider->state.qc.program, name);
+    const qa_qc_definition *field = definition;
     if (!field || field->type != QA_QC_FLOAT)
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source global is missing or has a different type");
     if (!qa_qc_global_float(engine->provider->state.qc.instance, field->offset, out, error)) return false;
@@ -291,21 +291,21 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
     if (!engine) return false;
     qa_application_network_q1_world value = {.protocol = engine->protocol, .max_clients = engine->max_clients};
     const qa_cvar_view *deathmatch = qa_cvars_read(engine->cvars, engine->cvar_handles.deathmatch);
-    const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
+    const qa_qc_definition *mapname = engine->global_bindings->mapname;
     int32_t id; float number;
     if (!deathmatch || !isfinite(deathmatch->number) || !mapname || mapname->type != QA_QC_STRING)
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source world declaration is incomplete");
     if (!q1_standard_quake(app, engine, &value.standard_quake, error) ||
         !qa_qc_global_int(engine->provider->state.qc.instance, mapname->offset, &id, error) ||
         !qa_qc_string(engine->provider->state.qc.instance, id, &value.map, error) ||
-        !q1_wire_string(engine, 0, "message", &value.level, error) ||
-        !application_qc_float(engine, 0, "sounds", &number, error)) return false;
+        !q1_wire_string(engine, 0, engine->field_bindings->message, &value.level, error) ||
+        !application_qc_float(engine, 0, engine->field_bindings->sounds, &number, error)) return false;
     value.cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(number);
     value.seconds = (float)((double)engine->source_time_ns / 1e9);
     if (!*value.map) return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source world identity");
     if (!*value.level) value.level = value.map;
     value.deathmatch = deathmatch->number != 0;
-    const char *names[] = {"total_secrets", "total_monsters", "found_secrets", "killed_monsters"};
+    const qa_qc_definition *names[] = {engine->global_bindings->total_secrets, engine->global_bindings->total_monsters, engine->global_bindings->found_secrets, engine->global_bindings->killed_monsters};
     int32_t *stats[] = {&value.total_secrets, &value.total_monsters, &value.found_secrets, &value.killed_monsters};
     for (size_t i = 0; i < 4; ++i)
         if (!q1_wire_global(engine, names[i], &number, error) ||
@@ -322,34 +322,34 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
     if (!engine || !application_network_q1_qc_client(engine, player, &slot, error)) return false;
     int32_t reference; qa_q1_clientdata value = {0}; float vec[3], scalar; uint32_t flags, extra;
     if (!qa_qc_actor_reference(engine->provider->state.qc.instance, player, false, &reference, error) ||
-        !q1_wire_vector(engine, reference, "view_ofs", vec, error)) return false;
+        !q1_wire_vector(engine, reference, engine->field_bindings->view_ofs, vec, error)) return false;
     value.viewheight = vec[2];
     if (engine->profile != QA_QC_QUAKEWORLD &&
-        (!application_qc_float(engine, reference, "idealpitch", &value.idealpitch, error) ||
-         !q1_wire_vector(engine, reference, "punchangle", value.punch, error))) return false;
-    if (!q1_wire_vector(engine, reference, "velocity", value.velocity, error) ||
-        !application_qc_float(engine, reference, "items", &scalar, error) || !q1_wire_bits(scalar, &value.items, error)) return false;
-    const qa_qc_definition *items2 = qa_qc_program_find_field(engine->provider->state.qc.program, "items2");
+        (!application_qc_float(engine, reference, engine->field_bindings->idealpitch, &value.idealpitch, error) ||
+         !q1_wire_vector(engine, reference, engine->field_bindings->punchangle, value.punch, error))) return false;
+    if (!q1_wire_vector(engine, reference, engine->field_bindings->velocity, value.velocity, error) ||
+        !application_qc_float(engine, reference, engine->field_bindings->items, &scalar, error) || !q1_wire_bits(scalar, &value.items, error)) return false;
+    const qa_qc_definition *items2 = engine->field_bindings->items2;
     if (items2) {
         if (items2->type != QA_QC_FLOAT ||
             !qa_qc_entity_float(engine->provider->state.qc.instance, reference, items2->offset, &scalar, error))
             return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source items2 field");
-    } else if (!q1_wire_global(engine, "serverflags", &scalar, error)) return false;
+    } else if (!q1_wire_global(engine, engine->global_bindings->serverflags, &scalar, error)) return false;
     if (!q1_wire_bits(scalar, &extra, error)) return false;
     value.items |= extra << (items2 ? 23 : 28);
-    if (!application_qc_float(engine, reference, "flags", &scalar, error) || !q1_wire_bits(scalar, &flags, error)) return false;
+    if (!application_qc_float(engine, reference, engine->field_bindings->flags, &scalar, error) || !q1_wire_bits(scalar, &flags, error)) return false;
     value.onground = (flags & 512) != 0;
-    if (!application_qc_float(engine, reference, "waterlevel", &scalar, error) || !isfinite(scalar))
+    if (!application_qc_float(engine, reference, engine->field_bindings->waterlevel, &scalar, error) || !isfinite(scalar))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source water level");
     value.inwater = scalar >= 2;
-    const char *names[] = {"weaponframe", "armorvalue", "currentammo", "ammo_shells", "ammo_nails", "ammo_rockets", "ammo_cells"};
+    const qa_qc_definition *names[] = {engine->field_bindings->weaponframe, engine->field_bindings->armorvalue, engine->field_bindings->currentammo, engine->field_bindings->ammo_shells, engine->field_bindings->ammo_nails, engine->field_bindings->ammo_rockets, engine->field_bindings->ammo_cells};
     uint32_t *fields[] = {&value.weapon_frame, &value.armor, &value.ammo, &value.shells, &value.nails, &value.rockets, &value.cells};
     for (size_t i = 0; i < 7; ++i) if (!q1_wire_scalar(engine, reference, names[i], UINT32_MAX, fields[i], error)) return false;
-    if (!application_qc_float(engine, reference, "health", &scalar, error) ||
+    if (!application_qc_float(engine, reference, engine->field_bindings->health, &scalar, error) ||
         !q1_wire_integer(scalar, INT32_MIN, INT32_MAX, &value.health, error) ||
-        !application_qc_float(engine, reference, "weapon", &scalar, error) || !q1_wire_bits(scalar, &value.weapon, error)) return false;
+        !application_qc_float(engine, reference, engine->field_bindings->weapon, &scalar, error) || !q1_wire_bits(scalar, &value.weapon, error)) return false;
     const char *weapon_model;
-    if (!q1_wire_string(engine, reference, "weaponmodel", &weapon_model, error)) return false;
+    if (!q1_wire_string(engine, reference, engine->field_bindings->weaponmodel, &weapon_model, error)) return false;
     if (*weapon_model) {
         for (size_t i = 0; i < engine->resource_count; ++i) {
             const application_qc_resource *r = &engine->resources[i];
@@ -380,8 +380,8 @@ bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
         qa_application_network_q1_status_player value = {.actor = client->actor, .source_slot = i,
             .colors = client->colors, .spawned = client->spawned};
         if (!q1_entity_reference(engine, client->actor, &reference, error) ||
-            !q1_wire_string(engine, reference, "netname", &value.name, error) ||
-            !application_qc_float(engine, reference, "frags", &frags, error) ||
+            !q1_wire_string(engine, reference, engine->field_bindings->netname, &value.name, error) ||
+            !application_qc_float(engine, reference, engine->field_bindings->frags, &frags, error) ||
             !q1_wire_bits(frags, &bits, error)) return false;
         value.frags = bits <= INT32_MAX ? (int32_t)bits : (int32_t)((int64_t)bits - INT64_C(4294967296));
         value.source_frags = frags;
@@ -403,7 +403,7 @@ bool qa_application_network_q1_kill(qa_application *app, qa_actor_id player, qa_
     if (!client->spawned || client->spectator) return true;
     int32_t reference; float health;
     if (!q1_entity_reference(engine, player, &reference, error) ||
-        !application_qc_float(engine, reference, "health", &health, error)) return false;
+        !application_qc_float(engine, reference, engine->field_bindings->health, &health, error)) return false;
     if (health <= 0) return true;
     qa_qc_game_global globals[] = {
         {"self", {QA_QC_GAME_ACTOR, {.actor = player}}},
@@ -484,7 +484,7 @@ bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     char copy[16];
     memcpy(copy, name, length); copy[length] = 0;
     int32_t reference, string; qa_qc_instance *vm = engine->provider->state.qc.instance;
-    const qa_qc_definition *field = application_qc_field(engine, "netname", QA_QC_STRING, error);
+    const qa_qc_definition *field = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
     bool ok = field && q1_entity_reference(engine, player, &reference, error) &&
         qa_qc_string_allocate(vm, copy, &string, error) &&
         qa_qc_set_entity_int(vm, reference, field->offset, string, error);
@@ -518,31 +518,31 @@ bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id
     qa_application_network_q1_feedback value = {0}; int32_t reference;
     float armor, blood, fixangle;
     if (!q1_entity_reference(engine, player, &reference, error) ||
-        !application_qc_float(engine, reference, "dmg_save", &armor, error) ||
-        !application_qc_float(engine, reference, "dmg_take", &blood, error) ||
-        !application_qc_float(engine, reference, "fixangle", &fixangle, error)) return false;
+        !application_qc_float(engine, reference, engine->field_bindings->dmg_save, &armor, error) ||
+        !application_qc_float(engine, reference, engine->field_bindings->dmg_take, &blood, error) ||
+        !application_qc_float(engine, reference, engine->field_bindings->fixangle, &fixangle, error)) return false;
     if (!isfinite(fixangle)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source view reset");
     value.damage = armor != 0 || blood != 0; value.set_angle = fixangle != 0;
     if (value.damage) {
-        const qa_qc_definition *field = application_qc_field(engine, "dmg_inflictor", QA_QC_ENTITY, error);
+        const qa_qc_definition *field = application_qc_field(engine->field_bindings->dmg_inflictor, QA_QC_ENTITY, error);
         int32_t inflictor; uint32_t saved, taken; float origin[3], minimum[3], maximum[3];
         if (!field || !q1_wire_bits(armor, &saved, error) ||
             !q1_wire_bits(blood, &taken, error) ||
             !qa_qc_entity_int(engine->provider->state.qc.instance, reference, field->offset, &inflictor, error) ||
-            !q1_wire_vector(engine, inflictor, "origin", origin, error) ||
-            !q1_wire_vector(engine, inflictor, "mins", minimum, error) ||
-            !q1_wire_vector(engine, inflictor, "maxs", maximum, error)) return false;
+            !q1_wire_vector(engine, inflictor, engine->field_bindings->origin, origin, error) ||
+            !q1_wire_vector(engine, inflictor, engine->field_bindings->mins, minimum, error) ||
+            !q1_wire_vector(engine, inflictor, engine->field_bindings->maxs, maximum, error)) return false;
         value.armor = (uint8_t)saved; value.blood = (uint8_t)taken;
         for (unsigned axis = 0; axis < 3; ++axis)
             value.origin[axis] = (double)origin[axis] + ((double)minimum[axis] + maximum[axis]) * 0.5;
     }
-    if (value.set_angle && (!q1_wire_vector(engine, reference, "angles", value.angles, error) ||
+    if (value.set_angle && (!q1_wire_vector(engine, reference, engine->field_bindings->angles, value.angles, error) ||
         !application_control_set_angles(app, player,
             qa_v3(value.angles[0], value.angles[1], value.angles[2]), error))) return false;
     /* Consume the returned Source fields after reading their complete typed state. */
-    if ((value.damage && (!application_qc_set_float(engine, reference, "dmg_save", 0, error) ||
-        !application_qc_set_float(engine, reference, "dmg_take", 0, error))) ||
-        (value.set_angle && !application_qc_set_float(engine, reference, "fixangle", 0, error))) return false;
+    if ((value.damage && (!application_qc_set_float(engine, reference, engine->field_bindings->dmg_save, 0, error) ||
+        !application_qc_set_float(engine, reference, engine->field_bindings->dmg_take, 0, error))) ||
+        (value.set_angle && !application_qc_set_float(engine, reference, engine->field_bindings->fixangle, 0, error))) return false;
     *out = value; return true;
 }
 
@@ -586,12 +586,12 @@ bool qa_application_network_q1_client_baseline(qa_application *app, qa_actor_id 
     if (binding.kind == QA_QC_SLOT_BORROWED) {
         uint32_t model; const char *name;
         if (!q1_entity_reference(engine, binding.actor, &reference, error) ||
-            !q1_wire_scalar(engine, reference, "modelindex", 255, &model, error) ||
-            !q1_wire_string(engine, reference, "model", &name, error)) return false;
+            !q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, 255, &model, error) ||
+            !q1_wire_string(engine, reference, engine->field_bindings->model, &name, error)) return false;
         if (model && *name && !qa_application_network_q1_entity(app, player, binding.actor, &value, error)) return false;
     } else if (!qa_qc_slot_reference(vm, source_slot, &reference, error)) return false;
-    if (!q1_wire_vector(engine, reference, "origin", value.origin, error) ||
-        !q1_wire_vector(engine, reference, "angles", value.angles, error)) return false;
+    if (!q1_wire_vector(engine, reference, engine->field_bindings->origin, value.origin, error) ||
+        !q1_wire_vector(engine, reference, engine->field_bindings->angles, value.angles, error)) return false;
     return qa_application_network_q1_baseline(app, player, &value, out, error);
 }
 bool qa_application_network_q1_signon_count(qa_application *app, qa_actor_owner owner,

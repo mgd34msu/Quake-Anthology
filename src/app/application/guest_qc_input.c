@@ -86,7 +86,7 @@ bool application_qc_entered(void *opaque, qa_qc_instance *vm, const qa_qc_call_e
     if (!application_qc_objectives_sync(engine, error)) return false;
     struct application_qc_input_scope *scope = engine->input_scope;
     if (!scope || !scope->binding) return true;
-    const qa_qc_definition *self = qa_qc_program_find_global(engine->provider->state.qc.program, "self"); int32_t reference;
+    const qa_qc_definition *self = engine->global_bindings->self; int32_t reference;
     if (!self || self->type != QA_QC_ENTITY || !qa_qc_global_int(vm, self->offset, &reference, error)) return false;
     if (reference != scope->reference) return true;
     for (size_t i = 0; i < scope->binding->output_count; ++i)
@@ -321,7 +321,7 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
             command->sequence <= client->receipt_sequence;
     }
     const qa_qc_definition *source_impulse = received ?
-        qa_qc_program_find_field(provider->state.qc.program, "impulse") : NULL;
+        provider->state.qc.engine->field_bindings->impulse : NULL;
     for (size_t i = 0; before && ok && i < profile->field_count; ++i) {
         const application_qc_bound_field *field = &profile->fields[i]; if (field->kind != QC_FIELD_INPUT) continue;
         saved[i].field = field;

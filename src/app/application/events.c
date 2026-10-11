@@ -310,7 +310,7 @@ bool application_q1_multicast_receives(application_provider *provider,
     qa_application *app = provider->application;
     qa_vec3 point;
     if (provider->kind == APPLICATION_PROVIDER_QC) {
-        const qa_qc_definition *field = qa_qc_program_find_field(provider->state.qc.program, "origin");
+        const qa_qc_definition *field = provider->state.qc.engine->field_bindings->origin;
         if (!field || field->type != QA_QC_VECTOR ||
             !qa_qc_actor_observation_vector(provider->state.qc.instance, slot, actor, field->offset, &point, error))
             return false;
@@ -769,7 +769,7 @@ bool application_q1_music_cue(qa_application *application, bool fresh, qa_error 
         cd_track = world.cd_track;
     } else if (source->kind == APPLICATION_PROVIDER_QC) {
         float sounds;
-        if (!application_qc_float(source->state.qc.engine, 0, "sounds", &sounds, error)) return false;
+        if (!application_qc_float(source->state.qc.engine, 0, source->state.qc.engine->field_bindings->sounds, &sounds, error)) return false;
         cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(sounds);
     } else return application_fail(error, QA_ERROR_UNSUPPORTED, "Q1 level cue has no native or QC Source");
     qa_clock_state clock; qa_string_id music;

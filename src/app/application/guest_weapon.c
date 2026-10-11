@@ -51,7 +51,7 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
         if (!qa_qc_actor_observation_slot(provider->state.qc.instance, actor, &slot, error)) return false;
         const struct application_qc_profile *profile = provider->state.qc.qualified;
         const qa_qc_definition *field = profile ? profile->weapon_field :
-            qa_qc_program_find_field(provider->state.qc.program, "weapon");
+            provider->state.qc.engine->field_bindings->weapon;
         if (!field || field->type != QA_QC_FLOAT)
             return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC selected weapon has no declared source observer");
         float value;

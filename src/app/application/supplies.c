@@ -1387,7 +1387,7 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
         bool ok = application_guest_weapon_read(source, actor, &active, error) &&
             supply_current(pair, actor, error) &&
             application_qc_reference(source->state.qc.engine, actor, &reference, error) &&
-            application_qc_float(source->state.qc.engine, reference, "max_health", &maximum, error) &&
+            application_qc_float(source->state.qc.engine, reference, source->state.qc.engine->field_bindings->max_health, &maximum, error) &&
             supply_current(pair, actor, error);
         qa_q1_weapon weapon = QA_Q1_WEAPON_COUNT;
         for (int i = QA_Q1_AXE; ok && i < QA_Q1_WEAPON_COUNT; ++i)

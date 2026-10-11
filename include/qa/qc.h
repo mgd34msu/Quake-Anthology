@@ -136,7 +136,15 @@ typedef struct qa_qc_definition {
     X(origin) X(angles) X(velocity) X(mins) X(maxs) X(size) \
     X(absmin) X(absmax) X(groundentity) X(takedamage) X(colormap) X(skin) \
     X(frame) X(think) X(chain) X(effects) X(alpha) X(scale) \
-    X(weaponmodel) X(weaponframe) X(punchangle)
+    X(weaponmodel) X(weaponframe) X(punchangle) \
+    X(view_ofs) X(idealpitch) X(items) X(items2) X(weapon) X(armorvalue) \
+    X(currentammo) X(max_health) X(ammo_shells) X(ammo_nails) X(ammo_rockets) X(ammo_cells) \
+    X(ammo_shells1) X(ammo_nails1) X(ammo_rockets1) X(ammo_cells1) \
+    X(ammo_lava_nails) X(ammo_multi_rockets) X(ammo_plasma) \
+    X(team) X(netname) X(frags) X(message) X(sounds) X(classname) \
+    X(fixangle) X(v_angle) X(oldorigin) X(movedir) X(teleport_time) \
+    X(button0) X(button2) X(impulse) X(lastruntime) X(maxspeed) \
+    X(touch) X(blocked) X(dmg_inflictor) X(dmg_save) X(dmg_take)
 typedef struct qa_qc_game_fields {
 #define QA_QC_GAME_FIELD(name) const qa_qc_definition *name;
     QA_QC_GAME_FIELD_LIST(QA_QC_GAME_FIELD)
@@ -146,11 +154,15 @@ typedef struct qa_qc_game_fields {
 #define QA_QC_ENGINE_GLOBAL_LIST(X) \
     X(self) X(time) X(frametime) X(v_forward) X(v_right) X(v_up) \
     X(trace_allsolid) X(trace_startsolid) X(trace_fraction) X(trace_endpos) \
-    X(trace_plane_normal) X(trace_plane_dist) X(trace_ent) X(trace_inopen) X(trace_inwater)
+    X(trace_plane_normal) X(trace_plane_dist) X(trace_ent) X(trace_inopen) X(trace_inwater) \
+    X(msg_entity) X(force_retouch) X(serverflags) X(mapname) \
+    X(total_secrets) X(total_monsters) X(found_secrets) X(killed_monsters) \
+    X(skill) X(deathmatch) X(coop) X(teamplay) X(armortype)
 typedef struct qa_qc_engine_globals {
 #define QA_QC_ENGINE_GLOBAL(name) const qa_qc_definition *name;
     QA_QC_ENGINE_GLOBAL_LIST(QA_QC_ENGINE_GLOBAL)
 #undef QA_QC_ENGINE_GLOBAL
+    const qa_qc_definition *spawn_parameters[16];
 } qa_qc_engine_globals;
 
 typedef struct qa_qc_function {

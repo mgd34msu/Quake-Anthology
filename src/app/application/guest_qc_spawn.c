@@ -36,7 +36,7 @@ bool application_qc_spawn_call(void *opaque, qa_qc_instance *vm,
         provider->state.qc.engine != engine || !provider->constructed || !provider->attached ||
         provider->close_pending || !engine->clients)
         return application_fail(error, QA_ERROR_ARGUMENT, "QC spawn continuation has no genuine source function owner");
-    const qa_qc_definition *self = qa_qc_program_find_global(provider->state.qc.program, "self");
+    const qa_qc_definition *self = provider->state.qc.engine->global_bindings->self;
     int32_t reference;
     if (!self || self->type != QA_QC_ENTITY)
         return application_fail(error, QA_ERROR_FORMAT, "QC spawn continuation has no typed source self");

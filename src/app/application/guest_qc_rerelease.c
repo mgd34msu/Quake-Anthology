@@ -81,7 +81,7 @@ static bool target(struct application_qc_state *engine,qa_qc_instance *vm,int32_
 }
 static bool walk_path(struct application_qc_state *engine,qa_qc_instance *vm,qa_error *error)
 {
-    const qa_qc_definition *self=qa_qc_program_find_global(engine->provider->state.qc.program,"self");
+    const qa_qc_definition *self=engine->global_bindings->self;
     int32_t reference; qa_actor_id actor; float distance; qa_vec3 goal;
     if(!self||self->type!=QA_QC_ENTITY)
         return application_fail(error,QA_ERROR_FORMAT,"QC monster path requires its actual entity self global");
@@ -105,7 +105,7 @@ static bool set_color(struct application_qc_state *engine,qa_qc_instance *vm,qa_
     if (top>13) top=13;
     if (bottom>13) bottom=13;
     uint8_t colors=(uint8_t)((top<<4)|bottom);
-    if (!application_qc_set_float(engine,reference,"team",(float)((value&15u)+1u),error)) return false;
+    if (!application_qc_set_float(engine,reference, engine->field_bindings->team,(float)((value&15u)+1u),error)) return false;
     application_qc_client *client=engine->clients+slot;
     if (client->colors==colors) return true;
     if (slot>256) return application_fail(error,QA_ERROR_FORMAT,"Rerelease color update exceeds actual source protocol slot");
@@ -290,7 +290,7 @@ bool application_qc_rerelease_command(application_provider *provider,qa_actor_id
             } else if (side>=100 && prompt->old_side<100 && prompt->selected<prompt->count) {
                 int32_t impulse=prompt->choices[prompt->selected].impulse;
                 command->impulse=(uint8_t)impulse;
-                if (!application_qc_set_float(engine,reference,"impulse",(float)impulse,error)) return false;
+                if (!application_qc_set_float(engine,reference, engine->field_bindings->impulse,(float)impulse,error)) return false;
             }
             command->forward_move=command->side_move=0;
         }
@@ -373,7 +373,7 @@ static bool finale(struct application_qc_state *engine,qa_qc_instance *vm,qa_err
 {
     if (!owner_get(engine,error)) return false;
     struct application_qc_rerelease *owner=engine->rerelease;
-    const qa_qc_definition *time=qa_qc_program_find_global(engine->provider->state.qc.program,"time");
+    const qa_qc_definition *time=engine->global_bindings->time;
     float seconds;
     if (!time || time->type!=QA_QC_FLOAT || !qa_qc_global_float(vm,time->offset,&seconds,error) || !isfinite(seconds))
         return application_fail(error,QA_ERROR_FORMAT,"QC finale has no genuine source clock");
@@ -384,7 +384,7 @@ static bool finale(struct application_qc_state *engine,qa_qc_instance *vm,qa_err
         if (!engine->clients[slot].connected) continue;
         int32_t reference; uint32_t actual; float down;
         ok=qa_qc_slot_reference(vm,slot,&reference,error) && target(engine,vm,reference,true,&actual,error) &&
-            application_qc_float(engine,reference,"button0",&down,error);
+            application_qc_float(engine,reference, engine->field_bindings->button0,&down,error);
         if (ok) current[count++]=(qc_finale_held){engine->clients[slot].actor,down!=0};
     }
     if (ok) {

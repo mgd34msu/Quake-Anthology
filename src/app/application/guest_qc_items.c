@@ -149,7 +149,7 @@ bool application_qc_items_initialize(struct application_qc_state *engine,qa_erro
 {
     application_provider *provider=engine->provider;
     if(provider->state.qc.qualified){engine->items=provider->state.qc.qualified->items;return true;}
-    const qa_qc_definition *items=qa_qc_program_find_field(provider->state.qc.program,"items");
+    const qa_qc_definition *items=provider->state.qc.engine->field_bindings->items;
     if(!items)return true;
     if(items->type!=QA_QC_FLOAT)return application_fail(e,QA_ERROR_FORMAT,"Original QC item word is not a Source float");
     struct application_qc_items *p=calloc(1,sizeof(*p));
@@ -163,12 +163,11 @@ bool application_qc_items_initialize(struct application_qc_state *engine,qa_erro
     p->storage[0]=(application_qc_item_storage){.field=items,.bits=true,.private_mask=UINT32_MAX};
     p->storage[0].items=calloc(QA_Q1_WEAPON_COUNT,sizeof(*p->storage[0].items));
     if(!p->storage[0].items)return application_fail(e,QA_ERROR_MEMORY,"Owning original QC weapon bits");
-    static const char *const ammo_fields[]={"ammo_shells","ammo_nails","ammo_rockets","ammo_cells",
-        "ammo_lava_nails","ammo_multi_rockets","ammo_plasma"};
+    const qa_qc_definition *ammo_fields[]={engine->field_bindings->ammo_shells, engine->field_bindings->ammo_nails, engine->field_bindings->ammo_rockets, engine->field_bindings->ammo_cells, engine->field_bindings->ammo_lava_nails, engine->field_bindings->ammo_multi_rockets, engine->field_bindings->ammo_plasma};
     qa_q1_program program=application_q1_program(provider->product->campaign);
     for(unsigned ammo=0;ammo<QA_Q1_AMMO_COUNT;++ammo){
         if(ammo>QA_Q1_CELLS&&program!=QA_Q1_ROGUE)continue;
-        const qa_qc_definition *f=qa_qc_program_find_field(provider->state.qc.program,ammo_fields[ammo]);
+        const qa_qc_definition *f=ammo_fields[ammo];
         if(!f)continue;
         if(f->type!=QA_QC_FLOAT)return application_fail(e,QA_ERROR_FORMAT,"Original QC ammunition is not a Source float");
         const char *name=qa_q1_ammo_identity((qa_q1_ammo)ammo);qa_item_id item;

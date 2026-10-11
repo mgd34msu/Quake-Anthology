@@ -129,7 +129,7 @@ static bool qw_name_value(struct application_qc_state *engine, uint32_t slot,
 static bool qw_name(struct application_qc_state *engine, uint32_t slot,
     int32_t reference, const char *name, qa_error *error)
 {
-    const qa_qc_definition *field = application_qc_field(engine, "netname", QA_QC_STRING, error);
+    const qa_qc_definition *field = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
     int32_t string;
     return field && qw_name_value(engine, slot, name, &string, error) &&
         qa_qc_set_entity_int(engine->provider->state.qc.instance, reference, field->offset, string, error);
@@ -151,26 +151,26 @@ static bool host_give(struct application_qc_state *engine, int32_t reference,
         else if (*item >= '2') weapon = UINT32_C(1) << (*item - '2');
         if (!weapon) return true;
         float items;
-        return application_qc_float(engine, reference, "items", &items, error) &&
-            application_qc_set_float(engine, reference, "items",
+        return application_qc_float(engine, reference, engine->field_bindings->items, &items, error) &&
+            application_qc_set_float(engine, reference, engine->field_bindings->items,
                 (float)(qa_source_float_to_i32(items) | (int32_t)weapon), error);
     }
-    const char *field = NULL, *alternate = NULL;
+    const qa_qc_definition *field = NULL, *alternate = NULL;
     bool extra = false;
     switch (*item) {
-    case 'h': field = "health"; break;
-    case 's': field = "ammo_shells"; alternate = "ammo_shells1"; break;
-    case 'n': field = "ammo_nails"; alternate = "ammo_nails1"; break;
-    case 'r': field = "ammo_rockets"; alternate = "ammo_rockets1"; break;
-    case 'c': field = "ammo_cells"; alternate = "ammo_cells1"; break;
-    case 'l': field = "ammo_nails"; alternate = "ammo_lava_nails"; extra = true; break;
-    case 'm': field = "ammo_rockets"; alternate = "ammo_multi_rockets"; extra = true; break;
-    case 'p': field = "ammo_cells"; alternate = "ammo_plasma"; extra = true; break;
+    case 'h': field = engine->field_bindings->health; break;
+    case 's': field = engine->field_bindings->ammo_shells; alternate = engine->field_bindings->ammo_shells1; break;
+    case 'n': field = engine->field_bindings->ammo_nails; alternate = engine->field_bindings->ammo_nails1; break;
+    case 'r': field = engine->field_bindings->ammo_rockets; alternate = engine->field_bindings->ammo_rockets1; break;
+    case 'c': field = engine->field_bindings->ammo_cells; alternate = engine->field_bindings->ammo_cells1; break;
+    case 'l': field = engine->field_bindings->ammo_nails; alternate = engine->field_bindings->ammo_lava_nails; extra = true; break;
+    case 'm': field = engine->field_bindings->ammo_rockets; alternate = engine->field_bindings->ammo_multi_rockets; extra = true; break;
+    case 'p': field = engine->field_bindings->ammo_cells; alternate = engine->field_bindings->ammo_plasma; extra = true; break;
     default: return true;
     }
     if (!rogue) return extra || application_qc_set_float(engine, reference, field, amount, error);
-    if (alternate) {
-        const qa_qc_definition *definition = qa_qc_program_find_field(engine->provider->state.qc.program, alternate);
+    if (*item != 'h') {
+        const qa_qc_definition *definition = alternate;
         if (definition) {
             if (definition->type != QA_QC_FLOAT)
                 return application_fail(error, QA_ERROR_FORMAT, "QC Host give field differs from its Source float");
@@ -182,7 +182,7 @@ static bool host_give(struct application_qc_state *engine, int32_t reference,
         if (*item != 's') {
             if (!definition) return true;
             float selected;
-            if (!application_qc_float(engine, reference, "weapon", &selected, error)) return false;
+            if (!application_qc_float(engine, reference, engine->field_bindings->weapon, &selected, error)) return false;
             if ((selected > 64) != extra) return true;
         }
     }
@@ -222,7 +222,7 @@ bool application_qc_host_command(application_provider *provider,
         const qa_cvar_view *cheats = qa_cvars_find(engine->cvars, "sv_cheats");
         allowed = cheats && cheats->number != 0;
     } else {
-        const qa_qc_definition *deathmatch = qa_qc_program_find_global(provider->state.qc.program, "deathmatch");
+        const qa_qc_definition *deathmatch = provider->state.qc.engine->global_bindings->deathmatch;
         float value;
         if (!deathmatch || deathmatch->type != QA_QC_FLOAT ||
             !qa_qc_global_float(provider->state.qc.instance, deathmatch->offset, &value, error))
@@ -241,10 +241,10 @@ bool application_qc_host_command(application_provider *provider,
     bool enabled;
     if (god || notarget) {
         float flags;
-        if (!application_qc_float(engine, reference, "flags", &flags, error)) return false;
+        if (!application_qc_float(engine, reference, engine->field_bindings->flags, &flags, error)) return false;
         int32_t bit = god ? 64 : 128, next = qa_source_float_to_i32(flags) ^ bit;
         enabled = (next & bit) != 0;
-        if (!application_qc_set_float(engine, reference, "flags", (float)next, error)) return false;
+        if (!application_qc_set_float(engine, reference, engine->field_bindings->flags, (float)next, error)) return false;
     } else {
         bool spectator = false;
         for (uint32_t i = 1; i <= engine->max_clients; ++i)
@@ -253,7 +253,7 @@ bool application_qc_host_command(application_provider *provider,
             }
         if (!application_control_toggle_motion(provider->application, context.actor,
             fly ? QA_PHYSICS_FLY : QA_PHYSICS_NOCLIP, spectator, &enabled, error) ||
-            !application_qc_set_float(engine, reference, "movetype", enabled ? fly ? 5 : 8 : 3, error)) return false;
+            !application_qc_set_float(engine, reference, engine->field_bindings->movetype, enabled ? fly ? 5 : 8 : 3, error)) return false;
     }
     if (!application_qc_control_source_client(provider, context.actor, &member, error) || !member)
         return application_fail(error, QA_ERROR_ARGUMENT, "QC Host command retired its actual client during a Source store");
@@ -334,8 +334,7 @@ static bool parms(struct application_qc_state *engine, application_qc_client *cl
                    bool read, qa_error *error)
 {
     for (unsigned i = 0; i < 16; ++i) {
-        char name[16]; snprintf(name, sizeof(name), "parm%u", i + 1);
-        const qa_qc_definition *def = qa_qc_program_find_global(engine->provider->state.qc.program, name);
+        const qa_qc_definition *def = engine->global_bindings->spawn_parameters[i];
         if (def == NULL || def->type != QA_QC_FLOAT)
             return application_fail(error, QA_ERROR_FORMAT, "QuakeC spawn parm global is missing");
         if (read) {
@@ -347,8 +346,8 @@ static bool parms(struct application_qc_state *engine, application_qc_client *cl
 static bool source_spawn_colors(struct application_qc_state *engine, int32_t reference,
     uint32_t slot, uint8_t colors, qa_error *error)
 {
-    return application_qc_set_float(engine, reference, "colormap", (float)slot, error) &&
-        application_qc_set_float(engine, reference, "team", (float)((colors & 15u) + 1u), error);
+    return application_qc_set_float(engine, reference, engine->field_bindings->colormap, (float)slot, error) &&
+        application_qc_set_float(engine, reference, engine->field_bindings->team, (float)((colors & 15u) + 1u), error);
 }
 static bool bind_player(application_provider *provider, uint32_t slot, uint32_t seat,
                                  qa_actor_id actor, const char *name, bool spectator,
@@ -425,7 +424,7 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     }
     qa_qc_instance *vm = provider->state.qc.instance;
     int32_t reference;
-    const qa_qc_definition *netname = application_qc_field(engine, "netname", QA_QC_STRING, error);
+    const qa_qc_definition *netname = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
     int32_t string;
     if (netname == NULL || !application_qc_reference(engine, actor, &reference, error)) return false;
     if (engine->profile == QA_QC_QUAKEWORLD) {
@@ -479,18 +478,18 @@ bool application_qc_prepare_player(application_provider *provider, qa_actor_id a
         qa_qc_instance *vm = provider->state.qc.instance;
         int32_t reference, name_string;
         qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);
-        const qa_qc_definition *colormap = application_qc_field(engine, "colormap", QA_QC_FLOAT, error);
-        const qa_qc_definition *team = application_qc_field(engine, "team", QA_QC_FLOAT, error);
-        const qa_qc_definition *netname = application_qc_field(engine, "netname", QA_QC_STRING, error);
+        const qa_qc_definition *colormap = application_qc_field(engine->field_bindings->colormap, QA_QC_FLOAT, error);
+        const qa_qc_definition *team = application_qc_field(engine->field_bindings->team, QA_QC_FLOAT, error);
+        const qa_qc_definition *netname = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
         const qa_cvar_view *maximum = qa_cvars_find(engine->cvars, "sv_maxspeed");
         bool ok = colormap && team && netname && qa_qc_slot_reference(vm, slot, &reference, error);
         if (ok && (!maximum || !isfinite(maximum->number)))
             ok = application_fail(error, QA_ERROR_FORMAT, "QW source Prepare has no finite source speed cvar");
-        const char *fields[] = {"gravity", "maxspeed"};
+        const qa_qc_definition *fields[] = {engine->field_bindings->gravity, engine->field_bindings->maxspeed};
         float values[] = {1, maximum ? maximum->number : 0};
         const qa_qc_definition *optional[2];
         for (size_t i = 0; ok && i < sizeof(fields) / sizeof(*fields); ++i) {
-            optional[i] = qa_qc_program_find_field(provider->state.qc.program, fields[i]);
+            optional[i] = fields[i];
             if (optional[i] && optional[i]->type != QA_QC_FLOAT)
                 ok = application_fail(error, QA_ERROR_FORMAT, "QW source Prepare optional movement field is not a float");
         }
@@ -558,7 +557,7 @@ bool application_qc_client_colors(application_provider *provider, qa_actor_id ac
         int32_t reference;
         if (!source_binding(engine, slot, actor, error) || !application_qc_reference(engine, actor, &reference, error))
             return application_fail(error, QA_ERROR_ARGUMENT, "QC colors lack the connected physical client binding");
-        if (!application_qc_set_float(engine, reference, "team", (float)(pants + 1u), error)) return false;
+        if (!application_qc_set_float(engine, reference, engine->field_bindings->team, (float)(pants + 1u), error)) return false;
         client->colors = (uint8_t)((shirt << 4) | pants);
         return true;
     }
@@ -580,7 +579,7 @@ bool application_qc_change_parms(application_provider *provider, qa_error *error
         if (!client->connected || qa_actors_get(qa_session_actors(engine->services.session), client->actor) == NULL) continue;
         if (!application_qc_named(engine, "SetChangeParms", client->actor, error) || !parms(engine, client, true, error)) return false;
     }
-    const qa_qc_definition *flags = qa_qc_program_find_global(provider->state.qc.program, "serverflags");
+    const qa_qc_definition *flags = provider->state.qc.engine->global_bindings->serverflags;
     if (flags != NULL && (flags->type != QA_QC_FLOAT ||
         !qa_qc_global_float(provider->state.qc.instance, flags->offset, &engine->serverflags, error))) return false;
     return true;
@@ -605,7 +604,7 @@ bool application_qc_player_receive(application_provider *provider, qa_actor_id a
         bool source_impulse = command->kind != QA_RULESET_Q3 && command->kind != QA_RULESET_Q2_RERELEASE;
         if (source_impulse && command->impulse) {
             application_qc_weapon_command(engine,actor);
-            if(!application_qc_set_float(engine, reference, "impulse", command->impulse, error)) return false;
+            if(!application_qc_set_float(engine, reference, engine->field_bindings->impulse, command->impulse, error)) return false;
         }
         if (!application_qc_rerelease_command(provider, actor, command, error)) return false;
         client->receipt_seen = true; client->receipt_sequence = command->sequence; client->receipt_ordinal = ordinal;
@@ -623,10 +622,10 @@ bool application_qc_player_command(application_provider *provider, qa_actor_id a
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Qualified QC input requires its mutable phase consumer");
     int32_t reference;
     if (!application_qc_reference(engine, actor, &reference, error)) return false;
-    const qa_qc_definition *angles = application_qc_field(engine, "v_angle", QA_QC_VECTOR, error);
+    const qa_qc_definition *angles = application_qc_field(engine->field_bindings->v_angle, QA_QC_VECTOR, error);
     if (angles == NULL || !qa_qc_set_entity_vector(provider->state.qc.instance, reference, angles->offset, command->angles, error) ||
-        !application_qc_set_float(engine, reference, "button0", (command->buttons & 1u) ? 1.0f : 0.0f, error) ||
-        !application_qc_set_float(engine, reference, "button2", (command->buttons & 2u) ? 1.0f : 0.0f, error)) return false;
+        !application_qc_set_float(engine, reference, engine->field_bindings->button0, (command->buttons & 1u) ? 1.0f : 0.0f, error) ||
+        !application_qc_set_float(engine, reference, engine->field_bindings->button2, (command->buttons & 2u) ? 1.0f : 0.0f, error)) return false;
     bool received = false;
     for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
         const application_qc_client *client = &engine->clients[slot];
@@ -636,7 +635,7 @@ bool application_qc_player_command(application_provider *provider, qa_actor_id a
     }
     if (!received && command->impulse != 0) {
         application_qc_weapon_command(engine,actor);
-        if(!application_qc_set_float(engine, reference, "impulse", command->impulse, error)) return false;
+        if(!application_qc_set_float(engine, reference, engine->field_bindings->impulse, command->impulse, error)) return false;
     }
     return true;
 }
@@ -699,13 +698,13 @@ bool application_qc_actor_traits(application_provider *provider, qa_actor_id act
     struct application_qc_state *engine = provider->state.qc.engine;
     if (engine == NULL || out == NULL) return false;
     qa_error ignored = {0}; int32_t reference; float flags, health, damage; int32_t name;
-    const qa_qc_definition *classname = qa_qc_program_find_field(provider->state.qc.program, "classname");
+    const qa_qc_definition *classname = provider->state.qc.engine->field_bindings->classname;
     const char *text;
     if (classname == NULL || classname->type != QA_QC_STRING ||
         !application_qc_reference(engine, actor, &reference, &ignored) ||
-        !application_qc_float(engine, reference, "flags", &flags, &ignored) ||
-        !application_qc_float(engine, reference, "health", &health, &ignored) ||
-        !application_qc_float(engine, reference, "takedamage", &damage, &ignored) ||
+        !application_qc_float(engine, reference, engine->field_bindings->flags, &flags, &ignored) ||
+        !application_qc_float(engine, reference, engine->field_bindings->health, &health, &ignored) ||
+        !application_qc_float(engine, reference, engine->field_bindings->takedamage, &damage, &ignored) ||
         !qa_qc_entity_int(provider->state.qc.instance, reference, classname->offset, &name, &ignored) ||
         !qa_qc_string(provider->state.qc.instance, name, &text, &ignored)) return false;
     if (!isfinite(flags) || (double)flags < INT32_MIN || (double)flags > INT32_MAX) return false;

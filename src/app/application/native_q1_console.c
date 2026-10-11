@@ -112,7 +112,7 @@ static bool qc_chat_source(application_provider *provider, qa_actor_id actor,
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     qa_qc_instance *vm = provider->state.qc.instance;
-    const qa_qc_definition *netname = application_qc_field(engine, "netname", QA_QC_STRING, error);
+    const qa_qc_definition *netname = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
     if (!netname) return false;
     const qa_cvar_view *teamplay = qa_cvars_read(engine->cvars, engine->cvar_handles.teamplay);
     bool filtered = actor.registry && mode == QA_Q1_CHAT_TEAM && teamplay->number != 0;
@@ -122,7 +122,7 @@ static bool qc_chat_source(application_provider *provider, qa_actor_id actor,
         if (!qa_qc_actor_reference(vm, actor, false, &reference, error) ||
             !qa_qc_entity_int(vm, reference, netname->offset, &name, error) ||
             !qa_qc_string(vm, name, &sender->name, error) ||
-            (filtered && !application_qc_float(engine, reference, "team", &sender_team, error))) return false;
+            (filtered && !application_qc_float(engine, reference, engine->field_bindings->team, &sender_team, error))) return false;
     } else sender->name = qa_cvars_read(engine->cvars, engine->cvar_handles.hostname)->value;
     for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
         const application_qc_client *client = engine->clients + slot;
@@ -136,7 +136,7 @@ static bool qc_chat_source(application_provider *provider, qa_actor_id actor,
                 if (!application_qc_command_name_equal(target, recipient_name)) continue;
             } else {
                 float team;
-                if (!application_qc_float(engine, reference, "team", &team, error)) return false;
+                if (!application_qc_float(engine, reference, engine->field_bindings->team, &team, error)) return false;
                 if (team != sender_team) continue;
             }
         }

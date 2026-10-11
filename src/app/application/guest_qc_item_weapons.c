@@ -211,7 +211,7 @@ bool application_qc_item_weapons_qualify(application_provider *provider,const qa
         think|=f->kind==QC_FIELD_THINK;nextthink|=f->kind==QC_FIELD_NEXTTHINK;
     }
     if(!think || !nextthink)return application_fail(e,QA_ERROR_FORMAT,"QC weapons require continuing Source think ownership");
-    p->think=qa_qc_program_find_field(provider->state.qc.program,"think");
+    p->think=provider->state.qc.engine->field_bindings->think;
     if(!p->think || p->think->type!=QA_QC_FUNCTION)return application_fail(e,QA_ERROR_FORMAT,"QC weapons require their actual think field");
     qa_json_id selected=qa_json_get(d,node,"selected"),select=qa_json_get(d,node,"select"),model=qa_json_get(d,node,"model");
     if(!stage(provider,d,qa_json_get(d,node,"stage"),p,e) ||
@@ -445,7 +445,7 @@ const qa_qc_inline_region *application_qc_item_weapons_regions(const application
 }
 static bool source_selected(struct application_qc_state *engine,qa_qc_instance *vm,bool *out,qa_error *e)
 {
-    const qa_qc_definition *self=qa_qc_program_find_global(engine->provider->state.qc.program,"self");int32_t reference;qa_actor_id actor;
+    const qa_qc_definition *self=engine->global_bindings->self;int32_t reference;qa_actor_id actor;
     if(vm!=engine->provider->state.qc.instance || !self || self->type!=QA_QC_ENTITY)
         return application_fail(e,QA_ERROR_ARGUMENT,"QC weapon stage lost its actual Source VM self");
     if(!qa_qc_global_int(vm,self->offset,&reference,e) || !qa_qc_reference_actor(vm,reference,&actor,e))return false;

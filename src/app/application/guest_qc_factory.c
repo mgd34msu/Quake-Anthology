@@ -44,6 +44,8 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "Allocating prepared QC source owner");
     provider->state.qc.engine = engine;
     engine->provider = provider; engine->world = world; engine->loading = true; engine->check_cluster = -1;
+    engine->field_bindings = qa_qc_program_resolved_fields(provider->state.qc.program);
+    engine->global_bindings = qa_qc_program_resolved_globals(provider->state.qc.program);
     engine->services = application_builtin_services(app, world, app->physics);
     engine->profile = selected;
     qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);

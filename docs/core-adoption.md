@@ -308,6 +308,18 @@ the ABI contract. Normal build and all seven core suites pass:
 `/tmp/qa-ta3196-native-import-ids-20261011-build.log` and
 `/tmp/qa-ta3196-native-import-ids-20261011-core.log`. Names findings 2-17 remain.
 
+Names finding 2, field/global slice: `QA_QC_GAME_FIELD_LIST` and
+`QA_QC_ENGINE_GLOBAL_LIST` in `include/qa/qc.h` remain the one program binding
+table. `src/compat/qc/program.c` resolves them and the sixteen spawn parameters
+at load. The QC owner and restore candidate borrow those immutable bindings.
+Engine scalar/vector/callback access, Q1/QW network observations, builtin
+imports, client commands, item initialization and source callbacks read their
+definitions directly; their fixed-name lookup and spawn-parameter formatting
+paths are deleted. Qualified custom fields still bind by authored name at load.
+The normal build and seven core suites pass:
+`/tmp/qa-ta3196-qc-bindings-20261011-{build,core}.log`. Precache readers and
+remaining QC presentation readers still need migration; finding 2 stays open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

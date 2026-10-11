@@ -420,6 +420,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     if (current && !unit)
         return application_fail(error,QA_ERROR_FORMAT,"QuakeC level restore lacks its current unit Source");
     struct application_qc_state candidate = {.provider = engine->provider, .world = engine->world,
+        .field_bindings = engine->field_bindings, .global_bindings = engine->global_bindings,
         .services = engine->services, .profile = engine->profile, .protocol = engine->protocol,
         .max_clients = engine->max_clients, .loading = true};
     candidate.source_time_ns = qa_net_read_u64(&reader); candidate.serverflags = qa_net_read_f32(&reader);

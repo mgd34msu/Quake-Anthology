@@ -31,11 +31,9 @@ static bool binding_for(struct application_qc_state *engine,qa_item_id item,
     return false;
 }
 static bool observe(struct application_qc_state *engine,uint32_t slot,qa_actor_id actor,
-    const char *name,float *out,qa_error *error)
+    const qa_qc_definition *definition,float *out,qa_error *error)
 {
-    const qa_qc_definition *field=!strcmp(name,"weapon") && engine->provider->state.qc.qualified?
-        engine->provider->state.qc.qualified->weapon_field:
-        qa_qc_program_find_field(engine->provider->state.qc.program,name);
+    const qa_qc_definition *field=definition;
     if(!field || field->type!=QA_QC_FLOAT)
         return application_fail(error,QA_ERROR_UNSUPPORTED,"QC weapon transition requires its actual source scalar");
     return qa_qc_actor_observation_float(engine->provider->state.qc.instance,slot,actor,field->offset,out,error) &&
@@ -45,7 +43,7 @@ static bool impulse(struct application_qc_state *engine,uint32_t slot,float valu
 {
     int32_t reference;
     return qa_qc_slot_reference(engine->provider->state.qc.instance,slot,&reference,error) &&
-        application_qc_set_float(engine,reference,"impulse",value,error);
+        application_qc_set_float(engine,reference, engine->field_bindings->impulse,value,error);
 }
 void application_qc_weapon_command(struct application_qc_state *engine,qa_actor_id actor)
 {
@@ -103,8 +101,8 @@ bool application_qc_weapon_before_postthink(struct application_qc_state *engine,
     if(client->pending_weapon) {
         qa_application_qc_weapon_ui_binding binding; uint32_t via=0; float current_impulse,health; double owned;
         if(!binding_for(engine,client->pending_weapon,&binding,&via,error) ||
-            !observe(engine,slot,actor,"impulse",&current_impulse,error) ||
-            !observe(engine,slot,actor,"health",&health,error) ||
+            !observe(engine,slot,actor, engine->field_bindings->impulse,&current_impulse,error) ||
+            !observe(engine,slot,actor, engine->field_bindings->health,&health,error) ||
             !qa_inventory_count_read(engine->provider->application->inventory,actor,binding.item,&owned,error)) return false;
         if(owned<=0 || health<=0) {
             client->pending_weapon=0; client->pending_weapon_following=false;
@@ -122,12 +120,14 @@ bool application_qc_weapon_after_postthink(struct application_qc_state *engine,q
     if(!qa_qc_actor_observation_slot(engine->provider->state.qc.instance,actor,&slot,error)) return false;
     qa_application_qc_weapon_ui_binding binding; uint32_t via=0; float current_impulse,current; double owned;
     if(!binding_for(engine,client->pending_weapon,&binding,&via,error) ||
-        !observe(engine,slot,actor,"impulse",&current_impulse,error)) return false;
+        !observe(engine,slot,actor, engine->field_bindings->impulse,&current_impulse,error)) return false;
     if(current_impulse!=0) return true;
     qa_item_id selection=client->pending_weapon; bool following=client->pending_weapon_following;
     client->pending_weapon=0; client->pending_weapon_following=false;
     if(!following) {
-        if(!observe(engine,slot,actor,"weapon",&current,error) ||
+        const qa_qc_definition *weapon = engine->provider->state.qc.qualified ?
+            engine->provider->state.qc.qualified->weapon_field : engine->field_bindings->weapon;
+        if(!observe(engine,slot,actor,weapon,&current,error) ||
             !qa_inventory_count_read(engine->provider->application->inventory,actor,binding.item,&owned,error)) return false;
         if((double)current==(double)via && owned>0) {
             client->pending_weapon=selection; client->pending_weapon_following=true;
@@ -165,7 +165,7 @@ bool qa_application_qc_weapon_settled(qa_application *app,qa_actor_id actor,bool
         program.field_count==216u && program.function_count==482u;
     if(provider->state.qc.qualified || (!netquake && !quakeworld))
         return application_fail(error,QA_ERROR_UNSUPPORTED,"QC weapon stage lacks an artifact-qualified continuation declaration");
-    const qa_qc_definition *field=qa_qc_program_find_field(provider->state.qc.program,"think"); int32_t think;
+    const qa_qc_definition *field=provider->state.qc.engine->field_bindings->think; int32_t think;
     if(!field || field->type!=QA_QC_FUNCTION ||
         !qa_qc_actor_observation_int(provider->state.qc.instance,view.source_slot,actor,field->offset,&think,error)) return false;
     if(think<0 || !qa_qc_program_function(provider->state.qc.program,(uint32_t)think))

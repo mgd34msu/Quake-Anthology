@@ -66,6 +66,8 @@ struct application_qc_state {
     struct application_qc_item_actor *item_actors;
     struct application_qc_pickup_actor *pickup_actors;
     application_provider *provider;
+    const qa_qc_game_fields *field_bindings;
+    const qa_qc_engine_globals *global_bindings;
     qa_world *world;
     qa_builtin_services services;
     qa_builtin_random random;
@@ -132,9 +134,9 @@ bool application_qc_resource_lookup(void *, qa_qc_resource_kind, const char *, b
 bool application_qc_resource_resolve_model(struct application_qc_state *, application_qc_resource *, qa_error *);
 bool application_qc_model_publish(struct application_qc_state *, const application_qc_resource *, qa_error *);
 void application_qc_resource_dispose(application_qc_resource *);
-const qa_qc_definition *application_qc_field(struct application_qc_state *, const char *, qa_qc_value_type, qa_error *);
-bool application_qc_float(struct application_qc_state *, int32_t, const char *, float *, qa_error *);
-bool application_qc_set_float(struct application_qc_state *, int32_t, const char *, float, qa_error *);
+const qa_qc_definition *application_qc_field(const qa_qc_definition *, qa_qc_value_type, qa_error *);
+bool application_qc_float(struct application_qc_state *, int32_t, const qa_qc_definition *, float *, qa_error *);
+bool application_qc_set_float(struct application_qc_state *, int32_t, const qa_qc_definition *, float, qa_error *);
 bool application_qc_reference(struct application_qc_state *, qa_actor_id, int32_t *, qa_error *);
 bool application_qc_named(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
 bool application_qc_water_transition(application_provider *, qa_actor_id, qa_error *);

@@ -587,12 +587,13 @@ static bool initialize_declared_map_context(struct application_qc_state *engine,
     qa_qc_instance *vm = engine->provider->state.qc.instance;
     if (!qa_qc_game_set_time(engine->provider->state.qc.game, (double)engine->source_time_ns / 1e9, 0, error)) return false;
     static const char *names[] = {"skill", "deathmatch", "coop", "teamplay"};
+    const qa_qc_definition *definitions[] = {engine->global_bindings->skill, engine->global_bindings->deathmatch, engine->global_bindings->coop, engine->global_bindings->teamplay};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
-        const qa_qc_definition *global = qa_qc_program_find_global(engine->provider->state.qc.program, names[i]);
+        const qa_qc_definition *global = definitions[i];
         const qa_cvar_view *cvar = qa_cvars_find(engine->cvars, names[i]);
         if (global && global->type == QA_QC_FLOAT && !qa_qc_set_global_float(vm, global->offset, cvar->number, error)) return false;
     }
-    const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
+    const qa_qc_definition *mapname = engine->global_bindings->mapname;
     if (mapname && mapname->type == QA_QC_STRING) {
         const char *base = strncmp(path, "maps/", 5) == 0 ? path + 5 : path;
         size_t length = strlen(base); char *short_name = malloc(length + 1);
@@ -642,8 +643,8 @@ bool application_qc_client_think(struct application_qc_state *engine, qa_actor_i
         if (profile->fields[i].kind == QC_FIELD_NEXTTHINK) deadline = profile->fields[i].definition;
     }
     if (!think) {
-        think = qa_qc_program_find_field(engine->provider->state.qc.program, "think");
-        deadline = qa_qc_program_find_field(engine->provider->state.qc.program, "nextthink");
+        think = engine->field_bindings->think;
+        deadline = engine->field_bindings->nextthink;
     }
     if (!think && !deadline) return true;
     if (!think || !deadline || think->type != QA_QC_FUNCTION || deadline->type != QA_QC_FLOAT)

@@ -5,9 +5,9 @@
 #include <stdio.h>
 
 static bool vector_field(struct application_qc_state *engine, int32_t reference,
-                          const char *name, qa_vec3 *out, qa_error *error)
+                          const qa_qc_definition *definition, qa_vec3 *out, qa_error *error)
 {
-    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_VECTOR, error);
+    const qa_qc_definition *field = application_qc_field(definition, QA_QC_VECTOR, error);
     return field != NULL && qa_qc_entity_vector(engine->provider->state.qc.instance, reference, field->offset, out, error);
 }
 static bool info_key(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
@@ -66,10 +66,10 @@ static bool info_key(struct application_qc_state *engine, qa_qc_instance *vm, qa
     free(name); qa_qw_info_free(&info);
     return ok;
 }
-static bool global_reference(struct application_qc_state *engine, const char *name,
+static bool global_reference(struct application_qc_state *engine, const qa_qc_definition *definition,
                               int32_t *out, qa_error *error)
 {
-    const qa_qc_definition *global = qa_qc_program_find_global(engine->provider->state.qc.program, name);
+    const qa_qc_definition *global = definition;
     if (global == NULL || global->type != QA_QC_ENTITY)
         return application_fail(error, QA_ERROR_FORMAT, "Missing QuakeC entity global");
     return qa_qc_global_int(engine->provider->state.qc.instance, global->offset, out, error);
@@ -81,8 +81,8 @@ static uint32_t source_flags(float value)
 static bool check_client_eye_reference(struct application_qc_state *engine, int32_t reference,
     qa_vec3 *out, qa_error *error) {
     qa_vec3 origin, offset;
-    if (!vector_field(engine, reference, "origin", &origin, error) ||
-        !vector_field(engine, reference, "view_ofs", &offset, error)) return false;
+    if (!vector_field(engine, reference, engine->field_bindings->origin, &origin, error) ||
+        !vector_field(engine, reference, engine->field_bindings->view_ofs, &offset, error)) return false;
     *out = qa_vec_add(origin, offset);
     return true;
 }
@@ -121,10 +121,10 @@ static bool check_client_row(void *opaque, uint32_t slot, bool selection,
     *out = (qa_builtin_check_client_row){0};
     if (!check_client_reference(engine, slot, &reference, &out->present, error)) return false;
     if (!out->present) return true;
-    if (!application_qc_float(engine, reference, "health", &out->health, error)) return false;
+    if (!application_qc_float(engine, reference, engine->field_bindings->health, &out->health, error)) return false;
     if (selection && !(out->health <= 0)) {
         float flags;
-        if (!application_qc_float(engine, reference, "flags", &flags, error)) return false;
+        if (!application_qc_float(engine, reference, engine->field_bindings->flags, &flags, error)) return false;
         out->no_target = (source_flags(flags) & 128u) != 0;
     }
     return true;
@@ -139,7 +139,7 @@ static bool check_client_eye(void *opaque, uint32_t slot, qa_vec3 *out, qa_error
 static bool check_client_observer_eye(void *opaque, qa_vec3 *out, qa_error *error) {
     struct application_qc_state *engine = opaque;
     int32_t reference;
-    return global_reference(engine, "self", &reference, error) &&
+    return global_reference(engine, engine->global_bindings->self, &reference, error) &&
         check_client_eye_reference(engine, reference, out, error);
 }
 static bool check_client(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
@@ -166,11 +166,11 @@ static bool aim_eligible(struct application_qc_state *engine, int32_t source, qa
     if (qa_actor_id_equal(shooter, actor) || qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL) return true;
     int32_t target; float damage, source_team, team;
     if (!application_qc_reference(engine, actor, &target, error) ||
-        !application_qc_float(engine, target, "takedamage", &damage, error)) return false;
+        !application_qc_float(engine, target, engine->field_bindings->takedamage, &damage, error)) return false;
     if (damage != 2) return true;
     if (teamplay != 0) {
-        if (!application_qc_float(engine, source, "team", &source_team, error) ||
-            !application_qc_float(engine, target, "team", &team, error)) return false;
+        if (!application_qc_float(engine, source, engine->field_bindings->team, &source_team, error) ||
+            !application_qc_float(engine, target, engine->field_bindings->team, &team, error)) return false;
         if (source_team > 0 && source_team == team) return true;
     }
     *eligible = true; return true;
@@ -186,7 +186,7 @@ static bool aim(struct application_qc_state *engine, qa_qc_instance *vm, qa_erro
 {
     int32_t reference; qa_actor_id actor; qa_body_state body;
     qa_vec3 forward;
-    const qa_qc_definition *direction = qa_qc_program_find_global(engine->provider->state.qc.program, "v_forward");
+    const qa_qc_definition *direction = engine->global_bindings->v_forward;
     if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_reference_actor(vm, reference, &actor, error) ||
         direction == NULL || direction->type != QA_QC_VECTOR || !qa_qc_global_vector(vm, direction->offset, &forward, error) ||
         !qa_world_body_read(engine->world, actor, &body, error)) return false;
@@ -254,16 +254,16 @@ static bool debug_entity(struct application_qc_state *engine, qa_qc_instance *vm
 static bool static_entity(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
 {
     int32_t reference, model_string; qa_actor_id actor; qa_vec3 origin, angles; float frame, color, skin;
-    const qa_qc_definition *model_field = application_qc_field(engine, "model", QA_QC_STRING, error);
+    const qa_qc_definition *model_field = application_qc_field(engine->field_bindings->model, QA_QC_STRING, error);
     const char *model_path; qa_qc_game_resource model;
     if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_reference_actor(vm, reference, &actor, error) ||
-        !vector_field(engine, reference, "origin", &origin, error) || !vector_field(engine, reference, "angles", &angles, error) ||
+        !vector_field(engine, reference, engine->field_bindings->origin, &origin, error) || !vector_field(engine, reference, engine->field_bindings->angles, &angles, error) ||
         !model_field || !qa_qc_entity_int(vm, reference, model_field->offset, &model_string, error) ||
         !qa_qc_string(vm, model_string, &model_path, error) ||
         !application_qc_resource_lookup(engine, QA_QC_RESOURCE_MODEL, model_path, false, &model, error) ||
-        !application_qc_float(engine, reference, "frame", &frame, error) ||
-        !application_qc_float(engine, reference, "colormap", &color, error) ||
-        !application_qc_float(engine, reference, "skin", &skin, error)) return false;
+        !application_qc_float(engine, reference, engine->field_bindings->frame, &frame, error) ||
+        !application_qc_float(engine, reference, engine->field_bindings->colormap, &color, error) ||
+        !application_qc_float(engine, reference, engine->field_bindings->skin, &skin, error)) return false;
     if (model.index > 255 || !isfinite(frame) || frame < 0 || frame > 255 ||
         !isfinite(color) || color < 0 || color > 255 || !isfinite(skin) || skin < 0 || skin > 255)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeC static model exceeds source protocol range");
@@ -339,7 +339,7 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
     }
     case QA_QC_BUILTIN_CHANGELEVEL: {
         const char *map; int32_t self; qa_actor_id actor = {0};
-        if (!qa_qc_arg_string(vm, 0, &map, error) || !global_reference(engine, "self", &self, error)) return false;
+        if (!qa_qc_arg_string(vm, 0, &map, error) || !global_reference(engine, engine->global_bindings->self, &self, error)) return false;
         if (self != 0 && !qa_qc_reference_actor(vm, self, &actor, error)) return false;
         qa_application_travel_request request = {.provider = engine->provider->owner, .cause = actor,
             .expression = map, .carry_players = true};
@@ -353,8 +353,7 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
             if (engine->clients[i].connected && qa_actor_id_equal(actor, engine->clients[i].actor)) { client = &engine->clients[i]; break; }
         if (client == NULL) return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC spawn parms require a client");
         for (unsigned i = 0; i < 16; ++i) {
-            char key[16]; snprintf(key, sizeof(key), "parm%u", i + 1);
-            const qa_qc_definition *def = qa_qc_program_find_global(engine->provider->state.qc.program, key);
+            const qa_qc_definition *def = engine->global_bindings->spawn_parameters[i];
             if (def == NULL || def->type != QA_QC_FLOAT || !qa_qc_set_global_float(vm, def->offset, client->parms[i], error)) return false;
         }
         return true;

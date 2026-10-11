@@ -63,7 +63,7 @@ static bool message_target(struct application_qc_state *engine, qa_qc_instance *
         return false;
     }
     if (destination == 1) {
-        const qa_qc_definition *global = qa_qc_program_find_global(engine->provider->state.qc.program, "msg_entity");
+        const qa_qc_definition *global = engine->global_bindings->msg_entity;
         int32_t reference;
         if (global == NULL || global->type != QA_QC_ENTITY || !qa_qc_global_int(vm, global->offset, &reference, error) ||
             !qa_qc_reference_actor(vm, reference, &recipient, error)) return false;

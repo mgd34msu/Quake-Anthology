@@ -348,7 +348,7 @@ static bool source_score(application_q3_component_client_adapter *a,qa_actor_id 
     if(source->kind==APPLICATION_PROVIDER_QC) {
         int32_t reference;float score;struct application_qc_state *engine=source->state.qc.engine;
         if(!application_qc_reference(engine,actor,&reference,e)||
-            !application_qc_float(engine,reference,"frags",&score,e)) return false;
+            !application_qc_float(engine,reference, engine->field_bindings->frags,&score,e)) return false;
         *out=score;return true;
     }
     if(source->kind==APPLICATION_PROVIDER_Q2) {
@@ -378,7 +378,7 @@ static bool source_set_score(application_q3_component_client_adapter *a,qa_actor
     if(source->kind==APPLICATION_PROVIDER_QC) {
         int32_t reference;struct application_qc_state *engine=source->state.qc.engine;
         return application_qc_reference(engine,actor,&reference,e)&&
-            application_qc_set_float(engine,reference,"frags",(float)(float)(score),e);
+            application_qc_set_float(engine,reference, engine->field_bindings->frags,(float)(float)(score),e);
     }
     if(trunc(score)!=score||score<INT32_MIN||score>INT32_MAX)
         return application_fail(e,QA_ERROR_ARGUMENT,"Component Source score requires an int32");
@@ -444,7 +444,7 @@ static bool source_set_team(application_q3_component_client_adapter *a,qa_actor_
             snprintf(value,sizeof(value),"%d",color-1);
             info=info_replace(p->userinfo?p->userinfo:"","bottomcolor",value,false,e);
             if(!info) return false;
-            if(!application_qc_set_float(qc,reference,"team",(float)color,e)) {free(info);return false;}
+            if(!application_qc_set_float(qc,reference, qc->field_bindings->team,(float)color,e)) {free(info);return false;}
         }
         if(!info) return false;
         p=player(a,actor);if(!p) {free(info);return application_fail(e,QA_ERROR_ARGUMENT,"Component QC team replaced its actual client");}

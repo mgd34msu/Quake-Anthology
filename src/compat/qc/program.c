@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/hash.h"
+#include <stdio.h>
 
 #define QC_PROGRAM_VERSION 6
 #define QC_NETQUAKE_SYSTEM_CRC 5927
@@ -418,6 +419,11 @@ bool qa_qc_program_load(qa_bytes bytes, const char *source,
 #define QC_RESOLVE_GLOBAL(name) program->engine_globals.name = qa_qc_program_find_global(program, #name);
     QA_QC_ENGINE_GLOBAL_LIST(QC_RESOLVE_GLOBAL)
 #undef QC_RESOLVE_GLOBAL
+    for (unsigned i = 0; i < 16; ++i) {
+        char name[16];
+        snprintf(name, sizeof(name), "parm%u", i + 1);
+        program->engine_globals.spawn_parameters[i] = qa_qc_program_find_global(program, name);
+    }
     *out = program;
     return true;
 }

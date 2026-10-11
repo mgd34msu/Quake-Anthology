@@ -132,25 +132,25 @@ bool qa_application_network_qw_ptrack(qa_application *app,qa_actor_id actor,
 }
 
 static bool qw_scalar(struct application_qc_state *engine, int32_t reference,
-    const char *name, float *out, qa_error *error)
+    const qa_qc_definition *definition, float *out, qa_error *error)
 {
-    return application_qc_float(engine, reference, name, out, error) &&
+    return application_qc_float(engine, reference, definition, out, error) &&
         (isfinite(*out) || application_fail(error, QA_ERROR_FORMAT, "Nonfinite QuakeWorld source scalar"));
 }
 
 static bool qw_truncated(struct application_qc_state *engine, int32_t reference,
-    const char *name, double *out, qa_error *error)
+    const qa_qc_definition *definition, double *out, qa_error *error)
 {
     float value;
-    if (!qw_scalar(engine, reference, name, &value, error)) return false;
+    if (!qw_scalar(engine, reference, definition, &value, error)) return false;
     *out = trunc((double)value);
     return true;
 }
 
 static bool qw_vector(struct application_qc_state *engine, int32_t reference,
-    const char *name, float out[3], qa_error *error)
+    const qa_qc_definition *definition, float out[3], qa_error *error)
 {
-    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_VECTOR, error);
+    const qa_qc_definition *field = application_qc_field(definition, QA_QC_VECTOR, error);
     qa_vec3 value;
     if (!field || !qa_qc_entity_vector(engine->provider->state.qc.instance,
             reference, field->offset, &value, error)) return false;
@@ -161,9 +161,9 @@ static bool qw_vector(struct application_qc_state *engine, int32_t reference,
 }
 
 static bool qw_string(struct application_qc_state *engine, int32_t reference,
-    const char *name, const char **out, qa_error *error)
+    const qa_qc_definition *definition, const char **out, qa_error *error)
 {
-    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_STRING, error);
+    const qa_qc_definition *field = application_qc_field(definition, QA_QC_STRING, error);
     int32_t string;
     if (!field || !qa_qc_entity_int(engine->provider->state.qc.instance,
             reference, field->offset, &string, error)) return false;
@@ -174,21 +174,21 @@ static bool qw_entity(struct application_qc_state *engine, uint32_t slot,
     int32_t reference, qa_application_network_qw_entity *out, qa_error *error)
 {
     qa_application_network_qw_entity value = {.number = slot};
-    if (!qw_truncated(engine, reference, "modelindex", &value.model, error) ||
-        !qw_truncated(engine, reference, "frame", &value.frame, error) ||
-        !qw_truncated(engine, reference, "colormap", &value.colormap, error) ||
-        !qw_truncated(engine, reference, "skin", &value.skin, error) ||
-        !qw_truncated(engine, reference, "effects", &value.effects, error) ||
-        !qw_vector(engine, reference, "origin", value.origin, error) ||
-        !qw_vector(engine, reference, "angles", value.angles, error)) return false;
+    if (!qw_truncated(engine, reference, engine->field_bindings->modelindex, &value.model, error) ||
+        !qw_truncated(engine, reference, engine->field_bindings->frame, &value.frame, error) ||
+        !qw_truncated(engine, reference, engine->field_bindings->colormap, &value.colormap, error) ||
+        !qw_truncated(engine, reference, engine->field_bindings->skin, &value.skin, error) ||
+        !qw_truncated(engine, reference, engine->field_bindings->effects, &value.effects, error) ||
+        !qw_vector(engine, reference, engine->field_bindings->origin, value.origin, error) ||
+        !qw_vector(engine, reference, engine->field_bindings->angles, value.angles, error)) return false;
     *out = value;
     return true;
 }
 
-static bool qw_global(struct application_qc_state *engine, const char *name,
+static bool qw_global(struct application_qc_state *engine, const qa_qc_definition *definition,
     float *out, qa_error *error)
 {
-    const qa_qc_definition *global = qa_qc_program_find_global(engine->provider->state.qc.program, name);
+    const qa_qc_definition *global = definition;
     if (!global || global->type != QA_QC_FLOAT)
         return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld source stat global is absent");
     return qa_qc_global_float(engine->provider->state.qc.instance, global->offset, out, error) &&
@@ -205,7 +205,7 @@ bool qa_application_network_qw_world_read(qa_application *app,
     if (!engine) return false;
     const qa_product *product = engine->provider->product;
     qa_application_map_view map;
-    const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
+    const qa_qc_definition *mapname = engine->global_bindings->mapname;
     int32_t name, reference; float cd_track;
     if (!product || !product->directory || !*product->directory ||
         !qa_application_map_read(app, &map) || !map.resource ||
@@ -214,8 +214,8 @@ bool qa_application_network_qw_world_read(qa_application *app,
     if (!qa_qc_global_int(engine->provider->state.qc.instance, mapname->offset, &name, error) ||
         !qa_qc_string(engine->provider->state.qc.instance, name, &value.map, error) ||
         !qa_qc_slot_reference(engine->provider->state.qc.instance, 0, &reference, error) ||
-        !qw_string(engine, reference, "message", &value.level, error) ||
-        !qw_scalar(engine, reference, "sounds", &cd_track, error)) return false;
+        !qw_string(engine, reference, engine->field_bindings->message, &value.level, error) ||
+        !qw_scalar(engine, reference, engine->field_bindings->sounds, &cd_track, error)) return false;
     value.cd_track = (uint8_t)(uint32_t)qa_source_float_to_i32(cd_track);
     const char *separator = strrchr(product->directory, '/');
     value.game_directory = separator ? separator + 1 : product->directory;
@@ -336,22 +336,22 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
         .begun = engine->clients[slot].spawned, .spectator = engine->clients[slot].spectator};
     if (!qa_qc_slot_reference(vm, slot, &reference, error) ||
         !qw_entity(engine, slot, reference, &value.entity, error) ||
-        !qw_vector(engine, reference, "velocity", value.velocity, error) ||
-        !qw_vector(engine, reference, "view_ofs", value.view_offset, error) ||
-        !qw_vector(engine, reference, "mins", value.minimum, error) ||
-        !qw_scalar(engine, reference, "health", &value.health, error) ||
-        !qw_scalar(engine, reference, "frags", &value.frags, error) ||
-        !qw_truncated(engine, reference, "weaponframe", &value.weapon_frame, error)) return false;
-    static const char *const fields[16] = {"health", NULL, NULL, "currentammo", "armorvalue",
-        "weaponframe", "ammo_shells", "ammo_nails", "ammo_rockets", "ammo_cells", "weapon"};
+        !qw_vector(engine, reference, engine->field_bindings->velocity, value.velocity, error) ||
+        !qw_vector(engine, reference, engine->field_bindings->view_ofs, value.view_offset, error) ||
+        !qw_vector(engine, reference, engine->field_bindings->mins, value.minimum, error) ||
+        !qw_scalar(engine, reference, engine->field_bindings->health, &value.health, error) ||
+        !qw_scalar(engine, reference, engine->field_bindings->frags, &value.frags, error) ||
+        !qw_truncated(engine, reference, engine->field_bindings->weaponframe, &value.weapon_frame, error)) return false;
+    const qa_qc_definition *fields[16] = {engine->field_bindings->health, NULL, NULL,
+        engine->field_bindings->currentammo, engine->field_bindings->armorvalue, engine->field_bindings->weaponframe, engine->field_bindings->ammo_shells, engine->field_bindings->ammo_nails, engine->field_bindings->ammo_rockets, engine->field_bindings->ammo_cells, engine->field_bindings->weapon};
     for (uint32_t index = 0; index < 11; ++index) {
-        if (!fields[index]) continue;
+        if (index == 1 || index == 2) continue;
         float raw;
         if (!qw_scalar(engine, reference, fields[index], &raw, error)) return false;
         value.stats[index] = trunc((double)raw);
     }
     const char *weapon;
-    if (!qw_string(engine, reference, "weaponmodel", &weapon, error)) return false;
+    if (!qw_string(engine, reference, engine->field_bindings->weaponmodel, &weapon, error)) return false;
     for (size_t i = 0; i < engine->resource_count; ++i) {
         const application_qc_resource *resource = &engine->resources[i];
         if (resource->kind == QA_QC_RESOURCE_MODEL && resource->name && !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), resource->name), weapon)) {
@@ -360,15 +360,15 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
             value.stats[2] = resource->value.index; break;
         }
     }
-    static const char *const globals[] = {"total_secrets", "total_monsters", "found_secrets", "killed_monsters"};
+    const qa_qc_definition *globals[] = {engine->global_bindings->total_secrets, engine->global_bindings->total_monsters, engine->global_bindings->found_secrets, engine->global_bindings->killed_monsters};
     for (uint32_t i = 0; i < 4; ++i) {
         float raw;
         if (!qw_global(engine, globals[i], &raw, error)) return false;
         value.stats[11 + i] = trunc((double)raw);
     }
     float items, flags;
-    if (!qw_scalar(engine, reference, "items", &items, error) ||
-        !qw_global(engine, "serverflags", &flags, error)) return false;
+    if (!qw_scalar(engine, reference, engine->field_bindings->items, &items, error) ||
+        !qw_global(engine, engine->global_bindings->serverflags, &flags, error)) return false;
     uint32_t item_bits = (uint32_t)qa_source_float_to_i32(items) | ((uint32_t)qa_source_float_to_i32(flags) << 28);
     int32_t signed_items;
     memcpy(&signed_items, &item_bits, sizeof(item_bits));
@@ -455,7 +455,7 @@ bool qa_application_network_qw_kill(qa_application *app, qa_actor_id actor,
     if (!engine || app->operation != APPLICATION_IDLE || !qw_client_binding(engine, actor, &slot, error)) return false;
     if (!engine->clients[slot].spawned || engine->clients[slot].spectator) return true;
     if (!qa_qc_slot_reference(engine->provider->state.qc.instance, slot, &reference, error) ||
-        !qw_scalar(engine, reference, "health", &health, error)) return false;
+        !qw_scalar(engine, reference, engine->field_bindings->health, &health, error)) return false;
     if (health <= 0) return true;
     qa_qc_game_global globals[] = {
         {"self", {QA_QC_GAME_ACTOR, {.actor = actor}}},
@@ -482,7 +482,7 @@ bool qa_application_network_qw_pause(qa_application *app, qa_actor_id actor,
         engine->clients[slot].spectator ? "Spectators can not pause.\n" : NULL;
     int32_t reference; const char *name = NULL;
     if (!denial && (!qa_qc_slot_reference(engine->provider->state.qc.instance, slot, &reference, error) ||
-        !qw_string(engine, reference, "netname", &name, error))) return false;
+        !qw_string(engine, reference, engine->field_bindings->netname, &name, error))) return false;
     const char *suffix = app->q1_paused ? " unpaused the game\n" : " paused the game\n";
     size_t name_size = denial ? 0 : strlen(name), suffix_size = denial ? 0 : strlen(suffix);
     if (name_size > 1395 || suffix_size > 1395 - name_size)
@@ -571,8 +571,8 @@ bool qa_application_network_qw_entity_next(qa_application *app, uint32_t *cursor
         float model;
         const char *name;
         if (!qa_qc_slot_reference(vm, slot, &reference, error) ||
-            !qw_scalar(engine, reference, "modelindex", &model, error) ||
-            !qw_string(engine, reference, "model", &name, error)) return false;
+            !qw_scalar(engine, reference, engine->field_bindings->modelindex, &model, error) ||
+            !qw_string(engine, reference, engine->field_bindings->model, &name, error)) return false;
         if (model == 0 || !*name) continue;
         if (!qw_entity(engine, slot, reference, out, error)) return false;
         *actor = binding.actor; *present = true;
