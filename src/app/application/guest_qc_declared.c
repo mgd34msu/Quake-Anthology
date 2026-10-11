@@ -607,6 +607,7 @@ static bool initialize_declared_map_context(struct application_qc_state *engine,
     }
     if (!application_qc_initialize_declared(engine, error)) return false;
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(engine->provider->state.qc.game, false, error)) return false;
+    if (!application_qc_precache_bind(engine, error)) return false;
     engine->loading = false; qa_cvars_set_server_active(engine->cvars, true);
     return application_qc_objectives_activate(engine,error);
 }

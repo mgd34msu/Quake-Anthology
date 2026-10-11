@@ -21,7 +21,11 @@ bool qa_qc_weapon_visual_read(const qa_qc_instance *vm, uint32_t slot,
     qa_qc_weapon_visual value = {0};
     const uint8_t *words = qc_entity_words_const(vm, slot);
     const qa_qc_definition *source = field(vm, slot, vm->program->engine_fields.weaponmodel, QA_QC_STRING, 1, &value.has_model, error);
-    if (value.has_model && (!source || !qa_qc_string(vm, qc_load_int(words, source->offset), &value.model, error))) return false;
+    if (value.has_model) {
+        if (!source) return false;
+        value.model_string = qc_load_int(words, source->offset);
+        if (!qa_qc_string(vm, value.model_string, &value.model, error)) return false;
+    }
     source = field(vm, slot, vm->program->engine_fields.weaponframe, QA_QC_FLOAT, 1, &value.has_frame, error);
     if (value.has_frame) {
         if (!source) return false;

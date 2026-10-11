@@ -62,18 +62,10 @@ bool application_qc_visual(application_provider *provider, qa_actor_id actor,
     out->visual.alpha = source.alpha == 0 ? 1 : fmaxf(0, fminf(1, source.alpha));
     out->visual.scale = source.scale == 0 ? 1 : source.scale;
     out->visual.visible = source.model[0] != '\0' && model_index != 0;
-    if (source.model[0]) {
-        const application_qc_resource *resource = NULL;
-        for (size_t i = 0; i < engine->resource_count; ++i)
-            if (engine->resources[i].kind == QA_QC_RESOURCE_MODEL &&
-                !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), engine->resources[i].name), source.model)) {
-                resource = &engine->resources[i];
-                break;
-            }
+    if (out->visual.visible) {
+        const application_qc_resource *resource = application_qc_resource_at(engine, QA_QC_RESOURCE_MODEL, (uint32_t)model_index);
         if (!resource)
             return application_fail(error, QA_ERROR_NOT_FOUND, "QC appearance model has no retained source precache");
-        if (model_index && resource->value.index != (uint32_t)model_index)
-            return application_fail(error, QA_ERROR_FORMAT, "QC appearance model differs from its source precache index");
         out->visual.models[0] = resource->name;
         out->model_resources[0] = resource->source;
         out->model_openings[0] = resource->source ? &resource->acquisition : NULL;

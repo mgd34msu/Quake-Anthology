@@ -79,6 +79,83 @@ void application_qc_resource_dispose(application_qc_resource *entry)
     qa_resource_release(entry->source);
     *entry = (application_qc_resource){0};
 }
+void application_qc_precache_dispose(struct application_qc_state *engine)
+{
+    free(engine->precache.indices[0]); free(engine->precache.indices[1]);
+    free(engine->precache.names);
+    engine->precache = (application_qc_precache){0};
+}
+const application_qc_resource *application_qc_resource_at(const struct application_qc_state *engine,
+    qa_qc_resource_kind kind, uint32_t index)
+{
+    if (!index || index >= engine->precache.counts[kind]) return NULL;
+    uint32_t row = engine->precache.indices[kind][index];
+    return row ? engine->resources + row - 1 : NULL;
+}
+static const application_qc_resource *resource_named(const struct application_qc_state *engine,
+    qa_qc_resource_kind kind, const char *name)
+{
+    qa_string_id id = qa_strings_find(qa_session_strings(engine->services.session),
+        (qa_bytes){(const uint8_t *)name, strlen(name)});
+    uint32_t row = id < engine->precache.name_count ? engine->precache.names[id][kind] : 0;
+    return row ? engine->resources + row - 1 : NULL;
+}
+bool application_qc_precache_bind(struct application_qc_state *engine, qa_error *error)
+{
+    application_qc_precache prepared = {0};
+    for (size_t i = 0; i < engine->resource_count; ++i) {
+        const application_qc_resource *resource = engine->resources + i;
+        if (prepared.counts[resource->kind] <= resource->value.index)
+            prepared.counts[resource->kind] = resource->value.index + 1;
+        if (prepared.name_count <= resource->name) prepared.name_count = (size_t)resource->name + 1;
+    }
+    for (unsigned i = 0; i < 2; ++i) if (prepared.counts[i]) {
+        prepared.indices[i] = calloc(prepared.counts[i], sizeof(*prepared.indices[i]));
+        if (!prepared.indices[i]) goto failed;
+    }
+    if (prepared.name_count) {
+        prepared.names = calloc(prepared.name_count, sizeof(*prepared.names));
+        if (!prepared.names) goto failed;
+    }
+    for (size_t i = 0; i < engine->resource_count; ++i) {
+        const application_qc_resource *resource = engine->resources + i;
+        prepared.indices[resource->kind][resource->value.index] = (uint32_t)i + 1;
+        prepared.names[resource->name][resource->kind] = (uint32_t)i + 1;
+    }
+    application_qc_precache_dispose(engine);
+    engine->precache = prepared;
+    ++engine->precache_generation;
+    const application_qc_resource *resource = resource_named(engine, QA_QC_RESOURCE_MODEL, "progs/player.mdl");
+    engine->precache.player_model = resource ? resource->value.index : 0;
+    resource = resource_named(engine, QA_QC_RESOURCE_MODEL, "progs/spike.mdl");
+    engine->precache.spike_model = resource ? resource->value.index : 0;
+    resource = resource_named(engine, QA_QC_RESOURCE_SOUND, "misc/h2ohit1.wav");
+    engine->precache.water_sound = resource ? resource->value.index : 0;
+    return true;
+failed:
+    free(prepared.indices[0]); free(prepared.indices[1]); free(prepared.names);
+    return application_fail(error, QA_ERROR_MEMORY, "Allocating source precache indices");
+}
+bool application_qc_model_string(struct application_qc_state *engine, qa_actor_id actor,
+    int32_t string, const application_qc_resource **out, qa_error *error)
+{
+    application_qc_actor *cache = engine->actors && actor.slot < engine->actor_capacity ? engine->actors + actor.slot : NULL;
+    bool immutable = string >= 0 && (size_t)string < engine->immutable_string_bytes;
+    if (immutable && cache && cache->model_generation == engine->precache_generation &&
+        qa_actor_id_equal(cache->model_actor, actor) && cache->model_string == string) {
+        *out = application_qc_resource_at(engine, QA_QC_RESOURCE_MODEL, cache->model_index);
+        return true;
+    }
+    const char *name;
+    if (!qa_qc_string(engine->provider->state.qc.instance, string, &name, error)) return false;
+    *out = *name ? resource_named(engine, QA_QC_RESOURCE_MODEL, name) : NULL;
+    if (cache && immutable) {
+        cache->model_actor = actor; cache->model_string = string;
+        cache->model_index = *out ? (*out)->value.index : 0;
+        cache->model_generation = engine->precache_generation;
+    }
+    return true;
+}
 bool application_qc_resource_resolve_model(struct application_qc_state *engine,
     application_qc_resource *entry, qa_error *error)
 {
@@ -137,6 +214,11 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
     if (name == NULL || out == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC resource needs a name and output");
     if (*name == '\0') { *out = (qa_qc_game_resource){0}; return true; }
+    if (!engine->loading) {
+        const application_qc_resource *entry = resource_named(engine, kind, name);
+        if (!entry) return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC resource was not precached");
+        *out = entry->value; return true;
+    }
     uint32_t index = 1;
     for (size_t i = 0; i < engine->resource_count; ++i) {
         application_qc_resource *entry = &engine->resources[i];
@@ -1442,6 +1524,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
             entities->properties + record.first_property, record.property_count, &reference, error)) return false;
     }
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(provider->state.qc.game, false, error)) return false;
+    if (!application_qc_precache_bind(engine, error)) return false;
     engine->loading = false; engine->initialized = true; engine->source_time_ns = initial_ns;
     qa_cvars_set_server_active(engine->cvars, true);
     return application_qc_objectives_activate(engine,error) && application_qc_callbacks_register(provider, error);
@@ -1505,6 +1588,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     qa_builtin_snapshot_free(&engine->observations);
     application_qc_items_destroy(engine);
     free((void *)engine->model_fields.entries);
+    application_qc_precache_dispose(engine);
     free(engine->resources); free(engine->clients); free(engine->actors); free(engine);
     provider->state.qc.engine = NULL;
     return true;
@@ -1572,18 +1656,11 @@ bool application_qc_water_transition(application_provider *provider, qa_actor_id
     float water_type = previous == 0 || native_contents <= -3 ? (float)native_contents : -1;
     float water_level = previous == 0 || native_contents <= -3 ? 1 : (float)native_contents;
     if (splash) {
-        const char *path = "misc/h2ohit1.wav";
-        bool precached = false;
-        for (size_t i = 0; i < engine->resource_count; ++i)
-            if (engine->resources[i].kind == QA_QC_RESOURCE_SOUND && strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), engine->resources[i].name), path) == 0) {
-                precached = true; break;
-            }
-        if (precached) {
-            qa_string_id resource;
-            if (!qa_builtin_resource(&engine->services, path, &resource, error)) return false;
+        const application_qc_resource *resource = application_qc_resource_at(engine, QA_QC_RESOURCE_SOUND, engine->precache.water_sound);
+        if (resource) {
             qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q1,
                 .provider = provider->owner, .actor = actor, .time_ns = engine->source_time_ns,
-                .resource = resource, .origin = body.origin, .channel = 0, .volume = 1, .attenuation = 1};
+                .resource = resource->name, .origin = body.origin, .channel = 0, .volume = 1, .attenuation = 1};
             if (!qa_builtin_emit(&engine->services, &sound, error)) return false;
         } else if (!provider->state.qc.qualified) {
             application_console_print(provider->application, &engine->command_context,

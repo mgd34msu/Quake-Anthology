@@ -391,6 +391,7 @@ static void dispose_candidate(struct application_qc_state *candidate)
         application_qc_resource_dispose(&candidate->resources[i]);
     }
     application_qc_messages_destroy(candidate);
+    application_qc_precache_dispose(candidate);
     for (size_t i = 0; i < 64; ++i) free(candidate->lightstyles[i]);
     qa_buffer_free(&candidate->original_extension);
     application_qc_rerelease_destroy(candidate);
@@ -421,6 +422,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         return application_fail(error,QA_ERROR_FORMAT,"QuakeC level restore lacks its current unit Source");
     struct application_qc_state candidate = {.provider = engine->provider, .world = engine->world,
         .field_bindings = engine->field_bindings, .global_bindings = engine->global_bindings,
+        .immutable_string_bytes = engine->immutable_string_bytes,
         .services = engine->services, .profile = engine->profile, .protocol = engine->protocol,
         .max_clients = engine->max_clients, .loading = true};
     candidate.source_time_ns = qa_net_read_u64(&reader); candidate.serverflags = qa_net_read_f32(&reader);
@@ -503,6 +505,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
             if (entry->kind==candidate.resources[j].kind && entry->name==candidate.resources[j].name)
                 ok=qa_net_reader_fail(&reader,"Duplicate saved source precache name");
     }
+    if (ok) ok = application_qc_precache_bind(&candidate, error);
     qa_bytes registry = {0};
     uint32_t registry_size = ok ? qa_net_read_u32(&reader) : 0;
     if (ok) ok = (unit ? registry_size==0 : registry_size!=0) &&
@@ -608,6 +611,10 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         application_qc_messages_destroy(engine);
         for (size_t i = 0; i < 64; ++i) { free(engine->lightstyles[i]); engine->lightstyles[i] = candidate.lightstyles[i]; candidate.lightstyles[i] = NULL; }
         free(engine->resources); free(engine->clients);
+        application_qc_precache_dispose(engine);
+        engine->precache = candidate.precache;
+        candidate.precache = (application_qc_precache){0};
+        ++engine->precache_generation;
         free((void *)engine->model_fields.entries);
         engine->model_fields=candidate.model_fields;
         candidate.model_fields=(qa_entity_model_fields){0};

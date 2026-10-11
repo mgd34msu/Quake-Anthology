@@ -5,6 +5,7 @@
 
 typedef struct qa_qc_weapon_visual {
     const char *model;
+    int32_t model_string;
     float frame;
     qa_vec3 punch_angle;
     bool has_model, has_frame, has_punch_angle;

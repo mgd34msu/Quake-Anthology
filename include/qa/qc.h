@@ -144,7 +144,9 @@ typedef struct qa_qc_definition {
     X(team) X(netname) X(frags) X(message) X(sounds) X(classname) \
     X(fixangle) X(v_angle) X(oldorigin) X(movedir) X(teleport_time) \
     X(button0) X(button2) X(impulse) X(lastruntime) X(maxspeed) \
-    X(touch) X(blocked) X(dmg_inflictor) X(dmg_save) X(dmg_take)
+    X(touch) X(blocked) X(dmg_inflictor) X(dmg_save) X(dmg_take) \
+    X(attack_finished) X(super_damage_finished) X(invincible_finished) \
+    X(invisible_finished) X(radsuit_finished) X(deathtype)
 typedef struct qa_qc_game_fields {
 #define QA_QC_GAME_FIELD(name) const qa_qc_definition *name;
     QA_QC_GAME_FIELD_LIST(QA_QC_GAME_FIELD)
@@ -189,6 +191,7 @@ bool qa_qc_program_load_vfs(qa_vfs *vfs, const char *path,
                             qa_qc_program **out, qa_error *error);
 void qa_qc_program_destroy(qa_qc_program *program);
 qa_qc_program_info qa_qc_program_describe(const qa_qc_program *program);
+qa_bytes qa_qc_program_strings(const qa_qc_program *program);
 const qa_qc_statement *qa_qc_program_statement(const qa_qc_program *program,
                                                 uint32_t index);
 bool qa_qc_program_statement_access(const qa_qc_program *, uint32_t,

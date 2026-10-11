@@ -46,6 +46,7 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
     engine->provider = provider; engine->world = world; engine->loading = true; engine->check_cluster = -1;
     engine->field_bindings = qa_qc_program_resolved_fields(provider->state.qc.program);
     engine->global_bindings = qa_qc_program_resolved_globals(provider->state.qc.program);
+    engine->immutable_string_bytes = qa_qc_program_strings(provider->state.qc.program).size;
     engine->services = application_builtin_services(app, world, app->physics);
     engine->profile = selected;
     qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);

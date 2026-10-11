@@ -318,7 +318,26 @@ definitions directly; their fixed-name lookup and spawn-parameter formatting
 paths are deleted. Qualified custom fields still bind by authored name at load.
 The normal build and seven core suites pass:
 `/tmp/qa-ta3196-qc-bindings-20261011-{build,core}.log`. Precache readers and
-remaining QC presentation readers still need migration; finding 2 stays open.
+remaining QC presentation readers were the next slice.
+
+Names finding 2, precache/presentation slice: `application_qc_precache_bind` in
+`guest_qc.c` prepares numeric-index and interned-name indexes over the existing
+resource rows at load and restore. Player, spike and water-splash resources bind
+once there. Appearance uses the entity's model index. Weapon presentation and
+Q1/QW client data retain an immutable program-string token's resolved model
+index; mutable engine strings resolve at their module boundary. Map/restore
+generation changes invalidate those derived bindings. The resource store and
+legacy precache numbering are unchanged; lookup indexes are not serialized.
+
+Equipment, qualified item weapons, water transitions and baseline construction
+use those bindings. QC animation, camera, inventory UI, power timers and damage
+cause fields use the one program definition table. Their fixed-field lookups
+and runtime linear precache comparisons are deleted. External authored profile
+names still resolve at qualification; loading precache declarations still admit
+text. The normal build and seven core suites pass:
+`/tmp/qa-ta3196-qc-precache-20261011-{build,core}.log`. Names findings 1-2 are
+migrated against the audit sites; findings 3-17 remain. No live installation,
+guest save/restore round trip or performance result is claimed.
 
 ## Scalar numeric callers
 

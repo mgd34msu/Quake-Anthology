@@ -352,13 +352,13 @@ bool qa_application_network_qw_client_read(qa_application *app, qa_actor_id acto
     }
     const char *weapon;
     if (!qw_string(engine, reference, engine->field_bindings->weaponmodel, &weapon, error)) return false;
-    for (size_t i = 0; i < engine->resource_count; ++i) {
-        const application_qc_resource *resource = &engine->resources[i];
-        if (resource->kind == QA_QC_RESOURCE_MODEL && resource->name && !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), resource->name), weapon)) {
-            if (!resource->value.index || resource->value.index > 255)
-                return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld weapon model exceeds its byte-indexed source precache");
-            value.stats[2] = resource->value.index; break;
-        }
+    int32_t weapon_string; const application_qc_resource *weapon_resource;
+    if (!qa_qc_entity_int(vm, reference, engine->field_bindings->weaponmodel->offset, &weapon_string, error) ||
+        !application_qc_model_string(engine, actor, weapon_string, &weapon_resource, error)) return false;
+    if (weapon_resource) {
+        if (!weapon_resource->value.index || weapon_resource->value.index > 255)
+            return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld weapon model exceeds its byte-indexed source precache");
+        value.stats[2] = weapon_resource->value.index;
     }
     const qa_qc_definition *globals[] = {engine->global_bindings->total_secrets, engine->global_bindings->total_monsters, engine->global_bindings->found_secrets, engine->global_bindings->killed_monsters};
     for (uint32_t i = 0; i < 4; ++i) {

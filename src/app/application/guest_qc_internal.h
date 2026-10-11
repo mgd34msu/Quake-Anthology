@@ -54,7 +54,17 @@ typedef struct application_qc_actor {
     int32_t reference;
     qa_entity_collision_fields collision_fields;
     bool collision_bound;
+    qa_actor_id model_actor;
+    int32_t model_string;
+    uint32_t model_index;
+    uint64_t model_generation;
 } application_qc_actor;
+typedef struct application_qc_precache {
+    uint32_t *indices[2], counts[2];
+    uint32_t (*names)[2];
+    size_t name_count;
+    uint32_t player_model, spike_model, water_sound;
+} application_qc_precache;
 typedef struct application_qc_cvar_handles {
     qa_cvar_handle qw_movement[9], sv_aim, teamplay, deathmatch, pausable, hostname;
 } application_qc_cvar_handles;
@@ -79,6 +89,9 @@ struct application_qc_state {
     qa_net_protocol_id protocol;
     application_qc_resource *resources;
     size_t resource_count, resource_capacity;
+    application_qc_precache precache;
+    uint64_t precache_generation;
+    size_t immutable_string_bytes;
     qa_entity_model_fields model_fields;
     application_qc_client *clients;
     uint32_t max_clients, check_slot;
@@ -134,6 +147,10 @@ bool application_qc_resource_lookup(void *, qa_qc_resource_kind, const char *, b
 bool application_qc_resource_resolve_model(struct application_qc_state *, application_qc_resource *, qa_error *);
 bool application_qc_model_publish(struct application_qc_state *, const application_qc_resource *, qa_error *);
 void application_qc_resource_dispose(application_qc_resource *);
+bool application_qc_precache_bind(struct application_qc_state *, qa_error *);
+void application_qc_precache_dispose(struct application_qc_state *);
+const application_qc_resource *application_qc_resource_at(const struct application_qc_state *, qa_qc_resource_kind, uint32_t);
+bool application_qc_model_string(struct application_qc_state *, qa_actor_id, int32_t, const application_qc_resource **, qa_error *);
 const qa_qc_definition *application_qc_field(const qa_qc_definition *, qa_qc_value_type, qa_error *);
 bool application_qc_float(struct application_qc_state *, int32_t, const qa_qc_definition *, float *, qa_error *);
 bool application_qc_set_float(struct application_qc_state *, int32_t, const qa_qc_definition *, float, qa_error *);

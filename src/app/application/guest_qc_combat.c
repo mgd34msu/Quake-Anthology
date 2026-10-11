@@ -692,7 +692,7 @@ static bool authored_request(application_qc_combat *owner, qa_actor_id target, q
         if (!qa_world_body_read(engine->world, target, &body, error)) return false;
         out->point = body.origin;
     }
-    const qa_qc_definition *death = qa_qc_program_find_field(owner->profile->program, "deathtype");
+    const qa_qc_definition *death = engine->field_bindings->deathtype;
     if (death && death->type == QA_QC_STRING) {
         uint32_t slot; int32_t string; const char *text;
         if (!qa_qc_actor_observation_slot(engine->provider->state.qc.instance, target, &slot, error) ||

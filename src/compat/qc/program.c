@@ -448,6 +448,10 @@ qa_qc_program_info qa_qc_program_describe(const qa_qc_program *program)
 {
     return program != NULL ? program->info : (qa_qc_program_info){0};
 }
+qa_bytes qa_qc_program_strings(const qa_qc_program *program)
+{
+    return program ? (qa_bytes){program->strings, program->string_bytes} : (qa_bytes){0};
+}
 
 const qa_qc_statement *qa_qc_program_statement(const qa_qc_program *program,
                                                 uint32_t index)

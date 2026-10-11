@@ -351,10 +351,11 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
     const char *weapon_model;
     if (!q1_wire_string(engine, reference, engine->field_bindings->weaponmodel, &weapon_model, error)) return false;
     if (*weapon_model) {
-        for (size_t i = 0; i < engine->resource_count; ++i) {
-            const application_qc_resource *r = &engine->resources[i];
-            if (r->kind == QA_QC_RESOURCE_MODEL && !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), r->name), weapon_model)) { value.weapon_model = r->value.index; break; }
-        }
+        int32_t string; const application_qc_resource *resource;
+        if (!qa_qc_entity_int(engine->provider->state.qc.instance, reference,
+            engine->field_bindings->weaponmodel->offset, &string, error) ||
+            !application_qc_model_string(engine, player, string, &resource, error)) return false;
+        value.weapon_model = resource ? resource->value.index : 0;
         if (!value.weapon_model)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source weapon model is not in its ordered precache");
     }
@@ -557,11 +558,7 @@ bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,
     qa_q1_entity value = *entity; value.effects = 0; value.step = false;
     value.colormap = 0;
     if (entity->number <= engine->max_clients) {
-        value.colormap = entity->number; value.model = 0;
-        for (size_t i = 0; i < engine->resource_count; ++i) {
-            const application_qc_resource *r = &engine->resources[i];
-            if (r->kind == QA_QC_RESOURCE_MODEL && !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), r->name), "progs/player.mdl")) { value.model = r->value.index; break; }
-        }
+        value.colormap = entity->number; value.model = engine->precache.player_model;
         if (!value.model || value.model > 255)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source player baseline lacks its original precached model");
     }

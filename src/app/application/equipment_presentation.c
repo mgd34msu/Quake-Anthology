@@ -361,11 +361,7 @@ static bool qc_model(application_provider *provider, qa_actor_id actor,
     if (source.has_punch_angle) out->kick_angles = source.punch_angle;
     if (!source.has_model || !source.model[0]) return true;
     const application_qc_resource *resource = NULL;
-    for (size_t i = 0; i < engine->resource_count; ++i)
-        if (engine->resources[i].kind == QA_QC_RESOURCE_MODEL &&
-            !strcmp(qa_strings_cstr(qa_session_strings(engine->services.session), engine->resources[i].name), source.model)) {
-            resource = engine->resources + i; break;
-        }
+    if (!application_qc_model_string(engine, actor, source.model_string, &resource, error)) return false;
     if (!resource || !resource->source)
         return application_fail(error, QA_ERROR_NOT_FOUND, "QC weaponmodel has no actual retained MODEL precache");
     out->view_model = resource->name; out->view_source = resource->source; out->visible = true;

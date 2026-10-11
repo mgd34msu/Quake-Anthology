@@ -41,20 +41,17 @@ static bool scalar_declared(const application_provider *p,const qa_qc_definition
     for(size_t i=0;profile && i<profile->field_count;++i) declared|=profile->fields[i].definition==field;
     return declared;
 }
-static bool scalar(application_provider *p,uint32_t slot,qa_actor_id actor,const char *name,
-    const qa_qc_definition *explicit_field,double *out,qa_error *error)
+static bool scalar(application_provider *p,uint32_t slot,qa_actor_id actor,const qa_qc_definition *field,double *out,qa_error *error)
 {
-    const qa_qc_definition *field=explicit_field?explicit_field:qa_qc_program_find_field(p->state.qc.program,name);
     if(!field || field->type!=QA_QC_FLOAT || !scalar_declared(p,field))
         return application_fail(error,QA_ERROR_UNSUPPORTED,"QC animation continuation has no actual declared scalar field");
     return raw_scalar(p,slot,actor,field,out,error);
 }
 static bool ui_optional_scalar(application_provider *p,uint32_t slot,qa_actor_id actor,
-    const char *name,double *out,bool *present,qa_error *error)
+    const qa_qc_definition *field,double *out,bool *present,qa_error *error)
 {
-    const qa_qc_definition *field=qa_qc_program_find_field(p->state.qc.program,name);
     *present=field && scalar_declared(p,field);
-    return !*present || scalar(p,slot,actor,name,field,out,error);
+    return !*present || scalar(p,slot,actor,field,out,error);
 }
 bool qa_application_qc_animation_read(qa_application *app,qa_actor_id actor,qa_launch_role role,
     qa_application_qc_animation *out,qa_error *error)
@@ -68,10 +65,10 @@ bool qa_application_qc_animation_read(qa_application *app,qa_actor_id actor,qa_l
     qa_application_qc_animation value={.actor=actor,.provider=p->owner,.descriptor=p->launch,
         .program=p->state.qc.program,.instance=p->state.qc.instance,.role=role};
     bool okay=role==QA_ROLE_CHARACTER?
-        scalar(p,slot,actor,"frame",NULL,&value.frame,error) && scalar(p,slot,actor,"nextthink",NULL,&value.next_frame_seconds,error):
-        scalar(p,slot,actor,"weaponframe",NULL,&value.frame,error) &&
-        scalar(p,slot,actor,"attack_finished",NULL,&value.attack_finished_seconds,error) &&
-        scalar(p,slot,actor,"weapon",p->state.qc.qualified?p->state.qc.qualified->weapon_field:NULL,&value.source_weapon,error);
+        scalar(p,slot,actor,p->state.qc.engine->field_bindings->frame,&value.frame,error) && scalar(p,slot,actor,p->state.qc.engine->field_bindings->nextthink,&value.next_frame_seconds,error):
+        scalar(p,slot,actor,p->state.qc.engine->field_bindings->weaponframe,&value.frame,error) &&
+        scalar(p,slot,actor,p->state.qc.engine->field_bindings->attack_finished,&value.attack_finished_seconds,error) &&
+        scalar(p,slot,actor,p->state.qc.qualified && p->state.qc.qualified->weapon_field ? p->state.qc.qualified->weapon_field :p->state.qc.engine->field_bindings->weapon,&value.source_weapon,error);
     if(okay) *out=value;
     return okay;
 }
@@ -94,7 +91,7 @@ bool qa_application_qc_selected_character_frame_read(qa_application *app,qa_acto
         return application_fail(error,QA_ERROR_ARGUMENT,"QC character frame lost its returned selected Source");
     qa_application_qc_animation value={.actor=actor,.provider=p->owner,.descriptor=p->launch,
         .program=p->state.qc.program,.instance=p->state.qc.instance,.role=QA_ROLE_CHARACTER};
-    if(!scalar(p,slot,actor,"frame",NULL,&value.frame,error) ||
+    if(!scalar(p,slot,actor,p->state.qc.engine->field_bindings->frame,&value.frame,error) ||
         application_provider_for(app,actor,QA_ROLE_CHARACTER,"")!=p || !source_returned(p)) return false;
     *out=value; return true;
 }
@@ -270,7 +267,7 @@ bool qa_application_qc_message_view_offset(qa_application *app,const qa_applicat
     if(!out || !qa_application_qc_message_client(app,source,actor,&slot,error)) return false;
     application_provider *p=owner(app,source->provider);
     bool qw=qa_q1_is_qw(source->protocol);
-    const qa_qc_definition *field=qa_qc_program_find_field(p->state.qc.program,qw?"mins":"view_ofs");
+    const qa_qc_definition *field=qw ? p->state.qc.engine->field_bindings->mins : p->state.qc.engine->field_bindings->view_ofs;
     const struct application_qc_profile *profile=p->state.qc.qualified; bool declared=!profile;
     for(size_t i=0;profile && i<profile->field_count;++i) declared|=profile->fields[i].definition==field;
     qa_vec3 value;
@@ -280,7 +277,7 @@ bool qa_application_qc_message_view_offset(qa_application *app,const qa_applicat
         return application_fail(error,QA_ERROR_FORMAT,"QC camera offset is not a finite source vector");
     if(qw) {
         double health;
-        if(!scalar(p,slot,actor,"health",NULL,&health,error)) return false;
+        if(!scalar(p,slot,actor,p->state.qc.engine->field_bindings->health,&health,error)) return false;
         value=qa_v3(0,0,value.z!=-24?8:health<=0?-16:22);
     }
     *out=value; return true;
@@ -396,15 +393,16 @@ static bool player_ui_read(qa_application *app,application_provider *p,
         .now_seconds=(double)p->state.qc.engine->source_time_ns/1e9,
         .binding_count=arsenal?(profile?profile->weapon_count:hipnotic_ui(p->state.qc.program)?11:8):0,.selected_role=role};
     double items;
-    if(!scalar(p,slot,actor,"items",NULL,&items,error) ||
+    if(!scalar(p,slot,actor,p->state.qc.engine->field_bindings->items,&items,error) ||
         !source_word(items,&value.items,error)) return false;
-    if(arsenal && (!scalar(p,slot,actor,"weapon",profile?profile->weapon_field:NULL,&value.weapon,error) ||
-        !scalar(p,slot,actor,"currentammo",NULL,&value.current_ammo,error))) return false;
+    if(arsenal && (!scalar(p,slot,actor,profile && profile->weapon_field ? profile->weapon_field :p->state.qc.engine->field_bindings->weapon,&value.weapon,error) ||
+        !scalar(p,slot,actor,p->state.qc.engine->field_bindings->currentammo,&value.current_ammo,error))) return false;
     bool present;
-    if(!ui_optional_scalar(p,slot,actor,"items2",&items,&present,error) ||
+    if(!ui_optional_scalar(p,slot,actor,p->state.qc.engine->field_bindings->items2,&items,&present,error) ||
         (present && !source_word(items,&value.items2,error))) return false;
     if(arsenal) {
-        static const char *const names[]={"ammo_shells","ammo_nails","ammo_rockets","ammo_cells"};
+        const qa_qc_game_fields *fields=p->state.qc.engine->field_bindings;
+        const qa_qc_definition *names[]={fields->ammo_shells,fields->ammo_nails,fields->ammo_rockets,fields->ammo_cells};
         double *const counts[]={&value.shells,&value.nails,&value.rockets,&value.cells};
         for(size_t i=0;i<4;++i) {
             if(!ui_optional_scalar(p,slot,actor,names[i],counts[i],&present,error)) return false;
@@ -414,17 +412,18 @@ static bool player_ui_read(qa_application *app,application_provider *p,
     const char *campaign=p->product->campaign;
     value.power_items2=value.items2 & (campaign && !strcmp(campaign,"hipnotic")?6u:
         campaign && !strcmp(campaign,"rogue")?192u:0u);
-    static const struct { const char *field,*label; } timers[]={
-        {"super_damage_finished","Quad Damage"}, {"invincible_finished","Invulnerability"},
-        {"invisible_finished","Invisibility"}, {"radsuit_finished","Environment Suit"}};
+    const qa_qc_game_fields *fields=p->state.qc.engine->field_bindings;
+    const struct { const qa_qc_definition *field; const char *label; } timers[]={
+        {fields->super_damage_finished,"Quad Damage"}, {fields->invincible_finished,"Invulnerability"},
+        {fields->invisible_finished,"Invisibility"}, {fields->radsuit_finished,"Environment Suit"}};
     for(size_t i=0;i<4;++i) {
-        const qa_qc_definition *field=qa_qc_program_find_field(p->state.qc.program,timers[i].field);
+        const qa_qc_definition *field=timers[i].field;
         if(!field || field->type!=QA_QC_FLOAT) continue;
         bool declared=!profile;
         for(size_t j=0;profile && j<profile->field_count;++j) declared|=profile->fields[j].definition==field;
         if(!declared) continue;
         double expires;
-        if(!scalar(p,slot,actor,timers[i].field,field,&expires,error)) return false;
+        if(!scalar(p,slot,actor,field,&expires,error)) return false;
         value.timers[value.timer_count++]=(qa_application_qc_power_timer){
             app->ui_names.q1_powers[i],timers[i].label,expires};
     }
