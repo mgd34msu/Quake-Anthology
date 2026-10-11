@@ -170,6 +170,7 @@ bool application_event_stream_create(qa_application *app, size_t actors, qa_erro
     app->unified_persistent_capacity = records;
     app->event_local_cursor = 1;
     app->event_peer_cursor = UINT64_MAX;
+    app->event_audio_cursor = UINT64_MAX;
     return true;
 }
 
@@ -1151,6 +1152,32 @@ uint64_t qa_application_events_next(const qa_application *app)
 uint64_t qa_application_events_output_failures(const qa_application *app)
 { return app ? app->event_reliable_declines : 0; }
 
+void application_events_retire(qa_application *app)
+{
+    uint64_t next = app->event_local_cursor;
+    if (app->event_peer_cursor < next) next = app->event_peer_cursor;
+    if (app->event_audio_cursor < next) next = app->event_audio_cursor;
+    qa_event_ring_retire(app->event_ring, next);
+}
+uint64_t qa_application_events_audio_first(const qa_application *app)
+{ return app->event_audio_cursor; }
+void qa_application_events_audio_consume(qa_application *app, uint64_t next)
+{
+    app->event_audio_cursor = next;
+    application_events_retire(app);
+}
+bool qa_application_client_sound(qa_application *app, const qa_builtin_event *event,
+    qa_actor_id recipient, qa_error *error)
+{
+    application_event_write write;
+    if (!application_event_stream_begin(app, QA_APPLICATION_EVENT_CLIENT_SOUND, &write, error))
+        return application_event_stream_decline(app, &write, true, error);
+    write.envelope->raw.client_sound.event = *event;
+    write.envelope->raw.client_sound.recipient = recipient;
+    return application_event_stream_commit(app, &write, error) ||
+        application_event_stream_decline(app, &write, true, error);
+}
+
 uint64_t qa_application_protocol_events_generation(const qa_application *app)
 { return app ? app->protocol_events_generation : 0; }
 
@@ -1201,6 +1228,10 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
         break;
     case QA_APPLICATION_EVENT_Q3_MAP: out->value.q3_map = &record->raw.q3_map; break;
     case QA_APPLICATION_EVENT_Q2_PLAYER: out->value.q2_player = &record->raw.q2_player; break;
+    case QA_APPLICATION_EVENT_CLIENT_SOUND:
+        out->value.builtin = &record->raw.client_sound.event;
+        out->sound_recipient = record->raw.client_sound.recipient;
+        break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
     case QA_APPLICATION_EVENT_EQUIPMENT: break;
     }
@@ -1217,9 +1248,7 @@ static bool clear_events(qa_application *application, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "gear event consumption retains a source operation");
     ++application->protocol_events_generation;
     application->event_local_cursor = qa_application_events_next(application);
-    uint64_t next = application->event_local_cursor < application->event_peer_cursor ?
-        application->event_local_cursor : application->event_peer_cursor;
-    qa_event_ring_retire(application->event_ring, next);
+    application_events_retire(application);
     return true;
 }
 

@@ -359,7 +359,7 @@ struct qa_application {
     uint64_t event_reliable_declines;
     uint16_t event_baseline_incomplete;
     uint64_t equipment_event_owner_next;
-    uint64_t event_local_cursor, event_peer_cursor;
+    uint64_t event_local_cursor, event_peer_cursor, event_audio_cursor;
     uint64_t protocol_events_generation;
     uint64_t simulation_event_sequence;
     uint64_t presentation_event_sequence;

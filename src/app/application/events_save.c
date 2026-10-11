@@ -930,6 +930,7 @@ static void install_store(qa_application *app, event_store *store, uint64_t pend
     app->event_write = NULL;
     app->event_local_cursor = pending_first;
     app->event_peer_cursor = UINT64_MAX;
+    if (app->event_audio_cursor != UINT64_MAX) app->event_audio_cursor = pending_first;
     qa_event_ring_retire(store->pages, app->event_local_cursor);
     ++app->protocol_events_generation;
     app->simulation_event_sequence = store->application->simulation_event_sequence;

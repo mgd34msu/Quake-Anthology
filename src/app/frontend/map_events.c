@@ -54,18 +54,6 @@ typedef struct frontend_retained_sound {
     qa_audio_mixer *static_mixers[QA_INPUT_LOCAL_SEATS];
     uint32_t restored_static_seats;
 } frontend_retained_sound;
-typedef enum frontend_audio_projection_kind {
-    FRONTEND_AUDIO_PLAY, FRONTEND_AUDIO_STOP_CHANNEL
-} frontend_audio_projection_kind;
-typedef struct frontend_audio_projection {
-    size_t slot;
-    struct frontend_audio_projection *next;
-    frontend_audio_projection_kind kind;
-    qa_actor_id actor;
-    qa_actor_id recipient; /* Delivery identity; FIXED sounds have no emitter actor. */
-    qa_audio_play sound;
-    int32_t milliseconds;
-} frontend_audio_projection;
 typedef struct frontend_retained_light {
     size_t slot;
     struct frontend_retained_light *next;
@@ -110,7 +98,7 @@ typedef struct frontend_event_view {
 } frontend_event_view;
 struct frontend_event_state {
     qa_arena storage;
-    qa_pool projections, sound_records, light_records, bound_records;
+    qa_pool sound_records, light_records, bound_records;
     frontend_event_resources *resources;
     frontend_event_image_policy *image_policy;
     frontend_retained_sound *sounds;
@@ -120,8 +108,8 @@ struct frontend_event_state {
     uint32_t step_random[624], step_cursor;
     qa_audio_asset *last_step;
     qa_actor_owner last_step_owner;
-    frontend_audio_projection *audio_head, *audio_tail;
-    bool audio_deferred;
+    bool audio_reading;
+    uint64_t audio_time_ns;
     frontend_event_view views[QA_INPUT_LOCAL_SEATS];
 };
 typedef struct event_owner_plan {
@@ -250,9 +238,7 @@ static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_err
         }
         capacity = capacity * 2 + 256;
         qa_arena_init(&state->storage, 0);
-        if (!qa_pool_prepare(&state->projections, &state->storage, capacity,
-                sizeof(frontend_audio_projection), _Alignof(frontend_audio_projection), error) ||
-            !qa_pool_prepare(&state->sound_records, &state->storage, capacity,
+        if (!qa_pool_prepare(&state->sound_records, &state->storage, capacity,
                 sizeof(frontend_retained_sound), _Alignof(frontend_retained_sound), error) ||
             !qa_pool_prepare(&state->light_records, &state->storage, capacity,
                 sizeof(frontend_retained_light), _Alignof(frontend_retained_light), error) ||
@@ -268,7 +254,7 @@ static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_err
             frontend->events->step_random[i] = 1812433253u * (prior ^ (prior >> 30)) + i;
         }
         frontend->events->step_cursor = 624;
-        frontend->events->audio_deferred = frontend_round_audio_pending(frontend);
+        qa_application_events_audio_consume(frontend->application, qa_application_events_local_first(frontend->application));
     }
     *out = frontend->events; return true;
 }
@@ -276,39 +262,6 @@ bool frontend_event_prepare(qa_frontend *frontend, qa_error *error)
 {
     frontend_event_state *state;
     return state_read(frontend, &state, error);
-}
-static void audio_projection_free(frontend_event_state *state, frontend_audio_projection *entry)
-{
-    qa_audio_asset_release(entry->sound.asset); qa_pool_release(&state->projections, entry->slot);
-}
-static void audio_projection_clear(frontend_event_state *state)
-{
-    while (state->audio_head) {
-        frontend_audio_projection *entry = state->audio_head;
-        state->audio_head = entry->next; audio_projection_free(state, entry);
-    }
-    state->audio_tail = NULL;
-}
-static bool audio_projection_append(frontend_event_state *state, qa_actor_id actor, qa_actor_id recipient,
-    const qa_audio_play *sound, frontend_audio_projection_kind kind,
-    int32_t milliseconds, qa_error *error)
-{
-    size_t slot;
-    frontend_audio_projection *entry = qa_pool_take(&state->projections, &slot);
-    if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining round sound projection");
-    *entry = (frontend_audio_projection){.slot = slot, .kind = kind, .actor = actor, .sound = *sound};
-    entry->recipient = recipient;
-    entry->milliseconds = milliseconds;
-    entry->sound.asset = qa_audio_asset_retain(sound->asset);
-    if (sound->asset && !entry->sound.asset) {
-        audio_projection_free(state, entry); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining projected sound asset");
-    }
-    /* Every named projection comes from a retained sound-bank asset. Channel
-     * stops have no name; the asset owns its canonical path through delivery. */
-    entry->sound.name = sound->name ? qa_audio_asset_name(entry->sound.asset) : NULL;
-    if (state->audio_tail) state->audio_tail->next = entry;
-    else state->audio_head = entry;
-    state->audio_tail = entry; return true;
 }
 static bool audio_receives(qa_frontend *frontend, uint32_t audience, uint32_t seat)
 {
@@ -327,50 +280,10 @@ static bool audio_play_receivers(qa_frontend *frontend, const qa_audio_play *sou
     return true;
 }
 static bool audio_play(qa_frontend *frontend, frontend_event_state *state,
-    qa_actor_id actor, const qa_audio_play *sound, qa_error *error)
+    const qa_audio_play *sound, qa_error *error)
 {
-    int32_t milliseconds = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX);
-    if (state->audio_deferred || state->audio_head)
-        return audio_projection_append(state, actor, (qa_actor_id){0}, sound, FRONTEND_AUDIO_PLAY, milliseconds, error);
+    int32_t milliseconds = (int32_t)((state->audio_time_ns / 1000000) & INT32_MAX);
     return audio_play_receivers(frontend, sound, milliseconds, error);
-}
-static bool audio_stop_channel(qa_frontend *frontend, frontend_event_state *state,
-    qa_actor_id actor, uint64_t identity, qa_actor_owner owner,
-    qa_game_family family, int32_t channel, qa_error *error)
-{
-    if (state->audio_deferred || state->audio_head) {
-        qa_audio_play sound = {.actor = identity, .owner = owner, .family = family, .channel = channel};
-        return audio_projection_append(state, actor, (qa_actor_id){0}, &sound, FRONTEND_AUDIO_STOP_CHANNEL, 0, error);
-    }
-    qa_audio_engine_stop_channel(frontend->audio, identity, owner, family, channel); return true;
-}
-static bool audio_projection_publish(qa_frontend *frontend, frontend_event_state *state,
-    qa_error *error)
-{
-    if (!state->audio_deferred && !state->audio_head) return true;
-    if (frontend->round) return true;
-    bool listeners = false;
-    for (unsigned i = 0; i < frontend->options.seats; ++i)
-        listeners = listeners || qa_audio_engine_seat_mixer(frontend->audio, i) != NULL;
-    if (!listeners) return true;
-    state->audio_deferred = false;
-    while (state->audio_head) {
-        frontend_audio_projection *entry = state->audio_head;
-        state->audio_head = entry->next;
-        if (!state->audio_head) state->audio_tail = NULL;
-        bool ok = true;
-        qa_actor_id recipient;
-        bool delivered = !entry->recipient.registry ||
-            (frontend_seat_actor_read(frontend, entry->sound.audience, &recipient) &&
-                qa_actor_id_equal(recipient, entry->recipient));
-        if (entry->kind == FRONTEND_AUDIO_PLAY && delivered)
-            ok = audio_play_receivers(frontend, &entry->sound, entry->milliseconds, error);
-        else if (entry->kind == FRONTEND_AUDIO_STOP_CHANNEL) qa_audio_engine_stop_channel(frontend->audio, entry->sound.actor,
-            entry->sound.owner, entry->sound.family, entry->sound.channel);
-        audio_projection_free(state, entry);
-        if (!ok) return false;
-    }
-    return true;
 }
 static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_game_family family,
     frontend_event_resources **out, qa_error *error)
@@ -437,7 +350,7 @@ void frontend_event_reset_round(qa_frontend *frontend)
     if (frontend->capture || frontend->resource_inventory) return;
     frontend_event_state *state = frontend->events;
     if (!state) return;
-    audio_projection_clear(state); state->audio_deferred = true;
+    qa_application_events_audio_consume(frontend->application, qa_application_events_next(frontend->application));
     while (state->sounds) {
         frontend_retained_sound *entry = state->sounds; state->sounds = entry->next;
         qa_audio_asset_release(entry->loop.sound.asset); qa_pool_release(&state->sound_records, entry->slot);
@@ -465,7 +378,7 @@ bool frontend_event_retire_checked(qa_frontend *frontend, qa_error *error)
         for (frontend_event_resources *entry = state->resources; entry; entry = entry->next)
             if (entry->family == QA_GAME_Q1 &&
                 !frontend_q1_sky_retire_provider(frontend->q1_sky, entry->owner, error)) return false;
-    audio_projection_clear(state);
+    qa_application_events_audio_consume(frontend->application, UINT64_MAX);
     while (state->sounds) {
         frontend_retained_sound *entry = state->sounds; state->sounds = entry->next;
         qa_audio_asset_release(entry->loop.sound.asset); qa_pool_release(&state->sound_records, entry->slot);
@@ -892,7 +805,7 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
         .family = QA_GAME_Q2, .actor = actor, .owner = event->provider, .audience = QA_AUDIO_WORLD,
         .origin_kind = QA_AUDIO_ACTOR, .origin_actor = actor, .origin = body.origin, .channel = 6,
         .volume = event->code == 2 ? 1 : .5f, .attenuation = event->code == 2 ? 1 : 2};
-    if (!audio_play(frontend, state, event->actor, &sound, error)) return false;
+    if (!audio_play(frontend, state, &sound, error)) return false;
     qa_audio_asset_release(state->last_step); state->last_step = qa_audio_asset_retain(asset);
     state->last_step_owner = event->provider; return true;
 }
@@ -905,12 +818,15 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
         !frontend_seat_actor_read(frontend, seat, &current) || !qa_actor_id_equal(current, recipient))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound requires its actual delivered physical client");
     if (!frontend->audio || frontend_network_local_input_owned(frontend,seat)) return true;
+    frontend_event_state *state;
+    if (!state_read(frontend, &state, error)) return false;
+    if (!state->audio_reading)
+        return qa_application_client_sound(frontend->application, event, recipient, error);
     const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
     if (!name || !*name) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound has no source resource name");
     qa_game_family family=event->family==QA_GAME_Q1?QA_GAME_Q1:QA_GAME_Q2;
-    frontend_event_state *state; frontend_event_resources *resources;
-    if (!state_read(frontend, &state, error) ||
-        !resources_read(frontend, event->provider, family, &resources, error)) return false;
+    frontend_event_resources *resources;
+    if (!resources_read(frontend, event->provider, family, &resources, error)) return false;
     uint64_t actor = QA_AUDIO_NO_ACTOR;
     if (event->actor.registry) {
         qa_error identity = {0};
@@ -923,10 +839,12 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset, .name = name,
         .family = family, .actor = actor, .owner = event->provider, .audience = seat,
         .origin_kind = QA_AUDIO_FIXED, .origin_actor = actor, .origin = event->origin,
-        .channel = event->channel, .volume = event->volume, .attenuation = event->attenuation};
-    int32_t milliseconds = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX);
+        .channel = event->channel, .volume = event->volume, .attenuation = event->attenuation,
+        .delay_seconds = event->value};
+    int32_t milliseconds = (int32_t)((state->audio_time_ns / 1000000) & INT32_MAX);
     bool ok = true;
-    if (event->actor.registry && qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor)) {
+    if (!(event->flags & QA_BUILTIN_SOUND_POSITIONED) && event->actor.registry &&
+        qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor)) {
         qa_body_state position; qa_error observed = {0};
         if (qa_world_body_read(qa_application_world(frontend->application), event->actor, &position, &observed)) {
             ok = frontend_audio_actor_position(frontend, event->actor, actor, &position, &sound.origin, error);
@@ -938,17 +856,12 @@ bool frontend_particle_sound(qa_frontend *frontend, const qa_builtin_event *even
     }
     if (ok && (!frontend_seat_actor_read(frontend, seat, &current) || !qa_actor_id_equal(current, recipient)))
         ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 particle sound recipient retired during resource admission");
-    if (ok && (state->audio_deferred || state->audio_head))
-        ok = audio_projection_append(state, event->actor, recipient, &sound,
-            FRONTEND_AUDIO_PLAY, milliseconds, error);
-    else if (ok) ok = audio_play_receivers(frontend, &sound, milliseconds, error);
+    if (ok) ok = audio_play_receivers(frontend, &sound, milliseconds, error);
     qa_audio_asset_release(asset); return ok;
 }
 typedef struct builtin_muzzle_audio {
     qa_frontend *frontend;
-    frontend_event_state *state;
     const qa_builtin_event *event;
-    const qa_application_protocol_event *message;
     uint32_t seat;
     bool fixed;
 } builtin_muzzle_audio;
@@ -958,33 +871,16 @@ static bool builtin_muzzle_sound(void *context, qa_q2_sound_index name, int32_t 
     builtin_muzzle_audio *audio=context;
     qa_frontend *frontend=audio->frontend;
     const qa_builtin_event *event=audio->event;
+    qa_actor_id recipient;
+    if (!frontend_seat_actor_read(frontend, audio->seat, &recipient)) return true;
     frontend_event_resources *resources;
-    if (!resources_read(frontend,event->provider,QA_GAME_Q2,&resources,error)) return false;
-    qa_audio_asset *asset=NULL;
-    if (!qa_audio_bank_register_id(resources->sounds,qa_audio_bank_q2_name(resources->sounds,name),QA_GAME_Q2,&asset,error)) return false;
-    if (!asset) return true;
-    uint64_t actor=audio->message?frontend_audio_q2_protocol_actor(frontend,audio->message,event->actor,error):
-        frontend_audio_actor(frontend,event->actor,error);
-    if (!audio->message && actor==QA_AUDIO_NO_ACTOR && (!error || !error->code) &&
-        !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)),event->actor))
-        actor=frontend_audio_retained_event_actor(frontend,event,error);
-    bool ok=actor!=QA_AUDIO_NO_ACTOR;
-    qa_vec3 origin=event->origin;
-    if (ok && !audio->fixed) {
-        qa_body_state body;
-        ok=qa_world_body_read(qa_application_world(frontend->application),event->actor,&body,error);
-        if (ok) {
-            origin=body.origin;
-            ok=qa_audio_engine_position(frontend->audio,actor,origin,error);
-        }
-    }
-    qa_audio_play sound={.sample=qa_audio_asset_sample(asset),.asset=asset,.name=qa_audio_asset_name(asset),
-        .family=QA_GAME_Q2,.actor=actor,.owner=event->provider,.audience=audio->seat,
-        .origin_kind=audio->fixed?QA_AUDIO_FIXED:QA_AUDIO_ACTOR,
-        .origin_actor=actor,.origin=origin,.channel=channel,
-        .volume=volume,.attenuation=attenuation,.delay_seconds=delay};
-    if (ok) ok=audio_play(frontend,audio->state,event->actor,&sound,error);
-    qa_audio_asset_release(asset); return ok;
+    if (!resources_read(frontend, event->provider, QA_GAME_Q2, &resources, error)) return false;
+    qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
+        .provider = event->provider, .actor = event->actor, .resource = qa_audio_bank_q2_name(resources->sounds, name),
+        .origin = event->origin, .channel = channel, .volume = volume, .attenuation = attenuation,
+        .time_ns = frontend->time_ns, .value = (float)delay,
+        .flags = audio->fixed ? QA_BUILTIN_SOUND_POSITIONED : 0};
+    return qa_application_client_sound(frontend->application, &sound, recipient, error);
 }
 static bool q2_muzzle_deliver(qa_frontend *frontend, const qa_builtin_event *event,
     const qa_application_protocol_event *message, const qa_application_q2_audience *audience,
@@ -1009,7 +905,7 @@ static bool q2_muzzle_deliver(qa_frontend *frontend, const qa_builtin_event *eve
         bool modern=effects && effects->integer!=0;
         if (found && !frontend_source_client_registry_current(frontend,&client))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 muzzle lost its physical CLIENT controls");
-        builtin_muzzle_audio audio={frontend,state,event,message,seat,monster || message!=NULL};
+        builtin_muzzle_audio audio={frontend,event,seat,monster || message!=NULL};
         bool ok=monster?frontend_q2_monster_muzzle_sounds(&state->light_random,(uint32_t)event->code,
             edition==QA_Q2_RERELEASE,builtin_muzzle_sound,&audio,error):
             frontend_q2_player_muzzle_sounds(&state->light_random,(uint32_t)event->code,
@@ -1077,6 +973,9 @@ bool frontend_audio_actor_position(qa_frontend *frontend, qa_actor_id actor, uin
 bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
 {
     if (!frontend->audio) return true;
+    if ((event->kind == QA_BUILTIN_SOUND || event->kind == QA_BUILTIN_STOP_SOUND) &&
+        (!frontend->events || !frontend->events->audio_reading))
+        return qa_application_client_sound(frontend->application, event, (qa_actor_id){0}, error);
     if (event->family==QA_GAME_Q2 && event->kind==QA_BUILTIN_MUZZLE)
         return builtin_muzzle(frontend,event,error);
     if (event->kind == QA_BUILTIN_EFFECT && event->family == QA_GAME_Q2 &&
@@ -1111,8 +1010,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
                 loop_stopped = true;
             } else link = &entry->next;
         }
-        if (!loop_stopped && !audio_stop_channel(frontend, state, event->actor,
-            actor, event->provider, family, event->channel, error)) return false;
+        if (!loop_stopped) qa_audio_engine_stop_channel(frontend->audio, actor, event->provider, family, event->channel);
         return true;
     }
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
@@ -1164,7 +1062,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
         }
     }
     if (!(event->flags & 1)) {
-        bool ok = audio_play(frontend, state, event->actor, &sound, error);
+        bool ok = audio_play(frontend, state, &sound, error);
         qa_audio_asset_release(asset);
         return ok && (!resources->gear || resources_current(frontend->application, resources) ||
             frontend_fail(error, QA_ERROR_ARGUMENT, "Gear sound source retired during playback"));
@@ -1192,11 +1090,42 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     if (ambient) entry->static_key = qa_scene_identity();
     return true;
 }
+static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state, qa_error *error)
+{
+    if (frontend->round) return true;
+    bool listeners = false;
+    for (unsigned i = 0; i < frontend->options.seats; ++i)
+        listeners = listeners || qa_audio_engine_seat_mixer(frontend->audio, i) != NULL;
+    if (!listeners) return true;
+    uint64_t next = qa_application_events_next(frontend->application);
+    state->audio_reading = true;
+    bool ok = true;
+    for (uint64_t id = qa_application_events_audio_first(frontend->application); id < next; ++id) {
+        qa_application_event_view output;
+        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = id}, &output)) continue;
+        if (output.kind != QA_APPLICATION_EVENT_BUILTIN && output.kind != QA_APPLICATION_EVENT_CLIENT_SOUND) continue;
+        const qa_builtin_event *event = output.value.builtin;
+        if (event->kind == QA_BUILTIN_MUZZLE) continue; /* Its decoded cues are client-sound records. */
+        state->audio_time_ns = event->time_ns ? event->time_ns : frontend->time_ns;
+        if (output.kind == QA_APPLICATION_EVENT_CLIENT_SOUND && output.sound_recipient.registry) {
+            for (uint32_t seat = 0; seat < frontend->options.seats && ok; ++seat) {
+                if (!seat_receives(frontend, seat, output.sound_recipient)) continue;
+                ok = frontend_particle_sound(frontend, event, seat, output.sound_recipient, error);
+            }
+        } else ok = frontend_event_sound(frontend, event, error);
+        if (!ok) break;
+        qa_application_events_audio_consume(frontend->application, id + 1);
+    }
+    state->audio_reading = false;
+    if (ok) qa_application_events_audio_consume(frontend->application, next);
+    return ok;
+}
 bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
 {
     frontend_event_state *state = frontend->events;
     if (!state || !frontend->audio) return true;
-    if (!audio_projection_publish(frontend, state, error)) return false;
+    if (!audio_events_read(frontend, state, error)) return false;
+    if (frontend->round) return true;
     frontend_retained_sound **link = &state->sounds;
     while (*link) {
         frontend_retained_sound *entry = *link;

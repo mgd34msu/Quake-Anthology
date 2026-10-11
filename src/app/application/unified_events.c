@@ -532,8 +532,7 @@ static char *event_alias(const qa_application *app, qa_string_id id)
 void application_unified_events_consume(qa_application *app, uint64_t next)
 {
     app->event_peer_cursor = next;
-    uint64_t retired = app->event_local_cursor < next ? app->event_local_cursor : next;
-    qa_event_ring_retire(app->event_ring, retired);
+    application_events_retire(app);
 }
 void application_unified_events_clear(qa_application *app)
 {

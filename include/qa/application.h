@@ -564,7 +564,8 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_Q3_MAP,
     QA_APPLICATION_EVENT_Q2_PLAYER,
     QA_APPLICATION_EVENT_PROTOCOL,
-    QA_APPLICATION_EVENT_EQUIPMENT
+    QA_APPLICATION_EVENT_EQUIPMENT,
+    QA_APPLICATION_EVENT_CLIENT_SOUND
 } qa_application_event_kind;
 
 struct qa_application_q2_audience;
@@ -585,6 +586,7 @@ typedef struct qa_application_event_view {
     const struct qa_application_q2_audience *q2_audience;
     const struct qa_application_q2_protocol_delivery *q2_delivery;
     uint64_t equipment_owner;
+    qa_actor_id sound_recipient;
 } qa_application_event_view;
 
 typedef struct qa_application_event_cursor {
@@ -601,6 +603,11 @@ uint64_t qa_application_events_first(const qa_application *);
 uint64_t qa_application_events_local_first(const qa_application *);
 uint64_t qa_application_events_next(const qa_application *);
 uint64_t qa_application_events_output_failures(const qa_application *);
+/* Audio retains its unread records in the same ring while listeners are unavailable. */
+uint64_t qa_application_events_audio_first(const qa_application *);
+void qa_application_events_audio_consume(qa_application *, uint64_t next);
+/* Client-generated effect sounds have no network projection. */
+bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
 bool qa_application_event_read(const qa_application *, qa_application_event_cursor *,
     qa_application_event_view *);
 uint64_t qa_application_protocol_events_generation(const qa_application *);

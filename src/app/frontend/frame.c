@@ -542,7 +542,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
                 } else fputs(text,stdout);
             }
         }
-        if (!frontend_event_sound(frontend, &event, error)) return false;
+        if (event.kind == QA_BUILTIN_MUZZLE && !frontend_event_sound(frontend, &event, error)) return false;
     }
     bool okay = frontend_equipment_events_drain(frontend->gear_events,error) &&
         (frontend->round ? frontend_round_clear_events(frontend,error) :

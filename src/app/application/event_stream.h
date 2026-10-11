@@ -50,6 +50,7 @@ typedef struct application_event_envelope {
         qa_application_q2_player_event q2_player;
         application_protocol_record protocol;
         application_equipment_event_record equipment;
+        struct { qa_builtin_event event; qa_actor_id recipient; } client_sound;
     } raw;
     application_protocol_record *protocols, *last_protocol;
     application_equipment_event_record *equipment, *last_equipment;
@@ -64,6 +65,7 @@ typedef struct application_event_write {
 } application_event_write;
 
 bool application_event_stream_create(qa_application *, size_t actor_capacity, qa_error *);
+void application_events_retire(qa_application *);
 bool application_event_stream_begin(qa_application *, qa_application_event_kind,
     application_event_write *, qa_error *);
 void *application_event_stream_alloc(qa_application *, size_t, size_t, qa_error *);
