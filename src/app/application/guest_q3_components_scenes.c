@@ -28,13 +28,6 @@ struct component_scene_row {
     uint64_t event_cursor;
     bool initialized,host_entered,advanced;
 };
-bool q3components_player_event(void *context,const application_q3_scene_player_event *event,uint64_t sequence,qa_error *e)
-{
-    component_game_row *game=context;
-    if(!game||!event||!sequence||!q3components_current(game)) return application_fail(e,QA_ERROR_ARGUMENT,"Player event lost its admitted component Source");
-    return application_unified_q3_component_player(game->roster->options.application,
-        &game->publication,event,e);
-}
 static bool retained(void *context)
 { component_scene_row *row=context; return row&&q3components_storage(row->game); }
 static bool published(void *context)

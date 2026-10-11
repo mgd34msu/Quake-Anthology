@@ -60,7 +60,7 @@ struct application_q3_component {
     size_t player_cursor_count;
     qa_qvm_binding player_watch;
     qa_qvm_binding restored_player_watch;
-    uint64_t player_order, player_sequence;
+    uint64_t player_order;
     int32_t milliseconds;
     bool initialized,restoring,closing,busy,has_source,draining,scene;
     bool restored_storage,restored_baseline,restored_actors,restored_mod,restored_items,restored_callbacks;

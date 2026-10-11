@@ -55,9 +55,12 @@ static bool component_emit(qa_application *app, const application_q3_component_p
         (qa_actor_id){0}, (uint64_t)(uint32_t)time * UINT64_C(1000000), 0, false, false, e);
 }
 
-bool application_unified_q3_component_player(qa_application *app, const application_q3_component_publication *p,
+bool application_unified_q3_component_player(qa_application *app, qa_actor_owner owner,
     const application_q3_scene_player_event *event, qa_error *e)
 {
+    application_q3_component_publication source;
+    if (!application_q3_components_event_source_read(app, owner, &source, e)) return false;
+    const application_q3_component_publication *p = &source;
     if (!app || !p || !event || event->time_ms < 0 || !event->actor.registry || !p->product || !p->metadata)
         return application_fail(e, QA_ERROR_ARGUMENT, "Original player event lost its actual component delivery");
     if (!p->module || !p->module->id || !p->module->artifact_path)

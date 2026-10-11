@@ -1,3 +1,4 @@
+#include "unified_q3_events.h"
 #include "guest_q3_component_private.h"
 #include "qa/q3_abi.h"
 
@@ -101,9 +102,8 @@ bool q3component_player_events_publish(application_q3_component *c,bool succeede
     }
     for(size_t i=1;i<count;++i) { pending_event row=pending[i]; size_t j=i; while(j&&pending[j-1].order>row.order) { pending[j]=pending[j-1]; --j; } pending[j]=row; }
     for(size_t i=0;i<count;++i) if(application_q3_component_records_live_client(c->records,pending[i].event.actor)) {
-        if(c->player_sequence==UINT64_MAX) return q3records_fail(e,QA_ERROR_ARGUMENT,"Original player event delivery sequence exhausted");
-        uint64_t sequence=++c->player_sequence;
-        if(c->options.source_player_event&&!c->options.source_player_event(c->options.context,&pending[i].event,sequence,e)) return false;
+        if(c->options.application && !application_unified_q3_component_player(c->options.application,
+            c->options.host.owner,&pending[i].event,e)) return false;
     }
     return true;
 }
@@ -114,9 +114,10 @@ bool q3component_player_events_destroy(application_q3_component *c,qa_error *e)
 }
 bool q3component_player_events_fields(application_q3_component *c,qa_source_save_io *io)
 {
+    uint64_t retired_sequence=0;
     bool reading=io->direction==QA_SOURCE_SAVE_READ; qa_qvm_binding watch=reading?0:c->player_watch;
     if(!qa_source_save_u64(io,&watch)||((watch!=0)!=(c->player_watch!=0))||
-        !qa_source_save_u64(io,&c->player_order)||!qa_source_save_u64(io,&c->player_sequence)||
+        !qa_source_save_u64(io,&c->player_order)||!qa_source_save_u64(io,&retired_sequence)||
         !qa_source_save_count(io,&c->player_cursor_count,c->maximum)) return false;
     if(reading) {
         c->restored_player_watch=watch;
