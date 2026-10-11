@@ -207,11 +207,11 @@ bool application_npc_owner_create(application_provider *source,bool prepared,app
         qa_ruleset_id kind=source->launch->selection.clock.kind;
         if(kind!=QA_RULESET_NETQUAKE && kind!=QA_RULESET_QUAKEWORLD)
             okay=application_fail(error,QA_ERROR_ARGUMENT,"Original monster source has no Q1 movement clock");
-        options.quakeworld=kind==QA_RULESET_QUAKEWORLD;
+        options.rules=kind;
     }
     if(okay) okay=qa_bsp_open(qa_resource_bytes(owner->map_resource),&owner->geometry,error);
     if(okay) {
-        owner->movement=qa_movement_profile_default(options.quakeworld?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE);
+        owner->movement=qa_movement_profile_default(options.rules);
         owner->map=(qa_nav_map){.name=app->current_map,.format=owner->geometry.format};
     }
     if(!okay) {application_npc_owner_free(owner);return false;}

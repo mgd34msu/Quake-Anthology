@@ -68,7 +68,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
         qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, c->actor->id);
         qa_actor_collision collision = {.family = QA_GAME_Q2,
                                         .shape = QA_SHAPE_BOX,
-                                        .contents = qa_collision_q2_source_contents(2, 2, c->rerelease),
+                                        .contents = qa_collision_q2_source_contents(2, 2, c->rules == QA_RULESET_Q2_RERELEASE),
                                         .owner = owner_reference,
                                         .role = QA_COLLISION_SOLID};
         qa_builtin_spawn spawn = {.owner = g->options.owner,
@@ -136,7 +136,7 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
             return false;
         qa_angle_vectors(c->input.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         q2_recoil(c, &kick_origin, &kick_angles);
-        q2_kick(c, qa_vec_scale(forward, -2), kick_angles, c->rerelease ? 0.2f : 0);
+        q2_kick(c, qa_vec_scale(forward, -2), kick_angles, c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
         bool bounce = c->actor->lmctf_plasma_bounce;
         if (!q2_sound(c, bounce ? QA_Q2_SFX_WEAPONS_PLASMA_FIRE1 : QA_Q2_SFX_WEAPONS_PLASMA_FIRE2, 1, 1,
                       e) ||

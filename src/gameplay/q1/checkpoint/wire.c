@@ -63,7 +63,7 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
         }
     }
     q1_wire_state *wire = g->wire;
-    if (g->options.quakeworld) {
+    if (g->options.rules == QA_RULESET_QUAKEWORLD) {
         q1_qw_fraglog *log = &wire->qw_fraglog;
         Q1_SAVE(io, u32, log->sequence);
         Q1_SAVE(io, double, log->time);
@@ -92,10 +92,10 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
     for (size_t i = 0; i < 64; ++i)
         Q1_SAVE(io, string, wire->lightstyles.patterns[i]);
     bool id1 = g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_CLASSIC &&
-               !g->options.quakeworld;
+               g->options.rules != QA_RULESET_QUAKEWORLD;
     if (!wire->generation || !wire->map_path || !wire->authored_entities || wire->id1 != id1 ||
         wire->authored_cursor > wire->authored_entities ||
-        wire->edict_limit != (g->options.quakeworld ? 768u :
+        wire->edict_limit != (g->options.rules == QA_RULESET_QUAKEWORLD ? 768u :
             g->options.edition == QA_Q1_CLASSIC ? 600u : 0u) ||
         wire->next_dynamic <= g->options.max_clients ||
         (wire->edict_limit && wire->next_dynamic > wire->edict_limit))
@@ -154,7 +154,7 @@ bool q1_save_wire(q1_save_io *io, qa_q1_game *g) {
             (row->present && (!row->name || !qa_strings_cstr(qa_session_strings(g->services.session), row->name))))
             return q1_save_fail(io, "Invalid retained Q1 source client observation");
     }
-    if (g->options.quakeworld) {
+    if (g->options.rules == QA_RULESET_QUAKEWORLD) {
         if (g->options.max_clients!=32)
             return q1_save_fail(io,"QW retained stats leave their fixed physical client table");
         for (size_t slot=0;slot<32;++slot)

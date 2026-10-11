@@ -143,7 +143,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;
-    g->qw_rj = g->options.quakeworld ? 1 : 0;
+    g->qw_rj = g->options.rules == QA_RULESET_QUAKEWORLD ? 1 : 0;
     g->sight_actor = g->horn_charmer = (q1_ref){0};
     g->rogue_runes_world = g->body_queue_head = (q1_ref){0};
     g->rogue_runes_started = false;
@@ -520,8 +520,7 @@ bool qa_q1_game_target_binding(qa_q1_game *g, qa_actor_id actor, qa_target_bindi
         return false;
     *out = (qa_target_binding){.actor = entity->id,
                                  .context = g,
-                                 .source = g->options.quakeworld ? QA_RULESET_QUAKEWORLD
-                                                                 : QA_RULESET_NETQUAKE,
+                                 .source = g->options.rules,
                                  .read = target_read,
                                  .use = target_use,
                                  .field = target_field,

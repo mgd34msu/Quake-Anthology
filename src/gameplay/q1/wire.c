@@ -13,7 +13,7 @@ static bool fail(qa_error *error, const char *message) {
 }
 static bool id1(const qa_q1_game *g) {
     return g->options.program == QA_Q1_ID1 && g->options.edition == QA_Q1_CLASSIC &&
-           !g->options.quakeworld;
+           g->options.rules != QA_RULESET_QUAKEWORLD;
 }
 void q1_wire_changed(q1_wire_state *wire) {
     if (wire && wire->revision != UINT64_MAX) ++wire->revision;
@@ -120,13 +120,13 @@ bool qa_q1_wire_begin_world(qa_q1_game *g, const char *path, uint32_t inline_mod
     g->check_client_time = 0;
     g->check_client_cluster = 0;
     g->check_client_eye = qa_v3(0, 0, 0);
-    if (g->options.quakeworld) {
+    if (g->options.rules == QA_RULESET_QUAKEWORLD) {
         if (g->wire) wire->qw_fraglog = g->wire->qw_fraglog;
         else wire->qw_fraglog.sequence = 1;
     }
     wire->inline_models = inline_models;
     wire->authored_entities = authored_entities;
-    wire->edict_limit = g->options.quakeworld ? 768u :
+    wire->edict_limit = g->options.rules == QA_RULESET_QUAKEWORLD ? 768u :
         g->options.edition == QA_Q1_CLASSIC ? 600u : 0u;
     if (wire->edict_limit && g->options.max_clients >= wire->edict_limit) {
         state_free(wire);
@@ -223,7 +223,7 @@ bool q1_wire_allocate_slot(qa_q1_game *g, bool *has_source, uint32_t *slot, qa_e
             break;
         }
     if (wire->edict_limit && physical == wire->edict_limit) {
-        if (!g->options.quakeworld) {
+        if (g->options.rules != QA_RULESET_QUAKEWORLD) {
             qa_error_set(error, QA_ERROR_MEMORY, physical, "ED_Alloc: no free edicts");
             return false;
         }
@@ -308,14 +308,14 @@ void qa_q1_wire_read_end(qa_q1_wire_receipt *receipt) {
     *receipt = (qa_q1_wire_receipt){0};
 }
 bool qa_q1_wire_qw_stats_read(const qa_q1_wire_receipt *receipt,uint32_t slot,double out[16],qa_error *error) {
-    if (!out || !qa_q1_wire_receipt_current(receipt) || !receipt->operation.game->options.quakeworld ||
+    if (!out || !qa_q1_wire_receipt_current(receipt) || receipt->operation.game->options.rules != QA_RULESET_QUAKEWORLD ||
         receipt->client_slots!=32 || !slot || slot>32)
         return fail(error,"QW retained stats require their actual physical source row");
     memcpy(out,receipt->operation.game->wire->qw_client_stats[slot-1],sizeof(double)*16);
     return true;
 }
 bool qa_q1_wire_qw_stats_store(const qa_q1_wire_receipt *receipt,uint32_t slot,const double stats[16],qa_error *error) {
-    if (!stats || !qa_q1_wire_receipt_current(receipt) || !receipt->operation.game->options.quakeworld ||
+    if (!stats || !qa_q1_wire_receipt_current(receipt) || receipt->operation.game->options.rules != QA_RULESET_QUAKEWORLD ||
         receipt->client_slots!=32 || !slot || slot>32)
         return fail(error,"QW retained stats lost their reached physical source store");
     for (size_t i=0;i<16;++i)
@@ -606,7 +606,7 @@ bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_erro
     int32_t sounds = spawn->map_fields ? spawn->map_fields->sounds : 0;
     uint32_t flags = spawn->spawnflags;
     if (!strcmp(name, "worldspawn")) {
-        if (g->options.quakeworld)
+        if (g->options.rules == QA_RULESET_QUAKEWORLD)
             return declare_rows(g, false, qw_world_sounds, sizeof(qw_world_sounds)/sizeof(*qw_world_sounds), error) &&
                 declare_rows(g, true, qw_world_models, sizeof(qw_world_models)/sizeof(*qw_world_models), error);
         if (g->options.program == QA_Q1_HIPNOTIC)
@@ -759,7 +759,7 @@ bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_erro
 #undef SOUND
 
 static bool qw_log_owner(const qa_q1_game *g, qa_error *error) {
-    return (g && !g->destroy_pending && !g->continuation_pending && g->options.quakeworld &&
+    return (g && !g->destroy_pending && !g->continuation_pending && g->options.rules == QA_RULESET_QUAKEWORLD &&
         g->wire && g->wire->qw_fraglog.sequence) ||
         fail(error, "QuakeWorld fraglog requires its actual physical Source server");
 }

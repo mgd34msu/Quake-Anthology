@@ -937,7 +937,7 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
     const qa_movement_state *movement, qa_q1_save_data *save, qa_error *error) {
     if (!game || !save || save->entities || save->entity_count || save->globals.count ||
         game->destroy_pending || game->continuation_pending || game->observation_depth ||
-        game->options.quakeworld || game->options.max_clients != 1 || game->options.deathmatch ||
+        game->options.rules == QA_RULESET_QUAKEWORLD || game->options.max_clients != 1 || game->options.deathmatch ||
         !program || !movement || movement->kind != QA_RULESET_NETQUAKE ||
         !game->wire || game->wire->loading || !game->maps ||
         !qa_session_safe(game->services.session) || !qa_world_idle(game->services.world))
@@ -2259,7 +2259,7 @@ bool qa_q1_game_original_fit(qa_q1_game *game,const qa_q1_save_data *save,
     bool *supported,qa_error *error) {
     if (!game || !save || !supported || !game->wire || game->wire->loading ||
         game->destroy_pending || game->continuation_pending || game->observation_depth ||
-        game->options.quakeworld || game->options.max_clients!=1 || game->options.deathmatch ||
+        game->options.rules == QA_RULESET_QUAKEWORLD || game->options.max_clients!=1 || game->options.deathmatch ||
         !qa_session_safe(game->services.session) || !qa_world_idle(game->services.world))
         return fail(error,"Original model admission requires its idle constructed Source precache");
     *supported=false;
@@ -2276,7 +2276,7 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     const qa_q1_save_data *save, qa_movement_state *movement, qa_error *error) {
     if (!movement || !game || !program || !save || !game->wire || game->wire->loading || !game->maps ||
         game->destroy_pending || game->continuation_pending || game->observation_depth ||
-        game->options.quakeworld || game->options.max_clients != 1 || game->options.deathmatch ||
+        game->options.rules == QA_RULESET_QUAKEWORLD || game->options.max_clients != 1 || game->options.deathmatch ||
         !qa_session_safe(game->services.session) || !qa_world_idle(game->services.world) ||
         !qa_q1_save_singleplayer(save,error) || save->entity_count > UINT32_MAX ||
         (game->wire->edict_limit && save->entity_count > game->wire->edict_limit))

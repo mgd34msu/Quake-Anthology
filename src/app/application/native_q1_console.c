@@ -872,19 +872,19 @@ bool application_native_q1_console_create(application_provider *provider,
     snprintf(teamplay, sizeof(teamplay), "%d", rules->teamplay);
     snprintf(gravity, sizeof(gravity), "%.9g", (double)rules->gravity);
     snprintf(gamecfg, sizeof(gamecfg), "%u", rules->gamecfg);
-    snprintf(maximum, sizeof(maximum), "%u", rules->quakeworld ? 8u : rules->max_clients);
+    snprintf(maximum, sizeof(maximum), "%u", (rules->rules == QA_RULESET_QUAKEWORLD) ? 8u : rules->max_clients);
     snprintf(aim, sizeof(aim), "%.9g", (double)rules->aim_threshold);
     bool registered;
     if (!qa_catalog_q1_registered(provider->application->catalog, provider->product->id,
             &registered, error)) return false;
     const char *values[] = {skill, deathmatch, coop, teamplay, gravity, "320", "0", "0", "0", gamecfg,
-        "0", "1", maximum, registered ? "1" : "0", "0", aim, rules->quakeworld ? "unnamed" : "UNNAMED"};
+        "0", "1", maximum, registered ? "1" : "0", "0", aim, (rules->rules == QA_RULESET_QUAKEWORLD) ? "unnamed" : "UNNAMED"};
     for (size_t i = 0; okay && i < sizeof(names) / sizeof(*names); ++i) {
         okay = qa_cvars_register(cvars, names[i].name, values[i], 0,
             provider->owner, NULL, error) &&
             qa_cvars_declare_save_policy(cvars, names[i].name, names[i].policy, error);
     }
-    if (rules->quakeworld) {
+    if ((rules->rules == QA_RULESET_QUAKEWORLD)) {
         static const struct { const char *name; qa_cvar_save_policy policy; } qw_names[] = {
             {"sv_maxvelocity", QA_CVAR_SAVE_GAMEPLAY},
             {"sv_stopspeed", QA_CVAR_SAVE_GAMEPLAY},

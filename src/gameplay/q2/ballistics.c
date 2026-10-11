@@ -139,7 +139,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
         return false;
     bool wet = ((uint32_t)water & Q2_WATER_MASK) != 0, initial = true;
     qa_vec3 water_start = start;
-    uint32_t shot = c->rerelease
+    uint32_t shot = c->rules == QA_RULESET_Q2_RERELEASE
                         ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                     : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                         : Q2_SHOT_MASK;
@@ -155,7 +155,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
     for (;;) {
         if (!q2_actor_live(c->game, c->actor->id))
             return true;
-        query.policy.contents_mask = qa_collision_contents_mask(initial && !c->rerelease ? shot : mask, QA_GAME_Q2);
+        query.policy.contents_mask = qa_collision_contents_mask(initial && c->rules != QA_RULESET_Q2_RERELEASE ? shot : mask, QA_GAME_Q2);
         if (!qa_world_trace_excluding(c->game->services.world, &query, excluded, count, &trace, e))
             return false;
         if (trace.fraction == 1 && initial) {
@@ -174,7 +174,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 int color =
                     ((uint32_t)qa_collision_contents_export(trace.contents, QA_GAME_Q2, trace.q1_opaque_token) & 32u) != 0
                         ? (trace.has_surface && strcmp(trace.surface.name,
-                                                       c->rerelease ? "brwater" : "*brwater") == 0
+                                                       c->rules == QA_RULESET_Q2_RERELEASE ? "brwater" : "*brwater") == 0
                                ? 3
                                : 2)
                     : ((uint32_t)qa_collision_contents_export(trace.contents, QA_GAME_Q2, trace.q1_opaque_token) & 16u) != 0 ? 4
@@ -193,13 +193,13 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 query.end = spread(c, trace.end, qa_vec_sub(query.end, start), hs * 2, vs * 2);
             }
             mask &= ~Q2_WATER_MASK;
-            if (!c->rerelease)
+            if (c->rules != QA_RULESET_Q2_RERELEASE)
                 query.start = trace.end;
             continue;
         }
         qa_actor_id target = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor : (qa_actor_id){0};
         qa_combat_state combat;
-        if ((c->rerelease || !sky(&trace)) && damageable(c->game, target, &combat)) {
+        if ((c->rules == QA_RULESET_Q2_RERELEASE || !sky(&trace)) && damageable(c->game, target, &combat)) {
             if (!q2_damage(c->game, &attack, target, damage, kick, direction, trace.end,
                            trace.contact ? trace.contact_plane.normal : qa_v3(0, 0, 0), false, e))
                 return false;
@@ -213,7 +213,7 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                     *e = observed;
                 return false;
             }
-            if (c->rerelease &&
+            if (c->rules == QA_RULESET_Q2_RERELEASE &&
                 (((uint32_t)qa_collision_contents_export(trace.contents, QA_GAME_Q2, trace.q1_opaque_token) & UINT32_C(0x04000000)) != 0 || (monster && dead))) {
                 bool duplicate = false;
                 for (size_t i = 0; i < count; ++i)
@@ -267,12 +267,12 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
                             .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_GAME_Q2)};
     query.policy.contents_mask =
-        qa_collision_contents_mask((c->rerelease ? (c->input.players_collide ? Q2_PROJECTILE_MASK
+        qa_collision_contents_mask((c->rules == QA_RULESET_Q2_RERELEASE ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                   : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                       : Q2_SHOT_MASK) |
         24u, QA_GAME_Q2);
     qa_trace_result trace = {0};
-    size_t count = 0, limit = c->rerelease ? 16 : c->game->capacity;
+    size_t count = 0, limit = c->rules == QA_RULESET_Q2_RERELEASE ? 16 : c->game->capacity;
     bool water = false;
     qa_attack attack = q2_attack(c, mod, flags);
     for (;;) {
@@ -319,7 +319,7 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
                                          collision.role != QA_COLLISION_TRIGGER;
             bool pierce =
                 traits.monster || traits.player || box || (has_collision && collision.monster);
-            if (c->rerelease && (!q2_actor_live(c->game, target) || traits.damageable_target ||
+            if (c->rules == QA_RULESET_Q2_RERELEASE && (!q2_actor_live(c->game, target) || traits.damageable_target ||
                                  (has_physics && (physical.solid == QA_PHYSICS_NOT_SOLID ||
                                                   physical.solid == QA_PHYSICS_TRIGGER))))
                 pierce = true;
@@ -329,14 +329,14 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
             if (!pierce || duplicate || count >= limit)
                 break;
             excluded[count++] = target;
-            if (!c->rerelease)
+            if (c->rules != QA_RULESET_Q2_RERELEASE)
                 query.pass_actor = target;
         }
-        if (!c->rerelease)
+        if (c->rules != QA_RULESET_Q2_RERELEASE)
             query.start = trace.end;
     }
     return q2_event_named(c, QA_BUILTIN_BEAM, Q2_NAME_RESOURCE_Q2_RAIL, mod, start, trace.end, e) &&
-           (!(water && !c->rerelease) || q2_event_named(c, QA_BUILTIN_BEAM,
+           (!(water && c->rules != QA_RULESET_Q2_RERELEASE) || q2_event_named(c, QA_BUILTIN_BEAM,
                 Q2_NAME_RESOURCE_Q2_RAIL_WATER, 12, start, trace.end, e)) &&
            q2_noise_for_actor(c->game, c->actor->id, trace.end, true, e);
 }
@@ -382,7 +382,7 @@ bool q2_heatbeam(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                             .end = qa_vec_add(start, qa_vec_scale(direction, q2_hitscan_range())),
                             .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_GAME_Q2)};
-    uint32_t mask = c->rerelease
+    uint32_t mask = c->rules == QA_RULESET_Q2_RERELEASE
                         ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                     : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                         : Q2_SHOT_MASK;
@@ -445,7 +445,7 @@ static qa_vec3 closest(qa_vec3 p, qa_bounds b) {
 }
 static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
-    if (c->rerelease && !q2_continues(c) && (s->frame == 13 || s->frame == 23 || s->frame >= 32)) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE && !q2_continues(c) && (s->frame == 13 || s->frame == 23 || s->frame >= 32)) {
         s->frame = 33;
         return true;
     }
@@ -457,7 +457,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
     qa_body_state own;
     if (!qa_world_body_read(c->game->services.world, c->actor->id, &own, e))
         return false;
-    if (!c->rerelease) {
+    if (c->rules != QA_RULESET_Q2_RERELEASE) {
         qa_vec3 f, u;
         qa_angle_vectors(c->input.angles, &f, NULL, &u,QA_ANGLE_FLOAT_MATH);
         q2_kick(c, qa_vec_scale(f, -2), qa_v3(-1, 0, 0), 0);
@@ -575,7 +575,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
            q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 bool q2_fire_chainfist(q2_weapon_call *c, qa_error *e) {
-    if (!c->rerelease)
+    if (c->rules != QA_RULESET_Q2_RERELEASE)
         return chainfist_run(c, NULL, e);
     qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(c->game, e);
     if (scratch == NULL)

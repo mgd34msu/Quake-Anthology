@@ -110,7 +110,7 @@ static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, flo
     bool player = false;
     if (!q2_target_creature(g, c->actor->id, NULL, &player, e))
         return false;
-    if (c->rerelease || !player)
+    if (c->rules == QA_RULESET_Q2_RERELEASE || !player)
         return true;
     if (g->options.skill == 0 && q2_random(g) > 0.25f)
         return true;
@@ -866,10 +866,10 @@ bool q2_tracker_target(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, qa_a
                             .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_GAME_Q2)};
     query.policy.contents_mask =
-        qa_collision_contents_mask(c->rerelease ? (c->input.players_collide ? Q2_PROJECTILE_MASK
+        qa_collision_contents_mask(c->rules == QA_RULESET_Q2_RERELEASE ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                  : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                      : Q2_SHOT_MASK, QA_GAME_Q2);
-    bool lag = c->rerelease && g->hooks.lag_begin != NULL;
+    bool lag = c->rules == QA_RULESET_Q2_RERELEASE && g->hooks.lag_begin != NULL;
     if (lag && !g->hooks.lag_begin(g->hooks.context, c->actor->id, start, direction, e))
         return false;
     qa_trace_result trace;
@@ -988,7 +988,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
                        : kind == Q2_PLASMA    ? g->runtime_names[Q2_NAME_RESOURCE_PLASMA]
                        : kind == Q2_FLECHETTE ? g->runtime_names[Q2_NAME_RESOURCE_FLECHETTE]
                        : kind == Q2_TRACKER   ? g->runtime_names[Q2_NAME_RESOURCE_TRACKER]
-                       : hand                 ? (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_HAND_GRENADE] : g->runtime_names[Q2_NAME_RESOURCE_HGRENADE])
+                       : hand                 ? (c->rules == QA_RULESET_Q2_RERELEASE ? g->runtime_names[Q2_NAME_RESOURCE_HAND_GRENADE] : g->runtime_names[Q2_NAME_RESOURCE_HGRENADE])
                                               : g->runtime_names[Q2_NAME_GRENADE];
     qa_string_id model = kind == Q2_BOLT        ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_LASER_TRIS_MD2]
                         : kind == Q2_LOOGIE    ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_LOOGY_TRIS_MD2]
@@ -998,15 +998,15 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
                         : kind == Q2_PLASMA    ? g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_PHOTON_SP2]
                         : kind == Q2_FLECHETTE ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_PROJ_FLECHETTE_TRIS_MD2]
                         : kind == Q2_TRACKER   ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_PROJ_DISINTEGRATOR_TRIS_MD2]
-                        : hand ? (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE3_TRIS_MD2]
+                        : hand ? (c->rules == QA_RULESET_Q2_RERELEASE ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE3_TRIS_MD2]
                                                : g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE2_TRIS_MD2])
-                               : (c->rerelease && !monster ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE4_TRIS_MD2]
+                               : (c->rules == QA_RULESET_Q2_RERELEASE && !monster ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE4_TRIS_MD2]
                                                            : g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_GRENADE_TRIS_MD2]);
     if (source_kind == Q2_BLUE_BOLT)
         model = g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_BLASER_TRIS_MD2];
-    if (source_kind == Q2_GREEN_BOLT && !c->rerelease)
+    if (source_kind == Q2_GREEN_BOLT && c->rules != QA_RULESET_Q2_RERELEASE)
         model = g->runtime_names[Q2_NAME_RESOURCE_MODELS_PROJ_LASER2_TRIS_MD2];
-    if ((kind == Q2_BOLT && (!c->rerelease || source_kind == Q2_GREEN_BOLT)) || kind == Q2_ION ||
+    if ((kind == Q2_BOLT && (c->rules != QA_RULESET_Q2_RERELEASE || source_kind == Q2_GREEN_BOLT)) || kind == Q2_ION ||
         kind == Q2_FLECHETTE || kind == Q2_LOOGIE)
         direction = qa_vec_normalize(direction);
     qa_vec3 dodge_start = start, dodge_direction = direction;
@@ -1015,9 +1015,9 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2,
-                                        c->rerelease ? (kind == Q2_LOOGIE ? 0u : 128u)
+                                        c->rules == QA_RULESET_Q2_RERELEASE ? (kind == Q2_LOOGIE ? 0u : 128u)
                                                      : source_kind == Q2_BOLT ? 2u : 0u,
-                                        c->rerelease),
+                                        c->rules == QA_RULESET_Q2_RERELEASE),
                                     .owner = owner_reference,
                                     .role = QA_COLLISION_SOLID};
     qa_builtin_spawn spawn = {
@@ -1054,9 +1054,9 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         .splash_mod = splash_mod,
         .hand = hand,
         .held = held,
-        .scale = c->rerelease ? 0 : 1,
+        .scale = c->rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
         .dodgeable = kind != Q2_BFG_BALL && kind != Q2_LOOGIE &&
-                     (c->rerelease || kind == Q2_ION || kind == Q2_PLASMA || kind == Q2_FLECHETTE ||
+                     (c->rules == QA_RULESET_Q2_RERELEASE || kind == Q2_ION || kind == Q2_PLASMA || kind == Q2_FLECHETTE ||
                       kind == Q2_TRACKER || source_kind == Q2_GREEN_BOLT)};
     a->projectile.effects =
         kind == Q2_BOLT
@@ -1076,7 +1076,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         a->projectile.radius = 128;
         if (a->projectile.effects != 0)
             a->projectile.effects |= UINT64_C(0x4000000);
-        if (c->rerelease) {
+        if (c->rules == QA_RULESET_Q2_RERELEASE) {
             a->projectile.skin = 2;
             a->projectile.scale = 2.5f;
         }
@@ -1084,19 +1084,19 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (source_kind == Q2_HEAT_ROCKET) {
         a->projectile.turn_fraction = 0.075f;
         a->projectile.expire_ns = UINT64_MAX;
-        a->projectile.next_ns = q2_deadline(c->now_ns, c->rerelease ? c->frame_ns : 100 * Q2_MS);
+        a->projectile.next_ns = q2_deadline(c->now_ns, c->rules == QA_RULESET_Q2_RERELEASE ? c->frame_ns : 100 * Q2_MS);
     }
-    if (kind == Q2_GRENADE && c->rerelease && monster && !hand)
+    if (kind == Q2_GRENADE && c->rules == QA_RULESET_Q2_RERELEASE && monster && !hand)
         a->projectile.effects |= UINT64_C(1) << 37;
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = c->rerelease;
+    a->physics.q2_rerelease = c->rules == QA_RULESET_Q2_RERELEASE;
     a->physics.motion = kind == Q2_GRENADE ? QA_PHYSICS_BOUNCE
                         : kind == Q2_ION   ? QA_PHYSICS_WALL_BOUNCE
                                            : QA_PHYSICS_FLY_MISSILE;
     a->physics.solid = hand && fuse <= 0 ? QA_PHYSICS_NOT_SOLID : QA_PHYSICS_BOX;
     a->physics.clip_mask =
-        c->rerelease && kind != Q2_LOOGIE ? (c->input.players_collide ? Q2_PROJECTILE_MASK
+        c->rules == QA_RULESET_Q2_RERELEASE && kind != Q2_LOOGIE ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                  : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                      : Q2_SHOT_MASK;
     if (kind == Q2_TRACKER) {
@@ -1115,7 +1115,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         if (c->has_grenade_impulse) {
             side = c->grenade_right;
             up = c->grenade_up;
-        } else if (c->rerelease && !hand && !monster) {
+        } else if (c->rules == QA_RULESET_Q2_RERELEASE && !hand && !monster) {
             side = q2_crandom(g) * 10;
             up = q2_grenade_lift(false, 0, q2_crandom(g));
         } else {
@@ -1123,16 +1123,16 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
             side = q2_crandom(g) * 10;
         }
         float gravity = c->has_grenade_impulse ? c->grenade_gravity : c->input.gravity;
-        up *= q2_grenade_gravity_scale(c->rerelease, gravity);
+        up *= q2_grenade_gravity_scale(c->rules == QA_RULESET_Q2_RERELEASE, gravity);
         spawn.body.velocity =
             q2_launch_velocity(direction, speed, up, side);
         if (!qa_world_body_write(g->services.world, id, &spawn.body, e))
             return false;
-        if (c->rerelease && (hand || monster)) {
+        if (c->rules == QA_RULESET_Q2_RERELEASE && (hand || monster)) {
             a->physics.angular_velocity.x = q2_crandom(g) * 360;
             a->physics.angular_velocity.y = q2_crandom(g) * 360;
             a->physics.angular_velocity.z = q2_crandom(g) * 360;
-        } else if (!c->rerelease)
+        } else if (c->rules != QA_RULESET_Q2_RERELEASE)
             a->physics.angular_velocity = qa_v3(300, 300, 300);
         else {
             spawn.body.angles =
@@ -1204,7 +1204,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (!live(g, id) || !live(g, c->actor->id))
         return true;
     if (kind == Q2_BOLT || kind == Q2_ION || kind == Q2_TRACKER || kind == Q2_LOOGIE ||
-        (kind == Q2_FLECHETTE && c->rerelease)) {
+        (kind == Q2_FLECHETTE && c->rules == QA_RULESET_Q2_RERELEASE)) {
         if (kind != Q2_BOLT || source_kind == Q2_GREEN_BOLT) {
             if (!qa_world_body_read(g->services.world, id, &spawn.body, e))
                 return false;
@@ -1223,7 +1223,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;
         if (trace.fraction < 1) {
-            spawn.body.origin = c->rerelease && kind != Q2_LOOGIE
+            spawn.body.origin = c->rules == QA_RULESET_Q2_RERELEASE && kind != Q2_LOOGIE
                                              ? qa_vec_add(trace.end, trace.contact_plane.normal)
                                              : qa_vec_add(start, qa_vec_scale(direction, -10));
             if (!qa_world_body_write(g->services.world, id, &spawn.body, e))
@@ -1231,9 +1231,9 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
             qa_touch_contact contact = {.self = id,
                                         .other = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor
                                                                                  : (qa_actor_id){0},
-                                        .has_plane = c->rerelease && kind != Q2_LOOGIE && trace.contact,
+                                        .has_plane = c->rules == QA_RULESET_Q2_RERELEASE && kind != Q2_LOOGIE && trace.contact,
                                         .plane = trace.contact_plane,
-                                        .has_surface = c->rerelease && kind != Q2_LOOGIE && trace.has_surface,
+                                        .has_surface = c->rules == QA_RULESET_Q2_RERELEASE && kind != Q2_LOOGIE && trace.has_surface,
                                         .surface = trace.surface};
             if ((kind != Q2_LOOGIE || trace.hit == QA_TRACE_HIT_ACTOR) &&
                 !qa_q2_touch(g, &contact, e))

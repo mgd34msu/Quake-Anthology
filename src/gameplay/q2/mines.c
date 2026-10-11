@@ -808,15 +808,15 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
                    float damage, float speed, float range, float splash, float fuse, bool held,
                    qa_error *e) {
     qa_q2_game *g = c->game;
-    qa_string_id classname = kind == Q2_PROX    ? (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_PROX_MINE] : g->runtime_names[Q2_NAME_RESOURCE_PROX])
-                            : kind == Q2_TESLA ? (c->rerelease ? g->runtime_names[Q2_NAME_TESLA_MINE] : g->runtime_names[Q2_NAME_TESLA])
-                                               : (c->rerelease ? g->runtime_names[Q2_NAME_RESOURCE_FOOD_CUBE_TRAP] : g->runtime_names[Q2_NAME_RESOURCE_HTRAP]);
+    qa_string_id classname = kind == Q2_PROX    ? (c->rules == QA_RULESET_Q2_RERELEASE ? g->runtime_names[Q2_NAME_RESOURCE_PROX_MINE] : g->runtime_names[Q2_NAME_RESOURCE_PROX])
+                            : kind == Q2_TESLA ? (c->rules == QA_RULESET_Q2_RERELEASE ? g->runtime_names[Q2_NAME_TESLA_MINE] : g->runtime_names[Q2_NAME_TESLA])
+                                               : (c->rules == QA_RULESET_Q2_RERELEASE ? g->runtime_names[Q2_NAME_RESOURCE_FOOD_CUBE_TRAP] : g->runtime_names[Q2_NAME_RESOURCE_HTRAP]);
     qa_string_id model = kind == Q2_PROX    ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_G_PROX_TRIS_MD2]
                         : kind == Q2_TESLA ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_G_TESLA_TRIS_MD2]
                                            : g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_Z_TRAP_TRIS_MD2];
     qa_actor_definition definition = classname;
     qa_vec3 angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
-    float lift = q2_mine_lift(kind, c->rerelease, c->input.gravity, q2_crandom(g));
+    float lift = q2_mine_lift(kind, c->rules == QA_RULESET_Q2_RERELEASE, c->input.gravity, q2_crandom(g));
     float side = q2_crandom(g) * 10;
     qa_body_state body = {
         .origin = start,
@@ -829,15 +829,15 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2,
-                                        c->rerelease && kind == Q2_PROX ? 128u : 0u, c->rerelease),
+                                        c->rules == QA_RULESET_Q2_RERELEASE && kind == Q2_PROX ? 128u : 0u, c->rules == QA_RULESET_Q2_RERELEASE),
                                     .owner = owner_reference,
                                     .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {.can_take_damage =
-                                  kind == Q2_TESLA || (kind == Q2_TRAP && c->rerelease),
+                                  kind == Q2_TESLA || (kind == Q2_TRAP && c->rules == QA_RULESET_Q2_RERELEASE),
                               .health = kind == Q2_TESLA ? (g->options.deathmatch ? 20
-                                                            : c->rerelease        ? 50
+                                                            : c->rules == QA_RULESET_Q2_RERELEASE        ? 50
                                                                                   : 30)
-                                        : c->rerelease   ? 20
+                                        : c->rules == QA_RULESET_Q2_RERELEASE   ? 20
                                                          : 0};
     qa_builtin_spawn spawn = {.owner = g->options.owner,
                               .definition = definition,
@@ -868,29 +868,29 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
         .effects = kind == Q2_TRAP ? 0 : 32,
         .render_flags = kind == Q2_TRAP ? 0 : 0x8000,
         .visible = true,
-        .scale = c->rerelease ? 0 : 1,
+        .scale = c->rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
         .dodgeable = true,
         .expire_ns = q2_deadline(c->now_ns, kind == Q2_PROX ? mine_life(damage / 90) : 30 * Q2_NS),
         .next_ns =
-            q2_deadline(c->now_ns, kind == Q2_PROX    ? (c->rerelease ? 0 : mine_life(damage / 90))
+            q2_deadline(c->now_ns, kind == Q2_PROX    ? (c->rules == QA_RULESET_Q2_RERELEASE ? 0 : mine_life(damage / 90))
                                    : kind == Q2_TESLA ? 3 * Q2_NS
                                                       : Q2_NS)};
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = c->rerelease;
+    a->physics.q2_rerelease = c->rules == QA_RULESET_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_BOX;
     a->physics.clip_mask =
-        (c->rerelease ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK) | (kind == Q2_TRAP ? 0 : 24u);
-    if (c->rerelease && !c->input.players_collide)
+        (c->rules == QA_RULESET_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK) | (kind == Q2_TRAP ? 0 : 24u);
+    if (c->rules == QA_RULESET_Q2_RERELEASE && !c->input.players_collide)
         a->physics.clip_mask &= ~Q2_PLAYER_CONTENTS;
     if (kind == Q2_TRAP) {
         a->physics.angular_velocity = qa_v3(0, 300, 0);
-        if (c->rerelease)
+        if (c->rules == QA_RULESET_Q2_RERELEASE)
             a->physics.clip_mask &= ~UINT32_C(0x04000000);
-    } else if (kind == Q2_TESLA && c->rerelease)
+    } else if (kind == Q2_TESLA && c->rules == QA_RULESET_Q2_RERELEASE)
         a->physics.clip_mask &= ~UINT32_C(0x04000000);
-    if (kind == Q2_TRAP && !c->rerelease && fuse <= 0) {
+    if (kind == Q2_TRAP && c->rules != QA_RULESET_Q2_RERELEASE && fuse <= 0) {
         q2_projectile p = a->projectile;
         if (!q2_projectile_noise(g, &p, start, e) ||
             !q2_projectile_radius(g, id, &p, start, (qa_actor_id){0}, damage, range, held ? 24 : 16,

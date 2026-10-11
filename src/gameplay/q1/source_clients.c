@@ -188,14 +188,14 @@ bool qa_q1_source_client_observer(qa_q1_game *game,qa_actor_id actor,bool observ
 }
 static q1_player *spectator(qa_q1_game *game,qa_actor_id actor,qa_error *error) {
     q1_player *player=(q1_player *)client_const(game,actor);
-    if(player && game->options.quakeworld && player->source_observer) return player;
+    if(player && game->options.rules == QA_RULESET_QUAKEWORLD && player->source_observer) return player;
     qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Spectator goal needs its actual QW source client");
     return NULL;
 }
 bool qa_q1_source_client_disconnect_sound(qa_q1_game *game,qa_actor_id actor,qa_error *error) {
     qa_q1_game_operation operation={0};
     if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
-    bool okay=client_const(game,actor) && game->options.quakeworld;
+    bool okay=client_const(game,actor) && game->options.rules == QA_RULESET_QUAKEWORLD;
     if(!okay) qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"QW disconnect lost its actual source client");
     if(okay) okay=q1_sound_resource(game, actor, game->runtime_names[Q1_NAME_RESOURCE_PLAYER_TORNOFF2_WAV], 4, 0, 1, error);
     if(okay && (!qa_q1_game_operation_live(&operation) || !client_const(game,actor))) {
@@ -258,7 +258,7 @@ bool qa_q1_source_spectator_track(qa_q1_game *game,qa_actor_id actor,qa_actor_id
     qa_q1_game_operation operation={0};
     if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=(q1_player *)client_const(game,actor);
-    bool okay=player && game->options.quakeworld;
+    bool okay=player && game->options.rules == QA_RULESET_QUAKEWORLD;
     if(!okay) qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Spectator tracking needs its actual QW source client");
     if(okay && target.registry) {
         const q1_player *tracked=client_const(game,target);

@@ -278,7 +278,7 @@ bool application_native_q1_composition_birth(application_provider *source, qa_ac
     qa_q1_options options;
     double seconds;
     if (!qa_q1_source_respawn_options_read(source->state.q1, &options, &seconds, error)) return false;
-    if (options.quakeworld && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC)
+    if ((options.rules == QA_RULESET_QUAKEWORLD) && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC)
         return qa_q1_source_qw_birth(source->state.q1, actor, error);
     if (options.program != QA_Q1_CTF && options.program != QA_Q1_ROGUE) return true;
     source_birth call = {0};

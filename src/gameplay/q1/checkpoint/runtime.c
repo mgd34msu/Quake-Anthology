@@ -5,7 +5,8 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
     qa_actor_owner movement = o->movement_provider, inventory = o->inventory_provider;
     qa_q1_program program = o->program;
     qa_q1_edition edition = o->edition;
-    bool quakeworld = o->quakeworld;
+    qa_ruleset_id rules = o->rules;
+    bool quakeworld = rules == QA_RULESET_QUAKEWORLD;
     uint32_t max_clients = o->max_clients;
     Q1_SAVE(io, string, o->provider);
     Q1_SAVE(io, string, o->combat_provider);
@@ -13,11 +14,13 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
     Q1_SAVE(io, string, o->inventory_provider);
     Q1_SAVE_ENUM(io, o->program, QA_Q1_CTF);
     Q1_SAVE_ENUM(io, o->edition, QA_Q1_QUAKE64);
-    Q1_SAVE(io, bool, o->quakeworld);
+    Q1_SAVE(io, bool, quakeworld);
+    if (io->values.direction == QA_SOURCE_SAVE_READ)
+        o->rules = quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
     if ((io->values.direction == QA_SOURCE_SAVE_READ) &&
         (o->provider != provider || o->combat_provider != combat ||
          o->movement_provider != movement || o->inventory_provider != inventory ||
-         o->program != program || o->edition != edition || o->quakeworld != quakeworld))
+         o->program != program || o->edition != edition || o->rules != rules))
         return q1_save_fail(io, "Q1 checkpoint belongs to a different provider composition");
     Q1_SAVE(io, bool, o->coop);
     Q1_SAVE(io, u8, o->skill);
@@ -85,7 +88,7 @@ bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {
     Q1_SAVE(io, vector, g->forward);
     Q1_SAVE(io, vector, g->right);
     Q1_SAVE(io, vector, g->up);
-    if (g->options.quakeworld) {
+    if (g->options.rules == QA_RULESET_QUAKEWORLD) {
         /* Q_atof of an accepted 63-byte info value can overflow binary32. */
         uint32_t rj;
         memcpy(&rj, &g->qw_rj, sizeof(rj));

@@ -108,7 +108,8 @@ typedef struct qa_q1_options {
     qa_actor_owner provider, combat_provider, movement_provider, inventory_provider;
     qa_q1_program program;
     qa_q1_edition edition;
-    bool quakeworld, coop;
+    qa_ruleset_id rules;
+    bool coop;
     uint8_t skill;
     int32_t deathmatch, teamplay, world_type;
     float gravity, aim_threshold;

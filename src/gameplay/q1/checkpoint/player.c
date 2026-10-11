@@ -166,7 +166,7 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
         return q1_save_fail(io,"Spectator tracker exceeds its actual physical client table");
     if((q1_ref_present(player->source_spectator_goal) || q1_ref_present(player->source_spectator_track) ||
         q1_ref_ordinal(player->source_spectator_goal) || q1_ref_ordinal(player->source_spectator_track)) &&
-       (!player->source_client || !io->game->options.quakeworld))
+       (!player->source_client || io->game->options.rules != QA_RULESET_QUAKEWORLD))
         return q1_save_fail(io,"Spectator goal has no actual QW source client");
     Q1_SAVE(io, bool, player->source_no_target);
     Q1_SAVE(io, bool, player->source_god_mode);

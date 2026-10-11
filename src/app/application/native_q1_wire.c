@@ -511,7 +511,7 @@ bool application_native_q1_wire_qw_begin(qa_application *app,
     double seconds;
     qa_collision_geometry *geometry = qa_world_geometry(app->world);
     bool okay = qa_q1_source_respawn_options_read(out->provider->state.q1, &options, &seconds, error) &&
-        options.quakeworld && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC &&
+        (options.rules == QA_RULESET_QUAKEWORLD) && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC &&
         out->receipt.client_slots == 32 && out->receipt.entity_slots >= 33 &&
         out->receipt.entity_slots <= 768 && geometry &&
         qa_collision_geometry_family(geometry) == QA_GAME_Q1 &&

@@ -489,7 +489,7 @@ static bool combat_context(void *context, const qa_damage_request *request,
                                               : qa_v3(0, 0, 0),
                     .teamplay = g->options.teamplay,
                     .skip_base_team_health = g->options.program == QA_Q1_ROGUE}};
-    if (g->options.quakeworld && g->options.program == QA_Q1_ID1 &&
+    if (g->options.rules == QA_RULESET_QUAKEWORLD && g->options.program == QA_Q1_ID1 &&
         g->options.edition == QA_Q1_CLASSIC) {
         out->game.q1.quakeworld_rj = true;
         qa_q1_source_client_view victim, killer;
@@ -710,7 +710,7 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     }
     g->services = *services;
     g->options = *options;
-    g->qw_rj = options->quakeworld ? 1 : 0;
+    g->qw_rj = options->rules == QA_RULESET_QUAKEWORLD ? 1 : 0;
     g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
     g->time = (double)g->time_ns / 1000000000.0;
     if (host)
@@ -794,7 +794,7 @@ bool qa_q1_game_force_retouch(qa_q1_game *g, uint32_t source_frames, qa_error *e
 bool qa_q1_game_retouch_actor(qa_q1_game *g, qa_actor_id actor,
                               const qa_source_frame *frame, qa_error *error) {
     if (!g || !frame || frame->provider != g->options.provider ||
-        frame->kind != (g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE) ||
+        frame->kind != g->options.rules ||
         frame->phase != QA_ENTITY_PHYSICS) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 retouch belongs to another source turn");
         return false;
@@ -890,7 +890,7 @@ bool qa_q1_game_component(qa_q1_game *g, qa_component *out, qa_error *error) {
     }
     *out = (qa_component){
         .owner = g->options.provider,
-        .clock = qa_clock_defaults(g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE),
+        .clock = qa_clock_defaults(g->options.rules),
         .state = g,
         .prepare_frame = prepare_frame,
         .begin_frame = begin_frame,
@@ -1055,7 +1055,7 @@ static bool think_callback(void *context, qa_actor_id actor, const qa_think_scop
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    qa_ruleset_id clock = g->options.quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
+    qa_ruleset_id clock = g->options.rules;
     bool admitted = scope &&
         ((scope->kind == QA_THINK_WORLD_FRAME &&
           scope->source.frame.provider == g->options.provider &&
@@ -1753,7 +1753,7 @@ static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_e
     if (!reaction_dispatch(g, outcome, error))
         return false;
     qa_actor_id actor = outcome->request.target;
-    if (outcome->result.reaction != QA_REACTION_PAIN || g->options.quakeworld ||
+    if (outcome->result.reaction != QA_REACTION_PAIN || g->options.rules == QA_RULESET_QUAKEWORLD ||
         !q1_alive(g, actor))
         return true;
     bool nightmare = g->options.program == QA_Q1_MG3

@@ -167,7 +167,7 @@ static bool context(qa_q2_game *g, q2_actor *a, const qa_q2_weapon_input *in, ui
                             .definition = qa_q2_weapon_definition_at(g, a->weapon.weapon),
                             .now_ns = now,
                             .frame_ns = frame,
-                            .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE,
+                            .rules = g->options.rules,
                             .silenced = a->silencer > 0};
     return out->definition != NULL;
 }
@@ -175,7 +175,7 @@ bool q2_no_ammo(q2_weapon_call *c, bool sound, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
     if (sound && c->now_ns >= c->state->empty_sound_ns) {
-        if (!q2_sound(c, QA_Q2_SFX_WEAPONS_NOAMMO, c->rerelease ? 1 : 2, 1, e))
+        if (!q2_sound(c, QA_Q2_SFX_WEAPONS_NOAMMO, c->rules == QA_RULESET_Q2_RERELEASE ? 1 : 2, 1, e))
             return false;
         c->state->empty_sound_ns = q2_deadline(c->now_ns, Q2_NS);
         if (!q2_actor_live(c->game, c->actor->id))
@@ -194,7 +194,7 @@ bool q2_no_ammo(q2_weapon_call *c, bool sound, qa_error *e) {
         QA_Q2_GRENADELAUNCHER, QA_Q2_PROXLAUNCHER, QA_Q2_CHAINFIST, QA_Q2_BLASTER};
     const qa_q2_weapon *order = base;
     size_t fallback_count = sizeof(base) / sizeof(*base);
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         order = rerelease;
         fallback_count = sizeof(rerelease) / sizeof(*rerelease);
     } else if (c->game->options.product == QA_Q2_ROGUE) {
@@ -235,13 +235,13 @@ bool q2_change_weapon(q2_weapon_call *c, qa_error *e) {
     qa_combat_state combat;
     if (!qa_combat_read(c->game->services.combat, c->actor->id, &combat, e))
         return false;
-    if (s->handoff == QA_Q2_PRIMARY_ACTIVE && c->rerelease && combat.health > 0 &&
+    if (s->handoff == QA_Q2_PRIMARY_ACTIVE && c->rules == QA_RULESET_Q2_RERELEASE && combat.health > 0 &&
         !c->input.instant_switch && c->input.holster)
         return true;
-    if (s->grenade_ns != 0 && (s->hand_reservation != QA_Q2_HAND_UNRESERVED || c->rerelease ||
+    if (s->grenade_ns != 0 && (s->hand_reservation != QA_Q2_HAND_UNRESERVED || c->rules == QA_RULESET_Q2_RERELEASE ||
                                (s->handoff == QA_Q2_PRIMARY_HOLSTERING &&
                                 (s->weapon == QA_Q2_TRAP || s->weapon == QA_Q2_TESLA)))) {
-        if (!c->rerelease)
+        if (c->rules != QA_RULESET_Q2_RERELEASE)
             s->grenade_ns = c->now_ns;
         if (!q2_throw(c, false, e))
             return false;
@@ -275,7 +275,7 @@ bool q2_change_weapon(q2_weapon_call *c, qa_error *e) {
     }
     s->handoff = QA_Q2_PRIMARY_ACTIVE;
     if (s->weapon != QA_Q2_WEAPON_NONE && s->pending != QA_Q2_WEAPON_NONE &&
-        s->pending != s->weapon && c->rerelease)
+        s->pending != s->weapon && c->rules == QA_RULESET_Q2_RERELEASE)
         if (!q2_sound(c, QA_Q2_SFX_WEAPONS_CHANGE, 1, 1, e))
             return false;
     if (!q2_actor_live(c->game, c->actor->id))
@@ -297,7 +297,7 @@ bool q2_change_weapon(q2_weapon_call *c, qa_error *e) {
     s->frame = 0;
     if (!q2_animation(c, 1, c->input.ducked ? 169 : 62, c->input.ducked ? 172 : 65, e))
         return false;
-    if (c->rerelease && c->input.instant_switch)
+    if (c->rules == QA_RULESET_Q2_RERELEASE && c->input.instant_switch)
         return run(c, e);
     return true;
 }
@@ -348,7 +348,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
     c->definition = qa_q2_weapon_definition_at(c->game, c->state->weapon);
     if (c->definition == NULL || c->state->handoff == QA_Q2_PRIMARY_HOLSTERED)
         return true;
-    if (c->rerelease)
+    if (c->rules == QA_RULESET_Q2_RERELEASE)
         c->silenced = c->actor->silencer > 0;
     qa_q2_weapon w = c->state->weapon;
     qa_q2_weapon_state *s = c->state;
@@ -357,14 +357,14 @@ static bool run(q2_weapon_call *c, qa_error *e) {
     if (w == QA_Q2_LMCTF_PLASMA)
         return q2_lmctf_plasma_weapon(c, e);
     if (w == QA_Q2_GRENADES || w == QA_Q2_TRAP || w == QA_Q2_TESLA) {
-        if (w == QA_Q2_TESLA && !c->rerelease) {
+        if (w == QA_Q2_TESLA && c->rules != QA_RULESET_Q2_RERELEASE) {
             s->view_model = 0;
             if (s->frame > 1 && s->frame < 9) s->view_model=c->game->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_V_TESLA2_TRIS_MD2];
         }
         return q2_throw_frame(c, e);
     }
     int last_sequence = 0;
-    if (!c->rerelease) {
+    if (c->rules != QA_RULESET_Q2_RERELEASE) {
         if (w == QA_Q2_CHAINFIST) {
             if (s->frame == 13 || s->frame == 23)
                 s->frame = 32;
@@ -405,7 +405,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id) || s->handoff == QA_Q2_PRIMARY_HOLSTERED)
         return true;
     if (w == QA_Q2_CHAINFIST) {
-        if (c->rerelease)
+        if (c->rules == QA_RULESET_Q2_RERELEASE)
             return chainfist_smoke(c, e) &&
                    q2_loop(c,
                            s->phase == QA_Q2_FIRING     ? QA_Q2_SFX_WEAPONS_SAWHIT
@@ -429,7 +429,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
             else if (chance < 0.66f)
                 s->frame = 24;
         }
-    } else if (!c->rerelease && w == QA_Q2_ETF_RIFLE && s->frame == 8 && q2_continues(c))
+    } else if (c->rules != QA_RULESET_Q2_RERELEASE && w == QA_Q2_ETF_RIFLE && s->frame == 8 && q2_continues(c))
         s->frame = 6;
     return true;
 }
@@ -523,10 +523,10 @@ static bool weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input 
     if (combat.health < 1) {
         if (a->weapon.grenade_ns != 0 && (a->weapon.weapon == QA_Q2_GRENADES
                                               ? a->weapon.hand_reservation != QA_Q2_HAND_UNRESERVED
-                                              : c.rerelease)) {
-            if (!c.rerelease)
+                                              : c.rules == QA_RULESET_Q2_RERELEASE)) {
+            if (c.rules != QA_RULESET_Q2_RERELEASE)
                 a->weapon.grenade_ns = now;
-            if (!q2_throw(&c, c.rerelease, e))
+            if (!q2_throw(&c, c.rules == QA_RULESET_Q2_RERELEASE, e))
                 return false;
             if (!q2_actor_live(g, id))
                 return true;
@@ -555,7 +555,7 @@ static bool weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input 
                 if (!q2_actor_live(g, id))
                     return true;
             }
-            if (c.rerelease && frame > 33 * Q2_MS && c.definition != NULL) {
+            if (c.rules == QA_RULESET_Q2_RERELEASE && frame > 33 * Q2_MS && c.definition != NULL) {
                 uint64_t interval;
                 if (!q2_animation_time(&c, &interval, e)) return false;
                 if (interval && interval < frame) {
@@ -574,7 +574,7 @@ static bool weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input 
                         remaining = remaining > interval ? remaining - interval : 0;
                     }
                 }
-            } else if (!c.rerelease && c.input.quad_fire_until_ns > now && !run(&c, e))
+            } else if (c.rules != QA_RULESET_Q2_RERELEASE && c.input.quad_fire_until_ns > now && !run(&c, e))
                 return false;
         }
     }

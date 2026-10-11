@@ -1210,7 +1210,7 @@ static bool monster_active(void *opaque, qa_actor_id actor, qa_monster_activatio
         if (map->kind != APPLICATION_PROVIDER_Q2 || !qa_world_body_read(map->application->world, actor, &body, error)) return false;
         body.origin.z += 1;
         if (!qa_world_body_write(map->application->world, actor, &body, error)) return false;
-        bool rerelease = map->product->edition == QA_EDITION_RERELEASE;
+        bool rerelease = map->component.clock.kind == QA_RULESET_Q2_RERELEASE;
         if (rerelease && !monster_activate_behavior(map, actor, error)) return false;
         if (!qa_q2_entities_killbox(map->state.q2, actor, actor, &clear, error)) return false;
         if (!qa_actors_get(qa_session_actors(map->application->session), actor)) return true;
@@ -1238,7 +1238,7 @@ static bool monster_use(void *opaque, qa_actor_id actor, qa_actor_id activator,
     if (!qa_session_clock(map->application->session, map->owner, &clock))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Triggered monster has no original map clock");
     row->activation = QA_MONSTER_SCHEDULED;
-    uint64_t interval = map->product->edition == QA_EDITION_RERELEASE ?
+    uint64_t interval = map->component.clock.kind == QA_RULESET_Q2_RERELEASE ?
         map->component.clock.interval_ns : UINT64_C(100000000);
     row->activation_ns = clock.frame.time_ns + interval;
     return true;
@@ -1260,7 +1260,7 @@ static bool monster_killed(void *opaque, qa_actor_id actor, qa_actor_id attacker
             if (!qa_q2_item_drop_monster(map->state.q2, actor, drop, &item, &dropped, error)) return false;
             row = qa_targets_monster(app->targets, actor);
             if (!row) return true;
-            if (map->product->edition == QA_EDITION_RERELEASE && dropped && row->item_target) {
+            if (map->component.clock.kind == QA_RULESET_Q2_RERELEASE && dropped && row->item_target) {
                 if (!qa_q2_entity_set_target(map->state.q2, item, row->item_target, error)) return false;
                 row->item_target = 0;
             }
@@ -1276,7 +1276,7 @@ static bool monster_killed(void *opaque, qa_actor_id actor, qa_actor_id attacker
     if (!qa_targets_use_request(app->targets, &(qa_target_use){.source = actor, .activator = attacker,
         .dialect = row->source, .fields = row->fields, .time_ns = clock.frame.time_ns}, error)) return false;
     row = qa_targets_monster(app->targets, actor);
-    if (!row || map->kind != APPLICATION_PROVIDER_Q2 || map->product->edition != QA_EDITION_RERELEASE || !row->health_target) return true;
+    if (!row || map->kind != APPLICATION_PROVIDER_Q2 || map->component.clock.kind != QA_RULESET_Q2_RERELEASE || !row->health_target) return true;
     row->fields.target = row->health_target;
     return qa_targets_use_request(app->targets, &(qa_target_use){.source = actor, .activator = attacker,
         .dialect = row->source, .fields = row->fields, .time_ns = clock.frame.time_ns}, error);
@@ -2063,7 +2063,7 @@ static bool q1_spawn_map(application_provider *provider,
             ok = false;
             break;
         }
-        bool inhibited = source.quakeworld ? (flags & 2048u) != 0 :
+        bool inhibited = source.rules == QA_RULESET_QUAKEWORLD ? (flags & 2048u) != 0 :
             source.deathmatch ? (flags & 2048u) != 0 :
             (flags & (source.skill == 0 ? 256u : source.skill == 1 ? 512u : 1024u)) != 0;
         if (inhibited) {

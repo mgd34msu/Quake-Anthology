@@ -21,7 +21,7 @@ static q2_weapon_call monster_weapon(q2m_context *context,
       .definition = qa_q2_weapon_definition_at(context->game, weapon),
       .now_ns = context->game->now_ns,
       .frame_ns = context->game->frame_ns,
-      .rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE,
+      .rules = context->game->options.rules,
   };
   return call;
 }

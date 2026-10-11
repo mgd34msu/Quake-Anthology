@@ -220,7 +220,7 @@ static uint64_t round_ms(uint64_t value) {
 }
 static bool interval(hand_step *step, bool frame, uint64_t *out, qa_error *e) {
     q2_weapon_call *c = &step->call;
-    unsigned divisor = c->rerelease ? (c->input.haste ? 2u : 1u) *
+    unsigned divisor = c->rules == QA_RULESET_Q2_RERELEASE ? (c->input.haste ? 2u : 1u) *
                                           (c->input.quad_fire_until_ns > c->now_ns ? 2u : 1u)
                                     : 1;
     uint64_t native = frame ? (100 / divisor) * Q2_MS : Q2_NS / divisor;
@@ -241,7 +241,7 @@ static bool emit(hand_step *step, uint64_t expires, bool held, qa_error *e) {
     effect(step, HAND_COOK_STOP);
     hand_effect *pending = &step->effects[step->effect_count++];
     pending->kind = HAND_EMIT;
-    if (step->lifecycle == QA_Q2_HAND_DEAD && !step->call.rerelease)
+    if (step->lifecycle == QA_Q2_HAND_DEAD && step->call.rules != QA_RULESET_Q2_RERELEASE)
         expires = step->call.now_ns;
     if (!q2_hand_calculate(
             &step->call, expires,
@@ -250,7 +250,7 @@ static bool emit(hand_step *step, uint64_t expires, bool held, qa_error *e) {
         return false;
     uint64_t duration, now = step->call.now_ns;
     if (!interval(step, false, &duration, e)) return false;
-    if (step->call.rerelease) {
+    if (step->call.rules == QA_RULESET_Q2_RERELEASE) {
         duration = round_ms(duration);
         now = round_ms(now);
     }
@@ -261,7 +261,7 @@ static bool emit(hand_step *step, uint64_t expires, bool held, qa_error *e) {
     return true;
 }
 static bool release(hand_step *step, uint64_t expires, uint64_t released_at, qa_error *e) {
-    if (step->call.rerelease)
+    if (step->call.rules == QA_RULESET_Q2_RERELEASE)
         return emit(step, expires, false, e);
     uint64_t when;
     if (!frame_deadline(step, released_at, &when, e)) return false;
@@ -302,7 +302,7 @@ static bool advance(hand_step *step, qa_error *e) {
             uint64_t expires = action.kind == QA_Q2_HAND_COOKING
                                    ? action.state.cooking.expires_ns
                                    : action.state.releasing.expires_ns;
-            if (!emit(step, expires, step->lifecycle == QA_Q2_HAND_DEAD && c->rerelease, e))
+            if (!emit(step, expires, step->lifecycle == QA_Q2_HAND_DEAD && c->rules == QA_RULESET_Q2_RERELEASE, e))
                 return false;
         }
         step->next.action = (qa_q2_hand_action){.kind = QA_Q2_HAND_DISARMED};
@@ -327,7 +327,7 @@ static bool advance(hand_step *step, qa_error *e) {
             if (!frame_deadline(step, c->now_ns, &next, e)) return false;
             step->next.action = (qa_q2_hand_action){
                 .kind = QA_Q2_HAND_PREPARING,
-                .state.preparing = {.frame = c->rerelease ? 2 : 1,
+                .state.preparing = {.frame = c->rules == QA_RULESET_Q2_RERELEASE ? 2 : 1,
                                     .next_ns = next,
                                     .release_queued = input->released || !input->held}};
         }
@@ -349,7 +349,7 @@ static bool advance(hand_step *step, qa_error *e) {
             return true;
         }
         effect(step, HAND_COOK_START);
-        uint64_t expires = q2_deadline(c->rerelease ? round_ms(next) : next, 3200 * Q2_MS);
+        uint64_t expires = q2_deadline(c->rules == QA_RULESET_Q2_RERELEASE ? round_ms(next) : next, 3200 * Q2_MS);
         return action.state.preparing.release_queued ? release(step, expires, next, e)
                                                      : cook(step, expires, e);
     }
@@ -407,7 +407,7 @@ static bool step(qa_q2_game *g, q2_actor *a, const qa_q2_hand_grenade_input *inp
                                 .definition = &g->definitions[QA_Q2_GRENADES],
                                 .now_ns = now,
                                 .frame_ns = frame,
-                                .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE},
+                                .rules = g->options.rules},
                        .input = input,
                        .next = a->hand_grenade,
                        .lifecycle = input->lifecycle};

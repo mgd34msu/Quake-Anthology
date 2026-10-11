@@ -394,7 +394,7 @@ static qa_q1_options q1_initial_options(application_provider *provider,
                        : product->edition == QA_EDITION_RERELEASE
                              ? QA_Q1_RERELEASE
                              : QA_Q1_CLASSIC,
-        .quakeworld = product->edition == QA_EDITION_QUAKEWORLD,
+        .rules = qa_product_ruleset(product, QA_GAME_Q1),
         .coop = profile.cooperative,
         .skill = (uint8_t)profile.skill,
         .deathmatch = profile.deathmatch ? 1 : 0,
@@ -428,9 +428,9 @@ static bool q1_final_options(application_provider *provider, const qa_launch_cho
     options->gravity = value[5].number;
     options->aim_threshold = value[6].number;
     float capacity = truncf(value[7].number);
-    if (!options->quakeworld && provider->application->operation != APPLICATION_PERSISTING &&
+    if (!(options->rules == QA_RULESET_QUAKEWORLD) && provider->application->operation != APPLICATION_PERSISTING &&
         !qa_cvars_set_number(cvars, "skill", (float)options->skill, error)) return false;
-    if (options->quakeworld) {
+    if ((options->rules == QA_RULESET_QUAKEWORLD)) {
         if (choices->seat_count > 32)
             return application_fail(error, QA_ERROR_FORMAT, "QuakeWorld has 32 physical client rows");
         options->max_clients = 32;

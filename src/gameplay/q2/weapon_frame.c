@@ -266,5 +266,5 @@ bool q2_generic_classic(q2_weapon_call *c, qa_error *e) {
 bool q2_generic(q2_weapon_call *c, qa_error *e) {
     if (c->state->handoff == QA_Q2_PRIMARY_HOLSTERED)
         return true;
-    return c->rerelease ? rerelease(c, e) : q2_generic_classic(c, e);
+    return c->rules == QA_RULESET_Q2_RERELEASE ? rerelease(c, e) : q2_generic_classic(c, e);
 }

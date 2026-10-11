@@ -105,7 +105,7 @@ static bool named_grant(qa_q1_game_operation *operation, qa_actor_id actor,
 
 static bool deathmatch_birth(qa_q1_game *game, qa_actor_id actor, bool dm4, qa_error *error)
 {
-    if (!game || !game->options.quakeworld || game->options.program != QA_Q1_ID1 ||
+    if (!game || game->options.rules != QA_RULESET_QUAKEWORLD || game->options.program != QA_Q1_ID1 ||
         game->options.edition != QA_Q1_CLASSIC || game->options.deathmatch != (dm4 ? 4 : 5)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
             "QuakeWorld deathmatch birth requires its actual source program");
@@ -165,7 +165,7 @@ bool qa_q1_source_qw_dm5_birth(qa_q1_game *game, qa_actor_id actor, qa_error *er
 
 bool qa_q1_source_qw_birth(qa_q1_game *game, qa_actor_id actor, qa_error *error)
 {
-    if (!game || !game->options.quakeworld || game->options.program != QA_Q1_ID1 ||
+    if (!game || game->options.rules != QA_RULESET_QUAKEWORLD || game->options.program != QA_Q1_ID1 ||
         game->options.edition != QA_Q1_CLASSIC || !game->host.world_info) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, actor.slot,
             "QuakeWorld birth requires its actual world infokey owner");

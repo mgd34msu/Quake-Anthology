@@ -425,7 +425,9 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     qa_q2_grapple_state *s = &owner->grapples[kind];
     if (s->hook.registry != 0)
         return true;
-    bool lm = kind == QA_Q2_LMCTF_GRAPPLE, rr = !lm && g->options.rules == QA_RULESET_Q2_RERELEASE;
+    bool lm = kind == QA_Q2_LMCTF_GRAPPLE;
+    qa_ruleset_id rules = lm ? QA_RULESET_Q2_CLASSIC : g->options.rules;
+    bool rr = rules == QA_RULESET_Q2_RERELEASE;
     q2_shot_spec spec;
     q2_grapple_spec(g, lm, &spec);
     float speed = spec.speed;
@@ -464,7 +466,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                            .definition = &g->definitions[weapon],
                            .now_ns = g->now_ns,
                            .frame_ns = g->frame_ns,
-                           .rerelease = rr};
+                           .rules = rules};
     hook->projectile = (q2_projectile){.kind = lm ? Q2_LMCTF_HOOK : Q2_CTF_HOOK,
                                        .owner = owner_reference,
                                        .attack = q2_attack(&call, lm ? 60 : 56, lm ? 4 : 0),
@@ -573,11 +575,11 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
                            .actor = a,
                            .state = &a->weapon,
                            .input = a->input,
-                           .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE};
+                           .rules = g->options.rules};
     qa_vec3 start, direction;
     if (!project_pose(&call, false, &p, &start, &direction, e))
         return false;
-    if (!call.rerelease && !sound(g, a->id, a->id, QA_Q2_SFX_WEAPONS_GRAPPLE_GRFIRE, 1, -1, true, e))
+    if (call.rules != QA_RULESET_Q2_RERELEASE && !sound(g, a->id, a->id, QA_Q2_SFX_WEAPONS_GRAPPLE_GRFIRE, 1, -1, true, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -586,7 +588,7 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    if (call.rerelease && launched &&
+    if (call.rules == QA_RULESET_Q2_RERELEASE && launched &&
         !sound(g, a->id, a->id, QA_Q2_SFX_WEAPONS_GRAPPLE_GRFIRE, 1, -1, false, e))
         return false;
     call.now_ns = g->now_ns;
@@ -596,7 +598,8 @@ static bool fire_lm(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_q2_grapple_state *s = &a->grapples[QA_Q2_LMCTF_GRAPPLE];
     qa_q2_grapple_pose p;
     if (!pose(g, a, QA_Q2_LMCTF_GRAPPLE, &p, e)) return false;
-    q2_weapon_call call = {.game = g, .actor = a, .state = &a->weapon, .input = a->input};
+    q2_weapon_call call = {.game = g, .actor = a, .state = &a->weapon, .input = a->input,
+                           .rules = QA_RULESET_Q2_CLASSIC};
     qa_vec3 start, forward;
     if (!project_pose(&call, true, &p, &start, &forward, e)) return false;
     bool created = s->hook_state == 0;
@@ -657,12 +660,12 @@ bool q2_grapple_fire(q2_weapon_call *c, qa_error *e) {
     bool lm = c->definition->weapon == QA_Q2_LMCTF_HOOK;
     qa_q2_grapple_state *s = &c->actor->grapples[lm ? QA_Q2_LMCTF_GRAPPLE : QA_Q2_CTF_GRAPPLE];
     if (!lm && s->phase != QA_Q2_GRAPPLE_FLY) {
-        if (!c->rerelease)
+        if (c->rules != QA_RULESET_Q2_RERELEASE)
             ++c->state->frame;
         return true;
     }
     c->state->source_firing = !lm || s->hook_state == 0;
-    if ((lm && c->state->source_firing) || (!lm && !c->rerelease)) {
+    if ((lm && c->state->source_firing) || (!lm && c->rules != QA_RULESET_Q2_RERELEASE)) {
         qa_q2_grapple_pose p;
         qa_vec3 forward;
         if (!pose(c->game, c->actor, lm ? QA_Q2_LMCTF_GRAPPLE : QA_Q2_CTF_GRAPPLE, &p, e))
@@ -671,11 +674,11 @@ bool q2_grapple_fire(q2_weapon_call *c, qa_error *e) {
         qa_vec3 previous_origin, angles;
         q2_recoil(c, &previous_origin, &angles);
         angles.x = -1;
-        q2_kick(c, qa_vec_scale(forward, -2), angles, c->rerelease ? 0.2f : 0);
+        q2_kick(c, qa_vec_scale(forward, -2), angles, c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     }
     if (!(lm ? fire_lm(c->game, c->actor, e) : fire_ctf(c->game, c->actor, e)))
         return false;
-    if (!lm && !c->rerelease && q2_actor_live(c->game, c->actor->id))
+    if (!lm && c->rules != QA_RULESET_Q2_RERELEASE && q2_actor_live(c->game, c->actor->id))
         ++c->state->frame;
     return true;
 }
@@ -737,7 +740,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
     if (rr) {
         if (s->phase != QA_Q2_GRAPPLE_HANG) {
             q2_weapon_call call = {
-                .game = g, .actor = a, .state = &a->weapon, .input = a->input, .rerelease = true};
+                .game = g, .actor = a, .state = &a->weapon, .input = a->input, .rules = QA_RULESET_Q2_RERELEASE};
             call.input.hand = p.hand;
             call.input.view_height = p.view_height;
             call.input.players_collide = g->grapple_options.players_collide;

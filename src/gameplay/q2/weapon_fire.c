@@ -10,15 +10,15 @@ bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
     case QA_Q2_HYPERBLASTER:
         out->kind = Q2_BOLT;
         out->offset = qa_v3(24, 8, -8);
-        out->damage = w == QA_Q2_BLASTER ? (c->rerelease || dm ? 15 : 10) : (dm ? 15 : 20);
+        out->damage = w == QA_Q2_BLASTER ? (c->rules == QA_RULESET_Q2_RERELEASE || dm ? 15 : 10) : (dm ? 15 : 20);
         out->kick = 1;
-        out->speed = c->rerelease && w == QA_Q2_BLASTER ? 1500 : 1000;
+        out->speed = c->rules == QA_RULESET_Q2_RERELEASE && w == QA_Q2_BLASTER ? 1500 : 1000;
         out->fuse = 2;
         out->mod = w == QA_Q2_BLASTER ? 1 : 10;
         break;
     case QA_Q2_SHOTGUN:
     case QA_Q2_SUPERSHOTGUN:
-        out->offset = qa_v3(0, c->rerelease ? 0 : 8, -8);
+        out->offset = qa_v3(0, c->rules == QA_RULESET_Q2_RERELEASE ? 0 : 8, -8);
         out->damage = w == QA_Q2_SHOTGUN ? 4 : 6;
         out->kick = w == QA_Q2_SHOTGUN ? 8 : 12;
         out->spread_x = w == QA_Q2_SHOTGUN ? 500 : 1000;
@@ -29,7 +29,7 @@ bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
         break;
     case QA_Q2_MACHINEGUN:
     case QA_Q2_CHAINGUN:
-        out->offset = qa_v3(0, c->rerelease ? 0 : w == QA_Q2_MACHINEGUN ? 8 : 7, -8);
+        out->offset = qa_v3(0, c->rules == QA_RULESET_Q2_RERELEASE ? 0 : w == QA_Q2_MACHINEGUN ? 8 : 7, -8);
         out->damage = w == QA_Q2_CHAINGUN && dm ? 6 : 8;
         out->kick = 2;
         out->spread_x = 300;
@@ -41,7 +41,7 @@ bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
         break;
     case QA_Q2_GRENADELAUNCHER:
         out->kind = Q2_GRENADE;
-        if (c->rerelease) out->offset.y = 0;
+        if (c->rules == QA_RULESET_Q2_RERELEASE) out->offset.y = 0;
         out->damage = 120;
         out->speed = 600;
         out->radius = 160;
@@ -89,7 +89,7 @@ bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
         break;
     case QA_Q2_DISINTEGRATOR:
         out->kind = Q2_TRACKER;
-        out->damage = c->rerelease ? (dm ? 45 : 135) : (dm ? 30 : 45);
+        out->damage = c->rules == QA_RULESET_Q2_RERELEASE ? (dm ? 45 : 135) : (dm ? 30 : 45);
         out->speed = 1000;
         out->fuse = 10;
         out->mod = 51;
@@ -105,8 +105,8 @@ bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
         out->radius = 192;
         out->fuse = 45;
         out->mod = out->splash_mod = 46;
-        out->muzzle = c->rerelease ? 31 : 6;
-        if (c->rerelease) out->offset.y = 0;
+        out->muzzle = c->rules == QA_RULESET_Q2_RERELEASE ? 31 : 6;
+        if (c->rules == QA_RULESET_Q2_RERELEASE) out->offset.y = 0;
         out->ballistic = out->deployable = out->conditional = true;
         break;
     case QA_Q2_BFG:
@@ -121,8 +121,8 @@ bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
         break;
     case QA_Q2_RAILGUN:
         out->offset = qa_v3(0, 7, -8);
-        out->damage = dm ? 100 : c->rerelease ? 125 : 150;
-        out->kick = dm ? 200 : c->rerelease ? 225 : 250;
+        out->damage = dm ? 100 : c->rules == QA_RULESET_Q2_RERELEASE ? 125 : 150;
+        out->kick = dm ? 200 : c->rules == QA_RULESET_Q2_RERELEASE ? 225 : 250;
         out->range = q2_hitscan_range();
         break;
     case QA_Q2_HEATBEAM:
@@ -136,7 +136,7 @@ bool q2_weapon_shot_spec(const q2_weapon_call *c, q2_shot_spec *out) {
         out->offset = qa_v3(15, c->state->frame == 6 ? 8 : 6, -8);
         out->damage = 10;
         out->kick = 3;
-        out->speed = c->rerelease ? 1150 : 750;
+        out->speed = c->rules == QA_RULESET_Q2_RERELEASE ? 1150 : 750;
         out->fuse = 8000 / out->speed;
         out->mod = 42;
         break;
@@ -187,7 +187,7 @@ static bool finish(q2_weapon_call *c, int code, qa_vec3 start, int consume, qa_e
 }
 static bool lag_begin(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool *active,
                       qa_error *e) {
-    *active = c->rerelease && c->game->hooks.lag_begin != NULL;
+    *active = c->rules == QA_RULESET_Q2_RERELEASE && c->game->hooks.lag_begin != NULL;
     return !*active ||
            c->game->hooks.lag_begin(c->game->hooks.context, c->actor->id, start, direction, e);
 }
@@ -206,12 +206,12 @@ static bool blaster(q2_weapon_call *c, qa_vec3 offset, float damage, bool hyper,
     if (!q2_project(c, c->input.angles, qa_vec_add(spec.offset, offset), &start, &dir, e))
         return false;
     qa_vec3 kick = qa_v3(-1, 0, 0);
-    if (hyper && c->rerelease) {
+    if (hyper && c->rules == QA_RULESET_Q2_RERELEASE) {
         kick.x = q2_crandom(c->game) * 0.7f;
         kick.y = q2_crandom(c->game) * 0.7f;
         kick.z = q2_crandom(c->game) * 0.7f;
     }
-    q2_kick(c, qa_vec_scale(forward(c), -2), kick, c->rerelease ? 0.2f : 0);
+    q2_kick(c, qa_vec_scale(forward(c), -2), kick, c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     float multiplier;
     if (!q2_multiplier(c, &multiplier, e)) return false;
     return q2_projectile_spawn(c, Q2_BOLT, start, dir, damage * multiplier, 1,
@@ -222,7 +222,7 @@ static bool blaster(q2_weapon_call *c, qa_vec3 offset, float damage, bool hyper,
 }
 qa_vec3 q2_hyper_offset(const q2_weapon_call *c) {
     float rotation = (float)(c->state->frame - 5) * 6.283185307179586f / 6;
-    return c->rerelease ? qa_v3(-4 * sinf(rotation), 4 * cosf(rotation), 0) :
+    return c->rules == QA_RULESET_Q2_RERELEASE ? qa_v3(-4 * sinf(rotation), 4 * cosf(rotation), 0) :
                          qa_v3(-4 * sinf(rotation), 0, 4 * cosf(rotation));
 }
 
@@ -236,11 +236,11 @@ bool q2_weapon_muzzle(q2_weapon_call *c, const q2_shot_spec *spec, qa_vec3 angle
     qa_vec3 projected = angles;
     if (weapon == QA_Q2_PHALANX) {
         projected.y += spec->yaw_offset;
-        if (!q2_project(c, c->rerelease ? projected : angles, offset, start, direction, error)) return false;
-        if (!c->rerelease) qa_angle_vectors(projected, direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
+        if (!q2_project(c, c->rules == QA_RULESET_Q2_RERELEASE ? projected : angles, offset, start, direction, error)) return false;
+        if (c->rules != QA_RULESET_Q2_RERELEASE) qa_angle_vectors(projected, direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
         return true;
     }
-    if (!c->rerelease && (weapon == QA_Q2_ETF_RIFLE || weapon == QA_Q2_TESLA)) {
+    if (c->rules != QA_RULESET_Q2_RERELEASE && (weapon == QA_Q2_ETF_RIFLE || weapon == QA_Q2_TESLA)) {
         qa_body_state body;
         qa_vec3 forward, right, up;
         if (!qa_world_body_read(c->game->services.world, c->actor->id, &body, error)) return false;
@@ -267,7 +267,7 @@ static bool hyperblaster(q2_weapon_call *c, qa_error *e) {
     int ammo;
     if (!q2_ammo(c, &ammo, e))
         return false;
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         s->frame = s->frame > 20 ? 6 : s->frame + 1;
         if (s->frame == 12) {
             if (ammo > 0 && q2_continues(c))
@@ -320,7 +320,7 @@ static bool machinegun(q2_weapon_call *c, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
     if (!q2_continues(c)) {
         s->machinegun_shots = 0;
-        s->frame = c->rerelease ? 6 : s->frame + 1;
+        s->frame = c->rules == QA_RULESET_Q2_RERELEASE ? 6 : s->frame + 1;
         return true;
     }
     s->frame = s->frame == 4 ? 5 : 4;
@@ -332,7 +332,7 @@ static bool machinegun(q2_weapon_call *c, qa_error *e) {
         return q2_no_ammo(c, true, e);
     }
     qa_vec3 origin, angles;
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         origin.x = q2_crandom(c->game) * 0.35f;
         origin.y = q2_crandom(c->game) * 0.35f;
         origin.z = q2_crandom(c->game) * 0.35f;
@@ -349,9 +349,9 @@ static bool machinegun(q2_weapon_call *c, qa_error *e) {
         if (!c->game->options.deathmatch && s->machinegun_shots < 9)
             ++s->machinegun_shots;
     }
-    q2_kick(c, origin, angles, c->rerelease ? 0.2f : 0);
+    q2_kick(c, origin, angles, c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     qa_vec3 start, dir;
-    if (!q2_project(c, c->rerelease ? c->input.angles : qa_vec_add(c->input.angles, angles),
+    if (!q2_project(c, c->rules == QA_RULESET_Q2_RERELEASE ? c->input.angles : qa_vec_add(c->input.angles, angles),
                     spec.offset, &start, &dir, e))
         return false;
     bool lag;
@@ -361,7 +361,7 @@ static bool machinegun(q2_weapon_call *c, qa_error *e) {
     if (!q2_multiplier(c, &damage_factor, e) || !q2_multiplier(c, &kick_factor, e))
         return lag_end(c, lag, false, e);
     bool result = q2_bullet(c, start, dir, spec.damage * damage_factor, spec.kick * kick_factor, spec.spread_x, spec.spread_y, 1, 4, false, e);
-    if (!lag_end(c, lag, result, e) || (c->rerelease && !q2_power_sound(c, e)) ||
+    if (!lag_end(c, lag, result, e) || (c->rules == QA_RULESET_Q2_RERELEASE && !q2_power_sound(c, e)) ||
         !finish(c, 1, start, 1, e))
         return false;
     return q2_attack_animation(c, (int)(q2_random(c->game) + 0.25f), e);
@@ -373,12 +373,12 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
     int ammo;
     if (!q2_ammo(c, &ammo, e))
         return false;
-    if (c->rerelease && s->frame > 31) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE && s->frame > 31) {
         s->frame = 5;
         if (!q2_sound(c, QA_Q2_SFX_WEAPONS_CHNGNU1A, 0, 2, e))
             return false;
     } else {
-        if (!c->rerelease && s->frame == 5 && !q2_sound(c, QA_Q2_SFX_WEAPONS_CHNGNU1A, 0, 2, e))
+        if (c->rules != QA_RULESET_Q2_RERELEASE && s->frame == 5 && !q2_sound(c, QA_Q2_SFX_WEAPONS_CHNGNU1A, 0, 2, e))
             return false;
         if (s->frame == 14 && !q2_continues(c)) {
             s->frame = 32;
@@ -392,11 +392,11 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
     if (s->frame == 22) {
         if (!q2_loop(c, Q2_NAME_NONE, e) || !q2_sound(c, QA_Q2_SFX_WEAPONS_CHNGND1A, 0, 2, e))
             return false;
-    } else if (!c->rerelease && !q2_loop(c, QA_Q2_SFX_WEAPONS_CHNGNL1A, e))
+    } else if (c->rules != QA_RULESET_Q2_RERELEASE && !q2_loop(c, QA_Q2_SFX_WEAPONS_CHNGNL1A, e))
         return false;
-    if (c->rerelease && (s->frame < 5 || s->frame > 21))
+    if (c->rules == QA_RULESET_Q2_RERELEASE && (s->frame < 5 || s->frame > 21))
         return true;
-    if (c->rerelease && !q2_loop(c, QA_Q2_SFX_WEAPONS_CHNGNL1A, e))
+    if (c->rules == QA_RULESET_Q2_RERELEASE && !q2_loop(c, QA_Q2_SFX_WEAPONS_CHNGNL1A, e))
         return false;
     if (!q2_attack_animation(c, s->frame & 1, e))
         return false;
@@ -408,7 +408,7 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
     if (shots <= 0)
         return q2_no_ammo(c, true, e);
     qa_vec3 o, a;
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         o.x = q2_crandom(c->game) * 0.35f;
         o.y = q2_crandom(c->game) * 0.35f;
         o.z = q2_crandom(c->game) * 0.35f;
@@ -424,7 +424,7 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
         o.z = q2_crandom(c->game) * 0.35f;
         a.z = q2_crandom(c->game) * 0.7f;
     }
-    q2_kick(c, o, a, c->rerelease ? 0.2f : 0);
+    q2_kick(c, o, a, c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     qa_vec3 start, dir;
     if (!q2_project(c, c->input.angles, qa_v3(0, 0, -8), &start, &dir, e))
         return false;
@@ -432,7 +432,7 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
     for (int i = 0; i < shots && result && q2_actor_live(c->game, c->actor->id); ++i) {
-        float side = (c->rerelease ? 0 : 7) + q2_crandom(c->game) * 4;
+        float side = (c->rules == QA_RULESET_Q2_RERELEASE ? 0 : 7) + q2_crandom(c->game) * 4;
         float up = q2_crandom(c->game) * 4 - 8;
         float damage_factor, kick_factor;
         result = q2_project(c, c->input.angles, qa_v3(0, side, up), &start, &dir, e) &&
@@ -440,21 +440,21 @@ static bool chaingun(q2_weapon_call *c, qa_error *e) {
                  q2_bullet(c, start, dir, spec.damage * damage_factor,
                            spec.kick * kick_factor, spec.spread_x, spec.spread_y, 1, 5, false, e);
     }
-    return lag_end(c, lag, result, e) && (!c->rerelease || q2_power_sound(c, e)) &&
+    return lag_end(c, lag, result, e) && (c->rules != QA_RULESET_Q2_RERELEASE || q2_power_sound(c, e)) &&
            finish(c, 3 + shots - 1, start, shots, e);
 }
 static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
     q2_shot_spec spec;
     (void)q2_weapon_shot_spec(c, &spec);
     if (!super && c->state->frame == 9) {
-        if (!c->rerelease)
+        if (c->rules != QA_RULESET_Q2_RERELEASE)
             ++c->state->frame;
         return true;
     }
     qa_vec3 start, dir;
     if (!q2_project(c, c->input.angles, spec.offset, &start, &dir, e))
         return false;
-    q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-2, 0, 0), c->rerelease ? 0.2f : 0);
+    q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-2, 0, 0), c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     bool lag, result = true;
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
@@ -462,7 +462,7 @@ static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
         for (int i = 0; i < 2 && result && q2_actor_live(c->game, c->actor->id); ++i) {
             qa_vec3 angles = c->input.angles;
             angles.y += i == 0 ? -spec.spread_degrees_x : spec.spread_degrees_x;
-            if (c->rerelease)
+            if (c->rules == QA_RULESET_Q2_RERELEASE)
                 result = q2_project(c, angles, qa_v3(0, 0, -8), &start, &dir, e);
             else
                 qa_angle_vectors(angles, &dir, NULL, NULL,QA_ANGLE_FLOAT_MATH);
@@ -479,7 +479,7 @@ static bool shotgun(q2_weapon_call *c, bool super, qa_error *e) {
     }
     if (!lag_end(c, lag, result, e))
         return false;
-    if (!c->rerelease)
+    if (c->rules != QA_RULESET_Q2_RERELEASE)
         ++c->state->frame;
     return finish(c, super ? 13 : 2, start, c->definition->quantity, e);
 }
@@ -495,7 +495,7 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
     qa_vec3 start, dir, angles = c->input.angles, offset = spec.offset;
     float damage = spec.damage, splash = spec.splash;
     if (w == QA_Q2_GRENADELAUNCHER || w == QA_Q2_PROXLAUNCHER) {
-        if (c->rerelease) angles.x = q2_launch_pitch(angles.x);
+        if (c->rules == QA_RULESET_Q2_RERELEASE) angles.x = q2_launch_pitch(angles.x);
     } else if (w == QA_Q2_ROCKETLAUNCHER)
         damage += floorf(q2_random(c->game) * spec.damage_random);
     else if (w == QA_Q2_IONRIPPER)
@@ -506,35 +506,35 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
         if (c->state->frame != 8) splash *= m;
     } else if (w == QA_Q2_BFG) {
         if (c->state->frame == 9) {
-            if (!c->rerelease) ++c->state->frame;
+            if (c->rules != QA_RULESET_Q2_RERELEASE) ++c->state->frame;
             qa_body_state body;
             if (!qa_world_body_read(c->game->services.world, c->actor->id, &body, e)) return false;
-            return flash(c, 12, e) && q2_noise(c, c->rerelease ? body.origin : qa_v3(0, 0, 0), e);
+            return flash(c, 12, e) && q2_noise(c, c->rules == QA_RULESET_Q2_RERELEASE ? body.origin : qa_v3(0, 0, 0), e);
         }
         int ammo;
         if (!q2_ammo(c, &ammo, e)) return false;
         if (ammo < c->definition->quantity) {
-            if (!c->rerelease) ++c->state->frame;
+            if (c->rules != QA_RULESET_Q2_RERELEASE) ++c->state->frame;
             return true;
         }
     }
-    if (!q2_project(c, w == QA_Q2_PHALANX && !c->rerelease ? c->input.angles : angles, offset,
+    if (!q2_project(c, w == QA_Q2_PHALANX && c->rules != QA_RULESET_Q2_RERELEASE ? c->input.angles : angles, offset,
                     &start, &dir, e))
         return false;
-    if (w == QA_Q2_PHALANX && !c->rerelease)
+    if (w == QA_Q2_PHALANX && c->rules != QA_RULESET_Q2_RERELEASE)
         qa_angle_vectors(angles, &dir, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     if (w == QA_Q2_DISINTEGRATOR) {
         if (!q2_tracker_target(c, start, dir, &c->projectile_enemy, e))
             return false;
         c->has_projectile_enemy = true;
     }
-    q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-1, 0, 0), c->rerelease ? 0.2f : 0);
+    q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-1, 0, 0), c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     if (w == QA_Q2_IONRIPPER) {
         qa_vec3 aim;
-        qa_angle_vectors(c->rerelease ? c->input.angles : angles, &aim, NULL, NULL,QA_ANGLE_FLOAT_MATH);
-        q2_kick(c, qa_vec_scale(aim, -3), qa_v3(-3, 0, 0), c->rerelease ? 0.2f : 0);
+        qa_angle_vectors(c->rules == QA_RULESET_Q2_RERELEASE ? c->input.angles : angles, &aim, NULL, NULL,QA_ANGLE_FLOAT_MATH);
+        q2_kick(c, qa_vec_scale(aim, -3), qa_v3(-3, 0, 0), c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     } else if (w == QA_Q2_PHALANX)
-        q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-2, 0, 0), c->rerelease ? 0.2f : 0);
+        q2_kick(c, qa_vec_scale(forward(c), -2), qa_v3(-2, 0, 0), c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     if (w != QA_Q2_PHALANX) {
         if (!q2_multiplier(c, &m, e)) return false;
         damage *= m;
@@ -549,16 +549,16 @@ static bool launch(q2_weapon_call *c, qa_error *e) {
         return false;
     if (w == QA_Q2_BFG)
         q2_kick(c, qa_vec_scale(forward(c), -2),
-                qa_v3(c->rerelease ? -20 : -40, 0, q2_crandom(c->game) * 8),
-                c->rerelease ? fmaxf(0, 0.6f - (float)((double)c->frame_ns / 1e9)) : 0.5f);
+                qa_v3(c->rules == QA_RULESET_Q2_RERELEASE ? -20 : -40, 0, q2_crandom(c->game) * 8),
+                c->rules == QA_RULESET_Q2_RERELEASE ? fmaxf(0, 0.6f - (float)((double)c->frame_ns / 1e9)) : 0.5f);
     bool second = w == QA_Q2_PHALANX && c->state->frame == 8;
-    if (!c->rerelease)
+    if (c->rules != QA_RULESET_Q2_RERELEASE)
         ++c->state->frame;
     if (w == QA_Q2_PHALANX)
-        return (second ? q2_consume(c, 1, true, e) && (!c->rerelease || flash(c, 20, e))
+        return (second ? q2_consume(c, 1, true, e) && (c->rules != QA_RULESET_Q2_RERELEASE || flash(c, 20, e))
                        : flash(c, 18, e) && q2_noise(c, start, e)) &&
                q2_weapon_fired(c->game, c->actor->id, w, e);
-    if (w == QA_Q2_BFG && !c->rerelease)
+    if (w == QA_Q2_BFG && c->rules != QA_RULESET_Q2_RERELEASE)
         return q2_noise(c, start, e) && q2_consume(c, 50, true, e) &&
                q2_weapon_fired(c->game, c->actor->id, w, e);
     return finish(c, spec.muzzle, start, c->definition->quantity, e);
@@ -569,7 +569,7 @@ static bool rail(q2_weapon_call *c, qa_error *e) {
     qa_vec3 start, dir;
     if (!q2_project(c, c->input.angles, spec.offset, &start, &dir, e))
         return false;
-    q2_kick(c, qa_vec_scale(forward(c), -3), qa_v3(-3, 0, 0), c->rerelease ? 0.2f : 0);
+    q2_kick(c, qa_vec_scale(forward(c), -3), qa_v3(-3, 0, 0), c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     float damage = spec.damage, kick = spec.kick;
     bool lag;
     if (!lag_begin(c, start, dir, &lag, e))
@@ -580,7 +580,7 @@ static bool rail(q2_weapon_call *c, qa_error *e) {
     bool result = q2_rail(c, start, dir, damage * damage_factor, kick * kick_factor, 11, 0, e);
     if (!lag_end(c, lag, result, e))
         return false;
-    if (!c->rerelease)
+    if (c->rules != QA_RULESET_Q2_RERELEASE)
         ++c->state->frame;
     return finish(c, 6, start, 1, e);
 }
@@ -590,7 +590,7 @@ static bool heatbeam(q2_weapon_call *c, qa_error *e) {
     qa_vec3 start, dir;
     if (!q2_project(c, c->input.angles, spec.offset, &start, &dir, e))
         return false;
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         int ammo;
         if (!q2_ammo(c, &ammo, e))
             return false;
@@ -607,7 +607,7 @@ static bool heatbeam(q2_weapon_call *c, qa_error *e) {
         ++c->state->frame;
         c->state->view_model=c->game->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_V_BEAMER2_TRIS_MD2];
     }
-    q2_kick(c, qa_v3(0, 0, 0), qa_v3(0, 0, 0), c->rerelease ? 0.2f : 0);
+    q2_kick(c, qa_v3(0, 0, 0), qa_v3(0, 0, 0), c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     bool lag;
     if (!lag_begin(c, start, dir, &lag, e))
         return false;
@@ -623,7 +623,7 @@ static bool etf_rifle(q2_weapon_call *c, qa_error *e) {
     q2_shot_spec spec;
     (void)q2_weapon_shot_spec(c, &spec);
     qa_q2_weapon_state *s = c->state;
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         if (!q2_continues(c)) {
             s->frame = 8;
             return true;
@@ -634,7 +634,7 @@ static bool etf_rifle(q2_weapon_call *c, qa_error *e) {
     if (!q2_ammo(c, &ammo, e))
         return false;
     if (ammo < c->definition->quantity) {
-        q2_kick(c, qa_v3(0, 0, 0), qa_v3(0, 0, 0), c->rerelease ? 0.2f : 0);
+        q2_kick(c, qa_v3(0, 0, 0), qa_v3(0, 0, 0), c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
         s->frame = 8;
         return q2_no_ammo(c, true, e);
     }
@@ -645,9 +645,9 @@ static bool etf_rifle(q2_weapon_call *c, qa_error *e) {
     angles.y = q2_crandom(c->game) * 0.85f;
     origin.z = q2_crandom(c->game) * 0.85f;
     angles.z = q2_crandom(c->game) * 0.85f;
-    q2_kick(c, origin, angles, c->rerelease ? 0.2f : 0);
+    q2_kick(c, origin, angles, c->rules == QA_RULESET_Q2_RERELEASE ? 0.2f : 0);
     qa_vec3 start, dir;
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         if (!q2_project(c, qa_vec_add(c->input.angles, angles),
                         qa_v3(15, s->frame == 6 ? 8 : 6, -8), &start, &dir, e))
             return false;
@@ -660,13 +660,13 @@ static bool etf_rifle(q2_weapon_call *c, qa_error *e) {
                              spec.speed, 0, 0, spec.fuse, spec.mod, 0, false, false,
                              e))
         return false;
-    if (c->rerelease && !q2_power_sound(c, e))
+    if (c->rules == QA_RULESET_Q2_RERELEASE && !q2_power_sound(c, e))
         return false;
-    if (!flash(c, c->rerelease && s->frame == 7 ? 32 : 30, e) || !q2_noise(c, start, e))
+    if (!flash(c, c->rules == QA_RULESET_Q2_RERELEASE && s->frame == 7 ? 32 : 30, e) || !q2_noise(c, start, e))
         return false;
-    if (!c->rerelease)
+    if (c->rules != QA_RULESET_Q2_RERELEASE)
         ++s->frame;
-    return q2_consume(c, c->definition->quantity, c->rerelease, e) && q2_attack_animation(c, 1, e) &&
+    return q2_consume(c, c->definition->quantity, c->rules == QA_RULESET_Q2_RERELEASE, e) && q2_attack_animation(c, 1, e) &&
            q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 bool q2_fire(q2_weapon_call *c, bool buffered, qa_error *e) {
@@ -687,7 +687,7 @@ bool q2_fire(q2_weapon_call *c, bool buffered, qa_error *e) {
         (void)q2_weapon_shot_spec(c, &spec);
         if (!blaster(c, qa_v3(0, 0, 0), spec.damage, false, e))
             return false;
-        if (!c->rerelease)
+        if (c->rules != QA_RULESET_Q2_RERELEASE)
             ++c->state->frame;
         return true;
     }

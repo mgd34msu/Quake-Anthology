@@ -20,9 +20,9 @@ bool q2_grapple_weapon(q2_weapon_call *c, qa_error *e) {
             return true;
         return q2_generic_classic(c, e);
     }
-    bool held = c->input.attack || (c->rerelease && c->input.holster);
+    bool held = c->input.attack || (c->rules == QA_RULESET_Q2_RERELEASE && c->input.holster);
     if (held && s->phase == QA_Q2_FIRING && source->hook.registry != 0)
-        s->frame = c->rerelease ? 6 : 9;
+        s->frame = c->rules == QA_RULESET_Q2_RERELEASE ? 6 : 9;
     if (!held && source->hook.registry != 0) {
         if (!qa_q2_grapple_reset(c->game, c->actor->id, QA_Q2_CTF_GRAPPLE, e))
             return false;
@@ -31,11 +31,11 @@ bool q2_grapple_weapon(q2_weapon_call *c, qa_error *e) {
         if (s->phase == QA_Q2_FIRING)
             s->phase = QA_Q2_READY;
     }
-    if ((change || (c->rerelease && (c->input.holster || c->input.latched_holster))) &&
+    if ((change || (c->rules == QA_RULESET_Q2_RERELEASE && (c->input.holster || c->input.latched_holster))) &&
         source->phase != QA_Q2_GRAPPLE_FLY && s->phase == QA_Q2_FIRING) {
         if (c->equipment)
             s->handoff = QA_Q2_PRIMARY_HOLSTERING;
-        else if (c->rerelease && s->handoff == QA_Q2_PRIMARY_ACTIVE &&
+        else if (c->rules == QA_RULESET_Q2_RERELEASE && s->handoff == QA_Q2_PRIMARY_ACTIVE &&
                  s->pending == QA_Q2_WEAPON_NONE)
             s->pending = s->weapon;
         s->phase = QA_Q2_DROPPING;
@@ -46,11 +46,11 @@ bool q2_grapple_weapon(q2_weapon_call *c, qa_error *e) {
         return false;
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
-    if (c->rerelease && held && s->phase == QA_Q2_FIRING && source->hook.registry != 0)
+    if (c->rules == QA_RULESET_Q2_RERELEASE && held && s->phase == QA_Q2_FIRING && source->hook.registry != 0)
         s->frame = 6;
     if (before == QA_Q2_ACTIVATING && s->phase == QA_Q2_READY &&
         source->phase != QA_Q2_GRAPPLE_FLY) {
-        s->frame = held ? 5 : c->rerelease ? 6 : 9;
+        s->frame = held ? 5 : c->rules == QA_RULESET_Q2_RERELEASE ? 6 : 9;
         s->phase = QA_Q2_FIRING;
     }
     return true;
@@ -135,7 +135,7 @@ bool qa_q2_grapple_equipment_tick(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_k
                         .definition = &g->definitions[s->weapon],
                         .now_ns = now,
                         .frame_ns = frame,
-                        .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE,
+                        .rules = g->options.rules,
                         .silenced = a->silencer > 0,
                         .equipment = true};
     c.input.source_rules =

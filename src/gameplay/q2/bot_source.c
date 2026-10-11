@@ -56,7 +56,7 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
     }
     q2_weapon_call call = {.game = game, .actor = actor, .state = &state, .input = actor->input,
         .definition = definition, .now_ns = game->now_ns, .frame_ns = game->frame_ns,
-        .rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE};
+        .rules = game->options.rules};
     bool throwing = weapon == QA_Q2_GRENADES || weapon == QA_Q2_TRAP || weapon == QA_Q2_TESLA;
     q2_shot_spec spec;
     if (throwing) {
@@ -82,16 +82,16 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
         .owned = owned_count > 0, .melee = spec.melee, .ballistic = spec.ballistic,
         .homing = spec.homing, .deployable = spec.deployable, .grapple = spec.grapple,
         .conditional = spec.conditional,
-        .range_from_bounds = spec.melee && call.rerelease,
+        .range_from_bounds = spec.melee && call.rules == QA_RULESET_Q2_RERELEASE,
         .timed_detonation = weapon == QA_Q2_GRENADES || weapon == QA_Q2_GRENADELAUNCHER,
         .requires_release = throwing,
-        .pitch_clamped = call.rerelease && (throwing || weapon == QA_Q2_GRENADELAUNCHER || weapon == QA_Q2_PROXLAUNCHER)};
+        .pitch_clamped = call.rules == QA_RULESET_Q2_RERELEASE && (throwing || weapon == QA_Q2_GRENADELAUNCHER || weapon == QA_Q2_PROXLAUNCHER)};
     if (weapon == QA_Q2_CHAINGUN) out->ammo_per_shot = spec.shots;
     if (weapon == QA_Q2_PHALANX && state.frame != 8) out->ammo_per_shot = 0;
     if (weapon == QA_Q2_TRAP) {
         out->effect_damage = q2_trap_capture_damage();
         out->damage = 0;
-        if (call.rerelease || spec.fuse > 0) out->splash_damage = 0;
+        if (call.rules == QA_RULESET_Q2_RERELEASE || spec.fuse > 0) out->splash_damage = 0;
     } else if (weapon == QA_Q2_TESLA) {
         out->effect_damage = spec.damage;
         out->effect_radius = spec.radius;
@@ -111,8 +111,8 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
         out->required_ammo = 0;
         out->ammo_per_shot = 0;
     } else {
-        bool honors_infinite = weapon == QA_Q2_ETF_RIFLE ? call.rerelease :
-            throwing ? !call.rerelease && weapon != QA_Q2_TRAP : true;
+        bool honors_infinite = weapon == QA_Q2_ETF_RIFLE ? call.rules == QA_RULESET_Q2_RERELEASE :
+            throwing ? call.rules != QA_RULESET_Q2_RERELEASE && weapon != QA_Q2_TRAP : true;
         if (infinite && honors_infinite) out->ammo_per_shot = 0;
         if (weapon == QA_Q2_LMCTF_PLASMA)
             out->ammo_per_shot = (game->options.deathmatch_flags & 8192u) != 0 ? 9 : 10;
@@ -128,13 +128,13 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
             if (!infinite) out->ammo_per_shot = ammo_count;
         }
     }
-    uint64_t interval = call.rerelease ? q2_animation_native(&call) : game->frame_ns;
+    uint64_t interval = call.rules == QA_RULESET_Q2_RERELEASE ? q2_animation_native(&call) : game->frame_ns;
     float seconds = (float)((double)interval / 1e9);
     out->has_cycle = !throwing && !out->grapple && weapon != QA_Q2_CHAINFIST && !game->hooks.firing_interval &&
         !game->hooks.selected_firing_interval;
-    if (!call.rerelease && call.input.source_rules == QA_Q2_WEAPON_RULES_CTF && call.input.haste)
+    if (call.rules != QA_RULESET_Q2_RERELEASE && call.input.source_rules == QA_Q2_WEAPON_RULES_CTF && call.input.haste)
         seconds *= 0.5f;
-    out->cycle = (float)(definition->fire_last - definition->activate_last + (call.rerelease ? 0 : 1)) * seconds;
+    out->cycle = (float)(definition->fire_last - definition->activate_last + (call.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1)) * seconds;
     if (definition->repeating || weapon == QA_Q2_ETF_RIFLE || weapon == QA_Q2_HEATBEAM)
         out->cycle = seconds;
     int launch_frame = weapon == QA_Q2_BFG ? 17 : state.frame;
@@ -158,8 +158,8 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
         out->spin_up = (float)(spin.frame - first) * seconds;
     }
     state.phase = QA_Q2_ACTIVATING;
-    if (call.rerelease) interval = q2_animation_native(&call);
-    out->activate = call.rerelease && call.input.instant_switch ? 0 :
+    if (call.rules == QA_RULESET_Q2_RERELEASE) interval = q2_animation_native(&call);
+    out->activate = call.rules == QA_RULESET_Q2_RERELEASE && call.input.instant_switch ? 0 :
         (float)definition->activate_last * (float)((double)interval / 1e9);
     if (out->ballistic) {
         if (!game->services.physics) {
@@ -169,13 +169,13 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
         qa_physics_properties properties = qa_physics_properties_default(QA_GAME_Q2);
         out->gravity_acceleration = game->services.physics->gravity * properties.gravity_scale;
         out->extra_z_velocity = out->deployable ?
-            q2_mine_lift(spec.kind, call.rerelease, call.input.gravity, 0) :
-            q2_grenade_lift(call.rerelease, call.input.gravity, 0);
+            q2_mine_lift(spec.kind, call.rules == QA_RULESET_Q2_RERELEASE, call.input.gravity, 0) :
+            q2_grenade_lift(call.rules == QA_RULESET_Q2_RERELEASE, call.input.gravity, 0);
     }
     qa_body_state body;
     if (!qa_world_body_read(game->services.world, id, &body, error)) return false;
     qa_vec3 angles = call.input.angles, start, direction;
-    if (call.rerelease && (throwing || weapon == QA_Q2_GRENADELAUNCHER || weapon == QA_Q2_PROXLAUNCHER))
+    if (call.rules == QA_RULESET_Q2_RERELEASE && (throwing || weapon == QA_Q2_GRENADELAUNCHER || weapon == QA_Q2_PROXLAUNCHER))
         angles.x = q2_launch_pitch(angles.x);
     if (!q2_weapon_muzzle(&call, &spec, angles, &start, &direction, error)) return false;
     if (q2_actor_get(game, id, false, error) != actor) {

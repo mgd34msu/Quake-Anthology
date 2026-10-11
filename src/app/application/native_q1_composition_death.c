@@ -448,7 +448,7 @@ bool application_native_q1_source_before_reaction(qa_application *app,
     else if (okay && outcome->request.attack.cause.kind == QA_CAUSE_ENVIRONMENT &&
         outcome->request.attack.cause.source.hazard == QA_HAZARD_FALL)
         okay = qa_strings_intern_cstr(qa_session_strings(app->session), "falling", &input.death_type, error);
-    if (okay && options.quakeworld && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC) {
+    if (okay && (options.rules == QA_RULESET_QUAKEWORLD) && options.program == QA_Q1_ID1 && options.edition == QA_Q1_CLASSIC) {
         okay = qw_obituary(&call, &input, error) && player_current(&call, actor, error);
         goto finish;
     }

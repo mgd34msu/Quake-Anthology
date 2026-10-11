@@ -144,6 +144,7 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
         .actor_traits = actor_traits, .motion_changed = unexpected_motion};
     qa_q1_options options = {.provider = fixture->owner, .combat_provider = fixture->owner,
         .inventory_provider = fixture->owner, .program = program, .edition = edition,
+        .rules = QA_RULESET_NETQUAKE,
         .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = 1};
     qa_q1_host host = {.context = fixture, .check_client = check_client};
     GAME_CHECK(qa_q1_game_create(&services, &options, &host, &fixture->game, &error));

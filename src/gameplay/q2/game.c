@@ -570,7 +570,7 @@ bool q2_ammo(q2_weapon_call *c, int *out, qa_error *e) {
     return q2_count(c->game, c->actor->id, c->game->ammo[c->definition->weapon], out, e);
 }
 bool q2_infinite_ammo(const q2_weapon_call *c) {
-    return c->rerelease ? c->input.infinite_ammo :
+    return c->rules == QA_RULESET_Q2_RERELEASE ? c->input.infinite_ammo :
         (c->game->options.deathmatch_flags & 8192u) != 0;
 }
 bool q2_consume(q2_weapon_call *c, int quantity, bool honor_infinite, qa_error *e) {
@@ -594,7 +594,7 @@ bool q2_consume(q2_weapon_call *c, int quantity, bool honor_infinite, qa_error *
     }
     if (!q2_ammo(c, &after, e))
         return false;
-    if (c->rerelease && before > c->definition->warning && after <= c->definition->warning &&
+    if (c->rules == QA_RULESET_Q2_RERELEASE && before > c->definition->warning && after <= c->definition->warning &&
         !q2_sound(c, QA_Q2_SFX_WEAPONS_LOWAMMO, 0, 1, e))
         return false;
     return true;
@@ -610,8 +610,7 @@ qa_attack q2_attack(q2_weapon_call *c, int mod, uint32_t flags) {
     if (c->game->hooks.inventory_provider)
         attack.inventory_provider = c->game->hooks.inventory_provider(
             c->game->hooks.context, attack.attacker, attack.weapon);
-    attack.cause = qa_q2_damage_cause(c->rerelease ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC,
-                                      c->game->options.product, mod, flags);
+    attack.cause = qa_q2_damage_cause(c->rules, c->game->options.product, mod, flags);
     return attack;
 }
 qa_damage_cause qa_q2_damage_cause(qa_ruleset_id edition, qa_q2_product product, int canonical,

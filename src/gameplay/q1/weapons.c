@@ -945,7 +945,7 @@ bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 ang
     qa_vec3 source = qa_vec_add(body.origin, qa_vec_scale(g->forward, 10));
     source.z =
         body.origin.z + body.bounds.mins.z + (body.bounds.maxs.z - body.bounds.mins.z) * 0.7f;
-    if (g->options.quakeworld)
+    if (g->options.rules == QA_RULESET_QUAKEWORLD)
         return qw_bullets(g,actor,source,direction,count,spread_x,spread_y,weapon,error);
     qa_actor_id pending = {0};
     float amount = 0;

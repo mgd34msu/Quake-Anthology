@@ -25,7 +25,7 @@ bool q2_event_named(q2_weapon_call *c, qa_builtin_event_kind kind, q2_runtime_na
             event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS,end};
             break;
         case Q2_NAME_RESOURCE_Q2_RAIL:
-            if (c->rerelease) {
+            if (c->rules == QA_RULESET_Q2_RERELEASE) {
                 event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS_LINE,origin};
                 break;
             }
@@ -83,7 +83,7 @@ bool q2_loop(q2_weapon_call *c, q2_runtime_name name, qa_error *e) {
 bool q2_noise(q2_weapon_call *c, qa_vec3 origin, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
-    if (c->rerelease) {
+    if (c->rules == QA_RULESET_Q2_RERELEASE) {
         uint64_t until = q2_deadline(c->now_ns, c->actor->silencer > 0 ? 400 * Q2_MS : 2 * Q2_NS);
         if (!q2_player_invisibility_reveal(c->game, c->actor->id, until, e) ||
             (c->game->hooks.invisibility_reveal != NULL &&
@@ -118,7 +118,7 @@ bool q2_animation(q2_weapon_call *c, int priority, int first, int last, qa_error
                               .code = priority,
                               .frame = first,
                               .count = last,
-                              .flags = c->rerelease ? 1u : 0u};
+                              .flags = c->rules == QA_RULESET_Q2_RERELEASE ? 1u : 0u};
     return qa_builtin_emit(&c->game->services, &event, e);
 }
 bool q2_attack_animation(q2_weapon_call *c, int offset, qa_error *e) {
@@ -131,7 +131,7 @@ bool q2_power_sound(q2_weapon_call *c, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
     bool quad = c->input.quad_until_ns > c->now_ns, twice = c->input.double_until_ns > c->now_ns;
-    q2_runtime_name path = quad && twice && c->rerelease ? QA_Q2_SFX_CTF_TECH2X
+    q2_runtime_name path = quad && twice && c->rules == QA_RULESET_Q2_RERELEASE ? QA_Q2_SFX_CTF_TECH2X
                        : quad                        ? QA_Q2_SFX_ITEMS_DAMAGE3
                        : twice                       ? QA_Q2_SFX_MISC_DDAMAGE3
                                                      : Q2_NAME_NONE;
@@ -187,7 +187,7 @@ void q2_recoil(q2_weapon_call *c, qa_vec3 *origin, qa_vec3 *angles) {
         : c->now_ns >= s->kick_until_ns
             ? 0
             : fminf(1, (float)((double)(s->kick_until_ns - c->now_ns) / 1e9) / s->kick_seconds);
-    *origin = qa_vec_scale(s->kick_origin, c->rerelease ? factor : impulse);
+    *origin = qa_vec_scale(s->kick_origin, c->rules == QA_RULESET_Q2_RERELEASE ? factor : impulse);
     *angles = qa_vec_scale(s->kick_angles, factor);
 }
 qa_string_id qa_q2_weapon_view_model(const qa_q2_game *game, const qa_q2_weapon_state *state)
@@ -221,9 +221,9 @@ bool q2_project(q2_weapon_call *c, qa_vec3 angles, qa_vec3 offset, qa_vec3 *star
                                                       : offset.y;
     qa_vec3 eye = qa_vec_add(body.origin, qa_v3(0, 0, c->input.view_height));
     *start = qa_vec_add(qa_vec_add(eye, qa_vec_scale(f, offset.x)), qa_vec_scale(r, side));
-    *start = qa_vec_add(*start, c->rerelease ? qa_vec_scale(u, offset.z) : qa_v3(0, 0, offset.z));
+    *start = qa_vec_add(*start, c->rules == QA_RULESET_Q2_RERELEASE ? qa_vec_scale(u, offset.z) : qa_v3(0, 0, offset.z));
     *direction = f;
-    if (!c->rerelease)
+    if (c->rules != QA_RULESET_Q2_RERELEASE)
         return true;
     qa_trace_query query = {
         .start = eye, .end = qa_vec_add(eye, qa_vec_scale(f, 8192)), .pass_actor = c->actor->id};

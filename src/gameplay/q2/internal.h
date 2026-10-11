@@ -563,7 +563,8 @@ typedef struct q2_weapon_call {
     qa_q2_weapon_input input;
     const qa_q2_weapon_definition *definition;
     uint64_t now_ns, frame_ns;
-    bool rerelease, silenced, equipment;
+    qa_ruleset_id rules;
+    bool silenced, equipment;
     bool has_projectile_enemy;
     qa_actor_id projectile_enemy;
     bool has_attack_owner, has_projectile_effects;

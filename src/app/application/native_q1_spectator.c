@@ -95,7 +95,7 @@ bool application_native_q1_spectator_begin(application_provider *source, qa_acto
     qa_q1_options options;
     double seconds;
     if (okay) okay = qa_q1_source_respawn_options_read(source->state.q1, &options, &seconds, error);
-    if (okay && (!options.quakeworld || options.max_clients != 32))
+    if (okay && (!(options.rules == QA_RULESET_QUAKEWORLD) || options.max_clients != 32))
         okay = application_fail(error, QA_ERROR_ARGUMENT, "QW spectator requires its genuine fixed client table");
     qa_body_state body;
     if (okay) okay = qa_world_body_read(app->world, actor, &body, error) && current(&call, error);
