@@ -547,12 +547,6 @@ static bool update_angles(prediction_player *player, const prediction_command *e
     }
     return true;
 }
-static float lerp_angle(float from, float to, float fraction)
-{
-    if (to - from > 180) to -= 360;
-    if (to - from < -180) to += 360;
-    return from + fraction * (to - from);
-}
 static bool interpolate(frontend_remote_prediction *owner, const frontend_remote_prediction_source *source,
     prediction_state *state, bool grab_angles, qa_error *error)
 {
@@ -589,9 +583,9 @@ static bool interpolate(frontend_remote_prediction *owner, const frontend_remote
         if (state->predicted.view.movement.kind == QA_RULESET_Q3)
             state->predicted.view.movement.data.q3.bob_cycle = bob_cycle;
         if (!grab_angles) state->predicted.view.view_angles = qa_v3(
-            lerp_angle(a->viewangles[0], b->viewangles[0], fraction),
-            lerp_angle(a->viewangles[1], b->viewangles[1], fraction),
-            lerp_angle(a->viewangles[2], b->viewangles[2], fraction));
+            qa_angle_lerp(a->viewangles[0], b->viewangles[0], fraction),
+            qa_angle_lerp(a->viewangles[1], b->viewangles[1], fraction),
+            qa_angle_lerp(a->viewangles[2], b->viewangles[2], fraction));
     }
     if (state->predicted.view.movement.kind == QA_RULESET_Q3)
         state->predicted.view.movement.data.q3.view_angles = state->predicted.view.view_angles;

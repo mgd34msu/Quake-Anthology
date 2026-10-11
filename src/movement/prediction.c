@@ -59,11 +59,6 @@ static bool required_command(const qa_q3_prediction_host *host, uint32_t number,
     if (!available) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 prediction command is outside CMD_BACKUP"); return false; }
     return true;
 }
-static float lerp_angle(float a, float b, float fraction) {
-    if (b-a>180) b-=360;
-    if (b-a < -180) b+=360;
-    return a+fraction*(b-a);
-}
 static bool interpolate(qa_q3_prediction *p, const qa_q3_prediction_host *host, const qa_q3_prediction_frame *frame, bool angles, qa_error *error) {
     p->predicted=frame->snapshot->movement;
     if (angles) {
@@ -80,8 +75,8 @@ static bool interpolate(qa_q3_prediction *p, const qa_q3_prediction_host *host, 
     s->bob_cycle=!isfinite(bob)||bob>=2147483648.0f||bob < -2147483648.0f?INT32_MIN:(int32_t)truncf(bob);
     s->origin=qa_vec_lerp(a->origin,b->origin,fraction);
     s->velocity=qa_vec_lerp(a->velocity,b->velocity,fraction);
-    if (!angles) s->view_angles=qa_v3(lerp_angle(a->view_angles.x,b->view_angles.x,fraction),
-        lerp_angle(a->view_angles.y,b->view_angles.y,fraction),lerp_angle(a->view_angles.z,b->view_angles.z,fraction));
+    if (!angles) s->view_angles=qa_v3(qa_angle_lerp(a->view_angles.x,b->view_angles.x,fraction),
+        qa_angle_lerp(a->view_angles.y,b->view_angles.y,fraction),qa_angle_lerp(a->view_angles.z,b->view_angles.z,fraction));
     return true;
 }
 static bool adjusted(const qa_q3_prediction_host *host, qa_vec3 origin, qa_movement_ground ground, int32_t from, int32_t to, qa_vec3 *out, qa_error *error) {

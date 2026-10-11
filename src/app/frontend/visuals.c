@@ -1069,8 +1069,6 @@ static bool entity_angles(qa_frontend *frontend, const qa_application_visual_vie
     if (!rotates) return true;
     qa_application_selected_effects source;
     if (!qa_application_effects_producer_read(frontend->application, view->provider, &source, error)) return false;
-    const qa_product *product = qa_catalog_product(qa_application_catalog(frontend->application), view->content);
-    if (!product) return frontend_fail(error, QA_ERROR_NOT_FOUND, "Rotating entity lost its actual content product");
     double seconds = (double)source.source_time_ns / 1000000000.0;
     int64_t milliseconds = (int64_t)(source.source_time_ns / UINT64_C(1000000));
     if (view->family == QA_GAME_Q2) {
@@ -1078,8 +1076,8 @@ static bool entity_angles(qa_frontend *frontend, const qa_application_visual_vie
         if (!frontend_particle_q2_client_time(frontend, view->provider, &seconds, &found, error)) return false;
         if (found) milliseconds = llround(seconds * 1000);
     }
-    *angles = frontend_legacy_entity_angles(view->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q1,
-        product->edition, model, view->visual.effects, *angles, seconds, milliseconds);
+    *angles = frontend_legacy_entity_angles(source.source_frame.kind,
+        model, view->visual.effects, *angles, seconds, milliseconds);
     return true;
 }
 

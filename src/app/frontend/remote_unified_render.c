@@ -432,8 +432,10 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
             position=qa_vec_add(position,predicted->origin_shift); previous=qa_vec_add(previous,predicted->origin_shift);
         }
         if (input.view_model && input.family==QA_GAME_Q1) { position.z+=2; previous.z+=2; }
-        qa_vec3 angles = input.view_model ? m->angles : frontend_legacy_entity_angles(input.family,
-            m->product->edition, m->media.model, m->effects, m->angles, world->seconds, world->milliseconds);
+        qa_vec3 angles = input.view_model ? m->angles : frontend_legacy_entity_angles(
+            qa_ruleset_from_family_tag(input.family, m->product->edition == QA_EDITION_RERELEASE,
+                qa_product_ruleset(m->product, input.family)),
+            m->media.model, m->effects, m->angles, world->seconds, world->milliseconds);
         qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; qa_angle_axis(angles,axes,QA_ANGLE_FLOAT_MATH);
         input.transform.origin[0]=position.x;input.transform.origin[1]=position.y;input.transform.origin[2]=position.z;
         for (unsigned a=0;a<3;++a) { input.transform.axes[a][0]=axes[a].x; input.transform.axes[a][1]=axes[a].y;

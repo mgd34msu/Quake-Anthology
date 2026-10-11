@@ -68,7 +68,7 @@ static bool model_submit(frontend_remote_q1 *row, const frontend_remote_q1_entit
     qa_vec3 origin = qa_v3(entity->entity.origin[0], entity->entity.origin[1], entity->entity.origin[2]);
     qa_vec3 angles = qa_v3(entity->entity.angles[0], entity->entity.angles[1], entity->entity.angles[2]), axes[3];
     if (model && !entity->view_weapon && entity->entity.number < 65536)
-        angles = frontend_legacy_entity_angles(QA_GAME_Q1, QA_EDITION_CLASSIC, model->source,
+        angles = frontend_legacy_entity_angles(row->rules, model->source,
             0, angles, world->seconds, 0);
     qa_angle_axis(angles, axes,QA_ANGLE_FLOAT_MATH);
     transform.origin[0] = origin.x; transform.origin[1] = origin.y; transform.origin[2] = origin.z;
