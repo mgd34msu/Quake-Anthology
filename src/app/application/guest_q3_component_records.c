@@ -214,10 +214,10 @@ bool application_q3_component_records_live_client(void *context,qa_actor_id acto
 { application_q3_component_records *r=context; component_actor *row=r?q3records_actor(r,actor):NULL; return row&&row->client&&row->admitted&&application_q3_component_records_eligible(r,actor); }
 bool application_q3_component_records_client_slot(void *context,qa_actor_id actor,int32_t *out,qa_error *e)
 { application_q3_component_records *r=context; component_actor *row=r?q3records_actor(r,actor):NULL; if(!out||!row||!row->client||row->retired||!q3records_live(r,actor)) return q3records_fail(e,QA_ERROR_ARGUMENT,"Component source call requires its genuine client reservation"); *out=(int32_t)row->slot; return true; }
-bool application_q3_component_records_pointer(void *context,qa_actor_id actor,const char *name,uint32_t *out,qa_error *e)
+bool application_q3_component_records_pointer(void *context,qa_actor_id actor,size_t index,uint32_t *out,qa_error *e)
 {
     application_q3_component_records *r=context;
-    if(!r||!name||!out||!r->options.storage_current(r->options.context,e)) return false;
+    if(!r||index>=r->record_count||!out||!r->options.storage_current(r->options.context,e)) return false;
     if(!actor.registry) { *out=0; return true; }
     component_actor *row=q3records_actor(r,actor);
     if(!row) {
@@ -228,10 +228,7 @@ bool application_q3_component_records_pointer(void *context,qa_actor_id actor,co
     }
     if(row->retired||!q3records_live(r,actor)) return q3records_fail(e,QA_ERROR_NOT_FOUND,"Component projection actor is retired");
     if(!row->projected) { uint32_t slot=row->slot; bool client=row->client; if(!application_q3_component_records_bind(r,actor,slot,false,client,e)) return false; row=q3records_actor(r,actor); }
-    for(size_t i=0;i<r->record_count;++i) if(!strcmp(r->records[i].id,name)) {
-        component_record *record=r->records+i;
-        if((record->client&&!row->client)||row->slot>=record->capacity) return q3records_fail(e,QA_ERROR_FORMAT,"Component actor has no auxiliary source record");
-        *out=record->address+row->slot*record->stride; return true;
-    }
-    return q3records_fail(e,QA_ERROR_FORMAT,"Component call names an undeclared actor record");
+    component_record *record=r->records+index;
+    if((record->client&&!row->client)||row->slot>=record->capacity) return q3records_fail(e,QA_ERROR_FORMAT,"Component actor has no auxiliary source record");
+    *out=record->address+row->slot*record->stride; return true;
 }

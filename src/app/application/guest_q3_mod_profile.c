@@ -77,8 +77,20 @@ static bool entry(const qa_json_document *d, qa_json_id id, qa_qvm_image *image,
     return word(d,id,v,e) && ((*v<n && code[*v].opcode==QA_QVM_ENTER) ||
         q3mod_fail(e,QA_ERROR_FORMAT,"Source callback does not name OP_ENTER"));
 }
-static const mod_record *record(const application_q3_mod_profile *p, const char *name)
-{ for (size_t i=0;i<p->record_count;++i) if (!strcmp(p->records[i].id,name)) return p->records+i; return NULL; }
+static const mod_record *record(const application_q3_mod_profile *p, size_t index)
+{ return index < p->record_count ? p->records + index : NULL; }
+static bool record_index(const qa_json_document *d, qa_json_id node,
+    const application_q3_mod_profile *p, size_t *out, qa_error *e)
+{
+    char *name = NULL;
+    if (!text(d, node, &name, e)) return false;
+    size_t index = 0;
+    while (index < p->record_count && strcmp(p->records[index].id, name)) ++index;
+    free(name);
+    *out = index;
+    return index < p->record_count ||
+        q3mod_fail(e, QA_ERROR_FORMAT, "Source declaration names undeclared actor storage");
+}
 static bool argument(const qa_json_document *d, qa_json_id id, application_q3_mod_profile *p,
     mod_argument *v, qa_error *e)
 {
@@ -87,7 +99,7 @@ static bool argument(const qa_json_document *d, qa_json_id id, application_q3_mo
         v->kind=qa_json_string_equal(d,kind,"actor")?MOD_ACTOR:MOD_CLIENT;
         if (!input(d,qa_json_get(d,id,"input"),&v->name,e) || v->name<Q3_MOD_SELF || v->name>Q3_MOD_INFLICTOR)
             return q3mod_fail(e,QA_ERROR_FORMAT,"Source actor argument requires an actor input");
-        if (v->kind==MOD_ACTOR && (!text(d,qa_json_get(d,id,"record"),&v->record,e) || !record(p,v->record)))
+        if (v->kind==MOD_ACTOR && (!record_index(d,qa_json_get(d,id,"record"),p,&v->record,e) || !record(p,v->record)))
             return q3mod_fail(e,QA_ERROR_FORMAT,"Source argument names undeclared actor storage");
         return true;
     }
@@ -156,7 +168,7 @@ static bool call(const qa_json_document *d, qa_json_id id, application_q3_mod_pr
     return true;
 }
 static void argument_free(mod_argument *v)
-{ free(v->record); if (v->literal.kind==Q3_MOD_VALUE_STRING) free((char *)v->literal.as.string); }
+{ if (v->literal.kind==Q3_MOD_VALUE_STRING) free((char *)v->literal.as.string); }
 static void call_free(mod_call *v)
 {
     for (size_t i=0;i<v->argument_count;++i) argument_free(v->arguments+i);
@@ -189,7 +201,7 @@ static bool pointer(const qa_json_document *d, qa_json_id id, application_q3_mod
 }
 static bool field(const qa_json_document *d, qa_json_id id, application_q3_mod_profile *p, mod_field *v, qa_error *e)
 {
-    if (!text(d,qa_json_get(d,id,"record"),&v->record,e) ||
+    if (!record_index(d,qa_json_get(d,id,"record"),p,&v->record,e) ||
         !word(d,qa_json_get(d,id,"offset"),&v->offset,e) ||
         !encoding(d,qa_json_get(d,id,"encoding"),false,&v->encoding,e)) return false;
     const mod_record *r=record(p,v->record);
@@ -203,7 +215,7 @@ static bool outputs(const qa_json_document *d, qa_json_id list, application_q3_m
         mod_output *v=b->outputs+i; qa_json_id at=qa_json_at(d,list,i), kind=qa_json_get(d,at,"kind");
         if (qa_json_string_equal(d,kind,"field")) {
             v->kind=MOD_FIELD; qa_json_id value=qa_json_get(d,at,"value");
-            if (!text(d,qa_json_get(d,at,"record"),&v->record,e) || !word(d,qa_json_get(d,at,"offset"),&v->offset,e) ||
+            if (!record_index(d,qa_json_get(d,at,"record"),p,&v->record,e) || !word(d,qa_json_get(d,at,"offset"),&v->offset,e) ||
                 !input(d,qa_json_get(d,value,"input"),&v->input,e) || v->input>=Q3_MOD_INPUT_COUNT) return false;
             const mod_record *r=record(p,v->record); size_t bytes=v->input==Q3_MOD_VIEW_ANGLES?12:4;
             if (!r || r->stride<bytes || v->offset>r->stride-bytes) return q3mod_fail(e,QA_ERROR_FORMAT,"Input field leaves declared actor record");
@@ -215,7 +227,7 @@ static bool outputs(const qa_json_document *d, qa_json_id list, application_q3_m
         if (v->kind==MOD_HANDLER && !qa_json_string_equal(d,kind,"handler")) return q3mod_fail(e,QA_ERROR_FORMAT,"Unknown input output kind");
         qa_json_id actor=qa_json_get(d,at,"actor"), ins=qa_json_get(d,at,"inputs");
         if (!entry(d,qa_json_get(d,at,"entry"),p->image,&v->entry,e) ||
-            !text(d,qa_json_get(d,actor,"record"),&v->record,e) || !record(p,v->record) ||
+            !record_index(d,qa_json_get(d,actor,"record"),p,&v->record,e) || !record(p,v->record) ||
             !pointer(d,qa_json_get(d,actor,"pointer"),p,&v->actor,e) || qa_json_type(d,ins)!=QA_JSON_ARRAY) return false;
         if (!array(d,ins,sizeof(*v->ordered_inputs),(void **)&v->ordered_inputs,&v->input_count,false,e)) return false;
         for (size_t j=0;j<qa_json_size(d,ins);++j) {
@@ -279,8 +291,8 @@ static bool storage(application_q3_mod_profile *p, const mod_field *f, qa_error 
     for (size_t i=0;i<p->protection_count;++i) {
         const mod_protection *v=p->protection+i;
         const mod_field *fs[]={&v->count,v->has_selection?&v->selection.field:NULL};
-        for (size_t j=0;j<2;++j) if (fs[j] && fs[j]!=f && fs[j]->record &&
-            fs[j]->offset==f->offset && !strcmp(fs[j]->record,f->record))
+        for (size_t j=0;j<2;++j) if (fs[j] && fs[j]!=f && fs[j]->record < p->record_count &&
+            fs[j]->offset==f->offset && fs[j]->record == f->record)
             return q3mod_fail(e,QA_ERROR_FORMAT,"Protection channels overlap source storage");
     }
     return true;
@@ -342,14 +354,14 @@ static bool pickups(const qa_json_document *d,qa_json_id root,application_q3_mod
         if(!array(d,contexts,sizeof(*v->context),(void **)&v->context,&v->context_count,false,e)) return false;
         for(size_t j=0;j<v->context_count;++j) {
             mod_pickup_context *f=v->context+j; qa_json_id row=qa_json_at(d,contexts,j);
-            if(!text(d,qa_json_get(d,row,"record"),&f->record,e)||!word(d,qa_json_get(d,row,"offset"),&f->offset,e)||
+            if(!record_index(d,qa_json_get(d,row,"record"),p,&f->record,e)||!word(d,qa_json_get(d,row,"offset"),&f->offset,e)||
                 !argument(d,qa_json_get(d,row,"value"),p,&f->value,e)) return false;
             const mod_record *r=record(p,f->record);
             if(!r||r->client||f->offset%4||f->offset>r->stride-4) return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup context leaves its nonclient record");
             mod_call check={.arguments=&f->value,.argument_count=1}; if(!available(&check,mask,p->clients,e)) return false;
             for(size_t k=0;k<r->field_count;++k) if(!r->fields[k].private_field&&f->offset<r->fields[k].offset+r->fields[k].length&&r->fields[k].offset<f->offset+4)
                 return q3mod_fail(e,QA_ERROR_FORMAT,"Original pickup context overlaps canonical projection");
-            for(size_t k=0;k<j;++k) if(v->context[k].offset==f->offset&&!strcmp(v->context[k].record,f->record)) return false;
+            for(size_t k=0;k<j;++k) if(v->context[k].offset==f->offset&&v->context[k].record == f->record) return false;
             qa_json_id source=qa_json_get(d,root,"sourceActors");
             if(p->entity_record!=SIZE_MAX&&r==p->records+p->entity_record&&source!=QA_JSON_NONE) {
                 uint32_t inuse; if(!word(d,qa_json_get(d,source,"inuse"),&inuse,e)||inuse==f->offset) return false;
@@ -548,14 +560,14 @@ void application_q3_mod_profile_destroy(application_q3_mod_profile *p)
         mod_input_binding *b=p->inputs+i;
         for (size_t j=0;j<b->call_count;++j) call_free(b->calls+j);
         for (size_t j=0;j<b->output_count;++j) {
-            free(b->outputs[j].record); free(b->outputs[j].ordered_inputs);
+            free(b->outputs[j].ordered_inputs);
             free(b->outputs[j].actor.indirections); free(b->outputs[j].command.indirections);
         }
         free(b->calls); free(b->outputs);
     }
     for (size_t i=0;i<p->protection_count;++i) {
-        mod_protection *v=p->protection+i; call_free(&v->absorb); free(v->count.record);
-        free(v->selection.field.record); free(v->selection.values);
+        mod_protection *v=p->protection+i; call_free(&v->absorb);
+        free(v->selection.values);
     }
     for (size_t i=0;i<p->callback_count;++i) call_free(&p->callbacks[i].call);
     for (size_t i=0;i<Q3_MOD_STAGE_COUNT;++i) {
@@ -564,7 +576,7 @@ void application_q3_mod_profile_destroy(application_q3_mod_profile *p)
     }
     for(size_t i=0;i<p->pickup_count;++i) {
         mod_pickup *v=p->pickups+i; call_free(&v->gate); call_free(&v->grant);
-        for(size_t j=0;j<v->context_count;++j) { free(v->context[j].record); argument_free(&v->context[j].value); }
+        for(size_t j=0;j<v->context_count;++j) { argument_free(&v->context[j].value); }
         free(v->context); free(v->writes); free(v->offered);
     }
     free(p->pickups);

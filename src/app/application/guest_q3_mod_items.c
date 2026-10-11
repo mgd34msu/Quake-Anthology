@@ -9,7 +9,7 @@ bool q3items_current(item_actor *a,qa_error *e)
         !qa_actors_get(qa_session_actors(a->owner->mod->session),a->actor)||
         (!a->admitting&&!(a->restore_inventory&&a->owner->mod->restoring)&&
             !qa_inventory_lease_current(a->owner->inventory,a->lease)))return false;
-    for(size_t i=0;i<a->address_count;++i){uint32_t actual;const char *record=a->owner->profile->source->records[a->addresses[i].record].id;
+    for(size_t i=0;i<a->address_count;++i){uint32_t actual;size_t record=a->addresses[i].record;
         if(!a->owner->mod->services.pointer(a->owner->mod->services.context,a->actor,record,&actual,e)||actual!=a->addresses[i].address)return false;}
     return true;
 }
@@ -191,7 +191,7 @@ static bool address_add(item_actor *a,size_t record,qa_error *e)
     item_record_address *next=realloc(a->addresses,(a->address_count+1)*sizeof(*next));
     if(!next)return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining original item record bases");
     a->addresses=next;
-    uint32_t address;if(!a->owner->mod->services.pointer(a->owner->mod->services.context,a->actor,a->owner->profile->source->records[record].id,&address,e))return false;
+    uint32_t address;if(!a->owner->mod->services.pointer(a->owner->mod->services.context,a->actor,record,&address,e))return false;
     a->addresses[a->address_count++]=(item_record_address){record,address};return true;
 }
 bool application_q3_mod_items_admit(application_q3_mod_items *o,qa_actor_id actor,qa_error *e)

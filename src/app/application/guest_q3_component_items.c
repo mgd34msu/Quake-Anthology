@@ -25,7 +25,7 @@ static bool posture(void *context,qa_actor_id actor,qa_bounds *bounds,double *he
         if(c->entity_record==SIZE_MAX) return q3records_fail(e,QA_ERROR_FORMAT,"Weapon ground actor has no declared source entity array");
         component_record *record=c->records->records+c->entity_record;
         uint32_t pointer;
-        if(!application_q3_component_records_pointer(c->records,ground_actor,record->id,&pointer,e)) return false;
+        if(!application_q3_component_records_pointer(c->records,ground_actor,c->entity_record,&pointer,e)) return false;
         uint32_t slot=(pointer-record->address)/record->stride;
         if(slot>INT32_MAX) return q3records_fail(e,QA_ERROR_FORMAT,"Weapon ground slot exceeds its Source ABI");
         *ground=(int32_t)slot;

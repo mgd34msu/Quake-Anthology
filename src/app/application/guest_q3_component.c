@@ -34,7 +34,7 @@ static bool match_read(void *context,qa_actor_id actor,qa_string_id *team,double
 { application_q3_component *c=context; return c->options.match_read&&c->options.match_read(c->options.context,actor,team,score,e); }
 static bool match_write(void *context,qa_actor_id actor,bool team,qa_string_id id,double score,qa_error *e)
 { application_q3_component *c=context; return c->options.match_write&&c->options.match_write(c->options.context,actor,team,id,score,e); }
-static bool pointer(void *context,qa_actor_id actor,const char *record,uint32_t *out,qa_error *e)
+static bool pointer(void *context,qa_actor_id actor,size_t record,uint32_t *out,qa_error *e)
 { return application_q3_component_records_pointer(((application_q3_component *)context)->records,actor,record,out,e); }
 static bool eligible(void *context,qa_actor_id actor)
 { return application_q3_component_records_eligible(((application_q3_component *)context)->records,actor); }
@@ -48,7 +48,7 @@ static bool client_slot(void *context,qa_actor_id actor,int32_t *out,qa_error *e
 static bool player(void *context,qa_actor_id actor,qa_q3_player *out,qa_error *e)
 {
     application_q3_component *c=context; uint32_t at;
-    if(c->player_record==SIZE_MAX||!client(c,actor)||!pointer(c,actor,c->records->records[c->player_record].id,&at,e)) return false;
+    if(c->player_record==SIZE_MAX||!client(c,actor)||!pointer(c,actor,c->player_record,&at,e)) return false;
     return qa_qvm_read_player(c->vm,(int32_t)at,true,out,e);
 }
 static bool time_read(void *context,double *seconds,qa_error *e)

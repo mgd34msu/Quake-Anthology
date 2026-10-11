@@ -51,7 +51,7 @@ bool q3component_player_events_track(application_q3_component *c,qa_actor_id act
     if(!c->player_watch) return true;
     for(size_t i=0;i<c->player_cursor_count;++i) if(qa_actor_id_equal(c->player_cursors[i].actor,actor)) return true;
     uint32_t address;
-    if(!application_q3_component_records_pointer(c->records,actor,c->records->records[c->player_record].id,&address,e)) return false;
+    if(!application_q3_component_records_pointer(c->records,actor,c->player_record,&address,e)) return false;
     component_player_cursor cursor={.actor=actor,.address=address}; qa_q3_player state;
     if(!read_state(c,&cursor,&state,e)) return false;
     cursor.external=state.externalEvent; cursor.external_time=state.externalEventTime;
@@ -134,7 +134,7 @@ bool q3component_player_events_fields(application_q3_component *c,qa_source_save
         component_record *record=c->records->records+c->player_record;
         if(cursor->address<record->address||(cursor->address-record->address)%record->stride||
             (cursor->address-record->address)/record->stride>=c->maximum) return false;
-        if(!reading) { uint32_t actual; if(!application_q3_component_records_pointer(c->records,cursor->actor,record->id,&actual,io->error)||actual!=cursor->address) return false; }
+        if(!reading) { uint32_t actual; if(!application_q3_component_records_pointer(c->records,cursor->actor,c->player_record,&actual,io->error)||actual!=cursor->address) return false; }
         for(size_t j=0;j<i;++j) if(c->player_cursors[j].address==cursor->address||qa_actor_id_equal(c->player_cursors[j].actor,cursor->actor)) return false;
     }
     return true;
@@ -163,7 +163,7 @@ bool q3component_player_events_validate(application_q3_component *c,qa_error *e)
     for(size_t i=0;i<c->player_cursor_count;++i) {
         component_player_cursor *cursor=c->player_cursors+i; uint32_t actual; qa_q3_player state;
         if(!application_q3_component_records_live_client(c->records,cursor->actor)||
-            !application_q3_component_records_pointer(c->records,cursor->actor,c->records->records[c->player_record].id,&actual,e)||actual!=cursor->address||
+            !application_q3_component_records_pointer(c->records,cursor->actor,c->player_record,&actual,e)||actual!=cursor->address||
             !read_state(c,cursor,&state,e)||state.eventSequence!=cursor->observed)
             return q3records_fail(e,QA_ERROR_FORMAT,"Original player event cursor differs from its actual admitted Source RAM");
     }

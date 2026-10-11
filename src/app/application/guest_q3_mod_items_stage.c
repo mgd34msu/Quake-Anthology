@@ -19,7 +19,7 @@ static bool source_actor(application_q3_mod_items *o,const item_actor_pointer *p
     if(!o->application)return true;
     item_actor *a=q3items_actor(o,o->application->actor);if(!a||!q3items_current(a,NULL))return true;
     uint32_t source,wanted;if(!pointer(o,&p->pointer,call,&source,e)||
-        !q3mod_address(o->mod,a->actor,o->profile->source->records[p->record].id,0,0,&wanted,e))return false;
+        !q3mod_address(o->mod,a->actor,p->record,0,0,&wanted,e))return false;
     if(source==wanted)*out=a;
     return true;
 }

@@ -12,7 +12,7 @@ static bool pointer(void *context,qa_actor_id actor,uint32_t *out,qa_error *e)
     application_q3_component *c=context;
     if(!actor.registry) { *out=0; return true; }
     if(c->entity_record==SIZE_MAX) return q3records_fail(e,QA_ERROR_ARGUMENT,"Actor semantics require their declared entity record");
-    return application_q3_component_records_pointer(c->records,actor,c->records->records[c->entity_record].id,out,e);
+    return application_q3_component_records_pointer(c->records,actor,c->entity_record,out,e);
 }
 static bool actor(void *context,int32_t word,qa_actor_id *out,qa_error *e)
 {

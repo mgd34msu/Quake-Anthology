@@ -19,17 +19,16 @@ bool q3mod_storage_current(application_q3_mod *o, qa_error *e)
         (qa_qvm_image_of(o->vm) == o->profile->image) ? true :
         q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic storage left its actual retained executor");
 }
-bool q3mod_address(application_q3_mod *o, qa_actor_id actor, const char *name,
+bool q3mod_address(application_q3_mod *o, qa_actor_id actor, size_t index,
     uint32_t relative, size_t length, uint32_t *out, qa_error *e)
 {
-    if (!q3mod_storage_current(o,e) || !name || !out || !qa_actors_get(qa_session_actors(o->session),actor))
+    if (!q3mod_storage_current(o,e) || index >= o->profile->record_count || !out || !qa_actors_get(qa_session_actors(o->session),actor))
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic source storage requires its full live source actor");
-    const mod_record *r=NULL;
-    for (size_t i=0;i<o->profile->record_count;++i) if (!strcmp(name,o->profile->records[i].id)) r=o->profile->records+i;
+    const mod_record *r=o->profile->records+index;
     if (!r || relative>r->stride || length>r->stride-relative)
         return q3mod_fail(e,QA_ERROR_ARGUMENT,"Generic field leaves its exact declared source record");
     uint32_t base;
-    if (!o->services.pointer(o->services.context,actor,name,&base,e)) return false;
+    if (!o->services.pointer(o->services.context,actor,index,&base,e)) return false;
     uint64_t limit=(uint64_t)r->address+(uint64_t)r->stride*r->capacity;
     if (base<r->address || base>=limit || (base-r->address)%r->stride ||
         (uint64_t)base+relative>UINT32_MAX ||
@@ -130,7 +129,7 @@ static bool lower(call_run *r, const mod_argument *a, int32_t *word, qa_error *e
     if (a->kind==MOD_CLIENT) {
         uint32_t entity;
         if (!o->profile->clients || !v.as.actor.registry ||
-            !q3mod_address(o,v.as.actor,o->profile->records[o->profile->entity_record].id,0,0,&entity,e) ||
+            !q3mod_address(o,v.as.actor,o->profile->entity_record,0,0,&entity,e) ||
             !o->services.client_slot(o->services.context,v.as.actor,word,e) || !q3mod_current(o,e)) return false;
         return *word>=0 && (uint32_t)*word<o->profile->maximum ? true :
             q3mod_fail(e,QA_ERROR_ARGUMENT,"Source client argument leaves its actual reserved rows");
@@ -339,8 +338,8 @@ static bool pickup_run_source(void *context,qa_qvm *vm,uint32_t scratch,qa_error
     const mod_pickup *d=r->definition; r->lowering.scratch=scratch;
     if(!o->services.source_prepare(o->services.context,e)||!q3mod_current(o,e)) return false;
     uint32_t recipient,pickup;
-    if(o->profile->entity_record==SIZE_MAX||!q3mod_address(o,r->offer->recipient,o->profile->records[o->profile->entity_record].id,0,0,&recipient,e)||
-        !q3mod_address(o,r->offer->pickup,o->profile->records[o->profile->entity_record].id,0,0,&pickup,e)) return false;
+    if(o->profile->entity_record==SIZE_MAX||!q3mod_address(o,r->offer->recipient,o->profile->entity_record,0,0,&recipient,e)||
+        !q3mod_address(o,r->offer->pickup,o->profile->entity_record,0,0,&pickup,e)) return false;
     (void)recipient; (void)pickup;
     qa_qvm_source_word *words=d->context_count?calloc(d->context_count,sizeof(*words)):NULL;
     if(d->context_count&&!words) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning original offered pickup context");

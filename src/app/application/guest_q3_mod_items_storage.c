@@ -3,7 +3,7 @@ bool q3items_address(item_actor *a,item_field f,uint32_t *out,qa_error *e)
 {
     application_q3_mod *m=a->owner->mod;application_q3_mod_profile *p=m->profile;
     if(f.record>=p->record_count)return false;
-    return q3mod_address(m,a->actor,p->records[f.record].id,f.offset,4,out,e);
+    return q3mod_address(m,a->actor,f.record,f.offset,4,out,e);
 }
 static bool scalar_at(item_actor *a,uint32_t address,const qa_qvm_committed_write *previous,int32_t *out,qa_error *e)
 {

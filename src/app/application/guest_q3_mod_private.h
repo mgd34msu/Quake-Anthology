@@ -17,7 +17,7 @@ typedef struct mod_argument {
     bool input, milliseconds;
     application_q3_mod_input name;
     application_q3_mod_value literal;
-    char *record;
+    size_t record;
     uint32_t address;
 } mod_argument;
 typedef struct mod_global { uint32_t address; mod_argument value; } mod_global;
@@ -42,7 +42,7 @@ typedef struct mod_record {
 typedef struct mod_pointer { bool argument; uint32_t root, offset; uint32_t *indirections; size_t count; } mod_pointer;
 typedef struct mod_output {
     enum { MOD_FIELD, MOD_HANDLER, MOD_COMMAND } kind;
-    char *record;
+    size_t record;
     uint32_t offset, entry, inputs;
     application_q3_mod_input *ordered_inputs;
     size_t input_count;
@@ -59,7 +59,7 @@ typedef struct mod_input_binding {
     mod_output *outputs;
     size_t output_count;
 } mod_input_binding;
-typedef struct mod_field { char *record; uint32_t offset; mod_scalar encoding; } mod_field;
+typedef struct mod_field { size_t record; uint32_t offset; mod_scalar encoding; } mod_field;
 typedef struct mod_selection_value { double value; uint32_t selected; } mod_selection_value;
 typedef struct mod_selection {
     mod_field field;
@@ -85,7 +85,7 @@ typedef struct mod_callback {
     bool knockback;
     mod_call call;
 } mod_callback;
-typedef struct mod_pickup_context { char *record; uint32_t offset; mod_argument value; } mod_pickup_context;
+typedef struct mod_pickup_context { size_t record; uint32_t offset; mod_argument value; } mod_pickup_context;
 typedef struct mod_pickup {
     qa_string_id id;
     qa_item_id *offered;
@@ -172,7 +172,7 @@ bool q3mod_saved_declaration(const application_q3_mod_profile *, qa_source_save_
     const char identity[4]);
 bool q3mod_current(application_q3_mod *, qa_error *);
 bool q3mod_storage_current(application_q3_mod *, qa_error *);
-bool q3mod_address(application_q3_mod *, qa_actor_id, const char *, uint32_t,
+bool q3mod_address(application_q3_mod *, qa_actor_id, size_t, uint32_t,
     size_t, uint32_t *, qa_error *);
 bool q3mod_scalar_word(double, mod_scalar, int32_t *, qa_error *);
 bool q3mod_invoke(application_q3_mod *, const mod_call *, const application_q3_mod_inputs *, double *, qa_error *);

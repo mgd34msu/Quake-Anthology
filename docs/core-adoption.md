@@ -761,6 +761,14 @@ campaigns retain the previous stock fallback. Campaign text stays at config
 and UI boundaries; the on-disk layout is unchanged. Normal build and seven
 core suites pass. Names item 16's guest record readers and item 17 remain.
 
+Names item 16, Q3 records: input, protection, argument and pickup-context
+descriptors resolve their record name to an array index while parsing the
+profile. Runtime address lowering, item storage and component pointer
+services take that index; their record-name scans and copied descriptor
+strings are deleted. Record names stay in external declarations and profile
+metadata. Every current address/pointer caller is migrated. Normal build
+and seven core suites pass. The native Q2 half of item 16 remains open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

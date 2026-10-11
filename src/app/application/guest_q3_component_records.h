@@ -38,7 +38,7 @@ bool application_q3_component_records_bind(application_q3_component_records *,qa
 bool application_q3_component_records_reserve_client(application_q3_component_records *,qa_actor_id,uint32_t *,qa_error *);
 bool application_q3_component_records_release(application_q3_component_records *,qa_actor_id,qa_error *);
 bool application_q3_component_records_admitted(application_q3_component_records *,qa_actor_id,bool,qa_error *);
-bool application_q3_component_records_pointer(void *,qa_actor_id,const char *,uint32_t *,qa_error *);
+bool application_q3_component_records_pointer(void *,qa_actor_id,size_t,uint32_t *,qa_error *);
 bool application_q3_component_records_eligible(void *,qa_actor_id);
 bool application_q3_component_records_live_client(void *,qa_actor_id);
 bool application_q3_component_records_client_slot(void *,qa_actor_id,int32_t *,qa_error *);

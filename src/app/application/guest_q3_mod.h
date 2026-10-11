@@ -71,7 +71,7 @@ typedef struct application_q3_mod_services {
     /* Pure retained RAM/source identity proof, including checked retirement
      * and imported storage before executable activation. */
     bool (*storage_current)(void *, qa_error *);
-    bool (*pointer)(void *, qa_actor_id, const char *record, uint32_t *, qa_error *);
+    bool (*pointer)(void *, qa_actor_id, size_t record, uint32_t *, qa_error *);
     bool (*eligible_actor)(void *, qa_actor_id);
     bool (*live_client)(void *, qa_actor_id);
     bool (*client_slot)(void *, qa_actor_id, int32_t *, qa_error *);
