@@ -90,7 +90,10 @@ bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating audio bank");
         return false;
     }
-    if (!qa_q2_sound_names_bind(strings,&bank->compiled_names,error)) { free(bank); return false; }
+    if (!qa_q2_sound_names_bind(strings,&bank->compiled_names,error) ||
+        !qa_audio_bank_sexed_reserve(bank, 32, error)) {
+        qa_id_index_destroy(&bank->sexed_paths); free(bank->sexed_names); free(bank); return false;
+    }
     bank->view = view;
     bank->strings = strings; qa_strings_retain(strings);
     bank->registration = 1;
@@ -148,7 +151,7 @@ static void bank_entry_release(bank_entry *entry)
 { qa_audio_asset_release(entry->asset); }
 static void bank_clear_entries(qa_audio_bank *bank)
 {
-    while (bank->sexed) { bank_sexed_name *entry=bank->sexed; bank->sexed=entry->next; free(entry); }
+    qa_id_index_clear(&bank->sexed_paths);
     for(size_t i=0;i<bank->count;++i)bank_entry_release(bank->entries+i);
     bank->count=0;bank_index_reset(bank);
 }
@@ -174,6 +177,7 @@ void qa_audio_bank_destroy(qa_audio_bank *bank) {
     qa_audio_bank_clear(bank);
     free(bank->entries);
     qa_id_index_destroy(&bank->names);
+    qa_id_index_destroy(&bank->sexed_paths); free(bank->sexed_names);
     qa_strings_destroy(bank->strings);
     free(bank);
 }
@@ -420,14 +424,25 @@ bool qa_audio_bank_sexed(qa_audio_bank *bank,const char *base,const char *model,
     return bank&&base&&model&&qa_strings_intern_cstr(bank->strings,base,&base_id,error)&&
         qa_strings_intern_cstr(bank->strings,model,&model_id,error)&&qa_audio_bank_sexed_id(bank,base_id,model_id,out,error);
 }
+bool qa_audio_bank_sexed_reserve(qa_audio_bank *bank, size_t pairs, qa_error *error)
+{
+    if (!bank || !qa_id_index_reserve(&bank->sexed_paths,
+        pairs > bank->sexed_paths.count ? pairs - bank->sexed_paths.count : 0, error)) return false;
+    if (bank->sexed_capacity >= bank->sexed_paths.capacity) return true;
+    qa_string_id *names = realloc(bank->sexed_names, bank->sexed_paths.capacity * sizeof(*names));
+    if (!names) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Reserving player sound paths"); return false; }
+    bank->sexed_names = names; bank->sexed_capacity = bank->sexed_paths.capacity;
+    return true;
+}
 bool qa_audio_bank_sexed_id(qa_audio_bank *bank,qa_string_id base_id,qa_string_id model_id,
     qa_audio_asset **out,qa_error *error)
 {
     if (!bank||!out) return false;
     qa_audio_bank_sync(bank);
-    for (bank_sexed_name *entry=bank->sexed;entry;entry=entry->next)
-        if (entry->base==base_id&&entry->model==model_id)
-            return qa_audio_bank_register_id(bank,entry->path,QA_GAME_Q2,out,error);
+    qa_id_index_cursor cursor = qa_id_index_begin(&bank->sexed_paths, base_id, model_id);
+    size_t row;
+    if (qa_id_index_next(&bank->sexed_paths, &cursor, &row))
+        return qa_audio_bank_register_id(bank, bank->sexed_names[row], QA_GAME_Q2, out, error);
     const char *base=qa_strings_cstr(bank->strings,base_id),*model=qa_strings_cstr(bank->strings,model_id);
     if (!base||!out) return false;
     if (!model) model="";
@@ -467,14 +482,10 @@ bool qa_audio_bank_sexed_id(qa_audio_bank *bank,qa_string_id base_id,qa_string_i
         memcpy(path + 12, name, name_length + 1);
         result = qa_audio_bank_register(bank, path, QA_GAME_Q2, &asset, error);
     }
-    if (result) {
-        bank_sexed_name *entry=calloc(1,sizeof(*entry));
-        if (!entry) { qa_error_set(error,QA_ERROR_MEMORY,0,"Binding player sound name"); result=false; }
-        if (entry) {
-            entry->base=base_id; entry->model=model_id;
-            result=qa_strings_intern_cstr(bank->strings,path,&entry->path,error);
-            if (result) { entry->next=bank->sexed; bank->sexed=entry; } else free(entry);
-        }
+    if (result && bank->sexed_paths.count < bank->sexed_capacity) {
+        size_t slot = bank->sexed_paths.count;
+        result = qa_strings_intern_cstr(bank->strings, path, bank->sexed_names + slot, error);
+        if (result) qa_id_index_insert(&bank->sexed_paths, base_id, model_id, slot);
     }
     if (path != local) free(path);
     if (result) *out=asset; else qa_audio_asset_release(asset);

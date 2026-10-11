@@ -24,13 +24,10 @@ typedef struct bank_entry {
     qa_game_family missing_family;
 } bank_entry;
 
-typedef struct bank_sexed_name {
-    struct bank_sexed_name *next;
-    qa_string_id base, model, path;
-} bank_sexed_name;
-
 struct qa_audio_bank {
-    bank_sexed_name *sexed;
+    qa_id_index sexed_paths;
+    qa_string_id *sexed_names;
+    size_t sexed_capacity;
     const qa_string_id *compiled_names;
     qa_strings *strings;
     qa_vfs *view;

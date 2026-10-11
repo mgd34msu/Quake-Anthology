@@ -102,6 +102,7 @@ bool qa_audio_bank_register_id(qa_audio_bank *, qa_string_id, qa_game_family, qa
 /* Borrowed entry by a name admitted at registration, including sound/ and # aliases. */
 qa_audio_asset *qa_audio_bank_get_id(qa_audio_bank *, qa_string_id, qa_game_family);
 qa_string_id qa_audio_bank_q2_name(const qa_audio_bank *, qa_q2_sound_index);
+bool qa_audio_bank_sexed_reserve(qa_audio_bank *, size_t pairs, qa_error *);
 bool qa_audio_bank_sexed_id(qa_audio_bank *, qa_string_id, qa_string_id, qa_audio_asset **, qa_error *);
 bool qa_audio_bank_sexed(qa_audio_bank *bank, const char *base, const char *model,
                          qa_audio_asset **out, qa_error *error);

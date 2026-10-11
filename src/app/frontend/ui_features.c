@@ -126,17 +126,23 @@ bool frontend_ui_audio_prepare_sound(qa_frontend *f, qa_audio_bank *bank,
 typedef struct source_audio_preparation {
     qa_frontend *frontend;
     qa_audio_bank *bank;
+    size_t sexed_count;
 } source_audio_preparation;
 static bool prepare_source_sound(void *context, const char *path, qa_error *error)
 {
     source_audio_preparation *preparation = context;
+    if (*path == '*' && !qa_audio_bank_sexed_reserve(preparation->bank,
+        ++preparation->sexed_count * 257, error)) return false;
     return frontend_ui_audio_prepare_sound(preparation->frontend, preparation->bank, path, QA_GAME_Q2, error);
 }
 bool frontend_ui_audio_prepare_q2_source(qa_frontend *f, qa_audio_bank *bank, qa_actor_owner owner, qa_error *error)
 {
+    size_t sexed_count = 0;
+    for (size_t i = 0; i < qa_q2_sound_count(); ++i) sexed_count += *qa_q2_sound_path(i) == '*';
+    if (!qa_audio_bank_sexed_reserve(bank, sexed_count * 257, error)) return false;
     for (size_t i = 0; i < qa_q2_sound_count(); ++i)
         if (!frontend_ui_audio_prepare_sound(f, bank, qa_q2_sound_path(i), QA_GAME_Q2, error)) return false;
-    source_audio_preparation preparation = {f, bank};
+    source_audio_preparation preparation = {f, bank, sexed_count};
     return !owner || qa_application_native_q2_sound_resources(f->application, owner, prepare_source_sound, &preparation, error);
 }
 void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)

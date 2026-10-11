@@ -279,6 +279,11 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
         QA_SCENE_LINEAR_MIPMAP_LINEAR,error) ||
         !qa_hud_q2_program_prepare_images(row->hud_overlay,row->images,remote_q2_rerelease_presentation(row),
             QA_SCENE_LINEAR_MIPMAP_LINEAR,error)) return false;
+    size_t sexed_count = 0;
+    for (size_t i = 0; i < qa_q2_sound_count(); ++i) sexed_count += *qa_q2_sound_path(i) == '*';
+    for (size_t i = 1; i < row->hud_names.layout.max_sounds; ++i)
+        sexed_count += *frontend_remote_q2_config(row, (uint32_t)(row->hud_names.layout.sounds + i)) == '*';
+    if (!qa_audio_bank_sexed_reserve(row->sounds, sexed_count * 257, error)) return false;
     for (size_t i = 1; i < row->hud_names.layout.max_sounds; ++i) {
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.sounds + i));
         if (!*name || name[0] == '*') continue;
