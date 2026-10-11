@@ -147,16 +147,21 @@ void application_network_q2_free_tables(qa_application_network_q2 *owner)
     for (unsigned i = 0; i < 3; ++i) {
         application_q2_resource_table *table = &owner->resources[i];
         free(table->names);
-        qa_id_index_destroy(&table->weapon_ordinals); table->weapon_count=0;
+        qa_id_index_destroy(&table->weapon_ordinals); table->weapons=(qa_hud_q2_weapons){0};
         table->names = NULL; table->count = 0;
     }
     owner->configs = NULL; owner->entries = NULL;
 }
 
-void application_network_q2_weapon_admit(application_q2_resource_table *table,qa_strings *strings,qa_string_id name)
+bool application_network_q2_weapon_admit(qa_application_network_q2 *owner, qa_string_id name, qa_error *error)
 {
-    const char *path=qa_strings_cstr(strings,name);
-    if (path && *path=='#') qa_id_index_insert(&table->weapon_ordinals,name,0,++table->weapon_count);
+    application_q2_resource_table *table = &owner->resources[0];
+    size_t prior = table->weapons.count ? table->weapons.count : 1;
+    qa_q2_codec codec; qa_q2_config_layout layout;
+    if (!qa_q2_codec_init(&codec, owner->host.protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error) ||
+        !qa_hud_q2_weapon_add(qa_session_strings(owner->app->session), &layout, name, &table->weapons, error)) return false;
+    if (table->weapons.count > prior) qa_id_index_insert(&table->weapon_ordinals, name, 0, prior);
+    return true;
 }
 
 bool application_network_q2_resource_id(qa_application_network_q2 *owner, unsigned kind,
@@ -174,7 +179,7 @@ bool application_network_q2_resource_id(qa_application_network_q2 *owner, unsign
         return application_fail(error, QA_ERROR_FORMAT, "Q2 source resource table is full");
     if (!application_network_q2_config_id(owner, table->base + index, name, error)) return false;
     table->names[index] = name; table->count = index; *out = index;
-    if (!kind) application_network_q2_weapon_admit(table,qa_session_strings(owner->app->session),name);
+    if (!kind && !application_network_q2_weapon_admit(owner,name,error)) return false;
     return true;
 }
 

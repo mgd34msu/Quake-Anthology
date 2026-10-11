@@ -256,7 +256,7 @@ static bool restore_payload(qa_application_network_q2 *candidate, qa_bytes bytes
             for (uint32_t k = 1; ok && k < index; ++k)
                 if (table->names[k] == name) ok = application_fail(error, QA_ERROR_FORMAT, "Q2 restored resource aliases an earlier index");
             if (ok) { table->names[index]=name;
-                if (!i) application_network_q2_weapon_admit(table,qa_session_strings(candidate->app->session),name);
+                if (!i) ok=application_network_q2_weapon_admit(candidate,name,error);
             }
             if (ok) table->count = index;
             previous = index;

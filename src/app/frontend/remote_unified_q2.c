@@ -840,7 +840,7 @@ static bool native_hud_bind(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     size_t at=0;
     for (uint32_t index=0;index<b->hud_names.layout.max_configs;++index) {
         qa_string_id value=at<count && rows[at].index==index?rows[at++].value_id:QA_STRING_NONE;
-        if (!qa_hud_q2_names_set(&b->hud_names,index,value,e)) return false;
+        if (!qa_hud_q2_names_set(&b->hud_names,index,value,NULL,e)) return false;
     }
     qa_unified_document *retained=NULL;
     if (!qa_unified_document_retain(document,&retained,e)) return false;

@@ -18,6 +18,7 @@
 #include "qa/localization.h"
 #include "qa/text.h"
 #include "qa/q2_sound.h"
+#include "qa/hud_q2.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
 #include "qa/movement.h"
@@ -1925,6 +1926,42 @@ static void test_q2_owned_frames(void)
         qa_q2_frame_history_destroy(history);
     }
 }
+static void test_q2_weapon_names(void)
+{
+    qa_error error = {0}; qa_strings *strings = NULL;
+    CHECK(qa_strings_create(&strings, &error));
+    const qa_net_protocol protocols[] = {QA_NET_Q2_34, QA_NET_Q2PRIVATE_4038};
+    qa_string_id *config = calloc(QA_Q2_MAX_CONFIGSTRINGS, sizeof(*config)); CHECK(config);
+    for (size_t i = 0; i < 2; ++i) {
+        qa_q2_codec codec; qa_q2_config_layout layout;
+        CHECK(qa_q2_codec_init(&codec, (qa_net_protocol_id){.kind = protocols[i]}, &error));
+        CHECK(qa_q2_config_layout_read(&codec, &layout, &error));
+        memset(config, 0, QA_Q2_MAX_CONFIGSTRINGS * sizeof(*config));
+        qa_hud_q2_weapons incremental = {0}, bound;
+        for (uint32_t j = 1; j <= 35; ++j) {
+            char name[32]; snprintf(name, sizeof(name), "#weapon%u.md2", j);
+            CHECK(qa_strings_intern_cstr(strings, name, config + layout.models + j, &error));
+            CHECK(qa_hud_q2_weapon_add(strings, &layout, config[layout.models + j], &incremental, &error));
+        }
+        CHECK(qa_hud_q2_weapons_bind(strings, &layout, config, &bound, &error));
+        CHECK(bound.count == (i ? 32u : 20u) && bound.count == incremental.count);
+        CHECK(!memcmp(bound.configs, incremental.configs, sizeof(bound.configs)));
+        CHECK(!strcmp(qa_strings_cstr(strings, bound.names[0]), "weapon.md2"));
+        if (i) {
+            CHECK(qa_strings_intern_cstr(strings, "1|2|3|4|5|6|7|8", config + layout.wheel_weapons, &error));
+            qa_hud_q2_weapons_warning(strings, &layout, config, layout.wheel_weapons, &bound);
+            CHECK(bound.warnings[0] == 7);
+            CHECK(qa_strings_intern_cstr(strings, "1|2|3|4|5|6|0", config + layout.wheel_weapons, &error));
+            qa_hud_q2_weapons_warning(strings, &layout, config, layout.wheel_weapons, &bound);
+            CHECK(bound.warnings[0] == 0);
+            CHECK(qa_strings_intern_cstr(strings, "incomplete", config + layout.wheel_weapons, &error));
+            qa_hud_q2_weapons_warning(strings, &layout, config, layout.wheel_weapons, &bound);
+            CHECK(bound.warnings[0] == 0);
+        }
+    }
+    free(config); qa_strings_destroy(strings);
+}
+
 static void test_native_import_slot_identity(void)
 {
     CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,12)==QA_NATIVE_Q2_IMPORT_trace);
@@ -1943,6 +1980,7 @@ int main(int argc, char **argv)
     test_source_text();
     test_compiled_sound_names();
     test_native_import_slot_identity();
+    test_q2_weapon_names();
     test_literal_tokens();
     test_platform_event_retirement();
     test_q2_command_angles();

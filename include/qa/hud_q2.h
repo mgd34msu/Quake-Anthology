@@ -33,6 +33,8 @@ typedef struct qa_hud_q2_player_ids {
 bool qa_hud_q2_player_ids_bind(qa_strings *, const char *, bool rerelease, qa_hud_q2_player_ids *, qa_error *);
 typedef struct qa_hud_q2_weapons { qa_string_id names[32], configs[32]; int32_t warnings[32]; size_t count; } qa_hud_q2_weapons;
 void qa_hud_q2_weapons_warning(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, uint32_t, qa_hud_q2_weapons *);
+bool qa_hud_q2_weapon_add(qa_strings *, const qa_q2_config_layout *, qa_string_id, qa_hud_q2_weapons *, qa_error *);
+bool qa_hud_q2_weapons_config(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, uint32_t, qa_string_id, qa_hud_q2_weapons *, bool *, qa_error *);
 bool qa_hud_q2_weapons_bind(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, qa_hud_q2_weapons *, qa_error *);
 bool qa_hud_q2_player_model_path(qa_bytes model, qa_bytes member, const char *suffix, char *, size_t, qa_error *);
 bool qa_hud_q2_player_icon_path(qa_bytes appearance, char *, size_t, qa_error *);
@@ -55,7 +57,7 @@ bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *,qa_scene_resources *,const
 bool qa_hud_q2_program_prepare_images(qa_hud_q2_program *,qa_scene_resources *,bool,qa_scene_filter,qa_error *);
 bool qa_hud_q2_names_init(qa_hud_q2_names *, qa_strings *, qa_error *);
 bool qa_hud_q2_names_configure(qa_hud_q2_names *, qa_net_protocol_id, qa_error *);
-bool qa_hud_q2_names_set(qa_hud_q2_names *, uint32_t, qa_string_id, qa_error *);
+bool qa_hud_q2_names_set(qa_hud_q2_names *, uint32_t, qa_string_id, bool *weapons_changed, qa_error *);
 qa_string_id qa_hud_q2_names_picture(const qa_hud_q2_names *, int32_t, unsigned variant);
 void qa_hud_q2_names_clear(qa_hud_q2_names *);
 void qa_hud_q2_names_destroy(qa_hud_q2_names *);

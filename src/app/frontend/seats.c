@@ -233,7 +233,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
             uint32_t link=rebound?1:qa_q2_config_changes_begin(source->config_changes,seat->q2_hud_config_revision);
             while(link && link<=source->configstring_count) {
                 uint32_t i=link-1;
-                if(!qa_hud_q2_names_set(&seat->q2_hud_names,i,source->configstrings[i],error)) return false;
+                if(!qa_hud_q2_names_set(&seat->q2_hud_names,i,source->configstrings[i],NULL,error)) return false;
                 link=rebound?link+1:source->config_changes->slots[i].newer;
             }
         } else {
@@ -246,12 +246,12 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
             if (!rows || !qa_application_native_q2_hud_configs(seat->frontend->application,&selected,rows,capacity,&count,error)) return false;
             uint32_t images=0;
             for(size_t i=0;i<count;++i) {
-                if(!qa_hud_q2_names_set(&seat->q2_hud_names,rows[i].index,rows[i].value_id,error)) return false;
+                if(!qa_hud_q2_names_set(&seat->q2_hud_names,rows[i].index,rows[i].value_id,NULL,error)) return false;
                 if(rows[i].index>hud.config.images && rows[i].index-hud.config.images<hud.config.max_images)
                     images=rows[i].index-hud.config.images;
             }
             for(uint32_t i=images+1;i<=seat->q2_hud_image_count;++i)
-                if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,QA_STRING_NONE,error)) return false;
+                if(!qa_hud_q2_names_set(&seat->q2_hud_names,hud.config.images+i,QA_STRING_NONE,NULL,error)) return false;
             seat->q2_hud_image_count=images;
         }
         seat->q2_hud_status_text=source->statusbar;seat->q2_hud_config_revision=source->config_revision;

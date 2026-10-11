@@ -84,7 +84,7 @@ typedef struct application_q2_resource_table {
     uint32_t base, maximum, count;
     qa_string_id *names;
     qa_id_index weapon_ordinals;
-    uint32_t weapon_count;
+    qa_hud_q2_weapons weapons;
 } application_q2_resource_table;
 typedef struct application_q2_numeric_config {
     uint32_t value;
@@ -144,7 +144,7 @@ void application_network_q2_free_tables(qa_application_network_q2 *);
 application_provider *application_network_q2_provider(qa_application_network_q2 *);
 bool application_network_q2_resource(qa_application_network_q2 *, unsigned,
     const char *, uint32_t *, qa_error *);
-void application_network_q2_weapon_admit(application_q2_resource_table *, qa_strings *, qa_string_id);
+bool application_network_q2_weapon_admit(qa_application_network_q2 *, qa_string_id, qa_error *);
 bool application_network_q2_resource_id(qa_application_network_q2 *, unsigned,
     qa_string_id, uint32_t *, qa_error *);
 bool application_network_q2_source_resource(qa_application_network_q2 *, unsigned,

@@ -234,25 +234,46 @@ void qa_hud_q2_weapons_warning(qa_strings *strings, const qa_q2_config_layout *l
     }
     weapons->warnings[index - layout->wheel_weapons] = warning;
 }
+bool qa_hud_q2_weapon_add(qa_strings *strings, const qa_q2_config_layout *layout,
+    qa_string_id name, qa_hud_q2_weapons *weapons, qa_error *error)
+{
+    if (!weapons->count) {
+        if (!qa_strings_intern_cstr(strings, "weapon.md2", weapons->names, error)) return false;
+        weapons->count = 1;
+    }
+    const char *path = qa_strings_cstr(strings, name);
+    size_t limit = layout->wheel_weapons != UINT32_MAX ? 32 : 20;
+    if (path && path[0] == '#' && weapons->count < limit) {
+        if (!qa_strings_intern_cstr(strings, path + 1, weapons->names + weapons->count, error)) return false;
+        weapons->configs[weapons->count++] = name;
+    }
+    return true;
+}
 bool qa_hud_q2_weapons_bind(qa_strings *strings, const qa_q2_config_layout *layout,
     const qa_string_id *config, qa_hud_q2_weapons *out, qa_error *error)
 {
     qa_hud_q2_weapons value = {0};
-    if (!qa_strings_intern_cstr(strings, "weapon.md2", value.names, error)) return false;
-    value.count = 1;
-    size_t limit = layout->wheel_weapons!=UINT32_MAX ? 32 : 20;
-    for (uint32_t i = 1; i < layout->max_models && value.count < limit; ++i) {
-        const char *name = qa_strings_cstr(strings, config[layout->models + i]);
-        if (name && name[0]=='#') {
-            value.configs[value.count]=config[layout->models+i];
-            if (!qa_strings_intern_cstr(strings,name+1,value.names+value.count,error)) return false;
-            ++value.count;
-        }
-    }
+    if (!qa_hud_q2_weapon_add(strings, layout, QA_STRING_NONE, &value, error)) return false;
+    for (uint32_t i = 1; i < layout->max_models; ++i)
+        if (!qa_hud_q2_weapon_add(strings, layout, config[layout->models + i], &value, error)) return false;
     if (layout->wheel_weapons != UINT32_MAX)
         for (uint32_t i = 0; i < 32; ++i)
             qa_hud_q2_weapons_warning(strings, layout, config, layout->wheel_weapons + i, &value);
     *out = value;
+    return true;
+}
+bool qa_hud_q2_weapons_config(qa_strings *strings, const qa_q2_config_layout *layout,
+    const qa_string_id *config, uint32_t index, qa_string_id prior, qa_hud_q2_weapons *weapons,
+    bool *changed, qa_error *error)
+{
+    bool models = false;
+    if (index >= layout->models && index - layout->models < layout->max_models) {
+        const char *old = qa_strings_cstr(strings, prior), *text = qa_strings_cstr(strings, config[index]);
+        models = (old && old[0] == '#') || (text && text[0] == '#');
+    }
+    if (changed) *changed = models;
+    if (models) return qa_hud_q2_weapons_bind(strings, layout, config, weapons, error);
+    qa_hud_q2_weapons_warning(strings, layout, config, index, weapons);
     return true;
 }
 bool qa_hud_q2_player_icon_path(qa_bytes appearance,char *path,size_t capacity,qa_error *error)
@@ -318,8 +339,9 @@ bool qa_hud_q2_names_configure(qa_hud_q2_names *names,qa_net_protocol_id protoco
     names->rerelease=qa_q2_protocol_rerelease(protocol);
     return qa_hud_q2_weapons_bind(names->strings,&names->layout,names->values,&names->weapons,error);
 }
-bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id value,qa_error *error)
+bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id value,bool *weapons_changed,qa_error *error)
 {
+    if (weapons_changed) *weapons_changed = false;
     if(index>=names->layout.max_configs) return false;
     if(names->values[index]==value) return true;
     const char *text=value?qa_strings_cstr(names->strings,value):"";
@@ -330,13 +352,9 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id valu
     }
     qa_string_id prior = names->values[index];
     names->values[index]=value;
-    qa_hud_q2_weapons_warning(names->strings, &names->layout, names->values, index, &names->weapons);
-    if (index >= names->layout.models && index - names->layout.models < names->layout.max_models) {
-        const char *old = prior ? qa_strings_cstr(names->strings, prior) : "";
-        if ((*text == '#' || *old == '#') &&
-            !qa_hud_q2_weapons_bind(names->strings, &names->layout, names->values, &names->weapons, error)) {
-            names->values[index] = prior; return false;
-        }
+    if (!qa_hud_q2_weapons_config(names->strings, &names->layout, names->values, index, prior,
+            &names->weapons, weapons_changed, error)) {
+        names->values[index] = prior; return false;
     }
     if (names->images && index>names->layout.images && index-names->layout.images<names->layout.max_images)
         return image_prepare(names->images,names->strings,value,names->rerelease,names->filter,error);

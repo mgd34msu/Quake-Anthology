@@ -240,6 +240,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
 static bool original_weapon_skin(qa_application_network_q2 *owner,
     const struct application_native_q2 *engine, uint32_t *skin, qa_error *error)
 {
+    (void)error;
     uint32_t ordinal = (*skin >> 8) & 255u;
     if (!ordinal) return true;
     qa_string_id weapon=ordinal<engine->weapons.count?engine->weapons.configs[ordinal]:QA_STRING_NONE;
@@ -247,8 +248,7 @@ static bool original_weapon_skin(qa_application_network_q2 *owner,
     if (weapon) {
         application_q2_resource_table *table=&owner->resources[0];
         qa_id_index_cursor cursor=qa_id_index_begin(&table->weapon_ordinals,weapon,0);
-        if (!qa_id_index_next(&table->weapon_ordinals,&cursor,&target_ordinal) || target_ordinal>255)
-            return application_fail(error,QA_ERROR_FORMAT,"Q2 player weapon has no retained target appearance declaration");
+        (void)qa_id_index_next(&table->weapon_ordinals,&cursor,&target_ordinal);
     }
     *skin = (*skin & ~UINT32_C(0xff00)) | ((uint32_t)target_ordinal << 8);
     return true;

@@ -57,19 +57,16 @@ bool application_native_q2_config_update(struct application_native_q2 *engine,
     if (previous==name) return true;
     qa_strings *strings=qa_session_strings(engine->provider->application->session);
     engine->configstrings[index]=name;
-    qa_hud_q2_weapons_warning(strings,&engine->config_layout,engine->configstrings,index,&engine->weapons);
-    bool ok=true;
-    if (index>=engine->config_layout.player_skins && index-engine->config_layout.player_skins<256) {
+    bool weapon_changed = false;
+    bool ok = qa_hud_q2_weapons_config(strings,&engine->config_layout,engine->configstrings,index,previous,
+        &engine->weapons,&weapon_changed,error);
+    if (ok && index>=engine->config_layout.player_skins && index-engine->config_layout.player_skins<256) {
         uint32_t slot=index-engine->config_layout.player_skins;
         const char *info=qa_strings_cstr(strings,name);
         ok=qa_hud_q2_player_ids_bind(strings,info?info:"",engine->config_layout.extended,engine->player_names+slot,error) &&
             player_paths(engine,slot,true,error);
-    } else if (index>=engine->config_layout.models && index-engine->config_layout.models<engine->config_layout.max_models) {
-        const char *old=qa_strings_cstr(strings,previous),*next=qa_strings_cstr(strings,name);
-        if ((old&&old[0]=='#') || (next&&next[0]=='#')) {
-            ok=qa_hud_q2_weapons_bind(strings,&engine->config_layout,engine->configstrings,&engine->weapons,error);
-            for (uint32_t slot=0;ok&&slot<256;++slot) ok=player_paths(engine,slot,false,error);
-        }
+    } else if (weapon_changed) {
+        for (uint32_t slot=0;ok&&slot<256;++slot) ok=player_paths(engine,slot,false,error);
     }
     if (!ok) {engine->configstrings[index]=previous;return false;}
     qa_q2_config_changed(&engine->config_changes,index);
