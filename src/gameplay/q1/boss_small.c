@@ -635,11 +635,11 @@ bool q1_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_error
 bool q1_orb_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
-    if (q1_classnamed(g, other, "monster_orb") || q1_classnamed(g, other, "monster_lava_man") ||
-        q1_classnamed(g, other, "monster_super_shambler"))
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_ORB]) || q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_LAVA_MAN]) ||
+        q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_SUPER_SHAMBLER]))
         return q1_remove(g, e, error);
     qa_physics_properties p;
-    if (q1_classnamed(g, other, "rock") ||
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_ROCK]) ||
         (actor_physics(g, other, &p) && p.solid == QA_PHYSICS_TRIGGER))
         return true;
     qa_body_state value;
@@ -665,7 +665,7 @@ bool q1_shub_grenade_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_err
         return q1_remove(g, e, error);
     if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
-    if (q1_classnamed(g, other, "monster_oldone_new") || q1_classnamed(g, other, "oldnew_child"))
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_OLDONE_NEW]) || q1_classnamed(g, other, g->runtime_names[Q1_NAME_OLDNEW_CHILD]))
         return q1_remove(g, e, error);
     if (q1_damageable(g, other))
         return q1_damage(g, other, e->id, q1_ref_actor(g, e->owner), 10, QA_Q1_WEAPON_COUNT, error) &&
@@ -693,8 +693,8 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
         q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
         if (!e)
             continue;
-        alive += q1_classnamed(g, e->id, "monster_szombie");
-        if (q1_classnamed(g, e->id, "info_szombie_spawn") && e->wait != 0 && e->wait < g->time)
+        alive += q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE]);
+        if (q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_INFO_SZOMBIE_SPAWN]) && e->wait != 0 && e->wait < g->time)
             ++eligible;
     }
     if (alive > 32 || !eligible) {
@@ -705,7 +705,7 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     qa_actor_id point = {0};
     for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
         q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
-        if (e && q1_classnamed(g, e->id, "info_szombie_spawn") && selected-- == 0) {
+        if (e && q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_INFO_SZOMBIE_SPAWN]) && selected-- == 0) {
             point = e->id;
             e->wait = (float)(g->time + 8);
             break;

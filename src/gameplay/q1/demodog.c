@@ -145,8 +145,8 @@ bool q1_demodog_grenade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other
         return true;
     qa_q1_target target;
     if (q1_target(g, other, &target) && (target.aimed_damage || target.player)) {
-        if (q1_classnamed(g, other, "monster_boss") ||
-            q1_classnamed(g, other, "monster_oldone_new")) {
+        if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_BOSS]) ||
+            q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_OLDONE_NEW])) {
             if (!q1_damage(g, other, entity->id, q1_ref_actor(g, entity->owner), entity->state.projectile.damage,
                            QA_Q1_WEAPON_COUNT, error))
                 return false;

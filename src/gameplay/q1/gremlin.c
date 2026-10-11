@@ -230,7 +230,7 @@ static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     if (victim && !victim->consumed_corpse) {
         victim->consumed_corpse = true;
         const char *head = victim->kind == Q1_MONSTER ? victim->state.monster.species->head : NULL;
-        if (q1_classnamed(g, target, "monster_fish"))
+        if (q1_classnamed(g, target, g->runtime_names[Q1_NAME_MONSTER_FISH]))
             head = "gib1";
         if (!head)
             head = "h_player";

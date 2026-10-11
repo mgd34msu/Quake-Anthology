@@ -154,7 +154,7 @@ bool q1_hipnotic_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     if (p->kind == Q1_PROXIMITY) {
-        if (qa_actor_id_equal(other, entity->id) || q1_classnamed(g, other, "proximity_grenade"))
+        if (qa_actor_id_equal(other, entity->id) || q1_classnamed(g, other, g->runtime_names[Q1_NAME_PROXIMITY_GRENADE]))
             return true;
         entity->physics.motion = QA_PHYSICS_TOSS;
         if (p->count == 1)
@@ -260,7 +260,7 @@ static bool proximity_watch(qa_q1_game *g, q1_actor *mine, qa_error *error) {
                      native->state.projectile.kind == Q1_PROXIMITY &&
                      native->state.projectile.count == 0;
         bool live = !qa_actor_id_equal(actor, mine->id) && q1_health(g, actor) > 0 &&
-                    creature(g, actor) && !q1_classnamed(g, actor, "proximity_grenade");
+                    creature(g, actor) && !q1_classnamed(g, actor, g->runtime_names[Q1_NAME_PROXIMITY_GRENADE]);
         if (!loose && !live)
             continue;
         qa_trace_result trace;
@@ -364,7 +364,7 @@ static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     }
     qa_vec3 origin = qa_vec_sub(trace.end, qa_vec_scale(forward, 4));
     if (trace.hit == QA_TRACE_HIT_ACTOR && q1_damageable(g, trace.actor)) {
-        float damage = q1_classnamed(g, trace.actor, "monster_zombie") ? 70 : 50;
+        float damage = q1_classnamed(g, trace.actor, g->runtime_names[Q1_NAME_MONSTER_ZOMBIE]) ? 70 : 50;
         if (!q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, origin, damage, 1, error) ||
             !q1_damage(g, trace.actor, player->id, player->id, damage,
                        strike->state.projectile.weapon, error))

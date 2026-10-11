@@ -188,8 +188,8 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
         if (native)
             native->spawnflags &= ~4u;
         if (!traits.player) {
-            if (q1_classnamed(g, other, "item_artifact_invulnerability") ||
-                q1_classnamed(g, other, "item_artifact_super_damage")) {
+            if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_ITEM_ARTIFACT_INVULNERABILITY]) ||
+                q1_classnamed(g, other, g->runtime_names[Q1_NAME_ITEM_ARTIFACT_SUPER_DAMAGE])) {
                 if (!field(g, id) || !q1_alive(g, other))
                     return true;
                 body.velocity = velocity;
@@ -199,7 +199,7 @@ static bool push(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error)
         }
     }
     bool living = q1_health(g, other) > 0;
-    bool grenade = living ? false : q1_classnamed(g, other, "grenade");
+    bool grenade = living ? false : q1_classnamed(g, other, g->runtime_names[Q1_NAME_GRENADE]);
     if (!field(g, id) || !q1_alive(g, other))
         return true;
     if (living || grenade) {
@@ -261,7 +261,7 @@ bool q1_map_addon_field_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         e = field(g, id);
         return !e || q1_map_schedule(g, e, e->wait, Q1_MAP_REARM, error);
     }
-    if (q1_health(g, other) <= 0 && !q1_classnamed(g, other, "grenade"))
+    if (q1_health(g, other) <= 0 && !q1_classnamed(g, other, g->runtime_names[Q1_NAME_GRENADE]))
         return true;
     e = field(g, id);
     if (!e || !q1_alive(g, other))

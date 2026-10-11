@@ -46,7 +46,7 @@ bool q1_overlord_destination(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     uint32_t cursor = 0;
     const qa_actor_record *record;
     while (qa_actors_next(qa_session_actors(g->services.session), &cursor, &record)) {
-        if (!q1_classnamed(g, record->id, "info_overlord_destination"))
+        if (!q1_classnamed(g, record->id, g->runtime_names[Q1_NAME_INFO_OVERLORD_DESTINATION]))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, record->id, &body, NULL) ||

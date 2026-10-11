@@ -251,7 +251,7 @@ bool q1_map_rogue_hazard_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
         return saw_start(g, entity, error);
     entity->activator = q1_ref_from(g, activator);
     if (entity->spawnflags & 1) {
-        bool end = q1_classnamed(g, other, "ltrail_end");
+        bool end = q1_classnamed(g, other, g->runtime_names[Q1_NAME_LTRAIL_END]);
         entity = hazard(g, id);
         if (!entity)
             return true;

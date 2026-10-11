@@ -20,7 +20,7 @@ static bool train_sound(qa_q1_game *g, q1_actor *entity, bool moving, qa_error *
 }
 bool q1_map_train_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     bool hipnotic = entity->map->kind == Q1_MAP_TRAIN2;
-    bool teleport = q1_classnamed(g, entity->id, "misc_teleporttrain");
+    bool teleport = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MISC_TELEPORTTRAIN]);
     if (!q1_map_text(g, entity->target))
         return q1_map_fail(error, "Q1 train has no target");
     if (!teleport && !entity->map->has_inline_model)

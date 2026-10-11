@@ -63,7 +63,7 @@ bool q1_major_boss_effect(qa_q1_game *g, qa_damage_effect_stage stage,
             effect->allowed = false;
         if (m->addon.boss == Q1_BOSS_FINAL && (e->spawnflags & 2) &&
             (m->source.boss.immune ||
-             q1_classnamed(g, request->attack.attacker, "monster_lava_man")))
+             q1_classnamed(g, request->attack.attacker, g->runtime_names[Q1_NAME_MONSTER_LAVA_MAN])))
             effect->allowed = false;
     } else if (stage == QA_DAMAGE_AFTER_ARMOR && m->addon.boss == Q1_BOSS_FINAL &&
                (e->spawnflags & 2)) {

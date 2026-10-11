@@ -88,8 +88,8 @@ bool q1_rocket_ogre_touch(qa_q1_game *g, q1_actor *missile, qa_actor_id other, q
                q1_remove(g, missile, error);
     }
     if (q1_health(g, other) != 0) {
-        float damage = q1_classnamed(g, other, "monster_shambler") ? 20
-                       : q1_classnamed(g, other, "monster_zombie") ? 60
+        float damage = q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_SHAMBLER]) ? 20
+                       : q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_ZOMBIE]) ? 60
                                                                    : 40;
         if (!q1_damage(g, other, missile->id, q1_ref_actor(g, missile->owner), damage, QA_Q1_WEAPON_COUNT, error))
             return false;

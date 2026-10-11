@@ -160,8 +160,8 @@ bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1
         q1_actor *entity = game->actors[i];
         if (!entity || !entity->active || !entity->native || entity->kind != Q1_MAP ||
             !entity->map || !q1_alive(game, entity->id) ||
-            (!q1_classnamed(game, entity->id, "func_door") &&
-             !q1_classnamed(game, entity->id, "trigger_teleport"))) continue;
+            (!q1_classnamed(game, entity->id, game->runtime_names[Q1_NAME_FUNC_DOOR]) &&
+             !q1_classnamed(game, entity->id, game->runtime_names[Q1_NAME_TRIGGER_TELEPORT]))) continue;
         qa_body_state target;
         if (!qa_world_body_read(game->services.world, entity->id, &target, error)) return false;
         qa_vec3 center = qa_vec_add(target.origin,
@@ -174,7 +174,7 @@ bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1
         }
         if (!near || record->source_slot < ordinal) { near = entity; ordinal = record->source_slot; }
     }
-    if (near && q1_classnamed(game, near->id, "func_door")) {
+    if (near && q1_classnamed(game, near->id, game->runtime_names[Q1_NAME_FUNC_DOOR])) {
         if (!observer_door(game, near, &body, passage_written, error)) return false;
     } else if (near) {
         qa_body_state target;

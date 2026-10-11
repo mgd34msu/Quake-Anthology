@@ -281,7 +281,7 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     case Q1_ZOMBIE_GRENADE:
         if (q1_damageable(g, other))
             return q1_damage(g, other, entity->id, q1_ref_actor(g, entity->owner),
-                             q1_classnamed(g, entity->id, "mummy_grenade") ? 15 + q1_random(g) * 15
+                             q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MUMMY_GRENADE]) ? 15 + q1_random(g) * 15
                                                                            : 10,
                              projectile.weapon, error) &&
                    q1_sound(g, entity->id, "zombie/z_hit.wav", 1, 1, error) &&

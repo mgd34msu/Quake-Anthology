@@ -1203,7 +1203,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     state->electrode_button = *handled && !strcmp(spawn->classname, "mge2m2_electrode_button");
     if (!fields(g, entity, spawn->map_fields, error))
         return false;
-    if (kind == Q1_MAP_LIGHT && q1_classnamed(g, entity->id, "light_fluorospark") && !state->style)
+    if (kind == Q1_MAP_LIGHT && q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUOROSPARK]) && !state->style)
         state->style = 10;
     if (!*handled)
         return true;
@@ -1307,10 +1307,10 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         entity->physics.motion = QA_PHYSICS_PUSH;
         entity->physics.solid = QA_PHYSICS_BRUSH;
         body.angles = qa_v3(0, 0, 0);
-        state->use_enabled = !q1_classnamed(g, entity->id, "func_ctf_wall");
+        state->use_enabled = !q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_CTF_WALL]);
         break;
     case Q1_MAP_POINT:
-        if (q1_classnamed(g, entity->id, "info_player_deathmatch") &&
+        if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_INFO_PLAYER_DEATHMATCH]) &&
             !q1_source_runes_start(g, error)) return false;
         break;
     case Q1_MAP_DESTINATION:
@@ -1318,7 +1318,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
             return q1_map_fail(error, "Q1 teleport destination has no targetname");
         state->mangle = body.angles;
         if (g->options.program == QA_Q1_CTF &&
-            q1_classnamed(g, entity->id, "info_vote_destination"))
+            q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_INFO_VOTE_DESTINATION]))
             entity->model = QA_STRING_NONE;
         body.angles = qa_v3(0, 0, 0);
         body.origin.z += 27;
@@ -1350,26 +1350,26 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         state->use_enabled = true;
         break;
     case Q1_MAP_LIGHT:
-        if (q1_classnamed(g, entity->id, "light") && !q1_map_text(g, entity->targetname))
+        if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT]) && !q1_map_text(g, entity->targetname))
             return q1_remove(g, entity, error);
-        if (state->style >= 32 && !q1_classnamed(g, entity->id, "light_fluorospark")) {
+        if (state->style >= 32 && !q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUOROSPARK])) {
             state->use_enabled = true;
             if (!q1_map_lightstyle(g, entity, entity->spawnflags & 1 ? "a" : "m", error))
                 return false;
             if (!q1_alive(g, entity->id))
                 return true;
         }
-        if (q1_classnamed(g, entity->id, "light_fluoro") ||
-            q1_classnamed(g, entity->id, "light_fluorospark"))
+        if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUORO]) ||
+            q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUOROSPARK]))
             if (!q1_map_ambient(g, body.origin,
-                                q1_classnamed(g, entity->id, "light_fluoro")
+                                q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUORO])
                                     ? "ambience/fl_hum1.wav"
                                     : "ambience/buzz1.wav",
                                 .5f, error))
                 return false;
         break;
     case Q1_MAP_BARREL: {
-        bool small = q1_classnamed(g, entity->id, "misc_explobox2");
+        bool small = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MISC_EXPLOBOX2]);
         if (!q1_model(g, entity, small ? "maps/b_exbox2.bsp" : "maps/b_explob.bsp", error) ||
             !qa_combat_set_health(g->services.combat, entity->id, 20, error) ||
             !q1_map_damageable(g, entity, true, error))

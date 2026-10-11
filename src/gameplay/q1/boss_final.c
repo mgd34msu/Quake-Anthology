@@ -100,7 +100,7 @@ static bool radius(qa_q1_game *g, q1_actor *e, float amount, qa_error *error) {
     for (size_t i = snapshot->snapshot.count; i > 0; --i) {
         qa_actor_id id = snapshot->snapshot.ids[i - 1];
         qa_body_state body;
-        if (qa_actor_id_equal(id, e->id) || q1_classnamed(g, id, "monster_lava_man") ||
+        if (qa_actor_id_equal(id, e->id) || q1_classnamed(g, id, g->runtime_names[Q1_NAME_MONSTER_LAVA_MAN]) ||
             !q1_damageable(g, id) || !qa_world_body_read(g->services.world, id, &body, NULL))
             continue;
         qa_vec3 center = qa_vec_add(
@@ -393,10 +393,10 @@ bool q1_final_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
                          const qa_touch_contact *contact, qa_error *error) {
     if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
-    if (q1_classnamed(g, other, "monster_orb") || q1_classnamed(g, other, "monster_lava_man"))
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_ORB]) || q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_LAVA_MAN]))
         return q1_remove(g, e, error);
     qa_physics_properties p;
-    if (q1_classnamed(g, other, "rock") ||
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_ROCK]) ||
         (g->services.physics->services.read(g->services.physics->services.context, other, &p) &&
          p.solid == QA_PHYSICS_TRIGGER))
         return true;
@@ -539,10 +539,10 @@ bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
                                        : q1_schedule(g, e, e->delay, Q1_THINK_BOSS_CHILD, error);
 }
 bool q1_final_map_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
-    bool boss = q1_classnamed(g, e->id, "info_boss_teleport_boss"),
-         first = q1_classnamed(g, e->id, "info_boss_teleport_first"),
-         second = q1_classnamed(g, e->id, "info_boss_teleport_second");
-    *handled = boss || first || second || q1_classnamed(g, e->id, "trigger_boss_teleport");
+    bool boss = q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_INFO_BOSS_TELEPORT_BOSS]),
+         first = q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_INFO_BOSS_TELEPORT_FIRST]),
+         second = q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_INFO_BOSS_TELEPORT_SECOND]);
+    *handled = boss || first || second || q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_TRIGGER_BOSS_TELEPORT]);
     if (!boss && !first && !second)
         return true;
     qa_body_state body;
@@ -560,14 +560,14 @@ bool q1_final_teleport(qa_q1_game *g, bool variant, qa_error *error) {
     if (!q1_snapshot_actors(g, &snapshot, error))
         return false;
     qa_actor_id boss = {0}, destination = {0};
-    const char *classname = variant ? "info_boss_teleport_second" : "info_boss_teleport_first";
+    qa_string_id classname = variant ? g->runtime_names[Q1_NAME_INFO_BOSS_TELEPORT_SECOND] : g->runtime_names[Q1_NAME_INFO_BOSS_TELEPORT_FIRST];
     for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
         q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
         if (!e)
             continue;
-        if (!boss.registry && q1_classnamed(g, e->id, "monster_boss"))
+        if (!boss.registry && q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_MONSTER_BOSS]))
             boss = e->id;
-        if (!destination.registry && q1_classnamed(g, e->id, "info_boss_teleport_boss"))
+        if (!destination.registry && q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_INFO_BOSS_TELEPORT_BOSS]))
             destination = e->id;
         if (q1_classnamed(g, e->id, classname))
             e->wait = 0;

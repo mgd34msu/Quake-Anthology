@@ -58,7 +58,7 @@ static bool eel_zap(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     for (size_t i = snapshot->snapshot.count; i > 0; --i) {
         qa_actor_id target = snapshot->snapshot.ids[i - 1];
         qa_q1_target traits;
-        if (q1_classnamed(g, target, "monster_eel") || !q1_target(g, target, &traits) ||
+        if (q1_classnamed(g, target, g->runtime_names[Q1_NAME_MONSTER_EEL]) || !q1_target(g, target, &traits) ||
             !traits.player || !q1_damageable(g, target))
             continue;
         qa_body_state body;

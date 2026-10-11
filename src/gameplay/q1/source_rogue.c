@@ -132,7 +132,7 @@ static q1_actor *world(qa_q1_game *game, qa_error *error) {
     if (!rogue(game, error)) return NULL;
     qa_actor_id id = game->maps ? game->maps->world_actor : (qa_actor_id){0};
     q1_actor *actor = q1_entity(game, id);
-    if (!actor || !actor->native || !q1_classnamed(game, id, "worldspawn")) {
+    if (!actor || !actor->native || !q1_classnamed(game, id, game->runtime_names[Q1_NAME_WORLDSPAWN])) {
         fail(error, id, "Rogue update requires its actual physical source world");
         return NULL;
     }

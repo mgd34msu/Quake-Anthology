@@ -272,11 +272,11 @@ bool q1_map_addon_visual_use(qa_q1_game *g, q1_actor *e, qa_error *error) {
 bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
     *handled = false;
     qa_actor_id id = e->id;
-    bool light = q1_classnamed(g, id, "light"), spark = q1_classnamed(g, id, "light_fluorospark");
-    bool flame = q1_classnamed(g, id, "light_torch_small_walltorch") ||
-                 q1_classnamed(g, id, "light_flame_large_yellow") ||
-                 q1_classnamed(g, id, "light_flame_small_yellow") ||
-                 q1_classnamed(g, id, "light_flame_small_white");
+    bool light = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT]), spark = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_FLUOROSPARK]);
+    bool flame = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH]) ||
+                 q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_FLAME_LARGE_YELLOW]) ||
+                 q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_FLAME_SMALL_YELLOW]) ||
+                 q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_FLAME_SMALL_WHITE]);
     if (!light && !spark && !flame)
         return true;
     *handled = true;
@@ -303,7 +303,7 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
         return true;
     if (spark)
         return q1_map_ambient(g, body.origin, "ambience/buzz1.wav", .5f, error);
-    const char *model = q1_classnamed(g, id, "light_torch_small_walltorch")
+    const char *model = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])
         ? "progs/flame.mdl" : "progs/flame2.mdl";
     if (!q1_model(g, e, model, error))
         return false;
@@ -313,7 +313,7 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
     if (!qa_q1_wire_declare_model(g, model, error)) return false;
     e = visual(g, id);
     if (!e) return true;
-    if (q1_classnamed(g, id, "light_flame_large_yellow")) e->frame = 1;
+    if (q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_FLAME_LARGE_YELLOW])) e->frame = 1;
     if (e->spawnflags & 4) {
         if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
         if (!visual(g, id)) return true;

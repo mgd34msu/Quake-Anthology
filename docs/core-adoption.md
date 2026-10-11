@@ -339,6 +339,18 @@ text. The normal build and seven core suites pass:
 migrated against the audit sites; findings 3-17 remain. No live installation,
 guest save/restore round trip or performance result is claimed.
 
+Names finding 3, Q1 slice: the compiled Q1 constructor interns its runtime
+classname/cause constants in the session table once. `q1_classnamed` accepts
+`qa_string_id`, reads the existing actor classname or shared traits, and compares
+IDs. Every caller uses the retained IDs, including mission-pack rule arrays,
+boss destinations, lights and ambient-source selectors. Obituary monster rows
+select those same IDs; messages still resolve text for output. The Hipnotic
+particle field compares the authored classname ID directly. Runtime classname
+strlen/memcmp and obituary string comparisons are deleted. The normal build and
+seven core suites pass:
+`/tmp/qa-ta3196-q1-classnames-20261011-{build,core}.log`. Q2, mode, campaign and
+bot-goal classname sites in finding 3 remain; no live gameplay claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

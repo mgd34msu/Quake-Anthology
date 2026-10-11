@@ -21,13 +21,13 @@ static bool remove_child(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_actor *child = q1_entity(g, q1_ref_actor(g, e->state.monster.source.heavy.child));
     e->state.monster.source.heavy.child = (q1_ref){0};
     return !child || !q1_ref_equal(child->owner, q1_ref_from(g, e->id)) ||
-           !q1_classnamed(g, child->id, "lightning_child") || q1_remove(g, child, error);
+           !q1_classnamed(g, child->id, g->runtime_names[Q1_NAME_LIGHTNING_CHILD]) || q1_remove(g, child, error);
 }
 static bool child_frame(qa_q1_game *g, q1_actor *e, int32_t frame) {
     e->effects |= 2;
     q1_actor *child = q1_entity(g, q1_ref_actor(g, e->state.monster.source.heavy.child));
     if (child && q1_ref_equal(child->owner, q1_ref_from(g, e->id)) &&
-        q1_classnamed(g, child->id, "lightning_child"))
+        q1_classnamed(g, child->id, g->runtime_names[Q1_NAME_LIGHTNING_CHILD]))
         child->frame = frame;
     return true;
 }
@@ -331,7 +331,7 @@ static bool cleanup_orbs(qa_q1_game *g, q1_actor *e, qa_error *error) {
     for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
         q1_actor *child = q1_entity(g, snapshot->snapshot.ids[i]);
         if (child && q1_ref_equal(child->owner, q1_ref_from(g, e->id)) &&
-            q1_classnamed(g, child->id, "monster_super_shambler") &&
+            q1_classnamed(g, child->id, g->runtime_names[Q1_NAME_MONSTER_SUPER_SHAMBLER]) &&
             !q1_schedule(g, child, .1, Q1_THINK_HEAVY_SOURCE_DIE, error)) {
             ok = false;
             break;

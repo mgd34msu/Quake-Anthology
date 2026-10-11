@@ -157,7 +157,7 @@ static bool repeat_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     }
     q1_actor *previous = q1_entity(g, q1_ref_actor(g, e->map->pending.addon.chain));
     if (previous && previous->map && previous->map->kind == Q1_MAP_ADDON_EXPLOSION &&
-        q1_classnamed(g, previous->id, "spawned_explosion") && !q1_remove(g, previous, error))
+        q1_classnamed(g, previous->id, g->runtime_names[Q1_NAME_SPAWNED_EXPLOSION]) && !q1_remove(g, previous, error))
         return false;
     e = control(g, id);
     if (!e)

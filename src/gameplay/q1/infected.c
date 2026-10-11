@@ -90,7 +90,7 @@ static bool retarget(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
     if (!q1_ref_present(m->enemy) ||
         !q1_classnamed(g, q1_ref_actor(g, m->enemy),
-                       m->species->species == QA_Q1_ZOMBIE ? "monster_zombie" : "monster_demon1"))
+                       m->species->species == QA_Q1_ZOMBIE ? g->runtime_names[Q1_NAME_MONSTER_ZOMBIE] : g->runtime_names[Q1_NAME_MONSTER_DEMON1]))
         return true;
     qa_builtin_snapshot_frame *snapshot;
     if (!q1_snapshot_players(g, &snapshot, error))

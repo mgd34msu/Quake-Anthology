@@ -50,8 +50,8 @@ static bool rocket_explode(qa_q1_game *g, q1_actor *rocket, qa_actor_id direct, 
         return false;
     if (direct.registry && q1_health(g, direct) != 0) {
         float damage = (q1_weapon_shape(QA_Q1_MULTI_ROCKET)->damage-7.5f) + q1_random(g)*15;
-        if (q1_classnamed(g, direct, "monster_shambler") ||
-            q1_classnamed(g, direct, "monster_dragon"))
+        if (q1_classnamed(g, direct, g->runtime_names[Q1_NAME_MONSTER_SHAMBLER]) ||
+            q1_classnamed(g, direct, g->runtime_names[Q1_NAME_MONSTER_DRAGON]))
             damage *= 0.5f;
         if (!q1_damage(g, direct, rocket->id, q1_ref_actor(g, rocket->owner), damage, QA_Q1_MULTI_ROCKET, error))
             return false;
@@ -156,7 +156,7 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
     if (!q1_sound(g, plasma->id, "plasma/explode.wav", 1, 1, error))
         return false;
     if (q1_health(g, other) != 0) {
-        if (q1_classnamed(g, other, "monster_shambler"))
+        if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_SHAMBLER]))
             damage *= 0.5f;
         if (!q1_damage(g, other, plasma->id, q1_ref_actor(g, plasma->owner), damage, QA_Q1_PLASMA, error))
             return false;
@@ -252,7 +252,7 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
         if (q1_damageable(g, other)) {
             if (!q1_effect(g, QA_BUILTIN_IMPACT, other, body.origin, powered ? 18 : 9, 1, error))
                 return false;
-            if (!q1_classnamed(g, other, "monster_lava_man")) {
+            if (!q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_LAVA_MAN])) {
                 bool player = is_player(g, other);
                 float damage = player ? powered ? 18 : 9 : powered ? 30 : 15;
                 qa_string_id cause;

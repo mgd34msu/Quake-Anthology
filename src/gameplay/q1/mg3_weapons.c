@@ -50,8 +50,8 @@ bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
         q1_actor *victim = q1_entity(g, trace.actor);
         if (victim)
             victim->axe_hit = true;
-        float damage = q1_classnamed(g, trace.actor, "monster_zombie") ||
-                               q1_classnamed(g, trace.actor, "monster_szombie")
+        float damage = q1_classnamed(g, trace.actor, g->runtime_names[Q1_NAME_MONSTER_ZOMBIE]) ||
+                               q1_classnamed(g, trace.actor, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE])
                            ? 120
                        : q1_health(g, trace.actor) < 40 ? 80
                                                         : 40;
@@ -131,13 +131,13 @@ bool q1_mg3_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
         return true;
     if (!q1_alive(g, player->id))
         return true;
-    static const char *const names[] = {"item_shells", "item_spikes", "item_rockets", "item_cells"};
+    static const q1_runtime_name names[] = {Q1_NAME_ITEM_SHELLS, Q1_NAME_ITEM_SPIKES, Q1_NAME_ITEM_ROCKETS, Q1_NAME_ITEM_CELLS};
     if (ammo < 4) {
         for (uint32_t i = 0; i < g->capacity; ++i) {
             q1_actor *item = g->actors[i];
             if (!item || item->kind != Q1_PICKUP || item->state.pickup.external ||
                 !(item->spawnflags & 8) || item->physics.solid != QA_PHYSICS_NOT_SOLID ||
-                !q1_classnamed(g, item->id, names[ammo]))
+                !q1_classnamed(g, item->id, g->runtime_names[names[ammo]]))
                 continue;
             if (!q1_schedule(g, item, 0.5 * q1_random(g), Q1_THINK_RESPAWN, error))
                 return false;

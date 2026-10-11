@@ -156,7 +156,7 @@ bool q1_dragon_launch_fireball(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin,
 bool q1_dragon_fireball_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *error) {
     if (q1_ref_equal(q1_ref_from(g, other), shot->owner))
         return true;
-    bool dragon = q1_classnamed(g, q1_ref_actor(g, shot->owner), "monster_dragon");
+    bool dragon = q1_classnamed(g, q1_ref_actor(g, shot->owner), g->runtime_names[Q1_NAME_MONSTER_DRAGON]);
     if (!q1_radius(g, shot->id, q1_ref_actor(g, shot->owner), dragon ? 90 : 30,
                    q1_ref_actor(g, dragon ? shot->owner : q1_ref_from(g, g->services.physics->world_actor)), QA_Q1_WEAPON_COUNT,
                    error))
@@ -306,7 +306,7 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_dragon_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     if (!entity->state.monster.source.dragon.death_state)
         return true;
-    if (q1_classnamed(g, other, "player")) {
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_PLAYER])) {
         if (!qa_builtin_resource(&g->services, "monster_dragon_dead", &entity->classname, error) ||
             !q1_damage(g, other, entity->id, entity->id, 200, QA_Q1_WEAPON_COUNT, error))
             return false;
@@ -324,7 +324,7 @@ bool q1_dragon_corner_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id other, 
     q1_actor *entity = q1_entity(g, other);
     if (!entity || entity->kind != Q1_MONSTER ||
         entity->state.monster.species->species != QA_Q1_DRAGON ||
-        !q1_classnamed(g, other, "monster_dragon") ||
+        !q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_DRAGON]) ||
         !q1_ref_equal(entity->state.monster.move_target, q1_ref_from(g, corner->id)))
         return true;
     qa_actor_id goal = q1_find_target(g, corner->target);

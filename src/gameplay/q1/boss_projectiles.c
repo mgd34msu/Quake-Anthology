@@ -110,8 +110,8 @@ bool q1_boss_autogun(qa_q1_game *g, q1_actor *source, qa_vec3 origin, float offs
 bool q1_boss_sphere_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     if (q1_ref_equal(e->owner, q1_ref_from(g, other)))
         return true;
-    if (q1_classnamed(g, other, "oldnew_child") || q1_classnamed(g, other, "oldnew_eye") ||
-        q1_classnamed(g, other, "monster_szombie"))
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_OLDNEW_CHILD]) || q1_classnamed(g, other, g->runtime_names[Q1_NAME_OLDNEW_EYE]) ||
+        q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE]))
         return q1_remove(g, e, error);
     qa_physics_properties p;
     if (g->services.physics->services.read(g->services.physics->services.context, other, &p) &&
@@ -266,7 +266,7 @@ bool q1_boss_teledeath_touch(qa_q1_game *g, q1_actor *death, qa_actor_id other, 
         return true;
     qa_q1_target traits, owner;
     bool player = q1_target(g, other, &traits) && traits.player;
-    if (player || q1_classnamed(g, other, "monster_oldone_new")) {
+    if (player || q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_OLDONE_NEW])) {
         if (qa_q1_game_invulnerable(g, other) &&
             !qa_builtin_resource(&g->services, "teledeath2", &death->classname, error))
             return false;

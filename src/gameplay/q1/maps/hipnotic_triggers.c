@@ -120,7 +120,7 @@ bool q1_map_hip_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) 
                q1_map_schedule(g, entity, .1, Q1_MAP_COUNTER_START, error);
     }
     if (kind == Q1_MAP_ONCOUNT) {
-        if (q1_classnamed(g, id, "func_oncount")) {
+        if (q1_classnamed(g, id, g->runtime_names[Q1_NAME_FUNC_ONCOUNT])) {
             entity->count = floorf(entity->count);
             if (entity->count <= 0)
                 entity->count = 1;
@@ -196,7 +196,7 @@ bool q1_map_hip_trigger_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     case Q1_MAP_ONCOUNT: {
         qa_actor_id id = entity->id;
         double value = 0;
-        if (q1_classnamed(g, other, "func_counter"))
+        if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_FUNC_COUNTER]))
             (void)qa_targets_number(g->maps->options.targets, other, "counter_state", &value);
         entity = trigger(g, id);
         return !entity || value != entity->count || q1_map_targets(g, entity, other, error);
@@ -246,7 +246,7 @@ bool q1_map_hip_trigger_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other
         return g->host.set_gravity(g->host.context, other,
                                    entity->map->gravity == -1 ? 1 : entity->map->gravity, error);
     case Q1_MAP_DECOY_TRIGGER:
-        if (!q1_classnamed(g, other, "monster_decoy"))
+        if (!q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_DECOY]))
             return true;
         entity = trigger(g, id);
         if (!entity)

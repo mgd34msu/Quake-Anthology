@@ -11,7 +11,7 @@ static q1_actor *capture_world(qa_q1_game *game, qa_error *error) {
     q1_actor *world = q1_entity(game, actor);
     if (!game || game->destroy_pending || game->continuation_pending ||
         game->options.program != QA_Q1_CTF || !world || !world->native ||
-        !q1_classnamed(game, actor, "worldspawn")) {
+        !q1_classnamed(game, actor, game->runtime_names[Q1_NAME_WORLDSPAWN])) {
         fail(error, actor, "CTF capture words require the actual native source world");
         return NULL;
     }
@@ -46,8 +46,8 @@ static q1_actor *flag(qa_q1_game *game, qa_actor_id actor, qa_error *error) {
     q1_actor *entity = q1_entity(game, actor);
     if (!game || game->continuation_pending || game->options.program != QA_Q1_CTF ||
         !entity || !entity->native || entity->kind != Q1_SOURCE_CTF_FLAG ||
-        (!q1_classnamed(game, actor, "item_flag_team1") &&
-         !q1_classnamed(game, actor, "item_flag_team2"))) {
+        (!q1_classnamed(game, actor, game->runtime_names[Q1_NAME_ITEM_FLAG_TEAM1]) &&
+         !q1_classnamed(game, actor, game->runtime_names[Q1_NAME_ITEM_FLAG_TEAM2]))) {
         fail(error, actor, "CTF flag requires its genuine native source actor");
         return NULL;
     }
@@ -217,12 +217,12 @@ bool qa_q1_source_flag_carry(qa_q1_game *game, qa_actor_id actor, qa_actor_id pl
 
 bool q1_source_flag_spawn(qa_q1_game *game, q1_actor *entity, bool *handled, qa_error *error) {
     *handled = game->options.program == QA_Q1_CTF &&
-        (q1_classnamed(game, entity->id, "item_flag_team1") ||
-         q1_classnamed(game, entity->id, "item_flag_team2"));
+        (q1_classnamed(game, entity->id, game->runtime_names[Q1_NAME_ITEM_FLAG_TEAM1]) ||
+         q1_classnamed(game, entity->id, game->runtime_names[Q1_NAME_ITEM_FLAG_TEAM2]));
     if (!*handled) return true;
     qa_actor_id actor = entity->id;
     entity->kind = Q1_SOURCE_CTF_FLAG;
-    bool blue = q1_classnamed(game, actor, "item_flag_team2");
+    bool blue = q1_classnamed(game, actor, game->runtime_names[Q1_NAME_ITEM_FLAG_TEAM2]);
     entity->skin = blue ? 1 : 0;
     entity->effects = blue ? 16 : 32;
     qa_body_state body;

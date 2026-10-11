@@ -9,7 +9,7 @@ static q1_actor *world(qa_q1_game *game, qa_error *error) {
     q1_actor *source = game && game->maps ? q1_entity(game, game->maps->world_actor) : NULL;
     if (!game || game->destroy_pending || game->continuation_pending ||
         game->options.program != QA_Q1_ROGUE || !source || !source->native ||
-        !q1_classnamed(game, source->id, "worldspawn")) {
+        !q1_classnamed(game, source->id, game->runtime_names[Q1_NAME_WORLDSPAWN])) {
         fail(error, (qa_actor_id){0}, "Rogue token lost its actual native source world");
         return NULL;
     }
@@ -18,7 +18,7 @@ static q1_actor *world(qa_q1_game *game, qa_error *error) {
 static q1_actor *token(qa_q1_game *game, qa_actor_id actor, qa_error *error) {
     q1_actor *source = q1_entity(game, actor);
     if (!world(game, error) || !source || !source->native ||
-        source->kind != Q1_SOURCE_ROGUE_TAG || !q1_classnamed(game, actor, "dmatch_tag_token")) {
+        source->kind != Q1_SOURCE_ROGUE_TAG || !q1_classnamed(game, actor, game->runtime_names[Q1_NAME_DMATCH_TAG_TOKEN])) {
         fail(error, actor, "Rogue token lost its physical source actor");
         return NULL;
     }
@@ -116,7 +116,7 @@ bool qa_q1_source_rogue_tag_configure(qa_q1_game *game,
 }
 bool q1_source_rogue_tag_spawn(qa_q1_game *game, q1_actor *source, bool *handled,
     qa_error *error) {
-    *handled = game->options.program == QA_Q1_ROGUE && q1_classnamed(game, source->id, "dmatch_tag_token");
+    *handled = game->options.program == QA_Q1_ROGUE && q1_classnamed(game, source->id, game->runtime_names[Q1_NAME_DMATCH_TAG_TOKEN]);
     if (!*handled) return true;
     float mode;
     if (!game->host.cvars ||

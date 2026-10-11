@@ -220,7 +220,7 @@ static bool spectator_find(qa_q1_game *game,uint32_t ordinal,qa_actor_id *out,
     for(uint32_t i=0;i<game->capacity;++i) {
         const q1_actor *entity=game->actors[i];
         if(!entity || !entity->active || !entity->native ||
-            !q1_classnamed(game,entity->id,"info_player_deathmatch")) continue;
+            !q1_classnamed(game,entity->id,game->runtime_names[Q1_NAME_INFO_PLAYER_DEATHMATCH])) continue;
         const qa_actor_record *record=qa_actors_get(qa_session_actors(game->services.session),entity->id);
         if(!record || record->owner!=game->options.provider || !record->has_source) {
             qa_error_set(error,QA_ERROR_ARGUMENT,entity->id.slot,"Spectator spawn point lost its physical source identity");

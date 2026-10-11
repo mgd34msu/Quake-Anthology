@@ -104,10 +104,10 @@ bool q1_wrath_think(qa_q1_game *g, q1_actor *shot, qa_error *error) {
 bool q1_wrath_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *error) {
     if (shot->physics.solid == QA_PHYSICS_NOT_SOLID)
         return true;
-    if (q1_ref_equal(q1_ref_from(g, other), shot->owner) || q1_classnamed(g, other, "monster_wrath") ||
-        q1_classnamed(g, other, "monster_super_wrath"))
+    if (q1_ref_equal(q1_ref_from(g, other), shot->owner) || q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_WRATH]) ||
+        q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_SUPER_WRATH]))
         return q1_remove(g, shot, error);
-    if (q1_classnamed(g, other, "monster_zombie") &&
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_ZOMBIE]) &&
         !q1_damage(g, other, shot->id, shot->id, 110, QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!q1_alive(g, shot->id))

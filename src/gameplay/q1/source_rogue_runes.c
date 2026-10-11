@@ -73,7 +73,7 @@ bool qa_q1_source_rogue_runes_read(const qa_q1_game *g, qa_actor_id actor,
 }
 static q1_actor *world(qa_q1_game *g, qa_error *error) {
     q1_actor *e = g->maps ? q1_entity(g, g->maps->world_actor) : NULL;
-    if (!e || !e->native || !q1_classnamed(g, e->id, "worldspawn")) {
+    if (!e || !e->native || !q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_WORLDSPAWN])) {
         fail(error, (qa_actor_id){0}, "Rogue rune cursor lost its source worldspawn");
         return NULL;
     }
@@ -85,12 +85,12 @@ static bool next_spawn(qa_q1_game *g, qa_vec3 *out, qa_error *error) {
     const q1_actor *previous = q1_entity_const(g, q1_ref_actor(g, owner->rogue_rune_spawn));
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
     const qa_actor_record *before = previous && previous->native &&
-        q1_classnamed(g, previous->id, "info_player_deathmatch") ? qa_actors_get(actors, previous->id) : NULL;
+        q1_classnamed(g, previous->id, g->runtime_names[Q1_NAME_INFO_PLAYER_DEATHMATCH]) ? qa_actors_get(actors, previous->id) : NULL;
     const qa_actor_record *first = NULL, *next = NULL;
     for (uint32_t i = 0; i < g->capacity; ++i) {
         q1_actor *spot = g->actors[i];
         if (!spot || !spot->native || !q1_alive(g, spot->id) ||
-            !q1_classnamed(g, spot->id, "info_player_deathmatch")) continue;
+            !q1_classnamed(g, spot->id, g->runtime_names[Q1_NAME_INFO_PLAYER_DEATHMATCH])) continue;
         const qa_actor_record *record = qa_actors_get(actors, spot->id);
         if (!record || record->owner != g->options.provider || !record->has_source)
             return fail(error, spot->id, "Rogue rune spawn lost its physical source ordinal");

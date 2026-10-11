@@ -150,7 +150,7 @@ bool q1_map_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, qa_er
         return true;
     corner->owner = q1_ref_from(g, actor);
     qa_q1_path_state previous;
-    if (q1_classnamed(g, mover.previous_corner, "path_corner") &&
+    if (q1_classnamed(g, mover.previous_corner, g->runtime_names[Q1_NAME_PATH_CORNER]) &&
         read_path(g, mover.previous_corner, &previous) &&
         qa_actor_id_equal(previous.owner, mover.previous_corner) &&
         !change_path(g, mover.previous_corner, (qa_q1_path_change){.kind = QA_Q1_PATH_OWNER},
@@ -163,7 +163,7 @@ bool q1_map_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, qa_er
         return false;
     if (!q1_alive(g, corner_id) || !read_path(g, actor, &mover) || mover.pause_until > g->time)
         return true;
-    if (q1_classnamed(g, actor, "monster_ogre") &&
+    if (q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_OGRE]) &&
         !q1_sound(g, actor, "ogre/ogdrag.wav", 2, 2, error))
         return false;
     corner = q1_entity(g, corner_id);
@@ -207,7 +207,7 @@ bool q1_map_path_use(qa_q1_game *g, q1_actor *trigger, qa_error *error) {
         } else {
             qa_authored_target corner;
             if (!qa_targets_read(g->maps->options.targets, actor, &corner) ||
-                !q1_classnamed(g, actor, "path_corner"))
+                !q1_classnamed(g, actor, g->runtime_names[Q1_NAME_PATH_CORNER]))
                 continue;
             ok = qa_targets_set_target(g->maps->options.targets, actor, trigger->map->netname,
                                        error);
@@ -241,7 +241,7 @@ bool q1_map_hip_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, q
     if (!corner || !corner->map || corner->map->kind != Q1_MAP_PATH || !q1_alive(g, actor) ||
         mover.path != corner->targetname)
         return true;
-    if (q1_classnamed(g, actor, "monster_ogre") &&
+    if (q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_OGRE]) &&
         !q1_sound(g, actor, "ogre/ogdrag.wav", 2, 2, error))
         return false;
     corner = q1_entity(g, corner_id);
@@ -286,7 +286,7 @@ bool q1_map_follow_touch(qa_q1_game *g, q1_actor *trigger, qa_actor_id actor, qa
     qa_q1_path_state mover;
     if (!g->services.physics->services.read(g->services.physics->services.context, actor,
                                             &physics) ||
-        !(physics.flags & QA_PHYSICS_MONSTER) || q1_classnamed(g, actor, "monster_decoy") ||
+        !(physics.flags & QA_PHYSICS_MONSTER) || q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_DECOY]) ||
         !read_path(g, actor, &mover) || !mover.monster || mover.follow_until > g->time)
         return true;
     qa_vec3 start, end = {0};

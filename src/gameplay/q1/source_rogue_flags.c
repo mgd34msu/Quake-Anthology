@@ -178,8 +178,8 @@ static bool policy(qa_q1_game *g, qa_q1_source_setting setting, float *out, qa_e
     return g->host.cvars && q1_source_value(g, setting, 0, out, error);
 }
 bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
-    bool red = q1_classnamed(g, e->id, "item_flag_team1"), blue = q1_classnamed(g, e->id, "item_flag_team2");
-    *handled = g->options.program == QA_Q1_ROGUE && (red || blue || q1_classnamed(g, e->id, "item_flag"));
+    bool red = q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_ITEM_FLAG_TEAM1]), blue = q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_ITEM_FLAG_TEAM2]);
+    *handled = g->options.program == QA_Q1_ROGUE && (red || blue || q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_ITEM_FLAG]));
     if (!*handled) return true;
     qa_actor_id actor = e->id;
     float mode, deathmatch;

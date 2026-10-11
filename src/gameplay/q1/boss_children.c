@@ -132,7 +132,7 @@ bool q1_boss_cleanup(qa_q1_game *g, qa_error *error) {
     for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
         q1_actor *e = q1_entity(g, snapshot->snapshot.ids[i]);
         if (e && e->kind == Q1_BOSS_CHILD &&
-            (q1_classnamed(g, e->id, "oldnew_child") || q1_classnamed(g, e->id, "oldnew_eye")) &&
+            (q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_OLDNEW_CHILD]) || q1_classnamed(g, e->id, g->runtime_names[Q1_NAME_OLDNEW_EYE])) &&
             !q1_boss_child_schedule(g, e, Q1_CHILD_CLEANUP, .1, error)) {
             ok = false;
             break;
@@ -303,7 +303,7 @@ static bool swiper(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (trace.hit == QA_TRACE_HIT_ACTOR && q1_health(g, trace.actor) != 0 &&
         !q1_damage(g, trace.actor, q1_ref_actor(g, q1_ref_present(e->owner) ? e->owner : q1_ref_from(g, g->services.physics->world_actor)),
-                   q1_ref_actor(g, e->owner), q1_classnamed(g, trace.actor, "monster_szombie") ? 100 : 25,
+                   q1_ref_actor(g, e->owner), q1_classnamed(g, trace.actor, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE]) ? 100 : 25,
                    QA_Q1_WEAPON_COUNT, error))
         return false;
     if (!q1_alive(g, e->id))
@@ -352,7 +352,7 @@ bool q1_boss_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
         qa_actor_id zombie = {0};
         for (size_t i = 0; i < snapshot->snapshot.count; ++i)
-            if (q1_classnamed(g, snapshot->snapshot.ids[i], "monster_szombie")) {
+            if (q1_classnamed(g, snapshot->snapshot.ids[i], g->runtime_names[Q1_NAME_MONSTER_SZOMBIE])) {
                 zombie = snapshot->snapshot.ids[i];
                 break;
             }
@@ -415,9 +415,9 @@ bool q1_boss_child_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error
 bool q1_boss_blast_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     if (qa_actor_id_equal(other, g->services.physics->world_actor))
         return q1_remove(g, e, error);
-    if (q1_ref_equal(e->owner, q1_ref_from(g, other)) || q1_classnamed(g, other, "sphere"))
+    if (q1_ref_equal(e->owner, q1_ref_from(g, other)) || q1_classnamed(g, other, g->runtime_names[Q1_NAME_SPHERE]))
         return true;
-    if (q1_classnamed(g, other, "monster_oldone_new"))
+    if (q1_classnamed(g, other, g->runtime_names[Q1_NAME_MONSTER_OLDONE_NEW]))
         return q1_remove(g, e, error);
     qa_physics_properties p;
     if (g->services.physics->services.read(g->services.physics->services.context, other, &p) &&

@@ -43,7 +43,7 @@ bool q1_gremlin_find_victim(qa_q1_game *g, q1_actor *entity, qa_actor_id *out, q
             distance *= 2;
         if (traits.player)
             distance /= 1.5f;
-        if (q1_classnamed(g, actor, "monster_gremlin"))
+        if (q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_GREMLIN]))
             distance *= 1.5f;
         if (distance < best) {
             best = distance;
@@ -251,7 +251,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
             return true;
     }
     if (m->source.gremlin.stolen) {
-        if (q1_health(g, q1_ref_actor(g, m->enemy)) < 0 && q1_classnamed(g, q1_ref_actor(g, m->enemy), "player"))
+        if (q1_health(g, q1_ref_actor(g, m->enemy)) < 0 && q1_classnamed(g, q1_ref_actor(g, m->enemy), g->runtime_names[Q1_NAME_PLAYER]))
             return q1_monster_play(g, entity, "gremlin_glook1", error);
         q1_actor *goal = q1_entity(g, q1_ref_actor(g, m->source.gremlin.flee_goal));
         if (!q1_gremlin_has_ammo(entity)) {

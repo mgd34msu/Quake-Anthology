@@ -570,10 +570,10 @@ bool q1_map_hip_hazard_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_e
     qa_actor_id id = e->id;
     float health = q1_health(g, id);
     if (health > 0) {
-        static const char *const ignored[] = {"trap_spike_mine", "missile", "grenade",
-                                              "hiplaser", "proximity_grenade"};
+        static const q1_runtime_name ignored[] = {Q1_NAME_TRAP_SPIKE_MINE, Q1_NAME_MISSILE, Q1_NAME_GRENADE,
+                                              Q1_NAME_HIPLASER, Q1_NAME_PROXIMITY_GRENADE};
         for (size_t i = 0; i < sizeof(ignored) / sizeof(*ignored); ++i)
-            if (q1_classnamed(g, other, ignored[i]))
+            if (q1_classnamed(g, other, g->runtime_names[ignored[i]]))
                 return true;
         if (!q1_damage(g, id, id, id, health + 10, QA_Q1_WEAPON_COUNT, error))
             return false;

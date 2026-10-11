@@ -41,7 +41,7 @@ bool q1_map_rogue_misc_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return !e || q1_link(g, e, error);
     }
     case Q1_MAP_ROGUE_LAMP: {
-        const char *model = q1_classnamed(g, id, "light_lantern") ? "progs/lantern.mdl"
+        const char *model = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_LANTERN]) ? "progs/lantern.mdl"
                                                                 : "progs/candle.mdl";
         if (!qa_q1_wire_declare_model(g, model, error)) return false;
         e = misc_actor(g, id);

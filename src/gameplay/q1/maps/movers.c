@@ -311,7 +311,7 @@ bool q1_map_plat_trigger(qa_q1_game *g, q1_actor *owner, q1_map_kind kind, qa_bo
 }
 bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id;
-    if (g->options.program == QA_Q1_MG3 && q1_classnamed(g, id, "func_axe_button")) {
+    if (g->options.program == QA_Q1_MG3 && q1_classnamed(g, id, g->runtime_names[Q1_NAME_FUNC_AXE_BUTTON])) {
         entity->max_health = 1;
         if (!qa_combat_set_health(g->services.combat, id, 1, error))
             return false;

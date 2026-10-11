@@ -35,7 +35,7 @@ static q1_actor *world(qa_q1_game *game, qa_error *error) {
     if (!live(game, error)) return NULL;
     qa_actor_id actor = game->maps ? game->maps->world_actor : (qa_actor_id){0};
     q1_actor *entity = q1_entity(game, actor);
-    if (!entity || !entity->native || !q1_classnamed(game, actor, "worldspawn")) {
+    if (!entity || !entity->native || !q1_classnamed(game, actor, game->runtime_names[Q1_NAME_WORLDSPAWN])) {
         fail(error, actor, "CTF rune cursor lost its actual source world");
         return NULL;
     }
@@ -74,7 +74,7 @@ static bool next_spawn(qa_q1_game *game, qa_actor_id *out, qa_error *error) {
     const q1_actor *previous = q1_entity_const(game, q1_ref_actor(game, owner->ctf_rune_spawn));
     const qa_actor_registry *actors = qa_session_actors(game->services.session);
     const qa_actor_record *before = previous && previous->native &&
-        q1_classnamed(game, previous->id, "info_player_deathmatch") ?
+        q1_classnamed(game, previous->id, game->runtime_names[Q1_NAME_INFO_PLAYER_DEATHMATCH]) ?
         qa_actors_get(actors, previous->id) : NULL;
     bool has_previous = before != NULL;
     if (before && (before->owner != game->options.provider || !before->has_source))
@@ -83,7 +83,7 @@ static bool next_spawn(qa_q1_game *game, qa_actor_id *out, qa_error *error) {
     for (uint32_t i = 0; i < game->capacity; ++i) {
         q1_actor *spot = game->actors[i];
         if (!spot || !spot->active || !spot->native || !q1_alive(game, spot->id) ||
-            !q1_classnamed(game, spot->id, "info_player_deathmatch")) continue;
+            !q1_classnamed(game, spot->id, game->runtime_names[Q1_NAME_INFO_PLAYER_DEATHMATCH])) continue;
         const qa_actor_record *record = qa_actors_get(actors, spot->id);
         if (!record || record->owner != game->options.provider || !record->has_source)
             return fail(error, spot->id, "CTF rune spawn lost its genuine native identity");

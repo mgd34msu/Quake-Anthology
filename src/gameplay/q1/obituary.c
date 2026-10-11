@@ -77,46 +77,47 @@ static const obituary_text messages[] = {
     {"$qc_suicides", "{0} suicides\n"},
     {"$qc_exited", "{0} exited the level\n"}};
 typedef struct monster_message {
-    const char *classname, *key, *classic;
+    q1_runtime_name classname;
+    const char *key, *classic;
 } monster_message;
 static const monster_message monsters[] = {
-    {"monster_army", "$qc_ks_grunt", "{0} was shot by a Grunt\n"},
-    {"monster_demon1", "$qc_ks_fiend", "{0} was eviscerated by a Fiend\n"},
-    {"monster_dog", "$qc_ks_rottweiler", "{0} was mauled by a Rottweiler\n"},
-    {"monster_dragon", "$qc_ks_dragon", "{0} was fried by a Dragon\n"},
-    {"monster_enforcer", "$qc_ks_enforcer", "{0} was blasted by an Enforcer\n"},
-    {"monster_fish", "$qc_ks_rotfish", "{0} was fed to the Rotfish\n"},
-    {"monster_hell_knight", "$qc_ks_deathknight", "{0} was slain by a Death Knight\n"},
-    {"monster_knight", "$qc_ks_knight", "{0} was slashed by a Knight\n"},
-    {"monster_ogre", "$qc_ks_ogre", "{0} was destroyed by an Ogre\n"},
-    {"monster_oldone", "$qc_ks_shub", "{0} became one with Shub-Niggurath\n"},
-    {"monster_shalrath", "$qc_ks_vore", "{0} was exploded by a Vore\n"},
-    {"monster_shambler", "$qc_ks_shambler", "{0} was smashed by a Shambler\n"},
-    {"monster_tarbaby", "$qc_ks_spawn", "{0} was slimed by a Spawn\n"},
-    {"monster_vomit", "$qc_ks_vomitus", "{0} was vomited on by a Vomitus\n"},
-    {"monster_wizard", "$qc_ks_scrag", "{0} was scragged by a Scrag\n"},
-    {"monster_zombie", "$qc_ks_zombie", "{0} joins the Zombies\n"},
-    {"monster_dragon_dead", "$qc_ks_dragon2", NULL},
-    {"monster_gremlin", "$qc_ks_gremlin", NULL},
-    {"monster_scourge", "$qc_ks_centroid", NULL},
-    {"monster_armagon", "$qc_ks_armagon", NULL},
-    {"monster_eel", "$qc_ks_eel", NULL},
-    {"monster_wrath", "$qc_ks_wrath", NULL},
-    {"monster_super_wrath", "$qc_ks_overlord", NULL},
-    {"monster_sword", "$qc_ks_swordsman", NULL},
-    {"monster_lava_man", "$qc_ks_hephaestus", NULL},
-    {"monster_morph", "$qc_ks_guardian", NULL},
-    {"monster_mummy", "$qc_ks_mummy", NULL}};
+    {Q1_NAME_MONSTER_ARMY, "$qc_ks_grunt", "{0} was shot by a Grunt\n"},
+    {Q1_NAME_MONSTER_DEMON1, "$qc_ks_fiend", "{0} was eviscerated by a Fiend\n"},
+    {Q1_NAME_MONSTER_DOG, "$qc_ks_rottweiler", "{0} was mauled by a Rottweiler\n"},
+    {Q1_NAME_MONSTER_DRAGON, "$qc_ks_dragon", "{0} was fried by a Dragon\n"},
+    {Q1_NAME_MONSTER_ENFORCER, "$qc_ks_enforcer", "{0} was blasted by an Enforcer\n"},
+    {Q1_NAME_MONSTER_FISH, "$qc_ks_rotfish", "{0} was fed to the Rotfish\n"},
+    {Q1_NAME_MONSTER_HELL_KNIGHT, "$qc_ks_deathknight", "{0} was slain by a Death Knight\n"},
+    {Q1_NAME_MONSTER_KNIGHT, "$qc_ks_knight", "{0} was slashed by a Knight\n"},
+    {Q1_NAME_MONSTER_OGRE, "$qc_ks_ogre", "{0} was destroyed by an Ogre\n"},
+    {Q1_NAME_MONSTER_OLDONE, "$qc_ks_shub", "{0} became one with Shub-Niggurath\n"},
+    {Q1_NAME_MONSTER_SHALRATH, "$qc_ks_vore", "{0} was exploded by a Vore\n"},
+    {Q1_NAME_MONSTER_SHAMBLER, "$qc_ks_shambler", "{0} was smashed by a Shambler\n"},
+    {Q1_NAME_MONSTER_TARBABY, "$qc_ks_spawn", "{0} was slimed by a Spawn\n"},
+    {Q1_NAME_MONSTER_VOMIT, "$qc_ks_vomitus", "{0} was vomited on by a Vomitus\n"},
+    {Q1_NAME_MONSTER_WIZARD, "$qc_ks_scrag", "{0} was scragged by a Scrag\n"},
+    {Q1_NAME_MONSTER_ZOMBIE, "$qc_ks_zombie", "{0} joins the Zombies\n"},
+    {Q1_NAME_MONSTER_DRAGON_DEAD, "$qc_ks_dragon2", NULL},
+    {Q1_NAME_MONSTER_GREMLIN, "$qc_ks_gremlin", NULL},
+    {Q1_NAME_MONSTER_SCOURGE, "$qc_ks_centroid", NULL},
+    {Q1_NAME_MONSTER_ARMAGON, "$qc_ks_armagon", NULL},
+    {Q1_NAME_MONSTER_EEL, "$qc_ks_eel", NULL},
+    {Q1_NAME_MONSTER_WRATH, "$qc_ks_wrath", NULL},
+    {Q1_NAME_MONSTER_SUPER_WRATH, "$qc_ks_overlord", NULL},
+    {Q1_NAME_MONSTER_SWORD, "$qc_ks_swordsman", NULL},
+    {Q1_NAME_MONSTER_LAVA_MAN, "$qc_ks_hephaestus", NULL},
+    {Q1_NAME_MONSTER_MORPH, "$qc_ks_guardian", NULL},
+    {Q1_NAME_MONSTER_MUMMY, "$qc_ks_mummy", NULL}};
 
 static const char *text(qa_q1_game *g, qa_string_id id) {
     const char *value = qa_strings_cstr(qa_session_strings(g->services.session), id);
     return value ? value : "";
 }
-static bool named(qa_q1_game *g, qa_string_id id, const char *name) {
-    return !strcmp(text(g, id), name);
+static bool named(qa_string_id id, qa_string_id name) {
+    return id == name;
 }
-static bool actor_named(qa_q1_game *g, const qa_q1_obituary_actor *actor, const char *name) {
-    return actor && named(g, actor->classname, name);
+static bool actor_named(const qa_q1_obituary_actor *actor, qa_string_id name) {
+    return actor && actor->classname == name;
 }
 static bool message(qa_q1_game *g, qa_q1_obituary_result *out, const char *key,
                     const char *classic_override, qa_string_id first, qa_string_id second,
@@ -170,13 +171,13 @@ static bool base_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
     int32_t delta = -1;
     qa_string_id first = victim->name, second = 0;
     size_t count = 1;
-    if (actor_named(g, attacker, "teledeath") && input->telefrag_owner) {
+    if (actor_named(attacker, g->runtime_names[Q1_NAME_TELEDEATH]) && input->telefrag_owner) {
         key = "$qc_telefragged";
         credit = input->telefrag_owner;
         delta = 1;
         second = credit->name;
         count = 2;
-    } else if (actor_named(g, attacker, "teledeath2"))
+    } else if (actor_named(attacker, g->runtime_names[Q1_NAME_TELEDEATH2]))
         key = "$qc_satans_power";
     else if (attacker && attacker->player) {
         if (qa_actor_id_equal(victim->actor, attacker->actor)) {
@@ -249,23 +250,23 @@ static bool base_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
         if (attacker->monster) {
             classic = "{0}";
             for (size_t i = 0; i < sizeof(monsters) / sizeof(monsters[0]); ++i)
-                if (monsters[i].classic && actor_named(g, attacker, monsters[i].classname)) {
+                if (monsters[i].classic && actor_named(attacker, g->runtime_names[monsters[i].classname])) {
                     classic = monsters[i].classic;
                     break;
                 }
             key = "classic-monster";
-        } else if (actor_named(g, attacker, "explo_box") ||
-                   actor_named(g, attacker, "misc_explobox") ||
-                   actor_named(g, attacker, "misc_explobox2"))
+        } else if (actor_named(attacker, g->runtime_names[Q1_NAME_EXPLO_BOX]) ||
+                   actor_named(attacker, g->runtime_names[Q1_NAME_MISC_EXPLOBOX]) ||
+                   actor_named(attacker, g->runtime_names[Q1_NAME_MISC_EXPLOBOX2]))
             key = "$qc_ks_blew_up";
-        else if (attacker->brush && !actor_named(g, attacker, "worldspawn"))
+        else if (attacker->brush && !actor_named(attacker, g->runtime_names[Q1_NAME_WORLDSPAWN]))
             key = "$qc_death_squish";
-        else if (actor_named(g, attacker, "trap_shooter") ||
-                 actor_named(g, attacker, "trap_spikeshooter"))
+        else if (actor_named(attacker, g->runtime_names[Q1_NAME_TRAP_SHOOTER]) ||
+                 actor_named(attacker, g->runtime_names[Q1_NAME_TRAP_SPIKESHOOTER]))
             key = "$qc_ks_spiked";
-        else if (actor_named(g, attacker, "fireball") || actor_named(g, attacker, "misc_fireball"))
+        else if (actor_named(attacker, g->runtime_names[Q1_NAME_FIREBALL]) || actor_named(attacker, g->runtime_names[Q1_NAME_MISC_FIREBALL]))
             key = "$qc_ks_lavaball";
-        else if (actor_named(g, attacker, "trigger_changelevel"))
+        else if (actor_named(attacker, g->runtime_names[Q1_NAME_TRIGGER_CHANGELEVEL]))
             key = "$qc_ks_tried_leave";
     }
     if (!key) {
@@ -277,12 +278,12 @@ static bool base_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
             key = victim->health < -15 ? "$qc_death_lava1"
                   : q1_random(g) < .5f ? "$qc_death_lava2"
                                        : "$qc_death_lava3";
-        else if (attacker && attacker->brush && !actor_named(g, attacker, "worldspawn"))
+        else if (attacker && attacker->brush && !actor_named(attacker, g->runtime_names[Q1_NAME_WORLDSPAWN]))
             key = "$qc_death_squish";
         else if (attacker && *text(g, attacker->kill_string))
             key = text(g, attacker->kill_string);
         else
-            key = named(g, input->death_type, "falling") ? "$qc_death_fall" : "$qc_death_died";
+            key = named(input->death_type, g->runtime_names[Q1_NAME_FALLING]) ? "$qc_death_fall" : "$qc_death_died";
     }
     return finish(g, out, key, classic, credit, delta, first, second, count, error);
 }
@@ -292,8 +293,8 @@ static bool pack_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
     const qa_q1_obituary_actor *victim = &input->victim, *attacker = input->attacker;
     bool hip = g->options.program == QA_Q1_HIPNOTIC;
     bool classic = g->options.edition != QA_Q1_RERELEASE;
-    if (!victim->player || actor_named(g, attacker, "teledeath") ||
-        actor_named(g, attacker, "teledeath2"))
+    if (!victim->player || actor_named(attacker, g->runtime_names[Q1_NAME_TELEDEATH]) ||
+        actor_named(attacker, g->runtime_names[Q1_NAME_TELEDEATH2]))
         return base_obituary(g, input, roll, out, error);
     const char *key = NULL, *override = NULL;
     const qa_q1_obituary_actor *credit = victim;
@@ -326,9 +327,9 @@ static bool pack_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
                                   error))
                 return false;
             if (hip) {
-                if (named(g, input->death_type, "hipnotic:empathy"))
+                if (named(input->death_type, g->runtime_names[Q1_NAME_HIPNOTIC_EMPATHY]))
                     key = q1_random(g) < .5f ? "$qc_death_empathy1" : "$qc_death_empathy2";
-                else if (named(g, input->inflictor_classname, "proximity_grenade"))
+                else if (named(input->inflictor_classname, g->runtime_names[Q1_NAME_PROXIMITY_GRENADE]))
                     key = q1_random(g) < .5f ? "$qc_death_bomb1" : "$qc_death_bomb2";
                 else if (attacker->weapon == QA_Q1_LASER)
                     key = q1_random(g) < .5f ? "$qc_death_laser1" : "$qc_death_laser2";
@@ -375,43 +376,43 @@ static bool pack_obituary(qa_q1_game *g, const qa_q1_obituary_input *input, floa
             return base_obituary(g, &water, roll, out, error);
         } else if (attacker && attacker->monster) {
             key = "";
-            if (!hip && actor_named(g, attacker, "monster_dragon"))
+            if (!hip && actor_named(attacker, g->runtime_names[Q1_NAME_MONSTER_DRAGON]))
                 key = "$qc_ks_dragon1";
             else
                 for (size_t i = 0; i < sizeof(monsters) / sizeof(monsters[0]); ++i)
-                    if (actor_named(g, attacker, monsters[i].classname)) {
+                    if (actor_named(attacker, g->runtime_names[monsters[i].classname])) {
                         key = monsters[i].key;
                         override = monsters[i].classic;
                         break;
                     }
-        } else if (actor_named(g, attacker, "explo_box"))
+        } else if (actor_named(attacker, g->runtime_names[Q1_NAME_EXPLO_BOX]))
             key = "$qc_ks_blew_up";
-        else if (attacker && attacker->brush && !actor_named(g, attacker, "worldspawn"))
+        else if (attacker && attacker->brush && !actor_named(attacker, g->runtime_names[Q1_NAME_WORLDSPAWN]))
             key = "$qc_death_squish";
-        else if (hip && named(g, input->death_type, "falling"))
+        else if (hip && named(input->death_type, g->runtime_names[Q1_NAME_FALLING]))
             key = "$qc_death_fall";
-        else if (actor_named(g, attacker, "trap_shooter") ||
-                 actor_named(g, attacker, "trap_spikeshooter"))
+        else if (actor_named(attacker, g->runtime_names[Q1_NAME_TRAP_SHOOTER]) ||
+                 actor_named(attacker, g->runtime_names[Q1_NAME_TRAP_SPIKESHOOTER]))
             key = "$qc_ks_spiked";
-        else if (actor_named(g, attacker, "fireball"))
+        else if (actor_named(attacker, g->runtime_names[Q1_NAME_FIREBALL]))
             key = "$qc_ks_lavaball";
-        else if (actor_named(g, attacker, "trigger_changelevel"))
+        else if (actor_named(attacker, g->runtime_names[Q1_NAME_TRIGGER_CHANGELEVEL]))
             key = "$qc_ks_tried_leave";
         else if (!hip) {
-            if (actor_named(g, attacker, "ltrail_start") ||
-                actor_named(g, attacker, "ltrail_relay"))
+            if (actor_named(attacker, g->runtime_names[Q1_NAME_LTRAIL_START]) ||
+                actor_named(attacker, g->runtime_names[Q1_NAME_LTRAIL_RELAY]))
                 key = "$qc_ks_rode_lightning";
-            else if (actor_named(g, attacker, "pendulum"))
+            else if (actor_named(attacker, g->runtime_names[Q1_NAME_PENDULUM]))
                 key = "$qc_ks_cleaved";
-            else if (actor_named(g, attacker, "buzzsaw"))
+            else if (actor_named(attacker, g->runtime_names[Q1_NAME_BUZZSAW]))
                 key = "$qc_ks_sliced";
-            else if (actor_named(g, attacker, "plasma"))
+            else if (actor_named(attacker, g->runtime_names[Q1_NAME_PLASMA]))
                 key = "$qc_ks_plasma";
-            else if (actor_named(g, attacker, "Vengeance")) {
+            else if (actor_named(attacker, g->runtime_names[Q1_NAME_VENGEANCE])) {
                 key = "$qc_death_vengeance";
                 credit = NULL;
                 delta = 0;
-            } else if (actor_named(g, attacker, "power_shield") && input->telefrag_owner) {
+            } else if (actor_named(attacker, g->runtime_names[Q1_NAME_POWER_SHIELD]) && input->telefrag_owner) {
                 key = "$qc_death_smashed";
                 credit = input->telefrag_owner;
                 delta = 1;

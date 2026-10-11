@@ -334,7 +334,7 @@ bool q1_damageable(qa_q1_game *g, qa_actor_id actor) {
     qa_combat_state state;
     return qa_combat_read(g->services.combat, actor, &state, NULL) && state.can_take_damage;
 }
-bool q1_classnamed(qa_q1_game *g, qa_actor_id actor, const char *name) {
+bool q1_classnamed(qa_q1_game *g, qa_actor_id actor, qa_string_id name) {
     qa_string_id classname = 0;
     q1_actor *entity = q1_entity(g, actor);
     if (entity)
@@ -344,8 +344,7 @@ bool q1_classnamed(qa_q1_game *g, qa_actor_id actor, const char *name) {
         if (g->services.actor_traits(g->services.context, actor, &traits))
             classname = traits.classname;
     }
-    qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), classname);
-    return text.size == strlen(name) && !memcmp(text.data, name, text.size);
+    return classname == name;
 }
 float q1_actor_view_height(const q1_actor *entity, bool player) {
     return player ? 22
@@ -455,7 +454,7 @@ static bool combat_context(void *context, const qa_damage_request *request,
         qa_actor_id inflictor = request->attack.inflictor;
         bool world = g->services.physics
                          ? qa_actor_id_equal(inflictor, g->services.physics->world_actor)
-                         : q1_classnamed(g, inflictor, "worldspawn");
+                         : q1_classnamed(g, inflictor, g->runtime_names[Q1_NAME_WORLDSPAWN]);
         has_origin =
             inflictor.registry && !world && qa_world_linked(g->services.world, inflictor, &linked);
         if (has_origin)
@@ -700,6 +699,14 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     g->time = (double)g->time_ns / 1000000000.0;
     if (host)
         g->host = *host;
+    static const char *const runtime_names[] = {
+#define Q1_RUNTIME_NAME_TEXT(key, text) text,
+        Q1_RUNTIME_NAME_LIST(Q1_RUNTIME_NAME_TEXT)
+#undef Q1_RUNTIME_NAME_TEXT
+    };
+    for (unsigned i = 0; i < Q1_NAME_COUNT; ++i)
+        if (!qa_strings_intern_cstr(qa_session_strings(services->session), runtime_names[i], &g->runtime_names[i], error))
+            goto fail;
     source_bind(g);
     qa_builtin_random_seed(&g->random, options->random_seed);
     for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
@@ -1316,7 +1323,7 @@ static bool radius_adjust(void *context, qa_actor_id target, float *damage, floa
     (void)allowed;
     (void)error;
     qa_q1_game *g = context;
-    if (q1_classnamed(g, target, "monster_shambler"))
+    if (q1_classnamed(g, target, g->runtime_names[Q1_NAME_MONSTER_SHAMBLER]))
         *damage *= 0.5f;
     return true;
 }
@@ -1575,7 +1582,7 @@ static bool touch_inner(qa_q1_game *g, const qa_touch_contact *contact, qa_error
         return q1_source_rogue_flag_touch(g, entity, contact->other, error);
     if (entity->kind == Q1_SOURCE_ROGUE_RUNE)
         return q1_source_rogue_rune_touch(g, entity, contact->other, error);
-    if (q1_classnamed(g, entity->id, "dragon_corner"))
+    if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_DRAGON_CORNER]))
         return q1_dragon_corner_touch(g, entity, contact->other, error);
     if (entity->kind == Q1_PROJECTILE)
         return q1_projectile_touch(g, entity, contact->other, contact, error);
@@ -1585,10 +1592,10 @@ static bool touch_inner(qa_q1_game *g, const qa_touch_contact *contact, qa_error
         return q1_monster_touch(g, entity, contact->other, error);
     if (entity->kind == Q1_PICKUP)
         return q1_pickup_touch(g, entity, contact->other, error);
-    if (entity->kind == Q1_TIMER && q1_classnamed(g, entity->id, "scourge_trigger"))
+    if (entity->kind == Q1_TIMER && q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_SCOURGE_TRIGGER]))
         return q1_scourge_trigger(g, entity, contact->other, error);
     if (entity->kind == Q1_TIMER &&
-        (q1_classnamed(g, entity->id, "teledeath") || q1_classnamed(g, entity->id, "teledeath2")))
+        (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TELEDEATH]) || q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TELEDEATH2])))
         return q1_teledeath_touch(g, entity, contact->other, error);
     return true;
 }
@@ -1621,7 +1628,7 @@ static bool use_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_ac
         return q1_map_use(g, entity, other, activator, error);
     if (entity)
         entity->activator = q1_ref_from(g, activator);
-    if (entity && q1_classnamed(g, actor, "trigger_boss_teleport"))
+    if (entity && q1_classnamed(g, actor, g->runtime_names[Q1_NAME_TRIGGER_BOSS_TELEPORT]))
         return q1_final_teleport(g, (entity->spawnflags & 1) != 0, error);
     if (entity && entity->kind == Q1_PICKUP)
         return q1_pickup_use(g, entity, error);
@@ -1740,8 +1747,8 @@ static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_e
         !q1_alive(g, actor))
         return true;
     bool nightmare = g->options.program == QA_Q1_MG3
-                         ? g->options.skill > 2 && !q1_classnamed(g, actor, "monster_boss") &&
-                               !q1_classnamed(g, actor, "monster_zombie")
+                         ? g->options.skill > 2 && !q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_BOSS]) &&
+                               !q1_classnamed(g, actor, g->runtime_names[Q1_NAME_MONSTER_ZOMBIE])
                          : g->options.skill == 3;
     if (!nightmare)
         return true;

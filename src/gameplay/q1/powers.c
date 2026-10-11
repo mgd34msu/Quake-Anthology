@@ -306,7 +306,7 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
     }
     if (stage == QA_DAMAGE_BEFORE_QUAD && g->options.edition == QA_Q1_RERELEASE &&
         g->options.program == QA_Q1_ID1 && request->amount < 9999 &&
-        q1_entity(g, request->target) && q1_classnamed(g, request->target, "monster_oldone")) {
+        q1_entity(g, request->target) && q1_classnamed(g, request->target, g->runtime_names[Q1_NAME_MONSTER_OLDONE])) {
         effect->allowed = false;
         return true;
     }
@@ -347,7 +347,7 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
                           qa_builtin_angle_mod(atan2f(forward.y, forward.x) * 57.29577951308232f);
             if (!(angle > 90 && angle < 270) && !(angle < -90 && angle > -270)) {
                 effect->amount *=
-                    q1_classnamed(g, request->attack.inflictor, "lava_spike") ? 0.7f : 0.3f;
+                    q1_classnamed(g, request->attack.inflictor, g->runtime_names[Q1_NAME_LAVA_SPIKE]) ? 0.7f : 0.3f;
                 return shield_hit(g, player, error);
             }
         }

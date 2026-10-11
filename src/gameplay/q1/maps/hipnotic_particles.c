@@ -100,11 +100,8 @@ static bool particle_field(qa_q1_game *g, q1_actor *entity, qa_actor_id other, q
     if (entity->spawnflags & 1) {
         double counter = 0;
         qa_authored_target source;
-        const char *classname =
-            qa_targets_read(g->maps->options.targets, other, &source)
-                ? qa_strings_cstr(qa_session_strings(g->services.session), source.classname)
-                : NULL;
-        if (classname && !strcmp(classname, "func_counter"))
+        if (qa_targets_read(g->maps->options.targets, other, &source) &&
+            source.classname == g->runtime_names[Q1_NAME_FUNC_COUNTER])
             (void)qa_targets_number(g->maps->options.targets, other, "counter_state", &counter);
         if (counter != state->counter_value)
             return true;

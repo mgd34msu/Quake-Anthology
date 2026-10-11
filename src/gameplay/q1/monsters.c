@@ -1160,7 +1160,7 @@ bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
         decoy->physics.ideal_yaw =
             qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
     }
-    if (goal.registry && q1_classnamed(g, goal, "path_corner")) {
+    if (goal.registry && q1_classnamed(g, goal, g->runtime_names[Q1_NAME_PATH_CORNER])) {
         if (!q1_monster_play(g, decoy, "decoy_walk1", error))
             goto failed;
     } else
@@ -1283,7 +1283,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             entity->physics.ideal_yaw =
                 qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
         }
-        bool path = goal.registry && q1_classnamed(g, goal, "path_corner");
+        bool path = goal.registry && q1_classnamed(g, goal, g->runtime_names[Q1_NAME_PATH_CORNER]);
         m->addon.path_wait = path && (entity->spawnflags & 4096);
         if (!path || m->addon.path_wait)
             goal = (qa_actor_id){0};
@@ -1300,7 +1300,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (addon && (entity->spawnflags & 4)) {
         if (g->options.program != QA_Q1_MG3) {
             for (uint32_t i = 0; i < g->capacity; ++i)
-                if (g->actors[i] && q1_classnamed(g, g->actors[i]->id, "horde_manager")) {
+                if (g->actors[i] && q1_classnamed(g, g->actors[i]->id, g->runtime_names[Q1_NAME_HORDE_MANAGER])) {
                     ++g->total_monsters;
                     break;
                 }

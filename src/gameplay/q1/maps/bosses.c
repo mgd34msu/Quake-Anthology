@@ -1,6 +1,6 @@
 #include "internal.h"
 
-static q1_actor *first_class(qa_q1_game *g, const char *name) {
+static q1_actor *first_class(qa_q1_game *g, qa_string_id name) {
     uint32_t cursor = 0;
     const qa_actor_record *record;
     while (qa_actors_next(qa_session_actors(g->services.session), &cursor, &record)) {
@@ -75,7 +75,7 @@ bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator
         return true;
     if (!lightning_fire(g, entity, error))
         return false;
-    q1_actor *boss = first_class(g, "monster_boss");
+    q1_actor *boss = first_class(g, g->runtime_names[Q1_NAME_MONSTER_BOSS]);
     if (!boss || boss->kind != Q1_MONSTER)
         return true;
     boss->state.monster.enemy = q1_ref_from(g, activator);
@@ -121,8 +121,8 @@ static bool achievement(qa_q1_game *g, const char *text, qa_error *error) {
 static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     if (g->maps->finale_started)
         return true;
-    q1_actor *position = first_class(g, "info_intermission");
-    q1_actor *train = first_class(g, "misc_teleporttrain");
+    q1_actor *position = first_class(g, g->runtime_names[Q1_NAME_INFO_INTERMISSION]);
+    q1_actor *train = first_class(g, g->runtime_names[Q1_NAME_MISC_TELEPORTTRAIN]);
     if (!position || !position->map || !train)
         return q1_map_fail(error, "Q1 finale requires intermission and teleport train actors");
     qa_body_state view;

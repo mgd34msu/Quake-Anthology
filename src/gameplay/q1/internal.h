@@ -16,6 +16,147 @@
 /* SV_SpawnServer starts the source clock at one second, before entity spawn. */
 #define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
 
+#define Q1_RUNTIME_NAME_LIST(X) \
+    X(VENGEANCE, "Vengeance") \
+    X(AMBIENT_COMP_HUM, "ambient_comp_hum") \
+    X(AMBIENT_DRIP, "ambient_drip") \
+    X(AMBIENT_DRONE, "ambient_drone") \
+    X(AMBIENT_FAN_BLOWING, "ambient_fan_blowing") \
+    X(AMBIENT_FLOURO_BUZZ, "ambient_flouro_buzz") \
+    X(AMBIENT_GENERIC, "ambient_generic") \
+    X(AMBIENT_HUMMING, "ambient_humming") \
+    X(AMBIENT_LIGHT_BUZZ, "ambient_light_buzz") \
+    X(AMBIENT_RIFTPOWER, "ambient_riftpower") \
+    X(AMBIENT_RUNNING_WATER, "ambient_running_water") \
+    X(AMBIENT_RUSHING, "ambient_rushing") \
+    X(AMBIENT_SUCK_WIND, "ambient_suck_wind") \
+    X(AMBIENT_SWAMP1, "ambient_swamp1") \
+    X(AMBIENT_SWAMP2, "ambient_swamp2") \
+    X(AMBIENT_THUNDER, "ambient_thunder") \
+    X(AMBIENT_WATERFALL, "ambient_waterfall") \
+    X(BUZZSAW, "buzzsaw") \
+    X(DMATCH_TAG_TOKEN, "dmatch_tag_token") \
+    X(DRAGON_CORNER, "dragon_corner") \
+    X(EXPLO_BOX, "explo_box") \
+    X(FALLING, "falling") \
+    X(FIREBALL, "fireball") \
+    X(FUNC_AXE_BUTTON, "func_axe_button") \
+    X(FUNC_COUNTER, "func_counter") \
+    X(FUNC_CTF_WALL, "func_ctf_wall") \
+    X(FUNC_DOOR, "func_door") \
+    X(FUNC_EPISODEGATE, "func_episodegate") \
+    X(FUNC_ILLUSIONARY, "func_illusionary") \
+    X(FUNC_MULTI_EXPLODER, "func_multi_exploder") \
+    X(FUNC_ONCOUNT, "func_oncount") \
+    X(FUNC_RUBBLE1, "func_rubble1") \
+    X(FUNC_RUBBLE2, "func_rubble2") \
+    X(FUNC_RUBBLE3, "func_rubble3") \
+    X(GRENADE, "grenade") \
+    X(HIPLASER, "hiplaser") \
+    X(HIPNOTIC_EMPATHY, "hipnotic:empathy") \
+    X(HORDE_MANAGER, "horde_manager") \
+    X(HUB_TRIGGER_CHANGELEVEL, "hub_trigger_changelevel") \
+    X(INFO_BOSS_TELEPORT_BOSS, "info_boss_teleport_boss") \
+    X(INFO_BOSS_TELEPORT_FIRST, "info_boss_teleport_first") \
+    X(INFO_BOSS_TELEPORT_SECOND, "info_boss_teleport_second") \
+    X(INFO_INTERMISSION, "info_intermission") \
+    X(INFO_OVERLORD_DESTINATION, "info_overlord_destination") \
+    X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
+    X(INFO_SZOMBIE_SPAWN, "info_szombie_spawn") \
+    X(INFO_VOTE_DESTINATION, "info_vote_destination") \
+    X(ITEM_ARTIFACT_INVULNERABILITY, "item_artifact_invulnerability") \
+    X(ITEM_ARTIFACT_SUPER_DAMAGE, "item_artifact_super_damage") \
+    X(ITEM_CELLS, "item_cells") \
+    X(ITEM_FLAG, "item_flag") \
+    X(ITEM_FLAG_TEAM1, "item_flag_team1") \
+    X(ITEM_FLAG_TEAM2, "item_flag_team2") \
+    X(ITEM_ROCKETS, "item_rockets") \
+    X(ITEM_SHELLS, "item_shells") \
+    X(ITEM_SPIKES, "item_spikes") \
+    X(LAVA_SPIKE, "lava_spike") \
+    X(LIGHT, "light") \
+    X(LIGHT_FLAME_LARGE_YELLOW, "light_flame_large_yellow") \
+    X(LIGHT_FLAME_SMALL_WHITE, "light_flame_small_white") \
+    X(LIGHT_FLAME_SMALL_YELLOW, "light_flame_small_yellow") \
+    X(LIGHT_FLUORO, "light_fluoro") \
+    X(LIGHT_FLUOROSPARK, "light_fluorospark") \
+    X(LIGHT_GLOBE, "light_globe") \
+    X(LIGHT_LANTERN, "light_lantern") \
+    X(LIGHT_TORCH_SMALL_WALLTORCH, "light_torch_small_walltorch") \
+    X(LIGHTNING_CHILD, "lightning_child") \
+    X(LTRAIL_END, "ltrail_end") \
+    X(LTRAIL_RELAY, "ltrail_relay") \
+    X(LTRAIL_START, "ltrail_start") \
+    X(MISC_CORPSE, "misc_corpse") \
+    X(MISC_EXPLOBOX, "misc_explobox") \
+    X(MISC_EXPLOBOX2, "misc_explobox2") \
+    X(MISC_FIREBALL, "misc_fireball") \
+    X(MISC_TELEPORTTRAIN, "misc_teleporttrain") \
+    X(MISSILE, "missile") \
+    X(MONSTER_ARMAGON, "monster_armagon") \
+    X(MONSTER_ARMY, "monster_army") \
+    X(MONSTER_BOSS, "monster_boss") \
+    X(MONSTER_DECOY, "monster_decoy") \
+    X(MONSTER_DEMON1, "monster_demon1") \
+    X(MONSTER_DOG, "monster_dog") \
+    X(MONSTER_DRAGON, "monster_dragon") \
+    X(MONSTER_DRAGON_DEAD, "monster_dragon_dead") \
+    X(MONSTER_EEL, "monster_eel") \
+    X(MONSTER_ENFORCER, "monster_enforcer") \
+    X(MONSTER_FISH, "monster_fish") \
+    X(MONSTER_GREMLIN, "monster_gremlin") \
+    X(MONSTER_HELL_KNIGHT, "monster_hell_knight") \
+    X(MONSTER_KNIGHT, "monster_knight") \
+    X(MONSTER_LAVA_MAN, "monster_lava_man") \
+    X(MONSTER_MORPH, "monster_morph") \
+    X(MONSTER_MUMMY, "monster_mummy") \
+    X(MONSTER_OGRE, "monster_ogre") \
+    X(MONSTER_OLDONE, "monster_oldone") \
+    X(MONSTER_OLDONE_NEW, "monster_oldone_new") \
+    X(MONSTER_ORB, "monster_orb") \
+    X(MONSTER_SCOURGE, "monster_scourge") \
+    X(MONSTER_SHALRATH, "monster_shalrath") \
+    X(MONSTER_SHAMBLER, "monster_shambler") \
+    X(MONSTER_SUPER_SHAMBLER, "monster_super_shambler") \
+    X(MONSTER_SUPER_WRATH, "monster_super_wrath") \
+    X(MONSTER_SWORD, "monster_sword") \
+    X(MONSTER_SZOMBIE, "monster_szombie") \
+    X(MONSTER_TARBABY, "monster_tarbaby") \
+    X(MONSTER_VOMIT, "monster_vomit") \
+    X(MONSTER_WIZARD, "monster_wizard") \
+    X(MONSTER_WRATH, "monster_wrath") \
+    X(MONSTER_ZOMBIE, "monster_zombie") \
+    X(MUMMY_GRENADE, "mummy_grenade") \
+    X(OLDNEW_CHILD, "oldnew_child") \
+    X(OLDNEW_EYE, "oldnew_eye") \
+    X(PATH_CORNER, "path_corner") \
+    X(PENDULUM, "pendulum") \
+    X(PLASMA, "plasma") \
+    X(PLAYER, "player") \
+    X(POWER_SHIELD, "power_shield") \
+    X(PROXIMITY_GRENADE, "proximity_grenade") \
+    X(ROCK, "rock") \
+    X(SCOURGE_TRIGGER, "scourge_trigger") \
+    X(SPAWNED_EXPLOSION, "spawned_explosion") \
+    X(SPHERE, "sphere") \
+    X(TELEDEATH, "teledeath") \
+    X(TELEDEATH2, "teledeath2") \
+    X(TRAP_SHOOTER, "trap_shooter") \
+    X(TRAP_SPIKE_MINE, "trap_spike_mine") \
+    X(TRAP_SPIKESHOOTER, "trap_spikeshooter") \
+    X(TRIGGER_BOSS_TELEPORT, "trigger_boss_teleport") \
+    X(TRIGGER_CHANGELEVEL, "trigger_changelevel") \
+    X(TRIGGER_ONCE, "trigger_once") \
+    X(TRIGGER_SECRET, "trigger_secret") \
+    X(TRIGGER_TELEPORT, "trigger_teleport") \
+    X(WORLDSPAWN, "worldspawn")
+typedef enum q1_runtime_name {
+#define Q1_RUNTIME_NAME_ENUM(key, text) Q1_NAME_##key,
+    Q1_RUNTIME_NAME_LIST(Q1_RUNTIME_NAME_ENUM)
+#undef Q1_RUNTIME_NAME_ENUM
+    Q1_NAME_COUNT
+} q1_runtime_name;
+
 typedef struct q1_map_state q1_map_state;
 typedef struct q1_map_runtime q1_map_runtime;
 
@@ -448,6 +589,7 @@ struct qa_q1_game {
     qa_builtin_services services;
     qa_q1_options options;
     qa_q1_host host;
+    qa_string_id runtime_names[Q1_NAME_COUNT];
     qa_cvar_handle source_settings[QA_Q1_SOURCE_SETTING_COUNT];
     qa_q1_source_flags_services source_flags;
     qa_q1_source_runes_services source_runes;
@@ -610,7 +752,7 @@ float q1_health(qa_q1_game *, qa_actor_id);
 bool q1_damageable(qa_q1_game *, qa_actor_id);
 float q1_actor_view_height(const q1_actor *, bool player);
 bool q1_target(qa_q1_game *, qa_actor_id, qa_q1_target *);
-bool q1_classnamed(qa_q1_game *, qa_actor_id, const char *);
+bool q1_classnamed(qa_q1_game *, qa_actor_id, qa_string_id);
 bool q1_model(qa_q1_game *, q1_actor *, const char *, qa_error *);
 const char *q1_door_key_sound(int32_t world_type, bool accepted);
 bool q1_sound(qa_q1_game *, qa_actor_id, const char *, int32_t channel, float attenuation,

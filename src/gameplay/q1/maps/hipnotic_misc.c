@@ -101,18 +101,19 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     case Q1_MAP_HIP_AMBIENT: {
         static const struct {
-            const char *name, *path;
-        } sounds[] = {{"ambient_humming", "ambient/humming.wav"},
-                      {"ambient_rushing", "ambient/rushing.wav"},
-                      {"ambient_running_water", "ambient/runwater.wav"},
-                      {"ambient_fan_blowing", "ambient/fanblow.wav"},
-                      {"ambient_waterfall", "ambient/waterfal.wav"},
-                      {"ambient_riftpower", "ambient/riftpowr.wav"}};
+            q1_runtime_name name;
+            const char *path;
+        } sounds[] = {{Q1_NAME_AMBIENT_HUMMING, "ambient/humming.wav"},
+                      {Q1_NAME_AMBIENT_RUSHING, "ambient/rushing.wav"},
+                      {Q1_NAME_AMBIENT_RUNNING_WATER, "ambient/runwater.wav"},
+                      {Q1_NAME_AMBIENT_FAN_BLOWING, "ambient/fanblow.wav"},
+                      {Q1_NAME_AMBIENT_WATERFALL, "ambient/waterfal.wav"},
+                      {Q1_NAME_AMBIENT_RIFTPOWER, "ambient/riftpowr.wav"}};
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
         for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i)
-            if (q1_classnamed(g, entity->id, sounds[i].name))
+            if (q1_classnamed(g, entity->id, g->runtime_names[sounds[i].name]))
                 return q1_map_ambient(g, body.origin, sounds[i].path,
                                       state->volume != 0 ? state->volume : .5f, error);
         return q1_map_fail(error, "unknown Hipnotic ambient source");
@@ -126,7 +127,7 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     case Q1_MAP_EXPLODER:
         entity->damage = entity->damage != 0 ? fmaxf(0, entity->damage) : 120;
         entity->speed = entity->speed != 0 ? entity->speed : 1;
-        if (q1_classnamed(g, entity->id, "func_multi_exploder")) {
+        if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_MULTI_EXPLODER])) {
             entity->model = QA_STRING_NONE;
             entity->physics.motion = QA_PHYSICS_STATIONARY;
             entity->wait = entity->wait != 0 ? entity->wait : .25f;
@@ -137,9 +138,9 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         state->use_enabled = true;
         return true;
     case Q1_MAP_RUBBLE_SOURCE:
-        state->style = q1_classnamed(g, entity->id, "func_rubble1")   ? 1
-                       : q1_classnamed(g, entity->id, "func_rubble2") ? 2
-                       : q1_classnamed(g, entity->id, "func_rubble3") ? 3
+        state->style = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_RUBBLE1])   ? 1
+                       : q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_RUBBLE2]) ? 2
+                       : q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_RUBBLE3]) ? 3
                                                                       : 0;
         state->use_enabled = true;
         return true;
@@ -165,7 +166,7 @@ bool q1_map_multi_explosion_begin(qa_q1_game *g, q1_actor *entity, qa_error *err
 }
 static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id;
-    if (q1_classnamed(g, entity->id, "func_multi_exploder"))
+    if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_MULTI_EXPLODER]))
         return q1_multi_explosion_think(g, entity, error);
     if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
         return false;

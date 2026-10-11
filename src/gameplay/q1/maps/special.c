@@ -25,7 +25,7 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
     bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
                  g->options.program == QA_Q1_MG3;
     qa_actor_id id = entity->id;
-    if (addon && q1_classnamed(g, id, "ambient_generic")) {
+    if (addon && q1_classnamed(g, id, g->runtime_names[Q1_NAME_AMBIENT_GENERIC])) {
         qa_string_id sound = entity->map->noise[0];
         if (!sound)
             return q1_remove(g, entity, error);
@@ -46,19 +46,20 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
         return !entity || q1_map_make_static(g, entity, error);
     }
     static const struct {
-        const char *classname, *sound;
+        q1_runtime_name classname;
+        const char *sound;
         float volume;
-    } sounds[] = {{"ambient_suck_wind", "ambience/suck1.wav", 1},
-                  {"ambient_flouro_buzz", "ambience/buzz1.wav", 1},
-                  {"ambient_drip", "ambience/drip1.wav", .5f},
-                  {"ambient_thunder", "ambience/thunder1.wav", .5f},
-                  {"ambient_light_buzz", "ambience/fl_hum1.wav", .5f},
-                  {"ambient_swamp1", "ambience/swamp1.wav", .5f},
-                  {"ambient_swamp2", "ambience/swamp2.wav", .5f},
-                  {"ambient_drone", "ambience/drone6.wav", .5f},
-                  {"ambient_comp_hum", "ambience/comp1.wav", 1}};
+    } sounds[] = {{Q1_NAME_AMBIENT_SUCK_WIND, "ambience/suck1.wav", 1},
+                  {Q1_NAME_AMBIENT_FLOURO_BUZZ, "ambience/buzz1.wav", 1},
+                  {Q1_NAME_AMBIENT_DRIP, "ambience/drip1.wav", .5f},
+                  {Q1_NAME_AMBIENT_THUNDER, "ambience/thunder1.wav", .5f},
+                  {Q1_NAME_AMBIENT_LIGHT_BUZZ, "ambience/fl_hum1.wav", .5f},
+                  {Q1_NAME_AMBIENT_SWAMP1, "ambience/swamp1.wav", .5f},
+                  {Q1_NAME_AMBIENT_SWAMP2, "ambience/swamp2.wav", .5f},
+                  {Q1_NAME_AMBIENT_DRONE, "ambience/drone6.wav", .5f},
+                  {Q1_NAME_AMBIENT_COMP_HUM, "ambience/comp1.wav", 1}};
     for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i)
-        if (q1_classnamed(g, id, sounds[i].classname)) {
+        if (q1_classnamed(g, id, g->runtime_names[sounds[i].classname])) {
             if (addon) {
                 if (!qa_q1_wire_declare_sound(g, sounds[i].sound, error)) return false;
                 entity = q1_entity(g, id);
@@ -120,7 +121,7 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     switch (state->kind) {
     case Q1_MAP_GATE: {
         uint32_t flags = *g->maps->options.server_flags;
-        bool hidden = q1_classnamed(g, entity->id, "func_episodegate")
+        bool hidden = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_EPISODEGATE])
                           ? !(flags & entity->spawnflags)
                           : (flags & 15) == 15;
         if (hidden) {
@@ -136,25 +137,25 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         break;
     }
     case Q1_MAP_STATIC:
-        if (q1_classnamed(g, id, "misc_corpse"))
+        if (q1_classnamed(g, id, g->runtime_names[Q1_NAME_MISC_CORPSE]))
             return corpse(g, entity, error);
-        if (q1_classnamed(g, entity->id, "func_illusionary")) {
+        if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_FUNC_ILLUSIONARY])) {
             body.angles = qa_v3(0, 0, 0);
             if (!qa_world_body_write(g->services.world, entity->id, &body, error))
                 return false;
-        } else if (q1_classnamed(g, entity->id, "light_globe")) {
+        } else if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_GLOBE])) {
             if (!q1_model(g, entity, "progs/s_light.spr", error))
                 return false;
         } else {
-            const char *model = q1_classnamed(g, entity->id, "light_torch_small_walltorch")
+            const char *model = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])
                                     ? "progs/flame.mdl"
                                     : "progs/flame2.mdl";
-            entity->frame = q1_classnamed(g, entity->id, "light_flame_large_yellow") ? 1 : 0;
+            entity->frame = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLAME_LARGE_YELLOW]) ? 1 : 0;
             bool silent = g->options.program == QA_Q1_ROGUE &&
-                          q1_classnamed(g, entity->id, "light_torch_small_walltorch") &&
+                          q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH]) &&
                           (entity->spawnflags & 1);
             if (g->options.program == QA_Q1_ROGUE &&
-                q1_classnamed(g, id, "light_torch_small_walltorch")) {
+                q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])) {
                 if (!qa_q1_wire_declare_model(g, model, error)) return false;
                 entity = q1_entity(g, id);
                 if (!entity || !entity->map) return true;
@@ -164,11 +165,11 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             entity = q1_entity(g, id);
             if (!entity || !entity->map) return true;
             if (g->options.program == QA_Q1_ROGUE &&
-                q1_classnamed(g, id, "light_torch_small_walltorch"))
+                q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH]))
                 silent = (entity->spawnflags & 1u) != 0;
             if (!silent) {
                 if (g->options.program == QA_Q1_ROGUE &&
-                    q1_classnamed(g, id, "light_torch_small_walltorch")) {
+                    q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])) {
                     if (!qa_q1_wire_declare_sound(g, "ambience/fire1.wav", error)) return false;
                     entity = q1_entity(g, id);
                     if (!entity || !entity->map) return true;
@@ -205,7 +206,7 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         state->movedir = q1_map_direction(body.angles);
         state->use_enabled = true;
         body.angles = qa_v3(0, 0, 0);
-        if (!q1_classnamed(g, entity->id, "trap_spikeshooter")) {
+        if (!q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRAP_SPIKESHOOTER])) {
             entity->wait = entity->wait != 0 ? entity->wait : 1;
             if (!q1_map_schedule(g, entity, state->initial_think + entity->wait,
                                  Q1_MAP_SHOOTER_FIRE, error))
@@ -241,7 +242,7 @@ static bool shooter_fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    float speed = laser && !q1_classnamed(g, entity->id, "trap_shooter") ? 600 : 500;
+    float speed = laser && !q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRAP_SHOOTER]) ? 600 : 500;
     qa_vec3 direction = laser ? qa_vec_normalize(entity->map->movedir) : entity->map->movedir;
     q1_actor *missile;
     q1_projectile_kind kind = laser                    ? Q1_ENFORCER_LASER

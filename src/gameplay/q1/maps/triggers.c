@@ -83,8 +83,8 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_remove(g, entity, error);
     switch (state->kind) {
     case Q1_MAP_MULTI: {
-        bool secret = q1_classnamed(g, entity->id, "trigger_secret");
-        if (secret || q1_classnamed(g, entity->id, "trigger_once"))
+        bool secret = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRIGGER_SECRET]);
+        if (secret || q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRIGGER_ONCE]))
             entity->wait = -1;
         if (secret) {
             if (g->maps->total_secrets == UINT32_MAX)
@@ -133,7 +133,7 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return !q1_alive(g, entity->id) || q1_link(g, entity, error);
     }
     case Q1_MAP_CHANGELEVEL:
-        if (addon(g) && q1_classnamed(g, entity->id, "hub_trigger_changelevel") &&
+        if (addon(g) && q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_HUB_TRIGGER_CHANGELEVEL]) &&
             (*g->maps->options.server_flags & 31) != 31)
             return q1_remove(g, entity, error);
         if (!q1_map_text(g, state->map))
@@ -188,7 +188,7 @@ bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, q
     q1_map_state *state = entity->map;
     if (entity->next_think > g->time)
         return true;
-    bool secret = q1_classnamed(g, entity->id, "trigger_secret");
+    bool secret = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRIGGER_SECRET]);
     if (secret) {
         if (!q1_map_player(g, activator))
             return true;
@@ -470,7 +470,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
             return false;
         return !q1_alive(g, entity->id) || q1_map_schedule(g, entity, 1, Q1_MAP_REARM, error);
     case Q1_MAP_PUSH:
-        if (q1_health(g, other) <= 0 && !q1_classnamed(g, other, "grenade"))
+        if (q1_health(g, other) <= 0 && !q1_classnamed(g, other, g->runtime_names[Q1_NAME_GRENADE]))
             return true;
         if (!qa_world_body_read(g->services.world, other, &body, error))
             return false;
