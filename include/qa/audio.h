@@ -426,8 +426,6 @@ typedef struct qa_audio_engine_options {
     qa_audio_setting_fn setting;
     qa_audio_log_fn log;
     void *diagnostic_user;
-    void (*discard_events)(void *, qa_audio_engine *, uint64_t owner, uint32_t audience, bool all);
-    void *event_context;
 } qa_audio_engine_options;
 bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_engine **out,
                             qa_error *error);
@@ -475,7 +473,7 @@ bool qa_audio_engine_play(qa_audio_engine *engine, const qa_audio_play *sound, i
 bool qa_audio_engine_loop(qa_audio_engine *engine, const qa_audio_loop *loop, qa_error *error);
 typedef enum qa_audio_event_kind {
     QA_AUDIO_EVENT_PLAY, QA_AUDIO_EVENT_LOOP, QA_AUDIO_EVENT_CLEAR,
-    QA_AUDIO_EVENT_STOP, QA_AUDIO_EVENT_POSITION
+    QA_AUDIO_EVENT_STOP, QA_AUDIO_EVENT_POSITION, QA_AUDIO_EVENT_STOP_OWNER
 } qa_audio_event_kind;
 typedef struct qa_audio_event {
     qa_audio_event_kind kind;

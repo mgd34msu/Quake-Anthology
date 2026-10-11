@@ -834,9 +834,6 @@ static void test_ring_console_capture(void)
     qa_console_destroy(test.app.console);
     application_event_stream_dispose(&test.app);free(test.app.unified_persistent);
 }
-static void test_audio_event_discard(void *context,qa_audio_engine *engine,uint64_t owner,uint32_t audience,bool all)
-{ qa_application_audio_discard(context,engine,owner,audience,all); }
-
 static void test_shared_effect_cursor(void)
 {
     qa_application app={0}; qa_error error={0};
@@ -938,32 +935,42 @@ static void test_shared_audio_preparation(void)
         counts=(audio_notification_counts){0};
         qa_application app={0};CHECK(application_event_stream_create(&app,16,&error));
         qa_audio_engine_options engine_options={.sample_rate=44100,.output_channels=2,
-            .mix_frames=16,.initial_voices=8,.observer=count_audio_notification,.observer_user=&counts,
-            .discard_events=test_audio_event_discard,.event_context=&app};
+            .mix_frames=16,.initial_voices=8,.observer=count_audio_notification,.observer_user=&counts};
         CHECK(qa_audio_engine_create(&engine_options,&engine,&error));
         qa_audio_event event={.kind=QA_AUDIO_EVENT_PLAY,.sound=sound};
         event.sound.audience=0;event.sound.owner=1;
         uint64_t first_event=qa_application_events_next(&app);
-        CHECK(qa_application_audio_emit(&app,engine,&event,&error));
+        CHECK(qa_application_audio_emit(&app,&event,&error));
+        CHECK(qa_application_audio_emit(&app,&(qa_audio_event){.kind=QA_AUDIO_EVENT_STOP_OWNER,
+            .sound={.owner=1,.audience=0}},&error));
         event.sound.owner=2;
-        CHECK(qa_application_audio_emit(&app,engine,&event,&error));
-        CHECK(qa_audio_engine_stop_owner(engine,1,0,&error));
+        CHECK(qa_application_audio_emit(&app,&event,&error));
         CHECK(counts.starts==0);
         qa_audio_listener listener={.seat=0,.actor=QA_AUDIO_NO_ACTOR,.gain=1,
             .axis={{1,0,0},{0,1,0},{0,0,1}}};
         CHECK(qa_audio_engine_listeners(engine,&listener,1,&error));
         qa_application_event_view output;
-        CHECK(qa_application_event_read(&app,&(qa_application_event_cursor){.id=first_event},&output));
-        CHECK(output.kind==QA_APPLICATION_EVENT_AUDIO && output.value.audio->cancelled);
-        CHECK(qa_application_event_read(&app,&(qa_application_event_cursor){.id=first_event+1},&output));
-        CHECK(!output.value.audio->cancelled && output.value.audio->event.sound.owner==2);
-        CHECK(qa_audio_engine_apply(engine,&output.value.audio->event,&error));
+        for(uint64_t id=first_event;id<qa_application_events_next(&app);++id) {
+            CHECK(qa_application_event_read(&app,&(qa_application_event_cursor){.id=id},&output));
+            CHECK(output.kind==QA_APPLICATION_EVENT_AUDIO);
+            if(id==first_event) CHECK(output.value.audio->kind==QA_AUDIO_EVENT_PLAY && output.value.audio->sound.owner==1);
+            if(id==first_event+1) CHECK(output.value.audio->kind==QA_AUDIO_EVENT_STOP_OWNER && output.value.audio->sound.owner==1);
+            if(id==first_event+2) CHECK(output.value.audio->kind==QA_AUDIO_EVENT_PLAY && output.value.audio->sound.owner==2);
+            CHECK(qa_audio_engine_apply(engine,output.value.audio,&error));
+            if(id==first_event+1) CHECK(counts.starts==counts.stops);
+        }
+        CHECK(qa_application_event_read(&app,&(qa_application_event_cursor){.id=first_event},&output) &&
+            output.value.audio->kind==QA_AUDIO_EVENT_PLAY && output.value.audio->sound.owner==1);
         int16_t captured[32];CHECK(qa_audio_engine_mix(engine,captured,16,&error));
         bool audible=false;for(size_t j=0;j<32;++j) audible|=captured[j]!=0;
-        CHECK(audible && counts.starts==1);
+        CHECK(audible && counts.starts==counts.stops+1);
+        size_t played=counts.starts;
         qa_audio_engine_stop_all(engine);CHECK(counts.starts==counts.stops);
         CHECK(qa_audio_engine_apply(engine,&event,&error));
-        CHECK(qa_audio_engine_mix(engine,captured,16,&error) && counts.starts==2);
+        CHECK(qa_audio_engine_mix(engine,captured,16,&error) && counts.starts==played+1);
+        CHECK(qa_audio_engine_apply(engine,&(qa_audio_event){.kind=QA_AUDIO_EVENT_STOP_OWNER,
+            .all=true,.sound={.audience=QA_AUDIO_WORLD}},&error));
+        CHECK(counts.starts==counts.stops);
         qa_audio_engine_destroy(engine);CHECK(counts.starts==counts.stops);
         application_event_stream_dispose(&app);free(app.unified_persistent);
         if (i + 1 == sizeof(families) / sizeof(*families)) {

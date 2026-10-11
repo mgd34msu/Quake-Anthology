@@ -628,7 +628,7 @@ static bool dispose_lease(remote_module_lease *lease, qa_error *error)
     if (lease->movie_references)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote module retirement retains a system cinematic source lease");
     if (f->audio) {
-        if (!qa_audio_engine_stop_owner(f->audio, lease->service_owner, physical_seat(owner), error)) return false;
+        if (!frontend_audio_stop_owner(f, lease->service_owner, physical_seat(owner), error)) return false;
         qa_audio_music *attached_player = qa_audio_engine_bus_music(f->audio, lease->service_owner);
         if (attached_player && attached_player != lease->music) return false;
         if (attached_player) {

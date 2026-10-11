@@ -214,7 +214,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     if (!frontend_remote_q2_effects_destroy(&row->effects, error)) return false;
     qa_buffer_free(&row->saved_effects);
     row->effects_imported = false;
-    if (row->frontend->audio && row->identity && !qa_audio_engine_stop_owner(row->frontend->audio,
+    if (row->frontend->audio && row->identity && !frontend_audio_stop_owner(row->frontend,
         row->identity, row->options.domain.physical_seat, error)) return false;
     remote_q2_footsteps_clear(row);
     frontend_world_scratch_destroy(&row->world_scratch);

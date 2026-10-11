@@ -897,7 +897,7 @@ static bool media_close(frontend_native_q3 *row,qa_error *e)
     if(row->frontend->audio) {
         qa_audio_engine_remove_music(row->frontend->audio,row->view.identity);
         row->view.music_attached=false;
-        if(!qa_audio_engine_stop_owner(row->frontend->audio,row->view.identity,row->view.seat,e))return false;
+        if(!frontend_audio_stop_owner(row->frontend,row->view.identity,row->view.seat,e))return false;
     }
     if(row->shader_movies && row->view.movies && !row->frontend->source_restoring) {
         frontend_material_movie_source expected={.frontend=row->frontend,.files=row->view.mounts,.images=row->view.images,

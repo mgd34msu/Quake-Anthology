@@ -1114,9 +1114,7 @@ static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state
         qa_application_event_view output;
         if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = id}, &output)) continue;
         if(output.kind==QA_APPLICATION_EVENT_AUDIO) {
-            const qa_application_audio_event *audio=output.value.audio;
-            if(!audio->cancelled && audio->engine==frontend->audio)
-                ok=qa_audio_engine_apply(frontend->audio,&audio->event,error);
+            ok=qa_audio_engine_apply(frontend->audio,output.value.audio,error);
             qa_application_events_audio_consume(frontend->application,id+1);
             if(!ok) break;
             continue;
@@ -1138,10 +1136,16 @@ static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state
     if (ok) qa_application_events_audio_consume(frontend->application, next);
     return ok;
 }
-bool frontend_audio_event(void *context,qa_audio_engine *engine,const qa_audio_event *event,qa_error *error)
+bool frontend_audio_event(void *context,const qa_audio_event *event,qa_error *error)
 {
     qa_frontend *frontend=context;
-    return qa_application_audio_emit(frontend->application,engine,event,error);
+    return qa_application_audio_emit(frontend->application,event,error);
+}
+bool frontend_audio_stop_owner(qa_frontend *frontend,uint64_t owner,uint32_t audience,qa_error *error)
+{
+    if(!qa_audio_engine_stop_owner(frontend->audio,owner,audience,error)) return false;
+    return !frontend->application || frontend_audio_event(frontend,
+        &(qa_audio_event){.kind=QA_AUDIO_EVENT_STOP_OWNER,.sound={.owner=owner,.audience=audience}},error);
 }
 bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
 {

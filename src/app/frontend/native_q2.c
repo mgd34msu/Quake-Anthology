@@ -544,10 +544,10 @@ static bool source_free(frontend_native_q2 *source, qa_error *error)
     if (!frontend_owners_idle(source->frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 frontend source retains an active parent or child owner");
     if (source->frontend->audio && source->identity) {
-        if (!qa_audio_engine_stop_owner(source->frontend->audio, source->identity, QA_AUDIO_WORLD, error))
+        if (!frontend_audio_stop_owner(source->frontend, source->identity, QA_AUDIO_WORLD, error))
             return false;
         for (uint32_t seat = 0; seat < source->frontend->options.seats; ++seat)
-            if (!qa_audio_engine_stop_owner(source->frontend->audio, source->identity, seat, error))
+            if (!frontend_audio_stop_owner(source->frontend, source->identity, seat, error))
                 return false;
     }
     qa_arena_destroy(&source->scratch);

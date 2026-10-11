@@ -989,7 +989,7 @@ static bool source_free(frontend_source *source)
     source->presentation=NULL;
     if (frontend->audio) {
         qa_audio_engine_remove_music(frontend->audio, source->identity);
-        if (!qa_audio_engine_stop_owner(frontend->audio, source->identity, source->seat, &error))
+        if (!frontend_audio_stop_owner(frontend, source->identity, source->seat, &error))
             fprintf(stderr, "source audio retirement: %s\n", error.message);
     }
     if (source->shader_movies && source->movies && !source->frontend->source_restoring) {

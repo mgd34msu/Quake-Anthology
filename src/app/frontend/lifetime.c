@@ -297,18 +297,12 @@ static int32_t audio_milliseconds(void *context)
     uint32_t word=(uint32_t)(((qa_frontend *)context)->time_ns/UINT64_C(1000000));
     int32_t value; memcpy(&value,&word,sizeof(value)); return value;
 }
-static void audio_events_discard(void *context,qa_audio_engine *engine,uint64_t owner,uint32_t audience,bool all)
-{
-    qa_frontend *frontend=context;
-    if(frontend->application) qa_application_audio_discard(frontend->application,engine,owner,audience,all);
-}
 void frontend_audio_engine_options(qa_frontend *frontend,qa_audio_engine_options *options)
 {
     *options=(qa_audio_engine_options){.sample_rate=48000,.output_channels=2,
         .mix_frames=1024,.initial_voices=128,
         .workspace_capacity=qa_actors_capacity(qa_session_actor_registry(qa_application_session(frontend->application))),
         .milliseconds=audio_milliseconds,.milliseconds_user=frontend,
-        .discard_events=audio_events_discard,.event_context=frontend,
         .observer=frontend_ui_audio_event,.observer_user=frontend};
 }
 bool frontend_audio_engine_options_ready(const qa_frontend *frontend)

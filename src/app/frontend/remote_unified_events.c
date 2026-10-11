@@ -636,7 +636,7 @@ bool frontend_unified_events_destroy(frontend_unified_events **slot,qa_error *e)
     frontend_unified_events *o=*slot;
     if (!frontend_unified_events_idle(o)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified event owner still has a live callback");
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    if (o->owns_audio && o->frontend->audio && !qa_audio_engine_stop_owner(o->frontend->audio,o->options.audio_owner,d->physical_seat,e)) return false;
+    if (o->owns_audio && o->frontend->audio && !frontend_audio_stop_owner(o->frontend,o->options.audio_owner,d->physical_seat,e)) return false;
     for (uint64_t id=qa_event_ring_first(o->records);id<qa_event_ring_next(o->records);++id) {
         const unified_received_event *record=qa_event_ring_at(o->records,id);
         qa_unified_document_destroy(record->delivery.document);

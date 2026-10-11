@@ -271,7 +271,7 @@ bool remote_q1_effects_clear(frontend_remote_q1 *row, qa_error *error)
         bool closed=frontend_received_music_destroy(&fx->music,error);fx->music_retiring=false;
         if(!closed)return false;}
     if(!remote_q1_effects_audio_detach(row,error)) return false;
-    if (row->frontend->audio && !qa_audio_engine_stop_owner(row->frontend->audio,
+    if (row->frontend->audio && !frontend_audio_stop_owner(row->frontend,
         row->options.domain.actor_owner,row->options.domain.physical_seat,error)) return false;
     if (fx) {
         for(size_t i=0;i<fx->ambient_count;++i) {

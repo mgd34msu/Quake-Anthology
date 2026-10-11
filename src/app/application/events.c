@@ -1247,7 +1247,7 @@ static void event_records_release(qa_application *app,uint64_t next)
     for(uint64_t id=qa_event_ring_first(app->event_ring);id<next && id<qa_event_ring_next(app->event_ring);++id) {
         const application_event_envelope *record=application_event_stream_at(app,id);
         if(record && record->kind==QA_APPLICATION_EVENT_AUDIO)
-            qa_audio_asset_release(record->raw.audio.event.sound.asset);
+            qa_audio_asset_release(record->raw.audio.sound.asset);
     }
 }
 void application_events_retire(qa_application *app)
@@ -1322,35 +1322,24 @@ bool qa_application_client_sound(qa_application *app, const qa_builtin_event *ev
         application_event_stream_decline(app, &write, true, error);
 }
 
-bool qa_application_audio_emit(qa_application *app,qa_audio_engine *engine,const qa_audio_event *event,qa_error *error)
+bool qa_application_audio_emit(qa_application *app,const qa_audio_event *event,qa_error *error)
 {
     application_event_write write;
     if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_AUDIO,&write,error))
         return application_event_stream_decline(app,&write,true,error);
-    qa_application_audio_event *record=&write.envelope->raw.audio;
-    *record=(qa_application_audio_event){.engine=engine,.event=*event};
+    qa_audio_event *record=&write.envelope->raw.audio;
+    *record=*event;
     if(event->sound.asset) {
-        record->event.sound.asset=qa_audio_asset_retain(event->sound.asset);
-        if(!record->event.sound.asset) {
+        record->sound.asset=qa_audio_asset_retain(event->sound.asset);
+        if(!record->sound.asset) {
             application_event_stream_abort(app,&write,error);
             return application_event_stream_decline(app,&write,true,error);
         }
     }
-    qa_audio_asset *asset=record->event.sound.asset;
+    qa_audio_asset *asset=record->sound.asset;
     if(application_event_stream_commit(app,&write,error)) return true;
     qa_audio_asset_release(asset);
     return application_event_stream_decline(app,&write,true,error);
-}
-
-void qa_application_audio_discard(qa_application *app,qa_audio_engine *engine,uint64_t owner,uint32_t audience,bool all)
-{
-    for(uint64_t id=qa_application_events_first(app);id<qa_application_events_next(app);++id) {
-        application_event_envelope *record=(application_event_envelope *)application_event_stream_at(app,id);
-        if(!record || record->kind!=QA_APPLICATION_EVENT_AUDIO) continue;
-        qa_application_audio_event *audio=&record->raw.audio;
-        if(audio->engine==engine && (all || audio->event.sound.owner==owner) &&
-            (audience==QA_AUDIO_WORLD || audio->event.sound.audience==audience)) audio->cancelled=true;
-    }
 }
 
 uint64_t qa_application_protocol_events_generation(const qa_application *app)

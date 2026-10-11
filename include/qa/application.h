@@ -579,12 +579,6 @@ typedef struct qa_application_log_event {
 } qa_application_log_event;
 enum { QA_APPLICATION_LOG_CONSOLE=1u,QA_APPLICATION_LOG_REDIRECTED=2u };
 
-typedef struct qa_application_audio_event {
-    qa_audio_engine *engine;
-    qa_audio_event event;
-    bool cancelled;
-} qa_application_audio_event;
-
 typedef struct qa_application_q3_effect_event {
     const void *recipient;
     qa_q3_entity entity;
@@ -610,7 +604,7 @@ typedef struct qa_application_event_view {
         const qa_application_q2_map_event *q2_map;
         const qa_application_q3_map_event *q3_map;
         const qa_application_q2_player_event *q2_player;
-        const qa_application_audio_event *audio;
+        const qa_audio_event *audio;
         const qa_application_q3_effect_event *q3_effect;
         const qa_application_log_event *log;
     } value;
@@ -662,12 +656,11 @@ void qa_application_player_feedback_read(const qa_application *, qa_actor_id,
     uint64_t first, uint64_t through, qa_player_feedback *);
 /* Client-generated effect sounds have no network projection. */
 bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
-bool qa_application_audio_emit(qa_application *, qa_audio_engine *, const qa_audio_event *, qa_error *);
+bool qa_application_audio_emit(qa_application *, const qa_audio_event *, qa_error *);
 bool qa_application_q3_effect_emit(qa_application *,const qa_application_q3_effect_event *,qa_error *);
 void qa_application_events_subscribe(qa_application *,qa_application_event_subscription *);
 void qa_application_events_unsubscribe(qa_application_event_subscription *);
 void qa_application_events_consumed(qa_application_event_subscription *,uint64_t next);
-void qa_application_audio_discard(qa_application *, qa_audio_engine *, uint64_t owner, uint32_t audience, bool all);
 bool qa_application_log_emit(qa_application *,const qa_command_context *,const char *,bool console,qa_error *);
 void qa_application_log_deliver(qa_console *,const qa_application_log_event *,
     void (*print)(void *,const qa_command_context *,const char *),void *context);

@@ -183,7 +183,7 @@ bool frontend_selected_effects_group_dispose(frontend_selected_effects_group *gr
         (group->view.presentation && !qa_q3_presentation_idle(group->view.presentation)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect group still owns an active source frame");
     if (group->view.presentation && group->view.presentation->options.audio &&
-        !qa_audio_engine_stop_owner(group->view.presentation->options.audio, group->view.identity, QA_AUDIO_WORLD, error)) return false;
+        !frontend_audio_stop_owner(group->owner->frontend, group->view.identity, QA_AUDIO_WORLD, error)) return false;
     if (group->view.presentation && !qa_q3_presentation_destroy(group->view.presentation, error)) return false;
     group->view.presentation = NULL;
     q3n_events_destroy(group->view.events); q3n_media_destroy(group->view.media);

@@ -51,7 +51,7 @@ typedef struct application_event_envelope {
         application_protocol_record protocol;
         application_equipment_event_record equipment;
         struct { qa_builtin_event event; qa_actor_id recipient; } client_sound;
-        qa_application_audio_event audio;
+        qa_audio_event audio;
         qa_application_log_event log;
         qa_application_q3_effect_event q3_effect;
     } raw;

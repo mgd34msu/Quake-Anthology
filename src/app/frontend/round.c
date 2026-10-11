@@ -305,7 +305,8 @@ static bool begin(qa_application_q3_round_cut *cut,
         frontend_remote_q1 *row=frontend_remote_q1_at(f,i);
         if (!row || !remote_q1_effects_audio_detach(row,error)) return false;
     }
-    return (!f->audio || qa_audio_engine_reset_round(f->audio, error)) &&
+    return (!f->audio || (frontend_audio_event(f,&(qa_audio_event){.kind=QA_AUDIO_EVENT_STOP_OWNER,
+                .all=true,.sound={.audience=QA_AUDIO_WORLD}},error) && qa_audio_engine_reset_round(f->audio, error))) &&
         (!f->device || qa_audio_device_reset_round(f->device, error));
 }
 static bool bind(qa_application_q3_round_cut *cut, qa_error *error)

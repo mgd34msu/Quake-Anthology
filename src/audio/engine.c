@@ -10,11 +10,7 @@ static bool fail(qa_error *error, qa_status code, const char *message) {
     qa_error_set(error, code, 0, "%s", message);
     return false;
 }
-static void events_discard(qa_audio_engine *engine, uint64_t owner, uint32_t audience, bool all)
-{
-    if (engine->options.discard_events)
-        engine->options.discard_events(engine->options.event_context, engine, owner, audience, all);
-}
+
 static void *grow(void *memory, size_t *capacity, size_t count, size_t size, qa_error *error) {
     if (count <= *capacity)
         return memory;
@@ -174,7 +170,6 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
         return;
     }
     engine->destroying = true;
-    events_discard(engine, 0, QA_AUDIO_WORLD, true);
     for (size_t i = 0; i < engine->seat_count; i++)
         seat_destroy(engine->seats[i]);
     for (size_t i = 0; i < engine->round_mixer_count; ++i)
@@ -452,13 +447,11 @@ static bool stop_owner_impl(qa_audio_engine *engine, uint64_t owner, uint32_t au
             if (!qa_audio_mixer_end_loop_frame(engine->seats[i]->mixer, error))
                 return false;
         }
-    events_discard(engine, owner, audience, false);
     return true;
 }
 static void stop_all_impl(qa_audio_engine *engine, bool retain_menu) {
     if (!engine)
         return;
-    events_discard(engine, 0, QA_AUDIO_WORLD, true);
     for (size_t i = 0; i < engine->seat_count; i++) {
         audio_seat *seat = engine->seats[i];
         if (engine->round_resetting) qa_audio_mixer_round_stop(seat->mixer);
@@ -786,6 +779,12 @@ bool qa_audio_engine_apply(qa_audio_engine *engine, const qa_audio_event *operat
     case QA_AUDIO_EVENT_STOP:
         okay = stop_loop_impl(engine, operation->sound.actor, operation->sound.owner,
             operation->sound.audience, error); break;
+    case QA_AUDIO_EVENT_STOP_OWNER:
+        if(!operation->all) okay=stop_owner_impl(engine,operation->sound.owner,operation->sound.audience,error);
+        else for(size_t i=0;i<engine->seat_count;++i)
+            if(selected(operation->sound.audience,engine->seats[i]->listener.seat))
+                qa_audio_mixer_stop_all(engine->seats[i]->mixer);
+        break;
     case QA_AUDIO_EVENT_POSITION:
         if (operation->sound.actor==QA_AUDIO_NO_ACTOR) break;
         for (size_t i=0;okay && i<engine->seat_count;++i)

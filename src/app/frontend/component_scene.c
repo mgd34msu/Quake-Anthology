@@ -442,7 +442,7 @@ static bool retire(void *context,qa_error *e)
     if ((owner->frontend->music_sources &&
         !frontend_music_sources_explicit_retire(owner->frontend->music_sources,owner,e)) ||
         !music_stop(owner,e) ||
-        (owner->frontend->audio && !qa_audio_engine_stop_owner(owner->frontend->audio,owner->identity,owner->request.physical_seat,e)) ||
+        (owner->frontend->audio && !frontend_audio_stop_owner(owner->frontend,owner->identity,owner->request.physical_seat,e)) ||
         !qa_q3_assets_services_retire(owner->assets,e)) return false;
     owner->retired=true;
     return true;
