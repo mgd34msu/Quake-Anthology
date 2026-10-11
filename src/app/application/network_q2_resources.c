@@ -44,6 +44,17 @@ static application_provider *provider_at(qa_application_network_q2 *owner, qa_ac
 
 static bool held_append(qa_application_network_q2 *owner, application_q2_held_resource *held, qa_error *error)
 {
+    qa_strings *strings = qa_session_strings(owner->app->session);
+    if (held->path && !qa_strings_intern_cstr(strings, held->path, &held->path_name, error)) return false;
+    if (held->wire_path) {
+        const char *sound = held->wire_path;
+        if (!strncmp(sound, "sound/", 6)) sound += 6;
+        char image[66];
+        snprintf(image, sizeof(image), "/%s", held->wire_path);
+        if (!qa_strings_intern_cstr(strings, held->wire_path, &held->wire_names[QA_NATIVE_HOST_MODEL], error) ||
+            !qa_strings_intern_cstr(strings, sound, &held->wire_names[QA_NATIVE_HOST_SOUND], error) ||
+            !qa_strings_intern_cstr(strings, image, &held->wire_names[QA_NATIVE_HOST_IMAGE], error)) return false;
+    }
     if (owner->held_resource_count == owner->held_resource_capacity) {
         size_t capacity = owner->held_resource_capacity ? owner->held_resource_capacity * 2 : 16;
         if (capacity < owner->held_resource_capacity || capacity > SIZE_MAX / sizeof(*owner->held_resources))
@@ -662,14 +673,15 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
     if (!files) return application_fail(error, QA_ERROR_ARGUMENT, "Q2 selected model has no actual provider file scope");
     for (size_t i = 0; i < owner->held_resource_count; ++i) {
         const application_q2_held_resource *old = &owner->held_resources[i];
-        if (old->kind == APPLICATION_Q2_HELD_MODEL && old->provider == visual->provider && !strcmp(old->path, path) &&
+        if (old->kind == APPLICATION_Q2_HELD_MODEL && old->provider == visual->provider &&
+            old->path_name == visual->visual.models[model] &&
             (!visual->model_resources[model] || old->resource == visual->model_resources[model]) &&
             old->identity == provider->launch->identity && qa_vfs_lookup_equal(old->view, files) &&
             model_colors_current(old, visual)) {
             if (visual->model_openings[model]) {
                 if (!acquisition_equal(&old->opening, visual->model_openings[model])) continue;
             }
-            return application_network_q2_resource(owner, 0, old->wire_path, out, error);
+            return application_network_q2_resource_id(owner, 0, old->wire_names[QA_NATIVE_HOST_MODEL], out, error);
         }
     }
     application_q2_held_resource held = {.provider = provider->owner, .identity = provider->launch->identity,
@@ -704,8 +716,8 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
     bool appended = false;
     if (ok) {
         ok = held_append(owner, &held, error); appended = ok;
-        if (ok) ok = application_network_q2_resource(owner, 0,
-            owner->held_resources[owner->held_resource_count - 1].wire_path, out, error);
+        if (ok) ok = application_network_q2_resource_id(owner, 0,
+            owner->held_resources[owner->held_resource_count - 1].wire_names[QA_NATIVE_HOST_MODEL], out, error);
     }
     if (!ok && !appended) while (owner->held_resource_count > dependency_start)
         held_free(&owner->held_resources[--owner->held_resource_count]);
@@ -714,11 +726,7 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
 
 static bool event_wire(qa_application_network_q2 *owner,size_t index,unsigned kind,uint32_t *out,qa_error *error)
 {
-    const char *wire=owner->held_resources[index].wire_path;
-    char config[66];
-    if(kind==QA_NATIVE_HOST_IMAGE) { snprintf(config,sizeof(config),"/%s",wire); wire=config; }
-    else if(kind==QA_NATIVE_HOST_SOUND && !strncmp(wire,"sound/",6)) wire+=6;
-    return application_network_q2_resource(owner,kind,wire,out,error);
+    return application_network_q2_resource_id(owner,kind,owner->held_resources[index].wire_names[kind],out,error);
 }
 
 bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, qa_actor_owner emitter,

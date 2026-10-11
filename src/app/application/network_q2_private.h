@@ -48,6 +48,7 @@ typedef struct application_q2_image_receipt {
 typedef struct application_q2_held_resource {
     qa_actor_owner provider;
     char *instance, *path, *wire_path;
+    qa_string_id path_name, wire_names[3];
     uint64_t identity, serial;
     qa_vfs *view;
     qa_resource *resource;
