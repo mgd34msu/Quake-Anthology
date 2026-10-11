@@ -445,7 +445,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     candidate.clients = calloc((size_t)candidate.max_clients + 1, sizeof(*candidate.clients));
     if (candidate.clients == NULL) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC restored clients");
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
-    if (ok) ok = qa_actor_index_create(&candidate.client_index, actors, error);
+    if (ok) ok = qa_actor_index_create(&candidate.client_index, actors, NULL, error);
     for (uint32_t i = 1; ok && i <= candidate.max_clients; ++i) {
         application_qc_client *client = &candidate.clients[i];
         client->seat = qa_net_read_u32(&reader);

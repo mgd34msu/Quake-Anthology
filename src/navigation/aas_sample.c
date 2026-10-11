@@ -8,29 +8,33 @@ typedef struct aas_frame {
     qa_vec3 start, end;
 } aas_frame;
 struct qa_aas_query {
-    qa_arena storage;
+    qa_arena owner_storage, storage;
     aas_frame *stack;
     uint32_t *areas;
     qa_stamp_set seen;
     size_t stack_capacity, area_capacity;
 };
-bool qa_aas_query_create(qa_aas_query **out, qa_error *e) {
+bool qa_aas_query_create(qa_arena *source, qa_aas_query **out, qa_error *e) {
     if (out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing AAS query output");
         return false;
     }
-    qa_aas_query *q = calloc(1, sizeof(*q));
+    qa_arena storage; nav_arena_init(&storage, source);
+    qa_aas_query *q = qa_arena_alloc(&storage, sizeof(*q), _Alignof(qa_aas_query), e);
     if (q == NULL) {
+        qa_arena_destroy(&storage);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating AAS query");
         return false;
     }
+    memset(q, 0, sizeof(*q)); q->owner_storage = storage;
     *out = q;
     return true;
 }
 void qa_aas_query_destroy(qa_aas_query *q) {
     if (q != NULL) {
         qa_arena_destroy(&q->storage);
-        free(q);
+        qa_arena storage = q->owner_storage;
+        qa_arena_destroy(&storage);
     }
 }
 bool qa_aas_query_prepare(qa_aas_query *q, size_t nodes, size_t areas, qa_error *e) {
@@ -45,7 +49,7 @@ bool qa_aas_query_prepare(qa_aas_query *q, size_t nodes, size_t areas, qa_error 
     if (areas > (SIZE_MAX - padding) / (2 * sizeof(uint32_t)) ||
         stack > (SIZE_MAX - padding - 2 * areas * sizeof(uint32_t)) / sizeof(aas_frame))
         goto memory;
-    qa_arena storage = {0};
+    qa_arena storage; nav_arena_init(&storage, &q->owner_storage);
     if (!qa_arena_reserve(&storage, padding + stack * sizeof(aas_frame) +
             2 * areas * sizeof(uint32_t), e))
         return false;

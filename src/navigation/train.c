@@ -120,7 +120,7 @@ bool qa_navigation_train_step(qa_navigation *n, qa_nav_workspace *w, qa_actor_id
         n->services.hazard(n->services.context, qa_bounds_translate(p->shape.bounds, target)))
         return true;
     nav_prediction prediction = {.navigation = n};
-    qa_nav_route route = {0};
+    qa_nav_route route = {0}; nav_arena_init(&route.storage, &n->storage);
     bool admitted;
     bool ok = nav_predict(&prediction, actor, origin, target, QA_NAV_WALK, &route, &admitted, e);
     nav_prediction_close(&prediction);

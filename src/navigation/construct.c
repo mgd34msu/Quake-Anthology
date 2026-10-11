@@ -9,6 +9,7 @@ typedef struct cell_node {
     uint32_t node;
 } cell_node;
 typedef struct construction {
+    qa_arena storage;
     const qa_nav_construction *options;
     const qa_navigation_services *services;
     qa_nav_graph *graph;
@@ -48,13 +49,13 @@ static bool grow_keys(construction *c, qa_error *e) {
     size_t capacity = c->seen_capacity == 0 ? 256 : c->seen_capacity * 2;
     if (capacity < c->seen_capacity || capacity > SIZE_MAX / sizeof(sample_key))
         goto memory;
-    sample_key *keys = calloc(capacity, sizeof(*keys));
+    sample_key *keys = qa_arena_alloc(&c->storage, capacity * sizeof(*keys), _Alignof(sample_key), e);
     if (keys == NULL)
         goto memory;
+    memset(keys, 0, capacity * sizeof(*keys));
     for (size_t i = 0; i < c->seen_capacity; ++i)
         if (c->seen[i].used)
             keys[key_slot(keys, capacity, c->seen[i])] = c->seen[i];
-    free(c->seen);
     c->seen = keys;
     c->seen_capacity = capacity;
     return true;
@@ -220,7 +221,8 @@ static bool face_samples(construction *c, qa_error *e) {
                 qa_error_set(e, QA_ERROR_MEMORY, i, "Navigation face is too large");
                 break;
             }
-            qa_vec3 *p = realloc(points, (size_t)face.edges.count * sizeof(*p));
+            qa_vec3 *p = qa_arena_grow(&c->storage, points, capacity * sizeof(*p),
+                (size_t)face.edges.count * sizeof(*p), _Alignof(qa_vec3), e);
             if (p == NULL) {
                 ok = false;
                 qa_error_set(e, QA_ERROR_MEMORY, i, "Allocating navigation face samples");
@@ -246,7 +248,6 @@ static bool face_samples(construction *c, qa_error *e) {
             ok = polygon(c, points, face.edges.count, normal,
                          source_for((uint32_t)i, QA_NAV_NO_INDEX), e);
     }
-    free(points);
     return ok;
 }
 static bool surface_polygon(construction *c, const uint32_t *indices, size_t count,
@@ -277,7 +278,7 @@ static bool surface_samples(construction *c, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation world surface count is too large");
         return false;
     }
-    uint32_t *members = malloc((count == 0 ? 1 : count) * sizeof(*members));
+    uint32_t *members = qa_arena_alloc(&c->storage, (count ? count : 1) * sizeof(*members), _Alignof(uint32_t), e);
     if (members == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Reading navigation world surfaces");
         return false;
@@ -318,7 +319,6 @@ static bool surface_samples(construction *c, qa_error *e) {
             }
         }
     }
-    free(members);
     return ok;
 }
 static int cell_compare(const void *a, const void *b) {
@@ -401,7 +401,7 @@ static bool link_nodes(construction *c, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation cell index is too large");
         return false;
     }
-    cell_node *cells = malloc((count == 0 ? 1 : count) * sizeof(*cells));
+    cell_node *cells = qa_arena_alloc(&c->storage, (count ? count : 1) * sizeof(*cells), _Alignof(cell_node), e);
     if (cells == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating navigation cell index");
         return false;
@@ -434,7 +434,6 @@ static bool link_nodes(construction *c, qa_error *e) {
                         ok = link_pair(c, node, c->graph->nodes + cells[j].node, e);
             }
     }
-    free(cells);
     return ok;
 }
 static const qa_nav_node *nearest(const construction *c, qa_vec3 point) {
@@ -457,7 +456,7 @@ static bool connections(construction *c, qa_error *e) {
         return false;
     }
     if (count != 0) {
-        c->graph->rejected = malloc(count * sizeof(*c->graph->rejected));
+        c->graph->rejected = qa_arena_alloc(&c->graph->storage, count * sizeof(*c->graph->rejected), _Alignof(qa_nav_rejection), e);
         if (c->graph->rejected == NULL) {
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating rejected connection diagnostics");
             return false;
@@ -502,7 +501,7 @@ static bool connections(construction *c, qa_error *e) {
     return true;
 }
 bool qa_nav_graph_construct(const qa_nav_construction *options,
-                            const qa_navigation_services *services, qa_nav_graph **out,
+                            const qa_navigation_services *services, qa_arena *source, qa_nav_graph **out,
                             qa_error *e) {
     if (options == NULL || out == NULL || options->geometry == NULL ||
         (options->connection_count != 0 && options->connections == NULL)) {
@@ -522,8 +521,9 @@ bool qa_nav_graph_construct(const qa_nav_construction *options,
         return false;
     }
     if (!nav_services_valid(services, false, e) ||
-        !nav_graph_new(&options->map, &options->profile, &c.graph, e))
+        !nav_graph_new(&options->map, &options->profile, source, &c.graph, e))
         return false;
+    nav_arena_init(&c.storage, &c.graph->storage);
     c.has_crouch = nav_crouch_profile(&options->profile, &c.crouched);
     bool ok = options->geometry->family == QA_BSP_Q3 ? surface_samples(&c, e) : face_samples(&c, e);
     size_t leaves = qa_bsp_record_count(options->geometry, QA_BSP_LEAVES);
@@ -546,7 +546,7 @@ bool qa_nav_graph_construct(const qa_nav_construction *options,
     }
     if (ok)
         ok = link_nodes(&c, e) && connections(&c, e) && nav_graph_finish(c.graph, e);
-    free(c.seen);
+    qa_arena_destroy(&c.storage);
     if (!ok) {
         qa_nav_graph_release(c.graph);
         return false;

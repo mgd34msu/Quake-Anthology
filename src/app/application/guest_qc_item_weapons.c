@@ -39,7 +39,7 @@ bool application_qc_item_weapons_create(struct application_qc_state *engine,qa_e
     struct application_qc_item_weapon_store *store=calloc(1,sizeof(*store));
     if(!store)return application_fail(e,QA_ERROR_MEMORY,"Owning QC weapon binding store");
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    if(!qa_actor_index_create(&store->index,registry,e)){
+    if(!qa_actor_index_create(&store->index,registry,NULL,e)){
         free(store);return false;
     }
     engine->item_weapon_store=store;return true;

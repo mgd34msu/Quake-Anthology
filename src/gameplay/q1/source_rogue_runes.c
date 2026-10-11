@@ -32,7 +32,7 @@ static q1_rogue_rune_player *state(qa_q1_game *g, qa_actor_id actor, qa_error *e
     if (found) return found;
     if (!g->rogue_rune_index.entries &&
         !qa_actor_index_create(&g->rogue_rune_index,
-            qa_session_actors(g->services.session), error)) return NULL;
+            qa_session_actors(g->services.session), NULL, error)) return NULL;
     q1_rogue_rune_player *row = calloc(1, sizeof(*row));
     if (!row) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Creating Rogue rune carrier state");

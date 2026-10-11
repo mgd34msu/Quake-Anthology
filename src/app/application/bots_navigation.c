@@ -591,14 +591,14 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
         uint32_t checksum_word=qa_collision_map_checksum(bots->application->geometry);int32_t checksum;
         memcpy(&checksum,&checksum_word,sizeof(checksum));
         ok=qa_nav_asset_read(qa_resource_bytes(graph->asset_resource),&checksum,&asset,error);
-        if(ok) ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,&graph->graph,error);
+        if(ok) ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,NULL,&graph->graph,error);
         qa_nav_asset_release(asset);
     } else {
         qa_nav_construction construction={.geometry=&bots->geometry,.map=map,.profile=profile};
-        ok=qa_nav_graph_construct(&construction,&services,&graph->graph,error);
+        ok=qa_nav_graph_construct(&construction,&services,NULL,&graph->graph,error);
     }
     services.topology_geometry_only=false;
-    if (!ok || !qa_navigation_create(graph->graph,&services,&graph->navigation,error)) return false;
+    if (!ok || !qa_navigation_create(graph->graph,&services,NULL,&graph->navigation,error)) return false;
     const qa_nav_graph_view *view=qa_nav_graph_read(graph->graph);
     if (bots->runtime && !qa_bot_runtime_prepare_navigation(bots->runtime,view,error)) return false;
     for (application_bot_guest *guest=bots->guests;guest;guest=guest->next)

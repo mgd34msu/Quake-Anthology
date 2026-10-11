@@ -5,8 +5,10 @@
 #include "qa/navigation.h"
 #include "qa/pool.h"
 #include "qa/source_save.h"
+#include "qa/network_unified_frame_pool.h"
 
 typedef struct npc_graph {
+    qa_arena storage;
     struct npc_graph *next;
     qa_bounds bounds;
     uint32_t flags;
@@ -15,6 +17,7 @@ typedef struct npc_graph {
     qa_vfs_acquisition acquisition;
 } npc_graph;
 typedef struct npc_actor {
+    qa_arena storage;
     struct npc_actor *next,*previous;
     qa_actor_id actor;
     npc_graph *graph;
@@ -26,6 +29,7 @@ typedef struct npc_actor {
     bool has_path,retired;
 } npc_actor;
 typedef struct application_bots_npc {
+    qa_unified_frame_lease *storage;
     application_provider *source;
     qa_world *world;
     qa_physics *physics;
@@ -70,6 +74,8 @@ bool application_npc_current(const application_bots_npc *,qa_error *);
 bool application_npc_physics_read(application_provider *,qa_actor_id,qa_physics_properties *,bool *found,qa_error *);
 qa_navigation_services application_npc_services(application_bots_npc *);
 bool application_npc_graph_rebuild(application_bots_npc *,npc_graph *,qa_error *);
+bool application_npc_graph_create(application_bots_npc *,npc_graph **,qa_error *);
+void application_npc_graph_free(npc_graph *);
 bool application_npc_actor_create(application_bots_npc *,qa_actor_id,npc_graph *,npc_actor **,qa_error *);
 void application_npc_actor_free(npc_actor *);
 #endif

@@ -466,7 +466,7 @@ bool application_qc_combat_create(struct application_qc_state *engine, qa_error 
     engine->combat = calloc(1, sizeof(*engine->combat));
     if (!engine->combat) return application_fail(error, QA_ERROR_MEMORY, "Owning QC combat callback contexts");
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    if (!qa_actor_index_create(&engine->combat->index,registry,error)) {
+    if (!qa_actor_index_create(&engine->combat->index,registry,NULL,error)) {
         free(engine->combat); engine->combat = NULL;
         return false;
     }

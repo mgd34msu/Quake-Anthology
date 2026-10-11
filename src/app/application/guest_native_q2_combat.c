@@ -636,7 +636,7 @@ bool application_native_q2_combat_prepare(struct application_native_q2 *engine, 
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing original native combat producer");
     p->engine = engine; engine->source_combat = p;
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
-    if (!qa_actor_index_create(&p->record_index, registry, error)) return false;
+    if (!qa_actor_index_create(&p->record_index, registry, NULL, error)) return false;
     if (!application_q2_combat_profile_read(engine, &p->profile, error)) return false;
     return !p->profile.kex || application_q2_kex_damage_prepare(&p->profile, &p->kex, error);
 }

@@ -61,7 +61,7 @@ static bool nearest(qa_navigation *n, qa_actor_id actor, qa_vec3 point, float ra
         if (!clear && !geographic && actor.registry &&
             node->source.kind == QA_NAV_ORIGIN_CONSTRUCTED &&
             (n->services.movement_input || n->services.traversal_admit)) {
-            qa_nav_route approach = {0};
+            qa_nav_route approach = {0}; nav_arena_init(&approach.storage, &n->storage);
             bool predicted = qa_navigation_admit_movement(n, actor, point, node->origin,
                                                           QA_NAV_WALK, &approach, e);
             clear = predicted && approach.found;

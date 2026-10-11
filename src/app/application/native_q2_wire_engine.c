@@ -31,7 +31,7 @@ bool application_native_q2_wire_begin(struct application_native_q2 *engine, qa_e
     wire->capacity = table.capacity; wire->clients = (uint32_t)clients->integer;
     wire->rows = calloc(wire->capacity, sizeof(*wire->rows));
     if (!wire->rows) { free(wire); return application_fail(error, QA_ERROR_MEMORY, "Allocating Original Q2 Engine entity bindings"); }
-    if (!qa_actor_index_create(&wire->actors, qa_session_actors(engine->provider->application->session), error) ||
+    if (!qa_actor_index_create(&wire->actors, qa_session_actors(engine->provider->application->session), NULL, error) ||
         !qa_actor_index_reverse_reserve(&wire->actors, wire->capacity, error)) {
         application_native_q2_wire_destroy(&wire); return false;
     }
@@ -237,7 +237,7 @@ static bool fields(qa_source_save_io *io, application_native_q2_wire_engine *wir
     if (io->direction == QA_SOURCE_SAVE_READ) {
         wire->rows = calloc(wire->capacity, sizeof(*wire->rows));
         if (!wire->rows) return application_fail(io->error, QA_ERROR_MEMORY, "Restoring Original Q2 Engine rows");
-        if (!qa_actor_index_create(&wire->actors, qa_session_actors(io->session), io->error) ||
+        if (!qa_actor_index_create(&wire->actors, qa_session_actors(io->session), NULL, io->error) ||
             !qa_actor_index_reverse_reserve(&wire->actors, wire->capacity, io->error)) return false;
     }
     for (uint32_t i = 0; i < wire->capacity; ++i) {

@@ -960,7 +960,7 @@ bool application_supplies_prepare(application_supplies *owner, application_provi
     if (pair_find(owner, source, arsenal)) return true;
     supply_pair *pair = calloc(1, sizeof(*pair));
     if (!pair) return application_fail(error, QA_ERROR_MEMORY, "Allocating selected supply pair");
-    if (!qa_actor_index_create(&pair->actors, qa_session_actors(owner->application->session), error)) {
+    if (!qa_actor_index_create(&pair->actors, qa_session_actors(owner->application->session), NULL, error)) {
         free(pair); return false;
     }
     pair->owner = owner; pair->source = source; pair->arsenal = arsenal;
@@ -1919,7 +1919,7 @@ static void actor_list_free(supply_actor *head) {
 static bool roster_matches(application_supplies *owner, const supply_actor *saved, qa_error *error) {
     const struct application_player_roster *roster = owner->application->players;
     qa_actor_index index = {0};
-    if (!qa_actor_index_create(&index, qa_session_actors(owner->application->session), error)) return false;
+    if (!qa_actor_index_create(&index, qa_session_actors(owner->application->session), NULL, error)) return false;
     size_t expected = 0, actual = 0;
     bool ok = true;
     for (const supply_actor *row = saved; ok && row; row = row->next) {

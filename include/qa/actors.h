@@ -4,6 +4,7 @@
 #include "qa/common.h"
 #include "qa/strings.h"
 #include "qa/id_index.h"
+#include "qa/arena.h"
 
 typedef uint32_t qa_actor_owner;
 typedef uint32_t qa_actor_definition;
@@ -29,9 +30,12 @@ typedef struct qa_actor_index {
     size_t capacity, source_capacity;
     uint64_t registry;
     qa_id_index retained;
+    bool borrowed_entries;
 } qa_actor_index;
 
-bool qa_actor_index_create(qa_actor_index *, const qa_actor_registry *, qa_error *);
+/* Optional entry storage must outlive the index. Reverse and retained bindings
+ * keep their own storage; a NULL arena gives the index ownership of entries. */
+bool qa_actor_index_create(qa_actor_index *, const qa_actor_registry *, qa_arena *, qa_error *);
 void qa_actor_index_destroy(qa_actor_index *);
 void qa_actor_index_clear(qa_actor_index *);
 void qa_actor_index_put(qa_actor_index *, qa_actor_id, size_t value);

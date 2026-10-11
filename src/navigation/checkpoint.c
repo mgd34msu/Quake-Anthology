@@ -1,5 +1,20 @@
 #include "internal.h"
 
+bool qa_nav_checkpoint_prepare(const qa_navigation *n, qa_nav_checkpoint *state,
+                               size_t enabled, size_t blocked, size_t admissions, qa_error *e) {
+    if (!state->storage.first && !state->storage.pages)
+        nav_arena_init(&state->storage, &n->storage);
+    return nav_storage_reserve(&state->storage, (void **)&state->enabled,
+               &state->enabled_capacity, enabled, sizeof(*state->enabled),
+               _Alignof(qa_nav_saved_area), e) &&
+        nav_storage_reserve(&state->storage, (void **)&state->blocked,
+               &state->blocked_capacity, blocked, sizeof(*state->blocked),
+               _Alignof(uint32_t), e) &&
+        nav_storage_reserve(&state->storage, (void **)&state->admissions,
+               &state->admission_capacity, admissions, sizeof(*state->admissions),
+               _Alignof(qa_nav_saved_admission), e);
+}
+
 bool qa_navigation_capture(const qa_navigation *n, qa_nav_checkpoint *out, qa_error *e) {
     if (n == NULL || out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing navigation checkpoint input/output");
@@ -15,12 +30,7 @@ bool qa_navigation_capture(const qa_navigation *n, qa_nav_checkpoint *out, qa_er
         if (!isnan(n->admission_seconds[i]))
             ++admissions;
     }
-    if (!nav_reserve((void **)&out->enabled, &out->enabled_capacity, enabled, sizeof(*out->enabled),
-                     e) ||
-        !nav_reserve((void **)&out->blocked, &out->blocked_capacity, blocked, sizeof(*out->blocked),
-                     e) ||
-        !nav_reserve((void **)&out->admissions, &out->admission_capacity, admissions,
-                     sizeof(*out->admissions), e))
+    if (!qa_nav_checkpoint_prepare(n, out, enabled, blocked, admissions, e))
         return false;
     out->map = n->graph->view.map;
     out->generation = n->generation;
@@ -53,17 +63,19 @@ bool qa_navigation_restore(qa_navigation *n, const qa_nav_checkpoint *state, qa_
         return false;
     }
     size_t nodes = n->graph->view.node_count, edges = n->graph->view.edge_count;
-    int8_t *enabled = malloc(nodes == 0 ? 1 : nodes);
-    uint8_t *blocked = calloc(edges == 0 ? 1 : edges, 1);
-    float *admissions = malloc((edges == 0 ? 1 : edges) * sizeof(*admissions));
+    qa_arena scratch;
+    nav_arena_init(&scratch, &n->storage);
+    int8_t *enabled = qa_arena_alloc(&scratch, nodes == 0 ? 1 : nodes, _Alignof(int8_t), e);
+    uint8_t *blocked = qa_arena_alloc(&scratch, edges == 0 ? 1 : edges, _Alignof(uint8_t), e);
+    float *admissions = qa_arena_alloc(&scratch, (edges == 0 ? 1 : edges) * sizeof(*admissions),
+                                       _Alignof(float), e);
     if (enabled == NULL || blocked == NULL || admissions == NULL) {
-        free(enabled);
-        free(blocked);
-        free(admissions);
+        qa_arena_destroy(&scratch);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Preparing navigation checkpoint restore");
         return false;
     }
     memset(enabled, -1, nodes);
+    memset(blocked, 0, edges);
     for (size_t i = 0; i < edges; ++i)
         admissions[i] = NAN;
     bool ok = true;
@@ -94,19 +106,15 @@ bool qa_navigation_restore(qa_navigation *n, const qa_nav_checkpoint *state, qa_
         admissions[index] = seconds;
     }
     if (!ok) {
-        free(enabled);
-        free(blocked);
-        free(admissions);
+        qa_arena_destroy(&scratch);
         qa_error_set(e, QA_ERROR_FORMAT, 0,
                      "Unknown, duplicate or invalid navigation checkpoint record");
         return false;
     }
-    free(n->enabled);
-    free(n->blocked);
-    free(n->admission_seconds);
-    n->enabled = enabled;
-    n->blocked = blocked;
-    n->admission_seconds = admissions;
+    memcpy(n->enabled, enabled, nodes);
+    memcpy(n->blocked, blocked, edges);
+    memcpy(n->admission_seconds, admissions, edges * sizeof(*admissions));
+    qa_arena_destroy(&scratch);
     n->generation = state->generation;
     n->world_revision = state->world_revision;
     ++n->topology_revision;
@@ -116,8 +124,6 @@ bool qa_navigation_restore(qa_navigation *n, const qa_nav_checkpoint *state, qa_
 void qa_nav_checkpoint_free(qa_nav_checkpoint *state) {
     if (state == NULL)
         return;
-    free(state->enabled);
-    free(state->blocked);
-    free(state->admissions);
+    qa_arena_destroy(&state->storage);
     *state = (qa_nav_checkpoint){0};
 }

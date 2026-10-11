@@ -320,7 +320,7 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
         if (!host->options.server.maximum_clients) host->options.server.maximum_clients = 64;
         host->game = calloc(1, sizeof(*host->game));
         if (!host->game) { free(host); return q3_fail(error, QA_ERROR_MEMORY, 0, "allocating Q3 game record bindings"); }
-        if (!qa_actor_index_create(&host->game->actor_slots, qa_session_actors(options->session), error) ||
+        if (!qa_actor_index_create(&host->game->actor_slots, qa_session_actors(options->session), NULL, error) ||
             !qa_strings_intern_cstr(qa_session_strings(options->session), "q3:guest-slot", &host->slot_definition, error)) {
             q3_game_checkpoint_free(host->game); free(host); return false;
         }

@@ -5,6 +5,7 @@
 #include "qa/movement.h"
 #include "qa/navigation_asset.h"
 #include "qa/strings.h"
+#include "qa/arena.h"
 
 typedef enum qa_nav_travel {
     QA_NAV_WALK,
@@ -180,10 +181,13 @@ typedef struct qa_nav_construction {
     const qa_nav_connection *connections;
     size_t connection_count;
 } qa_nav_construction;
+/* A non-NULL storage source supplies shared pool pages, released individually
+ * by these objects. Its lease must outlive every retained graph/runtime/route.
+ * NULL uses the same arena primitive for standalone cold-load ownership. */
 bool qa_nav_graph_from_asset(const qa_nav_map *, qa_nav_asset *, const qa_nav_profile *,
-                             const qa_navigation_services *, qa_nav_graph **, qa_error *);
+                             const qa_navigation_services *, qa_arena *, qa_nav_graph **, qa_error *);
 bool qa_nav_graph_construct(const qa_nav_construction *, const qa_navigation_services *,
-                            qa_nav_graph **, qa_error *);
+                            qa_arena *, qa_nav_graph **, qa_error *);
 void qa_nav_graph_retain(qa_nav_graph *);
 void qa_nav_graph_release(qa_nav_graph *);
 const qa_nav_graph_view *qa_nav_graph_read(const qa_nav_graph *);
@@ -192,10 +196,10 @@ qa_nav_travel qa_nav_kex_travel(uint32_t);
 uint32_t qa_nav_aas_travel_flag(uint32_t);
 uint32_t qa_nav_area_travel_flags(const qa_aas_setting *);
 uint32_t qa_nav_edge_travel_flag(const qa_nav_edge *);
-bool qa_navigation_create(qa_nav_graph *, const qa_navigation_services *, qa_navigation **,
+bool qa_navigation_create(qa_nav_graph *, const qa_navigation_services *, qa_arena *, qa_navigation **,
                           qa_error *);
 void qa_navigation_destroy(qa_navigation *);
-bool qa_nav_workspace_create(qa_nav_workspace **, qa_error *);
+bool qa_nav_workspace_create(qa_arena *, qa_nav_workspace **, qa_error *);
 qa_nav_workspace_limits qa_nav_workspace_limits_read(const qa_nav_graph_view *);
 /* Cold graph binding; retained maxima contain no borrowed graph pointers. */
 bool qa_nav_workspace_prepare(qa_nav_workspace *, qa_nav_workspace_limits, qa_error *);
@@ -260,6 +264,7 @@ typedef struct qa_nav_route_query {
     bool (*edge_filter)(void *, const qa_nav_edge *);
 } qa_nav_route_query;
 typedef struct qa_nav_route {
+    qa_arena storage;
     qa_nav_graph *graph; /* Retained on success; released by route_free/reuse. */
     uint32_t *nodes, *edges;
     qa_vec3 *points;
@@ -274,6 +279,7 @@ typedef struct qa_nav_route {
 bool qa_navigation_route(qa_navigation *, qa_nav_workspace *, const qa_nav_route_query *,
                          qa_nav_route *, qa_error *);
 void qa_nav_route_free(qa_nav_route *);
+bool qa_nav_route_reserve(qa_nav_route *, size_t nodes, size_t edges, size_t points, qa_error *);
 /* Admits one authored connection through the selected real movement kernel.
  * Reuses the route's trajectory storage and returns found=false if rejected. */
 bool qa_navigation_admit_edge(qa_navigation *, qa_actor_id, uint32_t edge, qa_vec3 origin,
@@ -301,6 +307,7 @@ typedef struct qa_nav_saved_admission {
     float seconds;
 } qa_nav_saved_admission;
 typedef struct qa_nav_checkpoint {
+    qa_arena storage;
     qa_nav_map map;
     uint64_t generation, world_revision;
     qa_nav_saved_area *enabled;
@@ -309,6 +316,10 @@ typedef struct qa_nav_checkpoint {
     size_t enabled_count, blocked_count, admission_count;
     size_t enabled_capacity, blocked_capacity, admission_capacity;
 } qa_nav_checkpoint;
+/* Zero initialization is valid. Shared-page checkpoints must be freed before
+ * the storage backing their navigation owner is released. */
+bool qa_nav_checkpoint_prepare(const qa_navigation *, qa_nav_checkpoint *, size_t enabled,
+                               size_t blocked, size_t admissions, qa_error *);
 bool qa_navigation_capture(const qa_navigation *, qa_nav_checkpoint *, qa_error *);
 bool qa_navigation_restore(qa_navigation *, const qa_nav_checkpoint *, qa_error *);
 void qa_nav_checkpoint_free(qa_nav_checkpoint *);

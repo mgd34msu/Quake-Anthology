@@ -456,7 +456,7 @@ bool application_native_q2_source_damage_create(struct application_native_q2 *n,
     o->engine=n;o->state=state;o->velocity=velocity;o->entry=qa_json_get(d,damage,"entry");
     o->rerelease=qa_json_string_equal(d,qa_json_get(d,damage,"abi"),"q2-rerelease");*out=o;
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);qa_native_entity_table admission_table;
-    if(!qa_actor_index_create(&o->actor_index,registry,e)||
+    if(!qa_actor_index_create(&o->actor_index,registry,NULL,e)||
         !qa_native_entity_table_get(instance(o),&admission_table,e))return false;
     o->prepared_capacity=admission_table.capacity;o->prepared_actors=calloc(o->prepared_capacity,sizeof(*o->prepared_actors));
     if(o->prepared_capacity&&!o->prepared_actors)return application_fail(e,QA_ERROR_MEMORY,"Owning declared combat restore slots");

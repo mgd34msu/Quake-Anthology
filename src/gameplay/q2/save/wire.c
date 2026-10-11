@@ -154,9 +154,9 @@ bool q2_save_wire(q2_save_io *io)
         qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Retaining Q2 physical edict continuation");
         return false;
     }
-    if (io->reading && (!qa_actor_index_create(&index, qa_session_actors(g->services.session), io->error) ||
+    if (io->reading && (!qa_actor_index_create(&index, qa_session_actors(g->services.session), NULL, io->error) ||
         !qa_actor_index_reverse_reserve(&index, capacity, io->error) ||
-        !qa_actor_index_create(&shadow_index, qa_session_actors(g->services.session), io->error))) {
+        !qa_actor_index_create(&shadow_index, qa_session_actors(g->services.session), NULL, io->error))) {
         qa_actor_index_destroy(&index); qa_actor_index_destroy(&shadow_index);
         free(actors); free(freed); free(seen); return false;
     }

@@ -47,14 +47,12 @@ static bool route_fields(qa_source_save_io *io,bot_move_record *record) {
            *counts[a]>(io->input.size-io->offset)/sizeof(uint32_t))
             return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated retained actual bot route");
         if(io->direction==QA_SOURCE_SAVE_READ && *counts[a]) {
-            *arrays[a]=malloc(*counts[a]*sizeof(uint32_t));
-            if(!*arrays[a]) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring retained actual bot route");
+            if(!qa_nav_route_reserve(&record->route,
+                a==0?*counts[a]:0,a==1?*counts[a]:0,0,io->error)) return false;
         }
         for(size_t i=0;i<*counts[a];++i)
             if(!qa_source_save_u32(io,&(*arrays[a])[i])) return false;
     }
-    record->route.node_capacity=record->route.node_count;
-    record->route.edge_capacity=record->route.edge_count;
     return true;
 }
 static bool state_fields(qa_source_save_io *io,qa_bot_move_state *state) {

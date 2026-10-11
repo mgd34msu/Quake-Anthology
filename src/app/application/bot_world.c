@@ -145,7 +145,7 @@ bool application_bot_world_create(const application_bot_world_services *services
     application_bot_world *world=calloc(1,sizeof(*world));
     if(!world) return fail(error,QA_ERROR_MEMORY,"allocating independent shared bot sensory owner");
     world->services=*services;world->restoring=restoring;world->next_entity=64;world->next_generation=1;
-    if(!qa_actor_index_create(&world->actor_entities,qa_session_actors(services->session),error)) {free(world);return false;}
+    if(!qa_actor_index_create(&world->actor_entities,qa_session_actors(services->session),NULL,error)) {free(world);return false;}
     world->begun=services->max_clients?calloc(services->max_clients,sizeof(*world->begun)):NULL;
     if(services->max_clients && !world->begun) {qa_actor_index_destroy(&world->actor_entities);free(world);
         return fail(error,QA_ERROR_MEMORY,"allocating shared bot begun-client set");}

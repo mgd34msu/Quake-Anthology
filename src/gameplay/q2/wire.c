@@ -196,9 +196,9 @@ bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 physical source edicts");
         return false;
     }
-    if (!qa_actor_index_create(&index, qa_session_actors(g->services.session), error) ||
+    if (!qa_actor_index_create(&index, qa_session_actors(g->services.session), NULL, error) ||
         !qa_actor_index_reverse_reserve(&index, capacity, error) ||
-        !qa_actor_index_create(&shadows, qa_session_actors(g->services.session), error)) {
+        !qa_actor_index_create(&shadows, qa_session_actors(g->services.session), NULL, error)) {
         qa_actor_index_destroy(&index); qa_actor_index_destroy(&shadows); free(freed); return false;
     }
     qa_actor_index_destroy(&g->wire_index); free(g->wire_freed_ns);

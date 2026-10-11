@@ -388,7 +388,7 @@ static bool prepare(struct application_native_q2 *n,qa_error *e)
     o->rerelease=qa_json_string_equal(d,qa_json_get(d,callbacks,"abi"),"q2-rerelease");
     memcpy(o->offsets,offsets,sizeof(offsets));memcpy(o->present,present,sizeof(present));n->source_actors=o;
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);
-    if(!qa_actor_index_create(&o->actor_index,registry,e))return false;
+    if(!qa_actor_index_create(&o->actor_index,registry,NULL,e))return false;
     if(!application_native_q2_source_combat_state_create(n,&o->combat,e))return false;
     if(!application_native_q2_source_damage_create(n,o->combat,o->velocity,&o->damage,e))return false;
     o->ready=true;

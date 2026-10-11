@@ -22,7 +22,7 @@ static bool store_create(struct application_qc_state *engine, qa_error *e)
     if(!store)return application_fail(e,QA_ERROR_MEMORY,"Owning QC item binding store");
     engine->item_store=store;
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    return qa_actor_index_create(&store->index,registry,e);
+    return qa_actor_index_create(&store->index,registry,NULL,e);
 }
 static void actor_reclaim(struct application_qc_item_actor *a)
 {

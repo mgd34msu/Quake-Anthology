@@ -199,8 +199,8 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing native source attack producer");
     engine->source_attack = p; p->engine = engine;
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
-    if (!qa_actor_index_create(&p->factor_index, registry, error) ||
-        !qa_actor_index_create(&p->projectile_index, registry, error) ||
+    if (!qa_actor_index_create(&p->factor_index, registry, NULL, error) ||
+        !qa_actor_index_create(&p->projectile_index, registry, NULL, error) ||
         !qa_pool_reserve_pages(&p->projectile_pool, &p->projectile_storage,
             qa_actors_capacity(registry), sizeof(attack_projectile), _Alignof(attack_projectile), error)) return false;
     if (!qa_json_parse(qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
@@ -727,8 +727,8 @@ bool application_native_q2_attack_restore_prepare(struct application_native_q2 *
     if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Preparing native attack continuation");
     qa_source_save_io io = {0};
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
-    bool ok = qa_actor_index_create(&prepared->factor_index, registry, error) &&
-        qa_actor_index_create(&prepared->projectile_index, registry, error) &&
+    bool ok = qa_actor_index_create(&prepared->factor_index, registry, NULL, error) &&
+        qa_actor_index_create(&prepared->projectile_index, registry, NULL, error) &&
         qa_pool_reserve_pages(&prepared->projectile_pool, &prepared->projectile_storage,
             qa_actors_capacity(registry), sizeof(attack_projectile), _Alignof(attack_projectile), error) &&
         qa_source_save_reader(&io, engine->provider->application->session, bytes, error);

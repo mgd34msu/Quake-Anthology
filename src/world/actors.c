@@ -66,19 +66,23 @@ bool qa_actor_id_equal(qa_actor_id left, qa_actor_id right)
         && left.slot == right.slot;
 }
 
-bool qa_actor_index_create(qa_actor_index *index, const qa_actor_registry *registry, qa_error *error)
+bool qa_actor_index_create(qa_actor_index *index, const qa_actor_registry *registry,
+    qa_arena *storage, qa_error *error)
 {
     size_t capacity = qa_actors_capacity(registry);
-    qa_actor_index_entry *entries = calloc(capacity, sizeof(*entries));
-    if (!entries) return fail(error, QA_ERROR_MEMORY, "Allocating actor binding index");
+    qa_actor_index_entry *entries = storage ?
+        qa_arena_alloc(storage, capacity * sizeof(*entries), _Alignof(qa_actor_index_entry), error) :
+        calloc(capacity, sizeof(*entries));
+    if (!entries) return storage ? false : fail(error, QA_ERROR_MEMORY, "Allocating actor binding index");
+    if (storage) memset(entries, 0, capacity * sizeof(*entries));
     *index = (qa_actor_index){.entries = entries, .capacity = capacity,
-        .registry = qa_actors_identity(registry)};
+        .registry = qa_actors_identity(registry), .borrowed_entries = storage != NULL};
     return true;
 }
 
 void qa_actor_index_destroy(qa_actor_index *index)
 {
-    free(index->entries);
+    if (!index->borrowed_entries) free(index->entries);
     free(index->sources);
     qa_id_index_destroy(&index->retained);
     *index = (qa_actor_index){0};

@@ -206,7 +206,7 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
                                qa_error *error)
 {
     if (host->kind == NATIVE_HOST_Q2_GAME &&
-        !qa_actor_index_create(&host->actor_slots, qa_session_actors(host->world.session), error)) return false;
+        !qa_actor_index_create(&host->actor_slots, qa_session_actors(host->world.session), NULL, error)) return false;
     if (host->world.session) host->string_names = qa_session_strings(host->world.session);
     else host->string_names = host->engine.strings;
     if (host->string_names) qa_strings_retain(host->string_names);

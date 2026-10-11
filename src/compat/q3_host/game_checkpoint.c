@@ -132,7 +132,7 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
     game->entity_count = qa_load_u32le(bytes.data + 4); game->entity_stride = qa_load_u32le(bytes.data + 8);
     game->client_stride = qa_load_u32le(bytes.data + 12); game->entities = qa_load_u64le(bytes.data + 20);
     game->clients = qa_load_u64le(bytes.data + 28);
-    bool ok = qa_actor_index_create(&game->actor_slots, qa_session_actors(host->options.session), error)
+    bool ok = qa_actor_index_create(&game->actor_slots, qa_session_actors(host->options.session), NULL, error)
         && descriptor(host, game, error);
     for (uint32_t i = 0; i < 1024; ++i) game->slots[i] = (q3_entity_slot){.host = host, .number = i};
     const uint8_t *row = bytes.data + GAME_HEADER;

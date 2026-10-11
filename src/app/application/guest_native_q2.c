@@ -279,7 +279,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 owner");
     provider->state.native.q2_engine = engine;
     engine->provider = provider; engine->world = world;
-    if (!qa_actor_index_create(&engine->client_index, qa_session_actors(app->session), error)) return false;
+    if (!qa_actor_index_create(&engine->client_index, qa_session_actors(app->session), NULL, error)) return false;
     bool cgame = (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_HUD)) &&
         !(provider->launch->roles & (QA_ROLE_BIT(QA_ROLE_ENTITIES) |
           QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL)));

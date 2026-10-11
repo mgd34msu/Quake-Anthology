@@ -362,7 +362,7 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
     owner->role = role; owner->profile = profile; *out = owner;
     const qa_actor_registry *registry = qa_session_actors(role->engine->provider->application->session);
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(profile);
-    if (!qa_actor_index_create(&owner->actor_index, registry, error)) return false;
+    if (!qa_actor_index_create(&owner->actor_index, registry, NULL, error)) return false;
     if (!application_q3_damage_scopes_create(role, profile, &owner->scopes, error)) return false;
     uint32_t entries[] = {d->callbacks.damage, d->callbacks.free, d->armor.check};
     qa_qvm_function_hook hooks[] = {damage, freed, armor_stage};

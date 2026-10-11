@@ -1,14 +1,17 @@
 #include "internal.h"
 
-bool nav_graph_new(const qa_nav_map *map, const qa_nav_profile *profile, qa_nav_graph **out,
+bool nav_graph_new(const qa_nav_map *map, const qa_nav_profile *profile, qa_arena *source, qa_nav_graph **out,
                    qa_error *e) {
     if (map == NULL || out == NULL || !nav_profile_valid(profile, e))
         return false;
-    qa_nav_graph *g = calloc(1, sizeof(*g));
+    qa_arena storage; nav_arena_init(&storage, source);
+    qa_nav_graph *g = qa_arena_alloc(&storage, sizeof(*g), _Alignof(qa_nav_graph), e);
     if (g == NULL) {
+        qa_arena_destroy(&storage);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating navigation graph");
         return false;
     }
+    memset(g, 0, sizeof(*g)); g->storage = storage;
     atomic_init(&g->references, 1);
     g->view.map = *map;
     g->view.profile = *profile;
@@ -24,7 +27,8 @@ bool nav_graph_node(qa_nav_graph *g, const qa_nav_node *node, qa_error *e) {
         if (capacity < g->node_capacity || capacity > UINT32_MAX ||
             capacity > SIZE_MAX / sizeof(*g->nodes))
             goto memory;
-        qa_nav_node *nodes = realloc(g->nodes, capacity * sizeof(*nodes));
+        qa_nav_node *nodes = qa_arena_grow(&g->storage, g->nodes, g->node_capacity * sizeof(*nodes),
+            capacity * sizeof(*nodes), _Alignof(qa_nav_node), e);
         if (nodes == NULL)
             goto memory;
         g->nodes = nodes;
@@ -46,7 +50,8 @@ bool nav_graph_edge(qa_nav_graph *g, const qa_nav_edge *edge, qa_error *e) {
         if (capacity < g->edge_capacity || capacity > UINT32_MAX ||
             capacity > SIZE_MAX / sizeof(*g->edges))
             goto memory;
-        qa_nav_edge *edges = realloc(g->edges, capacity * sizeof(*edges));
+        qa_nav_edge *edges = qa_arena_grow(&g->storage, g->edges, g->edge_capacity * sizeof(*edges),
+            capacity * sizeof(*edges), _Alignof(qa_nav_edge), e);
         if (edges == NULL)
             goto memory;
         g->edges = edges;
@@ -59,16 +64,18 @@ memory:
     qa_error_set(e, QA_ERROR_MEMORY, n, "Growing navigation edges");
     return false;
 }
-static uint32_t *indices(size_t count, bool clear) {
-    if (count > SIZE_MAX / sizeof(uint32_t))
-        return NULL;
-    return clear ? calloc(count == 0 ? 1 : count, sizeof(uint32_t))
-                 : malloc((count == 0 ? 1 : count) * sizeof(uint32_t));
+static uint32_t *indices(qa_arena *storage, size_t count, bool clear, qa_error *e) {
+    if (count > SIZE_MAX / sizeof(uint32_t)) return NULL;
+    size_t bytes = (count ? count : 1) * sizeof(uint32_t);
+    uint32_t *out = qa_arena_alloc(storage, bytes, _Alignof(uint32_t), e);
+    if (out && clear) memset(out, 0, bytes);
+    return out;
 }
 static bool mover_edge(const qa_nav_edge *edge) {
     return edge->mode == QA_NAV_MOVER && edge->has_entity;
 }
 bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
+    qa_arena scratch; nav_arena_init(&scratch, &g->storage);
     const size_t n = g->view.node_count, m = g->view.edge_count;
     size_t max_node = 0, max_edge = 0, mover_count = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -89,13 +96,13 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
         if (mover_edge(g->edges + i))
             ++mover_count;
     }
-    g->node_lookup = indices(max_node, false);
-    g->edge_lookup = indices(max_edge, false);
-    g->first_out = indices(n + 1, true);
-    g->outgoing = indices(m, false);
-    g->first_mover_out = indices(n + 1, false);
-    g->mover_outgoing = indices(mover_count, false);
-    g->clusters = indices(n, false);
+    g->node_lookup = indices(&g->storage, max_node, false, e);
+    g->edge_lookup = indices(&g->storage, max_edge, false, e);
+    g->first_out = indices(&g->storage, n + 1, true, e);
+    g->outgoing = indices(&g->storage, m, false, e);
+    g->first_mover_out = indices(&g->storage, n + 1, false, e);
+    g->mover_outgoing = indices(&g->storage, mover_count, false, e);
+    g->clusters = indices(&g->storage, n, false, e);
     if (g->node_lookup == NULL || g->edge_lookup == NULL || g->first_out == NULL ||
         g->outgoing == NULL || g->first_mover_out == NULL || g->mover_outgoing == NULL ||
         g->clusters == NULL)
@@ -121,19 +128,13 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
         g->edge_lookup[edge->id] = (uint32_t)i;
         ++g->first_out[from + 1];
     }
-    uint32_t *first_in = indices(n + 1, true), *incoming = indices(m, false),
-             *cursor = indices(n, false);
-    uint32_t *stack = indices(n, false), *next = indices(n, false), *order = indices(n, false);
-    uint8_t *seen = calloc(n == 0 ? 1 : n, 1);
+    uint32_t *first_in = indices(&g->storage, n + 1, true, e), *incoming = indices(&g->storage, m, false, e),
+             *cursor = indices(&scratch, n, false, e);
+    uint32_t *stack = indices(&scratch, n, false, e), *next = indices(&scratch, n, false, e), *order = indices(&scratch, n, false, e);
+    uint8_t *seen = qa_arena_alloc(&scratch, n ? n : 1, _Alignof(uint8_t), e);
+    if (seen) memset(seen, 0, n ? n : 1);
     if (first_in == NULL || incoming == NULL || cursor == NULL || stack == NULL || next == NULL ||
         order == NULL || seen == NULL) {
-        free(first_in);
-        free(incoming);
-        free(cursor);
-        free(stack);
-        free(next);
-        free(order);
-        free(seen);
         goto memory;
     }
     for (size_t i = 0; i < m; ++i)
@@ -206,20 +207,18 @@ bool nav_graph_finish(qa_nav_graph *g, qa_error *e) {
     }
     g->first_in = first_in;
     g->incoming = incoming;
-    free(cursor);
-    free(stack);
-    free(next);
-    free(order);
-    free(seen);
+    qa_arena_destroy(&scratch);
     g->view.nodes = g->nodes;
     g->view.edges = g->edges;
     g->view.clusters = g->clusters;
     g->view.cluster_count = cluster;
     return nav_aas_estimate_topology(g, e);
 invalid:
+    qa_arena_destroy(&scratch);
     qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid or duplicate navigation graph identity");
     return false;
 memory:
+    qa_arena_destroy(&scratch);
     qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating navigation adjacency");
     return false;
 }
@@ -230,20 +229,8 @@ void qa_nav_graph_retain(qa_nav_graph *g) {
 void qa_nav_graph_release(qa_nav_graph *g) {
     if (g != NULL && atomic_fetch_sub_explicit(&g->references, 1, memory_order_acq_rel) == 1) {
         qa_nav_asset_release((qa_nav_asset *)g->view.asset);
-        free(g->nodes);
-        free(g->edges);
-        free(g->node_lookup);
-        free(g->edge_lookup);
-        free(g->outgoing);
-        free(g->first_out);
-        free(g->mover_outgoing);
-        free(g->first_mover_out);
-        free(g->incoming);
-        free(g->first_in);
-        free(g->clusters);
-        free(g->rejected);
-        free(g->portal_maxima);
-        free(g);
+        qa_arena storage = g->storage;
+        qa_arena_destroy(&storage);
     }
 }
 const qa_nav_graph_view *qa_nav_graph_read(const qa_nav_graph *g) {
