@@ -275,15 +275,12 @@ bool application_q3_world_restart_guest_handoff(qa_application *app,
                 "Q3 Shutdown admitted a new client outside its prepared canonical roster");
     }
     if (!source_startup_values(state, error)) return false;
-    static const qa_mode_kind kinds[] = {QA_MODE_FFA, QA_MODE_DUEL,
-        QA_MODE_SINGLE_PLAYER, QA_MODE_TEAM_DEATHMATCH, QA_MODE_CTF,
-        QA_MODE_ONE_FLAG, QA_MODE_OVERLOAD, QA_MODE_HARVESTER};
     const qa_launch_choices *choices = qa_launch_snapshot_choices(state->candidate);
     for (size_t i = 0; i < state->publication->mode_count; ++i) {
         if (strcmp(choices->modes[i].instance, provider->launch->selection.instance)) continue;
         qa_mode_view mode;
         if (!qa_modes_read(state->publication->modes, state->publication->mode_ids[i], &mode, error)) return false;
-        mode.rules.kind = kinds[state->startup.game_type];
+        mode.rules.kind = qa_mode_from_game_type(state->startup.game_type);
         if (!qa_modes_configure(state->publication->modes, state->publication->mode_ids[i], &mode.rules, error)) return false;
     }
     state->guest_handed_off = true;
@@ -454,16 +451,13 @@ static bool make_draft(application_q3_world_restart_state *state,
 {
     if (!qa_launch_snapshot_draft_copy(state->launch, out, error)) return false;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(state->launch);
-    static const qa_mode_kind kinds[] = {QA_MODE_FFA, QA_MODE_DUEL,
-        QA_MODE_SINGLE_PLAYER, QA_MODE_TEAM_DEATHMATCH, QA_MODE_CTF,
-        QA_MODE_ONE_FLAG, QA_MODE_OVERLOAD, QA_MODE_HARVESTER};
     size_t index = 0;
     while (index < state->application->mode_count &&
         !same_mode(state->application->mode_ids[index], mode)) ++index;
     if (index >= choices->mode_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 replacement lost its selected source mode");
     qa_launch_mode selection = choices->modes[index];
-    selection.rules.kind = kinds[state->startup.game_type];
+    selection.rules.kind = qa_mode_from_game_type(state->startup.game_type);
     if (!qa_launch_set_mode(*out, &selection, error)) return false;
     qa_launch_provider provider = state->source->launch->selection;
     provider.clock.initial_time_ns = state->startup.initial_time_ns;

@@ -2,6 +2,7 @@
 #define QA_MODES_H
 
 #include "qa/builtin.h"
+#include "qa/game_type.h"
 
 typedef struct qa_modes qa_modes;
 typedef struct qa_command_invocation qa_command_invocation;
@@ -410,6 +411,7 @@ typedef struct qa_modes_options {
     uint64_t random_seed;
 } qa_modes_options;
 
+qa_mode_kind qa_mode_from_game_type(int32_t);
 qa_mode_rules qa_mode_defaults(qa_mode_source, qa_mode_kind);
 bool qa_modes_create(const qa_modes_options *, qa_modes **, qa_error *);
 /* Single session thread. Read callbacks do not mutate their exposed state.

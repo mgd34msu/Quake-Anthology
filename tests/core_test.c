@@ -72,6 +72,14 @@ static void test_compiled_sound_names(void)
         CHECK(!strcmp(qa_strings_cstr(strings,first[i]),qa_q2_sound_path(i-1)));
     qa_strings_destroy(strings);
 }
+
+static void test_shared_campaign_modes(void)
+{
+    CHECK(qa_mode_from_game_type(QA_GAME_TYPE_CAMPAIGN) == QA_MODE_SINGLE_PLAYER);
+    CHECK(qa_mode_from_game_type(QA_GAME_TYPE_COOPERATIVE) == QA_MODE_COOPERATIVE);
+    CHECK(qa_mode_from_game_type(QA_GAME_TYPE_HARVESTER) == QA_MODE_HARVESTER);
+    CHECK(qa_mode_from_game_type(-1) == QA_MODE_FFA);
+}
 static void test_shared_angle_basis(void)
 {
     for(int rule=QA_ANGLE_FLOAT_MATH;rule<=QA_ANGLE_FLOAT_NATIVE_MATH;++rule) {
@@ -2904,6 +2912,7 @@ int main(int argc, char **argv)
     test_source_text();
     test_q2_hud_configuration();
     test_compiled_sound_names();
+    test_shared_campaign_modes();
     test_shared_angle_basis();
     test_shared_bounds_and_transform();
     test_shared_vector_geometry();

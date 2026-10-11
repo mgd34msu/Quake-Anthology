@@ -149,13 +149,11 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
         if (!*parameter) return q3_message(m, v, actor, "Invalid vote map.\n", e);
         if (!qa_builtin_resource(&m->options.services, parameter, &intent.map, e)) return false;
     } else if (named(key, "g_gametype")) {
-        static const qa_mode_kind kinds[] = {QA_MODE_FFA, QA_MODE_DUEL, QA_MODE_SINGLE_PLAYER,
-            QA_MODE_TEAM_DEATHMATCH, QA_MODE_CTF, QA_MODE_ONE_FLAG, QA_MODE_OVERLOAD, QA_MODE_HARVESTER};
         int32_t type = q3_integer(parameter);
-        if (type < 0 || type >= (int32_t)(sizeof(kinds) / sizeof(*kinds)) || type == 2)
+        if (type < 0 || type > QA_GAME_TYPE_HARVESTER || type == QA_GAME_TYPE_ARENA_SINGLE_PLAYER)
             return q3_message(m, v, actor, "Invalid gametype.\n", e);
         intent.kind = QA_MATCH_GAME_TYPE;
-        intent.game_type = kinds[type];
+        intent.game_type = qa_mode_from_game_type(type);
         game_type = type;
         raw_command = true;
     } else if (named(key, "kick") || named(key, "clientkick")) {

@@ -189,6 +189,20 @@ bool mode_visible(qa_modes *m, qa_actor_id a, qa_actor_id b, bool pvs) {
     return qa_world_trace(m->options.services.world, &query, &trace, NULL) &&
            (trace.fraction == 1 || qa_actor_id_equal(trace.actor, b));
 }
+qa_mode_kind qa_mode_from_game_type(int32_t type) {
+    static const qa_mode_kind kinds[] = {
+        [QA_GAME_TYPE_FFA] = QA_MODE_FFA,
+        [QA_GAME_TYPE_DUEL] = QA_MODE_DUEL,
+        [QA_GAME_TYPE_ARENA_SINGLE_PLAYER] = QA_MODE_SINGLE_PLAYER,
+        [QA_GAME_TYPE_TEAM_DEATHMATCH] = QA_MODE_TEAM_DEATHMATCH,
+        [QA_GAME_TYPE_CTF] = QA_MODE_CTF,
+        [QA_GAME_TYPE_ONE_FLAG] = QA_MODE_ONE_FLAG,
+        [QA_GAME_TYPE_OVERLOAD] = QA_MODE_OVERLOAD,
+        [QA_GAME_TYPE_HARVESTER] = QA_MODE_HARVESTER,
+        [QA_GAME_TYPE_CAMPAIGN] = QA_MODE_SINGLE_PLAYER,
+        [QA_GAME_TYPE_COOPERATIVE] = QA_MODE_COOPERATIVE};
+    return (uint32_t)type < sizeof(kinds) / sizeof(*kinds) ? kinds[type] : QA_MODE_FFA;
+}
 qa_mode_rules qa_mode_defaults(qa_mode_source source, qa_mode_kind kind) {
     return (qa_mode_rules){.source = source,
                            .kind = kind,

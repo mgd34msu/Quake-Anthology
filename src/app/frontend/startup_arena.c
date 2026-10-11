@@ -226,8 +226,7 @@ static bool team_launch(frontend_startup_arena *owner,qa_launch_draft *draft,int
     const qa_team_arena_skirmish_view *view=qa_team_arena_skirmish_read(plan);
     qa_launch_world world=qa_launch_draft_choices(draft)->world;
     world.map=view->map; world.start_command=NULL; world.spawn_point=NULL; world.explicit_spawn_point=false; world.skill=1;
-    qa_mode_kind kind=view->game_type==1?QA_MODE_DUEL:view->game_type==4?QA_MODE_CTF:
-        view->game_type==5?QA_MODE_ONE_FLAG:view->game_type==6?QA_MODE_OVERLOAD:QA_MODE_HARVESTER;
+    qa_mode_kind kind=qa_mode_from_game_type((int32_t)view->game_type);
     bool ok=clear_bots(draft,error) && qa_launch_set_world(draft,&world,error) && mode_set(draft,kind,true,NULL,error);
     const qa_launch_choices *choices=qa_launch_draft_choices(draft);
     size_t player=0; while (player<choices->seat_count && !choices->seats[player].local) ++player;

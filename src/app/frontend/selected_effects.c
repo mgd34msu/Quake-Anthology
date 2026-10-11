@@ -158,8 +158,8 @@ static bool sound_output(void *context, const q3n_frame *frame, qa_audio_asset *
         .family = QA_GAME_Q3, .actor = QA_AUDIO_NO_ACTOR, .origin_actor = QA_AUDIO_NO_ACTOR,
         .owner = group->view.identity, .audience = QA_AUDIO_WORLD, .origin_kind = QA_AUDIO_FIXED,
         .origin = *origin, .channel = channel, .volume = 1, .attenuation = 1};
-    return qa_audio_engine_play(frontend->audio, &play,
-        q3ne_word((uint32_t)(frontend->time_ns / UINT64_C(1000000))), error) && active_current(group, frame, error);
+    return frontend_audio_event(frontend, &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY,
+        .sound = play, .milliseconds = frame->time}, error) && active_current(group, frame, error);
 }
 
 static bool capture_ref(void *context, const qa_q3_ref_entity *ref, float radius, qa_error *error)

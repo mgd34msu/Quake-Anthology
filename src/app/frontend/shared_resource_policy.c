@@ -221,9 +221,10 @@ struct frontend_live_resource_policy {
     qa_cvars *registry;
     frontend_shared_resource_policy *pending;
     policy_scalar applied[POLICY_VALUES];
+    uint64_t modifications[POLICY_VALUES], registry_revision;
     size_t applied_count;
     frontend_model_policy model_use;
-    bool model_use_ready;
+    bool model_use_ready, revisions_ready;
     bool busy;
 };
 static bool live_owner(qa_frontend *f, qa_error *error)
@@ -810,6 +811,7 @@ static void policy_publish(frontend_shared_resource_policy *ticket)
     }
     owner->applied_count = ticket->scalar_count;
     owner->model_use_ready = false;
+    owner->revisions_ready = false;
 }
 void frontend_shared_resource_policy_publish(frontend_shared_resource_policy *ticket)
 {
@@ -854,26 +856,30 @@ bool frontend_shared_resource_policy_live_destroy(qa_frontend *f, qa_error *erro
     for (size_t i = 0; i < POLICY_VALUES; ++i) free(owner->applied[i].value);
     free(owner); f->live_resource_policy = NULL; return true;
 }
-static bool live_recipe_changed(const struct frontend_live_resource_policy *owner, bool *changed, qa_error *error)
+static bool live_recipe_changed(const struct frontend_live_resource_policy *owner, bool *changed,
+    bool *model_changed, uint64_t modifications[POLICY_VALUES], qa_error *error)
 {
     *changed = !owner->applied_count;
+    *model_changed = !owner->model_use_ready;
     if (*changed) return true;
     for (size_t i = 0; i < owner->applied_count; ++i) {
-        /* Use and distance update the selected model without reopening assets. */
-        if (i >= 5 && i < BASE_POLICY_VALUES) continue;
         const qa_cvar_view *row = qa_cvars_read(owner->registry, owner->frontend->engine_cvars.resource_policy[i]);
         if (!row || !row->value || !owner->applied[i].value)
             return policy_fail(error, "Live resource refresh lost its canonical Source declaration");
+        modifications[i] = row->modification_count;
+        if (owner->revisions_ready && modifications[i] == owner->modifications[i]) continue;
+        if (i >= 3 && i < BASE_POLICY_VALUES) *model_changed = true;
+        /* Use and distance update the selected model without reopening assets. */
+        if (i >= 5 && i < BASE_POLICY_VALUES) continue;
         if (i == 3 || i == 4) {
             float previous;
             memcpy(&previous, &owner->applied[i].number, sizeof(previous));
-            *changed = (previous != 0) != (row->number != 0);
+            *changed |= (previous != 0) != (row->number != 0);
         } else {
             uint32_t number;
             memcpy(&number, &row->number, sizeof(number));
-            *changed = number != owner->applied[i].number || strcmp(row->value, owner->applied[i].value);
+            *changed |= number != owner->applied[i].number || strcmp(row->value, owner->applied[i].value);
         }
-        if (*changed) break;
     }
     return true;
 }
@@ -887,20 +893,28 @@ bool frontend_shared_resource_policy_live_sync(qa_frontend *f, qa_error *error)
     if (!qa_cvars_observer_idle(qa_application_cvars(f->application)) || !live_owner(f, error))
         return policy_fail(error, "Live resource refresh requires returned ENGINE publications");
     struct frontend_live_resource_policy *owner = f->live_resource_policy;
-    bool changed;
-    if (!live_recipe_changed(owner, &changed, error)) return false;
+    uint64_t revision = qa_cvars_revision(owner->registry);
+    if (owner->revisions_ready && owner->model_use_ready && owner->registry_revision == revision) return true;
+    uint64_t modifications[POLICY_VALUES];
+    bool changed, model_changed;
+    if (!live_recipe_changed(owner, &changed, &model_changed, modifications, error)) return false;
     if (!changed) {
-        frontend_model_policy policy;
-        if (!frontend_model_policy_read(f, &policy, error)) return false;
-        const frontend_model_policy *previous = &owner->model_use;
-        if (owner->model_use_ready && previous->q1_enhanced == policy.q1_enhanced &&
-            previous->q2_load == policy.q2_load && previous->q2_use == policy.q2_use &&
-            previous->source_distance == policy.source_distance && previous->distance == policy.distance &&
-            (previous->q2_distance == policy.q2_distance ||
-             (isnan(previous->q2_distance) && isnan(policy.q2_distance)))) return true;
-        if (!model_policy_sync(f, &policy, error)) return false;
-        owner->model_use = policy;
-        owner->model_use_ready = true;
+        if (model_changed) {
+            frontend_model_policy policy;
+            if (!frontend_model_policy_read(f, &policy, error)) return false;
+            const frontend_model_policy *previous = &owner->model_use;
+            bool same = owner->model_use_ready && previous->q1_enhanced == policy.q1_enhanced &&
+                previous->q2_load == policy.q2_load && previous->q2_use == policy.q2_use &&
+                previous->source_distance == policy.source_distance && previous->distance == policy.distance &&
+                (previous->q2_distance == policy.q2_distance ||
+                 (isnan(previous->q2_distance) && isnan(policy.q2_distance)));
+            if (!same && !model_policy_sync(f, &policy, error)) return false;
+            owner->model_use = policy;
+            owner->model_use_ready = true;
+        }
+        memcpy(owner->modifications, modifications, owner->applied_count * sizeof(*modifications));
+        owner->registry_revision = revision;
+        owner->revisions_ready = true;
         return true;
     }
     owner->busy = true;
