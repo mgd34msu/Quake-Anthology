@@ -761,24 +761,36 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
     return ok;
 }
 
+static void source_console_record(qa_application *app,uint64_t id)
+{
+    qa_application_event_cursor cursor={.id=id};qa_application_event_view view;
+    if(!qa_application_event_read(app,&cursor,&view) || view.kind!=QA_APPLICATION_EVENT_BUILTIN) return;
+    const qa_builtin_event *event=view.value.builtin;
+    if(event->kind!=QA_BUILTIN_LOG || !(event->code&QA_BUILTIN_LOG_REDIRECTED)) return;
+    qa_command_context context={.owner=event->provider,.origin=QA_COMMAND_SERVER};
+    const application_provider *provider=app->live_providers;
+    while(provider && provider->owner!=event->provider) provider=provider->next_live;
+    if(provider) context.dialect=qa_product_ruleset(provider->product,provider->product->family);
+    qa_console_emit(app->console,&context,qa_strings_cstr(qa_session_strings(app->session),event->text));
+}
 bool application_source_log(application_provider *provider, const char *text,
     bool console, qa_error *error)
 {
     qa_application *app = provider->application;
-    if (console && qa_console_output_redirected(app->console)) {
-        qa_command_context context = {.owner = provider->owner,
-            .dialect = qa_product_ruleset(provider->product, provider->product->family), .origin = QA_COMMAND_SERVER};
-        qa_console_emit(app->console, &context, text);
-        return true;
-    }
+    bool redirected=console && qa_console_output_redirected(app->console);
     qa_clock_state clock = {0};
     qa_session_clock(app->session, provider->owner, &clock);
     qa_builtin_event event = {.kind = QA_BUILTIN_LOG,
         .family = provider->product->family, .provider = provider->owner,
         .time_ns = clock.frame.time_ns,
-        .code = console ? QA_BUILTIN_LOG_CONSOLE : 0};
-    return qa_strings_intern_cstr(qa_session_strings(app->session), text,
-        &event.text, error) && application_emit(app, &event, error);
+        .code = (console ? QA_BUILTIN_LOG_CONSOLE : 0) | (redirected ? QA_BUILTIN_LOG_REDIRECTED : 0)};
+    uint64_t id=qa_application_events_next(app);
+    if(!qa_strings_intern_cstr(qa_session_strings(app->session), text,&event.text,error) ||
+        !application_emit(app,&event,error)) return false;
+    /* Console redirection lasts only for the synchronous command. Consume the
+     * committed record before returning to that command's capture boundary. */
+    if(redirected) source_console_record(app,id);
+    return true;
 }
 
 bool application_source_message(application_provider *provider, qa_actor_id actor,

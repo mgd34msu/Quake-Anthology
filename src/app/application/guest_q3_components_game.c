@@ -50,7 +50,7 @@ static void print(void *context,const char *text)
 static int32_t calendar(void *context,qa_q3_host_calendar *out)
 {
     component_game_row *row = context;
-    return application_q3_calendar(row->roster->options.application, out);
+    return qa_application_q3_calendar(row->roster->options.application, out);
 }
 static bool match_read(void *context,qa_actor_id actor,qa_string_id *team,double *score,qa_error *e)
 {

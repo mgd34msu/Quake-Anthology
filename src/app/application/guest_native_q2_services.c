@@ -35,12 +35,8 @@ static void print(void *opaque, const qa_native_host_print *source)
 {
     struct application_native_q2 *engine = opaque;
     qa_application *app = engine->provider->application;
-    if (qa_console_output_redirected(app->console)) {
-        qa_command_context context = engine->command_context;
-        context.actor = source->client;
-        qa_console_emit(app->console, &context, source->text);
-    } else if (source->kind == QA_NATIVE_HOST_PRINT_DEBUG)
-        (void)application_source_log(engine->provider, source->text, true, NULL);
+    if (source->kind == QA_NATIVE_HOST_PRINT_DEBUG || qa_console_output_redirected(app->console))
+        (void)application_source_log(engine->provider,source->text,true,NULL);
     if (source->kind != QA_NATIVE_HOST_PRINT_DEBUG) {
         qa_q2_server_event event = {.kind = source->kind == QA_NATIVE_HOST_PRINT_CENTER ?
             QA_Q2_SVC_CENTERPRINT : QA_Q2_SVC_PRINT,

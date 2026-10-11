@@ -342,19 +342,11 @@ static void print(void *context, const char *text)
 }
 static int32_t calendar(void *context, qa_q3_host_calendar *out)
 {
-    if (!entered(context,NULL,NULL,NULL)) return 0;
-    qa_platform_timespec now;
-    qa_platform_calendar_fields date;
-    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
-        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&date,NULL)) {
-        if (out) *out=(qa_q3_host_calendar){0};
-        return -1;
-    }
-    if (out) *out=(qa_q3_host_calendar){date.second,date.minute,date.hour,date.day,
-        date.month-1,date.year-1900,date.weekday,date.yearday,date.daylight};
-    uint32_t bits=(uint32_t)now.seconds; int32_t result;
-    memcpy(&result,&bits,sizeof(result)); return result;
+    remote_module_lease *lease=context;
+    if (!entered(lease,NULL,NULL,NULL)) return 0;
+    return qa_application_q3_calendar(lease->owner->application,out);
 }
+
 static bool arguments(void *context, qa_native_host_command_view *out, qa_error *error)
 {
     remote_module_lease *lease = context;

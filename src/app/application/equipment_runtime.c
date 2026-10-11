@@ -532,7 +532,7 @@ bool application_equipment_runtime_saved(qa_session *session, const qa_save_imag
 static int32_t calendar(void *context, qa_q3_host_calendar *out)
 {
     equipment_source *source = context;
-    return application_q3_calendar(source->runtime->options.application, out);
+    return qa_application_q3_calendar(source->runtime->options.application, out);
 }
 static bool names(equipment_source *source, const saved_source *saved, qa_error *error)
 {

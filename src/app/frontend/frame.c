@@ -514,7 +514,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
             output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
         if (event.kind == QA_BUILTIN_LOG) {
-            if (event.code & QA_BUILTIN_LOG_CONSOLE) {
+            if ((event.code & QA_BUILTIN_LOG_CONSOLE) && !(event.code & QA_BUILTIN_LOG_REDIRECTED)) {
                 qa_command_context context = {.owner = event.provider, .origin = QA_COMMAND_SERVER};
                 qa_console_emit(qa_application_console(frontend->application), &context,
                     qa_strings_cstr(strings, event.text));

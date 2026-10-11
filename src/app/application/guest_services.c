@@ -168,7 +168,7 @@ static uint32_t guest_milliseconds(void *context)
 void qa_application_real_time(qa_application *application, int64_t utc_ms)
 { application->utc_ms = utc_ms; }
 
-int32_t application_q3_calendar(const qa_application *application, qa_q3_host_calendar *out)
+int32_t qa_application_q3_calendar(const qa_application *application, qa_q3_host_calendar *out)
 {
     qa_platform_calendar_fields date;
     if (!qa_platform_calendar(application->utc_ms, true, &date, NULL)) {
@@ -186,7 +186,7 @@ int32_t application_q3_calendar(const qa_application *application, qa_q3_host_ca
 static int32_t guest_calendar(void *context, qa_q3_host_calendar *out)
 {
     application_provider *provider = context;
-    return application_q3_calendar(provider->application, out);
+    return qa_application_q3_calendar(provider->application, out);
 }
 
 static qa_collision_geometry *guest_geometry(void *context)
