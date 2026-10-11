@@ -92,6 +92,7 @@ static bool fields(application_native_q2_records *o,nqr_record *r,qa_json_id lis
         size_t at=0; for(;at<sizeof(bindings)/sizeof(*bindings);++at) if(qa_json_string_equal(d,binding,bindings[at].name)) break;
         if(at==sizeof(bindings)/sizeof(*bindings)||!word(d,row,"offset",&f->offset,e)) return nqr_fail(e,QA_ERROR_FORMAT,"Unknown native record field binding");
         nqr_kind k=f->kind=bindings[at].kind; f->writable=k<=NQR_BODY;
+        f->separate=k==NQR_PRIVATE||k==NQR_CONSTANT||k==NQR_ADDRESS||k==NQR_VECTOR;
         if(k==NQR_BODY) f->body=bindings[at].body;
         f->length=k==NQR_BODY||k==NQR_VECTOR?12:pointer_bytes;
         if(k<=NQR_SCORE||k==NQR_CONSTANT) { f->encoding=scalar(d,qa_json_get(d,row,"encoding")); f->length=(uint32_t)nqr_scalar_size(f->encoding); }
@@ -149,7 +150,9 @@ bool nqr_profile(application_native_q2_records *o,qa_error *e)
         if(!word(d,row,"stride",&r->stride,e)||r->stride<4||!word(d,row,"firstSlot",&r->first,e)||
             !word(d,row,"capacity",&r->capacity,e)||!r->capacity||r->capacity>65536) return nqr_fail(e,QA_ERROR_FORMAT,"Invalid native declared record extent");
         qa_json_id base=qa_json_get(d,row,"base"),kind=qa_json_get(d,base,"kind");
+        r->base=base;
         r->entities=qa_json_string_equal(d,kind,"entities");
+        r->base_kind=r->entities?NQR_BASE_ENTITIES:qa_json_string_equal(d,kind,"clients")?NQR_BASE_CLIENTS:NQR_BASE_ADDRESS;
         if(!r->entities&&!qa_json_string_equal(d,kind,"clients")&&!qa_json_string_equal(d,kind,"address")) return nqr_fail(e,QA_ERROR_FORMAT,"Unknown native record base");
     }
     qa_json_id clients=qa_json_get(d,root,"clients"),client_records=qa_json_get(d,clients,"records");
@@ -166,7 +169,8 @@ bool nqr_profile(application_native_q2_records *o,qa_error *e)
     if(o->entity_record!=SIZE_MAX&&!o->records[o->entity_record].entities) return nqr_fail(e,QA_ERROR_FORMAT,"Native entity record is not the genuine public export table");
     if(o->client_maximum&&(o->entity_record==SIZE_MAX||o->records[o->entity_record].first!=1)) return nqr_fail(e,QA_ERROR_FORMAT,"Native client entities require their actual source first slot");
     for(size_t i=0;i<o->record_count;++i) {
-        nqr_record *r=o->records+i; qa_json_id row=qa_json_at(d,list,i),base=qa_json_get(d,row,"base");
+        nqr_record *r=o->records+i; r->public_record=i==o->entity_record;
+        qa_json_id row=qa_json_at(d,list,i),base=r->base;
         if(r->capacity<o->client_maximum||
             (qa_json_string_equal(d,qa_json_get(d,base,"kind"),"clients")&&(!r->client||r->first||r->capacity!=o->client_maximum)))
             return nqr_fail(e,QA_ERROR_FORMAT,"Native declared client capacity differs from its private storage");
@@ -200,4 +204,15 @@ bool nqr_profile(application_native_q2_records *o,qa_error *e)
         o->has_pose=true;
     }
     return true;
+}
+
+bool nqr_private_range(const nqr_record *record,uint32_t offset,size_t bytes)
+{
+    if(record->client||offset>record->stride||bytes>record->stride-offset)return false;
+    for(size_t i=0;i<record->field_count;++i) {
+        const nqr_field *field=record->fields+i;
+        if(field->separate&&field->offset<=offset&&
+            (uint64_t)offset+bytes<=(uint64_t)field->offset+field->length)return true;
+    }
+    return false;
 }

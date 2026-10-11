@@ -1,3 +1,4 @@
+#include "native_q2_records_private.h"
 #include "native_q2_pickups.h"
 #include <stdlib.h>
 #include <string.h>
@@ -91,32 +92,12 @@ static bool overlap(uint32_t a,size_t an,uint32_t b,size_t bn)
 static bool private_context(application_native_q2_pickups *o,pickup_context_field *f,qa_error *e)
 {
     const qa_json_document *d=document(o); qa_json_id root=qa_json_root(d);
-    qa_json_id clients=qa_json_get(d,qa_json_get(d,root,"clients"),"records");
-    for(size_t i=0;i<qa_json_size(d,clients);++i)
-        if(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_at(d,clients,i))==f->record) return fail(e,QA_ERROR_FORMAT,"Native pickup context addresses client storage");
-    qa_json_id records=qa_json_get(d,root,"actorRecords"); bool declared=false;
-    for(size_t i=0;i<qa_json_size(d,records);++i) {
-        qa_json_id r=qa_json_at(d,records,i);
-        if(!(application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,r,"id"))==f->record)) continue;
-        uint32_t stride;
-        if(!word(d,qa_json_get(d,r,"stride"),&stride,e)||f->offset>stride||f->bytes>stride-f->offset) return false;
-        qa_json_id fields=qa_json_get(d,r,"fields");
-        for(size_t j=0;j<qa_json_size(d,fields);++j) {
-            qa_json_id field=qa_json_at(d,fields,j),binding=qa_json_get(d,field,"binding");
-            size_t bytes=0; uint32_t at;
-            if(qa_json_string_equal(d,binding,"private")) { uint32_t n; if(!word(d,qa_json_get(d,field,"byteLength"),&n,e)) return false; bytes=n; }
-            else if(qa_json_string_equal(d,binding,"constant")) bytes=scalar_bytes(d,qa_json_get(d,field,"encoding"));
-            else if(qa_json_string_equal(d,binding,"address")) bytes=o->pointer_bytes;
-            else if(qa_json_string_equal(d,binding,"constant-vector")) bytes=12;
-            else continue;
-            if(!word(d,qa_json_get(d,field,"offset"),&at,e)) return false;
-            if(at<=f->offset&&(uint64_t)f->offset+f->bytes<=(uint64_t)at+bytes) declared=true;
-        }
-        break;
-    }
-    if(!declared) return fail(e,QA_ERROR_FORMAT,"Native pickup context lacks declared separate source storage");
+    const application_native_q2_records *records=application_native_q2_callbacks_records(o->options.callbacks);
+    const nqr_record *record=records->records+f->record-1;
+    if(!nqr_private_range(record,f->offset,f->bytes))
+        return fail(e,QA_ERROR_FORMAT,"Native pickup context lacks declared separate source storage");
     qa_json_id source=qa_json_get(d,root,"sourceActors");
-    if(source!=QA_JSON_NONE&&qa_json_type(d,source)!=QA_JSON_NULL&&application_native_q2_callbacks_record_index(o->options.callbacks,qa_json_get(d,root,"entityRecord"))==f->record) {
+    if(source!=QA_JSON_NONE&&qa_json_type(d,source)!=QA_JSON_NULL&&record->public_record) {
         qa_json_id fields=qa_json_get(d,source,"fields"),callbacks=qa_json_get(d,source,"callbacks");
         const char *pointers[]={"ground","think","use"};
         for(size_t i=0;i<sizeof(pointers)/sizeof(*pointers);++i) {

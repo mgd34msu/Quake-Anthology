@@ -23,12 +23,15 @@ typedef struct nqr_field {
     uint8_t initial[12];
     nqr_team *teams;
     size_t team_count;
-    bool writable,body_output;
+    bool writable,body_output,separate;
 } nqr_field;
+typedef enum nqr_base_kind { NQR_BASE_CLIENTS,NQR_BASE_ENTITIES,NQR_BASE_ADDRESS } nqr_base_kind;
 typedef struct nqr_record {
     char *id;
     uint32_t stride,first,capacity;
-    bool client,entities;
+    bool client,entities,public_record;
+    nqr_base_kind base_kind;
+    qa_json_id base;
     nqr_field *fields;
     size_t field_count;
 } nqr_record;
@@ -88,6 +91,7 @@ bool nqr_current(application_native_q2_records *,qa_error *);
 bool nqr_live(application_native_q2_records *,qa_actor_id);
 nqr_actor *nqr_find(application_native_q2_records *,qa_actor_id);
 bool nqr_profile(application_native_q2_records *,qa_error *);
+bool nqr_private_range(const nqr_record *,uint32_t,size_t);
 bool nqr_scalar_encode(double,qa_native_value_type,uint8_t *,qa_error *);
 bool nqr_scalar_decode(const uint8_t *,qa_native_value_type,double *,qa_error *);
 size_t nqr_scalar_size(qa_native_value_type);
