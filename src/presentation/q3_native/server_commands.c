@@ -346,15 +346,16 @@ static bool end(q3n_server_commands *o, bool ok)
     return ok;
 }
 static bool config(q3n_server_commands *o, const q3n_frame *f, uint32_t index,
-    char **out, uint64_t *revision, qa_error *e)
+    void *storage, size_t capacity, char **out, uint64_t *revision, qa_error *e)
 {
     const char *text;
     if (!q3nc_current(o, f, e) || !q3n_frame_configstring(f, index, &text, revision, e)) return false;
     size_t size = strlen(text);
     if (size >= QA_Q3_GAMESTATE_CHARS) return q3nc_fail(e, QA_ERROR_FORMAT, "CG_ConfigString exceeds its source gamestate buffer");
-    *out = malloc(size + 1);
-    if (!*out) return q3nc_fail(e, QA_ERROR_MEMORY, "Retaining native CGAME configstring callback text");
-    memcpy(*out, text, size + 1); return true;
+    qa_arena scratch = {0};
+    if (!qa_arena_init_buffer(&scratch, storage, capacity, e)) return false;
+    *out = qa_arena_text(&scratch, text, e);
+    return *out != NULL;
 }
 static bool config_current(q3n_server_commands *o, const q3n_frame *f,
     uint32_t index, uint64_t revision, qa_error *e)
@@ -365,16 +366,18 @@ static bool config_current(q3n_server_commands *o, const q3n_frame *f,
 }
 static bool config_number(q3n_server_commands *o, const q3n_frame *f, uint32_t index, int32_t *out, qa_error *e)
 {
+    _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     char *text = NULL; uint64_t revision;
-    if (!config(o, f, index, &text, &revision, e)) return false;
-    *out = q3nc_integer(text); free(text); return true;
+    if (!config(o, f, index, storage, sizeof(storage), &text, &revision, e)) return false;
+    *out = q3nc_integer(text); return true;
 }
 static bool info_value(const char *info, const char *key, char *out, size_t capacity, qa_error *e)
 { return qa_q3_info_value(info, key, out, capacity, e); }
 static bool server_info(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
+    _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     char *text = NULL, value[8192]; uint64_t revision;
-    if (!config(o, f, 0, &text, &revision, e)) return false;
+    if (!config(o, f, 0, storage, sizeof(storage), &text, &revision, e)) return false;
     q3n_command_state *s = &o->state;
     bool ok = info_value(text, "g_gametype", value, sizeof(value), e);
     if (ok) {
@@ -394,19 +397,20 @@ static bool server_info(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
     if (ok) ok = info_value(text, "g_blueTeam", value, sizeof(value), e);
     if (ok) { q3nc_copy(s->blue_team, sizeof(s->blue_team), value); ok = set(o, f, "g_blueTeam", s->blue_team, e); }
     if (ok) ok = config_current(o, f, 0, revision, e);
-    free(text); return ok;
+    return ok;
 }
 static bool flag_status(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
+    _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     char *text = NULL; uint64_t revision;
-    if (!config(o, f, 23, &text, &revision, e)) return false;
+    if (!config(o, f, 23, storage, sizeof(storage), &text, &revision, e)) return false;
     bool ok = true;
     if (o->state.game_type == 4) {
         if (!*text) ok = q3nc_fail(e, QA_ERROR_FORMAT, "CTF flag status leaves source bytes uninitialized");
         else { o->state.red_flag = (unsigned char)text[0] - '0'; o->state.blue_flag = (unsigned char)text[1] - '0'; }
     } else if (o->options.product == QA_Q3_TEAM_ARENA && o->state.game_type == 5)
         o->state.flag_status = (unsigned char)text[0] - '0';
-    free(text); return ok;
+    return ok;
 }
 static bool initial_config(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
@@ -416,8 +420,9 @@ static bool initial_config(q3n_server_commands *o, const q3n_frame *f, qa_error 
 }
 static bool music(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
+    _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     char *text = NULL, intro[64], loop[64]; uint64_t revision;
-    if (!config(o, f, 2, &text, &revision, e)) return false;
+    if (!config(o, f, 2, storage, sizeof(storage), &text, &revision, e)) return false;
     qa_common_cursor cursor; qa_common_parser parser = {0};
     bool ok = qa_common_cursor_init(&cursor, (qa_bytes){(const uint8_t *)text, strlen(text)}, QA_COMMON_TERMINATED, e) &&
         qa_common_parse(&parser, &cursor, true, e);
@@ -426,12 +431,13 @@ static bool music(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
         q3nc_copy(loop, sizeof(loop), parser.token);
         ok = qa_q3_presentation_music(o->options.presentation, intro, loop, e) && config_current(o, f, 2, revision, e);
     }
-    free(text); return ok;
+    return ok;
 }
 static bool shader_state(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
+    _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     char *text = NULL; uint64_t revision;
-    if (!config(o, f, 24, &text, &revision, e)) return false;
+    if (!config(o, f, 24, storage, sizeof(storage), &text, &revision, e)) return false;
     bool ok = true; const char *position = text;
     while (*position && ok) {
         const char *equal = strchr(position, '='), *colon, *end;
@@ -446,7 +452,7 @@ static bool shader_state(q3n_server_commands *o, const q3n_frame *f, qa_error *e
             config_current(o, f, 24, revision, e);
         position = end + 1;
     }
-    free(text); return ok;
+    return ok;
 }
 static void spectators(q3n_server_commands *o)
 {
@@ -491,6 +497,7 @@ static bool register_client(q3n_server_commands *o, const q3n_frame *f,
 static bool initialize(q3n_server_commands *o, const q3n_frame *f,
     int32_t sequence, bool video, qa_error *e)
 {
+    _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     if (sequence < 0 || !begin(o, f, false, e)) return false;
     if (o->initialized) return end(o, q3nc_fail(e, QA_ERROR_ARGUMENT, "CGAME constructor has already completed"));
     qa_native_q3_wire_publication publication;
@@ -525,11 +532,10 @@ static bool initialize(q3n_server_commands *o, const q3n_frame *f,
             o->state.red_flag = o->state.blue_flag = o->state.flag_status = -1; }
     }
     char *version = NULL; uint64_t revision;
-    if (ok) ok = config(o, f, 20, &version, &revision, e);
+    if (ok) ok = config(o, f, 20, storage, sizeof(storage), &version, &revision, e);
     if (ok && strcmp(version, "baseq3-1")) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Client/Server game mismatch: baseq3-1/%s", version); ok = false;
     }
-    free(version);
     if (ok) ok = config_number(o, f, 21, &o->state.level_start_time, e) && server_info(o, f, e) &&
         loading(o, f, "collision map", -1, e) && stage(o, f, Q3N_INIT_COLLISION_MAP, &inline_models, e);
     if (ok && mission) ok = stage(o, f, Q3N_INIT_STRING_TABLE, &inline_models, e);
@@ -556,9 +562,8 @@ static bool initialize(q3n_server_commands *o, const q3n_frame *f,
     for (uint32_t i = 0; ok && i < 64; ++i) {
         if (i == f->viewing_client) continue;
         char *text = NULL; uint64_t client_revision;
-        ok = config(o, f, 544u + i, &text, &client_revision, e);
+        ok = config(o, f, 544u + i, storage, sizeof(storage), &text, &client_revision, e);
         if (ok && text[0]) ok = register_client(o, f, i, &inline_models, &client_settings, e);
-        free(text);
     }
     if (ok) ok =
         (f->compiled?q3n_clients_compiled_sync(o->options.clients,&f->compiled->source,&client_settings,e):
@@ -671,9 +676,10 @@ static bool team_info(q3n_server_commands *o, const q3n_frame *f, const qa_comma
 }
 static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t index, qa_error *e)
 {
+    _Alignas(max_align_t) uint8_t storage[QA_Q3_GAMESTATE_CHARS + 128];
     if (index < 0 || index >= 1024) return q3nc_fail(e, QA_ERROR_FORMAT, "CG_ConfigString: bad index");
     char *text = NULL; uint64_t revision;
-    if (!config(o, f, (uint32_t)index, &text, &revision, e)) return false;
+    if (!config(o, f, (uint32_t)index, storage, sizeof(storage), &text, &revision, e)) return false;
     q3n_command_state *s = &o->state; bool ok = true;
     switch (index) {
     case 0: ok = server_info(o, f, e); break;
@@ -722,7 +728,7 @@ static bool config_modified(q3n_server_commands *o, const q3n_frame *f, int32_t 
         break;
     }
     if (ok) ok = config_current(o, f, (uint32_t)index, revision, e);
-    free(text); return ok;
+    return ok;
 }
 static bool restart(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
 {
