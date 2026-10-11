@@ -14,6 +14,7 @@ typedef struct qa_application_q3_campaign {
     qa_q3_product product;
     qa_console *console;
     qa_cvars *cvars;
+    qa_cvar_handle nextmap;
     qa_vfs *content, *configuration;
     qa_mount_id write_mount;
     qa_fs_root *config_root, *profile_root;

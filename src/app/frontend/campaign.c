@@ -130,7 +130,7 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     if (!campaign_has_q3(f)) return frontend_campaign_destroy(f,error);
     qa_application_q3_campaign view;
     if (!qa_application_q3_campaign_read(f->application,0,&view,error)) return false;
-    qa_cvar_handle nextmap = owner && owner->cvars == view.cvars ? owner->nextmap : qa_cvars_resolve(view.cvars, "nextmap");
+    qa_cvar_handle nextmap = view.nextmap;
     campaign_kind kind = campaign_kind_of(&view, nextmap);
     if (kind == CAMPAIGN_NONE) return frontend_campaign_destroy(f,error);
     bool base = kind == CAMPAIGN_BASE;

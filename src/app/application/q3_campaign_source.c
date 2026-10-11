@@ -4,6 +4,7 @@
 #include "native_q3_console.h"
 #include "native_q3_settings.h"
 #include "guest_q3_private.h"
+#include "guest_q3_console.h"
 #include "startup_flow.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -73,6 +74,9 @@ bool qa_application_q3_campaign_read(qa_application *app, qa_actor_owner owner,
         .command_generation = app->command_generation, .map_revision = app->map_revision};
     if (!view.publication || !qa_application_map_read(app, &map) || !source_context(provider, &view, error))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign has no genuine GAME content, registry or round context");
+    view.nextmap=provider->kind==APPLICATION_PROVIDER_Q3 ?
+        application_native_q3_console_control(provider,APPLICATION_Q3_CVAR_NEXTMAP) :
+        application_guest_q3_console_control(provider,APPLICATION_Q3_CVAR_NEXTMAP);
     view.map = map.name; view.map_resource = map.resource;
     if (app->startup_hooks && app->startup_hooks->configuration_store) {
         qa_settings_store store = {0};
