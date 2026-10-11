@@ -1,5 +1,6 @@
 /* Donor: network/q3/connectionless.ts, admission.ts and authorization modules. */
 #include "qa/network_q3.h"
+#include "qa/text.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
@@ -12,9 +13,6 @@ static int32_t signed_word(uint32_t word) {
 }
 static int32_t elapsed_word(int64_t now, int64_t previous) {
     return signed_word((uint32_t)now - (uint32_t)previous);
-}
-static unsigned char info_fold(unsigned char byte) {
-    return byte >= 'A' && byte <= 'Z' ? (unsigned char)(byte + ('a' - 'A')) : byte;
 }
 static bool equal(const char *a, const char *b) {
     while (*a && *b) if (tolower((unsigned char)*a++) != tolower((unsigned char)*b++)) return false;
@@ -63,29 +61,15 @@ bool qa_q3_tokenize(const char *s, qa_q3_tokens *out, qa_error *error) {
     if (!out->count) out->text[0] = 0;
     return true;
 }
-bool qa_q3_info_value(const char *info, const char *key, char *out, size_t capacity, qa_error *error) {
-    if (!info || !key || !out || !capacity) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 info lookup");
-    if (strlen(info) >= 8192) return fail(error, QA_ERROR_FORMAT, "Q3 info exceeds 8191 bytes");
-    out[0] = 0;
-    const char *p = info;
-    if (*p == '\\') ++p;
-    while (*p) {
-        const char *name = p;
-        while (*p && *p != '\\') ++p;
-        size_t namesize = (size_t)(p - name);
-        if (!*p) break;
-        const char *value = ++p;
-        while (*p && *p != '\\') ++p;
-        size_t length = (size_t)(p - value);
-        bool match = strlen(key) == namesize;
-        for (size_t i = 0; match && i < namesize; ++i)
-            match = info_fold((unsigned char)name[i]) == info_fold((unsigned char)key[i]);
-        if (match) {
-            if (length >= capacity) return fail(error, QA_ERROR_FORMAT, "Q3 info lookup output too small");
-            memcpy(out, value, length); out[length] = 0; return true;
-        }
-        if (*p) ++p;
-    }
+bool qa_q3_info_value(const char *info,const char *key,char *out,size_t capacity,qa_error *error)
+{
+    if (!info || !key || !out || !capacity) return fail(error,QA_ERROR_ARGUMENT,"Invalid Q3 info lookup");
+    if (strlen(info)>=8192) return fail(error,QA_ERROR_FORMAT,"Q3 info exceeds 8191 bytes");
+    out[0]=0;
+    qa_bytes value;
+    qa_info_find(info,(qa_bytes){(const uint8_t *)key,strlen(key)},QA_INFO_CASE_FOLD,&value);
+    if (value.size>=capacity) return fail(error,QA_ERROR_FORMAT,"Q3 info lookup output too small");
+    memcpy(out,value.data,value.size);out[value.size]=0;
     return true;
 }
 bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *value, qa_error *error) {
@@ -95,20 +79,13 @@ bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *va
     size_t length = strlen(info), key_length = strlen(key);
     if (length >= capacity) return fail(error, QA_ERROR_FORMAT, "Q3 info exceeds capacity");
     size_t remove_begin = 0, remove_end = 0;
-    const char *p = info;
+    const char *p=info;
+    qa_bytes name,old_value;
     while (*p) {
-        const char *begin = p;
-        if (*p == '\\') ++p;
-        const char *name = p;
-        while (*p && *p != '\\') ++p;
-        size_t namesize = (size_t)(p - name);
-        if (!*p) break;
-        ++p;
-        while (*p && *p != '\\') ++p;
-        if (namesize == key_length && !memcmp(name, key, key_length)) {
-            remove_begin = (size_t)(begin - info);
-            remove_end = (size_t)(p - info);
-            break;
+        const char *begin=p;
+        if (!qa_info_next(&p,&name,&old_value)) break;
+        if (name.size==key_length && !memcmp(name.data,key,key_length)) {
+            remove_begin=(size_t)(begin-info);remove_end=(size_t)(p-info);break;
         }
     }
     char buffer[8192];

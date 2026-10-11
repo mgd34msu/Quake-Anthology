@@ -488,21 +488,15 @@ typedef struct unified_info_pair {
  * unmatched trailing keys are ignored, and replacing a key retains order. */
 static size_t info_pairs(const char *text, unified_info_pair *pairs)
 {
-    const char *cursor = text + (text[0] == '\\');
-    size_t count = 0;
-    while (*cursor) {
-        const char *separator = strchr(cursor, '\\');
-        if (!separator) break;
-        const char *value = separator + 1, *end = strchr(value, '\\');
-        size_t key_size = (size_t)(separator - cursor);
-        size_t value_size = end ? (size_t)(end - value) : strlen(value);
-        bool duplicate = false;
-        for (size_t i = 0; i < count; ++i)
-            if (pairs[i].key_size == key_size && !memcmp(pairs[i].key, cursor, key_size))
-                duplicate = true;
-        if (!duplicate) pairs[count++] = (unified_info_pair){cursor, value, key_size, value_size};
-        if (!end) break;
-        cursor = end + 1;
+    const char *cursor=text;
+    size_t count=0;
+    qa_bytes key,value;
+    while (qa_info_next(&cursor,&key,&value)) {
+        bool duplicate=false;
+        for (size_t i=0;i<count;++i)
+            if (pairs[i].key_size==key.size && !memcmp(pairs[i].key,key.data,key.size)) duplicate=true;
+        if (!duplicate) pairs[count++]=(unified_info_pair){(const char *)key.data,
+            (const char *)value.data,key.size,value.size};
     }
     return count;
 }
@@ -512,19 +506,14 @@ static bool info_key(unified_info_pair pair, const char *key)
     return strlen(key) == pair.key_size && !memcmp(pair.key, key, pair.key_size);
 }
 
-static char *info_value_copy(const char *text, const char *key, qa_error *error)
+static char *info_value_copy(const char *text,const char *key,qa_error *error)
 {
-    unified_info_pair *pairs = calloc(strlen(text) / 2 + 3, sizeof(*pairs));
-    if (!pairs) { application_fail(error, QA_ERROR_MEMORY, "Reading actual unified userinfo value"); return NULL; }
-    size_t count = info_pairs(text, pairs);
-    const char *value = ""; size_t size = 0;
-    for (size_t i = 0; i < count; ++i) if (info_key(pairs[i], key)) {
-        value = pairs[i].value; size = pairs[i].value_size; break;
-    }
-    char *copy = malloc(size + 1);
-    if (copy) { memcpy(copy, value, size); copy[size] = 0; }
-    else application_fail(error, QA_ERROR_MEMORY, "Retaining actual unified userinfo value");
-    free(pairs); return copy;
+    qa_bytes value;
+    qa_info_find(text,(qa_bytes){(const uint8_t *)key,strlen(key)},0,&value);
+    char *copy=malloc(value.size+1);
+    if (copy) {memcpy(copy,value.data,value.size);copy[value.size]=0;}
+    else application_fail(error,QA_ERROR_MEMORY,"Retaining actual unified userinfo value");
+    return copy;
 }
 
 static char *info_canonical(const char *text, const char *address, bool q1_language,

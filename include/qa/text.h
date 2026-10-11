@@ -18,6 +18,12 @@ size_t qa_utf8_encode(uint32_t scalar, char out[4]);
 bool qa_text_to_source_bytes(qa_bytes, uint8_t *out, size_t capacity, size_t *size, qa_error *);
 bool qa_text_from_source_bytes(qa_bytes, char *out, size_t capacity, size_t *size, qa_error *);
 bool qa_unicode_whitespace(uint32_t scalar);
+/* Quake backslash info pairs, borrowed from the NUL-terminated input. Cursor
+ * starts at the string and ends at the next delimiter or terminator. */
+bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value);
+enum { QA_INFO_LAST=1, QA_INFO_CASE_FOLD=2 };
+/* First match by default; missing keys return false and an empty span. */
+bool qa_info_find(const char *,qa_bytes key,unsigned policy,qa_bytes *value);
 /* Full-token conversion in the C numeric locale, independent of UI language.
  * Leading/trailing ASCII whitespace is accepted. The caller applies finite,
  * integral or domain bounds as needed. Output is unchanged on failure. */

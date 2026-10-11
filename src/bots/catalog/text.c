@@ -27,19 +27,14 @@ bool bot_catalog_utf8(const char *text,qa_buffer *out,qa_error *e) {
     }
     out->data=bytes;out->size=written;return true;
 }
-bool bot_catalog_info_value(const char *info,const char *key,char *out,size_t capacity,qa_error *e) {
-    if(!info || !key || !out || !capacity) return bot_catalog_fail(e,QA_ERROR_ARGUMENT,"source catalogue info requires bounded output");
-    if(strlen(info)>=8192) return bot_catalog_fail(e,QA_ERROR_FORMAT,"Info_ValueForKey: oversize infostring");
-    out[0]=0;const char *p=info;if(*p=='\\') ++p;
-    while(*p) {
-        const char *separator=strchr(p,'\\');if(!separator) return true;
-        const char *value=separator+1,*next=strchr(value,'\\');size_t n=next?(size_t)(next-value):strlen(value);
-        size_t k=(size_t)(separator-p),wanted=strlen(key);bool same=k==wanted;
-        for(size_t i=0;same && i<k;++i) same=lower((unsigned char)p[i])==lower((unsigned char)key[i]);
-        if(same) {if(n>=capacity) n=capacity-1;memcpy(out,value,n);out[n]=0;return true;}
-        if(!next) return true;
-        p=next+1;
-    }
+bool bot_catalog_info_value(const char *info,const char *key,char *out,size_t capacity,qa_error *e)
+{
+    if (!info || !key || !out || !capacity) return bot_catalog_fail(e,QA_ERROR_ARGUMENT,"source catalogue info requires bounded output");
+    if (strlen(info)>=8192) return bot_catalog_fail(e,QA_ERROR_FORMAT,"Info_ValueForKey: oversize infostring");
+    qa_bytes value;
+    qa_info_find(info,(qa_bytes){(const uint8_t *)key,strlen(key)},QA_INFO_CASE_FOLD,&value);
+    size_t size=value.size<capacity?value.size:capacity-1;
+    memcpy(out,value.data,size);out[size]=0;
     return true;
 }
 bool bot_catalog_info_set(qa_bot_catalog *c,char info[1024],const char *key,const char *value,qa_error *e) {
@@ -48,16 +43,15 @@ bool bot_catalog_info_set(qa_bot_catalog *c,char info[1024],const char *key,cons
         strchr(key,';') || strchr(value,';')?"Can't use keys or values with a semicolon\n":
         strchr(key,'"') || strchr(value,'"')?"Can't use keys or values with a \"\n":NULL;
     if(diagnostic) return c->services.print(c->services.context,diagnostic,e);
-    size_t cursor=0;
-    while(cursor<size) {
-        size_t start=cursor;if(info[cursor]=='\\') ++cursor;
-        const char *separator=strchr(info+cursor,'\\');if(!separator) break;
-        const char *next=strchr(separator+1,'\\');size_t end=next?(size_t)(next-info):size;
-        size_t length=(size_t)(separator-(info+cursor));
-        if(strlen(key)==length && !memcmp(info+cursor,key,length)) {
-            memmove(info+start,info+end,size-end+1);size-=end-start;break;
+    const char *cursor=info;
+    qa_bytes name,old_value;
+    while (*cursor) {
+        const char *start=cursor;
+        if (!qa_info_next(&cursor,&name,&old_value)) break;
+        if (name.size==strlen(key) && !memcmp(name.data,key,name.size)) {
+            size_t removed=(size_t)(cursor-start);
+            memmove((char *)start,cursor,strlen(cursor)+1);size-=removed;break;
         }
-        cursor=end;
     }
     if(!*value) return true;
     char pair[1024];size_t k=strlen(key),v=strlen(value),n=0;

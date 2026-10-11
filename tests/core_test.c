@@ -1314,6 +1314,15 @@ static void test_shared_cvar_archive(void)
 
 static void test_cvar_info_storage(void)
 {
+    const char *text="\\name\\first\\Name\\folded\\name\\last\\empty\\\\orphan";
+    qa_bytes key={(const uint8_t *)"name",4},info_span;
+    CHECK(qa_info_find(text,key,0,&info_span) && info_span.size==5 && !memcmp(info_span.data,"first",5));
+    CHECK(qa_info_find(text,key,QA_INFO_LAST,&info_span) && info_span.size==4 && !memcmp(info_span.data,"last",4));
+    CHECK(qa_info_find("Name\\folded",key,QA_INFO_CASE_FOLD,&info_span) && info_span.size==6 && !memcmp(info_span.data,"folded",6));
+    CHECK(qa_info_find(text,(qa_bytes){(const uint8_t *)"empty",5},0,&info_span) && info_span.size==0);
+    CHECK(!qa_info_find(text,(qa_bytes){(const uint8_t *)"orphan",6},0,&info_span) && info_span.size==0);
+    qa_error info_error={0};char too_small[4];
+    CHECK(!qa_q3_info_value(text,"NAME",too_small,sizeof(too_small),&info_error));
     for (qa_ruleset_id dialect = QA_RULESET_NETQUAKE; dialect <= QA_RULESET_Q3; ++dialect) {
         qa_error error = {0};
         qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = dialect,

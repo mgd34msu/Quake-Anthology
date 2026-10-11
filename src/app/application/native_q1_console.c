@@ -1,3 +1,4 @@
+#include "qa/text.h"
 #include "native_q1_console.h"
 #include "q3_product.h"
 #include "native_q1_wire.h"
@@ -401,43 +402,23 @@ bool application_native_q1_source_logfrag_enabled(application_provider *provider
 
 /* Keep the Source byte dictionary: filtering can create empty keys and
  * duplicates, and Info_RemoveKey removes only the first matching pair. */
-static bool info_pair(const char **cursor, const char **key, size_t *key_size,
-    const char **value, size_t *value_size, const char **start)
+static void info_value(const char *info,const char *wanted,const char **out,size_t *size)
 {
-    const char *s = *cursor;
-    *start = s;
-    if (*s == '\\') ++s;
-    *key = s;
-    while (*s && *s != '\\') ++s;
-    if (!*s) return false;
-    *key_size = (size_t)(s - *key);
-    *value = ++s;
-    while (*s && *s != '\\') ++s;
-    *value_size = (size_t)(s - *value);
-    *cursor = s;
-    return true;
+    qa_bytes value;
+    qa_info_find(info,(qa_bytes){(const uint8_t *)wanted,strlen(wanted)},0,&value);
+    *out=(const char *)value.data;*size=value.size;
 }
-static void info_value(const char *info, const char *wanted, const char **out, size_t *size)
+static void info_remove(char *info,const char *wanted)
 {
-    const char *cursor = info, *key, *value, *start;
-    size_t key_size, value_size, wanted_size = strlen(wanted);
-    while (info_pair(&cursor, &key, &key_size, &value, &value_size, &start)) {
-        if (key_size == wanted_size && !memcmp(key, wanted, key_size)) {
-            *out = value; *size = value_size; return;
+    const char *cursor=info;
+    qa_bytes key,value;
+    size_t wanted_size=strlen(wanted);
+    while (*cursor) {
+        const char *start=cursor;
+        if (!qa_info_next(&cursor,&key,&value)) break;
+        if (key.size==wanted_size && !memcmp(key.data,wanted,key.size)) {
+            memmove((char *)start,cursor,strlen(cursor)+1);return;
         }
-        if (!*cursor) break;
-    }
-    *out = ""; *size = 0;
-}
-static void info_remove(char *info, const char *wanted)
-{
-    const char *cursor = info, *key, *value, *start;
-    size_t key_size, value_size, wanted_size = strlen(wanted);
-    while (info_pair(&cursor, &key, &key_size, &value, &value_size, &start)) {
-        if (key_size == wanted_size && !memcmp(key, wanted, key_size)) {
-            memmove((char *)start, cursor, strlen(cursor) + 1); return;
-        }
-        if (!*cursor) break;
     }
 }
 static void info_print(struct application_native_q1_console *owner, const char *text)
@@ -509,21 +490,21 @@ static void cvar_effect(void *opaque, qa_cvar_effect_kind kind, const qa_cvar_vi
 static void info_list(struct application_native_q1_console *owner, const char *info)
 {
     const char *cursor = info;
-    if (*cursor == '\\') ++cursor;
     while (*cursor) {
-        const char *key = cursor;
-        while (*cursor && *cursor != '\\') ++cursor;
-        size_t size = (size_t)(cursor - key), width = size < 20 ? 20 : size;
+        qa_bytes key,value;
+        bool paired=qa_info_next(&cursor,&key,&value);
+        if (!paired) {
+            const char *text=cursor+(*cursor=='\\');
+            key=(qa_bytes){(const uint8_t *)text,strlen(text)};
+        }
+        size_t size=key.size,width=size<20?20:size;
         char field[32770];
-        memcpy(field, key, size); memset(field + size, ' ', width - size); field[width] = 0;
+        memcpy(field, key.data, size); memset(field + size, ' ', width - size); field[width] = 0;
         info_print(owner, field);
-        if (!*cursor) { info_print(owner, "MISSING VALUE\n"); return; }
-        const char *value = ++cursor;
-        while (*cursor && *cursor != '\\') ++cursor;
-        size = (size_t)(cursor - value);
-        memcpy(field, value, size); field[size] = '\n'; field[size + 1] = 0;
+        if (!paired) { info_print(owner, "MISSING VALUE\n"); return; }
+        size=value.size;
+        memcpy(field, value.data, size); field[size] = '\n'; field[size + 1] = 0;
         info_print(owner, field);
-        if (*cursor) ++cursor;
     }
 }
 static bool flood_command(void *opaque,const qa_command_invocation *invocation,qa_error *error)

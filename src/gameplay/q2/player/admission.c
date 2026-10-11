@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/player_names.h"
+#include "qa/text.h"
 #include "../entities/internal.h"
 
 bool q2_player_source_identity_bind(qa_q2_game *g,q2_client_state *s,const char *name,
@@ -19,35 +20,12 @@ bool q2_player_source_identity_bind(qa_q2_game *g,q2_client_state *s,const char 
     return true;
 }
 
-bool q2_player_userinfo_value(const char *info, const char *key, char *out, size_t capacity) {
-    size_t wanted = strlen(key);
-    bool found = false;
-    out[0] = 0;
-    const char *p = info;
-    if (*p == '\\')
-        p++;
-    while (*p) {
-        const char *k = p;
-        while (*p && *p != '\\')
-            p++;
-        size_t n = (size_t)(p - k);
-        if (!*p)
-            break;
-        p++;
-        const char *v = p;
-        while (*p && *p != '\\')
-            p++;
-        size_t length = (size_t)(p - v);
-        if (n == wanted && !memcmp(k, key, n)) {
-            if (length >= capacity)
-                length = capacity - 1;
-            memcpy(out, v, length);
-            out[length] = 0;
-            found = true;
-        }
-        if (*p)
-            p++;
-    }
+bool q2_player_userinfo_value(const char *info,const char *key,char *out,size_t capacity)
+{
+    qa_bytes value;
+    bool found=qa_info_find(info,(qa_bytes){(const uint8_t *)key,strlen(key)},QA_INFO_LAST,&value);
+    size_t size=value.size<capacity?value.size:capacity-1;
+    memcpy(out,value.data,size);out[size]=0;
     return found;
 }
 static bool info_remove(char *info, size_t capacity, const char *key, size_t *length) {
@@ -59,27 +37,14 @@ static bool info_remove(char *info, size_t capacity, const char *key, size_t *le
         memmove(info + 1, info, bytes);
         info[0] = '\\';
     }
-    const char *read = info;
-    if (*read == '\\')
-        read++;
-    while (*read) {
-        const char *name = read;
-        while (*read && *read != '\\')
-            read++;
-        size_t name_length = (size_t)(read - name);
-        if (!*read)
-            break;
-        read++;
-        while (*read && *read != '\\')
-            read++;
-        const char *next = *read ? read + 1 : read;
-        if (name_length != wanted || memcmp(name, key, name_length)) {
-            size_t bytes = (size_t)(read - name);
-            info[used++] = '\\';
-            memmove(info + used, name, bytes);
-            used += bytes;
+    const char *read=info;
+    qa_bytes name,value;
+    while (qa_info_next(&read,&name,&value)) {
+        if (name.size!=wanted || memcmp(name.data,key,name.size)) {
+            size_t bytes=(size_t)(read-(const char *)name.data);
+            info[used++]='\\';
+            memmove(info+used,name.data,bytes);used+=bytes;
         }
-        read = next;
     }
     info[used] = 0;
     *length = used;

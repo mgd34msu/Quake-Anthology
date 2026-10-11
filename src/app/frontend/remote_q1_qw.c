@@ -1,3 +1,4 @@
+#include "qa/text.h"
 #include "remote_q1_private.h"
 #include "remote_q1_prediction.h"
 #include "remote_q1_skins.h"
@@ -17,21 +18,13 @@ static int32_t source_atoi(const char *text)
     if (negative && value == 2147483648u) return INT32_MIN;
     return negative ? -(int32_t)value : (int32_t)value;
 }
-static bool info_value(const char *info, const char *key, char **out, qa_error *error)
+static bool info_value(const char *info,const char *key,char **out,qa_error *error)
 {
-    const char *value = ""; size_t length = 0, key_size = strlen(key);
-    const char *p = info ? info : ""; if (*p == '\\') ++p;
-    while (*p) {
-        const char *start = p; while (*p && *p != '\\') ++p;
-        if (!*p) break;
-        size_t name_size = (size_t)(p - start); const char *next = ++p;
-        while (*p && *p != '\\') ++p;
-        if (name_size == key_size && !memcmp(start, key, key_size)) value = next, length = (size_t)(p - next);
-        if (*p) ++p;
-    }
-    char *copy = malloc(length + 1);
-    if (!copy) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining QW userinfo value");
-    memcpy(copy, value, length); copy[length] = 0; free(*out); *out = copy; return true;
+    qa_bytes value;
+    qa_info_find(info?info:"",(qa_bytes){(const uint8_t *)key,strlen(key)},QA_INFO_LAST,&value);
+    char *copy=malloc(value.size+1);
+    if (!copy) return remote_q1_fail(error,QA_ERROR_MEMORY,"Retaining QW userinfo value");
+    memcpy(copy,value.data,value.size);copy[value.size]=0;free(*out);*out=copy;return true;
 }
 static bool info_set(char **info, const char *key, const char *value, qa_error *error)
 {
@@ -41,16 +34,14 @@ static bool info_set(char **info, const char *key, const char *value, qa_error *
     if (key_size > SIZE_MAX - 3 || value_size > SIZE_MAX - key_size - 3 || old_size > SIZE_MAX - key_size - value_size - 3) return false;
     char *copy = malloc(old_size + key_size + value_size + 3);
     if (!copy) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining QW setinfo map");
-    size_t used = 0; const char *p = old; if (*p == '\\') ++p;
-    while (*p) {
-        const char *name = p; while (*p && *p != '\\') ++p; if (!*p) break;
-        size_t length = (size_t)(p - name); const char *text = ++p;
-        while (*p && *p != '\\') ++p;
-        if (length != key_size || memcmp(name, key, length)) {
-            copy[used++] = '\\'; memcpy(copy + used, name, length); used += length;
-            copy[used++] = '\\'; length = (size_t)(p - text); memcpy(copy + used, text, length); used += length;
+    size_t used=0;
+    const char *p=old;
+    qa_bytes name,text;
+    while (qa_info_next(&p,&name,&text)) {
+        if (name.size!=key_size || memcmp(name.data,key,name.size)) {
+            copy[used++]='\\';memcpy(copy+used,name.data,name.size);used+=name.size;
+            copy[used++]='\\';memcpy(copy+used,text.data,text.size);used+=text.size;
         }
-        if (*p) ++p;
     }
     copy[used++] = '\\'; memcpy(copy + used, key, key_size); used += key_size;
     copy[used++] = '\\'; memcpy(copy + used, value, value_size); used += value_size; copy[used] = 0;

@@ -5,6 +5,43 @@
 #include <unicode/ucasemap.h>
 #include <unicode/utf8.h>
 
+bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value)
+{
+    const char *p=*cursor;
+    if (*p=='\\') ++p;
+    const char *separator=strchr(p,'\\');
+    if (!separator) return false;
+    const char *text=separator+1,*end=strchr(text,'\\');
+    if (!end) end=text+strlen(text);
+    *key=(qa_bytes){(const uint8_t *)p,(size_t)(separator-p)};
+    *value=(qa_bytes){(const uint8_t *)text,(size_t)(end-text)};
+    *cursor=end;
+    return true;
+}
+
+bool qa_info_find(const char *text,qa_bytes wanted,unsigned policy,qa_bytes *out)
+{
+    const char *cursor=text;
+    qa_bytes key,value;
+    bool found=false;
+    *out=(qa_bytes){(const uint8_t *)"",0};
+    while (qa_info_next(&cursor,&key,&value)) {
+        bool match=key.size==wanted.size;
+        if (policy&QA_INFO_CASE_FOLD) {
+            for (size_t i=0;match && i<key.size;++i) {
+                unsigned char a=key.data[i],b=wanted.data[i];
+                if (a>='A' && a<='Z') a+='a'-'A';
+                if (b>='A' && b<='Z') b+='a'-'A';
+                match=a==b;
+            }
+        } else if (match) match=!memcmp(key.data,wanted.data,key.size);
+        if (!match) continue;
+        *out=value;found=true;
+        if (!(policy&QA_INFO_LAST)) break;
+    }
+    return found;
+}
+
 static UChar32 next_code(qa_bytes input, size_t *cursor) {
     size_t remaining = input.size - *cursor;
     int32_t at = 0, length = (int32_t)(remaining < 4 ? remaining : 4);
