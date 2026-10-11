@@ -20,12 +20,13 @@
 #include <float.h>
 #include <math.h>
 
-typedef struct native_temporary {
+struct application_native_q2_scratch {
     size_t storage_slot;
-    struct native_temporary *next;
+    struct application_native_q2_scratch *next;
     qa_native_address address;
     size_t scratch_slot, scratch_count;
-} native_temporary;
+};
+typedef application_native_q2_scratch native_temporary;
 typedef struct native_global {
     size_t storage_slot;
     struct native_global *next;
@@ -751,6 +752,15 @@ static bool cleanup(application_native_q2_callbacks *o,native_global **globals,n
     }
     if(!ok&&e) *e=first;
     return ok;
+}
+bool application_native_q2_callbacks_scratch_acquire(application_native_q2_callbacks *o,
+    qa_bytes bytes,application_native_q2_scratch **owned,qa_native_address *out,qa_error *e)
+{return temporary(o,bytes,bytes.size,owned,out,e);}
+void application_native_q2_callbacks_scratch_release(application_native_q2_callbacks *o,
+    application_native_q2_scratch **owned)
+{
+    native_global *globals=NULL;
+    (void)cleanup(o,&globals,owned,NULL);
 }
 static bool projection_end(application_native_q2_callbacks *o,qa_error *e)
 {
@@ -1589,12 +1599,15 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
     if(!o->scratch) {
         qa_arena_destroy(&o->storage);
         qa_arena_init(&o->storage,0);
-        if(max_receipts>SIZE_MAX/64||max_values>SIZE_MAX/64||max_bytes>SIZE_MAX/64-15)
+        /* Each admitted damage transfer may hold three native vectors beside
+         * its authored callback arguments, until the synchronous call returns. */
+        if(max_receipts>SIZE_MAX/NQR_CALL_DEPTH-1||max_values>SIZE_MAX/NQR_CALL_DEPTH||
+            max_bytes>SIZE_MAX/NQR_CALL_DEPTH-63)
             return application_fail(e,QA_ERROR_MEMORY,"Native callback storage extent overflows");
-        o->scratch_bytes=((max_bytes+15)/16)*16*64;
-        if(!qa_pool_prepare(&o->receipts,&o->storage,max_receipts*64,sizeof(native_receipt),_Alignof(native_receipt),e)||
+        o->scratch_bytes=(((max_bytes+15)/16)*16+48)*NQR_CALL_DEPTH;
+        if(!qa_pool_prepare(&o->receipts,&o->storage,(max_receipts+1)*NQR_CALL_DEPTH,sizeof(native_receipt),_Alignof(native_receipt),e)||
             !qa_pool_prepare(&o->scratch_pages,&o->storage,o->scratch_bytes/16,16,16,e)||
-            !qa_pool_prepare(&o->region_values,&o->storage,max_values*64,sizeof(qa_native_value),_Alignof(qa_native_value),e)||
+            !qa_pool_prepare(&o->region_values,&o->storage,max_values*NQR_CALL_DEPTH,sizeof(qa_native_value),_Alignof(qa_native_value),e)||
             !qa_native_allocate(instance(o),o->scratch_bytes,INT32_MIN+13,&o->scratch,e)) return false;
         qa_arena_seal(&o->storage);
     }
