@@ -1,5 +1,6 @@
 #include "native_q3_client_internal.h"
 #include "qa/text.h"
+#include "../../presentation/q3_native/cgame_commands.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -18,33 +19,8 @@ struct frontend_native_q3_commands {
     size_t installed, contributed;
     bool registered, closed, busy;
 };
-static const char *const common[]={"testgun","testmodel","nextframe","prevframe","nextskin","prevskin","viewpos",
-    "+scores","-scores","+zoom","-zoom","sizeup","sizedown","weapnext","weapprev","weapon",
-    "tell_target","tell_attacker","vtell_target","vtell_attacker","tcmd"};
-static const char *const mission[]={"loadhud","nextTeamMember","prevTeamMember","nextOrder","confirmOrder","denyOrder",
-    "taskOffense","taskDefense","taskPatrol","taskCamp","taskFollow","taskRetrieve","taskEscort","taskSuicide","taskOwnFlag",
-    "tauntKillInsult","tauntPraise","tauntTaunt","tauntDeathInsult","tauntGauntlet","spWin","spLose","scoresDown","scoresUp"};
-static const char *const tail[]={"startOrbit","loaddeferred"};
-static const char *const forwarded[]={"kill","say","say_team","tell","vsay","vsay_team","vtell","vtaunt","vosay","vosay_team","votell",
-    "give","god","notarget","noclip","team","follow","levelshot","addbot","setviewpos","callvote","vote","callteamvote","teamvote",
-    "stats","teamtask","loaddefered"};
-#define QA_NATIVE_COUNT(array) (sizeof(array)/sizeof((array)[0]))
-static size_t local_count(qa_q3_product product)
-{ return QA_NATIVE_COUNT(common)+(product==QA_Q3_TEAM_ARENA?QA_NATIVE_COUNT(mission):0)+QA_NATIVE_COUNT(tail); }
-static size_t command_count(qa_q3_product product)
-{ return local_count(product)+QA_NATIVE_COUNT(forwarded); }
-static const char *command_name(qa_q3_product product,size_t index)
-{
-    if(index<QA_NATIVE_COUNT(common))return common[index];
-    index-=QA_NATIVE_COUNT(common);
-    if(product==QA_Q3_TEAM_ARENA) { if(index<QA_NATIVE_COUNT(mission))return mission[index]; index-=QA_NATIVE_COUNT(mission); }
-    if(index<QA_NATIVE_COUNT(tail))return tail[index];
-    index-=QA_NATIVE_COUNT(tail);
-    return index<QA_NATIVE_COUNT(forwarded)?forwarded[index]:NULL;
-}
 static unsigned char lower(unsigned char c) { return c>='A' && c<='Z'?(unsigned char)(c+32):c; }
-static bool equal(const char *a,const char *b)
-{ while(*a && *b && lower((unsigned char)*a)==lower((unsigned char)*b)) { ++a; ++b; } return !*a && !*b; }
+
 static int32_t signed_word(uint32_t word) { int32_t out; memcpy(&out,&word,4); return out; }
 static int32_t sum(int32_t a,int32_t b) { return signed_word((uint32_t)a+(uint32_t)b); }
 static int32_t integer(float value)
@@ -65,15 +41,15 @@ static const char *arg(const qa_command_invocation *command,size_t index,char ou
     const char *text=index<command->argc?command->argv[index]:"";
     size_t n=strlen(text); if(n>1023)n=1023; memcpy(out,text,n); out[n]=0; return out;
 }
-static bool set(frontend_native_q3 *row,const char *name,const char *value,qa_error *e)
-{ return qa_cvars_set(row->view.cvars,name,value,true,e); }
-static bool send(frontend_native_q3 *row,const char *text,qa_error *e)
-{ return qa_native_q3_client_reliable(row->view.client,text,e); }
-static bool append(frontend_native_q3 *row,const char *text,qa_error *e)
-{ return qa_native_q3_client_console(row->view.client,text,e); }
+static bool set(void *context,const qa_command_invocation *command,const char *name,const char *value,qa_error *e)
+{ (void)command; frontend_native_q3 *row=context; return qa_cvars_set(row->view.cvars,name,value,true,e); }
+static bool send(void *context,const qa_command_invocation *command,const char *text,qa_error *e)
+{ (void)command; frontend_native_q3 *row=context; return qa_native_q3_client_reliable(row->view.client,text,e); }
+static bool append(void *context,const qa_command_invocation *command,const char *text,qa_error *e)
+{ (void)command; frontend_native_q3 *row=context; return qa_native_q3_client_console(row->view.client,text,e); }
 static int32_t crosshair(const q3n_frame *f,const q3n_hud_state *hud)
 { return f->time>sum(hud->crosshair_client_time,1000)?-1:hud->crosshair_client; }
-static bool scores(frontend_native_q3_commands *o,const q3n_frame *f,qa_error *e)
+static bool scores(frontend_native_q3_commands *o,const qa_command_invocation *command,const q3n_frame *f,qa_error *e)
 {
     q3n_native_owners owners; frontend_native_q3 *row=o->row;
     if(!q3n_native_owners_read(row->view.core,&owners,e))return false;
@@ -81,7 +57,7 @@ static bool scores(frontend_native_q3_commands *o,const q3n_frame *f,qa_error *e
     const q3n_hud_state *hud=q3n_hud_read(owners.hud); bool due;
     if(!hud || !q3n_hud_scores_request(owners.hud,f,&due,e))return false;
     if(due) {
-        if(!send(row,"score",e))return false;
+        if(!send(row,command,"score",e))return false;
         if(!hud->show_scores && !q3n_server_commands_scores_clear(owners.commands,f,e))return false;
     }
     q3n_hud_scores(owners.hud,true,f->time); return true;
@@ -94,36 +70,36 @@ static bool dispatch_command(frontend_native_q3_commands *o,const qa_command_inv
     const q3n_hud_state *hud=q3n_hud_read(owners.hud);
     const q3n_command_state *state=q3n_server_commands_state(owners.commands);
     if(!hud || !state)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native console children are active");
-    if(equal(name,"testmodel") || equal(name,"testgun")) {
+    if(q3n_cgame_command_equal(name,"testmodel") || q3n_cgame_command_equal(name,"testgun")) {
         float back=0; const float *optional=NULL;
         if(command->argc==3) { char arg2[1024]; back=(float)qa_parse_quake_number(arg(command,2,arg2),QA_QUAKE_NUMBER_Q3_VM); optional=&back; }
-        return q3n_view_test_model(owners.view,f,command->argc<2?NULL:value,optional,equal(name,"testgun"),e);
+        return q3n_view_test_model(owners.view,f,command->argc<2?NULL:value,optional,q3n_cgame_command_equal(name,"testgun"),e);
     }
-    if(equal(name,"nextframe") || equal(name,"prevframe") || equal(name,"nextskin") || equal(name,"prevskin")) {
-        q3n_view_test_step(owners.view,equal(name,"nextskin") || equal(name,"prevskin"),lower((unsigned char)*name)=='n'?1:-1); return true;
+    if(q3n_cgame_command_equal(name,"nextframe") || q3n_cgame_command_equal(name,"prevframe") || q3n_cgame_command_equal(name,"nextskin") || q3n_cgame_command_equal(name,"prevskin")) {
+        q3n_view_test_step(owners.view,q3n_cgame_command_equal(name,"nextskin") || q3n_cgame_command_equal(name,"prevskin"),lower((unsigned char)*name)=='n'?1:-1); return true;
     }
-    if(equal(name,"+zoom") || equal(name,"-zoom")) { q3n_view_zoom(owners.view,*name=='+',f->time); return true; }
-    if(equal(name,"weapnext") || equal(name,"weapprev")) { q3n_weapons_cycle(f,equal(name,"weapnext")?1:-1); return true; }
-    if(equal(name,"weapon")) { q3n_weapons_select(f,game_atoi(value)); return true; }
-    if(equal(name,"viewpos")) {
+    if(q3n_cgame_command_equal(name,"+zoom") || q3n_cgame_command_equal(name,"-zoom")) { q3n_view_zoom(owners.view,*name=='+',f->time); return true; }
+    if(q3n_cgame_command_equal(name,"weapnext") || q3n_cgame_command_equal(name,"weapprev")) { q3n_weapons_cycle(f,q3n_cgame_command_equal(name,"weapnext")?1:-1); return true; }
+    if(q3n_cgame_command_equal(name,"weapon")) { q3n_weapons_select(f,game_atoi(value)); return true; }
+    if(q3n_cgame_command_equal(name,"viewpos")) {
         snprintf(text,sizeof(text),"(%i %i %i) : %i\n",integer(f->refdef.origin.x),integer(f->refdef.origin.y),
             integer(f->refdef.origin.z),integer(f->view_angles.y)); qa_console_emit(row->console,&command->context,text); return true;
     }
-    if(equal(name,"sizeup") || equal(name,"sizedown")) {
+    if(q3n_cgame_command_equal(name,"sizeup") || q3n_cgame_command_equal(name,"sizedown")) {
         qa_native_q3_client_cvar cached;
         if(!qa_native_q3_client_cvar_read(row->view.client,QA_NATIVE_Q3_CVAR_cg_viewsize,&cached,e))return false;
-        snprintf(text,sizeof(text),"%i",sum(cached.integer,equal(name,"sizeup")?10:-10)); return set(row,"cg_viewsize",text,e);
+        snprintf(text,sizeof(text),"%i",sum(cached.integer,q3n_cgame_command_equal(name,"sizeup")?10:-10)); return set(row,command,"cg_viewsize",text,e);
     }
-    if(equal(name,"+scores"))return scores(o,f,e);
-    if(equal(name,"-scores")) { if(hud->show_scores)q3n_hud_scores(owners.hud,false,f->time); return true; }
-    if(equal(name,"tcmd")) {
+    if(q3n_cgame_command_equal(name,"+scores"))return scores(o,command,f,e);
+    if(q3n_cgame_command_equal(name,"-scores")) { if(hud->show_scores)q3n_hud_scores(owners.hud,false,f->time); return true; }
+    if(q3n_cgame_command_equal(name,"tcmd")) {
         int32_t target=crosshair(f,hud); if(target==0)return true;
         char narrow[4]={0}; size_t n=strlen(value); if(n>3)n=3; memcpy(narrow,value,n);
-        snprintf(text,sizeof(text),"gc %i %i",target,game_atoi(narrow)); return append(row,text,e);
+        snprintf(text,sizeof(text),"gc %i %i",target,game_atoi(narrow)); return append(row,command,text,e);
     }
-    if(equal(name,"tell_target") || equal(name,"tell_attacker") || equal(name,"vtell_target") || equal(name,"vtell_attacker")) {
+    if(q3n_cgame_command_equal(name,"tell_target") || q3n_cgame_command_equal(name,"tell_attacker") || q3n_cgame_command_equal(name,"vtell_target") || q3n_cgame_command_equal(name,"vtell_attacker")) {
         const q3n_player_feedback *feedback=q3n_player_state_feedback(owners.player_state);
-        bool target=equal(name,"tell_target") || equal(name,"vtell_target");
+        bool target=q3n_cgame_command_equal(name,"tell_target") || q3n_cgame_command_equal(name,"vtell_target");
         int32_t client=target?crosshair(f,hud):feedback && feedback->attacker_time?f->local_player.persistant[6]:-1;
         if(client==-1)return true;
         char args[1024]={0}; size_t used=0;
@@ -137,69 +113,28 @@ static bool dispatch_command(frontend_native_q3_commands *o,const qa_command_inv
         size_t prefix=(size_t)snprintf(text,128,"%s %i ",lower((unsigned char)*name)=='v'?"vtell":"tell",client);
         size_t message=strlen(args); if(message>127-prefix)message=127-prefix;
         memcpy(text+prefix,args,message); text[prefix+message]=0;
-        return send(row,text,e);
+        return send(row,command,text,e);
     }
-    if(equal(name,"loaddeferred")) {
+    if(q3n_cgame_command_equal(name,"loaddeferred")) {
         q3n_native_frame_options projected;
         if(!frontend_native_q3_project_settings(row,&projected,e))return false;
         return q3n_clients_load_deferred(owners.clients,f->application,&f->source,&projected.clients,e);
     }
-    if(equal(name,"startOrbit")) {
+    if(q3n_cgame_command_equal(name,"startOrbit")) {
         const qa_cvar_view *developer=qa_cvars_find(row->view.cvars,"developer");
         if(!developer || !game_atoi(developer->value))return true;
         qa_native_q3_client_cvar cached;
         if(!qa_native_q3_client_cvar_read(row->view.client,QA_NATIVE_Q3_CVAR_cg_cameraOrbit,&cached,e))return false;
-        if(cached.number!=0)return set(row,"cg_cameraOrbit","0",e) && set(row,"cg_thirdPerson","0",e);
-        return set(row,"cg_cameraOrbit","5",e) && set(row,"cg_thirdPerson","1",e) &&
-            set(row,"cg_thirdPersonAngle","0",e) && set(row,"cg_thirdPersonRange","100",e);
+        if(cached.number!=0)return set(row,command,"cg_cameraOrbit","0",e) && set(row,command,"cg_thirdPerson","0",e);
+        return set(row,command,"cg_cameraOrbit","5",e) && set(row,command,"cg_thirdPerson","1",e) &&
+            set(row,command,"cg_thirdPersonAngle","0",e) && set(row,command,"cg_thirdPersonRange","100",e);
     }
-    if(!row->view.mission)return frontend_fail(e,QA_ERROR_UNSUPPORTED,"Team Arena console requires its actual menu owner");
-    if(equal(name,"loadhud")) {
-        const qa_cvar_view *file=qa_cvars_find(row->view.cvars,"cg_hudFiles");
-        const char *path=file && *file->value?file->value:"ui/hud.txt";
-        size_t n=strlen(path); if(n>1023)n=1023; memcpy(text,path,n); text[n]=0;
-        return q3n_mission_hud_reset(row->view.mission,f,true,e) && q3n_mission_hud_load_menus(row->view.mission,f,text,e);
-    }
-    if(equal(name,"scoresDown") || equal(name,"scoresUp"))return q3n_mission_hud_scroll(row->view.mission,f,equal(name,"scoresDown"),e);
-    if(equal(name,"nextTeamMember") || equal(name,"prevTeamMember"))return q3n_mission_hud_select(row->view.mission,f,equal(name,"nextTeamMember"),e);
-    if(equal(name,"nextOrder"))return q3n_mission_hud_next_order(row->view.mission,f,e);
-    if(equal(name,"confirmOrder") || equal(name,"denyOrder")) {
-        bool yes=equal(name,"confirmOrder"); int32_t leader=state->accept_leader,task=state->accept_task,until=state->accept_order_time;
-        snprintf(text,sizeof(text),"cmd vtell %d %s\n",leader,yes?"yes":"no");
-        if(!append(row,text,e) || !append(row,yes?"+button5; wait; -button5":"+button6; wait; -button6",e))return false;
-        if(f->time<until) {
-            if(yes) { snprintf(text,sizeof(text),"teamtask %d\n",task); if(!send(row,text,e))return false; }
-            return q3n_server_commands_order_answered(owners.commands,f,e);
-        }
-        return true;
-    }
-    static const char *const tasks[]={"taskOffense","taskDefense","taskPatrol","taskCamp","taskFollow","taskRetrieve","taskEscort"};
-    static const char *const voices[]={"onoffense","ondefense","onpatrol","oncamp","onfollow","onreturnflag","onfollowcarrier"};
-    static const int32_t ids[]={1,2,3,7,4,5,6};
-    for(size_t i=0;i<QA_NATIVE_COUNT(tasks);++i)if(equal(name,tasks[i])) {
-        const char *voice=i==0 && (state->game_type==4 || state->game_type==5)?"ongetflag":voices[i];
-        snprintf(text,sizeof(text),"cmd vsay_team %s\n",voice); if(!append(row,text,e))return false;
-        snprintf(text,sizeof(text),"teamtask %d\n",ids[i]); return send(row,text,e);
-    }
-    if(equal(name,"taskOwnFlag"))return append(row,"cmd vsay_team ihaveflag\n",e);
-    if(equal(name,"taskSuicide")) { int32_t target=crosshair(f,hud); if(target==-1)return true;
-        snprintf(text,128,"tell %i suicide",target); return send(row,text,e); }
-    static const char *const taunts[]={"tauntKillInsult","tauntPraise","tauntTaunt","tauntDeathInsult","tauntGauntlet"};
-    static const char *const calls[]={"cmd vsay kill_insult\n","cmd vsay praise\n","cmd vtaunt\n","cmd vsay death_insult\n","cmd vsay kill_guantlet\n"};
-    for(size_t i=0;i<QA_NATIVE_COUNT(taunts);++i)if(equal(name,taunts[i]))return append(row,calls[i],e);
-    if(equal(name,"spWin") || equal(name,"spLose")) {
-        bool win=equal(name,"spWin"); const q3n_media_view *media=q3n_media_read(owners.media);
-        const qa_cvar_view *center_time=qa_cvars_find(row->view.cvars,"cg_centertime");
-        uint64_t duration=(uint64_t)(fmax(0,fmin(86400,center_time?center_time->number:3))*1e9);
-        return media && set(row,"cg_cameraOrbit","2",e) && set(row,"cg_cameraOrbitDelay","35",e) &&
-            set(row,"cg_thirdPerson","1",e) && set(row,"cg_thirdPersonAngle","0",e) && set(row,"cg_thirdPersonRange","100",e) &&
-            q3n_events_buffer(owners.events,media->sounds[win?Q3N_S_WINNER:Q3N_S_LOSER],e) &&
-            qa_hud_center_print(row->frontend->seats[row->view.seat].hud,win?"YOU WIN!":"YOU LOSE...",
-                (uint64_t)(uint32_t)f->time*UINT64_C(1000000),duration,
-                (qa_hud_center_policy){.instant=true,.source_layout=true,.y=144,.character_width=0,.fade_ns=UINT64_C(200000000)},e);
-    }
-    return frontend_fail(e,QA_ERROR_FORMAT,"Native registered console command lacks its genuine handler");
+    q3n_cgame_command_services shared={.context=row,.cvars=row->view.cvars,.mission=row->view.mission,
+        .hud=owners.hud,.messages=row->frontend->seats[row->view.seat].hud,
+        .commands=owners.commands,.media=owners.media,.events=owners.events,.set=set,.send=send,.append=append};
+    return q3n_cgame_mission_command(&shared,command,f,e);
 }
+
 static void dispose(frontend_native_q3_commands *o,const q3n_frame *frame)
 {
     q3n_native_owners owners;
@@ -255,8 +190,8 @@ static bool bind_commands(frontend_native_q3_commands *o,size_t count,qa_error *
     native_dispatch *d=o->dispatch;
     qa_command_context constructor=o->constructor;
     for(size_t i=0;i<count;++i) {
-        const char *name=command_name(d->product,i);
-        if(i<local_count(d->product) && i>=o->installed) {
+        const char *name=q3n_cgame_command_name(d->product,i);
+        if(i<q3n_cgame_local_command_count(d->product) && i>=o->installed) {
             if(!qa_console_register_context(d->console,&constructor,name,NULL,d->source,
                 o->row->view.service_owner,false,handle,d,e))return false;
             o->installed=i+1;
@@ -273,7 +208,7 @@ static bool bind_commands(frontend_native_q3_commands *o,size_t count,qa_error *
 bool frontend_native_q3_commands_register(frontend_native_q3_commands *o,const q3n_frame *f,qa_error *e)
 {
     if(!o || o->busy || o->registered || !frontend_native_q3_cut(o->row,f,e))return false;
-    o->busy=true; bool ok=bind_commands(o,command_count(o->dispatch->product),e);
+    o->busy=true; bool ok=bind_commands(o,q3n_cgame_command_count(o->dispatch->product),e);
     if(ok)o->registered=true;
     o->busy=false; return ok;
 }
@@ -284,8 +219,8 @@ bool frontend_native_q3_commands_destroy(frontend_native_q3_commands *o,qa_error
     if(o->busy || !qa_console_idle(o->dispatch->console))return frontend_fail(e,QA_ERROR_ARGUMENT,"Native console teardown requires inactive callbacks");
     native_dispatch *d=o->dispatch;
     qa_command_context constructor=o->constructor;
-    for(size_t i=0;i<o->installed;++i)qa_console_unregister_context(d->console,&constructor,command_name(d->product,i),d->source);
-    for(size_t i=0;i<o->contributed;++i)qa_console_uncontribute(d->console,command_name(d->product,i),d->source,o->row->view.service_owner);
+    for(size_t i=0;i<o->installed;++i)qa_console_unregister_context(d->console,&constructor,q3n_cgame_command_name(d->product,i),d->source);
+    for(size_t i=0;i<o->contributed;++i)qa_console_uncontribute(d->console,q3n_cgame_command_name(d->product,i),d->source,o->row->view.service_owner);
     if(!--d->users)free(d);
     free(o); return true;
 }

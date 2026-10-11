@@ -1528,6 +1528,7 @@ add_library(qa_q3_native_presentation STATIC
     src/presentation/q3_native/remote_frame.c
     src/presentation/q3_native/weapon.c
     src/presentation/q3_native/client_info.c
+    src/presentation/q3_native/cgame_commands.c
     src/presentation/q3_native/events.c
     src/presentation/q3_native/effects.c
     src/presentation/q3_native/local_entities.c
