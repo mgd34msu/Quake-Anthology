@@ -33,7 +33,7 @@ static void sweep(application_bot_transport *transport) {
     for(size_t i=0;i<transport->count;++i) {
         bot_connection *entry=transport->connections[i];
         if(entry->active) transport->connections[retained++]=entry;
-        else {free(entry->snapshot);free(entry);}
+        else {qa_q3_reliable_clear(&entry->reliable);free(entry->snapshot);free(entry);}
     }
     transport->count=retained;
 }
@@ -48,7 +48,10 @@ bool application_bot_transport_create(const application_bot_transport_services *
 bool application_bot_transport_destroy(application_bot_transport *transport,qa_error *error) {
     if(!transport) return true;
     if(transport->calls) return fail(error,"local bot transport is executing a source callback");
-    for(size_t i=0;i<transport->count;++i) {free(transport->connections[i]->snapshot);free(transport->connections[i]);}
+    for(size_t i=0;i<transport->count;++i) {
+        qa_q3_reliable_clear(&transport->connections[i]->reliable);
+        free(transport->connections[i]->snapshot);free(transport->connections[i]);
+    }
     free(transport->connections);free(transport);return true;
 }
 bool application_bot_transport_can_destroy(const application_bot_transport *transport) {return !transport || !transport->calls;}
@@ -64,10 +67,11 @@ bool application_bot_transport_open(application_bot_transport *transport,uint32_
     if(transport->count>=SIZE_MAX/sizeof(*transport->connections)) return fail(error,"local bot transport roster exceeds its extent");
     bot_connection *entry=calloc(1,sizeof(*entry));
     if(!entry) {qa_error_set(error,QA_ERROR_MEMORY,0,"allocating local bot reliable owner");return false;}
+    if(!qa_q3_reliable_prepare(&entry->reliable,error)) { free(entry);return false; }
     bot_connection **entries=realloc(transport->connections,(transport->count+1)*sizeof(*entries));
-    if(!entries) {free(entry);qa_error_set(error,QA_ERROR_MEMORY,0,"growing local bot connection map");return false;}
-    transport->connections=entries;*entry=(bot_connection){.client=client,.actor=actor,.active=true};
-    qa_q3_reliable_init(&entry->reliable);entries[transport->count++]=entry;return true;
+    if(!entries) {qa_q3_reliable_clear(&entry->reliable);free(entry);qa_error_set(error,QA_ERROR_MEMORY,0,"growing local bot connection map");return false;}
+    transport->connections=entries;entry->client=client;entry->actor=actor;entry->active=true;
+    entries[transport->count++]=entry;return true;
 }
 bool application_bot_transport_close(application_bot_transport *transport,uint32_t client,qa_error *error) {
     if(!transport) return fail(error,"local bot transport owner is absent");
@@ -100,7 +104,7 @@ bool application_bot_transport_console(application_bot_transport *transport,uint
     if(entry->reliable.acknowledged==entry->reliable.sequence) return true;
     if(entry->reliable.acknowledged==INT32_MAX) return fail(error,"raw bot reliable acknowledgement exceeds its signed source domain");
     int32_t next=entry->reliable.acknowledged+1;entry->reliable.acknowledged=next;
-    const char *text=entry->reliable.text[(uint32_t)next&(QA_Q3_RELIABLE-1)];
+    const char *text=qa_q3_reliable_lookup(&entry->reliable,next);
     if(!*text) return true;
     size_t size=strlen(text);if(size>=capacity) size=capacity-1;
     memcpy(out,text,size);out[size]=0;*found=true;return true;
@@ -146,11 +150,11 @@ static bool connection_fields(qa_source_save_io *io,application_bot_transport *t
     if(!transport->services.client(transport->services.context,entry->actor,&actual,io->error)) return false;
     if(actual!=entry->client) return bot_save_fail(io,QA_ERROR_FORMAT,"local bot source client binding differs");
     for(size_t i=0;i<QA_Q3_RELIABLE;++i) {
-        const char *text=reading?NULL:entry->reliable.text[i];
+        const char *text=reading?NULL:qa_q3_reliable_lookup(&entry->reliable,(int32_t)i);
         if(!bot_save_text(io,&text)) return false;
         bool valid=text && strlen(text)<QA_Q3_COMMAND_CHARS;
         if(reading) {
-            if(valid) memcpy(entry->reliable.text[i],text,strlen(text)+1);
+            if(valid) valid=qa_q3_reliable_restore_slot(&entry->reliable,i,text,io->error);
             free((void *)text);
         }
         if(!valid) return bot_save_fail(io,QA_ERROR_FORMAT,"invalid local bot reliable slot continuation");

@@ -74,7 +74,7 @@ bool qa_q3_client_peer_checkpoint(const qa_q3_client_peer *p, qa_buffer *out, qa
         (p->demo || qa_q3_channel_checkpoint(p->channel, &w)) &&
         qa_net_write_i32(&w, p->reliable.sequence) && qa_net_write_i32(&w, p->reliable.acknowledged);
     for (size_t i = 0; ok && i < QA_Q3_RELIABLE; ++i)
-        ok = q3_save_text(&w, p->reliable.text[i], QA_Q3_COMMAND_CHARS) &&
+        ok = q3_save_text(&w,qa_q3_reliable_lookup(&p->reliable,(int32_t)i),QA_Q3_COMMAND_CHARS) &&
             q3_save_text(&w, q3_client_command_text(p,i), QA_Q3_COMMAND_CHARS);
     ok = ok && qa_net_write_i32(&w, p->server_message_sequence) &&
         qa_net_write_i32(&w, p->server_command_sequence) && qa_net_write_i32(&w, p->last_executed_server_command) &&
@@ -130,9 +130,12 @@ bool qa_q3_client_peer_restore(qa_bytes bytes, qa_q3_identity identity,
     }
     p->reliable.sequence = qa_net_read_i32(&r); p->reliable.acknowledged = qa_net_read_i32(&r);
     char commands[QA_Q3_RELIABLE][QA_Q3_COMMAND_CHARS];
-    for (size_t i = 0; i < QA_Q3_RELIABLE; ++i)
-        if (!qa_net_read_string(&r, p->reliable.text[i], QA_Q3_COMMAND_CHARS) ||
-            !qa_net_read_string(&r, commands[i], QA_Q3_COMMAND_CHARS)) goto failure;
+    for(size_t i=0;i<QA_Q3_RELIABLE;++i) {
+        char command[QA_Q3_COMMAND_CHARS];
+        if(!qa_net_read_string(&r,command,sizeof(command)) ||
+            !qa_q3_reliable_restore_slot(&p->reliable,i,command,error) ||
+            !qa_net_read_string(&r,commands[i],QA_Q3_COMMAND_CHARS)) goto failure;
+    }
     p->server_message_sequence = qa_net_read_i32(&r); p->server_command_sequence = qa_net_read_i32(&r);
     p->last_executed_server_command = qa_net_read_i32(&r); p->server_id = qa_net_read_i32(&r);
     p->last_packet_sent_time = qa_net_read_i32(&r); p->receive_time = qa_net_read_i32(&r);

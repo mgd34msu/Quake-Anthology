@@ -190,25 +190,80 @@ bool qa_q3_xor_client(uint8_t *data, size_t size, int32_t challenge,
 void qa_q3_xor_server(uint8_t *data, size_t size, int32_t challenge, uint32_t sequence, const char *command) {
     xor_payload(data, size, 4, (uint32_t)challenge ^ sequence, command);
 }
-void qa_q3_reliable_init(qa_q3_reliable *r) { memset(r, 0, sizeof(*r)); }
-const char *qa_q3_reliable_lookup(const qa_q3_reliable *r, int32_t sequence) { return r->text[(uint32_t)sequence & 63]; }
-bool qa_q3_reliable_add(qa_q3_reliable *r, qa_q3_role role, const char *text, qa_error *error) {
-    if (!r || !text) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 reliable command");
-    int64_t outstanding = (int64_t)r->sequence - r->acknowledged;
-    if (role == QA_Q3_CLIENT && outstanding > QA_Q3_RELIABLE) return fail(error, QA_ERROR_FORMAT, "Q3 client reliable command overflow");
-    if (r->sequence == INT32_MAX) return fail(error, QA_ERROR_FORMAT, "Q3 reliable sequence exhausted; reconnect required");
+void qa_q3_reliable_init(qa_q3_reliable *r) { memset(r,0,sizeof(*r)); }
+bool qa_q3_reliable_prepare(qa_q3_reliable *r,qa_error *error)
+{
+    if(!r->storage) r->storage=qa_event_ring_create((QA_Q3_RELIABLE+2)*2048,
+        2048,QA_Q3_RELIABLE+2,error);
+    return r->storage!=NULL;
+}
+void qa_q3_reliable_clear(qa_q3_reliable *r)
+{
+    for(size_t i=0;i<QA_Q3_RELIABLE;++i)
+        if(r->slots[i].lease) qa_event_lease_release(r->slots[i].lease);
+    qa_event_ring_destroy(&r->storage);
+    qa_q3_reliable_init(r);
+}
+const char *qa_q3_reliable_lookup(const qa_q3_reliable *r,int32_t sequence)
+{
+    const qa_q3_reliable_reference *ref=&r->slots[(uint32_t)sequence & (QA_Q3_RELIABLE-1)];
+    if(!ref->text) return "";
+    if(ref->config_index==UINT32_MAX) return ref->text;
+    qa_q3_reliable *cache=(qa_q3_reliable *)r;
+    qa_q3_configstring_command(ref->config_index,ref->text,ref->fragment,cache->command);
+    return cache->command;
+}
+bool qa_q3_reliable_admit(qa_q3_reliable *r,qa_q3_role role,qa_event_lease *lease,
+    const char *text,uint32_t config_index,uint32_t fragment,qa_error *error)
+{
+    int64_t outstanding=(int64_t)r->sequence-r->acknowledged;
+    if(role==QA_Q3_CLIENT && outstanding>QA_Q3_RELIABLE) return fail(error,QA_ERROR_FORMAT,"Q3 client reliable command overflow");
+    if(r->sequence==INT32_MAX) return fail(error,QA_ERROR_FORMAT,"Q3 reliable sequence exhausted; reconnect required");
     ++r->sequence;
-    if (role == QA_Q3_SERVER && outstanding == QA_Q3_RELIABLE) return fail(error, QA_ERROR_FORMAT, "Q3 server reliable command overflow");
-    size_t n = strlen(text);
-    if (n >= QA_Q3_COMMAND_CHARS) n = QA_Q3_COMMAND_CHARS - 1;
-    char *target = r->text[(uint32_t)r->sequence & 63];
-    memcpy(target, text, n); target[n] = 0;
+    if(role==QA_Q3_SERVER && outstanding==QA_Q3_RELIABLE) return fail(error,QA_ERROR_FORMAT,"Q3 server reliable command overflow");
+    qa_q3_reliable_reference *slot=&r->slots[(uint32_t)r->sequence & (QA_Q3_RELIABLE-1)];
+    qa_event_lease_retain(lease);
+    if(slot->lease) qa_event_lease_release(slot->lease);
+    *slot=(qa_q3_reliable_reference){lease,text,config_index,fragment};
+    return true;
+}
+static bool reliable_text(qa_q3_reliable *r,const char *text,qa_event_lease **out,qa_error *error)
+{
+    qa_event_transaction transaction;
+    if(!qa_event_ring_begin(r->storage,&transaction)) return fail(error,QA_ERROR_MEMORY,"Q3 command pages are full");
+    char *row=qa_event_ring_alloc(&transaction,QA_Q3_COMMAND_CHARS,1,error);
+    if(!row) { qa_event_ring_abort(&transaction);return false; }
+    size_t count=strlen(text);if(count>=QA_Q3_COMMAND_CHARS) count=QA_Q3_COMMAND_CHARS-1;
+    memset(row,0,QA_Q3_COMMAND_CHARS);memcpy(row,text,count);
+    uint64_t id=qa_event_ring_commit(&transaction,row);
+    if(!id) return fail(error,QA_ERROR_MEMORY,"Q3 command pages are full");
+    *out=qa_event_ring_retain(r->storage,id);
+    qa_event_ring_retire(r->storage,id+1);
+    return true;
+}
+bool qa_q3_reliable_add(qa_q3_reliable *r,qa_q3_role role,const char *text,qa_error *error)
+{
+    if(!r || !text || !r->storage) return fail(error,QA_ERROR_ARGUMENT,"Q3 wire command pages are not prepared");
+    qa_event_lease *lease=NULL;
+    if(!reliable_text(r,text,&lease,error)) return false;
+    bool okay=qa_q3_reliable_admit(r,role,lease,qa_event_lease_record(lease),UINT32_MAX,0,error);
+    qa_event_lease_release(lease);return okay;
+}
+bool qa_q3_reliable_restore_slot(qa_q3_reliable *r,size_t index,const char *text,qa_error *error)
+{
+    qa_event_lease *lease=NULL;
+    if(*text && (!qa_q3_reliable_prepare(r,error) || !reliable_text(r,text,&lease,error))) return false;
+    qa_q3_reliable_reference *slot=&r->slots[index];
+    if(slot->lease) qa_event_lease_release(slot->lease);
+    *slot=(qa_q3_reliable_reference){.lease=lease,.text=lease ? qa_event_lease_record(lease) : NULL,.config_index=UINT32_MAX};
     return true;
 }
 bool qa_q3_reliable_ack(qa_q3_reliable *r, qa_q3_role role, int32_t value, bool *clamped, qa_error *error) {
     if (!r || !clamped || value < 0 || value > r->sequence) return fail(error, QA_ERROR_FORMAT, "Invalid Q3 reliable acknowledgement");
     *clamped = (int64_t)value < (int64_t)r->sequence - QA_Q3_RELIABLE;
     r->acknowledged = *clamped ? r->sequence : value;
+    const qa_event_lease *lease=r->slots[(uint32_t)r->acknowledged & (QA_Q3_RELIABLE-1)].lease;
+    if(lease) r->event_cursor=qa_event_lease_id(lease)+1;
     if (*clamped && role == QA_Q3_SERVER) return fail(error, QA_ERROR_FORMAT, "Stale Q3 client reliable acknowledgement");
     return true;
 }

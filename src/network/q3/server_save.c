@@ -56,7 +56,7 @@ bool qa_q3_server_peer_checkpoint(const qa_q3_server_peer *p, qa_buffer *out, qa
         qa_net_write_u8(&w, s->pure_authentic) && qa_net_write_u8(&w, s->got_pure_command) &&
         qa_net_write_u8(&w, s->rate_delayed) && q3_save_usercmd(&w, &s->last_usercmd) &&
         qa_net_write_i32(&w, p->reliable.sequence) && qa_net_write_i32(&w, p->reliable.acknowledged);
-    for (size_t i = 0; ok && i < QA_Q3_RELIABLE; ++i) ok = q3_save_text(&w, p->reliable.text[i], QA_Q3_COMMAND_CHARS);
+    for (size_t i = 0; ok && i < QA_Q3_RELIABLE; ++i) ok = q3_save_text(&w, qa_q3_reliable_lookup(&p->reliable,(int32_t)i), QA_Q3_COMMAND_CHARS);
     ok = ok && q3_save_text(&w, p->last_command, sizeof(p->last_command)) &&
         q3_save_gamestate(&w, &p->gamestate) && qa_net_write_u64(&w, p->entity_number);
     for (size_t i = 0; ok && i < QA_Q3_PACKET_BACKUP; ++i) ok = q3_save_snapshot(&w, &p->history[i]);
@@ -103,8 +103,11 @@ bool qa_q3_server_peer_restore(qa_bytes bytes, qa_q3_identity identity,
     s->pure_authentic = q3_save_bool(&r); s->got_pure_command = q3_save_bool(&r); s->rate_delayed = q3_save_bool(&r);
     if (!q3_restore_usercmd(&r, &s->last_usercmd)) goto failure;
     p->reliable.sequence = qa_net_read_i32(&r); p->reliable.acknowledged = qa_net_read_i32(&r);
-    for (size_t i = 0; i < QA_Q3_RELIABLE; ++i)
-        if (!qa_net_read_string(&r, p->reliable.text[i], QA_Q3_COMMAND_CHARS)) goto failure;
+    for(size_t i=0;i<QA_Q3_RELIABLE;++i) {
+        char command[QA_Q3_COMMAND_CHARS];
+        if(!qa_net_read_string(&r,command,sizeof(command)) ||
+            !qa_q3_reliable_restore_slot(&p->reliable,i,command,error)) goto failure;
+    }
     if (!qa_net_read_string(&r, p->last_command, sizeof(p->last_command)) ||
         !q3_restore_gamestate(&r, &p->gamestate)) goto failure;
     p->entity_number = qa_net_read_u64(&r);

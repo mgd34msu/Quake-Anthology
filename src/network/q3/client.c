@@ -67,6 +67,7 @@ static bool create_peer(qa_q3_identity identity, qa_q3_product product, const qa
     if (!demo && !qa_q3_channel_create(QA_Q3_CLIENT, qport, &p->channel, e)) { free(p); return false; }
     p->command_events=qa_event_ring_create((QA_Q3_RELIABLE+2)*4096,2048,QA_Q3_RELIABLE+2,e);
     if(!p->command_events) { qa_q3_channel_destroy(p->channel); free(p); return false; }
+    if(!qa_q3_reliable_prepare(&p->reliable,e)) { qa_q3_client_peer_destroy(p);return false; }
     p->command_cursor=qa_event_ring_first(p->command_events);
     p->identity = identity; p->product = product; if (remote) p->remote = *remote; p->demo = demo; p->challenge = challenge; p->hooks = *hooks;
     p->generation = hooks->generation(hooks->context); p->demo_waiting = true;
@@ -86,6 +87,7 @@ bool qa_q3_client_peer_create_demo(qa_q3_identity identity, qa_q3_product produc
 void qa_q3_client_peer_destroy(qa_q3_client_peer *p) {
     if (!p) return;
     qa_q3_channel_destroy(p->channel);
+    qa_q3_reliable_clear(&p->reliable);
     for(size_t i=0;i<QA_Q3_RELIABLE;++i) if(p->server_commands[i]) qa_event_lease_release(p->server_commands[i]);
     qa_event_ring_destroy(&p->command_events);
     for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) free(p->history[i].entities);
@@ -380,7 +382,7 @@ bool qa_q3_client_peer_send(qa_q3_client_peer *p, const qa_q3_client_send *optio
     if (pending > QA_Q3_RELIABLE + 1) return fail(e, QA_ERROR_FORMAT, "Invalid Q3 client reliable range");
     for (int64_t n = (int64_t)p->reliable.acknowledged + 1; n <= p->reliable.sequence; ++n) {
         qa_q3_command *command = &message.commands[message.command_count++];
-        command->sequence = (int32_t)n; memcpy(command->text, qa_q3_reliable_lookup(&p->reliable, (int32_t)n), sizeof(command->text));
+        command->sequence = (int32_t)n; snprintf(command->text,sizeof(command->text),"%s",qa_q3_reliable_lookup(&p->reliable,(int32_t)n));
     }
     uint32_t sequence = qa_q3_channel_outgoing(p->channel);
     unsigned dup = options->packet_dup > 5 ? 5 : options->packet_dup;

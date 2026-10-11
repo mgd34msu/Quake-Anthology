@@ -337,6 +337,7 @@ void q3g_clients_clear(struct application_q3_guest *engine)
         q3g_client *client = &engine->clients[i];
         free(client->userinfo); free(client->retirement_reason); free(client->big_configstring); free(client->gamestate);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j) free(client->snapshots[j].entities);
+        qa_q3_reliable_clear(&client->reliable);
         *client = (q3g_client){.sensitivity = 1};
         qa_q3_reliable_init(&client->reliable);
     }

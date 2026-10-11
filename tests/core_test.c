@@ -2149,6 +2149,48 @@ static bool q3_test_download(void *context,const qa_q3_download *download,qa_err
 static bool q3_test_command(void *context,int32_t sequence,const qa_q3_tokens *tokens,qa_error *error)
 { (void)error;CHECK(tokens->count>0);q3_command_test *state=context;state->sequence=sequence;++state->calls;return true; }
 static bool q3_test_local(void *context) { (void)context;return false; }
+static void test_q3_reliable_event_references(void)
+{
+    qa_error error={0};
+    qa_event_ring *ring=qa_event_ring_create(8192,4096,4,&error);
+    CHECK(ring!=NULL);
+    qa_event_transaction transaction;
+    CHECK(qa_event_ring_begin(ring,&transaction));
+    char *text=qa_event_ring_alloc(&transaction,2501,1,&error);
+    CHECK(text!=NULL);
+    for(size_t i=0;i<2500;++i) text[i]=(char)('a'+i%26);
+    text[2500]=0;
+    uint64_t id=qa_event_ring_commit(&transaction,text);
+    CHECK(id!=0);
+    qa_event_lease *lease=qa_event_ring_retain(ring,id);
+    CHECK(lease!=NULL);
+    qa_q3_reliable histories[2]={0};
+    for(size_t reader=0;reader<2;++reader)
+        for(uint32_t fragment=0;fragment<3;++fragment)
+            CHECK(qa_q3_reliable_admit(histories+reader,QA_Q3_SERVER,lease,text,42,fragment,&error));
+    qa_event_ring_retire(ring,id+1);
+    CHECK(qa_event_ring_at(ring,id)==NULL);
+    qa_event_lease_release(lease);
+    qa_event_ring_destroy(&ring);
+    bool clamped=false;
+    CHECK(qa_q3_reliable_ack(histories,QA_Q3_SERVER,3,&clamped,&error));
+    CHECK(!clamped && histories[0].event_cursor==id+1);
+    qa_q3_reliable_clear(histories);
+    for(int32_t sequence=1;sequence<=3;++sequence) {
+        qa_q3_tokens tokens;
+        CHECK(qa_q3_tokenize(qa_q3_reliable_lookup(histories+1,sequence),&tokens,&error));
+        CHECK(tokens.count==3);
+        CHECK(!strcmp(qa_q3_token(&tokens,0),sequence==1 ? "bcs0" : sequence==2 ? "bcs1" : "bcs2"));
+        CHECK(!strcmp(qa_q3_token(&tokens,1),"42"));
+        size_t offset=(size_t)(sequence-1)*999,count=2500-offset;
+        if(count>999) count=999;
+        CHECK(strlen(qa_q3_token(&tokens,2))==count);
+        CHECK(!memcmp(qa_q3_token(&tokens,2),text+offset,count));
+        CHECK(histories[1].slots[sequence].text==text && !histories[1].storage);
+    }
+    qa_q3_reliable_clear(histories+1);
+}
+
 static void test_q3_received_commands(void)
 {
     qa_error error={0};q3_command_test state={0};
@@ -2217,6 +2259,7 @@ int main(int argc, char **argv)
     test_kex_direct_delivery();
     test_nq_send_admission();
     test_q3_send_admission();
+    test_q3_reliable_event_references();
     test_q3_received_commands();
     test_shared_cvar_archive();
     test_cvar_info_storage();

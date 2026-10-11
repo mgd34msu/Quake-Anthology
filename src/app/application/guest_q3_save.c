@@ -21,6 +21,7 @@
 #include "save_native_q2.h"
 #include "qa/map_sidecars.h"
 #include "save_private.h"
+#include <stdio.h>
 
 static bool level_only(const qa_application *app)
 {
@@ -223,8 +224,7 @@ static bool client(qa_source_save_io *io, q3g_client *value)
         qa_source_save_i32(io, &value->consumed_server_command) &&
         qa_source_save_i32(io, &value->server_id) && qa_source_save_u64(io, &value->entered_ns) &&
         qa_source_save_i32(io, &value->reliable.sequence) &&
-        qa_source_save_i32(io, &value->reliable.acknowledged) &&
-        qa_source_save_bytes(io, value->reliable.text, sizeof(value->reliable.text));
+        qa_source_save_i32(io, &value->reliable.acknowledged);
     if (!ok) return false;
     int64_t outstanding = (int64_t)value->reliable.sequence - value->reliable.acknowledged;
     if (value->command_sequence < 0 || value->snapshot_sequence < 0 ||
@@ -232,9 +232,16 @@ static bool client(qa_source_save_io *io, q3g_client *value)
         outstanding < 0 || outstanding > QA_Q3_RELIABLE ||
         value->consumed_server_command < 0 || value->consumed_server_command > value->reliable.sequence)
         return state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 client sequence");
-    for (size_t i = 0; i < QA_Q3_RELIABLE; ++i)
-        if (!memchr(value->reliable.text[i], 0, QA_Q3_COMMAND_CHARS))
-            return state_fail(io, QA_ERROR_FORMAT, "Unterminated application Q3 reliable command");
+    for(size_t i=0;i<QA_Q3_RELIABLE;++i) {
+        char text[QA_Q3_COMMAND_CHARS]={0};
+        if(io->direction==QA_SOURCE_SAVE_WRITE)
+            snprintf(text,sizeof(text),"%s",qa_q3_reliable_lookup(&value->reliable,(int32_t)i));
+        if(!qa_source_save_bytes(io,text,sizeof(text))) return false;
+        if(!memchr(text,0,sizeof(text)))
+            return state_fail(io,QA_ERROR_FORMAT,"Unterminated application Q3 reliable command");
+        if(io->direction==QA_SOURCE_SAVE_READ &&
+            !qa_q3_reliable_restore_slot(&value->reliable,i,text,io->error)) return false;
+    }
     bool present = value->gamestate != NULL;
     if (!qa_source_save_bool(io, &present)) return false;
     if (present && io->direction == QA_SOURCE_SAVE_READ) {

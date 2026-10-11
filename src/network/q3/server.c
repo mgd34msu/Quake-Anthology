@@ -26,6 +26,7 @@ bool qa_q3_server_peer_create(qa_q3_identity identity, qa_q3_product product, co
     qa_q3_server_peer *p = calloc(1, sizeof(*p));
     if (!p) return fail(e, QA_ERROR_MEMORY, "Allocating Q3 server peer");
     if (!qa_q3_channel_create(QA_Q3_SERVER, qport, &p->channel, e)) { free(p); return false; }
+    if(!qa_q3_reliable_prepare(&p->reliable,e)) { qa_q3_server_peer_destroy(p);return false; }
     p->identity = identity; p->product = product; p->remote = *remote; p->challenge = challenge; p->hooks = *hooks;
     p->state.phase = QA_Q3_CONNECTED; p->state.delta_message = -1; p->state.gamestate_message_number = -1;
     qa_q3_gamestate_init(&p->gamestate);
@@ -35,6 +36,7 @@ bool qa_q3_server_peer_create(qa_q3_identity identity, qa_q3_product product, co
 void qa_q3_server_peer_destroy(qa_q3_server_peer *p) {
     if (!p) return;
     qa_q3_channel_destroy(p->channel);
+    qa_q3_reliable_clear(&p->reliable);
     for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) free(p->history[i].entities);
     queued_message *q = p->queue_first;
     while (q) { queued_message *next = q->next; free(q); q = next; }
@@ -355,19 +357,24 @@ bool qa_q3_server_peer_reset_pure(qa_q3_server_peer *p, qa_error *error)
     if (!p) return fail(error, QA_ERROR_ARGUMENT, "Missing Q3 pure admission owner");
     p->state.pure_authentic = false; p->state.got_pure_command = false; return true;
 }
-bool qa_q3_configstring_commands(unsigned index, const char *text,
-    qa_q3_configstring_command_fn emit, void *context, qa_error *e)
+void qa_q3_configstring_command(unsigned index,const char *text,uint32_t fragment,
+    char out[QA_Q3_COMMAND_CHARS])
 {
-    size_t length = strlen(text), offset = 0;
+    size_t length=strlen(text),offset=(size_t)fragment*999;
+    size_t n=length-offset;if(n>999) n=999;
+    const char *name=length<=999 ? "cs" : !offset ? "bcs0" : offset+n==length ? "bcs2" : "bcs1";
+    snprintf(out,QA_Q3_COMMAND_CHARS,"%s %u \"%.*s\"",name,index,(int)n,text+offset);
+}
+bool qa_q3_configstring_commands(unsigned index,const char *text,
+    qa_q3_configstring_command_fn emit,void *context,qa_error *e)
+{
+    size_t length=strlen(text);uint32_t fragment=0;
     do {
-        size_t n = length - offset;
-        if (n > 999) n = 999;
-        const char *name = length <= 999 ? "cs" : !offset ? "bcs0" : offset + n == length ? "bcs2" : "bcs1";
-        char command[1024];
-        snprintf(command, sizeof(command), "%s %u \"%.*s\"", name, index, (int)n, text + offset);
-        if (!emit(context, command, e)) return false;
-        offset += n;
-    } while (offset < length);
+        char command[QA_Q3_COMMAND_CHARS];
+        qa_q3_configstring_command(index,text,fragment,command);
+        if(!emit(context,command,e)) return false;
+        ++fragment;
+    } while((size_t)fragment*999<length);
     return true;
 }
 static bool configstring_command(void *context, const char *text, qa_error *error)

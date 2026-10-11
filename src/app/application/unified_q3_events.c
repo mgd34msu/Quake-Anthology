@@ -148,9 +148,17 @@ bool qa_application_q3_output_drain(qa_application *app, qa_error *error)
             while (provider && provider->owner != view->event.provider) provider = provider->next_live;
             if (!provider || provider->close_pending) continue;
             if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_wire)
-                ok = application_native_q3_output(provider, &payload->value.q3, error);
+                {
+                    qa_event_lease *lease=qa_event_ring_retain(app->event_ring,record->id);
+                    ok=application_native_q3_output(provider,&payload->value.q3,lease,error);
+                    qa_event_lease_release(lease);
+                }
             else if (q3g_engine(provider))
-                ok = q3g_output(provider, &payload->value.q3, error);
+                {
+                    qa_event_lease *lease=qa_event_ring_retain(app->event_ring,record->id);
+                    ok=q3g_output(provider,&payload->value.q3,lease,error);
+                    qa_event_lease_release(lease);
+                }
         }
         if (ok) ++app->event_source_cursor;
     }

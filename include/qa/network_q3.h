@@ -1,6 +1,7 @@
 #ifndef QA_NETWORK_Q3_H
 #define QA_NETWORK_Q3_H
 #include "qa/network.h"
+#include "qa/event_ring.h"
 #include "qa/game_q3_product.h"
 #include "qa/world.h"
 #include "qa/movement.h"
@@ -124,12 +125,29 @@ bool qa_q3_xor_client(uint8_t *, size_t, int32_t challenge, qa_q3_command_lookup
 void qa_q3_xor_server(uint8_t *, size_t, int32_t challenge, uint32_t sequence, const char *command);
 
 typedef struct qa_q3_command { int32_t sequence; char text[QA_Q3_COMMAND_CHARS]; } qa_q3_command;
+typedef struct qa_q3_reliable_reference {
+    qa_event_lease *lease;
+    const char *text;
+    uint32_t config_index, fragment;
+} qa_q3_reliable_reference;
 typedef struct qa_q3_reliable {
     int32_t sequence, acknowledged;
-    char text[QA_Q3_RELIABLE][QA_Q3_COMMAND_CHARS];
+    qa_q3_reliable_reference slots[QA_Q3_RELIABLE];
+    qa_event_ring *storage;
+    uint64_t event_cursor;
+    char command[QA_Q3_COMMAND_CHARS];
 } qa_q3_reliable;
 void qa_q3_reliable_init(qa_q3_reliable *);
+/* Wire senders reserve their text pages at load. Local module readers instead
+ * retain the actual output record, with no second command text copy. */
+bool qa_q3_reliable_prepare(qa_q3_reliable *, qa_error *);
+void qa_q3_reliable_clear(qa_q3_reliable *);
 bool qa_q3_reliable_add(qa_q3_reliable *, qa_q3_role, const char *, qa_error *);
+bool qa_q3_reliable_admit(qa_q3_reliable *, qa_q3_role, qa_event_lease *,
+    const char *, uint32_t config_index, uint32_t fragment, qa_error *);
+bool qa_q3_reliable_restore_slot(qa_q3_reliable *, size_t, const char *, qa_error *);
+/* Configstring fragments are encoded at this module/protocol boundary. The
+ * returned text is borrowed until the next lookup on this history. */
 const char *qa_q3_reliable_lookup(const qa_q3_reliable *, int32_t);
 bool qa_q3_reliable_ack(qa_q3_reliable *, qa_q3_role, int32_t, bool *clamped, qa_error *);
 
@@ -145,6 +163,7 @@ void qa_q3_gamestate_init(qa_q3_gamestate *);
 const char *qa_q3_configstring(const qa_q3_gamestate *, unsigned index);
 bool qa_q3_configstring_set(qa_q3_gamestate *, unsigned, const char *, qa_error *);
 typedef bool (*qa_q3_configstring_command_fn)(void *, const char *, qa_error *);
+void qa_q3_configstring_command(unsigned index,const char *,uint32_t fragment,char out[QA_Q3_COMMAND_CHARS]);
 bool qa_q3_configstring_commands(unsigned, const char *, qa_q3_configstring_command_fn, void *, qa_error *);
 typedef struct qa_q3_snapshot {
     bool valid;
