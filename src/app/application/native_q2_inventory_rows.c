@@ -272,10 +272,10 @@ static bool append(application_native_q2_inventory_rows *owner,qa_arena *storage
 
 static bool original_label(application_native_q2_inventory_rows *owner, uint32_t index,
     char **out, qa_error *error) {
-    uint32_t base = owner->engine->config_layout.items;
-    if (index > UINT32_MAX - base || base + index >= owner->engine->config_layout.max_configs)
+    uint32_t base = owner->engine->hud_names.layout.items;
+    if (index > UINT32_MAX - base || base + index >= owner->engine->hud_names.layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Original inventory label leaves its source configstring namespace");
-    const char *raw = qa_strings_cstr(qa_session_strings(owner->engine->provider->application->session), owner->engine->configstrings[base + index]);
+    const char *raw = qa_strings_cstr(qa_session_strings(owner->engine->provider->application->session), owner->engine->hud_names.values[base + index]);
     if (!raw) raw = "";
     qa_buffer label = {0};
     if (!source_text(owner, (qa_bytes){(const uint8_t *)raw, strlen(raw)}, &owner->storage, &label, error)) return false;

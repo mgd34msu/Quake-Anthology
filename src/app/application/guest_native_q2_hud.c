@@ -48,11 +48,11 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         int32_t index = call->import->arguments[0].as.i32;
         if (index < 0 || index >= 256)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD client index is invalid");
-        const qa_hud_q2_player_ids *names=source->player_names+(uint32_t)index;
+        const qa_hud_q2_player_ids *names=source->hud_names.players+(uint32_t)index;
         qa_string_id name=names->name;
         if (dispatch!=QA_NATIVE_Q2_IMPORT_CL_GetClientName) {
             bool present=qa_strings_text(qa_session_strings(source->provider->application->session),
-                source->configstrings[source->config_layout.player_skins+(uint32_t)index]).size!=0;
+                source->hud_names.values[source->hud_names.layout.player_skins+(uint32_t)index]).size!=0;
             name=present?(dispatch==QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag?names->native_tag:names->icon):QA_STRING_NONE;
         }
         return qa_native_host_q2_retain_string(call->host,name,&result->as.address,error);
@@ -71,7 +71,7 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
             int32_t weapon = call->import->arguments[0].as.i32;
             if (weapon < 0 || weapon >= 32)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 weapon wheel index is invalid");
-            result->as.i32 = source->weapons.warnings[weapon];
+            result->as.i32 = source->hud_names.weapons.warnings[weapon];
         }
         return true;
     }
@@ -127,14 +127,14 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
     }
     bool rebound = engine->hud_source_owner != source->provider->owner;
     uint32_t link = rebound ? 1 : qa_q2_config_changes_begin(&source->config_changes, engine->hud_config_revision);
-    while (ok && link && link <= engine->config_layout.max_configs) {
+    while (ok && link && link <= engine->hud_names.layout.max_configs) {
         uint32_t i = link - 1;
-        qa_string_id value = source->configstrings[i], prior = engine->configstrings[i];
+        qa_string_id value = source->hud_names.values[i], prior = engine->hud_names.values[i];
         qa_strings *strings = qa_session_strings(engine->provider->application->session);
         if (value != prior && (qa_strings_text(strings, value).size || qa_strings_text(strings, prior).size)) {
             const char *text = value ? qa_strings_cstr(strings, value) : "";
             ok = parse_config(engine, (int32_t)i, text, error);
-            if (ok) engine->configstrings[i] = value;
+            if (ok) ok=qa_hud_q2_names_set(&engine->hud_names,i,value,NULL,error);
         }
         link = rebound ? link + 1 : source->config_changes.slots[i].newer;
     }

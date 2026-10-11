@@ -375,17 +375,16 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         engine->clients[i + 1].seat = choices->seats[i].id;
     }
     bool rerelease = engine->profile != QA_NATIVE_Q2_GAME_API3;
-    qa_q2_codec codec = {.protocol = qa_q2_default_protocol(rerelease)};
-    if (!qa_q2_config_layout_read(&codec, &engine->config_layout, error)) return false;
-    engine->protocol = codec.protocol;
+    engine->protocol = qa_q2_default_protocol(rerelease);
+    if (!qa_hud_q2_names_init(&engine->hud_names,qa_session_strings(app->session),error) ||
+        !qa_hud_q2_names_configure(&engine->hud_names,engine->protocol,error)) return false;
     engine->lightstyles.count = 256;
-    engine->configstrings = calloc(engine->config_layout.max_configs, sizeof(*engine->configstrings));
-    engine->config_changes.slots = calloc(engine->config_layout.max_configs, sizeof(*engine->config_changes.slots));
-    if (!engine->configstrings || !engine->config_changes.slots)
+    engine->config_changes.slots = calloc(engine->hud_names.layout.max_configs, sizeof(*engine->config_changes.slots));
+    if (!engine->config_changes.slots)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 source configstring table");
     if (!application_native_q2_config_prepare(engine,error)) return false;
     if (!cgame) {
-        qa_q2_message_options options = {.config_strings = engine->config_layout.max_configs,
+        qa_q2_message_options options = {.config_strings = engine->hud_names.layout.max_configs,
             .inventory_slots = 256, .native_api2023 = rerelease};
         if (!qa_q2_messages_create(engine->protocol, &options, &engine->event_decoder, error)) return false;
     }
@@ -833,7 +832,8 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     application_network_q2_retire_bindings(engine);
     qa_q2_messages_destroy(engine->event_decoder);
     qa_id_index_destroy(&engine->media_probes);
-    free(engine->config_changes.slots); free(engine->configstrings); free(engine->entity_text); free(engine->client_slots); free(engine);
+    qa_hud_q2_names_destroy(&engine->hud_names);
+    free(engine->config_changes.slots); free(engine->entity_text); free(engine->client_slots); free(engine);
     provider->state.native.q2_engine = NULL;
     if (!ok && error) *error = first;
     return ok;

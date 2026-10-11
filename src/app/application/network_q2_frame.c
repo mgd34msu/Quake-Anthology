@@ -243,7 +243,7 @@ static bool original_weapon_skin(qa_application_network_q2 *owner,
     (void)error;
     uint32_t ordinal = (*skin >> 8) & 255u;
     if (!ordinal) return true;
-    qa_string_id weapon=ordinal<engine->weapons.count?engine->weapons.configs[ordinal]:QA_STRING_NONE;
+    qa_string_id weapon=ordinal<engine->hud_names.weapons.count?engine->hud_names.weapons.configs[ordinal]:QA_STRING_NONE;
     size_t target_ordinal=0;
     if (weapon) {
         application_q2_resource_table *table=&owner->resources[0];

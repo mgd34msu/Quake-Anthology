@@ -122,11 +122,11 @@ static const char *resource_path(const q2_projection *p, qa_native_host_resource
     const qa_application_protocol_resource_reference *receipt = resource_receipt(p, kind, index);
     if (receipt) return receipt->name;
     uint32_t base = application_native_q2_resource_range(p->engine, kind).base;
-    if (index >= application_native_q2_resource_range(p->engine, kind).count || base + index >= p->engine->config_layout.max_configs ||
-        !p->engine->configstrings[base + index]) {
+    if (index >= application_native_q2_resource_range(p->engine, kind).count || base + index >= p->engine->hud_names.layout.max_configs ||
+        !p->engine->hud_names.values[base + index]) {
         application_fail(e, QA_ERROR_FORMAT, "Q2 service resource has no actual Source configstring"); return NULL;
     }
-    return qa_strings_cstr(qa_session_strings(p->engine->provider->application->session), p->engine->configstrings[base + index]);
+    return qa_strings_cstr(qa_session_strings(p->engine->provider->application->session), p->engine->hud_names.values[base + index]);
 }
 
 static void fog_apply(qa_q2_wire_fog *previous, const qa_q2_wire_fog *value)
@@ -226,7 +226,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_COMMAND_TEXT, .text = r->text};
         pres = &presentation; sim = &simulation; link = true; break;
     case QA_Q2_SVC_CONFIGSTRING: {
-        uint32_t skins = p->engine->config_layout.player_skins;
+        uint32_t skins = p->engine->hud_names.layout.player_skins;
         uint32_t index = event->data.config.index;
         simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_CONFIG_STRING,
             .index = index, .text = (char *)event->data.config.value}; sim = &simulation;

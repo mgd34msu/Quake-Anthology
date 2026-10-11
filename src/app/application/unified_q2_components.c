@@ -244,11 +244,11 @@ bool application_unified_q2_component_state(qa_application *app,
     state->player_number=(int32_t)v->source.player.source_slot-1;
     memcpy(state->inventory,v->source.inventory,sizeof(state->inventory));
     if (configs) {
-        state->configstrings=qa_unified_frame_lease_alloc(lease,native->config_layout.max_configs,
+        state->configstrings=qa_unified_frame_lease_alloc(lease,native->hud_names.layout.max_configs,
             sizeof(*state->configstrings),_Alignof(qa_q2_config_name),e);
-        if (native->config_layout.max_configs && !state->configstrings) return false;
-        for (uint32_t i=0;i<native->config_layout.max_configs;++i) if (native->configstrings[i])
-            state->configstrings[state->configstring_count++]=(qa_q2_config_name){i,native->configstrings[i]};
+        if (native->hud_names.layout.max_configs && !state->configstrings) return false;
+        for (uint32_t i=0;i<native->hud_names.layout.max_configs;++i) if (native->hud_names.values[i])
+            state->configstrings[state->configstring_count++]=(qa_q2_config_name){i,native->hud_names.values[i]};
     }
     return application_unified_q2_component_documents_current(app,v);
 }

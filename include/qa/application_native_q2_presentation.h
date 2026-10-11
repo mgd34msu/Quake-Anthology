@@ -7,6 +7,7 @@
 #include "qa/game_q2_wire.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/hud_controls.h"
+#include "qa/hud_q2.h"
 #include "qa/q2_config_changes.h"
 
 typedef enum qa_application_native_q2_source_kind {
@@ -101,6 +102,7 @@ typedef struct qa_application_native_q2_hud_source {
     qa_string_id statusbar_id;
     const char *statusbar;
     const qa_strings *strings;
+    const qa_hud_q2_names *names;
     const qa_string_id *configstrings;
     const qa_q2_config_changes *config_changes;
     uint32_t configstring_count;
@@ -127,6 +129,7 @@ typedef struct qa_application_native_q2_hud {
     const char *statusbar, *layout;
     uint64_t layout_revision;
     const qa_strings *strings;
+    const qa_hud_q2_names *names;
     const qa_string_id *configstrings;
     const qa_q2_config_changes *config_changes;
     uint32_t configstring_count;

@@ -78,12 +78,9 @@ struct application_native_q2 {
     application_native_q2_client clients[257];
     uint16_t *client_slots;
     uint32_t client_actor_capacity;
-    qa_string_id *configstrings;
     qa_q2_messages *event_decoder;
     qa_net_protocol_id protocol;
-    qa_q2_config_layout config_layout;
-    qa_hud_q2_player_ids player_names[256];
-    qa_hud_q2_weapons weapons;
+    qa_hud_q2_names hud_names;
     qa_q2_player_media player_media[256];
     qa_id_index media_probes;
     const qa_vfs *media_files;
@@ -116,7 +113,7 @@ typedef struct application_native_q2_resource_span { uint32_t base, count; } app
 static inline application_native_q2_resource_span application_native_q2_resource_range(
     const struct application_native_q2 *engine, qa_native_host_resource_kind kind)
 {
-    const qa_q2_config_layout *layout = &engine->config_layout;
+    const qa_q2_config_layout *layout = &engine->hud_names.layout;
     switch (kind) {
     case QA_NATIVE_HOST_MODEL: return (application_native_q2_resource_span){layout->models, layout->max_models};
     case QA_NATIVE_HOST_SOUND: return (application_native_q2_resource_span){layout->sounds, layout->max_sounds};

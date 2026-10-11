@@ -28,7 +28,7 @@ bool qa_application_native_q2_sound_resources(qa_application *app, qa_actor_owne
     } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
         const struct application_native_q2 *engine = provider->state.native.q2_engine;
         for (uint32_t i = 1; i < application_native_q2_resource_range(engine, 1).count; ++i) {
-            qa_string_id sound = engine->configstrings[application_native_q2_resource_range(engine, 1).base + i];
+            qa_string_id sound = engine->hud_names.values[application_native_q2_resource_range(engine, 1).base + i];
             if (sound && !visit(context, qa_strings_cstr(strings, sound), error)) return false;
         }
     }
@@ -78,9 +78,10 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         if (!selected.slot) return true;
         value->data_provider = selected.original->owner; value->config_revision = engine->config_changes.revision;
         value->original = true; value->strings = qa_session_strings(app->session);
-        value->configstrings = engine->configstrings;
+        value->names = &engine->hud_names;
+        value->configstrings = engine->hud_names.values;
         value->config_changes = &engine->config_changes;
-        value->configstring_count = engine->config_layout.max_configs;
+        value->configstring_count = engine->hud_names.layout.max_configs;
         value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
         value->statusbar_id = value->configstring_count > 5 ? value->configstrings[5] : QA_STRING_NONE;
         value->statusbar = value->configstring_count > 5 && value->configstrings[5] ?
@@ -173,7 +174,7 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
         .config_revision = source->config_revision, .edition = source->edition,
         .deathmatch = source->deathmatch, .cooperative = source->cooperative, .original = source->original,
         .game = source->game, .statusbar_id = source->statusbar_id, .statusbar = source->statusbar, .strings = source->strings,
-        .configstrings = source->configstrings, .config_changes = source->config_changes,
+        .names = source->names, .configstrings = source->configstrings, .config_changes = source->config_changes,
         .configstring_count = source->configstring_count, .layout = ""};
     application_provider *clock_owner = original ? original : hud;
     qa_clock_state clock;

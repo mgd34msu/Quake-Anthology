@@ -14,7 +14,7 @@ static struct application_native_q2 *engine_read(qa_application *app,
         provider->owner == source->source_owner && provider->launch == source->launch &&
         provider->state.native.host == source->source.original.host && engine &&
         engine->provider == provider && engine->profile == source->source.original.profile &&
-        !engine->calls && engine->configstrings ? engine : NULL;
+        !engine->calls && engine->hud_names.configured ? engine : NULL;
 }
 
 static bool media_probe(void *context, qa_string_id name, qa_q2_player_media_kind kind,
@@ -46,51 +46,44 @@ static bool player_paths(struct application_native_q2 *engine, uint32_t slot, bo
 {
     qa_strings *strings = qa_session_strings(engine->provider->application->session);
     const qa_cvar_view *setting = qa_cvars_read(engine->cvars, engine->appearance_cvar);
-    return qa_q2_player_media_resolve(strings, engine->player_names + slot, engine->weapons.names,
-        engine->weapons.count, engine->config_layout.extended, setting ? setting->number : 0, false, body, media_probe, engine,
+    return qa_q2_player_media_resolve(strings, engine->hud_names.players + slot, engine->hud_names.weapons.names,
+        engine->hud_names.weapons.count, engine->hud_names.layout.extended, setting ? setting->number : 0, false, body, media_probe, engine,
         engine->player_media + slot, error);
 }
 bool application_native_q2_config_prepare(struct application_native_q2 *engine, qa_error *error)
 {
     engine->appearance_cvar = qa_cvars_resolve(engine->cvars, "cl_noskins");
-    qa_strings *strings=qa_session_strings(engine->provider->application->session);
-    if (!qa_hud_q2_weapons_bind(strings,&engine->config_layout,engine->configstrings,&engine->weapons,error)) return false;
     for (uint32_t slot=0;slot<256;++slot) {
-        const char *info=qa_strings_cstr(strings,engine->configstrings[engine->config_layout.player_skins+slot]);
-        if (!qa_hud_q2_player_ids_bind(strings,info?info:"",engine->config_layout.extended,engine->player_names+slot,error) ||
-            !player_paths(engine,slot,true,error)) return false;
+        if (!player_paths(engine,slot,true,error)) return false;
     }
     return true;
 }
 bool application_native_q2_config_update(struct application_native_q2 *engine,
     uint32_t index, qa_string_id name, qa_error *error)
 {
-    qa_string_id previous=engine->configstrings[index];
+    qa_string_id previous=engine->hud_names.values[index];
     if (previous==name) return true;
-    qa_strings *strings=qa_session_strings(engine->provider->application->session);
-    engine->configstrings[index]=name;
     bool weapon_changed = false;
-    bool ok = qa_hud_q2_weapons_config(strings,&engine->config_layout,engine->configstrings,index,previous,
-        &engine->weapons,&weapon_changed,error);
-    if (ok && index>=engine->config_layout.player_skins && index-engine->config_layout.player_skins<256) {
-        uint32_t slot=index-engine->config_layout.player_skins;
-        const char *info=qa_strings_cstr(strings,name);
-        ok=qa_hud_q2_player_ids_bind(strings,info?info:"",engine->config_layout.extended,engine->player_names+slot,error) &&
-            player_paths(engine,slot,true,error);
+    bool ok = qa_hud_q2_names_set(&engine->hud_names,index,name,&weapon_changed,error);
+    if (ok && index>=engine->hud_names.layout.player_skins && index-engine->hud_names.layout.player_skins<256) {
+        uint32_t slot=index-engine->hud_names.layout.player_skins;
+        ok=player_paths(engine,slot,true,error);
     } else if (weapon_changed) {
         for (uint32_t slot=0;ok&&slot<256;++slot) ok=player_paths(engine,slot,false,error);
     }
-    if (!ok) {engine->configstrings[index]=previous;return false;}
+    if (!ok) return false;
     qa_q2_config_changed(&engine->config_changes,index);
     return true;
 }
 bool application_native_q2_config_clear(struct application_native_q2 *engine, qa_error *error)
 {
-    for (uint32_t i=0;i<engine->config_layout.max_configs;++i) {
-        if (engine->configstrings[i]) qa_q2_config_changed(&engine->config_changes,i);
-        engine->configstrings[i]=QA_STRING_NONE;
+    for (uint32_t i=0;i<engine->hud_names.layout.max_configs;++i) {
+        if (engine->hud_names.values[i]) qa_q2_config_changed(&engine->config_changes,i);
     }
-    return application_native_q2_config_prepare(engine,error);
+    qa_hud_q2_names_clear(&engine->hud_names);
+    return qa_hud_q2_weapons_bind(engine->hud_names.strings,&engine->hud_names.layout,
+        engine->hud_names.values,&engine->hud_names.weapons,error) &&
+        application_native_q2_config_prepare(engine,error);
 }
 
 bool application_native_q2_appearance_read(qa_application *app,
@@ -111,13 +104,13 @@ bool application_native_q2_appearance_read(qa_application *app,
     bool ok = true;
     const qa_q2_player_media *media=engine->player_media+(state->skinnum&255u);
     uint32_t ordinal=(state->skinnum>>8)&255u;
-    qa_string_id held=ordinal<engine->weapons.count?media->weapons[ordinal]:media->weapons[0];
+    qa_string_id held=ordinal<engine->hud_names.weapons.count?media->weapons[ordinal]:media->weapons[0];
     for (unsigned i=0;i<4;++i) {
         if (indexes[i]==Q2_CLIENT_MODEL) {
             value.models[i]=i?held:media->model;
             if (!i) {value.skin=0;value.skin_path=media->skin;}
-        } else if (indexes[i] && indexes[i]<engine->config_layout.max_models)
-            value.models[i]=engine->configstrings[engine->config_layout.models+indexes[i]];
+        } else if (indexes[i] && indexes[i]<engine->hud_names.layout.max_models)
+            value.models[i]=engine->hud_names.values[engine->hud_names.layout.models+indexes[i]];
     }
     if (ok && !application_native_q2_appearance_current(app, &value))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 appearance changed its physical Source or configstrings");

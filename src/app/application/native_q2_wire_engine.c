@@ -160,7 +160,7 @@ bool application_native_q2_wire_resource(struct application_native_q2 *engine, u
     uint32_t base = application_native_q2_resource_range(engine, kind).base, maximum = application_native_q2_resource_range(engine, kind).count;
     uint32_t free_index = 0;
     for (uint32_t i = 1; i < maximum; ++i) {
-        const char *current = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + i]);
+        const char *current = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[base + i]);
         if (current && !strcmp(current, path)) { *out = i; return true; }
         if (!free_index && (!current || !*current)) free_index = i;
     }

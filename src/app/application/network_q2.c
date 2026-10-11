@@ -209,24 +209,24 @@ bool application_network_q2_source_resource(qa_application_network_q2 *owner, un
     if (!engine || !out || kind > 2 || index >= application_native_q2_resource_range(engine, kind).count)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 resource lost its actual Source API index");
     if (!index) { *out = 0; return true; }
-    const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, kind).base + index]);
+    const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[application_native_q2_resource_range(engine, kind).base + index]);
     if (!path || !*path)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 published resource has no actual Source registration");
-    return application_network_q2_resource_id(owner, kind, engine->configstrings[application_native_q2_resource_range(engine, kind).base + index], out, error);
+    return application_network_q2_resource_id(owner, kind, engine->hud_names.values[application_native_q2_resource_range(engine, kind).base + index], out, error);
 }
 
 bool application_network_q2_source_config(qa_application_network_q2 *owner, uint32_t index,
     uint32_t *out, qa_error *error)
 {
     struct application_native_q2 *engine = source_engine(owner);
-    if (!engine || !out || index >= engine->config_layout.max_configs)
+    if (!engine || !out || index >= engine->hud_names.layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 config lost its actual Source API index");
     bool rr = engine->profile == QA_NATIVE_Q2_GAME_API2023;
-    uint32_t air = engine->config_layout.air_accelerate;
+    uint32_t air = engine->hud_names.layout.air_accelerate;
     if (index < air && index < owner->air_index) { *out = index; return true; }
     if (index == air) { *out = owner->air_index; return true; }
-    if (index == engine->config_layout.max_clients) { *out = owner->clients_index; return true; }
-    if (index == engine->config_layout.map_checksum) { *out = owner->checksum_index; return true; }
+    if (index == engine->hud_names.layout.max_clients) { *out = owner->clients_index; return true; }
+    if (index == engine->hud_names.layout.map_checksum) { *out = owner->checksum_index; return true; }
     for (unsigned kind = 0; kind < 3; ++kind) {
         uint32_t base = application_native_q2_resource_range(engine, kind).base;
         if (index >= base && index - base < application_native_q2_resource_range(engine, kind).count) {
@@ -235,8 +235,8 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
             *out = owner->resources[kind].base + resource; return true;
         }
     }
-    const uint32_t source[] = {engine->config_layout.lights, engine->config_layout.items,
-        engine->config_layout.player_skins, engine->config_layout.player_skins + 256};
+    const uint32_t source[] = {engine->hud_names.layout.lights, engine->hud_names.layout.items,
+        engine->hud_names.layout.player_skins, engine->hud_names.layout.player_skins + 256};
     const uint32_t target[] = {owner->light_base, owner->item_base,
         owner->skin_base, owner->skin_base + 256};
     for (unsigned range = 0; range < 4; ++range) {
@@ -247,10 +247,10 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
                 application_fail(error, QA_ERROR_FORMAT, "Q2 Source config exceeds its target range");
         }
     }
-    if (rr && owner->item_base - owner->light_base >= 512 && index >= engine->config_layout.second_lights && index < engine->config_layout.items) {
-        *out = owner->light_base + index - engine->config_layout.lights; return true;
+    if (rr && owner->item_base - owner->light_base >= 512 && index >= engine->hud_names.layout.second_lights && index < engine->hud_names.layout.items) {
+        *out = owner->light_base + index - engine->hud_names.layout.lights; return true;
     }
-    if (rr && owner->config_count == engine->config_layout.max_configs && index >= engine->config_layout.wheel_weapons) {
+    if (rr && owner->config_count == engine->hud_names.layout.max_configs && index >= engine->hud_names.layout.wheel_weapons) {
         *out = index; return true;
     }
     return application_fail(error, QA_ERROR_FORMAT, "Q2 Source config has no field in the admitted wire layout");
@@ -259,37 +259,37 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
 static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
 {
     struct application_native_q2 *engine = source_engine(owner);
-    if (!engine || !engine->configstrings)
+    if (!engine || !engine->hud_names.configured)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 publication lost its actual config owner");
     bool rr = engine->profile == QA_NATIVE_Q2_GAME_API2023;
-    uint32_t source_air = engine->config_layout.air_accelerate;
+    uint32_t source_air = engine->hud_names.layout.air_accelerate;
     uint32_t shared = source_air < owner->air_index ? source_air : owner->air_index;
     for (uint32_t i = 0; i < shared; ++i)
-        if (!application_network_q2_config_id(owner, i, engine->configstrings[i], error)) return false;
+        if (!application_network_q2_config_id(owner, i, engine->hud_names.values[i], error)) return false;
     bool ok = true;
     for (uint32_t i = shared; ok && i < owner->air_index; ++i) ok = application_network_q2_config(owner, i, "", error);
-    const uint32_t source[] = {engine->config_layout.lights, engine->config_layout.items,
-        engine->config_layout.player_skins, engine->config_layout.player_skins + 256};
+    const uint32_t source[] = {engine->hud_names.layout.lights, engine->hud_names.layout.items,
+        engine->hud_names.layout.player_skins, engine->hud_names.layout.player_skins + 256};
     for (unsigned range = 0; ok && range < 4; ++range) {
         uint32_t count = range == 3 ? 512u : 256u;
         for (uint32_t i = 0; ok && i < count; ++i) {
             uint32_t target;
             ok = application_network_q2_source_config(owner, source[range] + i, &target, error) &&
-                application_network_q2_config_id(owner, target, engine->configstrings[source[range] + i], error);
+                application_network_q2_config_id(owner, target, engine->hud_names.values[source[range] + i], error);
         }
     }
     if (rr && owner->item_base - owner->light_base >= 512)
         for (uint32_t i = 0; ok && i < 256; ++i)
-            ok = application_network_q2_config_id(owner, owner->light_base + 256 + i, engine->configstrings[engine->config_layout.second_lights + i], error);
-    if (rr && owner->config_count == engine->config_layout.max_configs)
-        for (uint32_t i = engine->config_layout.wheel_weapons; ok && i < owner->config_count; ++i)
-            ok = application_network_q2_config_id(owner, i, engine->configstrings[i], error);
+            ok = application_network_q2_config_id(owner, owner->light_base + 256 + i, engine->hud_names.values[engine->hud_names.layout.second_lights + i], error);
+    if (rr && owner->config_count == engine->hud_names.layout.max_configs)
+        for (uint32_t i = engine->hud_names.layout.wheel_weapons; ok && i < owner->config_count; ++i)
+            ok = application_network_q2_config_id(owner, i, engine->hud_names.values[i], error);
     /* The map and vwep declarations establish actual client constructors before frames. */
     uint32_t mapped;
-    if (ok && engine->configstrings[application_native_q2_resource_range(engine, 0).base + 1])
+    if (ok && engine->hud_names.values[application_native_q2_resource_range(engine, 0).base + 1])
         ok = application_network_q2_source_resource(owner, 0, 1, &mapped, error);
     for (uint32_t i = 1; ok && i < application_native_q2_resource_range(engine, 0).count; ++i) {
-        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, 0).base + i]);
+        const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[application_native_q2_resource_range(engine, 0).base + i]);
         if (path && path[0] == '#') ok = application_network_q2_source_resource(owner, 0, i, &mapped, error);
     }
     return ok;

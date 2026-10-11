@@ -97,7 +97,7 @@ static bool capture_record(void *context, const qa_q2_server_record *record, qa_
         if (event->kind == QA_Q2_SVC_POI && event->data.poi.time == UINT16_MAX) return true;
         if (index >= application_native_q2_resource_range(capture->engine, kind).count)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 emitted resource index exceeds its Source namespace");
-        qa_string_id name_id=capture->engine->configstrings[application_native_q2_resource_range(capture->engine, kind).base+index];
+        qa_string_id name_id=capture->engine->hud_names.values[application_native_q2_resource_range(capture->engine, kind).base+index];
         const char *name = qa_strings_cstr(qa_session_strings(capture->engine->provider->application->session), name_id);
         return retain(capture, ordinal, kind, index, name_id, name ? name : "", error);
     }

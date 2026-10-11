@@ -256,6 +256,7 @@ bool qa_hud_q2_names_init(qa_hud_q2_names *names,qa_strings *strings,qa_error *e
 }
 void qa_hud_q2_names_clear(qa_hud_q2_names *names)
 {
+    ++names->revision;
     memset(names->values,0,sizeof(names->values));
     memset(names->players,0,sizeof(names->players));
     names->weapons = (qa_hud_q2_weapons){0};
@@ -291,6 +292,7 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id valu
             &names->weapons, weapons_changed, error)) {
         names->values[index] = prior; return false;
     }
+    ++names->revision;
     if (names->images && index>names->layout.images && index-names->layout.images<names->layout.max_images)
         return image_prepare(names->images,names->strings,value,names->rerelease,names->filter,error);
     if (names->images && index>=names->layout.player_skins && index-names->layout.player_skins<256) {
@@ -300,13 +302,14 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id valu
     }
     return true;
 }
-bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *names,qa_scene_resources *images,
+bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *binding,const qa_hud_q2_names *names,qa_scene_resources *images,
     const qa_hud_q2_picture_names *pictures,qa_scene_filter filter,qa_error *error)
 {
     uint64_t generation=qa_scene_resources_lookup_generation(images);
-    if (names->images_ready && names->images==images && names->filter==filter && names->image_generation==generation) return true;
-    names->images=images;names->filter=filter;names->images_ready=false;
-    if (!qa_hud_q2_program_prepare_images(names->status,images,names->rerelease,filter,error)) return false;
+    if (binding->images_ready && binding->images==images && binding->filter==filter &&
+        binding->image_generation==generation && binding->image_names==names && binding->image_revision==names->revision) return true;
+    binding->images=images;binding->filter=filter;binding->images_ready=false;
+    if (!qa_hud_q2_program_prepare_images(binding->status,images,names->rerelease,filter,error)) return false;
     for (unsigned set=0;set<2;++set) for(unsigned digit=0;digit<11;++digit)
         if (!image_prepare(images,names->strings,pictures->digits[set][digit],names->rerelease,filter,error)) return false;
     const qa_string_id fixed[]={pictures->field,pictures->ping,pictures->inventory,pictures->conchars,
@@ -318,7 +321,8 @@ bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *names,qa_scene_resources *i
     for(unsigned slot=0;slot<256;++slot)
         if (!image_prepare(images,names->strings,names->players[slot].icon,names->rerelease,filter,error) ||
             !image_prepare(images,names->strings,names->players[slot].tag,names->rerelease,filter,error)) return false;
-    names->image_generation=generation;names->images_ready=true;
+    binding->image_names=names;binding->image_revision=names->revision;
+    binding->image_generation=generation;binding->images_ready=true;
     return true;
 }
 qa_string_id qa_hud_q2_names_picture(const qa_hud_q2_names *names,int32_t index,unsigned variant)

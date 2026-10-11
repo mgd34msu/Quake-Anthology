@@ -427,10 +427,10 @@ bool application_native_q2_weapon_request(application_provider *provider,qa_acto
     if(!*admitted||selected) return true;
     *admitted=false;
     struct application_native_q2 *engine=provider->state.native.q2_engine;
-    uint32_t base = engine->config_layout.items;
-    if (index > UINT32_MAX - base || base + index >= engine->config_layout.max_configs)
+    uint32_t base = engine->hud_names.layout.items;
+    if (index > UINT32_MAX - base || base + index >= engine->hud_names.layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Native weapon label leaves its real source configstring namespace");
-    const char *label = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + index]);
+    const char *label = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[base + index]);
     if (!label) label = "";
     /* This is the original source label in its own native byte encoding. The
      * typed command owner copies it before invoking the mutable Source. */
@@ -621,7 +621,7 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
     value.items = p->count ? application_unified_frame_alloc(lease, p->count, sizeof(*value.items), error) : NULL;
     if (p->count && !value.items)
         return application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 UI inventory");
-    uint32_t label_base = engine->config_layout.items;
+    uint32_t label_base = engine->hud_names.layout.items;
     bool ok = true;
     ++engine->calls;
     for (size_t i = 0; ok && i < p->count; ++i) {
@@ -630,11 +630,11 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
         if (!scalar_read(engine, base + p->inventory_offset + row->index * 4u, 4, &count, error)) { ok = false; break; }
         if (selected != empty && selected >= 0 && (uint32_t)selected == row->index) value.selected = row->item;
         if (!count) continue;
-        if (row->index > UINT32_MAX - label_base || label_base + row->index >= engine->config_layout.max_configs) {
+        if (row->index > UINT32_MAX - label_base || label_base + row->index >= engine->hud_names.layout.max_configs) {
             ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 item label leaves its actual configstring namespace");
             break;
         }
-        const char *label = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[label_base + row->index]);
+        const char *label = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[label_base + row->index]);
         if (!label) label = ""; /* An absent slot is the source's empty configstring. */
         size_t length = strlen(label);
         application_native_q2_ui_item *item = &value.items[value.count++];

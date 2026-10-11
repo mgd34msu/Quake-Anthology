@@ -41,11 +41,12 @@ typedef struct qa_hud_q2_names {
     qa_hud_q2_weapons weapons;
     qa_string_id default_icon, default_tag;
     qa_scene_resources *images;
-    uint64_t image_generation;
+    const struct qa_hud_q2_names *image_names;
+    uint64_t revision, image_revision, image_generation;
     qa_scene_filter filter;
     bool configured, rerelease, images_ready;
 } qa_hud_q2_names;
-bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *,qa_scene_resources *,const qa_hud_q2_picture_names *,qa_scene_filter,qa_error *);
+bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *binding,const qa_hud_q2_names *,qa_scene_resources *,const qa_hud_q2_picture_names *,qa_scene_filter,qa_error *);
 bool qa_hud_q2_program_prepare_images(qa_hud_q2_program *,qa_scene_resources *,bool,qa_scene_filter,qa_error *);
 bool qa_hud_q2_names_init(qa_hud_q2_names *, qa_strings *, qa_error *);
 bool qa_hud_q2_names_configure(qa_hud_q2_names *, qa_net_protocol_id, qa_error *);

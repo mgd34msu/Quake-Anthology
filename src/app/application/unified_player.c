@@ -1210,9 +1210,9 @@ bool application_unified_player_values(qa_application *app, const application_un
             struct application_native_q2 *engine = o.primary->state.native.q2_engine;
             uint32_t base = application_native_q2_resource_range(engine, QA_NATIVE_HOST_MODEL).base;
             if (o.q2.gunindex >= application_native_q2_resource_range(engine, QA_NATIVE_HOST_MODEL).count ||
-                base > UINT32_MAX - (uint32_t)o.q2.gunindex || base + (uint32_t)o.q2.gunindex >= engine->config_layout.max_configs)
+                base > UINT32_MAX - (uint32_t)o.q2.gunindex || base + (uint32_t)o.q2.gunindex >= engine->hud_names.layout.max_configs)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 UI gun model leaves its real source namespace");
-            else o.native_weapon = qa_q2_base_weapon_view_model(qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + (uint32_t)o.q2.gunindex]));
+            else o.native_weapon = qa_q2_base_weapon_view_model(qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[base + (uint32_t)o.q2.gunindex]));
         }
     }
     bool qc = qc_arsenal(&o);

@@ -317,7 +317,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     for (size_t i = 1; i < row->hud_names.layout.max_models; ++i) {
         if (!remote_q2_model_config(row, (uint16_t)(row->hud_names.layout.models + i), error)) return false;
     }
-    if (!qa_hud_q2_names_prepare_images(&row->hud_names,row->images,&row->hud_pictures,
+    if (!qa_hud_q2_names_prepare_images(&row->hud_names,&row->hud_names,row->images,&row->hud_pictures,
         QA_SCENE_LINEAR_MIPMAP_LINEAR,error) ||
         !qa_hud_q2_program_prepare_images(row->hud_overlay,row->images,remote_q2_rerelease_presentation(row),
             QA_SCENE_LINEAR_MIPMAP_LINEAR,error)) return false;

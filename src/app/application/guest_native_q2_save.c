@@ -121,15 +121,15 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     qa_application *app = engine->provider->application;
     const char *map = engine->map_name ? qa_strings_cstr(qa_session_strings(app->session), engine->map_name) : "";
     const char *spawn = engine->spawn_point ? qa_strings_cstr(qa_session_strings(app->session), engine->spawn_point) : "";
-    size_t size = 120u + 257u * 3680u + engine->config_layout.max_configs * 4u;
+    size_t size = 120u + 257u * 3680u + engine->hud_names.layout.max_configs * 4u;
     const char *texts[] = {map, spawn};
     for (size_t i = 0; i < 2; ++i) {
         if (!texts[i] || strlen(texts[i]) > 64u * 1024u * 1024u - size)
             return application_fail(error, QA_ERROR_MEMORY, "Native Q2 continuation text exceeds its storage budget");
         size += strlen(texts[i]);
     }
-    for (uint32_t i = 0; i < engine->config_layout.max_configs; ++i) {
-        size_t bytes = qa_strings_text(qa_session_strings(app->session), engine->configstrings[i]).size;
+    for (uint32_t i = 0; i < engine->hud_names.layout.max_configs; ++i) {
+        size_t bytes = qa_strings_text(qa_session_strings(app->session), engine->hud_names.values[i]).size;
         if (bytes > 64u * 1024u * 1024u - size)
             return application_fail(error, QA_ERROR_MEMORY, "Native Q2 configstring continuation exceeds its storage budget");
         size += bytes;
@@ -185,15 +185,15 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, buffer.size, error);
     const qa_actor_registry *actors = qa_session_actors(app->session);
     bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) &&
-        qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->config_layout.max_configs) &&
+        qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->hud_names.layout.max_configs) &&
         qa_net_write_u8(&writer, engine->initialized) && qa_net_write_u8(&writer, engine->map_ready) &&
         write_actor(&writer, actors, engine->world_actor, error) &&
         qa_net_write_u64(&writer, engine->frame.number) && qa_net_write_u64(&writer, engine->frame.start_ns) &&
         qa_net_write_u64(&writer, engine->frame.elapsed_ns) && qa_net_write_u64(&writer, engine->frame.time_ns) &&
         qa_net_write_u32(&writer, (uint32_t)engine->frame.phase) &&
         write_text(&writer, map) && write_text(&writer, spawn);
-    for (uint32_t i = 0; ok && i < engine->config_layout.max_configs; ++i)
-        ok = write_text(&writer, qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[i]));
+    for (uint32_t i = 0; ok && i < engine->hud_names.layout.max_configs; ++i)
+        ok = write_text(&writer, qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[i]));
     for (uint32_t i = 0; ok && i < 257; ++i) {
         const application_native_q2_client *client = &engine->clients[i];
         uint8_t flags = (uint8_t)(client->reserved | client->connected << 1 | client->begun << 2 |
@@ -246,7 +246,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
     if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
-        qa_net_read_u32(&reader) != engine->config_layout.max_configs)
+        qa_net_read_u32(&reader) != engine->hud_names.layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");
     uint8_t initialized = qa_net_read_u8(&reader), map_ready = qa_net_read_u8(&reader);
     qa_actor_id world;
@@ -269,12 +269,12 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     if (reader.failed || (unsigned)frame.phase > QA_FRAME_EXIT || frame.time_ns < frame.start_ns)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation source clock is invalid");
     char *map = NULL, *spawn = NULL;
-    qa_string_id *config = calloc(engine->config_layout.max_configs, sizeof(*config));
+    qa_string_id *config = calloc(engine->hud_names.layout.max_configs, sizeof(*config));
     application_native_q2_client *clients = calloc(257, sizeof(*clients));
     bool ok = config && clients;
     if (!ok) application_fail(error, QA_ERROR_MEMORY, "Preparing native Q2 continuation restore");
     if (ok) ok = read_text(&reader, &map, error) && read_text(&reader, &spawn, error);
-    for (uint32_t i = 0; ok && i < engine->config_layout.max_configs; ++i) {
+    for (uint32_t i = 0; ok && i < engine->hud_names.layout.max_configs; ++i) {
         char *text = NULL;
         ok = read_text(&reader, &text, error);
         if (ok) ok = qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
@@ -384,7 +384,9 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         engine->wire_engine = wire; wire = NULL;
         application_native_q2_visibility_destroy(&engine->visibility);
         engine->visibility = visibility; visibility = NULL;
-        free(engine->configstrings); engine->configstrings = config; config = NULL;
+        ok=application_native_q2_config_clear(engine,error);
+        for (uint32_t i=0;ok && i<engine->hud_names.layout.max_configs;++i)
+            ok=qa_hud_q2_names_set(&engine->hud_names,i,config[i],NULL,error);
         memcpy(engine->clients, clients, sizeof(engine->clients));
         memset(engine->client_slots, 0, engine->client_actor_capacity * sizeof(*engine->client_slots));
         for (uint32_t slot = 1; slot < 257; ++slot)
@@ -393,13 +395,13 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         engine->world_actor = world; engine->frame = frame; engine->map_name = map_id; engine->spawn_point = spawn_id;
         engine->initialized = initialized != 0; engine->map_ready = engine->provider->map_bound = map_ready != 0;
         qa_cvars_set_server_active(engine->cvars, engine->map_ready);
-        for (uint32_t i = 0; i < engine->config_layout.max_configs; ++i)
+        for (uint32_t i = 0; i < engine->hud_names.layout.max_configs; ++i)
             qa_q2_config_changed(&engine->config_changes, i);
-        uint32_t styles = engine->config_layout.lights;
+        uint32_t styles = engine->hud_names.layout.lights;
         for (uint32_t i = 0; i < 256; ++i)
-            qa_lightstyles_set(&engine->lightstyles, i, engine->configstrings[styles + i]);
+            qa_lightstyles_set(&engine->lightstyles, i, engine->hud_names.values[styles + i]);
         engine->hud_source_owner = 0;
-        ok=application_native_q2_config_prepare(engine,error);
+        if (ok) ok=application_native_q2_config_prepare(engine,error);
     }
     free(config);
     free(clients); free(map); free(spawn);

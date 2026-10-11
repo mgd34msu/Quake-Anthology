@@ -619,7 +619,7 @@ static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activa
         if (okay) {
             qa_net_protocol_id protocol=qa_q2_default_protocol(profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE);
             okay=qa_hud_q2_names_configure(&b->hud_names,protocol,e) &&
-                qa_hud_q2_names_prepare_images(&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
+                qa_hud_q2_names_prepare_images(&b->hud_names,&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
         }
         if (!okay) { qa_hud_q2_names_destroy(&b->hud_names);free(b); return false; }
         q2_bank **tail=&o->banks;
@@ -817,7 +817,7 @@ static qa_string_id native_config_picture(void *context,int32_t index,unsigned v
 static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
 {
     if (!qa_hud_q2_names_configure(&v->bank->hud_names,v->protocol,e) ||
-        !qa_hud_q2_names_prepare_images(&v->bank->hud_names,v->bank->images,&v->bank->picture_names,
+        !qa_hud_q2_names_prepare_images(&v->bank->hud_names,&v->bank->hud_names,v->bank->images,&v->bank->picture_names,
             QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     if (!v->bank->native_font) {
         qa_font_library *fonts;qa_scene_resources *images;qa_material_library *materials;qa_audio_bank *sounds;
@@ -834,7 +834,7 @@ static bool native_hud_bind(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     const qa_unified_document *document=v->configuration?o->status_metadata:v->config_document;
     if (b->hud_name_source==source && b->hud_name_document==document) return true;
     if (!qa_hud_q2_names_configure(&b->hud_names,v->protocol,e) ||
-        !qa_hud_q2_names_prepare_images(&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
+        !qa_hud_q2_names_prepare_images(&b->hud_names,&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     size_t count=v->configuration?v->configuration->configstring_count:v->config_source->configstring_count;
     const qa_q2_config_name *rows=v->configuration?v->configuration->configstrings:v->config_source->configstrings;
     size_t at=0;
