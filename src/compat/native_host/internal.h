@@ -8,6 +8,7 @@
 #include "qa/network.h"
 #include "qa/source_save.h"
 #include "qa/pool.h"
+#include "qa/id_index.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -19,13 +20,6 @@ typedef enum native_host_kind {
     NATIVE_HOST_Q3
 } native_host_kind;
 
-typedef struct native_host_string {
-    char *text;
-    qa_native_address address;
-    size_t bytes;
-    struct native_host_string *next;
-} native_host_string;
-
 typedef struct native_host_cvar_record {
     char *name;
     qa_native_address address;
@@ -34,13 +28,12 @@ typedef struct native_host_cvar_record {
     /* Publication receipt only. Values always come from the common table. */
     uint8_t published[56];
     bool published_valid;
-    native_host_string *name_object, *value_object, *latched_object;
     struct native_host_cvar_record *order_previous, *order_next;
     struct native_host_cvar_record *next;
 } native_host_cvar_record;
 
 typedef struct native_host_memory_state {
-    native_host_string *strings;
+    qa_id_index strings;
     native_host_cvar_record *cvar_shadows;
 } native_host_memory_state;
 bool native_host_memory_fields(qa_source_save_io *, qa_native_host *,
@@ -123,7 +116,9 @@ struct qa_native_host {
     qa_cvars *cvars;
     qa_console *console;
     qa_command_context command_context;
-    native_host_string *strings;
+    qa_id_index strings;
+    qa_strings *string_names;
+    qa_string_id empty_string;
     native_host_cvar_record *cvar_shadows, *cvar_order;
     uint64_t cvar_view_identity, cvar_revision;
     native_host_surface *surfaces;
@@ -200,6 +195,7 @@ bool native_host_write_vec3(qa_native_host *, qa_native_address, qa_vec3, qa_err
 bool native_host_text_read(qa_native_host *, qa_native_address, bool, qa_bytes *, qa_error *);
 bool native_host_string_read(qa_native_host *, qa_native_address, qa_bytes *, qa_error *);
 bool native_host_string_address(qa_native_host *, const char *, qa_native_address *, qa_error *);
+bool native_host_string_id_address(qa_native_host *, qa_string_id, qa_native_address *, qa_error *);
 bool native_host_temporary_string(qa_native_host *, const char *, qa_native_address *, qa_error *);
 void native_host_temporary_free(qa_native_host *, qa_native_address);
 bool native_host_cvar(qa_native_host *, const char *, const char *, uint32_t, bool,

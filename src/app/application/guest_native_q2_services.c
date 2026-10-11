@@ -340,7 +340,8 @@ static bool hud_view(void *opaque, uint32_t seat, qa_native_host_q2_hud_view *ou
 
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *engine)
 {
-    return (qa_native_host_engine_services){.context = engine, .print = print,
+    return (qa_native_host_engine_services){.context = engine,
+        .strings = qa_session_strings(engine->provider->application->session), .print = print,
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,
         .source_frame = source_frame,

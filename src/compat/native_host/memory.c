@@ -142,54 +142,36 @@ static char *copy_text(const char *text)
     return copy;
 }
 
-static bool string_object(qa_native_host *host, const char *text,
-                          native_host_string **out, qa_error *error)
+bool native_host_string_id_address(qa_native_host *host, qa_string_id name,
+    qa_native_address *out, qa_error *error)
 {
-    size_t length = strlen(text);
-    if (length >= host->maximum_string_bytes)
-        return native_host_fail(error, QA_ERROR_ARGUMENT, length,
-                                "native host string exceeds its source limit");
-    for (native_host_string *entry = host->strings; entry; entry = entry->next) {
-        if (!strcmp(entry->text, text)) {
-            *out = entry;
-            return true;
-        }
-    }
-    native_host_string *entry = calloc(1, sizeof(*entry));
-    if (!entry)
-        return native_host_fail(error, QA_ERROR_MEMORY, 0,
-                                "allocating native host string record");
-    entry->text = copy_text(text);
-    entry->bytes = length + 1u;
-    if (!entry->text || !qa_native_allocate(host->instance, entry->bytes, INT32_MIN + 1,
-                                             &entry->address, error) ||
-        !native_host_write(host, entry->address, text, entry->bytes, error)) {
-        if (entry->address) {
-            qa_error ignored = {0};
-            qa_native_free(host->instance, entry->address, &ignored);
-        }
-        free(entry->text);
-        free(entry);
+    if (!name) name = host->empty_string;
+    qa_id_index_cursor cursor = qa_id_index_begin(&host->strings, name, 0);
+    size_t address;
+    if (qa_id_index_next(&host->strings, &cursor, &address)) { *out = address; return true; }
+    qa_bytes text = qa_strings_text(host->string_names, name);
+    if (!text.data || text.size >= host->maximum_string_bytes)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, text.size, "native host string exceeds its source limit");
+    if (host->strings.count == host->strings.capacity)
+        return native_host_fail(error, QA_ERROR_CAPACITY, 0, "native host retained string storage is full");
+    qa_native_address value = 0;
+    if (!qa_native_allocate(host->instance, text.size + 1, INT32_MIN + 1, &value, error) ||
+        !native_host_write(host, value, text.data, text.size + 1, error)) {
+        if (value) { qa_error ignored = {0}; qa_native_free(host->instance, value, &ignored); }
         return false;
     }
-    entry->next = host->strings;
-    host->strings = entry;
-    *out = entry;
+    qa_id_index_insert(&host->strings, name, 0, value);
+    *out = value;
     return true;
 }
-
-
 bool native_host_string_address(qa_native_host *host, const char *text,
-                                qa_native_address *out, qa_error *error)
+    qa_native_address *out, qa_error *error)
 {
-    if (!host || !text || !out)
-        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
-                                "native host string and output are required");
-    native_host_string *entry;
-    if (!string_object(host, text, &entry, error)) return false;
-    *out = entry->address;
-    return true;
+    qa_string_id name;
+    return qa_strings_intern_cstr(host->string_names, text, &name, error) &&
+        native_host_string_id_address(host, name, out, error);
 }
+
 
 bool native_host_temporary_string(qa_native_host *host, const char *text,
                                   qa_native_address *out, qa_error *error)
@@ -240,18 +222,14 @@ bool native_host_store_pointer(const qa_native_host *host, uint8_t *bytes,
     return true;
 }
 
-static bool cvar_bytes(qa_native_host *host, native_host_cvar_record *record,
+static bool cvar_bytes(qa_native_host *host,
                        const qa_cvar_view *view, native_host_cvar_record *next,
                        uint8_t bytes[56], qa_error *error)
 {
-    if ((!record->name_object && !string_object(host, view->name, &record->name_object, error)) ||
-        ((!record->value_object || strcmp(record->value_object->text, view->value)) &&
-         !string_object(host, view->value, &record->value_object, error))) return false;
-    if (!view->latched_value) record->latched_object = NULL;
-    else if ((!record->latched_object || strcmp(record->latched_object->text, view->latched_value)) &&
-             !string_object(host, view->latched_value, &record->latched_object, error)) return false;
-    qa_native_address name = record->name_object->address, value = record->value_object->address;
-    qa_native_address latched = record->latched_object ? record->latched_object->address : 0;
+    qa_native_address name, value, latched = 0;
+    if (!native_host_string_address(host, view->name, &name, error) ||
+        !native_host_string_address(host, view->value, &value, error) ||
+        (view->latched_value && !native_host_string_address(host, view->latched_value, &latched, error))) return false;
     memset(bytes, 0, 56);
     if (host->profile == QA_NATIVE_Q2_GAME_API3) {
         const native_host_classic_layout *layout = host->classic;
@@ -281,7 +259,7 @@ static bool publish_cvar(qa_native_host *host, native_host_cvar_record *record,
                          bool restore, qa_error *error)
 {
     uint8_t bytes[56];
-    if (!cvar_bytes(host, record, view, next, bytes, error)) return false;
+    if (!cvar_bytes(host, view, next, bytes, error)) return false;
     size_t size = host->classic ? host->classic->cvar.bytes : sizeof(bytes);
     if (!restore) {
         if (!record->published_valid) {
@@ -452,10 +430,7 @@ bool native_host_cvar(qa_native_host *host, const char *name, const char *value,
  * the restored Source process already owns every tagged allocation and byte. */
 void native_host_memory_dispose(native_host_memory_state *state)
 {
-    while (state->strings) {
-        native_host_string *row=state->strings; state->strings=row->next;
-        free(row->text); free(row);
-    }
+    qa_id_index_destroy(&state->strings);
     while (state->cvar_shadows) {
         native_host_cvar_record *row=state->cvar_shadows; state->cvar_shadows=row->next;
         free(row->name); free(row);
@@ -493,35 +468,29 @@ bool native_host_memory_fields(qa_source_save_io *io,qa_native_host *host,
     native_host_memory_state *state,bool qualify_addresses)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    if (reading && (state->strings || state->cvar_shadows))
+    if (reading && (state->strings.count || state->cvar_shadows))
         return native_host_fail(io->error,QA_ERROR_ARGUMENT,io->offset,"Native memory import requires empty metadata custody");
-    size_t count=0;
-    if (!reading) for (native_host_string *row=state->strings;row;row=row->next) ++count;
-    if (!qa_source_save_count(io,&count,SIZE_MAX)) return false;
-    if (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/17))
-        return native_host_fail(io->error,QA_ERROR_FORMAT,io->offset,"Native string count exceeds its saved objects");
-    native_host_string **strings=&state->strings;
-    for (size_t i=0;i<count;++i) {
-        if (reading) {
-            *strings=calloc(1,sizeof(**strings));
-            if (!*strings) return native_host_fail(io->error,QA_ERROR_MEMORY,i,"Owning restored native string custody");
+    size_t count = state->strings.count;
+    if (!qa_source_save_count(io, &count, host->strings.capacity)) return false;
+    if (reading && !qa_id_index_reserve(&state->strings, host->strings.capacity, io->error)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_native_address address = reading ? 0 : state->strings.entries[i].value;
+        char *text = reading ? NULL : (char *)qa_strings_cstr(host->string_names, state->strings.entries[i].key);
+        size_t bytes = 0;
+        bool ok = qa_source_save_u64(io, &address) && memory_text(io, &text, &bytes, host->maximum_string_bytes) &&
+            memory_allocation(host, address, bytes, INT32_MIN + 1, qualify_addresses, io->error);
+        qa_string_id name = QA_STRING_NONE;
+        if (ok && reading) ok = qa_strings_intern_cstr(host->string_names, text, &name, io->error);
+        if (ok && qualify_addresses) {
+            qa_buffer actual = {0};
+            ok = qa_native_read_string(host->instance, address, bytes, &actual, io->error);
+            if (ok && (actual.size != bytes - 1 || memcmp(actual.data, text, actual.size)))
+                ok = native_host_fail(io->error, QA_ERROR_FORMAT, i, "Native string bytes differ from their restored Source RAM");
+            qa_buffer_free(&actual);
         }
-        native_host_string *row=*strings;
-        if (!reading && row->bytes!=strlen(row->text)+1)
-            return native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native string custody changes its actual allocation extent");
-        if (!qa_source_save_u64(io,&row->address) || !memory_text(io,&row->text,&row->bytes,host->maximum_string_bytes) ||
-            !memory_allocation(host,row->address,row->bytes,INT32_MIN+1,qualify_addresses,io->error)) return false;
-        for (native_host_string *prior=state->strings;prior!=row;prior=prior->next)
-            if (prior->address==row->address || !strcmp(prior->text,row->text))
-                return native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native string custody repeats a Source object");
-        if (qualify_addresses) {
-            qa_buffer actual={0};
-            bool ok=qa_native_read_string(host->instance,row->address,row->bytes,&actual,io->error);
-            if (ok && (actual.size!=row->bytes-1 || memcmp(actual.data,row->text,actual.size)))
-                ok=native_host_fail(io->error,QA_ERROR_FORMAT,i,"Native string bytes differ from their restored Source RAM");
-            qa_buffer_free(&actual); if (!ok) return false;
-        }
-        strings=&row->next;
+        if (reading) free(text);
+        if (!ok) return false;
+        if (reading) qa_id_index_insert(&state->strings, name, 0, address);
     }
     count=0;
     if (!reading) for (native_host_cvar_record *row=state->cvar_shadows;row;row=row->next) ++count;
@@ -544,10 +513,12 @@ bool native_host_memory_fields(qa_source_save_io *io,qa_native_host *host,
             uint8_t pointer[8];
             if (!qa_native_read(host->instance,row->address,pointer,host->pointer_bytes,io->error)) return false;
             qa_native_address name=host->pointer_bytes==4?qa_load_u32le(pointer):qa_load_u64le(pointer);
-            native_host_string *source=state->strings;
-            while (source && (source->address!=name || strcmp(source->text,row->name))) source=source->next;
-            if (!source) return native_host_fail(io->error,QA_ERROR_FORMAT,i,
-                "Native cvar-shadow name lacks its literal Source string object");
+            qa_string_id id = qa_strings_find(host->string_names, (qa_bytes){(const uint8_t *)row->name, strlen(row->name)});
+            qa_id_index_cursor cursor = qa_id_index_begin(&state->strings, id, 0);
+            size_t address;
+            if (!qa_id_index_next(&state->strings, &cursor, &address) || address != name)
+                return native_host_fail(io->error, QA_ERROR_FORMAT, i,
+                    "Native cvar-shadow name lacks its literal Source string object");
         }
         for (native_host_cvar_record *prior=state->cvar_shadows;prior!=row;prior=prior->next)
             if (prior->address==row->address || !strcmp(prior->name,row->name))

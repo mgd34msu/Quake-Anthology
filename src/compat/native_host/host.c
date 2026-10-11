@@ -190,6 +190,12 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
                                const qa_native_host_instance_options *options,
                                qa_error *error)
 {
+    if (host->world.session) host->string_names = qa_session_strings(host->world.session);
+    else host->string_names = host->engine.strings;
+    if (host->string_names) qa_strings_retain(host->string_names);
+    else if (!qa_strings_create(&host->string_names, error)) return false;
+    if (!qa_strings_intern_cstr(host->string_names, "", &host->empty_string, error) ||
+        !qa_id_index_reserve(&host->strings, QA_Q2_MAX_CONFIGSTRINGS + 4096, error)) return false;
     qa_native_process_options owned = {0};
     if (!options->process && !create_sdk_process(host, module, options, &owned, error))
         return false;
@@ -381,7 +387,8 @@ static void free_records(qa_native_host *host)
     qa_arena_destroy(&host->call_storage);
     qa_arena_destroy(&host->text_storage);
     native_host_memory_state memory={host->strings,host->cvar_shadows};
-    native_host_memory_dispose(&memory); host->strings=NULL; host->cvar_shadows=NULL;
+    native_host_memory_dispose(&memory); host->strings=(qa_id_index){0}; host->cvar_shadows=NULL;
+    qa_strings_destroy(host->string_names); host->string_names=NULL;
     while (host->surfaces) {
         native_host_surface *next = host->surfaces->next;
         free(host->surfaces);

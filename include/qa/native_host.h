@@ -96,6 +96,7 @@ typedef struct qa_native_host_q2_hud_view {
 
 typedef struct qa_native_host_engine_services {
     void *context;
+    qa_strings *strings;
     void (*print)(void *, const qa_native_host_print *);
     bool (*configstring_get)(void *, int32_t, const char **, qa_error *);
     bool (*configstring_set)(void *, int32_t, const char *, qa_error *);
@@ -363,7 +364,7 @@ bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
     const qa_native_host_q2_hud_view *, int32_t player_number,
     qa_bytes server_data, qa_bytes player_state, qa_error *);
 /* Immutable source return storage remains valid through this host's lifetime. */
-bool qa_native_host_q2_retain_string(qa_native_host *, const char *, qa_native_address *, qa_error *);
+bool qa_native_host_q2_retain_string(qa_native_host *, qa_string_id, qa_native_address *, qa_error *);
 bool qa_native_host_server_command(qa_native_host *, qa_error *);
 
 typedef struct qa_native_host_client_request {

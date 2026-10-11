@@ -62,7 +62,9 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
                     return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client dogtag is too long");
             } else if (!qa_hud_q2_player_icon_path(names.appearance,text,sizeof(text),error)) return false;
         }
-        return qa_native_host_q2_retain_string(call->host, text, &result->as.address, error);
+        qa_string_id name;
+        return qa_strings_intern_cstr(qa_session_strings(source->provider->application->session), text, &name, error) &&
+            qa_native_host_q2_retain_string(call->host, name, &result->as.address, error);
     }
     if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_FrameValid) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_ClientTime) ||
         (dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerFrame) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerProtocol) ||
