@@ -675,7 +675,7 @@ bool q1_pickup_define(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!qa_builtin_resource(&g->services, id, &item->item, error))
             return false;
     }
-    if (!q1_model(g, entity, model, error) ||
+    if (!(qa_builtin_resource(&g->services, model, &entity->model, error) && q1_model(g, entity, entity->model, error)) ||
         (sound && !qa_builtin_resource(&g->services, sound, &item->sound, error)))
         return false;
     item->original_model = entity->model;
@@ -1397,7 +1397,7 @@ bool q1_backpack_definition(qa_q1_game *g, q1_actor *pack, qa_error *error) {
     item->respawn = -1;
     item->avoid_underwater_lightning = g->options.edition == QA_Q1_RERELEASE;
     if (!qa_builtin_resource(&g->services, "q1:item_backpack", &item->item, error) ||
-        !q1_model(g, pack, "progs/backpack.mdl", error) ||
+        !q1_model(g, pack, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BACKPACK_MDL], error) ||
         !qa_builtin_resource(&g->services, "weapons/lock4.wav", &item->sound, error))
         return false;
     item->original_model = pack->model;

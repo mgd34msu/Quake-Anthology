@@ -10,7 +10,7 @@ static void spin(qa_q1_game *g, q1_actor *e) {
     e->physics.angular_velocity = qa_v3(x, y, z);
 }
 static bool rock(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 direction,
-                 qa_vec3 velocity, const char *model, q1_actor **out, qa_error *error) {
+                 qa_vec3 velocity, qa_string_id model, q1_actor **out, qa_error *error) {
     if (!q1_boss_shot(g, owner, origin, direction, velocity, model, Q1_FINAL_ROCK, out, error))
         return false;
     return qa_builtin_resource(&g->services, "rock", &(*out)->classname, error) &&
@@ -50,7 +50,7 @@ bool q1_final_awake(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error 
     body.bounds = m->species->bounds;
     e->max_health = 12000;
     e->physics.yaw_speed = 20;
-    return q1_boss_damageable(g, e, true, error) && q1_model(g, e, "progs/boss.mdl", error) &&
+    return q1_boss_damageable(g, e, true, error) && q1_model(g, e, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BOSS_MDL], error) &&
            qa_world_body_write(g->services.world, e->id, &body, error) && q1_link(g, e, error) &&
            qa_combat_set_health(g->services.combat, e->id, 12000, error) &&
            q1_effect(g, QA_BUILTIN_IMPACT, e->id, body.origin, 0, 10, error) &&
@@ -151,7 +151,7 @@ static bool blast(qa_q1_game *g, q1_actor *e, qa_vec3 offset, float spread, bool
             qa_vec_add(direction, qa_vec_add(qa_vec_scale(right, r), qa_vec_scale(up, u))));
         q1_actor *shot;
         if (!rock(g, e->id, qa_vec_add(origin, qa_vec_scale(aim, 8)), aim, aim,
-                  "progs/rogue/sphere.mdl", &shot, error))
+                  g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], &shot, error))
             return false;
         qa_body_state projectile;
         if (!read(g, shot, &projectile, error))
@@ -199,7 +199,7 @@ static bool line(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error) {
         aim = qa_vec_normalize(aim);
         q1_actor *shot;
         if (!rock(g, e->id, qa_vec_add(origin, qa_vec_scale(aim, 8)), aim, aim,
-                  "progs/rogue/sphere.mdl", &shot, error))
+                  g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], &shot, error))
             return false;
         qa_body_state projectile;
         if (!read(g, shot, &projectile, error))
@@ -231,7 +231,7 @@ static bool missile(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *error)
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target, origin));
     q1_actor *shot;
     if (!q1_boss_shot(g, e->id, origin, direction, qa_vec_scale(direction, 300),
-                      "progs/lavaball.mdl", Q1_ROCKET, &shot, error))
+                      g->runtime_names[Q1_NAME_RESOURCE_PROGS_LAVABALL_MDL], Q1_ROCKET, &shot, error))
         return false;
     shot->physics.angular_velocity = qa_v3(200, 100, 300);
     if (!q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
@@ -518,7 +518,7 @@ bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_vec3 origin =
             spiral ? qa_vec_add(body.origin, qa_vec_scale(direction, 100)) : body.origin;
         if (!rock(g, q1_ref_actor(g, spiral ? e->owner : q1_ref_from(g, e->id)), origin, direction, direction,
-                  spiral ? "progs/rogue/plasma.mdl" : "progs/rogue/sphere.mdl", &shot, error))
+                  spiral ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_PLASMA_MDL] : g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], &shot, error))
             return false;
         qa_body_state projectile;
         if (!read(g, shot, &projectile, error))

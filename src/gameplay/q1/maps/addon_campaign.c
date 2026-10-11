@@ -66,12 +66,10 @@ bool q1_map_addon_sigil_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     e->spawnflags = (1u << index) | spawned;
     e->map->style = (int32_t)(1u << index);
-    char model[32], message[40];
-    snprintf(model, sizeof(model), mg3 ? "progs/end%u.mdl" : "progs/mg1_rune%u.mdl",
-             index + 1);
+    char message[40];
     snprintf(message, sizeof(message), mg3 ? "$mg3_qc_rune%u" : "$qc_mg1_pickup_rune%u",
              index + 1);
-    if (!q1_model(g, e, model, error))
+    if (!q1_model(g, e, g->runtime_names[mg3?q1_rune_models[index]:q1_mg1_rune_models[index]], error))
         return false;
     e = campaign_actor(g, id);
     if (!e)
@@ -180,9 +178,7 @@ static bool indicator_model(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (index == 6)
         return q1_map_fail(error, "Q1 rune indicator has no source rune model");
     e->spawnflags = 1u << index;
-    char model[32];
-    snprintf(model, sizeof(model), "progs/mg1_rune%u.mdl", index + 1);
-    return q1_model(g, e, model, error);
+    return q1_model(g, e, g->runtime_names[q1_mg1_rune_models[index]], error);
 }
 bool q1_map_addon_campaign_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;

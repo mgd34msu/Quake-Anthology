@@ -5,6 +5,9 @@
 #include "wire_internal.h"
 #include <float.h>
 
+const q1_runtime_name q1_rune_models[4]={Q1_NAME_RESOURCE_PROGS_END1_MDL,Q1_NAME_RESOURCE_PROGS_END2_MDL,Q1_NAME_RESOURCE_PROGS_END3_MDL,Q1_NAME_RESOURCE_PROGS_END4_MDL};
+const q1_runtime_name q1_mg1_rune_models[6]={Q1_NAME_RESOURCE_PROGS_MG1_RUNE1_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE2_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE3_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE4_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE5_MDL,Q1_NAME_RESOURCE_PROGS_MG1_RUNE6_MDL};
+
 #define Q1_RUNTIME_NAME_TEXT(key, text) text,
 static const char *const q1_runtime_names[] = {
     Q1_RUNTIME_NAME_LIST(Q1_RUNTIME_NAME_TEXT)
@@ -392,11 +395,11 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
                              : 0};
     return true;
 }
-bool q1_model(qa_q1_game *g, q1_actor *entity, const char *path, qa_error *error) {
+bool q1_model(qa_q1_game *g, q1_actor *entity, qa_string_id model, qa_error *error) {
     if (g->wire && !g->wire->id1 && g->wire->loading &&
-        !qa_q1_wire_declare_model(g, path, error))
+        !qa_q1_wire_declare_model(g, qa_strings_cstr(qa_session_strings(g->services.session),model), error))
         return false;
-    return qa_builtin_resource(&g->services, path, &entity->model, error);
+    entity->model=model; return true;
 }
 bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, int32_t channel,
                        float attenuation, float volume, qa_error *error) {
@@ -1524,7 +1527,7 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
         entity->physics.motion = QA_PHYSICS_STEP;
         qa_body_state body = request.body;
         body.bounds = (qa_bounds){{-32, -32, -24}, {32, 32, 64}};
-        if (!q1_model(g, entity, "progs/demon.mdl", error) ||
+        if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_DEMON_MDL], error) ||
             !qa_world_body_write(g->services.world, actor, &body, error) ||
             !q1_link(g, entity, error))
             goto fail;

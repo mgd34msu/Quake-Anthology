@@ -18,7 +18,7 @@ bool q1_map_pendulum_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->spawnflags = 2;
     if (!(entity->spawnflags & 3))
         return q1_map_fail(error, "Unimplemented Pendulum Type (pendulum.qc)");
-    if (!q1_model(g, entity, "progs/pendulum.mdl", error))
+    if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_PENDULUM_MDL], error))
         return false;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, error))

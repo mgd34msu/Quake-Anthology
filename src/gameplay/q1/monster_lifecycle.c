@@ -301,15 +301,15 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!entity)
         return true;
     if (foundation && spec->species == QA_Q1_ARMY &&
-        !q1_gib_head(g, entity, spec->head, health, error))
+        !q1_gib_head(g, entity, (spec->head==Q1_NAME_COUNT?0:g->runtime_names[spec->head]), health, error))
         return false;
     for (unsigned i = 0; i < 3; ++i) {
-        const char *model = spec->species == QA_Q1_DOG || spec->species == QA_Q1_OGRE ? "gib3"
-                            : spec->species == QA_Q1_DEMON                            ? "gib1"
-                            : spec->species == QA_Q1_WIZARD                           ? "gib2"
-                            : i == 0                                                  ? "gib1"
-                            : i == 1                                                  ? "gib2"
-                                                                                      : "gib3";
+        qa_string_id model = spec->species == QA_Q1_DOG || spec->species == QA_Q1_OGRE ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL]
+                            : spec->species == QA_Q1_DEMON                            ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
+                            : spec->species == QA_Q1_WIZARD                           ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
+                            : i == 0                                                  ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
+                            : i == 1                                                  ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
+                                                                                      : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL];
         if (!q1_entity(g, source))
             return true;
         qa_body_state body;
@@ -328,8 +328,8 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity = q1_entity(g, source);
     if (!entity || (foundation && spec->species == QA_Q1_ARMY))
         return true;
-    return foundation ? q1_gib_head(g, entity, spec->head, health, error)
-                      : q1_gib(g, entity, spec->head, true, error);
+    return foundation ? q1_gib_head(g, entity, (spec->head==Q1_NAME_COUNT?0:g->runtime_names[spec->head]), health, error)
+                      : q1_gib(g, entity, (spec->head==Q1_NAME_COUNT?0:g->runtime_names[spec->head]), true, error);
 }
 
 bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_error *error) {
@@ -381,7 +381,7 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         return q1_gremlin_die(g, entity, attacker, error);
     if (spec->species >= QA_Q1_GREMLIN)
         return q1_mission_monster_die(g, entity, error);
-    if (q1_health(g, entity->id) < spec->gib_health && spec->head)
+    if (q1_health(g, entity->id) < spec->gib_health && spec->head != Q1_NAME_COUNT)
         return gib_monster(g, entity, error);
     qa_string_id sound = 0;
     const char *frame = NULL;
@@ -519,7 +519,7 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
         return qa_combat_set_traits(g->services.combat, entity->id, &combat, error) &&
                qa_combat_set_health(g->services.combat, entity->id, g->options.skill == 0 ? 1 : 3,
                                     error) &&
-               q1_model(g, entity, "progs/boss.mdl", error) &&
+               q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BOSS_MDL], error) &&
                q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id, body.origin, 0, 10, error) &&
                q1_link(g, entity, error) && q1_monster_play(g, entity, "boss_rise1", error);
     }

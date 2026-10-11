@@ -457,7 +457,7 @@ bool q1_map_rogue_ending(qa_q1_game *g, qa_actor_id player, qa_error *error) {
         if (observed)
             actor->frame = pose.frame;
     }
-    if (!q1_model(g, actor, "progs/player.mdl", error) ||
+    if (!q1_model(g, actor, g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYER_MDL], error) ||
         !qa_combat_set_health(g->services.combat, id, 100, error))
         return false;
     if (!ending_actor(g, id))

@@ -15,7 +15,7 @@ bool q1_boss_child_schedule(qa_q1_game *, q1_actor *, q1_boss_child_kind, double
 q1_ref q1_boss_enemy(const q1_actor *);
 qa_vec3 q1_boss_target(qa_q1_game *, const q1_actor *);
 bool q1_boss_shot(qa_q1_game *, qa_actor_id owner, qa_vec3 origin, qa_vec3 direction,
-                  qa_vec3 velocity, const char *model, q1_projectile_kind, q1_actor **, qa_error *);
+                  qa_vec3 velocity, qa_string_id model, q1_projectile_kind, q1_actor **, qa_error *);
 bool q1_boss_sphere_manager(qa_q1_game *, q1_actor *, int32_t count, bool chunk, qa_error *);
 bool q1_boss_autogun(qa_q1_game *, q1_actor *, qa_vec3 origin, float offset, qa_error *);
 bool q1_boss_sphere_think(qa_q1_game *, q1_actor *, qa_error *);

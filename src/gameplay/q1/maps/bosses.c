@@ -212,9 +212,9 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
                 float random = q1_random(g);
                 if (!q1_gib_at(g, oldone->id,
                                qa_vec_add(body.origin, qa_v3((float)x, (float)y, (float)z)), -999,
-                               random < .3f   ? "gib1"
-                               : random < .6f ? "gib2"
-                                              : "gib3",
+                               random < .3f   ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
+                               : random < .6f ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
+                                              : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL],
                                error))
                     return false;
             }
@@ -228,7 +228,7 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     victory->frame = 1;
     qa_body_state pose = {.origin = qa_vec_sub(body.origin, qa_v3(32, 264, 0)),
                           .angles = {0, 290, 0}};
-    if (!q1_model(g, victory, "progs/player.mdl", error) ||
+    if (!q1_model(g, victory, g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYER_MDL], error) ||
         !qa_world_body_write(g->services.world, victory->id, &pose, error) ||
         !q1_link(g, victory, error) || (q1_alive(g, oldone->id) && !q1_remove(g, oldone, error)) ||
         !style(g, "m", error))

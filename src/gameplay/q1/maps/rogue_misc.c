@@ -41,9 +41,9 @@ bool q1_map_rogue_misc_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return !e || q1_link(g, e, error);
     }
     case Q1_MAP_ROGUE_LAMP: {
-        const char *model = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_LANTERN]) ? "progs/lantern.mdl"
-                                                                : "progs/candle.mdl";
-        if (!qa_q1_wire_declare_model(g, model, error)) return false;
+        qa_string_id model = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_LANTERN]) ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_LANTERN_MDL]
+                                                                : g->runtime_names[Q1_NAME_RESOURCE_PROGS_CANDLE_MDL];
+        if (!qa_q1_wire_declare_model(g, qa_strings_cstr(qa_session_strings(g->services.session),model), error)) return false;
         e = misc_actor(g, id);
         if (!e) return true;
         if (!q1_model(g, e, model, error)) return false;
@@ -100,7 +100,7 @@ bool q1_map_rogue_rubble_throw(qa_q1_game *g, q1_actor *e, qa_error *error) {
     piece->physics.solid = QA_PHYSICS_BOX;
     piece->physics.motion = QA_PHYSICS_BOUNCE;
     piece->skin = (e->spawnflags & 1) != 0;
-    if (!q1_model(g, piece, "progs/rubble.mdl", error))
+    if (!q1_model(g, piece, g->runtime_names[Q1_NAME_RESOURCE_PROGS_RUBBLE_MDL], error))
         goto fail;
     piece = misc_actor(g, id);
     if (!piece)

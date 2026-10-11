@@ -4,21 +4,21 @@
 
 typedef struct drop_weapon {
     qa_q1_weapon weapon, powered;
-    q1_runtime_name classname;
-    const char *model, *name, *localized;
+    q1_runtime_name classname, model;
+    const char *name, *localized;
 } drop_weapon;
 static const drop_weapon drop_weapons[] = {
-    {QA_Q1_SUPER_SHOTGUN, QA_Q1_WEAPON_COUNT, Q1_NAME_CLASS_WEAPON_SUPERSHOTGUN, "progs/g_shot.mdl",
+    {QA_Q1_SUPER_SHOTGUN, QA_Q1_WEAPON_COUNT, Q1_NAME_CLASS_WEAPON_SUPERSHOTGUN, Q1_NAME_RESOURCE_PROGS_G_SHOT_MDL,
      "Double-barrelled Shotgun", "$qc_double_shotgun"},
-    {QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN, Q1_NAME_CLASS_WEAPON_NAILGUN, "progs/g_nail.mdl", "nailgun",
+    {QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN, Q1_NAME_CLASS_WEAPON_NAILGUN, Q1_NAME_RESOURCE_PROGS_G_NAIL_MDL, "nailgun",
      "$qc_nailgun"},
-    {QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN, Q1_NAME_CLASS_WEAPON_SUPERNAILGUN, "progs/g_nail2.mdl",
+    {QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN, Q1_NAME_CLASS_WEAPON_SUPERNAILGUN, Q1_NAME_RESOURCE_PROGS_G_NAIL2_MDL,
      "Super Nailgun", "$qc_super_nailgun"},
-    {QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE, Q1_NAME_CLASS_WEAPON_GRENADELAUNCHER, "progs/g_rock.mdl",
+    {QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE, Q1_NAME_CLASS_WEAPON_GRENADELAUNCHER, Q1_NAME_RESOURCE_PROGS_G_ROCK_MDL,
      "Grenade Launcher", "$qc_grenade_launcher"},
-    {QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET, Q1_NAME_CLASS_WEAPON_ROCKETLAUNCHER, "progs/g_rock2.mdl",
+    {QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET, Q1_NAME_CLASS_WEAPON_ROCKETLAUNCHER, Q1_NAME_RESOURCE_PROGS_G_ROCK2_MDL,
      "Rocket Launcher", "$qc_rocket_launcher"},
-    {QA_Q1_LIGHTNING, QA_Q1_PLASMA, Q1_NAME_CLASS_WEAPON_LIGHTNING, "progs/g_light.mdl", "Thunderbolt",
+    {QA_Q1_LIGHTNING, QA_Q1_PLASMA, Q1_NAME_CLASS_WEAPON_LIGHTNING, Q1_NAME_RESOURCE_PROGS_G_LIGHT_MDL, "Thunderbolt",
      "$qc_thunderbolt"}};
 typedef struct drop_ammo {
     qa_q1_ammo ammo;
@@ -161,7 +161,7 @@ bool qa_q1_ctf_toss_ammo(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_inpu
     pack->state.pickup.weapon = QA_Q1_WEAPON_COUNT;
     if (!qa_builtin_resource(&g->services, "q1:item_backpack",
                               &pack->state.pickup.item, error) ||
-        !q1_model(g, pack, "progs/backpack.mdl", error))
+        !q1_model(g, pack, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BACKPACK_MDL], error))
         goto fail;
     for (size_t i = 0; i < sizeof(drop_ammunition) / sizeof(*drop_ammunition); ++i) {
         const drop_ammo *rule = &drop_ammunition[i];
@@ -223,7 +223,7 @@ static bool toss_weapon(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_input
     item->state.pickup.item = g->weapons[definition->weapon];
     item->state.pickup.owner_delay = 1;
     qa_body_state body;
-    if (!q1_model(g, item, definition->model, error) ||
+    if (!q1_model(g, item, g->runtime_names[definition->model], error) ||
         !qa_builtin_resource(&g->services, definition->name, &item->message, error) ||
         !consume(g, actor, g->weapons[definition->weapon], 1, error))
         goto fail;

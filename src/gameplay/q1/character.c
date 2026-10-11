@@ -322,9 +322,9 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
         body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
         if (!qa_world_body_write(g->services.world, actor, &body, error))
             return false;
-        static const char *models[] = {"gib1", "gib2", "gib3"};
+        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
         for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib_at(g, actor, gib_origin, health, models[i], error))
+            if (!q1_gib_at(g, actor, gib_origin, health, g->runtime_names[models[i]], error))
                 return false;
         bool teledeath = cause_named(g, outcome->request.attack.attacker, "teledeath") ||
                          cause_named(g, outcome->request.attack.attacker, "teledeath2");
@@ -545,7 +545,7 @@ bool q1_spawn_bubble(qa_q1_game *g, qa_vec3 origin, qa_vec3 velocity, bool split
     body.origin = origin;
     body.velocity = velocity;
     body.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
-    return q1_model(g, bubble, "progs/s_bubble.spr", error) &&
+    return q1_model(g, bubble, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_BUBBLE_SPR], error) &&
            qa_world_body_write(g->services.world, bubble->id, &body, error) &&
            q1_link(g, bubble, error) && q1_schedule(g, bubble, 0.5, Q1_THINK_BUBBLE, error);
 }

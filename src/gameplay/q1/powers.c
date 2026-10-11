@@ -282,7 +282,7 @@ static bool shield_hit(qa_q1_game *g, q1_player *player, qa_error *error) {
             return false;
         q1_actor *shield;
         if (!q1_create(g, g->runtime_names[Q1_NAME_POWER_SHIELD], Q1_TIMER, player->id, &shield, error) ||
-            !q1_model(g, shield, "progs/p_shield.mdl", error))
+            !q1_model(g, shield, g->runtime_names[Q1_NAME_RESOURCE_PROGS_P_SHIELD_MDL], error))
             return false;
         shield->delay = (float)(g->time + 0.3);
         player->shield_until = shield->delay;
@@ -392,7 +392,7 @@ bool q1_sphere_pickup(qa_q1_game *g, q1_actor *item, qa_actor_id actor, bool *ta
         return true;
     q1_actor *sphere;
     if (!q1_create(g, g->runtime_names[Q1_NAME_VENGEANCE], Q1_PROJECTILE, actor, &sphere, error) ||
-        !q1_model(g, sphere, "progs/sphere.mdl", error))
+        !q1_model(g, sphere, g->runtime_names[Q1_NAME_RESOURCE_PROGS_SPHERE_MDL], error))
         return false;
     sphere->state.projectile.kind = Q1_VENGEANCE;
     sphere->state.projectile.expires = g->time + 30;

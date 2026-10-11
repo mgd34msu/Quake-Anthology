@@ -131,7 +131,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, bool first, qa_error *error) {
         !qa_world_body_read(g->services.world, shot->id, &body, error))
         return false;
     body.velocity = qa_vec_add(qa_vec_scale(direction, 600 * t), qa_v3(0, 0, 200 * t));
-    if (!q1_model(g, shot, "progs/lavaball.mdl", error) ||
+    if (!q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_LAVABALL_MDL], error) ||
         !qa_world_body_write(g->services.world, shot->id, &body, error) ||
         !q1_schedule(g, shot, 6, Q1_THINK_REMOVE, error) || !q1_link(g, shot, error) ||
         !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
@@ -169,7 +169,7 @@ bool q1_lavaman_awake(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
     if (!qa_combat_set_health(g->services.combat, entity->id, health, error) ||
         !qa_combat_set_traits(g->services.combat, entity->id, &combat, error) ||
         !qa_world_body_write(g->services.world, entity->id, &body, error) ||
-        !q1_model(g, entity, "progs/lavaman.mdl", error) ||
+        !q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_LAVAMAN_MDL], error) ||
         !q1_effect(g, QA_BUILTIN_IMPACT, entity->id,
                    qa_vec_sub(body.origin, qa_v3(0, 0, mg3 ? 50 : 0)), 0, 10, error))
         return false;

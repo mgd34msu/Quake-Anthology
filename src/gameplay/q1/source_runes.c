@@ -4,8 +4,8 @@ static const char *const rune_names[QA_Q1_RUNE_COUNT] = {
     "resistance", "strength", "haste", "regeneration"};
 static const q1_runtime_name rune_classes[QA_Q1_RUNE_COUNT] = {
     Q1_NAME_CLASS_ITEM_RUNE_RESISTANCE, Q1_NAME_CLASS_ITEM_RUNE_STRENGTH, Q1_NAME_CLASS_ITEM_RUNE_HASTE, Q1_NAME_CLASS_ITEM_RUNE_REGENERATION};
-static const char *const rune_models[QA_Q1_RUNE_COUNT] = {
-    "progs/end1.mdl", "progs/end2.mdl", "progs/end3.mdl", "progs/end4.mdl"};
+static const q1_runtime_name rune_models[QA_Q1_RUNE_COUNT] = {
+    Q1_NAME_RESOURCE_PROGS_END1_MDL, Q1_NAME_RESOURCE_PROGS_END2_MDL, Q1_NAME_RESOURCE_PROGS_END3_MDL, Q1_NAME_RESOURCE_PROGS_END4_MDL};
 
 static bool fail(qa_error *error, qa_actor_id actor, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "%s", message);
@@ -107,7 +107,7 @@ static bool drop(qa_q1_game *game, qa_q1_source_rune rune, qa_vec3 origin,
         &entity, error)) return false;
     qa_actor_id actor = entity->id;
     if (!actor_current(game, actor, entity, Q1_SOURCE_CTF_RUNE, error) ||
-        !q1_model(game, entity, rune_models[rune], error) ||
+        !q1_model(game, entity, game->runtime_names[rune_models[rune]], error) ||
         !actor_current(game, actor, entity, Q1_SOURCE_CTF_RUNE, error)) return false;
     entity->physics.solid = QA_PHYSICS_TRIGGER;
     entity->physics.motion = QA_PHYSICS_TOSS;

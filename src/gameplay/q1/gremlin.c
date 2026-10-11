@@ -8,7 +8,7 @@ static bool gib(qa_q1_game *g, q1_actor *entity, float damage, qa_error *error) 
     entity = q1_entity(g, id);
     if (!entity)
         return true;
-    if (!q1_gib_head(g, entity, "h_grem", damage, error))
+    if (!q1_gib_head(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_GREM_MDL], damage, error))
         return false;
     for (unsigned i = 0; i < 3; ++i) {
         if (!q1_entity(g, id))
@@ -18,7 +18,7 @@ static bool gib(qa_q1_game *g, q1_actor *entity, float damage, qa_error *error) 
             return false;
         if (!q1_entity(g, id))
             return true;
-        if (!q1_gib_at(g, id, body.origin, damage, "gib1", error))
+        if (!q1_gib_at(g, id, body.origin, damage, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL], error))
             return false;
     }
     return true;
@@ -163,7 +163,7 @@ static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     child->physics.solid = QA_PHYSICS_BOX;
     child->physics.motion = QA_PHYSICS_STEP;
-    if (!q1_model(g, child, "progs/grem.mdl", error) ||
+    if (!q1_model(g, child, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GREM_MDL], error) ||
         !qa_world_body_read(g->services.world, id, &body, error))
         return false;
     body.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
@@ -229,11 +229,11 @@ static bool gorge(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) 
     q1_actor *victim = q1_entity(g, target);
     if (victim && !victim->consumed_corpse) {
         victim->consumed_corpse = true;
-        const char *head = victim->kind == Q1_MONSTER ? victim->state.monster.species->head : NULL;
+        qa_string_id head = victim->kind == Q1_MONSTER && victim->state.monster.species->head != Q1_NAME_COUNT ? g->runtime_names[victim->state.monster.species->head] : 0;
         if (q1_classnamed(g, target, g->runtime_names[Q1_NAME_MONSTER_FISH]))
-            head = "gib1";
+            head = g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL];
         if (!head)
-            head = "h_player";
+            head = g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_PLAYER_MDL];
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_UDEATH_WAV], 2, 1, 1, error) ||
             !q1_gib_head(g, victim, head, -15, error))
             return false;

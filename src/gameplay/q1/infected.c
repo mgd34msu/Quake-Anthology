@@ -3,8 +3,8 @@
 const q1_species *q1_infected_form(qa_q1_species kind, unsigned corpse) {
     static const q1_species corpses[] = {{QA_Q1_HELLKNIGHT,
                                           "monster_hell_knight",
-                                          "progs/hknight.mdl",
-                                          "h_hellkn",
+                                          Q1_NAME_RESOURCE_PROGS_HKNIGHT_MDL,
+                                          Q1_NAME_RESOURCE_PROGS_H_HELLKN_MDL,
                                           Q1_NAME_RESOURCE_HKNIGHT_SIGHT1_WAV,
                                           "hknight_corpse1",
                                           "hknight_walk1",
@@ -17,8 +17,8 @@ const q1_species *q1_infected_form(qa_q1_species kind, unsigned corpse) {
                                           true},
                                          {QA_Q1_HELLKNIGHT,
                                           "monster_hell_knight",
-                                          "progs/hknight.mdl",
-                                          "h_hellkn",
+                                          Q1_NAME_RESOURCE_PROGS_HKNIGHT_MDL,
+                                          Q1_NAME_RESOURCE_PROGS_H_HELLKN_MDL,
                                           Q1_NAME_RESOURCE_HKNIGHT_SIGHT1_WAV,
                                           "hknight_corpse2",
                                           "hknight_walk1",
@@ -75,10 +75,10 @@ static bool gibs(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, float health, 
                  qa_error *error) {
     for (unsigned i = 0; i < 3; ++i) {
         if (!q1_gib_at(g, entity->id, origin, health,
-                       demon    ? "gib1"
-                       : i == 0 ? "gib1"
-                       : i == 1 ? "gib2"
-                                : "gib3",
+                       demon    ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
+                       : i == 0 ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
+                       : i == 1 ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
+                                : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL],
                        error))
             return false;
         if (!q1_alive(g, entity->id))
@@ -125,7 +125,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         if (!q1_alive(g, entity->id))
             return true;
-        if (!q1_gib_head(g, entity, "h_zombie", health, error) ||
+        if (!q1_gib_head(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_ZOMBIE_MDL], health, error) ||
             !qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
         return gibs(g, entity, body.origin, health, false, error);
@@ -139,7 +139,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_alive(g, entity->id))
         return true;
     if (m->addon.infected_kind == QA_Q1_ARMY &&
-        !q1_gib_at(g, entity->id, body.origin, health, "h_guard", error))
+        !q1_gib_at(g, entity->id, body.origin, health, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_GUARD_MDL], error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
@@ -154,7 +154,7 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     m->counted_death = false;
     entity->max_health = m->species->health;
     entity->aimed_damage = true;
-    if (!q1_model(g, entity, m->species->model, error) ||
+    if (!q1_model(g, entity, g->runtime_names[m->species->model], error) ||
         !qa_builtin_resource(&g->services, zombie ? "monster_zombie" : "monster_demon1",
                              &entity->classname, error) ||
         !qa_combat_set_health(g->services.combat, entity->id, m->species->health, error))
@@ -196,11 +196,11 @@ bool q1_infected_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_alive(g, entity->id))
         return true;
     if (zombie) {
-        if (!q1_gib_head(g, entity, "h_zombie", -100, error) ||
+        if (!q1_gib_head(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_ZOMBIE_MDL], -100, error) ||
             !qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
         return gibs(g, entity, body.origin, -100, false, error);
     }
     return gibs(g, entity, body.origin, -100, true, error) &&
-           (!q1_alive(g, entity->id) || q1_gib_head(g, entity, "h_demon", -100, error));
+           (!q1_alive(g, entity->id) || q1_gib_head(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_DEMON_MDL], -100, error));
 }

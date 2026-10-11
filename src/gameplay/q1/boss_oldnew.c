@@ -42,7 +42,7 @@ bool q1_major_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *er
     e->max_health = 12000;
     e->aimed_damage = true;
     traits.can_take_damage = true;
-    if (!q1_model(g, e, "progs/oldone.mdl", error) ||
+    if (!q1_model(g, e, g->runtime_names[Q1_NAME_RESOURCE_PROGS_OLDONE_MDL], error) ||
         !qa_world_body_write(g->services.world, e->id, &body, error) || !q1_link(g, e, error) ||
         !qa_combat_set_health(g->services.combat, e->id, 12000, error) ||
         !qa_combat_set_traits(g->services.combat, e->id, &traits, error))

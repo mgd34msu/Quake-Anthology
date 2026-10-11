@@ -29,7 +29,7 @@ static bool chunk(qa_q1_game *g, qa_actor_id explosion, qa_actor_id machine, qa_
     qa_actor_id gib_id = gib->id;
     gib->physics.solid = QA_PHYSICS_NOT_SOLID;
     gib->physics.motion = QA_PHYSICS_TOSS;
-    if (!q1_model(g, gib, "progs/timegib.mdl", error) ||
+    if (!q1_model(g, gib, g->runtime_names[Q1_NAME_RESOURCE_PROGS_TIMEGIB_MDL], error) ||
         !qa_world_body_read(g->services.world, machine, &source, error))
         goto fail;
     qa_body_state body = {.origin = qa_vec_sub(qa_vec_add(source.origin, qa_vec_scale(forward, 84)),
@@ -237,7 +237,7 @@ bool q1_map_time_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (g->options.deathmatch != 0)
         return q1_remove(g, entity, error);
     bool machine = entity->map->kind == Q1_MAP_TIME_MACHINE;
-    if (!q1_model(g, entity, machine ? "progs/timemach.mdl" : "progs/timecore.mdl", error))
+    if (!q1_model(g, entity, machine ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_TIMEMACH_MDL] : g->runtime_names[Q1_NAME_RESOURCE_PROGS_TIMECORE_MDL], error))
         return false;
     entity->physics.motion = QA_PHYSICS_FLY;
     entity->physics.solid = machine ? QA_PHYSICS_BOX : QA_PHYSICS_NOT_SOLID;

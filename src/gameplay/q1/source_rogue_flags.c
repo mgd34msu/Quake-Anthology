@@ -203,7 +203,7 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     base->physics.motion = QA_PHYSICS_TOSS;
     base->physics.solid = mode == 5 || mode == 6 ? QA_PHYSICS_TRIGGER : QA_PHYSICS_NOT_SOLID;
     qa_body_state original, body;
-    if (!q1_model(g, base, "progs/ctfbase.mdl", error) ||
+    if (!q1_model(g, base, g->runtime_names[Q1_NAME_RESOURCE_PROGS_CTFBASE_MDL], error) ||
         !qa_world_body_read(g->services.world, actor, &original, error) ||
         !qa_world_body_read(g->services.world, base_actor, &body, error) ||
         q1_entity(g, actor) != e || q1_entity(g, base_actor) != base) return false;
@@ -232,7 +232,7 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     }
     if (q1_entity(g, actor) != e) return fail(error, actor, "Rogue flag retired during base placement");
     if ((red || blue) && mode == 5) return q1_remove(g, e, error);
-    if (!q1_model(g, e, "progs/ctfmodel.mdl", error) ||
+    if (!q1_model(g, e, g->runtime_names[Q1_NAME_RESOURCE_PROGS_CTFMODEL_MDL], error) ||
         q1_entity(g, actor) != e) return false;
     original.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 74}};
     return qa_world_body_write(g->services.world, actor, &original, error) &&

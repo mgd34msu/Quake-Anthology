@@ -47,7 +47,7 @@ static bool lightning_child(qa_q1_game *g, q1_actor *e, bool fast, qa_error *err
         return false;
     e->state.monster.source.heavy.child = q1_ref_from(g, child->id);
     qa_body_state value = {.origin = parent.origin, .angles = parent.angles};
-    if (!q1_model(g, child, "progs/s_light.mdl", error) ||
+    if (!q1_model(g, child, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_LIGHT_MDL], error) ||
         !qa_world_body_write(g->services.world, child->id, &value, error) ||
         !q1_link(g, child, error) ||
         !q1_schedule(g, child, fast ? .7 : 1.4, Q1_THINK_REMOVE, error)) {
@@ -137,7 +137,7 @@ static bool shambler_shot(qa_q1_game *g, q1_actor *e, float y, float z, qa_vec3 
     q1_actor *shot;
     if (!heavy_spike(g, e, origin, qa_vec_scale(direction, 1000), &shot, error))
         return false;
-    if (!q1_model(g, shot, "progs/rogue/plasma.mdl", error))
+    if (!q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_PLASMA_MDL], error))
         goto fail;
     float x = 300 * signed_random(g), ay = 300 * signed_random(g), az = 300 * signed_random(g);
     shot->physics.angular_velocity = qa_v3(x, ay, az);
@@ -300,7 +300,7 @@ static bool rune_shot(qa_q1_game *g, q1_actor *e, float offset, unsigned variant
     q1_actor *shot;
     if (!heavy_spike(g, e, origin, qa_vec_scale(direction, 1000), &shot, error))
         return false;
-    if (!q1_model(g, shot, "progs/diamond_trail.mdl", error) ||
+    if (!q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_DIAMOND_TRAIL_MDL], error) ||
         !qa_world_body_read(g->services.world, shot->id, &value, error))
         goto fail;
     value.velocity = qa_vec_scale(direction, bloody(g) ? 600 : 400);
@@ -620,16 +620,16 @@ bool q1_heavy_die(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
         if (!q1_alive(g, e->id))
             return true;
-        if (!q1_gib_head(g, e, shambler ? "h_shams" : "h_hellkn", health, error))
+        if (!q1_gib_head(g, e, shambler ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_SHAMS_MDL] : g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_HELLKN_MDL], health, error))
             return false;
         qa_body_state value;
         if (!body(g, e, &value, error))
             return false;
-        static const char *const models[] = {"gib1", "gib2", "gib3"};
+        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
         for (unsigned i = 0; i < 3; ++i) {
             if (!q1_alive(g, e->id))
                 return true;
-            if (!q1_gib_at(g, e->id, value.origin, health, models[i], error))
+            if (!q1_gib_at(g, e->id, value.origin, health, g->runtime_names[models[i]], error))
                 return false;
         }
         return true;

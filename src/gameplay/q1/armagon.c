@@ -345,7 +345,7 @@ bool q1_armagon_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                                                                  : 0.75f;
     entity->physics.yaw_speed = g->options.skill == 0 ? 5 : g->options.skill == 1 ? 9 : 12;
     entity->max_health = g->options.skill == 0 ? 2000 : g->options.skill == 1 ? 2500 : 3500;
-    return q1_model(g, part, "progs/armabody.mdl", error) &&
+    return q1_model(g, part, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ARMABODY_MDL], error) &&
            qa_world_body_write(g->services.world, part->id, &body, error) &&
            q1_link(g, part, error) &&
            qa_combat_set_health(g->services.combat, entity->id, entity->max_health, error);
@@ -392,9 +392,9 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
             part->count = 0;
         if (count < 25) {
             if ((float)count > part->count) {
-                const char *models[] = {"gib1", "gib2", "gib3"};
+                static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
                 for (unsigned i = 0; i < 3; ++i)
-                    if (!q1_gib_at(g, part->id, body.origin, -100, models[i], error))
+                    if (!q1_gib_at(g, part->id, body.origin, -100, g->runtime_names[models[i]], error))
                         return false;
                 part->count = (float)(count + 1);
             }
@@ -406,14 +406,14 @@ bool q1_armagon_think(qa_q1_game *g, q1_actor *part, q1_think_kind kind, qa_erro
     }
     if (!q1_sound_resource(g, part->id, g->runtime_names[Q1_NAME_RESOURCE_MISC_LONGEXPL_WAV], 0, 0.5f, 1, error))
         return false;
-    const char *models[] = {"gib1", "gib2", "gib3"};
+    static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
     for (unsigned i = 0; i < 9; ++i)
-        if (!q1_gib_at(g, part->id, body.origin, -200, models[i % 3], error))
+        if (!q1_gib_at(g, part->id, body.origin, -200, g->runtime_names[models[i % 3]], error))
             return false;
     part->physics.motion = QA_PHYSICS_STATIONARY;
     part->physics.solid = QA_PHYSICS_NOT_SOLID;
     part->frame = 0;
-    return q1_model(g, part, "progs/s_explod.spr", error) &&
+    return q1_model(g, part, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_EXPLOD_SPR], error) &&
            q1_schedule(g, part, 0.1, Q1_THINK_SPRITE, error);
 }
 

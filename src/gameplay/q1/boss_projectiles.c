@@ -21,7 +21,7 @@ bool q1_boss_child_schedule(qa_q1_game *g, q1_actor *e, q1_boss_child_kind kind,
     return q1_schedule(g, e, seconds, Q1_THINK_BOSS_CHILD, error);
 }
 bool q1_boss_shot(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 direction,
-                  qa_vec3 velocity, const char *model, q1_projectile_kind kind, q1_actor **out,
+                  qa_vec3 velocity, qa_string_id model, q1_projectile_kind kind, q1_actor **out,
                   qa_error *error) {
     q1_actor *shot;
     if (!q1_projectile_spawn(g, owner, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin, direction, &shot,
@@ -101,7 +101,7 @@ bool q1_boss_autogun(qa_q1_game *g, q1_actor *source, qa_vec3 origin, float offs
                                qa_vec_scale(direction, 1 - fabsf(offset)));
     q1_actor *shot;
     if (!q1_boss_shot(g, source->id, origin, direction,
-                      qa_vec_scale(direction, offset == 0 ? 600 : 800), "progs/rogue/sphere.mdl",
+                      qa_vec_scale(direction, offset == 0 ? 600 : 800), g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL],
                       Q1_BOSS_SPHERE_SHOT, &shot, error))
         return false;
     shot->effects = 64;
@@ -150,7 +150,7 @@ static bool actual_sphere(qa_q1_game *g, q1_actor *e, qa_error *error) {
             qa_vec_add(qa_vec_add(body.origin, qa_v3(0, 0, 32)), qa_vec_scale(point, 32));
         q1_actor *shot;
         if (!q1_boss_shot(g, q1_ref_actor(g, e->owner), origin, aim, qa_vec_scale(aim, 800),
-                          "progs/rogue/sphere.mdl", Q1_BOSS_SPHERE_SHOT, &shot, error))
+                          g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], Q1_BOSS_SPHERE_SHOT, &shot, error))
             return false;
         shot->damage = 18;
         if (i % 5 == 0)
@@ -211,7 +211,7 @@ bool q1_boss_sphere_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
                 qa_vec_add(qa_vec_scale(g->up, (float)y * 16), qa_v3(0, 0, chunk ? 8 : 24)));
             q1_actor *shot;
             if (!q1_boss_shot(g, q1_ref_actor(g, e->owner), origin, qa_vec_scale(g->forward, 200),
-                              qa_vec_scale(qa_vec_normalize(g->forward), 400), "progs/diamond.mdl",
+                              qa_vec_scale(qa_vec_normalize(g->forward), 400), g->runtime_names[Q1_NAME_RESOURCE_PROGS_DIAMOND_MDL],
                               Q1_BOSS_SPHERE_SHOT, &shot, error))
                 return false;
             if (y == (chunk ? 0 : -1) && x % 2 == 0)
@@ -298,9 +298,9 @@ bool q1_boss_gib_vectors(qa_q1_game *g, q1_actor *source, qa_error *error) {
         gib->physics.angular_velocity = qa_v3(x, y, z);
         if (!q1_think_deadline(g->time, 0, &gib->physics.q1_pusher.local_seconds, error) ||
             !q1_model(g, gib,
-                      choice < .3f   ? "progs/gib1.mdl"
-                      : choice < .6f ? "progs/gib2.mdl"
-                                     : "progs/gib3.mdl",
+                      choice < .3f   ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB1_MDL]
+                      : choice < .6f ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB2_MDL]
+                                     : g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL],
                       error) ||
             !qa_world_body_write(g->services.world, gib->id, &body, error) ||
             !q1_schedule(g, gib, 10 + q1_random(g) * 10, Q1_THINK_REMOVE, error) ||

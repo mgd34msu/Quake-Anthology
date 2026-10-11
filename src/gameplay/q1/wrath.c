@@ -19,7 +19,7 @@ bool q1_wrath_launch(qa_q1_game *g, q1_actor *entity, unsigned attack, qa_error 
                                            qa_vec_scale(g->right, attack == 3 ? 20 : 0))));
     q1_actor *shot;
     if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_WRATH_MISSILE], Q1_PROJECTILE, entity->id, &shot, error) ||
-        !q1_model(g, shot, "progs/w_ball.mdl", error))
+        !q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_W_BALL_MDL], error))
         return false;
     shot->state.projectile =
         (q1_projectile){.kind = Q1_WRATH_MISSILE,
@@ -58,9 +58,9 @@ bool q1_wrath_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
         float health = q1_health(g, entity->id);
-        const char *models[] = {"wrthgib1", "wrthgib2", "wrthgib3"};
+        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_WRTHGIB1_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB2_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB3_MDL};
         for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib_at(g, entity->id, body.origin, health, models[i], error))
+            if (!q1_gib_at(g, entity->id, body.origin, health, g->runtime_names[models[i]], error))
                 return false;
         qa_actor_id world =
             g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
@@ -128,7 +128,7 @@ bool q1_wrath_touch(qa_q1_game *g, q1_actor *shot, qa_actor_id other, qa_error *
     shot->physics.solid = QA_PHYSICS_NOT_SOLID;
     shot->touch_disabled = true;
     shot->frame = 0;
-    return q1_model(g, shot, "progs/s_explod.spr", error) &&
+    return q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_EXPLOD_SPR], error) &&
            qa_world_body_write(g->services.world, shot->id, &body, error) &&
            q1_link(g, shot, error) && q1_schedule(g, shot, 0.1, Q1_THINK_SPRITE, error);
 }

@@ -385,7 +385,7 @@ bool q1_map_rogue_hazard_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error)
         return q1_map_trigger_init(g, entity, true, error);
     }
     if (state->kind == Q1_MAP_BUZZSAW) {
-        if (!q1_model(g, entity, "progs/buzzsaw.mdl", error))
+        if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BUZZSAW_MDL], error))
             return false;
         entity = hazard(g, id);
         if (!entity)

@@ -79,7 +79,7 @@ bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
             return false;
     }
     if (!qa_combat_set_health(g->services.combat, e->id, e->max_health, error) ||
-        !q1_boss_damageable(g, e, true, error) || !q1_model(g, e, m->species->model, error) ||
+        !q1_boss_damageable(g, e, true, error) || !q1_model(g, e, g->runtime_names[m->species->model], error) ||
         !qa_world_body_write(g->services.world, e->id, &value, error) || !q1_link(g, e, error))
         return false;
     if (!ghost) {
@@ -158,11 +158,11 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
     if (!body(g, e, &value, error) || !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_ZOMBIE_Z_GIB_WAV], 2, 1, 1, error))
         return false;
     float health = q1_health(g, e->id);
-    static const char *const models[] = {"gib1", "gib2", "gib3"};
+    static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
     for (unsigned i = 0; i < 3; ++i) {
         if (!q1_alive(g, e->id))
             return true;
-        if (!q1_gib_at(g, e->id, value.origin, health, models[i], error))
+        if (!q1_gib_at(g, e->id, value.origin, health, g->runtime_names[models[i]], error))
             return false;
     }
     return !q1_alive(g, e->id) || q1_remove(g, e, error);
@@ -348,7 +348,7 @@ static bool orb_blast(qa_q1_game *g, q1_actor *e, qa_error *error) {
             return false;
         shot->state.projectile.kind = Q1_ORB_ROCK;
         if (!qa_builtin_resource(&g->services, "rock", &shot->classname, error) ||
-            !q1_model(g, shot, "progs/rogue/sphere.mdl", error) || !body(g, shot, &value, error)) {
+            !q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], error) || !body(g, shot, &value, error)) {
             q1_remove(g, shot, NULL);
             return false;
         }
@@ -749,7 +749,7 @@ bool q1_spawn_homing_flame(qa_q1_game *g, q1_actor *source, qa_actor_id *out, qa
     }
     value.angles = qa_v3(0, 0, 0);
     if (!qa_world_body_write(g->services.world, flame->id, &value, error) ||
-        !q1_model(g, flame, "progs/flame2.mdl", error) ||
+        !q1_model(g, flame, g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME2_MDL], error) ||
         !q1_schedule(g, flame, .1, Q1_THINK_HOMING_FLAME, error)) {
         q1_remove(g, flame, NULL);
         return false;

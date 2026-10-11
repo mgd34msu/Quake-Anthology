@@ -786,7 +786,7 @@ bool qa_q1_monster_activate(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     entity->physics.motion = QA_PHYSICS_STEP;
     entity->physics.solid = QA_PHYSICS_BOX;
     combat.can_take_damage = true;
-    return q1_model(g, entity, entity->state.monster.species->model, error) &&
+    return q1_model(g, entity, g->runtime_names[entity->state.monster.species->model], error) &&
         qa_combat_set_traits(g->services.combat, actor, &combat, error) && q1_link(g, entity, error);
 }
 bool q1_monster_mission_turn(qa_q1_game *g, q1_actor *entity, bool *active, qa_error *error) {
@@ -1035,7 +1035,7 @@ static bool monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spe
     monster->path_end = true;
     if (!qa_combat_set_health(g->services.combat, entity->id, spec->health, error) ||
         !qa_world_body_write(g->services.world, entity->id, &state, error) ||
-        !q1_model(g, entity, spec->model, error))
+        !q1_model(g, entity, g->runtime_names[spec->model], error))
         return false;
     if (addon && !crucified) {
         if (spec->species == QA_Q1_FISH)
@@ -1198,7 +1198,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->physics.motion = QA_PHYSICS_STEP;
         entity->physics.yaw_speed = 20;
         entity->aimed_damage = true;
-        if (!q1_model(g, entity, m->species->model, error))
+        if (!q1_model(g, entity, g->runtime_names[m->species->model], error))
             return false;
     }
     if (!(entity->physics.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) {

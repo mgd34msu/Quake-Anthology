@@ -226,7 +226,7 @@ bool q1_source_flag_spawn(qa_q1_game *game, q1_actor *entity, bool *handled, qa_
     entity->skin = blue ? 1 : 0;
     entity->effects = blue ? 16 : 32;
     qa_body_state body;
-    if (!q1_model(game, entity, "progs/flag.mdl", error) ||
+    if (!q1_model(game, entity, game->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAG_MDL], error) ||
         !qa_world_body_read(game->services.world, actor, &body, error)) return false;
     if (flag(game, actor, error) != entity) return false;
     body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 74}};

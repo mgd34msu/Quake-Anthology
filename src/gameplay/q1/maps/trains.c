@@ -53,7 +53,7 @@ bool q1_map_train_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!entity)
             return true;
     } else if (teleport) {
-        if (!q1_model(g, entity, "progs/teleport.mdl", error))
+        if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_TELEPORT_MDL], error))
             return false;
         entity->physics.angular_velocity = qa_v3(100, 200, 300);
     } else if (!qa_builtin_resource(&g->services, "train", &entity->classname, error))

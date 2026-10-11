@@ -60,7 +60,7 @@ bool q1_map_hip_particles_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error
         break;
     case Q1_MAP_WALL_SPRITE: {
         qa_actor_id id = entity->id;
-        if (!q1_map_text(g, entity->model) && !q1_model(g, entity, "progs/s_blood1.spr", error))
+        if (!q1_map_text(g, entity->model) && !q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_BLOOD1_SPR], error))
             return false;
         entity = q1_entity(g, id);
         if (!entity || !entity->map) return true;

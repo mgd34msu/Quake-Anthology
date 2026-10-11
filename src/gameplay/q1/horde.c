@@ -142,7 +142,7 @@ bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_
         return false;
     if (!entity->state.monster.addon.enabled)
         body.bounds = species->bounds;
-    if (!q1_model(g, entity, species->model, error))
+    if (!q1_model(g, entity, g->runtime_names[species->model], error))
         return false;
     body.origin = qa_vec_add(origin, qa_v3(0, 0, offset + 1));
     if (species->species != QA_Q1_WIZARD) {

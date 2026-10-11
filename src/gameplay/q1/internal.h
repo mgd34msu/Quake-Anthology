@@ -18,6 +18,143 @@
 #define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
 
 #define Q1_RUNTIME_NAME_LIST(X) \
+    X(RESOURCE_PROGS_MG1_RUNE1_MDL, "progs/mg1_rune1.mdl") \
+    X(RESOURCE_PROGS_MG1_RUNE2_MDL, "progs/mg1_rune2.mdl") \
+    X(RESOURCE_PROGS_MG1_RUNE3_MDL, "progs/mg1_rune3.mdl") \
+    X(RESOURCE_PROGS_MG1_RUNE4_MDL, "progs/mg1_rune4.mdl") \
+    X(RESOURCE_PROGS_MG1_RUNE5_MDL, "progs/mg1_rune5.mdl") \
+    X(RESOURCE_PROGS_MG1_RUNE6_MDL, "progs/mg1_rune6.mdl") \
+    X(RESOURCE_PROGS_H_PLAYER_MDL, "progs/h_player.mdl") \
+    X(RESOURCE_PROGS_ARMABODY_MDL, "progs/armabody.mdl") \
+    X(RESOURCE_PROGS_S_EXPLOD_SPR, "progs/s_explod.spr") \
+    X(RESOURCE_PROGS_FIREBALL_MDL, "progs/fireball.mdl") \
+    X(RESOURCE_PROGS_DRAGON_MDL, "progs/dragon.mdl") \
+    X(RESOURCE_PROGS_BACKPACK_MDL, "progs/backpack.mdl") \
+    X(RESOURCE_PROGS_STAR_MDL, "progs/star.mdl") \
+    X(RESOURCE_PROGS_HOOK_MDL, "progs/hook.mdl") \
+    X(RESOURCE_PROGS_BIT_MDL, "progs/bit.mdl") \
+    X(RESOURCE_PROGS_H_GREM_MDL, "progs/h_grem.mdl") \
+    X(RESOURCE_PROGS_GIB1_MDL, "progs/gib1.mdl") \
+    X(RESOURCE_PROGS_GREM_MDL, "progs/grem.mdl") \
+    X(RESOURCE_PROGS_H_SCOURG_MDL, "progs/h_scourg.mdl") \
+    X(RESOURCE_PROGS_GIB2_MDL, "progs/gib2.mdl") \
+    X(RESOURCE_PROGS_GIB3_MDL, "progs/gib3.mdl") \
+    X(RESOURCE_PROGS_EELGIB_MDL, "progs/eelgib.mdl") \
+    X(RESOURCE_PROGS_H_ZOMBIE_MDL, "progs/h_zombie.mdl") \
+    X(RESOURCE_PROGS_ZOM_GIB_MDL, "progs/zom_gib.mdl") \
+    X(RESOURCE_PROGS_W_BALL_MDL, "progs/w_ball.mdl") \
+    X(RESOURCE_PROGS_GRENADE_MDL, "progs/grenade.mdl") \
+    X(RESOURCE_PROGS_H_DOG_MDL, "progs/h_dog.mdl") \
+    X(RESOURCE_PROGS_H_GUARD_MDL, "progs/h_guard.mdl") \
+    X(RESOURCE_PROGS_H_DEMON_MDL, "progs/h_demon.mdl") \
+    X(RESOURCE_PROGS_S_LIGHT_MDL, "progs/s_light.mdl") \
+    X(RESOURCE_PROGS_ROGUE_PLASMA_MDL, "progs/rogue/plasma.mdl") \
+    X(RESOURCE_PROGS_DIAMOND_TRAIL_MDL, "progs/diamond_trail.mdl") \
+    X(RESOURCE_PROGS_H_SHAMS_MDL, "progs/h_shams.mdl") \
+    X(RESOURCE_PROGS_H_HELLKN_MDL, "progs/h_hellkn.mdl") \
+    X(RESOURCE_PROGS_ROCKUP_D_MDL, "progs/rockup_d.mdl") \
+    X(RESOURCE_PROGS_BOSS_MDL, "progs/boss.mdl") \
+    X(RESOURCE_PROGS_TELEPORTER_EYE_MDL, "progs/teleporter_eye.mdl") \
+    X(RESOURCE_PROGS_ROGUE_SPHERE_MDL, "progs/rogue/sphere.mdl") \
+    X(RESOURCE_MAPS_BMODEL_B_SPLASH_BSP, "maps/bmodel/b_splash.bsp") \
+    X(RESOURCE_PROGS_LAVABALL_MDL, "progs/lavaball.mdl") \
+    X(RESOURCE_PROGS_OLDONE_MDL, "progs/oldone.mdl") \
+    X(RESOURCE_PROGS_DIAMOND_MDL, "progs/diamond.mdl") \
+    X(RESOURCE_PROGS_FLAME2_MDL, "progs/flame2.mdl") \
+    X(RESOURCE_PROGS_P_SHIELD_MDL, "progs/p_shield.mdl") \
+    X(RESOURCE_PROGS_SPHERE_MDL, "progs/sphere.mdl") \
+    X(RESOURCE_PROGS_S_BUBBLE_SPR, "progs/s_bubble.spr") \
+    X(RESOURCE_PROGS_FLAG_MDL, "progs/flag.mdl") \
+    X(RESOURCE_PROGS_DEMON_MDL, "progs/demon.mdl") \
+    X(RESOURCE_PROGS_CTFBASE_MDL, "progs/ctfbase.mdl") \
+    X(RESOURCE_PROGS_CTFMODEL_MDL, "progs/ctfmodel.mdl") \
+    X(RESOURCE_PROGS_LAVAMAN_MDL, "progs/lavaman.mdl") \
+    X(RESOURCE_PROGS_S_LIGHT_SPR, "progs/s_light.spr") \
+    X(RESOURCE_PROGS_PLAYER_MDL, "progs/player.mdl") \
+    X(RESOURCE_PROGS_SPIKE_MDL, "progs/spike.mdl") \
+    X(RESOURCE_PROGS_S_BLOOD1_SPR, "progs/s_blood1.spr") \
+    X(RESOURCE_PROGS_PLAYER_HANGING_MDL, "progs/player_hanging.mdl") \
+    X(RESOURCE_PROGS_PLAYER_HANGING_ANIMATED_MDL, "progs/player_hanging_animated.mdl") \
+    X(RESOURCE_PROGS_TELEPORT_MDL, "progs/teleport.mdl") \
+    X(RESOURCE_PROGS_PENDULUM_MDL, "progs/pendulum.mdl") \
+    X(RESOURCE_PROGS_TIMEGIB_MDL, "progs/timegib.mdl") \
+    X(RESOURCE_PROGS_TIMEMACH_MDL, "progs/timemach.mdl") \
+    X(RESOURCE_PROGS_TIMECORE_MDL, "progs/timecore.mdl") \
+    X(RESOURCE_PROGS_BUZZSAW_MDL, "progs/buzzsaw.mdl") \
+    X(RESOURCE_PROGS_SPIKMINE_MDL, "progs/spikmine.mdl") \
+    X(RESOURCE_PROGS_RUBBLE_MDL, "progs/rubble.mdl") \
+    X(RESOURCE_PROGS_ROPEX_MDL, "progs/ropex.mdl") \
+    X(RESOURCE_PROGS_CANDLE_MDL, "progs/candle.mdl") \
+    X(RESOURCE_PROGS_FLAME3_MDL, "progs/flame3.mdl") \
+    X(RESOURCE_MAPS_B_EXBOX2_BSP, "maps/b_exbox2.bsp") \
+    X(RESOURCE_MAPS_B_EXPLOB_BSP, "maps/b_explob.bsp") \
+    X(RESOURCE_PROGS_RUBBLE1_MDL, "progs/rubble1.mdl") \
+    X(RESOURCE_PROGS_RUBBLE3_MDL, "progs/rubble3.mdl") \
+    X(RESOURCE_PROGS_RUBBLE2_MDL, "progs/rubble2.mdl") \
+    X(RESOURCE_PROGS_S_SPIKE_MDL, "progs/s_spike.mdl") \
+    X(RESOURCE_PROGS_MISSILE_MDL, "progs/missile.mdl") \
+    X(RESOURCE_PROGS_W_SPIKE_MDL, "progs/w_spike.mdl") \
+    X(RESOURCE_PROGS_K_SPIKE_MDL, "progs/k_spike.mdl") \
+    X(RESOURCE_PROGS_LASER_MDL, "progs/laser.mdl") \
+    X(RESOURCE_PROGS_V_SPIKE_MDL, "progs/v_spike.mdl") \
+    X(RESOURCE_PROGS_LASRSPIK_MDL, "progs/lasrspik.mdl") \
+    X(RESOURCE_PROGS_PROXBOMB_MDL, "progs/proxbomb.mdl") \
+    X(RESOURCE_PROGS_LSPIKE_MDL, "progs/lspike.mdl") \
+    X(RESOURCE_PROGS_MERVUP_MDL, "progs/mervup.mdl") \
+    X(RESOURCE_PROGS_ROCKUP_MDL, "progs/rockup.mdl") \
+    X(RESOURCE_PROGS_PLASMA_MDL, "progs/plasma.mdl") \
+    X(RESOURCE_PROGS_DRGGIB01_MDL, "progs/drggib01.mdl") \
+    X(RESOURCE_PROGS_DRGGIB02_MDL, "progs/drggib02.mdl") \
+    X(RESOURCE_PROGS_DRGGIB03_MDL, "progs/drggib03.mdl") \
+    X(RESOURCE_PROGS_WRTHGIB1_MDL, "progs/wrthgib1.mdl") \
+    X(RESOURCE_PROGS_WRTHGIB2_MDL, "progs/wrthgib2.mdl") \
+    X(RESOURCE_PROGS_WRTHGIB3_MDL, "progs/wrthgib3.mdl") \
+    X(RESOURCE_PROGS_S_WRTGB2_MDL, "progs/s_wrtgb2.mdl") \
+    X(RESOURCE_PROGS_S_WRTGB3_MDL, "progs/s_wrtgb3.mdl") \
+    X(RESOURCE_PROGS_END1_MDL, "progs/end1.mdl") \
+    X(RESOURCE_PROGS_END2_MDL, "progs/end2.mdl") \
+    X(RESOURCE_PROGS_END3_MDL, "progs/end3.mdl") \
+    X(RESOURCE_PROGS_END4_MDL, "progs/end4.mdl") \
+    X(RESOURCE_PROGS_TELEPORTER_EYE_BLINK_MDL, "progs/teleporter_eye_blink.mdl") \
+    X(RESOURCE_PROGS_ZOMBIE_MDL, "progs/zombie.mdl") \
+    X(RESOURCE_PROGS_SHAMBLER_BLOOD_MDL, "progs/shambler_blood.mdl") \
+    X(RESOURCE_PROGS_RKNIGHT_MDL, "progs/rknight.mdl") \
+    X(RESOURCE_PROGS_SOLDIER_MDL, "progs/soldier.mdl") \
+    X(RESOURCE_PROGS_KNIGHT_MDL, "progs/knight.mdl") \
+    X(RESOURCE_PROGS_H_KNIGHT_MDL, "progs/h_knight.mdl") \
+    X(RESOURCE_PROGS_ENFORCER_MDL, "progs/enforcer.mdl") \
+    X(RESOURCE_PROGS_H_MEGA_MDL, "progs/h_mega.mdl") \
+    X(RESOURCE_PROGS_HKNIGHT_MDL, "progs/hknight.mdl") \
+    X(RESOURCE_PROGS_DOG_EXPLOSIVE_MDL, "progs/dog_explosive.mdl") \
+    X(RESOURCE_PROGS_DOG_MDL, "progs/dog.mdl") \
+    X(RESOURCE_PROGS_OGRE_MDL, "progs/ogre.mdl") \
+    X(RESOURCE_PROGS_H_OGRE_MDL, "progs/h_ogre.mdl") \
+    X(RESOURCE_PROGS_OGRE_ROCKET_MDL, "progs/ogre_rocket.mdl") \
+    X(RESOURCE_PROGS_SHAMBLER_MDL, "progs/shambler.mdl") \
+    X(RESOURCE_PROGS_WIZARD_MDL, "progs/wizard.mdl") \
+    X(RESOURCE_PROGS_H_WIZARD_MDL, "progs/h_wizard.mdl") \
+    X(RESOURCE_PROGS_SHALRATH_MDL, "progs/shalrath.mdl") \
+    X(RESOURCE_PROGS_H_SHAL_MDL, "progs/h_shal.mdl") \
+    X(RESOURCE_PROGS_TARBABY_MDL, "progs/tarbaby.mdl") \
+    X(RESOURCE_PROGS_FISH_MDL, "progs/fish.mdl") \
+    X(RESOURCE_PROGS_EEL2_MDL, "progs/eel2.mdl") \
+    X(RESOURCE_PROGS_SWORD_MDL, "progs/sword.mdl") \
+    X(RESOURCE_PROGS_MUMMY_MDL, "progs/mummy.mdl") \
+    X(RESOURCE_PROGS_SCOR_MDL, "progs/scor.mdl") \
+    X(RESOURCE_PROGS_WRATH_MDL, "progs/wrath.mdl") \
+    X(RESOURCE_PROGS_S_WRATH_MDL, "progs/s_wrath.mdl") \
+    X(RESOURCE_PROGS_ARMALEGS_MDL, "progs/armalegs.mdl") \
+    X(RESOURCE_PROGS_MORPH_AZ_MDL, "progs/morph_az.mdl") \
+    X(RESOURCE_PROGS_G_SHOT_MDL, "progs/g_shot.mdl") \
+    X(RESOURCE_PROGS_G_NAIL_MDL, "progs/g_nail.mdl") \
+    X(RESOURCE_PROGS_G_NAIL2_MDL, "progs/g_nail2.mdl") \
+    X(RESOURCE_PROGS_G_ROCK_MDL, "progs/g_rock.mdl") \
+    X(RESOURCE_PROGS_G_ROCK2_MDL, "progs/g_rock2.mdl") \
+    X(RESOURCE_PROGS_G_LIGHT_MDL, "progs/g_light.mdl") \
+    X(RESOURCE_PROGS_MORPH_EG_MDL, "progs/morph_eg.mdl") \
+    X(RESOURCE_PROGS_MORPH_GR_MDL, "progs/morph_gr.mdl") \
+    X(RESOURCE_PROGS_LANTERN_MDL, "progs/lantern.mdl") \
+    X(RESOURCE_PROGS_FLAME_MDL, "progs/flame.mdl") \
     X(VENGEANCE, "Vengeance") \
     X(AMBIENT_COMP_HUM, "ambient_comp_hum") \
     X(AMBIENT_DRIP, "ambient_drip") \
@@ -521,6 +658,7 @@ typedef enum q1_runtime_name {
 #undef Q1_RUNTIME_NAME_ENUM
     Q1_NAME_COUNT
 } q1_runtime_name;
+extern const q1_runtime_name q1_rune_models[4], q1_mg1_rune_models[6];
 
 typedef struct q1_map_state q1_map_state;
 typedef struct q1_map_runtime q1_map_runtime;
@@ -696,7 +834,8 @@ typedef struct q1_frame {
 } q1_frame;
 typedef struct q1_species {
     qa_q1_species species;
-    const char *classname, *model, *head;
+    const char *classname;
+    q1_runtime_name model, head;
     q1_runtime_name sight;
     const char *stand, *walk, *run, *missile;
     float health, gib_health;
@@ -1123,7 +1262,7 @@ bool q1_damageable(qa_q1_game *, qa_actor_id);
 float q1_actor_view_height(const q1_actor *, bool player);
 bool q1_target(qa_q1_game *, qa_actor_id, qa_q1_target *);
 bool q1_classnamed(qa_q1_game *, qa_actor_id, qa_string_id);
-bool q1_model(qa_q1_game *, q1_actor *, const char *, qa_error *);
+bool q1_model(qa_q1_game *, q1_actor *, qa_string_id, qa_error *);
 const char *q1_runtime_name_text(q1_runtime_name);
 q1_runtime_name q1_door_key_sound(int32_t world_type, bool accepted);
 bool q1_sound_resource(qa_q1_game *, qa_actor_id, qa_string_id, int32_t channel, float attenuation,
@@ -1212,9 +1351,9 @@ bool q1_projectile_touch(qa_q1_game *, q1_actor *, qa_actor_id, const qa_touch_c
                          qa_error *);
 bool q1_projectile_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_explode(qa_q1_game *, q1_actor *, qa_actor_id direct, qa_error *);
-bool q1_gib(qa_q1_game *, q1_actor *, const char *, bool head, qa_error *);
-bool q1_gib_head(qa_q1_game *, q1_actor *, const char *, float damage, qa_error *);
-bool q1_gib_at(qa_q1_game *, qa_actor_id owner, qa_vec3, float health, const char *, qa_error *);
+bool q1_gib(qa_q1_game *, q1_actor *, qa_string_id, bool head, qa_error *);
+bool q1_gib_head(qa_q1_game *, q1_actor *, qa_string_id, float damage, qa_error *);
+bool q1_gib_at(qa_q1_game *, qa_actor_id owner, qa_vec3, float health, qa_string_id, qa_error *);
 bool q1_meat_spray(qa_q1_game *, q1_actor *, qa_vec3 origin, qa_vec3 velocity, qa_error *);
 bool q1_monster_spawn(qa_q1_game *, q1_actor *, const q1_species *, qa_error *);
 bool q1_monster_drop_floor(qa_q1_game *, q1_actor *, qa_error *);

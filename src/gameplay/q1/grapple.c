@@ -232,7 +232,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
         .origin = qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(forward, 16), qa_v3(0, 0, 16)))};
     if (!qa_world_body_write(g->services.world, hook->id, &body, error) ||
         !q1_missile_velocity(g, hook, qa_vec_scale(direction, shape->speed), error) ||
-        !q1_model(g, hook, ctf ? "progs/star.mdl" : "progs/hook.mdl", error) ||
+        !q1_model(g, hook, ctf ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_STAR_MDL] : g->runtime_names[Q1_NAME_RESOURCE_PROGS_HOOK_MDL], error) ||
         !q1_link(g, hook, error) ||
         !q1_schedule(g, hook, ctf ? 0.1 : shape->lifetime, ctf ? Q1_THINK_HOOK_FLY : Q1_THINK_HOOK_RESET,
                      error) ||
@@ -250,7 +250,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
             link->physics.motion = QA_PHYSICS_NOCLIP;
             link->physics.angular_velocity = qa_v3(310, 410, 510);
             qa_body_state chain = {.angles = {31.0f * (float)number, 41.0f * (float)number, 51.0f * (float)number}};
-            if (!q1_model(g, link, "progs/bit.mdl", error) ||
+            if (!q1_model(g, link, g->runtime_names[Q1_NAME_RESOURCE_PROGS_BIT_MDL], error) ||
                 !qa_world_body_write(g->services.world, link->id, &chain, error) ||
                 !position_link(g, link, error))
                 return false;

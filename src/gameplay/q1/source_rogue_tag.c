@@ -128,7 +128,7 @@ bool q1_source_rogue_tag_spawn(qa_q1_game *game, q1_actor *source, bool *handled
     source->skin = 1;
     source->effects |= 8;
     qa_body_state body;
-    if (!q1_model(game, source, "progs/sphere.mdl", error) ||
+    if (!q1_model(game, source, game->runtime_names[Q1_NAME_RESOURCE_PROGS_SPHERE_MDL], error) ||
         !qa_world_body_read(game->services.world, source->id, &body, error)) return false;
     if (q1_entity(game, source->id) != source)
         return fail(error, source->id, "Rogue token retired during native construction");

@@ -363,7 +363,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             projectile->frame = frames[i];
             projectile->state.projectile.expires = g->time + shape->lifetime;
             projectile->state.projectile.launch_angles = player->input.view_angles;
-            if (multiplayer && !q1_model(g, projectile, "progs/rockup_d.mdl", error))
+            if (multiplayer && !q1_model(g, projectile, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROCKUP_D_MDL], error))
                 return false;
             if (!q1_launch_behavior(g, projectile, QA_BUILTIN_ROCKET, error))
                 return false;

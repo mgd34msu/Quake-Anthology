@@ -88,7 +88,7 @@ static bool rope_segment(qa_q1_game *g, qa_actor_id parent_id, bool *published,
     child->frame = 3;
     child->physics.solid = QA_PHYSICS_NOT_SOLID;
     child->physics.motion = QA_PHYSICS_STATIONARY;
-    if (!q1_model(g, child, "progs/ropex.mdl", error))
+    if (!q1_model(g, child, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROPEX_MDL], error))
         goto failure;
     q1_actor *parent = visual(g, parent_id);
     child = visual(g, child_id);
@@ -303,14 +303,14 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
         return true;
     if (spark)
         return q1_map_ambient(g, body.origin, "ambience/buzz1.wav", .5f, error);
-    const char *model = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])
-        ? "progs/flame.mdl" : "progs/flame2.mdl";
+    qa_string_id model = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])
+        ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME_MDL] : g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME2_MDL];
     if (!q1_model(g, e, model, error))
         return false;
     e = visual(g, id);
     if (!e)
         return true;
-    if (!qa_q1_wire_declare_model(g, model, error)) return false;
+    if (!qa_q1_wire_declare_model(g, qa_strings_cstr(qa_session_strings(g->services.session),model), error)) return false;
     e = visual(g, id);
     if (!e) return true;
     if (q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_FLAME_LARGE_YELLOW])) e->frame = 1;
@@ -348,8 +348,8 @@ bool q1_map_addon_visual_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         e = visual(g, id);
         if (!e) return true;
     }
-    if (!q1_model(g, e, kind == Q1_MAP_ROPE ? "progs/ropex.mdl"
-                             : kind == Q1_MAP_CANDLE ? "progs/candle.mdl" : "progs/flame3.mdl", error))
+    if (!q1_model(g, e, kind == Q1_MAP_ROPE ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROPEX_MDL]
+                             : kind == Q1_MAP_CANDLE ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_CANDLE_MDL] : g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME3_MDL], error))
         return false;
     e = visual(g, id);
     if (!e)

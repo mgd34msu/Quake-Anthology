@@ -90,7 +90,7 @@ static bool grenade(qa_q1_game *g, q1_actor *entity, bool vertical, qa_error *er
         .velocity = velocity,
         .angles = {atan2f(velocity.z, hypotf(velocity.x, velocity.y)) * 57.29577951308232f,
                    qa_builtin_angle_mod(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0}};
-    if (!q1_model(g, shot, "progs/grenade.mdl", error) ||
+    if (!q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GRENADE_MDL], error) ||
         !qa_world_body_write(g->services.world, shot->id, &launch, error) ||
         !q1_link(g, shot, error) ||
         !q1_schedule(g, shot, 2.5 + 0.25 * (2 * q1_random(g) - 1), Q1_THINK_DEMODOG_EXPLODE,
@@ -121,12 +121,12 @@ bool q1_demodog_die(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     for (unsigned i = 0; i < 3; ++i) {
-        if (!q1_gib_at(g, entity->id, body.origin, -50, "gib3", error))
+        if (!q1_gib_at(g, entity->id, body.origin, -50, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GIB3_MDL], error))
             return false;
         if (!q1_alive(g, entity->id))
             return true;
     }
-    return q1_gib_head(g, entity, "h_dog", -50, error);
+    return q1_gib_head(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_H_DOG_MDL], -50, error);
 }
 bool q1_demodog_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id ignore, qa_error *error) {
     if (!q1_radius(g, entity->id, q1_ref_actor(g, entity->owner), entity->state.projectile.damage, ignore,

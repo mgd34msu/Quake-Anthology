@@ -122,16 +122,14 @@ static bool spawn(qa_q1_game *g, uint32_t rune, qa_vec3 origin, qa_error *error)
     if (!current(g, error) || !q1_create(g, g->runtime_names[Q1_NAME_CLASS_ROGUE_RUNE], Q1_SOURCE_ROGUE_RUNE,
         (qa_actor_id){0}, &e, error)) return false;
     qa_actor_id actor = e->id;
-    char word[32];
     e->state.rogue_rune = (float)rune;
     if (!entity_current(g, actor, e, error)) return false;
     e->source_movement_flags = 256;
     e->physics.solid = QA_PHYSICS_TRIGGER;
     e->physics.motion = QA_PHYSICS_TOSS;
     unsigned model = (rune & 1) ? 1 : (rune & 2) ? 2 : (rune & 4) ? 3 : 4;
-    snprintf(word, sizeof(word), "progs/end%u.mdl", model);
     qa_body_state body;
-    if (!q1_model(g, e, word, error) || !entity_current(g, actor, e, error) ||
+    if (!q1_model(g, e, g->runtime_names[q1_rune_models[model-1]], error) || !entity_current(g, actor, e, error) ||
         !qa_world_body_read(g->services.world, actor, &body, error)) return false;
     body.origin = origin;
     body.velocity = velocity(g);

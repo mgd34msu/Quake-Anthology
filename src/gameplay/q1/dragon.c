@@ -136,7 +136,7 @@ bool q1_dragon_launch_fireball(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin,
     if (source)
         source->effects |= 2;
     if (!q1_create(g, g->runtime_names[Q1_NAME_FIREBALL], Q1_PROJECTILE, owner, &shot, error) ||
-        !q1_model(g, shot, "progs/fireball.mdl", error))
+        !q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_FIREBALL_MDL], error))
         return false;
     shot->state.projectile =
         (q1_projectile){.kind = Q1_DRAGON_FIREBALL,
@@ -256,14 +256,13 @@ static bool finish_death(qa_q1_game *g, q1_actor *entity, unsigned count, qa_err
             q1_actor *gib;
             if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GIB], Q1_GIB, (qa_actor_id){0}, &gib, error))
                 return false;
-            char path[32];
-            snprintf(path, sizeof(path), "progs/gib%u.mdl", model);
+            static const q1_runtime_name gib_models[]={Q1_NAME_RESOURCE_PROGS_GIB1_MDL,Q1_NAME_RESOURCE_PROGS_GIB2_MDL,Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
             gib->physics.motion = QA_PHYSICS_BOUNCE;
             float x = q1_random(g) * 600, y = q1_random(g) * 600, z = q1_random(g) * 600;
             gib->physics.angular_velocity = qa_v3(x, y, z);
             body = (qa_body_state){
                 .origin = body.origin, .velocity = velocity, .bounds = {{-8, -8, -8}, {8, 8, 8}}};
-            if (!q1_model(g, gib, path, error) ||
+            if (!q1_model(g, gib, g->runtime_names[gib_models[model-1]], error) ||
                 !qa_world_body_write(g->services.world, gib->id, &body, error) ||
                 !q1_schedule(g, gib, 10 + q1_random(g) * 10, Q1_THINK_REMOVE, error) ||
                 !q1_link(g, gib, error))
@@ -289,9 +288,9 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     if (qa_vec_length(body.velocity) < 100 || (entity->physics.flags & QA_PHYSICS_PLAYER)) {
         m->source.dragon.death_state = 3;
-        const char *models[] = {"drggib01", "drggib02", "drggib03"};
+        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_DRGGIB01_MDL, Q1_NAME_RESOURCE_PROGS_DRGGIB02_MDL, Q1_NAME_RESOURCE_PROGS_DRGGIB03_MDL};
         for (unsigned i = 0; i < 3; ++i)
-            if (!q1_gib_at(g, entity->id, body.origin, -100, models[i], error))
+            if (!q1_gib_at(g, entity->id, body.origin, -100, g->runtime_names[models[i]], error))
                 return false;
         if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_PLAYER_TORNOFF2_WAV], 4, 0, 1, error))
             return false;
@@ -353,7 +352,7 @@ bool q1_dragon_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->state.monster.next_frame = q1_frame_index("dragon_activate");
     return qa_combat_set_health(g->services.combat, entity->id, entity->max_health, error) &&
            qa_world_body_write(g->services.world, entity->id, &body, error) &&
-           q1_model(g, entity, "progs/dragon.mdl", error) &&
+           q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_DRAGON_MDL], error) &&
            q1_schedule(g, entity, 0.1 - g->time, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_dragon_pain(qa_q1_game *g, q1_actor *entity, qa_error *error) {

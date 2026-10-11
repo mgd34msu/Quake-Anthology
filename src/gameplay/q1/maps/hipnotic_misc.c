@@ -244,9 +244,9 @@ static bool rubble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         piece->physics.angular_velocity.z = q1_random(g) * 600;
         entity->map->pause_time = (float)g->time;
         if (!q1_model(g, piece,
-                      model == 1   ? "progs/rubble1.mdl"
-                      : model == 2 ? "progs/rubble3.mdl"
-                                   : "progs/rubble2.mdl",
+                      model == 1   ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_RUBBLE1_MDL]
+                      : model == 2 ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_RUBBLE3_MDL]
+                                   : g->runtime_names[Q1_NAME_RESOURCE_PROGS_RUBBLE2_MDL],
                       error) ||
             !qa_world_body_write(g->services.world, child, &body, error))
             goto failed;

@@ -499,7 +499,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             !q1_create(g, g->runtime_names[Q1_NAME_CLASS_SHAMBLER_LIGHT], Q1_TIMER, entity->id, &missile, error))
             return false;
         entity->owner = q1_ref_from(g, missile->id);
-        return q1_model(g, missile, "progs/s_light.mdl", error) &&
+        return q1_model(g, missile, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_LIGHT_MDL], error) &&
                qa_world_body_write(g->services.world, missile->id, &body, error) &&
                q1_link(g, missile, error) && q1_schedule(g, missile, 0.7, Q1_THINK_REMOVE, error);
     case Q1_ACTION_SHAM_MAGIC4:

@@ -67,7 +67,7 @@ bool q1_map_sacrifice_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->physics.motion = QA_PHYSICS_STEP;
     bool floating = (entity->spawnflags & 2) != 0;
     if (floating) {
-        if (!q1_model(g, entity, "progs/player_hanging.mdl", error)) return false;
+        if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYER_HANGING_MDL], error)) return false;
         entity->count = 0;
         entity->physics.angular_velocity = qa_v3(0, 36, 0);
         qa_body_state body;
@@ -77,7 +77,7 @@ bool q1_map_sacrifice_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->map->pending.mover.destination = body.origin;
     } else {
         entity->count = (float)(5 + floor((double)q1_random(g) * 65 + .5));
-        if (!q1_model(g, entity, "progs/player_hanging_animated.mdl", error)) return false;
+        if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYER_HANGING_ANIMATED_MDL], error)) return false;
         entity->frame = (int32_t)entity->count;
     }
     if (!q1_map_schedule(g, entity, .1,
@@ -108,11 +108,11 @@ bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_write(g->services.world, id, &body, error))
         return false;
     if (!sacrifice(g, id)) return true;
-    static const char *const models[] = {"gib1", "gib2", "gib3"};
+    static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
     for (size_t i = 0; i < sizeof(models) / sizeof(*models); ++i) {
         if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
         if (!sacrifice(g, id)) return true;
-        if (!q1_gib_at(g, id, body.origin, -10, models[i], error))
+        if (!q1_gib_at(g, id, body.origin, -10, g->runtime_names[models[i]], error))
             return false;
         if (!sacrifice(g, id))
             return true;

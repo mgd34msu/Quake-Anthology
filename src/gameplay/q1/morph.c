@@ -39,10 +39,10 @@ static bool wake(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);
 }
 bool q1_morph_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    const char *model = entity->spawnflags & 2   ? "progs/morph_az.mdl"
-                        : entity->spawnflags & 4 ? "progs/morph_eg.mdl"
-                        : entity->spawnflags & 8 ? "progs/morph_gr.mdl"
-                                                 : NULL;
+    qa_string_id model = entity->spawnflags & 2   ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_MORPH_AZ_MDL]
+                        : entity->spawnflags & 4 ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_MORPH_EG_MDL]
+                        : entity->spawnflags & 8 ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_MORPH_GR_MDL]
+                                                 : 0;
     if (!model) {
         qa_error_set(error, QA_ERROR_FORMAT, entity->id.slot,
                      "monster_morph has no source skin selection");

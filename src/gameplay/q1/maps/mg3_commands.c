@@ -114,7 +114,7 @@ static bool marker_update(qa_q1_game *g, qa_actor_id player, qa_actor_id target,
         marker->map->kind = Q1_MAP_POINT;
         marker->physics.motion = QA_PHYSICS_STATIONARY;
         marker->physics.solid = QA_PHYSICS_NOT_SOLID;
-        if (!q1_model(g, marker, "progs/s_bubble.spr", error)) {
+        if (!q1_model(g, marker, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_BUBBLE_SPR], error)) {
             if (q1_alive(g, id))
                 (void)q1_remove(g, marker, NULL);
             return false;

@@ -835,6 +835,14 @@ standard-image classification happen once per binding, including missing-image
 results, rather than on every actor draw. All item 13 sites in the expanded
 list are migrated. Normal build and seven core suites pass.
 
+Names leftovers item 14, Q1 models: the sole model setter takes an admitted
+ID. Projectile, gib, grapple, boss-shot, drop and monster-model callers use
+retained selectors. Species model/head metadata is bound to the same runtime
+table. Gib and repeatable rune paths no longer format or intern model names.
+Variable authored pickup/map paths are admitted at their cold setup boundary.
+The replaced text model/gib APIs are deleted. Normal build and seven core
+suites pass. The ambient/lightstyle and other effect emitters remain open.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

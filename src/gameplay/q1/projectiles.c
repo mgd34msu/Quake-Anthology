@@ -23,7 +23,7 @@ bool q1_meat_spray(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 veloc
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
     velocity.z += 250 + 50 * q1_random(g);
     body = (qa_body_state){.origin = origin, .velocity = velocity};
-    ok = q1_model(g, spray, "progs/zom_gib.mdl", error) &&
+    ok = q1_model(g, spray, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ZOM_GIB_MDL], error) &&
          qa_world_body_write(g->services.world, child, &body, error);
     if (!ok)
         goto cleanup;
@@ -53,12 +53,12 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
         Q1_NAME_CLASS_KNIGHT_SPIKE,    Q1_NAME_CLASS_ENFORCER_LASER, Q1_NAME_CLASS_OGRE_GRENADE,      Q1_NAME_CLASS_ZOMBIE_GRENADE, Q1_NAME_CLASS_VORE_BALL,
         Q1_NAME_CLASS_CHTHON_LAVABALL, Q1_NAME_HIPLASER,       Q1_NAME_PROXIMITY_GRENADE, Q1_NAME_LAVA_SPIKE,     Q1_NAME_CLASS_MULTIGRENADE,
         Q1_NAME_CLASS_MULTIROCKET,     Q1_NAME_PLASMA};
-    static const char *const models[] = {
-        "progs/spike.mdl",    "progs/s_spike.mdl", "progs/missile.mdl",  "progs/grenade.mdl",
-        "progs/w_spike.mdl",  "progs/k_spike.mdl", "progs/laser.mdl",    "progs/grenade.mdl",
-        "progs/zom_gib.mdl",  "progs/v_spike.mdl", "progs/lavaball.mdl", "progs/lasrspik.mdl",
-        "progs/proxbomb.mdl", "progs/lspike.mdl",  "progs/mervup.mdl",   "progs/rockup.mdl",
-        "progs/plasma.mdl"};
+    static const q1_runtime_name models[] = {
+        Q1_NAME_RESOURCE_PROGS_SPIKE_MDL,    Q1_NAME_RESOURCE_PROGS_S_SPIKE_MDL, Q1_NAME_RESOURCE_PROGS_MISSILE_MDL,  Q1_NAME_RESOURCE_PROGS_GRENADE_MDL,
+        Q1_NAME_RESOURCE_PROGS_W_SPIKE_MDL,  Q1_NAME_RESOURCE_PROGS_K_SPIKE_MDL, Q1_NAME_RESOURCE_PROGS_LASER_MDL,    Q1_NAME_RESOURCE_PROGS_GRENADE_MDL,
+        Q1_NAME_RESOURCE_PROGS_ZOM_GIB_MDL,  Q1_NAME_RESOURCE_PROGS_V_SPIKE_MDL, Q1_NAME_RESOURCE_PROGS_LAVABALL_MDL, Q1_NAME_RESOURCE_PROGS_LASRSPIK_MDL,
+        Q1_NAME_RESOURCE_PROGS_PROXBOMB_MDL, Q1_NAME_RESOURCE_PROGS_LSPIKE_MDL,  Q1_NAME_RESOURCE_PROGS_MERVUP_MDL,   Q1_NAME_RESOURCE_PROGS_ROCKUP_MDL,
+        Q1_NAME_RESOURCE_PROGS_PLASMA_MDL};
     if ((unsigned)kind >= sizeof(names) / sizeof(*names)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 projectile kind");
         return false;
@@ -90,7 +90,7 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
         .velocity = velocity,
         .angles = {atan2f(velocity.z, hypotf(velocity.x, velocity.y)) * 57.29577951308232f,
                    qa_builtin_angle_mod(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0}};
-    if (!q1_model(g, entity, models[kind], error) ||
+    if (!q1_model(g, entity, g->runtime_names[models[kind]], error) ||
         !qa_world_body_write(g->services.world, entity->id, &body, error) ||
         !q1_link(g, entity, error))
         goto fail;
@@ -123,7 +123,7 @@ bool q1_sprite_prepare(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->touch_disabled = true;
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
     entity->frame = 0;
-    if (!q1_model(g, entity, "progs/s_explod.spr", error))
+    if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_EXPLOD_SPR], error))
         return false;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, error))
@@ -352,7 +352,7 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return false;
 }
 
-bool q1_gib_at(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, float health, const char *model,
+bool q1_gib_at(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, float health, qa_string_id model,
                qa_error *error) {
     q1_actor *gib;
     if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GIB], Q1_GIB, owner, &gib, error))
@@ -361,14 +361,7 @@ bool q1_gib_at(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, float health, c
     bool ok = true;
     gib = q1_entity(g, child);
     if (!gib || (owner.registry && !q1_alive(g, owner))) goto cleanup;
-    char path[128];
-    int length = snprintf(path, sizeof(path), "progs/%s.mdl", model);
-    if (length < 0 || (size_t)length >= sizeof(path)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 gib model name too long");
-        ok = false;
-        goto cleanup;
-    }
-    ok = q1_model(g, gib, path, error);
+    ok = q1_model(g, gib, model, error);
     if (!ok) goto cleanup;
     gib->physics.motion = QA_PHYSICS_BOUNCE;
     double scale = health > -50 ? .7 : health > -200 ? 2 : 10;
@@ -403,7 +396,7 @@ cleanup:
         (void)qa_session_release(g->services.session, child, NULL);
     return ok;
 }
-bool q1_gib(qa_q1_game *g, q1_actor *source, const char *model, bool head, qa_error *error) {
+bool q1_gib(qa_q1_game *g, q1_actor *source, qa_string_id model, bool head, qa_error *error) {
     qa_actor_id id = source->id;
     float health = q1_health(g, id);
     source = q1_entity(g, id);
@@ -416,7 +409,7 @@ bool q1_gib(qa_q1_game *g, q1_actor *source, const char *model, bool head, qa_er
         return !q1_entity(g, id);
     return !q1_entity(g, id) || q1_gib_at(g, id, body.origin, health, model, error);
 }
-bool q1_gib_head(qa_q1_game *g, q1_actor *source, const char *model, float health,
+bool q1_gib_head(qa_q1_game *g, q1_actor *source, qa_string_id model, float health,
                  qa_error *error) {
     qa_actor_id id = source->id;
     source = q1_entity(g, id);
@@ -426,14 +419,7 @@ bool q1_gib_head(qa_q1_game *g, q1_actor *source, const char *model, float healt
     source->kind = Q1_GIB;
     source->think = Q1_THINK_NONE;
     source->next_think = 0;
-    char path[128];
-    int length = snprintf(path, sizeof(path), "progs/%s.mdl", model);
-    if (length < 0 || (size_t)length >= sizeof(path)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 gib model name too long");
-        return false;
-    }
-    if (!q1_model(g, source, path, error))
-        return false;
+    if (!q1_model(g, source, model, error)) return false;
     source->frame = 0;
     source->physics.motion = QA_PHYSICS_BOUNCE;
     qa_combat_state state;

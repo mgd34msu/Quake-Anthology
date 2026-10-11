@@ -46,7 +46,7 @@ static bool armed_eye(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind, f
     e->physics.motion = QA_PHYSICS_STEP;
     e->physics.flags = QA_PHYSICS_MONSTER | QA_PHYSICS_FLYING;
     e->state.boss_child.sign = side;
-    if (!q1_model(g, e, "progs/teleporter_eye.mdl", error) ||
+    if (!q1_model(g, e, g->runtime_names[Q1_NAME_RESOURCE_PROGS_TELEPORTER_EYE_MDL], error) ||
         !qa_world_body_write(g->services.world, e->id, &body, error) ||
         !q1_boss_teledeath(g, e, error) || !set_health(g, e, 120, error))
         goto fail;
@@ -95,7 +95,7 @@ bool q1_boss_child_spawn(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind
         body.origin.z += 300;
         body.bounds = (qa_bounds){{-32, -32, -24}, {32, 32, 64}};
         if (!qa_q1_spawn_teleport_fog(g, body.origin, NULL, error) ||
-            !q1_model(g, e, "progs/teleporter_eye.mdl", error))
+            !q1_model(g, e, g->runtime_names[Q1_NAME_RESOURCE_PROGS_TELEPORTER_EYE_MDL], error))
             goto fail;
         e->physics.solid = QA_PHYSICS_BOX;
         e->physics.motion = QA_PHYSICS_FLY;
@@ -227,7 +227,7 @@ static bool blaster(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     q1_actor *shot;
     if (!q1_boss_shot(g, e->id, qa_vec_add(body.origin, qa_vec_scale(direction, 8)), direction,
-                      qa_vec_scale(direction, 500), "progs/rogue/sphere.mdl", Q1_BOSS_BLAST_SHOT,
+                      qa_vec_scale(direction, 500), g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_SPHERE_MDL], Q1_BOSS_BLAST_SHOT,
                       &shot, error))
         return false;
     shot->effects = 64;
@@ -265,7 +265,7 @@ static bool spammer(qa_q1_game *g, q1_actor *e, qa_error *error) {
     shot->physics.motion = QA_PHYSICS_TOSS;
     shot->effects = 64;
     body = (qa_body_state){.origin = origin, .velocity = velocity};
-    if (!q1_model(g, shot, "progs/rogue/plasma.mdl", error) ||
+    if (!q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_ROGUE_PLASMA_MDL], error) ||
         !qa_world_body_write(g->services.world, shot->id, &body, error) ||
         !q1_sound_resource(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error))
         return false;
@@ -400,7 +400,7 @@ bool q1_boss_child_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error
             e->physics.motion = QA_PHYSICS_STATIONARY;
             e->physics.solid = QA_PHYSICS_NOT_SOLID;
             return qa_world_body_write(g->services.world, e->id, &body, error) &&
-                   q1_model(g, e, "maps/bmodel/b_splash.bsp", error) && q1_link(g, e, error) &&
+                   q1_model(g, e, g->runtime_names[Q1_NAME_RESOURCE_MAPS_BMODEL_B_SPLASH_BSP], error) && q1_link(g, e, error) &&
                    q1_boss_child_schedule(g, e, Q1_CHILD_SPAM_BEAM, 2, error);
         }
         return (q1_health(g, other) == 0 ||

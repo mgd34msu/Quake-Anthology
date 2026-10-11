@@ -1367,7 +1367,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         break;
     case Q1_MAP_BARREL: {
         bool small = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MISC_EXPLOBOX2]);
-        if (!q1_model(g, entity, small ? "maps/b_exbox2.bsp" : "maps/b_explob.bsp", error) ||
+        if (!q1_model(g, entity, small ? g->runtime_names[Q1_NAME_RESOURCE_MAPS_B_EXBOX2_BSP] : g->runtime_names[Q1_NAME_RESOURCE_MAPS_B_EXPLOB_BSP], error) ||
             !qa_combat_set_health(g->services.combat, entity->id, 20, error) ||
             !q1_map_damageable(g, entity, true, error))
             return false;

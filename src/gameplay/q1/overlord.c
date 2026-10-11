@@ -93,7 +93,7 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     entity->physics.flags &= ~(uint32_t)QA_PHYSICS_ONGROUND;
     return qa_world_body_write(g->services.world, entity->id, &body, error);
 }
-static bool toss(qa_q1_game *g, q1_actor *entity, const char *model, qa_error *error) {
+static bool toss(qa_q1_game *g, q1_actor *entity, qa_string_id model, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -106,15 +106,13 @@ static bool toss(qa_q1_game *g, q1_actor *entity, const char *model, qa_error *e
     if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GIB], Q1_GIB, (qa_actor_id){0}, &gib, error))
         return false;
     gib->physics.motion = QA_PHYSICS_BOUNCE;
-    char path[64];
-    snprintf(path, sizeof(path), "progs/%s.mdl", model);
     body = (qa_body_state){.origin = body.origin, .velocity = velocity};
-    return q1_model(g, gib, path, error) &&
+    return q1_model(g, gib, model, error) &&
            qa_world_body_write(g->services.world, gib->id, &body, error) &&
            q1_schedule(g, gib, 10 + q1_random(g) * 10, Q1_THINK_REMOVE, error) &&
            q1_link(g, gib, error);
 }
-static bool burst(qa_q1_game *g, q1_actor *entity, const char *const *models, unsigned count,
+static bool burst(qa_q1_game *g, q1_actor *entity, const q1_runtime_name *models, unsigned count,
                   qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
@@ -123,7 +121,7 @@ static bool burst(qa_q1_game *g, q1_actor *entity, const char *const *models, un
     for (unsigned i = 0; i < count; ++i) {
         if (!q1_alive(g, entity->id))
             return true;
-        if (!toss(g, entity, models[i], error))
+        if (!toss(g, entity, g->runtime_names[models[i]], error))
             return false;
     }
     return true;
@@ -189,7 +187,7 @@ bool q1_overlord_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action,
         entity->physics.flags |= QA_PHYSICS_FLYING;
         return q1_schedule(g, entity, 0.05, Q1_THINK_MONSTER_FRAME, error);
     case Q1_ACTION_S_WRATH_OVERLORD_DIE17: {
-        const char *models[] = {"s_wrtgb2", "s_wrtgb3", "wrthgib1", "wrthgib2", "wrthgib3"};
+        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_S_WRTGB2_MDL, Q1_NAME_RESOURCE_PROGS_S_WRTGB3_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB1_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB2_MDL, Q1_NAME_RESOURCE_PROGS_WRTHGIB3_MDL};
         entity->model = 0;
         return burst(g, entity, models, 5, error) &&
                (!q1_alive(g, entity->id) ||
@@ -197,7 +195,7 @@ bool q1_overlord_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action,
     }
     case Q1_ACTION_S_WRATH_OVERLORD_DIE18:
     case Q1_ACTION_S_WRATH_OVERLORD_DIE19: {
-        const char *models[] = {"gib1", "gib2", "gib3", "gib1", "gib2", "gib3"};
+        static const q1_runtime_name models[] = {Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL, Q1_NAME_RESOURCE_PROGS_GIB1_MDL, Q1_NAME_RESOURCE_PROGS_GIB2_MDL, Q1_NAME_RESOURCE_PROGS_GIB3_MDL};
         if (!burst(g, entity, models, 6, error))
             return false;
         if (!q1_alive(g, entity->id))

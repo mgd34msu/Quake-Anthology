@@ -449,7 +449,7 @@ bool q1_map_hip_hazard_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         ++g->total_monsters;
         s->touch_enabled = true;
         s->use_enabled = false;
-        if (!q1_model(g, e, "progs/spikmine.mdl", error))
+        if (!q1_model(g, e, g->runtime_names[Q1_NAME_RESOURCE_PROGS_SPIKMINE_MDL], error))
             return false;
         if (!q1_alive(g, id))
             return true;

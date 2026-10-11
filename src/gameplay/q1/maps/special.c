@@ -104,7 +104,7 @@ static bool corpse(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     char model[48];
     snprintf(model, sizeof(model), "progs/%s.mdl", poses[style].model);
     qa_actor_id id = entity->id;
-    if (!q1_model(g, entity, model, error))
+    if (!(qa_builtin_resource(&g->services, model, &entity->model, error) && q1_model(g, entity, entity->model, error)))
         return false;
     entity = q1_entity(g, id);
     return !entity || q1_link(g, entity, error);
@@ -144,19 +144,19 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             if (!qa_world_body_write(g->services.world, entity->id, &body, error))
                 return false;
         } else if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_GLOBE])) {
-            if (!q1_model(g, entity, "progs/s_light.spr", error))
+            if (!q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_S_LIGHT_SPR], error))
                 return false;
         } else {
-            const char *model = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])
-                                    ? "progs/flame.mdl"
-                                    : "progs/flame2.mdl";
+            qa_string_id model = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])
+                                    ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME_MDL]
+                                    : g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME2_MDL];
             entity->frame = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLAME_LARGE_YELLOW]) ? 1 : 0;
             bool silent = g->options.program == QA_Q1_ROGUE &&
                           q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH]) &&
                           (entity->spawnflags & 1);
             if (g->options.program == QA_Q1_ROGUE &&
                 q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])) {
-                if (!qa_q1_wire_declare_model(g, model, error)) return false;
+                if (!qa_q1_wire_declare_model(g, qa_strings_cstr(qa_session_strings(g->services.session),model), error)) return false;
                 entity = q1_entity(g, id);
                 if (!entity || !entity->map) return true;
                 silent = (entity->spawnflags & 1u) != 0;
@@ -190,9 +190,7 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!bits)
             return q1_map_fail(error, "Q1 sigil has no episode flag");
         unsigned number = bits & 8 ? 4 : bits & 4 ? 3 : bits & 2 ? 2 : 1;
-        char model[32];
-        snprintf(model, sizeof(model), "progs/end%u.mdl", number);
-        if (!q1_model(g, entity, model, error))
+        if (!q1_model(g, entity, g->runtime_names[q1_rune_models[number-1]], error))
             return false;
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         entity->physics.motion = QA_PHYSICS_TOSS;
@@ -221,7 +219,7 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return g->options.deathmatch ? q1_remove(g, entity, error)
                                      : q1_map_schedule(g, entity, 1, Q1_MAP_BUBBLES_MAKE, error);
     case Q1_MAP_VIEW:
-        return q1_model(g, entity, "progs/player.mdl", error);
+        return q1_model(g, entity, g->runtime_names[Q1_NAME_RESOURCE_PROGS_PLAYER_MDL], error);
     case Q1_MAP_NOISE:
         return q1_map_schedule(g, entity, .1 + q1_random(g), Q1_MAP_NOISE_REPEAT, error);
     case Q1_MAP_LIGHTNING:
@@ -251,7 +249,7 @@ static bool shooter_fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, kind, body.origin,
                              qa_vec_scale(direction, speed), &missile, error))
         return false;
-    return kind != Q1_SUPERSPIKE || q1_model(g, missile, "progs/spike.mdl", error);
+    return kind != Q1_SUPERSPIKE || q1_model(g, missile, g->runtime_names[Q1_NAME_RESOURCE_PROGS_SPIKE_MDL], error);
 }
 bool q1_map_special_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     if (entity->map->kind == Q1_MAP_LIGHTNING)
@@ -326,7 +324,7 @@ static bool fireball_fly(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                              .angles = {atan2f(z, hypotf(x, y)) * 57.29577951308232f,
                                         qa_builtin_angle_mod(atan2f(y, x) * 57.29577951308232f),
                                         0}};
-    if (!q1_model(g, ball, "progs/lavaball.mdl", error) ||
+    if (!q1_model(g, ball, g->runtime_names[Q1_NAME_RESOURCE_PROGS_LAVABALL_MDL], error) ||
         !qa_world_body_write(g->services.world, ball->id, &missile, error) ||
         !q1_map_schedule(g, ball, 5, Q1_MAP_REMOVE, error) || !q1_link(g, ball, error))
         return false;
