@@ -97,7 +97,7 @@ static bool source_current(void *context, const frontend_q2_footstep_source *sou
 static frontend_q2_footstep_source source_read(frontend_remote_q2 *row)
 {
     return (frontend_q2_footstep_source){row->content.catalog, row->content.selected,
-        frontend_remote_q2_config(row, row->layout.models + 1), row->map, row->content.mounts,
+        frontend_remote_q2_config(row, row->hud_names.layout.models + 1), row->map, row->content.mounts,
         row->geometry, row->sounds, qa_session_strings(qa_application_session(row->frontend->application)), row, source_current, remote_q2_trace, remote_q2_effect_asset};
 }
 bool frontend_q2_footsteps_destroy(frontend_q2_footsteps **owned, qa_error *error)

@@ -215,8 +215,8 @@ static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
 {
     const qa_application_ui_names *names=qa_application_ui_names_read(row->frontend->application);
     qa_string_id path_id=names->flare_image;
-    if ((packet->renderfx & 256u) && packet->frame < row->layout.max_images) {
-        qa_string_id selected=row->hud_names.values[row->layout.images+packet->frame];
+    if ((packet->renderfx & 256u) && packet->frame < row->hud_names.layout.max_images) {
+        qa_string_id selected=row->hud_names.values[row->hud_names.layout.images+packet->frame];
         if (selected) path_id=selected;
     }
     const qa_scene_image *image = NULL;
@@ -263,8 +263,8 @@ static qa_string_id hud_config_picture(void *context,int32_t index,unsigned vari
 static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_error *error)
 {
     if (!row->media_ready || !row->frontend->audio) return true;
-    if (event->index >= row->layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound leaves its actual protocol config range");
-    qa_string_id name=row->hud_names.values[row->layout.sounds+event->index];
+    if (event->index >= row->hud_names.layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound leaves its actual protocol config range");
+    qa_string_id name=row->hud_names.values[row->hud_names.layout.sounds+event->index];
     if (!name) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 sound has no actual configstring");
     const qa_q2_entity *source = entity(&row->frame, event->entity);
     qa_vec3 origin = event->has_position ? vector(event->position) : source ? vector(source->origin) : qa_v3(0, 0, 0);
@@ -329,8 +329,8 @@ static bool loops(frontend_remote_q2 *row, qa_error *error)
     for (size_t i = 0; i < row->frame.entity_count; ++i) {
         const qa_q2_entity *entity = row->frame.entities + i;
         if (!entity->sound) continue;
-        if (entity->sound >= row->layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 looping sound leaves its received config range");
-        qa_string_id name = row->hud_names.values[row->layout.sounds + entity->sound];
+        if (entity->sound >= row->hud_names.layout.max_sounds) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 looping sound leaves its received config range");
+        qa_string_id name = row->hud_names.values[row->hud_names.layout.sounds + entity->sound];
         if (!name) continue;
         qa_audio_asset *asset = NULL;
         if (!qa_audio_bank_register_id(row->sounds, name, QA_GAME_Q2, &asset, error)) return false;
@@ -578,7 +578,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     ++row->busy; bool ok = qa_scene_frame_emit(&f->frame, &begin, error);
     qa_vec3 styles[256];
     for (size_t i = 0; i < 256; ++i) {
-        const char *style = frontend_remote_q2_config(row, (uint16_t)(row->layout.lights + i)); size_t length = strlen(style);
+        const char *style = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.lights + i)); size_t length = strlen(style);
         float value = length ? (style[((size_t)fmax(0, floor(time * 0.01))) % length] - 'a') / 12.0f : 1;
         styles[i] = qa_v3(value, value, value);
     }
@@ -626,9 +626,9 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         if (current->renderfx & 128) {
             if (qa_q2_model_beam(remote_q2_rerelease_presentation(row) ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
                 current->renderfx, current->modelindex > 1)) {
-                if (current->modelindex < row->layout.max_models) {
+                if (current->modelindex < row->hud_names.layout.max_models) {
                     const char *path = frontend_remote_q2_config(row,
-                        (uint16_t)(row->layout.models + current->modelindex));
+                        (uint16_t)(row->hud_names.layout.models + current->modelindex));
                     ok = submit_model(row, current->modelindex, path, NULL, NULL, &view, &world, current, NULL, false,
                         vector(current->origin), vector(current->angles), error);
                 }
@@ -639,7 +639,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 vector(current->old_origin), current->skinnum, (int32_t)current->frame, &f->frame, error);
             continue;
         }
-        if (!current->modelindex || current->modelindex >= row->layout.max_models ||
+        if (!current->modelindex || current->modelindex >= row->hud_names.layout.max_models ||
             current->number == player_entity_number) continue;
         const qa_q2_entity *prior = entity(&row->previous, current->number);
         if (!prior || prior->modelindex != current->modelindex || current->event == 6 || current->event == 7 ||
@@ -672,7 +672,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 packet.renderfx |= 32; packet.alpha = current->effects & (UINT64_C(1) << 31) ? .6f : .3f;
             }
         }
-        const char *path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + current->modelindex));
+        const char *path = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + current->modelindex));
         remote_q2_clientinfo info = {0}; const qa_material *skin = NULL;
         remote_q2_model *prepared=NULL;
         if (current->modelindex == 255) {
@@ -699,7 +699,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             ok = submit_model(row, model_index, path, prepared, skin, &view, &world, &packet, prior, false, position, direction, error);
         }
         uint32_t linked[] = {current->modelindex2, current->modelindex3, current->modelindex4};
-        for (size_t j = 0; ok && j < 3; ++j) if (linked[j] && linked[j] < row->layout.max_models) {
+        for (size_t j = 0; ok && j < 3; ++j) if (linked[j] && linked[j] < row->hud_names.layout.max_models) {
             const char *linked_path;
             uint32_t linked_index = linked[j];
             remote_q2_model *linked_model=NULL;
@@ -710,7 +710,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 linked_index = 0; linked_model=info.weapon_resource;
             } else {
                 if (!j && !remote_q2_rerelease_presentation(row) && (linked[j] & 128)) linked_index &= 127;
-                linked_path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + linked_index));
+                linked_path = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + linked_index));
             }
             qa_q2_entity attachment = packet; attachment.skinnum = 0; attachment.alpha = 0; attachment.renderfx = 0; attachment.modelindex = 0;
             if (!j && linked[j] != 255 && !remote_q2_rerelease_presentation(row) && (linked[j] & 128)) {
@@ -724,7 +724,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
     const qa_cvar_view *gun_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.legacy.cl_gun);
     if (ok && entities_enabled && (!gun_setting || gun_setting->number != 0) &&
         (remote_q2_rerelease_presentation(row) || frame->player.fov <= 90) &&
-        frame->player.gunindex && frame->player.gunindex < row->layout.max_models) {
+        frame->player.gunindex && frame->player.gunindex < row->hud_names.layout.max_models) {
         qa_q2_entity gun = {.number = player_entity_number, .frame = frame->player.gunframe,
             .skinnum = frame->player.gunskin, .renderfx = 1 | 4 | 16, .scale = 1};
         qa_q2_entity old = gun; old.frame = before && before->player.gunindex == frame->player.gunindex ? before->player.gunframe : gun.frame;
@@ -733,7 +733,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             vector(frame->player.gunoffset);
         qa_vec3 gun_angles = continuous ? angles_lerp(before->player.gunangles, frame->player.gunangles, row->fraction) :
             vector(frame->player.gunangles);
-        ok = submit_model(row, frame->player.gunindex, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + frame->player.gunindex)), NULL, NULL,
+        ok = submit_model(row, frame->player.gunindex, frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + frame->player.gunindex)), NULL, NULL,
             &view, &world, &gun, &old, true, qa_vec_add(origin, gun_offset), qa_vec_add(angles, gun_angles), error);
     }
     const qa_cvar_view *particles_setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_particles);

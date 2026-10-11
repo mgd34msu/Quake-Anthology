@@ -74,16 +74,6 @@ bool frontend_remote_q2_wire_seat(const frontend_remote_q2 *row, uint32_t *out, 
         }
     return found || remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 canonical seat is absent from the actual connection");
 }
-remote_q2_layout remote_q2_layout_read(qa_net_protocol_id protocol)
-{
-    qa_q2_codec codec = {0}; qa_q2_config_layout value = {0}; qa_error error = {0};
-    if (!qa_q2_codec_init(&codec, protocol, &error) || !qa_q2_config_layout_read(&codec, &value, &error))
-        return (remote_q2_layout){0};
-    return (remote_q2_layout){(uint16_t)value.models, (uint16_t)value.sounds, (uint16_t)value.images,
-        (uint16_t)value.lights, (uint16_t)value.items, (uint16_t)value.player_skins, (uint16_t)value.map_checksum,
-        (uint16_t)value.max_clients, (uint16_t)value.air_accelerate,
-        value.max_models, value.max_sounds, value.max_images, value.max_configs};
-}
 bool remote_q2_float_movement(const frontend_remote_q2 *row)
 {
     qa_net_protocol kind = row->options.domain.protocol.kind;
@@ -92,8 +82,7 @@ bool remote_q2_float_movement(const frontend_remote_q2 *row)
 }
 bool remote_q2_rerelease_presentation(const frontend_remote_q2 *row)
 {
-    return remote_q2_float_movement(row) ||
-        (row->options.domain.protocol.kind == QA_NET_Q2PRO_36 && row->layout.max_models == 8192);
+    return row->hud_names.rerelease;
 }
 bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *data, qa_error *error)
 {
@@ -102,9 +91,10 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
         if (data->protocol_revision) protocol.revision = data->protocol_revision;
         protocol.flags = data->wire_flags;
     }
-    remote_q2_layout layout = remote_q2_layout_read(protocol);
+    qa_q2_config_layout layout; qa_q2_codec codec;
+    if (!qa_q2_codec_init(&codec, protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
     if (!layout.max_configs) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 SERVERDATA has no admitted config namespace");
-    if (layout.max_configs != row->layout.max_configs || layout.max_models != row->layout.max_models) {
+    if (layout.max_configs != row->hud_names.layout.max_configs || layout.max_models != row->hud_names.layout.max_models) {
         remote_q2_model **model_slots = calloc(layout.max_models, sizeof(*model_slots));
         if (!model_slots) {
             free(model_slots);
@@ -112,20 +102,19 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
         }
         free(row->model_slots); row->model_slots = model_slots;
     }
-    row->layout = layout;
     qa_strings *strings = qa_session_strings(qa_application_session(row->options.domain.application));
     return qa_hud_q2_names_configure(&row->hud_names,protocol,error) &&
         (row->hud_overlay || qa_hud_q2_program_create(strings, &row->hud_overlay, error));
 }
-const char *frontend_remote_q2_config(const frontend_remote_q2 *row, uint16_t index)
+const char *frontend_remote_q2_config(const frontend_remote_q2 *row, uint32_t index)
 {
-    if (!row || index>=row->layout.max_configs) return "";
+    if (!row || index>=row->hud_names.layout.max_configs) return "";
     qa_string_id id=row->hud_names.values[index];
     return id?qa_strings_cstr(row->hud_names.strings,id):"";
 }
 bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *value, qa_error *error)
 {
-    if (!value || index >= row->layout.max_configs)
+    if (!value || index >= row->hud_names.layout.max_configs)
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 configstring leaves the actual protocol layout");
     qa_string_id id=QA_STRING_NONE;
     if (*value && !qa_strings_intern_cstr(row->hud_names.strings,value,&id,error)) return false;
@@ -236,11 +225,15 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 construction requires its pending real CLIENT registry and physical input");
     frontend_remote_q2 *row = calloc(1, sizeof(*row));
     if (!row) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining remote Q2 CLIENT");
-    row->frontend = f; row->options = *options; row->layout = remote_q2_layout_read(d->protocol);
+    row->frontend = f; row->options = *options;
+    if (!qa_hud_q2_names_init(&row->hud_names,qa_session_strings(qa_application_session(f->application)),error) ||
+        !qa_hud_q2_names_configure(&row->hud_names,d->protocol,error)) {
+        qa_hud_q2_names_destroy(&row->hud_names); free(row); return false;
+    }
     remote_q2_cvars_bind(row);
     row->events = qa_event_ring_create(65536, 16384, 2, error);
-    row->model_slots = calloc(row->layout.max_models, sizeof(*row->model_slots));
-    if (!row->events || !row->model_slots || !qa_hud_q2_names_init(&row->hud_names,qa_session_strings(qa_application_session(f->application)),error) || !qa_hud_q2_picture_names_bind(qa_session_strings(qa_application_session(f->application)),&row->hud_pictures,error) || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
+    row->model_slots = calloc(row->hud_names.layout.max_models, sizeof(*row->model_slots));
+    if (!row->events || !row->model_slots || !qa_hud_q2_picture_names_bind(qa_session_strings(qa_application_session(f->application)),&row->hud_pictures,error) || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
         qa_event_ring_destroy(&row->events);
         qa_arena_destroy(&row->effect_storage);qa_hud_q2_names_destroy(&row->hud_names); free(row->model_slots); free(row); return false;
     }
@@ -827,10 +820,10 @@ bool frontend_remote_q2_demo_record_seed(frontend_remote_q2 *row,
 {
     if (!remote_q2_live(row, error) || row->busy || !row->media_ready || !row->frame.valid)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 recording requires its admitted frame and media");
-    qa_q2_config_entry *configs = malloc(row->layout.max_configs * sizeof(*configs));
+    qa_q2_config_entry *configs = malloc(row->hud_names.layout.max_configs * sizeof(*configs));
     if (!configs) return remote_q2_fail(error, QA_ERROR_MEMORY, "Collecting Q2 demo configstrings");
     size_t count = 0;
-    for (size_t i = 0; i < row->layout.max_configs; ++i)
+    for (size_t i = 0; i < row->hud_names.layout.max_configs; ++i)
         if (row->hud_names.values[i]) configs[count++] = (qa_q2_config_entry){(uint16_t)i, frontend_remote_q2_config(row,(uint16_t)i)};
     qa_q2_game_state state = {.data = row->data, .configs = configs, .config_count = count,
         .baselines = {row->baselines, row->baseline_count}};

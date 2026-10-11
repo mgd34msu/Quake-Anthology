@@ -10,15 +10,15 @@ static const qa_q2_player *player(const frontend_remote_q2 *row)
     return row->frame.valid && frontend_remote_q2_wire_seat(row, &seat, &error) && seat < row->frame.player_count ?
         &row->frame.players[seat].player : NULL;
 }
-void remote_q2_prediction_config(frontend_remote_q2 *row, uint16_t index)
+void remote_q2_prediction_config(frontend_remote_q2 *row, uint32_t index)
 {
-    if (index == row->layout.max_clients) {
+    if (index == row->hud_names.layout.max_clients) {
         row->collision_clients = strtoul(frontend_remote_q2_config(row, index), NULL, 10);
         row->collision_dirty = true;
     }
-    if (!row->collision_models || index < row->layout.models ||
-        (size_t)(index - row->layout.models) >= row->layout.max_models) return;
-    qa_entity_model_field *entry = row->collision_models + index - row->layout.models;
+    if (!row->collision_models || index < row->hud_names.layout.models ||
+        (size_t)(index - row->hud_names.layout.models) >= row->hud_names.layout.max_models) return;
+    qa_entity_model_field *entry = row->collision_models + index - row->hud_names.layout.models;
     *entry = (qa_entity_model_field){0};
     const char *path = frontend_remote_q2_config(row, index);
     if (*path == '*') {
@@ -79,7 +79,7 @@ bool remote_q2_prediction_publish(frontend_remote_q2 *row, qa_error *error)
         qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
             .role = QA_COLLISION_SOLID};
         if (entity->solid == 31) {
-            if (entity->modelindex >= row->layout.max_models ||
+            if (entity->modelindex >= row->hud_names.layout.max_models ||
                 !row->collision_models[entity->modelindex].present) continue;
             model = row->collision_models[entity->modelindex].model;
             if (!qa_collision_model_bounds(row->geometry, model, &state.bounds, error)) return false;
@@ -186,7 +186,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
         }
     }
     qa_movement_profile profile = qa_movement_profile_default(kind);
-    const char *air_text = frontend_remote_q2_config(row, row->layout.air_accelerate); char *end;
+    const char *air_text = frontend_remote_q2_config(row, row->hud_names.layout.air_accelerate); char *end;
     double air = strtod(air_text, &end);
     while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') ++end;
     if ((*air_text && (*end || !isfinite(air))) || air < -FLT_MAX || air > FLT_MAX)

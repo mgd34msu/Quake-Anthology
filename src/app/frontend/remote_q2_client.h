@@ -114,7 +114,7 @@ bool frontend_remote_q2_input(qa_frontend *, uint32_t physical_seat,
     bool *command_ready, qa_error *);
 bool frontend_remote_q2_content_visit(const qa_frontend *,
     const qa_application_content_visitor *, qa_error *);
-const char *frontend_remote_q2_config(const frontend_remote_q2 *, uint16_t);
+const char *frontend_remote_q2_config(const frontend_remote_q2 *, uint32_t);
 /* Pure observation of actual received entity/player rows. It grants no
  * canonical actor identity; the application observer owns that admission. */
 bool frontend_remote_q2_entity_received(const frontend_remote_q2 *, uint32_t source_number);

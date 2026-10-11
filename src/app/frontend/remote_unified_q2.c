@@ -623,7 +623,7 @@ static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activa
         if (okay) okay = qa_hud_q2_names_init(&b->hud_names,o->replica->strings,e) &&
             qa_hud_q2_picture_names_bind(o->replica->strings,&b->picture_names,e);
         if (okay) {
-            qa_net_protocol_id protocol={.kind=profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE?QA_NET_Q2KEX_2023:QA_NET_Q2_34};
+            qa_net_protocol_id protocol=qa_q2_default_protocol(profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE);
             okay=qa_hud_q2_names_configure(&b->hud_names,protocol,e) &&
                 qa_hud_q2_names_prepare_images(&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
         }

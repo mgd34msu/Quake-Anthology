@@ -71,7 +71,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
             uint32_t skin = (uint32_t)source.skin, shell = source.render_flags & 0x1c00;
             const char *image = (source.render_flags & 256) ? resource_text(application, entity.flare_image) : NULL;
             out->flare = (qa_entity_flare){
-                .image = image && *image ? image : "misc/flare.tga",
+                .image = image && *image ? image : resource_text(application, application->ui_names.flare_image),
                 .fade_start = truncf(entity.flare_start), .fade_end = truncf(entity.flare_end), .scale = source.scale,
                 .color = skin ? qa_v3((float)(skin >> 24) / 255,
                     (float)((skin >> 16) & 255) / 255, (float)((skin >> 8) & 255) / 255) : qa_v3(1, 1, 1),

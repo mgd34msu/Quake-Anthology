@@ -131,15 +131,15 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
     }
     m->source = &m->decoded; m->next = row->models; row->models = m; *out = m; return true;
 }
-bool remote_q2_model_config(frontend_remote_q2 *row, uint16_t index, qa_error *error)
+bool remote_q2_model_config(frontend_remote_q2 *row, uint32_t index, qa_error *error)
 {
-    if (index < row->layout.models || (size_t)(index - row->layout.models) >= row->layout.max_models) return true;
-    size_t slot = index - row->layout.models;
+    if (index < row->hud_names.layout.models || (size_t)(index - row->hud_names.layout.models) >= row->hud_names.layout.max_models) return true;
+    size_t slot = index - row->hud_names.layout.models;
     row->model_slots[slot] = NULL;
     if (!slot) return true;
     const char *path = frontend_remote_q2_config(row, index);
     if (!*path || path[0] == '*' || path[0] == '#' ||
-        !strcmp(path, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + 1)))) return true;
+        !strcmp(path, frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + 1)))) return true;
     qa_error issue = {0};
     if (remote_q2_model_read(row, path, &row->model_slots[slot], &issue) || issue.code == QA_ERROR_NOT_FOUND) return true;
     if (error) *error = issue;
@@ -176,7 +176,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     row->collision_viewer = (qa_actor_id){0}; row->collision_clients = 0;
     qa_collision_destroy(row->geometry); row->geometry = NULL;
     memset(row->clientinfo,0,sizeof(row->clientinfo));
-    if (row->model_slots) memset(row->model_slots, 0, row->layout.max_models * sizeof(*row->model_slots));
+    if (row->model_slots) memset(row->model_slots, 0, row->hud_names.layout.max_models * sizeof(*row->model_slots));
     while (row->models) {
         remote_q2_model *m = row->models; row->models = m->next;
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
@@ -200,7 +200,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
 }
 bool remote_q2_map_validate(const frontend_remote_q2 *row, const qa_resource *resource, qa_bsp_view *bsp, qa_error *error)
 {
-    const char *checksum = frontend_remote_q2_config(row, row->layout.checksum);
+    const char *checksum = frontend_remote_q2_config(row, row->hud_names.layout.map_checksum);
     char *end = NULL; errno = 0; long long value = strtoll(checksum, &end, 10);
     while (end && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) ++end;
     if (end == checksum || !end || *end || errno == ERANGE || value < INT32_MIN || value > UINT32_MAX)
@@ -214,7 +214,7 @@ bool remote_q2_map_validate(const frontend_remote_q2 *row, const qa_resource *re
 bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
 {
     if (!remote_q2_media_clear(row, error)) return false;
-    const char *map = frontend_remote_q2_config(row, row->layout.models + 1);
+    const char *map = frontend_remote_q2_config(row, row->hud_names.layout.models + 1);
     if (!*map) return remote_q2_fail(error, QA_ERROR_FORMAT, "Remote Q2 server supplied no world model");
     if (!qa_vfs_acquire_receipt(row->content.mounts, map, &row->map, &row->map_opening, error)) return false;
     qa_bsp_view bsp;
@@ -224,12 +224,12 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     row->collision_capacity = qa_actors_capacity(actors);
     if (!qa_movement_result_reserve(&row->prediction_scratch, row->collision_capacity + 1, error)) return false;
     row->collision_actors = calloc(row->collision_capacity, sizeof(*row->collision_actors));
-    row->collision_models = calloc(row->layout.max_models, sizeof(*row->collision_models));
+    row->collision_models = calloc(row->hud_names.layout.max_models, sizeof(*row->collision_models));
     if (!row->collision_actors || !row->collision_models ||
         !qa_world_create(actors, row->geometry, NULL, 1, &row->collision_world, error)) return false;
-    for (size_t i = 0; i < row->layout.max_models; ++i)
-        remote_q2_prediction_config(row, (uint16_t)(row->layout.models + i));
-    remote_q2_prediction_config(row, row->layout.max_clients);
+    for (size_t i = 0; i < row->hud_names.layout.max_models; ++i)
+        remote_q2_prediction_config(row, (uint16_t)(row->hud_names.layout.models + i));
+    remote_q2_prediction_config(row, row->hud_names.layout.max_clients);
     qa_world_query_rules query_rules = {.actors = row->collision_actors,
         .brush_contents_only = true, .contents_ignore_pass = true};
     qa_world_set_query_rules(row->collision_world, &query_rules);
@@ -257,15 +257,15 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     qa_error flare_issue={0};
     if (!qa_scene_q2_picture(row->images,row->hud_names.strings,ui_names->flare_image,true,QA_SCENE_LINEAR,&flare_issue) &&
         flare_issue.code!=QA_OK && flare_issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=flare_issue;return false;}
-    for (size_t i = 1; i < row->layout.max_models; ++i) {
-        if (!remote_q2_model_config(row, (uint16_t)(row->layout.models + i), error)) return false;
+    for (size_t i = 1; i < row->hud_names.layout.max_models; ++i) {
+        if (!remote_q2_model_config(row, (uint16_t)(row->hud_names.layout.models + i), error)) return false;
     }
     if (!qa_hud_q2_names_prepare_images(&row->hud_names,row->images,&row->hud_pictures,
         QA_SCENE_LINEAR_MIPMAP_LINEAR,error) ||
         !qa_hud_q2_program_prepare_images(row->hud_overlay,row->images,remote_q2_rerelease_presentation(row),
             QA_SCENE_LINEAR_MIPMAP_LINEAR,error)) return false;
-    for (size_t i = 1; i < row->layout.max_sounds; ++i) {
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + i));
+    for (size_t i = 1; i < row->hud_names.layout.max_sounds; ++i) {
+        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.sounds + i));
         if (!*name || name[0] == '*') continue;
         if (!frontend_ui_audio_prepare_sound(row->frontend, row->sounds, name, QA_GAME_Q2, error)) return false;
     }

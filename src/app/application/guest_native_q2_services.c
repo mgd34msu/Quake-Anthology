@@ -85,7 +85,7 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
     if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
         value, &name, error)) return false;
     application_native_q2_config_update(engine, (uint32_t)index, name);
-    uint32_t styles = engine->resource_base[QA_NATIVE_HOST_IMAGE] + engine->resource_limit[QA_NATIVE_HOST_IMAGE];
+    uint32_t styles = engine->config_layout.lights;
     if ((uint32_t)index >= styles && (uint32_t)index - styles < 256)
         qa_lightstyles_set(&engine->lightstyles, (uint32_t)index - styles, name);
     if (!engine->map_ready) return true;

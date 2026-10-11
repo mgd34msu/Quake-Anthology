@@ -1,4 +1,5 @@
 #include "guest_native_q2_private.h"
+#include "qa/hud_q2.h"
 #include <limits.h>
 
 struct application_native_q2 *application_native_q2_hud_source(
@@ -47,29 +48,19 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         int32_t index = call->import->arguments[0].as.i32;
         if (index < 0 || index >= 256)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD client index is invalid");
-        const char *skin = qa_strings_cstr(qa_session_strings(source->provider->application->session), source->configstrings[11582 + index]);
+        const char *skin = qa_strings_cstr(qa_session_strings(source->provider->application->session), source->configstrings[source->config_layout.player_skins + (uint32_t)index]);
         if (!skin) skin = "";
-        const char *first = strchr(skin, '\\');
+        qa_hud_q2_player_names names = qa_hud_q2_player_names_read(skin);
         char text[1024] = {0};
-        if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientName)) {
-            size_t bytes = first ? (size_t)(first - skin) : 0;
-            if (bytes >= sizeof(text)) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client name is too long");
-            memcpy(text, skin, bytes);
+        if (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientName) {
+            if (names.name.size >= sizeof(text)) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client name is too long");
+            memcpy(text, names.name.data, names.name.size);
         } else if (*skin) {
-            const char *model_skin = first ? first + 1 : skin;
-            const char *last = strchr(model_skin, '\\');
-            if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag)) {
-                const char *dogtag = last && last[1] ? last + 1 : "default";
-                int bytes = snprintf(text, sizeof(text), "%s.pcx", dogtag);
+            if (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag) {
+                int bytes = snprintf(text, sizeof(text), "%.*s.pcx", (int)names.tag.size, (const char *)names.tag.data);
                 if (bytes < 0 || (size_t)bytes >= sizeof(text))
                     return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client dogtag is too long");
-            } else {
-                size_t bytes = last ? (size_t)(last - model_skin) : strlen(model_skin);
-                if (bytes && bytes < sizeof(text) - 17) {
-                    memcpy(text, "/players/", 9); memcpy(text + 9, model_skin, bytes);
-                    memcpy(text + 9 + bytes, "_i.pcx", 7);
-                } else if (bytes) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client icon is too long");
-            }
+            } else if (!qa_hud_q2_player_icon_path(names.appearance,text,sizeof(text),error)) return false;
         }
         return qa_native_host_q2_retain_string(call->host, text, &result->as.address, error);
     }

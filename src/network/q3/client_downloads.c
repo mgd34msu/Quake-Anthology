@@ -195,8 +195,7 @@ static bool inspect(qa_q3_client_downloads *owner, const package_request *reques
 static void retained_failure(qa_q3_client_downloads *owner,const qa_error *error)
 {
     if (!error || error->code==QA_OK) return;
-    bool changed=owner->failure.code!=error->code || owner->failure.offset!=error->offset ||
-        strcmp(owner->failure.message,error->message);
+    bool changed=!qa_error_same(&owner->failure,error);
     owner->failure=*error;
     if(changed && owner->bindings.failure) owner->bindings.failure(owner->bindings.context,error);
 }

@@ -5,6 +5,10 @@
 #include "qa/strings.h"
 
 typedef struct qa_q2_config_name { uint32_t index; qa_string_id value_id; } qa_q2_config_name;
+enum { QA_Q2_CLASSIC_CONFIGSTRINGS = 2080, QA_Q2_RERELEASE_CONFIGSTRINGS = 12448,
+    QA_Q2_MAX_CONFIGSTRINGS = 13630 };
+qa_net_protocol_id qa_q2_default_protocol(bool rerelease);
+
 #define QA_Q2_MAX_STATS 64
 #define QA_Q2_MAX_SEATS 8
 #define QA_Q2_MAX_AREABITS 8192

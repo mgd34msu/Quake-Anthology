@@ -375,13 +375,15 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         engine->clients[i + 1].seat = choices->seats[i].id;
     }
     bool rerelease = engine->profile != QA_NATIVE_Q2_GAME_API3;
-    engine->resource_base[0] = rerelease ? 62 : 32;
-    engine->resource_limit[0] = rerelease ? 8192 : 256;
-    engine->resource_limit[1] = rerelease ? 2048 : 256;
-    engine->resource_limit[2] = rerelease ? 512 : 256;
-    engine->resource_base[1] = engine->resource_base[0] + engine->resource_limit[0];
-    engine->resource_base[2] = engine->resource_base[1] + engine->resource_limit[1];
-    engine->configstring_count = rerelease ? 12448 : 2080;
+    qa_q2_codec codec = {.protocol = qa_q2_default_protocol(rerelease)};
+    if (!qa_q2_config_layout_read(&codec, &engine->config_layout, error)) return false;
+    engine->resource_base[0] = engine->config_layout.models;
+    engine->resource_base[1] = engine->config_layout.sounds;
+    engine->resource_base[2] = engine->config_layout.images;
+    engine->resource_limit[0] = engine->config_layout.max_models;
+    engine->resource_limit[1] = engine->config_layout.max_sounds;
+    engine->resource_limit[2] = engine->config_layout.max_images;
+    engine->configstring_count = engine->config_layout.max_configs;
     engine->lightstyles.count = 256;
     engine->configstrings = calloc(engine->configstring_count, sizeof(*engine->configstrings));
     engine->config_changes.slots = calloc(engine->configstring_count, sizeof(*engine->config_changes.slots));

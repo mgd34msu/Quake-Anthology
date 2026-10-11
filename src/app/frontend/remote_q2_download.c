@@ -338,7 +338,7 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
     *result = QA_Q2_PREPARATION_RECEIVING;
     if (row->download_stage || row->download_refresh_pending) return true;
     bool waiting = false;
-    const char *map = frontend_remote_q2_config(row, row->layout.models + 1);
+    const char *map = frontend_remote_q2_config(row, row->hud_names.layout.models + 1);
     if (!*map) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 server supplied no map download identity");
     if (!request(row, map, &waiting, error) || waiting) return waiting;
     qa_resource *map_resource = NULL; qa_bsp_view map_view;
@@ -346,8 +346,8 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
         remote_q2_map_validate(row, map_resource, &map_view, error);
     qa_resource_release(map_resource);
     if (!admitted) return false;
-    for (size_t i = 1; i < row->layout.max_models; ++i) {
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + i));
+    for (size_t i = 1; i < row->hud_names.layout.max_models; ++i) {
+        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + i));
         if (!*name || name[0] == '*' || name[0] == '#' || !strcmp(name, map)) continue;
         if (!request(row, name, &waiting, error) || waiting) return waiting;
         qa_resource *resource = NULL; qa_error issue = {0};
@@ -366,20 +366,20 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
         qa_model_free(&model); qa_resource_release(resource);
         if (!ok || waiting) return ok;
     }
-    for (size_t i = 1; i < row->layout.max_sounds; ++i) {
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.sounds + i));
+    for (size_t i = 1; i < row->hud_names.layout.max_sounds; ++i) {
+        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.sounds + i));
         if (!*name || name[0] == '*') continue;
         if (!path_join(row, name[0] == '#' ? "" : "sound/", name[0] == '#' ? name + 1 : name, "", &waiting, error) || waiting) return waiting;
     }
-    for (size_t i = 1; i < row->layout.max_images; ++i) {
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + i));
+    for (size_t i = 1; i < row->hud_names.layout.max_images; ++i) {
+        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.images + i));
         if (!*name) continue;
         char path[4096];
         if (!qa_scene_q2_picture_path(name,remote_q2_rerelease_presentation(row),path,sizeof(path),error) ||
             !path_join(row,"",path,"",&waiting,error) || waiting) return waiting;
     }
     for (size_t i = 0; i < 256; ++i) {
-        const char *value = frontend_remote_q2_config(row, (uint16_t)(row->layout.players + i));
+        const char *value = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.player_skins + i));
         const char *appearance = strchr(value, '\\'); appearance = appearance ? appearance + 1 : value;
         const char *slash = strchr(appearance, '/');
         if (!slash || slash == appearance || !slash[1]) continue;

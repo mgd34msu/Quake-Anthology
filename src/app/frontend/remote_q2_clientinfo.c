@@ -66,15 +66,15 @@ static const char *weapon_name(frontend_remote_q2 *row, uint32_t weapon)
 {
     if (!weapon) return "weapon.md2";
     uint32_t count = 0;
-    for (size_t i = 1; i < row->layout.max_models && count < 31; ++i) {
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + i));
+    for (size_t i = 1; i < row->hud_names.layout.max_models && count < 31; ++i) {
+        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + i));
         if (name[0] == '#' && ++count == weapon) return name + 1;
     }
     return NULL;
 }
 static bool prepare_player(frontend_remote_q2 *row, uint32_t player, qa_error *error)
 {
-    const char *text=player==256?"male/grunt":frontend_remote_q2_config(row,(uint16_t)(row->layout.players+player));
+    const char *text=player==256?"male/grunt":frontend_remote_q2_config(row,(uint16_t)(row->hud_names.layout.player_skins+player));
     remote_q2_clientinfo value={0}; char model[64],skin[64]; appearance(row,text,model,skin);
     snprintf(value.model,sizeof(value.model),"players/%s/tris.md2",model);
     if (!model_admit(row,value.model,&value.model_resource,error)) return false;
@@ -146,7 +146,7 @@ bool remote_q2_clientinfo_prepare(frontend_remote_q2 *row, qa_error *error)
 {
     if (!prepare_player(row,256,error)) return false;
     for (uint32_t i=0;i<256;++i) {
-        if (*frontend_remote_q2_config(row,(uint16_t)(row->layout.players+i))) {
+        if (*frontend_remote_q2_config(row,(uint16_t)(row->hud_names.layout.player_skins+i))) {
             if (!prepare_player(row,i,error)) return false;
         } else row->clientinfo[i]=row->clientinfo[256];
     }
@@ -156,9 +156,9 @@ bool remote_q2_clientinfo_prepare(frontend_remote_q2 *row, qa_error *error)
 }
 bool remote_q2_clientinfo_config(frontend_remote_q2 *row, uint32_t index, qa_error *error)
 {
-    if (index>=row->layout.players && index-row->layout.players<256)
-        return prepare_player(row,index-row->layout.players,error);
-    if (index>=row->layout.models && index-row->layout.models<row->layout.max_models)
+    if (index>=row->hud_names.layout.player_skins && index-row->hud_names.layout.player_skins<256)
+        return prepare_player(row,index-row->hud_names.layout.player_skins,error);
+    if (index>=row->hud_names.layout.models && index-row->hud_names.layout.models<row->hud_names.layout.max_models)
         return remote_q2_clientinfo_prepare(row,error);
     return true;
 }

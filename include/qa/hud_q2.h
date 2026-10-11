@@ -25,14 +25,16 @@ typedef struct qa_hud_q2_picture_names {
 } qa_hud_q2_picture_names;
 bool qa_hud_q2_picture_names_bind(qa_strings *, qa_hud_q2_picture_names *, qa_error *);
 bool qa_hud_q2_player_picture_names(qa_strings *, const char *, qa_string_id *, qa_string_id *, qa_error *);
+typedef struct qa_hud_q2_player_names { qa_bytes name, appearance, tag; } qa_hud_q2_player_names;
+qa_hud_q2_player_names qa_hud_q2_player_names_read(const char *);
+bool qa_hud_q2_player_icon_path(qa_bytes appearance, char *, size_t, qa_error *);
 enum { QA_HUD_Q2_LAYOUT_BYTES = 65536, QA_HUD_Q2_LAYOUT_SCRATCH_BYTES = 16 * QA_HUD_Q2_LAYOUT_BYTES };
-enum { QA_HUD_Q2_CONFIG_COUNT = 13630 };
 typedef struct qa_hud_q2_names {
     qa_strings *strings;
     qa_q2_config_layout layout;
     qa_net_protocol_id protocol;
     qa_hud_q2_program *status;
-    qa_string_id values[QA_HUD_Q2_CONFIG_COUNT];
+    qa_string_id values[QA_Q2_MAX_CONFIGSTRINGS];
     qa_string_id appearances[256], icons[256], tags[256];
     qa_string_id default_icon, default_tag;
     qa_scene_resources *images;

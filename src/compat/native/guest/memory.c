@@ -343,8 +343,7 @@ bool guest_callback_cancelled(const qa_native_guest *guest,const qa_error *error
 {
     if(!guest||guest->failed||!error)return false;
     for(const guest_callback_recovery *r=guest->recovery;r;r=r->previous)
-        if(r->cancelled&&!r->restored&&!r->resolved&&error->code==r->failure.code&&
-            error->offset==r->failure.offset&&!strcmp(error->message,r->failure.message))return true;
+        if(r->cancelled&&!r->restored&&!r->resolved&&qa_error_same(error,&r->failure))return true;
     return false;
 }
 bool guest_call_prepared(const qa_native_guest *guest)

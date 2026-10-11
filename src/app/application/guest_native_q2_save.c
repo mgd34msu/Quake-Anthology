@@ -395,7 +395,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         qa_cvars_set_server_active(engine->cvars, engine->map_ready);
         for (uint32_t i = 0; i < engine->configstring_count; ++i)
             qa_q2_config_changed(&engine->config_changes, i);
-        uint32_t styles = engine->resource_base[QA_NATIVE_HOST_IMAGE] + engine->resource_limit[QA_NATIVE_HOST_IMAGE];
+        uint32_t styles = engine->config_layout.lights;
         for (uint32_t i = 0; i < 256; ++i)
             qa_lightstyles_set(&engine->lightstyles, i, engine->configstrings[styles + i]);
         engine->hud_source_owner = 0;

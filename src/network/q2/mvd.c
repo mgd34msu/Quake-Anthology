@@ -26,7 +26,7 @@ bool qa_q2_mvd_profile_init(uint16_t revision, uint16_t flags,
     }
     p.protocol.kind=p.rerelease ? QA_NET_Q2REPRO_1038 : p.extended ? QA_NET_Q2PRO_36 : QA_NET_Q2_34;
     if (p.extended && !p.rerelease) p.protocol.revision=revision==2013 ? 1026u : p.v2 ? 1025u : 1024u;
-    p.max_configstrings=p.rerelease ? 12448 : p.extended ? 13630 : 2080;
+    p.max_configstrings=p.rerelease ? QA_Q2_RERELEASE_CONFIGSTRINGS : p.extended ? QA_Q2_MAX_CONFIGSTRINGS : QA_Q2_CLASSIC_CONFIGSTRINGS;
     p.max_clients_index=p.extended ? 60 : 30; p.max_entities=p.extended ? 8192 : 1024;
     *out=p; return true;
 }

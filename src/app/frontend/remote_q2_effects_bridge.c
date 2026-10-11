@@ -85,7 +85,7 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
             pose.bounds = remote_q2_solid_bounds(row, entity->solid);
             pose.radius = qa_vec_length(qa_vec_sub(pose.bounds.maxs, pose.bounds.mins)) * .5f;
         }
-        if (entity->modelindex && entity->modelindex < row->layout.max_models) {
+        if (entity->modelindex && entity->modelindex < row->hud_names.layout.max_models) {
             remote_q2_model *held = row->model_slots[entity->modelindex];
             pose.model_present = held && held->source;
         }

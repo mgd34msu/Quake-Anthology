@@ -220,8 +220,8 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         qa_hud_q2_names_clear(&seat->q2_hud_names);seat->q2_hud_image_count=0;
         if(!qa_hud_q2_picture_names_bind((qa_strings *)source->strings,&seat->q2_hud_pictures,error))return false;
     }
-    qa_net_protocol_id image_protocol={.kind=source->edition==QA_Q2_RERELEASE?QA_NET_Q2KEX_2023:QA_NET_Q2_34};
-    if (!qa_hud_q2_names_configure(&seat->q2_hud_names,image_protocol,error) ||
+    qa_net_protocol_id protocol=qa_q2_default_protocol(source->edition==QA_Q2_RERELEASE);
+    if (!qa_hud_q2_names_configure(&seat->q2_hud_names,protocol,error) ||
         !qa_hud_q2_names_prepare_images(&seat->q2_hud_names,hud.media.images,&seat->q2_hud_pictures,QA_SCENE_NEAREST,error)) return false;
     if (!seat->q2_hud_classic) {
         const qa_scene_image *conchars = local_q2_picture(&hud, seat->q2_hud_pictures.conchars, error);
@@ -231,8 +231,6 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         if (!seat->q2_hud_fonts || !qa_font_classic_create(seat->q2_hud_fonts,
             "local-q2:conchars", conchars, QA_FONT_BAKED_COLOR, &seat->q2_hud_classic, error)) return false;
     }
-    qa_net_protocol_id protocol = {.kind = source->edition == QA_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
-    if(!qa_hud_q2_names_configure(&seat->q2_hud_names,protocol,error)) return false;
     hud.config=seat->q2_hud_names.layout;
     if(seat->q2_hud_status_text!=source->statusbar||seat->q2_hud_config_revision!=source->config_revision||
         seat->q2_hud_config_provider!=source->data_provider) {

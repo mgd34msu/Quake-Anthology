@@ -226,7 +226,7 @@ static bool emit_to(q2_projection *p, const qa_q2_server_record *record, qa_acto
         simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_COMMAND_TEXT, .text = r->text};
         pres = &presentation; sim = &simulation; link = true; break;
     case QA_Q2_SVC_CONFIGSTRING: {
-        uint32_t skins = p->engine->resource_base[QA_NATIVE_HOST_IMAGE] + p->engine->resource_limit[QA_NATIVE_HOST_IMAGE] + 512;
+        uint32_t skins = p->engine->config_layout.player_skins;
         uint32_t index = event->data.config.index;
         simulation.value.message = (qa_unified_message_event){.kind = QA_UNIFIED_MESSAGE_CONFIG_STRING,
             .index = index, .text = (char *)event->data.config.value}; sim = &simulation;

@@ -99,7 +99,7 @@ static bool q2_configuration(qa_application *app, const application_unified_sour
     row->q2_hud = out;
     out->data_provider = hud.data_provider; out->revision = hud.config_revision;
     out->deathmatch = hud.deathmatch; out->cooperative = hud.cooperative;
-    out->protocol = (qa_net_protocol_id){.kind = hud.edition == QA_Q2_CLASSIC ? QA_NET_Q2_34 : QA_NET_Q2KEX_2023};
+    out->protocol = qa_q2_default_protocol(hud.edition != QA_Q2_CLASSIC);
     if (hud.original) {
         out->configstrings = application_unified_frame_alloc(lease, hud.configstring_count, sizeof(*out->configstrings), error);
         if (hud.configstring_count && !out->configstrings)
