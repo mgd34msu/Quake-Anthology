@@ -102,6 +102,7 @@ typedef struct native_call_descriptor {
     size_t count, global_count, input_count;
     qa_native_address entry;
     qa_native_value_type returns;
+    application_native_q2_region_recipe *region_recipe;
     int32_t sparks;
     bool bound, armor, power_armor, accepts_nonzero;
 } native_call_descriptor;
@@ -907,7 +908,7 @@ static bool call_native_common(application_native_q2_callbacks *o,qa_json_id cal
         application_native_q2_visibility_invalidate(o->engine);
         if(region_scope)ok=region_current(region_scope,e);
         if(ok)ok=(region!=QA_JSON_NONE?
-            application_native_q2_callback_region_execute(instance(o),o->declaration,o->document,region,entry,
+            application_native_q2_callback_region_execute(instance(o),region_descriptor->region_recipe,entry,
                 &signature,values,count,region_values,region_count,region_current,region_scope,
                 &region_scope->scope,&result,&dispatched,e):
             qa_native_invoke_receipt(instance(o),entry,&signature,values,count,
@@ -1338,27 +1339,6 @@ static bool prepare_skips(application_native_q2_callbacks *o,qa_json_id call,qa_
 static bool validate_calls(application_native_q2_callbacks *o,qa_json_id value,qa_error *e)
 {
     const qa_json_document *d=o->document;
-    if(qa_json_type(d,value)==QA_JSON_OBJECT&&
-        qa_json_string_equal(d,qa_json_get(d,value,"abi"),"source-region")) {
-        qa_json_id call=qa_json_get(d,value,"call"),arguments=qa_json_get(d,call,"arguments");
-        size_t count=qa_json_size(d,arguments); qa_native_type types[64]; qa_native_value_type returns;
-        scalar_type(d,qa_json_get(d,call,"returns"),&returns);
-        if(qa_json_type(d,arguments)!=QA_JSON_ARRAY||count>64||returns==QA_NATIVE_BYTES)
-            return fail(e,"Native protection region has no admitted whole-call ABI");
-        for(size_t i=0;i<count;++i) {
-            qa_native_value_type type;
-            if(!value_shape(o,qa_json_at(d,arguments,i),&type,e)) return false;
-            types[i]=(qa_native_type){.kind=type,.count=1};
-        }
-        qa_json_id inputs=qa_json_get(d,value,"inputs");
-        for(size_t i=0;i<qa_json_size(d,inputs);++i) {
-            qa_native_value_type type;
-            if(!value_shape(o,qa_json_get(d,qa_json_at(d,inputs,i),"value"),&type,e)) return false;
-        }
-        qa_native_signature signature={.abi=o->target.abi,.parameters=types,.parameter_count=count,
-            .result={.kind=returns,.count=1}};
-        if(!application_native_q2_callback_region_call_validate(instance(o),o->declaration,d,value,&signature,e)) return false;
-    }
     if(qa_json_type(d,value)==QA_JSON_OBJECT) {
         qa_json_id arguments=qa_json_get(d,value,"arguments");
         if(arguments!=QA_JSON_NONE&&qa_json_get(d,value,"returns")!=QA_JSON_NONE) {
@@ -1418,6 +1398,7 @@ static void descriptors_clear(application_native_q2_callbacks *o)
             free(o->call_descriptors[i].arguments);
             free(o->call_descriptors[i].globals);
             free(o->call_descriptors[i].inputs);
+            application_native_q2_callback_region_dispose(o->call_descriptors[i].region_recipe);
         }
     }
     free(o->arguments); free(o->addresses); free(o->call_descriptors); free(o->protection_descriptors);
@@ -1462,6 +1443,8 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
                 if(qa_json_string_equal(d,kind,names[j])) {a->kind=(native_argument_kind)(NATIVE_ARGUMENT_TIME+j);break;}
         }
         if(a->kind==NATIVE_ARGUMENT_OTHER) continue;
+        if(a->kind==NATIVE_ARGUMENT_CLIENT) a->type=QA_NATIVE_I32;
+        else if(a->kind!=NATIVE_ARGUMENT_SCALAR&&a->kind!=NATIVE_ARGUMENT_TIME) a->type=QA_NATIVE_ADDRESS;
         if(a->kind==NATIVE_ARGUMENT_TIME||a->kind==NATIVE_ARGUMENT_ACTOR||a->kind==NATIVE_ARGUMENT_CLIENT||a->kind==NATIVE_ARGUMENT_USERINFO)
             a->input=application_native_q2_callbacks_input_index(o,qa_json_get(d,node,"input"));
         else if(qa_json_string_equal(d,qa_json_get(d,raw,"kind"),"input"))
@@ -1525,6 +1508,17 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
         if(!entry_decode(o,entry,&call->entry,e)) return false;
         call->accepts_nonzero=qa_json_string_equal(d,qa_json_get(d,node,"accepts"),"nonzero");
         call->bound=true;
+    }
+    for(size_t i=0;i<o->record_node_count;++i) {
+        qa_json_id node=(qa_json_id)i;
+        if(!qa_json_string_equal(d,qa_json_get(d,node,"abi"),"source-region")) continue;
+        const native_call_descriptor *call=o->call_descriptors+qa_json_get(d,node,"call");
+        qa_native_type types[64];
+        for(size_t j=0;j<call->count;++j) types[j]=(qa_native_type){.kind=o->arguments[call->arguments[j]].type,.count=1};
+        qa_native_signature signature={.abi=o->target.abi,.parameters=types,.parameter_count=call->count,
+            .result={.kind=call->returns,.count=1}};
+        if(!application_native_q2_callback_region_prepare(instance(o),o->declaration,d,node,&signature,call->entry,
+            &o->call_descriptors[i].region_recipe,e)) return false;
     }
     qa_json_id protection=qa_json_get(d,qa_json_root(d),"protection");
     for(size_t i=0;i<qa_json_size(d,protection);++i) {

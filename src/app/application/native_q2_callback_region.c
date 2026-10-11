@@ -11,12 +11,13 @@ typedef struct region_location {
     size_t bytes, offset;
     uint32_t index;
 } region_location;
-typedef struct region_recipe {
+typedef struct application_native_q2_region_recipe {
     qa_native_target target;
     uint64_t frame_entry, entry, join, frame_exit, stack_bytes, argument_bytes;
     region_location result, *inputs;
     size_t count;
     uint32_t declared;
+    const qa_native_declaration *declaration;
 } region_recipe;
 
 static const char *const storage_names[] = {"int8", "uint8", "int16", "uint16", "int32", "uint32",
@@ -168,14 +169,6 @@ static bool recipe_read(qa_native_instance *instance, const qa_native_declaratio
     *out = value; return true;
 }
 
-bool application_native_q2_callback_region_validate(qa_native_instance *instance, const qa_native_declaration *declaration,
-    const qa_json_document *document, qa_json_id definition, qa_error *error)
-{
-    region_recipe recipe;
-    if (!recipe_read(instance, declaration, document, definition, &recipe, error)) return false;
-    free(recipe.inputs); return true;
-}
-
 static bool argument_area(const region_recipe *recipe, const qa_native_signature *signature, qa_error *error)
 {
     size_t bytes;
@@ -209,15 +202,22 @@ static bool call_target(qa_native_instance *instance, const qa_json_document *do
     return expected == actual || fail(error, QA_ERROR_ARGUMENT, "Native region target differs from its acquired original call");
 }
 
-bool application_native_q2_callback_region_call_validate(qa_native_instance *instance,
+bool application_native_q2_callback_region_prepare(qa_native_instance *instance,
     const qa_native_declaration *declaration, const qa_json_document *document,
-    qa_json_id definition, const qa_native_signature *signature, qa_error *error)
+    qa_json_id definition, const qa_native_signature *signature, qa_native_address target,
+    application_native_q2_region_recipe **out, qa_error *error)
 {
     region_recipe recipe;
     if (!recipe_read(instance, declaration, document, definition, &recipe, error)) return false;
-    bool okay = argument_area(&recipe, signature, error);
-    free(recipe.inputs); return okay;
+    if (!argument_area(&recipe, signature, error) || !call_target(instance, document, definition, target, error)) {
+        free(recipe.inputs); return false;
+    }
+    region_recipe *owned = malloc(sizeof(*owned));
+    if (!owned) { free(recipe.inputs); return fail(error, QA_ERROR_MEMORY, "Binding native region recipe"); }
+    *owned = recipe; owned->declaration = declaration; *out = owned; return true;
 }
+void application_native_q2_callback_region_dispose(application_native_q2_region_recipe *recipe)
+{ if (recipe) { free(recipe->inputs); free(recipe); } }
 
 typedef enum region_phase { REGION_PROLOGUE, REGION_INPUTS, REGION_EXECUTING, REGION_EPILOGUE } region_phase;
 typedef struct region_stack_input {
@@ -403,8 +403,8 @@ static bool boundary(void *context, qa_native_instance *instance,
     return true;
 }
 
-bool application_native_q2_callback_region_execute(qa_native_instance *instance, const qa_native_declaration *declaration,
-    const qa_json_document *document, qa_json_id definition, qa_native_address target,
+bool application_native_q2_callback_region_execute(qa_native_instance *instance,
+    const application_native_q2_region_recipe *prepared, qa_native_address target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t argument_count,
     const qa_native_value *inputs, size_t input_count,
     application_native_q2_region_current_fn current, void *context,
@@ -414,15 +414,10 @@ bool application_native_q2_callback_region_execute(qa_native_instance *instance,
     if (!out || *out || !result || !entered || !current || !signature || (input_count && !inputs))
         return fail(error, QA_ERROR_ARGUMENT, "Native region requires its actual invocation owner and borrowed inputs");
     if (!current(context, error)) return false;
-    region_recipe recipe;
-    if (!recipe_read(instance, declaration, document, definition, &recipe, error)) return false;
-    if (!argument_area(&recipe, signature, error) ||
-        !call_target(instance, document, definition, target, error)) { free(recipe.inputs); return false; }
-    if (input_count != recipe.count || input_count > SIZE_MAX / sizeof(qa_native_value) || input_count > SIZE_MAX / sizeof(region_stack_input)) {
-        free(recipe.inputs); return fail(error, QA_ERROR_FORMAT, "Native region input count differs from its source declaration");
-    }
+    const region_recipe recipe = *prepared;
+    if (input_count != recipe.count) return fail(error, QA_ERROR_FORMAT, "Native region input count differs from its source declaration");
     application_native_q2_callback_region *scope = calloc(1, sizeof(*scope));
-    if (!scope) { free(recipe.inputs); return fail(error, QA_ERROR_MEMORY, "Owning native source region execution"); }
+    if (!scope) return fail(error, QA_ERROR_MEMORY, "Owning native source region execution");
     scope->instance = instance; scope->module = qa_native_get_module(instance); scope->recipe = recipe;
     scope->current = current; scope->context = context;
     *out = scope;
@@ -430,7 +425,7 @@ bool application_native_q2_callback_region_execute(qa_native_instance *instance,
     scope->stack = input_count ? calloc(input_count, sizeof(*scope->stack)) : NULL;
     if (input_count && (!scope->values || !scope->stack)) return fail(error, QA_ERROR_MEMORY, "Owning lowered native region inputs");
     if (input_count) memcpy(scope->values, inputs, input_count * sizeof(*inputs));
-    if (!qa_native_region_scope_open(instance, declaration, recipe.declared, target, boundary, scope, &scope->lower, error)) return false;
+    if (!qa_native_region_scope_open(instance, recipe.declaration, recipe.declared, target, boundary, scope, &scope->lower, error)) return false;
     qa_native_value ignored = {0}; scope->invoking = true;
     bool okay = qa_native_region_scope_invoke(scope->lower, signature, arguments, argument_count,
         signature->result.kind == QA_NATIVE_VOID ? NULL : &ignored, entered, error);
@@ -447,5 +442,5 @@ bool application_native_q2_callback_region_close(application_native_q2_callback_
     application_native_q2_callback_region *scope = *owner;
     if (scope->invoking) return fail(error, QA_ERROR_ARGUMENT, "Native region close overlaps its actual source invocation");
     if (!qa_native_region_scope_close(&scope->lower, error)) return false;
-    free(scope->recipe.inputs); free(scope->values); free(scope->stack); free(scope); *owner = NULL; return true;
+    free(scope->values); free(scope->stack); free(scope); *owner = NULL; return true;
 }
