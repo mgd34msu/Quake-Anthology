@@ -21,19 +21,25 @@ typedef struct original_slot {
     bool weapon, ammunition;
 } original_slot;
 
+typedef struct inventory_rows_cache {
+    qa_arena storage;
+    application_native_q2_inventory_readout rows;
+    qa_actor_id actor;
+    qa_actor_owner arsenal;
+    uint64_t map, config, inventory;
+    bool valid;
+} inventory_rows_cache;
+
 struct application_native_q2_inventory_rows {
     struct application_native_q2 *engine;
     const qa_json_document *document;
     original_slot *slots;
     size_t slot_count;
     uint32_t prototypes[4];
-    application_native_q2_inventory_readout latest;
-    qa_arena storage, commands;
+    qa_arena storage, commands, cache_storage;
+    qa_pool cache_pages;
+    inventory_rows_cache caches[257];
     size_t row_capacity, storage_bytes;
-    qa_actor_id latest_actor;
-    qa_actor_owner latest_arsenal;
-    uint64_t latest_map, latest_config, latest_inventory;
-    bool latest_valid;
     size_t calls;
     bool prepared;
 };
@@ -207,6 +213,16 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
     if (!qa_arena_reserve(&owner->storage,owner->storage_bytes,error) ||
         !qa_arena_reserve(&owner->commands,owner->storage_bytes,error)) {slots_free(slots,used);return false;}
     qa_arena_seal(&owner->storage);qa_arena_seal(&owner->commands);
+    size_t cache_bytes=owner->storage_bytes+sizeof(owner->caches)/sizeof(*owner->caches)*
+        (size_t)count*(sizeof(application_native_q2_inventory_row)+256);
+    size_t pages=(cache_bytes+4095)/4096;
+    if(!qa_arena_reserve(&owner->cache_storage,pages*(4096+sizeof(size_t))+128,error) ||
+        !qa_pool_prepare(&owner->cache_pages,&owner->cache_storage,pages,4096,_Alignof(max_align_t),error)) {
+        slots_free(slots,used);return false;
+    }
+    qa_arena_seal(&owner->cache_storage);
+    for(size_t i=0;i<sizeof(owner->caches)/sizeof(*owner->caches);++i)
+        qa_arena_init_pool(&owner->caches[i].storage,&owner->cache_pages);
     owner->slots = slots;
     owner->slot_count = used;
     memcpy(owner->prototypes, prototypes, sizeof(prototypes));
@@ -425,14 +441,16 @@ static bool rows(void *context, qa_actor_id actor,
     qa_inventory_source_snapshot snapshot = {0};
     selected_catalog catalog = {.storage=&owner->commands,.capacity=owner->row_capacity};
     uint64_t inventory_revision=qa_inventory_revision(app->inventory,actor);
-    if(owner->latest_valid && qa_actor_id_equal(actor,owner->latest_actor) &&
-        owner->latest_arsenal==arsenal->owner && owner->latest_map==map_revision &&
-        owner->latest_config==config_revision && owner->latest_inventory==inventory_revision) {
-        for(size_t i=0;i<owner->latest.count;++i)
-            if(!qa_inventory_count_read(app->inventory,actor,owner->latest.rows[i].item,&owner->latest.rows[i].count,error)) return false;
-        *out=owner->latest.present?owner->latest.rows:NULL;*count=owner->latest.count;*present=owner->latest.present;return true;
+    inventory_rows_cache *cache=owner->caches+source.slot;
+    if(cache->valid && qa_actor_id_equal(actor,cache->actor) &&
+        cache->arsenal==arsenal->owner && cache->map==map_revision &&
+        cache->config==config_revision && cache->inventory==inventory_revision) {
+        for(size_t i=0;i<cache->rows.count;++i)
+            if(!qa_inventory_count_read(app->inventory,actor,cache->rows.rows[i].item,&cache->rows.rows[i].count,error)) return false;
+        *out=cache->rows.present?cache->rows.rows:NULL;*count=cache->rows.count;*present=cache->rows.present;return true;
     }
-    owner->latest_valid=false;
+    cache->valid=false;
+    qa_arena_reset(&cache->storage);
     qa_arena_reset(&owner->storage);qa_arena_reset(&owner->commands);
     application_native_q2_inventory_readout result = {0};
     result.rows=qa_arena_alloc(&owner->storage,owner->row_capacity*sizeof(*result.rows),
@@ -588,11 +606,24 @@ static bool rows(void *context, qa_actor_id actor,
     qa_inventory_source_snapshot_free(&snapshot);
     --owner->engine->calls; --owner->calls;
     if (!okay) return false;
-    owner->latest = result;
-    owner->latest_actor=actor;owner->latest_arsenal=arsenal->owner;
-    owner->latest_map=map_revision;owner->latest_config=config_revision;
-    owner->latest_inventory=qa_inventory_revision(app->inventory,actor);owner->latest_valid=true;
-    *out = result.present?result.rows:NULL; *count = result.count; *present = result.present;
+    application_native_q2_inventory_readout retained={.count=result.count,.present=result.present};
+    if(result.count) {
+        retained.rows=qa_arena_alloc(&cache->storage,result.count*sizeof(*retained.rows),
+            _Alignof(application_native_q2_inventory_row),error);
+        if(!retained.rows) return false;
+        for(size_t i=0;i<result.count;++i) {
+            retained.rows[i]=result.rows[i];
+            retained.rows[i].label=qa_arena_text(&cache->storage,result.rows[i].label,error);
+            retained.rows[i].presentation.icon=qa_arena_text(&cache->storage,result.rows[i].presentation.icon,error);
+            retained.rows[i].presentation.lump=qa_arena_text(&cache->storage,result.rows[i].presentation.lump,error);
+            if(!retained.rows[i].label || (result.rows[i].presentation.icon&&!retained.rows[i].presentation.icon) ||
+                (result.rows[i].presentation.lump&&!retained.rows[i].presentation.lump)) return false;
+        }
+    }
+    cache->rows=retained;cache->actor=actor;cache->arsenal=arsenal->owner;
+    cache->map=map_revision;cache->config=config_revision;
+    cache->inventory=qa_inventory_revision(app->inventory,actor);cache->valid=true;
+    *out=retained.rows;*count=retained.count;*present=retained.present;
     return true;
 }
 
@@ -675,6 +706,8 @@ bool application_native_q2_inventory_rows_destroy(application_native_q2_inventor
     if (!owner) return true;
     if (!application_native_q2_inventory_rows_idle(owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Mixed inventory is still borrowing its actual source owner");
+    for(size_t i=0;i<sizeof(owner->caches)/sizeof(*owner->caches);++i) qa_arena_destroy(&owner->caches[i].storage);
+    qa_arena_destroy(&owner->cache_storage);
     qa_arena_destroy(&owner->storage);qa_arena_destroy(&owner->commands);
     slots_free(owner->slots, owner->slot_count);
     free(owner);
