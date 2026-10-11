@@ -56,6 +56,8 @@ bool q2_target_creature(qa_q2_game *g, qa_actor_id id, bool *creature, bool *pla
 }
 bool q2_projectile_event(qa_q2_game *g, qa_actor_id id, qa_builtin_event_kind kind,
                          qa_string_id resource, int code, qa_vec3 origin, qa_vec3 end, qa_error *e) {
+    if (kind == QA_BUILTIN_SOUND || kind == QA_BUILTIN_STOP_SOUND)
+        return q2_emit_sound(g,id,kind,&origin,resource,code,1,1,0,e);
     qa_builtin_event event = {.kind = kind,
                               .family = QA_GAME_Q2,
                               .provider = g->options.owner,
@@ -69,8 +71,6 @@ bool q2_projectile_event(qa_q2_game *g, qa_actor_id id, qa_builtin_event_kind ki
                               .resource = resource};
     if (kind == QA_BUILTIN_BEAM)
         event.q2_multicast=(qa_builtin_q2_multicast){QA_BUILTIN_Q2_MULTICAST_PHS,origin};
-    if (kind == QA_BUILTIN_SOUND || kind == QA_BUILTIN_STOP_SOUND)
-        event.channel = code;
     if (kind == QA_BUILTIN_ANIMATION && resource != 0 && id.slot < g->capacity &&
         g->actors[id.slot] != NULL && qa_actor_id_equal(g->actors[id.slot]->id, id) &&
         g->actors[id.slot]->projectile.kind != Q2_PROJECTILE_NONE) {

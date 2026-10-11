@@ -59,7 +59,7 @@ bool q2_entity_schedule(qa_q2_game *, q2_actor *, q2_entity_think, float);
 bool q2_entity_body(qa_q2_game *, q2_actor *, const qa_body_state *, bool, qa_error *);
 bool q2_entity_solid(qa_q2_game *, q2_actor *, qa_physics_solid, qa_error *);
 bool q2_entity_show(qa_q2_game *, q2_actor *, qa_error *);
-bool q2_entity_sound(qa_q2_game *, q2_actor *, const char *, int, float, float, int, qa_error *);
+bool q2_entity_sound(qa_q2_game *, q2_actor *, qa_string_id, int, float, float, int, qa_error *);
 bool q2_entity_targets(qa_q2_game *, q2_actor *, qa_actor_id, bool, qa_error *);
 bool q2_entity_damage(qa_q2_game *, q2_actor *, qa_actor_id, qa_actor_id, float, float, int,
                       uint32_t, qa_error *);

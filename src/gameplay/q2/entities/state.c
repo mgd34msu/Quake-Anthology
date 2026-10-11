@@ -457,34 +457,18 @@ bool q2_entity_native_spawn(qa_q2_game *g, const char *name, const qa_body_state
     *out = a;
     return true;
 }
-bool q2_entity_sound(qa_q2_game *g, q2_actor *a, const char *path, int channel, float volume,
+bool q2_entity_sound(qa_q2_game *g, q2_actor *a, qa_string_id resource, int channel, float volume,
                      float attenuation, int loop, qa_error *e) {
-    if (!path || !*path)
-        return true;
-    qa_string_id resource;
+    if (!resource || resource==g->runtime_names[Q2_NAME_RESOURCE_EMPTY]) return true;
     qa_body_state body;
-    if (!qa_builtin_resource(&g->services, path, &resource, e) ||
-        !qa_world_body_read(g->services.world, a->id, &body, e))
-        return false;
+    if (!qa_world_body_read(g->services.world, a->id, &body, e)) return false;
+    if (!q2_actor_live(g,a->id)) return true;
     bool positioned = loop == 0 && a->physics.solid == QA_PHYSICS_BRUSH;
     qa_vec3 origin = positioned ?
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f)) :
         body.origin;
-    return qa_builtin_emit(
-        &g->services,
-        &(qa_builtin_event){.kind = loop < 0 ? QA_BUILTIN_STOP_SOUND : QA_BUILTIN_SOUND,
-                            .family = QA_GAME_Q2,
-                            .provider = g->options.owner,
-                            .actor = a->id,
-                            .resource = resource,
-                            .time_ns = g->now_ns,
-                            .origin = origin,
-                            .channel = channel,
-                            .volume = volume,
-                            .attenuation = attenuation,
-                            .flags = (loop > 0 ? 1u : 0u) |
-                                (positioned ? QA_BUILTIN_SOUND_POSITIONED : 0u)},
-        e);
+    return q2_emit_sound(g,a->id,loop<0?QA_BUILTIN_STOP_SOUND:QA_BUILTIN_SOUND,&origin,
+        resource,channel,volume,attenuation,(loop>0?1u:0u)|(positioned?QA_BUILTIN_SOUND_POSITIONED:0u),e);
 }
 bool q2_entity_message(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, const char *text,
                        qa_error *e) {

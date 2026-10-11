@@ -15,7 +15,7 @@ static bool speaker(qa_q2_game *g, q2_actor *a, int operation, qa_error *e) {
                         : s->attenuation == -1                      ? 0
                         : s->attenuation > 0 && s->attenuation != 3 ? s->attenuation / 5
                                                                     : 1;
-    return q2_entity_sound(g, a, qa_strings_cstr(qa_session_strings(g->services.session), s->noise),
+    return q2_entity_sound(g, a, s->noise,
                            2 | (s->spawnflags & 4 ? 16 : 0), operation ? 1 : s->volume, attenuation,
                            operation, e);
 }
@@ -377,7 +377,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
                 strcpy(text, "Sequence completed!");
             if (!q2_entity_message(g, a, activator, text, e) ||
                 (q2_actor_live(g, a->id) &&
-                 !q2_entity_sound(g, a, QA_Q2_SOUND_MISC_TALK1, 0, 1, 1, 0, e)))
+                 !q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_TALK1], 0, 1, 1, 0, e)))
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;
@@ -412,8 +412,8 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
     case Q2E_GOAL: {
         if (g->options.edition == QA_Q2_RERELEASE)
             return q2_goal_use(g, a, activator, e);
-        const char *noise = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE]);
-        if (!q2_entity_sound(g, a, *noise ? noise : QA_Q2_SOUND_MISC_SECRET, 2, 1, 1, 0, e))
+        qa_string_id noise = q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]);
+        if (!q2_entity_sound(g, a, noise && noise!=g->runtime_names[Q2_NAME_RESOURCE_EMPTY] ? noise : g->runtime_names[Q2_NAME_SOUND_MISC_SECRET], 2, 1, 1, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;

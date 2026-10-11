@@ -35,7 +35,7 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
     bool teleported = false;
     for (;;) {
         if (!s->target)
-            return q2_entity_sound(g, a, q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE]), 2, 1, 3, -1, e);
+            return q2_entity_sound(g, a, q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]), 2, 1, 3, -1, e);
         qa_actor_id id;
         if (!q2_entity_pick(g, s->target, &id))
             return true;
@@ -74,7 +74,7 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
             s->accel = accel != 0 ? accel : s->speed;
             s->decel = decel != 0 ? decel : s->speed;
         }
-        if (!q2_entity_sound(g, a, q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE]), 2, 1, 3, 1, e))
+        if (!q2_entity_sound(g, a, q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]), 2, 1, 3, 1, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -159,7 +159,7 @@ bool q2_train_wait(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (!q2_entity_body(g, a, &b, false, e))
             return false;
     }
-    return q2_entity_sound(g, a, q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE]), 2, 1, 3, -1, e);
+    return q2_entity_sound(g, a, q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]), 2, 1, 3, -1, e);
 }
 bool q2_train_find(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;

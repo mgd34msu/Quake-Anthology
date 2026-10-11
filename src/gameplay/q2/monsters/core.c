@@ -133,45 +133,16 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
-static bool sound_at(q2m_context *context, q2_runtime_name path, int channel,
-                     float attenuation, float volume, qa_vec3 origin,
-                     qa_error *error) {
-  if (!q2m_alive(context))
-    return true;
-  qa_builtin_event event = {
-      .kind = QA_BUILTIN_SOUND,
-      .family = QA_GAME_Q2,
-      .provider = context->game->options.owner,
-      .actor = context->actor->id,
-      .other = context->monster->enemy,
-      .time_ns = context->game->now_ns,
-      .origin = origin,
-      .volume = volume,
-      .attenuation = attenuation,
-      .channel = channel,
-      .frame = context->monster->frame,
-  };
-  event.resource=context->game->runtime_names[path];
-  return qa_builtin_emit(&context->game->services, &event, error);
-}
-
 bool q2m_sound_at(q2m_context *context, q2_runtime_name path, int channel,
                   float attenuation, qa_vec3 origin, qa_error *error) {
-  return sound_at(context, path, channel, attenuation, 1.0f, origin, error);
+  return !q2m_alive(context) || q2_emit_sound(context->game,context->actor->id,
+      QA_BUILTIN_SOUND,&origin,context->game->runtime_names[path],channel,1,attenuation,0,error);
 }
 
 bool q2m_sound_volume(q2m_context *context, q2_runtime_name path, int channel,
                        float attenuation, float volume, qa_error *error) {
-  if (!q2m_alive(context))
-    return true;
-  qa_body_state body;
-  if (!qa_world_body_read(context->game->services.world, context->actor->id,
-                          &body, error))
-    return !q2m_alive(context);
-  if (!q2m_alive(context))
-    return true;
-  return sound_at(context, path, channel, attenuation, volume, body.origin,
-                  error);
+  return !q2m_alive(context) || q2_emit_sound(context->game,context->actor->id,
+      QA_BUILTIN_SOUND,NULL,context->game->runtime_names[path],channel,volume,attenuation,0,error);
 }
 
 bool q2m_sound(q2m_context *context, q2_runtime_name path, int channel,

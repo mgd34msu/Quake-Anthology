@@ -112,19 +112,8 @@ bool q2_player_compass_update(qa_q2_game *g, q2_actor *a, bool first, qa_error *
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    qa_string_id sound;
-    sound=g->runtime_names[Q2_NAME_SOUND_MISC_HELP_MARKER];
-    return qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                                               .actor = a->id,
-                                               .provider = g->options.owner,
-                                               .family = QA_GAME_Q2,
-                                               .origin = point,
-                                               .resource = sound,
-                                               .volume = 1,
-                                               .attenuation = 1,
-                                               .time_ns = g->now_ns},
-                           e);
+    return q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,&point,
+        g->runtime_names[Q2_NAME_SOUND_MISC_HELP_MARKER],0,1,1,0,e);
 }
 bool q2_client_item_action(qa_q2_game *g, qa_actor_id id, bool flashlight, bool *used,
                            qa_error *e) {

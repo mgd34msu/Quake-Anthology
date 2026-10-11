@@ -370,13 +370,8 @@ static bool source_beam(q2m_context *context, float damage, int channel,
   if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
     return true;
   if (fresh && rerelease) {
-    qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
-      .provider = game->options.owner, .actor = actor->id,
-      .time_ns = game->now_ns, .origin = origin, .volume = 1, .attenuation = 1,
-      .flags = rerelease ? 1u : 0u};
-    sound.resource=game->runtime_names[Q2_NAME_SOUND_MISC_LASFLY];
-    if (!qa_builtin_emit(&game->services, &sound, error))
-      return false;
+    if (!q2_emit_sound(game,actor->id,QA_BUILTIN_SOUND,&origin,
+        game->runtime_names[Q2_NAME_SOUND_MISC_LASFLY],0,1,1,rerelease?1u:0u,error)) return false;
     if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
       return true;
   }
@@ -526,12 +521,8 @@ bool q2m_guardian_beam(q2m_context *context, qa_error *error) {
       return false;
     if (!actor || !q2m_alive(context)) return true;
     fresh = true;
-    qa_string_id sound=game->runtime_names[Q2_NAME_SOUND_MISC_LASFLY];
-    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
-        .provider = game->options.owner, .actor = actor->id, .resource = sound,
-        .time_ns = game->now_ns, .origin = context->body.origin,
-        .volume = 1.0f, .attenuation = 1.0f, .flags = 1u};
-    if (!qa_builtin_emit(&game->services, &event, error)) goto failed;
+    if (!q2_emit_sound(game,actor->id,QA_BUILTIN_SOUND,&context->body.origin,
+        game->runtime_names[Q2_NAME_SOUND_MISC_LASFLY],0,1,1,1,error)) goto failed;
     if (!q2_actor_live(game, actor->id)) return true;
     if (!q2m_alive(context)) return qa_session_release(game->services.session, actor->id, error);
   }

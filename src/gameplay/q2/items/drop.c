@@ -206,19 +206,7 @@ bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float 
         return true;
     a->item->think = Q2_ITEM_IDLE;
     a->item->due_ns = 0;
-    qa_string_id sound = g->runtime_names[Q2_NAME_SOUND_MISC_FHIT3];
-    if (!qa_world_body_read(g->services.world, id, &body, e) ||
-        !qa_builtin_emit(&g->services,
-                         &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                                             .family = QA_GAME_Q2,
-                                             .provider = g->options.owner,
-                                             .actor = id,
-                                             .origin = body.origin,
-                                             .resource = sound,
-                                             .volume = 1,
-                                             .attenuation = 1,
-                                             .time_ns = g->now_ns},
-                         e))
+    if (!q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,g->runtime_names[Q2_NAME_SOUND_MISC_FHIT3],0,1,1,0,e))
         goto fail;
     return true;
 fail:

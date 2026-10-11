@@ -52,7 +52,7 @@ static bool player_start(qa_q2_game *g, qa_actor_id id) {
 }
 static bool mine_sound(qa_q2_game *g, q2_actor *a, q2_runtime_name name, int channel, float attenuation,
                        qa_error *e) {
-    return q2_emit_sound(g,a->id,NULL,g->runtime_names[name],channel,1,attenuation,0,e);
+    return q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,NULL,g->runtime_names[name],channel,1,attenuation,0,e);
 }
 static bool sound(qa_q2_game *g, q2_actor *a, q2_runtime_name name, int channel, qa_error *e) {
     return mine_sound(g, a, name, channel, 1, e);
@@ -554,17 +554,8 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             if (!q2_projectile_loop(g, a, g->runtime_names[Q2_NAME_SOUND_WEAPONS_TRAPSUCK], false, e))
                 return false;
         } else {
-            qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                                      .family = QA_GAME_Q2,
-                                      .provider = g->options.owner,
-                                      .actor = id,
-                                      .time_ns = g->now_ns,
-                                      .origin = body.origin,
-                                      .channel = 2,
-                                      .volume = 1,
-                                      .attenuation = 2};
-            event.resource=g->runtime_names[Q2_NAME_SOUND_WEAPONS_TRAPSUCK];
-            if (!qa_builtin_emit(&g->services, &event, e)) return false;
+            if (!q2_emit_sound(g,id,QA_BUILTIN_SOUND,&body.origin,
+                g->runtime_names[Q2_NAME_SOUND_WEAPONS_TRAPSUCK],2,1,2,0,e)) return false;
         }
         if (!q2_actor_live(g, id) || !q2_actor_live(g, best))
             return true;

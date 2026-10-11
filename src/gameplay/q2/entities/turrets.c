@@ -52,20 +52,8 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
     }
     if (!q2_actor_live(g, a->id))
         return true;
-    qa_string_id sound;
-    sound=g->runtime_names[Q2_NAME_SOUND_WEAPONS_ROCKLF1A];
-    return qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                                               .family = QA_GAME_Q2,
-                                               .provider = g->options.owner,
-                                               .actor = a->id,
-                                               .origin = start,
-                                               .resource = sound,
-                                               .channel = 1,
-                                               .volume = 1,
-                                               .attenuation = 1,
-                                               .time_ns = g->now_ns},
-                           e);
+    return q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,&start,
+        g->runtime_names[Q2_NAME_SOUND_WEAPONS_ROCKLF1A],1,1,1,0,e);
 }
 static bool breach_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);

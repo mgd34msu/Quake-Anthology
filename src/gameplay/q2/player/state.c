@@ -191,7 +191,7 @@ bool q2_player_print(qa_q2_game *g, qa_actor_id id, int level, const char *text,
         e);
 }
 bool q2_player_sound(qa_q2_game *g, qa_actor_id id, q2_runtime_name name, int channel, qa_error *e) {
-    return q2_emit_sound(g,id,NULL,g->runtime_names[name],channel,1,1,0,e);
+    return q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,g->runtime_names[name],channel,1,1,0,e);
 }
 bool q2_player_observe(qa_q2_game *g, q2_actor *a, qa_q2_player_movement *m, qa_error *e) {
     qa_q2_player_services *s = &g->player_runtime->services;

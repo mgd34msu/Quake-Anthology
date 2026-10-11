@@ -208,7 +208,7 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
         (rr ? s->rule.mission_time_ns < g->now_ns : (g->wire_frame & 63) == 0)) {
         bool beep = !rr || s->rule.mission_changed == 1;
         if (!rr) ++s->rule.mission_changed;
-        if (beep && !q2_entity_sound(g, a, QA_Q2_SOUND_MISC_PC_UP, rr ? 0 : 2, 1, 3, 0, e))
+        if (beep && !q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_PC_UP], rr ? 0 : 2, 1, 3, 0, e))
             return false;
         if (!q2_actor_live(g, a->id)) return true;
         if (rr) {

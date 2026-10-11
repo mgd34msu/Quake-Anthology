@@ -477,12 +477,8 @@ bool q2m_parasite_callback(q2m_context *context, q2m_callback_id name, bool *han
                                                                : Q2_NAME_SOUND_PARASITE_PARPAIN2, 2, 1, error);
     } else if ((name == Q2M_CALLBACK_parasite_tap) || (name == Q2M_CALLBACK_parasite_scratch)) {
         q2_runtime_name path = (name == Q2M_CALLBACK_parasite_tap) ? Q2_NAME_SOUND_PARASITE_PARIDLE1 : Q2_NAME_SOUND_PARASITE_PARIDLE2;
-        qa_string_id resource=context->game->runtime_names[path];
-        return qa_builtin_emit(&context->game->services, &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                .family = QA_GAME_Q2, .provider = context->game->options.owner,
-                .actor = context->actor->id, .resource = resource, .channel = 1,
-                .origin = context->body.origin, .volume = .75f, .attenuation = 2.75f,
-                .time_ns = context->game->now_ns}, error);
+        return q2_emit_sound(context->game,context->actor->id,QA_BUILTIN_SOUND,
+            &context->body.origin,context->game->runtime_names[path],1,.75f,2.75f,0,error);
     } else
         *handled = false;
     return true;

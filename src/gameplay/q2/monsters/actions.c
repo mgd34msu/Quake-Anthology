@@ -401,22 +401,9 @@ bool q2m_weapon_sound(q2m_context *context, q2_runtime_name path, qa_error *erro
   if (!path && !resource)
     return true;
   context->monster->weapon_sound = path ? resource : 0;
-  qa_builtin_event event = {
-      .kind = path ? QA_BUILTIN_SOUND : QA_BUILTIN_STOP_SOUND,
-      .family = QA_GAME_Q2,
-      .provider = context->game->options.owner,
-      .actor = context->actor->id,
-      .other = context->monster->enemy,
-      .time_ns = context->game->now_ns,
-      .origin = context->body.origin,
-      .volume = 1.0f,
-      .attenuation = 1.0f,
-      .channel = 0,
-      .resource = resource,
-      .flags = path ? 1u : 0u,
-      .frame = context->monster->frame,
-  };
-  return qa_builtin_emit(&context->game->services, &event, error);
+  return q2_emit_sound(context->game,context->actor->id,
+      path ? QA_BUILTIN_SOUND : QA_BUILTIN_STOP_SOUND,&context->body.origin,
+      resource,0,1,1,path ? 1u : 0u,error);
 }
 
 bool q2m_jorg_sound_end(q2m_context *context, qa_error *error) {
@@ -1768,19 +1755,8 @@ static bool carrier_spawn_callbacks(q2m_context *context, q2m_callback_id callba
 
 static bool stop_loop_sound(q2m_context *context, q2_runtime_name path,
                             qa_error *error) {
-  qa_builtin_event event = {
-      .kind = QA_BUILTIN_STOP_SOUND,
-      .family = QA_GAME_Q2,
-      .provider = context->game->options.owner,
-      .actor = context->actor->id,
-      .time_ns = context->game->now_ns,
-      .origin = context->body.origin,
-      .volume = 1.0f,
-      .attenuation = 1.0f,
-      .channel = 0,
-  };
-  event.resource=context->game->runtime_names[path];
-  return qa_builtin_emit(&context->game->services, &event, error);
+  return q2_emit_sound(context->game,context->actor->id,QA_BUILTIN_STOP_SOUND,
+      &context->body.origin,context->game->runtime_names[path],0,1,1,0,error);
 }
 
 static int widow_torso_frame(q2m_context *context, bool *turned,

@@ -396,26 +396,10 @@ static bool dispatch(hand_step *step, uint64_t revision, qa_error *e) {
                                      165, damage, p->fuse, 15, p->held ? 24 : 16, true, p->held, e))
                 return false;
         } else {
-            qa_body_state body;
-            if (!qa_world_body_read(g->services.world, c->actor->id, &body, e))
-                return false;
-            qa_builtin_event event = {
-                .kind = pending->kind == HAND_COOK_STOP ? QA_BUILTIN_STOP_SOUND : QA_BUILTIN_SOUND,
-                .family = QA_GAME_Q2,
-                .provider = g->options.owner,
-                .actor = c->actor->id,
-                .time_ns = c->now_ns,
-                .origin = body.origin,
-                .channel = 1,
-                .volume = 1,
-                .attenuation = 1,
-                .flags = pending->kind == HAND_COOK_START ? 1u : 0u};
-            if (!qa_builtin_resource(&g->services,
-                                     pending->kind == HAND_COCK ? QA_Q2_SOUND_WEAPONS_HGRENA1B
-                                                                : QA_Q2_SOUND_WEAPONS_HGRENC1B,
-                                     &event.resource, e) ||
-                !qa_builtin_emit(&g->services, &event, e))
-                return false;
+            if (!q2_emit_sound(g,c->actor->id,
+                pending->kind == HAND_COOK_STOP ? QA_BUILTIN_STOP_SOUND : QA_BUILTIN_SOUND,NULL,
+                g->runtime_names[pending->kind==HAND_COCK?Q2_NAME_SOUND_WEAPONS_HGRENA1B:Q2_NAME_SOUND_WEAPONS_HGRENC1B],
+                1,1,1,pending->kind==HAND_COOK_START?1u:0u,e)) return false;
         }
     }
     return true;

@@ -42,6 +42,8 @@
     X(FUNC_AREAPORTAL, "func_areaportal") \
     X(LASER_SPARKS, "q2:laser-sparks") \
     X(NOCLASS, "noclass") \
+    X(ZERO, "0") \
+    X(SPACE, " ") \
     X(PAIN_DAEMON, "pain daemon") \
     X(WELDING_SPARKS, "q2:welding-sparks") \
     X(RESOURCE_Q2_ROCKET_EXPLOSION_WATER, "q2:rocket-explosion-water") \
@@ -478,7 +480,7 @@ bool q2_count(qa_q2_game *, qa_actor_id, qa_item_id, int *, qa_error *);
 bool q2_ammo(q2_weapon_call *, int *, qa_error *);
 bool q2_infinite_ammo(const q2_weapon_call *);
 bool q2_consume(q2_weapon_call *, int, bool honor_infinite, qa_error *);
-bool q2_emit_sound(qa_q2_game *, qa_actor_id, const qa_vec3 *origin, qa_string_id,
+bool q2_emit_sound(qa_q2_game *, qa_actor_id, qa_builtin_event_kind, const qa_vec3 *origin, qa_string_id,
     int channel, float volume, float attenuation, uint32_t flags, qa_error *);
 bool q2_actor_loop(qa_q2_game *, qa_actor_id, qa_string_id *current, qa_string_id next,
     int channel, bool stop_previous, qa_error *);

@@ -806,21 +806,8 @@ static bool stop_loop_sound(q2m_context *context, q2_runtime_name path, int chan
                             qa_error *error) {
   if (context->monster->definition->species == Q2M_GUARDIAN)
     context->monster->weapon_sound = 0;
-  qa_builtin_event event = {
-      .kind = QA_BUILTIN_STOP_SOUND,
-      .family = QA_GAME_Q2,
-      .provider = context->game->options.owner,
-      .actor = context->actor->id,
-      .other = context->monster->enemy,
-      .time_ns = context->game->now_ns,
-      .origin = context->body.origin,
-      .volume = 1.0f,
-      .attenuation = 1.0f,
-      .channel = channel,
-      .frame = context->monster->frame,
-  };
-  event.resource=context->game->runtime_names[path];
-  return qa_builtin_emit(&context->game->services, &event, error);
+  return q2_emit_sound(context->game,context->actor->id,QA_BUILTIN_STOP_SOUND,
+      &context->body.origin,context->game->runtime_names[path],channel,1,1,0,error);
 }
 
 static bool pain_brain_mutant(q2m_context *context, bool brain, qa_error *error) {
@@ -2957,11 +2944,7 @@ static bool environment_damage(qa_q2_game *g, q2_actor *a, qa_vec3 origin,
 
 static bool environment_sound(qa_q2_game *g, q2_actor *a, qa_vec3 origin,
                               q2_runtime_name path, qa_error *error) {
-  qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
-      .provider = g->options.owner, .actor = a->id, .time_ns = g->now_ns,
-      .origin = origin, .volume = 1, .attenuation = 1, .channel = 4};
-  event.resource=g->runtime_names[path];
-  return qa_builtin_emit(&g->services, &event, error);
+  return q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,&origin,g->runtime_names[path],4,1,1,0,error);
 }
 
 bool q2_world_effects(qa_q2_game *g, q2_actor *a, const qa_body_state *body,

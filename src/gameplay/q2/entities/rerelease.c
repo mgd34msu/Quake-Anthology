@@ -78,23 +78,8 @@ static bool flashlight(qa_q2_game *g, qa_actor_id id, bool enabled, qa_error *e)
     if (a->client->info.flashlight == enabled)
         return true;
     a->client->info.flashlight = enabled;
-    qa_body_state body;
-    qa_string_id sound;
-    if (!qa_world_body_read(g->services.world, id, &body, e) ||
-        !qa_builtin_resource(&g->services,
-                             enabled ? QA_Q2_SOUND_ITEMS_FLASHLIGHT_ON : QA_Q2_SOUND_ITEMS_FLASHLIGHT_OFF,
-                             &sound, e) ||
-        !qa_builtin_emit(&g->services,
-                         &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                                             .family = QA_GAME_Q2,
-                                             .provider = g->options.owner,
-                                             .actor = id,
-                                             .origin = body.origin,
-                                             .resource = sound,
-                                             .volume = 1,
-                                             .attenuation = 3,
-                                             .time_ns = g->now_ns},
-                         e))
+    if (!q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,
+        g->runtime_names[enabled?Q2_NAME_SOUND_ITEMS_FLASHLIGHT_ON:Q2_NAME_SOUND_ITEMS_FLASHLIGHT_OFF],0,1,3,0,e))
         return false;
     return !q2_actor_live(g, id) ||
            q2_player_emit(g,

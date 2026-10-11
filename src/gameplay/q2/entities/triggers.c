@@ -152,7 +152,7 @@ bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (!q2_entity_native_spawn(g, "ctf_teleport_sound", &body, Q2E_POINT, &sound, e))
             return false;
         s->enemy = sound->id;
-        return q2_entity_sound(g, sound, QA_Q2_SOUND_WORLD_HUM1, 0, 1, 1, 1, e);
+        return q2_entity_sound(g, sound, g->runtime_names[Q2_NAME_SOUND_WORLD_HUM1], 0, 1, 1, 1, e);
     }
     if (!q2_entity_init_trigger(g, a, e))
         return false;

@@ -122,7 +122,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
             qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
         if (!q2_entity_body(g, a, &body, false, e)) return false;
         if (s->noise && !q2_entity_sound(g, a,
-            qa_strings_cstr(qa_session_strings(g->services.session), s->noise), 0, 1, 1, 0, e)) return false;
+            s->noise, 0, 1, 1, 0, e)) return false;
     }
     return !q2_actor_live(g, a->id) ||
            (s->damage != 0 ? explode(g, a, 1, e) : qa_session_release(g->services.session, a->id, e));
@@ -609,7 +609,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        if (!q2_entity_sound(g, a, QA_Q2_SOUND_WORLD_AMB10, 0, 1, 3, 1, e))
+        if (!q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_WORLD_AMB10], 0, 1, 3, 1, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -746,7 +746,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
     case Q2S_BLACKHOLE:
         return qa_session_release(g->services.session, a->id, e);
     case Q2S_COMMANDER:
-        if (!q2_entity_sound(g, a, QA_Q2_SOUND_TANK_PAIN, 4, 1, 1, 0, e))
+        if (!q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_TANK_PAIN], 4, 1, 1, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -880,7 +880,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        if (s->visual.frame == 22 && !q2_entity_sound(g, a, QA_Q2_SOUND_TANK_THUD, 4, 1, 1, 0, e))
+        if (s->visual.frame == 22 && !q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_TANK_THUD], 4, 1, 1, 0, e))
             return false;
         return !q2_actor_live(g, a->id) || s->visual.frame >= 24 ||
                q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
@@ -891,7 +891,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     case Q2S_ROTATING_LIGHT:
         if (s->spawnflags & 1)
             return true;
-        return q2_entity_sound(g, a, QA_Q2_SOUND_MISC_ALARM, 10, 1, 3, 0, e) &&
+        return q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_ALARM], 10, 1, 3, 0, e) &&
                (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, 1));
     case Q2S_REPAIR: {
         if (s->stage == 1) {
@@ -917,7 +917,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, s->delay);
     }
     case Q2S_AMBIENCE:
-        return q2_entity_sound(g, a, QA_Q2_SOUND_WORLD_AMB4, 2, 1, 0, 0, e) &&
+        return q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_WORLD_AMB4], 2, 1, 0, 0, e) &&
                (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, 2.7f));
     case Q2S_MAL_LASER:
         if (!q2_laser_think(g, a, e))
@@ -1026,7 +1026,7 @@ bool q2_scenery_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *ou
             return false;
         if (state.health > -80)
             return true;
-        if (!q2_entity_sound(g, a, QA_Q2_SOUND_MISC_UDEATH, 4, 1, 1, 0, e))
+        if (!q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_UDEATH], 4, 1, 1, 0, e))
             return false;
         for (int i = 0; i < 4; i++) {
             if (!q2_actor_live(g, a->id))

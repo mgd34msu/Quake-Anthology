@@ -22,19 +22,9 @@ static bool flies(q2m_context *c, bool enabled, qa_error *error) {
         c->actor->extra_effects |= UINT64_C(0x4000);
     else
         c->actor->extra_effects &= ~UINT64_C(0x4000);
-    qa_builtin_event event = {.kind = enabled ? QA_BUILTIN_SOUND : QA_BUILTIN_STOP_SOUND,
-                              .family = QA_GAME_Q2,
-                              .provider = c->game->options.owner,
-                              .actor = c->actor->id,
-                              .time_ns = c->game->now_ns,
-                              .origin = c->body.origin,
-                              .volume = 1,
-                              .attenuation = 1,
-                              .flags = enabled ? 1u : 0u};
-    event.resource=c->game->runtime_names[Q2_NAME_SOUND_INFANTRY_INFLIES1];
-    if (!q2m_alive(c))
-        return true;
-    if (!qa_builtin_emit(&c->game->services, &event, error))
+    if (!q2m_alive(c)) return true;
+    if (!q2_emit_sound(c->game,c->actor->id,enabled ? QA_BUILTIN_SOUND : QA_BUILTIN_STOP_SOUND,
+        &c->body.origin,c->game->runtime_names[Q2_NAME_SOUND_INFANTRY_INFLIES1],0,1,1,enabled?1u:0u,error))
         return false;
     return !q2m_alive(c) || q2m_show(c, error);
 }

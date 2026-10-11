@@ -41,13 +41,13 @@ bool q2_event(q2_weapon_call *c, qa_builtin_event_kind kind, int code, qa_vec3 o
     qa_error *e) {
     return q2_event_named(c, kind, NULL, code, origin, end, e);
 }
-bool q2_emit_sound(qa_q2_game *g, qa_actor_id actor, const qa_vec3 *origin,
+bool q2_emit_sound(qa_q2_game *g, qa_actor_id actor, qa_builtin_event_kind kind, const qa_vec3 *origin,
     qa_string_id resource, int channel, float volume, float attenuation, uint32_t flags, qa_error *e) {
     if (!q2_actor_live(g,actor)) return true;
     qa_body_state body;
     if (!origin && !qa_world_body_read(g->services.world,actor,&body,e)) return !q2_actor_live(g,actor);
     if (!q2_actor_live(g,actor)) return true;
-    return qa_builtin_emit(&g->services,&(qa_builtin_event){.kind=QA_BUILTIN_SOUND,
+    return qa_builtin_emit(&g->services,&(qa_builtin_event){.kind=kind,
         .family=QA_GAME_Q2,.provider=g->options.owner,.actor=actor,.time_ns=g->now_ns,
         .origin=origin?*origin:body.origin,.resource=resource,.channel=channel,
         .volume=volume,.attenuation=attenuation,.flags=flags},e);
@@ -59,15 +59,12 @@ bool q2_actor_loop(qa_q2_game *g, qa_actor_id actor, qa_string_id *current,
     if (!qa_world_body_read(g->services.world,actor,&body,e)) return !q2_actor_live(g,actor);
     if (!q2_actor_live(g,actor)) return true;
     qa_string_id previous=*current; *current=next;
-    if (stop_previous && previous && !qa_builtin_emit(&g->services,
-            &(qa_builtin_event){.kind=QA_BUILTIN_STOP_SOUND,.family=QA_GAME_Q2,
-                .provider=g->options.owner,.actor=actor,.time_ns=g->now_ns,
-                .origin=body.origin,.resource=previous,.channel=channel,.volume=1,.attenuation=1},e)) return false;
+    if (stop_previous && previous && !q2_emit_sound(g,actor,QA_BUILTIN_STOP_SOUND,&body.origin,previous,channel,1,1,0,e)) return false;
     if (!next || !q2_actor_live(g,actor) || *current!=next) return true;
-    return q2_emit_sound(g,actor,&body.origin,next,channel,1,1,1,e);
+    return q2_emit_sound(g,actor,QA_BUILTIN_SOUND,&body.origin,next,channel,1,1,1,e);
 }
 bool q2_sound(q2_weapon_call *c, q2_runtime_name name, int channel, float attenuation, qa_error *e) {
-    return q2_emit_sound(c->game,c->actor->id,NULL,c->game->runtime_names[name],channel,1,attenuation,0,e);
+    return q2_emit_sound(c->game,c->actor->id,QA_BUILTIN_SOUND,NULL,c->game->runtime_names[name],channel,1,attenuation,0,e);
 }
 bool q2_loop(q2_weapon_call *c, q2_runtime_name name, qa_error *e) {
     return q2_actor_loop(c->game,c->actor->id,&c->state->loop_sound,

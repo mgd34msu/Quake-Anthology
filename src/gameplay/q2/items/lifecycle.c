@@ -54,7 +54,7 @@ bool qa_q2_items_configure(qa_q2_game *g, const qa_q2_item_options *options, qa_
     return true;
 }
 bool q2_item_sound(qa_q2_game *g, qa_actor_id id, qa_string_id sound, qa_error *e) {
-    return q2_emit_sound(g,id,NULL,sound,3,1,1,0,e);
+    return q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,sound,3,1,1,0,e);
 }
 bool q2_item_visual(qa_q2_game *g, q2_actor *a, qa_error *e) {
     a->item->visual.visible = a->item->visible;

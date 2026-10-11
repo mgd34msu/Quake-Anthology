@@ -59,7 +59,7 @@ static bool sound(qa_q2_game *g, qa_actor_id id, qa_actor_id owner, q2_runtime_n
     int channel, float volume, bool reliable, qa_error *e) {
     q2_actor *a=find(g,owner);
     if (volume<0) volume=a && a->silencer>0 ? .2f : 1;
-    return q2_emit_sound(g,id,NULL,g->runtime_names[name],channel,volume,1,reliable?2u:0u,e);
+    return q2_emit_sound(g,id,QA_BUILTIN_SOUND,NULL,g->runtime_names[name],channel,volume,1,reliable?2u:0u,e);
 }
 static bool loop(qa_q2_game *g, q2_actor *hook, qa_string_id path, qa_error *e) {
     return q2_projectile_loop(g, hook, path, true, e);

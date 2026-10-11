@@ -115,18 +115,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
             return false;
         if (!q2_actor_live(g, id))
             continue;
-        qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                                  .family = QA_GAME_Q2,
-                                  .provider = g->options.owner,
-                                  .actor = id,
-                                  .time_ns = c->now_ns,
-                                  .origin = start,
-                                  .resource = sound,
-                                  .volume = 1,
-                                  .attenuation = 1,
-                                  .flags = 1};
-        if (!qa_builtin_emit(&g->services, &event, e))
-            return false;
+        if (!q2_emit_sound(g,id,QA_BUILTIN_SOUND,&start,sound,0,1,1,1,e)) return false;
     }
     return true;
 }
@@ -196,7 +185,7 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
 }
 static bool impact_sound(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, q2_runtime_name name,
     float attenuation, qa_error *e) {
-    return q2_emit_sound(g,id,&origin,g->runtime_names[name],4,1,attenuation,0,e);
+    return q2_emit_sound(g,id,QA_BUILTIN_SOUND,&origin,g->runtime_names[name],4,1,attenuation,0,e);
 }
 bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     q2_actor *a = q2_actor_get(g, contact->self, false, e);

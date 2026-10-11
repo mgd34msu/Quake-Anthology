@@ -3,7 +3,7 @@
 
 static bool nuke_sound(qa_q2_game *g, q2_actor *a, q2_runtime_name name, int channel,
     float volume, float attenuation, qa_error *e) {
-    return q2_emit_sound(g,a->id,NULL,g->runtime_names[name],channel,volume,attenuation,0,e);
+    return q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,NULL,g->runtime_names[name],channel,volume,attenuation,0,e);
 }
 static bool blind(qa_q2_game *g, qa_actor_id id, uint64_t duration, bool inside, qa_error *e) {
     if (!q2_actor_live(g, id))

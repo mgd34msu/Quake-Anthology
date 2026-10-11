@@ -28,22 +28,18 @@ static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
     bool water = s->kind == Q2E_WATER, button = s->kind == Q2E_BUTTON;
     int sounds = (int)q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SOUNDS], 0);
     bool enabled = water ? sounds == 1 || sounds == 2 : sounds != 1;
-    const char *edge = water    ? (start ? QA_Q2_SOUND_WORLD_MOV_WATR : QA_Q2_SOUND_WORLD_STP_WATR)
-                       : button ? (start ? QA_Q2_SOUND_SWITCHES_BUTN2 : "")
-                                : (start ? QA_Q2_SOUND_DOORS_DR1_STRT : QA_Q2_SOUND_DOORS_DR1_END);
-    const char *middle = water || button ? "" : QA_Q2_SOUND_DOORS_DR1_MID;
-    if (!enabled)
-        edge = middle = "";
+    qa_string_id edge = g->runtime_names[water ? (start ? Q2_NAME_SOUND_WORLD_MOV_WATR : Q2_NAME_SOUND_WORLD_STP_WATR)
+                       : button ? (start ? Q2_NAME_SOUND_SWITCHES_BUTN2 : Q2_NAME_NONE)
+                                : (start ? Q2_NAME_SOUND_DOORS_DR1_STRT : Q2_NAME_SOUND_DOORS_DR1_END)];
+    qa_string_id middle = water || button ? QA_STRING_NONE : g->runtime_names[Q2_NAME_SOUND_DOORS_DR1_MID];
+    if (!enabled) edge = middle = QA_STRING_NONE;
     if (g->options.edition == QA_Q2_RERELEASE) {
         qa_string_id key = g->field_keys[start ? QA_TARGET_KEY_NOISE_START : QA_TARGET_KEY_NOISE_END];
-        if (q2_field_id(s, key))
-            edge = q2_field_text(g, s, key);
+        if (q2_field_id(s, key)) edge = q2_field_id(s, key);
         if (q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE_MIDDLE]))
-            middle = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_NOISE_MIDDLE]);
-        if (!strcmp(edge, "0") || !strcmp(edge, " "))
-            edge = "";
-        if (!strcmp(middle, "0") || !strcmp(middle, " "))
-            middle = "";
+            middle = q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE_MIDDLE]);
+        if (edge==g->runtime_names[Q2_NAME_ZERO] || edge==g->runtime_names[Q2_NAME_SPACE]) edge=QA_STRING_NONE;
+        if (middle==g->runtime_names[Q2_NAME_ZERO] || middle==g->runtime_names[Q2_NAME_SPACE]) middle=QA_STRING_NONE;
     }
     float attenuation = g->options.edition == QA_Q2_RERELEASE && !water
                             ? q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ATTENUATION], 3)
@@ -430,7 +426,7 @@ bool q2_door_touch(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     if (!q2_entity_message(g, a, other,
                            qa_strings_cstr(qa_session_strings(g->services.session), s->message), e))
         return false;
-    return !q2_actor_live(g, a->id) || q2_entity_sound(g, a, QA_Q2_SOUND_MISC_TALK1, 0, 1, 1, 0, e);
+    return !q2_actor_live(g, a->id) || q2_entity_sound(g, a, g->runtime_names[Q2_NAME_SOUND_MISC_TALK1], 0, 1, 1, 0, e);
 }
 bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     const qa_actor_registry *actors = qa_session_actors(g->services.session);
