@@ -12,7 +12,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM } campaign_kind;
+typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM, CAMPAIGN_NONE } campaign_kind;
 typedef struct campaign_player { int32_t client,rank,score; } campaign_player;
 struct frontend_campaign {
     qa_frontend *frontend;
@@ -24,6 +24,8 @@ struct frontend_campaign {
     uint64_t map_revision;
     int32_t match_start;
     campaign_kind kind;
+    qa_cvar_handle nextmap, skill, selection;
+    uint64_t cvar_revision, configuration_generation;
     qa_base_arena_catalog *catalog;
     qa_arena_progress progression;
     qa_team_arena_progress *team;
@@ -34,12 +36,7 @@ struct frontend_campaign {
     int32_t player_client;
     qa_team_arena_score_result team_result;
     bool result,announced,movie_played,music_attached,draining;
-    bool ui_pending;
-    frontend_campaign_ui_action ui_action;
-    int32_t ui_arena,ui_skill;
-    uint32_t ui_seat;
-    qa_actor_owner ui_receiver;
-    qa_actor_id ui_actor;
+
 };
 static const char *const base_archive_names[8]={"g_spScores1","g_spScores2","g_spScores3","g_spScores4",
     "g_spScores5","g_spAwards","g_spVideos","g_spCompletedRound"};
@@ -79,7 +76,7 @@ static bool campaign_uuid(char out[37],qa_error *error)
     out[at]=0; return true;
 }
 bool frontend_campaign_ready(const qa_frontend *f)
-{ return f && (!f->campaign || (!f->campaign->draining && !f->campaign->ui_pending)); }
+{ return f && (!f->campaign || !f->campaign->draining); }
 bool frontend_campaign_destroy(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->campaign) return true;
@@ -98,27 +95,43 @@ static bool campaign_has_q3(const qa_frontend *f)
     const qa_product *product=instance?qa_catalog_product(qa_launch_snapshot_catalog(publication),instance->selection.product):NULL;
     return product && product->family==QA_GAME_Q3;
 }
+static campaign_kind campaign_kind_of(const qa_application_q3_campaign *view, qa_cvar_handle nextmap)
+{
+    if (view->product == QA_Q3_ARENA && view->game_type == 2) return CAMPAIGN_BASE;
+    const qa_cvar_view *next = qa_cvars_read(view->cvars, nextmap);
+    if (view->product == QA_Q3_TEAM_ARENA && next && !strcmp(next->value, "teamarena-results")) return CAMPAIGN_TEAM;
+    return CAMPAIGN_NONE;
+}
+static bool campaign_source_matches(const frontend_campaign *, const qa_application_q3_campaign *);
 bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->application || f->capture) return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign setup requires its actual frontend source owner");
     if (qa_application_startup_pending(f->application)) return true;
+    frontend_campaign *owner = f->campaign;
+    qa_application_map_view map;
+    if (owner && owner->publication == qa_application_launch(f->application) &&
+        owner->configuration_generation == qa_application_configuration_generation(f->application) &&
+        qa_application_map_read(f->application, &map) && owner->map_revision == map.revision &&
+        owner->cvar_revision == qa_cvars_revision(owner->cvars)) return true;
     if (!campaign_has_q3(f)) return frontend_campaign_destroy(f,error);
     qa_application_q3_campaign view;
     if (!qa_application_q3_campaign_read(f->application,0,&view,error)) return false;
-    bool base=view.product==QA_Q3_ARENA && view.game_type==2;
-    bool team=view.product==QA_Q3_TEAM_ARENA && !strcmp(campaign_value(view.cvars,"nextmap"),"teamarena-results");
-    if (!base && !team) return frontend_campaign_destroy(f,error);
-    frontend_campaign *owner=f->campaign;
-    if (owner && owner->source==view.source_owner && owner->content==view.content && owner->cvars==view.cvars &&
-        owner->config_root==view.config_root && owner->map_revision==view.map_revision && owner->match_start==view.match_start_time &&
-        owner->kind==(base?CAMPAIGN_BASE:CAMPAIGN_TEAM)) return true;
+    qa_cvar_handle nextmap = owner && owner->cvars == view.cvars ? owner->nextmap : qa_cvars_resolve(view.cvars, "nextmap");
+    campaign_kind kind = campaign_kind_of(&view, nextmap);
+    if (kind == CAMPAIGN_NONE) return frontend_campaign_destroy(f,error);
+    bool base = kind == CAMPAIGN_BASE;
+    if (owner && campaign_source_matches(owner, &view)) {
+        owner->cvar_revision = qa_cvars_revision(owner->cvars);
+        return true;
+    }
     if (!frontend_campaign_ready(f) || !frontend_campaign_destroy(f,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign source changed before its accepted command drained");
     owner=calloc(1,sizeof(*owner));
     if (!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating actual source campaign continuation");
     owner->frontend=f; owner->source=view.source_owner; owner->content=view.content; owner->cvars=view.cvars;
     owner->config_root=view.config_root; owner->map_revision=view.map_revision; owner->match_start=view.match_start_time;
-    owner->kind=base?CAMPAIGN_BASE:CAMPAIGN_TEAM; owner->publication=view.publication;
+    owner->kind=kind; owner->publication=view.publication; owner->nextmap=nextmap;
+    owner->configuration_generation=qa_application_configuration_generation(f->application);
     qa_launch_snapshot_retain(owner->publication);
     bool ok=true;
     if (base) {
@@ -136,6 +149,9 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
             char identity[37]; ok=campaign_uuid(identity,error) && qa_cvars_set(view.cvars,"g_spRoundIdentity",identity,true,error);
         }
     } else ok=view.config_root && qa_team_arena_progress_create(view.config_root,&owner->team,error);
+    owner->skill=qa_cvars_resolve(view.cvars,"g_spSkill");
+    owner->selection=qa_cvars_resolve(view.cvars,"ui_spSelection");
+    owner->cvar_revision=qa_cvars_revision(view.cvars);
     if (ok) ok=qa_application_q3_campaign_current(f->application,&view);
     f->campaign=owner;
     if (!ok) {
@@ -147,6 +163,7 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
 static bool campaign_base_complete(qa_frontend *, const qa_application_q3_campaign *, const qa_command_invocation *, qa_error *);
 static bool campaign_team_complete(qa_frontend *, const qa_application_q3_campaign *, const qa_command_invocation *, qa_error *);
 static bool campaign_base_action(qa_frontend *, const qa_application_q3_campaign *, const char *, qa_error *);
+static bool campaign_launch_action(qa_frontend *, const qa_application_q3_campaign *, const qa_command_invocation *, qa_error *);
 bool frontend_campaign_source_command(void *context,qa_application *application,const qa_command_invocation *invocation,
     bool *handled,qa_error *error)
 {
@@ -160,7 +177,8 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
         return frontend_cinematic_command(f,invocation,error);
     }
     if (strcmp(name,"postgame") && strcmp(name,"spPostgame") && strcmp(name,"arena-reset") &&
-        strcmp(name,"arena-unlock") && strcmp(name,"arena-medals") && strcmp(name,"teamarena-results")) return true;
+        strcmp(name,"arena-unlock") && strcmp(name,"arena-medals") && strcmp(name,"teamarena-results") &&
+        strcmp(name,"arena-play") && strcmp(name,"arena-retry") && strcmp(name,"arena-next")) return true;
     qa_frontend *f=context;
     if (!f || application!=f->application || f->source_restoring || f->capture || !frontend_campaign_sync(f,error)) return false;
     if (!f->campaign) return true;
@@ -173,6 +191,8 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
             (invocation->context.owner && invocation->context.owner!=view.source_owner)))) return false;
     /* The common console owns and orders the invocation; campaign has no private queue. */
     *handled = true;
+    if (!strcmp(name,"arena-play") || !strcmp(name,"arena-retry") || !strcmp(name,"arena-next"))
+        return campaign_launch_action(f, &view, invocation, error);
     f->campaign->draining = true;
     bool ok;
     if (postgame) ok = f->campaign->kind == CAMPAIGN_BASE ?
@@ -232,7 +252,7 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     frontend_campaign *owner=f->campaign;
     const qa_base_arena *arena=qa_base_arena_catalog_find(owner->catalog,view->map);
     if (!arena) return frontend_fail(error,QA_ERROR_NOT_FOUND,"Postgame map has no actual authored single-player arena");
-    const qa_cvar_view *skill_value=qa_cvars_find(view->cvars,"g_spSkill"); float raw_skill=skill_value?skill_value->number:0;
+    const qa_cvar_view *skill_value=qa_cvars_read(view->cvars,owner->skill); float raw_skill=skill_value?skill_value->number:0;
     int32_t skill=raw_skill>=5?5:raw_skill>=4?4:raw_skill>=3?3:raw_skill>=2?2:1;
     qa_arena_result game={.level=arena->number,.skill=skill,.rank=8,
         .accuracy=campaign_number(request,2),.impressive=campaign_number(request,3),.excellent=campaign_number(request,4),
@@ -301,7 +321,7 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
     const qa_command_invocation *request,qa_error *error)
 {
     frontend_campaign *owner=f->campaign;
-    const qa_cvar_view *skill=qa_cvars_find(view->cvars,"g_spSkill"),*beat=qa_cvars_find(view->cvars,"ui_teamArenaTimeToBeat");
+    const qa_cvar_view *skill=qa_cvars_read(view->cvars,owner->skill),*beat=qa_cvars_find(view->cvars,"ui_teamArenaTimeToBeat");
     qa_team_arena_score_input input={.match_start_time=view->match_start_time,
         .skill=skill?skill->number:0,.time_to_beat=beat?beat->number:0,
         .stats={campaign_number(request,2),campaign_number(request,3),campaign_number(request,4),
@@ -344,8 +364,7 @@ static bool campaign_source_matches(const frontend_campaign *owner,const qa_appl
     return owner->source==view->source_owner && owner->content==view->content && owner->cvars==view->cvars &&
         owner->config_root==view->config_root && owner->publication==view->publication &&
         owner->map_revision==view->map_revision && owner->match_start==view->match_start_time &&
-        (owner->kind==CAMPAIGN_BASE?(view->product==QA_Q3_ARENA && view->game_type==2):
-            (view->product==QA_Q3_TEAM_ARENA && !strcmp(campaign_value(view->cvars,"nextmap"),"teamarena-results")));
+        owner->kind == campaign_kind_of(view, owner->nextmap);
 }
 bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui_view *out,qa_error *error)
 {
@@ -362,10 +381,11 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     if (!frontend_seat_launch_id_read(f,seat,&launch_seat)) return true;
     if (!qa_application_q3_campaign_menu_read(f->application,receiver,launch_seat,&out->source,&out->client,error) ||
         !campaign_source_matches(owner,&out->source)) return false;
-    const qa_cvar_view *skill=qa_cvars_find(owner->cvars,"g_spSkill");
+    const qa_cvar_view *skill=qa_cvars_read(owner->cvars,owner->skill);
     double raw=skill?skill->number:2;
     out->skill=raw>=5?5:raw>=4?4:raw>=3?3:raw>=2?2:1;
-    out->installed=true; out->team=owner->kind==CAMPAIGN_TEAM; out->result=owner->result; out->action_pending=owner->ui_pending;
+    out->installed=true; out->team=owner->kind==CAMPAIGN_TEAM; out->result=owner->result;
+    out->action_pending=qa_console_pending(out->source.console);
     if (out->team) {
         out->team_score_recorded=owner->result; out->team_score=owner->team_result;
         if (!qa_application_q3_campaign_result_read(f->application,&out->source,launch_seat,
@@ -375,7 +395,7 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
         out->catalog=owner->catalog; out->progression=&owner->progression;
         out->selection=-1;
         if (!qa_arena_progress_current(&owner->progression,&out->selection,error)) return false;
-        const qa_cvar_view *selected=qa_cvars_find(owner->cvars,"ui_spSelection");
+        const qa_cvar_view *selected=qa_cvars_read(owner->cvars,owner->selection);
         if (selected && *selected->value) {
             char *end=NULL; double value=strtod(selected->value,&end);
             while (end && (*end==' ' || (*end>='\t' && *end<='\r'))) ++end;
@@ -419,35 +439,30 @@ bool frontend_campaign_ui_stage(qa_frontend *f,uint32_t seat,frontend_campaign_u
         if (!found || skill<1 || skill>5 || !qa_arena_progress_available(view.progression,arena,&available,error) || !available)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"That authored arena is not unlocked in the source profile");
     }
-    frontend_campaign *owner=f->campaign;
-    owner->ui_action=action; owner->ui_arena=arena; owner->ui_skill=skill;
-    owner->ui_seat=seat; owner->ui_receiver=view.client.receiver; owner->ui_actor=view.client.source_actor;
-    owner->ui_pending=true; return true;
+    qa_console *console; qa_cvars *cvars; qa_command_context command;
+    if (!qa_input_seat_recipient_read(f->seats[seat].input, &console, &cvars, &command)) return false;
+    (void)cvars;
+    char text[96];
+    if (action == FRONTEND_CAMPAIGN_RESET) strcpy(text, "arena-reset\n");
+    else if (action == FRONTEND_CAMPAIGN_QUIT) strcpy(text, "quit\n");
+    else if (action == FRONTEND_CAMPAIGN_RETRY) strcpy(text, "arena-retry\n");
+    else if (action == FRONTEND_CAMPAIGN_NEXT) strcpy(text, "arena-next\n");
+    else snprintf(text, sizeof(text), "arena-play %" PRId32 " %" PRId32 "\n", arena, skill);
+    return qa_console_append(console, &command, text, error);
 }
-bool frontend_campaign_ui_drain(qa_frontend *f,qa_error *error)
+static bool campaign_launch_action(qa_frontend *f, const qa_application_q3_campaign *view,
+    const qa_command_invocation *command, qa_error *error)
 {
-    if (!f || f->stepping || f->capture || f->preparing || !frontend_owners_idle(f))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign action must follow the completed frontend callback boundary");
-    if (qa_application_startup_pending(f->application)) return true;
-    frontend_campaign *owner=f->campaign;
-    if (!owner || !owner->ui_pending) return true;
-    if (owner->draining)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign action still retains an earlier source command");
-    qa_application_q3_campaign source; qa_application_q3_client_context client;
-    uint32_t launch_seat;
-    if (!frontend_seat_launch_id_read(f,owner->ui_seat,&launch_seat) ||
-        !qa_application_q3_campaign_menu_read(f->application,owner->ui_receiver,launch_seat,&source,&client,error) ||
-        !campaign_source_matches(owner,&source) || !qa_actor_id_equal(client.source_actor,owner->ui_actor))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Queued campaign action lost its source or local recipient");
-    frontend_campaign_ui_action action=owner->ui_action;
-    int32_t number=owner->ui_arena,skill=action==FRONTEND_CAMPAIGN_PLAY?owner->ui_skill:0;
-    owner->ui_pending=false;
-    if (action==FRONTEND_CAMPAIGN_QUIT) { qa_application_request_stop(f->application); return true; }
-    if (action==FRONTEND_CAMPAIGN_RESET) return campaign_base_action(f,&source,"arena-reset",error);
+    frontend_campaign *owner = f->campaign;
+    if (owner->kind != CAMPAIGN_BASE) return true;
+    bool play = !strcmp(command->argv[0], "arena-play");
+    bool retry = !strcmp(command->argv[0], "arena-retry");
+    int32_t number = play ? campaign_number(command, 0) : 0;
+    int32_t skill = play ? campaign_number(command, 1) : 0;
     const qa_base_arena *arena=NULL;
-    if (action==FRONTEND_CAMPAIGN_RETRY) arena=qa_base_arena_catalog_find(owner->catalog,source.map);
+    if (retry) arena=qa_base_arena_catalog_find(owner->catalog,view->map);
     else {
-        if (action==FRONTEND_CAMPAIGN_NEXT && !qa_arena_progress_current(&owner->progression,&number,error)) return false;
+        if (!play && !qa_arena_progress_current(&owner->progression,&number,error)) return false;
         for (size_t i=0;i<qa_base_arena_catalog_count(owner->catalog);++i) {
             const qa_base_arena *row=qa_base_arena_catalog_at(owner->catalog,i);
             if (row->number==number) { arena=row; break; }
@@ -455,15 +470,15 @@ bool frontend_campaign_ui_drain(qa_frontend *f,qa_error *error)
     }
     if (!arena) return frontend_fail(error,QA_ERROR_NOT_FOUND,"Campaign action has no authored arena map");
     qa_launch_draft *draft=NULL;
-    if (!qa_launch_snapshot_draft_copy(source.publication,&draft,error)) return false;
+    if (!qa_launch_snapshot_draft_copy(view->publication,&draft,error)) return false;
     qa_launch_world world=qa_launch_draft_choices(draft)->world;
     world.map=arena->map; world.start_command=NULL; world.spawn_point=NULL; world.explicit_spawn_point=false;
-    if (action==FRONTEND_CAMPAIGN_PLAY) world.skill=skill;
+    if (play) world.skill=skill;
     char text[16]; (void)snprintf(text,sizeof(text),"%" PRId32,skill);
     qa_application_q3_setting rows[]={ {"g_gametype","2"},{"sv_cheats","0"},{"g_doWarmup","0"},
         {"sv_maxclients","8"},{"g_spSkill",text} };
     bool ok=qa_launch_set_world(draft,&world,error) &&
-        qa_application_q3_campaign_launch(f->application,&source,draft,rows,action==FRONTEND_CAMPAIGN_PLAY?5:4,error);
+        qa_application_q3_campaign_launch(f->application,view,draft,rows,play?5:4,error);
     qa_launch_draft_destroy(draft);
     return ok && (qa_application_startup_pending(f->application) || frontend_campaign_sync(f,error));
 }

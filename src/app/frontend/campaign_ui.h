@@ -29,5 +29,4 @@ typedef enum frontend_campaign_ui_action {
 /* Stage against the actual recipient. PLAY uses the authored arena number
  * and skill 1..5; execution follows source and UI callback unwind. */
 bool frontend_campaign_ui_stage(qa_frontend *,uint32_t,frontend_campaign_ui_action,int32_t,int32_t,qa_error *);
-bool frontend_campaign_ui_drain(qa_frontend *,qa_error *);
 #endif

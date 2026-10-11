@@ -1017,7 +1017,7 @@ static bool frontend_step(qa_frontend *frontend,
         if (ok && ready && !qa_application_should_stop(frontend->application)) {
             ok=qa_profiler_push(profiler,"source_events",error);
             if (ok) ok=frontend_profiler_end(profiler,
-                frontend_source_drain(frontend, error) && (replay || frontend_campaign_ui_drain(frontend,error)),error);
+                frontend_source_drain(frontend, error),error);
         }
     }
     frontend->stepping=false;
