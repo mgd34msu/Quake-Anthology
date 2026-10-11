@@ -409,15 +409,19 @@ static bool q2_map_capacity(application_provider *provider, const qa_q2_map_even
     qa_application *app = provider->application;
     switch (event->kind) {
     case QA_Q2_MAP_STEAM: case QA_Q2_MAP_FORCE_WALL:
-    case QA_Q2_MAP_SCREEN_BLEND: case QA_Q2_MAP_DYNAMIC_LIGHT:
+    case QA_Q2_MAP_SCREEN_BLEND:
         return application_event_stream_decline(app, write, true, error);
+    case QA_Q2_MAP_DYNAMIC_LIGHT:
+        if (!(event->flags&QA_Q2_MAP_LIGHT_SHADOW))
+            return application_event_stream_decline(app,write,true,error);
+        return application_event_stream_close_subscribers(app,write,protocol_channels(provider),true,error);
     default:
         if (event->recipient.registry)
             return application_event_stream_close_recipients(app, write, event->recipient, NULL,
                 protocol_channels(provider), error);
         return application_event_stream_close_subscribers(app, write, protocol_channels(provider),
             event->kind == QA_Q2_MAP_MUSIC || event->kind == QA_Q2_MAP_LIGHTSTYLE ||
-            event->kind == QA_Q2_MAP_WORLD_TEXT, error);
+            event->kind == QA_Q2_MAP_SKY || event->kind == QA_Q2_MAP_WORLD_TEXT, error);
     }
 }
 

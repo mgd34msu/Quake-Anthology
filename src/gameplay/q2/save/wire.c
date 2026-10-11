@@ -265,7 +265,6 @@ bool q2_save_wire(q2_save_io *io)
         g->wire_actors = actors; g->wire_freed_ns = freed;
         g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = extent;
         g->wire_frame = frame;
-        ++g->wire_map_revision; ++g->wire_shadow_revision;
         for (uint32_t i = 0; i < 256; ++i) qa_lightstyles_set(&g->wire_lightstyles, i, styles[i]);
         g->wire_music = music; g->wire_music_present = music_present;
         memcpy(g->wire_shadows, shadows, sizeof(shadows)); g->wire_shadow_count = shadow_count;

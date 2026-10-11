@@ -588,7 +588,7 @@ bool application_unified_event_append(qa_application *app,
     return true;
 }
 
-typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE } persistent_domain;
+typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE, PERSIST_SKY, PERSIST_SHADOW } persistent_domain;
 void application_unified_persistent_key(qa_application *app, const application_unified_event_record *row,
     application_persistent_key *out, bool *remove)
 {
@@ -622,6 +622,10 @@ void application_unified_persistent_key(qa_application *app, const application_u
         const qa_q2_map_event *v = &p->value.q2_map;
         if (v->kind == QA_Q2_MAP_LIGHTSTYLE) { key.domain = PERSIST_STYLE; key.selector = (uint32_t)v->style; }
         else if (v->kind == QA_Q2_MAP_MUSIC) key.domain = PERSIST_MUSIC;
+        else if (v->kind == QA_Q2_MAP_SKY) key.domain = PERSIST_SKY;
+        else if (v->kind == QA_Q2_MAP_DYNAMIC_LIGHT && (v->flags&QA_Q2_MAP_LIGHT_SHADOW)) {
+            key.domain=PERSIST_SHADOW;key.selector=(uint32_t)v->slot;
+        }
     }
     if (!key.domain) return;
     key.provider = row->owner_generation ? row->provider : 0; key.generation = row->owner_generation;

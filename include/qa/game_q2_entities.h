@@ -49,6 +49,7 @@ typedef struct qa_q2_campaign_level {
     uint32_t visit_order, total_secrets, found_secrets, total_monsters, killed_monsters;
     double time_seconds;
 } qa_q2_campaign_level;
+#define QA_Q2_MAP_LIGHT_SHADOW (1u << 1)
 typedef struct qa_q2_map_event {
     qa_q2_map_event_kind kind;
     qa_actor_id actor, recipient, target;

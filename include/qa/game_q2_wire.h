@@ -19,7 +19,6 @@ typedef struct qa_q2_wire_view {
     bool present;
 } qa_q2_wire_view;
 typedef struct qa_q2_wire_map {
-    uint64_t revision, shadow_revision;
     qa_string_id music, sky;
     qa_vec3 sky_axis;
     float sky_rotation;

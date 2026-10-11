@@ -316,6 +316,7 @@ bool q2_publish_visual(qa_q2_game *g, qa_actor_id id, const qa_entity_visual *v,
     return s->visual(s->context, id, &visual, e);
 }
 bool q2_map_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *e) {
+    qa_q2_map_event record=*event;
     qa_q2_entity_services *s = &g->entity_runtime->services;
     if (!s->event) {
         qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 map event service is not installed");
@@ -335,14 +336,12 @@ bool q2_map_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *e) {
             qa_error_set(e, QA_ERROR_FORMAT, 0, "Q2 music emission lost its actual Source string");
             return false;
         }
-        if (g->wire_music != music || !g->wire_music_present) ++g->wire_map_revision;
         g->wire_music = music; g->wire_music_present = true;
-    } else if (event->kind == QA_Q2_MAP_SKY) {
-        ++g->wire_map_revision;
-    } else if (event->kind == QA_Q2_MAP_DYNAMIC_LIGHT && !q2_wire_shadow_event(g, event, e)) {
+
+    } else if (event->kind == QA_Q2_MAP_DYNAMIC_LIGHT && !q2_wire_shadow_event(g, &record, e)) {
         return false;
     }
-    return s->event(s->context, event, e);
+    return s->event(s->context, &record, e);
 }
 bool q2_entity_show(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_publish_visual(g, a->id, &a->entity->visual, e);

@@ -548,7 +548,6 @@ struct qa_q2_game {
     uint64_t wire_frame;
     qa_string_id wire_statusbar_names[5];
     qa_lightstyles wire_lightstyles;
-    uint64_t wire_map_revision, wire_shadow_revision;
     qa_q2_wire_shadow_light wire_shadows[256];
     uint32_t wire_shadow_count;
     qa_string_id wire_music;
@@ -614,7 +613,7 @@ void q2_actor_publish_prepared(qa_q2_game *, q2_actor *, qa_actor_id);
 void q2_actor_order(qa_q2_game *, q2_actor *, uint64_t);
 bool q2_wire_admit(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
 bool q2_player_source_motion_rules(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
-bool q2_wire_shadow_event(qa_q2_game *, const qa_q2_map_event *, qa_error *);
+bool q2_wire_shadow_event(qa_q2_game *, qa_q2_map_event *, qa_error *);
 bool q2_wire_bind(qa_q2_game *, q2_actor *, uint32_t, qa_error *);
 void q2_wire_release(qa_q2_game *, q2_actor *);
 bool q2_wire_names_prepare(qa_q2_game *,qa_error *);

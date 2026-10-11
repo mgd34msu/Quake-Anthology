@@ -677,6 +677,38 @@ static bool initialize_builtin(qa_application_network_q2 *owner, qa_error *error
     return ok;
 }
 
+static bool map_config_event(qa_application_network_q2 *owner,const qa_q2_map_event *event,qa_error *error)
+{
+    switch(event->kind) {
+    case QA_Q2_MAP_MUSIC:
+        return application_network_q2_config_id(owner,1,event->resource?event->resource:event->text,error);
+    case QA_Q2_MAP_LIGHTSTYLE:
+        return event->style>=0 && event->style<256 &&
+            application_network_q2_config_id(owner,owner->light_base+(uint32_t)event->style,event->text,error);
+    case QA_Q2_MAP_SKY: {
+        char axis[128],rotation[64];
+        snprintf(axis,sizeof(axis),"%.9g %.9g %.9g",event->direction.x,event->direction.y,event->direction.z);
+        if(owner->host.source.edition==QA_Q2_RERELEASE)
+            snprintf(rotation,sizeof(rotation),"%.9g %u",event->value,(event->flags&1u)?1u:0u);
+        else snprintf(rotation,sizeof(rotation),"%.9g",event->value);
+        return application_network_q2_config_id(owner,2,event->resource,error) &&
+            application_network_q2_config(owner,3,axis,error) && application_network_q2_config(owner,4,rotation,error);
+    }
+    case QA_Q2_MAP_DYNAMIC_LIGHT: {
+        if (!(event->flags&QA_Q2_MAP_LIGHT_SHADOW) || owner->host.source.edition!=QA_Q2_RERELEASE ||
+            owner->item_base-owner->light_base<512) return true;
+        char config[512]={0};
+        if(event->radius>0) snprintf(config,sizeof(config),
+            "%u;%u;%.9g;%u;%.9g;%.9g;%.9g;%d;%.9g;%.9g;%.9g;%.9g",
+            (uint32_t)event->count,event->flags&1u,event->radius,event->resolution,
+            event->intensity,event->fade_start,event->fade_end,event->style,event->value,
+            event->direction.x,event->direction.y,event->direction.z);
+        return application_network_q2_config(owner,owner->light_base+256+(uint32_t)event->slot,config,error);
+    }
+    default:return true;
+    }
+}
+
 bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *error)
 {
     application_provider *provider = application_network_q2_provider(owner);
@@ -715,49 +747,15 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     }
     if (owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
         qa_q2_game *game = (qa_q2_game *)owner->host.source.source.game;
-        qa_q2_wire_map map;
-        if (!qa_q2_wire_map_read(game, &map, error)) return false;
-        if (!owner->builtin_metadata_ready || owner->map_metadata_revision != map.revision) {
-            if (map.music_present && !application_network_q2_config_id(owner, 1, map.music, error)) return false;
-            if (map.sky) {
-                char axis[128], rotation[64];
-                snprintf(axis, sizeof(axis), "%.9g %.9g %.9g", map.sky_axis.x, map.sky_axis.y, map.sky_axis.z);
-                if (owner->host.source.edition == QA_Q2_RERELEASE)
-                    snprintf(rotation, sizeof(rotation), "%.9g %u", map.sky_rotation, map.sky_auto ? 1u : 0u);
-                else snprintf(rotation, sizeof(rotation), "%.9g", map.sky_rotation);
-                if (!application_network_q2_config_id(owner, 2, map.sky, error) ||
-                    !application_network_q2_config(owner, 3, axis, error) ||
-                    !application_network_q2_config(owner, 4, rotation, error)) return false;
+        if (!owner->builtin_metadata_ready) {
+            for(size_t i=0;i<owner->app->unified_persistent_count;++i) {
+                const application_unified_event_record *record=&owner->app->unified_persistent[i].event;
+                if(record->provider==owner->host.source.source_owner && record->presentation &&
+                    record->presentation->kind==QA_UNIFIED_PRESENTATION_Q2_MAP &&
+                    !map_config_event(owner,&record->presentation->value.q2_map,error)) return false;
             }
-            owner->map_metadata_revision = map.revision;
+            owner->builtin_metadata_ready=true;
         }
-        const qa_lightstyles *styles=qa_q2_wire_lightstyles(game,error);
-        if (!styles) return false;
-        if (!owner->builtin_metadata_ready || owner->style_revision != styles->revision) {
-            for (uint32_t style = 0; style < styles->count; ++style)
-                if (!application_network_q2_config_id(owner, owner->light_base + style, styles->patterns[style], error)) return false;
-            owner->style_revision = styles->revision;
-        }
-        if ((!owner->builtin_metadata_ready || owner->shadow_revision != map.shadow_revision) &&
-            owner->host.source.edition == QA_Q2_RERELEASE && owner->item_base - owner->light_base >= 512) {
-            for (uint32_t index = 0; index < 256; ++index) {
-                qa_q2_wire_shadow_light light;
-                char config[512] = {0};
-                if (!qa_q2_wire_shadow_read(game, index, &light, error)) return false;
-                if (light.present) {
-                    int size = snprintf(config, sizeof(config),
-                        "%u;%u;%.9g;%u;%.9g;%.9g;%.9g;%d;%.9g;%.9g;%.9g;%.9g",
-                        light.source_slot, light.type, light.radius, light.resolution,
-                        light.intensity, light.fade_start, light.fade_end, light.style,
-                        light.cone_angle, light.direction.x, light.direction.y, light.direction.z);
-                    if (size < 0 || (size_t)size >= sizeof(config))
-                        return application_fail(error, QA_ERROR_FORMAT, "Q2 Source shadow-light config exceeds its wire record");
-                }
-                if (!application_network_q2_config(owner, owner->light_base + 256 + index, config, error)) return false;
-            }
-        }
-        owner->shadow_revision = map.shadow_revision;
-        owner->builtin_metadata_ready = true;
         uint64_t events_next = qa_application_events_next(owner->app);
         for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
             qa_application_event_view output;
@@ -788,18 +786,17 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             } else if (binding.source_slot != slot)
                 return application_fail(error, QA_ERROR_FORMAT, "Q2 retained event changed its physical Source edict");
         }
-        for (uint64_t i = qa_application_events_local_first(owner->app); i < events_next; ++i) {
+        uint64_t first=qa_application_events_local_first(owner->app);
+        if(owner->map_events_next>first) first=owner->map_events_next;
+        for(uint64_t i=first;i<events_next;++i) {
             qa_application_event_view output;
-            if (!qa_application_event_read(owner->app, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-                output.kind != QA_APPLICATION_EVENT_Q2_MAP) continue;
-            const qa_application_q2_map_event record = *output.value.q2_map;
-            if (record.provider != owner->host.source.source_owner) continue;
-            if (record.event.kind == QA_Q2_MAP_LIGHTSTYLE) {
-                int style = record.event.style;
-                if (style < 0 || (uint32_t)style >= 256 ||
-                    !application_network_q2_config(owner, owner->light_base + (uint32_t)style, source_text(owner, record.event.text), error)) return false;
-            }
+            if (!qa_application_event_read(owner->app,&(qa_application_event_cursor){.id=i},&output) ||
+                output.kind!=QA_APPLICATION_EVENT_Q2_MAP) continue;
+            const qa_application_q2_map_event *record=output.value.q2_map;
+            if(record->provider==owner->host.source.source_owner &&
+                !map_config_event(owner,&record->event,error)) return false;
         }
+        owner->map_events_next=events_next;
         struct application_player_roster *roster = owner->app->players;
         for (size_t i = 0; roster && i < roster->count; ++i) {
             application_player_record *row = &roster->records[i];

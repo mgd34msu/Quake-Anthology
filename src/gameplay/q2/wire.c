@@ -179,7 +179,6 @@ void q2_wire_reset(qa_q2_game *g)
     memset(g->wire_freed_ns, 0, g->wire_capacity * sizeof(*g->wire_freed_ns));
     g->wire_extent = g->wire_clients + 1; g->wire_frame = 0;
     g->wire_reference_count = 0;
-    ++g->wire_map_revision; ++g->wire_shadow_revision;
     ++g->wire_lightstyles.revision;
     memset(g->wire_lightstyles.patterns, 0, sizeof(g->wire_lightstyles.patterns));
     memset(g->wire_shadows, 0, sizeof(g->wire_shadows)); g->wire_shadow_count = 0;
@@ -284,7 +283,12 @@ void q2_wire_release(qa_q2_game *g, q2_actor *a)
     for (uint32_t i = 0; i < g->wire_shadow_count; ++i)
         if (qa_actor_id_equal(g->wire_shadows[i].actor, a->id)) {
             g->wire_shadows[i] = (qa_q2_wire_shadow_light){0};
-            ++g->wire_shadow_revision;
+            if (g->entity_runtime) {
+                qa_error ignored={0};
+                qa_q2_map_event event={.kind=QA_Q2_MAP_DYNAMIC_LIGHT,.actor=a->id,
+                    .slot=(int)i,.flags=QA_Q2_MAP_LIGHT_SHADOW};
+                (void)q2_map_event(g,&event,&ignored);
+            }
         }
     if (a->wire_bound && a->wire_slot < g->wire_extent &&
         qa_actor_id_equal(g->wire_actors[a->wire_slot], a->id)) {
@@ -370,7 +374,7 @@ bool qa_q2_wire_map_read(const qa_q2_game *g, qa_q2_wire_map *out, qa_error *err
 {
     if (!out || !idle(g, error)) return false;
     const q2_entities *state = g->entity_runtime;
-    *out = (qa_q2_wire_map){.revision = g->wire_map_revision, .shadow_revision = g->wire_shadow_revision, .music = g->wire_music, .music_present = g->wire_music_present,
+    *out = (qa_q2_wire_map){.music = g->wire_music, .music_present = g->wire_music_present,
         .sky = state->sky, .sky_axis = state->sky_axis, .sky_rotation = state->sky_rotation,
         .sky_auto = state->sky_auto};
     return true;
@@ -391,7 +395,7 @@ bool qa_q2_wire_shadow_read(const qa_q2_game *g, uint32_t index,
     return true;
 }
 
-bool q2_wire_shadow_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *error)
+bool q2_wire_shadow_event(qa_q2_game *g, qa_q2_map_event *event, qa_error *error)
 {
     q2_actor *a = event->actor.slot < g->capacity ? g->actors[event->actor.slot] : NULL;
     if (g->options.edition != QA_Q2_RERELEASE || !a || !qa_actor_id_equal(a->id, event->actor) ||
@@ -410,7 +414,8 @@ bool q2_wire_shadow_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error 
     while (index < g->wire_shadow_count && !qa_actor_id_equal(g->wire_shadows[index].actor, a->id)) ++index;
     if (index >= 256) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source shadow-light table is full"); return false; }
     if (index == g->wire_shadow_count) ++g->wire_shadow_count;
-    ++g->wire_shadow_revision;
+    event->slot=(int)index;event->count=(int)a->wire_slot;
+    event->value=cone;event->flags|=QA_Q2_MAP_LIGHT_SHADOW;
     g->wire_shadows[index] = (qa_q2_wire_shadow_light){.actor = a->id, .source_slot = a->wire_slot,
         .type = (event->flags & 1) ? 1u : 0u, .resolution = event->resolution, .radius = event->radius,
         .intensity = event->intensity, .fade_start = event->fade_start, .fade_end = event->fade_end,

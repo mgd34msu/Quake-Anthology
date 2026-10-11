@@ -365,7 +365,6 @@ bool qa_q2_entities_restore(qa_q2_game *g, const qa_q2_entities_checkpoint *s, q
     next.found_goals = s->found_goals;
     next.last_autosave_ns = s->last_autosave_ns;
     next.world_fog = s->world_fog;
-    ++g->wire_map_revision;
     next.sky = s->sky;
     next.goals = s->goals;
     next.primary = s->primary;
