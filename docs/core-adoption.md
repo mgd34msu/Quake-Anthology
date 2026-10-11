@@ -371,6 +371,16 @@ Normal build and seven core suites pass:
 `/tmp/qa-ta3196-mode-campaign-names-20261011-{build,core}.log`. The shared target
 router, authored traversal callers and bot-goal selectors remain in finding 3.
 
+Names finding 3, shared target slice: `qa_targets_next_authored` takes a
+`qa_string_id` and compares current authored classname IDs. Every Q1, Q2 and
+application caller passes a load-bound ID (or zero for unfiltered traversal).
+Q2's map-find and matching-start helpers use the same ID boundary. Target-router
+monster and door rules bind their constants at creation; the router's named-text
+helper is deleted. Native tick, target-order and legacy module semantics remain
+unchanged. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-authored-target-ids-20261011-{build,core}.log`. The bot-goal
+classname selector is the remaining listed site in names finding 3.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

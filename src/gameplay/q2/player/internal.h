@@ -71,7 +71,7 @@ bool q2_player_publish_inventory(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_player_update_chase(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_player_coop_respawn(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_player_obituary(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_error *);
-bool q2_map_find(qa_q2_game *, const char *classname, qa_string_id target, size_t ordinal,
+bool q2_map_find(qa_q2_game *, qa_string_id classname, qa_string_id target, size_t ordinal,
                  qa_actor_id *);
 uint32_t q2_map_flags(qa_q2_game *, qa_actor_id);
 bool q2_player_trace(qa_q2_game *, qa_actor_id, qa_vec3, qa_vec3, const qa_bounds *, uint32_t,

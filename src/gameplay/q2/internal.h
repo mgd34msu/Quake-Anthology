@@ -23,7 +23,18 @@
     X(MONSTER_GEKK, "monster_gekk") \
     X(BODYQUE, "bodyque") \
     X(WORLDSPAWN, "worldspawn") \
-    X(GIB, "gib")
+    X(GIB, "gib") \
+    X(FUNC_WATER, "func_water") \
+    X(INFO_PLAYER_COOP, "info_player_coop") \
+    X(INFO_PLAYER_COOP_LAVA, "info_player_coop_lava") \
+    X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
+    X(INFO_PLAYER_INTERMISSION, "info_player_intermission") \
+    X(INFO_PLAYER_START, "info_player_start") \
+    X(INFO_PLAYER_TEAM1, "info_player_team1") \
+    X(INFO_PLAYER_TEAM2, "info_player_team2") \
+    X(LIGHT, "light") \
+    X(MISC_VIPER, "misc_viper") \
+    X(TARGET_CHANGELEVEL, "target_changelevel")
 
 typedef enum q2_runtime_name {
 #define Q2_RUNTIME_NAME_ENUM(key, text) Q2_NAME_##key,

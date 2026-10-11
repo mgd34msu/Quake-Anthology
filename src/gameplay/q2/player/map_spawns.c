@@ -152,7 +152,7 @@ bool q2_player_map_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_e
             return false;
         qa_actor_id id;
         qa_target_cursor cursor = {0};
-        while (qa_targets_next_authored(g->entity_runtime->services.targets, "info_player_start",
+        while (qa_targets_next_authored(g->entity_runtime->services.targets, g->runtime_names[Q2_NAME_INFO_PLAYER_START],
                                         &cursor, &id)) {
             qa_authored_target fields;
             qa_body_state start;

@@ -113,7 +113,7 @@ out:
 static bool look_at(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 *angles, qa_error *e) {
     qa_actor_id target;
     qa_string_id path = q2_field_id(g, a->entity, "pathtarget");
-    if (!path || !q2_map_find(g, NULL, path, 0, &target))
+    if (!path || !q2_map_find(g, 0, path, 0, &target))
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, target, &body, e))

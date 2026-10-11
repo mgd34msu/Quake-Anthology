@@ -54,6 +54,15 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
         return NULL;
     }
     targets->options = *options;
+    static const char *const runtime_names[TARGET_NAME_COUNT] = {
+        "monster_zombie", "func_areaportal", "func_door", "func_door_rotating"
+    };
+    for (unsigned i = 0; i < TARGET_NAME_COUNT; ++i)
+        if (!qa_strings_intern_cstr(qa_session_strings(options->session), runtime_names[i],
+                                    &targets->runtime_names[i], error)) {
+            qa_targets_destroy(targets);
+            return NULL;
+        }
     targets->capacity = qa_actors_capacity(qa_session_actors(options->session));
     targets->bindings = calloc(targets->capacity, sizeof(*targets->bindings));
     targets->monsters = calloc(targets->capacity, sizeof(*targets->monsters));
@@ -177,9 +186,8 @@ bool qa_targets_monster_admit(qa_targets *targets, qa_actor_id actor,
         .authored = *authored};
     if (!targets->monster_resolve || !targets->monster_resolve(targets->monster_context,
         authored->owner, &row->mission, error)) { free(row); return false; }
-    const char *classname = qa_strings_cstr(qa_session_strings(targets->options.session), authored->fields.classname);
     bool zombie = (authored->source == QA_RULESET_NETQUAKE || authored->source == QA_RULESET_QUAKEWORLD) &&
-        classname && !strcmp(classname, "monster_zombie");
+        authored->fields.classname == targets->runtime_names[TARGET_NAME_MONSTER_ZOMBIE];
     row->mission.ambush = (authored->spawnflags & (zombie ? 2u : 1u)) != 0;
     if (authored->barrier_count) {
         row->authored.barriers = malloc(authored->barrier_count * sizeof(*authored->barriers));
@@ -512,7 +520,7 @@ bool qa_targets_pick(qa_targets *targets, qa_string_id name, uint32_t random, si
     *out = targets->index[at + random % count].actor;
     return true;
 }
-bool qa_targets_next_authored(qa_targets *targets, const char *classname, qa_target_cursor *cursor,
+bool qa_targets_next_authored(qa_targets *targets, qa_string_id classname, qa_target_cursor *cursor,
                               qa_actor_id *out) {
     size_t at = 0;
     if (cursor->started) {
@@ -535,12 +543,8 @@ bool qa_targets_next_authored(qa_targets *targets, const char *classname, qa_tar
         qa_authored_target fields;
         if (!qa_targets_read(targets, actor, &fields))
             continue;
-        if (classname) {
-            const char *name =
-                qa_strings_cstr(qa_session_strings(targets->options.session), fields.classname);
-            if (!name || strcmp(name, classname))
-                continue;
-        }
+        if (classname && fields.classname != classname)
+            continue;
         *cursor = (qa_target_cursor){current.order, current.slot, true};
         *out = actor;
         return true;
@@ -592,10 +596,6 @@ bool qa_targets_invoke(qa_targets *targets, qa_actor_id actor, qa_actor_id other
         return true;
     use_invocation use = {targets, *entry, targets->binding_serial[actor.slot], other, activator};
     return qa_session_invoke(targets->options.session, actor, QA_INVOKE_USE, invoke, &use, error);
-}
-static bool named(const qa_targets *targets, qa_string_id id, const char *text) {
-    const char *value = qa_strings_cstr(qa_session_strings(targets->options.session), id);
-    return value && !strcmp(value, text);
 }
 static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error) {
     bool q1 = request.dialect == QA_RULESET_NETQUAKE || request.dialect == QA_RULESET_QUAKEWORLD;
@@ -669,9 +669,9 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
             } else {
                 qa_authored_target destination;
                 bool skip_portal = !q3 && qa_targets_read(targets, current, &destination) &&
-                                   named(targets, destination.classname, "func_areaportal") &&
-                                   (named(targets, request.fields.classname, "func_door") ||
-                                    named(targets, request.fields.classname, "func_door_rotating"));
+                                   (destination.classname == targets->runtime_names[TARGET_NAME_FUNC_AREAPORTAL]) &&
+                                   ((request.fields.classname == targets->runtime_names[TARGET_NAME_FUNC_DOOR]) ||
+                                    (request.fields.classname == targets->runtime_names[TARGET_NAME_FUNC_DOOR_ROTATING]));
                 if (!skip_portal &&
                     !qa_targets_invoke(targets, current, request.source, request.activator, error))
                     return false;

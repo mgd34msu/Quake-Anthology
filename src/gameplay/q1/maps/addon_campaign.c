@@ -44,7 +44,7 @@ static bool activate_coop_spawns(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return okay;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
-    while (qa_targets_next_authored(g->maps->options.targets, "info_player_coop", &cursor, &actor)) {
+    while (qa_targets_next_authored(g->maps->options.targets, g->runtime_names[Q1_NAME_INFO_PLAYER_COOP], &cursor, &actor)) {
         q1_actor *point = campaign_actor(g, actor);
         if (!point || point->map->kind != Q1_MAP_COOP_POINT)
             continue;
@@ -268,7 +268,7 @@ bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator
     qa_actor_id id = e->id;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
-    while (qa_targets_next_authored(g->maps->options.targets, NULL, &cursor, &actor)) {
+    while (qa_targets_next_authored(g->maps->options.targets, 0, &cursor, &actor)) {
         if (!campaign_actor(g, id))
             return true;
         q1_actor *rune = campaign_actor(g, actor);
@@ -294,7 +294,7 @@ bool q1_map_addon_electrode_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
     float count = e->map->counter_value;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
-    while (qa_targets_next_authored(g->maps->options.targets, "mge2m2_electrode_target",
+    while (qa_targets_next_authored(g->maps->options.targets, g->runtime_names[Q1_NAME_MGE2M2_ELECTRODE_TARGET],
                                     &cursor, &actor)) {
         double target_count;
         if (!campaign_actor(g, id))

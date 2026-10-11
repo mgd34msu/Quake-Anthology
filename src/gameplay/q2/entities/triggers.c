@@ -276,7 +276,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
             return true;
         qa_actor_id destination;
         qa_body_state to;
-        if (!q2_map_find(g, NULL, s->target, 0, &destination))
+        if (!q2_map_find(g, 0, s->target, 0, &destination))
             return true;
         if (!qa_world_body_read(g->services.world, destination, &to, e))
             return false;

@@ -149,7 +149,11 @@
     X(TRIGGER_ONCE, "trigger_once") \
     X(TRIGGER_SECRET, "trigger_secret") \
     X(TRIGGER_TELEPORT, "trigger_teleport") \
-    X(WORLDSPAWN, "worldspawn")
+    X(WORLDSPAWN, "worldspawn") \
+    X(INFO_PLAYER_COOP, "info_player_coop") \
+    X(MGE2M2_ELECTRODE_TARGET, "mge2m2_electrode_target") \
+    X(TRIGGER_MUSIC, "trigger_music")
+
 typedef enum q1_runtime_name {
 #define Q1_RUNTIME_NAME_ENUM(key, text) Q1_NAME_##key,
     Q1_RUNTIME_NAME_LIST(Q1_RUNTIME_NAME_ENUM)

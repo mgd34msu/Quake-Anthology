@@ -144,15 +144,15 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         s->rule.spawned = false;
         qa_actor_id camera = {0};
         size_t cameras = 0;
-        while (q2_map_find(g, "info_player_intermission", UINT32_MAX, cameras, &camera))
+        while (q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_INTERMISSION], UINT32_MAX, cameras, &camera))
             cameras++;
         if (cameras)
-            q2_map_find(g, "info_player_intermission", UINT32_MAX,
+            q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_INTERMISSION], UINT32_MAX,
                         (size_t)(q2_random(g) * 4) % cameras, &camera);
         if (!camera.registry)
-            q2_map_find(g, "info_player_start", UINT32_MAX, 0, &camera);
+            q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_START], UINT32_MAX, 0, &camera);
         if (!camera.registry)
-            q2_map_find(g, "info_player_deathmatch", UINT32_MAX, 0, &camera);
+            q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_DEATHMATCH], UINT32_MAX, 0, &camera);
         qa_body_state view = {0};
         if (!qa_world_body_read(g->services.world, id, &body, e) ||
             (camera.registry && !qa_world_body_read(g->services.world, camera, &view, e)))

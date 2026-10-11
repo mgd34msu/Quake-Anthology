@@ -81,6 +81,7 @@ typedef struct application_provider {
     qa_catalog *product_catalog;
     qa_actor_owner owner;
     qa_string_id content_name;
+    qa_string_id trigger_teleport_class;
     qa_source_frame event_retirement_frame;
     bool event_retirement_frame_present;
     bool event_activation_deferred, event_activation_bound;

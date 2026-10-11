@@ -627,9 +627,8 @@ bool q2_entity_radius(qa_q2_game *g, q2_actor *a, qa_actor_id credit, float amou
     r.prepare = q2_prepare_radius_damage;
     return q2_radius_damage(g, &r, NULL, e);
 }
-bool q2_map_find(qa_q2_game *g, const char *classname, qa_string_id target, size_t ordinal,
+bool q2_map_find(qa_q2_game *g, qa_string_id classname, qa_string_id target, size_t ordinal,
                  qa_actor_id *out) {
-    qa_strings *strings = qa_session_strings(g->services.session);
     qa_targets *targets = g->entity_runtime->services.targets;
     if (!targets)
         return false;
@@ -641,8 +640,7 @@ bool q2_map_find(qa_q2_game *g, const char *classname, qa_string_id target, size
             if (classname) {
                 if (!qa_targets_read(targets, id, &fields))
                     continue;
-                const char *name = qa_strings_cstr(strings, fields.classname);
-                if (!name || strcmp(name, classname))
+                if (fields.classname != classname)
                     continue;
             }
             if (!ordinal--) {
@@ -671,7 +669,7 @@ bool q2_entity_pick(qa_q2_game *g, qa_string_id target, qa_actor_id *out) {
     size_t n = 0;
     if (!target)
         return false;
-    while (n < 8 && q2_map_find(g, NULL, target, n, &ids[n]))
+    while (n < 8 && q2_map_find(g, 0, target, n, &ids[n]))
         n++;
     if (!n)
         return false;

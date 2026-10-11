@@ -53,13 +53,13 @@ static bool show(qa_q2_game *g, q2_actor *a, qa_error *e) {
         light.fade_end = q2_field_float(g, s, "shadowlightendfadedistance", 0);
         light.style = qa_source_float_to_i32(q2_field_float(g, s, "shadowlightstyle", -1));
         qa_actor_id style;
-        if (q2_map_find(g, NULL, q2_field_id(g, s, "shadowlightstyletarget"), 0, &style)) {
+        if (q2_map_find(g, 0, q2_field_id(g, s, "shadowlightstyletarget"), 0, &style)) {
             q2_actor *owner = q2_ent(g, style);
             if (owner)
                 light.style = owner->entity->style;
         }
         qa_actor_id target;
-        if (s->target && q2_map_find(g, NULL, s->target, 0, &target)) {
+        if (s->target && q2_map_find(g, 0, s->target, 0, &target)) {
             qa_body_state to;
             if (!qa_world_body_read(g->services.world, target, &to, e))
                 return false;

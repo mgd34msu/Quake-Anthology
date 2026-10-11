@@ -191,13 +191,13 @@ bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_land
     if (!rr || !p->camera_set) {
         size_t count = 0;
         qa_actor_id spot = {0};
-        while (q2_map_find(g, "info_player_intermission", UINT32_MAX, count, &spot))
+        while (q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_INTERMISSION], UINT32_MAX, count, &spot))
             count++;
         if (count) {
             size_t choice = rr ? q2_random_bounded(g, 4) : (size_t)(q2_random(g) * 4);
-            q2_map_find(g, "info_player_intermission", UINT32_MAX, choice % count, &spot);
-        } else if (!q2_map_find(g, "info_player_start", UINT32_MAX, 0, &spot) &&
-                   !q2_map_find(g, "info_player_deathmatch", UINT32_MAX, 0, &spot)) {
+            q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_INTERMISSION], UINT32_MAX, choice % count, &spot);
+        } else if (!q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_START], UINT32_MAX, 0, &spot) &&
+                   !q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_DEATHMATCH], UINT32_MAX, 0, &spot)) {
             qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 intermission has no camera or spawn");
             return false;
         }

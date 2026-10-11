@@ -125,9 +125,9 @@ bool qa_targets_first(qa_targets *, qa_string_id name, qa_actor_id *);
  * callbacks may remove, add or rename targets between calls. Tied source slots
  * remain distinct through their shared host slots. */
 bool qa_targets_next(qa_targets *, qa_string_id name, qa_target_cursor *, qa_actor_id *);
-/* Source-order traversal also includes unnamed authored actors. A null class
+/* Source-order traversal also includes unnamed authored actors. A zero class
  * accepts every binding; otherwise the owner's current classname must match. */
-bool qa_targets_next_authored(qa_targets *, const char *classname, qa_target_cursor *,
+bool qa_targets_next_authored(qa_targets *, qa_string_id classname, qa_target_cursor *,
                               qa_actor_id *);
 bool qa_targets_pick(qa_targets *, qa_string_id name, uint32_t random, size_t maximum_choices,
                      qa_actor_id *);

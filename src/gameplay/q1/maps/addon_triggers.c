@@ -116,7 +116,7 @@ static bool change_targets(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_string_id old = e->target, replacement = e->killtarget;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
-    while (qa_targets_next_authored(g->maps->options.targets, NULL, &cursor, &actor)) {
+    while (qa_targets_next_authored(g->maps->options.targets, 0, &cursor, &actor)) {
         if (!trigger(g, id))
             return true;
         qa_authored_target fields;

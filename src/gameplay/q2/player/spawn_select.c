@@ -138,7 +138,7 @@ static bool clear_spawn(qa_q2_game *g, qa_actor_id spot, qa_bounds bounds, bool 
     *clear = !hit.start_solid;
     return true;
 }
-static bool matching_start(qa_q2_game *g, const char *classname, qa_string_id target, size_t index,
+static bool matching_start(qa_q2_game *g, qa_string_id classname, qa_string_id target, size_t index,
                            qa_actor_id *out, qa_error *e) {
     *out = (qa_actor_id){0};
     qa_target_cursor cursor = {0};
@@ -160,14 +160,14 @@ static bool matching_start(qa_q2_game *g, const char *classname, qa_string_id ta
 }
 static bool single_spawn(qa_q2_game *g, qa_string_id target, bool rr, qa_actor_id *out,
                          qa_error *e) {
-    if (!matching_start(g, "info_player_start", target, 0, out, e))
+    if (!matching_start(g, g->runtime_names[Q2_NAME_INFO_PLAYER_START], target, 0, out, e))
         return false;
     if (out->registry)
         return true;
-    if (rr && !matching_start(g, "info_player_start", 0, 0, out, e))
+    if (rr && !matching_start(g, g->runtime_names[Q2_NAME_INFO_PLAYER_START], 0, 0, out, e))
         return false;
     if (!out->registry && (rr || target == 0))
-        q2_map_find(g, "info_player_start", UINT32_MAX, 0, out);
+        q2_map_find(g, g->runtime_names[Q2_NAME_INFO_PLAYER_START], UINT32_MAX, 0, out);
     return true;
 }
 static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_actor_id *out,
@@ -177,10 +177,14 @@ static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_a
     qa_actor_id id = {0};
     qa_targets *targets = g->entity_runtime->services.targets;
     qa_target_cursor cursor = {0};
-    while (qa_targets_next_authored(targets, "info_player_deathmatch", &cursor, &id))
+    while (qa_targets_next_authored(targets, g->runtime_names[Q2_NAME_INFO_PLAYER_DEATHMATCH], &cursor, &id))
         count++;
-    const char *names[] = {"info_player_deathmatch", "info_player_team1", "info_player_team2",
-                           "info_player_start"};
+    const qa_string_id names[] = {
+        g->runtime_names[Q2_NAME_INFO_PLAYER_DEATHMATCH],
+        g->runtime_names[Q2_NAME_INFO_PLAYER_TEAM1],
+        g->runtime_names[Q2_NAME_INFO_PLAYER_TEAM2],
+        g->runtime_names[Q2_NAME_INFO_PLAYER_START]
+    };
     size_t first = 0, last = 1;
     if (!count && rr) {
         first = 1;
@@ -356,7 +360,7 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
     qa_targets *targets = g->entity_runtime->services.targets;
     qa_target_cursor cursor = {0};
     qa_actor_id id;
-    while (qa_targets_next_authored(targets, "func_water", &cursor, &id)) {
+    while (qa_targets_next_authored(targets, g->runtime_names[Q2_NAME_FUNC_WATER], &cursor, &id)) {
         if (!(q2_map_flags(g, id) & 2))
             continue;
         qa_body_state body;
@@ -382,7 +386,7 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
     bool okay = false;
     cursor = (qa_target_cursor){0};
     for (size_t i = 0;
-         i < 64 && qa_targets_next_authored(targets, "info_player_coop_lava", &cursor, &id); i++) {
+         i < 64 && qa_targets_next_authored(targets, g->runtime_names[Q2_NAME_INFO_PLAYER_COOP_LAVA], &cursor, &id); i++) {
         qa_body_state body;
         float distance;
         if (!qa_world_body_read(g->services.world, id, &body, e))
@@ -407,7 +411,7 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
         return lava_spawn(g, out, e);
     qa_actor_id first = {0}, match = {0};
     if (!single_spawn(g, target, true, &first, e) ||
-        !matching_start(g, "info_player_coop", target, 0, &match, e))
+        !matching_start(g, g->runtime_names[Q2_NAME_INFO_PLAYER_COOP], target, 0, &match, e))
         return false;
     qa_string_id coop_target = match.registry ? target : 0;
     qa_builtin_snapshot_frame *players = q2_player_roster(g, e);
@@ -417,7 +421,7 @@ static bool select_coop(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_string_
     for (int pass = 0; pass < 2 && !out->registry; pass++)
         for (size_t i = 0;; i++) {
             qa_actor_id candidate = first;
-            if (i && !matching_start(g, "info_player_coop", coop_target, i - 1, &candidate, e))
+            if (i && !matching_start(g, g->runtime_names[Q2_NAME_INFO_PLAYER_COOP], coop_target, i - 1, &candidate, e))
                 goto done;
             if (!candidate.registry) {
                 if (i)
@@ -506,7 +510,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
             if (!select_coop(g, a, m->standing_bounds, target, &spot, e))
                 return false;
         } else if (s->info.slot &&
-                   !matching_start(g, "info_player_coop", target, s->info.slot - 1, &spot, e))
+                   !matching_start(g, g->runtime_names[Q2_NAME_INFO_PLAYER_COOP], target, s->info.slot - 1, &spot, e))
             return false;
     }
     if (!spot.registry && (!rr || (!g->options.deathmatch && !g->options.cooperative)) &&

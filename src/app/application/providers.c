@@ -106,8 +106,11 @@ bool application_provider_prepare(qa_application *application,
                                 "invalid application provider selection");
     *out = NULL;
     qa_actor_owner owner;
+    qa_string_id trigger_teleport;
     if (!qa_strings_intern_cstr(qa_session_strings(application->session),
-                                launch->selection.instance, &owner, error))
+                                launch->selection.instance, &owner, error) ||
+        !qa_strings_intern_cstr(qa_session_strings(application->session),
+                                "trigger_teleport", &trigger_teleport, error))
         return false;
     application_provider *provider = calloc(1, sizeof(*provider));
     if (provider == NULL)
@@ -115,6 +118,7 @@ bool application_provider_prepare(qa_application *application,
                                 "cannot allocate application provider");
     provider->application = application;
     provider->owner = owner;
+    provider->trigger_teleport_class = trigger_teleport;
     if (!kind_for(launch, &provider->kind, error)) {
         free(provider);
         return false;

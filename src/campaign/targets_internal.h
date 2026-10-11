@@ -17,8 +17,13 @@ typedef struct target_monster {
     qa_monster_mission mission;
     qa_authored_monster authored;
 } target_monster;
+typedef enum target_name {
+    TARGET_NAME_MONSTER_ZOMBIE, TARGET_NAME_FUNC_AREAPORTAL,
+    TARGET_NAME_FUNC_DOOR, TARGET_NAME_FUNC_DOOR_ROTATING, TARGET_NAME_COUNT
+} target_name;
 struct qa_targets {
     qa_target_options options;
+    qa_string_id runtime_names[TARGET_NAME_COUNT];
     qa_target_binding *bindings;
     target_monster **monsters;
     void *monster_context;

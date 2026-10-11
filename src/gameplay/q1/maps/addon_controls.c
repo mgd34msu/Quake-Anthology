@@ -75,7 +75,7 @@ static bool door_group(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_err
     qa_string_id category = e->map->category;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
-    while (qa_targets_next_authored(g->maps->options.targets, NULL, &cursor, &actor)) {
+    while (qa_targets_next_authored(g->maps->options.targets, 0, &cursor, &actor)) {
         qa_target_field field;
         if (!control(g, id))
             return true;
@@ -106,7 +106,7 @@ static bool music(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
-    while (control(g, id) && qa_targets_next_authored(g->maps->options.targets, "trigger_music", &cursor, &actor)) {
+    while (control(g, id) && qa_targets_next_authored(g->maps->options.targets, g->runtime_names[Q1_NAME_TRIGGER_MUSIC], &cursor, &actor)) {
         q1_actor *target = control(g, actor);
         if (target && target->map->kind == Q1_MAP_ADDON_MUSIC)
             target->map->sounds = track;
@@ -342,7 +342,7 @@ static bool cutscene(qa_q1_game *g, q1_actor *e, qa_error *error) {
     e->map->touch_enabled = false;
     qa_target_cursor cursor = {0};
     qa_actor_id camera;
-    if (!qa_targets_next_authored(g->maps->options.targets, "info_intermission", &cursor, &camera))
+    if (!qa_targets_next_authored(g->maps->options.targets, g->runtime_names[Q1_NAME_INFO_INTERMISSION], &cursor, &camera))
         return q1_map_fail(error, "Q1 addon cutscene has no intermission camera");
     qa_body_state body;
     qa_vec3 angles = qa_v3(0, 0, 0);

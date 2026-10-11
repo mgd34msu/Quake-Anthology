@@ -45,7 +45,7 @@ bool qa_q2_players_end_deathmatch_level(qa_q2_game *game,qa_error *error) {
             if(configured && *configured) next=configured;
             else {
                 qa_actor_id changelevel;
-                if(q2_map_find(game,"target_changelevel",UINT32_MAX,0,&changelevel)) {
+                if(q2_map_find(game,game->runtime_names[Q2_NAME_TARGET_CHANGELEVEL],UINT32_MAX,0,&changelevel)) {
                     q2_actor *source=q2_actor_get(game,changelevel,false,NULL);
                     const char *authored=source && source->entity?qa_strings_cstr(strings,source->entity->map):NULL;
                     if(authored && *authored) next=authored;

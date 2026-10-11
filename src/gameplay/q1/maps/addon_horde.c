@@ -9,7 +9,7 @@ bool q1_map_horde_present(qa_q1_game *g) {
         return false;
     qa_target_cursor cursor = {0};
     qa_actor_id id;
-    while (qa_targets_next_authored(g->maps->options.targets, "horde_manager", &cursor, &id)) {
+    while (qa_targets_next_authored(g->maps->options.targets, g->runtime_names[Q1_NAME_HORDE_MANAGER], &cursor, &id)) {
         q1_actor *manager = authored(g, id);
         if (manager && manager->native && manager->map->kind == Q1_MAP_HORDE_MANAGER)
             return true;
@@ -88,7 +88,7 @@ static bool layout(qa_q1_game *g, qa_horde_options *out, qa_horde_point *points,
     qa_target_cursor cursor = {0};
     qa_actor_id id;
     q1_actor *manager = NULL;
-    while (qa_targets_next_authored(g->maps->options.targets, "horde_manager", &cursor, &id)) {
+    while (qa_targets_next_authored(g->maps->options.targets, g->runtime_names[Q1_NAME_HORDE_MANAGER], &cursor, &id)) {
         q1_actor *e = authored(g, id);
         if (e && e->map->kind == Q1_MAP_HORDE_MANAGER) {
             manager = e;
@@ -103,7 +103,7 @@ static bool layout(qa_q1_game *g, qa_horde_options *out, qa_horde_point *points,
                                 .skill = g->options.skill, .world_type = g->options.world_type,
                                 .cooperative = g->options.coop};
     cursor = (qa_target_cursor){0};
-    while (qa_targets_next_authored(g->maps->options.targets, NULL, &cursor, &id)) {
+    while (qa_targets_next_authored(g->maps->options.targets, 0, &cursor, &id)) {
         q1_actor *e = authored(g, id);
         if (!e || e->map->kind == Q1_MAP_HORDE_MANAGER)
             continue;

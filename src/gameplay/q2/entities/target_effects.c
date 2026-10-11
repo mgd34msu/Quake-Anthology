@@ -131,7 +131,7 @@ static bool laser_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     if (!s->enemy.registry) {
         if (s->target)
-            q2_map_find(g, NULL, s->target, 0, &s->enemy);
+            q2_map_find(g, 0, s->target, 0, &s->enemy);
         else {
             s->direction = q2_movedir(b.angles);
             b.angles = qa_v3(0, 0, 0);
@@ -222,7 +222,7 @@ static bool steam_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
     if (s->target)
-        q2_map_find(g, NULL, s->target, 0, &s->enemy);
+        q2_map_find(g, 0, s->target, 0, &s->enemy);
     else {
         s->direction = q2_movedir(b.angles);
         b.angles = qa_v3(0, 0, 0);
@@ -423,7 +423,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
         if (!q2_actor_live(g, s->enemy)) {
             size_t n = 0;
             qa_actor_id target;
-            while (q2_map_find(g, "light", s->target, n++, &target))
+            while (q2_map_find(g, g->runtime_names[Q2_NAME_LIGHT], s->target, n++, &target))
                 s->enemy = target;
             if (!s->enemy.registry)
                 return qa_session_release(g->services.session, a->id, e);
@@ -541,7 +541,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
         return kill_players(g, a, e);
     case Q2E_ANGER: {
         qa_actor_id target;
-        if (!s->target || !q2_map_find(g, NULL, s->killtarget, 0, &target))
+        if (!s->target || !q2_map_find(g, 0, s->killtarget, 0, &target))
             return true;
         const qa_actor_record *record =
             qa_actors_get(qa_session_actors(g->services.session), target);

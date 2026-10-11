@@ -1545,7 +1545,7 @@ static bool monster_nearby(monster_placement_query *query, qa_body_state *out, b
 static bool monster_teleport_staging(application_provider *map, const qa_body_state *body)
 {
     qa_target_cursor cursor = {0}; qa_actor_id trigger;
-    while (qa_targets_next_authored(map->application->targets, "trigger_teleport", &cursor, &trigger)) {
+    while (qa_targets_next_authored(map->application->targets, map->trigger_teleport_class, &cursor, &trigger)) {
         qa_authored_target fields; qa_linked_body linked; qa_actor_collision collision; double flags = 0;
         qa_actor_id destination;
         if (!qa_targets_read(map->application->targets, trigger, &fields) || !fields.targetname ||

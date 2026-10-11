@@ -253,7 +253,7 @@ static void reset_clock(q2_entity_state *s) {
 }
 static bool clock_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
-    if (!q2_actor_live(g, s->enemy) && !q2_map_find(g, NULL, s->target, 0, &s->enemy))
+    if (!q2_actor_live(g, s->enemy) && !q2_map_find(g, 0, s->target, 0, &s->enemy))
         return true;
     char text[64];
     int value = s->clock_value;
@@ -788,7 +788,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
         return clock_tick(g, a, e);
     case Q2S_BOMB: {
         qa_actor_id viper;
-        if (!q2_map_find(g, "misc_viper", UINT32_MAX, 0, &viper))
+        if (!q2_map_find(g, g->runtime_names[Q2_NAME_MISC_VIPER], UINT32_MAX, 0, &viper))
             return true;
         q2_actor *ship = q2_ent(g, viper);
         if (!ship || !ship->entity->mover)
@@ -811,7 +811,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
     }
     case Q2S_MISSILE: {
         qa_actor_id target;
-        if (!q2_map_find(g, NULL, s->target, 0, &target))
+        if (!q2_map_find(g, 0, s->target, 0, &target))
             return true;
         qa_body_state from, to;
         if (!qa_world_body_read(g->services.world, a->id, &from, e) ||
@@ -966,7 +966,7 @@ bool q2_scenery_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
             return true;
         qa_actor_id destination;
         qa_body_state body;
-        if (!q2_map_find(g, NULL, s->target, 0, &destination))
+        if (!q2_map_find(g, 0, s->target, 0, &destination))
             return true;
         if (!qa_world_body_read(g->services.world, destination, &body, e))
             return false;
