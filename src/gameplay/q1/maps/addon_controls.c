@@ -55,8 +55,7 @@ static bool door_relay(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_err
             continue;
         if (!control(g, id) || !q1_alive(g, actor))
             continue;
-        const char *classname = qa_strings_cstr(qa_session_strings(g->services.session), fields.classname);
-        if (!classname || (strcmp(classname, "func_door") && strcmp(classname, "func_button")))
+        if (fields.classname!=g->runtime_names[Q1_NAME_FUNC_DOOR]&&fields.classname!=g->runtime_names[Q1_NAME_FUNC_BUTTON])
             continue;
         q1_actor *target = q1_entity(g, actor);
         if (target && target->map &&

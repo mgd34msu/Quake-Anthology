@@ -36,7 +36,7 @@ bool application_source_intermission_read(application_provider *source,
         if (!qa_q3_source_match_state_read(source->state.q3, &match, error)) return false;
         intermission = match.intermission_time_ms != 0;
     } else if (source->kind == APPLICATION_PROVIDER_QC) {
-        const qa_qc_definition *definition = qa_qc_program_find_global(source->state.qc.program, "intermission_running");
+        const qa_qc_definition *definition = qa_qc_program_resolved_globals(source->state.qc.program)->intermission_running;
         if (definition) {
             float value;
             if (definition->type != QA_QC_FLOAT)

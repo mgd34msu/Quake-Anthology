@@ -162,7 +162,7 @@ static bool basis_current(const qa_native_q3_remote_client_services *services)
     const qa_native_q3_remote_client_basis *basis = &services->basis;
     application_provider *provider = receiver(basis->application, basis->client.receiver);
     qa_application_q3_remote_source source;
-    qa_q3_product product = provider && provider->product && !strcmp(provider->product->campaign, "missionpack") ?
+    qa_q3_product product = provider && provider->product && provider->product->campaign_id==QA_CAMPAIGN_MISSIONPACK ?
         QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     return provider && provider->constructed && provider->attached && !provider->close_pending &&
         provider->kind == APPLICATION_PROVIDER_Q3 && provider->launch &&

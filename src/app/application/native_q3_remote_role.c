@@ -496,7 +496,7 @@ bool application_native_q3_remote_role_product(application_provider *provider, u
     struct application_native_q3_remote_role *row = find(provider, seat);
     if (!native_receiver(provider) || !row || row->retiring || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT product lost its real compiled receiver");
-    *out = !strcmp(provider->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA; return true;
+    *out = provider->product->campaign_id==QA_CAMPAIGN_MISSIONPACK ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA; return true;
 }
 bool application_native_q3_remote_role_source_read(application_provider *provider, uint32_t seat, uint64_t epoch,
     qa_application_q3_remote_source *out, qa_error *error)

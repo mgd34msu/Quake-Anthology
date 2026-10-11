@@ -34,6 +34,7 @@
     X(INFO_PLAYER_START, "info_player_start") \
     X(INFO_PLAYER_TEAM1, "info_player_team1") \
     X(INFO_PLAYER_TEAM2, "info_player_team2") \
+    X(MISC_TELEPORTER_DEST, "misc_teleporter_dest") \
     X(LIGHT, "light") \
     X(MISC_VIPER, "misc_viper") \
     X(TARGET_CHANGELEVEL, "target_changelevel") \

@@ -218,8 +218,7 @@ bool q1_map_hip_trigger_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other
         if (!native && g->services.actor_traits &&
             g->services.actor_traits(g->services.context, other, &traits))
             classname = traits.classname;
-        qa_bytes name = qa_strings_text(qa_session_strings(g->services.session), classname);
-        bool monster = name.size >= 8 && !memcmp(name.data, "monster_", 8);
+        bool monster = (qa_strings_name_flags(qa_session_strings(g->services.session),classname)&QA_NAME_MONSTER)!=0;
         entity = trigger(g, id);
         if (!entity || (player && !(entity->spawnflags & 2)) ||
             (monster && !(entity->spawnflags & 1)))

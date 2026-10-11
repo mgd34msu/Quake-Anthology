@@ -790,8 +790,19 @@ Names item 17: bot runtime creation binds droppedweight, bot_developer,
 bot_testichat and bot_testrchat to stable variable pointers. Goal evaluation,
 diagnostics and chat decisions read those pointers. Restore rebinds after
 replacing the library variable store; shutdown clears the pointers. Normal
-build and seven core suites pass. Names items 1-17 are migrated at the
-audited sites. The cvars kind and later kinds remain open.
+build and seven core suites pass. The later supervisor names sweep found
+additional runtime callers outside the original cited sites. Names adoption
+remains open; cvars work is deferred until that list is complete.
+
+Names leftovers items 2, 3 and 15: QC program admission resolves
+intermission_running; presentation reads the retained global offset. The shared
+string table classifies authored classname prefixes once at admission. Mine
+scans and Hipnotic remove-trigger touches read those stored flags; relay doors
+and horde zombie spawns compare retained IDs. Bot queries and remote Q3 client
+role reads use the catalog campaign ID. The replaced runtime text comparisons
+are deleted. The normal build and seven core suites pass. Names leftovers
+items 5, 6, 8, 10-14 and the remaining native callback metadata in item 16
+still require migration. Item 17 uses bound bot variable pointers.
 
 ## Scalar numeric callers
 

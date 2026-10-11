@@ -45,6 +45,7 @@
     X(FUNC_COUNTER, "func_counter") \
     X(FUNC_CTF_WALL, "func_ctf_wall") \
     X(FUNC_DOOR, "func_door") \
+    X(FUNC_BUTTON, "func_button") \
     X(FUNC_EPISODEGATE, "func_episodegate") \
     X(FUNC_ILLUSIONARY, "func_illusionary") \
     X(FUNC_MULTI_EXPLODER, "func_multi_exploder") \

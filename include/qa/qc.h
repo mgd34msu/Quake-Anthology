@@ -159,7 +159,7 @@ typedef struct qa_qc_game_fields {
     X(trace_plane_normal) X(trace_plane_dist) X(trace_ent) X(trace_inopen) X(trace_inwater) \
     X(msg_entity) X(force_retouch) X(serverflags) X(mapname) \
     X(total_secrets) X(total_monsters) X(found_secrets) X(killed_monsters) \
-    X(skill) X(deathmatch) X(coop) X(teamplay) X(armortype)
+    X(skill) X(deathmatch) X(coop) X(teamplay) X(armortype) X(intermission_running)
 typedef struct qa_qc_engine_globals {
 #define QA_QC_ENGINE_GLOBAL(name) const qa_qc_definition *name;
     QA_QC_ENGINE_GLOBAL_LIST(QA_QC_ENGINE_GLOBAL)

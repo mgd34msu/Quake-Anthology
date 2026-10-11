@@ -43,14 +43,12 @@ static bool player_start(qa_q2_game *g, qa_actor_id id) {
     if (g->services.actor_traits == NULL ||
         !g->services.actor_traits(g->services.context, id, &traits))
         return false;
-    const char *name = qa_strings_cstr(qa_session_strings(g->services.session), traits.classname);
-    if (name == NULL)
-        return false;
+    qa_string_id name=traits.classname;
     if (g->options.edition == QA_Q2_RERELEASE)
-        return strncmp(name, "info_player_", 12) == 0 ||
-               strcmp(name, "misc_teleporter_dest") == 0 || strncmp(name, "item_flag_", 10) == 0;
-    return strcmp(name, "info_player_deathmatch") == 0 || strcmp(name, "info_player_start") == 0 ||
-           strcmp(name, "info_player_coop") == 0 || strcmp(name, "misc_teleporter_dest") == 0;
+        return (qa_strings_name_flags(qa_session_strings(g->services.session),name)&(QA_NAME_PLAYER_START|QA_NAME_ITEM_FLAG))!=0 ||
+            name==g->runtime_names[Q2_NAME_MISC_TELEPORTER_DEST];
+    return name==g->runtime_names[Q2_NAME_INFO_PLAYER_DEATHMATCH] || name==g->runtime_names[Q2_NAME_INFO_PLAYER_START] ||
+        name==g->runtime_names[Q2_NAME_INFO_PLAYER_COOP] || name==g->runtime_names[Q2_NAME_MISC_TELEPORTER_DEST];
 }
 static bool mine_sound(qa_q2_game *g, q2_actor *a, const char *path, int channel, float attenuation,
                        qa_error *e) {

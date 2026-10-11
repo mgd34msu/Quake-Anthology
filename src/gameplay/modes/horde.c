@@ -588,7 +588,7 @@ static bool spawn_squad(qa_modes *m, mode_instance *v, horde_state *h, qa_error 
             return mode_fail(e, "Horde monster provider returned no live actor");
         h->monsters[actor.slot] =
             (horde_monster){.actor = actor,
-                .zombie = strcmp(s.members[i].name, "zombie") == 0};
+                .zombie = classname==m->runtime_names[MODE_NAME_MONSTER_ZOMBIE]};
     }
     if (category == 0)
         --h->value.fodder;

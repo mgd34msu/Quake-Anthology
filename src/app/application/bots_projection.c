@@ -315,7 +315,7 @@ bool application_bot_entity(void *opaque,qa_actor_id actor,qa_bot_entity *out,qa
             !qa_actor_id_equal(body.actor,actor)) return false;
         out->hidden=(visibility.server_flags&1)!=0;out->missile=state.eType==3;
         out->grapple=out->missile && state.weapon==QA_Q3_W_GRAPPLE;out->temporary_event=state.eType>13;
-        out->proximity_trigger=source->product && !strcmp(source->product->campaign,"missionpack") &&
+        out->proximity_trigger=source->product && source->product->campaign_id==QA_CAMPAIGN_MISSIONPACK &&
             body.colliding && qa_collision_bits_equal(body.collision.contents,
                 qa_collision_bit(QA_CONTENT_TRIGGER)) && body.proximity_trigger;
         if(slot<QA_Q3_SOURCE_CLIENTS) {
