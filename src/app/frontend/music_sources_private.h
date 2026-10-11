@@ -8,13 +8,6 @@ typedef struct frontend_music_world {
     uint64_t map_revision;
     char *instance;
 } frontend_music_world;
-typedef struct frontend_music_command {
-    struct frontend_music_command *next;
-    qa_command_context context;
-    char *script;
-    char **argv;
-    size_t argc;
-} frontend_music_command;
 struct frontend_music_sources {
     qa_frontend *frontend;
     qa_application *application;
@@ -30,7 +23,6 @@ struct frontend_music_sources {
     qa_launch_instance_lease *origin_metadata;
     char *origin_instance, *origin_product;
     bool has_origin, origin_bound, origin_recipe;
-    frontend_music_command *commands, *commands_tail;
     frontend_music_slot output;
     bool busy, restoring;
 };
@@ -40,5 +32,4 @@ bool frontend_music_world_current(const frontend_music_sources *);
 void frontend_music_world_dispose(frontend_music_world *);
 bool frontend_music_world_capture(frontend_music_sources *, qa_error *);
 qa_product_id frontend_music_world_fallback(const frontend_music_sources *);
-void frontend_music_command_free(frontend_music_command *);
 #endif

@@ -149,11 +149,6 @@ static bool origin_admit(frontend_music_sources *owner, const frontend_music_ori
         return fail(e, "Explicit music requires its actual source declaration, player and retained caller");
     return true;
 }
-void frontend_music_command_free(frontend_music_command *command) {
-    if (!command) return;
-    for (size_t i = 0; i < command->argc; ++i) free(command->argv[i]);
-    free(command->argv); free(command->script); free(command);
-}
 bool frontend_music_sources_current(const frontend_music_sources *owner) {
     return owner && owner->frontend && owner->slot && *owner->slot == owner &&
         owner->frontend->application == owner->application && owner->frontend->audio == owner->engine;
@@ -292,12 +287,6 @@ static bool world_cue(const frontend_music_sources *owner, const qa_product *sou
 bool frontend_music_sources_idle(const frontend_music_sources *owner) {
     return !owner || (frontend_music_sources_current(owner) && !owner->busy &&
         frontend_music_policy_idle(owner->policies[0]) && frontend_music_policy_idle(owner->policies[1]));
-}
-bool frontend_music_sources_queued(const frontend_music_sources *owner, size_t *count) {
-    if (!frontend_music_sources_current(owner) || !count || owner->busy || owner->restoring) return false;
-    size_t total = 0;
-    for (const frontend_music_command *command = owner->commands; command; command = command->next) ++total;
-    *count = total; return true;
 }
 bool frontend_music_sources_parent_is(const frontend_music_sources *owner, const qa_frontend *f, const qa_audio_engine *engine) {
     if (!frontend_music_sources_current(owner) || owner->frontend != f || owner->engine != engine || !owner->controls || owner->restoring || owner->busy) return false;
@@ -550,9 +539,9 @@ bool frontend_music_sources_update(frontend_music_sources *owner, qa_error *e) {
     if (owner->policies[FRONTEND_MUSIC_WORLD] && !(owner->has_origin ? origin_current(owner) : frontend_music_world_current(owner)))
         return fail(e, "Automatic WORLD music retained a displaced published source");
     if (!frontend_music_sources_output(owner, owner->output, e)) return false;
-    if (!frontend_music_sources_flush(owner, e)) return false;
-    owner->busy = true; bool ok = true;
-    if (owner->output == FRONTEND_MUSIC_WORLD && owner->policies[FRONTEND_MUSIC_WORLD])
+    owner->busy = true;
+    bool ok = !owner->policies[FRONTEND_MUSIC_MENU] || frontend_music_policy_update(owner->policies[FRONTEND_MUSIC_MENU], e);
+    if (ok && owner->output == FRONTEND_MUSIC_WORLD && owner->policies[FRONTEND_MUSIC_WORLD])
         ok = frontend_music_policy_update(owner->policies[FRONTEND_MUSIC_WORLD], e);
     owner->busy = false; return ok;
 }
@@ -634,76 +623,25 @@ static bool absent_command(frontend_music_sources *owner, const qa_command_invoc
     qa_buffer_free(&lowered);
     return ok && frontend_music_sources_current(owner) && qa_application_command_context_active(owner->application, &call->context);
 }
-bool frontend_music_sources_flush(frontend_music_sources *owner, qa_error *e) {
-    if (!owner || !frontend_music_sources_idle(owner) || owner->restoring || owner->frontend->capture)
-        return fail(e, "Menu music flush requires its returned actual source owner");
-    owner->busy = true;
-    bool ok = !owner->policies[FRONTEND_MUSIC_MENU] || frontend_music_policy_update(owner->policies[FRONTEND_MUSIC_MENU], e);
-    while (ok && owner->commands) {
-        frontend_music_command *command = owner->commands;
-        owner->commands = command->next; if (!owner->commands) owner->commands_tail = NULL;
-        qa_command_invocation call = {.console = qa_application_console(owner->application), .context = command->context,
-            .argc = command->argc, .argv = (const char *const *)command->argv};
-        if (!qa_application_command_context_active(owner->application, &call.context))
-            ok = fail(e, "Queued menu music belongs to a retired command publication");
-        else if (owner->policies[FRONTEND_MUSIC_MENU]) {
-            ok = frontend_music_policy_command(owner->policies[FRONTEND_MUSIC_MENU], &call, e);
-            qa_audio_music *attached = qa_audio_engine_bus_music(owner->engine, owner->buses[FRONTEND_MUSIC_MENU]);
-            if (ok && attached) ok = qa_audio_engine_music_output(owner->engine, owner->buses[FRONTEND_MUSIC_MENU], attached,
-                owner->output == FRONTEND_MUSIC_MENU, e);
-        }
-        else ok = absent_command(owner, &call, e);
-        frontend_music_command_free(command);
-    }
-    owner->busy = false; return ok;
-}
-static bool queue(frontend_music_sources *owner, const qa_command_invocation *call, qa_error *e) {
-    if (call->console != qa_application_console(owner->application) || !call->argv || !call->argc || call->argc > 1024 ||
-        !qa_application_command_context_active(owner->application, &call->context))
-        return fail(e, "Menu music requires its genuine captured console request");
-    size_t size = 0;
-    for (size_t i = 0; i < call->argc; ++i) {
-        if (!call->argv[i]) return fail(e, "Menu music has an absent captured argument");
-        size_t n = strlen(call->argv[i]); if (n >= 9216 - size) return fail(e, "Menu music exceeds its actual console token capacity");
-        size += n + 1;
-    }
-    if (strcmp(call->argv[0], "music") && strcmp(call->argv[0], "cd")) return fail(e, "That request is not menu music");
-    frontend_music_command *command = calloc(1, sizeof(*command));
-    if (!command) return frontend_fail(e, QA_ERROR_MEMORY, "Retaining queued menu music");
-    command->context = call->context; command->argc = call->argc;
-    command->argv = calloc(command->argc, sizeof(*command->argv));
-    if (!command->argv) { command->argc = 0; frontend_music_command_free(command); return frontend_fail(e, QA_ERROR_MEMORY, "Retaining menu music arguments"); }
-    for (size_t i = 0; i < command->argc; ++i) {
-        size_t n = strlen(call->argv[i]) + 1; command->argv[i] = malloc(n);
-        if (!command->argv[i]) { frontend_music_command_free(command); return frontend_fail(e, QA_ERROR_MEMORY, "Retaining menu music argument bytes"); }
-        memcpy(command->argv[i], call->argv[i], n);
-    }
-    if (call->context.script) {
-        size_t n = strlen(call->context.script) + 1; command->script = malloc(n);
-        if (!command->script) { frontend_music_command_free(command); return frontend_fail(e, QA_ERROR_MEMORY, "Retaining music script origin"); }
-        memcpy(command->script, call->context.script, n); command->context.script = command->script;
-    }
-    if (owner->commands_tail) owner->commands_tail->next = command; else owner->commands = command;
-    owner->commands_tail = command; return true;
-}
 bool frontend_music_sources_command(frontend_music_sources *owner, const qa_command_invocation *call, qa_error *e) {
     if (!owner || !frontend_music_sources_idle(owner) || owner->restoring || !call)
         return fail(e, "Music command requires its actual retained application music constructor");
-    if (owner->output == FRONTEND_MUSIC_MENU) return queue(owner, call, e);
-    frontend_music_policy *policy = owner->policies[FRONTEND_MUSIC_WORLD];
-    if (policy && !(owner->has_origin ? origin_current(owner) : frontend_music_world_current(owner)))
+    frontend_music_slot slot = owner->output;
+    frontend_music_policy *policy = owner->policies[slot];
+    if (slot == FRONTEND_MUSIC_WORLD && policy && !(owner->has_origin ? origin_current(owner) : frontend_music_world_current(owner)))
         return fail(e, "Music command retained a displaced WORLD source");
     if (!policy) {
         owner->busy = true; bool ok = absent_command(owner, call, e); owner->busy = false; return ok;
     }
     owner->busy = true; bool ok = true, replacing = false;
-    if (owner->has_origin) {
+    if (slot == FRONTEND_MUSIC_MENU) ok = frontend_music_policy_update(policy, e);
+    if (ok && slot == FRONTEND_MUSIC_WORLD && owner->has_origin) {
         ok = frontend_music_policy_manual_start(policy, call, &replacing);
         if (ok && replacing) ok = owner->origin.stop(owner->origin.context, e) && origin_current(owner);
     }
     if (ok) ok = frontend_music_policy_command(policy, call, e);
-    qa_audio_music *attached = qa_audio_engine_bus_music(owner->engine, owner->buses[FRONTEND_MUSIC_WORLD]);
-    if (ok && attached) ok = qa_audio_engine_music_output(owner->engine, owner->buses[FRONTEND_MUSIC_WORLD], attached, true, e);
+    qa_audio_music *attached = qa_audio_engine_bus_music(owner->engine, owner->buses[slot]);
+    if (ok && attached) ok = qa_audio_engine_music_output(owner->engine, owner->buses[slot], attached, true, e);
     owner->busy = false; return ok;
 }
 size_t frontend_music_sources_bank_count(const frontend_music_sources *owner) {
@@ -731,8 +669,6 @@ bool frontend_music_sources_destroy(frontend_music_sources **in, qa_error *e) {
     frontend_music_sources *owner = *in;
     if (!frontend_music_sources_current(owner) || owner->busy || owner->frontend->capture ||
         (!owner->restoring && !frontend_music_sources_idle(owner))) return fail(e, "Music sources still retain a callback or resource preparation");
-    while (owner->commands) { frontend_music_command *command = owner->commands; owner->commands = command->next; frontend_music_command_free(command); }
-    owner->commands_tail = NULL;
     if (owner->restoring) {
         for (size_t i = 0; i < 2; ++i) if (!frontend_music_policy_destroy(owner->policies + i, e)) return false;
         frontend_music_world_dispose(&owner->world); origin_dispose(owner); qa_audio_music_controls_release(owner->controls);

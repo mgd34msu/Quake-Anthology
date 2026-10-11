@@ -153,9 +153,7 @@ bool frontend_shared_publication_prepare(frontend_shared_settings *owner,
         ticket->prepared=true; return true;
     }
     ticket->music_sources=f->music_sources;
-    size_t queued=0;
-    if (!frontend_music_sources_parent_is(ticket->music_sources,f,f->audio) ||
-        !frontend_music_sources_queued(ticket->music_sources,&queued) || queued)
+    if (!frontend_music_sources_parent_is(ticket->music_sources,f,f->audio))
         return fail(e,"Final publication requires returned music requests before holding resource children");
     bool published=false;
     if (!frontend_view_settings_has_published(f->view_settings,&published)) return false;
@@ -293,8 +291,6 @@ bool frontend_shared_publication_ready_is(const frontend_shared_publication *tic
             (ticket->audio || ticket->acoustics || ticket->audio_device || ticket->music[0] || ticket->music[1])) ||
         !frontend_shared_render_controls_ready_is(ticket->render_controls) ||
         f->music_sources!=ticket->music_sources || !frontend_music_sources_parent_is(ticket->music_sources,f,f->audio)) return false;
-    size_t queued=0;
-    if (!frontend_music_sources_queued(ticket->music_sources,&queued) || queued) return false;
     for (unsigned i=0;i<2;++i)
         if (frontend_music_sources_policy(ticket->music_sources,(frontend_music_slot)i)!=ticket->policies[i] ||
             (ticket->policies[i] && !frontend_shared_music_ready_is(ticket->music[i]))) return false;

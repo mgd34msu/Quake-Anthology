@@ -606,11 +606,6 @@ static bool resource_returned(qa_frontend *frontend,qa_error *error)
 }
 bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *error)
 {
-    if (frontend->music_sources) {
-        size_t queued;
-        if (!frontend_music_sources_queued(frontend->music_sources,&queued) ||
-            (queued && !frontend_music_sources_flush(frontend->music_sources,error))) return false;
-    }
     if (qa_application_launch(frontend->application) &&
         qa_application_events_local_first(frontend->application) != qa_application_events_next(frontend->application) &&
         !frontend_events_flush(frontend,error)) return false;

@@ -74,9 +74,6 @@ bool frontend_music_sources_restore_origin(frontend_music_sources *, const front
  * Finish rejects a saved origin which no actual caller has rebound. */
 bool frontend_music_sources_restore_origin_matches(const frontend_music_sources *, const frontend_music_origin *);
 bool frontend_music_sources_idle(const frontend_music_sources *);
-/* Pure retained request inventory, including while a policy child is held.
- * Preparation forbids accepting another request until that child returns. */
-bool frontend_music_sources_queued(const frontend_music_sources *, size_t *count);
 /* Pure installed constructor/slot proof, including a retained prepared child.
  * Genuine empty catalogs/no-audio and no published WORLD have absent slots. */
 bool frontend_music_sources_parent_is(const frontend_music_sources *, const qa_frontend *, const qa_audio_engine *);
@@ -93,9 +90,6 @@ bool frontend_music_sources_update(frontend_music_sources *, qa_error *);
 /* Called by the real menu/GAME output publication, independently of whether a
  * client or map exists. This selection is retained across cold import. */
 bool frontend_music_sources_output(frontend_music_sources *, frontend_music_slot, qa_error *);
-/* Menu requests retain copied arguments and the actual captured origin. Flush
- * follows menu preference selection, before pending source publication. */
-bool frontend_music_sources_flush(frontend_music_sources *, qa_error *);
 bool frontend_music_sources_command(frontend_music_sources *, const qa_command_invocation *, qa_error *);
 size_t frontend_music_sources_bank_count(const frontend_music_sources *);
 qa_audio_bank *frontend_music_sources_bank_at(const frontend_music_sources *, size_t);
