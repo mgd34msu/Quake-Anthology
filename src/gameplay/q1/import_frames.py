@@ -129,6 +129,8 @@ def main():
     declarations.extend("    " + action_id(name) + "," for name in action_names)
     declarations.extend(["    Q1_ACTION_COUNT", "} q1_frame_action;", "", "#endif", ""])
     destination.with_name("frame_actions.h").write_text("\n".join(declarations))
+    runtime_names = dict((text, "Q1_NAME_" + name) for name, text in
+                         re.findall(r'X\((\w+), "([^"]*)"\)', destination.with_name("internal.h").read_text()))
     operations = []
     frames = []
     for name, frame in rows:
@@ -141,7 +143,7 @@ def main():
             elif kind == "sound":
                 channel = {"voice": 2, "weapon": 1, "body": 4}[operation["channel"]]
                 chance = -1 if operation["chance"] is None else operation["chance"]
-                operations.append("{.kind=Q1_FRAME_SOUND,.text=" + literal(operation["path"]) +
+                operations.append("{.kind=Q1_FRAME_SOUND,.resource=" + runtime_names[operation["path"]] +
                                   f",.channel={channel},.attenuation=" + number(operation["attenuation"]) +
                                   ",.chance=" + number(chance) + ",.greater=" +
                                   ("true" if operation["comparison"] == "greater" else "false") + "}")
@@ -150,7 +152,7 @@ def main():
                     raise ValueError(f"Unsupported authored solid value in {name}")
                 operations.append("{.kind=Q1_FRAME_SOLID}")
             elif kind == "lightstyle":
-                operations.append("{.kind=Q1_FRAME_LIGHTSTYLE,.text=" + literal(operation["pattern"]) + "}")
+                operations.append("{.kind=Q1_FRAME_LIGHTSTYLE,.resource=" + runtime_names[operation["pattern"]] + "}")
             elif kind == "action":
                 operations.append("{.kind=Q1_FRAME_ACTION,.action=" + action_id(operation["name"]) + "}")
             else:

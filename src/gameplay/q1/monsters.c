@@ -870,7 +870,7 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         case Q1_FRAME_SOUND: {
             float value = op->chance < 0 ? 0 : q1_random(g);
             if ((op->chance < 0 || (op->greater ? value > op->chance : value < op->chance)) &&
-                !q1_sound_resource(g, entity->id, g->runtime_names[op->sound], op->channel, op->attenuation, 1, error))
+                !q1_sound_resource(g, entity->id, g->runtime_names[op->resource], op->channel, op->attenuation, 1, error))
                 return false;
             break;
         }
@@ -880,8 +880,8 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                       .provider = g->options.provider,
                                       .actor = entity->id,
                                       .time_ns = g->time_ns};
-            if (!qa_builtin_resource(&g->services, op->text, &event.text, error) ||
-                !qa_builtin_emit(&g->services, &event, error))
+            event.text=g->runtime_names[op->resource];
+            if (!qa_builtin_emit(&g->services, &event, error))
                 return false;
             break;
         }

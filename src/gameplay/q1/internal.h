@@ -21,6 +21,12 @@
     X(RESOURCE_AMBIENCE_FIRE1_WAV, "ambience/fire1.wav") \
     X(RESOURCE_A, "a") \
     X(RESOURCE_M, "m") \
+    X(RESOURCE_K, "k") \
+    X(RESOURCE_I, "i") \
+    X(RESOURCE_G, "g") \
+    X(RESOURCE_E, "e") \
+    X(RESOURCE_C, "c") \
+    X(RESOURCE_B, "b") \
     X(RESOURCE_AMBIENCE_BUZZ1_WAV, "ambience/buzz1.wav") \
     X(RESOURCE_AMBIENCE_FL_HUM1_WAV, "ambience/fl_hum1.wav") \
     X(RESOURCE_AMBIENCE_HUM1_WAV, "ambience/hum1.wav") \
@@ -869,8 +875,7 @@ typedef struct q1_frame_operation {
     float distance, attenuation, chance;
     int32_t channel;
     bool greater;
-    const char *text;
-    q1_runtime_name sound;
+    q1_runtime_name resource;
 } q1_frame_operation;
 typedef enum q1_frame_id {
 #define Q1_FRAME_ROW(name, frame, next, operation, count) Q1_FRAME_##name,
