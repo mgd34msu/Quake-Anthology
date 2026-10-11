@@ -171,9 +171,7 @@ bool q2_item_randomize(qa_q2_game *g, q2_actor **actor, qa_error *e) {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
-        qa_actor_definition definition;
-        if (!qa_builtin_resource(&g->services, d->classname, &definition, e))
-            return false;
+        qa_actor_definition definition = d->classname_id;
         qa_actor_id id;
         if (!qa_builtin_spawn_actor(&g->services,
                                     &(qa_builtin_spawn){.owner = g->options.owner,
@@ -202,7 +200,6 @@ bool q2_item_randomize(qa_q2_game *g, q2_actor **actor, qa_error *e) {
     a->item->definition = d;
     a->item->spawn.classname = d->classname;
     a->item->visual.effects = d->rotate ? 1 : 0;
-    if (!qa_builtin_resource(&g->services, d->model, &a->item->visual.models[0], e))
-        return false;
+    a->item->visual.models[0] = d->model_id;
     return q2_item_visual(g, a, e);
 }

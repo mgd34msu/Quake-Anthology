@@ -81,7 +81,7 @@ bool q2_item_observe(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_item_armor_result(qa_q2_game *, const qa_q2_item_definition *,
                           const qa_regular_armor *, qa_regular_armor *);
 bool q2_item_finish(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
-bool q2_item_sound(qa_q2_game *, qa_actor_id, const char *, qa_error *);
+bool q2_item_sound(qa_q2_game *, qa_actor_id, qa_string_id, qa_error *);
 bool q2_item_visual(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_item_hide(qa_q2_game *, q2_actor *, q2_item_think, uint64_t, qa_error *);
 bool q2_item_change_collision(qa_q2_game *, q2_actor *, qa_physics_solid, qa_error *);

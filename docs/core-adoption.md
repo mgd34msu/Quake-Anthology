@@ -820,6 +820,13 @@ rebuilds carry the same handle. Item 13's local brush decision reads the shared
 name table's admitted path flag, with the suffix parser deleted. Normal build
 and seven core suites pass. Item 13's flare image binding remains open.
 
+Names leftovers item 14, Q2 items: catalog admission binds model, icon, label
+and sound IDs beside the classname ID. Drop, random replacement, pickup HUD
+feedback and map item setup read those fields. Item/power sound helpers take
+retained IDs; dropped-item landing uses the runtime sound ID. The replaced
+text setters are deleted. Normal build and seven core suites pass. Q1 model
+and map emitters, and Q2 monster emitters, remain open in this item.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

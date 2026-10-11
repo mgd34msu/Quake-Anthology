@@ -53,17 +53,14 @@ bool qa_q2_items_configure(qa_q2_game *g, const qa_q2_item_options *options, qa_
     g->item_runtime->options = *options;
     return true;
 }
-bool q2_item_sound(qa_q2_game *g, qa_actor_id id, const char *path, qa_error *e) {
+bool q2_item_sound(qa_q2_game *g, qa_actor_id id, qa_string_id sound, qa_error *e) {
     if (!q2_actor_live(g, id))
         return true;
     qa_body_state body;
-    qa_string_id sound;
     if (!qa_world_body_read(g->services.world, id, &body, e))
         return !q2_actor_live(g, id);
     if (!q2_actor_live(g, id))
         return true;
-    if (!qa_builtin_resource(&g->services, path, &sound, e))
-        return false;
     return qa_builtin_emit(&g->services,
                            &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
                                                .family = QA_GAME_Q2,
@@ -242,8 +239,7 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
         .scale = rr ? q2_actor_field_float(g, id, g->field_keys[QA_TARGET_KEY_SCALE], 0) : 1, .alpha = 1, .old_frame = -1, .effects = d->rotate ? 1 : 0, .render_flags = 512};
     if ((d->rule_flags & QA_Q2_ITEM_COMMANDER_HEAD))
         item->visual.effects |= 2;
-    if (!qa_builtin_resource(&g->services, d->model, &item->visual.models[0], e))
-        return false;
+    item->visual.models[0] = d->model_id;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = rr;
     a->physics_bound = true;

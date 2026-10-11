@@ -111,10 +111,7 @@ static bool complete(void *context, const qa_pickup_offer *offer, bool accepted,
             return false;
         if (!live(call))
             return true;
-        qa_string_id icon, name;
-        if (!qa_builtin_resource(&g->services, d->icon, &icon, e) ||
-            !qa_builtin_resource(&g->services, d->name, &name, e))
-            return false;
+        qa_string_id icon = d->icon_id, name = d->name_id;
         q2_actor *recipient = q2_actor_get(g, call->player, false, NULL);
         if (recipient && recipient->client) {
             recipient->pickup_icon = icon;
@@ -136,7 +133,7 @@ static bool complete(void *context, const qa_pickup_offer *offer, bool accepted,
             return false;
         if (!live(call))
             return true;
-        if (!q2_item_sound(g, call->player, d->sound, e))
+        if (!q2_item_sound(g, call->player, d->sound_id, e))
             return false;
         if (!live(call))
             return true;

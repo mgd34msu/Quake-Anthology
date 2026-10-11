@@ -375,6 +375,10 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             d->respawn_seconds = 0;
             d->console_give = QA_Q2_GIVE_INVENTORY_ONLY;
         }
+        if (!qa_builtin_resource(&g->services, d->model, &d->model_id, e) ||
+            !qa_builtin_resource(&g->services, d->icon, &d->icon_id, e) ||
+            !qa_builtin_resource(&g->services, d->name, &d->name_id, e) ||
+            !qa_builtin_resource(&g->services, d->sound, &d->sound_id, e)) return false;
         if (d->kind == QA_Q2_ITEM_HEALTH || d->kind == QA_Q2_ITEM_ARMOR ||
             d->kind == QA_Q2_ITEM_SHARD || d->kind == QA_Q2_ITEM_MAX_HEALTH ||
             d->kind == QA_Q2_ITEM_PACK || d->kind == QA_Q2_ITEM_FOOD)

@@ -36,9 +36,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
             return false;
         origin = trace.end;
     }
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, d->classname, &definition, e))
-        return false;
+    qa_actor_definition definition = d->classname_id;
     qa_vec3 velocity = qa_vec_scale(forward, 100);
     velocity.z = 300;
     qa_builtin_spawn spawn = {
@@ -72,8 +70,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
                                   .visible = true,
                                   .effects = d->rotate ? 1 : 0,
                                   .render_flags = 512 | 0x8000};
-    if (!qa_builtin_resource(&g->services, d->model, &item->visual.models[0], e))
-        goto fail;
+    item->visual.models[0] = d->model_id;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_TOSS;
@@ -209,9 +206,8 @@ bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float 
         return true;
     a->item->think = Q2_ITEM_IDLE;
     a->item->due_ns = 0;
-    qa_string_id sound;
+    qa_string_id sound = g->runtime_names[Q2_NAME_RESOURCE_MISC_FHIT3_WAV];
     if (!qa_world_body_read(g->services.world, id, &body, e) ||
-        !qa_builtin_resource(&g->services, QA_Q2_SOUND_MISC_FHIT3, &sound, e) ||
         !qa_builtin_emit(&g->services,
                          &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
                                              .family = QA_GAME_Q2,
@@ -243,9 +239,7 @@ bool qa_q2_item_give(qa_q2_game *g, qa_actor_id player, const char *name, int co
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, player, &body, e))
         return false;
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&g->services, d->classname, &definition, e))
-        return false;
+    qa_actor_definition definition = d->classname_id;
     qa_actor_id id;
     if (!qa_builtin_spawn_actor(
             &g->services,
