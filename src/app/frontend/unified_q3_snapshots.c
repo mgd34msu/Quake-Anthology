@@ -1,6 +1,7 @@
 /* SnapshotRuntime/cg_snapshot.c private CLIENT state. */
 #include "unified_q3_snapshots.h"
 #include "../../presentation/q3_native/trajectory.h"
+#include "../../presentation/q3_native/events.h"
 #include "qa/network_q3_fields_save.h"
 
 #include <limits.h>
@@ -267,13 +268,7 @@ static bool reset(frontend_unified_q3_snapshots *s,uint32_t number,qa_error *e)
 static bool event(frontend_unified_q3_snapshots *s,uint32_t number,qa_error *e)
 {
     cached_entity *row = s->rows+number; q3n_entity *cent = s->entities+number; qa_q3_entity scratch = row->current;
-    if (scratch.eType > 13) {
-        if (cent->previous_event) return true;
-        cent->previous_event = 1; if (scratch.eFlags&16) scratch.number = scratch.otherEntityNum; scratch.event = scratch.eType-13;
-    } else {
-        if (scratch.event == cent->previous_event) return true;
-        cent->previous_event = scratch.event; if (!(scratch.event&~0x300)) return true;
-    }
+    if (!q3n_entity_event_detect(&scratch,cent)) return true;
     if (!q3n_trajectory(&scratch.pos,s->snap.value.server_time,&cent->lerp_origin,e)) return false;
     q3n_compiled_frame f; q3n_compiled_entity entity;
     if (!begin(s,Q3N_COMPILED_SNAPSHOT_CALLBACK,&f,e)) return false;

@@ -2,6 +2,7 @@
  * Copyright (C) 1999-2005 Id Software, Inc., GPL-2.0-or-later. */
 #include "remote_snapshots.h"
 #include "../../presentation/q3_native/trajectory.h"
+#include "../../presentation/q3_native/events.h"
 #include "qa/network_q3_fields_save.h"
 #include <limits.h>
 #include <stdio.h>
@@ -156,16 +157,7 @@ static bool reset(frontend_remote_snapshots *s,frontend_remote_centity *row,cons
 static bool events(frontend_remote_snapshots *s,frontend_remote_centity *row,qa_error *e)
 {
     qa_q3_entity event=row->current;
-    if(event.eType>13) {
-        if(row->presentation->previous_event) return true;
-        row->presentation->previous_event=1;
-        if(event.eFlags&16) event.number=event.otherEntityNum;
-        event.event=event.eType-13;
-    } else {
-        if(event.event==row->presentation->previous_event) return true;
-        row->presentation->previous_event=event.event;
-        if(!(event.event&~0x300)) return true;
-    }
+    if(!q3n_entity_event_detect(&event,row->presentation)) return true;
     if(!q3n_trajectory(&event.pos,s->snap.value.server_time,&row->presentation->lerp_origin,e)) return false;
     if(!callback_begin(s,e)) return false;
     bool ok=s->options.event(s->options.context,&s->source,row,&event,row->presentation->lerp_origin,s->time,e);

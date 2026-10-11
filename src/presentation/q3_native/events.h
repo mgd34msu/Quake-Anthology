@@ -60,6 +60,7 @@ int32_t q3n_events_rand(q3n_events *);
 float q3n_events_random(q3n_events *);
 float q3n_events_crandom(q3n_events *);
 qa_vec3 q3n_events_direction(int32_t source_byte);
+bool q3n_entity_event_detect(qa_q3_entity *, q3n_entity *);
 bool q3n_events_apply(const q3n_frame *, const qa_application_native_q3_entity *, q3n_entity *, qa_error *);
 /* The snapshot owner has already performed CG_CheckEvents deduplication and
  * authored this scratch ES. Dispatch it once against that exact cache row. */
