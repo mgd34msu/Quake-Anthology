@@ -107,7 +107,16 @@ typedef struct mode_objective {
     X(TEAM_CTF_REDPLAYER, "team_CTF_redplayer") \
     X(TEAM_CTF_REDSPAWN, "team_CTF_redspawn") \
     X(TEAM_CTF_BLUEPLAYER, "team_CTF_blueplayer") \
-    X(TEAM_CTF_BLUESPAWN, "team_CTF_bluespawn")
+    X(TEAM_CTF_BLUESPAWN, "team_CTF_bluespawn") \
+    X(FALLING, "falling") \
+    X(Q1_WEAPON_AXE, "q1:weapon/axe") \
+    X(Q1_WEAPON_SHOTGUN, "q1:weapon/shotgun") \
+    X(Q1_WEAPON_SUPERSHOTGUN, "q1:weapon/supershotgun") \
+    X(Q1_WEAPON_GRENADELAUNCHER, "q1:weapon/grenadelauncher") \
+    X(Q1_WEAPON_ROCKETLAUNCHER, "q1:weapon/rocketlauncher") \
+    X(Q1_WEAPON_MULTI_GRENADE, "q1:weapon/rogue:multi-grenade") \
+    X(Q1_WEAPON_MULTI_ROCKET, "q1:weapon/rogue:multi-rocket") \
+    X(Q1_WEAPON_PLASMA, "q1:weapon/rogue:plasma")
 
 typedef enum mode_name {
 #define MODE_NAME_ENUM(key, text) MODE_NAME_##key,

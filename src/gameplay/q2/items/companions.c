@@ -361,8 +361,8 @@ bool q2_companion_use(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definit
         return false;
     if (!consumed || !q2_actor_live(g, owner))
         return true;
-    q2_companion_kind kind = !strcmp(d->classname, "item_sphere_defender") ? Q2_SPHERE_DEFENDER
-                             : !strcmp(d->classname, "item_sphere_hunter") ? Q2_SPHERE_HUNTER
+    q2_companion_kind kind = (d->rule_flags & QA_Q2_ITEM_SPHERE_DEFENDER) ? Q2_SPHERE_DEFENDER
+                             : (d->rule_flags & QA_Q2_ITEM_SPHERE_HUNTER) ? Q2_SPHERE_HUNTER
                                                                            : Q2_SPHERE_VENGEANCE;
     qa_actor_id sphere;
     if (!launch(g, owner, kind, false, owner, &sphere, e))

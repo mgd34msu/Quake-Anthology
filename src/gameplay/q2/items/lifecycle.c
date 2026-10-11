@@ -127,15 +127,15 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d, bool *out,
             return true;
         if (g->options.edition == QA_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE &&
             (((flags & 0x20000) &&
-              (!strcmp(d->classname, "ammo_prox") || !strcmp(d->classname, "ammo_tesla"))) ||
+              ((d->rule_flags & QA_Q2_ITEM_PROX_AMMO) || (d->rule_flags & QA_Q2_ITEM_TESLA_AMMO))) ||
              ((flags & 0x80000) && d->kind == QA_Q2_ITEM_NUKE) ||
              ((flags & 0x100000) && d->kind == QA_Q2_ITEM_SPHERE)))
             return true;
         if (g->options.edition == QA_Q2_RERELEASE) {
             const qa_q2_item_options *options = &g->item_runtime->options;
             if ((options->no_mines &&
-                 (d->weapon == QA_Q2_PROXLAUNCHER || !strcmp(d->classname, "ammo_prox") ||
-                  !strcmp(d->classname, "ammo_tesla") || !strcmp(d->classname, "ammo_trap"))) ||
+                 (d->weapon == QA_Q2_PROXLAUNCHER || (d->rule_flags & QA_Q2_ITEM_PROX_AMMO) ||
+                  (d->rule_flags & QA_Q2_ITEM_TESLA_AMMO) || (d->rule_flags & QA_Q2_ITEM_TRAP_AMMO))) ||
                 (options->no_nukes && d->kind == QA_Q2_ITEM_NUKE) ||
                 (options->no_spheres && d->kind == QA_Q2_ITEM_SPHERE))
                 return true;
@@ -155,24 +155,16 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d, bool *out,
             if (((uint32_t)(int32_t)source_flags & 2u) == 0 &&
                 d->kind == QA_Q2_ITEM_POWER && d->powerup == QA_Q2_POWER_INVULNERABILITY)
                 return true;
-            static const struct { const char *classname; uint32_t mask; } weapons[] = {
-                {"weapon_bfg", 1}, {"weapon_hyperblaster", 2}, {"weapon_railgun", 4},
-                {"weapon_rocketlauncher", 8}, {"weapon_grenadelauncher", 16},
-                {"weapon_chaingun", 32}, {"weapon_machinegun", 64},
-                {"weapon_supershotgun", 128}, {"weapon_shotgun", 256}, {"weapon_plasma", 512},
-            };
             uint32_t mask = (uint32_t)(int32_t)disabled;
-            for (size_t i = 0; i < sizeof(weapons) / sizeof(*weapons); ++i)
-                if ((mask & weapons[i].mask) != 0 && !strcmp(d->classname, weapons[i].classname))
-                    return true;
+            if (mask & d->disabled_weapon_mask) return true;
         }
     }
     if (g->options.edition == QA_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE) {
-        if (d->weapon == QA_Q2_DISINTEGRATOR || !strcmp(d->classname, "ammo_disruptor"))
+        if (d->weapon == QA_Q2_DISINTEGRATOR || (d->rule_flags & QA_Q2_ITEM_DISRUPTOR_AMMO))
             return true;
         if (!g->options.deathmatch && (d->kind == QA_Q2_ITEM_NUKE || d->kind == QA_Q2_ITEM_DECOY ||
-                                       !strcmp(d->classname, "item_sphere_hunter") ||
-                                       !strcmp(d->classname, "item_sphere_vengeance")))
+                                       (d->rule_flags & QA_Q2_ITEM_SPHERE_HUNTER) ||
+                                       (d->rule_flags & QA_Q2_ITEM_SPHERE_VENGEANCE)))
             return true;
     }
     *out = false;
@@ -238,17 +230,17 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
     item->definition = d;
     item->spawn = *spawn;
     item->spawn.classname = d->classname;
-    if (rogue && !rr && item->spawn.spawnflags > 1 && strcmp(d->classname, "key_power_cube"))
+    if (rogue && !rr && item->spawn.spawnflags > 1 && !(d->rule_flags & QA_Q2_ITEM_POWER_CUBE))
         item->spawn.spawnflags = 0;
-    if (g->options.cooperative && (!strcmp(d->classname, "key_power_cube") ||
-                                   (rr && !strcmp(d->classname, "key_explosive_charges")))) {
+    if (g->options.cooperative && ((d->rule_flags & QA_Q2_ITEM_POWER_CUBE) ||
+                                   (rr && (d->rule_flags & QA_Q2_ITEM_EXPLOSIVE_CHARGES)))) {
         item->spawn.spawnflags |= UINT32_C(1) << ((8 + g->item_runtime->cubes++) & 31);
     }
     item->think = Q2_ITEM_FLOOR;
     item->due_ns = q2_deadline(q2_deadline(g->now_ns, g->frame_ns), g->frame_ns);
     item->visual = (qa_entity_visual){
         .scale = rr ? q2_actor_field_float(g, id, g->field_keys[QA_TARGET_KEY_SCALE], 0) : 1, .alpha = 1, .old_frame = -1, .effects = d->rotate ? 1 : 0, .render_flags = 512};
-    if (!strcmp(d->classname, "key_commander_head"))
+    if ((d->rule_flags & QA_Q2_ITEM_COMMANDER_HEAD))
         item->visual.effects |= 2;
     if (!qa_builtin_resource(&g->services, d->model, &item->visual.models[0], e))
         return false;

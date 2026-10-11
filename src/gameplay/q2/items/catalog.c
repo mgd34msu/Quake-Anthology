@@ -171,6 +171,35 @@ static void install(q2_items *items, const qa_q2_item_definition *definitions, s
     memcpy(items->definitions + items->count, definitions, count * sizeof(*definitions));
     items->count += count;
 }
+static void bind_rules(qa_q2_item_definition *d) {
+    static const struct { const char *classname; uint32_t flag; } rules[] = {
+        {"key_power_cube", QA_Q2_ITEM_POWER_CUBE},
+        {"key_explosive_charges", QA_Q2_ITEM_EXPLOSIVE_CHARGES},
+        {"ammo_prox", QA_Q2_ITEM_PROX_AMMO}, {"ammo_tesla", QA_Q2_ITEM_TESLA_AMMO},
+        {"ammo_trap", QA_Q2_ITEM_TRAP_AMMO}, {"ammo_disruptor", QA_Q2_ITEM_DISRUPTOR_AMMO},
+        {"key_commander_head", QA_Q2_ITEM_COMMANDER_HEAD},
+        {"item_sphere_defender", QA_Q2_ITEM_SPHERE_DEFENDER},
+        {"item_sphere_hunter", QA_Q2_ITEM_SPHERE_HUNTER},
+        {"item_sphere_vengeance", QA_Q2_ITEM_SPHERE_VENGEANCE}
+    };
+    d->rule_flags = 0; d->disabled_weapon_mask = 0;
+    for (size_t i = 0; i < sizeof(rules) / sizeof(*rules); ++i)
+        if (!strcmp(d->classname, rules[i].classname)) d->rule_flags |= rules[i].flag;
+    if (d->kind != QA_Q2_ITEM_WEAPON) return;
+    switch (d->weapon) {
+    case QA_Q2_BFG: d->disabled_weapon_mask = 1; break;
+    case QA_Q2_HYPERBLASTER: d->disabled_weapon_mask = 2; break;
+    case QA_Q2_RAILGUN: d->disabled_weapon_mask = 4; break;
+    case QA_Q2_ROCKETLAUNCHER: d->disabled_weapon_mask = 8; break;
+    case QA_Q2_GRENADELAUNCHER: d->disabled_weapon_mask = 16; break;
+    case QA_Q2_CHAINGUN: d->disabled_weapon_mask = 32; break;
+    case QA_Q2_MACHINEGUN: d->disabled_weapon_mask = 64; break;
+    case QA_Q2_SUPERSHOTGUN: d->disabled_weapon_mask = 128; break;
+    case QA_Q2_SHOTGUN: d->disabled_weapon_mask = 256; break;
+    case QA_Q2_LMCTF_PLASMA: d->disabled_weapon_mask = 512; break;
+    default: break;
+    }
+}
 static bool same(const char *a, const char *b) {
     while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) {
         ++a;
@@ -320,6 +349,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
         qa_q2_item_definition *d = &r->definitions[i];
         if (!qa_builtin_resource(&g->services, d->classname, &d->classname_id, e))
             return false;
+        bind_rules(d);
         char id[96];
         int length = snprintf(id, sizeof(id), "q2:%s", d->classname);
         if (length < 0 || (size_t)length >= sizeof(id) ||

@@ -157,8 +157,8 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
         if (!q2_item_ensure(g, recipient, d, e) || !q2_count(g, recipient, d->item, &previous, e))
             return false;
         if (g->options.cooperative) {
-            if (!strcmp(d->classname, "key_power_cube") ||
-                !strcmp(d->classname, "key_explosive_charges")) {
+            if ((d->rule_flags & QA_Q2_ITEM_POWER_CUBE) ||
+                (d->rule_flags & QA_Q2_ITEM_EXPLOSIVE_CHARGES)) {
                 uint32_t cubes = (item->spawn.spawnflags & 0xff00u) >> 8;
                 if (powers->power_cubes & cubes)
                     return true;

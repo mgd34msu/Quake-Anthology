@@ -73,8 +73,8 @@ static bool key_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error 
     if (!q2_actor_live(g, a->id) || !q2_actor_live(g, activator))
         return true;
     bool cube =
-        !strcmp(d->classname, "key_power_cube") ||
-        (g->options.edition == QA_Q2_RERELEASE && !strcmp(d->classname, "key_explosive_charges"));
+        (d->rule_flags & QA_Q2_ITEM_POWER_CUBE) ||
+        (g->options.edition == QA_Q2_RERELEASE && (d->rule_flags & QA_Q2_ITEM_EXPLOSIVE_CHARGES));
     unsigned bit = 0;
     if (cube && g->options.cooperative) {
         q2_power_state *p = q2_powers(g, activator, e);

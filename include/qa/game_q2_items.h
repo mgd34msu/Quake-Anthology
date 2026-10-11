@@ -49,11 +49,24 @@ typedef struct qa_q2_supplemental_item {
     double capacity;
     qa_q2_console_give console_give;
 } qa_q2_supplemental_item;
+enum qa_q2_item_rule_flags {
+    QA_Q2_ITEM_POWER_CUBE = 1u << 0,
+    QA_Q2_ITEM_EXPLOSIVE_CHARGES = 1u << 1,
+    QA_Q2_ITEM_PROX_AMMO = 1u << 2,
+    QA_Q2_ITEM_TESLA_AMMO = 1u << 3,
+    QA_Q2_ITEM_TRAP_AMMO = 1u << 4,
+    QA_Q2_ITEM_DISRUPTOR_AMMO = 1u << 5,
+    QA_Q2_ITEM_COMMANDER_HEAD = 1u << 6,
+    QA_Q2_ITEM_SPHERE_DEFENDER = 1u << 7,
+    QA_Q2_ITEM_SPHERE_HUNTER = 1u << 8,
+    QA_Q2_ITEM_SPHERE_VENGEANCE = 1u << 9
+};
 typedef struct qa_q2_item_definition {
     const char *classname, *name, *model, *icon, *sound;
     qa_q2_item_kind kind;
     qa_item_id item, ammo;
     qa_string_id classname_id;
+    uint32_t rule_flags, disabled_weapon_mask;
     qa_q2_weapon weapon;
     int quantity, capacity;
     float respawn_seconds, normal_protection, energy_protection;

@@ -167,7 +167,7 @@ static bool native_preview(item_inspection *call, q2_actor *actor, qa_error *err
     case QA_Q2_ITEM_KEY:
         *call->available = !g->options.cooperative || entry.count == 0;
         if (g->options.cooperative &&
-            (!strcmp(d->classname, "key_power_cube") || !strcmp(d->classname, "key_explosive_charges")))
+            ((d->rule_flags & QA_Q2_ITEM_POWER_CUBE) || (d->rule_flags & QA_Q2_ITEM_EXPLOSIVE_CHARGES)))
             *call->available = !powers || !(powers->power_cubes & ((item->spawn.spawnflags & 0xff00u) >> 8));
         *call->utility = *call->available ? 1 : 0; return true;
     case QA_Q2_ITEM_AMMO:

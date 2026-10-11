@@ -469,6 +469,23 @@ Normal production build and seven core suites pass:
 catalog/recipe slice, this migrates names finding 6's listed sites. Names 7-17
 and other kinds remain. No live screenshot, audio, save/restore or timing claim.
 
+Names finding 7: mode construction binds the falling cause and haste weapon
+identities in the existing session name table. Damage and attack-delay readers
+compare those IDs. One retained-ID haste set replaces the two string predicates;
+Rogue and Threewave keep their original intervals and weapon membership.
+
+Q2 catalog construction binds cube/charges, mine ammunition, commander-head and
+sphere rules on the existing item definitions. It also retains the LMCTF disabled
+weapon mask. Spawn filtering, pickup grant/availability, cooperative key use and
+sphere use read those fields instead of comparing classnames at runtime. The
+runtime weapon-name/mask table is deleted. Q1 status inventory/weapon/ammo/key/
+power readers already compare the retained shared IDs and are unchanged.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-item-name-bindings-20261011-{build,core}.log`. Names findings 1-7
+are migrated against their listed sites; findings 8-17 and other kinds remain.
+No live pickup, coop, campaign or performance result is claimed.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

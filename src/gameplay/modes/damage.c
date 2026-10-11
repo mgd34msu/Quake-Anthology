@@ -60,11 +60,8 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
                     attacker->last_team && attacker->last_team == target->last_team;
     bool falling = request->attack.cause.kind == QA_CAUSE_ENVIRONMENT &&
                    request->attack.cause.source.hazard == QA_HAZARD_FALL;
-    if (request->attack.cause.kind == QA_CAUSE_Q1) {
-        const char *cause = qa_strings_cstr(qa_session_strings(m->options.services.session),
-                                            request->attack.cause.source.q1.death_type);
-        falling = cause && !strcmp(cause, "falling");
-    }
+    if (request->attack.cause.kind == QA_CAUSE_Q1)
+        falling = request->attack.cause.source.q1.death_type == m->runtime_names[MODE_NAME_FALLING];
     if (stage == QA_DAMAGE_BEFORE_QUAD && source == QA_MODE_THREEWAVE && target && falling &&
         m->options.hooks.grapple_pulling &&
         m->options.hooks.grapple_pulling(m->options.hooks.context, request->target))
@@ -138,16 +135,11 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
     }
     return true;
 }
-static bool rogue_haste_weapon(const char *name) {
-    return name && (!strcmp(name, "q1:weapon/axe") || !strcmp(name, "q1:weapon/shotgun") ||
-        !strcmp(name, "q1:weapon/supershotgun") || !strcmp(name, "q1:weapon/grenadelauncher") ||
-        !strcmp(name, "q1:weapon/rocketlauncher") || !strcmp(name, "q1:weapon/rogue:multi-grenade") ||
-        !strcmp(name, "q1:weapon/rogue:multi-rocket") || !strcmp(name, "q1:weapon/rogue:plasma"));
-}
-static bool threewave_haste_weapon(const char *name) {
-    return name && (!strcmp(name, "q1:weapon/axe") || !strcmp(name, "q1:weapon/shotgun") ||
-        !strcmp(name, "q1:weapon/supershotgun") || !strcmp(name, "q1:weapon/grenadelauncher") ||
-        !strcmp(name, "q1:weapon/rocketlauncher"));
+static bool haste_weapon(const qa_modes *m, qa_item_id weapon, bool rogue) {
+    mode_name last = rogue ? MODE_NAME_Q1_WEAPON_PLASMA : MODE_NAME_Q1_WEAPON_ROCKETLAUNCHER;
+    for (mode_name name = MODE_NAME_Q1_WEAPON_AXE; name <= last; ++name)
+        if (weapon == m->runtime_names[name]) return true;
+    return false;
 }
 bool qa_modes_haste_weapon(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_item_id weapon,
                            float base, float *interval, float *nail_speed, qa_error *e) {
@@ -158,18 +150,19 @@ bool qa_modes_haste_weapon(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_ite
     if ((v->value.rules.source != QA_MODE_THREEWAVE && v->value.rules.source != QA_MODE_ROGUE) ||
         !qa_modes_has_relic(m, id, actor, QA_RELIC_HASTE))
         return true;
-    const char *name = qa_strings_cstr(qa_session_strings(m->options.services.session), weapon);
-    if (!name)
+    if (!qa_strings_text(qa_session_strings(m->options.services.session), weapon).data)
         return true;
     if (v->value.rules.source == QA_MODE_ROGUE) {
-        if (!rogue_haste_weapon(name)) return true;
+        if (!haste_weapon(m, weapon, true)) return true;
         *interval = (base * 2.0f) / 3.0f;
         return true;
     }
-    if (!strcmp(name, "q1:weapon/axe") || !strcmp(name, "q1:weapon/shotgun") ||
-        !strcmp(name, "q1:weapon/grenadelauncher"))
+    if (weapon == m->runtime_names[MODE_NAME_Q1_WEAPON_AXE] ||
+        weapon == m->runtime_names[MODE_NAME_Q1_WEAPON_SHOTGUN] ||
+        weapon == m->runtime_names[MODE_NAME_Q1_WEAPON_GRENADELAUNCHER])
         *interval = .3f;
-    else if (!strcmp(name, "q1:weapon/supershotgun") || !strcmp(name, "q1:weapon/rocketlauncher"))
+    else if (weapon == m->runtime_names[MODE_NAME_Q1_WEAPON_SUPERSHOTGUN] ||
+        weapon == m->runtime_names[MODE_NAME_Q1_WEAPON_ROCKETLAUNCHER])
         *interval = .4f;
     *nail_speed = 2000;
     return true;
@@ -180,9 +173,8 @@ static bool weapon_attack_delay(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     float base = *delay, nail_speed = 0;
     if (!qa_modes_haste_weapon(m, id, actor, weapon, base, delay, &nail_speed, e)) return false;
     mode_instance *v = mode_get(m, id);
-    const char *name = qa_strings_cstr(qa_session_strings(m->options.services.session), weapon);
-    if (((v->value.rules.source == QA_MODE_ROGUE && rogue_haste_weapon(name)) ||
-         (v->value.rules.source == QA_MODE_THREEWAVE && threewave_haste_weapon(name))) &&
+    if (((v->value.rules.source == QA_MODE_ROGUE && haste_weapon(m, weapon, true)) ||
+         (v->value.rules.source == QA_MODE_THREEWAVE && haste_weapon(m, weapon, false))) &&
         qa_modes_has_relic(m, id, actor, QA_RELIC_HASTE)) {
         bool handled;
         return qa_modes_tech_sound(m, id, actor, QA_RELIC_HASTE, false, false, &handled, e);
