@@ -601,6 +601,13 @@ static void count_audio_notification(void *context, const qa_audio_voice_event *
     CHECK(event->sample && event->voice_id);
     if (event->started) ++counts->starts; else ++counts->stops;
 }
+static qa_audio_trace_hit audio_material_trace(void *context, qa_vec3 start, qa_vec3 end,
+    qa_vec3 mins, qa_vec3 maxs)
+{
+    (void)start; (void)mins; (void)maxs;
+    return (qa_audio_trace_hit){.fraction=.5f, .end=end, .material=*(qa_string_id *)context};
+}
+
 static void test_shared_audio_preparation(void)
 {
     qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
@@ -709,6 +716,29 @@ static void test_shared_audio_preparation(void)
     CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&first,&error) && first);
     CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&again,&error) && again==first);
     qa_audio_asset_release(first);qa_audio_asset_release(again);
+    const char environment_json[] = "{\"environments\":[{\"reverbs\":["
+        "{\"materials\":[\"WOOD\"],\"preset\":\"room\"},"
+        "{\"materials\":[\"wood\"],\"preset\":\"generic\"},"
+        "{\"materials\":\"*\",\"preset\":\"padded_cell\"},"
+        "{\"materials\":[\"metal\"],\"preset\":\"generic\"}]}]}";
+    qa_audio_environments *configuration = NULL;
+    CHECK(qa_audio_environments_parse((qa_bytes){(const uint8_t *)environment_json,
+        sizeof(environment_json)-1}, names, &configuration, &error));
+    qa_string_id floor = qa_strings_find(names, (qa_bytes){(const uint8_t *)"wood", 4});
+    CHECK(floor);
+    qa_audio_environment *environment = NULL;
+    CHECK(qa_audio_environment_create(configuration, audio_material_trace, &floor, &environment, &error));
+    qa_audio_environments_destroy(configuration);
+    qa_audio_environment_lerp(environment, 0);
+    qa_audio_environment_update(environment, qa_v3(0,0,0), 1);
+    CHECK(qa_audio_environment_params(environment)->decay_time == qa_audio_reverb_preset(2)->decay_time);
+    floor = qa_strings_find(names, (qa_bytes){(const uint8_t *)"metal", 5});
+    qa_audio_environment_update(environment, qa_v3(0,0,0), 2);
+    CHECK(qa_audio_environment_params(environment)->decay_time == qa_audio_reverb_preset(1)->decay_time);
+    CHECK(qa_strings_intern_cstr(names, "unknown-floor", &floor, &error));
+    qa_audio_environment_update(environment, qa_v3(0,0,0), 3);
+    CHECK(qa_audio_environment_params(environment)->decay_time == qa_audio_reverb_preset(1)->decay_time);
+    qa_audio_environment_destroy(environment);
     qa_audio_bank_destroy(bank); qa_strings_destroy(names); qa_vfs_destroy(view); qa_resource_pool_destroy(resources);
     CHECK(unlink(jump)==0);CHECK(rmdir(male)==0);CHECK(rmdir(player)==0);CHECK(unlink(optional)==0);
     CHECK(!memcmp(held->samples, held_samples, sizeof(held_samples))); qa_audio_sample_release(held);

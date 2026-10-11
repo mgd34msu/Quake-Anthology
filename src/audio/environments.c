@@ -8,7 +8,7 @@
 #include <string.h>
 
 typedef struct material_reverb {
-    qa_buffer *materials;
+    qa_string_id *materials;
     size_t material_count, preset;
     bool wildcard;
 } material_reverb;
@@ -17,10 +17,12 @@ typedef struct environment_group {
     double dimension;
     material_reverb *reverbs;
     size_t count;
+    size_t *material_presets, material_extent, fallback;
 } environment_group;
 
 typedef struct environment_table {
     atomic_size_t references;
+    qa_strings *strings;
     environment_group *groups;
     size_t count;
 } environment_table;
@@ -40,8 +42,6 @@ struct qa_audio_environment {
     double probe_time, lerp_start, lerp_end;
     float lerp_seconds;
     bool enabled;
-    bool has_material;
-    qa_buffer material_input, material_lower;
     qa_audio_reverb_params active, from, to;
 };
 
@@ -79,13 +79,13 @@ static void table_release(environment_table *table) {
         environment_group *group = &table->groups[i];
         for (size_t j = 0; j < group->count; ++j) {
             material_reverb *reverb = &group->reverbs[j];
-            for (size_t k = 0; k < reverb->material_count; ++k)
-                qa_buffer_free(&reverb->materials[k]);
             free(reverb->materials);
         }
         free(group->reverbs);
+        free(group->material_presets);
     }
     free(table->groups);
+    qa_strings_destroy(table->strings);
     free(table);
 }
 
@@ -113,7 +113,7 @@ static bool warn_missing_preset(const qa_json_document *document, qa_json_id pre
     return true;
 }
 
-static bool parse_reverb(const qa_json_document *document, qa_json_id id, material_reverb *reverb,
+static bool parse_reverb(const qa_json_document *document, qa_json_id id, material_reverb *reverb, qa_strings *strings,
                          qa_audio_log_fn warning, void *warning_user, qa_error *error) {
     if (qa_json_type(document, id) != QA_JSON_OBJECT) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Sound reverb must be an object");
@@ -157,9 +157,10 @@ static bool parse_reverb(const qa_json_document *document, qa_json_id id, materi
                 qa_buffer text = {0};
                 if (!qa_json_string(document, name, &text, error))
                     return false;
-                bool lowered =
-                    qa_utf8_lower((qa_bytes){text.data, text.size}, &reverb->materials[i], error);
-                qa_buffer_free(&text);
+                qa_buffer lower = {0};
+                bool lowered = qa_utf8_lower((qa_bytes){text.data, text.size}, &lower, error) &&
+                    qa_strings_intern(strings, (qa_bytes){lower.data, lower.size}, reverb->materials + i, error);
+                qa_buffer_free(&lower); qa_buffer_free(&text);
                 if (!lowered)
                     return false;
             }
@@ -190,7 +191,7 @@ static bool parse_reverb(const qa_json_document *document, qa_json_id id, materi
     return true;
 }
 
-static bool parse_group(const qa_json_document *document, qa_json_id id, environment_group *group,
+static bool parse_group(const qa_json_document *document, qa_json_id id, environment_group *group, qa_strings *strings,
                         qa_audio_log_fn warning, void *warning_user, qa_error *error) {
     if (qa_json_type(document, id) != QA_JSON_OBJECT) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Sound environment must be an object");
@@ -226,20 +227,47 @@ static bool parse_group(const qa_json_document *document, qa_json_id id, environ
         group->count = count;
     }
     for (size_t i = 0; i < count; ++i)
-        if (!parse_reverb(document, qa_json_at(document, reverbs, i), &group->reverbs[i], warning,
+        if (!parse_reverb(document, qa_json_at(document, reverbs, i), &group->reverbs[i], strings, warning,
                           warning_user, error))
             return false;
     return true;
 }
 
-bool qa_audio_environments_parse(qa_bytes json, qa_audio_environments **out, qa_error *error) {
-    return qa_audio_environments_parse_ex(json, NULL, NULL, out, error);
+static bool group_materials_prepare(environment_group *group, qa_error *error)
+{
+    qa_string_id maximum = QA_STRING_NONE;
+    size_t first_wildcard = group->count;
+    group->fallback = SIZE_MAX;
+    for (size_t i = 0; i < group->count; ++i) {
+        const material_reverb *reverb = group->reverbs + i;
+        if (reverb->wildcard && first_wildcard == group->count) {
+            first_wildcard = i; group->fallback = reverb->preset;
+        }
+        for (size_t j = 0; j < reverb->material_count; ++j)
+            if (reverb->materials[j] > maximum) maximum = reverb->materials[j];
+    }
+    group->material_extent = (size_t)maximum + 1;
+    group->material_presets = malloc(group->material_extent * sizeof(*group->material_presets));
+    if (!group->material_presets) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Indexing sound environment materials"); return false;
+    }
+    for (size_t i = 0; i < group->material_extent; ++i) group->material_presets[i] = group->fallback;
+    /* Earlier declarations win, including a wildcard before any later material. */
+    for (size_t i = first_wildcard; i > 0; --i) {
+        const material_reverb *reverb = group->reverbs + i - 1;
+        for (size_t j = 0; j < reverb->material_count; ++j)
+            group->material_presets[reverb->materials[j]] = reverb->preset;
+    }
+    return true;
+}
+bool qa_audio_environments_parse(qa_bytes json, qa_strings *strings, qa_audio_environments **out, qa_error *error) {
+    return qa_audio_environments_parse_ex(json, strings, NULL, NULL, out, error);
 }
 
-bool qa_audio_environments_parse_ex(qa_bytes json, qa_audio_log_fn warning, void *warning_user,
+bool qa_audio_environments_parse_ex(qa_bytes json, qa_strings *strings, qa_audio_log_fn warning, void *warning_user,
                                     qa_audio_environments **out, qa_error *error) {
-    if (!out) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Sound environments require an output");
+    if (!out || !strings) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Sound environments require a shared name table and output");
         return false;
     }
     qa_json_document *document = NULL;
@@ -263,6 +291,7 @@ bool qa_audio_environments_parse_ex(qa_bytes json, qa_audio_log_fn warning, void
         return false;
     }
     environments->table = table;
+    table->strings = strings; qa_strings_retain(strings);
     atomic_init(&table->references, 1);
     size_t count = qa_json_size(document, groups);
     if (count > SIZE_MAX / sizeof(*table->groups)) {
@@ -278,8 +307,8 @@ bool qa_audio_environments_parse_ex(qa_bytes json, qa_audio_log_fn warning, void
         table->count = count;
     }
     for (size_t i = 0; i < count; ++i)
-        if (!parse_group(document, qa_json_at(document, groups, i), &table->groups[i], warning,
-                         warning_user, error))
+        if (!parse_group(document, qa_json_at(document, groups, i), &table->groups[i], strings, warning,
+                         warning_user, error) || !group_materials_prepare(table->groups + i, error))
             goto fail;
     qa_json_destroy(document);
     *out = environments;
@@ -336,8 +365,6 @@ bool qa_audio_environment_create(const qa_audio_environments *environments, qa_a
 void qa_audio_environment_destroy(qa_audio_environment *environment) {
     if (!environment)
         return;
-    qa_buffer_free(&environment->material_input);
-    qa_buffer_free(&environment->material_lower);
     table_release(environment->table);
     free(environment);
 }
@@ -355,34 +382,6 @@ void qa_audio_environment_lerp(qa_audio_environment *environment, float seconds)
 const qa_audio_reverb_params *qa_audio_environment_params(const qa_audio_environment *environment) {
     return environment && environment->enabled && environment->table->count ? &environment->active
                                                                             : NULL;
-}
-
-static bool cache_material(qa_audio_environment *environment, const char *material) {
-    size_t length = strlen(material);
-    if (environment->has_material && environment->material_input.size == length &&
-        (!length || !memcmp(environment->material_input.data, material, length)))
-        return true;
-    if (length == SIZE_MAX)
-        return false;
-    qa_buffer input = {malloc(length + 1), length}, lower = {0};
-    if (!input.data)
-        return false;
-    memcpy(input.data, material, length + 1);
-    if (!qa_utf8_lower((qa_bytes){input.data, length}, &lower, NULL)) {
-        qa_buffer_free(&input);
-        return false;
-    }
-    qa_buffer_free(&environment->material_input);
-    qa_buffer_free(&environment->material_lower);
-    environment->material_input = input;
-    environment->material_lower = lower;
-    environment->has_material = true;
-    return true;
-}
-
-static bool material_matches(const qa_buffer *name, const qa_buffer *material) {
-    return name->size == material->size &&
-           (!name->size || !memcmp(name->data, material->data, name->size));
 }
 
 static qa_audio_reverb_params interpolate(const qa_audio_reverb_params *a,
@@ -459,20 +458,9 @@ void qa_audio_environment_update(qa_audio_environment *environment, qa_vec3 orig
         selected = QA_REVERB_PRESET_PLAIN;
     } else {
         const environment_group *group = &table->groups[environment->group];
-        if (floor_hit.material && !cache_material(environment, floor_hit.material))
-            return;
-        for (size_t i = 0; i < group->count; ++i) {
-            const material_reverb *reverb = &group->reverbs[i];
-            bool matches = reverb->wildcard;
-            if (floor_hit.material) {
-                for (size_t j = 0; !matches && j < reverb->material_count; ++j)
-                    matches = material_matches(&reverb->materials[j], &environment->material_lower);
-            }
-            if (matches) {
-                selected = reverb->preset;
-                break;
-            }
-        }
+        size_t choice = floor_hit.material && floor_hit.material < group->material_extent ?
+            group->material_presets[floor_hit.material] : group->fallback;
+        if (choice != SIZE_MAX) selected = choice;
     }
     if (selected != environment->preset) {
         environment->preset = selected;

@@ -614,8 +614,18 @@ footstep fields stay unchanged; the process-local index rebuilds on restore.
 Normal build and seven core suites pass:
 `/tmp/qa-ta3196-floor-material-ids-20261011-build.log` and
 `/tmp/qa-ta3196-floor-material-ids-20261011-core.log`.
-The item-11 audio environment/reverb consumer remains next; no runtime or
-performance claim is made by this slice.
+The item-11 audio environment/reverb consumer takes the folded surface ID from
+the same trace result. Environment parsing binds material names into that
+shared table and prepares a preset index for each environment group. Updates
+read the index directly; the temporary material buffers and text-comparison
+loop are deleted. Declaration order, wildcard precedence and unknown-material
+fallback remain intact. The existing core audio fixture checks those rules and
+configuration lifetime. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-reverb-material-ids-20261011-build.log` and
+`/tmp/qa-ta3196-reverb-material-ids-20261011-core.log`.
+Names findings 1-11 are migrated at the listed sites. Findings 12-17 and the
+other adoption kinds remain open; this is source/build/core evidence, with no
+new installation, live-audio or performance claim.
 
 ## Scalar numeric callers
 

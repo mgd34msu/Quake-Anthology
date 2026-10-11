@@ -67,7 +67,8 @@ bool qa_application_acoustics_trace(qa_application_acoustics *owner,qa_actor_id 
         ok=application_fail(error,QA_ERROR_ARGUMENT,"Acoustic world changed during linked actor trace");
     owner->readers--;
     if (ok) *out=(qa_audio_trace_hit){.fraction=result.fraction,
-        .start_solid=result.start_solid,.all_solid=result.all_solid,.end=result.end};
+        .start_solid=result.start_solid,.all_solid=result.all_solid,.end=result.end,
+            .material=result.has_surface ? result.surface.material_lower_id : QA_STRING_NONE};
     return ok;
 }
 void qa_application_acoustics_release(qa_application_acoustics *owner)

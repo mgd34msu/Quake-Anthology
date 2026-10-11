@@ -61,7 +61,8 @@ static bool trace(void *context,const qa_audio_listener *listener,qa_vec3 start,
         qa_trace_result result;
         if (!qa_q3_host_collision_trace(owner->private_scenes[listener->seat],&query,&result,error)) return false;
         *out=(qa_audio_trace_hit){.fraction=result.fraction,.start_solid=result.start_solid,
-            .all_solid=result.all_solid,.end=result.end};
+            .all_solid=result.all_solid,.end=result.end,
+            .material=result.has_surface ? result.surface.material_lower_id : QA_STRING_NONE};
         return true;
     }
     if (!scene.world) {

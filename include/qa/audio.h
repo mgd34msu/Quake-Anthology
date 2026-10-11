@@ -362,7 +362,7 @@ typedef struct qa_audio_trace_hit {
     float fraction;
     bool start_solid, all_solid, sky;
     qa_vec3 end;
-    const char *material;
+    qa_string_id material; /* Folded name in the environment configuration's shared table. */
 } qa_audio_trace_hit;
 typedef qa_audio_trace_hit (*qa_audio_trace_fn)(void *user, qa_vec3 start, qa_vec3 end,
                                                 qa_vec3 mins, qa_vec3 maxs);
@@ -373,8 +373,8 @@ const char *qa_audio_reverb_preset_name(size_t index);
 const qa_audio_reverb_params *qa_audio_reverb_preset(size_t index);
 typedef struct qa_audio_environments qa_audio_environments;
 typedef struct qa_audio_environment qa_audio_environment;
-bool qa_audio_environments_parse(qa_bytes json, qa_audio_environments **out, qa_error *error);
-bool qa_audio_environments_parse_ex(qa_bytes json, qa_audio_log_fn warning, void *warning_user,
+bool qa_audio_environments_parse(qa_bytes json, qa_strings *, qa_audio_environments **out, qa_error *error);
+bool qa_audio_environments_parse_ex(qa_bytes json, qa_strings *, qa_audio_log_fn warning, void *warning_user,
                                     qa_audio_environments **out, qa_error *error);
 void qa_audio_environments_destroy(qa_audio_environments *environments);
 /* Selectors retain immutable configuration until destroyed. */
