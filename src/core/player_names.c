@@ -83,3 +83,88 @@ bool qa_hud_q2_player_picture_names(qa_strings *strings, const char *info, qa_st
     *icon = names.icon; *dogtag = names.tag;
     return true;
 }
+
+static bool component(qa_bytes text)
+{
+    if (!text.size || text.size >= 64 || (text.size <= 2 && text.data[0] == '.' &&
+        (text.size == 1 || text.data[1] == '.'))) return false;
+    for (size_t i = 0; i < text.size; ++i) {
+        unsigned char c = text.data[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || strchr("_+.-", c))) return false;
+    }
+    return true;
+}
+static bool model_is(qa_bytes model, const char *name)
+{
+    size_t i = 0;
+    for (; i < model.size && name[i]; ++i) {
+        unsigned char c = model.data[i];
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        if (c != (unsigned char)name[i]) return false;
+    }
+    return i == model.size && !name[i];
+}
+static bool media_path(qa_strings *strings, qa_bytes model, qa_bytes member, const char *suffix,
+    qa_q2_player_media_kind kind, qa_q2_player_media_probe probe, void *context,
+    qa_string_id *out, bool *found, qa_error *error)
+{
+    char path[4096]; size_t prefix = kind == QA_Q2_PLAYER_MEDIA_ICON ? 1 : 0;
+    path[0] = '/';
+    return qa_hud_q2_player_model_path(model, member, suffix, path + prefix, sizeof(path) - prefix, error) &&
+        qa_strings_intern_cstr(strings, path, out, error) && probe(context, *out, kind, found, error);
+}
+bool qa_q2_player_media_resolve(qa_strings *strings, const qa_hud_q2_player_ids *names,
+    const qa_string_id *weapons, size_t count, bool rerelease, double noskins, bool base_client, bool body,
+    qa_q2_player_media_probe probe, void *context, qa_q2_player_media *out, qa_error *error)
+{
+    static const qa_bytes male = {(const uint8_t *)"male", 4}, female = {(const uint8_t *)"female", 6},
+        grunt = {(const uint8_t *)"grunt", 5}, athena = {(const uint8_t *)"athena", 6},
+        tris = {(const uint8_t *)"tris.md2", 8}, default_weapon = {(const uint8_t *)"weapon.md2", 10};
+    qa_q2_player_media value = *out;
+    qa_bytes model = qa_strings_text(strings, body ? names->model : value.model_name);
+    if (body) {
+        qa_bytes skin = qa_strings_text(strings, names->skin);
+        if (rerelease && (noskins == 2 || !component(skin))) {
+            if (model_is(model, "female")) { model = female; skin = athena; }
+            else { model = male; skin = grunt; }
+        } else if (noskins != 0 || !component(model) || !component(skin)) { model = male; skin = grunt; }
+        bool model_found, skin_found, icon_found;
+        if (!media_path(strings, model, tris, "", QA_Q2_PLAYER_MEDIA_MODEL, probe, context, &value.model, &model_found, error)) return false;
+        if (!model_found && !model_is(model, "male")) {
+            model = male;
+            if (!media_path(strings, model, tris, "", QA_Q2_PLAYER_MEDIA_MODEL, probe, context, &value.model, &model_found, error)) return false;
+        }
+        if (!media_path(strings, model, skin, ".pcx", QA_Q2_PLAYER_MEDIA_SKIN, probe, context, &value.skin, &skin_found, error)) return false;
+        if (!skin_found && rerelease && model_is(model, "female")) {
+            skin = athena;
+            if (!media_path(strings, model, skin, ".pcx", QA_Q2_PLAYER_MEDIA_SKIN, probe, context, &value.skin, &skin_found, error)) return false;
+        }
+        if (!skin_found && !model_is(model, "male")) {
+            model = male;
+            if (!media_path(strings, model, tris, "", QA_Q2_PLAYER_MEDIA_MODEL, probe, context, &value.model, &model_found, error) ||
+                !media_path(strings, model, skin, ".pcx", QA_Q2_PLAYER_MEDIA_SKIN, probe, context, &value.skin, &skin_found, error)) return false;
+        }
+        if (!skin_found) {
+            skin = grunt;
+            if (!media_path(strings, model, skin, ".pcx", QA_Q2_PLAYER_MEDIA_SKIN, probe, context, &value.skin, &skin_found, error)) return false;
+        }
+        if (!media_path(strings, model, skin, "_i.pcx", QA_Q2_PLAYER_MEDIA_ICON, probe, context, &value.icon, &icon_found, error) ||
+            !qa_strings_intern(strings, model, &value.model_name, error)) return false;
+        value.body_valid = model_found && skin_found && (rerelease || icon_found);
+    }
+    memset(value.weapons, 0, sizeof(value.weapons)); value.weapon_valid = false;
+    if (count > 32) count = 32;
+    for (size_t i = 0; i < count; ++i) {
+        qa_bytes weapon = qa_strings_text(strings, weapons[i]); bool found;
+        if (!media_path(strings, model, weapon, "", QA_Q2_PLAYER_MEDIA_MODEL, probe, context, value.weapons + i, &found, error)) return false;
+        if (!found && model_is(model, "cyborg"))
+            if (!media_path(strings, male, weapon, "", QA_Q2_PLAYER_MEDIA_MODEL, probe, context, value.weapons + i, &found, error)) return false;
+        if (!found && i) { value.weapons[i] = value.weapons[0]; found = value.weapon_valid; }
+        if (!found && !base_client)
+            if (!media_path(strings, male, default_weapon, "", QA_Q2_PLAYER_MEDIA_MODEL, probe, context, value.weapons + i, &found, error)) return false;
+        if (!i) value.weapon_valid = found;
+    }
+    *out = value;
+    return true;
+}

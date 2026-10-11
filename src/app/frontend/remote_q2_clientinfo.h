@@ -2,11 +2,12 @@
 #define QA_FRONTEND_REMOTE_Q2_CLIENTINFO_H
 #include "remote_q2_client.h"
 #include "qa/material.h"
+#include "qa/player_names.h"
 struct remote_q2_model;
 typedef struct remote_q2_clientinfo {
-    char model[256], skin[256];
+    const char *model;
     const char *weapon;
-    qa_string_id model_name;
+    qa_q2_player_media media;
     struct remote_q2_model *model_resource, *weapon_resource;
     const qa_material *skin_material;
     bool valid;

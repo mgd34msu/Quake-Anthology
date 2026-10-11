@@ -17,30 +17,25 @@ static struct application_native_q2 *engine_read(qa_application *app,
         !engine->calls && engine->configstrings ? engine : NULL;
 }
 
-static bool player_paths(struct application_native_q2 *engine, uint32_t slot,
-    bool body, qa_error *error)
+static bool media_probe(void *context, qa_string_id name, qa_q2_player_media_kind kind,
+    bool *found, qa_error *error)
+{
+    struct application_native_q2 *engine = context;
+    const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), name);
+    if (kind == QA_Q2_PLAYER_MEDIA_ICON) ++path;
+    return qa_vfs_probe(engine->provider->launch->content, path, found, NULL, error);
+}
+static bool player_paths(struct application_native_q2 *engine, uint32_t slot, bool body, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(engine->provider->application->session);
-    const qa_hud_q2_player_ids *names = engine->player_names + slot;
-    qa_bytes model = qa_strings_text(strings,names->model);
-    application_native_q2_player_media value = engine->player_media[slot];
-    char path[4096];
-    if (body) {
-        if (!qa_hud_q2_player_model_path(model,(qa_bytes){(const uint8_t *)"tris.md2",8},"",path,sizeof(path),error) ||
-            !qa_strings_intern_cstr(strings,path,&value.model,error) ||
-            !qa_hud_q2_player_model_path(model,qa_strings_text(strings,names->skin),".pcx",path,sizeof(path),error) ||
-            !qa_strings_intern_cstr(strings,path,&value.skin,error)) return false;
-    }
-    memset(value.weapons,0,sizeof(value.weapons));
-    for (size_t i=0;i<engine->weapons.count;++i) {
-        if (!qa_hud_q2_player_model_path(model,qa_strings_text(strings,engine->weapons.names[i]),"",path,sizeof(path),error) ||
-            !qa_strings_intern_cstr(strings,path,value.weapons+i,error)) return false;
-    }
-    engine->player_media[slot]=value;
-    return true;
+    const qa_cvar_view *setting = qa_cvars_read(engine->cvars, engine->appearance_cvar);
+    return qa_q2_player_media_resolve(strings, engine->player_names + slot, engine->weapons.names,
+        engine->weapons.count, engine->config_layout.extended, setting ? setting->number : 0, false, body, media_probe, engine,
+        engine->player_media + slot, error);
 }
 bool application_native_q2_config_prepare(struct application_native_q2 *engine, qa_error *error)
 {
+    engine->appearance_cvar = qa_cvars_resolve(engine->cvars, "cl_noskins");
     qa_strings *strings=qa_session_strings(engine->provider->application->session);
     if (!qa_hud_q2_weapons_bind(strings,&engine->config_layout,engine->configstrings,&engine->weapons,error)) return false;
     for (uint32_t slot=0;slot<256;++slot) {
@@ -97,7 +92,7 @@ bool application_native_q2_appearance_read(qa_application *app,
     uint32_t indexes[] = {state->modelindex, state->modelindex2, state->modelindex3, state->modelindex4};
     value.skin = state->skinnum;
     bool ok = true;
-    const application_native_q2_player_media *media=engine->player_media+(state->skinnum&255u);
+    const qa_q2_player_media *media=engine->player_media+(state->skinnum&255u);
     uint32_t ordinal=(state->skinnum>>8)&255u;
     qa_string_id held=ordinal<engine->weapons.count?media->weapons[ordinal]:media->weapons[0];
     for (unsigned i=0;i<4;++i) {

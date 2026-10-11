@@ -34,10 +34,6 @@ typedef struct application_native_q2_client {
     bool inventory_bound, inventory_prepared;
 } application_native_q2_client;
 
-typedef struct application_native_q2_player_media {
-    qa_string_id model, skin, weapons[32];
-} application_native_q2_player_media;
-
 struct application_native_q2 {
     const struct application_native_q2_input_stage *input_stage;
     const qa_usercmd *input_command;
@@ -72,6 +68,7 @@ struct application_native_q2 {
     void *application_context;
     qa_cvars *cvars;
     struct { qa_cvar_handle coop, dmflags; } combat_cvars;
+    qa_cvar_handle appearance_cvar;
     qa_console *console;
     qa_command_context command_context;
     qa_command_tokens arguments;
@@ -86,7 +83,7 @@ struct application_native_q2 {
     qa_q2_config_layout config_layout;
     qa_hud_q2_player_ids player_names[256];
     qa_hud_q2_weapons weapons;
-    application_native_q2_player_media player_media[256];
+    qa_q2_player_media player_media[256];
     qa_source_frame frame;
     qa_string_id map_name, spawn_point;
     char *entity_text;

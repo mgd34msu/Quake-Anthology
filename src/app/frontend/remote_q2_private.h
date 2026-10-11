@@ -185,6 +185,7 @@ void remote_q2_prediction_receive(frontend_remote_q2 *);
 void remote_q2_prediction_config(frontend_remote_q2 *, uint32_t);
 bool remote_q2_prediction_publish(frontend_remote_q2 *, qa_error *);
 bool remote_q2_map_validate(const frontend_remote_q2 *, const qa_resource *, qa_bsp_view *, qa_error *);
+bool remote_q2_model_read_id(frontend_remote_q2 *, qa_string_id, remote_q2_model **, qa_error *);
 bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **, qa_error *);
 bool remote_q2_model_config(frontend_remote_q2 *, uint32_t, qa_error *);
 const qa_scene_image *remote_q2_picture_read(void *, qa_string_id, qa_error *);

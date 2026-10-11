@@ -138,12 +138,17 @@ bool remote_q2_model_cached(frontend_remote_q2 *row, qa_string_id path, remote_q
 }
 bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_model **out, qa_error *error)
 {
+    if (!row) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 model owner is required");
+    qa_string_id name;
+    return qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)), path, &name, error) &&
+        remote_q2_model_read_id(row, name, out, error);
+}
+bool remote_q2_model_read_id(frontend_remote_q2 *row, qa_string_id path_id, remote_q2_model **out, qa_error *error)
+{
     if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 model registration requires its live source resource owner");
     *out = NULL;
-    qa_string_id path_id;
-    if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
-        path, &path_id, error)) return false;
+    const char *path = qa_strings_cstr(qa_session_strings(qa_application_session(row->frontend->application)), path_id);
     if (remote_q2_model_cached(row, path_id, out))
         return *out != NULL || remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 model has a retained missing-resource admission");
     if (!model_index_reserve(row, 1, error)) return false;

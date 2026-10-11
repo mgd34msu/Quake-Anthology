@@ -382,15 +382,15 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
         const char *value = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.player_skins + i));
         if (!*value) continue;
         qa_hud_q2_player_names names = qa_hud_q2_player_names_read(value,remote_q2_rerelease_presentation(row));
-        char prefix[4096], skin[4096];
-        int bytes=snprintf(prefix,sizeof(prefix),"players/%.*s/",(int)names.model.size,(const char *)names.model.data);
-        if (bytes<0 || (size_t)bytes>=sizeof(prefix) || names.skin.size>=sizeof(skin))
-            return remote_q2_fail(error,QA_ERROR_FORMAT,"Q2 player download path is too long");
-        memcpy(skin,names.skin.data,names.skin.size);skin[names.skin.size]=0;
+        char path[4096];
         const char *fixed[] = {"tris.md2", "weapon.md2", "weapon.pcx"}; bool ok = true;
-        for (size_t j = 0; ok && j < 3 && !waiting; ++j) ok = path_join(row, prefix, fixed[j], "", &waiting, error);
-        if (ok && !waiting) ok = path_join(row, prefix, skin, ".pcx", &waiting, error);
-        if (ok && !waiting) ok = path_join(row, prefix, skin, "_i.pcx", &waiting, error);
+        for (size_t j = 0; ok && j < 3 && !waiting; ++j)
+            ok = qa_hud_q2_player_model_path(names.model, (qa_bytes){(const uint8_t *)fixed[j], strlen(fixed[j])},
+                "", path, sizeof(path), error) && path_join(row, "", path, "", &waiting, error);
+        const char *suffixes[] = {".pcx", "_i.pcx"};
+        for (size_t j = 0; ok && j < 2 && !waiting; ++j)
+            ok = qa_hud_q2_player_model_path(names.model, names.skin, suffixes[j], path, sizeof(path), error) &&
+                path_join(row, "", path, "", &waiting, error);
         if (!ok || waiting) return ok;
     }
     const char *sky = frontend_remote_q2_config(row, 2);

@@ -4,123 +4,63 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool component(const char *text)
-{
-    if (!*text || !strcmp(text, ".") || !strcmp(text, "..")) return false;
-    for (const unsigned char *p = (const unsigned char *)text; *p; ++p)
-        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-            (*p >= '0' && *p <= '9') || strchr("_+.-", *p))) return false;
-    return true;
-}
-static bool equal(const char *a, const char *b)
-{
-    while (*a && *b) {
-        unsigned char x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false;
-    }
-    return !*a && !*b;
-}
-static void appearance(frontend_remote_q2 *row, const char *text, char model[64], char skin[64])
-{
-    qa_hud_q2_player_names names = qa_hud_q2_player_names_read(text, remote_q2_rerelease_presentation(row));
-    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars,row->cvar_handles.cl_noskins);
-    double noskins = setting ? setting->number : 0;
-    size_t length = names.model.size;
-    if (!length || length >= 64) strcpy(model, "male");
-    else { memcpy(model, names.model.data, length); model[length] = 0; }
-    length = names.skin.size < 64 ? names.skin.size : 0;
-    memcpy(skin, names.skin.data, length); skin[length] = 0;
-    if (remote_q2_rerelease_presentation(row)) {
-        if (noskins == 2 || !component(skin)) {
-            if (equal(model, "female")) { strcpy(model, "female"); strcpy(skin, "athena"); }
-            else { strcpy(model, "male"); strcpy(skin, "grunt"); }
-        } else if (noskins != 0 || !component(model)) { strcpy(model, "male"); strcpy(skin, "grunt"); }
-    } else if (noskins != 0 || !component(model) || !component(skin)) {
-        strcpy(model, "male"); strcpy(skin, "grunt");
-    }
-}
-static bool model_admit(frontend_remote_q2 *row, const char *path, remote_q2_model **out, qa_error *error)
-{
-    qa_error issue = {0}; *out = NULL;
-    if (remote_q2_model_read(row, path, out, &issue)) return true;
-    if (issue.code == QA_ERROR_NOT_FOUND) return true;
-    if (error) *error = issue;
-    return false;
-}
-static bool skin_admit(frontend_remote_q2 *row, const char *path, const qa_material **out, qa_error *error)
+static bool skin_admit(frontend_remote_q2 *row, qa_string_id name, const qa_material **out, qa_error *error)
 {
     qa_scene_image_options options = remote_q2_image_options(QA_IMAGE_USAGE_SKIN);
-    if (!qa_material_register(row->materials, path, &options, false, out, error)) return false;
+    if (!qa_material_register(row->materials, qa_strings_cstr(row->hud_names.strings, name), &options, false, out, error)) return false;
     if (*out && (*out)->default_shader) *out = NULL;
     return true;
 }
-static bool prepare_weapons(frontend_remote_q2 *row, uint32_t player, const char *model,
-    remote_q2_model *weapons[32], bool *has_default_weapon, qa_error *error)
+static bool media_probe(void *context, qa_string_id name, qa_q2_player_media_kind kind,
+    bool *found, qa_error *error)
 {
-    memset(weapons,0,32*sizeof(*weapons));
-    *has_default_weapon=false;
-    for (uint32_t i=0;i<32;++i) {
-        if (i >= row->hud_names.weapons.count) break;
-        const char *name = qa_strings_cstr(row->hud_names.strings,row->hud_names.weapons.names[i]);
-        char path[256];
-        if (strlen(name)>127) return remote_q2_fail(error,QA_ERROR_FORMAT,"Q2 player weapon exceeds its native client-info path extent");
-        snprintf(path,sizeof(path),"players/%s/%s",model,name);
-        if (!model_admit(row,path,weapons+i,error)) return false;
-        if (!i) *has_default_weapon=weapons[i]!=NULL;
-        if (!weapons[i] && equal(model,"cyborg")) {
-            snprintf(path,sizeof(path),"players/male/%s",name);
-            if (!model_admit(row,path,weapons+i,error)) return false;
+    frontend_remote_q2 *row = context;
+    qa_error issue = {0}; *found = false;
+    if (kind == QA_Q2_PLAYER_MEDIA_MODEL) {
+        remote_q2_model *model = NULL;
+        if (!remote_q2_model_read_id(row, name, &model, &issue) && issue.code != QA_ERROR_NOT_FOUND) {
+            if (error) *error = issue;
+            return false;
         }
-        if (!weapons[i] && i) weapons[i]=weapons[0];
-        if (!weapons[i] && player!=256) {
-            if (!model_admit(row,"players/male/weapon.md2",weapons+i,error)) return false;
-        }
+        *found = model != NULL;
+    } else if (kind == QA_Q2_PLAYER_MEDIA_SKIN) {
+        const qa_material *skin = NULL;
+        if (!skin_admit(row, name, &skin, error)) return false;
+        *found = skin != NULL;
+    } else {
+        *found = qa_scene_q2_picture(row->images, row->hud_names.strings, name, QA_IMAGE_USAGE_PICTURE,
+            remote_q2_rerelease_presentation(row), QA_SCENE_LINEAR_MIPMAP_LINEAR, &issue) != NULL;
+        if (!*found && issue.code != QA_OK && issue.code != QA_ERROR_NOT_FOUND) { if (error) *error = issue; return false; }
     }
     return true;
 }
-static bool prepare_player(frontend_remote_q2 *row, uint32_t player, qa_error *error)
+static bool prepare_media(frontend_remote_q2 *row, uint32_t player, bool body, qa_error *error)
 {
-    const char *text=player==256?"male/grunt":frontend_remote_q2_config(row,(uint16_t)(row->hud_names.layout.player_skins+player));
-    remote_q2_clientinfo value={0}; char model[64],skin[64]; appearance(row,text,model,skin);
-    snprintf(value.model,sizeof(value.model),"players/%s/tris.md2",model);
-    if (!model_admit(row,value.model,&value.model_resource,error)) return false;
-    if (!value.model_resource && !equal(model,"male")) {
-        strcpy(model,"male");strcpy(value.model,"players/male/tris.md2");
-        if (!model_admit(row,value.model,&value.model_resource,error)) return false;
+    remote_q2_clientinfo value = row->clientinfo[player].value;
+    qa_hud_q2_player_ids base, *names = row->hud_names.players + (player == 256 ? 0 : player);
+    if (player == 256) {
+        if (!qa_hud_q2_player_ids_bind(row->hud_names.strings, "", remote_q2_rerelease_presentation(row), &base, error)) return false;
+        names = &base;
     }
-    snprintf(value.skin,sizeof(value.skin),"players/%s/%s.pcx",model,skin);
-    if (!skin_admit(row,value.skin,&value.skin_material,error)) return false;
-    if (!value.skin_material && remote_q2_rerelease_presentation(row) && equal(model,"female")) {
-        strcpy(skin,"athena");strcpy(value.skin,"players/female/athena.pcx");
-        if (!skin_admit(row,value.skin,&value.skin_material,error)) return false;
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_noskins);
+    if (!qa_q2_player_media_resolve(row->hud_names.strings, names, row->hud_names.weapons.names,
+        row->hud_names.weapons.count, remote_q2_rerelease_presentation(row), setting ? setting->number : 0,
+        player == 256, body, media_probe, row, &value.media, error)) return false;
+    remote_q2_model *weapons[32] = {0};
+    if (body) {
+        value.model = qa_strings_cstr(row->hud_names.strings, value.media.model);
+        remote_q2_model_cached(row, value.media.model, &value.model_resource);
+        if (!skin_admit(row, value.media.skin, &value.skin_material, error)) return false;
     }
-    if (!value.skin_material && !equal(model,"male")) {
-        strcpy(model,"male");strcpy(value.model,"players/male/tris.md2");
-        snprintf(value.skin,sizeof(value.skin),"players/male/%s.pcx",skin);
-        if (!model_admit(row,value.model,&value.model_resource,error) ||
-            !skin_admit(row,value.skin,&value.skin_material,error)) return false;
+    for (size_t i = 0; i < row->hud_names.weapons.count; ++i)
+        remote_q2_model_cached(row, value.media.weapons[i], weapons + i);
+    value.valid = value.media.body_valid && value.media.weapon_valid;
+    if (!value.valid && player != 256) {
+        value = row->clientinfo[256].value;
+        memcpy(weapons, row->clientinfo[256].weapons, sizeof(weapons));
     }
-    if (!value.skin_material) {
-        snprintf(value.skin,sizeof(value.skin),"players/%s/grunt.pcx",model);
-        if (!skin_admit(row,value.skin,&value.skin_material,error)) return false;
-    }
-    remote_q2_model *weapons[32]; bool has_default_weapon;
-    if (!qa_strings_intern_cstr(row->hud_names.strings,model,&value.model_name,error) ||
-        !prepare_weapons(row,player,model,weapons,&has_default_weapon,error)) return false;
-    qa_string_id icon=player==256?row->hud_names.default_icon:row->hud_names.players[player].icon;
-    qa_error issue={0};
-    const qa_scene_image *image=qa_scene_q2_picture(row->images,row->hud_names.strings,icon,QA_IMAGE_USAGE_PICTURE,
-        remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,&issue);
-    if (!image && issue.code!=QA_OK && issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=issue;return false;}
-    value.valid=value.model_resource && value.skin_material && has_default_weapon && (remote_q2_rerelease_presentation(row) || image);
-    if (!value.valid && player!=256) {
-        value=row->clientinfo[256].value;
-        memcpy(weapons,row->clientinfo[256].weapons,sizeof(weapons));
-    }
-    row->clientinfo[player].value=value;
-    memcpy(row->clientinfo[player].weapons,weapons,sizeof(weapons));
+    row->clientinfo[player].value = value;
+    memcpy(row->clientinfo[player].weapons, weapons, sizeof(weapons));
     return true;
 }
 bool remote_q2_clientinfo_read(frontend_remote_q2 *row, uint32_t player, uint32_t weapon,
@@ -138,10 +78,10 @@ bool remote_q2_clientinfo_read(frontend_remote_q2 *row, uint32_t player, uint32_
 }
 bool remote_q2_clientinfo_prepare(frontend_remote_q2 *row, qa_error *error)
 {
-    if (!prepare_player(row,256,error)) return false;
+    if (!prepare_media(row,256,true,error)) return false;
     for (uint32_t i=0;i<256;++i) {
         if (*frontend_remote_q2_config(row,(uint16_t)(row->hud_names.layout.player_skins+i))) {
-            if (!prepare_player(row,i,error)) return false;
+            if (!prepare_media(row,i,true,error)) return false;
         } else row->clientinfo[i]=row->clientinfo[256];
     }
     const qa_cvar_view *setting=qa_cvars_read(row->options.domain.cvars,row->cvar_handles.cl_noskins);
@@ -151,16 +91,10 @@ bool remote_q2_clientinfo_prepare(frontend_remote_q2 *row, qa_error *error)
 bool remote_q2_clientinfo_config(frontend_remote_q2 *row, uint32_t index, bool weapon_changed, qa_error *error)
 {
     if (index>=row->hud_names.layout.player_skins && index-row->hud_names.layout.player_skins<256)
-        return prepare_player(row,index-row->hud_names.layout.player_skins,error);
+        return prepare_media(row,index-row->hud_names.layout.player_skins,true,error);
     if (weapon_changed) {
         for (uint32_t player=256;;--player) {
-            remote_q2_clientinfo *value=&row->clientinfo[player].value;
-            const char *model=qa_strings_cstr(row->hud_names.strings,value->model_name);
-            if (model) {
-                bool has_default;
-                if (!prepare_weapons(row,player,model,row->clientinfo[player].weapons,&has_default,error)) return false;
-                if (!has_default) value->valid=false;
-            }
+            if (!prepare_media(row,player,false,error)) return false;
             if (!player) break;
         }
     }

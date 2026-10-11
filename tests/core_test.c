@@ -1934,6 +1934,51 @@ static void test_q2_owned_frames(void)
         qa_q2_frame_history_destroy(history);
     }
 }
+typedef struct player_media_fixture { qa_strings *strings; size_t body_reads; } player_media_fixture;
+static bool player_media_available(void *context, qa_string_id name, qa_q2_player_media_kind kind,
+    bool *found, qa_error *error)
+{
+    (void)error;
+    player_media_fixture *fixture = context;
+    const char *path = qa_strings_cstr(fixture->strings, name);
+    if (kind != QA_Q2_PLAYER_MEDIA_MODEL || strstr(path, "tris.md2")) ++fixture->body_reads;
+    *found = !strcmp(path, "players/male/tris.md2") || !strcmp(path, "players/male/grunt.pcx") ||
+        !strcmp(path, "/players/male/grunt_i.pcx") || !strcmp(path, "players/male/weapon.md2") ||
+        !strcmp(path, "players/female/tris.md2") || !strcmp(path, "players/female/athena.pcx") ||
+        !strcmp(path, "/players/female/athena_i.pcx") || !strcmp(path, "players/female/weapon.md2") ||
+        !strcmp(path, "players/cyborg/tris.md2") || !strcmp(path, "players/cyborg/oni911.pcx") ||
+        !strcmp(path, "/players/cyborg/oni911_i.pcx");
+    return true;
+}
+static void test_q2_player_media(void)
+{
+    qa_error error = {0}; qa_strings *strings = NULL;
+    CHECK(qa_strings_create(&strings, &error));
+    qa_string_id weapon; CHECK(qa_strings_intern_cstr(strings, "weapon.md2", &weapon, &error));
+    player_media_fixture fixture = {.strings = strings};
+    const char *infos[] = {"Player\\female/missing", "Player\\missing/missing", "Player\\cyborg/oni911"};
+    const char *skins[] = {"players/female/athena.pcx", "players/male/grunt.pcx", "players/cyborg/oni911.pcx"};
+    for (size_t i = 0; i < 3; ++i) {
+        qa_hud_q2_player_ids names; qa_q2_player_media media = {0};
+        CHECK(qa_hud_q2_player_ids_bind(strings, infos[i], true, &names, &error));
+        CHECK(qa_q2_player_media_resolve(strings, &names, &weapon, 1, true, 0, false, true,
+            player_media_available, &fixture, &media, &error));
+        CHECK(media.body_valid && media.weapon_valid);
+        CHECK(!strcmp(qa_strings_cstr(strings, media.skin), skins[i]));
+        if (i == 2) CHECK(!strcmp(qa_strings_cstr(strings, media.weapons[0]), "players/male/weapon.md2"));
+        fixture.body_reads = 0; qa_string_id skin = media.skin, model = media.model;
+        CHECK(qa_q2_player_media_resolve(strings, &names, &weapon, 1, true, 0, false, false,
+            player_media_available, &fixture, &media, &error));
+        CHECK(!fixture.body_reads && media.skin == skin && media.model == model);
+    }
+    qa_hud_q2_player_ids names; qa_q2_player_media media = {0};
+    CHECK(qa_hud_q2_player_ids_bind(strings, infos[0], false, &names, &error));
+    CHECK(qa_q2_player_media_resolve(strings, &names, &weapon, 1, false, 0, false, true,
+        player_media_available, &fixture, &media, &error));
+    CHECK(media.body_valid && media.weapon_valid && !strcmp(qa_strings_cstr(strings, media.skin), skins[1]));
+    qa_strings_destroy(strings);
+}
+
 static void test_q2_weapon_names(void)
 {
     qa_error error = {0}; qa_strings *strings = NULL;
@@ -1989,6 +2034,7 @@ int main(int argc, char **argv)
     test_compiled_sound_names();
     test_native_import_slot_identity();
     test_q2_weapon_names();
+    test_q2_player_media();
     test_literal_tokens();
     test_platform_event_retirement();
     test_q2_command_angles();
