@@ -13,30 +13,12 @@ static bool call_text(qa_native_host *host, const qa_native_import_call *call, s
     return native_host_string_read(host, address, out, error);
 }
 
-static bool call_string_span(qa_native_host *host, const qa_native_import_call *call,
-                             size_t index, const char **out, qa_bytes *owned,
-                             qa_error *error)
+bool qa_native_host_q2_call_string(const qa_native_host_q2_application_call *call,
+    size_t index, const char **out, qa_error *error)
 {
-    if (index >= call->argument_count)
-        return native_host_fail(error, QA_ERROR_ARGUMENT, index,
-                                "native import string argument is missing");
-    qa_native_address address = native_argument_address(call, index);
-    if (!address) {
-        *out = "";
-        return true;
-    }
-    qa_bytes text;
-    if (!qa_native_string_span(host->instance, address, host->maximum_string_bytes,
-                                &text, error))
-        return false;
-    if (text.data) {
-        *out = (const char *)text.data;
-        return true;
-    }
-    if (!native_host_string_read(host, address, owned, error))
-        return false;
-    *out = (const char *)owned->data;
-    return true;
+    if (index >= call->import->argument_count)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, index, "native import string argument is missing");
+    return qa_native_host_string_span(call->host, native_argument_address(call->import, index), out, error);
 }
 
 static bool emit_print(qa_native_host *host, qa_native_host_print_kind kind,
@@ -380,8 +362,9 @@ static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
 {
     qa_bytes name_copy = {0}, value_copy = {0};
     const char *name="", *value="";
-    if (!call_string_span(host, call, 0, &name, &name_copy, error) ||
-        !call_string_span(host, call, 1, &value, &value_copy, error)) {
+    qa_native_host_q2_application_call application = {.host = host, .instance = host->instance, .import = call};
+    if (!qa_native_host_q2_call_string(&application, 0, &name, error) ||
+        !qa_native_host_q2_call_string(&application, 1, &value, error)) {
         return false;
     }
     qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);

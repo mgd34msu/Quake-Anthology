@@ -189,6 +189,9 @@ typedef struct qa_native_host_q2_application_call {
     uint32_t seat;
     bool seat_bound;
 } qa_native_host_q2_application_call;
+bool qa_native_host_q2_call_string(const qa_native_host_q2_application_call *,
+    size_t index, const char **text, qa_error *);
+bool qa_native_host_string_span(qa_native_host *, qa_native_address, const char **, qa_error *);
 
 /* These callbacks own services whose state is outside gameplay authority:
  * localization, clipboard, debug presentation, bot navigation and cgame UI. */

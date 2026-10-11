@@ -97,6 +97,19 @@ bool native_host_write_vec3(qa_native_host *host, qa_native_address address, qa_
     return native_host_write(host, address, bytes, sizeof(bytes), error);
 }
 
+bool qa_native_host_string_span(qa_native_host *host, qa_native_address address,
+    const char **out, qa_error *error)
+{
+    if (!address) { *out = ""; return true; }
+    qa_bytes text;
+    if (!qa_native_string_span(host->instance, address, host->maximum_string_bytes, &text, error)) return false;
+    if (text.data) { *out = (const char *)text.data; return true; }
+    uint8_t *copy = qa_arena_alloc(&host->text_storage, text.size + 1, 1, error);
+    if (!copy || !qa_native_read(host->instance, address, copy, text.size + 1, error)) return false;
+    *out = (const char *)copy;
+    return true;
+}
+
 bool native_host_string_read(qa_native_host *host, qa_native_address address, qa_bytes *out,
                              qa_error *error)
 {
