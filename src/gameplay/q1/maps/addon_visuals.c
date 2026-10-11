@@ -62,7 +62,7 @@ static bool ramp_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return false;
     if (!visual(g, id))
         return true;
-    if (!g->maps->options.lightstyle(g->maps->options.context, (int32_t)style, value, error))
+    if (!q1_actor_lightstyle(g, id, (int32_t)style, value, error))
         return false;
     e = visual(g, id);
     if (!e)
@@ -286,8 +286,7 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
         if (e->map->style < 32)
             return true;
         if (e->spawnflags & 2) {
-            if (!g->maps->options.lightstyle(g->maps->options.context, e->map->style,
-                                              e->targetname, error))
+            if (!q1_actor_lightstyle(g, id, e->map->style, e->targetname, error))
                 return false;
             e = visual(g, id);
             return !e || q1_remove(g, e, error);

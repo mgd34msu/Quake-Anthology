@@ -110,7 +110,7 @@ struct application_qc_state {
     qa_buffer original_extension;
     qa_buffer npc_restore;
     struct application_qc_rerelease *rerelease;
-    char *lightstyles[64];
+    qa_string_id lightstyles[64];
     uint64_t lightstyle_revision;
     application_qc_message *messages;
     size_t message_count, message_capacity;

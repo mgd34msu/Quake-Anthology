@@ -323,19 +323,10 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         if (!qa_qc_arg_float(vm, 0, &style, error) || !qa_qc_arg_string(vm, 1, &pattern, error)) return false;
         if (!isfinite(style) || style < 0 || style >= 64)
             return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC lightstyle outside source table");
-        qa_builtin_event light = {.kind = QA_BUILTIN_LIGHT,
-            .family = QA_GAME_Q1, .provider = engine->provider->owner,
-            .code = (int32_t)style, .time_ns = engine->source_time_ns};
-        if (!qa_builtin_resource(&engine->services, pattern, &light.resource, error))
-            return false;
-        size_t length = strlen(pattern);
-        char *copy = malloc(length + 1);
-        if (copy == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC lightstyle");
-        memcpy(copy, pattern, length + 1);
-        const char *prior = engine->lightstyles[(uint32_t)style];
-        if (!prior || strcmp(prior, copy)) ++engine->lightstyle_revision;
-        free(engine->lightstyles[(uint32_t)style]); engine->lightstyles[(uint32_t)style] = copy;
-        return qa_builtin_emit(&engine->services, &light, error);
+        qa_string_id resource;
+        return qa_builtin_resource(&engine->services, pattern, &resource, error) &&
+            qa_builtin_q1_lightstyle(&engine->services, engine->provider->owner,
+                (qa_actor_id){0}, engine->source_time_ns, (int32_t)style, resource, error);
     }
     case QA_QC_BUILTIN_CHANGELEVEL: {
         const char *map; int32_t self; qa_actor_id actor = {0};

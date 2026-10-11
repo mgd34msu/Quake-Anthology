@@ -99,6 +99,24 @@ static void test_json_caller_storage(void)
     CHECK(owned.size==decoded.size && !memcmp(owned.data,expected,sizeof(expected)));
     qa_buffer_free(&owned); qa_json_destroy(document);
 }
+static bool capture_lightstyle(void *context, const qa_builtin_event *event, qa_error *error)
+{
+    (void)error;
+    *(qa_builtin_event *)context = *event;
+    return true;
+}
+static void test_q1_lightstyle_event(void)
+{
+    qa_builtin_event event = {0};
+    qa_builtin_services services = {.context = &event, .emit = capture_lightstyle};
+    qa_actor_id actor = {.registry = 1, .slot = 7, .generation = 2};
+    qa_error error = {0};
+    CHECK(qa_builtin_q1_lightstyle(&services, 19, actor, 1234, 47, 35, &error));
+    CHECK(event.kind == QA_BUILTIN_LIGHT && event.family == QA_GAME_Q1);
+    CHECK(event.code == 47 && event.resource == 35 && !event.text);
+    CHECK(event.provider == 19 && event.time_ns == 1234 && qa_actor_id_equal(event.actor, actor));
+}
+
 static void test_q1_effect_state(void)
 {
     frontend_fx_q1_state state;
@@ -1955,6 +1973,7 @@ int main(int argc, char **argv)
     test_recovery_checkpoints();
     test_q1_original_codec();
     test_q1_effect_state();
+    test_q1_lightstyle_event();
     test_q2_owned_frames();
     test_q2_retained_records();
     test_q1_gameplay();

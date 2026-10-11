@@ -1333,7 +1333,7 @@ bool q1_classnamed(qa_q1_game *, qa_actor_id, qa_string_id);
 bool q1_model(qa_q1_game *, q1_actor *, qa_string_id, qa_error *);
 const char *q1_runtime_name_text(q1_runtime_name);
 q1_runtime_name q1_door_key_sound(int32_t world_type, bool accepted);
-bool q1_actor_lightstyle(qa_q1_game *, qa_actor_id, qa_string_id, qa_error *);
+bool q1_actor_lightstyle(qa_q1_game *, qa_actor_id, int32_t, qa_string_id, qa_error *);
 bool q1_sound_resource(qa_q1_game *, qa_actor_id, qa_string_id, int32_t channel, float attenuation,
                        float volume, qa_error *);
 bool q1_effect(qa_q1_game *, qa_builtin_event_kind, qa_actor_id, qa_vec3, float, int32_t,

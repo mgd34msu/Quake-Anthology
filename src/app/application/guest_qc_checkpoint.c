@@ -296,7 +296,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
             !add_size(&capacity, message->size + message->reference_count * 32 + 64, error)) return false;
     }
     for (size_t i = 0; i < 64; ++i)
-        if (!add_size(&capacity, (engine->lightstyles[i] ? strlen(engine->lightstyles[i]) : 0) + 4, error)) return false;
+        if (!add_size(&capacity, (engine->lightstyles[i] ? qa_strings_text(qa_session_strings(engine->services.session), engine->lightstyles[i]).size : 0) + 4, error)) return false;
     if (engine->resource_count > UINT32_MAX || engine->message_count > UINT32_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "QuakeC engine checkpoint record count overflow");
     qa_buffer rerelease={0};
@@ -364,7 +364,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     for (size_t i = 0; ok && i < engine->resource_count; ++i) ok=write_resource(&writer,graph,qa_session_strings(engine->services.session),engine->resources+i,openings+i);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)registry.size) &&
         qa_net_write_data(&writer, registry.data, registry.size);
-    for (size_t i = 0; ok && i < 64; ++i) ok = write_text(&writer, engine->lightstyles[i]);
+    for (size_t i = 0; ok && i < 64; ++i) ok = write_text(&writer, qa_strings_cstr(qa_session_strings(engine->services.session), engine->lightstyles[i]));
     if (ok) ok=qa_net_write_u32(&writer,(uint32_t)engine->original_extension.size) &&
         qa_net_write_data(&writer,engine->original_extension.data,engine->original_extension.size);
     if (ok) ok=qa_net_write_u32(&writer,(uint32_t)rerelease.size) && qa_net_write_data(&writer,rerelease.data,rerelease.size);
@@ -392,7 +392,6 @@ static void dispose_candidate(struct application_qc_state *candidate)
     }
     application_qc_messages_destroy(candidate);
     application_qc_precache_dispose(candidate);
-    for (size_t i = 0; i < 64; ++i) free(candidate->lightstyles[i]);
     qa_buffer_free(&candidate->original_extension);
     application_qc_rerelease_destroy(candidate);
     free(candidate->resources); free(candidate->clients);
@@ -510,7 +509,11 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     uint32_t registry_size = ok ? qa_net_read_u32(&reader) : 0;
     if (ok) ok = (unit ? registry_size==0 : registry_size!=0) &&
         qa_net_read_bytes(&reader, registry_size, &registry);
-    for (size_t i = 0; ok && i < 64; ++i) { candidate.lightstyles[i] = read_text(&reader); ok = candidate.lightstyles[i] != NULL; }
+    for (size_t i = 0; ok && i < 64; ++i) {
+        char *pattern = read_text(&reader);
+        ok = pattern && qa_builtin_resource(&candidate.services, pattern, &candidate.lightstyles[i], error);
+        free(pattern);
+    }
     uint32_t extension=ok?qa_net_read_u32(&reader):0;
     if (ok && (reader.failed || extension>qa_net_reader_remaining(&reader)))
         ok=qa_net_reader_fail(&reader,"Original source extension exceeds its checkpoint");
@@ -609,7 +612,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
             application_qc_resource_dispose(&engine->resources[i]);
         }
         application_qc_messages_destroy(engine);
-        for (size_t i = 0; i < 64; ++i) { free(engine->lightstyles[i]); engine->lightstyles[i] = candidate.lightstyles[i]; candidate.lightstyles[i] = NULL; }
+        memcpy(engine->lightstyles, candidate.lightstyles, sizeof(engine->lightstyles));
         free(engine->resources); free(engine->clients);
         application_qc_precache_dispose(engine);
         engine->precache = candidate.precache;

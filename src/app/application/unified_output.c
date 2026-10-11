@@ -268,7 +268,7 @@ static bool styles(qa_application *app, const application_unified_source *source
         } else if (p->kind == APPLICATION_PROVIDER_Q2) {
             if (!qa_q2_wire_lightstyle_read(p->state.q2, (uint32_t)i, &id, error)) return false;
             if (id) pattern = qa_strings_cstr(strings, id);
-        } else if (qc) pattern = qc->lightstyles[i];
+        } else if (qc) { id = qc->lightstyles[i]; if (id) pattern = qa_strings_cstr(strings, id); }
         else if (native) pattern = qa_strings_cstr(qa_session_strings(native->provider->application->session), native->configstrings[base + i]);
         qa_unified_style_pattern *row = out->styles + out->style_count++;
         row->family = source->family; row->index = (uint32_t)i;

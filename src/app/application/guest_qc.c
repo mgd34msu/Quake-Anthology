@@ -1464,7 +1464,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
             memset((void *)engine->model_fields.entries,0,
                    (size_t)engine->model_fields.count*sizeof(*engine->model_fields.entries));
         application_qc_messages_reset(engine);
-        for (size_t i = 0; i < 64; ++i) { free(engine->lightstyles[i]); engine->lightstyles[i] = NULL; }
+        memset(engine->lightstyles, 0, sizeof(engine->lightstyles));
     }
     if (engine == NULL || entities == NULL || map == NULL || entities->count == 0 || !engine->loading)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC map is missing its world entity");
@@ -1582,7 +1582,6 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
         application_qc_resource_dispose(&engine->resources[i]);
     }
     application_qc_messages_destroy(engine);
-    for (size_t i = 0; i < 64; ++i) free(engine->lightstyles[i]);
     qa_buffer_free(&engine->original_extension);
     application_qc_rerelease_destroy(engine);
     qa_builtin_snapshot_free(&engine->observations);

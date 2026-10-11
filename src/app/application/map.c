@@ -512,20 +512,6 @@ static bool q1_ambient(void *opaque, qa_vec3 origin, qa_string_id sound,
                           error);
 }
 
-static bool q1_lightstyle(void *opaque, int32_t style, qa_string_id pattern,
-                          qa_error *error)
-{
-    application_provider *provider = opaque;
-    if (!qa_q1_wire_lightstyle(provider->state.q1, style, pattern, error))
-        return false;
-    return emit_map_event(opaque,
-                          (qa_builtin_event){.kind = QA_BUILTIN_LIGHT,
-                                             .family = QA_GAME_Q1,
-                                             .resource = pattern,
-                                             .code = style},
-                          error);
-}
-
 static bool q1_integer_intent(void *opaque, int32_t value, qa_error *error)
 {
     application_provider *provider = opaque;
@@ -1059,7 +1045,6 @@ static bool q1_map_options(application_provider *provider,
         .context = provider,
         .static_model = q1_static_model,
         .ambient = q1_ambient,
-        .lightstyle = q1_lightstyle,
         .fog_player = q1_fog_player,
         .set_skill = q1_integer_intent,
         .player_exited = q1_player_exited,

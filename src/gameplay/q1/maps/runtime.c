@@ -33,7 +33,7 @@ bool q1_map_present_intermission(qa_q1_game *g, qa_actor_id source, uint32_t sta
 static bool map_options_valid(const qa_q1_game *g, const qa_q1_map_options *options,
                               qa_error *error) {
     if (!g || g->destroy_pending || !options || !options->targets || !options->level || !options->server_flags ||
-        !options->static_model || !options->ambient || !options->lightstyle ||
+        !options->static_model || !options->ambient ||
         !options->set_skill || !options->secret_found || !g->services.actor_traits ||
         !g->services.physics || !g->services.physics->services.read ||
         !g->services.physics->services.write || !g->services.motion_changed ||
@@ -762,7 +762,7 @@ bool q1_map_ambient(qa_q1_game *g, qa_vec3 origin, qa_string_id sound, float vol
     return g->maps->options.ambient(g->maps->options.context, origin, sound, volume, 3, error);
 }
 bool q1_map_lightstyle(qa_q1_game *g, q1_actor *entity, qa_string_id pattern, qa_error *error) {
-    return g->maps->options.lightstyle(g->maps->options.context, entity->map->style, pattern, error);
+    return q1_actor_lightstyle(g, entity->id, entity->map->style, pattern, error);
 }
 
 static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *source,
@@ -1286,7 +1286,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         for (size_t i = 0; i < sizeof(styles) / sizeof(*styles); ++i) {
             qa_string_id pattern;
             if (!qa_builtin_resource(&g->services, styles[i], &pattern, error) ||
-                !g->maps->options.lightstyle(g->maps->options.context, (int32_t)i, pattern, error))
+                !q1_actor_lightstyle(g, entity->id, (int32_t)i, pattern, error))
                 return false;
             if (!q1_alive(g, entity->id))
                 return true;

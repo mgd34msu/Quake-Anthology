@@ -104,7 +104,7 @@ bool q1_map_finale_emit(qa_q1_game *g, uint32_t stage, const char *text, qa_erro
     return g->maps->options.finale(g->maps->options.context, &view, error);
 }
 static bool style(qa_q1_game *g, qa_string_id pattern, qa_error *error) {
-    return g->maps->options.lightstyle(g->maps->options.context, 0, pattern, error);
+    return q1_actor_lightstyle(g, g->maps->world_actor, 0, pattern, error);
 }
 static bool achievement(qa_q1_game *g, qa_string_id text, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_ACHIEVEMENT,

@@ -103,6 +103,15 @@ bool qa_builtin_resource(const qa_builtin_services *s, const char *path, qa_stri
     return qa_strings_intern_cstr(qa_session_strings(s->session), path, out, error);
 }
 
+bool qa_builtin_q1_lightstyle(const qa_builtin_services *s, qa_actor_owner provider,
+                             qa_actor_id actor, uint64_t time_ns, int32_t style,
+                             qa_string_id pattern, qa_error *error) {
+    const qa_builtin_event event = {.kind = QA_BUILTIN_LIGHT, .family = QA_GAME_Q1,
+        .provider = provider, .actor = actor, .time_ns = time_ns,
+        .code = style, .resource = pattern};
+    return qa_builtin_emit(s, &event, error);
+}
+
 bool qa_builtin_snapshot_reserve(qa_builtin_actor_snapshot *snapshot, size_t capacity,
                                  qa_error *error) {
     if (!snapshot || capacity > SIZE_MAX / (2 * sizeof(qa_actor_id))) {

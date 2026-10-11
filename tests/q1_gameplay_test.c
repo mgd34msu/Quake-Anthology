@@ -185,12 +185,6 @@ static bool unexpected_ambient(void *context, qa_vec3 origin, qa_string_id sound
     (void)context; (void)origin; (void)sound; (void)volume; (void)attenuation; (void)error;
     return false;
 }
-static bool unexpected_lightstyle(void *context, int32_t style, qa_string_id pattern,
-    qa_error *error)
-{
-    (void)context; (void)style; (void)pattern; (void)error;
-    return false;
-}
 static bool unexpected_skill(void *context, int32_t skill, qa_error *error)
 {
     (void)context; (void)skill; (void)error;
@@ -242,7 +236,7 @@ static void fixture_bind_maps(q1_fixture *fixture)
         .targets = fixture->targets, .level = fixture->level,
         .server_flags = &fixture->server_flags, .current_map = map,
         .static_model = unexpected_static, .ambient = unexpected_ambient,
-        .lightstyle = unexpected_lightstyle, .set_skill = unexpected_skill,
+        .set_skill = unexpected_skill,
         .secret_found = unexpected_secret}, &error));
 }
 

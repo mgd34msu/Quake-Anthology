@@ -406,10 +406,10 @@ bool q1_model(qa_q1_game *g, q1_actor *entity, qa_string_id model, qa_error *err
         return false;
     entity->model=model; return true;
 }
-bool q1_actor_lightstyle(qa_q1_game *g, qa_actor_id actor, qa_string_id pattern, qa_error *error) {
-    qa_builtin_event event={.kind=QA_BUILTIN_LIGHT,.family=QA_GAME_Q1,
-        .provider=g->options.provider,.actor=actor,.time_ns=g->time_ns,.text=pattern};
-    return qa_builtin_emit(&g->services,&event,error);
+bool q1_actor_lightstyle(qa_q1_game *g, qa_actor_id actor, int32_t style,
+                        qa_string_id pattern, qa_error *error) {
+    return qa_builtin_q1_lightstyle(&g->services, g->options.provider, actor,
+                                   g->time_ns, style, pattern, error);
 }
 bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, int32_t channel,
                        float attenuation, float volume, qa_error *error) {

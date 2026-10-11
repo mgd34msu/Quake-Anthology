@@ -97,7 +97,6 @@ typedef struct qa_q1_map_options {
     bool (*static_model)(void *, const qa_q1_static_model *, qa_error *);
     bool (*ambient)(void *, qa_vec3, qa_string_id sound, float volume, float attenuation,
                     qa_error *);
-    bool (*lightstyle)(void *, int32_t style, qa_string_id pattern, qa_error *);
     bool (*set_skill)(void *, int32_t, qa_error *);
     bool (*player_exited)(void *, qa_actor_id, qa_error *);
     bool (*secret_found)(void *, qa_actor_id source, qa_actor_id player, uint32_t total,

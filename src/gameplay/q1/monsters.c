@@ -875,7 +875,7 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             break;
         }
         case Q1_FRAME_LIGHTSTYLE: {
-            if (!q1_actor_lightstyle(g,entity->id,g->runtime_names[op->resource],error))
+            if (!q1_actor_lightstyle(g, entity->id, 0, g->runtime_names[op->resource],error))
                 return false;
             break;
         }

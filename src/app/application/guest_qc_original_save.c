@@ -193,7 +193,7 @@ bool qa_application_q1_save_capture(qa_application *app,const qa_q1_save_client 
                 ok=application_fail(error,QA_ERROR_FORMAT,"Source spawn parameters are nonfinite");
         }
         for (size_t i=0;ok && i<64;++i) {
-            const char *style=engine->lightstyles[i];
+            const char *style=qa_strings_cstr(qa_session_strings(engine->services.session),engine->lightstyles[i]);
             save->lightstyles[i]=duplicate(style && *style?style:"m",error);ok=save->lightstyles[i]!=NULL;
         }
         if (ok) {
@@ -277,13 +277,10 @@ static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_dat
     }
     engine->clients[1].has_parms=true;
     for (size_t i=0;i<64;++i) {
-        char *style=duplicate(save->lightstyles[i],error);
-        if (!style) return false;
-        qa_builtin_event event={.kind=QA_BUILTIN_LIGHT,.family=QA_GAME_Q1,.provider=engine->provider->owner,
-            .code=(int32_t)i,.time_ns=engine->source_time_ns};
-        if (!qa_builtin_resource(&engine->services,style,&event.resource,error) ||
-            !qa_builtin_emit(&engine->services,&event,error)) { free(style); return false; }
-        free(engine->lightstyles[i]); engine->lightstyles[i]=style;
+        qa_string_id style;
+        if (!qa_builtin_resource(&engine->services,save->lightstyles[i],&style,error) ||
+            !qa_builtin_q1_lightstyle(&engine->services,engine->provider->owner,
+                (qa_actor_id){0},engine->source_time_ns,(int32_t)i,style,error)) return false;
     }
     qa_buffer_free(&engine->original_extension);
     if (save->extension.size) {

@@ -219,7 +219,7 @@ static bool finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
                               .count = 3,
                               .time_ns = g->time_ns};
     event.resource=g->runtime_names[Q1_NAME_MUSIC];
-    return qa_builtin_emit(&g->services, &event, error) && q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_M], error) &&
+    return qa_builtin_emit(&g->services, &event, error) && q1_actor_lightstyle(g, e->id, 0, g->runtime_names[Q1_NAME_RESOURCE_M], error) &&
            qa_q1_game_map_finish_addon(g, QA_Q1_MAP_END_DOPA, error);
 }
 bool q1_major_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_error *error) {
@@ -257,13 +257,13 @@ bool q1_major_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa
             m->next_frame = (Q1_FRAME_oldnew_death1);
         return true;
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH16:
-        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_G], error);
+        return q1_actor_lightstyle(g, e->id, 0, g->runtime_names[Q1_NAME_RESOURCE_G], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH17:
-        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_C], error);
+        return q1_actor_lightstyle(g, e->id, 0, g->runtime_names[Q1_NAME_RESOURCE_C], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH18:
-        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_B], error);
+        return q1_actor_lightstyle(g, e->id, 0, g->runtime_names[Q1_NAME_RESOURCE_B], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH19:
-        return q1_actor_lightstyle(g, e->id, g->runtime_names[Q1_NAME_RESOURCE_A], error);
+        return q1_actor_lightstyle(g, e->id, 0, g->runtime_names[Q1_NAME_RESOURCE_A], error);
     case Q1_ACTION_OLDNEW_OLDNEW_DEATH20:
         return finish(g, e, error);
     default:

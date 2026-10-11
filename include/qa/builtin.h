@@ -305,6 +305,8 @@ bool qa_builtin_check_client(const qa_builtin_check_client_query *, uint32_t *, 
 bool qa_builtin_spawn_actor(const qa_builtin_services *, const qa_builtin_spawn *, qa_actor_id *,
                             qa_error *);
 bool qa_builtin_emit(const qa_builtin_services *, const qa_builtin_event *, qa_error *);
+bool qa_builtin_q1_lightstyle(const qa_builtin_services *, qa_actor_owner, qa_actor_id,
+                             uint64_t time_ns, int32_t style, qa_string_id pattern, qa_error *);
 bool qa_builtin_resource(const qa_builtin_services *, const char *, qa_string_id *, qa_error *);
 /* Zero-initialize once, reuse between calls, and free at owner teardown. Each
  * nested gameplay query needs its own retained snapshot. IDs are observations;
