@@ -476,7 +476,7 @@ static bool bot_print(void *opaque,const char *text,qa_error *error) {
     if(source->kind==APPLICATION_PROVIDER_Q3) return application_native_q3_console_print(source,text,error);
     qa_command_context command={.owner=source->owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER};
     if(!qa_application_capture_command_context(bots->application,&command,&command,error)) return false;
-    application_console_print(bots->application,&command,text);return true;
+    return qa_application_log_emit(bots->application,&command,text,true,error);
 }
 static void bot_diagnostic(void *opaque,qa_script_severity severity,const char *text) {
     (void)severity;qa_error error={0};

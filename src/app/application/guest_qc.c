@@ -1665,8 +1665,8 @@ bool application_qc_water_transition(application_provider *provider, qa_actor_id
                 .resource = resource->name, .origin = body.origin, .channel = 0, .volume = 1, .attenuation = 1};
             if (!qa_builtin_emit(&engine->services, &sound, error)) return false;
         } else if (!provider->state.qc.qualified) {
-            application_console_print(provider->application, &engine->command_context,
-                "SV_StartSound: misc/h2ohit1.wav not precacheed\n");
+            if (!qa_application_log_emit(provider->application, &engine->command_context,
+                "SV_StartSound: misc/h2ohit1.wav not precacheed\n", true, error)) return false;
         }
         if (qa_actors_get(actors, actor) == NULL) return true;
     }

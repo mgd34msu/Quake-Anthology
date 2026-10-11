@@ -99,7 +99,8 @@ static bool set_color(struct application_qc_state *engine,qa_qc_instance *vm,qa_
     qa_error local={0};
     if (!target(engine,vm,reference,false,&slot,&local)) {
         if (local.code==QA_ERROR_NOT_FOUND || local.code==QA_ERROR_FORMAT) { if (error) *error=local; return false; }
-        qa_console_emit(engine->console,&engine->command_context,"tried to setcolor a non-client\n"); return true;
+        return qa_application_log_emit(engine->provider->application,&engine->command_context,
+            "tried to setcolor a non-client\n",true,error);
     }
     uint8_t top=value>>4,bottom=value&15u;
     if (top>13) top=13;

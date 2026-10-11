@@ -166,7 +166,7 @@ static bool print(void *context,const char *text,qa_error *error) {
     qa_application *app=binding->bots->application;
     qa_command_context request={.owner=binding->source->owner,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_SERVER},actual;
     if(!qa_application_capture_command_context(app,&request,&actual,error)) return false;
-    qa_console_emit(app->console,&actual,text);return true;
+    return qa_application_log_emit(app,&actual,text,true,error);
 }
 static bool memory_debug(void *context,int32_t *out,qa_error *error) {
     application_bot_world_binding *binding=context;
