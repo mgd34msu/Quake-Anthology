@@ -522,7 +522,7 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
                 .reserved_source_slot = engine->callbacks ? application_native_q2_callbacks_reserved_slot : NULL},
             .services = {.engine = application_native_q2_services(engine),
                 .movement = application_native_q2_movement_services(engine),
-                .application = engine->application, .application_context = engine->application_context},
+                .application = application_native_q2_import, .application_context = engine},
             .cvars = engine->cvars, .console = engine->console, .command_context = engine->command_context};
         ok = qa_native_host_create_q2_game(provider->state.native.module, &options,
             &provider->state.native.host, error);

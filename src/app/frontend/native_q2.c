@@ -4,6 +4,7 @@
 #include "capture.h"
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
+#include "menu_fonts.h"
 #include "qa/font_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/localization.h"
@@ -38,7 +39,6 @@ struct frontend_native_q2 {
     qa_font_library *fonts;
     const qa_font *classic;
     qa_localization_pool *catalogs;
-    qa_font_world_store *world_text;
     frontend_native_q2_image_policy *image_policy;
     native_q2_string strings[8];
     size_t next_string;
@@ -83,14 +83,6 @@ static bool return_string(frontend_native_q2 *source, qa_native_instance *instan
         return false;
     }
     result->as.address = item->address; source->next_string = (source->next_string + 1) % 8; return true;
-}
-static bool vector_argument(const qa_native_host_q2_application_call *call, size_t index,
-    qa_vec3 *out, qa_error *error)
-{
-    uint8_t bytes[12];
-    if (!qa_native_read(call->instance, call->import->arguments[index].as.address, bytes, sizeof(bytes), error)) return false;
-    *out = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
-    return true;
 }
 static bool color_argument(const qa_native_host_q2_application_call *call, size_t index,
     qa_vec4 *out, qa_error *error)
@@ -171,13 +163,8 @@ static bool source_font(frontend_native_q2 *source, qa_error *error)
     if (!source_files(source, error)) return false;
     if (!source->fonts) source->fonts = qa_font_library_create(source->mounts, source->images, error);
     if (!source->fonts) return false;
-    qa_scene_image_options options = {.family = QA_GAME_Q2, .wrap = QA_SCENE_CLAMP,
-        .filter = QA_SCENE_NEAREST, .usage = QA_IMAGE_USAGE_PICTURE, .transparent = true, .transparent_index = 255};
-    qa_scene_image *image = NULL;
-    if (!qa_scene_image_load(source->images, "pics/conchars.pcx", &options, &image, error)) return false;
-    bool ok = qa_font_classic_create(source->fonts, "native-q2:conchars", image,
-        QA_FONT_BAKED_COLOR, &source->classic, error);
-    qa_scene_image_release(image); return ok;
+    return frontend_source_classic_font(source->mounts, source->images, source->fonts,
+        QA_GAME_Q2, &source->classic, error);
 }
 static const char *binding_name(frontend_native_q2 *source, const char *command, char out[96])
 {
@@ -221,30 +208,6 @@ static bool draw_text(frontend_native_q2 *source, const char *text, int32_t x, i
     }
     return ok;
 }
-static bool world_text(frontend_native_q2 *source, const qa_native_host_q2_application_call *call,
-    qa_error *error)
-{
-    bool fixed = call->import->slot == 60; size_t offset = fixed ? 1 : 0;
-    qa_font_world_text text = {.orientation = fixed ? QA_FONT_WORLD_FIXED : QA_FONT_WORLD_BILLBOARD,
-        .font = QA_FONT_WORLD_CLASSIC, .distance_cull_factor = .004f, .has_distance_cull = true,
-        .content = source->owner};
-    uint8_t bytes[255]; size_t used = 0;
-    qa_native_address address = call->import->arguments[1 + offset].as.address;
-    for (size_t i = 0; i < 127; ++i) {
-        uint8_t byte;
-        if (address > UINT64_MAX - i || !qa_native_read(call->instance, address + i, &byte, 1, error)) return false;
-        if (!byte) break;
-        if (byte < 128) bytes[used++] = byte;
-        else { bytes[used++] = (uint8_t)(0xc0u | byte >> 6); bytes[used++] = (uint8_t)(0x80u | (byte & 63u)); }
-    }
-    text.text = (qa_bytes){bytes, used};
-    if (!vector_argument(call, 0, &text.origin, error) ||
-        (fixed && !vector_argument(call, 1, &text.angles, error)) || !color_argument(call, 2 + offset, &text.color, error)) return false;
-    text.cell_size = call->import->arguments[3 + offset].as.f32 * 8;
-    text.depth_test = call->import->arguments[5 + offset].as.u8 != 0;
-    return qa_font_world_store_submit(source->world_text, &text,
-        (double)source->frontend->time_ns / 1000000000, call->import->arguments[4 + offset].as.f32, error);
-}
 static bool application_import_body(void *context, const qa_native_host_q2_application_call *call,
     qa_native_value *result, qa_error *error)
 {
@@ -268,19 +231,6 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
         }
     }
     if (source->profile == QA_NATIVE_Q2_GAME_API2023) {
-        if (import->slot >= 54 && import->slot <= 63 && import->slot != 59 && import->slot != 60) {
-            qa_arena_reset(&source->scratch);
-            const qa_debug_line *lines = NULL; size_t count = 0; uint32_t lifetime = 0; bool handled = false;
-            bool ok = qa_debug_native_q2(call->instance, import, &source->scratch, &lines, &count, &lifetime, &handled, error);
-            qa_tools *tools = frontend_tools_owner(source->frontend);
-            if (ok && handled) {
-                if (!tools) ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 debug owner is absent");
-                else ok = qa_debug_store_submit(qa_tools_debug(tools), lines, count,
-                    (double)source->frontend->time_ns / 1000000, lifetime, error);
-            }
-            return ok && handled;
-        }
-        if (import->slot == 59 || import->slot == 60) return world_text(source, call, error);
         if ((dispatch == QA_NATIVE_Q2_IMPORT_SendToClipBoard)) {
             const char *text = NULL;
             return qa_native_host_q2_call_string(call, 0, &text, error) &&
@@ -551,7 +501,7 @@ static bool source_free(frontend_native_q2 *source, qa_error *error)
                 return false;
     }
     qa_arena_destroy(&source->scratch);
-    qa_font_world_store_destroy(source->world_text); qa_localization_pool_destroy(source->catalogs);
+    qa_localization_pool_destroy(source->catalogs);
     qa_audio_bank_destroy(source->sounds); qa_font_library_destroy(source->fonts);
     qa_scene_resources_destroy(source->images); qa_vfs_destroy(source->mounts);
     free(source);
@@ -608,8 +558,8 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
         source->provider_files = engine->content_files;
         source->next = frontend->native_q2; frontend->native_q2 = source;
         source->mounts = qa_vfs_clone(engine->content_files, error);
-        source->catalogs = qa_localization_pool_create(error); source->world_text = qa_font_world_store_create(error);
-        if (!source->mounts || !source->catalogs || !source->world_text) { release_source(source); return false; }
+        source->catalogs = qa_localization_pool_create(error);
+        if (!source->mounts || !source->catalogs) { release_source(source); return false; }
     }
     source->owner_context = engine->owner_context; source->owner_idle = engine->owner_idle;
     source->cvars = engine->cvars; source->prepared = false;
@@ -635,27 +585,10 @@ bool frontend_native_q2_frame(qa_frontend *frontend, uint32_t seat, qa_scene_rec
     }
     return true;
 }
-bool frontend_native_q2_world_text(qa_frontend *frontend, uint32_t seat, const qa_scene_view *view, qa_error *error)
-{
-    if (seat >= frontend->options.seats) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 world text seat is invalid");
-    bool ok = true;
-    for (frontend_native_q2 *source = frontend->native_q2; source && ok; source = source->next) {
-        qa_arena_reset(&source->scratch);
-        qa_font_world_snapshot snapshot;
-        ok = qa_font_world_store_snapshot(source->world_text, (double)frontend->time_ns / 1000000000,
-            frontend->frame_number, &source->scratch, &snapshot, error);
-        if (ok && snapshot.count) {
-            ok = source_font(source, error);
-            qa_font_selection fonts = frontend->seats[seat].fonts; fonts.classic = source->classic;
-            if (ok) ok = qa_font_world_draw(&frontend->frame, view, &snapshot, &fonts, 0, false, error);
-        }
-    }
-    return ok;
-}
 void frontend_native_q2_retire_world(qa_frontend *frontend)
 {
     for (frontend_native_q2 *source = frontend->native_q2; source; source = source->next) {
-        qa_font_world_store_clear(source->world_text); source->seat_bound = false;
+        source->seat_bound = false;
     }
 }
 const qa_scene_resources *frontend_native_q2_images_at(qa_frontend *frontend, size_t index)

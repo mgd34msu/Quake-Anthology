@@ -1,5 +1,6 @@
 #include "remote_unified_private.h"
 #include "ui_features.h"
+#include "menu_fonts.h"
 #include "remote_unified_media_private.h"
 #include "capture.h"
 #include "shared_resource_policy.h"
@@ -95,6 +96,16 @@ bool frontend_unified_media_bank(frontend_unified_media *owner, qa_string_id con
     unified_media_bank *row;
     if (!images || !materials || !fonts || !sounds || !bank(owner, content_name, &row, error)) return false;
     *images = row->images; *materials = row->materials; *fonts = row->fonts; *sounds = row->sounds; return true;
+}
+bool frontend_unified_media_world_text_font(frontend_unified_media *owner, qa_string_id content,
+    const qa_font **out, qa_error *error)
+{
+    unified_media_bank *row;
+    if (!bank(owner, content, &row, error)) return false;
+    if (!row->world_text_font && !frontend_source_classic_font(row->files, row->images,
+        row->fonts, row->product->family, &row->world_text_font, error)) return false;
+    *out = row->world_text_font;
+    return true;
 }
 bool frontend_unified_media_files(frontend_unified_media *owner, qa_string_id content_name,
     qa_vfs **files, const qa_product **product, qa_error *error)

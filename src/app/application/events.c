@@ -15,6 +15,7 @@
 #include "native_q2_protocol_resources.h"
 #include "network_q2_private.h"
 #include "qa/application_q3_round.h"
+#include "qa/tools.h"
 #include "qa/game_q1_source_obituary.h"
 #include "qa/network_q1_qw.h"
 #include "qa/qc_observation.h"
@@ -1294,6 +1295,25 @@ void qa_application_events_consumed(qa_application_event_subscription *reader,ui
     reader->next=next;
     if(reader->application) application_events_retire(reader->application);
 }
+bool qa_application_debug_emit(qa_application *app, const qa_application_debug_event *event,
+    qa_error *error)
+{
+    if (!event || (event->count && !event->lines) || event->count > SIZE_MAX / sizeof(qa_debug_line))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid debug geometry payload");
+    application_event_write write;
+    if (!application_event_stream_begin(app, QA_APPLICATION_EVENT_DEBUG, &write, error))
+        return application_event_stream_decline(app, &write, true, error);
+    qa_debug_line *lines = event->count ? application_event_stream_alloc(app,
+        event->count * sizeof(*lines), _Alignof(qa_debug_line), error) : NULL;
+    if (event->count && !lines)
+        return application_event_stream_decline(app, &write, true, error);
+    if (event->count) memcpy(lines, event->lines, event->count * sizeof(*lines));
+    write.envelope->raw.debug = *event;
+    write.envelope->raw.debug.lines = lines;
+    return application_event_stream_commit(app, &write, error) ||
+        application_event_stream_decline(app, &write, true, error);
+}
+
 bool qa_application_q3_effect_emit(qa_application *app,const qa_application_q3_effect_event *event,qa_error *error)
 {
     application_event_write write;
@@ -1465,6 +1485,7 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
     case QA_APPLICATION_EVENT_QW_COMMAND: out->value.qw_command=&record->raw.qw_command; break;
     case QA_APPLICATION_EVENT_MUSIC: out->value.music=&record->raw.music; break;
     case QA_APPLICATION_EVENT_LOG: out->value.log=&record->raw.log; break;
+    case QA_APPLICATION_EVENT_DEBUG: out->value.debug=&record->raw.debug; break;
     case QA_APPLICATION_EVENT_RANKING_REPORT:
         out->value.ranking_report=&record->raw.ranking_report; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:

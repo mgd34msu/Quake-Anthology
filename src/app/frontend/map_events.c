@@ -471,8 +471,17 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     for (uint64_t i = qa_application_events_local_first(frontend->application);
         i < qa_application_events_next(frontend->application); ++i) {
         qa_application_event_view output;
-        if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
-            output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
+        if (!qa_application_event_read(frontend->application,
+            &(qa_application_event_cursor){.id = i, .projection = 0}, &output)) continue;
+        if (output.kind == QA_APPLICATION_EVENT_DEBUG) {
+            const qa_application_debug_event *debug = output.value.debug;
+            qa_tools *tools = frontend_tools_owner(frontend);
+            if (tools && !qa_debug_store_submit(qa_tools_debug(tools), debug->lines,
+                debug->count, (double)debug->time_ns / 1000000, debug->lifetime_ms, error))
+                return false;
+            continue;
+        }
+        if (output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
         bool handled;
         if (!frontend_qc_rerelease_event(frontend,&event,&handled,error)) return false;

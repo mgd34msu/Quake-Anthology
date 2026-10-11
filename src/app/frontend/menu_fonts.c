@@ -46,13 +46,14 @@ bool frontend_menu_font_view(qa_frontend *f, const qa_product **selected, const 
         qa_vfs_set_prefix_order(f->ui_mounts, "menu/art", order, original + extra, error);
     free(order); qa_vfs_destroy(source); return ok;
 }
-bool frontend_menu_charset(qa_frontend *f, const qa_product *product, qa_error *error)
+bool frontend_source_classic_font(qa_vfs *files, qa_scene_resources *images,
+    qa_font_library *fonts, qa_game_family family, const qa_font **out, qa_error *error)
 {
     qa_scene_image *image = NULL; bool ok = true;
-    if (product->family == QA_GAME_Q1) {
+    if (family == QA_GAME_Q1) {
         qa_resource *wad_source = NULL, *palette = NULL; qa_wad wad = {0}; qa_image expanded = {0};
-        ok = qa_vfs_acquire(f->ui_mounts, "gfx.wad", &wad_source, NULL, error) &&
-            qa_vfs_acquire(f->ui_mounts, "gfx/palette.lmp", &palette, NULL, error) &&
+        ok = qa_vfs_acquire(files, "gfx.wad", &wad_source, NULL, error) &&
+            qa_vfs_acquire(files, "gfx/palette.lmp", &palette, NULL, error) &&
             qa_wad_decode(qa_resource_bytes(wad_source), &wad, error);
         const qa_wad_lump *chars = NULL;
         for (size_t i = 0; ok && i < wad.count; ++i) if (!strcmp(wad.lumps[i].name, "conchars")) { chars = wad.lumps + i; break; }
@@ -61,7 +62,7 @@ bool frontend_menu_charset(qa_frontend *f, const qa_product *product, qa_error *
         qa_palette_options colors = {.transparent_index = 0, .fullbright_first = -1, .fullbright_last = -1, .layer = QA_PALETTE_COMBINED};
         if (ok) ok = qa_image_expand_indexed(&(qa_indexed_level){128, 128, {(uint8_t *)chars->bytes.data, chars->bytes.size}},
             qa_resource_bytes(palette), &colors, &expanded, error);
-        if (ok) ok = qa_scene_image_create(f->ui_images, "frontend:source-conchars", QA_SCENE_RGBA8,
+        if (ok) ok = qa_scene_image_create(images, "frontend:source-conchars", QA_SCENE_RGBA8,
             &(qa_scene_image_level){128, 128, expanded.rgba.data, expanded.rgba.size}, 1, QA_SCENE_CLAMP,
             QA_SCENE_NEAREST, (qa_vec4){0}, &image, error);
         if (ok) {
@@ -75,14 +76,20 @@ bool frontend_menu_charset(qa_frontend *f, const qa_product *product, qa_error *
         }
         qa_image_free(&expanded); qa_wad_free(&wad); qa_resource_release(palette); qa_resource_release(wad_source);
     } else {
-        qa_scene_image_options options = {.family = product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3,
+        qa_scene_image_options options = {.family = family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3,
             .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_NEAREST, .usage = QA_IMAGE_USAGE_PICTURE,
             .transparent = true, .transparent_index = 255};
-        ok = qa_scene_image_load(f->ui_images, product->family == QA_GAME_Q2 ? "pics/conchars.pcx" : "gfx/2d/bigchars", &options, &image, error);
+        ok = qa_scene_image_load(images, family == QA_GAME_Q2 ? "pics/conchars.pcx" : "gfx/2d/bigchars", &options, &image, error);
     }
-    if (ok) ok = qa_font_classic_create(f->fonts, "source conchars", image,
-        product->family == QA_GAME_Q3 ? QA_FONT_TINTED : QA_FONT_BAKED_COLOR, &f->classic, error);
+    if (ok) ok = qa_font_classic_create(fonts, "source conchars", image,
+        family == QA_GAME_Q3 ? QA_FONT_TINTED : QA_FONT_BAKED_COLOR, out, error);
     qa_scene_image_release(image);
+    return ok;
+}
+bool frontend_menu_charset(qa_frontend *f, const qa_product *product, qa_error *error)
+{
+    bool ok = frontend_source_classic_font(f->ui_mounts, f->ui_images, f->fonts,
+        product->family, &f->classic, error);
     if (ok && product->family == QA_GAME_Q2 && product->edition == QA_EDITION_RERELEASE)
         ok = qa_font_kfont_load(f->fonts, "fonts/qconfont.kfont", &f->ui_features->console, error);
     return ok;

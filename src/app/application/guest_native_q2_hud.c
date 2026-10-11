@@ -1,5 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "qa/hud_q2.h"
+#include "qa/tools.h"
+#include "control_frame.h"
 #include <limits.h>
 
 struct application_native_q2 *application_native_q2_hud_source(
@@ -35,10 +37,80 @@ struct application_native_q2 *application_native_q2_hud_source(
     return NULL;
 }
 
+static bool debug_import(struct application_native_q2 *engine,
+    const qa_native_host_q2_application_call *call, qa_error *error)
+{
+    qa_application *app = engine->provider->application;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+    if (!storage) return false;
+    const qa_debug_line *lines = NULL;
+    size_t count = 0;
+    uint32_t lifetime = 0;
+    bool handled = false;
+    bool okay = qa_debug_native_q2(call->instance, call->import,
+        qa_unified_frame_lease_arena(storage), &lines, &count, &lifetime, &handled, error);
+    if (okay && handled)
+        okay = qa_application_debug_emit(app, &(qa_application_debug_event){
+            .provider = engine->provider->owner, .time_ns = qa_session_elapsed(app->session),
+            .lines = lines, .count = count, .lifetime_ms = lifetime}, error);
+    qa_unified_frame_lease_release(storage);
+    return okay && handled;
+}
+
+static bool world_text_import(struct application_native_q2 *engine,
+    const qa_native_host_q2_application_call *call, qa_error *error)
+{
+    const qa_native_value *args = call->import->arguments;
+    bool fixed = call->import->slot == 60;
+    size_t offset = fixed ? 1 : 0;
+    qa_q2_map_event event = {.kind = QA_Q2_MAP_WORLD_TEXT,
+        .value = args[3 + offset].as.f32 * 8,
+        .duration = args[4 + offset].as.f32,
+        .flags = (fixed ? 0u : 2u) | (args[5 + offset].as.u8 ? 1u : 0u),
+        .visible = true};
+    uint8_t vector[12], color[4], text[255];
+    size_t used = 0;
+    if (!qa_native_read(call->instance, args[0].as.address, vector, sizeof(vector), error))
+        return false;
+    event.origin = qa_v3(qa_load_f32le(vector), qa_load_f32le(vector + 4), qa_load_f32le(vector + 8));
+    if (fixed) {
+        if (!qa_native_read(call->instance, args[1].as.address, vector, sizeof(vector), error))
+            return false;
+        event.direction = qa_v3(qa_load_f32le(vector), qa_load_f32le(vector + 4), qa_load_f32le(vector + 8));
+    }
+    if (!qa_native_read(call->instance, args[2 + offset].as.address, color, sizeof(color), error))
+        return false;
+    event.color = qa_v3(color[0] / 255.f, color[1] / 255.f, color[2] / 255.f);
+    event.alpha = color[3] / 255.f;
+    qa_native_address address = args[1 + offset].as.address;
+    for (size_t i = 0; i < 127; ++i) {
+        uint8_t byte;
+        if (address > UINT64_MAX - i || !qa_native_read(call->instance, address + i, &byte, 1, error))
+            return false;
+        if (!byte) break;
+        if (byte < 128) text[used++] = byte;
+        else {
+            text[used++] = (uint8_t)(0xc0u | byte >> 6);
+            text[used++] = (uint8_t)(0x80u | (byte & 63u));
+        }
+    }
+    if (!used) return true;
+    if (!qa_strings_intern(qa_session_strings(engine->provider->application->session),
+            (qa_bytes){text, used}, &event.text, error)) return false;
+    return application_emit_q2_map(engine->provider, &event, error);
+}
+
 bool application_native_q2_import(void *opaque, const qa_native_host_q2_application_call *call,
     qa_native_value *result, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
+    if (call->import->profile == QA_NATIVE_Q2_GAME_API2023 &&
+        call->import->slot >= 54 && call->import->slot <= 63 &&
+        call->import->slot != 59 && call->import->slot != 60)
+        return debug_import(engine, call, error);
+    if (call->import->profile == QA_NATIVE_Q2_GAME_API2023 &&
+        (call->import->slot == 59 || call->import->slot == 60))
+        return world_text_import(engine, call, error);
     qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->import->profile,call->import->slot);
     if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientName) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientPic) ||
         (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag)) {

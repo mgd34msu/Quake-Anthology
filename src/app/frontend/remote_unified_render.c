@@ -54,6 +54,7 @@ struct frontend_unified_render {
     qa_unified_frame_lease *storage;
     unified_render_model *models;
     size_t model_count;
+    const qa_font **world_text_fonts;
     qa_hud *hud;
     qa_hud_value vitals[3];
     qa_hud_team_face team_face;
@@ -392,6 +393,15 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     if (okay && count) { r->models=qa_unified_frame_lease_alloc(storage,count,sizeof(*r->models),_Alignof(unified_render_model),e); okay=r->models!=NULL;
         if (!okay) frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining received unified model bindings"); }
     for (size_t i=0;okay && i<count;++i) { r->model_count=i+1; okay=model_read(r,received->visuals->models+i,r->models+i,e); }
+    size_t text_count=received->visuals->world_text_count;
+    if (okay && text_count) {
+        r->world_text_fonts=qa_unified_frame_lease_alloc(storage,text_count,
+            sizeof(*r->world_text_fonts),_Alignof(const qa_font *),e);
+        okay=r->world_text_fonts!=NULL;
+    }
+    for (size_t i=0;okay && i<text_count;++i)
+        okay=frontend_unified_media_world_text_font(media,received->visuals->world_text[i].content,
+            r->world_text_fonts+i,e);
     if (okay) r->hud=f->seats[hud_domain->physical_seat].hud;
     if (!okay) { (void)frontend_unified_render_destroy(&r,NULL); return false; }
     *out=r; return true;
@@ -565,6 +575,35 @@ static bool unified_sky_environment(frontend_unified_render *r,const qa_scene_wo
     if (out->boxed) memcpy(out->images,world->sky_images,sizeof(out->images));
     return true;
 }
+static bool world_text_draw(frontend_unified_render *r,const qa_scene_view *view,qa_error *e)
+{
+    const qa_unified_frame_visuals *visuals=qa_unified_document_frame(r->frame)->visuals;
+    size_t count=visuals->world_text_count;
+    if (!count) return true;
+    qa_font_world_text *texts=qa_arena_alloc(&r->frontend->frame.storage,
+        count*sizeof(*texts),_Alignof(qa_font_world_text),e);
+    if (!texts) return false;
+    for (size_t i=0;i<count;++i) {
+        const qa_entity_text *source=visuals->world_text+i;
+        texts[i]=(qa_font_world_text){.text=qa_strings_text(r->replica->strings,source->text),
+            .origin=source->origin,.angles=source->angles,
+            .color={source->color[0],source->color[1],source->color[2],source->color[3]},
+            .cell_size=source->cell_size,.distance_cull_factor=source->distance_cull_factor,
+            .orientation=source->billboard?QA_FONT_WORLD_BILLBOARD:QA_FONT_WORLD_FIXED,
+            .font=QA_FONT_WORLD_CLASSIC,.has_distance_cull=true,.depth_test=source->depth_test,
+            .content=source->content};
+    }
+    qa_font_selection fonts=r->frontend->seats[view->seat].fonts;
+    for (size_t first=0;first<count;) {
+        size_t next=first+1;
+        fonts.classic=r->world_text_fonts[first];
+        while (next<count && r->world_text_fonts[next]==fonts.classic) ++next;
+        qa_font_world_snapshot snapshot={.texts=texts+first,.count=next-first};
+        if (!qa_font_world_draw(&r->frontend->frame,view,&snapshot,&fonts,0,false,e)) return false;
+        first=next;
+    }
+    return true;
+}
 bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unified_prediction_view *predicted,
     const frontend_unified_render_children *children,float stereo,qa_audio_listener *listener,qa_error *e)
 {
@@ -721,6 +760,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
         .reflected_lights=unified_scene_reflected_lights,.blend=unified_scene_blend,.policy=unified_scene_policy};
     if (okay) okay=frontend_legacy_scene_submit_product(r->frontend,frontend_unified_media_world(r->media),
         product,&world,&r->frontend->frame,&services,e);
+    if (okay) okay=world_text_draw(r,&view,e);
     if (okay && children && children->player_blend)
         okay=children->player_blend(children->context,player,r->has_blend,&r->blend,
             r->has_damage_blend,&r->damage_blend,view.viewport,&r->frontend->frame,e) &&

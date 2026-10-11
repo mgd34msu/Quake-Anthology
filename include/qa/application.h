@@ -574,7 +574,8 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_Q3_COMMAND,
     QA_APPLICATION_EVENT_QW_COMMAND,
     QA_APPLICATION_EVENT_MUSIC,
-    QA_APPLICATION_EVENT_RANKING_REPORT
+    QA_APPLICATION_EVENT_RANKING_REPORT,
+    QA_APPLICATION_EVENT_DEBUG
 } qa_application_event_kind;
 
 typedef struct qa_application_log_event {
@@ -625,6 +626,15 @@ typedef struct qa_application_ranking_report_event {
     qa_ranking_source_report report;
 } qa_application_ranking_report_event;
 
+struct qa_debug_line;
+typedef struct qa_application_debug_event {
+    qa_actor_owner provider;
+    uint64_t time_ns;
+    const struct qa_debug_line *lines;
+    size_t count;
+    uint32_t lifetime_ms;
+} qa_application_debug_event;
+
 /* Caller-owned cursor. Unread records stay in the application ring. */
 typedef struct qa_application_event_subscription {
     qa_application *application;
@@ -648,6 +658,7 @@ typedef struct qa_application_event_view {
         const qa_application_music_event *music;
         const qa_application_log_event *log;
         const qa_application_ranking_report_event *ranking_report;
+        const qa_application_debug_event *debug;
     } value;
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;
@@ -698,6 +709,7 @@ void qa_application_player_feedback_read(const qa_application *, qa_actor_id,
 /* Client-generated effect sounds have no network projection. */
 bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
 bool qa_application_audio_emit(qa_application *, const qa_audio_event *, qa_error *);
+bool qa_application_debug_emit(qa_application *, const qa_application_debug_event *, qa_error *);
 bool qa_application_q3_effect_emit(qa_application *,const qa_application_q3_effect_event *,qa_error *);
 void qa_application_events_subscribe(qa_application *,qa_application_event_subscription *);
 void qa_application_events_unsubscribe(qa_application_event_subscription *);

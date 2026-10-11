@@ -24,6 +24,7 @@ typedef struct unified_media_bank {
     struct frontend_material_movies *shader_movies;
     uint64_t cinematic_audio_owner;
     qa_font_library *fonts;
+    const qa_font *world_text_font;
     qa_audio_bank *sounds;
     qa_q3_presentation_assets *q3_assets;
     qa_buffer saved_assets;

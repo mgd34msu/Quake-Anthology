@@ -57,6 +57,8 @@ bool frontend_unified_media_create(qa_frontend *, qa_executable_recipe *, uint32
 bool frontend_unified_media_bank(frontend_unified_media *, qa_string_id content,
     qa_scene_resources **, qa_material_library **, qa_font_library **,
     qa_audio_bank **, qa_error *);
+bool frontend_unified_media_world_text_font(frontend_unified_media *, qa_string_id content,
+    const qa_font **, qa_error *);
 bool frontend_unified_media_files(frontend_unified_media *, qa_string_id content,
     qa_vfs **, const qa_product **, qa_error *);
 bool frontend_unified_media_q3_assets(frontend_unified_media *, qa_string_id content,
