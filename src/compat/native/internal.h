@@ -32,6 +32,7 @@ typedef struct native_signature_spec {
     qa_native_signature signature;
     uint32_t slot;
     bool optional;
+    qa_native_q2_import_kind dispatch;
 } native_signature_spec;
 
 typedef struct native_profile_spec {

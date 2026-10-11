@@ -276,17 +276,18 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
 {
     frontend_native_q2 *source = context; const qa_native_import_call *import = call->import;
     const qa_native_value *args = import->arguments;
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(import->profile,import->slot);
     if (import->profile != source->profile) return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 platform profile mismatch");
     if (source->profile == QA_NATIVE_Q2_CGAME_API2023) {
         source->seat_bound = call->seat_bound;
         if (source->seat_bound && !frontend_seat_ordinal_read(source->frontend,call->seat,&source->seat))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 entry seat is unavailable");
         if (source->seat_bound) source->viewport = frontend_viewport(source->frontend, source->seat);
-        if (!strcmp(import->name, "CL_ClientRealTime")) {
+        if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_ClientRealTime)) {
             result->as.u64 = source->frontend->time_ns / UINT64_C(1000000); return true;
         }
-        if (!strcmp(import->name, "CL_FrameTime")) { result->as.f32 = source->frame_seconds; return true; }
-        if (!strcmp(import->name, "CL_InAutoDemoLoop")) {
+        if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_FrameTime)) { result->as.f32 = source->frame_seconds; return true; }
+        if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_InAutoDemoLoop)) {
             /* This lease presents the local authoritative session; demo peers
              * require a separate admitted client presentation producer. */
             result->as.u8 = 0; return true;
@@ -306,7 +307,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             qa_arena_destroy(&scratch); return ok && handled;
         }
         if (import->slot == 59 || import->slot == 60) return world_text(source, call, error);
-        if (!strcmp(import->name, "SendToClipBoard")) {
+        if ((dispatch == QA_NATIVE_Q2_IMPORT_SendToClipBoard)) {
             qa_buffer text = {0}; bool ok = text_argument(call, 0, &text, error);
             if (ok) ok = frontend_clipboard_write(source->frontend, (const char *)text.data, error);
             qa_buffer_free(&text); return ok;
@@ -318,7 +319,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             import->name, import->slot);
         return false;
     }
-    if (!strcmp(import->name, "Localize")) return localize(source, call, result, error);
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_Localize)) return localize(source, call, result, error);
     if (import->slot == 20) {
         if (!seat_ready(source, error)) return false;
         qa_buffer command = {0}; char name[96];
@@ -359,7 +360,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
         }
         qa_localization_release(catalog); qa_buffer_free(&command); qa_buffer_free(&purpose); return ok;
     }
-    if (!strcmp(import->name, "SCR_SetAltTypeface")) { source->alternate = args[0].as.u8 != 0; return true; }
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_SCR_SetAltTypeface)) { source->alternate = args[0].as.u8 != 0; return true; }
     if (import->slot == 23) {
         if (!seat_ready(source, error)) return false;
         int32_t scale = args[2].as.i32;
@@ -374,9 +375,9 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
             (qa_scene_rect_f){(float)args[0].as.i32, (float)args[1].as.i32, 8.f * (float)scale, 8.f * (float)scale},
             glyph.uv, (qa_vec4){1, 1, 1, 1}, error);
     }
-    if (!strcmp(import->name, "Draw_RegisterPic") || !strcmp(import->name, "Draw_GetPicSize") ||
-        !strcmp(import->name, "SCR_DrawPic") || !strcmp(import->name, "SCR_DrawColorPic")) {
-        size_t index = !strcmp(import->name, "Draw_RegisterPic") ? 0 : !strcmp(import->name, "Draw_GetPicSize") ? 2 : 4;
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_Draw_RegisterPic) || (dispatch == QA_NATIVE_Q2_IMPORT_Draw_GetPicSize) ||
+        (dispatch == QA_NATIVE_Q2_IMPORT_SCR_DrawPic) || (dispatch == QA_NATIVE_Q2_IMPORT_SCR_DrawColorPic)) {
+        size_t index = (dispatch == QA_NATIVE_Q2_IMPORT_Draw_RegisterPic) ? 0 : (dispatch == QA_NATIVE_Q2_IMPORT_Draw_GetPicSize) ? 2 : 4;
         qa_buffer name = {0}; const qa_scene_image *image = NULL;
         bool ok = text_argument(call, index, &name, error) && picture(source, (const char *)name.data, &image, error);
         if (ok && import->slot == 21) result->as.u8 = image != NULL;

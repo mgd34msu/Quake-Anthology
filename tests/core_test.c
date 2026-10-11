@@ -3,6 +3,7 @@
 #endif
 
 #include "qa/arena.h"
+#include "qa/native.h"
 #include "qa/pool.h"
 #include "qa/network_unified_frame_pool.h"
 #include "qa/network_unified_control.h"
@@ -1840,11 +1841,22 @@ static void test_q2_owned_frames(void)
         qa_q2_frame_history_destroy(history);
     }
 }
+static void test_native_import_slot_identity(void)
+{
+    CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,12)==QA_NATIVE_Q2_IMPORT_trace);
+    CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,4)==QA_NATIVE_Q2_IMPORT_sound);
+    CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_CGAME_API2023,0)==QA_NATIVE_Q2_IMPORT_Com_Print);
+    CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_CGAME_API2023,1)==QA_NATIVE_Q2_IMPORT_get_configstring);
+    CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_CGAME_API2023,2)==QA_NATIVE_Q2_IMPORT_Com_Error);
+    CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,UINT32_MAX)==QA_NATIVE_Q2_IMPORT_NONE);
+}
+
 int main(int argc, char **argv)
 {
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_native_import_slot_identity();
     test_literal_tokens();
     test_platform_event_retirement();
     test_q2_command_angles();

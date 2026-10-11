@@ -79,17 +79,19 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
     if (!host || !call)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native message writer call is required");
-    if (!strcmp(call->name, "WriteChar"))
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
+    switch (dispatch) {
+    case QA_NATIVE_Q2_IMPORT_WriteChar:
         return append_u8(host, (uint8_t)(int8_t)native_argument_i32(call, 0), error);
-    if (!strcmp(call->name, "WriteByte"))
+    case QA_NATIVE_Q2_IMPORT_WriteByte:
         return append_u8(host, (uint8_t)native_argument_i32(call, 0), error);
-    if (!strcmp(call->name, "WriteShort"))
+    case QA_NATIVE_Q2_IMPORT_WriteShort:
         return append_u16(host, (uint16_t)(int16_t)native_argument_i32(call, 0), error);
-    if (!strcmp(call->name, "WriteLong"))
+    case QA_NATIVE_Q2_IMPORT_WriteLong:
         return append_u32(host, (uint32_t)native_argument_i32(call, 0), error);
-    if (!strcmp(call->name, "WriteFloat"))
+    case QA_NATIVE_Q2_IMPORT_WriteFloat:
         return append_f32(host, native_argument_f32(call, 0), error);
-    if (!strcmp(call->name, "WriteAngle")) {
+    case QA_NATIVE_Q2_IMPORT_WriteAngle: {
         float angle = native_argument_f32(call, 0);
         if (!isfinite(angle))
             return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
@@ -97,7 +99,7 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
         int32_t encoded = (int32_t)truncf(angle * (256.0f / 360.0f));
         return append_u8(host, (uint8_t)encoded, error);
     }
-    if (!strcmp(call->name, "WriteString")) {
+    case QA_NATIVE_Q2_IMPORT_WriteString: {
         qa_native_address address = native_argument_address(call, 0);
         if (!address)
             return append_u8(host, 0, error);
@@ -107,7 +109,7 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
         bool ok = append(host, string.data, string.size, error) && append_u8(host, 0, error);
         return ok;
     }
-    if (!strcmp(call->name, "WritePosition")) {
+    case QA_NATIVE_Q2_IMPORT_WritePosition: {
         qa_vec3 position;
         if (!native_host_read_vec3(host, native_argument_address(call, 0), &position, error))
             return false;
@@ -125,9 +127,9 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
         }
         return true;
     }
-    if (!strcmp(call->name, "WriteDir"))
+    case QA_NATIVE_Q2_IMPORT_WriteDir:
         return write_direction(host, native_argument_address(call, 0), error);
-    if (!strcmp(call->name, "WriteEntity")) {
+    case QA_NATIVE_Q2_IMPORT_WriteEntity: {
         uint32_t slot;
         qa_actor_id actor;
         if (!native_host_actor_for_address(host, native_argument_address(call, 0), false,
@@ -159,15 +161,17 @@ bool native_host_message_write(qa_native_host *host, const qa_native_import_call
             (qa_native_host_message_reference){offset, actor};
         return true;
     }
+    default:
     return native_host_fail(error, QA_ERROR_NOT_FOUND, call->slot,
                             "unknown native Q2 message writer");
+    }
 }
 
 bool native_host_message_send(qa_native_host *host, const qa_native_import_call *call,
                               qa_error *error)
 {
-    if (!host || !call || (!strcmp(call->name, "multicast") ==
-                           !strcmp(call->name, "unicast")))
+    if (!host || !call || ((qa_native_q2_import_dispatch(call->profile,call->slot) == QA_NATIVE_Q2_IMPORT_multicast) ==
+                           (qa_native_q2_import_dispatch(call->profile,call->slot) == QA_NATIVE_Q2_IMPORT_unicast)))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native Q2 message delivery call is invalid");
     if (host->message_failed) {
@@ -179,7 +183,7 @@ bool native_host_message_send(qa_native_host *host, const qa_native_import_call 
         .payload = {host->message, host->message_size},
         .references = host->message_references,
         .reference_count = host->message_reference_count,
-        .target = !strcmp(call->name, "unicast") ? QA_NATIVE_HOST_UNICAST
+        .target = (qa_native_q2_import_dispatch(call->profile,call->slot) == QA_NATIVE_Q2_IMPORT_unicast) ? QA_NATIVE_HOST_UNICAST
                                                  : QA_NATIVE_HOST_MULTICAST};
     bool deliver = host->message_size != 0;
     if (message.target == QA_NATIVE_HOST_UNICAST) {

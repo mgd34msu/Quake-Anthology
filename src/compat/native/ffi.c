@@ -34,7 +34,7 @@ bool native_dispatch_import(qa_native_instance *instance, const native_signature
             return false;
         }
     }
-    if (!strcmp(spec->name, "TagMalloc") && count == 2) {
+    if (spec->dispatch == QA_NATIVE_Q2_IMPORT_TagMalloc && count == 2) {
         uint64_t requested;
         if (arguments[0].type == QA_NATIVE_I32) {
             if (arguments[0].as.i32 < 0) {
@@ -62,7 +62,7 @@ bool native_dispatch_import(qa_native_instance *instance, const native_signature
         *result = (qa_native_value){.type = QA_NATIVE_ADDRESS, .as.address = address};
         return true;
     }
-    if (!strcmp(spec->name, "TagFree") && count == 1) {
+    if (spec->dispatch == QA_NATIVE_Q2_IMPORT_TagFree && count == 1) {
         if (!qa_native_free(instance, arguments[0].as.address, &error)) {
             native_latch_error(instance, &error);
             return false;
@@ -70,7 +70,7 @@ bool native_dispatch_import(qa_native_instance *instance, const native_signature
         *result = (qa_native_value){.type = QA_NATIVE_VOID};
         return true;
     }
-    if (!strcmp(spec->name, "FreeTags") && count == 1) {
+    if (spec->dispatch == QA_NATIVE_Q2_IMPORT_FreeTags && count == 1) {
         qa_native_free_tag(instance, arguments[0].as.i32);
         *result = (qa_native_value){.type = QA_NATIVE_VOID};
         return true;

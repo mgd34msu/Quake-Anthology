@@ -40,9 +40,9 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
     qa_native_value *result, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
-    const char *name = call->import->name;
-    if (!strcmp(name, "CL_GetClientName") || !strcmp(name, "CL_GetClientPic") ||
-        !strcmp(name, "CL_GetClientDogtag")) {
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->import->profile,call->import->slot);
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientName) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientPic) ||
+        (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag)) {
         uint32_t slot;
         struct application_native_q2 *source = application_native_q2_hud_source(engine, &slot, error);
         if (!source) return false;
@@ -53,14 +53,14 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         if (!skin) skin = "";
         const char *first = strchr(skin, '\\');
         char text[1024] = {0};
-        if (!strcmp(name, "CL_GetClientName")) {
+        if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientName)) {
             size_t bytes = first ? (size_t)(first - skin) : 0;
             if (bytes >= sizeof(text)) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client name is too long");
             memcpy(text, skin, bytes);
         } else if (*skin) {
             const char *model_skin = first ? first + 1 : skin;
             const char *last = strchr(model_skin, '\\');
-            if (!strcmp(name, "CL_GetClientDogtag")) {
+            if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag)) {
                 const char *dogtag = last && last[1] ? last + 1 : "default";
                 int bytes = snprintf(text, sizeof(text), "%s.pcx", dogtag);
                 if (bytes < 0 || (size_t)bytes >= sizeof(text))
@@ -75,16 +75,16 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         }
         return qa_native_host_q2_retain_string(call->host, text, &result->as.address, error);
     }
-    if (!strcmp(name, "CL_FrameValid") || !strcmp(name, "CL_ClientTime") ||
-        !strcmp(name, "CL_ServerFrame") || !strcmp(name, "CL_ServerProtocol") ||
-        !strcmp(name, "CL_GetWarnAmmoCount")) {
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_FrameValid) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_ClientTime) ||
+        (dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerFrame) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerProtocol) ||
+        (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetWarnAmmoCount)) {
         uint32_t slot;
         struct application_native_q2 *source = application_native_q2_hud_source(engine, &slot, error);
         if (!source) return false;
-        if (!strcmp(name, "CL_FrameValid")) result->as.u8 = source->map_ready && source->clients[slot].begun;
-        else if (!strcmp(name, "CL_ClientTime")) result->as.u64 = source->frame.time_ns / UINT64_C(1000000);
-        else if (!strcmp(name, "CL_ServerFrame")) result->as.i32 = (int32_t)(uint32_t)source->frame.number;
-        else if (!strcmp(name, "CL_ServerProtocol")) result->as.i32 = 2023;
+        if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_FrameValid)) result->as.u8 = source->map_ready && source->clients[slot].begun;
+        else if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_ClientTime)) result->as.u64 = source->frame.time_ns / UINT64_C(1000000);
+        else if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerFrame)) result->as.i32 = (int32_t)(uint32_t)source->frame.number;
+        else if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerProtocol)) result->as.i32 = 2023;
         else {
             int32_t weapon = call->import->arguments[0].as.i32;
             if (weapon < 0 || weapon >= 32)

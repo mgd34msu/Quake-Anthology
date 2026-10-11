@@ -268,7 +268,45 @@ NQ preparation, QW log rotation and Q3 peer retirement remain maintenance
 operations. The normal production build and seven existing core suites pass:
 `/tmp/qa-ta3196-control-queues-20261011-build.log` and
 `/tmp/qa-ta3196-control-queues-20261011-core.log`. This does not claim a live
-legacy-server connection check. Events finding 4 remains open.
+legacy-server connection check.
+
+Events finding 4: legacy Q1 messages enter `qa_event_ring` at
+`src/app/frontend/remote_q1_client.c:400`; the cursor at line 497 is the only
+presentation dispatch. QW translations use the same admission path, including
+CD tracks received before signon (`remote_q1_qw.c:119`). Map admission preserves
+those records until the map is ready. The private QW pending list and CD latch
+are deleted. Q1 local, legacy and unified presentation share
+`frontend_fx_q1_state` in `selected_effects_q1_temporary.c`; the three private
+light/beam allocation implementations are deleted.
+
+Legacy Q2 decoded batches enter the ring at `remote_q2_client.c:422`, retain the
+existing decoder lease, and dispatch through the cursor at line 404 before that
+borrow ends. Direct printing and the fallback effect dispatch are deleted.
+Local Q2 adapts its actual provider/resources at `particle_events.c:672` and
+its admitted temporary events at line 1110 into the same Q2 effect service as
+legacy and unified clients (`remote_q2_effects.c`). Local particle, light,
+beam, laser, explosion and sustain stores and effect/render recipes are deleted.
+Caller pose scratch is load-sized and deduplicated by the common `qa_stamp_set`.
+Protocol decoders and numeric wire layouts remain at their existing boundaries.
+
+Commits: `06d43468`, `5c5d2999`, `103e242b`, `5d98c0d2`. Each passed the normal
+production build and all seven core suites. The final logs are
+`/tmp/qa-ta3196-q2-shared-state-20261011-build.log` and
+`/tmp/qa-ta3196-q2-shared-state-20261011-core.log`. This completes events findings
+1-4 and clock finding 1 by caller migration and build/core evidence; it does not
+claim a new live installation. The other kinds in TA-3196 remain open.
+
+Names finding 1: the existing Q2 ABI declarations in
+`src/compat/native/profiles.c` bind each import slot to its numeric dispatch ID.
+`qa_native_q2_import_dispatch` reads that declaration by profile and slot.
+The host dispatcher/message writer, frontend native Q2 imports, native HUD,
+source link/unlink adapter and tagged-memory trampoline use those IDs. Import
+names remain diagnostic metadata. The import-name strcmp/prefix chains and
+resource-kind name selector are deleted; wire and argument widths are unchanged.
+The core fixture checks classic trace/sound and rerelease cgame slots against
+the ABI contract. Normal build and all seven core suites pass:
+`/tmp/qa-ta3196-native-import-ids-20261011-build.log` and
+`/tmp/qa-ta3196-native-import-ids-20261011-core.log`. Names findings 2-17 remain.
 
 ## Scalar numeric callers
 

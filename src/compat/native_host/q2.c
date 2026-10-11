@@ -61,16 +61,17 @@ static bool print_import(qa_native_host *host, const qa_native_import_call *call
     qa_native_host_print_kind kind = QA_NATIVE_HOST_PRINT_DEBUG;
     qa_native_address entity = 0;
     int32_t level = 0;
-    if (!strcmp(call->name, "bprintf") || !strcmp(call->name, "Broadcast_Print")) {
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_bprintf) || (dispatch == QA_NATIVE_Q2_IMPORT_Broadcast_Print)) {
         kind = QA_NATIVE_HOST_PRINT_BROADCAST;
         level = native_argument_i32(call, 0);
         text_index = 1;
-    } else if (!strcmp(call->name, "cprintf") || !strcmp(call->name, "Client_Print")) {
+    } else if ((dispatch == QA_NATIVE_Q2_IMPORT_cprintf) || (dispatch == QA_NATIVE_Q2_IMPORT_Client_Print)) {
         kind = QA_NATIVE_HOST_PRINT_CLIENT;
         entity = native_argument_address(call, 0);
         level = native_argument_i32(call, 1);
         text_index = 2;
-    } else if (!strcmp(call->name, "centerprintf") || !strcmp(call->name, "Center_Print")) {
+    } else if ((dispatch == QA_NATIVE_Q2_IMPORT_centerprintf) || (dispatch == QA_NATIVE_Q2_IMPORT_Center_Print)) {
         kind = QA_NATIVE_HOST_PRINT_CENTER;
         entity = native_argument_address(call, 0);
         text_index = 1;
@@ -78,7 +79,7 @@ static bool print_import(qa_native_host *host, const qa_native_import_call *call
     qa_bytes text = {0};
     if (!call_text(host, call, text_index, &text, error))
         return false;
-    bool fatal = !strcmp(call->name, "error") || !strcmp(call->name, "Com_Error");
+    bool fatal = (dispatch == QA_NATIVE_Q2_IMPORT_error) || (dispatch == QA_NATIVE_Q2_IMPORT_Com_Error);
     bool ok = fatal ? native_host_fail(error, QA_ERROR_FORMAT, call->slot,
                                        (const char *)text.data)
                     : emit_print(host, kind, entity, level, (const char *)text.data, error);
@@ -112,10 +113,10 @@ static bool configstring_set(qa_native_host *host, const qa_native_import_call *
     return ok;
 }
 
-static qa_native_host_resource_kind resource_kind(const char *name)
+static qa_native_host_resource_kind resource_kind(qa_native_q2_import_kind dispatch)
 {
-    return !strcmp(name, "modelindex") ? QA_NATIVE_HOST_MODEL
-           : !strcmp(name, "soundindex") ? QA_NATIVE_HOST_SOUND
+    return (dispatch == QA_NATIVE_Q2_IMPORT_modelindex) ? QA_NATIVE_HOST_MODEL
+           : (dispatch == QA_NATIVE_Q2_IMPORT_soundindex) ? QA_NATIVE_HOST_SOUND
                                           : QA_NATIVE_HOST_IMAGE;
 }
 
@@ -138,9 +139,9 @@ static bool resource_import(qa_native_host *host, const qa_native_import_call *c
     if (!call_text(host, call, 0, &name, error))
         return false;
     int32_t index;
-    bool ok = index_resource(host, resource_kind(call->name), (const char *)name.data,
+    bool ok = index_resource(host, resource_kind(qa_native_q2_import_dispatch(call->profile,call->slot)), (const char *)name.data,
                              &index, error);
-    if (ok && resource_kind(call->name) == QA_NATIVE_HOST_MODEL) {
+    if (ok && resource_kind(qa_native_q2_import_dispatch(call->profile,call->slot)) == QA_NATIVE_HOST_MODEL) {
         uint32_t model;
         ok = remember_inline_model(host, index, (const char *)name.data, &model, error);
     }
@@ -258,8 +259,9 @@ static bool sound_import(qa_native_host *host, const qa_native_import_call *call
     if (!host->engine.sound)
         return native_host_fail(error, QA_ERROR_UNSUPPORTED, call->slot,
                                 "native sound service is unbound");
-    bool positioned = !strcmp(call->name, "positioned_sound");
-    bool local = !strcmp(call->name, "local_sound");
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
+    bool positioned = (dispatch == QA_NATIVE_Q2_IMPORT_positioned_sound);
+    bool local = (dispatch == QA_NATIVE_Q2_IMPORT_local_sound);
     size_t cursor = 0;
     qa_native_host_sound sound = {.positioned = positioned, .local = local};
     if (local) {
@@ -305,7 +307,8 @@ static bool command_import(qa_native_host *host, const qa_native_import_call *ca
     qa_native_host_command_view command = {0};
     if (!command_view(host, &command, error))
         return false;
-    if (!strcmp(call->name, "argc")) {
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_argc)) {
         if (command.count > INT32_MAX)
             return native_host_fail(error, QA_ERROR_FORMAT, command.count,
                                     "native command has too many arguments");
@@ -313,7 +316,7 @@ static bool command_import(qa_native_host *host, const qa_native_import_call *ca
         return true;
     }
     const char *text;
-    if (!strcmp(call->name, "argv")) {
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_argv)) {
         int32_t index = native_argument_i32(call, 0);
         text = index >= 0 && (size_t)index < command.count ? command.arguments[index] : "";
     } else {
@@ -354,7 +357,8 @@ static bool extension_import(qa_native_host *host, const qa_native_import_call *
 static bool tagged_memory(qa_native_host *host, const qa_native_import_call *call,
                           qa_native_value *result, qa_error *error)
 {
-    if (!strcmp(call->name, "TagMalloc")) {
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_TagMalloc)) {
         uint64_t amount = host->profile == QA_NATIVE_Q2_GAME_API3
                               ? (uint32_t)native_argument_i32(call, 0)
                               : call->arguments[0].as.u64;
@@ -365,7 +369,7 @@ static bool tagged_memory(qa_native_host *host, const qa_native_import_call *cal
                                   native_argument_i32(call, 1),
                                   &result->as.address, error);
     }
-    if (!strcmp(call->name, "TagFree"))
+    if ((dispatch == QA_NATIVE_Q2_IMPORT_TagFree))
         return qa_native_free(host->instance, native_argument_address(call, 0), error);
     qa_native_free_tag(host->instance, native_argument_i32(call, 0));
     return true;
@@ -375,12 +379,13 @@ static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
                         qa_native_value *result, qa_error *error)
 {
     qa_bytes name_copy = {0}, value_copy = {0};
-    const char *name, *value;
+    const char *name="", *value="";
     if (!call_string_span(host, call, 0, &name, &name_copy, error) ||
         !call_string_span(host, call, 1, &value, &value_copy, error)) {
         return false;
     }
-    bool registration = !strcmp(call->name, "cvar");
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
+    bool registration = (dispatch == QA_NATIVE_Q2_IMPORT_cvar);
     const qa_cvar_view *existing = host->cvars ? qa_cvars_find(host->cvars, name) : NULL;
     bool declaration = !existing || !existing->declared;
     /* Declaration and set callbacks may reenter the guest before the common
@@ -396,7 +401,7 @@ static bool cvar_import(qa_native_host *host, const qa_native_import_call *call,
                          ? (host->profile == QA_NATIVE_Q2_GAME_API3
                                 ? (uint32_t)native_argument_i32(call, 2)
                                 : native_argument_u32(call, 2))
-                         : !strcmp(call->name, "cvar_forceset") ? 1u : 0u;
+                         : (dispatch == QA_NATIVE_Q2_IMPORT_cvar_forceset) ? 1u : 0u;
     bool ok = native_host_cvar(host, name, value, flags, !registration,
                                &result->as.address, error);
     return ok;
@@ -466,35 +471,47 @@ static bool q2_application(qa_native_host *host, const qa_native_import_call *ca
 bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *call,
                            qa_native_value *result, qa_error *error)
 {
-    const char *name = call->name;
-    if (!strcmp(name, "bprintf") || !strcmp(name, "dprintf") ||
-        !strcmp(name, "cprintf") || !strcmp(name, "centerprintf") ||
-        !strcmp(name, "error") || !strcmp(name, "Broadcast_Print") ||
-        !strcmp(name, "Com_Print") || !strcmp(name, "Client_Print") ||
-        !strcmp(name, "Center_Print") || !strcmp(name, "Com_Error"))
-        return print_import(host, call, error);
-    if (!strcmp(name, "TagMalloc") || !strcmp(name, "TagFree") ||
-        !strcmp(name, "FreeTags"))
-        return tagged_memory(host, call, result, error);
-    if (!strcmp(name, "cvar") || !strcmp(name, "cvar_set") ||
-        !strcmp(name, "cvar_forceset"))
-        return cvar_import(host, call, result, error);
-    if (!strcmp(name, "configstring"))
-        return configstring_set(host, call, error);
-    if (!strcmp(name, "get_configstring"))
-        return configstring_get(host, native_argument_i32(call, 0),
+    qa_native_q2_import_kind dispatch=qa_native_q2_import_dispatch(call->profile,call->slot);
+    switch (dispatch) {
+    case QA_NATIVE_Q2_IMPORT_bprintf:
+    case QA_NATIVE_Q2_IMPORT_dprintf:
+    case QA_NATIVE_Q2_IMPORT_cprintf:
+    case QA_NATIVE_Q2_IMPORT_centerprintf:
+    case QA_NATIVE_Q2_IMPORT_error:
+    case QA_NATIVE_Q2_IMPORT_Broadcast_Print:
+    case QA_NATIVE_Q2_IMPORT_Com_Print:
+    case QA_NATIVE_Q2_IMPORT_Client_Print:
+    case QA_NATIVE_Q2_IMPORT_Center_Print:
+    case QA_NATIVE_Q2_IMPORT_Com_Error:
+    return print_import(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_TagMalloc:
+    case QA_NATIVE_Q2_IMPORT_TagFree:
+    case QA_NATIVE_Q2_IMPORT_FreeTags:
+    return tagged_memory(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_cvar:
+    case QA_NATIVE_Q2_IMPORT_cvar_set:
+    case QA_NATIVE_Q2_IMPORT_cvar_forceset:
+    return cvar_import(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_configstring:
+    return configstring_set(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_get_configstring:
+    return configstring_get(host, native_argument_i32(call, 0),
                                 &result->as.address, error);
-    if (!strcmp(name, "modelindex") || !strcmp(name, "soundindex") ||
-        !strcmp(name, "imageindex"))
-        return resource_import(host, call, result, error);
-    if (!strcmp(name, "setmodel"))
-        return set_model(host, call, error);
-    if (!strcmp(name, "sound") || !strcmp(name, "positioned_sound") ||
-        !strcmp(name, "local_sound"))
-        return sound_import(host, call, error);
-    if (!strcmp(name, "trace") || !strcmp(name, "clip"))
-        return native_host_trace(host, call, result, !strcmp(name, "clip"), error);
-    if (!strcmp(name, "pointcontents")) {
+    case QA_NATIVE_Q2_IMPORT_modelindex:
+    case QA_NATIVE_Q2_IMPORT_soundindex:
+    case QA_NATIVE_Q2_IMPORT_imageindex:
+    return resource_import(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_setmodel:
+    return set_model(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_sound:
+    case QA_NATIVE_Q2_IMPORT_positioned_sound:
+    case QA_NATIVE_Q2_IMPORT_local_sound:
+    return sound_import(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_trace:
+    case QA_NATIVE_Q2_IMPORT_clip:
+    return native_host_trace(host, call, result, (dispatch == QA_NATIVE_Q2_IMPORT_clip), error);
+    case QA_NATIVE_Q2_IMPORT_pointcontents:
+    {
         uint32_t contents;
         if (!point_contents(host, native_argument_address(call, 0), &contents, error))
             return false;
@@ -504,9 +521,11 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
             result->as.u32 = contents;
         return true;
     }
-    if (!strcmp(name, "inPVS") || !strcmp(name, "inPHS")) {
+    case QA_NATIVE_Q2_IMPORT_inPVS:
+    case QA_NATIVE_Q2_IMPORT_inPHS:
+    {
         bool visible;
-        if (!visibility(host, call, !strcmp(name, "inPHS"), &visible, error))
+        if (!visibility(host, call, (dispatch == QA_NATIVE_Q2_IMPORT_inPHS), &visible, error))
             return false;
         if (host->profile == QA_NATIVE_Q2_GAME_API3)
             result->as.i32 = visible ? 1 : 0;
@@ -514,14 +533,16 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
             result->as.u8 = visible ? 1u : 0u;
         return true;
     }
-    if (!strcmp(name, "SetAreaPortalState")) {
+    case QA_NATIVE_Q2_IMPORT_SetAreaPortalState:
+    {
         bool open = host->profile == QA_NATIVE_Q2_GAME_API3
                         ? native_argument_i32(call, 1) != 0
                         : call->arguments[1].as.u8 != 0;
         return qa_collision_set_portal(qa_world_geometry(host->world.world),
                                        (uint32_t)native_argument_i32(call, 0), open, error);
     }
-    if (!strcmp(name, "AreasConnected")) {
+    case QA_NATIVE_Q2_IMPORT_AreasConnected:
+    {
         bool connected;
         if (!qa_collision_areas_connected(qa_world_geometry(host->world.world),
                                           native_argument_i32(call, 0),
@@ -533,35 +554,50 @@ bool native_host_q2_import(qa_native_host *host, const qa_native_import_call *ca
             result->as.u8 = connected ? 1u : 0u;
         return true;
     }
-    if (!strcmp(name, "linkentity"))
-        return native_host_link(host, native_argument_address(call, 0), error);
-    if (!strcmp(name, "unlinkentity"))
-        return native_host_unlink(host, native_argument_address(call, 0), error);
-    if (!strcmp(name, "BoxEdicts"))
-        return native_host_box_edicts(host, call, result, error);
-    if (!strcmp(name, "Pmove"))
-        return native_host_pmove(host, native_argument_address(call, 0), error);
-    if (!strcmp(name, "multicast") || !strcmp(name, "unicast"))
-        return native_host_message_send(host, call, error);
-    if (!strncmp(name, "Write", 5))
-        return native_host_message_write(host, call, error);
-    if (!strcmp(name, "argc") || !strcmp(name, "argv") || !strcmp(name, "args"))
-        return command_import(host, call, result, error);
-    if (!strcmp(name, "AddCommandString"))
-        return add_command(host, call, error);
-    if (!strcmp(name, "GetExtension"))
-        return extension_import(host, call, result, error);
-    if (host->profile == QA_NATIVE_Q2_GAME_API2023 &&
-        (!strcmp(name, "Bot_RegisterEdict") || !strcmp(name, "Bot_UnRegisterEdict")))
-        return native_host_q2_bot_register(host, native_argument_address(call, 0),
-            !strcmp(name, "Bot_RegisterEdict"), error);
-    if (!strcmp(name, "ServerFrame")) {
+    case QA_NATIVE_Q2_IMPORT_linkentity:
+    return native_host_link(host, native_argument_address(call, 0), error);
+    case QA_NATIVE_Q2_IMPORT_unlinkentity:
+    return native_host_unlink(host, native_argument_address(call, 0), error);
+    case QA_NATIVE_Q2_IMPORT_BoxEdicts:
+    return native_host_box_edicts(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_Pmove:
+    return native_host_pmove(host, native_argument_address(call, 0), error);
+    case QA_NATIVE_Q2_IMPORT_multicast:
+    case QA_NATIVE_Q2_IMPORT_unicast:
+    return native_host_message_send(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_WriteChar:
+    case QA_NATIVE_Q2_IMPORT_WriteByte:
+    case QA_NATIVE_Q2_IMPORT_WriteShort:
+    case QA_NATIVE_Q2_IMPORT_WriteLong:
+    case QA_NATIVE_Q2_IMPORT_WriteFloat:
+    case QA_NATIVE_Q2_IMPORT_WriteString:
+    case QA_NATIVE_Q2_IMPORT_WritePosition:
+    case QA_NATIVE_Q2_IMPORT_WriteDir:
+    case QA_NATIVE_Q2_IMPORT_WriteAngle:
+    case QA_NATIVE_Q2_IMPORT_WriteEntity:
+    return native_host_message_write(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_argc:
+    case QA_NATIVE_Q2_IMPORT_argv:
+    case QA_NATIVE_Q2_IMPORT_args:
+    return command_import(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_AddCommandString:
+    return add_command(host, call, error);
+    case QA_NATIVE_Q2_IMPORT_GetExtension:
+    return extension_import(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_Bot_RegisterEdict:
+    case QA_NATIVE_Q2_IMPORT_Bot_UnRegisterEdict:
+    return native_host_q2_bot_register(host, native_argument_address(call, 0),
+            (dispatch == QA_NATIVE_Q2_IMPORT_Bot_RegisterEdict), error);
+    case QA_NATIVE_Q2_IMPORT_ServerFrame:
+    {
         result->as.u32 = host->engine.server_frame
                              ? host->engine.server_frame(host->engine.context)
                              : 0;
         return true;
     }
-    if (!strcmp(name, "Info_ValueForKey"))
-        return info_value(host, call, result, error);
+    case QA_NATIVE_Q2_IMPORT_Info_ValueForKey:
+    return info_value(host, call, result, error);
+    default:
     return q2_application(host, call, result, error);
+    }
 }

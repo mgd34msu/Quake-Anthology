@@ -1696,9 +1696,9 @@ bool application_native_q2_callbacks_import(void *context,const qa_native_import
     qa_native_value *result,bool *handled,qa_error *e)
 {
     struct application_native_q2 *n=context; application_native_q2_callbacks *o=n?n->callbacks:NULL;
-    if(!o||!call||!call->name||!result||!handled) return fail(e,"Native source import lost its actual callback owner");
+    if(!o||!call||!result||!handled) return fail(e,"Native source import lost its actual callback owner");
     *handled=false;
-    bool link=strcmp(call->name,"linkentity")==0,unlink=strcmp(call->name,"unlinkentity")==0;
+    bool link=(qa_native_q2_import_dispatch(call->profile,call->slot) == QA_NATIVE_Q2_IMPORT_linkentity),unlink=(qa_native_q2_import_dispatch(call->profile,call->slot) == QA_NATIVE_Q2_IMPORT_unlinkentity);
     if(!link&&!unlink) return true;
     if(!o->records) return true;
     if(application_native_q2_records_lifecycle(o->records)) {
