@@ -91,18 +91,15 @@ static bool q3_model_shadow(qa_scene_model *model, const qa_scene_model_input *i
     qa_material_library *materials = input->material_library ? input->material_library : model->materials;
     if (input->shadow_mode == 2) {
         if (((input->flags & 2u) && !input->view.clip_enabled) || (input->flags & (8u | 64u))) return true;
-        shadow = qa_material_find(materials, "<stencil shadow>");
+        shadow = qa_material_library_builtin(materials, QA_MATERIAL_BUILTIN_STENCIL_SHADOW);
         if (!shadow) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model library has no canonical stencil shadow material"); return false; }
         if (context->source_scratch) return qa_material_submit(shadow, mesh, context, frame, error);
         if (!qa_scene_stencil_shadow(frame, &input->view, mesh, context->model,
                                       input->light_direction, qa_scene_white(model->resources), error)) return false;
     } else {
         if (!(input->flags & 256u)) return true;
-        if (context->source_scratch && qa_material_library_has_source_profile(materials)) {
-            shadow = qa_material_find(materials, "projectionShadow");
-            if (!shadow) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source projection shadow lacks its real Init registration"); return false; }
-        } else if (!qa_material_register_kind(materials, "projectionShadow", &model->options,
-                                         QA_MATERIAL_DYNAMIC, &shadow, error)) return false;
+        shadow = qa_material_library_builtin(materials, QA_MATERIAL_BUILTIN_PROJECTION_SHADOW);
+        if (!shadow) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source projection shadow lacks its real Init registration"); return false; }
         context->projection_shadow = true;
         if (!qa_material_submit(shadow, mesh, context, frame, error)) return false;
     }
@@ -254,7 +251,8 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     if (shell_image) material = NULL;
     if (!material && input->family == QA_GAME_Q3 && !shell_image &&
         format != QA_MODEL_MDL && format != QA_MODEL_SPR) {
-        material = qa_material_find(input->material_library ? input->material_library : model->materials, "*default");
+        material = qa_material_library_builtin(input->material_library ? input->material_library : model->materials,
+            QA_MATERIAL_BUILTIN_DEFAULT);
         if (!material) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model library has no canonical default material"); return false; }
     }
     if (material) {

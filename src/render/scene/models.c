@@ -123,6 +123,12 @@ bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources
         model->options.transparent = true; model->options.transparent_index = 255;
         model->options.mipmap = false;
     }
+    if (options->family == QA_GAME_Q3 && !qa_material_library_has_source_profile(materials) &&
+        !qa_material_library_builtin(materials, QA_MATERIAL_BUILTIN_PROJECTION_SHADOW)) {
+        const qa_material *shadow;
+        if (!qa_material_register_kind(materials, "projectionShadow", &model->options,
+            QA_MATERIAL_DYNAMIC, &shadow, error)) goto fail;
+    }
     void *allocation;
     if (source->format == QA_MODEL_MD5) {
         size_t joints = source->bone_count;
@@ -851,7 +857,7 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
                 false, &external->material, error)) return false;
             if (qa_material_library_has_source_profile(input->material_library) && external->material->default_shader &&
                 (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
-                external->material = qa_material_find(input->material_library, "*default");
+                external->material = qa_material_library_builtin(input->material_library, QA_MATERIAL_BUILTIN_DEFAULT);
             *out = external; return true;
         }
         *out = model->meshes[index].shaders[skin];

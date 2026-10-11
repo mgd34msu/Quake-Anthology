@@ -218,6 +218,11 @@ bool qa_material_library_parse(qa_material_library *, qa_bytes, const qa_scene_i
 bool qa_material_library_parse_scoped(qa_material_library *, qa_bytes, const qa_scene_image_options *, qa_error *);
 bool qa_material_library_load_scripts(qa_material_library *, qa_vfs *, const qa_scene_image_options *, qa_error *);
 const qa_material *qa_material_find(const qa_material_library *, const char *);
+typedef enum qa_material_builtin {
+    QA_MATERIAL_BUILTIN_DEFAULT, QA_MATERIAL_BUILTIN_STENCIL_SHADOW,
+    QA_MATERIAL_BUILTIN_PROJECTION_SHADOW, QA_MATERIAL_BUILTIN_COUNT
+} qa_material_builtin;
+const qa_material *qa_material_library_builtin(const qa_material_library *, qa_material_builtin);
 bool qa_material_has_authored(const qa_material_library *, const char *);
 /* A registered recipient variant keeps the original compiled program and
  * maps only its real retained image inputs into Source uploads. */

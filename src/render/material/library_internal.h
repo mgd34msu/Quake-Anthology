@@ -69,6 +69,7 @@ struct qa_material_library {
     qa_material_catalog_source *catalog_sources, *catalog_tail, *catalog_current;
     qa_material_record *records[QA_MATERIAL_BUCKETS];
     qa_material_record **ordered;
+    const qa_material *builtins[QA_MATERIAL_BUILTIN_COUNT];
     size_t count, capacity;
     qa_material_remap_record *remaps;
     qa_material_generated *generated;

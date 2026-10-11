@@ -519,6 +519,20 @@ static void record_free(qa_material_record *record)
     free(record);
 }
 
+static void builtin_bind(qa_material_library *library, const qa_material_record *record)
+{
+    if (record->source_variant_parent) return;
+    qa_material_builtin kind;
+    if (record->kind == QA_MATERIAL_DEFAULT) kind = QA_MATERIAL_BUILTIN_DEFAULT;
+    else if (record->kind == QA_MATERIAL_STENCIL_SHADOW) kind = QA_MATERIAL_BUILTIN_STENCIL_SHADOW;
+    else if (record->kind == QA_MATERIAL_DYNAMIC && record->material.family == QA_GAME_Q3 &&
+        !strcmp(record->material.name, "projectionshadow")) kind = QA_MATERIAL_BUILTIN_PROJECTION_SHADOW;
+    else return;
+    const qa_material *previous = library->builtins[kind];
+    if (!previous || record->material.registration < previous->registration)
+        library->builtins[kind] = &record->material;
+}
+
 static bool publish(qa_material_library *library, qa_material_record *record, qa_error *error)
 {
     if (library->count == QA_MATERIAL_MAX_REGISTERED) {
@@ -555,6 +569,7 @@ static bool publish(qa_material_library *library, qa_material_record *record, qa
     unsigned bucket = qa_material_hash(material->name);
     record->next = library->records[bucket];
     library->records[bucket] = record;
+    builtin_bind(library, record);
     return true;
 }
 
@@ -1204,6 +1219,7 @@ void qa_scene_material_image_policy_publish(qa_scene_material_image_policy *tick
             record->material.registration += (uint32_t)ticket->count;
             record->material.library = library;
             record->next = library->records[bucket]; library->records[bucket] = record;
+            builtin_bind(library, record);
             record = next;
         }
         ticket->destination->records[bucket] = NULL;
@@ -1411,7 +1427,7 @@ static bool register_material(qa_material_library *library, const char *name,
     if (library->source_profile && library->count >= QA_MATERIAL_MAX_REGISTERED) {
         library->registration_record = previous_record;
         record_free(record);
-        *out = qa_material_find(library, "*default");
+        *out = qa_material_library_builtin(library, QA_MATERIAL_BUILTIN_DEFAULT);
         return *out != NULL;
     }
     size_t registered_before = library->count;
@@ -1433,7 +1449,7 @@ static bool register_material(qa_material_library *library, const char *name,
     library->registration_record = previous_record;
     record->admission_parent = NULL;
     if (library->source_profile && library->count >= QA_MATERIAL_MAX_REGISTERED) {
-        record_free(record); *out = qa_material_find(library, "*default");
+        record_free(record); *out = qa_material_library_builtin(library, QA_MATERIAL_BUILTIN_DEFAULT);
         return *out != NULL;
     }
     if (!publish(library, record, error)) {
@@ -1621,6 +1637,13 @@ const qa_material *qa_material_find(const qa_material_library *library, const ch
         if (!record->source_variant_parent && !strcmp(record->material.name, key) && (!result || record->material.registration < result->registration))
             result = &record->material;
     return result;
+}
+
+const qa_material *qa_material_library_builtin(const qa_material_library *library, qa_material_builtin kind)
+{
+    if (!library || (unsigned)kind >= QA_MATERIAL_BUILTIN_COUNT) return NULL;
+    const qa_material *material = library->builtins[kind];
+    return material ? material : qa_material_library_builtin(library->policy_source, kind);
 }
 
 bool qa_material_has_authored(const qa_material_library *library, const char *name)
@@ -1867,6 +1890,8 @@ static void registration_rollback(qa_material_library *library, size_t count)
             qa_material_record *record = *link;
             if (record->material.registration >= count) {
                 *link = record->next;
+                for (unsigned i = 0; i < QA_MATERIAL_BUILTIN_COUNT; ++i)
+                    if (library->builtins[i] == &record->material) library->builtins[i] = NULL;
                 record_free(record);
             } else link = &record->next;
         }
@@ -1876,6 +1901,7 @@ static void registration_rollback(qa_material_library *library, size_t count)
      * buckets before sorting; never inspect freed registration metadata. */
     for (size_t bucket = 0; bucket < QA_MATERIAL_BUCKETS; ++bucket) {
         for (qa_material_record *record = library->records[bucket]; record; record = record->next) {
+            builtin_bind(library, record);
             size_t index = kept;
             while (index && (library->ordered[index - 1]->material.sort > record->material.sort ||
                 (library->ordered[index - 1]->material.sort == record->material.sort &&

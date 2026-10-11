@@ -627,6 +627,19 @@ Names findings 1-11 are migrated at the listed sites. Findings 12-17 and the
 other adoption kinds remain open; this is source/build/core evidence, with no
 new installation, live-audio or performance claim.
 
+Names item 12, builtin material slice: the material library retains its default,
+stencil-shadow and projection-shadow handles when their records publish.
+Source initialization binds projectionShadow through its existing registration;
+generic Q3 models bind it during model creation. Model draws, missing-MD3
+fallbacks and registration-limit fallback read these handles. The replaced
+draw-time builtin name lookups and projection-shadow registration are deleted.
+Rollback clears retired handles and prepared-library publication binds incoming
+records. Normal build and seven core suites pass:
+`/tmp/qa-ta3196-builtin-materials-20261011-build.log` and
+`/tmp/qa-ta3196-builtin-materials-20261011-core.log`.
+Item 12's per-library image and Unified skin bindings remain next; no new
+installation or renderer runtime claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

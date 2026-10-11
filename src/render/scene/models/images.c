@@ -102,7 +102,7 @@ bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_fram
                                   &image->material, error)) goto fail;
         if (qa_material_library_has_source_profile(model->materials) && image->material->default_shader &&
             (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
-            image->material = qa_material_find(model->materials, "*default");
+            image->material = qa_material_library_builtin(model->materials, QA_MATERIAL_BUILTIN_DEFAULT);
     } else {
         qa_error load_error = {0};
         qa_scene_image *base = NULL;
