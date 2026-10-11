@@ -809,7 +809,7 @@ static const char *native_config(void *context,int32_t index)
 static const qa_scene_image *native_picture(void *context,qa_string_id name_id,qa_error *e)
 {
     q2_native *v=context;
-    return qa_scene_q2_picture_read(v->bank->images,v->bank->owner->replica->strings,name_id,
+    return qa_scene_q2_picture_read(v->bank->images,v->bank->owner->replica->strings,name_id,QA_IMAGE_USAGE_PICTURE,
         v->protocol.kind==QA_NET_Q2KEX_2023,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
 }
 static qa_string_id native_config_picture(void *context,int32_t index,unsigned variant)
@@ -1823,7 +1823,7 @@ static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_f
     if (!o->marker_count || !o->marker_bank) return true;
     q2_bank *b=o->marker_bank;
     const qa_cvars *registry=frontend_remote_unified_domain_read(o->replica)->cvars;
-    qa_hud_q2_marker marker={.image=qa_scene_q2_picture_read(b->images,o->replica->strings,b->picture_names.marker,
+    qa_hud_q2_marker marker={.image=qa_scene_q2_picture_read(b->images,o->replica->strings,b->picture_names.marker,QA_IMAGE_USAGE_PICTURE,
         b->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,QA_SCENE_LINEAR_MIPMAP_LINEAR,e),
         .now_ns=nanoseconds(o->seconds),.started_ns=o->marker_ns,.layout_flags=(uint32_t)o->view_layouts,
     };

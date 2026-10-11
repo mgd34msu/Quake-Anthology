@@ -154,8 +154,8 @@ static bool picture(frontend_native_q2 *source, const char *name, bool admit,
     if (!id && admit && !qa_strings_intern_cstr(strings,name,&id,error)) return false;
     if (!id) { *out=NULL;return true; }
     qa_error issue={0};
-    *out=admit?qa_scene_q2_picture(source->images,strings,id,true,QA_SCENE_LINEAR,&issue):
-        qa_scene_q2_picture_read(source->images,strings,id,true,QA_SCENE_LINEAR,&issue);
+    *out=admit?qa_scene_q2_picture(source->images,strings,id,QA_IMAGE_USAGE_PICTURE,true,QA_SCENE_LINEAR,&issue):
+        qa_scene_q2_picture_read(source->images,strings,id,QA_IMAGE_USAGE_PICTURE,true,QA_SCENE_LINEAR,&issue);
     if (*out || issue.code==QA_ERROR_NOT_FOUND || issue.code==QA_OK) return true;
     if (error) *error=issue;
     return false;

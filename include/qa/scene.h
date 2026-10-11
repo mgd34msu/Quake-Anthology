@@ -305,9 +305,9 @@ bool qa_scene_q2_picture_direct(const char *name, bool rerelease);
 /* Borrowed until resource policy/VFS change or owner destruction. Names and
  * missing resources share the bank's image request index. */
 const qa_scene_image *qa_scene_q2_picture(qa_scene_resources *, qa_strings *, qa_string_id,
-    bool rerelease, qa_scene_filter, qa_error *);
+    qa_scene_image_usage, bool rerelease, qa_scene_filter, qa_error *);
 const qa_scene_image *qa_scene_q2_picture_read(qa_scene_resources *, qa_strings *, qa_string_id,
-    bool rerelease, qa_scene_filter, qa_error *);
+    qa_scene_image_usage, bool rerelease, qa_scene_filter, qa_error *);
 bool qa_scene_image_load_exact(qa_scene_resources *, const char *, const qa_scene_image_options *,
                               qa_scene_image **, qa_error *);
 /* Decode owned immutable input without filesystem lookup or cache admission.

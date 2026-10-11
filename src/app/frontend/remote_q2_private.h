@@ -26,6 +26,8 @@ typedef struct remote_q2_model {
     qa_scene_model *scene;
 } remote_q2_model;
 
+bool remote_q2_flare_prepare(frontend_remote_q2 *, const qa_q2_wire_frame *, qa_error *);
+bool remote_q2_flare_standard(const frontend_remote_q2 *, qa_string_id);
 qa_scene_image_options remote_q2_image_options(qa_scene_image_usage);
 bool remote_q2_model_cached(frontend_remote_q2 *, qa_string_id, remote_q2_model **);
 bool remote_q2_model_scope_required(const char *, qa_bytes);
@@ -142,7 +144,7 @@ struct frontend_remote_q2 {
     bool effects_imported;
     struct remote_q2_footsteps *footsteps;
     remote_q2_model *models;
-    qa_id_index model_names;
+    qa_id_index model_names, flare_names;
     remote_q2_model **model_rows;
     size_t model_count, model_capacity;
     struct frontend_remote_q2_image_policy *image_policy;

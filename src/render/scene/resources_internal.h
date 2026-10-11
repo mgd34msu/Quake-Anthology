@@ -77,6 +77,7 @@ typedef struct image_request {
     uint64_t lookup_generation;
     qa_status status;
     qa_scene_filter filter;
+    qa_scene_image_usage usage;
     bool picture, rerelease, exact_file;
 } image_request;
 typedef struct image_alias {

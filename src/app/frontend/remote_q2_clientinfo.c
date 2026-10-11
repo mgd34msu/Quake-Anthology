@@ -115,7 +115,7 @@ static bool prepare_player(frontend_remote_q2 *row, uint32_t player, qa_error *e
     }
     qa_string_id icon=player==256?row->hud_names.default_icon:row->hud_names.icons[player];
     qa_error issue={0};
-    const qa_scene_image *image=qa_scene_q2_picture(row->images,row->hud_names.strings,icon,
+    const qa_scene_image *image=qa_scene_q2_picture(row->images,row->hud_names.strings,icon,QA_IMAGE_USAGE_PICTURE,
         remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,&issue);
     if (!image && issue.code!=QA_OK && issue.code!=QA_ERROR_NOT_FOUND) {if(error)*error=issue;return false;}
     value.valid=value.model_resource && value.skin_material && has_default_weapon && (remote_q2_rerelease_presentation(row) || image);

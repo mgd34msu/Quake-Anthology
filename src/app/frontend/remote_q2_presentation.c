@@ -194,22 +194,6 @@ static bool damage_blend_draw(frontend_remote_q2 *row, qa_scene_rect viewport,
     qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = {.viewport = viewport}};
     return qa_scene_frame_emit(frame, &view, error) && qa_scene_frame_draw(frame, &draw, error);
 }
-static bool flare_standard_image(const char *path)
-{
-    static const char *const names[] = {"misc/flare.tga", "sprites/psx_flare"};
-    for (size_t n = 0; n < 2; ++n) {
-        size_t i = 0;
-        while (names[n][i] && path[i]) {
-            unsigned char c = (unsigned char)path[i];
-            if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
-            if (c == '\\') c = '/';
-            if (c != (unsigned char)names[n][i]) break;
-            ++i;
-        }
-        if (!names[n][i] && (n == 1 || !path[i])) return true;
-    }
-    return false;
-}
 static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
     const qa_scene_view *view, qa_vec3 origin, qa_error *error)
 {
@@ -222,14 +206,13 @@ static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
     const qa_scene_image *image = NULL;
     for (unsigned attempt=0;attempt<2;++attempt) {
         qa_error issue={0};
-        image=qa_scene_q2_picture_read(row->images,row->hud_names.strings,path_id,
+        image=qa_scene_q2_picture_read(row->images,row->hud_names.strings,path_id,QA_IMAGE_USAGE_SPRITE,
             true,QA_SCENE_LINEAR,&issue);
         if (image) break;
         if (issue.code!=QA_ERROR_NOT_FOUND && issue.code!=QA_OK) {if(error)*error=issue;return false;}
         if (path_id==names->flare_image) return true;
         path_id=names->flare_image;
     }
-    const char *path=qa_strings_cstr(row->hud_names.strings,path_id);
     if (!image) return true;
     uint32_t color = packet->skinnum;
     qa_scene_flare_options options = {.scale = packet->scale != 0 ? packet->scale : 1,
@@ -240,7 +223,7 @@ static bool flare_draw(frontend_remote_q2 *row, const qa_q2_entity *packet,
         .separate_rim = (packet->renderfx & (1024u | 2048u | 4096u)) != 0,
         .rim_color = {(packet->renderfx & 1024u) ? 1.f : 0.f, (packet->renderfx & 2048u) ? 1.f : 0.f,
             (packet->renderfx & 4096u) ? 1.f : 0.f},
-        .standard_image = flare_standard_image(path)};
+        .standard_image = remote_q2_flare_standard(row,path_id)};
     return qa_scene_flare(&row->frontend->frame, view, origin, &options, image, error);
 }
 static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,

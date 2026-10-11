@@ -79,7 +79,7 @@ static bool image_prepare(qa_scene_resources *images,qa_strings *strings,qa_stri
     bool rerelease,qa_scene_filter filter,qa_error *error)
 {
     qa_error issue={0};
-    if (!id || qa_scene_q2_picture(images,strings,id,rerelease,filter,&issue) || issue.code==QA_OK || issue.code==QA_ERROR_NOT_FOUND) return true;
+    if (!id || qa_scene_q2_picture(images,strings,id,QA_IMAGE_USAGE_PICTURE,rerelease,filter,&issue) || issue.code==QA_OK || issue.code==QA_ERROR_NOT_FOUND) return true;
     if (error) *error=issue;
     return false;
 }

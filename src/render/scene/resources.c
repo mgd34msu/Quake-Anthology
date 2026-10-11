@@ -1434,7 +1434,7 @@ bool qa_scene_resource_policy_ready(qa_scene_resource_policy *ticket, qa_error *
         if (!request->picture) continue;
         qa_error issue={0};
         if (!qa_scene_q2_picture(ticket->destination,request->strings,request->name,
-            request->rerelease,request->filter,&issue) && issue.code!=QA_OK && issue.code!=QA_ERROR_NOT_FOUND) {
+            request->usage,request->rerelease,request->filter,&issue) && issue.code!=QA_OK && issue.code!=QA_ERROR_NOT_FOUND) {
             if (error) *error=issue;
             return false;
         }
@@ -2854,12 +2854,12 @@ static image_cache *cache_find(qa_scene_resources *resources,qa_string_id name,
     return first;
 }
 static size_t picture_request_find(const qa_scene_resources *resources,const qa_strings *strings,
-    qa_string_id name,bool rerelease,qa_scene_filter filter)
+    qa_string_id name,qa_scene_image_usage usage,bool rerelease,qa_scene_filter filter)
 {
     qa_id_index_cursor cursor=qa_id_index_begin(&resources->request_index,name,(uint64_t)(uintptr_t)strings);size_t row;
     while (qa_id_index_next(&resources->request_index,&cursor,&row)) {
         const image_request *request=resources->requests+row;
-        if (request->rerelease==rerelease && request->filter==filter) return row;
+        if (request->usage==usage && request->rerelease==rerelease && request->filter==filter) return row;
     }
     return SIZE_MAX;
 }
@@ -3346,11 +3346,11 @@ bool qa_scene_q2_picture_path(const char *name, bool rerelease, char *out, size_
     return true;
 }
 static const qa_scene_image *q2_picture(qa_scene_resources *resources, qa_strings *strings,
-    qa_string_id name_id, bool rerelease, qa_scene_filter filter, bool admit, qa_error *error)
+    qa_string_id name_id, qa_scene_image_usage usage, bool rerelease, qa_scene_filter filter, bool admit, qa_error *error)
 {
     if (!resources || !strings || !name_id) return NULL;
     uint64_t generation=qa_vfs_lookup_generation(resources->vfs);
-    size_t index=picture_request_find(resources,strings,name_id,rerelease,filter);
+    size_t index=picture_request_find(resources,strings,name_id,usage,rerelease,filter);
     if (index!=SIZE_MAX) {
         const image_request *request=resources->requests+index;
         if (request->lookup_generation==generation) {
@@ -3369,7 +3369,7 @@ static const qa_scene_image *q2_picture(qa_scene_resources *resources, qa_string
     qa_scene_image_options options={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,
         .wrap=QA_SCENE_CLAMP,.filter=filter,.transparent=true,.transparent_index=255};
     const char *relative=name+prefixed;
-    bool sprite=!strncmp(relative,"sprites/",8) || !strcmp(relative,"misc/flare.tga");
+    bool sprite=usage==QA_IMAGE_USAGE_SPRITE || !strncmp(relative,"sprites/",8);
     if (sprite || (qa_scene_q2_picture_direct(name,rerelease) && !prefixed)) {
         options.usage=sprite?QA_IMAGE_USAGE_SPRITE:QA_IMAGE_USAGE_SKIN;
         options.mipmap=!sprite;options.filter=sprite?QA_SCENE_LINEAR:QA_SCENE_LINEAR_MIPMAP_LINEAR;
@@ -3390,7 +3390,7 @@ static const qa_scene_image *q2_picture(qa_scene_resources *resources, qa_string
         if (!image_requests_prepare(resources,error)) return NULL;
         qa_strings_retain(strings);
         index=image_request_store(resources,(image_request){.strings=strings,.name=name_id,.path=path_id,
-            .picture=true,.rerelease=rerelease,.filter=filter});
+            .picture=true,.usage=usage,.rerelease=rerelease,.filter=filter});
     }
     image_request *request=resources->requests+index;
     request->lookup_generation=generation;request->status=status;request->cache_index=cache_index;
@@ -3398,11 +3398,11 @@ static const qa_scene_image *q2_picture(qa_scene_resources *resources, qa_string
     return resources->cache[cache_index].image;
 }
 const qa_scene_image *qa_scene_q2_picture(qa_scene_resources *resources,qa_strings *strings,
-    qa_string_id name,bool rerelease,qa_scene_filter filter,qa_error *error)
-{ return q2_picture(resources,strings,name,rerelease,filter,true,error); }
+    qa_string_id name,qa_scene_image_usage usage,bool rerelease,qa_scene_filter filter,qa_error *error)
+{ return q2_picture(resources,strings,name,usage,rerelease,filter,true,error); }
 const qa_scene_image *qa_scene_q2_picture_read(qa_scene_resources *resources,qa_strings *strings,
-    qa_string_id name,bool rerelease,qa_scene_filter filter,qa_error *error)
-{ return q2_picture(resources,strings,name,rerelease,filter,false,error); }
+    qa_string_id name,qa_scene_image_usage usage,bool rerelease,qa_scene_filter filter,qa_error *error)
+{ return q2_picture(resources,strings,name,usage,rerelease,filter,false,error); }
 bool qa_scene_image_load_exact(qa_scene_resources *resources, const char *name,
     const qa_scene_image_options *options, qa_scene_image **out, qa_error *error)
 {

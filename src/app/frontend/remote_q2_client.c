@@ -356,7 +356,7 @@ static bool hook_frame(void *context, qa_net_client_id id, const qa_q2_wire_fram
 {
     (void)records; (void)count; frontend_remote_q2 *row = context;
     if (!row || row->busy || !hook_current(row, id, error) || !frame || !frame->valid || !row->media_ready) return false;
-    if (!remote_q2_clientinfo_settings(row,error)) return false;
+    if (!remote_q2_clientinfo_settings(row,error) || !remote_q2_flare_prepare(row,frame,error)) return false;
     qa_q2_wire_frame held = {0};
     if (!qa_q2_frame_clone(frame, &held, error)) return false;
     qa_q2_frame_free(&row->previous); row->previous = row->frame; row->frame = held;
