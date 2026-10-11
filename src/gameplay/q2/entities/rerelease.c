@@ -53,10 +53,6 @@ static bool fog_equal(qa_q2_fog a, qa_q2_fog b) {
 static qa_bounds absolute_bounds(qa_body_state b) {
     return (qa_bounds){qa_vec_add(b.origin, b.bounds.mins), qa_vec_add(b.origin, b.bounds.maxs)};
 }
-static bool intersects(qa_bounds a, qa_bounds b) {
-    return a.mins.x <= b.maxs.x && a.maxs.x >= b.mins.x && a.mins.y <= b.maxs.y &&
-           a.maxs.y >= b.mins.y && a.mins.z <= b.maxs.z && a.maxs.z >= b.mins.z;
-}
 static bool use_actor(qa_q2_game *g, qa_actor_id target, qa_actor_id source, qa_error *e) {
     if (!q2_actor_live(g, target))
         return true;
@@ -224,7 +220,7 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
             continue;
         if (!qa_world_body_read(g->services.world, id, &body, e))
             goto out;
-        if (intersects(bounds, absolute_bounds(body)))
+        if (qa_bounds_overlap(bounds, absolute_bounds(body)))
             inside++;
         else
             outside++;
@@ -249,7 +245,7 @@ static bool relay(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool period
                 continue;
             if (!qa_world_body_read(g->services.world, id, &body, e))
                 goto out;
-            bool is_inside = active && intersects(bounds, absolute_bounds(body));
+            bool is_inside = active && qa_bounds_overlap(bounds, absolute_bounds(body));
             if (!periodic && is_inside)
                 continue;
             qa_string_id text = periodic && is_inside ? s->message : s->map;

@@ -314,8 +314,7 @@ bool qa_move_contact(qa_move_context *c, const qa_trace_result *trace, bool touc
 }
 bool qa_move_bounds(qa_move_context *c, qa_bounds requested, qa_collision_bits mask, qa_bounds *out) {
     qa_bounds previous=c->result->bounds;
-    bool expands=requested.mins.x<previous.mins.x||requested.mins.y<previous.mins.y||requested.mins.z<previous.mins.z||
-        requested.maxs.x>previous.maxs.x||requested.maxs.y>previous.maxs.y||requested.maxs.z>previous.maxs.z;
+    bool expands = qa_bounds_expands(previous, requested);
     if (!qa_bounds_valid(requested)) return fail(c,"Invalid requested movement bounds");
     if (expands) {
         qa_vec3 origin=qa_movement_origin(c->state); qa_trace_result trace;

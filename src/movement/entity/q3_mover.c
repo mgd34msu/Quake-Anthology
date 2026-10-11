@@ -281,10 +281,6 @@ static bool q3_proximity_push(q3_mover_transaction *transaction, qa_actor_id act
         ph_link(transaction->physics, actor, false, transaction->error);
 }
 
-static bool q3_overlap(qa_bounds first, qa_bounds second) {
-    return first.mins.x < second.maxs.x && first.mins.y < second.maxs.y && first.mins.z < second.maxs.z &&
-           first.maxs.x > second.mins.x && first.maxs.y > second.mins.y && first.maxs.z > second.mins.z;
-}
 static qa_bounds q3_absolute(q3_mover_transaction *transaction, qa_actor_id actor, const qa_body_state *body) {
     qa_linked_body linked;
     return qa_world_linked(transaction->physics->world, actor, &linked)
@@ -374,7 +370,7 @@ static bool q3_push_part(q3_mover_transaction *transaction, qa_actor_id pusher,
             continue;
         }
         if (!qa_actor_id_equal(qa_physics_actor_reference(transaction->physics, check.body.ground), pusher)) {
-            if (!q3_overlap(q3_absolute(transaction, actor, &check.body), destination)) continue;
+            if (!qa_bounds_overlap_strict(q3_absolute(transaction, actor, &check.body), destination)) continue;
             bool blocked;
             if (!q3_position_blocked(transaction, actor, &blocked)) { ok = false; break; }
             if (!blocked) continue;

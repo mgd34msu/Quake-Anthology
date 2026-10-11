@@ -368,9 +368,7 @@ bool qaw_q3_fog_for_bounds(const qa_scene_world *world, qa_bounds bounds,
     if (!data) return false;
     for (size_t i = 0; i < data->fog_count; ++i) {
         const q3_fog *fog = data->fogs + i;
-        if (!fog->active || bounds.maxs.x < fog->bounds.mins.x || bounds.mins.x > fog->bounds.maxs.x ||
-            bounds.maxs.y < fog->bounds.mins.y || bounds.mins.y > fog->bounds.maxs.y ||
-            bounds.maxs.z < fog->bounds.mins.z || bounds.mins.z > fog->bounds.maxs.z) continue;
+        if (!fog->active || !qa_bounds_overlap(bounds, fog->bounds)) continue;
         *out = fog_volume(fog, i);
         return true;
     }

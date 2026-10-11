@@ -407,12 +407,6 @@ static bool q2_fly_move(q2_classic_move *pm, bool collide)
     return true;
 }
 
-static bool q2_expands(qa_bounds previous, qa_bounds requested)
-{
-    return requested.mins.x < previous.mins.x || requested.mins.y < previous.mins.y ||
-        requested.mins.z < previous.mins.z || requested.maxs.x > previous.maxs.x ||
-        requested.maxs.y > previous.maxs.y || requested.maxs.z > previous.maxs.z;
-}
 
 static bool q2_check_duck(q2_classic_move *pm)
 {
@@ -439,7 +433,7 @@ static bool q2_check_duck(q2_classic_move *pm)
     pm->bounds.maxs.z = q2_height(pm, ducked ? 4.0f : 32.0f);
     pm->view_height = q2_height(pm, ducked ? -2.0f : 22.0f);
     qa_bounds previous = input->has_current_bounds ? input->current_bounds : pm->character;
-    if (q2_expands(previous, pm->bounds)) {
+    if (qa_bounds_expands(previous, pm->bounds)) {
         qa_trace_result trace;
         if (!q2_trace_bounds(pm, pm->origin, pm->origin, pm->bounds, &trace)) return false;
         if (trace.all_solid) {

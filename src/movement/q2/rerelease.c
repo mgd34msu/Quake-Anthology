@@ -577,11 +577,6 @@ static float rr_height(const rr_move *p, float source)
            (p->character.maxs.z - p->character.mins.z);
 }
 
-static bool rr_expands(qa_bounds from, qa_bounds to)
-{
-    return to.mins.x < from.mins.x || to.mins.y < from.mins.y || to.mins.z < from.mins.z ||
-           to.maxs.x > from.maxs.x || to.maxs.y > from.maxs.y || to.maxs.z > from.maxs.z;
-}
 
 static void rr_dimensions(rr_move *p)
 {
@@ -600,7 +595,7 @@ static void rr_dimensions(rr_move *p)
         p->bounds.maxs.z = rr_height(p, 32.0f);
         p->state->view_height = rr_height(p, 22.0f);
     }
-    if (rr_expands(p->accepted_bounds, p->bounds)) {
+    if (qa_bounds_expands(p->accepted_bounds, p->bounds)) {
         qa_trace_result trace = rr_trace(p, *p->origin, *p->origin, p->bounds, 0);
         if (trace.all_solid) {
             p->bounds = p->accepted_bounds;

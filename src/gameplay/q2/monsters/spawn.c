@@ -2,11 +2,6 @@
 #include "spawn.h"
 #include "qa/movement.h"
 
-static bool valid_bounds(qa_bounds bounds) {
-  return qa_vec_finite(bounds.mins) && qa_vec_finite(bounds.maxs) &&
-         bounds.mins.x <= bounds.maxs.x && bounds.mins.y <= bounds.maxs.y &&
-         bounds.mins.z <= bounds.maxs.z;
-}
 
 static bool trace_world(const qa_q2_game *game, const qa_trace_result *trace) {
   return trace->hit == QA_TRACE_HIT_NONE || trace->hit == QA_TRACE_HIT_WORLD ||
@@ -55,7 +50,7 @@ bool qa_q2_rogue_find_spawn_point(qa_q2_game *game, qa_vec3 start,
                                   bool *found, qa_vec3 *position,
                                   qa_error *error) {
   if (game == NULL || found == NULL || position == NULL ||
-      !qa_vec_finite(start) || !valid_bounds(bounds) ||
+      !qa_vec_finite(start) || !qa_bounds_valid(bounds) ||
       !isfinite(max_move_up) || max_move_up < 0.0f) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Invalid Rogue monster spawn-point query");
@@ -89,7 +84,7 @@ bool qa_q2_rogue_check_ground_spawn(qa_q2_game *game, qa_vec3 origin,
                                     float gravity, bool *valid,
                                     qa_error *error) {
   if (game == NULL || valid == NULL || !qa_vec_finite(origin) ||
-      !valid_bounds(bounds) || !isfinite(height) || height < 0.0f ||
+      !qa_bounds_valid(bounds) || !isfinite(height) || height < 0.0f ||
       !isfinite(gravity)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Invalid Rogue ground-spawn query");

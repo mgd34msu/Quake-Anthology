@@ -68,9 +68,7 @@ bool q1_body_shape(q1_move *m) {
         qa_bounds previous = m->owned_bounds ? m->body_bounds :
             m->has_starting_bounds ? m->starting_bounds : m->c->result->bounds;
         qa_bounds requested = e->body_bounds;
-        bool expands = requested.mins.x < previous.mins.x || requested.mins.y < previous.mins.y ||
-            requested.mins.z < previous.mins.z || requested.maxs.x > previous.maxs.x ||
-            requested.maxs.y > previous.maxs.y || requested.maxs.z > previous.maxs.z;
+        bool expands = qa_bounds_expands(previous, requested);
         if (expands) {
             qa_vec3 origin = qa_movement_origin(m->c->state);
             qa_trace_result trace;

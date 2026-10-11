@@ -141,11 +141,6 @@ bool application_q2_control_crouched(struct application_native_q2 *engine, qa_ac
     return ok;
 }
 
-static bool valid_bounds(qa_bounds bounds)
-{
-    return qa_vec_finite(bounds.mins) && qa_vec_finite(bounds.maxs) &&
-        bounds.mins.x <= bounds.maxs.x && bounds.mins.y <= bounds.maxs.y && bounds.mins.z <= bounds.maxs.z;
-}
 
 static qa_vec3 load_vector(const uint8_t *bytes)
 { return qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8)); }
@@ -245,11 +240,9 @@ static bool apply_dimensions(struct application_q2_control *p, control_frame *fr
         if (!qa_native_read(p->native, frame->address + RR_PM_MINS, native_bounds, sizeof(native_bounds), error)) return false;
         desired = (qa_bounds){load_vector(native_bounds), load_vector(native_bounds + 12)};
     }
-    if (!valid_bounds(desired)) return application_fail(error, QA_ERROR_FORMAT, "Native dimensions produced invalid public bounds");
+    if (!qa_bounds_valid(desired)) return application_fail(error, QA_ERROR_FORMAT, "Native dimensions produced invalid public bounds");
     qa_bounds previous = frame->accepted;
-    bool expands = desired.mins.x < previous.mins.x || desired.mins.y < previous.mins.y ||
-        desired.mins.z < previous.mins.z || desired.maxs.x > previous.maxs.x ||
-        desired.maxs.y > previous.maxs.y || desired.maxs.z > previous.maxs.z;
+    bool expands = qa_bounds_expands(previous, desired);
     bool clear = true;
     if (expands && !expansion_clear(p, frame, desired, &clear, error)) return false;
     if (!frame_live(p, frame, error) ||
@@ -313,7 +306,7 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
         qa_body_state source;
         if(ok) ok=frame_live(p,&frame,error)&&
             qa_world_body_read(engine->world,frame.client.actor,&source,error);
-        if(ok&&!valid_bounds(source.bounds))
+        if(ok&&!qa_bounds_valid(source.bounds))
             ok=application_fail(error,QA_ERROR_FORMAT,"Declared Pmove lost its actual Source body bounds");
         if(ok) frame.accepted=source.bounds;
         p->current=&frame;
@@ -332,7 +325,7 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
     if (ok) ok = frame_live(p, &frame, error) && active_outputs(&frame.client, &outputs, error) &&
         frame_live(p, &frame, error) && qa_world_body_read(engine->world, frame.client.actor, &body, error) &&
         frame_live(p, &frame, error);
-    if (ok && !valid_bounds(body.bounds)) ok = application_fail(error, QA_ERROR_FORMAT, "Native Pmove lost its actual current body bounds");
+    if (ok && !qa_bounds_valid(body.bounds)) ok = application_fail(error, QA_ERROR_FORMAT, "Native Pmove lost its actual current body bounds");
     if (ok) {
         frame.accepted = body.bounds; frame.has_requested = outputs.has_body_bounds; frame.requested = outputs.body_bounds;
         ok = qa_native_read(native, frame.address + RR_PM_FLAGS, flags, sizeof(flags), error) &&

@@ -32,9 +32,7 @@ static bool qw_posture(qw_move *m) {
         crouched = trace.start_solid || trace.all_solid;
     }
     qa_bounds requested = e->has_body_bounds ? e->body_bounds : crouched ? c->input->crouched.bounds : standing;
-    bool expands = requested.mins.x < previous.mins.x || requested.mins.y < previous.mins.y ||
-        requested.mins.z < previous.mins.z || requested.maxs.x > previous.maxs.x ||
-        requested.maxs.y > previous.maxs.y || requested.maxs.z > previous.maxs.z;
+    bool expands = qa_bounds_expands(previous, requested);
     if (expands) {
         shape.bounds = requested;
         if (!qa_move_trace_q1(c, origin, origin, shape, QA_Q1_MOVE_NORMAL, &trace)) return false;

@@ -199,10 +199,7 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
             else ok = vector(owner, scope->movement + owner->profile->source->movement_mins, &trace.requested.mins, error) &&
                 vector(owner, scope->movement + owner->profile->source->movement_maxs, &trace.requested.maxs, error);
             trace.previous = scope->accepted ? scope->accepted_bounds : scope->current_bounds;
-            bool expands = trace.requested.mins.x < trace.previous.mins.x ||
-                trace.requested.mins.y < trace.previous.mins.y || trace.requested.mins.z < trace.previous.mins.z ||
-                trace.requested.maxs.x > trace.previous.maxs.x || trace.requested.maxs.y > trace.previous.maxs.y ||
-                trace.requested.maxs.z > trace.previous.maxs.z;
+            bool expands = qa_bounds_expands(trace.previous, trace.requested);
             if (ok) ok = expands ? qa_qvm_source_scratch(call, owner->image, 92,
                 perform_trace, &trace, error) : apply_bounds(&trace, true, error);
         }

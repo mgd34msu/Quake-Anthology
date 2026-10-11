@@ -1,9 +1,5 @@
 #include "internal.h"
 
-static bool overlaps(qa_bounds a, qa_bounds b) {
-    return a.mins.x <= b.maxs.x && a.maxs.x >= b.mins.x && a.mins.y <= b.maxs.y &&
-           a.maxs.y >= b.mins.y && a.mins.z <= b.maxs.z && a.maxs.z >= b.mins.z;
-}
 static bool classic(qa_q2_game *g, q2_actor *source, qa_actor_id credit, bool *clear, qa_error *e) {
     *clear = false;
     for (;;) {
@@ -78,7 +74,7 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
         qa_linked_body linked;
         if (qa_actor_id_equal(id, target) || !q2_actor_live(g, target) ||
             !qa_world_linked(g->services.world, target, &linked) ||
-            !overlaps(box, linked.absolute_bounds) || !q2_target_damageable(g, target))
+            !qa_bounds_overlap(box, linked.absolute_bounds) || !q2_target_damageable(g, target))
             continue;
         q2_actor *native = q2_actor_get(g, target, false, NULL);
         if (native && native->physics_bound && native->physics.solid != QA_PHYSICS_BOX)

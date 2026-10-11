@@ -60,6 +60,16 @@ static inline bool qa_bounds_overlap(qa_bounds a, qa_bounds b) {
            a.mins.y <= b.maxs.y && a.maxs.y >= b.mins.y &&
            a.mins.z <= b.maxs.z && a.maxs.z >= b.mins.z;
 }
+static inline bool qa_bounds_overlap_strict(qa_bounds a, qa_bounds b) {
+    return a.mins.x < b.maxs.x && a.maxs.x > b.mins.x &&
+           a.mins.y < b.maxs.y && a.maxs.y > b.mins.y &&
+           a.mins.z < b.maxs.z && a.maxs.z > b.mins.z;
+}
+static inline bool qa_bounds_expands(qa_bounds previous, qa_bounds requested) {
+    return requested.mins.x < previous.mins.x || requested.mins.y < previous.mins.y ||
+           requested.mins.z < previous.mins.z || requested.maxs.x > previous.maxs.x ||
+           requested.maxs.y > previous.maxs.y || requested.maxs.z > previous.maxs.z;
+}
 static inline bool qa_bounds_contains(qa_bounds b, qa_vec3 p) {
     return p.x >= b.mins.x && p.x <= b.maxs.x &&
            p.y >= b.mins.y && p.y <= b.maxs.y &&

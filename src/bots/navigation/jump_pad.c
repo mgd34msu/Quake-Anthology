@@ -19,9 +19,7 @@ bool qa_bot_navigation_jump_pad(qa_bot_navigation *n, qa_vec3 origin, qa_bounds 
         bool touches = false;
         for (size_t j = 0; j < n->trajectory.point_count; ++j) {
             qa_bounds body = qa_bounds_translate(presence, n->trajectory.points[j]);
-            if (body.mins.x <= target.maxs.x && body.maxs.x >= target.mins.x &&
-                body.mins.y <= target.maxs.y && body.maxs.y >= target.mins.y &&
-                body.mins.z <= target.maxs.z && body.maxs.z >= target.mins.z) {
+            if (qa_bounds_overlap(body, target)) {
                 touches = true;
                 break;
             }

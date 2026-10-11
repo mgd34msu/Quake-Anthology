@@ -48,6 +48,27 @@
     } \
 } while (0)
 
+static void test_bounds_predicates(void)
+{
+    qa_bounds standing = {qa_v3(-16, -16, -24), qa_v3(16, 16, 32)};
+    qa_bounds crouched = standing; crouched.maxs.z = 4;
+    CHECK(qa_bounds_valid(standing) && qa_bounds_valid(crouched));
+    CHECK(qa_bounds_expands(crouched, standing));
+    CHECK(!qa_bounds_expands(standing, crouched));
+    CHECK(!qa_bounds_expands(standing, standing));
+    qa_bounds touching = qa_bounds_translate(standing, qa_v3(32, 0, 0));
+    CHECK(qa_bounds_overlap(standing, touching));
+    CHECK(!qa_bounds_overlap_strict(standing, touching));
+    touching.mins.x -= 1;
+    CHECK(qa_bounds_overlap_strict(standing, touching));
+    touching.mins.x += 2;
+    CHECK(!qa_bounds_overlap(standing, touching));
+    qa_bounds invalid = standing; invalid.maxs.z = -25;
+    CHECK(!qa_bounds_valid(invalid));
+    invalid = standing; invalid.mins.x = NAN;
+    CHECK(!qa_bounds_valid(invalid));
+}
+
 static void test_json_caller_storage(void)
 {
     const char source[]="\"A\\u0000B\\ud83d\\ude00\\n\"";
@@ -1814,6 +1835,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_bounds_predicates();
     test_literal_tokens();
     test_platform_event_retirement();
     test_q2_command_angles();
