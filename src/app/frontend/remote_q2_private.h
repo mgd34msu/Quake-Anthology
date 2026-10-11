@@ -12,6 +12,7 @@
 typedef struct remote_q2_model {
     struct remote_q2_model *next;
     char *path;
+    qa_string_id path_id;
     qa_resource *resource;
     qa_vfs_acquisition opening;
     qa_resource *scope, *palette;
@@ -25,12 +26,15 @@ typedef struct remote_q2_model {
 typedef struct remote_q2_picture {
     struct remote_q2_picture *next;
     char *name;
+    qa_string_id name_id;
+    bool sprite;
     const qa_scene_image *image;
     uint64_t saved_image;
 } remote_q2_picture;
 typedef struct remote_q2_missing_model {
     struct remote_q2_missing_model *next;
     char *path;
+    qa_string_id path_id;
 } remote_q2_missing_model;
 typedef struct remote_q2_layout {
     uint16_t models, sounds, images, lights, items, players, checksum, max_clients, air_accelerate;
@@ -102,6 +106,7 @@ struct frontend_remote_q2 {
     remote_q2_layout layout;
     frontend_remote_q2_content content;
     char **configs;
+    remote_q2_model **model_slots;
     qa_q2_entity *baselines;
     size_t baseline_count;
     qa_q2_wire_frame frame, previous;
@@ -192,6 +197,7 @@ void remote_q2_prediction_config(frontend_remote_q2 *, uint16_t);
 bool remote_q2_prediction_publish(frontend_remote_q2 *, qa_error *);
 bool remote_q2_map_validate(const frontend_remote_q2 *, const qa_resource *, qa_bsp_view *, qa_error *);
 bool remote_q2_model_read(frontend_remote_q2 *, const char *, remote_q2_model **, qa_error *);
+bool remote_q2_model_config(frontend_remote_q2 *, uint16_t, qa_error *);
 const qa_scene_image *remote_q2_picture_read(void *, const char *, qa_error *);
 const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *, const char *, qa_error *);
 bool remote_q2_image_direct(const frontend_remote_q2 *, const char *);

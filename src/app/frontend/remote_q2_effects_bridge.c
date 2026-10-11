@@ -53,10 +53,12 @@ static bool model(void *context, const char *path, bool acquire, qa_scene_model 
     frontend_remote_q2 *row = context;
     if (!row || !path || !out) return false;
     *out = NULL;
+    qa_string_id path_id = qa_strings_find(qa_session_strings(qa_application_session(row->frontend->application)),
+        (qa_bytes){(const uint8_t *)path, strlen(path)});
     for (remote_q2_model *held = row->models; held; held = held->next)
-        if (!strcmp(held->path, path)) { *out = held->scene; return held->scene != NULL; }
+        if (held->path_id == path_id) { *out = held->scene; return held->scene != NULL; }
     for (remote_q2_missing_model *held = row->missing_models; held; held = held->next)
-        if (!strcmp(held->path, path)) return true;
+        if (held->path_id == path_id) return true;
     if (!acquire) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 effect model has no retained acquisition admission");
     remote_q2_model *held = NULL; qa_error issue = {0};
     if (remote_q2_model_read(row, path, &held, &issue)) { *out = held->scene; return true; }
@@ -84,10 +86,8 @@ static bool actor(void *context, uint32_t number, frontend_remote_q2_effects_pos
             pose.radius = qa_vec_length(qa_vec_sub(pose.bounds.maxs, pose.bounds.mins)) * .5f;
         }
         if (entity->modelindex && entity->modelindex < row->layout.max_models) {
-            const char *path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + entity->modelindex));
-            for (remote_q2_model *held = row->models; held; held = held->next) if (!strcmp(held->path, path) && held->source) {
-                pose.model_present = true; break;
-            }
+            remote_q2_model *held = row->model_slots[entity->modelindex];
+            pose.model_present = held && held->source;
         }
         *out = pose; return true;
     }

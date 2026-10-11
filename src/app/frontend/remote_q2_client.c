@@ -103,12 +103,17 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
     }
     remote_q2_layout layout = remote_q2_layout_read(protocol);
     if (!layout.max_configs) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 SERVERDATA has no admitted config namespace");
-    if (layout.max_configs != row->layout.max_configs) {
+    if (layout.max_configs != row->layout.max_configs || layout.max_models != row->layout.max_models) {
         for (size_t i = 0; i < row->layout.max_configs; ++i)
             if (row->configs && row->configs[i]) return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 namespace replacement retains old configstrings");
         char **configs = calloc(layout.max_configs, sizeof(*configs));
-        if (!configs) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining negotiated Q2 config namespace");
+        remote_q2_model **model_slots = calloc(layout.max_models, sizeof(*model_slots));
+        if (!configs || !model_slots) {
+            free(configs); free(model_slots);
+            return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining negotiated Q2 config namespace");
+        }
         free(row->configs); row->configs = configs;
+        free(row->model_slots); row->model_slots = model_slots;
     }
     row->layout = layout; return true;
 }
@@ -121,7 +126,8 @@ bool remote_q2_config_set(frontend_remote_q2 *row, uint16_t index, const char *v
     size_t size = strlen(value) + 1; char *copy = malloc(size);
     if (!copy) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 configstring");
     memcpy(copy, value, size); free(row->configs[index]); row->configs[index] = copy;
-    remote_q2_prediction_config(row, index); return true;
+    remote_q2_prediction_config(row, index);
+    return !row->media_ready || remote_q2_model_config(row, index, error);
 }
 typedef struct remote_q2_event_batch {
     const qa_q2_server_record *records;
@@ -226,9 +232,10 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     remote_q2_cvars_bind(row);
     row->events = qa_event_ring_create(65536, 16384, 2, error);
     row->configs = calloc(row->layout.max_configs, sizeof(*row->configs));
-    if (!row->events || !row->configs || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
+    row->model_slots = calloc(row->layout.max_models, sizeof(*row->model_slots));
+    if (!row->events || !row->configs || !row->model_slots || !effect_storage_prepare(row,error) || !frontend_source_identity_allocate(f, &row->identity, error)) {
         qa_event_ring_destroy(&row->events);
-        qa_arena_destroy(&row->effect_storage);free(row->configs); free(row); return false;
+        qa_arena_destroy(&row->effect_storage);free(row->configs); free(row->model_slots); free(row); return false;
     }
     row->event_cursor = qa_event_ring_first(row->events);
     qa_catalog_retain(d->catalog); row->frame_ms = 100; row->fraction = 1;
@@ -711,7 +718,7 @@ bool frontend_remote_q2_destroy(frontend_remote_q2 **owned, qa_error *error)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 receiver still owns its attached transport callbacks");
     if (!content_clear(row, error)) return false;
     qa_event_ring_destroy(&row->events);
-    qa_catalog_release(row->options.domain.catalog); free(row->configs); qa_arena_destroy(&row->effect_storage);
+    qa_catalog_release(row->options.domain.catalog); free(row->configs); free(row->model_slots); qa_arena_destroy(&row->effect_storage);
     frontend_remote_q2 **link = &row->frontend->remote_q2;
     while (*link != row) link = &(*link)->next;
     *link = row->next; qa_movement_result_free(&row->prediction_scratch); free(row); *owned = NULL; return true;

@@ -91,12 +91,16 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
     if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 model registration requires its live source resource owner");
     *out = NULL;
+    qa_string_id path_id;
+    if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
+        path, &path_id, error)) return false;
     for (remote_q2_model *m = row->models; m; m = m->next)
-        if (!strcmp(m->path, path)) { *out = m; return true; }
+        if (m->path_id == path_id) { *out = m; return true; }
     for (remote_q2_missing_model *m = row->missing_models; m; m = m->next)
-        if (!strcmp(m->path, path)) return remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 model has a retained missing-resource admission");
+        if (m->path_id == path_id) return remote_q2_fail(error, QA_ERROR_NOT_FOUND, "Q2 model has a retained missing-resource admission");
     remote_q2_model *m = calloc(1, sizeof(*m));
     if (!m) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining remote Q2 model");
+    m->path_id = path_id;
     m->path = malloc(strlen(path) + 1);
     if (m->path) strcpy(m->path, path);
     qa_scene_image_options options = image_options(QA_IMAGE_USAGE_SKIN);
@@ -115,6 +119,7 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
             remote_q2_missing_model *missing = calloc(1, sizeof(*missing));
             if (missing) {
                 missing->path = m->path; m->path = NULL;
+                missing->path_id = path_id;
                 missing->next = row->missing_models; row->missing_models = missing;
             } else remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining absent Q2 model admission");
         }
@@ -124,6 +129,20 @@ bool remote_q2_model_read(frontend_remote_q2 *row, const char *path, remote_q2_m
         qa_vfs_acquisition_dispose(&m->opening); free(m->path); free(m); return false;
     }
     m->source = &m->decoded; m->next = row->models; row->models = m; *out = m; return true;
+}
+bool remote_q2_model_config(frontend_remote_q2 *row, uint16_t index, qa_error *error)
+{
+    if (index < row->layout.models || (size_t)(index - row->layout.models) >= row->layout.max_models) return true;
+    size_t slot = index - row->layout.models;
+    row->model_slots[slot] = NULL;
+    if (!slot) return true;
+    const char *path = frontend_remote_q2_config(row, index);
+    if (!*path || path[0] == '*' || path[0] == '#' ||
+        !strcmp(path, frontend_remote_q2_config(row, (uint16_t)(row->layout.models + 1)))) return true;
+    qa_error issue = {0};
+    if (remote_q2_model_read(row, path, &row->model_slots[slot], &issue) || issue.code == QA_ERROR_NOT_FOUND) return true;
+    if (error) *error = issue;
+    return false;
 }
 bool remote_q2_image_direct(const frontend_remote_q2 *row, const char *name)
 {
@@ -138,7 +157,11 @@ const qa_scene_image *remote_q2_picture_read(void *context, const char *name, qa
     if (!row || row->retiring || row->image_policy || row->frontend->resource_inventory || row->frontend->capture || row->frontend->source_restoring) {
         remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 picture registration requires its live resource owner"); return NULL;
     }
-    for (remote_q2_picture *p = row->pictures; p; p = p->next) if (!strcmp(p->name, name)) return p->image;
+    qa_string_id name_id;
+    if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
+        name, &name_id, error)) return NULL;
+    for (remote_q2_picture *p = row->pictures; p; p = p->next)
+        if (!p->sprite && p->name_id == name_id) return p->image;
     size_t length = strlen(name);
     if (length > SIZE_MAX - 11) return NULL;
     char *path = malloc(length + 11);
@@ -156,7 +179,8 @@ const qa_scene_image *remote_q2_picture_read(void *context, const char *name, qa
     if (!ok) { free(p); return NULL; }
     p->name = malloc(length + 1);
     if (!p->name) { qa_scene_image_release(image); free(p); remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 picture name"); return NULL; }
-    strcpy(p->name, name); p->image = image; p->next = row->pictures; row->pictures = p; return image;
+    strcpy(p->name, name); p->name_id = name_id; p->image = image;
+    p->next = row->pictures; row->pictures = p; return image;
 }
 const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *row, const char *path, qa_error *error)
 {
@@ -166,8 +190,11 @@ const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *row, const char 
     }
     size_t length = strlen(path);
     if (length > SIZE_MAX - 9) return NULL;
+    qa_string_id path_id;
+    if (!qa_strings_intern_cstr(qa_session_strings(qa_application_session(row->frontend->application)),
+        path, &path_id, error)) return NULL;
     for (remote_q2_picture *p = row->pictures; p; p = p->next)
-        if (!strncmp(p->name, "#sprite:", 8) && !strcmp(p->name + 8, path)) return p->image;
+        if (p->sprite && p->name_id == path_id) return p->image;
     char *key = malloc(length + 9);
     if (!key) { remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 sprite cache key"); return NULL; }
     memcpy(key, "#sprite:", 8); memcpy(key + 8, path, length + 1);
@@ -177,7 +204,8 @@ const qa_scene_image *remote_q2_sprite_read(frontend_remote_q2 *row, const char 
     options.wrap = QA_SCENE_CLAMP; options.filter = QA_SCENE_LINEAR; options.mipmap = false; options.transparent_index = -1;
     qa_scene_image *image = NULL;
     if (!qa_scene_image_load(row->images, path, &options, &image, error)) { free(p); free(key); return NULL; }
-    p->name = key; p->image = image; p->next = row->pictures; row->pictures = p; return image;
+    p->name = key; p->name_id = path_id; p->sprite = true; p->image = image;
+    p->next = row->pictures; row->pictures = p; return image;
 }
 bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
 {
@@ -199,6 +227,7 @@ bool remote_q2_media_clear(frontend_remote_q2 *row, qa_error *error)
     row->collision_count = row->collision_capacity = 0;
     row->collision_viewer = (qa_actor_id){0}; row->collision_clients = 0;
     qa_collision_destroy(row->geometry); row->geometry = NULL;
+    if (row->model_slots) memset(row->model_slots, 0, row->layout.max_models * sizeof(*row->model_slots));
     while (row->models) {
         remote_q2_model *m = row->models; row->models = m->next;
         qa_scene_model_destroy(m->scene); qa_model_free(&m->decoded); frontend_model_release(m->source_lease); qa_resource_release(m->resource);
@@ -280,13 +309,7 @@ bool remote_q2_media_prepare(frontend_remote_q2 *row, qa_error *error)
     if (!frontend_world_scratch_create(row->world, &row->world_scratch, error)) return false;
     if (!remote_q2_footsteps_prepare(row, error)) return false;
     for (size_t i = 1; i < row->layout.max_models; ++i) {
-        const char *path = frontend_remote_q2_config(row, (uint16_t)(row->layout.models + i));
-        if (!*path || path[0] == '*' || path[0] == '#' || !strcmp(path, map)) continue;
-        remote_q2_model *model = NULL; qa_error issue = {0};
-        if (!remote_q2_model_read(row, path, &model, &issue) && issue.code != QA_ERROR_NOT_FOUND) {
-            if (error) *error = issue;
-            return false;
-        }
+        if (!remote_q2_model_config(row, (uint16_t)(row->layout.models + i), error)) return false;
     }
     for (size_t i = 1; i < row->layout.max_images; ++i) {
         const char *name = frontend_remote_q2_config(row, (uint16_t)(row->layout.images + i));

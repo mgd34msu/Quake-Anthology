@@ -684,6 +684,17 @@ deleted. Normal build and seven core suites pass:
 `/tmp/qa-ta3196-q1-bound-precache-20261011-core.log`.
 Item 13 remains open for Q2 media and per-mesh skin mappings.
 
+Names item 13, Q2 media: remote Q2 owns a load-sized model-index table,
+filled during precache admission and refreshed on configstring changes.
+Effect pose observation reads the slot directly. Map teardown clears the
+slots before retiring their models. Model and missing-model caches compare
+shared path IDs; picture and sprite caches compare shared IDs with distinct
+usage tags. Their former text comparisons are deleted. Normal build and
+seven core suites pass:
+`/tmp/qa-ta3196-q2-media-ids-20261011-build.log` and
+`/tmp/qa-ta3196-q2-media-ids-20261011-core.log`.
+Per-mesh skin mappings remain open; no new live Q2 presentation claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
