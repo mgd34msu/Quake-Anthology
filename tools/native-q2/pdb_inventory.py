@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -433,8 +432,6 @@ def inventory(artifact: bytes, debug: bytes, type_names: list[str], symbol_names
                  "typed object extent exceeds its actual linked image section")
             selected_symbols.append(dict(match, byteLength=extent))
     return {"schema": 1, "kind": "artifact-compiler-inventory",
-        "artifactSha256": hashlib.sha256(artifact).hexdigest(),
-        "pdbSha256": hashlib.sha256(debug).hexdigest(),
         "guid": str(uuid.UUID(bytes_le=pe.guid)), "age": pe.age,
         "machine": pe.machine, "pointerBytes": pe.pointer_bytes,
         "embeddedPdbPath": pe.pdb_name, "roots": sorted(set(roots)),

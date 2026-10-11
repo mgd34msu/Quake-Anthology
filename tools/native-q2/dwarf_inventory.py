@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -355,7 +354,7 @@ def inventory(data: bytes, type_names: list[str], symbol_names: list[str]) -> di
         roots.extend(definitions)
         selected.append(dict(symbol, definitions=definitions))
     return dict(schema=1, kind="artifact-compiler-inventory", format="elf-dwarf",
-        artifactSha256=hashlib.sha256(data).hexdigest(), machine=62, pointerBytes=8,
+        machine=62, pointerBytes=8,
         roots=sorted(set(roots)), units=dwarf.units, symbols=selected, dataSymbols=symbols,
         dies=dwarf.closure(roots))
 

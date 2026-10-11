@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -159,7 +158,7 @@ def inventory(artifact: bytes, debug: bytes | None, name: str, paths: list[str],
         need(len(matches) == 1, "named member root lacks a unique actual PDB definition")
         members = [pe_member(types, matches[0], path) for path in paths]
         result = dict(format="pe-pdb", machine=pe.machine, pointerBytes=pe.pointer_bytes,
-                      pdbSha256=hashlib.sha256(debug).hexdigest(), guid=str(uuid.UUID(bytes_le=pe.guid)), age=pe.age,
+                      guid=str(uuid.UUID(bytes_le=pe.guid)), age=pe.age,
                       records=[dict(type=matches[0], byteLength=types.extent(matches[0]), members=members)],
                       types=types.closure([matches[0]]))
     else:
@@ -178,7 +177,6 @@ def inventory(artifact: bytes, debug: bytes | None, name: str, paths: list[str],
         result = dict(format="elf-dwarf", machine=62, pointerBytes=8, records=records,
                       units=dwarf.units, dies=dwarf.closure(matches))
     result.update(schema=1, kind="artifact-member-path-inventory", typeName=name,
-                  artifactSha256=hashlib.sha256(artifact).hexdigest(),
                   semanticCoverage="requires-original-source-audit")
     return result
 

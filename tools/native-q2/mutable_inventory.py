@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -154,7 +153,7 @@ def pe_inventory(artifact: bytes, debug: bytes) -> dict:
                     closure[fact["id"]] = fact
         objects.append(row)
     return dict(format="pe-pdb", machine=pe.machine, pointerBytes=pe.pointer_bytes,
-                pdbSha256=hashlib.sha256(debug).hexdigest(), guid=str(uuid.UUID(bytes_le=pe.guid)),
+                guid=str(uuid.UUID(bytes_le=pe.guid)),
                 age=pe.age, embeddedPdbPath=pe.pdb_name, image=image, objects=objects,
                 types=[closure[index] for index in sorted(closure)],
                 rangesWithoutQualifiedCompilerObjects=gaps(image["mutableRanges"], objects),
@@ -301,7 +300,6 @@ def main() -> None:
                  "ELF mutable inventory uses actual embedded compiler facts")
             result = elf_inventory(artifact)
         result.update(schema=1, kind="artifact-mutable-root-inventory",
-                      artifactSha256=hashlib.sha256(artifact).hexdigest(),
                       semanticCoverage="requires-original-source-audit")
         text = json.dumps(result, indent=2, sort_keys=True) + "\n"
         need(len(text.encode("utf-8")) <= MAX_BYTES, "mutable compiler facts exceed bounded output owner")
