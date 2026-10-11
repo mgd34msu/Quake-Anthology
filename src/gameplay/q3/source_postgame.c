@@ -19,17 +19,6 @@ bool qa_q3_source_postgame_client_state(const qa_q3_game *game, uint32_t slot,
     return true;
 }
 
-static float source_yaw(qa_vec3 direction)
-{
-    float yaw;
-    if (direction.x == 0 && direction.y == 0) return 0;
-    if (direction.x != 0) {
-        float radians = (float)atan2((double)direction.y, (double)direction.x);
-        yaw = ((radians * 180) / Q3_PI);
-    } else yaw = direction.y > 0 ? 90 : 270;
-    return yaw < 0 ? (yaw + 360) : yaw;
-}
-
 static bool podium_origin(qa_q3_game *game, qa_vec3 *out, qa_error *error)
 {
     if (!game->options.hooks.postgame_podium_parameters)
@@ -91,8 +80,8 @@ static bool place_model(qa_q3_game *game, uint32_t model, qa_actor_id podium,
     if (!qa_world_body_read(game->options.services.world, podium, &pad, error)) return false;
     qa_q3_entity entity;
     if (!source_entity(game, model, &entity, error)) return false;
-    qa_vec3 angles = qa_v3(0, source_yaw(qa_vec_sub(game->match_state.intermission_origin,
-                                                 pad.origin)), 0);
+    qa_vec3 direction=qa_vec_sub(game->match_state.intermission_origin,pad.origin);
+    qa_vec3 angles = qa_v3(0,qa_vec_angles(direction,QA_DIRECTION_VM,QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT).y,0);
     qa_trajectory angular = trajectory(&entity.apos);
     angular.base = angles;
     qa_vec3 forward, right, up;
@@ -134,8 +123,9 @@ static bool spawn_podium(qa_q3_game *game, qa_actor_id *out, qa_error *error)
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PODIUM)
         return q3_fail(error, "podium was replaced during its origin producer");
-    entry->state.postgame.entity.apos.base[1] = source_yaw(
-        qa_vec_sub(game->match_state.intermission_origin, origin));
+    entry->state.postgame.entity.apos.base[1] = qa_vec_angles(
+        qa_vec_sub(game->match_state.intermission_origin,origin),QA_DIRECTION_VM,
+        QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT).y;
     if (!q3_wire_entity_ready(game, actor, error) ||
         !qa_q3_wire_link(game, actor, NULL, error)) return false;
     entry = q3_actor_get(game, actor);

@@ -753,7 +753,7 @@ static bool makron_spawn_tick(qa_q2_game *game, q2_actor *actor,
   qa_vec3 difference = qa_vec_sub(target.origin, resumed.body.origin);
   qa_vec3 direction = qa_vec_normalize(difference);
   resumed.body.angles.y = qa_angle_wrap(
-      atan2f(difference.y, difference.x) * 57.29577951308232f);
+      qa_vec_yaw(difference, QA_DIRECTION_FLOAT, false));
   resumed.body.velocity = qa_vec_scale(direction, 400.0f);
   resumed.body.velocity.z = 200.0f;
   resumed.body.ground = (qa_actor_reference){0};

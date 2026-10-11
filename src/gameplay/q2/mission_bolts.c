@@ -218,8 +218,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
             } else
                 movedir = desired;
             body.angles =
-                qa_v3(-atan2f(movedir.z, hypotf(movedir.x, movedir.y)) * 57.29577951308232f,
-                      atan2f(movedir.y, movedir.x) * 57.29577951308232f, 0);
+                qa_vec_angles(movedir, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
         }
         if (rr && qa_actor_reference_present(p->enemy) == 0) {
             if (!q2_emit_sound(g,a->id,QA_BUILTIN_SOUND,&body.origin,

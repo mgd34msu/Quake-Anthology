@@ -84,19 +84,11 @@ bool q3_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_vec3 direction, 
         return false;
     qa_q3_entity *event = q3_wire_temporary(game, temporary);
     if (!event) return q3_fail(error, "Q3 invulnerability impact lost its temporary entity");
-    qa_vec3 offset_angles = qa_vec_sub(*impact, body.origin);
-    float yaw = 0, pitch = offset_angles.z > 0 ? 90 : 270;
-    if (offset_angles.x != 0 || offset_angles.y != 0) {
-        yaw = offset_angles.x != 0 ? (((float)atan2((double)offset_angles.y, (double)offset_angles.x) * 180) / Q3_PI)
-            : offset_angles.y > 0 ? 90 : 270;
-        if (yaw < 0) yaw = (yaw + 360);
-        float horizontal = (float)sqrt((double)((offset_angles.x * offset_angles.x) + (offset_angles.y * offset_angles.y)));
-        pitch = (((float)atan2((double)offset_angles.z, (double)horizontal) * 180) / Q3_PI);
-        if (pitch < 0) pitch = (pitch + 360);
-    }
-    pitch = (-pitch + 90);
+    qa_vec3 angles = qa_vec_angles(qa_vec_sub(*impact, body.origin),QA_DIRECTION_VM,
+        QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
+    float pitch = (angles.x + 90);
     if (pitch > 360) pitch = (pitch + -360);
-    event->angles[0] = pitch; event->angles[1] = yaw; event->angles[2] = 0;
+    event->angles[0] = pitch; event->angles[1] = angles.y; event->angles[2] = 0;
     return q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_IMPACT, 71, 0, body.origin, *impact,
                     *normal, error);
 }

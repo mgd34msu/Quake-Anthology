@@ -67,7 +67,7 @@ bool q1_charmed_hunt(qa_q1_game *g, q1_actor *entity, bool flee, qa_error *error
             return false;
         qa_vec3 delta = qa_vec_sub(target.origin, body.origin);
         entity->physics.ideal_yaw =
-            qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
+            qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true);
     }
     m->next_frame = (m->species->walk);
     return q1_schedule(g, entity, 0.1, Q1_THINK_MONSTER_FRAME, error);

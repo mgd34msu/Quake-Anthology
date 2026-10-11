@@ -439,6 +439,8 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
                                     .role = QA_COLLISION_SOLID};
     qa_combat_state combat = {
         .health = lm ? 59 : 0, .can_take_damage = lm || rr, .no_knockback = rr};
+    qa_vec3 angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
+    angles.x += lm ? 90 : 0;
     qa_builtin_spawn spawn = {
         .owner = g->options.owner,
         .definition = definition,
@@ -447,9 +449,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
         .body = {
             .origin = start,
             .velocity = qa_vec_scale(direction, speed),
-            .angles = {-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f +
-                           (lm ? 90 : 0),
-                       atan2f(direction.y, direction.x) * 57.29577951308232f, 0}}};
+            .angles = angles}};
     qa_actor_id id;
     if (!qa_builtin_spawn_actor(&g->services, &spawn, &id, e))
         return false;

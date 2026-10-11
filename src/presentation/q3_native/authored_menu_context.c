@@ -126,12 +126,11 @@ void q3menu_axis_clear(vec3_t axis[3])
 { memset(axis, 0, sizeof(vec3_t) * 3); axis[0][0] = axis[1][1] = axis[2][2] = 1; }
 void q3menu_angles(const vec3_t angles, vec3_t axis[3])
 {
-    float yaw = angles[1] * (float)(M_PI / 180), pitch = angles[0] * (float)(M_PI / 180);
-    float roll = angles[2] * (float)(M_PI / 180);
-    float sy = sinf(yaw), cy = cosf(yaw), sp = sinf(pitch), cp = cosf(pitch), sr = sinf(roll), cr = cosf(roll);
-    axis[0][0] = cp * cy; axis[0][1] = cp * sy; axis[0][2] = -sp;
-    axis[1][0] = sr * sp * cy - cr * sy; axis[1][1] = sr * sp * sy + cr * cy; axis[1][2] = sr * cp;
-    axis[2][0] = cr * sp * cy + sr * sy; axis[2][1] = cr * sp * sy - sr * cy; axis[2][2] = cr * cp;
+    qa_vec3 result[3];
+    qa_angle_axis(qa_v3(angles[0],angles[1],angles[2]),result,QA_ANGLE_FLOAT_MATH);
+    for(unsigned i=0;i<3;++i) {
+        axis[i][0]=result[i].x;axis[i][1]=result[i].y;axis[i][2]=result[i].z;
+    }
 }
 int q3menu_define(char *definition)
 { q3menu_context *context = q3menu_active(); return qa_script_defines_add(context->global_defines, definition, context->error) ? 1 : 0; }

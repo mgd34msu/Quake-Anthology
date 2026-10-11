@@ -78,7 +78,7 @@ static bool move(qa_q1_game *g, q1_actor *entity, float distance, qa_error *erro
     if (!m->source.dragon.attacking)
         m->enemy = q1_ref_from(g, goal);
     qa_vec3 direction = qa_vec_sub(target.origin, body.origin);
-    float desired = qa_angle_wrap(atan2f(direction.y, direction.x) * 57.29577951308232f);
+    float desired = qa_vec_yaw(direction, QA_DIRECTION_FLOAT, true);
     float yaw = body.angles.y, roll = body.angles.z;
     if (yaw != desired) {
         float offset = 180 - yaw;

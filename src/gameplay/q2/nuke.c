@@ -288,8 +288,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
     definition=g->runtime_names[Q2_NAME_RESOURCE_NUKE];
     weapon=g->runtime_names[Q2_NAME_RESOURCE_Q2_AMMO_NUKE];
     qa_vec3 angles =
-                qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-                      atan2f(direction.y, direction.x) * 57.29577951308232f, 0),
+                qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH),
             right, up;
     qa_angle_vectors(angles, NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
     float lift = 200 + q2_crandom(g) * 10, side = q2_crandom(g) * 10;

@@ -78,9 +78,7 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
     if (look.registry && !qa_actor_id_equal(look, victim) &&
         qa_world_body_read(game->options.services.world, look, &target, &ignored)) {
         qa_vec3 delta = qa_vec_sub(target.origin, body.origin);
-        yaw = atan2f(delta.y, delta.x) * 180 / Q3_PI;
-        if (yaw < 0)
-            yaw += 360;
+        yaw = qa_vec_yaw(delta,QA_DIRECTION_FLOAT_DIVIDE,true);
     }
     entry->state.player.dead_yaw = (int32_t)fmodf(yaw, 360);
     q3_player_view_write(game, victim, qa_v3(0, body.angles.y, 0));

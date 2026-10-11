@@ -70,9 +70,7 @@ bool q1_monster_face(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!entity)
         return true;
     qa_vec3 delta = qa_vec_sub(target.origin, self.origin);
-    double yaw = atan2((double)delta.y, delta.x) * 180 /
-                 3.14159265358979323846264338327950288;
-    entity->physics.ideal_yaw = (float)(yaw < 0 ? yaw + 360 : yaw);
+    entity->physics.ideal_yaw = qa_vec_yaw(delta, QA_DIRECTION_NATIVE, true);
     return qa_physics_change_yaw(g->services.physics, source, (float)g->elapsed, error);
 }
 bool q1_monster_visible(qa_q1_game *g, q1_actor *entity, qa_actor_id target, bool *out,
@@ -130,7 +128,7 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
             return false;
         qa_vec3 delta = qa_vec_sub(other.origin, self.origin);
         entity->physics.ideal_yaw =
-            qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
+            qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true);
     }
     qa_monster_mission mission;
     if (q1_monster_mission(g, entity->id, &mission)) {
@@ -664,7 +662,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
                 return false;
             qa_vec3 delta = qa_vec_sub(target.origin, self.origin);
             entity->physics.ideal_yaw =
-                qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
+                qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true);
             if (!qa_physics_walk_move(g->services.physics, entity->id,
                                       entity->physics.ideal_yaw + offset, distance,
                                       (float)g->elapsed, true, true, &moved, error))
@@ -746,7 +744,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
             qa_angle_vectors(self.angles, &g->forward, &g->right, &g->up,QA_ANGLE_FLOAT_MATH);
             qa_vec3 delta =
                 qa_vec_sub(qa_vec_sub(target.origin, qa_vec_scale(g->right, 30)), self.origin);
-            float yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;
+            float yaw = qa_vec_yaw(delta, QA_DIRECTION_FLOAT, false);
             if (!qa_physics_walk_move(g->services.physics, entity->id, yaw, 20, (float)g->elapsed,
                                       true, true, &moved, error))
                 return false;
@@ -1149,7 +1147,7 @@ bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
             goto failed;
         qa_vec3 delta = qa_vec_sub(destination.origin, origin);
         decoy->physics.ideal_yaw =
-            qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
+            qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true);
     }
     if (goal.registry && q1_classnamed(g, goal, g->runtime_names[Q1_NAME_PATH_CORNER])) {
         if (!q1_monster_play(g, decoy, Q1_FRAME_decoy_walk1, error))
@@ -1271,7 +1269,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 return false;
             qa_vec3 delta = qa_vec_sub(state.origin, self.origin);
             entity->physics.ideal_yaw =
-                qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
+                qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true);
         }
         bool path = goal.registry && q1_classnamed(g, goal, g->runtime_names[Q1_NAME_PATH_CORNER]);
         m->addon.path_wait = path && (entity->spawnflags & 4096);

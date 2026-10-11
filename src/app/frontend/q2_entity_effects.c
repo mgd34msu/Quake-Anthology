@@ -198,8 +198,8 @@ bool frontend_q2_entity_effect(frontend_q2_entity_effects *o,const frontend_q2_e
         if (flags&(UINT64_C(1)<<37)) light(o,row->origin,100,qa_v3(1,1,0),0);
         if (flags&(UINT64_C(1)<<34)) {
             bool self=qa_actor_id_equal(row->actor,s->viewer);
-            float pitch=row->angles.x*.017453292519943295f,yaw=row->angles.y*.017453292519943295f;
-            qa_vec3 forward=self?s->view.axis[0]:qa_v3(cosf(pitch)*cosf(yaw),cosf(pitch)*sinf(yaw),-sinf(pitch));
+            qa_vec3 forward=s->view.axis[0];
+            if (!self) qa_angle_vectors(row->angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
             qa_vec3 point=self?s->view.origin:row->origin;
             qa_trace_query query={.start=point,.end=qa_vec_add(point,qa_vec_scale(forward,self || !s->per_pixel_lighting?256:1024)),
                 .shape={.kind=QA_SHAPE_POINT},.policy={.behavior = &qa_trace_behaviors[QA_RULESET_Q2_CLASSIC],

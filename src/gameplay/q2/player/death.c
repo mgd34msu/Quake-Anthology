@@ -345,8 +345,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
             if (!qa_world_body_read(g->services.world, killer, &target, e))
                 goto fail;
             s->rule.killer_yaw = qa_angle_wrap(
-                atan2f(target.origin.y - body.origin.y, target.origin.x - body.origin.x) *
-                57.29577951308232f);
+                qa_vec_yaw(qa_vec_sub(target.origin, body.origin), QA_DIRECTION_FLOAT, false));
         } else
             s->rule.killer_yaw = body.angles.y;
         if (!q2_player_obituary(g, a, outcome, e))

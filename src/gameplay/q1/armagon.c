@@ -57,7 +57,7 @@ static bool think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     qa_vec3 delta = qa_vec_sub(enemy_origin(g, entity, false), body.origin);
-    entity->physics.ideal_yaw = qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
+    entity->physics.ideal_yaw = qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true);
     float offset = entity->physics.ideal_yaw - body.angles.y;
     if (offset > 180)
         offset -= 360;
@@ -172,7 +172,7 @@ static bool over_think(qa_q1_game *g, q1_actor *entity, bool left, qa_error *err
     if (entity->count == 0) {
         qa_vec3 direction = qa_vec_sub(enemy_origin(g, entity, false), body.origin);
         entity->physics.ideal_yaw =
-            qa_angle_wrap(atan2f(direction.y, direction.x) * 57.29577951308232f);
+            qa_vec_yaw(direction, QA_DIRECTION_FLOAT, true);
         delta = entity->physics.ideal_yaw - body.angles.y + (left ? -165 : 165);
         if (delta > 180)
             delta -= 360;

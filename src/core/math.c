@@ -74,6 +74,7 @@ static double direction_degrees(double y,double x,qa_direction_math_rule rule)
     case QA_DIRECTION_FLOAT_DIVIDE:return atan2f((float)y,(float)x)*180.f/pi;
     case QA_DIRECTION_VM:return (float)atan2(y,x)*180.f/pi;
     case QA_DIRECTION_GEAR:return (float)((float)atan2(y,x)*180.f/(double)pi);
+    case QA_DIRECTION_NATIVE_RATIO:return atan2(y,x)*(180.0/(double)pi);
     default: {
         double degrees=atan2(y,x)*180/3.14159265358979323846264338327950288;
         return rule==QA_DIRECTION_INTEGER?trunc(degrees):degrees;
@@ -82,7 +83,8 @@ static double direction_degrees(double y,double x,qa_direction_math_rule rule)
 }
 static double direction_wrap(double angle,qa_direction_math_rule rule)
 {
-    if(angle<0) return rule==QA_DIRECTION_NATIVE?angle+360:(float)((float)angle+360);
+    if(angle<0) return rule==QA_DIRECTION_NATIVE || rule==QA_DIRECTION_NATIVE_RATIO?
+        angle+360:(float)((float)angle+360);
     return angle;
 }
 float qa_vec_yaw(qa_vec3 v,qa_direction_math_rule rule,bool wrap)
@@ -93,7 +95,8 @@ float qa_vec_yaw(qa_vec3 v,qa_direction_math_rule rule,bool wrap)
 qa_vec3 qa_vec_angles(qa_vec3 v,qa_direction_math_rule rule,unsigned flags)
 {
     bool vertical=v.x==0 && v.y==0;
-    double horizontal=flags&QA_VECTOR_SQUARED_HORIZONTAL?sqrtf(v.x*v.x+v.y*v.y):
+    double horizontal=flags&QA_VECTOR_SQUARED_HORIZONTAL?
+        (flags&QA_VECTOR_DOUBLE_SQRT?(float)sqrt((double)(v.x*v.x+v.y*v.y)):sqrtf(v.x*v.x+v.y*v.y)):
         flags&QA_VECTOR_WIDE_HORIZONTAL?hypot((double)v.x,v.y):hypotf(v.x,v.y);
     double pitch=vertical && (flags&QA_VECTOR_VERTICAL_CARDINAL)?(v.z>0?90:270):
         vertical && (flags&QA_VECTOR_VERTICAL_SIGNED)?(v.z>0?90:-90):direction_degrees(v.z,horizontal,rule);

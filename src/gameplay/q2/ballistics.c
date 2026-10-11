@@ -112,9 +112,8 @@ bool q2_radius_damage(qa_q2_game *g, const qa_builtin_radius *radius, size_t *da
     return ok;
 }
 static qa_vec3 spread(q2_weapon_call *c, qa_vec3 origin, qa_vec3 direction, float hs, float vs) {
-    float horizontal = sqrtf(direction.x * direction.x + direction.y * direction.y);
-    qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
-                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
+    qa_vec3 angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT,
+                                  QA_VECTOR_NEGATIVE_PITCH | QA_VECTOR_SQUARED_HORIZONTAL);
     qa_vec3 f, r, u;
     qa_angle_vectors(angles, &f, &r, &u,QA_ANGLE_FLOAT_MATH);
     float x = q2_crandom(c->game) * hs, y = q2_crandom(c->game) * vs;

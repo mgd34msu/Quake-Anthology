@@ -136,12 +136,10 @@ static void heat_particles(frontend_q2_beam_context *o, qa_vec3 origin, qa_vec3 
 }
 static qa_vec3 beam_angles(const frontend_q2_beam_context *o, qa_vec3 delta)
 {
-    float horizontal=hypotf(delta.x,delta.y), yaw=horizontal==0?0:atan2f(delta.y,delta.x)*57.29577951308232f;
-    bool rerelease=o->rerelease;
-    float pitch=horizontal==0?(delta.z>0?90:270):atan2f(delta.z,horizontal)*(rerelease?57.29577951308232f:-57.29577951308232f);
-    if (yaw<0) yaw+=360;
-    if (pitch<0) pitch+=360;
-    return qa_v3(rerelease?-pitch:pitch,yaw,0);
+    unsigned flags=QA_VECTOR_WRAPPED|QA_VECTOR_VERTICAL_CARDINAL;
+    if (o->rerelease) flags|=QA_VECTOR_NEGATIVE_PITCH;
+    else if (delta.x!=0 || delta.y!=0) flags|=QA_VECTOR_NEGATE_BEFORE_WRAP;
+    return qa_vec_angles(delta,QA_DIRECTION_FLOAT,flags);
 }
 bool frontend_q2_beams_prepare(frontend_q2_beam_context *o, frontend_q2_temporary_beam *pool, size_t count,
     const frontend_q2_beam_view *s, bool advance, qa_error *e)

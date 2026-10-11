@@ -180,21 +180,11 @@ int frontend_fx_q1_beam_index(uint8_t type)
 void frontend_fx_q1_beam_begin(frontend_fx_q1_beam_cursor *cursor, qa_vec3 start, qa_vec3 end)
 {
     qa_vec3 delta = qa_vec_sub(end, start);
-    float yaw, pitch;
-    if (delta.x == 0 && delta.y == 0) {
-        yaw = 0;
-        pitch = delta.z > 0 ? 90 : 270;
-    } else {
-        yaw = (float)(int)(atan2(delta.y, delta.x) * 180 / 3.14159265358979323846);
-        if (yaw < 0) yaw += 360;
-        float forward = (float)sqrt(delta.x * delta.x + delta.y * delta.y);
-        pitch = (float)(int)(atan2(delta.z, forward) * 180 / 3.14159265358979323846);
-        if (pitch < 0) pitch += 360;
-    }
+    qa_vec3 angles=qa_vec_angles(delta,QA_DIRECTION_INTEGER,QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
     float distance = qa_vec_length(delta);
     *cursor = (frontend_fx_q1_beam_cursor){.origin = start,
         .direction = distance != 0 ? qa_vec_scale(delta, 1 / distance) : qa_v3(0, 0, 0),
-        .angles = {-pitch, yaw, 0}, .remaining = distance};
+        .angles = angles, .remaining = distance};
 }
 
 bool frontend_fx_q1_beam_next(frontend_fx_q1_beam_cursor *cursor, qa_builtin_random *random,

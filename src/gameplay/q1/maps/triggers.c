@@ -432,8 +432,7 @@ static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *e
     if (!follower || follower->kind != Q1_MONSTER)
         return true;
     qa_vec3 delta = qa_vec_sub(to.origin, from.origin);
-    float yaw = atan2f(delta.y, delta.x) * (180.0f / 3.14159265358979323846f);
-    follower->physics.ideal_yaw = yaw < 0 ? yaw + 360 : yaw;
+    follower->physics.ideal_yaw = qa_vec_yaw(delta, QA_DIRECTION_FLOAT_RATIO, true);
     return true;
 }
 bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,

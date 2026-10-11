@@ -929,8 +929,9 @@ bool q2_scenery_prethink(qa_q2_game *g, q2_actor *a, qa_error *e) {
                      : fminf(1, (float)(s->timestamp_ns - g->now_ns) / Q2_NS);
     qa_vec3 direction = qa_vec_scale(s->direction, 1 + diff);
     direction.z = diff;
-    b.angles = qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-                     atan2f(direction.y, direction.x) * 57.29577951308232f, b.angles.z + 10);
+    float roll = b.angles.z + 10;
+    b.angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
+    b.angles.z = roll;
     b.ground = (qa_actor_reference){0};
     return q2_entity_body(g, a, &b, false, e);
 }

@@ -1695,11 +1695,8 @@ static bool pain_actor(q2m_context *context, qa_error *error) {
     if (direction.x == 0)
       yaw = direction.y == 0 ? 0 : direction.y > 0 ? 90 : rerelease ? 270 : -90;
     else {
-      double angle = atan2(direction.y, direction.x);
-      yaw = rerelease ? angle * (180.0 / (double)0x1.921fb6p1f)
-                      : trunc(angle * 180.0 / 0x1.921fb54442d18p1);
-      if (yaw < 0)
-        yaw += 360;
+      yaw = qa_vec_yaw(direction,
+          rerelease ? QA_DIRECTION_NATIVE_RATIO : QA_DIRECTION_INTEGER, true);
     }
     monster->ideal_yaw = (float)yaw;
     float draw = rerelease ? q2_rerelease_float(game, 0, 1) : q2m_random(game);

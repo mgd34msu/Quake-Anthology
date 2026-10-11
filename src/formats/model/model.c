@@ -101,15 +101,7 @@ void model_bounds_union(qa_model_bounds *b, const qa_model_bounds *p) {
 }
 void model_normalize(float p[3]) { model_v3_store(p, qa_vec_normalize(model_v3(p))); }
 static void normalize_md3(float p[3]) {
-    float square = qa_vec_dot(model_v3(p), model_v3(p));
-    uint32_t bits;
-    memcpy(&bits, &square, sizeof(bits));
-    bits = 0x5f3759dfu - (bits >> 1);
-    float inverse;
-    memcpy(&inverse, &bits, sizeof(inverse));
-    inverse *= 1.5f - (square * 0.5f * inverse * inverse);
-    for (unsigned i = 0; i < 3; ++i)
-        p[i] *= inverse;
+    model_v3_store(p, qa_vec_fast_normalize(model_v3(p)));
 }
 qa_bytes qa_model_shader_name(const qa_model_shader *shader) {
     if (!shader)

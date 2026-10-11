@@ -190,8 +190,7 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *g, qa_actor_id corner, qa_actor_id 
     if (!actor || !actor->map || actor->map->kind != kind || (next.registry && !q1_alive(g, next)))
         return true;
     qa_vec3 delta = qa_vec_sub(to.origin, from.origin);
-    float yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;
-    actor->physics.ideal_yaw = yaw < 0 ? yaw + 360 : yaw;
+    actor->physics.ideal_yaw = qa_vec_yaw(delta, QA_DIRECTION_FLOAT, true);
     if (!next.registry)
         actor->map->pause_time = (float)(g->time + 999999);
     *handled = true;

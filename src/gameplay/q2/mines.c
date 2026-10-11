@@ -532,7 +532,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             if (g->services.physics != NULL &&
                 g->services.physics->services.read(g->services.physics->services.context, best,
                                                    &physics)) {
-                physics.ideal_yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;
+                physics.ideal_yaw = qa_vec_yaw(delta, QA_DIRECTION_FLOAT, false);
                 if (!g->services.physics->services.write(g->services.physics->services.context,
                                                          best, &physics, e) ||
                     !qa_physics_change_yaw(g->services.physics, best,
@@ -766,8 +766,8 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     if (!field(g, a, Q2_PROX_FIELD, (qa_bounds){qa_v3(-96, -96, -96), qa_v3(96, 96, 96)}, e))
         return false;
     qa_vec3 normal = contact->plane.normal;
-    body.angles = qa_v3(-atan2f(normal.z, hypotf(normal.x, normal.y)) * 57.29577951308232f + 90,
-                        atan2f(normal.y, normal.x) * 57.29577951308232f, 0);
+    body.angles = qa_vec_angles(normal, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
+    body.angles.x += 90;
     body.velocity = qa_v3(0, 0, 0);
     a->physics.angular_velocity = qa_v3(0, 0, 0);
     a->physics.motion = motion;
@@ -789,8 +789,7 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     return true;
 }
 qa_vec3 q2_mine_velocity(qa_vec3 direction, float speed, float lift, float side) {
-    qa_vec3 angles = qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0), right, up;
+    qa_vec3 angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH), right, up;
     qa_angle_vectors(angles, NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
     return qa_vec_add(qa_vec_add(qa_vec_scale(direction, speed), qa_vec_scale(up, lift)),
                       qa_vec_scale(right, side));
@@ -816,9 +815,7 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
                         : kind == Q2_TESLA ? g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_G_TESLA_TRIS_MD2]
                                            : g->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_Z_TRAP_TRIS_MD2];
     qa_actor_definition definition = classname;
-    float horizontal = hypotf(direction.x, direction.y);
-    qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
-                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
+    qa_vec3 angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
     float lift = q2_mine_lift(kind, c->rerelease, c->input.gravity, q2_crandom(g));
     float side = q2_crandom(g) * 10;
     qa_body_state body = {

@@ -69,7 +69,7 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
             m->path, change->reference);
         qa_vec3 direction = qa_vec_sub(destination.origin, self.origin);
         entity->physics.ideal_yaw =
-            qa_angle_wrap(atan2f(direction.y, direction.x) * 57.29577951308232f);
+            qa_vec_yaw(direction, QA_DIRECTION_FLOAT, true);
         return true;
     }
     case QA_Q1_PATH_PAUSE_END:

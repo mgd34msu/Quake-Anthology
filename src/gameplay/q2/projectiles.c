@@ -634,8 +634,7 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         a->projectile.movedir = direction;
         body.velocity = qa_vec_scale(direction, p.speed);
         body.angles =
-            qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-                  atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
+            qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
         if (!qa_world_body_write(g->services.world, id, &body, e))
             return false;
         a->projectile.next_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
@@ -945,9 +944,8 @@ bool q2_launch_behavior(qa_q2_game *g, q2_actor *a, qa_builtin_projectile_role r
 float q2_bfg_impact_damage(void) { return 200; }
 float q2_bfg_impact_radius(void) { return 100; }
 qa_vec3 q2_launch_velocity(qa_vec3 direction, float speed, float lift, float side) {
-    float horizontal = sqrtf(direction.x * direction.x + direction.y * direction.y);
-    qa_vec3 angles = qa_v3(-atan2f(direction.z, horizontal) * 57.29577951308232f,
-                           atan2f(direction.y, direction.x) * 57.29577951308232f, 0), right, up;
+    qa_vec3 angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT,
+                                  QA_VECTOR_NEGATIVE_PITCH | QA_VECTOR_SQUARED_HORIZONTAL), right, up;
     qa_angle_vectors(angles, NULL, &right, &up,QA_ANGLE_FLOAT_MATH);
     return qa_vec_add(qa_vec_add(qa_vec_scale(direction, speed), qa_vec_scale(up, lift)),
                       qa_vec_scale(right, side));
@@ -1028,9 +1026,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         .collision = hand && fuse <= 0 ? NULL : &collision,
         .body = {.origin = start,
                  .velocity = qa_vec_scale(direction, speed),
-                 .angles = {-atan2f(direction.z, hypotf(direction.x, direction.y)) *
-                                57.29577951308232f,
-                            atan2f(direction.y, direction.x) * 57.29577951308232f, 0}},
+                 .angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH)},
         .link = false};
     qa_actor_id id;
     if (!qa_builtin_spawn_actor(&g->services, &spawn, &id, e))
@@ -1140,10 +1136,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
             a->physics.angular_velocity = qa_v3(300, 300, 300);
         else {
             spawn.body.angles =
-                qa_v3(-atan2f(spawn.body.velocity.z,
-                              hypotf(spawn.body.velocity.x, spawn.body.velocity.y)) *
-                          57.29577951308232f,
-                      atan2f(spawn.body.velocity.y, spawn.body.velocity.x) * 57.29577951308232f, 0);
+                qa_vec_angles(spawn.body.velocity, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
             if (!qa_world_body_write(g->services.world, id, &spawn.body, e))
                 return false;
             a->projectile.armed = true;
@@ -1363,9 +1356,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (speed_squared != 0) {
             float fraction = fminf(1, speed_squared / (p.speed * p.speed));
             qa_vec3 angles =
-                qa_v3(-atan2f(body.velocity.z, hypotf(body.velocity.x, body.velocity.y)) *
-                          57.29577951308232f,
-                      atan2f(body.velocity.y, body.velocity.x) * 57.29577951308232f, 0);
+                qa_vec_angles(body.velocity, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
             body.angles.x += qa_angle_delta(angles.x, body.angles.x) * fraction;
             body.angles.y = angles.y;
             body.angles.z += (float)((double)g->frame_ns / 1e9) * 360 * fraction;

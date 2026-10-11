@@ -213,10 +213,6 @@ bool qa_modes_checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error
 static bool reference(qa_modes *m, qa_actor_id actor) {
     return !actor.registry || mode_live(m, actor);
 }
-static bool bounds_valid(qa_bounds b) {
-    return qa_vec_finite(b.mins) && qa_vec_finite(b.maxs) && b.mins.x <= b.maxs.x &&
-           b.mins.y <= b.maxs.y && b.mins.z <= b.maxs.z;
-}
 static bool physics_valid(qa_modes *m, const qa_physics_properties *p) {
     return p->family >= QA_GAME_Q1 && p->family <= QA_GAME_Q3 &&
            p->motion >= QA_PHYSICS_STATIONARY && p->motion <= QA_PHYSICS_STEP &&
@@ -581,7 +577,7 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
             o->value.phase < QA_OBJECTIVE_HOME || o->value.phase > QA_OBJECTIVE_COMPLETE ||
             !qa_vec_finite(o->home) || !qa_vec_finite(o->spec.origin) ||
             !qa_vec_finite(o->spec.angles) || !qa_vec_finite(o->spec.direction) ||
-            !isfinite(o->spec.value) || (o->spec.has_bounds && !bounds_valid(o->spec.bounds)) ||
+            !isfinite(o->spec.value) || (o->spec.has_bounds && !qa_bounds_valid(o->spec.bounds)) ||
             !physics_valid(m, &o->physics) || o->collision.family < QA_GAME_Q1 ||
             o->collision.family > QA_GAME_Q3 || o->collision.role < QA_COLLISION_SOLID ||
             o->collision.role > QA_COLLISION_BOTH || !reference(m, o->value.carrier) ||

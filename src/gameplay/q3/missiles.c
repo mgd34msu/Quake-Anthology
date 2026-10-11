@@ -552,15 +552,9 @@ static bool stick_mine(qa_q3_game *game, qa_actor_id actor, const qa_trace_resul
         q3_wire_entity_source *source = q3_wire_entity(game, actor);
         if (!source)
             return q3_fail(error, "Q3 stuck proximity mine lost its source angles");
-        qa_vec3 normal = trace->contact_plane.normal;
-        float yaw = normal.x == 0 ? (normal.y > 0 ? 90 : normal.y < 0 ? 270 : 0)
-            : (((float)atan2((double)normal.y, (double)normal.x) * 180) / Q3_PI);
-        if (yaw < 0) yaw = (yaw + 360);
-        float pitch = normal.x == 0 && normal.y == 0 ? (normal.z > 0 ? 90 : 270)
-            : (((float)atan2((double)normal.z,
-                (double)(float)sqrt((double)((normal.x * normal.x) + (normal.y * normal.y)))) * 180) / Q3_PI);
-        if (pitch < 0) pitch = (pitch + 360);
-        source->authored_angles = qa_v3((-pitch + 90), yaw, 0);
+        qa_vec3 angles = qa_vec_angles(trace->contact_plane.normal,QA_DIRECTION_VM,
+            QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
+        source->authored_angles = qa_v3((angles.x + 90), angles.y, 0);
         if (!q3_wire_add_event(game, actor, 66, qa_collision_surface_export(trace->surface_flags, QA_GAME_Q3), error))
             return false;
         qa_body_state body;

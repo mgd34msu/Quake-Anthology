@@ -50,8 +50,7 @@ static bool launch(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, bool bou
     q2_lmctf_plasma_spec(bounce, &spec);
     const float yaw_offsets[] = {0, spec.spread_degrees_x, -spec.spread_degrees_x};
     qa_vec3 angles =
-        qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-              atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
+        qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
     qa_string_id classname, model, sound;
     classname=g->runtime_names[Q2_NAME_RESOURCE_GOOP];
     model=g->runtime_names[Q2_NAME_RESOURCE_SPRITES_S_PLASMA1_SP2];

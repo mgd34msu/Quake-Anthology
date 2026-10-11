@@ -185,8 +185,7 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
     }
     out->muzzle_count = 1;
     out->muzzle_offsets[0] = qa_vec_sub(start, body.origin);
-    out->launch_angles = qa_v3(-atan2f(direction.z, hypotf(direction.x, direction.y)) * 57.29577951308232f,
-                              atan2f(direction.y, direction.x) * 57.29577951308232f, 0);
+    out->launch_angles = qa_vec_angles(direction, QA_DIRECTION_FLOAT, QA_VECTOR_NEGATIVE_PITCH);
     out->launch_velocity = out->ballistic && out->deployable ?
         q2_mine_velocity(direction, spec.speed, out->extra_z_velocity, 0) :
         q2_launch_velocity(direction, spec.speed, out->extra_z_velocity, 0);

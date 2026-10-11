@@ -1190,7 +1190,7 @@ bool qa_q2_monster_route_advance(qa_q2_game *game, qa_actor_id id, qa_actor_id g
     qa_body_state body;
     if (!qa_world_body_read(game->services.world, goal, &body, error)) return false;
     qa_vec3 delta = qa_vec_sub(body.origin, context.body.origin);
-    context.monster->ideal_yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;
+    context.monster->ideal_yaw = qa_vec_yaw(delta, QA_DIRECTION_FLOAT, false);
   }
   return q2m_set_move(&context, pause_until_ns || hold || !goal.registry ?
     context.monster->definition->stand_move : context.monster->definition->walk_move, false, error);
@@ -1255,7 +1255,7 @@ bool qa_q2_monster_touch_path_corner(qa_q2_game *game, qa_actor_id id,
       return false;
     qa_vec3 direction = qa_vec_sub(target.origin, context.body.origin);
     context.monster->ideal_yaw =
-        atan2f(direction.y, direction.x) * 57.29577951308232f;
+        qa_vec_yaw(direction, QA_DIRECTION_FLOAT, false);
   }
   context.actor->physics.goal = qa_actor_reference_lifetime(context.monster->goal);
   *accepted = true;

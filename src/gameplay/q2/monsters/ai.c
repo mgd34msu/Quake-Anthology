@@ -2945,9 +2945,7 @@ static bool alternate_fly(q2m_context *context, bool *handled,
   if (has_enemy && (monster->fly_buzzard || monster->medic)) {
     qa_vec3 pitch_direction =
         qa_vec_normalize(qa_vec_sub(context->body.origin, target));
-    float desired = atan2f(pitch_direction.z,
-                           hypotf(pitch_direction.x, pitch_direction.y)) *
-                    57.29577951308232f;
+    float desired = qa_vec_angles(pitch_direction, QA_DIRECTION_FLOAT, 0).x;
     if (desired - context->body.angles.x > 180.0f)
       desired -= 360.0f;
     if (desired - context->body.angles.x < -180.0f)

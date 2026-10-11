@@ -730,7 +730,7 @@ static bool touch_triggers(frontend_remote_prediction *owner, const frontend_rem
             qa_vec3 velocity = vector(row.entity->origin2);
             if (p->jumppadEnt != row.entity->number) {
                 float pitch = velocity.x == 0 && velocity.y == 0 ? -90.0f :
-                    -atan2f(velocity.z, hypotf(velocity.x, velocity.y)) * (180.0f / 3.14159265358979323846f);
+                    qa_vec_angles(velocity,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_NEGATIVE_PITCH).x;
                 event_parameter(player, 13, fabsf(pitch) < 45 ? 0 : 1);
             }
             p->jumppadEnt = row.entity->number; p->jumppadFrame = p->pmoveFramecount;
@@ -1329,15 +1329,10 @@ static bool command_fields(qa_source_save_io *io, qa_usercmd *v)
     return qa_vec_finite(v->angles) && isfinite(v->acknowledged_server_seconds) &&
         isfinite(v->forward_move) && isfinite(v->side_move) && isfinite(v->up_move);
 }
-static bool bounds_valid(qa_bounds value)
-{
-    return qa_vec_finite(value.mins) && qa_vec_finite(value.maxs) &&
-        value.mins.x <= value.maxs.x && value.mins.y <= value.maxs.y && value.mins.z <= value.maxs.z;
-}
 static bool posture_fields(qa_source_save_io *io, qa_movement_posture *v)
 {
     return qa_persistence_bounds(io, &v->bounds) && qa_source_save_f32(io, &v->view_height) &&
-        bounds_valid(v->bounds) && isfinite(v->view_height);
+        qa_bounds_valid(v->bounds) && isfinite(v->view_height);
 }
 static bool configuration_fields(qa_source_save_io *io, qa_application_control_prediction_configuration *v)
 {
@@ -1417,10 +1412,10 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
             !v->numeric.rounding && !v->numeric.qw_origin_binary64) &&
         in->state.kind == in->profile.kind && in->command.kind == in->state.kind &&
         (!in->has_source_seconds || isfinite(in->source_seconds)) &&
-        bounds_valid(in->shape.bounds) && bounds_valid(in->current_bounds) &&
-        bounds_valid(in->invulnerability_bounds) &&
-        (!in->environment.has_body_bounds || bounds_valid(in->environment.body_bounds)) &&
-        (!in->environment.fixed_pose || bounds_valid(in->environment.pose.bounds)) &&
+        qa_bounds_valid(in->shape.bounds) && qa_bounds_valid(in->current_bounds) &&
+        qa_bounds_valid(in->invulnerability_bounds) &&
+        (!in->environment.has_body_bounds || qa_bounds_valid(in->environment.body_bounds)) &&
+        (!in->environment.fixed_pose || qa_bounds_valid(in->environment.pose.bounds)) &&
         qa_vec_finite(v->q2r_pml_origin) && qa_vec_finite(v->view_angles) && qa_vec_finite(v->command_angles) &&
         qa_vec_finite(in->view_offset) && qa_vec_finite(in->source_punch_angles) && isfinite(v->view_height) &&
         v->water_level >= 0 && v->water_level <= 3 && native_capabilities(v) &&
@@ -1460,7 +1455,7 @@ static bool player_fields(qa_source_save_io *io, prediction_player *v)
         !qa_source_save_f32(io, &v->fractional_weapon_ms) || !qa_source_save_i32(io, &v->arsenal_event_sequence) ||
         !qa_source_save_u32(io, &v->external_slot) || !qa_source_save_i32(io, &v->requested_weapon)) return false;
     view->status = (frontend_remote_prediction_status)status;
-    return bounds_valid(view->bounds) && qa_vec_finite(qa_movement_origin(&view->movement)) &&
+    return qa_bounds_valid(view->bounds) && qa_vec_finite(qa_movement_origin(&view->movement)) &&
         qa_vec_finite(qa_movement_velocity(&view->movement)) &&
         qa_vec_finite(view->view_angles) && qa_vec_finite(view->command_angles) &&
         qa_vec_finite(view->view_offset) && isfinite(view->view_height) &&

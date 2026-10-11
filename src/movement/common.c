@@ -458,8 +458,8 @@ void qa_movement_q3_jump_pad(qa_movement_state *state, qa_actor_id pad, qa_vec3 
     bool changed=s->jump_pad.registry==0||!qa_actor_id_equal(s->jump_pad,pad);
     s->jump_pad=pad; s->jump_pad_frame=s->movement_frame; s->velocity=velocity;
     if (changed) {
-        float pitch=velocity.x==0&&velocity.y==0?(velocity.z>0?-90.0f:-270.0f):
-            -atan2f(velocity.z,hypotf(velocity.x,velocity.y))*57.29577951308232f;
+        float pitch=qa_vec_angles(velocity,QA_DIRECTION_FLOAT,
+            QA_VECTOR_NEGATIVE_PITCH|QA_VECTOR_VERTICAL_CARDINAL).x;
         pitch=qa_angle_mod(pitch,QA_ANGLE_WORD_PRECISE);
         pitch=fabsf(pitch>180?pitch-360:pitch);
         s->event_sequence++;

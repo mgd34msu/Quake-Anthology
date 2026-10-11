@@ -36,12 +36,9 @@ bool q1_missile_velocity(qa_q1_game *g, q1_actor *entity, qa_vec3 velocity, qa_e
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     body.velocity = velocity;
-    body.angles =
-        qa_v3(velocity.x == 0 && velocity.y == 0
-                  ? (velocity.z > 0 ? 90 : 270)
-                  : qa_angle_wrap(atan2f(velocity.z, hypotf(velocity.x, velocity.y)) *
-                                         57.29577951308232f),
-              qa_angle_wrap(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0);
+    body.angles = qa_vec_angles(velocity, QA_DIRECTION_FLOAT, QA_VECTOR_WRAPPED);
+    if (velocity.x == 0 && velocity.y == 0)
+        body.angles.x = velocity.z > 0 ? 90 : 270;
     body.ground = (qa_actor_reference){0};
     return qa_world_body_write(g->services.world, entity->id, &body, error);
 }

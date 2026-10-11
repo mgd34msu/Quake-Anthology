@@ -181,7 +181,7 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
     qa_vec3 difference = qa_vec_sub(target.origin, resumed.body.origin);
     qa_vec3 direction = qa_vec_normalize(difference);
     resumed.body.angles.y = qa_angle_wrap(
-        atan2f(difference.y, difference.x) * 57.29577951308232f);
+        qa_vec_yaw(difference, QA_DIRECTION_FLOAT, false));
     resumed.body.velocity = qa_vec_scale(direction, 400.0f);
     resumed.body.velocity.z = 200.0f;
     resumed.body.ground = (qa_actor_reference){0};
@@ -1088,7 +1088,7 @@ static bool soldier_callbacks(q2m_context *context, q2m_callback_id callback,
       qa_vec3 direction =
           qa_vec_sub(monster->blind_fire_target, context->body.origin);
       monster->ideal_yaw =
-          atan2f(direction.y, direction.x) * 57.29577951308232f;
+          qa_vec_yaw(direction, QA_DIRECTION_FLOAT, false);
     }
     return true;
   }
@@ -1692,7 +1692,7 @@ static bool carrier_spawn_callbacks(q2m_context *context, q2m_callback_id callba
       if (phase >= 0 && phase <= 2) {
         qa_vec3 direction = qa_vec_sub(enemy.origin, context->body.origin);
         monster->ideal_yaw = qa_angle_wrap(
-            atan2f(direction.y, direction.x) * 57.29577951308232f +
+            qa_vec_yaw(direction, QA_DIRECTION_FLOAT, false) +
             (float)(phase - 1) * 30.0f);
       }
     }
@@ -1759,7 +1759,7 @@ static int widow_torso_frame(q2m_context *context, bool *turned,
                           context->monster->enemy, &enemy, &ignored))
     return 79;
   qa_vec3 to_self = qa_vec_sub(context->body.origin, enemy.origin);
-  float target_yaw = atan2f(to_self.y, to_self.x) * 57.29577951308232f;
+  float target_yaw = qa_vec_yaw(to_self, QA_DIRECTION_FLOAT, false);
   float angle = context->body.angles.y - target_yaw;
   while (angle < 0.0f)
     angle += 360.0f;
@@ -2958,7 +2958,7 @@ static bool foundational_species_callback(q2m_context *context,
     qa_vec3 direction =
         qa_vec_normalize(qa_vec_sub(target, context->body.origin));
     context->body.angles.y =
-        atan2f(direction.y, direction.x) * 57.29577951308232f;
+        qa_vec_yaw(direction, QA_DIRECTION_FLOAT, false);
     qa_vec3 forward;
     qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
     context->body.origin.z += 1.0f;
@@ -4886,7 +4886,7 @@ static bool callback_gunner_blind_check_51(q2m_context *context, q2m_callback_id
     struct qa_q2_monster *monster = context->monster;
     if (monster->attack_state == Q2M_BLIND) {
         qa_vec3 direction = qa_vec_sub(monster->blind_fire_target, context->body.origin);
-        monster->ideal_yaw = atan2f(direction.y, direction.x) * 57.29577951308232f;
+        monster->ideal_yaw = qa_vec_yaw(direction, QA_DIRECTION_FLOAT, false);
         return q2m_change_yaw(context, error);
     }
     return true;

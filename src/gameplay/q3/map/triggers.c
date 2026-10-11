@@ -239,22 +239,6 @@ bool q3_map_trigger_use(qa_q3_game *game, qa_q3_map_actor_state *state,
     }
 }
 
-static double jump_pad_pitch(qa_vec3 velocity) {
-    float pitch;
-    if (velocity.x == 0 && velocity.y == 0)
-        pitch = velocity.z > 0 ? 90.0f : 270.0f;
-    else {
-        float squared = ((velocity.x * velocity.x) + (velocity.y * velocity.y));
-        float horizontal = (float)sqrt((double)squared);
-        float radians = (float)atan2((double)velocity.z, (double)horizontal);
-        pitch = (radians * 180.0f) / Q3_PI;
-        if (pitch < 0)
-            pitch = (pitch + 360.0f);
-    }
-    double normalized=qa_angle_mod(-pitch,QA_ANGLE_WORD_PRECISE);
-    return fabs(normalized > 180 ? normalized - 360 : normalized);
-}
-
 static bool jump_pad(qa_q3_game *game, qa_q3_map_actor_state *state,
                      qa_actor_id actor, qa_error *error) {
     qa_actor_id source = state->actor;
@@ -268,7 +252,9 @@ static bool jump_pad(qa_q3_game *game, qa_q3_map_actor_state *state,
     qa_q3_player_motion motion = {0};
     if (player && !q3_player_motion_read(game, actor, &motion, error)) return false;
     if (!player || motion.jumppad_entity != number) {
-        double pitch = jump_pad_pitch(velocity);
+        qa_vec3 angles=qa_vec_angles(velocity,QA_DIRECTION_VM,QA_VECTOR_SOURCE|QA_VECTOR_DOUBLE_SQRT);
+        double normalized=qa_angle_mod(angles.x,QA_ANGLE_WORD_PRECISE);
+        double pitch=fabs(normalized > 180 ? normalized - 360 : normalized);
         if (!q3_player_event(game, actor, 13, pitch < 45 ? 0 : 1, error))
             return false;
         if (!q3_map_get(game, source))
