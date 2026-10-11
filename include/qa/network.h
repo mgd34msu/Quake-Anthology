@@ -140,6 +140,7 @@ typedef struct qa_net_transport_ops {
     bool (*maintenance)(void *, uint64_t now_ns, qa_error *);
     bool (*reliable_receipt)(const void *, const qa_net_address *, qa_network_reliable_receipt *);
     bool (*send_ready)(const void *, const qa_net_address *);
+    bool (*dispatch_ready)(const void *, const qa_net_transport_event *);
 } qa_net_transport_ops;
 bool qa_net_transport_create(const qa_net_address *, qa_net_limits,
                               const qa_net_transport_ops *, void *owned_state,
@@ -180,6 +181,10 @@ bool qa_net_transport_send_ready(const qa_net_transport *, const qa_net_address 
  * prepared datagram owned by its sender; neither false success nor IO error. */
 qa_net_send_result qa_net_transport_send(qa_net_transport *, const qa_net_address *, qa_bytes, qa_error *);
 bool qa_net_transport_collect(qa_net_transport *, uint64_t, qa_net_transport_event *, qa_error *);
+/* Observe destination capacity without consuming or decoding into live state.
+ * False leaves the copied physical event with its caller. NULL logical drains
+ * remain available so they can free destination capacity. */
+bool qa_net_transport_dispatch_ready(const qa_net_transport *, const qa_net_transport_event *);
 bool qa_net_transport_dispatch(qa_net_transport *, const qa_net_transport_event *, qa_net_datagram *, bool *, qa_error *);
 bool qa_net_transport_maintenance(qa_net_transport *, uint64_t, qa_error *);
 /* Ordinary datagram transports return false and a zero receipt. */
@@ -214,7 +219,12 @@ bool qa_net_dosbox_create(qa_net_transport *udp, const qa_net_address *server,
                            uint64_t now_ns, uint64_t timeout_ns,
                            qa_net_dosbox **, qa_error *);
 bool qa_net_dosbox_collect(qa_net_dosbox *, uint64_t now_ns, qa_net_transport_event *, qa_error *);
-bool qa_net_dosbox_dispatch(qa_net_dosbox *, const qa_net_transport_event *, bool *registered, qa_error *);
+/* Full retains the supplied event, returns success with consumed=false and
+ * leaves registered reflecting the current phase. Retry after logical drains. */
+bool qa_net_dosbox_dispatch(qa_net_dosbox *, const qa_net_transport_event *, bool *registered,
+    bool *consumed, qa_error *);
+/* Keep copied input while readiness is false. */
+bool qa_net_dosbox_dispatch_ready(const qa_net_dosbox *, const qa_net_transport_event *);
 bool qa_net_dosbox_maintenance(qa_net_dosbox *, uint64_t now_ns, qa_error *);
 bool qa_net_dosbox_bind(qa_net_dosbox *, uint16_t port, uint8_t packet_type,
                          qa_net_transport **, qa_error *);

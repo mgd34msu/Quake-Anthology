@@ -241,6 +241,14 @@ static bool socks_collect(void *opaque, uint64_t now_ns, qa_net_transport_event 
     return true;
 }
 
+static bool socks_dispatch_ready(const void *opaque,const qa_net_transport_event *event)
+{
+    const socks_transport *socks=opaque;
+    if((event->source&3u)==1 || (event->source&3u)==2) return true;
+    qa_net_transport_event child=*event;
+    child.source>>=2;
+    return qa_net_transport_dispatch_ready(socks->udp,&child);
+}
 static bool socks_dispatch(void *opaque, const qa_net_transport_event *event,
     qa_net_datagram *out, bool *present, qa_error *error) {
     socks_transport *socks = opaque;
@@ -369,7 +377,8 @@ bool qa_net_socks_wrap(qa_net_transport *udp, const qa_net_socks_options *option
     } else socks_greeting(socks);
     const qa_net_transport_ops ops = {
         .send = socks_send, .collect = socks_collect, .dispatch = socks_dispatch,
-        .maintenance = socks_maintenance, .close = socks_close, .ready = socks_ready
+        .maintenance = socks_maintenance, .close = socks_close, .ready = socks_ready,
+        .dispatch_ready = socks_dispatch_ready
     };
     if (!qa_net_transport_create(bound, (qa_net_limits){socks->limit, 256}, &ops, socks, out, error)) {
         socks_close(socks);

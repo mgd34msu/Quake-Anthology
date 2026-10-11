@@ -1844,7 +1844,8 @@ static void test_dosbox_loopback(void)
     CHECK(qa_net_ipx_encode(&packet,&writer));
     qa_net_transport_event event={.packet={.kind=QA_NET_POLL_PACKET,.from=server,
         .received_ns=18,.payload={bytes,qa_net_writer_size(&writer)}}};
-    bool registered=false;CHECK(qa_net_dosbox_dispatch(network,&event,&registered,&error) && registered);
+    bool registered=false,consumed=false;
+    CHECK(qa_net_dosbox_dispatch(network,&event,&registered,&consumed,&error) && registered && consumed);
     CHECK(qa_net_dosbox_bind(network,4000,4,&a,&error));
     CHECK(qa_net_dosbox_bind(network,4001,4,&b,&error));
     for(uint32_t i=0;i<256;++i)
@@ -1854,6 +1855,12 @@ static void test_dosbox_loopback(void)
     CHECK(qa_net_transport_send(a,qa_net_transport_address(b),(qa_bytes){(const uint8_t *)&extra,4},&error)==QA_NET_SEND_FULL);
     qa_net_address broadcast=*qa_net_transport_address(b);memset(broadcast.host.ipx.node,255,6);
     CHECK(qa_net_transport_send(a,&broadcast,(qa_bytes){(const uint8_t *)&extra,4},&error)==QA_NET_SEND_FULL && sends==1);
+    packet.to=*qa_net_transport_address(b);packet.from=*qa_net_transport_address(a);
+    packet.payload=(qa_bytes){(const uint8_t *)&extra,4};
+    qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);CHECK(qa_net_ipx_encode(&packet,&writer));
+    event.packet.payload=(qa_bytes){bytes,qa_net_writer_size(&writer)};event.packet.received_ns=1234;
+    CHECK(!qa_net_dosbox_dispatch_ready(network,&event));
+    CHECK(qa_net_dosbox_dispatch(network,&event,&registered,&consumed,&error) && !consumed);
     for(uint32_t i=0;i<256;++i) {
         qa_net_transport_event received;qa_net_datagram data;bool present=false;
         CHECK(qa_net_transport_collect(b,20+i,&received,&error));
@@ -1870,7 +1877,8 @@ static void test_dosbox_loopback(void)
     packet.from.host.ipx.node[5]=7;packet.payload=(qa_bytes){(const uint8_t *)&extra,4};
     qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);CHECK(qa_net_ipx_encode(&packet,&writer));
     event.packet.payload=(qa_bytes){bytes,qa_net_writer_size(&writer)};event.packet.received_ns=1234;
-    CHECK(qa_net_dosbox_dispatch(network,&event,&registered,&error));
+    CHECK(qa_net_dosbox_dispatch_ready(network,&event));
+    CHECK(qa_net_dosbox_dispatch(network,&event,&registered,&consumed,&error) && consumed);
     CHECK(qa_net_transport_collect(b,2000,&received,&error) && received.packet.received_ns==1234);
     CHECK(qa_net_address_equal(&received.packet.from,&packet.from,true));
     qa_net_transport_close(a);qa_net_transport_close(b);qa_net_dosbox_destroy(network);

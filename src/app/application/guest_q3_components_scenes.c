@@ -42,6 +42,12 @@ static void print(void *context,const char *text)
     qa_command_context command={.owner=row->services,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL};
     application_console_print(row->game->roster->options.application,&command,text);
 }
+static void module_print(void *context,const char *text)
+{
+    component_scene_row *row=context;
+    qa_command_context command={.owner=row->services,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL};
+    (void)qa_application_log_emit(row->game->roster->options.application,&command,text,true,NULL);
+}
 static void console_print(void *context,const qa_command_context *command,const char *text)
 { (void)command; print(context,text); }
 static bool cheats(void *context)
@@ -113,7 +119,7 @@ static bool open_scene(component_scene_row *row,qa_error *e)
         .world=options->world,.owner=game->publication.owner,.service_owner=row->services,.mounts=game->publication.content,
         .write_view={.root=qa_catalog_write_resolver_root(game->write_resolver),
             .resolver=qa_catalog_write_resolver_services(game->write_resolver)},
-        .cvars=row->cvars,.console=row->console,.command_context={.owner=row->services,.seat=row->seat,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL,.cvar_view=qa_cvars_view_identity(row->cvars)},.common={.context=row,.print=print}};
+        .cvars=row->cvars,.console=row->console,.command_context={.owner=row->services,.seat=row->seat,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL,.cvar_view=qa_cvars_view_identity(row->cvars)},.common={.context=row,.print=module_print}};
     if(!options->scene_factory.prepare) return application_fail(e,QA_ERROR_UNSUPPORTED,"Component scene lacks its real renderer factory");
     application_q3_component_scene_preparation preparation={.component=game->publication.metadata,.descriptor=game->publication.descriptor,
         .catalog=game->provider->product_catalog,.owner=game->publication.owner,.generation=game->publication.generation,
