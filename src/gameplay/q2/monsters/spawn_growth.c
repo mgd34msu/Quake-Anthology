@@ -126,9 +126,12 @@ bool q2m_rerelease_spawn_growth(qa_q2_game *game, qa_vec3 origin, float radius, 
         goto failed;
     if (!q2_actor_live(game, id))
         return qa_session_release(game->services.session, beam->id, error);
-    p->child = qa_actor_reference_source(game->options.owner, beam->wire_slot);
+    uint32_t beam_number, growth_number;
+    if (!qa_q2_wire_entity_number(game, beam->id, &beam_number, error) ||
+        !qa_q2_wire_entity_number(game, growth->id, &growth_number, error)) goto failed;
+    p->child = qa_actor_reference_source(game->options.owner, beam_number);
     beam->projectile.kind = Q2_RERELEASE_SPAWN_BEAM;
-    beam->projectile.owner = qa_actor_reference_source(game->options.owner, growth->wire_slot);
+    beam->projectile.owner = qa_actor_reference_source(game->options.owner, growth_number);
     beam->projectile.frame = 1;
     beam->projectile.skin = 0x30303030;
     beam->projectile.render_flags = 128 | 512 | 64;

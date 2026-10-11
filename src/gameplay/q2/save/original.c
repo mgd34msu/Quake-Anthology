@@ -1268,7 +1268,7 @@ bool q2_original_write_game(qa_q2_game *g, bool autosave,
         qa_json_writer_array(&writer);
     }
     for (uint32_t slot = 0; okay && slot < state.clients; ++slot) {
-        q2_actor *actor = q2_actor_get(g, g->wire_actors[slot + 1], false, NULL);
+        q2_actor *actor = q2_actor_get(g, q2_wire_actor_at(g, slot + 1), false, NULL);
         q2_original_client_state client = {0};
         okay = q2_original_client_capture(g, actor, &client, error);
         if (io.edition == QA_RULESET_Q2_CLASSIC) {

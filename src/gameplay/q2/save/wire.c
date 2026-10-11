@@ -144,19 +144,25 @@ bool q2_save_wire(q2_save_io *io)
     qa_clock_state clock;
     if (!qa_session_clock(g->services.session, g->options.owner, &clock) || frame != clock.frame_number)
         return q2_save_fail(io, "Q2 continuation wire frame differs from its restored source clock");
-    qa_actor_id *actors = io->reading ? calloc(capacity, sizeof(*actors)) : g->wire_actors;
+    qa_actor_id *actors = io->reading ? calloc(capacity, sizeof(*actors)) : NULL;
     uint64_t *freed = io->reading ? calloc(capacity, sizeof(*freed)) : g->wire_freed_ns;
     uint8_t *seen = calloc(g->capacity, 1);
-    if (!actors || !freed || !seen) {
+    qa_actor_index index = {0};
+    if ((io->reading && !actors) || !freed || !seen) {
         if (io->reading) { free(actors); free(freed); }
         free(seen);
         qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "Retaining Q2 physical edict continuation");
         return false;
     }
+    if (io->reading && (!qa_actor_index_create(&index, qa_session_actors(g->services.session), io->error) ||
+        !qa_actor_index_reverse_reserve(&index, capacity, io->error))) {
+        qa_actor_index_destroy(&index); free(actors); free(freed); free(seen); return false;
+    }
     bool ok = true;
     for (uint32_t slot = 0; ok && slot < extent; ++slot) {
         qa_q2_saved_reference ref = {0};
-        if (!io->reading) ok = q2_save_reference(g, actors[slot], &ref, io->error);
+        qa_actor_id id = io->reading ? (qa_actor_id){0} : q2_wire_actor_at(g, slot);
+        if (!io->reading) ok = q2_save_reference(g, id, &ref, io->error);
         ok = ok && q2_save_ref(io, &ref) && q2_save_u64(io, &freed[slot]);
         if (!ok) break;
         if (freed[slot] > g->now_ns || (ref.present && freed[slot])) {
@@ -166,19 +172,23 @@ bool q2_save_wire(q2_save_io *io)
         if (!ref.present) continue;
         const qa_actor_record *record = io->reading
             ? qa_actors_resolve_saved(qa_session_actors(g->services.session), ref.actor)
-            : qa_actors_get(qa_session_actors(g->services.session), actors[slot]);
+            : qa_actors_get(qa_session_actors(g->services.session), id);
         q2_actor *a = record && record->id.slot < g->capacity ? g->actors[record->id.slot] : NULL;
         bool player = a && a->client && !a->client->rule.corpse;
+        uint32_t number;
         if (!a || !qa_actor_id_equal(a->id, record->id) || seen[record->id.slot] ||
             (record->owner == g->options.owner && record->has_source && record->source_slot != slot) ||
             (player && a->client->info.slot + 1 != slot) ||
             (!player && slot && slot <= clients) ||
-            !a->wire_bound || (!io->reading && a->wire_slot != slot)) {
+            (!io->reading && (!q2_wire_binding_number(g, record->id, &number) || number != slot))) {
             ok = q2_save_fail(io, "Q2 continuation physical edict aliases an actor or client");
             break;
         }
         seen[record->id.slot] = 1;
-        if (io->reading) { actors[slot] = record->id; a->wire_bound = true; a->wire_slot = slot; }
+        if (io->reading) {
+            actors[slot] = record->id;
+            if (record->owner != g->options.owner) qa_actor_index_put(&index, record->id, slot);
+        }
         qa_q2_wire_view value = a->wire_view;
         qa_q2_wire_lifetime lifetime = a->wire_lifetime;
         uint32_t event = a->wire_event;
@@ -195,10 +205,12 @@ bool q2_save_wire(q2_save_io *io)
         }
     }
     for (q2_actor *a = g->first_actor; ok && a; a = a->live_next) {
-        if (!a->wire_bound && (!a->hand_grenade_bound || a->client || a->entity || a->monster || a->item ||
+        uint32_t number;
+        bool bound = io->reading ? seen[a->id.slot] != 0 : q2_wire_binding_number(g, a->id, &number);
+        if (!bound && (!a->hand_grenade_bound || a->client || a->entity || a->monster || a->item ||
             a->weapon_bound || a->physics_bound || a->projectile.kind != Q2_PROJECTILE_NONE))
             ok = q2_save_fail(io, "Q2 continuation removed physical membership from a source extension");
-        if (ok && a->wire_bound && !seen[a->id.slot])
+        if (ok && bound && !seen[a->id.slot])
             ok = q2_save_fail(io, "Q2 continuation omits an admitted physical source edict");
     }
     uint32_t shadow_count = g->wire_shadow_count;
@@ -227,7 +239,8 @@ bool q2_save_wire(q2_save_io *io)
             qa_actors_resolve_saved(qa_session_actors(g->services.session), ref.actor) : NULL;
         q2_actor *a = record && record->id.slot < g->capacity ? g->actors[record->id.slot] : NULL;
         if (!a || !a->entity || a->entity->kind != Q2E_DYNAMIC_LIGHT || a->entity->stage != 1 ||
-            s->source_slot >= extent || !qa_actor_id_equal(actors[s->source_slot], record->id)) {
+            s->source_slot >= extent || !qa_actor_id_equal(io->reading ? actors[s->source_slot] :
+                q2_wire_actor_at(g, s->source_slot), record->id)) {
             ok = q2_save_fail(io, "Q2 continuation shadow light lost its true Source entity");
             break;
         }
@@ -236,41 +249,48 @@ bool q2_save_wire(q2_save_io *io)
                 ok = q2_save_fail(io, "Q2 continuation aliases a Source shadow light");
         if (ok && io->reading) s->actor = record->id;
     }
-    size_t reference_count = io->reading ? 0 : g->wire_reference_count;
-    void *reference_storage = io->reading ? NULL : g->wire_references;
-    if (ok) ok = q2_save_count(io, &reference_count, 17, sizeof(q2_wire_reference), &reference_storage);
-    q2_wire_reference *references = reference_storage;
+    size_t reference_count = io->reading ? 0 : qa_actor_index_retained_count(&g->wire_index);
+    if (ok && reference_count > UINT32_MAX) ok = q2_save_fail(io, "Invalid Q2 continuation array");
+    uint32_t reference_word = (uint32_t)reference_count;
+    if (ok) ok = q2_save_u32(io, &reference_word);
+    if (ok && io->reading && reference_word > (io->input.size - io->offset) / 17)
+        ok = q2_save_fail(io, "Invalid Q2 continuation array extent");
+    reference_count = reference_word;
+    qa_actor_index *references = io->reading ? &index : &g->wire_index;
     for (size_t i = 0; ok && i < reference_count; ++i) {
         qa_q2_saved_reference saved = {0};
-        if (!io->reading) ok = q2_save_reference(g, references[i].actor, &saved, io->error);
+        qa_actor_id actor = {0};
+        size_t value = 0;
+        if (!io->reading) ok = qa_actor_index_retained_at(references, i, &actor, &value) &&
+            q2_save_reference(g, actor, &saved, io->error);
+        uint32_t number = (uint32_t)value;
         ok = ok && q2_save_ref(io, &saved) && saved.present &&
-            q2_save_u32(io, &references[i].number) && references[i].number < extent;
-        if (ok && io->reading) ok = q2_resolve_reference(g, saved, &references[i].actor, io->error);
-        for (size_t j = 0; ok && j < i; ++j)
-            if (qa_actor_id_equal(references[i].actor, references[j].actor))
-                ok = q2_save_fail(io, "Q2 Engine provenance aliases a full actor generation");
-        const qa_actor_record *live = ok ? qa_actors_get(qa_session_actors(g->services.session), references[i].actor) : NULL;
-        if (live && !qa_actor_id_equal(actors[references[i].number], live->id))
+            q2_save_u32(io, &number) && number < extent;
+        if (ok && io->reading) ok = q2_resolve_reference(g, saved, &actor, io->error);
+        if (ok && io->reading && qa_actor_index_find_retained(references, actor, &value))
+            ok = q2_save_fail(io, "Q2 Engine provenance aliases a full actor generation");
+        const qa_actor_record *live = ok ? qa_actors_get(qa_session_actors(g->services.session), actor) : NULL;
+        if (live && !qa_actor_id_equal(io->reading ? actors[number] : q2_wire_actor_at(g, number), live->id))
             ok = q2_save_fail(io, "Q2 live Engine provenance differs from its physical admission");
+        if (ok && io->reading) ok = qa_actor_index_remember(references, actor, number, io->error);
     }
     for (uint32_t slot = 0; ok && slot < extent; ++slot) {
-        if (!actors[slot].registry) continue;
-        bool admitted = false;
-        for (size_t i = 0; i < reference_count; ++i)
-            if (references[i].number == slot && qa_actor_id_equal(references[i].actor, actors[slot])) admitted = true;
-        if (!admitted) ok = q2_save_fail(io, "Q2 Engine row lost its actual admission provenance");
+        qa_actor_id actor = io->reading ? actors[slot] : q2_wire_actor_at(g, slot);
+        if (!actor.registry) continue;
+        size_t number;
+        if (!qa_actor_index_find_retained(references, actor, &number) || number != slot)
+            ok = q2_save_fail(io, "Q2 Engine row lost its actual admission provenance");
     }
     if (ok && io->reading) {
-        free(g->wire_actors); free(g->wire_freed_ns);
-        free(g->wire_references);
-        g->wire_references = references;
-        g->wire_reference_count = g->wire_reference_capacity = reference_count;
-        g->wire_actors = actors; g->wire_freed_ns = freed;
+        qa_actor_index_destroy(&g->wire_index); free(g->wire_freed_ns);
+        g->wire_index = index; index = (qa_actor_index){0}; g->wire_freed_ns = freed;
         g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = extent;
         g->wire_frame = frame;
         for (uint32_t i = 0; i < 256; ++i) qa_lightstyles_set(&g->wire_lightstyles, i, styles[i]);
         memcpy(g->wire_shadows, shadows, sizeof(shadows)); g->wire_shadow_count = shadow_count;
-    } else if (io->reading) { free(actors); free(freed); free(references); }
+    } else if (io->reading) free(freed);
+    qa_actor_index_destroy(&index);
+    free(actors);
     free(seen);
     return ok;
 }

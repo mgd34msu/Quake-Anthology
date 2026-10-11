@@ -393,7 +393,9 @@ static bool fire(q2m_context *context, qa_error *error) {
         qa_session_release(game->services.session, tip->id, NULL);
         return false;
     }
-    tip->projectile.child = qa_actor_reference_source(game->options.owner, segment->wire_slot);
+    uint32_t segment_number;
+    if (!qa_q2_wire_entity_number(game, segment->id, &segment_number, error)) return false;
+    tip->projectile.child = qa_actor_reference_source(game->options.owner, segment_number);
     if (!q2m_alive(context) || !q2_actor_live(game, tip->id) ||
         !q2_actor_live(game, segment->id))
         return reset(game, tip, error);

@@ -114,7 +114,7 @@ bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
             return false;
         }
     q2_players *p = g->player_runtime;
-    if (g->wire_actors && g->wire_clients != r->max_clients &&
+    if (g->wire_freed_ns && g->wire_clients != r->max_clients &&
         !qa_q2_wire_configure(g, g->wire_capacity, r->max_clients, e)) {
         for (size_t i = 0; i < 5; ++i) free(copies[i]);
         free(rotation);

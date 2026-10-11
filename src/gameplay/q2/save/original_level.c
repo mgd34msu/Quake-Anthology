@@ -221,8 +221,9 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     const qa_q2_save_level *engine_level, bool *restored, qa_error *error)
 {
     q2_actor *source = game ? q2_actor_get(game, actor, false, NULL) : NULL;
+    uint32_t number;
     if (!game || !restored || !source || !source->client ||
-        slot >= game->wire_clients || !source->wire_bound || source->wire_slot != slot + 1 ||
+        slot >= game->wire_clients || !q2_wire_binding_number(game, actor, &number) || number != slot + 1 ||
         !q2_checkpoint_idle(game, error)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, slot,
             "Original Q2 client requires its admitted physical slot and GAME owner");
@@ -326,7 +327,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
      * from the same original LEVEL bytes; no second pending state owner. */
     for (size_t i = 0; okay && i < level.count; ++i) {
         const q2_original_edict_row *row = level.rows + i;
-        q2_actor *target = q2_actor_get(game, game->wire_actors[row->number], false, NULL);
+        q2_actor *target = q2_actor_get(game, q2_wire_actor_at(game, row->number), false, NULL);
         if (!target) continue;
         io = edict_reader(game, &level, row, error);
         io.references_only = true;
@@ -568,7 +569,7 @@ static bool write_level(qa_q2_game *g, bool transition,
         qa_json_writer_end(&writer); qa_json_writer_key(&writer, "entities"); qa_json_writer_object(&writer);
     }
     for (uint32_t slot = 0; okay && slot < g->wire_extent; ++slot) {
-        q2_actor *actor = q2_actor_get(g, g->wire_actors[slot], false, NULL);
+        q2_actor *actor = q2_actor_get(g, q2_wire_actor_at(g, slot), false, NULL);
         if (!actor || (transition && slot > 0 && slot <= g->wire_clients)) continue;
         if (io.edition == QA_RULESET_Q2_CLASSIC) {
             okay = q2_save_u32(&raw, &slot);
@@ -693,7 +694,7 @@ static bool level_admit(qa_q2_game *g, const q2_original_level_file *file, qa_er
      * the same class. ReadLevel replaces the rest, without executing SP_* again. */
     for (uint32_t slot = 0; slot < g->wire_extent; ++slot) {
         if (slot > 0 && slot <= g->wire_clients) continue;
-        qa_actor_id id = g->wire_actors[slot];
+        qa_actor_id id = q2_wire_actor_at(g, slot);
         if (!id.registry) continue;
         const q2_original_edict_row *row = q2_original_level_actor(file, slot);
         qa_string_id classname = 0;
@@ -708,7 +709,7 @@ static bool level_admit(qa_q2_game *g, const q2_original_level_file *file, qa_er
         if (row->number > 0 && row->number <= g->wire_clients) continue;
         qa_string_id classname;
         if (!level_classname(g, file, row, &classname, error)) return false;
-        qa_actor_id id = g->wire_actors[row->number];
+        qa_actor_id id = q2_wire_actor_at(g, row->number);
         if (!id.registry) {
             qa_body_state body = {0};
             q2_original_record_io io = edict_reader(g, file, row, error);
@@ -742,7 +743,7 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
     for (size_t i = 0; i < file->count; ++i) {
         const q2_original_edict_row *row = file->rows + i;
         if (row->number > 0 && row->number <= g->wire_clients) continue;
-        q2_actor *actor = q2_actor_get(g, g->wire_actors[row->number], false, NULL);
+        q2_actor *actor = q2_actor_get(g, q2_wire_actor_at(g, row->number), false, NULL);
         if (!actor) return level_error(error, row->number, "Original Q2 restored Source edict disappeared");
         qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
             .role = actor->physics.solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
@@ -808,7 +809,7 @@ bool qa_q2_game_original_read_level(qa_q2_game *game, qa_bytes bytes,
     for (size_t i = 0; okay && i < file.count; ++i) {
         const q2_original_edict_row *row = file.rows + i;
         if (row->number > 0 && row->number <= game->wire_clients) continue;
-        q2_actor *actor = q2_actor_get(game, game->wire_actors[row->number], false, NULL);
+        q2_actor *actor = q2_actor_get(game, q2_wire_actor_at(game, row->number), false, NULL);
         q2_original_record_io io = edict_reader(game, &file, row, error);
         okay = actor && original_edict(game, &io, actor, engine, error);
     }

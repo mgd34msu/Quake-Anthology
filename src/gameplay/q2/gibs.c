@@ -410,8 +410,10 @@ static bool trap_capture_run(qa_q2_game *g, q2_actor *trap,
         q2_actor *a = q2_actor_get(g, id, false, e);
         if (a == NULL)
             return false;
+        uint32_t number;
+        if (!qa_q2_wire_entity_number(g, trap->id, &number, e)) return false;
         a->projectile.kind = Q2_TRAP_ORBIT_GIB;
-        a->projectile.owner = qa_actor_reference_source(g->options.owner, trap->wire_slot);
+        a->projectile.owner = qa_actor_reference_source(g->options.owner, number);
         a->projectile.next_ns = g->now_ns;
         a->physics.motion = QA_PHYSICS_STATIONARY;
         if (!q2_gib_think(g, a, e))

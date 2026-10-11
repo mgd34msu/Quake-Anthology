@@ -131,13 +131,15 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, mine->id, &body, e))
         return false;
+    uint32_t mine_number;
+    if (!qa_q2_wire_entity_number(g, mine->id, &mine_number, e)) return false;
     qa_actor_definition definition=g->runtime_names[kind==Q2_PROX_FIELD ? Q2_NAME_RESOURCE_PROX_FIELD : Q2_NAME_RESOURCE_TESLA_TRIGGER];
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(1, 0,
                                         g->options.rules == QA_RULESET_Q2_RERELEASE),
                                     .role = QA_COLLISION_TRIGGER,
-                                    .owner = qa_actor_reference_source(g->options.owner, mine->wire_slot)};
+                                    .owner = qa_actor_reference_source(g->options.owner, mine_number)};
     qa_builtin_spawn spawn = {.owner = g->options.owner,
                               .definition = definition,
                               .collision = &collision,
@@ -149,13 +151,15 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
     q2_actor *child = q2_actor_get(g, id, true, e);
     if (child == NULL)
         return false;
+    uint32_t child_number;
+    if (!qa_q2_wire_entity_number(g, id, &child_number, e)) return false;
     child->projectile = (q2_projectile){.kind = kind,
-        .owner = qa_actor_reference_source(g->options.owner, mine->wire_slot)};
+        .owner = qa_actor_reference_source(g->options.owner, mine_number)};
     child->physics_bound = true;
     child->physics = qa_physics_properties_default(QA_RULESET_Q2_CLASSIC);
     child->physics.motion = QA_PHYSICS_STATIONARY;
     child->physics.solid = QA_PHYSICS_TRIGGER;
-    mine->projectile.child = qa_actor_reference_source(g->options.owner, child->wire_slot);
+    mine->projectile.child = qa_actor_reference_source(g->options.owner, child_number);
     return true;
 }
 static bool clear_collision_owner(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -1071,7 +1075,9 @@ bool qa_q2_mark_tesla_area(qa_q2_game *g, qa_actor_id observer, qa_actor_id tesl
         return false;
     q2_actor *child = q2_actor_get(g, area, false, e);
     if (!child) return false;
-    tail->projectile.child = qa_actor_reference_source(g->options.owner, child->wire_slot);
+    uint32_t number;
+    if (!qa_q2_wire_entity_number(g, area, &number, e)) return false;
+    tail->projectile.child = qa_actor_reference_source(g->options.owner, number);
     *created = true;
     return true;
 }

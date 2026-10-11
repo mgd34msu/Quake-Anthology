@@ -127,7 +127,7 @@ bool qa_q2_actor_released(qa_q2_game *g, qa_actor_record record, qa_error *e) {
     if (g != NULL && record.id.slot < g->capacity && g->actors[record.id.slot] != NULL &&
         qa_actor_id_equal(g->actors[record.id.slot]->id, record.id)) {
         q2_actor *a = g->actors[record.id.slot];
-        q2_wire_release(g, a);
+        q2_wire_release(g, a, record);
         q2_entity_unbind(g, a);
         g->actors[record.id.slot] = NULL;
         if (a->live_previous != NULL)
@@ -320,9 +320,8 @@ static void close_game(void *context) {
     q2_players_close(g);
     q2_items_close(g);
     free(g->actors);
-    free(g->wire_actors);
+    qa_actor_index_destroy(&g->wire_index);
     free(g->wire_freed_ns);
-    free(g->wire_references);
     free(g);
 }
 bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *options,
@@ -410,12 +409,12 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
 static bool command_actor(void *context, qa_session *session, qa_actor_id id) {
     qa_q2_game *g = context;
     const q2_actor *a = g && id.slot < g->capacity ? g->actors[id.slot] : NULL;
+    uint32_t slot;
     return g && session == g->services.session &&
         qa_actors_get(qa_session_actors(session), id) && a && qa_actor_id_equal(a->id, id) &&
-        a->client && a->client->info.connected && a->wire_bound &&
-        a->wire_slot && a->wire_slot <= g->wire_clients && a->wire_slot < g->wire_extent &&
-        a->wire_slot == a->client->info.slot + 1 &&
-        qa_actor_id_equal(g->wire_actors[a->wire_slot], id);
+        a->client && a->client->info.connected && q2_wire_binding_number(g, id, &slot) &&
+        slot && slot <= g->wire_clients && slot == a->client->info.slot + 1 &&
+        qa_actor_id_equal(q2_wire_actor_at(g, slot), id);
 }
 qa_component qa_q2_component(qa_q2_game *g) {
     qa_component component = {.owner = g->options.owner,

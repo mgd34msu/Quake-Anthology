@@ -13,15 +13,10 @@ typedef struct application_native_q2_wire_row {
     bool occupied, original;
     qa_q2_source_entity_motion motion;
 } application_native_q2_wire_row;
-typedef struct application_native_q2_wire_reference {
-    qa_actor_id actor;
-    uint32_t number;
-} application_native_q2_wire_reference;
 typedef struct application_native_q2_wire_engine {
     uint32_t capacity, clients;
     application_native_q2_wire_row *rows;
-    application_native_q2_wire_reference *references;
-    size_t reference_count, reference_capacity;
+    qa_actor_index actors;
 } application_native_q2_wire_engine;
 
 bool application_native_q2_wire_begin(struct application_native_q2 *, qa_error *);

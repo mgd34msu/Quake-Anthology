@@ -38,7 +38,8 @@ static bool actor_fields(q2_save_io *io, actor_save *s) {
 }
 static bool actor_capture(qa_q2_game *g, q2_actor *a, actor_save *s, qa_error *e) {
     s->has_monster = a->monster != NULL;
-    s->wire_bound = a->wire_bound;
+    uint32_t number;
+    s->wire_bound = q2_wire_binding_number(g, a->id, &number);
     if (a->powers && qa_inventory_lease_current(g->services.inventory, a->powers->definitions))
         s->definitions_serial = a->powers->definitions.serial;
     if (a->item && qa_pickups_observation_current(g->services.pickups, a->item->observation))
@@ -136,7 +137,6 @@ static bool actor_restore(q2_save_io *io, actor_save *s, uint64_t limit, uint64_
           !qa_q2_actor_restore(g, record->id, &s->actor, io->error))))
         return false;
     q2_actor *a = q2_actor_get(g, record->id, false, NULL);
-    a->wire_bound = s->wire_bound;
     a->restore_hand_ammo = s->hand_ammo;
     a->restore_targets = s->has_targets;
     if (a->powers) a->powers->definitions = (qa_inventory_lease){record->id, s->definitions_serial};

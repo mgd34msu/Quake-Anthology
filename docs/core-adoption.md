@@ -1468,3 +1468,28 @@ The normal production build and all seven existing core suites passed, recorded
 in `/tmp/qa-spatial-adoption-20261011-build.log` and
 `/tmp/qa-spatial-adoption-20261011-core.log`. This establishes build/core-suite
 results, not live-play or timing proof. Identity and heap adoption remain open.
+
+## TA-3196 identity adoption
+
+All eight identity items in the current foundation list now use common actor
+indices or the existing canonical player state. The shared index is declared in
+`include/qa/actors.h:20` and implemented in `src/world/actors.c`. It checks the full
+registry, slot and generation. Current entries, optional reverse entries and
+retained historical generations have separate lifetimes in that one implementation.
+
+| Item | Migrated callers and removed copies |
+| --- | --- |
+| 1 | Native host actor-address and release readers, application native Q2 damage/projection readers and Q3 host borrowed/bind readers use `qa_native_host_slot_for_actor` or the common index. Full source-table identity scans are deleted. SLOT notifications carry the previous actor so rebinding removes its entry. Checkpoint restore rebuilds the index for the restored registry. |
+| 2 | QC client input, output, messages, protection, imports, weapon, rerelease and network readers use `application_qc_client_for_actor` in `guest_qc_clients.c:11`. Actor-matching client-array scans are deleted. Admission, release and checkpoint candidates maintain the index. |
+| 3 | `map_players_private.h:109` roster lookup and bot actor/client seat readers use indexed membership. The private bot retirement flag is deleted; its legacy saved boolean is derived at the boundary. Bot rows and client-seat storage reserve actor capacity at load. |
+| 4 | Q3 combat, native Q2 source damage and QC item bindings use common actor indices and fixed pools. Per-actor calloc and lookup list walks are deleted. Entered callbacks retain their records until return; released unrelated records reclaim immediately. |
+| 5 | Q3 own source bindings read canonical actor source slots; foreign bindings use the common index. `source_numbers` and live source-row actor copies are deleted. Original GAME allocation flags and boundary projections remain original game state. |
+| 6 | Compiled and native Q2 wire readers use the common current/history index. `wire_actors`, runtime wire-slot/bound fields and private provenance vectors are deleted. Released generations remain available for already-admitted events. Save counts, field widths and admission order stay in the existing boundary layout. |
+| 7 | Remote prediction reads its retained `qa_usercmd` instead of four duplicate sequence/time/button/weapon fields. Existing checkpoint positions remain serializer locals. |
+| 8 | Q3 end-frame water effects read canonical control state in `native_q3_end_frame.c:122`. Per-client water copies and their exports are deleted; old save slots are boundary projections. |
+
+The listed sites and neighboring actor-lookup copies were checked against the
+final source. Each source slice passed one normal production build and all seven
+existing core suites. This is source/build/core-test evidence, without a live-play
+or timing claim. Heap adoption remains open, including growth of retained history
+and the remaining message, frame and callback storage callers.

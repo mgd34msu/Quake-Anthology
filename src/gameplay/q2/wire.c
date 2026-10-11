@@ -148,6 +148,28 @@ static bool idle(const qa_q2_game *g, qa_error *error)
             "Q2 wire observation requires its completed GAME owner"), false);
 }
 
+bool q2_wire_binding_number(const qa_q2_game *g, qa_actor_id id, uint32_t *out)
+{
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
+    if (!record) return false;
+    size_t number;
+    if (record->owner == g->options.owner && record->has_source)
+        number = record->source_slot;
+    else if (!qa_actor_index_find(&g->wire_index, id, &number)) return false;
+    if (number >= g->wire_extent) return false;
+    *out = (uint32_t)number;
+    return true;
+}
+
+qa_actor_id q2_wire_actor_at(const qa_q2_game *g, uint32_t slot)
+{
+    qa_actor_id bound = qa_actor_index_at_source(&g->wire_index, slot);
+    if (bound.registry) return bound;
+    const qa_actor_record *record = qa_actors_at_source(qa_session_actors(g->services.session),
+        g->options.owner, slot);
+    return record ? record->id : (qa_actor_id){0};
+}
+
 bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
     uint32_t clients, qa_error *error)
 {
@@ -157,17 +179,18 @@ bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
             "Q2 wire construction requires an empty representable source edict table");
         return false;
     }
-    qa_actor_id *actors = calloc(capacity, sizeof(*actors));
+    qa_actor_index index = {0};
     uint64_t *freed = calloc(capacity, sizeof(*freed));
-    if (!actors || !freed) {
-        free(actors); free(freed);
+    if (!freed) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 physical source edicts");
         return false;
     }
-    free(g->wire_actors); free(g->wire_freed_ns);
-    free(g->wire_references); g->wire_references = NULL;
-    g->wire_reference_count = g->wire_reference_capacity = 0;
-    g->wire_actors = actors; g->wire_freed_ns = freed;
+    if (!qa_actor_index_create(&index, qa_session_actors(g->services.session), error) ||
+        !qa_actor_index_reverse_reserve(&index, capacity, error)) {
+        qa_actor_index_destroy(&index); free(freed); return false;
+    }
+    qa_actor_index_destroy(&g->wire_index); free(g->wire_freed_ns);
+    g->wire_index = index; g->wire_freed_ns = freed;
     g->wire_capacity = capacity; g->wire_clients = clients; g->wire_extent = clients + 1;
     g->wire_frame = 0;
     return true;
@@ -175,10 +198,9 @@ bool qa_q2_wire_configure(qa_q2_game *g, uint32_t capacity,
 
 void q2_wire_reset(qa_q2_game *g)
 {
-    memset(g->wire_actors, 0, g->wire_capacity * sizeof(*g->wire_actors));
+    qa_actor_index_clear(&g->wire_index);
     memset(g->wire_freed_ns, 0, g->wire_capacity * sizeof(*g->wire_freed_ns));
     g->wire_extent = g->wire_clients + 1; g->wire_frame = 0;
-    g->wire_reference_count = 0;
     ++g->wire_lightstyles.revision;
     memset(g->wire_lightstyles.patterns, 0, sizeof(g->wire_lightstyles.patterns));
     memset(g->wire_shadows, 0, sizeof(g->wire_shadows)); g->wire_shadow_count = 0;
@@ -187,39 +209,36 @@ void q2_wire_reset(qa_q2_game *g)
 static bool bind(qa_q2_game *g, q2_actor *a, qa_actor_id id,
     uint32_t slot, qa_error *error)
 {
+    qa_actor_id occupied = q2_wire_actor_at(g, slot);
     if (slot >= g->wire_capacity ||
-        (g->wire_actors[slot].registry && !qa_actor_id_equal(g->wire_actors[slot], id))) {
+        (occupied.registry && !qa_actor_id_equal(occupied, id))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, slot,
             "Q2 physical source edict is occupied or outside its admitted table");
         return false;
     }
-    if (a->wire_bound && a->wire_slot != slot &&
-        !qa_actor_id_equal(g->wire_actors[a->wire_slot], id)) {
-            qa_error_set(error, QA_ERROR_FORMAT, a->wire_slot,
+    uint32_t previous;
+    size_t module_previous;
+    bool bound = qa_actor_index_find(&g->wire_index, id, &module_previous);
+    if (bound) previous = (uint32_t)module_previous;
+    else bound = q2_wire_binding_number(g, id, &previous);
+    if (bound && previous != slot &&
+        !qa_actor_id_equal(q2_wire_actor_at(g, previous), id)) {
+            qa_error_set(error, QA_ERROR_FORMAT, previous,
                 "Q2 actor lost its prior physical source edict");
             return false;
     }
-    size_t reference = 0;
-    while (reference < g->wire_reference_count &&
-        !qa_actor_id_equal(g->wire_references[reference].actor, id)) ++reference;
-    if (reference == g->wire_reference_capacity) {
-        size_t capacity = reference ? reference * 2 : 32;
-        if (capacity < reference || capacity > SIZE_MAX / sizeof(*g->wire_references)) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 Engine provenance extent overflows"); return false;
-        }
-        q2_wire_reference *rows = realloc(g->wire_references, capacity * sizeof(*rows));
-        if (!rows) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Q2 Engine admission provenance"); return false; }
-        g->wire_references = rows; g->wire_reference_capacity = capacity;
-    }
-    g->wire_references[reference] = (q2_wire_reference){id, slot};
-    if (reference == g->wire_reference_count) ++g->wire_reference_count;
-    if (a->wire_bound && a->wire_slot != slot) {
-        g->wire_actors[a->wire_slot] = (qa_actor_id){0};
-        g->wire_freed_ns[a->wire_slot] = g->now_ns;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
+    if (record->owner == g->options.owner && (!record->has_source || record->source_slot != slot) &&
+        !qa_actors_bind_source(qa_session_actor_registry(g->services.session), id, slot, error)) return false;
+    if (!qa_actor_index_remember(&g->wire_index, id, slot, error)) return false;
+    if (bound && previous != slot) {
+        qa_actor_index_remove(&g->wire_index, id);
+        g->wire_freed_ns[previous] = g->now_ns;
         a->wire_lifetime = (qa_q2_wire_lifetime){0};
     }
-    g->wire_actors[slot] = id; g->wire_freed_ns[slot] = 0;
-    a->wire_slot = slot; a->wire_bound = true;
+    if (record->owner == g->options.owner) qa_actor_index_remove(&g->wire_index, id);
+    else qa_actor_index_put(&g->wire_index, id, slot);
+    g->wire_freed_ns[slot] = 0;
     if (g->wire_extent <= slot) g->wire_extent = slot + 1;
     return true;
 }
@@ -234,7 +253,7 @@ static bool spawn_slot(const qa_q2_game *g,uint32_t *out,qa_error *error)
     uint32_t slot=g->wire_extent;
     for(uint32_t i=g->wire_clients+1;i<g->wire_extent;++i) {
         uint64_t freed=g->wire_freed_ns[i];
-        if(!g->wire_actors[i].registry&&(freed<2*Q2_NS||
+        if(!q2_wire_actor_at(g,i).registry&&(freed<2*Q2_NS||
             (g->now_ns>freed&&g->now_ns-freed>Q2_NS/2))) {
             slot=i;break;
         }
@@ -249,7 +268,7 @@ static bool spawn_slot(const qa_q2_game *g,uint32_t *out,qa_error *error)
 bool qa_q2_wire_spawn_slot(const qa_q2_game *g,uint32_t *out,qa_error *error)
 {
     if(!g||!out||g->restoring_continuation||g->continuation_pending||g->continuation_failed||
-        g->release_failed||!g->wire_actors||!g->wire_freed_ns||
+        g->release_failed||!g->wire_freed_ns||
         g->wire_extent<g->wire_clients+1||g->wire_extent>g->wire_capacity) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 Source spawn requires its actual physical edict namespace");
         return false;
@@ -259,7 +278,11 @@ bool qa_q2_wire_spawn_slot(const qa_q2_game *g,uint32_t *out,qa_error *error)
 
 bool q2_wire_admit(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *error)
 {
-    if (g->restoring_continuation || a->wire_bound) return true;
+    if (g->restoring_continuation) return true;
+    uint32_t number;
+    size_t retained;
+    if (q2_wire_binding_number(g, id, &number) &&
+        qa_actor_index_find_retained(&g->wire_index, id, &retained) && retained == number) return true;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
     if (!record) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 physical source actor is retired");
@@ -277,7 +300,7 @@ bool q2_wire_admit(qa_q2_game *g, q2_actor *a, qa_actor_id id, qa_error *error)
     return bind(g, a, id, slot, error);
 }
 
-void q2_wire_release(qa_q2_game *g, q2_actor *a)
+void q2_wire_release(qa_q2_game *g, q2_actor *a, qa_actor_record released)
 {
     for (uint32_t i = 0; i < g->wire_shadow_count; ++i)
         if (qa_actor_id_equal(g->wire_shadows[i].actor, a->id)) {
@@ -289,12 +312,12 @@ void q2_wire_release(qa_q2_game *g, q2_actor *a)
                 (void)q2_map_event(g,&event,&ignored);
             }
         }
-    if (a->wire_bound && a->wire_slot < g->wire_extent &&
-        qa_actor_id_equal(g->wire_actors[a->wire_slot], a->id)) {
-        g->wire_actors[a->wire_slot] = (qa_actor_id){0};
-        g->wire_freed_ns[a->wire_slot] = g->now_ns;
-    }
-    a->wire_bound = false;
+    size_t slot;
+    bool bound = released.owner == g->options.owner && released.has_source;
+    if (bound) slot = released.source_slot;
+    else bound = qa_actor_index_find(&g->wire_index, a->id, &slot);
+    if (bound && slot < g->wire_extent) g->wire_freed_ns[slot] = g->now_ns;
+    qa_actor_index_remove(&g->wire_index, a->id);
 }
 
 bool qa_q2_wire_extent(const qa_q2_game *g, uint32_t *out, qa_error *error)
@@ -333,17 +356,18 @@ bool qa_q2_wire_entity_number(qa_q2_game *g, qa_actor_id id, uint32_t *out, qa_e
         g->continuation_failed || g->release_failed) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 entity reference requires its actual Engine namespace"); return false;
     }
-    for (size_t i = 0; i < g->wire_reference_count; ++i)
-        if (qa_actor_id_equal(g->wire_references[i].actor, id)) {
-            *out = g->wire_references[i].number; return true;
-        }
+    size_t retained;
+    if (qa_actor_index_find_retained(&g->wire_index, id, &retained)) {
+        *out = (uint32_t)retained; return true;
+    }
     if (!qa_q2_wire_admit_actor(g, id, error)) return false;
     q2_actor *a = g->actors[id.slot];
-    if (!a || !a->wire_bound || a->wire_slot >= g->wire_extent ||
-        !qa_actor_id_equal(g->wire_actors[a->wire_slot], id)) {
+    uint32_t slot;
+    if (!a || !q2_wire_binding_number(g, id, &slot) ||
+        !qa_actor_id_equal(q2_wire_actor_at(g, slot), id)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 emitted actor lost its genuine Engine admission"); return false;
     }
-    *out = a->wire_slot; return true;
+    *out = slot; return true;
 }
 
 bool qa_q2_wire_linked(qa_q2_game *g, const qa_linked_body *linked, qa_error *error)
@@ -351,8 +375,9 @@ bool qa_q2_wire_linked(qa_q2_game *g, const qa_linked_body *linked, qa_error *er
     if (!linked || !qa_vec_finite(linked->state.origin) ||
         !qa_q2_wire_admit_actor(g, linked->actor, error)) return false;
     q2_actor *a = g->actors[linked->actor.slot];
-    if (!a->wire_bound || a->wire_slot >= g->wire_extent ||
-        !qa_actor_id_equal(g->wire_actors[a->wire_slot], linked->actor) || a->wire_lifetime.link_count == UINT64_MAX) {
+    uint32_t slot;
+    if (!q2_wire_binding_number(g, linked->actor, &slot) ||
+        !qa_actor_id_equal(q2_wire_actor_at(g, slot), linked->actor) || a->wire_lifetime.link_count == UINT64_MAX) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source link lost its actual physical Engine membership");
         return false;
     }
@@ -376,8 +401,9 @@ bool q2_wire_shadow_event(qa_q2_game *g, qa_q2_map_event *event, qa_error *error
         !a->entity || a->entity->kind != Q2E_DYNAMIC_LIGHT || a->entity->stage != 1) return true;
     if (event->radius <= 0) return true;
     float cone = q2_field_float(g, a->entity, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTCONEANGLE], 45);
-    if (!a->wire_bound || a->wire_slot >= g->wire_extent ||
-        !qa_actor_id_equal(g->wire_actors[a->wire_slot], a->id) ||
+    uint32_t slot;
+    if (!q2_wire_binding_number(g, a->id, &slot) ||
+        !qa_actor_id_equal(q2_wire_actor_at(g, slot), a->id) ||
         !qa_vec_finite(event->direction) || !isfinite(event->radius) || !isfinite(event->intensity) ||
         !isfinite(event->fade_start) || !isfinite(event->fade_end) || !isfinite(cone) ||
         event->style < -1 || event->style >= 256) {
@@ -388,9 +414,9 @@ bool q2_wire_shadow_event(qa_q2_game *g, qa_q2_map_event *event, qa_error *error
     while (index < g->wire_shadow_count && !qa_actor_id_equal(g->wire_shadows[index].actor, a->id)) ++index;
     if (index >= 256) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 Source shadow-light table is full"); return false; }
     if (index == g->wire_shadow_count) ++g->wire_shadow_count;
-    event->slot=(int)index;event->count=(int)a->wire_slot;
+    event->slot=(int)index;event->count=(int)slot;
     event->value=cone;event->flags|=QA_Q2_MAP_LIGHT_SHADOW;
-    g->wire_shadows[index] = (q2_shadow_slot){.actor = a->id, .source_slot = a->wire_slot};
+    g->wire_shadows[index] = (q2_shadow_slot){.actor = a->id, .source_slot = slot};
     return true;
 }
 
@@ -401,14 +427,14 @@ static bool current(const qa_q2_game *g, uint32_t slot,
         qa_error_set(error, QA_ERROR_ARGUMENT, slot, "Q2 edict leaves its physical source extent");
         return false;
     }
-    qa_actor_id id = g->wire_actors[slot];
+    qa_actor_id id = q2_wire_actor_at(g, slot);
     qa_q2_wire_binding value = {.source_owner = g->options.owner, .source_slot = slot};
     if (id.registry) {
         const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
         q2_actor *a = id.slot < g->capacity ? g->actors[id.slot] : NULL;
+        uint32_t number;
         if (!record || !a || !qa_actor_id_equal(a->id, id) ||
-            !a->wire_bound || a->wire_slot != slot ||
-            (record->owner == g->options.owner && record->has_source && record->source_slot != slot)) {
+            !q2_wire_binding_number(g, id, &number) || number != slot) {
             qa_error_set(error, QA_ERROR_FORMAT, slot, "Q2 physical source binding lost its full actor generation");
             return false;
         }
@@ -429,11 +455,12 @@ bool qa_q2_wire_actor(const qa_q2_game *g, qa_actor_id id,
 {
     if (!out || !idle(g, error)) return false;
     const q2_actor *a = id.slot < g->capacity ? g->actors[id.slot] : NULL;
-    if (!a || !qa_actor_id_equal(a->id, id) || !a->wire_bound) {
+    uint32_t slot;
+    if (!a || !qa_actor_id_equal(a->id, id) || !q2_wire_binding_number(g, id, &slot)) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Actor has no admitted Q2 physical source edict");
         return false;
     }
-    return current(g, a->wire_slot, out, error);
+    return current(g, slot, out, error);
 }
 
 bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
@@ -458,8 +485,9 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
         }
     }
     const q2_actor *a=id.slot<g->capacity?g->actors[id.slot]:NULL;
-    if (!a || !qa_actor_id_equal(a->id,id) || !a->wire_bound ||
-        !current(g,a->wire_slot,&binding,error)) {
+    uint32_t slot;
+    if (!a || !qa_actor_id_equal(a->id,id) || !q2_wire_binding_number(g,id,&slot) ||
+        !current(g,slot,&binding,error)) {
         if (!error || error->code==QA_OK)
             qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Actor has no admitted Q2 physical source edict");
         return false;
@@ -711,8 +739,9 @@ bool qa_q2_wire_next(const qa_q2_game *g, uint64_t *order,
     if (!order || !out || !found || !idle(g, error)) return false;
     *found = false;
     for (const q2_actor *a = g->first_actor; a; a = a->live_next) {
-        if (a->source_order <= *order || !a->wire_bound) continue;
-        if (!current(g, a->wire_slot, out, error)) return false;
+        uint32_t slot;
+        if (a->source_order <= *order || !q2_wire_binding_number(g, a->id, &slot)) continue;
+        if (!current(g, slot, out, error)) return false;
         *order = a->source_order; *found = true;
         return true;
     }

@@ -436,9 +436,8 @@ typedef struct q2_actor {
     size_t storage_slot;
     struct q2_actor *live_next, *live_previous;
     uint64_t source_order;
-    uint32_t wire_slot, wire_event;
+    uint32_t wire_event;
     uint64_t wire_event_frame;
-    bool wire_bound;
     qa_q2_wire_view wire_view;
     qa_q2_player_pm_rules source_pm;
     qa_q2_wire_lifetime wire_lifetime;
@@ -485,10 +484,6 @@ typedef struct q2_shadow_slot {
     qa_actor_id actor;
     uint32_t source_slot;
 } q2_shadow_slot;
-typedef struct q2_wire_reference {
-    qa_actor_id actor;
-    uint32_t number;
-} q2_wire_reference;
 typedef struct q2_push_frame {
     struct q2_push_frame *next;
     qa_physics_push *parts;
@@ -544,10 +539,8 @@ struct qa_q2_game {
     q2_mt_random rerelease_random;
     qa_actor_id current_actor;
     uint64_t sequence, actor_sequence, now_ns, frame_ns;
-    qa_actor_id *wire_actors;
+    qa_actor_index wire_index;
     uint64_t *wire_freed_ns;
-    q2_wire_reference *wire_references;
-    size_t wire_reference_count, wire_reference_capacity;
     uint32_t wire_capacity, wire_extent, wire_clients;
     uint64_t wire_frame;
     qa_string_id wire_statusbar_names[5];
@@ -618,7 +611,9 @@ bool q2_wire_admit(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
 bool q2_player_source_motion_rules(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
 bool q2_wire_shadow_event(qa_q2_game *, qa_q2_map_event *, qa_error *);
 bool q2_wire_bind(qa_q2_game *, q2_actor *, uint32_t, qa_error *);
-void q2_wire_release(qa_q2_game *, q2_actor *);
+bool q2_wire_binding_number(const qa_q2_game *, qa_actor_id, uint32_t *);
+qa_actor_id q2_wire_actor_at(const qa_q2_game *, uint32_t);
+void q2_wire_release(qa_q2_game *, q2_actor *, qa_actor_record);
 bool q2_wire_names_prepare(qa_q2_game *,qa_error *);
 void q2_wire_reset(qa_q2_game *);
 bool q2_actor_live(qa_q2_game *, qa_actor_id);

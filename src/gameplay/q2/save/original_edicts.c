@@ -173,7 +173,7 @@ bool q2_original_reference(qa_q2_game *game, q2_original_record_io *io,
         number = (int32_t)slot;
     }
     if (!physical_reference(game, io, name, offset, &number)) return false;
-    if (io->reading) *actor = number < 0 ? (qa_actor_id){0} : game->wire_actors[(uint32_t)number];
+    if (io->reading) *actor = number < 0 ? (qa_actor_id){0} : q2_wire_actor_at(game, (uint32_t)number);
     return true;
 }
 
@@ -288,7 +288,7 @@ static bool original_player_model(qa_q2_game *game, q2_original_record_io *io,
     uint32_t slot = skin & 255u;
     if (slot >= game->wire_clients || !engine)
         return malformed(io, 60, "Original Q2 player model has no physical client skin");
-    q2_actor *player = q2_actor_get(game, game->wire_actors[slot + 1], false, NULL);
+    q2_actor *player = q2_actor_get(game, q2_wire_actor_at(game, slot + 1), false, NULL);
     if (component == 0 && player && player->client && player->client->rule.visual.models[0]) {
         *model = player->client->rule.visual.models[0];
         *native_skin = player->client->rule.visual.skin;
@@ -351,7 +351,8 @@ static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
                 continue;
             }
         }
-        bool world = actor->wire_bound && actor->wire_slot == 0;
+        uint32_t number;
+        bool world = q2_wire_binding_number(game, actor->id, &number) && number == 0;
         bool beam = (actor->projectile.kind == Q2_BFG_LASER || actor->projectile.kind == Q2_RERELEASE_SPAWN_BEAM);
         if ((world || beam) && i == 0) {
             index = io->reading ? 0 : 1;
