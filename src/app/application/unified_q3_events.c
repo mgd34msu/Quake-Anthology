@@ -1,13 +1,22 @@
 #include "unified_q3_events.h"
 #include "unified_events.h"
 #include "guest_q3_components.h"
+#include "guest_q3_private.h"
+#include "native_q3_wire_state.h"
 
 static bool source(application_provider *p, qa_error *e)
 {
     return (p && p->application && !p->application->destroy_requested &&
-        p->kind == APPLICATION_PROVIDER_Q3 && p->state.q3 && p->constructed &&
-        !p->close_pending && p->launch && p->product) ||
+        !p->close_pending && p->launch && p->product &&
+        ((p->kind == APPLICATION_PROVIDER_Q3 && p->state.q3) || q3g_engine(p))) ||
         application_fail(e, QA_ERROR_ARGUMENT, "Q3 presentation lost its genuine GAME owner");
+}
+
+static bool source_time(application_provider *p, int32_t *time, qa_error *e)
+{
+    if (p->kind == APPLICATION_PROVIDER_Q3) return qa_q3_source_clock(p->state.q3, time, e);
+    *time = q3g_engine(p)->milliseconds;
+    return true;
 }
 
 bool application_unified_q3_attack_providers(void *context, qa_actor_id attacker,
@@ -78,7 +87,7 @@ bool application_unified_q3_text(application_provider *p, application_unified_q3
     static const qa_unified_q3_event_kind kinds[] = {QA_UNIFIED_Q3_SERVER_COMMAND,
         QA_UNIFIED_Q3_DROP_CLIENT};
     int32_t time;
-    if (!qa_q3_source_clock(p->state.q3, &time, e)) return false;
+    if (!source_time(p, &time, e)) return false;
     qa_unified_q3_event event = {.kind = kinds[kind], .client = client, .text = (char *)value};
     return source_emit(p, &event,
         (uint64_t)(uint32_t)time * UINT64_C(1000000), e);
@@ -89,7 +98,7 @@ bool application_unified_q3_configstring(application_provider *p, uint32_t index
     if (index >= QA_Q3_CONFIGSTRINGS || !value || !source(p, e))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 source configstring has no authored slot");
     int32_t time;
-    if (!qa_q3_source_clock(p->state.q3, &time, e)) return false;
+    if (!source_time(p, &time, e)) return false;
     qa_unified_q3_event event = {.kind = QA_UNIFIED_Q3_CONFIGSTRING, .index = index, .text = (char *)value};
     return source_emit(p, &event,
         (uint64_t)(uint32_t)time * UINT64_C(1000000), e);
@@ -114,8 +123,36 @@ bool application_unified_q3_console(application_provider *p, bool execute_now, c
 {
     if (!value || !source(p, e)) return application_fail(e, QA_ERROR_ARGUMENT, "Q3 engine event lost its authored text");
     int32_t now;
-    if (!qa_q3_source_clock(p->state.q3, &now, e)) return false;
+    if (!source_time(p, &now, e)) return false;
     qa_unified_q3_event event = {.kind = QA_UNIFIED_Q3_CONSOLE_COMMAND, .execute_now = execute_now, .text = (char *)value};
     return source_emit(p, &event,
         (uint64_t)(uint32_t)now * UINT64_C(1000000), e);
+}
+bool qa_application_q3_output_drain(qa_application *app, qa_error *error)
+{
+    if (app->event_source_draining) return true;
+    app->event_source_draining = true;
+    bool ok = true;
+    while (ok && app->event_source_cursor < qa_application_events_next(app)) {
+        const application_event_envelope *record =
+            application_event_stream_at(app, app->event_source_cursor);
+        for (const application_event_view *view = record ? record->views : NULL;
+                ok && view; view = view->next) {
+            const qa_unified_presentation_payload *payload = view->event.presentation;
+            if (!payload || payload->kind != QA_UNIFIED_PRESENTATION_Q3 ||
+                (payload->value.q3.kind != QA_UNIFIED_Q3_SERVER_COMMAND &&
+                 payload->value.q3.kind != QA_UNIFIED_Q3_CONFIGSTRING)) continue;
+            application_provider *provider = app->live_providers;
+            while (provider && provider->owner != view->event.provider) provider = provider->next_live;
+            if (!provider || provider->close_pending) continue;
+            if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_wire)
+                ok = application_native_q3_output(provider, &payload->value.q3, error);
+            else if (q3g_engine(provider))
+                ok = q3g_output(provider, &payload->value.q3, error);
+        }
+        if (ok) ++app->event_source_cursor;
+    }
+    app->event_source_draining = false;
+    application_events_retire(app);
+    return ok;
 }

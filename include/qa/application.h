@@ -608,6 +608,8 @@ uint64_t qa_application_events_audio_first(const qa_application *);
 void qa_application_events_audio_consume(qa_application *, uint64_t next);
 /* Client-generated effect sounds have no network projection. */
 bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
+/* Module/protocol adapters consume committed Q3 output before client publication. */
+bool qa_application_q3_output_drain(qa_application *, qa_error *);
 bool qa_application_event_read(const qa_application *, qa_application_event_cursor *,
     qa_application_event_view *);
 uint64_t qa_application_protocol_events_generation(const qa_application *);

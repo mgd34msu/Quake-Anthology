@@ -195,6 +195,7 @@ bool application_q3_guest_client_begin(application_provider *provider, uint32_t 
         client->gamestate = malloc(sizeof(*client->gamestate));
         if (!client->gamestate) return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 local client gamestate");
     }
+    if (!qa_application_q3_output_drain(provider->application, error)) return false;
     *client->gamestate = engine->gamestate;
     client->gamestate->client_number = (int32_t)slot;
     client->gamestate->command_sequence = client->reliable.sequence;

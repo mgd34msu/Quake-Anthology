@@ -3,6 +3,7 @@
 #include "native_q3_wire_state.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_console.h"
+#include "unified_q3_events.h"
 
 char *q3g_copy_text(const char *text, qa_error *error)
 {
@@ -103,7 +104,7 @@ static bool retained_command_recipient(const struct application_q3_guest *engine
     }
     return false;
 }
-static bool send_command(void *context, int32_t client, const char *text, qa_error *error)
+static bool output_command(void *context, int32_t client, const char *text, qa_error *error)
 {
     q3g_role *role = context;
     if (client < -1 || client >= 64 || strlen(text) >= QA_Q3_COMMAND_CHARS)
@@ -119,31 +120,38 @@ static bool send_command(void *context, int32_t client, const char *text, qa_err
             !qa_q3_reliable_add(&role->engine->clients[i].reliable, QA_Q3_SERVER, text, error)) return false;
     return true;
 }
+static bool send_command(void *context, int32_t client, const char *text, qa_error *error)
+{
+    q3g_role *role = context;
+    if (client < -1 || client >= 64 || !text || strlen(text) >= QA_Q3_COMMAND_CHARS)
+        return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 server command recipient or size");
+    return application_unified_q3_text(role->engine->provider,
+        APPLICATION_Q3_SOURCE_COMMAND, client, text, error);
+}
+
+static bool output_configstring_command(void *context, const char *text, qa_error *error)
+{ return output_command(context, -1, text, error); }
+
+bool q3g_output(application_provider *provider, const qa_unified_q3_event *event, qa_error *error)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || !engine->game) return true;
+    if (event->kind == QA_UNIFIED_Q3_SERVER_COMMAND)
+        return output_command(engine->game, event->client, event->text, error);
+    if (event->kind == QA_UNIFIED_Q3_CONFIGSTRING)
+        return qa_q3_configstring_commands(event->index, event->text,
+            output_configstring_command, engine->game, error);
+    return true;
+}
+
 bool q3g_set_configstring(q3g_role *role, uint32_t index, const char *text, qa_error *error)
 {
     if (index >= QA_Q3_CONFIGSTRINGS || !text)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 configstring update");
     const char *prior = qa_q3_configstring(&role->engine->gamestate, index);
     if (!strcmp(prior, text)) return true;
-    size_t length = strlen(text), chunk = QA_Q3_COMMAND_CHARS - 24;
-    if (length >= QA_Q3_GAMESTATE_CHARS)
-        return application_fail(error, QA_ERROR_FORMAT, "Q3 configstring exceeds gamestate capacity");
-    size_t count = length <= chunk ? 1 : (length + chunk - 1) / chunk;
-    for (size_t i = 0; i < 64; ++i)
-        if (retained_command_recipient(role->engine, i) && !queue_room(&role->engine->clients[i], count, error)) return false;
-    if (!qa_q3_configstring_set(&role->engine->gamestate, index, text, error)) return false;
-    char command[QA_Q3_COMMAND_CHARS];
-    if (length <= chunk) {
-        snprintf(command, sizeof(command), "cs %u \"%s\"", index, text);
-        return send_command(role, -1, command, error);
-    }
-    for (size_t offset = 0; offset < length; offset += chunk) {
-        size_t size = length - offset < chunk ? length - offset : chunk;
-        const char *name = !offset ? "bcs0" : offset + size == length ? "bcs2" : "bcs1";
-        snprintf(command, sizeof(command), "%s %u \"%.*s\"", name, index, (int)size, text + offset);
-        if (!send_command(role, -1, command, error)) return false;
-    }
-    return true;
+    return qa_q3_configstring_set(&role->engine->gamestate, index, text, error) &&
+        application_unified_q3_configstring(role->engine->provider, index, text, error);
 }
 
 bool q3g_publish_information(q3g_role *role, bool force, qa_error *error)
@@ -246,6 +254,7 @@ static bool bot_snapshot_entity(void *context, int32_t client, int32_t sequence,
 static bool bot_console_message(void *context, int32_t client, const char **out, qa_error *error)
 {
     q3g_role *role = context;
+    if (!qa_application_q3_output_drain(role->engine->provider->application, error)) return false;
     if (role->server.bot_console_message)
         return role->server.bot_console_message(role->server.context, client, out, error);
     if (client < 0 || client >= 64) return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 bot console client");

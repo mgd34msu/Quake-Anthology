@@ -170,6 +170,7 @@ bool application_event_stream_create(qa_application *app, size_t actors, qa_erro
         return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized persistent event slots");
     app->unified_persistent_capacity = records;
     app->event_local_cursor = 1;
+    app->event_source_cursor = 1;
     app->event_peer_cursor = UINT64_MAX;
     app->event_audio_cursor = UINT64_MAX;
     return true;
@@ -1199,6 +1200,7 @@ void application_events_retire(qa_application *app)
     uint64_t next = app->event_local_cursor;
     if (app->event_peer_cursor < next) next = app->event_peer_cursor;
     if (app->event_audio_cursor < next) next = app->event_audio_cursor;
+    if (app->event_source_cursor < next) next = app->event_source_cursor;
     qa_event_ring_retire(app->event_ring, next);
 }
 uint64_t qa_application_events_audio_first(const qa_application *app)

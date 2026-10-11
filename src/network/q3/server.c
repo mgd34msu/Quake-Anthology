@@ -355,13 +355,9 @@ bool qa_q3_server_peer_reset_pure(qa_q3_server_peer *p, qa_error *error)
     if (!p) return fail(error, QA_ERROR_ARGUMENT, "Missing Q3 pure admission owner");
     p->state.pure_authentic = false; p->state.got_pure_command = false; return true;
 }
-bool qa_q3_server_peer_configstring(qa_q3_server_peer *p, unsigned index, const char *text, qa_error *e) {
-    if (!p || !text || index >= QA_Q3_CONFIGSTRINGS || strlen(text) >= 8192 || strpbrk(text, "\"\r\n"))
-        return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 configstring update");
-    const char *old = qa_q3_configstring(&p->gamestate, index);
-    if (old && !strcmp(old, text)) return true;
-    if (!qa_q3_configstring_set(&p->gamestate, index, text, e)) return false;
-    if (p->state.phase < QA_Q3_PRIMED) return true;
+bool qa_q3_configstring_commands(unsigned index, const char *text,
+    qa_q3_configstring_command_fn emit, void *context, qa_error *e)
+{
     size_t length = strlen(text), offset = 0;
     do {
         size_t n = length - offset;
@@ -369,8 +365,19 @@ bool qa_q3_server_peer_configstring(qa_q3_server_peer *p, unsigned index, const 
         const char *name = length <= 999 ? "cs" : !offset ? "bcs0" : offset + n == length ? "bcs2" : "bcs1";
         char command[1024];
         snprintf(command, sizeof(command), "%s %u \"%.*s\"", name, index, (int)n, text + offset);
-        if (!qa_q3_server_peer_command(p, command, e)) return false;
+        if (!emit(context, command, e)) return false;
         offset += n;
     } while (offset < length);
     return true;
+}
+static bool configstring_command(void *context, const char *text, qa_error *error)
+{ return qa_q3_server_peer_command(context, text, error); }
+bool qa_q3_server_peer_configstring(qa_q3_server_peer *p, unsigned index, const char *text, qa_error *e) {
+    if (!p || !text || index >= QA_Q3_CONFIGSTRINGS || strlen(text) >= 8192 || strpbrk(text, "\"\r\n"))
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 configstring update");
+    const char *old = qa_q3_configstring(&p->gamestate, index);
+    if (old && !strcmp(old, text)) return true;
+    if (!qa_q3_configstring_set(&p->gamestate, index, text, e)) return false;
+    if (p->state.phase < QA_Q3_PRIMED) return true;
+    return qa_q3_configstring_commands(index, text, configstring_command, p, e);
 }

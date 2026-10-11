@@ -929,6 +929,9 @@ static void install_store(qa_application *app, event_store *store, uint64_t pend
     app->event_ring = store->pages;
     app->event_write = NULL;
     app->event_local_cursor = pending_first;
+    /* Module reliable state is restored separately; retained presentation is not a new send. */
+    app->event_source_cursor = qa_event_ring_next(store->pages);
+    app->event_source_draining = false;
     app->event_peer_cursor = UINT64_MAX;
     if (app->event_audio_cursor != UINT64_MAX) app->event_audio_cursor = pending_first;
     qa_event_ring_retire(store->pages, app->event_local_cursor);

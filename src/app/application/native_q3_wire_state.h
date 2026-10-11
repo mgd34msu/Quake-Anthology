@@ -9,6 +9,7 @@ bool application_native_q3_wire_create(application_provider *, qa_world *source_
     bool restoring, qa_error *);
 bool application_native_q3_wire_destroy(application_provider *, qa_error *);
 bool application_native_q3_wire_idle(const application_provider *);
+bool application_native_q3_output(application_provider *, const qa_unified_q3_event *, qa_error *);
 bool application_native_q3_wire_destroy_ready(const application_provider *);
 
 /* Engine admission follows the real physical GAME binding. Source gclient,

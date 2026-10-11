@@ -657,6 +657,7 @@ bool application_native_q3_wire_drop_transport(application_provider *provider, u
 bool application_native_q3_wire_local_publication(application_provider *provider, uint32_t slot,
     application_native_q3_wire_publication *out, bool *wanted, qa_error *error)
 {
+    if (!qa_application_q3_output_drain(provider->application, error)) return false;
     struct application_native_q3_wire *wire = wire_owner(provider, error);
     if (!wire) return false;
     if (!out || !wanted || slot >= wire->max_clients || wire->round_pending)
@@ -1072,8 +1073,7 @@ bool application_native_q3_send_command(application_provider *provider, int32_t 
 {
     if (!text || slot < -1 || slot >= (int32_t)QA_Q3_SOURCE_CLIENTS || strlen(text) >= QA_Q3_COMMAND_CHARS)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 Source command has no authored client or text");
-    return application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_COMMAND, slot, text, error) &&
-        send_command_transport(provider, slot, text, error);
+    return application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_COMMAND, slot, text, error);
 }
 
 bool application_native_q3_server_command(void *context, int32_t slot,
@@ -1097,66 +1097,27 @@ static bool ui_configstring_publish(struct application_native_q3_wire *wire,
 
 bool application_native_q3_configstring_changed(void *context, uint32_t index,
     const char *text, qa_error *error)
+{ return application_unified_q3_configstring(context, index, text, error); }
+
+static bool output_configstring_command(void *context, const char *text, qa_error *error)
+{ return send_command_transport(context, -1, text, error); }
+
+bool application_native_q3_output(application_provider *provider,
+    const qa_unified_q3_event *event, qa_error *error)
 {
-    application_provider *provider = context;
-    if (index >= QA_Q3_CONFIGSTRINGS || !text)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 committed configstring is invalid");
-    struct application_native_q3_wire *wire = wire_owner(provider, error);
-    if (!wire) return false;
-    qa_q3_game *game = provider->state.q3;
-    uint64_t revision;
-    if (!qa_q3_configstring_revision(game, index, &revision, error)) return false;
-    char *retained = copy_text(text, error);
-    if (!retained) return false;
-    size_t length = strlen(retained), chunk = QA_Q3_COMMAND_CHARS - 25;
-    char command[QA_Q3_COMMAND_CHARS];
-    bool ok = application_unified_q3_configstring(provider, index, retained, error);
-    size_t offset = 0;
-    if (!ok) { free(retained); return false; }
-    do {
-        const char *current;
-        uint64_t actual;
-        if (wire_owner(provider, error) != wire || provider->state.q3 != game ||
-            !qa_q3_configstring_revision(game, index, &actual, error) ||
-            !qa_q3_configstring_read(game, index, &current, error)) {
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 configstring publication lost its source owner");
-            break;
-        }
-        if (actual != revision) break;
-        if (strcmp(current, retained)) {
-            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 configstring text differs from its authored mutation");
-            break;
-        }
-        if (!offset && !ui_configstring_publish(wire, index, retained, error)) {
-            ok = false;
-            break;
-        }
-        size_t bytes = length - offset < chunk ? length - offset : chunk;
-        const char *name = length <= chunk ? "cs" : !offset ? "bcs0" :
-            offset + bytes == length ? "bcs2" : "bcs1";
-        snprintf(command, sizeof(command), "%s %u \"%.*s\"", name, index, (int)bytes, retained + offset);
-        ok = send_command_transport(provider, -1, command, error);
-        if (!ok) break;
-        if (wire_owner(provider, error) != wire || provider->state.q3 != game ||
-            !qa_q3_configstring_revision(game, index, &actual, error) ||
-            !qa_q3_configstring_read(game, index, &current, error)) {
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 configstring callback retired its source owner");
-            break;
-        }
-        if (actual != revision) break;
-        if (strcmp(current, retained)) {
-            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 configstring callback changed text without a source mutation");
-            break;
-        }
-        offset += bytes;
-    } while (offset < length);
-    free(retained);
-    return ok;
+    if (event->kind == QA_UNIFIED_Q3_SERVER_COMMAND)
+        return send_command_transport(provider, event->client, event->text, error);
+    if (event->kind == QA_UNIFIED_Q3_CONFIGSTRING)
+        return ui_configstring_publish(provider->native_q3_wire, event->index, event->text, error) &&
+            qa_q3_configstring_commands(event->index, event->text,
+                output_configstring_command, provider, error);
+    return true;
 }
 
 bool application_native_q3_bot_console(application_provider *provider, qa_actor_id actor,
     char *text, size_t capacity, bool *found, qa_error *error)
 {
+    if (!qa_application_q3_output_drain(provider->application, error)) return false;
     uint32_t slot;
     if (!provider || !text || !capacity || !found ||
         !qa_q3_native_client_slot(provider->state.q3, actor, &slot, error))

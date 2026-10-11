@@ -144,6 +144,8 @@ typedef struct qa_q3_gamestate {
 void qa_q3_gamestate_init(qa_q3_gamestate *);
 const char *qa_q3_configstring(const qa_q3_gamestate *, unsigned index);
 bool qa_q3_configstring_set(qa_q3_gamestate *, unsigned, const char *, qa_error *);
+typedef bool (*qa_q3_configstring_command_fn)(void *, const char *, qa_error *);
+bool qa_q3_configstring_commands(unsigned, const char *, qa_q3_configstring_command_fn, void *, qa_error *);
 typedef struct qa_q3_snapshot {
     bool valid;
     int32_t message_number, server_time, delta_number, server_command_number;

@@ -925,7 +925,8 @@ static bool frontend_step(qa_frontend *frontend,
                     if (ok) ok = frontend_profiler_end(profiler,
                         frontend_remote_unified_sample(frontend,frontend->wall_time_ns,error) &&
                         frontend_remote_q1_sample_all(frontend,frontend->wall_time_ns,error) &&
-                        frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) && frontend_network_publish(frontend, error) &&
+                        frontend_remote_q2_sample(frontend,frontend->wall_time_ns,error) &&
+                        qa_application_q3_output_drain(frontend->application,error) && frontend_network_publish(frontend, error) &&
                         frontend_input_profile_bind(frontend,error) && frontend_campaign_sync(frontend,error), error);
                 }
             }
@@ -937,6 +938,8 @@ static bool frontend_step(qa_frontend *frontend,
             if (ok && ready && !replay && !qa_application_should_stop(frontend->application))
                 ok=commands(frontend,*playing,true,error);
         }
+        if (ok && ready && !replay && !qa_application_should_stop(frontend->application))
+            ok=qa_application_q3_output_drain(frontend->application,error);
         if (ok && ready && !qa_application_should_stop(frontend->application) && cinematic) {
             bool rendered=false;
             /* Playback owns its separate media clock. A console fallback may
