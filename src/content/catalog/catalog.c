@@ -115,6 +115,27 @@ bool catalog_requirement(qa_catalog *catalog, catalog_product *product,
     return true;
 }
 
+bool catalog_bind_product_names(qa_catalog *catalog, catalog_product *product, qa_error *error)
+{
+    qa_string_id key, identity;
+    if (!qa_strings_intern_cstr(catalog->strings, product->view.key, &key, error) ||
+        !qa_strings_intern_cstr(catalog->strings, product->view.identity, &identity, error)) return false;
+    size_t old_capacity = catalog->product_name_capacity;
+    size_t count = (size_t)(key > identity ? key : identity) + 1;
+    if (!catalog_grow((void **)&catalog->products_by_name, &catalog->product_name_capacity,
+        count, sizeof(*catalog->products_by_name), error)) return false;
+    memset(catalog->products_by_name + old_capacity, 0,
+        (catalog->product_name_capacity - old_capacity) * sizeof(*catalog->products_by_name));
+    product->view.key = qa_strings_cstr(catalog->strings, key);
+    product->view.identity = qa_strings_cstr(catalog->strings, identity);
+    qa_string_id names[] = {key, identity};
+    for (size_t i = 0; i < 2; ++i) {
+        qa_product_id *slot = catalog->products_by_name + names[i];
+        if (!*slot || product->view.id < *slot) *slot = product->view.id;
+    }
+    return true;
+}
+
 bool catalog_add_product(qa_catalog *catalog, const qa_product *view,
                           catalog_product **out, qa_error *error)
 {
@@ -125,7 +146,7 @@ bool catalog_add_product(qa_catalog *catalog, const qa_product *view,
     *product = (catalog_product){ .view = *view, .configuration_base = view->base };
     product->view.id = (qa_product_id)++catalog->product_count;
     *out = product;
-    return true;
+    return catalog_bind_product_names(catalog, product, error);
 }
 
 bool catalog_product_issue(qa_catalog *catalog, catalog_product *product,
@@ -333,7 +354,7 @@ void qa_catalog_release(qa_catalog *catalog)
     }
     free(catalog->behaviors);
     for (size_t i = 0; i < catalog->physical_count; ++i) free(catalog->physical[i].members);
-    free(catalog->products); free(catalog->physical); free(catalog->mods);
+    free(catalog->products_by_name); free(catalog->products); free(catalog->physical); free(catalog->mods);
     free(catalog->install_roots); free(catalog->locations);
     if (catalog->mounts) qa_resource_pool_trim(catalog->resources);
     qa_vfs_destroy(catalog->mounts); qa_strings_destroy(catalog->strings);
@@ -401,11 +422,10 @@ qa_fs_root *qa_catalog_product_loose_root(const qa_catalog *c, qa_product_id id)
 }
 const qa_product *qa_catalog_find(const qa_catalog *c, const char *key)
 {
-    if (c && key) for (size_t i = 0; i < c->product_count; ++i) {
-        const qa_product *p = &c->products[i].view;
-        if (!strcmp(key, p->key) || !strcmp(key, p->identity)) return p;
-    }
-    return NULL;
+    if (!c || !key) return NULL;
+    qa_string_id name = qa_strings_find(c->strings,
+        (qa_bytes){(const uint8_t *)key, strlen(key)});
+    return name < c->product_name_capacity ? qa_catalog_product(c, c->products_by_name[name]) : NULL;
 }
 size_t qa_catalog_mount_count(const qa_catalog *c) { return c ? c->physical_count : 0; }
 const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *c, size_t i)

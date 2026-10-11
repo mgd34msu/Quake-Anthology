@@ -127,6 +127,7 @@ static bool graph_fields(qa_source_save_io *io, qa_executable_recipe *recipe,
             files == policy || !qa_source_save_u32(io, &view->product)) return false;
         if (reading) {
             qa_catalog *actual = NULL;
+            view->kind = recipe_view_owner_kind(view->owner);
             if (!qa_application_content_retain_catalog(graph, owner_catalog, &actual, io->error)) return false;
             view->catalog = actual; view->owns_files = true;
             if (!qa_application_content_claim_view(graph, files, &view->files, io->error) ||

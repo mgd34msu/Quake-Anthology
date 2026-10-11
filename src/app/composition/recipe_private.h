@@ -11,8 +11,13 @@
 
 #define RECIPE_MAX_RECORDS 65536u
 #define RECIPE_MAX_BYTES (32u * 1024u * 1024u)
+typedef enum recipe_view_kind {
+    RECIPE_VIEW_MAIN, RECIPE_VIEW_PROVIDER, RECIPE_VIEW_CONTENT,
+    RECIPE_VIEW_SIDECARS, RECIPE_VIEW_OTHER
+} recipe_view_kind;
 typedef struct recipe_view {
     const char *owner;
+    recipe_view_kind kind;
     qa_vfs *files;
     bool owns_files;
     const qa_catalog *catalog;
@@ -77,6 +82,7 @@ bool recipe_resource_add_from(qa_executable_recipe *, qa_product_id, const char 
 bool recipe_view_write(qa_json_writer *, const recipe_view *, qa_error *);
 bool recipe_resource_write(qa_json_writer *, const qa_executable_recipe *, size_t, qa_error *);
 bool recipe_view_add(qa_executable_recipe *, const char *, const qa_catalog *, qa_vfs *, bool, size_t *, qa_error *);
+recipe_view_kind recipe_view_owner_kind(const char *);
 /* Import retained metadata only, after genuine views/resources/BSP exist. */
 bool recipe_metadata_restore(qa_executable_recipe *, qa_error *);
 

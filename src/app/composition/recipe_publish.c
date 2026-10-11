@@ -22,6 +22,15 @@ static bool product_write(qa_json_writer *w, const qa_catalog *catalog, qa_produ
     if (!product || !product->identity) return recipe_fail(error, "Transfer resource has no genuine content identity");
     qa_json_writer_string(w, product->identity); return !w->failed;
 }
+recipe_view_kind recipe_view_owner_kind(const char *owner)
+{
+    if (!strcmp(owner, "main")) return RECIPE_VIEW_MAIN;
+    if (!strncmp(owner, "provider:", 9)) return RECIPE_VIEW_PROVIDER;
+    if (!strncmp(owner, "content:", 8)) return RECIPE_VIEW_CONTENT;
+    if (!strncmp(owner, "map-sidecars:", 13)) return RECIPE_VIEW_SIDECARS;
+    return RECIPE_VIEW_OTHER;
+}
+
 bool recipe_view_add(qa_executable_recipe *r, const char *owner, const qa_catalog *catalog,
     qa_vfs *files, bool owns, size_t *index, qa_error *error)
 {
@@ -33,7 +42,8 @@ bool recipe_view_add(qa_executable_recipe *r, const char *owner, const qa_catalo
     if (!copy) { r->views = next; return false; }
     strcpy(copy, owner); r->views = next;
     if (index) *index = r->view_count;
-    r->views[r->view_count++] = (recipe_view){.owner = copy, .files = files, .owns_files = owns, .catalog = catalog};
+    r->views[r->view_count++] = (recipe_view){.owner = copy, .kind = recipe_view_owner_kind(copy),
+        .files = files, .owns_files = owns, .catalog = catalog};
     qa_catalog_retain((qa_catalog *)catalog); return true;
 }
 static bool physical_mount(const recipe_view *view, qa_vfs_mount_info info,

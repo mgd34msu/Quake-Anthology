@@ -52,6 +52,8 @@ struct qa_catalog {
     qa_mount_id q3_download_mount, corpus_mount, q2_download_mount[2];
     catalog_product *products;
     size_t product_count, product_capacity;
+    qa_product_id *products_by_name;
+    size_t product_name_capacity;
     catalog_physical *physical;
     size_t physical_count, physical_capacity;
     qa_catalog_mod *mods;
@@ -70,6 +72,7 @@ bool catalog_remote_name(const char *);
 bool catalog_requirement(qa_catalog *, catalog_product *, const char *, qa_error *);
 bool catalog_stock(qa_catalog *, qa_error *);
 bool catalog_add_product(qa_catalog *, const qa_product *, catalog_product **, qa_error *);
+bool catalog_bind_product_names(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_scan(qa_catalog *, bool mods, const char *remote_base,
     const char *remote_directory, qa_product_id *selected, qa_error *);
 bool catalog_discover_locations(qa_catalog *, qa_error *);

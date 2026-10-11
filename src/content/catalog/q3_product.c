@@ -164,7 +164,8 @@ bool qa_catalog_clone(const qa_catalog *source, qa_catalog **out, qa_error *erro
             sizeof(*copy->products), error)) goto fail;
     copy->product_count = copy->product_capacity = source->product_count;
     for (size_t i = 0; i < copy->product_count; ++i)
-        if (!copy_product(copy, &source->products[i], &copy->products[i], error)) goto fail;
+        if (!copy_product(copy, &source->products[i], &copy->products[i], error) ||
+            !catalog_bind_product_names(copy, &copy->products[i], error)) goto fail;
     if (!copy_array((void **)&copy->mods, NULL, source->mod_count,
             sizeof(*copy->mods), error)) goto fail;
     copy->mod_count = copy->mod_capacity = source->mod_count;

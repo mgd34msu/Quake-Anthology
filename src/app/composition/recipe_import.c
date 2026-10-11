@@ -32,8 +32,8 @@ static bool view_read(qa_executable_recipe *r, const qa_json_document *json, qa_
     if (!files) { qa_buffer_free(&name); return false; }
     bool ok = recipe_view_add(r, (const char *)name.data, r->catalog, files, true, &view, error); qa_buffer_free(&name);
     if (!ok) { qa_vfs_destroy(files); return false; }
-    if (!strncmp(r->views[view].owner, "content:", 8) || !strncmp(r->views[view].owner, "map-sidecars:", 13)) {
-        const char *identity = r->views[view].owner + (!strncmp(r->views[view].owner, "content:", 8) ? 8 : 13);
+    if (r->views[view].kind == RECIPE_VIEW_CONTENT || r->views[view].kind == RECIPE_VIEW_SIDECARS) {
+        const char *identity = r->views[view].owner + (r->views[view].kind == RECIPE_VIEW_CONTENT ? 8 : 13);
         const qa_product *product = qa_catalog_find(r->catalog, identity);
         if (!product || strcmp(product->identity, identity)) return recipe_fail(error, "Content view has no actual installed product owner");
         r->views[view].product = product->id;
@@ -715,7 +715,7 @@ bool qa_executable_recipe_content_read(const qa_executable_recipe *r, const char
     const qa_product *product = qa_catalog_find(r->catalog, identity);
     if (!product || strcmp(product->identity, identity)) return false;
     for (size_t i = 0; i < r->view_count; ++i)
-        if (r->views[i].product == product->id && !strncmp(r->views[i].owner, "content:", 8)) {
+        if (r->views[i].product == product->id && r->views[i].kind == RECIPE_VIEW_CONTENT) {
             *files = r->views[i].files; *actual_product = product; return true;
         }
     return false;
@@ -728,7 +728,7 @@ bool qa_executable_recipe_content(qa_executable_recipe *r, const char *identity,
     const qa_product *product = qa_catalog_find(r->catalog, identity);
     if (!product || strcmp(product->identity, identity) || product->availability != QA_CONTENT_INSTALLED) return recipe_fail(error, "Remote content is not installed");
     size_t view = SIZE_MAX;
-    for (size_t i = 0; i < r->view_count; ++i) if (r->views[i].product == product->id && !strncmp(r->views[i].owner, "content:", 8)) { view = i; break; }
+    for (size_t i = 0; i < r->view_count; ++i) if (r->views[i].product == product->id && r->views[i].kind == RECIPE_VIEW_CONTENT) { view = i; break; }
     if (view == SIZE_MAX) {
         qa_vfs *selected = NULL; if (!qa_catalog_open(r->catalog, product->id, &selected, error)) return false;
         qa_vfs *content = qa_vfs_create(r->pool, error); bool retained = content != NULL;

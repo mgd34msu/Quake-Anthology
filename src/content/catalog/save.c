@@ -169,6 +169,8 @@ static bool products(qa_source_save_io *io, qa_catalog *catalog)
         FIELD(bool, &episode, needs_skill_select);
         for (size_t j = 0; j < i; ++j)
             if (!strcmp(catalog->products[j].view.key, view->key)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ &&
+            !catalog_bind_product_names(catalog, product, io->error)) return false;
     }
     for (size_t i = 0; i < catalog->product_count; ++i) {
         const catalog_product *product = &catalog->products[i];

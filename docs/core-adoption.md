@@ -437,6 +437,18 @@ Normal production build and all seven existing core suites pass:
 names finding 5 sites. Findings 6-17 and other kinds remain open. No live network,
 guest restore, installation or performance result is claimed.
 
+Names finding 6, catalog/recipe slice: catalog product keys and identities bind
+to the existing catalog string table at discovery, clone and restore. A derived
+ID-to-product index replaces `qa_catalog_find`'s product strcmp scan, preserving
+the first product's precedence for overlapping names. The index is rebuilt at
+load and is not serialized. Recipe view construction and restore classify the
+existing owner text once; content-view readers use that retained kind and the
+product ID instead of testing owner prefixes on each request.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-catalog-name-index-20261011-{build,core}.log`. Remaining finding 6
+render/media bindings are being checked next; no live or performance claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
