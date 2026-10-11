@@ -905,7 +905,12 @@
     X(CLASSNAME_MONSTER_OGRE_MARKSMAN, "monster_ogre_marksman") \
     X(CLASSNAME_MONSTER_OGRE_ROCKET, "monster_ogre_rocket") \
     X(CLASSNAME_MONSTER_RANGED_KNIGHT, "monster_ranged_knight") \
-    X(RESOURCE_DISCHARGE, "discharge")
+    X(RESOURCE_DISCHARGE, "discharge") \
+    X(USERINFO_NAME, "name") \
+    X(USERINFO_TOPCOLOR, "topcolor") \
+    X(USERINFO_BOTTOMCOLOR, "bottomcolor") \
+    X(USERINFO_AUTOSWITCH, "qts_weapon_autoswitch") \
+    X(USERINFO_UNCONNECTED, "unconnected")
 
 typedef enum q1_runtime_name {
 #define Q1_RUNTIME_NAME_ENUM(key, text) Q1_NAME_##key,

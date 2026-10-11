@@ -270,6 +270,7 @@ static void free_instance(qa_qc_instance *instance)
     qa_arena_destroy(&instance->scratch);
     qa_arena_destroy(&instance->findradius_storage);
     free(instance->globals); free(instance->entities); free(instance->slots);
+    free(instance->string_fields);
     free(instance->actor_slots);
     free(instance->projected_words);
     free(instance->bodies); free(instance->profiles); free(instance->frames);
@@ -334,6 +335,8 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     size_t global_bytes = (size_t)program->info.global_words * 4u;
     instance->globals = malloc(global_bytes);
     instance->entities = calloc(1, (size_t)entity_bytes);
+    if (options->host.session != NULL && instance->layout.field_words != 0)
+        instance->string_fields = calloc(instance->layout.field_words, 1u);
     instance->slots = calloc(instance->options.entity_capacity, sizeof(*instance->slots));
     instance->actor_capacity = options->host.session ? qa_actors_capacity(qa_session_actors(options->host.session)) : 0;
     if (instance->actor_capacity)
@@ -349,11 +352,17 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     if (instance->globals == NULL || instance->entities == NULL || instance->slots == NULL
         || instance->bodies == NULL || instance->profiles == NULL || instance->frames == NULL
         || instance->locals == NULL || (instance->actor_capacity && !instance->actor_slots)
+        || (options->host.session != NULL && instance->layout.field_words != 0
+            && instance->string_fields == NULL)
         || (instance->projection_stride && !instance->projected_words)) {
         free_instance(instance);
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC private state");
     }
     memcpy(instance->globals, program->initial_globals, global_bytes);
+    if (instance->string_fields != NULL)
+        for (uint32_t i = 0; i < program->info.field_count; ++i)
+            if (program->fields[i].type == QA_QC_STRING)
+                instance->string_fields[program->fields[i].offset] = 1;
     qa_arena_init(&instance->scratch, 0);
     if (!qa_arena_reserve(&instance->scratch, options->temporary_bytes ? options->temporary_bytes : 16u * 1024u * 1024u, error)) {
         free_instance(instance); return false;
@@ -376,6 +385,9 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     if (!qc_strings_create(&instance->strings,
             (qa_bytes){program->strings, program->string_bytes},
             program->info.api == QA_QC_API_QUAKEWORLD, error)
+        || !qc_strings_bind_identities(&instance->strings,
+            options->host.session ? qa_session_strings(options->host.session) : NULL,
+            program->string_bytes, error)
         || !copy_host(instance, error)
         || !copy_inline_regions(instance, error)) {
         free_instance(instance); return false;
@@ -528,7 +540,7 @@ static bool raw_entity_vector(qa_qc_instance *instance, uint32_t slot,
     qc_store_float(fields, word, value.x);
     qc_store_float(fields, word + 1u, value.y);
     qc_store_float(fields, word + 2u, value.z);
-    return true;
+    return qc_prepare_string_fields(instance, slot, word, 3u, error);
 }
 
 static bool raw_entity_int(qa_qc_instance *instance, uint32_t slot,
@@ -536,7 +548,7 @@ static bool raw_entity_int(qa_qc_instance *instance, uint32_t slot,
 {
     if (!qc_entity_range(instance, slot, word, 1, error)) return false;
     qc_store_word(qc_entity_words(instance, slot), word, (uint32_t)value);
-    return true;
+    return qc_prepare_string_fields(instance, slot, word, 1u, error);
 }
 
 static bool raw_body_vector(qa_qc_instance *instance, uint32_t slot,

@@ -2,6 +2,7 @@
 #define QA_QC_INTERNAL_H
 
 #include "qa/binary.h"
+#include "qa/id_index.h"
 #include "qa/pool.h"
 #include "qa/qc.h"
 
@@ -23,6 +24,8 @@ typedef struct qc_strings {
     uint32_t used, capacity;
     qc_engine_string *engines;
     uint32_t engine_count, engine_capacity;
+    qa_strings *identities;
+    qa_id_index identities_by_offset;
     bool quakeworld;
 } qc_strings;
 
@@ -90,6 +93,7 @@ struct qa_qc_instance {
     char **extensions;
     qa_qc_inline_region *inline_regions;
     uint8_t *globals, *entities;
+    uint8_t *string_fields;
     qc_slot *slots;
     uint32_t *actor_slots;
     uint32_t actor_capacity;
@@ -196,6 +200,9 @@ bool qc_strings_reserve(qc_strings *strings, uint32_t length,
 void qc_strings_destroy(qc_strings *strings);
 bool qc_strings_get(const qc_strings *strings, int32_t id, const char **out,
                     qa_error *error);
+bool qc_strings_bind_identities(qc_strings *, qa_strings *, uint32_t literal_bytes,
+                                qa_error *);
+bool qc_strings_identity(qc_strings *, int32_t id, qa_string_id *, qa_error *);
 bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
                          qa_error *error);
 bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
@@ -220,6 +227,8 @@ bool qc_write_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
 bool qc_project_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
                        const uint32_t *values, uint32_t count,
                        qa_error *error);
+bool qc_prepare_string_fields(qa_qc_instance *, uint32_t slot, uint32_t word,
+                              uint32_t count, qa_error *);
 bool qc_prepare_entity_access(qa_qc_instance *instance, uint32_t slot,
                               uint32_t word, uint32_t count,
                               qa_qc_entity_access_kind kind,

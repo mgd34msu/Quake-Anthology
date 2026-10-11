@@ -382,13 +382,20 @@ bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
     for (uint32_t i = 1; i <= engine->max_clients; ++i) {
         const application_qc_client *client = engine->clients + i;
         if (!client->connected) continue;
-        int32_t reference; float frags; uint32_t bits;
+        int32_t reference, name; float frags; uint32_t bits;
         qa_application_network_q1_status_player value = {.actor = client->actor, .source_slot = i,
             .colors = client->colors, .spawned = client->spawned};
-        if (!q1_entity_reference(engine, client->actor, &reference, error) ||
-            !q1_wire_string(engine, reference, engine->field_bindings->netname, &value.name, error) ||
+        const qa_qc_definition *netname = application_qc_field(
+            engine->field_bindings->netname, QA_QC_STRING, error);
+        if (!netname || !q1_entity_reference(engine, client->actor, &reference, error) ||
+            !qa_qc_entity_int(engine->provider->state.qc.instance, reference,
+                netname->offset, &name, error) ||
+            !qa_qc_string_identity(engine->provider->state.qc.instance,
+                name, &value.name_id, error) ||
             !application_qc_float(engine, reference, engine->field_bindings->frags, &frags, error) ||
             !q1_wire_bits(frags, &bits, error)) return false;
+        value.name = qa_strings_cstr(qa_session_strings(engine->services.session),
+                                     value.name_id);
         value.frags = bits <= INT32_MAX ? (int32_t)bits : (int32_t)((int64_t)bits - INT64_C(4294967296));
         value.source_frags = frags;
         if ((value.colors >> 4) > 13 || (value.colors & 15u) > 13)

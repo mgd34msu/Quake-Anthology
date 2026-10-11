@@ -95,13 +95,14 @@ typedef struct qa_application_network_q1_status_player {
     qa_actor_id actor;
     uint32_t source_slot;
     const char *name;
+    qa_string_id name_id;
     int32_t frags;
     float source_frags;
     uint8_t colors;
     bool spawned;
 } qa_application_network_q1_status_player;
 /* Connected source clients, including local clients, in physical slot order.
- * Names borrow actual QC strings until source mutation. */
+ * Names and their identities belong to the session's canonical string table. */
 bool qa_application_network_q1_status(qa_application *, qa_actor_owner source_owner,
     qa_application_network_q1_status_player players[255], size_t *count, qa_error *);
 /* Invoke the real ClientKill callback for a healthy spawned nonspectator.

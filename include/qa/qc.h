@@ -618,6 +618,11 @@ bool qa_qc_project_entity_vector(qa_qc_instance *, int32_t reference,
  * destruction. QW negative engine-string IDs retain their original meaning. */
 bool qa_qc_string(const qa_qc_instance *, int32_t id,
                   const char **out, qa_error *error);
+/* Identity belongs to the host session's canonical string table. Mutable
+ * engine strings refresh it at rewrite; an unprepared valid alias is admitted
+ * on its first read. Guest references and checkpoint encoding are unchanged. */
+bool qa_qc_string_identity(qa_qc_instance *, int32_t id,
+                           qa_string_id *out, qa_error *error);
 bool qa_qc_string_allocate(qa_qc_instance *, const char *text,
                            int32_t *out, qa_error *error);
 /* Named buffers may also refresh canonical string projections during a

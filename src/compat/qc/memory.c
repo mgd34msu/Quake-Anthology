@@ -120,6 +120,7 @@ void qc_strings_destroy(qc_strings *strings)
     if (strings == NULL) return;
     for (uint32_t i = 0; i < strings->engine_count; ++i)
         free(strings->engines[i].name);
+    qa_id_index_destroy(&strings->identities_by_offset);
     free(strings->engines);
     free(strings->bytes);
     *strings = (qc_strings){0};
@@ -168,6 +169,105 @@ bool qc_strings_get(const qc_strings *strings, int32_t id, const char **out,
     return true;
 }
 
+bool qc_strings_identity(qc_strings *strings, int32_t id, qa_string_id *out,
+                         qa_error *error)
+{
+    if (strings == NULL || strings->identities == NULL || out == NULL)
+        return memory_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "QC string identity requires a host session");
+    uint32_t offset = (uint32_t)id;
+    if (id < 0) {
+        uint64_t index = (uint64_t)(-(int64_t)id - 1);
+        if (!strings->quakeworld || index >= strings->engine_count) {
+            const char *text;
+            return qc_strings_get(strings, id, &text, error);
+        }
+        offset = strings->engines[index].offset;
+    }
+    qa_id_index_entry *entry = qa_id_index_find(&strings->identities_by_offset,
+                                               QA_STRING_NONE, offset);
+    if (entry != NULL && entry->value != QA_STRING_NONE) {
+        *out = (qa_string_id)entry->value;
+        return true;
+    }
+    const char *text;
+    qa_string_id identity;
+    if (!qc_strings_get(strings, id, &text, error)
+        || !qa_strings_intern_cstr(strings->identities, text, &identity, error))
+        return false;
+    if (entry != NULL) entry->value = identity;
+    else {
+        if (!qa_id_index_reserve(&strings->identities_by_offset, 1, error))
+            return false;
+        qa_id_index_insert(&strings->identities_by_offset, QA_STRING_NONE,
+                           offset, identity);
+    }
+    *out = identity;
+    return true;
+}
+
+bool qc_strings_bind_identities(qc_strings *strings, qa_strings *identities,
+                                uint32_t literal_bytes, qa_error *error)
+{
+    strings->identities = identities;
+    if (identities == NULL) return true;
+    uint32_t offset = 0;
+    while (offset < literal_bytes) {
+        const uint8_t *end = memchr(strings->bytes + offset, 0,
+                                    literal_bytes - offset);
+        if (end == NULL) break;
+        if (offset == 0 || end != strings->bytes + offset) {
+            qa_string_id identity;
+            if (!qc_strings_identity(strings, (int32_t)offset, &identity, error))
+                return false;
+        }
+        offset = (uint32_t)(end - strings->bytes) + 1u;
+    }
+    for (uint32_t i = 0; i < strings->engine_count; ++i) {
+        qa_string_id identity;
+        if (!qc_strings_identity(strings, (int32_t)strings->engines[i].offset,
+                                  &identity, error)) return false;
+    }
+    return true;
+}
+
+static bool string_prepare(qc_strings *strings, uint32_t offset, qa_error *error)
+{
+    if (strings->identities == NULL) return true;
+    qa_string_id identity;
+    return qc_strings_identity(strings, (int32_t)offset, &identity, error);
+}
+
+static bool string_refresh(qc_strings *strings, uint32_t offset,
+                            uint32_t capacity, qa_error *error)
+{
+    if (strings->identities == NULL) return true;
+    qa_id_index *index = &strings->identities_by_offset;
+    /* Invalidate the whole rewritten buffer before admission can fail. A later
+     * read then resolves the committed bytes instead of returning an old ID. */
+    for (size_t i = 0; i < index->count; ++i) {
+        qa_id_index_entry *entry = index->entries + i;
+        bool affected = entry->discriminator >= offset
+            && entry->discriminator - offset < capacity;
+        /* An unusual valid reference can begin in an unterminated literal
+         * tail and reach a later engine buffer. Its retained length records
+         * that dependency without inspecting text during identity reads. */
+        if (entry->discriminator < offset && entry->value != QA_STRING_NONE
+            && qa_strings_text(strings->identities, (qa_string_id)entry->value).size
+                >= offset - entry->discriminator)
+            affected = true;
+        if (affected)
+            entry->value = QA_STRING_NONE;
+    }
+    for (size_t i = 0; i < index->count; ++i) {
+        const qa_id_index_entry *entry = index->entries + i;
+        if (entry->value == QA_STRING_NONE
+            && !string_prepare(strings, (uint32_t)entry->discriminator, error))
+            return false;
+    }
+    return string_prepare(strings, offset, error);
+}
+
 bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
                          qa_error *error)
 {
@@ -197,6 +297,7 @@ bool qc_strings_allocate(qc_strings *strings, const char *text, int32_t *out,
     }
     string_encode(strings, offset, text, length);
     free(staged);
+    if (!string_prepare(strings, offset, error)) return false;
     *out = (int32_t)offset;
     return true;
 }
@@ -224,7 +325,11 @@ bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
         if (length >= entry->capacity)
             return memory_fail(error, QA_ERROR_ARGUMENT, length,
                                "QC engine string exceeds its buffer");
+        bool changed = memcmp(strings->bytes + entry->offset, text, length + 1u) != 0;
         string_encode(strings, entry->offset, text, length);
+        if (!(changed ? string_refresh(strings, entry->offset, entry->capacity, error)
+                       : string_prepare(strings, entry->offset, error)))
+            return false;
         *out = strings->quakeworld ? -(int32_t)i - 1
                                    : (int32_t)entry->offset;
         return true;
@@ -270,6 +375,7 @@ bool qc_strings_engine(qc_strings *strings, const char *name, const char *text,
         .offset = offset,
         .capacity = (uint32_t)capacity
     };
+    if (!string_prepare(strings, offset, error)) return false;
     *out = strings->quakeworld ? -(int32_t)index - 1 : (int32_t)offset;
     return true;
 }
@@ -491,7 +597,32 @@ bool qc_write_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
     for (uint32_t i = 0; i < count; ++i)
         event.after[i] = qc_load_word(fields, word + i);
     qc_projection_invalidate(instance);
-    return notify_store(instance, &event, error);
+    qa_error failure = {0};
+    bool prepared = qc_prepare_string_fields(instance, slot, word, count, &failure);
+    if (!notify_store(instance, &event, error)) return false;
+    if (!prepared && error != NULL) *error = failure;
+    return prepared;
+}
+
+bool qc_prepare_string_fields(qa_qc_instance *instance, uint32_t slot,
+                              uint32_t word, uint32_t count, qa_error *error)
+{
+    if (instance->string_fields == NULL) return true;
+    const uint8_t *fields = qc_entity_words_const(instance, slot);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!instance->string_fields[word + i]) continue;
+        int32_t reference = qc_load_int(fields, word + i);
+        qa_string_id identity;
+        qa_error failure = {0};
+        /* Raw stores may hold arbitrary words, including string references
+         * that become valid only after a later allocation. Preserve the store. */
+        if (!qc_strings_identity(&instance->strings, reference, &identity, &failure)
+            && failure.code == QA_ERROR_MEMORY) {
+            if (error != NULL) *error = failure;
+            return false;
+        }
+    }
+    return true;
 }
 
 bool qc_project_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
@@ -505,7 +636,7 @@ bool qc_project_entity(qa_qc_instance *instance, uint32_t slot, uint32_t word,
     uint8_t *fields = qc_entity_words(instance, slot);
     for (uint32_t i = 0; i < count; ++i)
         qc_store_word(fields, word + i, input_word(instance, values, i));
-    return true;
+    return qc_prepare_string_fields(instance, slot, word, count, error);
 }
 
 static bool argument_word(const qa_qc_instance *instance, uint32_t argument,
@@ -808,6 +939,15 @@ bool qa_qc_string(const qa_qc_instance *instance, int32_t id,
         return memory_fail(error, QA_ERROR_ARGUMENT, 0,
                            "invalid QC string lookup");
     return qc_strings_get(&instance->strings, id, out, error);
+}
+
+bool qa_qc_string_identity(qa_qc_instance *instance, int32_t id,
+                           qa_string_id *out, qa_error *error)
+{
+    if (instance == NULL)
+        return memory_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "invalid QC string identity lookup");
+    return qc_strings_identity(&instance->strings, id, out, error);
 }
 
 bool qa_qc_string_allocate(qa_qc_instance *instance, const char *text,

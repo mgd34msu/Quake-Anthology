@@ -769,7 +769,7 @@ bool application_native_q1_wire_status(qa_application *app, qa_actor_owner owner
         float score = view.frags;
         int32_t frags = qa_source_float_to_i32(score);
         players[count++] = (qa_application_network_q1_status_player){.actor = actor,
-            .source_slot = slot + 1, .name = view.name, .source_frags = score, .frags = frags,
+            .source_slot = slot + 1, .name = view.name, .name_id = view.name_id, .source_frags = score, .frags = frags,
             .colors = (uint8_t)((view.shirt << 4) | view.pants),
             .spawned = !row->deferred && !row->source_begin_pending};
     }
