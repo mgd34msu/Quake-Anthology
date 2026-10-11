@@ -1397,7 +1397,8 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     free(regions);if(!created)return false;
     provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
     if(!application_qc_combat_create(engine,error) || !application_qc_protection_create(engine,error) ||
-        !application_qc_items_initialize(engine,error))return false;
+        !application_qc_items_initialize(engine,error) || !application_qc_item_weapons_create(engine,error) ||
+        !application_qc_pickups_create(engine,error))return false;
     provider->component = (qa_component){.owner = provider->owner, .clock = provider->launch->selection.clock,
         .state = engine, .prepare_frame = prepare_frame, .begin_frame = begin_frame,
         .actor_frame = actor_frame, .end_frame = end_frame, .command_actor = command_actor};
@@ -1587,6 +1588,8 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     application_qc_rerelease_destroy(engine);
     qa_builtin_snapshot_free(&engine->observations);
     application_qc_items_destroy(engine);
+    application_qc_item_weapons_destroy(engine);
+    application_qc_pickups_destroy(engine);
     free((void *)engine->model_fields.entries);
     application_qc_precache_dispose(engine);
     qa_actor_index_destroy(&engine->client_index);

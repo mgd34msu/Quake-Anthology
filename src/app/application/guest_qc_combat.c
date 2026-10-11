@@ -36,7 +36,7 @@ struct application_qc_combat_profile {
     bool armor_declared, empty_declared;
 };
 typedef struct combat_actor {
-    struct combat_actor *next;
+    struct combat_actor *next,*previous;
     application_qc_combat *owner;
     qa_actor_id actor;
     uint32_t slot;
@@ -68,7 +68,7 @@ struct application_qc_combat {
     struct application_qc_state *engine;
     const application_qc_combat_profile *profile;
     combat_actor *actors;
-    combat_actor **actor_slots;
+    qa_actor_index index;
     damage_frame *frame;
     incoming_damage *incoming;
     uint64_t sequence;
@@ -283,9 +283,31 @@ const qa_qc_inline_region *application_qc_combat_regions(const application_qc_co
 { *count = profile ? profile->region_count : 0; return profile ? profile->regions : NULL; }
 static combat_actor *find(application_qc_combat *owner, qa_actor_id actor)
 {
-    combat_actor *at = actor.slot < owner->engine->actor_capacity
-        ? owner->actor_slots[actor.slot] : NULL;
-    return at && !at->retired && qa_actor_id_equal(at->actor, actor) ? at : NULL;
+    size_t slot;
+    return qa_actor_index_find(&owner->index,actor,&slot)?(combat_actor *)(uintptr_t)slot:NULL;
+}
+static void actor_reclaim(combat_actor *actor)
+{
+    if(actor->retired&&!actor->calls)free(actor);
+}
+static combat_actor *actor_create(application_qc_combat *owner,qa_actor_id id,uint32_t physical,
+    int32_t reference,qa_error *error)
+{
+    combat_actor *actor=calloc(1,sizeof(*actor));
+    if(!actor){application_fail(error,QA_ERROR_MEMORY,"Owning QC combat callback context");return NULL;}
+    *actor=(combat_actor){.next=owner->actors,.owner=owner,.actor=id,.slot=physical,
+        .reference=reference};
+    if(actor->next)actor->next->previous=actor;
+    owner->actors=actor;
+    qa_actor_index_put(&owner->index,id,(size_t)(uintptr_t)actor);return actor;
+}
+static void actor_retire(combat_actor *actor)
+{
+    application_qc_combat *owner=actor->owner;
+    qa_actor_index_remove(&owner->index,actor->actor);
+    if(actor->previous)actor->previous->next=actor->next;else owner->actors=actor->next;
+    if(actor->next)actor->next->previous=actor->previous;
+    actor->bound=false;actor->retired=true;actor_reclaim(actor);
 }
 static bool held(const application_qc_combat *owner, qa_error *error)
 {
@@ -419,11 +441,11 @@ static bool source_damage(void *context, qa_combat *combat, const qa_damage_requ
     if (!state.can_take_damage) return true;
     incoming_damage incoming = {.previous = owner->incoming, .actor = actor,
         .request = request, .observer = observer, .result = result};
-    owner->incoming = &incoming; ++owner->calls;
+    owner->incoming = &incoming; ++owner->calls; ++actor->calls;
     application_qc_inputs inputs = inputs_for(owner->engine, request);
     uint32_t words[3];
     bool ok = application_qc_run_call(owner->engine, &owner->profile->damage, &inputs, words, error);
-    --owner->calls; owner->incoming = incoming.previous;
+    --owner->calls; owner->incoming = incoming.previous; --actor->calls;actor_reclaim(actor);
     return ok && (incoming.entered || reject(error, "QC canonical hit did not reach its actual declared damage boundary"));
 }
 static qa_combat_binding binding(combat_actor *actor)
@@ -443,10 +465,10 @@ bool application_qc_combat_create(struct application_qc_state *engine, qa_error 
     if (engine->combat) return held(engine->combat, error);
     engine->combat = calloc(1, sizeof(*engine->combat));
     if (!engine->combat) return application_fail(error, QA_ERROR_MEMORY, "Owning QC combat callback contexts");
-    engine->combat->actor_slots = calloc(engine->actor_capacity, sizeof(*engine->combat->actor_slots));
-    if (!engine->combat->actor_slots) {
+    const qa_actor_registry *registry=qa_session_actors(engine->services.session);
+    if (!qa_actor_index_create(&engine->combat->index,registry,error)) {
         free(engine->combat); engine->combat = NULL;
-        return application_fail(error, QA_ERROR_MEMORY, "Indexing QC combat callback contexts");
+        return false;
     }
     engine->combat->engine = engine; engine->combat->profile = profile; return true;
 }
@@ -459,8 +481,6 @@ static bool eligible(application_qc_combat *owner, qa_qc_slot_binding slot)
 static bool admit(application_qc_combat *owner, qa_qc_slot_binding slot, int32_t reference, qa_error *error)
 {
     if (!eligible(owner, slot)) return true;
-    if (slot.actor.slot >= owner->engine->actor_capacity)
-        return reject(error, "QC combat actor exceeds its actual registry capacity");
     combat_actor *actor = find(owner, slot.actor);
     if (actor) {
         if (!current(actor, error)) return false;
@@ -468,18 +488,11 @@ static bool admit(application_qc_combat *owner, qa_qc_slot_binding slot, int32_t
         return !actor->bound || qa_combat_primary_current(owner->engine->services.combat, actor->actor,
             actor->serial, actor) || reject(error, "QC combat lost its actual canonical primary");
     }
-    if (owner->actor_slots[slot.actor.slot])
-        return reject(error, "QC combat retained another actor generation in this registry slot");
-    actor = calloc(1, sizeof(*actor));
-    if (!actor) return application_fail(error, QA_ERROR_MEMORY, "Owning QC full-actor combat context");
-    *actor = (combat_actor){.next = owner->actors, .owner = owner, .actor = slot.actor,
-        .slot = slot.slot, .reference = reference}; owner->actors = actor;
-    owner->actor_slots[slot.actor.slot] = actor;
+    actor = actor_create(owner,slot.actor,slot.slot,reference,error);
+    if (!actor) return false;
     qa_combat_binding source = binding(actor);
     if (!qa_combat_bind(owner->engine->services.combat, actor->actor, &source, true, error)) {
-        owner->actors = actor->next;
-        owner->actor_slots[slot.actor.slot] = NULL;
-        free(actor);
+        actor_retire(actor);
         return false;
     }
     actor->serial = qa_combat_storage_serial(owner->engine->services.combat, actor->actor); actor->bound = true;
@@ -632,7 +645,7 @@ static bool continued_damage(void *context, qa_combat *combat, const qa_damage_r
         }
     }
     free(saved);
-    if (entered->actor->retired && !entered->actor->calls) free(entered->actor);
+    actor_reclaim(entered->actor);
     if (!ok && error) *error = first;
     return ok;
 }
@@ -825,7 +838,11 @@ bool application_qc_combat_replace(struct application_qc_state *engine, qa_qc_in
             const application_qc_armor_scale *scale = owner->profile->armor.scales + i;
             if (scale->caller == event->caller && scale->statement == event->statement) entered.regular_scale = scale->scale;
         }
-        if (ok) ok = qa_combat_run_source(engine->services.combat, &request, continued_damage, &entered, &outcome, error);
+        if (ok) {
+            ++actor->calls;
+            ok = qa_combat_run_source(engine->services.combat, &request, continued_damage, &entered, &outcome, error);
+            --actor->calls;actor_reclaim(actor);
+        }
         if (ok && !qa_qc_call_completed(next)) ok = qa_qc_call_skip(next, (uint32_t[3]){0}, error);
     }
     --owner->calls; qa_damage_outcome_release(&outcome); return ok;
@@ -896,15 +913,14 @@ bool application_qc_combat_release(struct application_qc_state *engine, qa_actor
 {
     application_qc_combat *owner = engine->combat;
     if (!owner) return true;
-    combat_actor **link = &owner->actors;
-    while (*link) {
-        combat_actor *actor = *link;
-        if (!qa_actor_id_equal(actor->actor, id)) { link = &actor->next; continue; }
-        if (actor->bound && qa_combat_primary_current(engine->services.combat, id, actor->serial, actor) &&
-            !qa_combat_detach_primary(engine->services.combat, id, actor->serial, actor, error)) return false;
-        *link = actor->next; actor->bound = false; actor->retired = true;
-        if (owner->actor_slots[id.slot] == actor) owner->actor_slots[id.slot] = NULL;
-        if (!actor->calls) free(actor);
+    combat_actor *actor=find(owner,id);
+    if(actor){
+        ++actor->calls;
+        bool ok=!actor->bound||!qa_combat_primary_current(engine->services.combat,id,actor->serial,actor)||
+            qa_combat_detach_primary(engine->services.combat,id,actor->serial,actor,error);
+        if(ok&&!actor->retired)actor_retire(actor);
+        --actor->calls;actor_reclaim(actor);
+        return ok;
     }
     return true;
 }
@@ -921,7 +937,9 @@ bool application_qc_combat_suspend(struct application_qc_state *engine, qa_error
 bool application_qc_combat_destroy(struct application_qc_state *engine, qa_error *error)
 {
     if (!application_qc_combat_suspend(engine, error)) return false;
-    if (engine->combat) free(engine->combat->actor_slots);
+    if (engine->combat) {
+        qa_actor_index_destroy(&engine->combat->index);
+    }
     free(engine->combat); engine->combat = NULL; return true;
 }
 bool application_qc_combat_ready(const struct application_qc_state *engine, qa_error *error)
@@ -946,20 +964,16 @@ bool application_qc_combat_saved_binding(struct application_qc_state *engine, qa
         !application_qc_combat_create(engine, error) || !engine->combat)
         return reject(error, "Saved QC combat has no actual declared primary");
     application_qc_combat *owner = engine->combat;
-    if (id.slot >= engine->actor_capacity)
-        return reject(error, "Saved QC combat exceeds its actual registry capacity");
-    if (owner->actor_slots[id.slot]) return reject(error, "Saved QC combat duplicates its actual callback context");
+    if (find(owner,id)) return reject(error, "Saved QC combat duplicates its actual callback context");
     uint32_t physical; int32_t reference; qa_qc_slot_binding slot;
     qa_qc_instance *vm = engine->provider->state.qc.instance;
     if (!held(owner, error) || !qa_qc_actor_observation_slot(vm, id, &physical, error) ||
         !qa_qc_slot(vm, physical, &slot) || !eligible(owner, slot) ||
         !qa_qc_slot_reference(vm, physical, &reference, error))
         return reject(error, "Saved QC combat lost its actual restored full-actor Source row");
-    combat_actor *actor = calloc(1, sizeof(*actor));
-    if (!actor) return application_fail(error, QA_ERROR_MEMORY, "Restoring QC combat callback context");
-    *actor = (combat_actor){.next = owner->actors, .owner = owner, .actor = id,
-        .slot = physical, .reference = reference, .serial = serial, .bound = true, .restoring = true}; owner->actors = actor;
-    owner->actor_slots[id.slot] = actor;
+    combat_actor *actor = actor_create(owner,id,physical,reference,error);
+    if (!actor) return false;
+    actor->serial=serial;actor->bound=true;actor->restoring=true;
     *out = binding(actor); return true;
 }
 bool application_qc_combat_restore_attach(struct application_qc_state *engine, qa_error *error)

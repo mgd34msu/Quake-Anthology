@@ -3,16 +3,14 @@
 #include "guest_q3_combat_source.h"
 #include "guest_q3_damage_scope.h"
 #include "guest_q3_private.h"
-#include "qa/pool.h"
 
 typedef struct combat_actor {
-    struct combat_actor *retired_next;
-    size_t storage_slot;
+    struct combat_actor *next,*previous,*retired_next;
     application_q3_combat_actor source;
     struct application_q3_combat *owner;
     uint64_t serial;
     unsigned calls;
-    bool bound, occupied;
+    bool bound;
 } combat_actor;
 typedef struct incoming_damage {
     struct incoming_damage *previous;
@@ -27,8 +25,7 @@ struct application_q3_combat {
     const application_q3_combat_profile *profile;
     application_q3_damage_scopes *scopes;
     qa_actor_index actor_index;
-    qa_pool actors;
-    qa_arena actor_storage;
+    combat_actor *actors;
     combat_actor *retired;
     incoming_damage *incoming;
     qa_qvm_binding bindings[3];
@@ -40,7 +37,7 @@ static qa_combat *shared(application_q3_combat *owner)
 static combat_actor *actor_find(application_q3_combat *owner, qa_actor_id actor)
 {
     size_t slot;
-    return qa_actor_index_find(&owner->actor_index, actor, &slot) ? qa_pool_at(&owner->actors, slot) : NULL;
+    return qa_actor_index_find(&owner->actor_index, actor, &slot) ? (combat_actor *)(uintptr_t)slot : NULL;
 }
 static void actors_collect(application_q3_combat *owner)
 {
@@ -48,18 +45,21 @@ static void actors_collect(application_q3_combat *owner)
     while(*link){
         combat_actor *actor=*link;
         if(actor->calls){link=&actor->retired_next;continue;}
-        *link=actor->retired_next;actor->occupied=false;
-        qa_pool_release(&owner->actors,actor->storage_slot);
+        *link=actor->retired_next;
+        if(actor->previous)actor->previous->next=actor->next;else owner->actors=actor->next;
+        if(actor->next)actor->next->previous=actor->previous;
+        free(actor);
     }
 }
 static combat_actor *actor_create(application_q3_combat *owner, qa_actor_id id, qa_error *error)
 {
     actors_collect(owner);
-    size_t slot;
-    combat_actor *actor = qa_pool_take(&owner->actors, &slot);
-    if (!actor) { application_fail(error, QA_ERROR_MEMORY, "Original combat actor pool exhausted"); return NULL; }
-    *actor = (combat_actor){.owner = owner, .source.actor = id, .storage_slot = slot, .occupied = true};
-    qa_actor_index_put(&owner->actor_index, id, slot);
+    combat_actor *actor = calloc(1,sizeof(*actor));
+    if (!actor) { application_fail(error, QA_ERROR_MEMORY, "Retaining original combat actor binding"); return NULL; }
+    *actor = (combat_actor){.owner = owner, .source.actor = id, .next = owner->actors};
+    if(actor->next)actor->next->previous=actor;
+    owner->actors=actor;
+    qa_actor_index_put(&owner->actor_index, id, (size_t)(uintptr_t)actor);
     return actor;
 }
 static bool read(void *context, qa_combat_state *out, qa_error *error)
@@ -368,14 +368,10 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
     if(frame_bytes<sizeof(uint32_t))frame_bytes=sizeof(uint32_t);
     size_t argument_bytes=2*sizeof(uint32_t)+d->damage_call.count*sizeof(uint32_t);
     if(frame_bytes>argument_bytes)frame_bytes=argument_bytes;
-    /* Retired records remain only for entered damage frames. Source calls use
-     * their qualified ENTER frame; host calls also reserve their argument frame. */
+    /* Source damage-scope storage is sized from the qualified QVM frames.
+     * Actor payloads are separate: host callbacks may retain them outside a VM frame. */
     size_t entered_capacity=qa_qvm_memory_size(role->vm)/frame_bytes;
-    if (!qa_actor_index_create(&owner->actor_index, registry, error) ||
-        !qa_pool_reserve_pages(&owner->actors, &owner->actor_storage,
-            (size_t)qa_actors_capacity(registry)+entered_capacity,
-            sizeof(combat_actor), _Alignof(combat_actor), error)) return false;
-    memset(owner->actors.values, 0, owner->actors.capacity * owner->actors.stride);
+    if (!qa_actor_index_create(&owner->actor_index, registry, error)) return false;
     if (!application_q3_damage_scopes_create(role, profile, entered_capacity, &owner->scopes, error)) return false;
     uint32_t entries[] = {d->callbacks.damage, d->callbacks.free, d->armor.check};
     qa_qvm_function_hook hooks[] = {damage, freed, armor_stage};
@@ -458,9 +454,7 @@ bool application_q3_combat_destroy(application_q3_combat **pointer, qa_error *er
     if (owner->calls || owner->incoming ||
         (owner->scopes && !application_q3_damage_scopes_quiescent(owner->scopes)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original combat retains a source action or refused observer cleanup");
-    for (size_t slot = 0; slot < owner->actors.capacity; ++slot) {
-        combat_actor *actor = qa_pool_at(&owner->actors, slot);
-        if (!actor->occupied) continue;
+    for (combat_actor *actor=owner->actors;actor;actor=actor->next) {
         if (actor->bound && qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), actor->source.actor) &&
             qa_combat_primary_current(shared(owner), actor->source.actor, actor->serial, actor)) {
             if (!qa_combat_detach_primary(shared(owner), actor->source.actor, actor->serial, actor, error)) return false;
@@ -472,6 +466,7 @@ bool application_q3_combat_destroy(application_q3_combat **pointer, qa_error *er
         owner->bindings[i] = 0;
     }
     if (!application_q3_damage_scopes_destroy(&owner->scopes, error)) return false;
-    qa_actor_index_destroy(&owner->actor_index); qa_arena_destroy(&owner->actor_storage);
+    qa_actor_index_destroy(&owner->actor_index);
+    while(owner->actors){combat_actor *next=owner->actors->next;free(owner->actors);owner->actors=next;}
     free(owner); *pointer = NULL; return true;
 }

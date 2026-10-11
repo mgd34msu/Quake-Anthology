@@ -24,7 +24,8 @@ struct application_qc_protection_profile {
     qa_qc_inline_region regions[2];
 };
 typedef struct protection_channel {
-    struct protection_channel *next;
+    struct protection_channel *next,*previous;
+    struct protection_channel *actor_next,*actor_previous;
     application_qc_protection *owner;
     qa_actor_id actor;
     qa_protection_lease lease;
@@ -42,6 +43,7 @@ struct application_qc_protection {
     struct application_qc_state *engine;
     const application_qc_protection_profile *profile;
     protection_channel *channels;
+    qa_actor_index indexes[2];
     protection_scope *scope;
 };
 
@@ -278,9 +280,40 @@ static bool client(const application_qc_protection *owner, qa_actor_id actor, ui
 }
 static protection_channel *find(application_qc_protection *owner, qa_actor_id actor, size_t definition)
 {
-    for (protection_channel *row = owner->channels; row; row = row->next)
-        if (row->definition == definition && qa_actor_id_equal(row->actor, actor)) return row;
-    return NULL;
+    size_t slot;
+    return qa_actor_index_find(owner->indexes+definition,actor,&slot)?(protection_channel *)(uintptr_t)slot:NULL;
+}
+static protection_channel *actor_first(application_qc_protection *owner,qa_actor_id actor)
+{
+    protection_channel *row=find(owner,actor,0);
+    if(row)return row->actor_previous?row->actor_previous:row;
+    return owner->profile->count>1?find(owner,actor,1):NULL;
+}
+static void channel_reclaim(protection_channel *row)
+{
+    if(row->retired&&!row->calls)free(row);
+}
+static protection_channel *channel_create(application_qc_protection *owner,qa_actor_id actor,
+    uint32_t client,size_t definition,qa_error *error)
+{
+    protection_channel *row=calloc(1,sizeof(*row));
+    if(!row){fail(error,QA_ERROR_MEMORY,"Owning QC protection callback context");return NULL;}
+    *row=(protection_channel){.next=owner->channels,.actor_next=actor_first(owner,actor),.owner=owner,.actor=actor,.client=client,
+        .definition=definition};
+    if(row->actor_next)row->actor_next->actor_previous=row;
+    if(row->next)row->next->previous=row;
+    owner->channels=row;
+    qa_actor_index_put(owner->indexes+definition,actor,(size_t)(uintptr_t)row);return row;
+}
+static void channel_retire(protection_channel *row)
+{
+    application_qc_protection *owner=row->owner;
+    qa_actor_index_remove(owner->indexes+row->definition,row->actor);
+    if(row->previous)row->previous->next=row->next;else owner->channels=row->next;
+    if(row->next)row->next->previous=row->previous;
+    if(row->actor_previous)row->actor_previous->actor_next=row->actor_next;
+    if(row->actor_next)row->actor_next->actor_previous=row->actor_previous;
+    row->retired=true;channel_reclaim(row);
 }
 static bool require(protection_channel *row, int32_t *reference, qa_error *error)
 {
@@ -450,7 +483,7 @@ static bool absorb_binding(void *context, const qa_damage_request *request,
     --row->calls;
     bool retired = row->retired;
     qa_actor_id actor = row->actor;
-    if (!row->calls && retired) free(row);
+    channel_reclaim(row);
     if (!ok) return false;
     float value; memcpy(&value, result, sizeof(value));
     if (!isfinite(value) || value < 0 || value > amount)
@@ -471,7 +504,16 @@ bool application_qc_protection_create(struct application_qc_state *engine, qa_er
     if (engine->protection) return held(engine->protection, error);
     application_qc_protection *owner = calloc(1, sizeof(*owner));
     if (!owner) return fail(error, QA_ERROR_MEMORY, "Owning QC protection callback contexts");
-    owner->engine = engine; owner->profile = qualified->protection; engine->protection = owner;
+    owner->engine = engine; owner->profile = qualified->protection;
+    const qa_actor_registry *registry=qa_session_actors(engine->services.session);
+    bool prepared=true;
+    for(size_t i=0;prepared&&i<owner->profile->count;++i)
+        prepared=qa_actor_index_create(owner->indexes+i,registry,error);
+    if(!prepared){
+        for(size_t i=0;i<owner->profile->count;++i)qa_actor_index_destroy(owner->indexes+i);
+        free(owner);return false;
+    }
+    engine->protection = owner;
     return held(owner, error);
 }
 bool application_qc_protection_reserve(struct application_qc_state *engine, qa_actor_id actor, qa_error *error)
@@ -487,13 +529,11 @@ bool application_qc_protection_reserve(struct application_qc_state *engine, qa_a
                 return fail(error, QA_ERROR_ARGUMENT, "QC protection reservation changed its actual client or lease");
             continue;
         }
-        row = calloc(1, sizeof(*row));
-        if (!row) return fail(error, QA_ERROR_MEMORY, "Owning QC protection lease callback context");
-        *row = (protection_channel){.owner = owner, .actor = actor, .client = slot, .definition = i};
+        row = channel_create(owner,actor,slot,i,error);
+        if (!row) return false;
         const protection_definition *definition = owner->profile->definitions + i;
         if (!qa_combat_reserve_protection(engine->services.combat, actor, definition->channel,
-            &definition->claim, &row->lease, error)) { free(row); return false; }
-        row->next = owner->channels; owner->channels = row;
+            &definition->claim, &row->lease, error)) { channel_retire(row); return false; }
     }
     return true;
 }
@@ -502,12 +542,13 @@ bool application_qc_protection_activate(struct application_qc_state *engine, qa_
     application_qc_protection *owner = engine->protection;
     if (!owner) return true;
     if (!application_qc_protection_reserve(engine, actor, error)) return false;
-    for (protection_channel *row = owner->channels; row; row = row->next)
-        if (qa_actor_id_equal(row->actor, actor) && !row->bound) {
+    for (protection_channel *row=actor_first(owner,actor);row;row=row->actor_next){
+        if (!row->bound) {
             qa_protection_binding source = binding(row);
             if (!qa_combat_bind_protection(engine->services.combat, row->lease, &source, error)) return false;
             row->bound = true;
         }
+    }
     return true;
 }
 bool application_qc_protection_source_stored(struct application_qc_state *engine, qa_qc_instance *vm,
@@ -519,8 +560,8 @@ bool application_qc_protection_source_stored(struct application_qc_state *engine
     qa_actor_id actor;
     if (!qa_qc_reference_actor(vm, event->entity_reference, &actor, error)) return false;
     qa_protection_store change = {0};
-    for (protection_channel *row = owner->channels; row; row = row->next) {
-        if (!row->bound || row->restoring || !qa_actor_id_equal(row->actor, actor)) continue;
+    for (protection_channel *row=actor_first(owner,actor);row;row=row->actor_next) {
+        if (!row->bound || row->restoring) continue;
         const protection_definition *definition = owner->profile->definitions + row->definition;
         bool touches = definition->count->offset >= event->word && definition->count->offset - event->word < event->count;
         if (definition->selection) touches = touches || (definition->selection->offset >= event->word &&
@@ -545,18 +586,18 @@ bool application_qc_protection_release(struct application_qc_state *engine, qa_a
 {
     application_qc_protection *owner = engine->protection;
     if (!owner) return true;
-    protection_channel **link = &owner->channels;
-    while (*link) {
-        protection_channel *row = *link;
-        if (!qa_actor_id_equal(row->actor, actor)) { link = &row->next; continue; }
+    protection_channel *row;
+    while((row=actor_first(owner,actor))) {
         if (row->restoring && !row->lease.serial) {
             qa_actor_owner actual;
             if (qa_combat_protection_owner(engine->services.combat, actor, row->lease.channel, &actual, &row->lease.serial) &&
                 actual != engine->provider->owner) row->lease.serial = 0;
         }
-        if (!qa_combat_close_protection(engine->services.combat, row->lease, error)) return false;
-        *link = row->next; row->retired = true;
-        if (!row->calls) free(row);
+        ++row->calls;
+        bool ok=qa_combat_close_protection(engine->services.combat,row->lease,error);
+        if(ok&&!row->retired)channel_retire(row);
+        --row->calls;channel_reclaim(row);
+        if(!ok)return false;
     }
     return true;
 }
@@ -572,6 +613,10 @@ bool application_qc_protection_suspend(struct application_qc_state *engine, qa_e
 bool application_qc_protection_destroy(struct application_qc_state *engine, qa_error *error)
 {
     if (!application_qc_protection_suspend(engine, error)) return false;
+    if(engine->protection){
+        for(size_t i=0;i<engine->protection->profile->count;++i)
+            qa_actor_index_destroy(engine->protection->indexes+i);
+    }
     free(engine->protection); engine->protection = NULL; return true;
 }
 bool application_qc_protection_idle(const struct application_qc_state *engine)
@@ -615,12 +660,11 @@ bool application_qc_protection_saved_binding(struct application_qc_state *engine
             return fail(error, QA_ERROR_FORMAT, "Saved QC protection differs from its actual declared claim");
         protection_channel *row = find(owner, actor, i);
         if (row) return fail(error, QA_ERROR_FORMAT, "Saved QC protection duplicates its actual callback context");
-        row = calloc(1, sizeof(*row));
-        if (!row) return fail(error, QA_ERROR_MEMORY, "Restoring QC protection callback context");
-        *row = (protection_channel){.next = owner->channels, .owner = owner, .actor = actor,
-            .client = slot, .definition = i, .lease = {.actor = actor, .channel = channel},
-            .bound = true, .restoring = true};
-        owner->channels = row; *out = binding(row); return true;
+        row = channel_create(owner,actor,slot,i,error);
+        if (!row) return false;
+        row->lease=(qa_protection_lease){.actor=actor,.channel=channel};
+        row->bound=true;row->restoring=true;
+        *out = binding(row); return true;
     }
     return fail(error, QA_ERROR_NOT_FOUND, "Saved QC protection has no actual channel declaration");
 }
@@ -640,10 +684,8 @@ bool application_qc_protection_restore_attach(struct application_qc_state *engin
                 return fail(error, QA_ERROR_FORMAT, "Restored QC client lost its canonical protection reservation");
             protection_channel *row = find(owner, actor, i);
             if (!row) {
-                row = calloc(1, sizeof(*row));
-                if (!row) return fail(error, QA_ERROR_MEMORY, "Attaching restored QC protection reservation");
-                *row = (protection_channel){.next = owner->channels, .owner = owner, .actor = actor,
-                    .client = slot, .definition = i}; owner->channels = row;
+                row = channel_create(owner,actor,slot,i,error);
+                if (!row) return false;
             }
             qa_protection_lease lease = {actor, serial, definition->channel};
             if (row->client != slot || qa_combat_protection_bound(engine->services.combat, lease) != row->bound)
