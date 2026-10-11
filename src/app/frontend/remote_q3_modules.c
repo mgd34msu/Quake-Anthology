@@ -321,11 +321,7 @@ static void cinematic_print(void *context, const char *text)
     remote_module_lease *lease = context;
     if (!lease || !cinematic_diagnostic_current(lease, lease->cinematics)) return;
     ++lease->callbacks;
-    qa_console *console = lease->constructor.console;
-    qa_console *shared = qa_application_console(lease->owner->application);
-    if (qa_console_output_redirected(console)) qa_console_emit(console, &lease->command, text);
-    else if (shared && qa_console_output_redirected(shared)) qa_console_emit(shared, &lease->command, text);
-    else frontend_console_print(lease->owner->frontend, &lease->command, text);
+    (void)qa_application_log_emit(lease->owner->application,&lease->command,text,true,NULL);
     --lease->callbacks;
 }
 static void print(void *context, const char *text)
@@ -333,11 +329,7 @@ static void print(void *context, const char *text)
     remote_module_lease *lease = context;
     if (!entered(lease, NULL, NULL, NULL)) return;
     ++lease->callbacks;
-    qa_console *console = source(lease->owner)->receiver.console;
-    qa_console *shared = qa_application_console(lease->owner->application);
-    if (qa_console_output_redirected(console)) qa_console_emit(console, &lease->command, text);
-    else if (shared && qa_console_output_redirected(shared)) qa_console_emit(shared, &lease->command, text);
-    else frontend_console_print(lease->owner->frontend, &lease->command, text);
+    (void)qa_application_log_emit(lease->owner->application,&lease->command,text,true,NULL);
     --lease->callbacks;
 }
 static int32_t calendar(void *context, qa_q3_host_calendar *out)
@@ -720,7 +712,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
             &lease->cinematics, error) &&
         qa_q3_cinematic_source_role_diagnostic_bind(lease->cinematics, lease, cinematic_print,
             cinematic_diagnostic_current, error);
-    qa_q3_presentation_options backend = {.assets = assets(owner), .audio = f->audio,
+    qa_q3_presentation_options backend = {.assets = assets(owner), .audio = f->audio, .audio_event=frontend_audio_event,.audio_event_context=f,
         .cinematics = lease->cinematics,
         .clock = {lease, milliseconds}, .seat = physical_seat(owner), .owner = lease->service_owner,
         .viewport = {0, 0, f->width, f->height},

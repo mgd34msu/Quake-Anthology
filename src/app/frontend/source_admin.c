@@ -91,7 +91,10 @@ static bool execute(void *context,const qa_net_address *from,const char *text,bo
     if (!command_current(owner,&command,error)) return false;
     command.direct=true; command.console_text=true; command.script="remote-console";
     admin_output capture={.write=write,.context=result};
+    uint64_t first=qa_application_events_next(owner->application);
     bool ok=qa_console_execute_capture(owner->console,&command,text,output,&capture,error);
+    qa_application_logs_deliver(owner->application,first,qa_application_events_next(owner->application),
+        owner->console,output,&capture);
     if (capture.error.code) { if (error) *error=capture.error; return false; }
     return ok;
 }

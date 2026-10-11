@@ -163,6 +163,8 @@ typedef struct qa_q3_picture_receipt {
 typedef struct qa_q3_presentation_options {
     qa_q3_presentation_assets *assets;
     qa_audio_engine *audio;
+    bool (*audio_event)(void *, qa_audio_engine *, const qa_audio_event *, qa_error *);
+    void *audio_event_context;
     /* Original Source UI/CG and videoMap share the frontend's actual numeric
      * cinematic source. Selected application movies retain their own owner. */
     struct qa_q3_cinematic_source *cinematics;

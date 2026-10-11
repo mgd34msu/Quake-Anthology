@@ -903,11 +903,7 @@ static bool update_screen(void *context, qa_error *error)
 static void common_print(void *context, const char *text)
 {
     frontend_source_lease *lease = context;
-    qa_console *console = lease->console;
-    qa_console *shared = qa_application_console(lease->source->application);
-    if (console && qa_console_output_redirected(console)) qa_console_emit(console, &lease->command, text);
-    else if (shared && qa_console_output_redirected(shared)) qa_console_emit(shared, &lease->command, text);
-    else print_source(lease->source, text);
+    (void)qa_application_log_emit(lease->source->application,&lease->command,text,true,NULL);
 }
 static uint32_t common_milliseconds(void *context)
 {
@@ -1183,6 +1179,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source, .model_initialize = model_initialize};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &source->assets, error);
     qa_q3_presentation_options presentation = {.assets = source->assets, .audio = frontend->audio,
+        .audio_event=frontend_audio_event,.audio_event_context=frontend,
         .clock = {source, milliseconds}, .seat = source->seat, .owner = source->identity,
         .viewport = {0, 0, frontend->width, frontend->height}, .near_clip = 4, .far_clip = 16384,
         .identity_light = 1, .lod_scale = 5, .rail_core_width = 6, .rail_ring_width = 16, .rail_segment_length = 32,

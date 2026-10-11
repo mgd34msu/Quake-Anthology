@@ -426,6 +426,8 @@ typedef struct qa_audio_engine_options {
     qa_audio_setting_fn setting;
     qa_audio_log_fn log;
     void *diagnostic_user;
+    void (*discard_events)(void *, qa_audio_engine *, uint64_t owner, uint32_t audience, bool all);
+    void *event_context;
 } qa_audio_engine_options;
 bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_engine **out,
                             qa_error *error);
@@ -482,10 +484,8 @@ typedef struct qa_audio_event {
     int32_t milliseconds, frame_number;
     bool persistent, all;
 } qa_audio_event;
-/* Immutable audio events retain assets until the frame publishes its listeners.
- * Every source uses the same load-sized event pages and delivery cursor. */
-bool qa_audio_engine_event(qa_audio_engine *, const qa_audio_event *, qa_error *);
-bool qa_audio_engine_events(qa_audio_engine *, qa_error *);
+/* Apply a consumed output-ring record to the published listener roster. */
+bool qa_audio_engine_apply(qa_audio_engine *, const qa_audio_event *, qa_error *);
 void qa_audio_engine_clear_loops(qa_audio_engine *engine, bool all);
 void qa_audio_engine_stop_channel(qa_audio_engine *engine, uint64_t actor, uint64_t owner,
                                   qa_game_family family, int32_t channel);

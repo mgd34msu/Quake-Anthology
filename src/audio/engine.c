@@ -10,29 +10,10 @@ static bool fail(qa_error *error, qa_status code, const char *message) {
     qa_error_set(error, code, 0, "%s", message);
     return false;
 }
-typedef struct audio_event_record {
-    qa_audio_event event;
-    bool cancelled;
-} audio_event_record;
-static void events_discard(qa_audio_engine *engine, uint64_t owner, uint32_t audience, bool all_owners)
+static void events_discard(qa_audio_engine *engine, uint64_t owner, uint32_t audience, bool all)
 {
-    uint64_t next=qa_event_ring_next(engine->events);
-    for(uint64_t id=engine->event_cursor;id<next;++id) {
-        audio_event_record *record=(audio_event_record *)qa_event_ring_at(engine->events,id);
-        const qa_audio_play *sound=&record->event.sound;
-        if(!record->cancelled && (all_owners || sound->owner==owner) &&
-            (audience==QA_AUDIO_WORLD || sound->audience==audience)) {
-            record->cancelled=true;
-            qa_audio_asset_release(sound->asset);
-        }
-    }
-    /* Cancellation changes delivery metadata, never the admitted payload. */
-    while(engine->event_cursor<next) {
-        const audio_event_record *record=qa_event_ring_at(engine->events,engine->event_cursor);
-        if(!record->cancelled) break;
-        ++engine->event_cursor;
-    }
-    qa_event_ring_retire(engine->events,engine->event_cursor);
+    if (engine->options.discard_events)
+        engine->options.discard_events(engine->options.event_context, engine, owner, audience, all);
 }
 static void *grow(void *memory, size_t *capacity, size_t count, size_t size, qa_error *error) {
     if (count <= *capacity)
@@ -172,11 +153,6 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
     engine->effects_gain = 0.7f;
     engine->music_gain = 0.25f;
     engine->doppler = true;
-    /* Four clients can each submit a full snapshot's sounds, loops and positions.
-     * Storage is fixed at load and recycled after the audio consumer advances. */
-    engine->events=qa_event_ring_create(4096*(sizeof(audio_event_record)+64),4096,4096,error);
-    if(!engine->events) { free(engine);return false; }
-    engine->event_cursor=qa_event_ring_first(engine->events);
     engine->sum = malloc(frames * 2 * sizeof(float));
     engine->seat_scratch = malloc(frames * 2 * sizeof(float));
     if (!engine->sum || !engine->seat_scratch) {
@@ -212,7 +188,6 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
     free(engine->round_mixers);
     free(engine->positions);
     free(engine->buses);
-    qa_event_ring_destroy(&engine->events);
     free(engine->sum);
     free(engine->seat_scratch);
     free(engine);
@@ -787,75 +762,37 @@ bool qa_audio_engine_loop(qa_audio_engine *engine, const qa_audio_loop *loop, qa
     bool result = loop_impl(engine, loop, error);
     leave(engine); return result;
 }
-bool qa_audio_engine_event(qa_audio_engine *engine, const qa_audio_event *event, qa_error *error)
-{
-    if (!enter(engine,false,error)) return false;
-    /* Temporary effects have explicit origins and no persistent actor position. */
-    if(event->kind==QA_AUDIO_EVENT_POSITION && event->sound.actor==QA_AUDIO_NO_ACTOR) {
-        leave(engine);return true;
-    }
-    qa_event_transaction transaction;
-    bool okay=qa_event_ring_begin(engine->events,&transaction);
-    audio_event_record *record=okay ? qa_event_ring_alloc(&transaction,sizeof(*record),
-        _Alignof(audio_event_record),error) : NULL;
-    if(record) {
-        *record=(audio_event_record){.event=*event};
-        if(event->sound.asset) record->event.sound.asset=qa_audio_asset_retain(event->sound.asset);
-        okay=(!event->sound.asset || record->event.sound.asset) &&
-            qa_event_ring_commit(&transaction,record)!=0;
-        if(!okay) qa_audio_asset_release(record->event.sound.asset);
-    } else okay=false;
-    if(!okay) {
-        if(transaction.active) qa_event_ring_abort(&transaction);
-        if(!error || error->code==QA_OK) fail(error,QA_ERROR_MEMORY,"Audio event pages are full");
-    }
-    leave(engine);return okay;
-}
-bool qa_audio_engine_events(qa_audio_engine *engine, qa_error *error)
+bool qa_audio_engine_apply(qa_audio_engine *engine, const qa_audio_event *operation, qa_error *error)
 {
     if (!enter(engine, true, error)) return false;
     bool okay = true;
-    while (okay && engine->event_cursor<qa_event_ring_next(engine->events)) {
-        const audio_event_record *record=qa_event_ring_at(engine->events,engine->event_cursor);
-        qa_audio_event operation=record->event;
-        bool cancelled=record->cancelled;
-        audio_seat *seat = find_seat(engine, operation.sound.audience);
-        /* Delivery can fail after an observer has seen it. The attempted
-         * operation is consumed once; only the untouched suffix is retried. */
-        ++engine->event_cursor;
-        qa_event_ring_retire(engine->events,engine->event_cursor);
-        if(cancelled) continue;
-        /* The actual published listener roster selects CG audio recipients.
-         * An absent recipient contributes no audio, including during menus. */
-        if (operation.sound.audience == QA_AUDIO_WORLD ? !engine->seat_count : !seat) {
-            qa_audio_asset_release(operation.sound.asset); continue;
-        }
-        switch (operation.kind) {
-        case QA_AUDIO_EVENT_PLAY:
-            okay = play_impl(engine, &operation.sound, operation.milliseconds, error); break;
-        case QA_AUDIO_EVENT_LOOP: {
-            qa_audio_loop loop = {.sound = operation.sound, .velocity = operation.velocity,
-                .frame_number = operation.frame_number, .persistent = operation.persistent};
-            okay = loop_impl(engine, &loop, error); break;
-        }
-        case QA_AUDIO_EVENT_CLEAR:
-            for(size_t i=0;i<engine->seat_count;++i)
-                if(selected(operation.sound.audience,engine->seats[i]->listener.seat))
-                    qa_audio_mixer_clear_seat_loops(engine->seats[i]->mixer,operation.sound.owner,operation.all);
-            break;
-        case QA_AUDIO_EVENT_STOP:
-            okay = stop_loop_impl(engine, operation.sound.actor, operation.sound.owner,
-                operation.sound.audience, error); break;
-        case QA_AUDIO_EVENT_POSITION:
-            for(size_t i=0;okay && i<engine->seat_count;++i)
-                if(selected(operation.sound.audience,engine->seats[i]->listener.seat))
-                    okay=qa_audio_mixer_position_owner(engine->seats[i]->mixer,operation.sound.actor,
-                        operation.sound.owner,operation.sound.origin,error);
-            break;
-        }
-        qa_audio_asset_release(operation.sound.asset);
-        if (engine->destroy_pending)
-            okay = fail(error, QA_ERROR_ARGUMENT, "Audio owner retired during delivery");
+    audio_seat *seat = find_seat(engine, operation->sound.audience);
+    if (operation->sound.audience == QA_AUDIO_WORLD ? !engine->seat_count : !seat) {
+        leave(engine); return true;
+    }
+    switch (operation->kind) {
+    case QA_AUDIO_EVENT_PLAY:
+        okay = play_impl(engine, &operation->sound, operation->milliseconds, error); break;
+    case QA_AUDIO_EVENT_LOOP: {
+        qa_audio_loop loop = {.sound = operation->sound, .velocity = operation->velocity,
+            .frame_number = operation->frame_number, .persistent = operation->persistent};
+        okay = loop_impl(engine, &loop, error); break;
+    }
+    case QA_AUDIO_EVENT_CLEAR:
+        for (size_t i=0;i<engine->seat_count;++i)
+            if (selected(operation->sound.audience,engine->seats[i]->listener.seat))
+                qa_audio_mixer_clear_seat_loops(engine->seats[i]->mixer,operation->sound.owner,operation->all);
+        break;
+    case QA_AUDIO_EVENT_STOP:
+        okay = stop_loop_impl(engine, operation->sound.actor, operation->sound.owner,
+            operation->sound.audience, error); break;
+    case QA_AUDIO_EVENT_POSITION:
+        if (operation->sound.actor==QA_AUDIO_NO_ACTOR) break;
+        for (size_t i=0;okay && i<engine->seat_count;++i)
+            if (selected(operation->sound.audience,engine->seats[i]->listener.seat))
+                okay=qa_audio_mixer_position_owner(engine->seats[i]->mixer,operation->sound.actor,
+                    operation->sound.owner,operation->sound.origin,error);
+        break;
     }
     leave(engine); return okay;
 }

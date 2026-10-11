@@ -761,36 +761,57 @@ bool application_emit(void *opaque, const qa_builtin_event *event, qa_error *err
     return ok;
 }
 
-static void source_console_record(qa_application *app,uint64_t id)
+bool qa_application_log_emit(qa_application *app,const qa_command_context *context,
+    const char *text,bool console,qa_error *error)
 {
-    qa_application_event_cursor cursor={.id=id};qa_application_event_view view;
-    if(!qa_application_event_read(app,&cursor,&view) || view.kind!=QA_APPLICATION_EVENT_BUILTIN) return;
-    const qa_builtin_event *event=view.value.builtin;
-    if(event->kind!=QA_BUILTIN_LOG || !(event->code&QA_BUILTIN_LOG_REDIRECTED)) return;
-    qa_command_context context={.owner=event->provider,.origin=QA_COMMAND_SERVER};
-    const application_provider *provider=app->live_providers;
-    while(provider && provider->owner!=event->provider) provider=provider->next_live;
-    if(provider) context.dialect=qa_product_ruleset(provider->product,provider->product->family);
-    qa_console_emit(app->console,&context,qa_strings_cstr(qa_session_strings(app->session),event->text));
+    application_event_write write;
+    if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_LOG,&write,error))
+        return application_event_stream_decline(app,&write,true,error);
+    size_t bytes=strlen(text)+1;
+    char *copy=application_event_stream_alloc(app,bytes,1,error);
+    application_event_view *view=copy?application_event_stream_alloc(app,sizeof(*view),
+        _Alignof(application_event_view),error):NULL;
+    if(!view) goto abort;
+    memcpy(copy,text,bytes);
+    qa_application_log_event *log=&write.envelope->raw.log;
+    *log=(qa_application_log_event){.context=*context,.text=copy,
+        .flags=(console?QA_BUILTIN_LOG_CONSOLE:0) |
+            (console && qa_console_output_redirected(app->console)?QA_BUILTIN_LOG_REDIRECTED:0)};
+    if(context->script) {
+        bytes=strlen(context->script)+1;
+        char *script=application_event_stream_alloc(app,bytes,1,error);
+        if(!script) goto abort;
+        memcpy(script,context->script,bytes);log->context.script=script;
+    }
+    *view=(application_event_view){.event={.log=log}};
+    write.envelope->views=write.envelope->last_view=view;
+    if(application_event_stream_commit(app,&write,error)) return true;
+    return application_event_stream_decline(app,&write,true,error);
+abort:
+    application_event_stream_abort(app,&write,error);
+    return application_event_stream_decline(app,&write,true,error);
 }
-bool application_source_log(application_provider *provider, const char *text,
-    bool console, qa_error *error)
+
+void qa_application_logs_deliver(qa_application *app,uint64_t first,uint64_t next,qa_console *console,
+    void (*print)(void *,const qa_command_context *,const char *),void *context)
 {
-    qa_application *app = provider->application;
-    bool redirected=console && qa_console_output_redirected(app->console);
-    qa_clock_state clock = {0};
-    qa_session_clock(app->session, provider->owner, &clock);
-    qa_builtin_event event = {.kind = QA_BUILTIN_LOG,
-        .family = provider->product->family, .provider = provider->owner,
-        .time_ns = clock.frame.time_ns,
-        .code = (console ? QA_BUILTIN_LOG_CONSOLE : 0) | (redirected ? QA_BUILTIN_LOG_REDIRECTED : 0)};
-    uint64_t id=qa_application_events_next(app);
-    if(!qa_strings_intern_cstr(qa_session_strings(app->session), text,&event.text,error) ||
-        !application_emit(app,&event,error)) return false;
-    /* Console redirection lasts only for the synchronous command. Consume the
-     * committed record before returning to that command's capture boundary. */
-    if(redirected) source_console_record(app,id);
-    return true;
+    qa_application_event_range range={.next=first,.end=next};
+    const application_unified_event_record *record;
+    while((record=qa_application_event_range_next(app,&range,NULL))) {
+        qa_application_log_event *log=(qa_application_log_event *)record->log;
+        if(!log || log->delivered || !(log->flags&QA_BUILTIN_LOG_CONSOLE) ||
+            !!(log->flags&QA_BUILTIN_LOG_REDIRECTED)!=!!print) continue;
+        log->delivered=true;
+        if(print) print(context,&log->context,log->text);
+        else qa_console_emit(console,&log->context,log->text);
+    }
+}
+
+bool application_source_log(application_provider *provider,const char *text,bool console,qa_error *error)
+{
+    qa_command_context context={.owner=provider->owner,.origin=QA_COMMAND_SERVER,
+        .dialect=provider->launch->selection.clock.kind};
+    return qa_application_log_emit(provider->application,&context,text,console,error);
 }
 
 bool application_source_message(application_provider *provider, qa_actor_id actor,
@@ -1208,6 +1229,15 @@ uint64_t qa_application_events_next(const qa_application *app)
 uint64_t qa_application_events_output_failures(const qa_application *app)
 { return app ? app->event_reliable_declines : 0; }
 
+static void event_records_release(qa_application *app,uint64_t next)
+{
+    if(!app->event_ring) return;
+    for(uint64_t id=qa_event_ring_first(app->event_ring);id<next && id<qa_event_ring_next(app->event_ring);++id) {
+        const application_event_envelope *record=application_event_stream_at(app,id);
+        if(record && record->kind==QA_APPLICATION_EVENT_AUDIO)
+            qa_audio_asset_release(record->raw.audio.event.sound.asset);
+    }
+}
 void application_events_retire(qa_application *app)
 {
     uint64_t next = app->event_local_cursor;
@@ -1216,7 +1246,13 @@ void application_events_retire(qa_application *app)
     if (app->event_source_cursor < next) next = app->event_source_cursor;
     uint64_t component = application_q3_components_events_first(app->components);
     if (component < next) next = component;
+    event_records_release(app,next);
     qa_event_ring_retire(app->event_ring, next);
+}
+void application_event_stream_dispose(qa_application *app)
+{
+    event_records_release(app,qa_application_events_next(app));
+    qa_event_ring_destroy(&app->event_ring);
 }
 uint64_t qa_application_events_audio_first(const qa_application *app)
 { return app->event_audio_cursor; }
@@ -1235,6 +1271,37 @@ bool qa_application_client_sound(qa_application *app, const qa_builtin_event *ev
     write.envelope->raw.client_sound.recipient = recipient;
     return application_event_stream_commit(app, &write, error) ||
         application_event_stream_decline(app, &write, true, error);
+}
+
+bool qa_application_audio_emit(qa_application *app,qa_audio_engine *engine,const qa_audio_event *event,qa_error *error)
+{
+    application_event_write write;
+    if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_AUDIO,&write,error))
+        return application_event_stream_decline(app,&write,true,error);
+    qa_application_audio_event *record=&write.envelope->raw.audio;
+    *record=(qa_application_audio_event){.engine=engine,.event=*event};
+    if(event->sound.asset) {
+        record->event.sound.asset=qa_audio_asset_retain(event->sound.asset);
+        if(!record->event.sound.asset) {
+            application_event_stream_abort(app,&write,error);
+            return application_event_stream_decline(app,&write,true,error);
+        }
+    }
+    qa_audio_asset *asset=record->event.sound.asset;
+    if(application_event_stream_commit(app,&write,error)) return true;
+    qa_audio_asset_release(asset);
+    return application_event_stream_decline(app,&write,true,error);
+}
+
+void qa_application_audio_discard(qa_application *app,qa_audio_engine *engine,uint64_t owner,uint32_t audience,bool all)
+{
+    for(uint64_t id=qa_application_events_first(app);id<qa_application_events_next(app);++id) {
+        application_event_envelope *record=(application_event_envelope *)application_event_stream_at(app,id);
+        if(!record || record->kind!=QA_APPLICATION_EVENT_AUDIO) continue;
+        qa_application_audio_event *audio=&record->raw.audio;
+        if(audio->engine==engine && (all || audio->event.sound.owner==owner) &&
+            (audience==QA_AUDIO_WORLD || audio->event.sound.audience==audience)) audio->cancelled=true;
+    }
 }
 
 uint64_t qa_application_protocol_events_generation(const qa_application *app)
@@ -1314,8 +1381,9 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
         out->value.builtin = &record->raw.client_sound.event;
         out->sound_recipient = record->raw.client_sound.recipient;
         break;
+    case QA_APPLICATION_EVENT_AUDIO: out->value.audio=&record->raw.audio; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
-    case QA_APPLICATION_EVENT_EQUIPMENT: break;
+    case QA_APPLICATION_EVENT_EQUIPMENT: case QA_APPLICATION_EVENT_LOG: break;
     }
     return true;
 }

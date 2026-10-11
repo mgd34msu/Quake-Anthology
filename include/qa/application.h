@@ -2,6 +2,7 @@
 #define QA_APPLICATION_H
 
 #include "qa/builtin.h"
+#include "qa/audio.h"
 #include "qa/campaign.h"
 #include "qa/game_q1_maps.h"
 #include "qa/game_q2_entities.h"
@@ -565,8 +566,23 @@ typedef enum qa_application_event_kind {
     QA_APPLICATION_EVENT_Q2_PLAYER,
     QA_APPLICATION_EVENT_PROTOCOL,
     QA_APPLICATION_EVENT_EQUIPMENT,
-    QA_APPLICATION_EVENT_CLIENT_SOUND
+    QA_APPLICATION_EVENT_CLIENT_SOUND,
+    QA_APPLICATION_EVENT_AUDIO,
+    QA_APPLICATION_EVENT_LOG
 } qa_application_event_kind;
+
+typedef struct qa_application_log_event {
+    qa_command_context context;
+    const char *text;
+    uint32_t flags;
+    bool delivered;
+} qa_application_log_event;
+
+typedef struct qa_application_audio_event {
+    qa_audio_engine *engine;
+    qa_audio_event event;
+    bool cancelled;
+} qa_application_audio_event;
 
 struct qa_application_q2_audience;
 struct qa_application_q2_protocol_delivery;
@@ -577,6 +593,7 @@ typedef struct qa_application_event_view {
         const qa_application_q2_map_event *q2_map;
         const qa_application_q3_map_event *q3_map;
         const qa_application_q2_player_event *q2_player;
+        const qa_application_audio_event *audio;
     } value;
     const qa_application_protocol_event *protocol;
     const struct qa_application_equipment_event *equipment;
@@ -626,6 +643,11 @@ void qa_application_player_feedback_read(const qa_application *, qa_actor_id,
     uint64_t first, uint64_t through, qa_player_feedback *);
 /* Client-generated effect sounds have no network projection. */
 bool qa_application_client_sound(qa_application *, const qa_builtin_event *, qa_actor_id recipient, qa_error *);
+bool qa_application_audio_emit(qa_application *, qa_audio_engine *, const qa_audio_event *, qa_error *);
+void qa_application_audio_discard(qa_application *, qa_audio_engine *, uint64_t owner, uint32_t audience, bool all);
+bool qa_application_log_emit(qa_application *,const qa_command_context *,const char *,bool console,qa_error *);
+void qa_application_logs_deliver(qa_application *,uint64_t first,uint64_t next,qa_console *,
+    void (*print)(void *,const qa_command_context *,const char *),void *context);
 /* Module/protocol adapters consume committed Q3 output before client publication. */
 bool qa_application_q3_output_drain(qa_application *, qa_error *);
 bool qa_application_event_read(const qa_application *, qa_application_event_cursor *,

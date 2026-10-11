@@ -6,6 +6,7 @@
 #include "qa/event_ring.h"
 
 typedef struct application_unified_event_record {
+    const qa_application_log_event *log;
     qa_unified_presentation_payload *presentation;
     qa_unified_simulation_payload *simulation;
     uint64_t order, presentation_sequence, simulation_sequence, time_ns, simulation_time_ns;

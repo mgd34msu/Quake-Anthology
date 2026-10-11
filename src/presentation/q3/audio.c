@@ -73,7 +73,7 @@ bool qa_q3_presentation_sound(qa_q3_presentation *p, int32_t handle, const qa_ve
     if (!sound_valid(p, handle)) return q3p_end(p, true);
     qa_audio_asset *asset = q3p_sound(p->options.assets, handle);
     if (!asset) return q3p_end(p, true);
-    bool ok = p->options.audio && p->options.milliseconds;
+    bool ok = p->options.audio && p->options.audio_event && p->options.milliseconds;
     if (!ok) q3p_fail(error, QA_ERROR_UNSUPPORTED, "Q3 shared audio output or clock is unavailable");
     qa_audio_play play = sound(p, asset); play.channel = channel;
     if (local) { play.origin_kind = QA_AUDIO_LOCAL; play.attenuation = 0; }
@@ -82,7 +82,7 @@ bool qa_q3_presentation_sound(qa_q3_presentation *p, int32_t handle, const qa_ve
         play.origin_kind = origin ? QA_AUDIO_FIXED : QA_AUDIO_ACTOR;
         if (origin) play.origin = *origin; else play.origin_actor = play.actor;
     }
-    if (ok) ok = qa_audio_engine_event(p->options.audio,
+    if (ok) ok = p->options.audio_event(p->options.audio_event_context, p->options.audio,
         &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY, .sound = play,
             .milliseconds = p->options.milliseconds(p->options.context)}, error);
     return q3p_end(p, ok);
@@ -95,14 +95,14 @@ bool qa_q3_presentation_loop(qa_q3_presentation *p, int32_t handle, int32_t enti
     if (!sound_valid(p, handle)) return q3p_end(p, true);
     qa_audio_asset *asset = q3p_sound(p->options.assets, handle);
     if (!asset) return q3p_end(p, true);
-    bool ok = p->options.audio && p->options.frame_number;
+    bool ok = p->options.audio && p->options.audio_event && p->options.frame_number;
     if (!ok) q3p_fail(error, QA_ERROR_UNSUPPORTED, "Q3 shared loop output or frame clock is unavailable");
     qa_audio_loop loop = {.sound = sound(p, asset), .velocity = velocity, .persistent = persistent};
     loop.sound.origin_kind = QA_AUDIO_FIXED; loop.sound.origin = origin;
     if (ok) ok = actor(p, entity, &loop.sound.actor, error);
     if (ok) {
         loop.frame_number = p->options.frame_number(p->options.context);
-        ok = qa_audio_engine_event(p->options.audio,
+        ok = p->options.audio_event(p->options.audio_event_context, p->options.audio,
             &(qa_audio_event){.kind = QA_AUDIO_EVENT_LOOP, .sound = loop.sound,
                 .velocity = loop.velocity, .frame_number = loop.frame_number,
                 .persistent = loop.persistent}, error);
@@ -113,7 +113,7 @@ bool qa_q3_presentation_loop(qa_q3_presentation *p, int32_t handle, int32_t enti
 bool qa_q3_presentation_clear_loops(qa_q3_presentation *p, bool all, qa_error *error)
 {
     if (!q3p_begin(p, error)) return false;
-    bool ok = p->options.audio ? qa_audio_engine_event(p->options.audio,
+    bool ok = p->options.audio && p->options.audio_event ? p->options.audio_event(p->options.audio_event_context, p->options.audio,
         &(qa_audio_event){.kind = QA_AUDIO_EVENT_CLEAR, .all = all,
             .sound = {.family = QA_GAME_Q3, .owner = p->options.owner,
                 .actor = QA_AUDIO_NO_ACTOR, .audience = p->options.seat}}, error) :
@@ -125,9 +125,9 @@ bool qa_q3_presentation_stop_loop(qa_q3_presentation *p, int32_t entity, qa_erro
 {
     if (!q3p_begin(p, error)) return false;
     uint64_t id;
-    bool ok = p->options.audio ? actor(p, entity, &id, error) :
+    bool ok = p->options.audio && p->options.audio_event ? actor(p, entity, &id, error) :
         q3p_fail(error, QA_ERROR_UNSUPPORTED, "Q3 shared audio output is unavailable");
-    if (ok) ok = qa_audio_engine_event(p->options.audio,
+    if (ok) ok = p->options.audio_event(p->options.audio_event_context, p->options.audio,
         &(qa_audio_event){.kind = QA_AUDIO_EVENT_STOP,
             .sound = {.family = QA_GAME_Q3, .actor = id, .owner = p->options.owner,
                 .audience = p->options.seat}}, error);
@@ -140,8 +140,8 @@ bool qa_q3_presentation_sound_position(qa_q3_presentation *p, int32_t entity,
     if (!q3p_begin(p, error)) return false;
     uint64_t id;
     bool ok = actor(p, entity, &id, error);
-    if (ok && !p->options.audio) ok = q3p_fail(error, QA_ERROR_UNSUPPORTED, "Q3 shared audio output is unavailable");
-    if (ok) ok = qa_audio_engine_event(p->options.audio,
+    if (ok && (!p->options.audio || !p->options.audio_event)) ok = q3p_fail(error, QA_ERROR_UNSUPPORTED, "Q3 shared audio output is unavailable");
+    if (ok) ok = p->options.audio_event(p->options.audio_event_context, p->options.audio,
         &(qa_audio_event){.kind = QA_AUDIO_EVENT_POSITION,
             .sound = {.family = QA_GAME_Q3, .actor = id, .owner = p->options.owner,
                 .audience = p->options.seat, .origin = origin}}, error);

@@ -342,7 +342,7 @@ bool frontend_native_q3_backend_options(frontend_native_q3 *row,qa_q3_presentati
 {
     if(!row || !out || !linked(row) || !row->view.assets)return frontend_fail(e,QA_ERROR_ARGUMENT,"Native backend requires its real asset registry");
     qa_frontend *f=row->frontend;
-    *out=(qa_q3_presentation_options){.assets=row->view.assets,.audio=f->audio,.clock={row,clock_time},
+    *out=(qa_q3_presentation_options){.assets=row->view.assets,.audio=f->audio, .audio_event=frontend_audio_event,.audio_event_context=f,.clock={row,clock_time},
         .seat=row->view.seat,.owner=row->view.identity,.viewport=frontend_viewport(f,row->view.seat),
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,
         .context=row,.audio_actor=audio_actor,.listener=listener,.music=music,.frame_number=frame_number,

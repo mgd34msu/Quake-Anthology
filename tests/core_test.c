@@ -40,6 +40,7 @@
 #include "qa/network_q2_messages.h"
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
 #include "../src/network/q2/session_internal.h"
+#include "../src/app/application/internal.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -784,6 +785,55 @@ static qa_audio_trace_hit audio_material_trace(void *context, qa_vec3 start, qa_
     return (qa_audio_trace_hit){.fraction=.5f, .end=end, .material=*(qa_string_id *)context};
 }
 
+typedef struct log_delivery_test {
+    qa_application app;
+    size_t normal, captured;
+    qa_command_context delivered;
+} log_delivery_test;
+static void log_test_output(void *context,const qa_command_context *command,const char *text)
+{
+    log_delivery_test *test=context;
+    CHECK(text && *text=='v');test->delivered=*command;++test->captured;
+}
+static void log_test_normal(void *context,const qa_command_context *command,const char *text)
+{
+    log_delivery_test *test=context;
+    CHECK(text && *text=='v');test->delivered=*command;++test->normal;
+}
+static bool log_test_produce(void *context,const qa_command_invocation *command,qa_error *error)
+{
+    log_delivery_test *test=context;char text[]="value";
+    bool okay=qa_application_log_emit(&test->app,&command->context,text,true,error);
+    text[0]='x';CHECK(test->captured==0 && test->normal==0);
+    return okay;
+}
+static void test_ring_console_capture(void)
+{
+    qa_error error={0};log_delivery_test test={0};
+    CHECK(application_event_stream_create(&test.app,16,&error));
+    qa_command_context context={.owner=1,.dialect=QA_RULESET_Q2_RERELEASE,.origin=QA_COMMAND_SERVER};
+    test.app.console=qa_console_create(&(qa_console_options){.context=context,
+        .disable_builtins=true,.user=&test,.print=log_test_normal},&error);
+    CHECK(test.app.console);
+    CHECK(qa_console_register(test.app.console,"ringlog","",1,false,log_test_produce,&test,&error));
+    uint64_t first=qa_application_events_next(&test.app);
+    CHECK(qa_console_execute_capture(test.app.console,&context,"ringlog",log_test_output,&test,&error));
+    CHECK(test.captured==0 && test.normal==0);
+    uint64_t next=qa_application_events_next(&test.app);
+    qa_application_logs_deliver(&test.app,first,next,test.app.console,log_test_output,&test);
+    CHECK(test.captured==1 && test.normal==0 && test.delivered.dialect==context.dialect && test.delivered.owner==1);
+    qa_application_logs_deliver(&test.app,first,next,test.app.console,log_test_output,&test);
+    qa_application_logs_deliver(&test.app,first,next,test.app.console,NULL,NULL);
+    CHECK(test.captured==1 && test.normal==0);
+    CHECK(qa_application_log_emit(&test.app,&context,"value",true,&error));
+    qa_application_logs_deliver(&test.app,next,qa_application_events_next(&test.app),test.app.console,NULL,NULL);
+    CHECK(test.normal==1);
+    qa_console_destroy(test.app.console);
+    application_event_stream_dispose(&test.app);free(test.app.unified_persistent);
+}
+static void test_audio_event_discard(void *context,qa_audio_engine *engine,uint64_t owner,uint32_t audience,bool all)
+{ qa_application_audio_discard(context,engine,owner,audience,all); }
+
 static void test_shared_audio_preparation(void)
 {
     qa_error error = {0}; char directory[] = "/tmp/qa-audio-assets-XXXXXX";
@@ -848,28 +898,36 @@ static void test_shared_audio_preparation(void)
         qa_audio_mixer_destroy(mixer);
         qa_audio_engine *engine=NULL;
         counts=(audio_notification_counts){0};
+        qa_application app={0};CHECK(application_event_stream_create(&app,16,&error));
         qa_audio_engine_options engine_options={.sample_rate=44100,.output_channels=2,
-            .mix_frames=16,.initial_voices=8,.observer=count_audio_notification,.observer_user=&counts};
+            .mix_frames=16,.initial_voices=8,.observer=count_audio_notification,.observer_user=&counts,
+            .discard_events=test_audio_event_discard,.event_context=&app};
         CHECK(qa_audio_engine_create(&engine_options,&engine,&error));
         qa_audio_event event={.kind=QA_AUDIO_EVENT_PLAY,.sound=sound};
         event.sound.audience=0;event.sound.owner=1;
-        CHECK(qa_audio_engine_event(engine,&event,&error));
+        uint64_t first_event=qa_application_events_next(&app);
+        CHECK(qa_application_audio_emit(&app,engine,&event,&error));
         event.sound.owner=2;
-        CHECK(qa_audio_engine_event(engine,&event,&error));
+        CHECK(qa_application_audio_emit(&app,engine,&event,&error));
         CHECK(qa_audio_engine_stop_owner(engine,1,0,&error));
         CHECK(counts.starts==0);
         qa_audio_listener listener={.seat=0,.actor=QA_AUDIO_NO_ACTOR,.gain=1,
             .axis={{1,0,0},{0,1,0},{0,0,1}}};
         CHECK(qa_audio_engine_listeners(engine,&listener,1,&error));
-        CHECK(qa_audio_engine_events(engine,&error));
+        qa_application_event_view output;
+        CHECK(qa_application_event_read(&app,&(qa_application_event_cursor){.id=first_event},&output));
+        CHECK(output.kind==QA_APPLICATION_EVENT_AUDIO && output.value.audio->cancelled);
+        CHECK(qa_application_event_read(&app,&(qa_application_event_cursor){.id=first_event+1},&output));
+        CHECK(!output.value.audio->cancelled && output.value.audio->event.sound.owner==2);
+        CHECK(qa_audio_engine_apply(engine,&output.value.audio->event,&error));
         int16_t captured[32];CHECK(qa_audio_engine_mix(engine,captured,16,&error));
         bool audible=false;for(size_t j=0;j<32;++j) audible|=captured[j]!=0;
         CHECK(audible && counts.starts==1);
         qa_audio_engine_stop_all(engine);CHECK(counts.starts==counts.stops);
-        CHECK(qa_audio_engine_event(engine,&event,&error));
-        CHECK(qa_audio_engine_events(engine,&error));
+        CHECK(qa_audio_engine_apply(engine,&event,&error));
         CHECK(qa_audio_engine_mix(engine,captured,16,&error) && counts.starts==2);
         qa_audio_engine_destroy(engine);CHECK(counts.starts==counts.stops);
+        application_event_stream_dispose(&app);free(app.unified_persistent);
         if (i + 1 == sizeof(families) / sizeof(*families)) {
             CHECK(first->frame_count == sizeof(held_samples) / sizeof(*held_samples));
             memcpy(held_samples, first->samples, sizeof(held_samples)); held = qa_audio_sample_retain(first); CHECK(held);
@@ -2480,6 +2538,7 @@ int main(int argc, char **argv)
     test_metadata_retention();
     test_files();
     test_localization_lookup_generation();
+    test_ring_console_capture();
     test_shared_audio_preparation();
     test_retained_movement_result();
     test_campaign_unit();

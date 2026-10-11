@@ -922,7 +922,7 @@ bool application_events_save_content_visit(qa_application *app,
 static void install_store(qa_application *app, event_store *store, uint64_t pending_first)
 {
     application_unified_persistent_dispose(app);
-    qa_event_ring_destroy(&app->event_ring);
+    application_event_stream_dispose(app);
     free(app->unified_event_owners);
     application_unified_events_resources_dispose(app);
     application_unified_world_text_destroy(app);

@@ -1498,8 +1498,11 @@ static bool admin_execute(void *context, const qa_net_address *from, const char 
     qa_command_context command=source.command;
     command.direct=true; command.console_text=true; command.script="remote-console";
     captured_output capture = {.write = write, .context = output};
+    qa_application *app=n->frontend->application;
+    uint64_t first=qa_application_events_next(app);
     bool ok = qa_console_execute_capture(source.console, &command,
         text, captured_print, &capture, error);
+    qa_application_logs_deliver(app,first,qa_application_events_next(app),source.console,captured_print,&capture);
     if (capture.error.code) { if (error) *error = capture.error; return false; }
     return ok;
 }

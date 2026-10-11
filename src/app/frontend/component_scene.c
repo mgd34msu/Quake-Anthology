@@ -780,7 +780,7 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     qa_q3_presentation_asset_options assets={.strings=qa_session_strings(qa_application_session(f->application)),.provider={owner->files,owner->images,owner->materials,QA_GAME_Q3,qa_application_world(f->application)},
         .sounds=owner->sounds,.movies=owner->media,.context=owner,.print=print,.model_initialize=model_initialize};
     if (!qa_q3_presentation_assets_create(&assets,&owner->assets,e)) return false;
-    qa_q3_presentation_options options={.assets=owner->assets,.audio=f->audio,.clock={owner,milliseconds},
+    qa_q3_presentation_options options={.assets=owner->assets,.audio=f->audio, .audio_event=frontend_audio_event,.audio_event_context=f,.clock={owner,milliseconds},
         .source_scene_membership=true,
         .seat=request->physical_seat,.owner=owner->identity,.viewport=frontend_viewport(f,request->physical_seat),
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,

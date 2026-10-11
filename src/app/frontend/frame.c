@@ -508,19 +508,13 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     uint64_t next = qa_application_events_next(frontend->application);
+    qa_application_logs_deliver(frontend->application,qa_application_events_local_first(frontend->application),
+        next,qa_application_console(frontend->application),NULL,NULL);
     for (uint64_t i = qa_application_events_local_first(frontend->application); i < next; ++i) {
         qa_application_event_view output;
         if (!qa_application_event_read(frontend->application, &(qa_application_event_cursor){.id = i, .projection = 0}, &output) ||
             output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
-        if (event.kind == QA_BUILTIN_LOG) {
-            if ((event.code & QA_BUILTIN_LOG_CONSOLE) && !(event.code & QA_BUILTIN_LOG_REDIRECTED)) {
-                qa_command_context context = {.owner = event.provider, .origin = QA_COMMAND_SERVER};
-                qa_console_emit(qa_application_console(frontend->application), &context,
-                    qa_strings_cstr(strings, event.text));
-            }
-            continue;
-        }
         if (!frontend_ranking_event(frontend,&event,error)) return false;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
@@ -1015,7 +1009,7 @@ static bool frontend_step(qa_frontend *frontend,
                     if (ok) ok=frontend_music_sources_update(frontend->music_sources,error);
                     if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
                     if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
-                         qa_audio_engine_events(frontend->audio, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
+                         qa_audio_engine_end_loop_frame(frontend->audio, error) &&
                          audio_output(frontend, adjusted, error);
                     ok = frontend_profiler_end(profiler, ok, error);
                 }

@@ -1,7 +1,6 @@
 #ifndef QA_AUDIO_ENGINE_INTERNAL_H
 #define QA_AUDIO_ENGINE_INTERNAL_H
 #include "qa/audio.h"
-#include "qa/event_ring.h"
 #include "qa/audio_acoustics_prepare.h"
 #include "qa/audio_music_engine.h"
 typedef struct audio_seat {
@@ -32,8 +31,6 @@ struct qa_audio_engine {
     size_t position_count, position_capacity;
     audio_bus *buses;
     size_t bus_count, bus_capacity;
-    qa_event_ring *events;
-    uint64_t event_cursor;
     float *sum, *seat_scratch;
     uint64_t clock, next_voice;
     double milliseconds;

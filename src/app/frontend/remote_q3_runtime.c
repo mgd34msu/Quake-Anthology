@@ -765,7 +765,7 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     o->no_curves=qa_cvars_resolve(basis.client.source_cvars,"cm_noCurves");
     o->player_curve_clip=qa_cvars_resolve(basis.client.source_cvars,"cm_playerCurveClip");
     const frontend_remote_q3_resources *r=&services.resources;
-    qa_q3_presentation_options backend={.assets=r->assets,.audio=f->audio,.clock={o,clock_time},
+    qa_q3_presentation_options backend={.assets=r->assets,.audio=f->audio, .audio_event=frontend_audio_event,.audio_event_context=f,.clock={o,clock_time},
         .world_scratch=r->world_scratch.view,.world_child_scratch=r->world_scratch.child,
         .seat=r->physical_seat,.owner=r->identity,.viewport=frontend_viewport(f,r->physical_seat),
         .near_clip=4,.far_clip=16384,.identity_light=1,.lod_scale=5,.rail_core_width=6,.rail_ring_width=16,.rail_segment_length=32,

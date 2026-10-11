@@ -452,6 +452,7 @@ bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_servi
     v.preferences=preferences;v.backend_frame=backend_frame;
     v.video_shutdown=o->options.operations.video_shutdown?video_shutdown:NULL;
     v.presentation.assets=o->assets;v.presentation.audio=o->options.frontend->audio;
+    v.presentation.audio_event=frontend_audio_event;v.presentation.audio_event_context=o->options.frontend;
     v.presentation.owner=o->options.audio_owner;v.presentation.seat=o->physical_seat;
     v.presentation.viewport=frontend_viewport(o->options.frontend,o->physical_seat);
     if(!frontend_q3_renderer_options_read(o->options.frontend,&v.presentation,e))return false;
