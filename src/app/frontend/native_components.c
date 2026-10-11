@@ -11,6 +11,7 @@ typedef struct component_child {
     qa_application_q3_component_bodies bodies;
 } component_child;
 typedef struct component_pose {
+    struct component_pose *next;
     qa_actor_id actor;
     qa_application_q3_body_part part;
     qa_q3_ref_entity ref;
@@ -21,7 +22,7 @@ struct frontend_native_components {
     const q3n_frame *frame;
     component_child *children;
     size_t count;
-    component_pose *poses;
+    component_pose *poses,*last_pose;
     size_t pose_count;
     uint32_t first_order,packet_order;
     bool submitted;
@@ -41,8 +42,7 @@ void frontend_native_components_release(frontend_native_q3 *row)
     struct frontend_native_components *owner=row->components;
     if(!owner) return;
     for(size_t i=owner->count;i>0;--i) qa_application_q3_component_bodies_return(&owner->children[i-1].lease);
-    free(owner->children); free(owner->poses);
-    free(owner); row->components=NULL;
+    row->components=NULL;
 }
 bool frontend_native_components_prepare(frontend_native_q3 *row,const q3n_frame *frame,qa_error *error)
 {
@@ -50,13 +50,17 @@ bool frontend_native_components_prepare(frontend_native_q3 *row,const q3n_frame 
     size_t count=qa_application_q3_component_scene_count(frame->application);
     if(!count) return true;
     if(count>SIZE_MAX/sizeof(component_child)) return frontend_fail(error,QA_ERROR_MEMORY,"Native component roster exceeds allocation");
-    struct frontend_native_components *owner=calloc(1,sizeof(*owner));
-    if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual native component Draw");
+    qa_arena *storage=&row->frontend->frame.storage;
+    struct frontend_native_components *owner=qa_arena_alloc(storage,sizeof(*owner),
+        _Alignof(struct frontend_native_components),error);
+    if(!owner) return false;
+    *owner=(struct frontend_native_components){0};
     owner->frame=frame; row->components=owner;
-    owner->children=calloc(count,sizeof(*owner->children));
-    if(!owner->children) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining native component output roster");
+    owner->children=qa_arena_alloc(storage,count*sizeof(*owner->children),_Alignof(component_child),error);
+    if(!owner->children) return false;
     for(size_t i=0;i<count;++i) {
         component_child *child=&owner->children[i];
+        *child=(component_child){0};
         if(!qa_application_q3_component_draw_prepare(frame->application,i,row->view.seat,frame->viewing_actor,
             &frame->refdef.origin,frame->refdef.axis,frame->time,frame->frame_milliseconds,
             frame->source.source_frame.number,&child->draw,error)) return false;
@@ -83,17 +87,24 @@ bool frontend_native_components_body(frontend_native_q3 *row,const q3n_frame *fr
     qa_q3_model_opening opening;
     if(!ref || ref->kind!=QA_Q3_REF_MODEL || ref->model<=0 ||
         !qa_q3_assets_model_opening(row->view.assets,(size_t)(ref->model-1),QA_Q3_MODEL_PRIMARY_OPENING,&opening,error)) return false;
-    if(owner->pose_count==SIZE_MAX/sizeof(*owner->poses)) return false;
-    component_pose *poses=realloc(owner->poses,(owner->pose_count+1)*sizeof(*poses));
-    if(!poses) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual native component body pose");
-    owner->poses=poses;
+    component_pose *pose=qa_arena_alloc(&row->frontend->frame.storage,sizeof(*pose),_Alignof(component_pose),error);
+    if(!pose) return false;
     static const qa_application_q3_body_part parts[4]={QA_APPLICATION_Q3_BODY_LOWER,QA_APPLICATION_Q3_BODY_UPPER,
         QA_APPLICATION_Q3_BODY_HEAD,QA_APPLICATION_Q3_BODY};
-    poses[owner->pose_count++]=(component_pose){actor,parts[part],*ref,opening.resource,base};
+    *pose=(component_pose){.actor=actor,.part=parts[part],.ref=*ref,.resource=opening.resource,.base=base};
+    if(owner->last_pose) owner->last_pose->next=pose;
+    else owner->poses=pose;
+    owner->last_pose=pose;
+    ++owner->pose_count;
     *consumed=true; return current(row,error);
 }
 void frontend_native_components_clear(frontend_native_q3 *row)
-{ if(row->components) row->components->pose_count=0; }
+{
+    if(row->components) {
+        row->components->poses=row->components->last_pose=NULL;
+        row->components->pose_count=0;
+    }
+}
 bool frontend_native_components_scene_prepare(frontend_native_q3 *row,qa_q3_scene_options *options,qa_error *error)
 {
     struct frontend_native_components *owner=row->components;
@@ -114,8 +125,9 @@ bool frontend_native_components_scene_submit(frontend_native_q3 *row,const qa_q3
     struct frontend_native_components *owner=row->components;
     if(!owner || options->world.no_world) return true;
     if(!current(row,error)) return false;
-    for(size_t i=0;i<owner->pose_count;++i) {
-        const component_pose *pose=&owner->poses[i]; bool visible=true;
+    size_t ordinal=0;
+    for(const component_pose *pose=owner->poses;pose;pose=pose->next,++ordinal) {
+        bool visible=true;
         for(size_t j=0;j<owner->count;++j) for(size_t k=0;k<owner->children[j].bodies.count;++k) {
             qa_application_q3_component_actor body;
             if(!qa_application_q3_component_body_at(&owner->children[j].bodies,k,&body)) return false;
@@ -123,12 +135,13 @@ bool frontend_native_components_scene_submit(frontend_native_q3 *row,const qa_q3
             if(!body.count) visible=false;
             for(size_t m=0;m<body.count;++m) if(pass_matches(pose->part,body.parts[m].part) && !body.parts[m].base) visible=false;
         }
-        uint32_t order=owner->first_order+(uint32_t)i;
+        uint32_t order=owner->first_order+(uint32_t)ordinal;
         if((!pose->base || visible) && !qa_q3_presentation_source_body_pass(row->view.presentation,&pose->ref,
             row->view.assets,&pose->ref,owner->frame->time,options,order,frame,error)) return false;
         bool posed=false;
-        for(size_t j=0;j<i;++j) if(qa_actor_id_equal(owner->poses[j].actor,pose->actor) &&
-            owner->poses[j].part==pose->part && owner->poses[j].resource==pose->resource) { posed=true; break; }
+        for(const component_pose *prior=owner->poses;prior!=pose;prior=prior->next)
+            if(qa_actor_id_equal(prior->actor,pose->actor) && prior->part==pose->part &&
+                prior->resource==pose->resource) { posed=true; break; }
         if(posed) continue;
         for(size_t j=0;j<owner->count;++j) for(size_t k=0;k<owner->children[j].bodies.count;++k) {
             const component_child *child=&owner->children[j]; qa_application_q3_component_actor body;
