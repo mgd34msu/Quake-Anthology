@@ -163,7 +163,7 @@ bool frontend_source_effects_prepare(frontend_source_effects *scope,
     scope->first = options->first_entity; scope->reserved = 0;
     if (!options->world.no_world) {
         if(!frontend_scene_lights_span_merge(&scope->frontend->frame.storage,&options->world,
-            scope->effect_lights,scope->effect_light_count,error)) return false;
+            scope->effect_lights,scope->effect_light_count,true,error)) return false;
         for (size_t i = 0; i < scope->groups; ++i) {
             if (!frontend_selected_effects_source_matches(scope->frontend, scope, i)) continue;
             frontend_selected_effects_view view; qa_application_selected_effects source;

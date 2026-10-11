@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "scene_lights.h"
 #include "qa/scene_effects.h"
 #include "visual_access.h"
 #include "qa/game_q2_feedback.h"
@@ -1291,15 +1292,7 @@ bool frontend_particle_world(qa_frontend *frontend, uint32_t seat,
             if (!frontend_remote_q2_effects_prepare(owner->q2_effects,&sample,&effect_lights,&count,error)) return false;
         }
         if (!count) continue;
-        if (world->light_count>SIZE_MAX-count ||
-            world->light_count+count>SIZE_MAX/sizeof(qa_scene_light))
-            return frontend_fail(error,QA_ERROR_MEMORY,"Q2 explosion light array exceeds native storage");
-        qa_scene_light *lights=qa_arena_alloc(&frontend->frame.storage,
-            (world->light_count+count)*sizeof(*lights),_Alignof(qa_scene_light),error);
-        if (!lights) return false;
-        if (world->light_count) memcpy(lights,world->lights,world->light_count*sizeof(*lights));
-        memcpy(lights+world->light_count,effect_lights,count*sizeof(*lights));
-        world->lights=lights; world->light_count+=count;
+        if(!frontend_scene_lights_span_merge(&frontend->frame.storage,world,effect_lights,count,false,error)) return false;
     }
     return true;
 }

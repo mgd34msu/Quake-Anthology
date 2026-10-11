@@ -760,7 +760,7 @@ bool frontend_unified_q3_runtime_scene_prepare(frontend_unified_q3_runtime *o,
                 o->faulted=true;return false;}
             if(admitted) {
                 qa_q3_source_light_cell cell;
-                if(o->scene_light_count==32 || !qa_q3_source_scene_bank_light_read(bank,
+                if(o->scene_light_count==QA_SCENE_PROJECTED_LIGHTS || !qa_q3_source_scene_bank_light_read(bank,
                     o->scene_light_first+(uint32_t)o->scene_light_count,&cell)){
                     o->faulted=true;return fail(e,"Compiled light admission left its actual shared bank span");}
                 o->scene_lights[o->scene_light_count++]=cell.value;

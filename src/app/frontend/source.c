@@ -1612,40 +1612,6 @@ static void body_scene_clear(frontend_source_lease *lease)
 }
 static void body_scene_completed(frontend_source_lease *lease)
 { if (lease->body_draw) lease->body_draw->components_submitted=true; }
-typedef struct body_light_cursor {
-    frontend_source_lease *lease;
-    size_t child,packet,packet_count,light;
-    frontend_component_scene_packet current;
-    bool entered;
-} body_light_cursor;
-static bool body_light_read(void *context,qa_scene_light *light,const qa_q3_refdef **definition,
-    bool *view,bool *present,qa_error *error)
-{
-    body_light_cursor *cursor=context;
-    source_body_draw *draw=cursor->lease->body_draw;
-    *present=false;*view=false;*definition=NULL;
-    while(cursor->child<draw->count) {
-        if(cursor->light<cursor->current.light_count) {
-            *light=cursor->current.lights[cursor->light++];*present=true;return true;
-        }
-        const qa_application_q3_component_draw *child=&draw->components[cursor->child].draw;
-        if(!cursor->entered) {
-            if(!frontend_component_scene_packet_count(cursor->lease->source->frontend,child->frontend_identity,
-                child->sequence,&cursor->packet_count,error)) return false;
-            cursor->entered=true;
-        }
-        if(cursor->packet<cursor->packet_count) {
-            if(!frontend_component_scene_packet_read(cursor->lease->source->frontend,child->frontend_identity,
-                child->sequence,cursor->packet++,&cursor->current,error)) return false;
-            cursor->light=0;
-        } else {
-            ++cursor->child;cursor->entered=false;cursor->packet=cursor->light=0;
-            cursor->current=(frontend_component_scene_packet){0};
-        }
-    }
-    return true;
-}
-
 static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options *options,qa_error *error)
 {
     source_body_draw *draw=lease->body_draw;
@@ -1655,27 +1621,10 @@ static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options 
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene order left its actual Draw inventory");
     draw->first_order=options->first_entity; options->first_entity+=(uint32_t)draw->ref_count;
     draw->component_order=options->first_entity;
-    size_t entities=0,lights=0;
-    if (!draw->components_submitted) for (size_t i=0;i<draw->count;++i) {
-        const qa_application_q3_component_draw *child=&draw->components[i].draw;
-        size_t packets;
-        if (!frontend_component_scene_packet_count(lease->source->frontend,child->frontend_identity,child->sequence,&packets,error)) return false;
-        for (size_t j=0;j<packets;++j) {
-            frontend_component_scene_packet packet;
-            if (!frontend_component_scene_packet_read(lease->source->frontend,child->frontend_identity,child->sequence,j,&packet,error)) return false;
-            if (packet.entity_count>SIZE_MAX-entities || packet.light_count>SIZE_MAX-lights)
-                return frontend_fail(error,QA_ERROR_MEMORY,"Component scene extent overflow");
-            entities+=packet.entity_count; lights+=packet.light_count;
-        }
-    }
-    if (entities>1022-options->first_entity || lights>SIZE_MAX-options->world.light_count ||
-        lights+options->world.light_count>SIZE_MAX/sizeof(qa_scene_light))
-        return frontend_fail(error,QA_ERROR_MEMORY,"Component scene leaves primary submission limits");
-    options->first_entity+=(uint32_t)entities;
-    if (!lights) return true;
-    body_light_cursor cursor={.lease=lease};
-    if(!frontend_scene_lights_merge(&lease->source->frontend->frame.storage,&options->world,
-        lights,body_light_read,&cursor,error)) return false;
+    frontend_scene_component_span span={.frontend=lease->source->frontend,
+        .draws=(const qa_application_q3_component_draw *)draw->components,
+        .count=draw->components_submitted?0:draw->count,.stride=sizeof(*draw->components)};
+    if(!frontend_scene_components_prepare(&lease->source->frontend->frame.storage,&span,options,error)) return false;
     return body_current(lease,&view);
 }
 static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
@@ -1744,26 +1693,11 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
         }
     }
     if (!draw->components_submitted) {
-        uint32_t order=draw->component_order;
-        for (size_t i=0;i<draw->count;++i) {
-            const source_body_component *child=draw->components+i;
-            size_t packets;
-            if (!frontend_component_scene_packet_count(lease->source->frontend,child->draw.frontend_identity,child->draw.sequence,&packets,error)) return false;
-            for (size_t j=0;j<packets;++j) {
-                frontend_component_scene_packet packet;
-                if (!frontend_component_scene_packet_read(lease->source->frontend,child->draw.frontend_identity,child->draw.sequence,j,&packet,error)) return false;
-                for (size_t k=0;k<packet.entity_count;++k,++order)
-                    if (!qa_q3_presentation_source_component_entity(lease->source->presentation,child->draw.assets,
-                        packet.entities+k,packet.definition.time,options,order,frame,error)) return false;
-                for (size_t k=0;k<packet.polygon_count;++k) {
-                    const qa_q3_scene_polygon *polygon=packet.polygons+k;
-                    if (polygon->first>packet.vertex_count || polygon->count>packet.vertex_count-polygon->first)
-                        return frontend_fail(error,QA_ERROR_FORMAT,"Component polygon leaves its retained vertices");
-                    if (!qa_q3_presentation_source_component_poly(lease->source->presentation,child->draw.assets,
-                        polygon->shader,packet.vertices+polygon->first,polygon->count,&polygon->fog,packet.definition.time,options,frame,error)) return false;
-                }
-            }
-        }
+        frontend_scene_component_span span={.frontend=lease->source->frontend,
+            .draws=(const qa_application_q3_component_draw *)draw->components,
+            .count=draw->count,.stride=sizeof(*draw->components)};
+        if(!frontend_scene_components_submit(&span,lease->source->presentation,options,
+            draw->component_order,frame,error)) return false;
     }
     return body_current(lease,&view);
 }

@@ -1071,7 +1071,7 @@ bool qa_material_source_scene_view(qa_material_source_scratch *source, const qa_
     source->view.context = input->source_diagnostics_context;
     const qa_scene_light *lights = input->use_projected_lights ? input->projected_lights : input->lights;
     size_t count = input->use_projected_lights ? input->projected_light_count : input->light_count;
-    if (count > 32 || (count && !lights)) {
+    if (count > QA_SCENE_PROJECTED_LIGHTS || (count && !lights)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source view has no admitted bounded light list"); return false;
     }
     source->view.light_count = count;
@@ -1317,7 +1317,7 @@ bool qa_material_source_commands(const qa_material *material, const qa_material_
 {
     qa_material_source_scratch *source = context ? context->source_scratch : NULL;
     if (!material || !source || !source->collecting || source->pictures || source->frame != frame ||
-        first > frame->command_count || context->light_count > 32 ||
+        first > frame->command_count || context->light_count > QA_SCENE_PROJECTED_LIGHTS ||
         (context->light_count && !context->lights) || !material_source_current(source, error)) return false;
     if (source->submission_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Source submission count is exhausted"); return false;
@@ -1913,7 +1913,7 @@ bool qa_material_submit(const qa_material *original, const qa_scene_mesh *mesh,
     if (original == NULL || mesh == NULL || context == NULL || frame == NULL ||
         (mesh->vertex_count != 0 && mesh->vertices == NULL) ||
         (mesh->index_count != 0 && mesh->indices == NULL) || mesh->primitive != QA_SCENE_TRIANGLES ||
-        mesh->index_count % 3 != 0 || context->light_count > 32 ||
+        mesh->index_count % 3 != 0 || context->light_count > QA_SCENE_PROJECTED_LIGHTS ||
         (context->light_count != 0 && context->lights == NULL) ||
         (context->fragment_light_count != 0 && context->fragment_lights == NULL) ||
         !isfinite(context->seconds) || !isfinite(context->identity_light) ||

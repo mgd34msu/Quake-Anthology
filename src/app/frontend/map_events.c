@@ -1,5 +1,6 @@
 #include "ui_features.h"
 #include "internal.h"
+#include "scene_lights.h"
 #include "qa/pool.h"
 #include "qc_rerelease_events.h"
 #include "qa/scene_resource_save.h"
@@ -621,6 +622,37 @@ static bool lightstyle_source(qa_frontend *frontend,qa_actor_owner owner,qa_game
         *seconds=(float)*seconds;
     return true;
 }
+typedef struct retained_light_cursor {
+    qa_frontend *frontend;
+    frontend_event_view *style;
+    const qa_scene_world_input *world;
+    frontend_retained_light *next;
+    unsigned seat;
+} retained_light_cursor;
+static bool retained_light_read(void *context,qa_scene_light *out,const qa_q3_refdef **definition,
+    bool *view,bool *present,qa_error *error)
+{
+    (void)error;retained_light_cursor *cursor=context;
+    *view=false;*definition=NULL;*present=false;
+    while(cursor->next) {
+        frontend_retained_light *light=cursor->next;cursor->next=light->next;
+        const qa_q2_map_event *event=&light->event;
+        if(!event->visible || !seat_receives(cursor->frontend,cursor->seat,event->recipient) ||
+            !qa_actors_get(qa_world_actors(qa_application_world(cursor->frontend->application)),event->actor)) continue;
+        float intensity=event->intensity;
+        if(event->style>=0 && event->style<FRONTEND_STYLES) intensity*=cursor->style->q2_styles[event->style].x;
+        float distance=qa_vec_length(qa_vec_sub(cursor->world->view.origin,event->origin));
+        if(event->fade_end>event->fade_start && distance>event->fade_start)
+            intensity*=fmaxf(0,(event->fade_end-distance)/(event->fade_end-event->fade_start));
+        *out=(qa_scene_light){.origin=event->origin,.color=qa_vec_scale(event->color,intensity),
+            .radius=event->radius,.scale=1,.direction=event->direction,
+            .spot=(event->flags&1)!=0,.cos_half_angle=event->cone_cosine,
+            .identity=light->identity,.revision=light->revision,.family=QA_GAME_Q2,
+            .shadow_resolution=event->resolution};
+        *present=true;break;
+    }
+    return true;
+}
 bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_input *world, qa_error *error)
 {
     if (!frontend || seat >= frontend->options.seats || !world || frontend->resource_inventory)
@@ -679,33 +711,9 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
 #undef MIX
 #undef COLOR
     }
-    size_t count = 0;
-    for (frontend_retained_light *light = state->lights; light; light = light->next)
-        if (light->event.visible && seat_receives(frontend, seat, light->event.recipient) &&
-            qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), light->event.actor)) ++count;
-    if (!count) return frontend_particle_world(frontend,seat,world,error);
-    if (world->light_count > SIZE_MAX - count || count + world->light_count > SIZE_MAX / sizeof(qa_scene_light))
-        return frontend_fail(error, QA_ERROR_MEMORY, "authored light array exceeds native storage");
-    qa_scene_light *lights = qa_arena_alloc(&frontend->frame.storage, (count + world->light_count) * sizeof(*lights), _Alignof(qa_scene_light), error);
-    if (!lights) return false;
-    if (world->light_count) memcpy(lights, world->lights, world->light_count * sizeof(*lights));
-    size_t used = world->light_count;
-    for (frontend_retained_light *light = state->lights; light; light = light->next) {
-        const qa_q2_map_event *event = &light->event;
-        if (!event->visible || !seat_receives(frontend, seat, event->recipient) ||
-            !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor)) continue;
-        float intensity = event->intensity;
-        if (event->style >= 0 && event->style < FRONTEND_STYLES) intensity *= view->q2_styles[event->style].x;
-        float distance = qa_vec_length(qa_vec_sub(world->view.origin, event->origin));
-        if (event->fade_end > event->fade_start && distance > event->fade_start)
-            intensity *= fmaxf(0, (event->fade_end - distance) / (event->fade_end - event->fade_start));
-        lights[used++] = (qa_scene_light){.origin = event->origin, .color = qa_vec_scale(event->color, intensity),
-            .radius = event->radius, .scale = 1, .direction = event->direction,
-            .spot = (event->flags & 1) != 0, .cos_half_angle = event->cone_cosine,
-            .identity = light->identity, .revision = light->revision, .family = QA_GAME_Q2,
-            .shadow_resolution = event->resolution};
-    }
-    world->lights = lights; world->light_count = used;
+    retained_light_cursor cursor={.frontend=frontend,.style=view,.world=world,.next=state->lights,.seat=seat};
+    if(!frontend_scene_lights_merge(&frontend->frame.storage,world,state->light_records.active,
+        retained_light_read,&cursor,false,error)) return false;
     return frontend_particle_world(frontend,seat,world,error);
 }
 bool frontend_event_debug(qa_frontend *frontend, const qa_scene_view *view, qa_error *error)

@@ -46,7 +46,7 @@ typedef struct qaw_visibility_cache {
     float projection[2];
     qa_scene_plane clip_plane;
     qa_bounds bounds_start, bounds;
-    qaw_visibility_light lights[32];
+    qaw_visibility_light lights[QA_SCENE_PROJECTED_LIGHTS];
     size_t light_count, surface_count, area_bytes;
     uint64_t leaf_visits;
     uint32_t visibility_generation, node_generation;

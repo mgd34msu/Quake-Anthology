@@ -1,5 +1,6 @@
 #include "native_components.h"
 #include "component_scene.h"
+#include "scene_lights.h"
 #include "qa/application_q3_components.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_model_opening.h"
@@ -22,7 +23,6 @@ struct frontend_native_components {
     size_t count;
     component_pose *poses;
     size_t pose_count;
-    qa_scene_light *lights,*projected;
     uint32_t first_order,packet_order;
     bool submitted;
 };
@@ -41,7 +41,7 @@ void frontend_native_components_release(frontend_native_q3 *row)
     struct frontend_native_components *owner=row->components;
     if(!owner) return;
     for(size_t i=owner->count;i>0;--i) qa_application_q3_component_bodies_return(&owner->children[i-1].lease);
-    free(owner->children); free(owner->poses); free(owner->lights); free(owner->projected);
+    free(owner->children); free(owner->poses);
     free(owner); row->components=NULL;
 }
 bool frontend_native_components_prepare(frontend_native_q3 *row,const q3n_frame *frame,qa_error *error)
@@ -101,42 +101,10 @@ bool frontend_native_components_scene_prepare(frontend_native_q3 *row,qa_q3_scen
     if(!current(row,error) || options->first_entity>1022 || owner->pose_count>1022-options->first_entity) return false;
     owner->first_order=options->first_entity; options->first_entity+=(uint32_t)owner->pose_count;
     owner->packet_order=options->first_entity;
-    size_t entities=0,lights=0;
-    for(size_t i=0;!owner->submitted && i<owner->count;++i) {
-        const component_child *child=&owner->children[i]; size_t packets=0;
-        if(!frontend_component_scene_packet_count(row->frontend,child->draw.frontend_identity,child->draw.sequence,&packets,error)) return false;
-        for(size_t j=0;j<packets;++j) {
-            frontend_component_scene_packet packet;
-            if(!frontend_component_scene_packet_read(row->frontend,child->draw.frontend_identity,child->draw.sequence,j,&packet,error) ||
-                packet.entity_count>SIZE_MAX-entities || packet.light_count>SIZE_MAX-lights) return false;
-            entities+=packet.entity_count; lights+=packet.light_count;
-        }
-    }
-    if(entities>1022-options->first_entity || lights>SIZE_MAX-options->world.light_count ||
-        options->world.light_count+lights>SIZE_MAX/sizeof(*owner->lights)) return false;
-    options->first_entity+=(uint32_t)entities;
-    if(!lights) return true;
-    size_t count=options->world.light_count+lights;
-    qa_scene_light *merged=malloc(count*sizeof(*merged)),*projected=malloc(32*sizeof(*projected));
-    if(!merged || !projected) { free(merged); free(projected); return frontend_fail(error,QA_ERROR_MEMORY,"Retaining native component scene lights"); }
-    size_t used=options->world.light_count,projected_count=options->world.projected_light_count;
-    if(projected_count>32) { free(merged); free(projected); return false; }
-    if(used) memcpy(merged,options->world.lights,used*sizeof(*merged));
-    if(projected_count) memcpy(projected,options->world.projected_lights,projected_count*sizeof(*projected));
-    for(size_t i=0;i<owner->count;++i) {
-        const component_child *child=&owner->children[i]; size_t packets=0;
-        if(!frontend_component_scene_packet_count(row->frontend,child->draw.frontend_identity,child->draw.sequence,&packets,error)) { free(merged); free(projected); return false; }
-        for(size_t j=0;j<packets;++j) {
-            frontend_component_scene_packet packet;
-            if(!frontend_component_scene_packet_read(row->frontend,child->draw.frontend_identity,child->draw.sequence,j,&packet,error)) { free(merged); free(projected); return false; }
-            if(packet.light_count) memcpy(merged+used,packet.lights,packet.light_count*sizeof(*merged));
-            used+=packet.light_count;
-            for(size_t k=0;k<packet.light_count && projected_count<32;++k) projected[projected_count++]=packet.lights[k];
-        }
-    }
-    free(owner->lights); free(owner->projected); owner->lights=merged; owner->projected=projected;
-    options->world.lights=merged; options->world.light_count=count;
-    options->world.projected_lights=projected; options->world.projected_light_count=projected_count;
+    frontend_scene_component_span span={.frontend=row->frontend,
+        .draws=(const qa_application_q3_component_draw *)owner->children,
+        .count=owner->submitted?0:owner->count,.stride=sizeof(*owner->children)};
+    if(!frontend_scene_components_prepare(&row->frontend->frame.storage,&span,options,error)) return false;
     return current(row,error);
 }
 static bool pass_matches(qa_application_q3_body_part pose,qa_application_q3_body_part part)
@@ -198,24 +166,10 @@ bool frontend_native_components_scene_submit(frontend_native_q3 *row,const qa_q3
             }
         }
     }
-    uint32_t order=owner->packet_order;
-    for(size_t i=0;!owner->submitted && i<owner->count;++i) {
-        const component_child *child=&owner->children[i]; size_t packets=0;
-        if(!frontend_component_scene_packet_count(row->frontend,child->draw.frontend_identity,child->draw.sequence,&packets,error)) return false;
-        for(size_t j=0;j<packets;++j) {
-            frontend_component_scene_packet packet;
-            if(!frontend_component_scene_packet_read(row->frontend,child->draw.frontend_identity,child->draw.sequence,j,&packet,error)) return false;
-            for(size_t k=0;k<packet.entity_count;++k,++order)
-                if(!qa_q3_presentation_source_component_entity(row->view.presentation,child->draw.assets,packet.entities+k,
-                    packet.definition.time,options,order,frame,error)) return false;
-            for(size_t k=0;k<packet.polygon_count;++k) {
-                const qa_q3_scene_polygon *polygon=&packet.polygons[k];
-                if(polygon->first>packet.vertex_count || polygon->count>packet.vertex_count-polygon->first) return false;
-                if(!qa_q3_presentation_source_component_poly(row->view.presentation,child->draw.assets,polygon->shader,
-                    packet.vertices+polygon->first,polygon->count,&polygon->fog,packet.definition.time,options,frame,error)) return false;
-            }
-        }
-    }
+    frontend_scene_component_span span={.frontend=row->frontend,
+        .draws=(const qa_application_q3_component_draw *)owner->children,
+        .count=owner->submitted?0:owner->count,.stride=sizeof(*owner->children)};
+    if(!frontend_scene_components_submit(&span,row->view.presentation,options,owner->packet_order,frame,error)) return false;
     owner->submitted=true; return current(row,error);
 }
 bool frontend_native_components_hud(frontend_native_q3 *row,qa_error *error)

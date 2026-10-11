@@ -25,7 +25,7 @@ typedef struct material_source_view {
     int64_t milliseconds;
     bool valid, no_world, hyperspace;
     qa_scene_view view;
-    qa_scene_light lights[32];
+    qa_scene_light lights[QA_SCENE_PROJECTED_LIGHTS];
     size_t light_count;
     char texts[8][33];
     qa_scene_world *world;
@@ -107,7 +107,7 @@ struct qa_material_source_scratch {
     uint32_t submitted_light_count, first_scene_light;
     bool entity_is_cell;
     uint32_t light_mask;
-    qa_scene_light lights[32];
+    qa_scene_light lights[QA_SCENE_PROJECTED_LIGHTS];
     size_t light_count;
 };
 bool material_source_enter(qa_material_source_scratch *, qa_error *);

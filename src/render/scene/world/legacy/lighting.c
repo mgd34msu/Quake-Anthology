@@ -253,12 +253,14 @@ static bool surface_dynamic(qaw_surface *surface, const qa_material_context *con
                             bool *affects, qa_error *error)
 {
     *affects = false;
+    _Static_assert(QA_SCENE_PROJECTED_LIGHTS <= sizeof(surface->legacy->dlightbits) * 8,
+        "Projected lights must fit the dlightbits mask");
     surface->legacy->dlightbits = 0;
     for (size_t i = 0; i < context->light_count; ++i) {
         projected_light light;
         if (!project_light(surface, &context->lights[i], i, &light, error)) return false;
         *affects = *affects || light.affects;
-        if (i < 32 && light.affects) surface->legacy->dlightbits |= UINT32_C(1) << i;
+        if (i < QA_SCENE_PROJECTED_LIGHTS && light.affects) surface->legacy->dlightbits |= UINT32_C(1) << i;
     }
     return true;
 }
@@ -267,7 +269,7 @@ static bool dynamic_lights(qaw_surface *surface, const qa_material_context *cont
 {
     qaw_legacy *light = surface->legacy;
     for (size_t i = 0; i < context->light_count; ++i) {
-        if (i < 32 && (light->dlightbits & (UINT32_C(1) << i)) == 0) continue;
+        if (i < QA_SCENE_PROJECTED_LIGHTS && (light->dlightbits & (UINT32_C(1) << i)) == 0) continue;
         const qa_scene_light *source = &context->lights[i];
         projected_light projected;
         if (!project_light(surface, source, i, &projected, error)) return false;

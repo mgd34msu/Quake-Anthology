@@ -16,7 +16,7 @@ struct frontend_unified_q3_runtime {
     bool prepared, prediction_prepared, prediction_applied, information_prepared, rendered;
     qa_q3_supplement *supplement;
     struct qa_q3_source_scene_bank *scene_bank;
-    qa_scene_light scene_lights[32];
+    qa_scene_light scene_lights[QA_SCENE_PROJECTED_LIGHTS];
     uint32_t scene_light_first;
     size_t scene_light_count;
     bool camera_prepared, scene_prepared, scene_submitted, scene_third_person;

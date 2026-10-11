@@ -886,7 +886,7 @@ static bool remaining_planes(qa_bounds bounds, const qa_scene_plane *planes,
 
 static uint32_t all_lights(size_t count)
 {
-    return count >= 32 ? UINT32_MAX : (UINT32_C(1) << count) - 1;
+    return count >= QA_SCENE_PROJECTED_LIGHTS ? UINT32_MAX : (UINT32_C(1) << count) - 1;
 }
 
 static bool source_mark_leaves(const qa_scene_world *world, int32_t eye, qa_vec3 origin,
@@ -1201,8 +1201,8 @@ static bool valid_input(const qa_scene_world *world, const qa_scene_world_input 
         return world_error(error, QA_ERROR_ARGUMENT, "invalid world view or light inputs");
     size_t projected_count;
     const qa_scene_light *projected = projected_lights(world, input, &projected_count);
-    if (projected_count > 32 || (projected_count != 0 && projected == NULL))
-        return world_error(error, QA_ERROR_ARGUMENT, "projected world lights exceed source 32-light mask or are absent");
+    if (projected_count > QA_SCENE_PROJECTED_LIGHTS || (projected_count != 0 && projected == NULL))
+        return world_error(error, QA_ERROR_ARGUMENT, "projected world lights exceed the light mask or are absent");
     for (size_t i = 0; i < projected_count; ++i)
         if (!qa_vec_finite(projected[i].origin) || !qa_vec_finite(projected[i].color)
             || !isfinite(projected[i].radius) || projected[i].radius < 0)
@@ -1330,7 +1330,7 @@ static uint32_t surface_light_mask(const qaw_surface *surface, uint32_t mask,
 {
     if (surface->skip || surface->flare) return 0;
     if (surface->type == QA_BSP_SURFACE_TRIANGLES) return mask;
-    for (size_t i = 0; i < count && i < 32; ++i) {
+    for (size_t i = 0; i < count && i < QA_SCENE_PROJECTED_LIGHTS; ++i) {
         uint32_t bit = UINT32_C(1) << i;
         if ((mask & bit) == 0) continue;
         const qa_scene_light *light = &lights[i];
