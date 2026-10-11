@@ -143,6 +143,7 @@ typedef struct qa_application_protocol_resource_reference {
     qa_native_host_resource_kind kind;
     uint32_t source_index;
     const char *name;
+    qa_string_id name_id;
     /* Prior real Source precache registration. Zero retains an unresolved
      * Source spelling, including sexed sounds and known missing resources. */
     qa_string_id resource_key;

@@ -747,7 +747,7 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
             (!actual || actual->kind != APPLICATION_PROVIDER_NATIVE || !actual->state.native.q2_engine ||
                 actual->state.native.q2_engine->world != owner->app->world))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 inline model lost its actual shared WORLD map");
-        return application_network_q2_resource(owner, kind, reference->name, out, error);
+        return application_network_q2_resource_id(owner, kind, reference->name_id, out, error);
     }
     const application_unified_event_resource *receipt = reference->resource_key ?
         application_unified_event_resource_find(owner->app, reference->resource_key) : NULL;

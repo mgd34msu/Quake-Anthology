@@ -201,14 +201,14 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
     if (flare) {
         float start = selected_visual ? selected.flare.fade_start : source->flare_start;
         float end = selected_visual ? selected.flare.fade_end : source->flare_end;
-        const char *image = selected_visual ? selected.flare.image : text(owner, source->flare_image);
+        qa_string_id image = selected_visual ? selected.flare_image : source->flare_image;
         if (!isfinite(start) || !isfinite(end) || start < 0 || (double)start > UINT32_MAX ||
             end < 0 || (double)end > UINT32_MAX)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 flare leaves its actual Source wire field range");
         value.modelindex = 1; value.modelindex2 = (uint32_t)start;
         value.modelindex3 = (uint32_t)end; value.frame = 0;
         if ((value.renderfx & 256) &&
-            !application_network_q2_resource(owner, 2, image && *image ? image : "misc/flare.tga", &value.frame, error)) return false;
+            !application_network_q2_resource_id(owner, 2, image ? image : owner->app->ui_names.flare_image, &value.frame, error)) return false;
     }
     qa_builtin_player_info player;
     if ((!selected_visual || selected.provider == owner->host.source.source_owner) &&
@@ -221,7 +221,7 @@ static bool builtin_entity(qa_application_network_q2 *owner, uint32_t slot,
             value.modelindex2 = 255; value.skinnum |= (uint32_t)weapon->player_model << 8;
         }
     }
-    if (!application_network_q2_resource(owner, 1, text(owner, source->loop_sound), &value.sound, error)) return false;
+    if (!application_network_q2_resource_id(owner, 1, source->loop_sound, &value.sound, error)) return false;
     if (value.alpha == 1) value.alpha = 0;
     if (value.scale == 1) value.scale = 0;
     if (source->solid == QA_PHYSICS_BRUSH) value.solid = 31;

@@ -320,6 +320,7 @@
     X(SPHERE, "sphere") \
     X(TELEDEATH, "teledeath") \
     X(TELEDEATH2, "teledeath2") \
+    X(CTF_GRAPPLE, "ctf:grapple") \
     X(TRAP_SHOOTER, "trap_shooter") \
     X(TRAP_SPIKE_MINE, "trap_spike_mine") \
     X(TRAP_SPIKESHOOTER, "trap_spikeshooter") \

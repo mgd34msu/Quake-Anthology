@@ -280,7 +280,7 @@ static bool q1_standard_quake(qa_application *app, struct application_qc_state *
     const qa_product *product = engine->provider->product;
     if (!product || !product->campaign)
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source product has no original weapon dialect");
-    *out = strcmp(product->campaign, "hipnotic") && strcmp(product->campaign, "rogue"); return true;
+    *out = product->campaign_id != QA_CAMPAIGN_HIPNOTIC && product->campaign_id != QA_CAMPAIGN_ROGUE; return true;
 }
 bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner owner,
     qa_application_network_q1_world *out, qa_error *error)

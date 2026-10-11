@@ -219,10 +219,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     hook->state.projectile.expires = g->time + shape->lifetime;
     hook->state.projectile.attack = q1_attack(g, actor, hook->id, hook->state.projectile.weapon);
     hook->state.projectile.attack.projectile = hook->id;
-    if (ctf &&
-        !qa_builtin_resource(&g->services, "ctf:grapple",
-                             &hook->state.projectile.attack.cause.source.q1.death_type, error))
-        return false;
+    if (ctf) hook->state.projectile.attack.cause.source.q1.death_type=g->runtime_names[Q1_NAME_CTF_GRAPPLE];
     hook->physics.motion = ctf ? QA_PHYSICS_FLY : QA_PHYSICS_FLY_MISSILE;
     hook->physics.solid = QA_PHYSICS_BOX;
     hook->frame = ctf ? 0 : 1;

@@ -1062,10 +1062,10 @@ static application_event_admission emit_protocol(application_provider *provider,
     if (!delivery && event->resource_count && !resources) goto abort;
     for (size_t i = 0; !delivery && i < event->resource_count; ++i) {
         resources[i] = event->resources[i];
-        size_t length = strlen(resources[i].name);
-        char *name = application_event_stream_alloc(application, length + 1, 1, error);
-        if (!name) goto abort;
-        memcpy(name, resources[i].name, length + 1); resources[i].name = name;
+        if (!resources[i].name_id && *resources[i].name && !qa_strings_intern_cstr(
+            qa_session_strings(application->session), resources[i].name, &resources[i].name_id, error)) goto abort;
+        resources[i].name = resources[i].name_id ?
+            qa_strings_cstr(qa_session_strings(application->session), resources[i].name_id) : "";
     }
     copied.event_id = write->envelope->id;
     copied.provider = provider->owner;

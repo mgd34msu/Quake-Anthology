@@ -450,7 +450,7 @@ static bool q3_source_rules(application_provider *p, qa_error *error) {
         !application_native_q3_settings_number_at(p, APPLICATION_Q3_SETTING_G_WEAPONRESPAWN, &rules.weapon_respawn_seconds, error) ||
         !application_native_q3_settings_number_at(p, APPLICATION_Q3_SETTING_G_WEAPON_TEAM_RESPAWN, &rules.team_weapon_respawn_seconds, error))
         return false;
-    if (p->product && !strcmp(p->product->campaign, "missionpack") &&
+    if (p->product && p->product->campaign_id == QA_CAMPAIGN_MISSIONPACK &&
         !application_native_q3_settings_integer_at(p, APPLICATION_Q3_SETTING_G_PROX_MINE_TIMEOUT, &rules.proximity_timeout_ms, error))
         return false;
     rules.friendly_fire = friendly_fire != 0;

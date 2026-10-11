@@ -64,23 +64,21 @@ static bool capture_entities(resource_capture *capture, const qa_q2_server_recor
 }
 
 static bool retain(resource_capture *capture, size_t ordinal, qa_native_host_resource_kind kind,
-    uint32_t index, const char *name, qa_error *error)
+    uint32_t index, qa_string_id name_id, const char *name, qa_error *error)
 {
     application_native_q2_protocol_resources *resources = capture->out;
     if (!name || index >= capture->engine->resource_limit[kind])
         return application_fail(error, QA_ERROR_FORMAT, "Q2 protocol resource leaves its actual Source table");
     if (capture->counting) { ++resources->capacity; return true; }
     qa_application_protocol_resource_reference row = {.record_ordinal = ordinal, .kind = kind, .source_index = index};
-    size_t length = strlen(name);
-    if (length == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Q2 resource spelling extent overflows");
-    char *owned = application_event_stream_alloc(capture->engine->provider->application, length + 1, 1, error);
-    if (!owned) return false;
-    memcpy(owned, name, length + 1); row.name = owned;
+    qa_strings *strings=qa_session_strings(capture->engine->provider->application->session);
+    if (!name_id && *name && !qa_strings_intern_cstr(strings,name,&name_id,error)) return false;
+    row.name_id=name_id;
+    row.name=name_id?qa_strings_cstr(strings,name_id):"";
     bool found = false;
     if (*name && !application_unified_event_resource_lookup_receipt(capture->engine->provider->application,
         capture->engine->provider->owner, kind,
-        qa_strings_find(qa_session_strings(capture->engine->provider->application->session),
-            (qa_bytes){(const uint8_t *)name,length}), &row.resource_key, &row.resource_custody, &found, error)) {
+        name_id, &row.resource_key, &row.resource_custody, &found, error)) {
         return false;
     }
     resources->rows[resources->count++] = row; return true;
@@ -99,15 +97,16 @@ static bool capture_record(void *context, const qa_q2_server_record *record, qa_
         if (event->kind == QA_Q2_SVC_POI && event->data.poi.time == UINT16_MAX) return true;
         if (index >= capture->engine->resource_limit[kind])
             return application_fail(error, QA_ERROR_FORMAT, "Q2 emitted resource index exceeds its Source namespace");
-        const char *name = qa_strings_cstr(qa_session_strings(capture->engine->provider->application->session), capture->engine->configstrings[capture->engine->resource_base[kind] + index]);
-        return retain(capture, ordinal, kind, index, name ? name : "", error);
+        qa_string_id name_id=capture->engine->configstrings[capture->engine->resource_base[kind]+index];
+        const char *name = qa_strings_cstr(qa_session_strings(capture->engine->provider->application->session), name_id);
+        return retain(capture, ordinal, kind, index, name_id, name ? name : "", error);
     }
     if (event->kind == QA_Q2_SVC_CONFIGSTRING) {
         uint32_t slot = event->data.config.index;
         for (unsigned kind = 0; kind <= QA_NATIVE_HOST_IMAGE; ++kind) {
             uint32_t base = capture->engine->resource_base[kind], count = capture->engine->resource_limit[kind];
             if (slot >= base && slot - base < count)
-                return retain(capture, ordinal, (qa_native_host_resource_kind)kind, slot - base, event->data.config.value, error);
+                return retain(capture, ordinal, (qa_native_host_resource_kind)kind, slot - base, QA_STRING_NONE, event->data.config.value, error);
         }
     }
     return true;

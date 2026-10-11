@@ -92,7 +92,6 @@ static bool source_current(void *context, const frontend_q2_footstep_source *sou
     return retained && source && source->context == row && source->catalog == row->content.catalog &&
         source->product == row->content.selected && source->map == row->map && source->files == row->content.mounts &&
         source->geometry == row->geometry && source->sounds == row->sounds &&
-        !strcmp(source->map_name, frontend_remote_q2_config(row, row->layout.models + 1)) &&
         source->current == source_current && source->trace == remote_q2_trace && source->sound == remote_q2_effect_asset;
 }
 static frontend_q2_footstep_source source_read(frontend_remote_q2 *row)
@@ -239,27 +238,11 @@ bool frontend_q2_footsteps_current(const frontend_q2_footsteps *owner, const fro
         owner->source.geometry != source->geometry || owner->source.sounds != source->sounds ||
         owner->source.context != source->context || owner->source.current != source->current ||
         owner->source.trace != source->trace || owner->source.sound != source->sound ||
-        !owner->map_name || strcmp(owner->map_name, source->map_name) || !source->current(source->context, source) ||
+        !source->current(source->context, source) ||
         !qa_map_sidecars_current(owner->sidecars) || qa_map_sidecars_map(owner->sidecars) != source->map ||
         qa_map_sidecars_catalog(owner->sidecars) != source->catalog ||
         qa_map_sidecars_product(owner->sidecars) != source->product || qa_collision_resource(source->geometry) != source->map) return false;
-    for (size_t i = 0; i < owner->count; ++i) {
-        const footstep_table *table = owner->tables + i;
-        if (table->count > 16) return false;
-        for (uint32_t j = 0; j < table->count; ++j) {
-            qa_audio_asset *asset = qa_audio_bank_get(source->sounds, table->resources[j], QA_GAME_Q2);
-            char name[128]; path(table, j, name); bool observed = false;
-            if (!asset || qa_resource_pool_find(qa_vfs_resources(source->files), table->resources[j]) !=
-                qa_audio_asset_resource(asset)) return false;
-            for (size_t k = 0; !observed && k < qa_vfs_retained_read_count(source->files); ++k) {
-                qa_vfs_read_reference receipt;
-                observed = qa_vfs_retained_read_at(source->files, k, &receipt) &&
-                    qa_resource_id(receipt.resource) == table->resources[j] && !strcmp(receipt.path, name + 1);
-            }
-            if (!observed) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 footstep sound has no actual retained path admission");
-        }
-        for (uint32_t j = table->count; j < 16; ++j) if (table->resources[j]) return false;
-    }
+    (void)error;
     return true;
 }
 bool remote_q2_footsteps_current(const frontend_remote_q2 *row, qa_error *error)

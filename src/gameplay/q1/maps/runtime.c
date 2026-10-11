@@ -1567,8 +1567,8 @@ bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *o
     if (entity->map->kind != Q1_MAP_BARREL)
         return true;
     entity->activator = q1_ref_from(g, outcome->request.attack.attacker);
-    return qa_builtin_resource(&g->services, "explo_box", &entity->classname, error) &&
-           q1_map_damageable(g, entity, false, error) &&
+    entity->classname=g->runtime_names[Q1_NAME_EXPLO_BOX];
+    return q1_map_damageable(g, entity, false, error) &&
            q1_map_schedule(g, entity, .3, Q1_MAP_BARREL_EXPLODE, error);
 }
 bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {

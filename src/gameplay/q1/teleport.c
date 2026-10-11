@@ -60,9 +60,7 @@ bool q1_teledeath_touch(qa_q1_game *g, q1_actor *death, qa_actor_id victim, qa_e
         return true;
     qa_q1_target target, owner;
     if (q1_target(g, victim, &target) && target.player) {
-        if (qa_q1_game_invulnerable(g, victim) &&
-            !qa_builtin_resource(&g->services, "teledeath2", &death->classname, error))
-            return false;
+        if (qa_q1_game_invulnerable(g, victim)) death->classname=g->runtime_names[Q1_NAME_TELEDEATH2];
         if (!q1_target(g, q1_ref_actor(g, death->owner), &owner) || !owner.player)
             return q1_damage_typed(g, q1_ref_actor(g, death->owner), death->id, death->id, 50000, QA_Q1_WEAPON_COUNT,
                                    QA_Q1_ARMOR_NORMAL, death->classname, error);

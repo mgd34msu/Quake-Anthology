@@ -1454,16 +1454,8 @@ static bool physics_event(void *opaque, const qa_physics_event *value,
     application_provider *provider = application_provider_for(
         application, value->actor, QA_ROLE_EFFECTS, "");
     qa_game_family family = provider_family(provider);
-    const char *path = value->kind == QA_PHYSICS_LAND
-                           ? (family == QA_GAME_Q1 ? "demon/dland2.wav"
-                                                  : "world/land.wav")
-                           : "misc/h2ohit1.wav";
-    qa_string_id resource;
-    qa_builtin_services services =
-        application_builtin_services(application, application->world,
-                                     application->physics);
-    if (!qa_builtin_resource(&services, path, &resource, error))
-        return false;
+    qa_string_id resource=application->ui_names.landing_sounds[
+        value->kind==QA_PHYSICS_LAND ? (family==QA_GAME_Q1 ? 0 : 1) : 2];
     return application_emit(
         application,
         &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,

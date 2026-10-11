@@ -4357,8 +4357,7 @@ bool application_control_physics_read(const qa_application *application,
             qa_q1_source_client_read(source->state.q1, actor, &client) && !client.observer &&
             qa_q1_character_read(character->state.q1, actor, &pose) &&
             pose.life == QA_Q1_DEAD && pose.frame == 60 && pose.next_frame_seconds == -1) {
-            const char *model = qa_strings_cstr(qa_session_strings(application->session), pose.model);
-            if (model && !strcmp(model, "progs/player.mdl")) {
+            if (pose.model==application->ui_names.q1_player_model) {
                 out->motion = pose.motion;
                 out->solid = pose.solid;
             }

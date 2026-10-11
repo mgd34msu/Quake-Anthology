@@ -589,7 +589,6 @@ static bool footstep_current(void *ctx,const frontend_q2_footstep_source *s)
     q2_bank *b=ctx; frontend_q2_footstep_source actual=footstep_source(b);
     return s && s->catalog==actual.catalog && s->product==actual.product && s->map==actual.map &&
         s->files==actual.files && s->geometry==actual.geometry && s->sounds==actual.sounds && s->context==b &&
-        s->map_name && actual.map_name && !strcmp(s->map_name,actual.map_name) &&
         s->current==actual.current && s->trace==actual.trace && s->sound==actual.sound && current(b->owner,NULL);
 }
 static frontend_q2_footstep_source footstep_source(q2_bank *b)

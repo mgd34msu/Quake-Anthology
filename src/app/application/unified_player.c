@@ -168,6 +168,9 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
     QA_Q1_BEAM_NAMES(Q1_BEAM_BIND)
 #undef Q1_BEAM_BIND
     const struct { const char *text; qa_string_id *id; } events[] = {
+        {"demon/dland2.wav", &names->landing_sounds[0]}, {"world/land.wav", &names->landing_sounds[1]},
+        {"misc/h2ohit1.wav", &names->landing_sounds[2]}, {"progs/player.mdl", &names->q1_player_model},
+        {"i_health", &names->q2_health_icon}, {"i_help", &names->q2_help_icon},
         {"music", &names->music}, {"q1:fog", &names->fog}, {"misc/talk.wav", &names->talk_sound},
         {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
         {"debug-bounds", &names->debug_bounds}, {"colored-explosion", &names->colored_explosion},
