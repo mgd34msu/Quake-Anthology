@@ -34,22 +34,25 @@ static qa_source_frame source_frame(const qa_q2_game *g) {
         .start_ns = g->now_ns >= g->frame_ns ? g->now_ns - g->frame_ns : 0};
 }
 
+bool q2_push_storage_prepare(qa_q2_game *g, qa_error *e) {
+    if (g->capacity > SIZE_MAX / sizeof(qa_physics_push)) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 pusher team storage is too large");
+        return false;
+    }
+    return qa_pool_reserve_pages(&g->push_teams, &g->push_storage,
+        QA_PHYSICS_DEFAULT_PUSH_FRAMES, g->capacity * sizeof(qa_physics_push),
+        _Alignof(qa_physics_push), e);
+}
+
 static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->physics.flags & QA_PHYSICS_TEAM_SLAVE) return true;
     qa_actor_id leader = a->id;
-    q2_push_frame **slot = &g->push_frames;
-    while (*slot && (*slot)->active) slot = &(*slot)->next;
-    q2_push_frame *frame = *slot;
-    if (!frame) {
-        frame = calloc(1, sizeof(*frame));
-        if (!frame) {
-            qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Capturing Q2 pusher team");
-            return false;
-        }
-        *slot = frame;
+    size_t slot;
+    qa_physics_push *parts = qa_pool_take(&g->push_teams, &slot);
+    if (!parts) {
+        qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Q2 pusher team storage is full");
+        return false;
     }
-    frame->active = true;
-    qa_physics_push *parts = frame->parts;
     bool ok = true;
     size_t count = 0;
     for (;;) {
@@ -70,22 +73,6 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
                     break;
                 }
             if (!ok) break;
-            if (count == frame->capacity) {
-                size_t capacity = frame->capacity ? frame->capacity * 2 : 8;
-                if (capacity < frame->capacity || capacity > SIZE_MAX / sizeof(*parts)) {
-                    qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Q2 pusher team size overflow");
-                    ok = false;
-                    break;
-                }
-                qa_physics_push *grown = realloc(parts, capacity * sizeof(*parts));
-                if (!grown) {
-                    qa_error_set(e, QA_ERROR_MEMORY, leader.slot, "Capturing Q2 pusher team");
-                    ok = false;
-                    break;
-                }
-                parts = frame->parts = grown;
-                frame->capacity = capacity;
-            }
             qa_body_state body;
             if (!qa_world_body_read(g->services.world, part->id, &body, e)) {
                 ok = false;
@@ -133,7 +120,7 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
         break;
     }
-    frame->active = false;
+    qa_pool_release(&g->push_teams, slot);
     return ok;
 }
 

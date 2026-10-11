@@ -301,12 +301,7 @@ bool qa_q2_actor_tick(qa_q2_game *g, qa_actor_id id, uint64_t now, uint64_t elap
 static void close_game(void *context) {
     qa_q2_game *g = context;
     qa_builtin_snapshot_pool_free(&g->trace_frames);
-    while (g->push_frames) {
-        q2_push_frame *frame = g->push_frames;
-        g->push_frames = frame->next;
-        free(frame->parts);
-        free(frame);
-    }
+    qa_arena_destroy(&g->push_storage);
     while (g->all_actors != NULL) {
         q2_actor *next = g->all_actors->all_next;
         q2_monster_release_state(g->all_actors);
@@ -373,6 +368,7 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
     if (hooks != NULL)
         g->hooks = *hooks;
     g->capacity = qa_actors_capacity(qa_session_actors(services->session));
+    if (!q2_push_storage_prepare(g, e)) { close_game(g); return false; }
     g->actors = calloc(g->capacity, sizeof(*g->actors));
     qa_builtin_random_seed(&g->random, (uint32_t)options->seed);
     q2_rerelease_seed(g, (uint32_t)options->seed);
