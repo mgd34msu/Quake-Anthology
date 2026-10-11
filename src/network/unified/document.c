@@ -573,7 +573,13 @@ static bool typed_decode(qa_unified_document_kind kind, qa_bytes bytes, qa_strin
         qa_unified_control *record=lease ? qa_unified_frame_lease_alloc(lease,1,sizeof(*record),_Alignof(max_align_t),error) : calloc(1,sizeof(*record));
         if (!record) { qa_error_set(error,QA_ERROR_MEMORY,0,"Receiving actual Unified control"); return false; }
         bool okay=qa_unified_record_delta_decode(&qa_unified_control_layout,
-            (qa_bytes){bytes.data+4,bytes.size-4},NULL,record,lease, NULL, NULL, NULL, NULL,error) && control_document_owned(&record,lease,out,error);
+            (qa_bytes){bytes.data+4,bytes.size-4},NULL,record,lease, NULL, NULL, NULL, NULL,error);
+        if (okay && strings && record->kind==QA_UNIFIED_CONTROL_COMPONENTS)
+            for (size_t i=0;okay && i<record->value.components.native_count;++i) {
+                qa_unified_component_q2 *row=record->value.components.native+i;
+                okay=qa_strings_intern_cstr(strings,row->owner.provider,&row->owner_provider_id,error);
+            }
+        if (okay) okay=control_document_owned(&record,lease,out,error);
         if (record && !lease) { qa_unified_record_dispose(&qa_unified_control_layout,record); free(record); }
         return okay;
     }

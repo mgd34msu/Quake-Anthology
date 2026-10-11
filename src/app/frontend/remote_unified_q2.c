@@ -946,9 +946,7 @@ bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unif
     bool okay=true;
     for (size_t i=0;okay && i<count;++i) {
         const qa_unified_component_q2 *row=update->native+i; const q2_native *old=NULL;
-        qa_string_id provider;
-        okay=qa_strings_intern_cstr(o->replica->strings,row->owner.provider,&provider,e);
-        if (!okay) break;
+        qa_string_id provider=row->owner_provider_id;
         for (size_t k=0;k<o->native_count;++k) if (provider==o->native[k].provider_name) old=o->native+k;
         okay=native_read(o,row,d,old,provider,next+i,e);
         for (size_t k=0;okay && k<i;++k) okay=next[k].provider_name!=next[i].provider_name;

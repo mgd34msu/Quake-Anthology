@@ -83,6 +83,10 @@ typedef struct application_q2_resource_table {
     uint32_t base, maximum, count;
     qa_string_id *names;
 } application_q2_resource_table;
+typedef struct application_q2_numeric_config {
+    uint32_t value;
+    qa_string_id name;
+} application_q2_numeric_config;
 struct qa_application_network_q2 {
     qa_application *app;
     qa_application_network_q2_host host;
@@ -91,6 +95,7 @@ struct qa_application_network_q2 {
     int32_t server_count;
     uint32_t config_count, item_base, skin_base, light_base;
     uint32_t checksum_index, clients_index, air_index, n64_index;
+    application_q2_numeric_config numeric_configs[3];
     uint64_t observed_map_revision;
     uint32_t observed_client_slots;
     bool map_configs_ready, builtin_metadata_ready;

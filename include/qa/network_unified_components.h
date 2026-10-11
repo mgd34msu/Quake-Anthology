@@ -40,6 +40,7 @@ typedef enum qa_unified_component_hud {
 
 typedef struct qa_unified_component_q2 {
     qa_source_owner owner;
+    qa_string_id owner_provider_id; /* Bound once by the receiving string table. */
     qa_unified_component_identity identity;
     uint64_t generation;
     qa_unified_component_hud hud;

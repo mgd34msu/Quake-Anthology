@@ -622,10 +622,16 @@ static const char *source_text(qa_application_network_q2 *owner, qa_string_id id
     return id ? qa_strings_cstr(qa_session_strings(owner->app->session), id) : "";
 }
 
-static bool config_number(qa_application_network_q2 *owner, uint32_t index, uint32_t number, qa_error *error)
+static bool config_number(qa_application_network_q2 *owner, uint32_t index, uint32_t number,
+    application_q2_numeric_config *retained, qa_error *error)
 {
-    char text[32]; snprintf(text, sizeof(text), "%u", number);
-    return application_network_q2_config(owner, index, text, error);
+    if (!retained->name || retained->value != number) {
+        char text[32]; snprintf(text, sizeof(text), "%u", number);
+        qa_string_id name;
+        if (!qa_strings_intern_cstr(qa_session_strings(owner->app->session), text, &name, error)) return false;
+        *retained = (application_q2_numeric_config){number, name};
+    }
+    return application_network_q2_config_id(owner, index, retained->name, error);
 }
 
 static const char *world_field(qa_application_network_q2 *owner,
@@ -725,11 +731,11 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
     }
     if (!owner->map_configs_ready || owner->observed_map_revision != owner->app->map_revision) {
         if (!config_number(owner, owner->checksum_index,
-            qa_collision_map_checksum(owner->app->geometry), error)) return false;
+            qa_collision_map_checksum(owner->app->geometry), owner->numeric_configs, error)) return false;
         owner->observed_map_revision = owner->app->map_revision;
     }
     if (!owner->map_configs_ready || owner->observed_client_slots != owner->host.client_slots) {
-        if (!config_number(owner, owner->clients_index, owner->host.client_slots, error)) return false;
+        if (!config_number(owner, owner->clients_index, owner->host.client_slots, owner->numeric_configs + 1, error)) return false;
         owner->observed_client_slots = owner->host.client_slots;
     }
     owner->map_configs_ready = true;
@@ -738,7 +744,7 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");
     if (owner->n64_index != UINT32_MAX && owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN) {
         if (!owner->builtin_metadata_ready && !config_number(owner, owner->n64_index,
-            provider->product->campaign_id == QA_CAMPAIGN_N64, error)) return false;
+            provider->product->campaign_id == QA_CAMPAIGN_N64, owner->numeric_configs + 2, error)) return false;
     }
     if (owner->event_frame != owner->host.source.clock.frame_number) {
         memset(owner->event_actors, 0, owner->entity_capacity * sizeof(*owner->event_actors));
