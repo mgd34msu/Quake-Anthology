@@ -55,6 +55,8 @@ typedef struct application_player_record {
     application_player_guest_binding *guests;
     size_t guest_count;
     qa_q1_travel_state *q1_entry;
+    qa_player_feedback feedback;
+    qa_actor_id feedback_actor;
     uint16_t output_incomplete;
     bool deferred, remote, dynamic, retiring, source_begin_pending;
 } application_player_record;
@@ -89,6 +91,8 @@ typedef struct application_player_point {
 } application_player_point;
 struct application_player_roster {
     uint64_t revision;
+    uint64_t feedback_first,feedback_through,feedback_generation,feedback_revision;
+    size_t feedback_count;
     application_player_record *records;
     size_t count, capacity;
     application_player_point *points;

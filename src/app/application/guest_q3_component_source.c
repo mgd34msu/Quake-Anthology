@@ -246,22 +246,19 @@ static bool view_acquire(void *context,bool baseline,application_q3_scene_contex
     b->command_next=view->command_cursor;
     qa_application *app=s->options.application;
     bool pending=false;
-    while(app && !pending && b->command_next<qa_application_events_next(app)) {
-        const application_event_envelope *record=application_event_stream_at(app,b->command_next);
-        for(const application_event_view *row=record?record->views:NULL;row;row=row->next) {
-            const qa_unified_presentation_payload *payload=row->event.presentation;
-            if(row->event.provider!=s->options.owner ||
-                !payload || payload->kind!=QA_UNIFIED_PRESENTATION_Q3) continue;
-            const qa_unified_q3_event *event=&payload->value.q3;
-            if(event->kind!=QA_UNIFIED_Q3_SERVER_COMMAND && event->kind!=QA_UNIFIED_Q3_CONFIGSTRING) continue;
-            if(event->source_sequence>p->command_sequence) { pending=true; break; }
-            if((int64_t)event->source_sequence<=(int64_t)p->command_sequence-64) continue;
-            if(b->command_count<64) b->commands[b->command_count++]=(application_q3_scene_command){
-                .sequence=event->source_sequence,.text=event->text,.output=event,
-                .addressed=!row->event.recipient.registry||qa_actor_id_equal(row->event.recipient,view->viewer)};
-        }
-        if(!pending) ++b->command_next;
+    qa_application_event_range cursor={.next=b->command_next,.end=app?qa_application_events_next(app):0};
+    const qa_application_event_filter filter={.presentation_kind=QA_UNIFIED_PRESENTATION_Q3,.provider=s->options.owner};
+    const application_unified_event_record *row;
+    while(app && (row=qa_application_event_range_next(app,&cursor,&filter))) {
+        const qa_unified_q3_event *event=&row->presentation->value.q3;
+        if(event->kind!=QA_UNIFIED_Q3_SERVER_COMMAND && event->kind!=QA_UNIFIED_Q3_CONFIGSTRING) continue;
+        if(event->source_sequence>p->command_sequence) { pending=true; break; }
+        if((int64_t)event->source_sequence<=(int64_t)p->command_sequence-64) continue;
+        if(b->command_count<64) b->commands[b->command_count++]=(application_q3_scene_command){
+            .sequence=event->source_sequence,.text=event->text,.output=event,
+            .addressed=!row->recipient.registry||qa_actor_id_equal(row->recipient,view->viewer)};
     }
+    b->command_next=pending ? cursor.id : cursor.next;
     b->snapshot=(qa_q3_snapshot){.valid=true,.server_time=p->time_ms,.server_command_number=p->command_sequence,
         .player=client->state,.area_bytes=b->visible.area_bytes,.entity_count=b->visible.count,.entities=b->visible.entities};
     memcpy(b->snapshot.area_mask,b->visible.area_mask,32);

@@ -1046,9 +1046,8 @@ static bool presentation_for(qa_application *app, const application_unified_even
 }
 typedef struct event_iterator {
     const qa_application *application;
-    const application_event_view *view;
     qa_event_lease *lease;
-    uint64_t cursor, end;
+    qa_application_event_range range;
     size_t persistent;
     bool initial;
 } event_iterator;
@@ -1062,15 +1061,7 @@ static const application_unified_event_record *event_iterator_next(event_iterato
         iterator->lease = slot->lease;
         return &slot->event;
     }
-    while (!iterator->view) {
-        if (iterator->cursor == iterator->end) return NULL;
-        const application_event_envelope *envelope =
-            application_event_stream_at(iterator->application, iterator->cursor++);
-        if (envelope) iterator->view = envelope->views;
-    }
-    const application_unified_event_record *record = &iterator->view->event;
-    iterator->view = iterator->view->next;
-    return record;
+    return qa_application_event_range_next(iterator->application,&iterator->range,NULL);
 }
 
 static bool events_project(qa_application *app, const application_unified_source *source,
@@ -1086,8 +1077,8 @@ static bool events_project(qa_application *app, const application_unified_source
         .resource_count = app->unified_event_resource_count, .registration_revision = app->unified_event_registration_revision,
         .persistent_revision = app->unified_persistent_revision, .world_text_revision = app->unified_world_text_revision};
     uint64_t first = qa_application_events_first(app);
-    event_iterator begin = {.application = app, .cursor = after > first ? after : first,
-        .end = result.through, .initial = initial};
+    event_iterator begin = {.application = app, .range={.next=after > first ? after : first,
+        .end=result.through}, .initial=initial};
     event_iterator iterator = begin;
     const application_unified_event_record *r;
     size_t presentation_count = 0, simulation_count = 0, dependency_count = 0;

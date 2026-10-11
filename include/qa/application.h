@@ -596,6 +596,21 @@ typedef struct qa_application_event_cursor {
     bool started;
 } qa_application_event_cursor;
 
+struct application_unified_event_record;
+typedef struct qa_application_event_range {
+    uint64_t next,end,id;
+    const void *view;
+} qa_application_event_range;
+typedef struct qa_application_event_filter {
+    int32_t presentation_kind;
+    qa_actor_owner provider;
+    qa_actor_id recipient;
+} qa_application_event_filter;
+/* A NULL filter selects every projection. Negative kind and zero identities
+ * are wildcards. end may be UINT64_MAX to include newly committed output. */
+const struct application_unified_event_record *qa_application_event_range_next(
+    const qa_application *,qa_application_event_range *,const qa_application_event_filter *);
+
 /* Initialize a cursor with its record ID and optional starting projection.
  * Reads walk attached views once, including the raw record on the first read.
  * Borrowed fields remain valid until every consumer retires the record. */

@@ -169,21 +169,20 @@ bool application_q3_components_scene_advance(application_q3_components *owner,si
         if(!row->frontend.begin(row->frontend.owner,sequence,e)) return false;
         qa_application *app=owner->options.application;
         if(!row->profile->player_events) row->event_cursor=qa_application_events_next(app);
-        while(row->event_cursor<qa_application_events_next(app)) {
-            const application_event_envelope *record=application_event_stream_at(app,row->event_cursor);
-            for(const application_event_view *view=record?record->views:NULL;view;view=view->next) {
-                const qa_unified_presentation_payload *payload=view->event.presentation;
-                if(view->event.provider!=row->game->publication.owner || !payload ||
-                    payload->kind!=QA_UNIFIED_PRESENTATION_Q3 ||
-                    payload->value.q3.kind!=QA_UNIFIED_Q3_PLAYER_EVENT) continue;
-                const qa_unified_q3_event *value=&payload->value.q3;
-                application_q3_scene_player_event event={.actor=value->actor,.player=value->player,
-                    .event=value->event,.parameter=value->parameter,.external=value->external,
-                    .source_sequence=value->source_sequence,.origin=value->origin,.time_ms=value->time_ms};
-                if(!application_q3_scene_consume(*scene,&event,view->event.presentation_sequence,e)) return false;
-            }
-            ++row->event_cursor;
+        qa_application_event_range cursor={.next=row->event_cursor,.end=UINT64_MAX};
+        const qa_application_event_filter filter={.presentation_kind=QA_UNIFIED_PRESENTATION_Q3,
+            .provider=row->game->publication.owner};
+        const application_unified_event_record *view;
+        while((view=qa_application_event_range_next(app,&cursor,&filter))) {
+            const qa_unified_q3_event *value=&view->presentation->value.q3;
+            if(value->kind!=QA_UNIFIED_Q3_PLAYER_EVENT) continue;
+            application_q3_scene_player_event event={.actor=value->actor,.player=value->player,
+                .event=value->event,.parameter=value->parameter,.external=value->external,
+                .source_sequence=value->source_sequence,.origin=value->origin,.time_ms=value->time_ms};
+            if(!application_q3_scene_consume(*scene,&event,view->presentation_sequence,e)) return false;
+            row->event_cursor=cursor.view ? cursor.id : cursor.next;
         }
+        row->event_cursor=cursor.next;
         if(!application_q3_scene_advance(*scene,sequence,e)) return false;
         row->view.command_cursor=row->view.command_next;
         application_events_retire(app);

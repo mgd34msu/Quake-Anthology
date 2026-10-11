@@ -163,40 +163,28 @@ bool qa_application_q3_output_drain(qa_application *app, qa_error *error)
 {
     if (app->event_source_draining) return true;
     app->event_source_draining = true;
-    bool ok = true;
-    while (ok && app->event_source_cursor < qa_application_events_next(app)) {
-        const application_event_envelope *record =
-            application_event_stream_at(app, app->event_source_cursor);
-        for (const application_event_view *view = record ? record->views : NULL;
-                ok && view; view = view->next) {
-            const qa_unified_presentation_payload *payload = view->event.presentation;
-            if (!payload || payload->kind != QA_UNIFIED_PRESENTATION_Q3 ||
-                (payload->value.q3.kind != QA_UNIFIED_Q3_SERVER_COMMAND &&
-                 payload->value.q3.kind != QA_UNIFIED_Q3_CONFIGSTRING)) continue;
-            application_provider *provider = app->live_providers;
-            while (provider && provider->owner != view->event.provider) provider = provider->next_live;
-            if (!provider || provider->close_pending) continue;
-            if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->native_q3_wire)
-                {
-                    qa_event_lease *lease=qa_event_ring_retain(app->event_ring,record->id);
-                    ok=application_native_q3_output(provider,&payload->value.q3,lease,error);
-                    qa_event_lease_release(lease);
-                }
-            else if (q3g_engine(provider))
-                {
-                    qa_event_lease *lease=qa_event_ring_retain(app->event_ring,record->id);
-                    ok=q3g_output(provider,&payload->value.q3,lease,error);
-                    qa_event_lease_release(lease);
-                }
-            else if(app->bots && app->bots->transport && application_bot_source(app->bots)==provider &&
-                payload->value.q3.kind==QA_UNIFIED_Q3_SERVER_COMMAND) {
-                qa_event_lease *lease=qa_event_ring_retain(app->event_ring,record->id);
-                ok=application_bot_transport_output(app->bots->transport,&payload->value.q3,lease,error);
+    bool ok=true;
+    qa_application_event_range cursor={.next=app->event_source_cursor,.end=UINT64_MAX};
+    const qa_application_event_filter filter={.presentation_kind=QA_UNIFIED_PRESENTATION_Q3};
+    const application_unified_event_record *view;
+    while(ok && (view=qa_application_event_range_next(app,&cursor,&filter))) {
+        const qa_unified_q3_event *event=&view->presentation->value.q3;
+        if(event->kind==QA_UNIFIED_Q3_SERVER_COMMAND || event->kind==QA_UNIFIED_Q3_CONFIGSTRING) {
+            application_provider *provider=app->live_providers;
+            while(provider && provider->owner!=view->provider) provider=provider->next_live;
+            if(provider && !provider->close_pending) {
+                qa_event_lease *lease=qa_event_ring_retain(app->event_ring,cursor.id);
+                if(provider->kind==APPLICATION_PROVIDER_Q3 && provider->native_q3_wire)
+                    ok=application_native_q3_output(provider,event,lease,error);
+                else if(q3g_engine(provider)) ok=q3g_output(provider,event,lease,error);
+                else if(app->bots && app->bots->transport && application_bot_source(app->bots)==provider)
+                    ok=application_bot_transport_output(app->bots->transport,event,lease,error);
                 qa_event_lease_release(lease);
             }
         }
-        if (ok) ++app->event_source_cursor;
+        if(ok) app->event_source_cursor=cursor.view ? cursor.id : cursor.next;
     }
+    if(ok) app->event_source_cursor=cursor.next;
     app->event_source_draining = false;
     application_events_retire(app);
     return ok;
