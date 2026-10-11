@@ -1104,11 +1104,14 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
                 out->native_inventory = application_unified_frame_alloc(o->lease, 1, sizeof(*out->native_inventory), e);
                 if (!out->native_inventory) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory");
                 qa_unified_native_inventory *v = out->native_inventory;
-                if (ok && mixed.count) {
-                    v->items = application_unified_frame_alloc(o->lease, mixed.count, sizeof(*v->items), e);
+                size_t count = 0;
+                for (size_t i = 0; i < mixed.count; ++i) if (mixed.rows[i].count != 0) ++count;
+                if (ok && count) {
+                    v->items = application_unified_frame_alloc(o->lease, count, sizeof(*v->items), e);
                     if (!v->items) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory rows");
                 }
                 for (size_t i = 0; ok && i < mixed.count; ++i) {
+                    if (mixed.rows[i].count == 0) continue;
                     char *label = NULL;
                     ok = application_unified_frame_string(o->lease, &label, mixed.rows[i].label, e) &&
                         native_inventory_item(v, o, mixed.rows[i].item, label, mixed.rows[i].count, e);

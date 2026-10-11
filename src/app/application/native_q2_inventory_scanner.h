@@ -33,6 +33,8 @@ typedef struct application_native_q2_inventory_row {
     bool selected, presence_only;
     application_native_q2_inventory_presentation presentation;
 } application_native_q2_inventory_row;
+bool application_native_q2_inventory_row_copy(qa_arena *,
+    const application_native_q2_inventory_row *, application_native_q2_inventory_row *, qa_error *);
 typedef struct application_native_q2_inventory_scanner_options {
     void *context;
     size_t (*storage_bytes)(void *);
@@ -50,8 +52,8 @@ typedef struct application_native_q2_inventory_readout {
     application_native_q2_inventory_presentation selected_presentation;
     bool present;
 } application_native_q2_inventory_readout;
-/* The profile is the acquired primary declaration, never a callback document.
- * Returned rows borrow load-sized storage until readout_free. */
+/* UI reads borrow cached rows until the next read/reconfigure. Re-entrant
+ * command observations own pool copies until readout_free. */
 bool application_native_q2_inventory_scanner_create(struct application_native_q2 *,
     const application_native_q2_inventory_scanner_options *,
     application_native_q2_inventory_scanner **, qa_error *);

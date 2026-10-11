@@ -244,7 +244,20 @@ static bool player_current(application_native_q2_inventory_rows *owner,
     return application_native_q2_inventory_source_current(owner->engine, source, error);
 }
 
-static bool append(application_native_q2_inventory_rows *owner,application_native_q2_inventory_readout *out,
+bool application_native_q2_inventory_row_copy(qa_arena *storage,
+    const application_native_q2_inventory_row *row, application_native_q2_inventory_row *out, qa_error *error)
+{
+    application_native_q2_inventory_row value = *row;
+    value.label = qa_arena_text(storage, row->label, error);
+    value.presentation.icon = qa_arena_text(storage, row->presentation.icon, error);
+    value.presentation.lump = qa_arena_text(storage, row->presentation.lump, error);
+    if (!value.label || (row->presentation.icon && !value.presentation.icon) ||
+        (row->presentation.lump && !value.presentation.lump)) return false;
+    *out = value;
+    return true;
+}
+
+static bool append(application_native_q2_inventory_rows *owner,qa_arena *storage,application_native_q2_inventory_readout *out,
     const application_native_q2_inventory_row *row,qa_error *error)
 {
     size_t index=out->count;
@@ -252,13 +265,7 @@ static bool append(application_native_q2_inventory_rows *owner,application_nativ
     if(index==out->count && out->count==owner->row_capacity) {
         qa_error_set(error,QA_ERROR_CAPACITY,0,"Mixed inventory exceeds load-sized rows");return false;
     }
-    application_native_q2_inventory_row value=*row;
-    value.label=qa_arena_text(&owner->storage,row->label,error);
-    value.presentation.icon=qa_arena_text(&owner->storage,row->presentation.icon,error);
-    value.presentation.lump=qa_arena_text(&owner->storage,row->presentation.lump,error);
-    if(!value.label || (row->presentation.icon&&!value.presentation.icon) ||
-        (row->presentation.lump&&!value.presentation.lump)) return false;
-    out->rows[index]=value;
+    if (!application_native_q2_inventory_row_copy(storage, row, out->rows + index, error)) return false;
     if(index==out->count) ++out->count;
     return true;
 }
@@ -367,10 +374,10 @@ static bool catalog_read(qa_application *app, application_provider *arsenal, qa_
 static bool row_count(application_native_q2_inventory_rows *owner,
     const application_native_q2_inventory_source *source, application_provider *arsenal,
     uint64_t map_revision, uint64_t config_revision, application_native_q2_inventory_row *row,
-    application_native_q2_inventory_readout *out, qa_error *error) {
+    qa_arena *storage, application_native_q2_inventory_readout *out, qa_error *error) {
     qa_application *app = owner->engine->provider->application;
     return qa_inventory_count_read(app->inventory, source->actor, row->item, &row->count, error) &&
-        player_current(owner, source, arsenal, map_revision, config_revision, error) && append(owner, out, row, error);
+        player_current(owner, source, arsenal, map_revision, config_revision, error) && append(owner, storage, out, row, error);
 }
 
 static bool component_icon(const application_q3_component_item_metadata *metadata,
@@ -453,9 +460,6 @@ static bool rows(void *context, qa_actor_id actor,
     qa_arena_reset(&cache->storage);
     qa_arena_reset(&owner->storage);qa_arena_reset(&owner->commands);
     application_native_q2_inventory_readout result = {0};
-    result.rows=qa_arena_alloc(&owner->storage,owner->row_capacity*sizeof(*result.rows),
-        _Alignof(application_native_q2_inventory_row),error);
-    if(!result.rows) return false;
     ++owner->calls; ++owner->engine->calls;
     bool okay = qa_inventory_source_items(app->inventory, actor, &owner->storage, &snapshot, error) &&
         player_current(owner, &source, arsenal, map_revision, config_revision, error);
@@ -474,13 +478,20 @@ static bool rows(void *context, qa_actor_id actor,
     }
     if (okay && (selected || component_count)) {
         result.present = true;
+        size_t capacity = owner->slot_count + catalog.count * 2;
+        for (size_t g = 0; g < snapshot.group_count; ++g) capacity += snapshot.groups[g].count;
+        if (capacity > owner->row_capacity) capacity = owner->row_capacity;
+        result.rows = capacity ? qa_arena_alloc(&cache->storage, capacity * sizeof(*result.rows),
+            _Alignof(application_native_q2_inventory_row), error) : NULL;
+        okay = !capacity || result.rows;
+
         for (size_t i = 0; okay && selected && i < catalog.count; ++i) {
             const qa_item_definition *definition = catalog.items + i;
             application_native_q2_inventory_row row = {.item = definition->item,
                 .label = definition->label, .source_index = owner->prototypes[0], .selected = true,
                 .presentation = {.source = arsenal->owner, .kind = APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON,
                     .weapon = definition->item}};
-            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
+            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &cache->storage, &result, error);
         }
         for (size_t i = 0; okay && selected && i < catalog.count; ++i) {
             const qa_item_definition *definition = catalog.items + i;
@@ -495,7 +506,7 @@ static bool rows(void *context, qa_actor_id actor,
                 .source_index = owner->prototypes[1], .selected = true,
                 .presentation = {.source = arsenal->owner, .kind = APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION,
                     .weapon = definition->item}};
-            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
+            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &cache->storage, &result, error);
         }
         for (size_t i = 0; okay && selected && i < owner->slot_count; ++i) {
             const original_slot *slot = owner->slots + i;
@@ -522,7 +533,7 @@ static bool rows(void *context, qa_actor_id actor,
                 .presentation = {.source = primary->owner, .kind = APPLICATION_NATIVE_INVENTORY_PRESENTATION_ITEM,
                     .icon_kind = icon ? APPLICATION_NATIVE_INVENTORY_ICON_IMAGE : APPLICATION_NATIVE_INVENTORY_ICON_NONE,
                     .icon = icon}};
-            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
+            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &cache->storage, &result, error);
         }
         for (size_t i = 0; okay && i < owner->slot_count; ++i) {
             const original_slot *slot = owner->slots + i;
@@ -530,7 +541,7 @@ static bool rows(void *context, qa_actor_id actor,
             char *label;
             if (!original_label(owner, slot->index, &label, error)) { okay = false; break; }
             application_native_q2_inventory_row row = {.item = slot->item, .label = label, .source_index = slot->index};
-            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
+            okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &cache->storage, &result, error);
         }
         /* The Source Map replacement order is equipment, then component definitions. */
         for (unsigned pass = 0; okay && pass < 2; ++pass)
@@ -595,7 +606,7 @@ static bool rows(void *context, qa_actor_id actor,
                         if (okay) okay = component_icon(&metadata, &row.presentation, &icon, &lump, error);
                     }
                 }
-                if (okay) okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &result, error);
+                if (okay) okay = row_count(owner, &source, arsenal, map_revision, config_revision, &row, &cache->storage, &result, error);
                 if (okay && metadata_found) okay = component_current(app, actor, &metadata, error);
                 qa_buffer_free(&icon);
                 qa_buffer_free(&lump);
@@ -606,24 +617,10 @@ static bool rows(void *context, qa_actor_id actor,
     qa_inventory_source_snapshot_free(&snapshot);
     --owner->engine->calls; --owner->calls;
     if (!okay) return false;
-    application_native_q2_inventory_readout retained={.count=result.count,.present=result.present};
-    if(result.count) {
-        retained.rows=qa_arena_alloc(&cache->storage,result.count*sizeof(*retained.rows),
-            _Alignof(application_native_q2_inventory_row),error);
-        if(!retained.rows) return false;
-        for(size_t i=0;i<result.count;++i) {
-            retained.rows[i]=result.rows[i];
-            retained.rows[i].label=qa_arena_text(&cache->storage,result.rows[i].label,error);
-            retained.rows[i].presentation.icon=qa_arena_text(&cache->storage,result.rows[i].presentation.icon,error);
-            retained.rows[i].presentation.lump=qa_arena_text(&cache->storage,result.rows[i].presentation.lump,error);
-            if(!retained.rows[i].label || (result.rows[i].presentation.icon&&!retained.rows[i].presentation.icon) ||
-                (result.rows[i].presentation.lump&&!retained.rows[i].presentation.lump)) return false;
-        }
-    }
-    cache->rows=retained;cache->actor=actor;cache->arsenal=arsenal->owner;
+    cache->rows=result;cache->actor=actor;cache->arsenal=arsenal->owner;
     cache->map=map_revision;cache->config=config_revision;
     cache->inventory=qa_inventory_revision(app->inventory,actor);cache->valid=true;
-    *out=retained.rows;*count=retained.count;*present=retained.present;
+    *out=result.rows;*count=result.count;*present=result.present;
     return true;
 }
 

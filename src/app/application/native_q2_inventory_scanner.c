@@ -119,7 +119,7 @@ void application_native_q2_inventory_readout_free(application_native_q2_inventor
     if (r->storage) qa_pool_release_run(r->storage,r->storage_slot,r->storage_pages);
     *r=(application_native_q2_inventory_readout){0};
 }
-static bool rows(application_native_q2_inventory_scanner *o,qa_actor_id actor,
+static bool rows(application_native_q2_inventory_scanner *o,qa_actor_id actor, bool retain,
     application_native_q2_inventory_readout *out,qa_error *e)
 {
     const application_native_q2_inventory_row *borrowed=NULL;size_t count=0;bool present=false;
@@ -128,6 +128,7 @@ static bool rows(application_native_q2_inventory_scanner *o,qa_actor_id actor,
         return application_fail(e,QA_ERROR_ARGUMENT,"Native inventory row producer returned an invalid acquisition");
     application_native_q2_inventory_readout r={.present=present};
     if(!count) {*out=r;return true;}
+    if (!retain) { r.rows = (application_native_q2_inventory_row *)borrowed; r.count = count; *out = r; return true; }
     size_t bytes=count*sizeof(*borrowed)+128;
     for(size_t i=0;i<count;++i) {
         if(!borrowed[i].item || !borrowed[i].label || borrowed[i].source_index>=o->count)
@@ -145,12 +146,7 @@ static bool rows(application_native_q2_inventory_scanner *o,qa_actor_id actor,
     r.rows=okay?qa_arena_alloc(&arena,count*sizeof(*r.rows),_Alignof(application_native_q2_inventory_row),e):NULL;
     okay=r.rows!=NULL;
     for(size_t i=0;okay && i<count;++i) {
-        r.rows[i]=borrowed[i];
-        r.rows[i].label=qa_arena_text(&arena,borrowed[i].label,e);
-        r.rows[i].presentation.icon=qa_arena_text(&arena,borrowed[i].presentation.icon,e);
-        r.rows[i].presentation.lump=qa_arena_text(&arena,borrowed[i].presentation.lump,e);
-        okay=r.rows[i].label && (!borrowed[i].presentation.icon||r.rows[i].presentation.icon) &&
-            (!borrowed[i].presentation.lump||r.rows[i].presentation.lump);
+        okay = application_native_q2_inventory_row_copy(&arena, borrowed + i, r.rows + i, e);
         ++r.count;
         for(size_t j=0;okay && j<i;++j) if(r.rows[j].item==r.rows[i].item)
             okay=application_fail(e,QA_ERROR_ARGUMENT,"Mixed inventory producer repeats a canonical item");
@@ -314,7 +310,7 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
     bool ok = true;
     if (entry->kind == 2 && frame.actor.registry && !o->evaluating) {
         application_native_q2_inventory_readout r = {0}; size_t chosen = SIZE_MAX;
-        ok = rows(o, frame.actor, &r, e);
+        ok = rows(o, frame.actor, true, &r, e);
         if (ok && r.present) ok = cursor(o, frame.actor, &r, &chosen, e);
         if (ok && chosen != SIZE_MAX && r.rows[chosen].selected) {
             application_native_q2_inventory_source s;
@@ -424,7 +420,7 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
         if (event->phase == QA_NATIVE_REGION_ENTER) return lookup_name(o, event, frame, e);
         application_native_q2_inventory_readout r = {0}; size_t chosen = SIZE_MAX;
         qa_native_address original = o->pointer_bytes == 4 ? (uint32_t)event->state.registers[QA_NATIVE_RAX] : event->state.registers[QA_NATIVE_RAX];
-        bool ok = rows(o, frame->actor, &r, e);
+        bool ok = rows(o, frame->actor, true, &r, e);
         if (ok && r.present) ok = named_choice(o, frame, &r, original, &chosen, e);
         if (ok && chosen != SIZE_MAX && r.rows[chosen].selected) {
             application_native_q2_inventory_source s; qa_native_address descriptor;
@@ -443,7 +439,7 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
         application_native_q2_inventory_readout_free(&r); return ok;
     }
     if (event->phase != QA_NATIVE_REGION_ENTER) return true;
-    application_native_q2_inventory_readout r = {0}; bool ok = rows(o, frame->actor, &r, e);
+    application_native_q2_inventory_readout r = {0}; bool ok = rows(o, frame->actor, true, &r, e);
     if (!ok || !r.present) { application_native_q2_inventory_readout_free(&r); return ok; }
     if (region->kind == 1) {
         ok = navigate(o, frame, &r, region->direction, event, e);
@@ -592,7 +588,7 @@ bool application_native_q2_inventory_scanner_read(application_native_q2_inventor
 {
     if (!out || !current(o, e) || !o->active || !application_native_q2_inventory_scanner_idle(o)) return false;
     application_native_q2_inventory_readout r = {0}; ++o->calls;
-    bool ok = rows(o, actor, &r, e); size_t chosen = SIZE_MAX;
+    bool ok = rows(o, actor, false, &r, e); size_t chosen = SIZE_MAX;
     if (ok && r.present) ok = cursor(o, actor, &r, &chosen, e);
     if (ok && !r.present) {
         inventory_selection *tracked = selection(o, actor);
@@ -605,10 +601,6 @@ bool application_native_q2_inventory_scanner_read(application_native_q2_inventor
     if (ok && chosen != SIZE_MAX) {
         r.selected = r.rows[chosen].item;
         r.selected_presentation=r.rows[chosen].presentation;
-    }
-    if (ok) { size_t retained = 0;
-        for (size_t i = 0; i < r.count; ++i) if (r.rows[i].count != 0) r.rows[retained++] = r.rows[i];
-        r.count = retained;
     }
     --o->calls;
     if (!ok) { application_native_q2_inventory_readout_free(&r); return false; }
@@ -627,7 +619,7 @@ bool application_native_q2_inventory_scanner_restore_selection(application_nativ
     inventory_selection *retained = calloc(1, sizeof(*retained));
     if (!retained) return application_fail(e, QA_ERROR_MEMORY, "Reserving restored native inventory selection");
     ++o->calls;
-    application_native_q2_inventory_readout r = {0}; bool ok = rows(o, actor, &r, e); size_t found = SIZE_MAX;
+    application_native_q2_inventory_readout r = {0}; bool ok = rows(o, actor, true, &r, e); size_t found = SIZE_MAX;
     for (size_t i = 0; ok && i < r.count; ++i) if (r.rows[i].item == item) { found = i; break; }
     if (ok && found == SIZE_MAX) ok = application_fail(e, QA_ERROR_NOT_FOUND, "Saved mixed inventory selection is absent from its actual rows");
     if (ok) ok = application_native_q2_inventory_source_current(o->engine, &s, e) &&
@@ -704,7 +696,7 @@ bool application_native_q2_inventory_scanner_finish_restore(application_native_q
     for (inventory_selection *s = o->selected; s; s = s->next) {
         application_native_q2_inventory_source actual; application_native_q2_inventory_readout r = {0}; int32_t cursor_value;
         bool ok = source(o, s->actor, &actual, e) && read_word(o, actual.client + o->cursor, &cursor_value, e) &&
-            rows(o, s->actor, &r, e); bool found = false;
+            rows(o, s->actor, true, &r, e); bool found = false;
         for (size_t i = 0; ok && i < r.count; ++i) if (r.rows[i].item == s->item && r.rows[i].source_index == s->index) found = true;
         application_native_q2_inventory_readout_free(&r);
         if (!ok) return false;
