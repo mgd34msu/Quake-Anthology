@@ -9,6 +9,7 @@
 #include "native_q3_console.h"
 #include "guest_q3_components.h"
 #include "client_events.h"
+#include "control_frame.h"
 #include "qa/application_network.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_bots.h"
@@ -75,44 +76,29 @@ static bool capacity(application_provider *source, uint32_t *out, bool checkpoin
     return true;
 }
 
-static bool bytes_retain(qa_bytes value, qa_buffer *out, size_t *capacity, qa_error *error)
+qa_usercmd *application_unified_inputs_group_take(application_unified_inputs *owner,
+    size_t count, qa_error *error)
 {
-    if (value.size && !value.data)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified intent has no owned source bytes");
-    if (value.size > *capacity) {
-        uint8_t *copy = realloc(out->data, value.size);
-        if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining unified Source intent");
-        out->data = copy;
-        *capacity = value.size;
+    if (count > (SIZE_MAX - sizeof(application_unified_input_group)) / sizeof(qa_usercmd)) {
+        application_fail(error, QA_ERROR_MEMORY, "Unified input programme exceeds its actual extent");
+        return NULL;
     }
-    if (value.size && (value.size != out->size || memcmp(out->data, value.data, value.size)))
-        memcpy(out->data, value.data, value.size);
-    out->size = value.size;
-    return true;
+    if (!owner->storage) owner->storage = application_control_storage_acquire(owner->application, error);
+    if (!owner->storage) return NULL;
+    application_unified_input_group *group = qa_unified_frame_lease_alloc(owner->storage, 1,
+        sizeof(*group) + count * sizeof(*group->commands), _Alignof(application_unified_input_group), error);
+    if (!group) return NULL;
+    group->count = count;
+    if (owner->last) owner->last->next = group; else owner->first = group;
+    owner->last = group;
+    return group->commands;
 }
-
-static bool inputs_reserve(application_unified_inputs *owner, size_t count, qa_error *error)
+static void inputs_clear(application_unified_inputs *owner)
 {
-    if (count <= owner->capacity) return true;
-    size_t maximum = SIZE_MAX / sizeof(*owner->commands);
-    size_t next_capacity = owner->capacity ? owner->capacity : 64;
-    while (next_capacity < count) {
-        if (next_capacity > maximum / 2) { next_capacity = count; break; }
-        next_capacity *= 2;
-    }
-    retained_input *next = realloc(owner->commands, next_capacity * sizeof(*next));
-    if (!next) return application_fail(error, QA_ERROR_MEMORY, "Growing retained unified Source input programme");
-    memset(next + owner->capacity, 0, (next_capacity - owner->capacity) * sizeof(*next));
-    owner->commands = next;
-    owner->capacity = next_capacity;
-    return true;
-}
-
-static void input_free(retained_input *input)
-{
-    qa_buffer_free(&input->provider);
-    qa_buffer_free(&input->weapon);
-    *input = (retained_input){0};
+    qa_unified_frame_lease_release(owner->storage);
+    owner->storage = NULL;
+    owner->first = owner->last = NULL;
+    owner->cursor = owner->count = 0;
 }
 
 static bool inputs_player(application_unified_inputs *owner, qa_unified_session_player *out,
@@ -144,7 +130,9 @@ bool application_unified_inputs_create(qa_application *app, qa_network_runtime *
         .epoch = epoch, .runtime_epoch = qa_network_epoch(runtime, client),
         .publication = source.publication, .map_revision = source.map_revision,
         .queued = -1, .submitted = -1};
-    if (!inputs_reserve(owner, 64, error)) { free(owner); return false; }
+    owner->names = qa_session_strings(app->session);
+    qa_strings_retain(owner->names);
+    owner->arsenal = qa_strings_find(owner->names, player.arsenal);
     *out = owner;
     return true;
 }
@@ -158,7 +146,7 @@ bool application_unified_inputs_queue(application_unified_inputs *owner,
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input batch belongs to a retired Source peer");
     size_t added = 0;
     int64_t sequence = owner->queued;
-    const qa_usercmd *accepted[64];
+    qa_usercmd accepted[64];
     for (size_t i = 0; i < batch->count; ++i) {
         const qa_usercmd *input = batch->commands + i;
         if (input->sequence > INT64_MAX) goto invalid;
@@ -167,27 +155,32 @@ bool application_unified_inputs_queue(application_unified_inputs *owner,
         if (input->has_arsenal && (input->arsenal.provider.size != player.arsenal.size ||
             !input->arsenal.provider.data || memcmp(input->arsenal.provider.data,
                 player.arsenal.data, player.arsenal.size))) goto invalid;
-        accepted[added++] = input;
+        qa_usercmd selected = *input;
+        if (input->has_arsenal) {
+            selected.arsenal.names = owner->names;
+            selected.arsenal.provider_id = owner->arsenal;
+            selected.arsenal.weapon_id = QA_STRING_NONE;
+            if (input->arsenal.weapon.size) {
+                if (input->arsenal.names == owner->names && input->arsenal.weapon_id)
+                    selected.arsenal.weapon_id = input->arsenal.weapon_id;
+                else if (!qa_strings_intern(owner->names, input->arsenal.weapon,
+                    &selected.arsenal.weapon_id, error)) return false;
+            }
+            if (!selected.arsenal.provider_id) goto invalid;
+            selected.arsenal.provider = qa_strings_text(owner->names, selected.arsenal.provider_id);
+            selected.arsenal.weapon = qa_strings_text(owner->names, selected.arsenal.weapon_id);
+        }
+        accepted[added++] = selected;
         sequence = (int64_t)input->sequence;
     }
-    if (added > SIZE_MAX / sizeof(*owner->commands) - owner->count) {
+    if (added > SIZE_MAX - owner->count) {
         application_fail(error, QA_ERROR_MEMORY, "Unified input programme exceeds its actual extent");
         return false;
     }
-    if (!inputs_reserve(owner, owner->count + added, error)) return false;
-    for (size_t i = 0; i < added; ++i) {
-        const qa_usercmd *input = accepted[i];
-        retained_input *candidate = owner->commands + owner->count + i;
-        candidate->value = *input;
-        if (input->has_arsenal) {
-            if (!bytes_retain(input->arsenal.provider, &candidate->provider, &candidate->provider_capacity, error) ||
-                !bytes_retain(input->arsenal.weapon, &candidate->weapon, &candidate->weapon_capacity, error)) {
-                for (size_t j = 0; j <= i; ++j) owner->commands[owner->count + j].value = (qa_usercmd){0};
-                return false;
-            }
-            candidate->value.arsenal.provider = (qa_bytes){candidate->provider.data, candidate->provider.size};
-            candidate->value.arsenal.weapon = (qa_bytes){candidate->weapon.data, candidate->weapon.size};
-        }
+    if (added) {
+        qa_usercmd *commands = application_unified_inputs_group_take(owner, added, error);
+        if (!commands) return false;
+        memcpy(commands, accepted, added * sizeof(*commands));
     }
     owner->count += added;
     owner->queued = sequence;
@@ -211,16 +204,24 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
     owner->advancing = true;
     bool okay = true;
     if (player.movement == QA_RULESET_NETQUAKE) {
-        qa_usercmd selected = owner->commands[owner->cursor].value;
-        for (size_t i = owner->cursor + 1; i < owner->count; ++i) {
-            qa_usercmd next = owner->commands[i].value;
+        qa_usercmd selected = {0};
+        size_t ordinal = 0;
+        bool present = false;
+        for (application_unified_input_group *group = owner->first; group; group = group->next)
+        for (size_t i = 0; i < group->count; ++i, ++ordinal) {
+            if (ordinal < owner->cursor) continue;
+            qa_usercmd next = group->commands[i];
+            if (!present) { selected = next; present = true; continue; }
             if (next.impulse == 0)
                 next.impulse = selected.impulse;
             if (selected.has_arsenal && (!next.has_arsenal ||
-                same_bytes(next.arsenal.provider, selected.arsenal.provider))) {
+                next.arsenal.provider_id == selected.arsenal.provider_id)) {
                 if (!next.has_arsenal) { next.has_arsenal = true; next.arsenal = selected.arsenal; }
                 else {
-                    if (!next.arsenal.weapon.size) next.arsenal.weapon = selected.arsenal.weapon;
+                    if (!next.arsenal.weapon_id) {
+                        next.arsenal.weapon_id = selected.arsenal.weapon_id;
+                        next.arsenal.weapon = selected.arsenal.weapon;
+                    }
                     next.arsenal.use_holdable |= selected.arsenal.use_holdable;
                     if (!next.arsenal.has_impulse || !next.arsenal.impulse) {
                         next.arsenal.has_impulse = selected.arsenal.has_impulse || next.arsenal.has_impulse;
@@ -234,18 +235,18 @@ bool application_unified_inputs_flush(application_unified_inputs *owner, qa_erro
             owner->actor, owner->runtime_epoch, &selected, error);
         if (okay) { owner->submitted = (int64_t)selected.sequence; owner->cursor = owner->count; }
     } else {
-        while (okay && owner->cursor < owner->count) {
-            const qa_usercmd *input = &owner->commands[owner->cursor].value;
+        size_t ordinal = 0;
+        for (application_unified_input_group *group = owner->first; okay && group; group = group->next)
+        for (size_t i = 0; okay && i < group->count; ++i, ++ordinal) {
+            if (ordinal < owner->cursor) continue;
+            const qa_usercmd *input = group->commands + i;
             okay = qa_network_accept_unified_input(owner->runtime, owner->client, owner->seat,
                 owner->actor, owner->runtime_epoch, input, error);
             if (okay) { owner->submitted = (int64_t)input->sequence; ++owner->cursor; }
         }
     }
     owner->advancing = false;
-    if (okay) {
-        for (size_t i = 0; i < owner->count; ++i) owner->commands[i].value = (qa_usercmd){0};
-        owner->cursor = owner->count = 0;
-    }
+    if (okay) inputs_clear(owner);
     return okay;
 }
 
@@ -259,8 +260,9 @@ bool application_unified_inputs_destroy(application_unified_inputs *owner, qa_er
     if (!owner) return true;
     if (owner->advancing)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified Source input is still entered");
-    for (size_t i = 0; i < owner->capacity; ++i) input_free(owner->commands + i);
-    free(owner->commands); free(owner);
+    inputs_clear(owner);
+    qa_strings_destroy(owner->names);
+    free(owner);
     return true;
 }
 

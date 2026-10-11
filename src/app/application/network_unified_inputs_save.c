@@ -4,31 +4,39 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool input(qa_source_save_io *io, retained_input *row, uint32_t epoch,
+static bool selection(qa_source_save_io *io, qa_strings *names, qa_string_id *name,
+    qa_bytes *view)
+{
+    bool writing = io->direction == QA_SOURCE_SAVE_WRITE;
+    qa_bytes text = writing ? qa_strings_text(names, *name) : (qa_bytes){0};
+    size_t size = text.size;
+    if (!qa_source_save_count(io, &size, SIZE_MAX)) return false;
+    if (writing) {
+        if (!qa_source_save_bytes(io, (void *)text.data, size)) return false;
+    } else {
+        if (!qa_source_save_span(io, size, &text)) return false;
+        *name = QA_STRING_NONE;
+        if (size && !qa_strings_intern(names, text, name, io->error)) return false;
+    }
+    *view = qa_strings_text(names, *name);
+    return true;
+}
+static bool input(qa_source_save_io *io, qa_usercmd *value, qa_strings *names, uint32_t epoch,
     const qa_unified_session_player *player)
 {
-    qa_usercmd *value = &row->value;
-    bool writing = io->direction == QA_SOURCE_SAVE_WRITE;
     if (!qa_source_save_usercmd(io, value) || value->sequence > QA_UNIFIED_SAFE_INTEGER ||
         value->kind != player->movement ||
         !qa_source_save_bool(io, &value->has_arsenal)) return false;
     if (value->has_arsenal) {
-        if (writing && (value->arsenal.provider.data != row->provider.data ||
-            value->arsenal.provider.size != row->provider.size || value->arsenal.weapon.data != row->weapon.data ||
-            value->arsenal.weapon.size != row->weapon.size)) return false;
-        if (!application_unified_save_blob(io, &row->provider) ||
-            !application_unified_save_blob(io, &row->weapon) ||
+        value->arsenal.names = names;
+        if (!selection(io, names, &value->arsenal.provider_id, &value->arsenal.provider) ||
+            !selection(io, names, &value->arsenal.weapon_id, &value->arsenal.weapon) ||
             !qa_source_save_bool(io, &value->arsenal.use_holdable) ||
             !qa_source_save_bool(io, &value->arsenal.has_impulse) ||
             !qa_source_save_u8(io, &value->arsenal.impulse) ||
-            row->provider.size != player->arsenal.size ||
-            (row->provider.size && memcmp(row->provider.data, player->arsenal.data, row->provider.size))) return false;
-        if (!writing) {
-            row->provider_capacity = row->provider.size;
-            row->weapon_capacity = row->weapon.size;
-        }
-        value->arsenal.provider = (qa_bytes){row->provider.data, row->provider.size};
-        value->arsenal.weapon = (qa_bytes){row->weapon.data, row->weapon.size};
+            value->arsenal.provider.size != player->arsenal.size ||
+            (value->arsenal.provider.size && memcmp(value->arsenal.provider.data,
+                player->arsenal.data, value->arsenal.provider.size))) return false;
     }
     /* Apply the same command schema at the save boundary. */
     qa_unified_document *document = NULL;
@@ -51,6 +59,9 @@ bool application_unified_inputs_save(qa_source_save_io *io, application_unified_
         **slot = (application_unified_inputs){.application = app, .runtime = runtime, .client = client,
             .seat = seat, .actor = player->actor, .source = source->owner, .source_slot = player->source_slot,
             .publication = source->publication, .map_revision = source->map_revision, .epoch = epoch};
+        (*slot)->names = qa_session_strings(app->session);
+        qa_strings_retain((*slot)->names);
+        (*slot)->arsenal = qa_strings_find((*slot)->names, player->arsenal);
     }
     application_unified_inputs *owner = *slot;
     uint32_t wire_epoch = owner->epoch;
@@ -66,23 +77,22 @@ bool application_unified_inputs_save(qa_source_save_io *io, application_unified_
         !qa_source_save_i64(io, &owner->queued) || !qa_source_save_i64(io, &owner->submitted) ||
         owner->queued < -1 || owner->submitted < -1 || owner->submitted > owner->queued ||
         owner->queued > (int64_t)QA_UNIFIED_SAFE_INTEGER ||
-        !qa_source_save_count(io, &owner->count, SIZE_MAX / sizeof(*owner->commands)) ||
+        !qa_source_save_count(io, &owner->count, SIZE_MAX / sizeof(qa_usercmd)) ||
         !qa_source_save_count(io, &owner->cursor, owner->count)) return false;
     if (!writing) {
         if (owner->count > (io->input.size - io->offset) / 13) return false;
-        size_t capacity = owner->count > 64 ? owner->count : 64;
-        owner->commands = calloc(capacity, sizeof(*owner->commands));
-        if (!owner->commands)
-            return application_fail(io->error, QA_ERROR_MEMORY, "Restoring ordered Source commands");
-        owner->capacity = capacity;
+        if (owner->count && !application_unified_inputs_group_take(owner, owner->count, io->error)) return false;
     }
-    if (owner->count && !owner->commands) return false;
+    if (owner->count && !owner->first) return false;
     int64_t previous = -1;
-    for (size_t i = 0; i < owner->count; ++i) {
-        if (!input(io, owner->commands + i, epoch, player)) return false;
-        int64_t sequence = (int64_t)owner->commands[i].value.sequence;
+    size_t ordinal = 0;
+    for (application_unified_input_group *group = owner->first; group; group = group->next)
+    for (size_t i = 0; i < group->count; ++i, ++ordinal) {
+        qa_usercmd *command = group->commands + i;
+        if (!input(io, command, owner->names, epoch, player)) return false;
+        int64_t sequence = (int64_t)command->sequence;
         if (sequence <= previous || sequence > owner->queued ||
-            (i < owner->cursor ? sequence > owner->submitted : sequence <= owner->submitted)) return false;
+            (ordinal < owner->cursor ? sequence > owner->submitted : sequence <= owner->submitted)) return false;
         previous = sequence;
     }
     if (owner->count && previous != owner->queued) return false;
