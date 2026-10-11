@@ -14,6 +14,7 @@ typedef struct unified_event_resource {
     qa_string_id id, content, path;
     const qa_resource *resource;
     qa_audio_asset *asset;
+    qa_audio_bank *bank;
     qa_game_family family;
 } unified_event_resource;
 typedef struct unified_component_owner {
@@ -472,6 +473,20 @@ static bool message(frontend_unified_events *o,const char *text_value,qa_error *
     qa_console_emit(domain->console,&domain->command_context,o->message_line);
     return true;
 }
+static bool resource_sound_asset(frontend_unified_events *o, unified_event_resource *r, qa_error *e)
+{
+    if (!r->asset) {
+        qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts;
+        if (!frontend_unified_media_bank(o->media,r->content,&images,&materials,&fonts,&r->bank,e) ||
+            !qa_audio_bank_register_id(r->bank,r->path,r->family,&r->asset,e)) return false;
+        if (!r->asset) return frontend_unified_fail(e,QA_ERROR_NOT_FOUND,"Declared Unified sound is absent from its actual bank");
+        const qa_resource *resource=qa_audio_asset_resource(r->asset);
+        if (resource!=r->resource ||
+            qa_resource_bytes(resource).size!=qa_resource_bytes(r->resource).size)
+            return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified sound bank differs from its declared resource authority");
+    }
+    return true;
+}
 static bool sound(frontend_unified_events *o,const qa_unified_sound_event *event,double ms,qa_error *e)
 {
     unified_event_resource *r=resource_find(o,event->resource);
@@ -480,16 +495,7 @@ static bool sound(frontend_unified_events *o,const qa_unified_sound_event *event
     if (!actor(o,event->actor,&actual,e)) return false;
     uint64_t audio=QA_AUDIO_NO_ACTOR;
     if (actual.registry && !o->options.audio_actor(o->options.context,actual,&audio,e)) return false;
-    if (!r->asset) {
-        qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
-        if (!frontend_unified_media_bank(o->media,r->content,&images,&materials,&fonts,&bank,e) ||
-            !qa_audio_bank_register(bank,qa_strings_cstr(o->strings,r->path),r->family,&r->asset,e)) return false;
-        if (!r->asset) return frontend_unified_fail(e,QA_ERROR_NOT_FOUND,"Declared Unified sound is absent from its actual bank");
-        const qa_resource *resource=qa_audio_asset_resource(r->asset);
-        if (resource!=r->resource ||
-            qa_resource_bytes(resource).size!=qa_resource_bytes(r->resource).size)
-            return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified sound bank differs from its declared resource authority");
-    }
+    if (!resource_sound_asset(o,r,e)) return false;
     if (!o->frontend->audio) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified sound has no actual output engine");
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     qa_audio_play play={.sample=qa_audio_asset_sample(r->asset),.asset=r->asset,
@@ -681,7 +687,6 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
         if (source->kind!=QA_BUILTIN_SOUND ||
             (source->family==QA_GAME_Q2 && (source->flags==1 || source->flags==2))) return true;
         bool ambient=source->family==QA_GAME_Q1 && (source->flags & 1u)!=0;
-        emitted_path=qa_strings_cstr(o->strings,source->resource);
         emitted=(qa_unified_sound_event){.resource=source->resource,
             .actor=ambient?(qa_actor_id){0}:source->actor,.origin=source->origin,
             .channel=ambient?0:source->channel,.volume=source->volume,.attenuation=source->attenuation};
@@ -710,17 +715,19 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     if (!o->busy || !events || o->presentation_at>=events->presentation_count ||
         events->presentation+o->presentation_at!=row)
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Sound linkage is outside its actual retained presentation delivery");
+    qa_string_id content=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)row->content,strlen(row->content)});
     for (size_t i=0;i<events->simulation_count;++i) {
         const qa_unified_simulation_event *simulation=events->simulation+i;
         if (simulation->payload.kind!=QA_UNIFIED_SIMULATION_SOUND) continue;
         const qa_unified_sound_event *sound_event=&simulation->payload.value.sound;
         unified_event_resource *resource=resource_find(o,sound_event->resource);
         if (!resource) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Linked sound lost its declared resource");
-        if (resource->content!=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)row->content,strlen(row->content)})) continue;
-        const char *path=qa_strings_cstr(o->strings,resource->path);
-        bool same_path=emitted_path && (!strcmp(path,emitted_path) ||
-            (!strncmp(path,"sound/",6) && !strcmp(path+6,emitted_path)) ||
-            (emitted_path[0]=='#' && !strcmp(path,emitted_path+1)));
+        if (resource->content!=content) continue;
+        if (!resource_sound_asset(o,resource,e)) return false;
+        if (!emitted.resource && emitted_path)
+            emitted.resource=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)emitted_path,strlen(emitted_path)});
+        bool same_path=emitted.resource &&
+            qa_audio_bank_get_id(resource->bank,emitted.resource,resource->family)==resource->asset;
         double seconds=simulation->milliseconds?simulation->time/1000:simulation->time;
         if (same_path && seconds==row->seconds && sound_event->channel==emitted.channel &&
             sound_event->volume==emitted.volume && sound_event->attenuation==emitted.attenuation &&

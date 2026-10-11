@@ -591,9 +591,15 @@ fallback checks. Normal build and seven core suites pass:
 `/tmp/qa-ta3196-sound-bank-ids-20261011-build.log` and
 `/tmp/qa-ta3196-sound-bank-ids-20261011-core.log`.
 
-The ancillary Unified simulation/presentation sound mirror still compares
-normalized path text; that remaining item-10 consumer is next. Findings 11-17
-remain. This is source/build/core proof, with no live-play, install or timing claim.
+The ancillary Unified sound mirror now resolves its declared resource through
+the same bank once and compares the emitted ID's cached asset to that retained
+asset. Its private sound-prefix and `#` string-comparison path is deleted.
+Builtin event IDs stay numeric; protocol text resolves at its external adapter.
+The normal build and seven core suites pass:
+`/tmp/qa-ta3196-sound-mirror-ids-20261011-build.log` and
+`/tmp/qa-ta3196-sound-mirror-ids-20261011-core.log`.
+Names findings 1-10 are migrated at the audited sites; findings 11-17 remain.
+This is source/build/core proof, with no live-play, install or timing claim.
 
 ## Scalar numeric callers
 
