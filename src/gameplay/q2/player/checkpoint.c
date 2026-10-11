@@ -160,7 +160,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
     }
     if (!a)
         return false;
-    q2_client_state *state = malloc(sizeof(*state));
+    q2_client_state *state = calloc(1, sizeof(*state));
     if (!state) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 player state");
         return false;
