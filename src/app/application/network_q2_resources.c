@@ -93,7 +93,7 @@ static bool held_same(const application_q2_held_resource *a, const application_q
         !bytes_equal((qa_bytes){a->catalog_bytes.data, a->catalog_bytes.size},
                      (qa_bytes){b->catalog_bytes.data, b->catalog_bytes.size})))) return false;
     if (a->kind == APPLICATION_Q2_HELD_EVENT && (a->event_kind != b->event_kind ||
-        !text_equal(a->event_key, b->event_key) || a->event_custody != b->event_custody)) return false;
+        a->event_key!=b->event_key || a->event_custody != b->event_custody)) return false;
     bool images = a->kind == APPLICATION_Q2_HELD_IMAGE || a->kind == APPLICATION_Q2_HELD_MATERIAL ||
         a->kind == APPLICATION_Q2_HELD_ALIAS || (derived && a->kind == APPLICATION_Q2_HELD_MODEL && a->model_scope);
     if (images && (!image_options_equal(&a->image_options, &b->image_options) ||
@@ -712,15 +712,6 @@ bool application_network_q2_visual_resource(qa_application_network_q2 *owner,
     held_free(&held); return ok;
 }
 
-static const application_unified_event_resource *event_receipt(qa_application *app, const char *key)
-{
-    for (size_t i = 0; i < application_unified_event_resource_count(app); ++i) {
-        const application_unified_event_resource *row = application_unified_event_resource_at(app, i);
-        if (row && !strcmp(row->id, key)) return row;
-    }
-    return NULL;
-}
-
 static bool event_wire(qa_application_network_q2 *owner,size_t index,unsigned kind,uint32_t *out,qa_error *error)
 {
     const char *wire=owner->held_resources[index].wire_path;
@@ -735,14 +726,13 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
 {
     application_unified_event_source source;
     if (!owner || !reference || !reference->name || !out || (unsigned)reference->kind > QA_NATIVE_HOST_IMAGE ||
-        !memchr(reference->resource_key, 0, sizeof(reference->resource_key)) ||
         !application_network_q2_current(owner, error) ||
         !application_unified_event_source_read(owner->app, emitter, &source, error) ||
         !source.descriptor || !source.content || !source.product || source.product->family != QA_GAME_Q2)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 event resource lost its captured Source owner");
     unsigned kind = (unsigned)reference->kind;
     if (!*reference->name) { *out = 0; return true; }
-    if (!*reference->resource_key && ((kind == QA_NATIVE_HOST_SOUND && reference->name[0] == '*') ||
+    if (!reference->resource_key && ((kind == QA_NATIVE_HOST_SOUND && reference->name[0] == '*') ||
         (kind == QA_NATIVE_HOST_MODEL && (reference->name[0] == '*' || reference->name[0] == '#')))) {
         application_provider *actual = provider_at(owner, emitter);
         if (kind == QA_NATIVE_HOST_MODEL && reference->name[0] == '*' &&
@@ -751,15 +741,15 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
             return application_fail(error, QA_ERROR_ARGUMENT, "Q2 inline model lost its actual shared WORLD map");
         return application_network_q2_resource(owner, kind, reference->name, out, error);
     }
-    const application_unified_event_resource *receipt = *reference->resource_key ?
-        event_receipt(owner->app, reference->resource_key) : NULL;
+    const application_unified_event_resource *receipt = reference->resource_key ?
+        application_unified_event_resource_find(owner->app, reference->resource_key) : NULL;
     const qa_resource *captured = NULL; const qa_vfs *captured_view = NULL;
     const qa_vfs_acquisition *captured_opening = NULL;
     if (receipt && !application_unified_event_resource_receipt_read(owner->app, reference->resource_key,
         reference->resource_custody, &captured, &captured_view, &captured_opening, error)) return false;
     const char *content = receipt ? qa_strings_cstr(qa_session_strings(owner->app->session), receipt->content) : NULL;
     const char *path = receipt ? captured_opening->path : reference->name;
-    if (*reference->resource_key && (!receipt || !captured_view || !captured ||
+    if (reference->resource_key && (!receipt || !captured_view || !captured ||
         !content || strcmp(content, source.product->identity) || !path || !*path))
         return application_fail(error, QA_ERROR_FORMAT, "Q2 event lost its immutable captured resource key");
     if(receipt) {
@@ -768,7 +758,7 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
             .event_kind=reference->kind,.resource=(qa_resource *)captured,.view=(qa_vfs *)captured_view,
             .path=(char *)path,.opening=*captured_opening};
         if(probe.kind==APPLICATION_Q2_HELD_EVENT) {
-            memcpy(probe.event_key,reference->resource_key,sizeof(probe.event_key));
+            probe.event_key=reference->resource_key;
             probe.event_custody=reference->resource_custody;
         }
         const qa_application_visual_view colors={0};
@@ -792,7 +782,7 @@ bool qa_application_network_q2_event_resource(qa_application_network_q2 *owner, 
         .kind = receipt && kind == QA_NATIVE_HOST_MODEL ? APPLICATION_Q2_HELD_MODEL : APPLICATION_Q2_HELD_EVENT,
         .missing = receipt == NULL, .event_kind = reference->kind};
     if (held.kind == APPLICATION_Q2_HELD_EVENT) {
-        memcpy(held.event_key, reference->resource_key, sizeof(held.event_key)); held.event_custody = reference->resource_custody;
+        held.event_key=reference->resource_key; held.event_custody = reference->resource_custody;
     }
     held.instance = application_network_q2_copy(source.descriptor->selection.instance, error);
     held.path = qa_scene_model_image_path(path, error);
@@ -1035,12 +1025,21 @@ static bool holder_fields(qa_application_network_q2 *owner, qa_source_save_io *i
         !qa_source_save_count(io, &held->name_offset, INT32_MAX) ||
         !qa_source_save_count(io, &held->name_size, INT32_MAX) ||
         !buffer_field(io, &held->catalog_bytes, memory ? INT32_MAX : 0)) return false;
+    char event_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY]={0};
+    if (io->direction==QA_SOURCE_SAVE_WRITE) {
+        const char *name=qa_strings_cstr(qa_session_strings(io->session),held->event_key);
+        if (name) snprintf(event_key,sizeof(event_key),"%s",name);
+    }
     uint32_t event_kind = (uint32_t)held->event_kind;
     if (!qa_source_save_u32(io, &event_kind) || event_kind > QA_NATIVE_HOST_IMAGE ||
-        !qa_source_save_bytes(io, held->event_key, sizeof(held->event_key)) ||
-        !memchr(held->event_key, 0, sizeof(held->event_key)) ||
+        !qa_source_save_bytes(io, event_key, sizeof(event_key)) ||
+        !memchr(event_key, 0, sizeof(event_key)) ||
         !qa_source_save_u64(io, &held->event_custody)) return false;
     held->event_kind = (qa_native_host_resource_kind)event_kind;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        held->event_key=0;
+        if (*event_key && !qa_strings_intern_cstr(qa_session_strings(io->session),event_key,&held->event_key,io->error)) return false;
+    }
     if (held->kind == APPLICATION_Q2_HELD_IMAGE_RECEIPT &&
         !qa_source_save_u64(io, &held->receipt_source)) return false;
     if ((held->model_scope || held->kind == APPLICATION_Q2_HELD_IMAGE || held->kind == APPLICATION_Q2_HELD_MATERIAL ||

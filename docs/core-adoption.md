@@ -549,6 +549,27 @@ pass: `/tmp/qa-ta3196-resource-path-ids-20261011-{build,core}.log`.
 Resource-key strings in publication/receipt lookup still need migration; this
 is a partial finding 9 slice, with no live/install claim.
 
+Names finding 9, publication/receipt slice: Source resource registration admits
+its generated dictionary key into the common session table once. Lookup returns
+that retained ID from the registration's existing resource-row index. Builtin
+and raw Q2 sound publishers, captured packet references, Unified sound payloads
+and held Q2 event resources carry the ID directly; key buffers and their copies
+are deleted. Source receipt/read lookup has one numeric-ID selector, shared by
+the Q2 event-resource consumer; its private string-key scan is deleted. The
+receiver and saved-event resource-use selection compare those same IDs.
+
+The existing NAME codec emits/reads the same nullable key text at the wire
+boundary. Control resource declarations keep their cold external spelling.
+Restoration rebuilds the derived row name from that spelling, and the Q2 held
+resource adapter preserves the existing fixed text field on disk. Runtime key
+comparisons do not decode it. Numeric resource-row scans remain; normalized
+sound-path matching and bank lookup are still names finding 10 work.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-resource-key-ids-20261011-{build,core}.log`. Names finding 9 is
+migrated at the audited sites by source/build/core proof. Findings 10-17 remain;
+no new live legacy-wire, save/session, installation or performance claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

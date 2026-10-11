@@ -142,9 +142,9 @@ typedef struct qa_application_protocol_resource_reference {
     qa_native_host_resource_kind kind;
     uint32_t source_index;
     const char *name;
-    /* Prior real Source precache registration. Empty retains an unresolved
+    /* Prior real Source precache registration. Zero retains an unresolved
      * Source spelling, including sexed sounds and known missing resources. */
-    char resource_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
+    qa_string_id resource_key;
     uint64_t resource_custody; /* Exact retained opening within this immutable key. */
 } qa_application_protocol_resource_reference;
 typedef struct qa_application_protocol_event {

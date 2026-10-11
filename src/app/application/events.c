@@ -1016,10 +1016,10 @@ static application_event_admission emit_protocol(application_provider *provider,
     for (size_t i = 0; i < event->resource_count; ++i) {
         const qa_application_protocol_resource_reference *resource = event->resources + i;
         if ((unsigned)resource->kind > QA_NATIVE_HOST_IMAGE || !resource->name ||
-            resource->record_ordinal >= event->payload.size || resource->resource_key[QA_APPLICATION_RESOURCE_KEY_CAPACITY - 1] ||
-            (!resource->resource_key[0] && resource->resource_custody))
+            resource->record_ordinal >= event->payload.size ||
+            (!resource->resource_key && resource->resource_custody))
             return application_fail(error, QA_ERROR_ARGUMENT, "Source protocol resource lost its immutable precache receipt");
-        if (resource->resource_key[0]) {
+        if (resource->resource_key) {
             const qa_resource *held; const qa_vfs *view; const qa_vfs_acquisition *opening;
             if (!application_unified_event_resource_receipt_read(application, resource->resource_key,
                 resource->resource_custody, &held, &view, &opening, error)) return false;

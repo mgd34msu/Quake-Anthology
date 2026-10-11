@@ -191,9 +191,9 @@ bool application_native_q1_wire_resources_prepare(application_provider *p, qa_er
         memcpy(full, "sound/", 6); memcpy(full + 6, path, length + 1);
         okay = qa_vfs_acquire(content, full, &sounds[i], NULL, error); free(full);
         if (okay) {
-            char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
+            qa_string_id id;
             okay = application_unified_event_resource_register(p->application, p->owner,
-                path, sounds[i], id, error);
+                path, sounds[i], &id, error);
         }
     }
     if (okay && (p->close_pending || p->native_q1_wire != owner ||

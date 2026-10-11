@@ -156,7 +156,7 @@ typedef struct qa_unified_presentation_event {
 } qa_unified_presentation_event;
 
 typedef struct qa_unified_sound_event {
-    char *resource;
+    qa_string_id resource;
     qa_actor_id actor;
     qa_vec3 origin;
     int32_t channel;

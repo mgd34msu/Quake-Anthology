@@ -174,22 +174,27 @@ const application_unified_event_resource *application_unified_event_resource_at(
     return app && index < app->unified_event_resource_count ? app->unified_event_resources + index : NULL;
 }
 
-const qa_resource *application_unified_event_resource_read(const qa_application *app, const char *id)
+const application_unified_event_resource *application_unified_event_resource_find(const qa_application *app,qa_string_id id)
 {
-    for (size_t i = 0; app && id && i < app->unified_event_resource_count; ++i)
-        if (!strcmp(app->unified_event_resources[i].id, id)) return app->unified_event_resources[i].resource;
+    for (size_t i=0;app && id && i<app->unified_event_resource_count;++i)
+        if (app->unified_event_resources[i].name==id) return app->unified_event_resources+i;
     return NULL;
+}
+const qa_resource *application_unified_event_resource_read(const qa_application *app,qa_string_id id)
+{
+    const application_unified_event_resource *row=application_unified_event_resource_find(app,id);
+    return row?row->resource:NULL;
 }
 
 bool application_unified_event_resource_lookup_receipt(qa_application *app, qa_actor_owner owner,
-    qa_native_host_resource_kind kind, qa_string_id path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], uint64_t *custody,
+    qa_native_host_resource_kind kind, qa_string_id path, qa_string_id *id, uint64_t *custody,
     bool *found, qa_error *error)
 {
     application_unified_event_source source;
     if (!application_unified_event_source_read(app, owner, &source, error) ||
         (unsigned)kind > QA_NATIVE_HOST_IMAGE || !id || !custody || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source sound lookup lost its actual registration owner");
-    id[0] = 0; *custody = 0; *found = false;
+    *id = 0; *custody = 0; *found = false;
     if (!path) return true;
     for (size_t i = 0; i < app->unified_event_registration_count; ++i) {
         const application_unified_event_registration *row = app->unified_event_registrations + i;
@@ -197,7 +202,7 @@ bool application_unified_event_resource_lookup_receipt(qa_application *app, qa_a
         if (row->resource >= app->unified_event_resource_count ||
             row->custody > app->unified_event_resources[row->resource].custody_count)
             return application_fail(error, QA_ERROR_FORMAT, "Source sound registration lost its retained resource");
-        memcpy(id, app->unified_event_resources[row->resource].id, QA_APPLICATION_RESOURCE_KEY_CAPACITY);
+        *id=app->unified_event_resources[row->resource].name;
         *custody = row->custody;
         *found = true; return true;
     }
@@ -205,21 +210,20 @@ bool application_unified_event_resource_lookup_receipt(qa_application *app, qa_a
 }
 
 bool application_unified_event_resource_lookup_kind(qa_application *app, qa_actor_owner owner,
-    qa_native_host_resource_kind kind, qa_string_id path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *error)
+    qa_native_host_resource_kind kind, qa_string_id path, qa_string_id *id, bool *found, qa_error *error)
 {
     uint64_t custody;
     return application_unified_event_resource_lookup_receipt(app, owner, kind, path, id, &custody, found, error);
 }
 
-bool application_unified_event_resource_receipt_read(const qa_application *app, const char *id,
+bool application_unified_event_resource_receipt_read(const qa_application *app, qa_string_id id,
     uint64_t custody, const qa_resource **resource, const qa_vfs **view,
     const qa_vfs_acquisition **opening, qa_error *error)
 {
     if (!app || !id || !resource || !view || !opening)
         return application_fail(error, QA_ERROR_ARGUMENT, "Source resource receipt has no actual output");
-    for (size_t i = 0; i < app->unified_event_resource_count; ++i) {
-        const application_unified_event_resource *row = app->unified_event_resources + i;
-        if (strcmp(row->id, id)) continue;
+    const application_unified_event_resource *row=application_unified_event_resource_find(app,id);
+    if (row) {
         if (custody > row->custody_count)
             return application_fail(error, QA_ERROR_FORMAT, "Source resource receipt has no captured opening");
         if (custody) {
@@ -237,7 +241,7 @@ bool application_unified_event_resource_receipt_read(const qa_application *app, 
 }
 
 bool application_unified_event_resource_lookup(qa_application *app, qa_actor_owner owner,
-    qa_string_id path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *error)
+    qa_string_id path, qa_string_id *id, bool *found, qa_error *error)
 { return application_unified_event_resource_lookup_kind(app, owner, QA_NATIVE_HOST_SOUND, path, id, found, error); }
 
 bool application_unified_event_registration_clear(qa_application *app, qa_actor_owner owner, qa_error *error)
@@ -313,7 +317,7 @@ void application_unified_events_resources_dispose(qa_application *app)
 }
 
 bool application_unified_event_resource_register(qa_application *app, qa_actor_owner owner,
-    const char *path, const qa_resource *resource, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *error)
+    const char *path, const qa_resource *resource, qa_string_id *id, qa_error *error)
 {
     application_unified_event_source source;
     if (!application_unified_event_source_read(app, owner, &source, error) || !path || !*path || !resource || !id)
@@ -382,7 +386,7 @@ static bool custody_retain(application_unified_event_resource *row, const qa_vfs
 
 bool application_unified_event_resource_register_acquired(qa_application *app, qa_actor_owner owner,
     qa_native_host_resource_kind kind, const char *path, const qa_vfs *view, const qa_resource *resource,
-    const qa_vfs_acquisition *opening, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *error)
+    const qa_vfs_acquisition *opening, qa_string_id *id, qa_error *error)
 {
     application_unified_event_source source;
     if (!application_unified_event_source_read(app, owner, &source, error) || (unsigned)kind > QA_NATIVE_HOST_IMAGE ||
@@ -404,7 +408,7 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
             uint64_t custody;
             bool ok = custody_retain(app->unified_event_resources + i, view, resource, opening, &custody, error) &&
                 registration_bind(app, owner, kind, path, i, custody, error);
-            if (ok) memcpy(id, old->id, QA_APPLICATION_RESOURCE_KEY_CAPACITY);
+            if (ok) *id=old->name;
             return ok;
         }
     }
@@ -422,6 +426,7 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
     qa_bytes bytes = qa_json_source(qa_unified_document_json(key), qa_unified_document_root(key));
     row.key.data = malloc(bytes.size);
     bool ok = row.key.data != NULL &&
+        qa_strings_intern_cstr(qa_session_strings(app->session), actual_id, &row.name, error) &&
         qa_strings_intern_cstr(qa_session_strings(app->session), registration_path, &row.path, error) &&
         qa_strings_intern_cstr(qa_session_strings(app->session), source.product->identity, &row.content, error) &&
         qa_launch_instance_retain_metadata(source.descriptor, &row.descriptor, error);
@@ -447,7 +452,7 @@ bool application_unified_event_resource_register_acquired(qa_application *app, q
         size_t index = app->unified_event_resource_count++;
         app->unified_event_resources[index] = row;
         ok = registration_bind(app, owner, kind, path, index, 0, error);
-        if (ok) memcpy(id, actual_id, QA_APPLICATION_RESOURCE_KEY_CAPACITY);
+        if (ok) *id=row.name;
     } else {
         qa_buffer_free(&row.key); qa_launch_instance_lease_release(row.descriptor);
         qa_vfs_acquisition_dispose(&row.opening); qa_vfs_destroy(row.view);

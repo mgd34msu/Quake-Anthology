@@ -1622,7 +1622,7 @@ static const qa_unified_field qa_unified_presentation_payload_fields[] = {
 const qa_unified_record_layout qa_unified_presentation_payload_layout = QA_UNIFIED_LAYOUT(qa_unified_presentation_payload, qa_unified_presentation_payload_fields);
 
 static const qa_unified_field qa_unified_sound_event_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_sound_event, resource, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_sound_event, resource, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_RECORD(qa_unified_sound_event, actor, qa_unified_actor_layout),
     QA_UNIFIED_RECORD(qa_unified_sound_event, origin, qa_unified_vector_layout),
     QA_UNIFIED_FIELD(qa_unified_sound_event, channel, QA_UNIFIED_FIELD_I32),

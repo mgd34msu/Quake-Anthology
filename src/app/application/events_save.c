@@ -412,6 +412,8 @@ static bool normalized_rows(qa_source_save_io *io, event_store *store)
             !qa_unified_resource_serial(row->id, &serial) || serial <= previous_serial)
             return event_fail(io, QA_ERROR_FORMAT, "Source resource dictionary has invalid ownership");
         previous_serial = serial;
+        if (io->direction==QA_SOURCE_SAVE_READ && !qa_strings_intern_cstr(
+            qa_session_strings(io->session),row->id,&row->name,io->error)) return false;
         const qa_vfs *files = io->direction == QA_SOURCE_SAVE_READ ?
             qa_application_content_view(graph, view) : row->view;
         const qa_resource *actual=io->direction==QA_SOURCE_SAVE_READ?
@@ -807,9 +809,9 @@ static bool leased(qa_application *app, qa_error *error)
 static void record_resource_uses(const event_store *store, const application_unified_event_record *row, bool *used)
 {
     if (!row->simulation || row->simulation->kind != QA_UNIFIED_SIMULATION_SOUND) return;
-    const char *id = row->simulation->value.sound.resource;
+    qa_string_id id = row->simulation->value.sound.resource;
     for (size_t i = 0; i < store->resource_count; ++i)
-        if (id && !strcmp(id, store->resources[i].id)) used[i] = true;
+        if (id && id==store->resources[i].name) used[i] = true;
 }
 
 static bool registration_rebuilt(const event_store *store,

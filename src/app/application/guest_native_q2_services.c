@@ -99,11 +99,11 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
     const char *name, qa_error *error)
 {
     if (!*name || *name == '*') return true;
-    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY]; bool found;
+    qa_string_id id; bool found;
     if (!application_unified_event_resource_lookup_kind(engine->provider->application,
         engine->provider->owner, kind,
         qa_strings_find(qa_session_strings(engine->provider->application->session),
-            (qa_bytes){(const uint8_t *)name,strlen(name)}), id, &found, error)) return false;
+            (qa_bytes){(const uint8_t *)name,strlen(name)}), &id, &found, error)) return false;
     if (found) return true;
     if (kind == QA_NATIVE_HOST_IMAGE) {
         if (!engine->platform.resource_precache) return true;
@@ -111,7 +111,7 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
         bool ok = engine->platform.resource_precache(engine->platform.context, kind, name,
             &view, &held, &opening, &found, error);
         if (ok && found) ok = application_unified_event_resource_register_acquired(engine->provider->application,
-            engine->provider->owner, kind, name, view, held, &opening, id, error);
+            engine->provider->owner, kind, name, view, held, &opening, &id, error);
         if (ok && !found && (held || opening.path || opening.lookup_path || opening.link_source ||
             opening.link_target || opening.mount || opening.resource_id))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Absent Q2 image precache retained an unclaimed opening");
@@ -135,7 +135,7 @@ static bool register_file(struct application_native_q2 *engine, qa_native_host_r
         return false;
     }
     ok = application_unified_event_resource_register_acquired(engine->provider->application,
-        engine->provider->owner, kind, name, engine->provider->launch->content, held, &receipt, id, error);
+        engine->provider->owner, kind, name, engine->provider->launch->content, held, &receipt, &id, error);
     qa_resource_release(held); qa_vfs_acquisition_dispose(&receipt);
     return ok;
 }

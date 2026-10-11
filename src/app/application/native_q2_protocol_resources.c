@@ -80,7 +80,7 @@ static bool retain(resource_capture *capture, size_t ordinal, qa_native_host_res
     if (*name && !application_unified_event_resource_lookup_receipt(capture->engine->provider->application,
         capture->engine->provider->owner, kind,
         qa_strings_find(qa_session_strings(capture->engine->provider->application->session),
-            (qa_bytes){(const uint8_t *)name,length}), row.resource_key, &row.resource_custody, &found, error)) {
+            (qa_bytes){(const uint8_t *)name,length}), &row.resource_key, &row.resource_custody, &found, error)) {
         return false;
     }
     resources->rows[resources->count++] = row; return true;

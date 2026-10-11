@@ -92,7 +92,7 @@ typedef struct application_unified_event_resource_custody {
 
 typedef struct application_unified_event_resource {
     qa_actor_owner provider;
-    qa_string_id content, path;
+    qa_string_id content, path, name;
     qa_resource *resource;
     qa_resource_pool *pool;
     qa_vfs *view;
@@ -116,18 +116,19 @@ typedef struct application_unified_event_registration {
 /* Registration consumes no VFS read. It admits only an actual held opening in
  * the emitting Source's retained content view, and retains that acquisition. */
 bool application_unified_event_resource_register(qa_application *, qa_actor_owner,
-    const char *requested_path, const qa_resource *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *);
+    const char *requested_path, const qa_resource *, qa_string_id *id, qa_error *);
 bool application_unified_event_resource_register_acquired(qa_application *, qa_actor_owner,
     qa_native_host_resource_kind, const char *logical_name, const qa_vfs *, const qa_resource *,
-    const qa_vfs_acquisition *, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], qa_error *);
-const qa_resource *application_unified_event_resource_read(const qa_application *, const char *id);
+    const qa_vfs_acquisition *, qa_string_id *id, qa_error *);
+const application_unified_event_resource *application_unified_event_resource_find(const qa_application *, qa_string_id);
+const qa_resource *application_unified_event_resource_read(const qa_application *, qa_string_id);
 bool application_unified_event_resource_lookup(qa_application *, qa_actor_owner,
-    qa_string_id requested_path, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
+    qa_string_id requested_path, qa_string_id *id, bool *found, qa_error *);
 bool application_unified_event_resource_lookup_kind(qa_application *, qa_actor_owner,
-    qa_native_host_resource_kind, qa_string_id, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], bool *found, qa_error *);
+    qa_native_host_resource_kind, qa_string_id, qa_string_id *id, bool *found, qa_error *);
 bool application_unified_event_resource_lookup_receipt(qa_application *, qa_actor_owner,
-    qa_native_host_resource_kind, qa_string_id, char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY], uint64_t *custody, bool *found, qa_error *);
-bool application_unified_event_resource_receipt_read(const qa_application *, const char *id,
+    qa_native_host_resource_kind, qa_string_id, qa_string_id *id, uint64_t *custody, bool *found, qa_error *);
+bool application_unified_event_resource_receipt_read(const qa_application *, qa_string_id id,
     uint64_t custody, const qa_resource **, const qa_vfs **, const qa_vfs_acquisition **, qa_error *);
 bool application_unified_event_registration_clear(qa_application *, qa_actor_owner, qa_error *);
 void application_unified_events_resources_dispose(qa_application *);

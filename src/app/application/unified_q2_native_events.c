@@ -154,10 +154,10 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
     qa_unified_presentation_payload presentation = {.kind = QA_UNIFIED_PRESENTATION_BUILTIN};
     presentation.value.builtin = *v;
     qa_unified_simulation_payload simulation = {0}; const qa_unified_simulation_payload *sim = NULL;
-    char key[QA_APPLICATION_RESOURCE_KEY_CAPACITY]; bool ok = true;
+    qa_string_id key; bool ok = true;
     if (v->kind == QA_BUILTIN_SOUND && !(v->flags & 1u)) {
         bool found;
-        ok = application_unified_event_resource_lookup(app, v->provider, v->resource, key, &found, e);
+        ok = application_unified_event_resource_lookup(app, v->provider, v->resource, &key, &found, e);
         if (ok && found) {
             simulation.kind = QA_UNIFIED_SIMULATION_SOUND;
             simulation.value.sound = (qa_unified_sound_event){.resource = key, .actor = v->actor,

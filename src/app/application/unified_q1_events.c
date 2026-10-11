@@ -26,11 +26,11 @@ bool application_unified_q1_sound_precache(void *context, const char *path, qa_e
 {
     application_provider *source = context;
     if (!path || !*path || !precache_source(source, error)) return false;
-    char id[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
+    qa_string_id id;
     bool found;
     if (!application_unified_event_resource_lookup(source->application, source->owner,
         qa_strings_find(qa_session_strings(source->application->session),
-            (qa_bytes){(const uint8_t *)path,strlen(path)}), id, &found, error)) return false;
+            (qa_bytes){(const uint8_t *)path,strlen(path)}), &id, &found, error)) return false;
     if (found) return true;
     size_t length = strlen(path);
     if (length > SIZE_MAX - 7)
@@ -44,7 +44,7 @@ bool application_unified_q1_sound_precache(void *context, const char *path, qa_e
     free(full);
     if (okay) okay = precache_source(source, error) &&
         application_unified_event_resource_register(source->application, source->owner,
-            path, resource, id, error);
+            path, resource, &id, error);
     qa_resource_release(resource);
     return okay;
 }
@@ -102,11 +102,11 @@ bool application_unified_q1_event(qa_application *app, const qa_builtin_event *e
     presentation.value.builtin = *event;
     qa_unified_simulation_payload simulation = {0};
     const qa_unified_simulation_payload *sim = NULL;
-    char identity[QA_APPLICATION_RESOURCE_KEY_CAPACITY];
+    qa_string_id identity;
     bool okay = true;
     if (event->kind == QA_BUILTIN_SOUND) {
         bool found;
-        okay = application_unified_event_resource_lookup(app, event->provider, event->resource, identity, &found, error);
+        okay = application_unified_event_resource_lookup(app, event->provider, event->resource, &identity, &found, error);
         if (okay && found) {
             bool ambient = (event->flags & 1u) != 0;
             simulation.kind = QA_UNIFIED_SIMULATION_SOUND;

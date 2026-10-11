@@ -275,9 +275,8 @@ static bool declare_resources(frontend_unified_events *o, const qa_unified_resou
     *tail=o->resources; o->resources=head;
     return true;
 }
-static unified_event_resource *resource_find(frontend_unified_events *o,const char *id)
+static unified_event_resource *resource_find(frontend_unified_events *o,qa_string_id key)
 {
-    qa_string_id key=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)id,strlen(id)});
     for (unified_event_resource *r=o->resources;r;r=r->next)
         if (r->id==key) return r;
     return NULL;
@@ -666,13 +665,15 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     if (!o || !row || !out) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Sound linkage needs its actual delivery record");
     *out=false;
     qa_unified_sound_event emitted={0};
+    const char *emitted_path=NULL;
     switch (row->payload.kind) {
     case QA_UNIFIED_PRESENTATION_BUILTIN: {
         const qa_builtin_event *source=&row->payload.value.builtin;
         if (source->kind!=QA_BUILTIN_SOUND ||
             (source->family==QA_GAME_Q2 && (source->flags==1 || source->flags==2))) return true;
         bool ambient=source->family==QA_GAME_Q1 && (source->flags & 1u)!=0;
-        emitted=(qa_unified_sound_event){.resource=(char *)qa_strings_cstr(o->strings,source->resource),
+        emitted_path=qa_strings_cstr(o->strings,source->resource);
+        emitted=(qa_unified_sound_event){.resource=source->resource,
             .actor=ambient?(qa_actor_id){0}:source->actor,.origin=source->origin,
             .channel=ambient?0:source->channel,.volume=source->volume,.attenuation=source->attenuation};
         break;
@@ -680,7 +681,8 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     case QA_UNIFIED_PRESENTATION_Q2_PROTOCOL: {
         const qa_unified_q2_protocol_event *source=&row->payload.value.q2_protocol;
         if (source->kind!=QA_Q2_SVC_SOUND) return true;
-        emitted=(qa_unified_sound_event){.resource=source->resource,.actor=source->actor,.origin=source->origin,
+        emitted_path=source->resource;
+        emitted=(qa_unified_sound_event){.actor=source->actor,.origin=source->origin,
             .channel=source->channel,.volume=source->volume,.attenuation=source->attenuation,
             .delay_seconds=source->delay_seconds};
         break;
@@ -688,7 +690,8 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
     case QA_UNIFIED_PRESENTATION_Q3: {
         const qa_unified_q3_event *source=&row->payload.value.q3;
         if (source->kind!=QA_UNIFIED_Q3_SOUND || source->loop) return true;
-        emitted=(qa_unified_sound_event){.resource=source->resource,.actor=source->actor,.origin=source->origin,
+        emitted_path=source->resource;
+        emitted=(qa_unified_sound_event){.actor=source->actor,.origin=source->origin,
             .channel=source->channel,.volume=source->volume,.attenuation=1};
         break;
     }
@@ -706,9 +709,9 @@ bool frontend_unified_events_sound_mirrored(frontend_unified_events *o,const qa_
         if (!resource) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Linked sound lost its declared resource");
         if (resource->content!=qa_strings_find(o->strings,(qa_bytes){(const uint8_t *)row->content,strlen(row->content)})) continue;
         const char *path=qa_strings_cstr(o->strings,resource->path);
-        bool same_path=!strcmp(path,emitted.resource) ||
-            (!strncmp(path,"sound/",6) && !strcmp(path+6,emitted.resource)) ||
-            (emitted.resource[0]=='#' && !strcmp(path,emitted.resource+1));
+        bool same_path=emitted_path && (!strcmp(path,emitted_path) ||
+            (!strncmp(path,"sound/",6) && !strcmp(path+6,emitted_path)) ||
+            (emitted_path[0]=='#' && !strcmp(path,emitted_path+1)));
         double seconds=simulation->milliseconds?simulation->time/1000:simulation->time;
         if (same_path && seconds==row->seconds && sound_event->channel==emitted.channel &&
             sound_event->volume==emitted.volume && sound_event->attenuation==emitted.attenuation &&
