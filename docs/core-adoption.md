@@ -1364,3 +1364,32 @@ contents formats remain boundary annotations. The existing serialized family
 and merged-contents fields still reconstruct the descriptor on restore.
 The normal build and seven core suites pass. This slice does not claim a
 new live combined-mode or legacy-protocol round trip.
+
+## TA-3196 remaining event readers
+
+The eight remaining items from the event foundation list now use the application
+ring. B1/B2/D1 share `application_q3_command_cursor` in
+`src/app/application/unified_q3_events.c:11`. Native cgame/read_command and bot
+readers, QVM cgame/bot readers, and `bots_transport.c:112` read those pages. Their
+embedded `qa_q3_reliable` histories are deleted. The shared persistent store keeps
+leases for the protocol-sized command window; each reader owns its consumption
+cursor. Module restore transfers the subscriptions and preserves the existing
+saved command layout.
+
+B11 admits decoded legacy commands at `src/app/frontend/network.c:2673` before
+remote cgame requests them. The supplied-command executor is
+`src/network/q3/client.c:406`. Wire-only XOR history stays in the protocol codec.
+The network host owns a subscription and drains output in record order at
+`src/app/frontend/network.c:6977`, during publication, round transitions and replay
+consumption. The pushed host transport callback is deleted.
+
+B9 uses the platform TIME stamp. C2 uses immutable LOG records and the common
+console capture consumer. D2 admits detected Q3 entity/player effects to the root
+ring before delivery. D3 uses root AUDIO records and ordered owner stops; the
+audio engine's private event queue is deleted.
+
+Normal production build and all seven core suites pass. Existing core checks
+cover 131 decoded commands, big configstrings, independent cursors, retirement,
+the 64-command window, cursor moves, and module-command retention across event
+store restore. No live installation is claimed. Remaining primitive adoption
+from the foundation list is still open.

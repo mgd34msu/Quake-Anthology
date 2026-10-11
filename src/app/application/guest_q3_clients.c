@@ -198,10 +198,10 @@ bool application_q3_guest_client_begin(application_provider *provider, uint32_t 
     if (!qa_application_q3_output_drain(provider->application, error)) return false;
     *client->gamestate = engine->gamestate;
     client->gamestate->client_number = (int32_t)slot;
-    client->gamestate->command_sequence = client->reliable.sequence;
+    client->gamestate->command_sequence = client->server_commands.sequence;
     bool clamped;
-    if (!qa_q3_reliable_ack(&client->reliable, QA_Q3_SERVER, client->reliable.sequence, &clamped, error)) return false;
-    client->consumed_server_command = client->reliable.sequence;
+    if (!application_q3_command_ack(&client->server_commands, client->server_commands.sequence, &clamped, error)) return false;
+    client->consumed_server_command = client->server_commands.sequence;
     if (!q3g_arsenal_client_admit(provider, slot, error)) return false;
     return application_guest_bots_admit(provider, error) && application_guest_clients_drain(provider, error);
 }
@@ -328,9 +328,9 @@ void q3g_clients_clear(struct application_q3_guest *engine)
         q3g_client *client = &engine->clients[i];
         free(client->userinfo); free(client->retirement_reason); free(client->gamestate);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j) free(client->snapshots[j].entities);
-        qa_q3_reliable_clear(&client->reliable);
+        application_q3_command_clear(&client->server_commands);
         *client = (q3g_client){.sensitivity = 1};
-        qa_q3_reliable_init(&client->reliable);
+        application_q3_command_init(&client->server_commands, engine->provider->application);
     }
 }
 
@@ -406,8 +406,10 @@ static bool server_command(void *context,int32_t number,bool *present,qa_error *
     if(!client) return false;
     *present=false;
     qa_q3_server_command_result result;
-    if(!qa_q3_server_command_apply(&client->reliable,client->gamestate,&client->big_configstring,number,
-        qa_q3_reliable_lookup(&client->reliable,number),&role->command_storage.tokens,&result,error)) return false;
+    const char *text;
+    if (!application_q3_command_lookup(&client->server_commands, number, &text, error)) return false;
+    if(!qa_q3_server_command_apply(NULL,client->gamestate,&client->big_configstring,number,
+        text,&role->command_storage.tokens,&result,error)) return false;
     if(number<=0) return true;
     *present=result.kind!=QA_Q3_SERVER_FRAGMENT && result.kind!=QA_Q3_SERVER_DISCONNECT;
     if(result.kind==QA_Q3_SERVER_SYSTEM_INFO) client->pending_system_info=true;
@@ -416,7 +418,9 @@ static bool server_command(void *context,int32_t number,bool *present,qa_error *
         role,client_effect,error)) return false;
     if(result.kind==QA_Q3_SERVER_SYSTEM_INFO) client->pending_system_info=false;
     if(result.kind==QA_Q3_SERVER_DISCONNECT) return true;
-    return qa_q3_server_command_ack(&client->reliable,client->gamestate,number,&client->consumed_server_command,error);
+    bool clamped;
+    return application_q3_command_ack(&client->server_commands, number, &clamped, error) &&
+        qa_q3_server_command_ack(NULL,client->gamestate,number,&client->consumed_server_command,error);
 }
 static int32_t current_command(void *context)
 {

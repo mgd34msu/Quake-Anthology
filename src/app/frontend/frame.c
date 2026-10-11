@@ -506,6 +506,7 @@ static bool platform_events(qa_frontend *frontend, qa_error *error)
 }
 bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
+    if (!frontend_network_output_drain(frontend, error)) return false;
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     uint64_t next = qa_application_events_next(frontend->application);
     for (uint64_t i = qa_application_events_local_first(frontend->application); i < next; ++i) {

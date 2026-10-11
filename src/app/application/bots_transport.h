@@ -7,6 +7,7 @@
 typedef struct application_bot_transport application_bot_transport;
 typedef struct application_bot_transport_services {
     void *context;
+    struct qa_application *application;
     application_bot_world *world;
     qa_session *session;
     bool (*client)(void *,qa_actor_id,uint32_t *,qa_error *);

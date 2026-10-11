@@ -3,6 +3,24 @@
 
 #include "internal.h"
 
+typedef struct application_q3_command_cursor {
+    qa_application *application;
+    qa_application_event_subscription delivery;
+    uint64_t serial;
+    int32_t sequence, acknowledged;
+    char formatted[QA_Q3_COMMAND_CHARS];
+} application_q3_command_cursor;
+void application_q3_command_init(application_q3_command_cursor *,qa_application *);
+void application_q3_command_clear(application_q3_command_cursor *);
+void application_q3_command_move(application_q3_command_cursor *,application_q3_command_cursor *);
+bool application_q3_command_admit(application_q3_command_cursor *,const char *,
+    uint32_t config_index,uint32_t fragment,bool *overflow,qa_error *);
+bool application_q3_command_admit_received(application_q3_command_cursor *,const qa_q3_command *,qa_error *);
+bool application_q3_command_lookup(application_q3_command_cursor *,int32_t,const char **,qa_error *);
+bool application_q3_command_lookup_slot(application_q3_command_cursor *,size_t,const char **,qa_error *);
+bool application_q3_command_restore_slot(application_q3_command_cursor *,size_t,const char *,qa_error *);
+bool application_q3_command_ack(application_q3_command_cursor *,int32_t,bool *clamped,qa_error *);
+
 typedef enum application_unified_q3_text_kind {
     APPLICATION_Q3_SOURCE_COMMAND, APPLICATION_Q3_SOURCE_DROP, APPLICATION_Q3_SOURCE_RESTART
 } application_unified_q3_text_kind;

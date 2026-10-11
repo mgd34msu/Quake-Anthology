@@ -18,8 +18,7 @@ static const char *lookup(void *user, int32_t sequence)
 { return q3_client_command_text(user,(uint32_t)sequence & (QA_Q3_RELIABLE-1)); }
 bool q3_client_command_admit(qa_q3_client_peer *p,const qa_q3_command *value,qa_error *e)
 {
-    /* The wire keeps its original 64-command XOR history. Presentation reads
-     * immutable records from the same pages, with an independent cursor. */
+    /* These retained commands belong only to the original wire XOR window. */
     uint64_t first=qa_event_ring_first(p->command_events),next=qa_event_ring_next(p->command_events);
     while(first<next) {
         const qa_q3_command *row=qa_event_ring_at(p->command_events,first);
@@ -148,7 +147,8 @@ static bool consume(void *user, const qa_q3_server_event *event, qa_error *e) {
     case QA_Q3_EVENT_COMMAND:
         if(!q3_client_command_admit(p,event->value.command,e)) return false;
         p->server_command_sequence = event->value.command->sequence;
-        return true;
+        return !p->hooks.command_received ||
+            (p->hooks.command_received(p->hooks.context,event->value.command,e) && current(p,e));
     case QA_Q3_EVENT_DOWNLOAD:
         return p->hooks.download(p->hooks.context, event->value.download, e) && current(p, e);
     case QA_Q3_EVENT_SNAPSHOT: {
@@ -403,6 +403,20 @@ static bool execute(qa_q3_client_peer *p,int32_t sequence,const char *text,qa_er
     return p->hooks.command(p->hooks.context,sequence,&tokens,e) && current(p,e) &&
         qa_q3_server_command_ack(NULL,&p->gamestate,sequence,&p->last_executed_server_command,e);
 }
+bool qa_q3_client_peer_command_apply(qa_q3_client_peer *p,const qa_q3_command *command,qa_error *e)
+{
+    if(!p || !command) return fail(e,QA_ERROR_ARGUMENT,"Missing Q3 client command");
+    if(!current(p,e)) return false;
+    int32_t sequence=command->sequence;
+    if((int64_t)sequence<=(int64_t)p->server_command_sequence-QA_Q3_RELIABLE) {
+        if(p->demo) return true;
+        return fail(e,QA_ERROR_FORMAT,"Q3 server command was cycled out");
+    }
+    if(sequence>p->server_command_sequence)
+        return fail(e,QA_ERROR_FORMAT,"Requested Q3 server command has not arrived");
+    p->last_executed_server_command=sequence;
+    return execute(p,sequence,command->text,e);
+}
 bool qa_q3_client_peer_execute(qa_q3_client_peer *p, int32_t sequence, bool demo, qa_error *e) {
     if (!p) return fail(e, QA_ERROR_ARGUMENT, "Missing Q3 client peer");
     if (!current(p, e)) return false;
@@ -411,12 +425,12 @@ bool qa_q3_client_peer_execute(qa_q3_client_peer *p, int32_t sequence, bool demo
         return fail(e, QA_ERROR_FORMAT, "Q3 server command was cycled out");
     }
     if (sequence > p->server_command_sequence) return fail(e, QA_ERROR_FORMAT, "Requested Q3 server command has not arrived");
-    p->last_executed_server_command = sequence;
     qa_event_lease *lease=p->server_commands[(uint32_t)sequence & (QA_Q3_RELIABLE-1)];
     uint64_t id=lease ? qa_event_lease_id(lease) : 0;
     const qa_q3_command *record=id ? qa_event_ring_at(p->command_events,id) : NULL;
     if(!record && lease) record=qa_event_lease_record(lease);
-    bool okay=execute(p,sequence,record ? record->text : "",e);
+    qa_q3_command empty={.sequence=sequence};
+    bool okay=qa_q3_client_peer_command_apply(p,record ? record : &empty,e);
     if(okay && id>=p->command_cursor) {
         p->command_cursor=id+1;
         qa_event_ring_retire(p->command_events,p->command_cursor);

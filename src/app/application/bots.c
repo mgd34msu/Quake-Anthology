@@ -1057,7 +1057,7 @@ bool application_bots_shared_construct(application_bots *bots,bool restoring,qa_
        !application_bot_world_binding_services(bots->shared_binding,&services,error) ||
        !application_bot_world_create(&services,restoring,&bots->shared_world,error)) return false;
     application_bot_world_binding_holder(bots->shared_binding,bots->shared_world);
-    application_bot_transport_services transport={.context=bots->shared_binding,.world=bots->shared_world,
+    application_bot_transport_services transport={.context=bots->shared_binding,.application=bots->application,.world=bots->shared_world,
         .session=bots->application->session,.client=application_bot_world_binding_transport_client,
         .drop=application_bot_world_binding_transport_drop};
     if(!application_bot_transport_create(&transport,&bots->transport,error)) return false;

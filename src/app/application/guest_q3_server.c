@@ -107,7 +107,7 @@ static bool output_command(void *context,int32_t client,const char *text,
     for(size_t i=0;i<64;++i) {
         if((client>=0 && i!=(size_t)client) || !retained_command_recipient(role->engine,i)) continue;
         bool overflow;
-        if(!qa_q3_reliable_server_admit(&role->engine->clients[i].reliable,lease,event->text,
+        if(!application_q3_command_admit(&role->engine->clients[i].server_commands,event->text,
             config_index,fragment,&overflow,error)) return false;
         if(overflow && !drop_client(role,(uint32_t)i,"Server command overflow",error)) return false;
     }
@@ -249,10 +249,12 @@ static bool bot_console_message(void *context, int32_t client, const char **out,
     if (client < 0 || client >= 64) return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 bot console client");
     q3g_client *source = &role->engine->clients[client];
     *out = NULL;
-    if (source->consumed_server_command < source->reliable.sequence) {
-        *out = qa_q3_reliable_lookup(&source->reliable, ++source->consumed_server_command);
+    if (source->consumed_server_command < source->server_commands.sequence) {
+        int32_t sequence = source->consumed_server_command + 1;
+        if (!application_q3_command_lookup(&source->server_commands, sequence, out, error)) return false;
+        source->consumed_server_command = sequence;
         bool clamped;
-        return qa_q3_reliable_ack(&source->reliable, QA_Q3_SERVER,
+        return application_q3_command_ack(&source->server_commands,
                                   source->consumed_server_command, &clamped, error);
     }
     return true;

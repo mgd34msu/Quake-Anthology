@@ -69,7 +69,9 @@ typedef struct application_unified_persistent_event {
     application_unified_event_record event;
     application_persistent_key key;
     qa_event_lease *lease;
+    const qa_application_q3_command_event *command;
 } application_unified_persistent_event;
+void application_q3_command_key(const qa_application_q3_command_event *,application_persistent_key *);
 
 typedef struct application_unified_persistent_cursor {
     qa_actor_owner provider;

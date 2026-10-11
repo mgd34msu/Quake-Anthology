@@ -38,7 +38,7 @@ typedef struct native_q3_wire_client {
     uint32_t seat;
     char *userinfo;
     char *drop_reason;
-    qa_q3_reliable reliable;
+    application_q3_command_cursor server_commands;
     qa_q3_usercmd command;
     qa_q3_usercmd commands[NATIVE_Q3_COMMAND_BACKUP];
     int32_t command_sequence;
@@ -230,14 +230,14 @@ static void client_world_clear(native_q3_wire_client *client)
 static void clients_clear(struct application_native_q3_wire *wire)
 {
     for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
-        qa_q3_reliable_clear(&wire->clients[i].reliable);
+        application_q3_command_clear(&wire->clients[i].server_commands);
         free(wire->clients[i].userinfo);
         if (!wire->clients[i].drop_reason_static) free(wire->clients[i].drop_reason);
         free(wire->clients[i].gamestate);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
             if (!wire->clients[i].snapshots[j].reserved) free(wire->clients[i].snapshots[j].entities);
         wire->clients[i] = (native_q3_wire_client){.seat = UINT32_MAX, .sensitivity = 1};
-        qa_q3_reliable_init(&wire->clients[i].reliable);
+        application_q3_command_init(&wire->clients[i].server_commands, wire->provider->application);
     }
     qa_arena_destroy(wire->snapshot_storage);free(wire->snapshot_storage);wire->snapshot_storage=NULL;
 }
@@ -394,12 +394,12 @@ bool application_native_q3_wire_connect(application_provider *provider, uint32_t
     qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
     free(client->userinfo);
     if (!client->drop_reason_static) free(client->drop_reason);
-    qa_q3_reliable_clear(&client->reliable);
+    application_q3_command_clear(&client->server_commands);
     *client = (native_q3_wire_client){.actor = actor, .seat = seat,
         .userinfo = copy, .admitted = true, .bot = bot, .sensitivity = 1,
         .entered_ns = qa_session_elapsed(provider->application->session)};
     snapshots_bind(client,snapshots);
-    qa_q3_reliable_init(&client->reliable);
+    application_q3_command_init(&client->server_commands, provider->application);
     ++wire->client_revision[slot];
     return true;
 }
@@ -431,10 +431,10 @@ bool application_native_q3_wire_disconnect(application_provider *provider, uint3
     qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
     if (!client->drop_reason_static) free(client->drop_reason);
     client_world_clear(client);
-    qa_q3_reliable_clear(&client->reliable);
+    application_q3_command_clear(&client->server_commands);
     *client = (native_q3_wire_client){.seat = UINT32_MAX, .userinfo = userinfo, .sensitivity = 1};
     snapshots_bind(client,snapshots);
-    qa_q3_reliable_init(&client->reliable);
+    application_q3_command_init(&client->server_commands, provider->application);
     ++wire->client_revision[slot];
     return true;
 }
@@ -659,7 +659,7 @@ bool application_native_q3_wire_local_publication(application_provider *provider
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 local publication lost its physical binding or sequence");
     *out = (application_native_q3_wire_publication){
         .next_message = client->snapshot_sequence + 1,
-        .reliable_sequence = client->reliable.sequence,
+        .reliable_sequence = client->server_commands.sequence,
         .snapshot_bit = wire->snapshot_bit,
         .gamestate_needed = client->gamestate == NULL ||
             (snapshots && !client->bot && !client->has_snapshot),
@@ -787,9 +787,9 @@ bool application_native_q3_wire_record_read(application_provider *provider,uint3
             if(!qa_q3_configstring_read(provider->state.q3,i,&text,error)||
                 !qa_q3_configstring_set(state,i,text,error))return false;
         }
-        state->command_sequence=client->reliable.sequence;
+        state->command_sequence=client->server_commands.sequence;
     }
-    *sequence=client->reliable.sequence;return true;
+    *sequence=client->server_commands.sequence;return true;
 }
 bool application_native_q3_wire_record_command(application_provider *provider,uint32_t slot,
     int32_t sequence,const char **text,qa_error *error)
@@ -798,8 +798,8 @@ bool application_native_q3_wire_record_command(application_provider *provider,ui
     if(!text||!application_native_q3_wire_record_read(provider,slot,NULL,&latest,error))return false;
     if(sequence<=0||sequence>latest||(int64_t)latest-sequence>=QA_Q3_RELIABLE)
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 recording command left its actual retained reliable ring");
-    *text=qa_q3_reliable_lookup(&provider->native_q3_wire->clients[slot].reliable,sequence);
-    return true;
+    return application_q3_command_lookup(
+        &provider->native_q3_wire->clients[slot].server_commands,sequence,text,error);
 }
 
 bool application_native_q3_wire_gamestate(application_provider *provider, uint32_t slot,
@@ -809,7 +809,7 @@ bool application_native_q3_wire_gamestate(application_provider *provider, uint32
     native_q3_wire_client *client = wire_client(provider, slot, &wire, error);
     if (!client) return false;
     if (!value || value->client_number != (int32_t)slot ||
-        value->command_sequence != client->reliable.sequence ||
+        value->command_sequence != client->server_commands.sequence ||
         !value->string_bytes || value->string_bytes > QA_Q3_GAMESTATE_CHARS ||
         value->strings[0] || client->has_snapshot || wire->round_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 gamestate publication has no initial source observation");
@@ -823,8 +823,8 @@ bool application_native_q3_wire_gamestate(application_provider *provider, uint32
         return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q3 source gamestate");
     *copy = *value;
     bool clamped;
-    if (!client->bot && !qa_q3_reliable_ack(&client->reliable, QA_Q3_SERVER,
-                            client->reliable.sequence, &clamped, error)) {
+    if (!client->bot && !application_q3_command_ack(&client->server_commands,
+                            client->server_commands.sequence, &clamped, error)) {
         free(copy);
         return false;
     }
@@ -833,7 +833,7 @@ bool application_native_q3_wire_gamestate(application_provider *provider, uint32
     client->initial_server_command = value->command_sequence;
     for (size_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i)
         client->config_commands[i] = value->command_sequence;
-    if (!client->bot) client->consumed_server_command = client->reliable.sequence;
+    if (!client->bot) client->consumed_server_command = client->server_commands.sequence;
     return true;
 }
 
@@ -845,7 +845,7 @@ bool application_native_q3_wire_snapshot(application_provider *provider, uint32_
     if (!client) return false;
     if (!value || !value->valid || !client->begun || !client->gamestate ||
         wire->round_pending || value->message_number <= client->snapshot_sequence ||
-        value->server_command_number != client->reliable.sequence ||
+        value->server_command_number != client->server_commands.sequence ||
         value->player.clientNum < 0 || (uint32_t)value->player.clientNum >= QA_Q3_SOURCE_CLIENTS ||
         value->entity_count > 256 ||
         (value->entity_count && !value->entities) || value->area_bytes > sizeof(value->area_mask) ||
@@ -1018,7 +1018,7 @@ static bool send_command_transport(void *context,int32_t slot,const char *text,
         if (!(retain & (UINT64_C(1) << i))) continue;
         native_q3_wire_client *client = &wire->clients[i];
         bool overflow;
-        ok=qa_q3_reliable_server_admit(&client->reliable,lease,event->text,
+        ok=application_q3_command_admit(&client->server_commands,event->text,
             config_index,fragment,&overflow,error);
         if(ok && overflow) {
             client->drop_reason="Server command overflow";
@@ -1099,11 +1099,12 @@ bool application_native_q3_bot_console(application_provider *provider, qa_actor_
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 bot console names another engine client");
     *found = false;
     text[0] = 0;
-    if (client->reliable.acknowledged == client->reliable.sequence) return true;
-    int32_t next = client->reliable.acknowledged + 1;
-    const char *command = qa_q3_reliable_lookup(&client->reliable, next);
+    if (client->server_commands.acknowledged == client->server_commands.sequence) return true;
+    int32_t next = client->server_commands.acknowledged + 1;
+    const char *command;
+    if (!application_q3_command_lookup(&client->server_commands, next, &command, error)) return false;
     bool clamped;
-    if (!qa_q3_reliable_ack(&client->reliable, QA_Q3_SERVER, next, &clamped, error)) return false;
+    if (!application_q3_command_ack(&client->server_commands, next, &clamped, error)) return false;
     if (!command || !*command) return true;
     size_t bytes = strlen(command);
     if (bytes >= capacity) bytes = capacity - 1;
@@ -1259,15 +1260,19 @@ static bool leased_server_command(void *context,int32_t number,bool *present,qa_
     if(!client) return false;
     *present=false;
     qa_q3_server_command_result result;
-    if(!qa_q3_server_command_apply(&client->reliable,client->gamestate,&client->big_configstring,number,
-        qa_q3_reliable_lookup(&client->reliable,number),&lease->command_storage.tokens,&result,error)) return false;
+    const char *text;
+    if (!application_q3_command_lookup(&client->server_commands, number, &text, error)) return false;
+    if(!qa_q3_server_command_apply(NULL,client->gamestate,&client->big_configstring,number,
+        text,&lease->command_storage.tokens,&result,error)) return false;
     if(number<=0) return true;
     *present=result.kind!=QA_Q3_SERVER_FRAGMENT && result.kind!=QA_Q3_SERVER_DISCONNECT;
     if(result.config_index!=UINT32_MAX) client->config_commands[result.config_index]=number;
     if(!application_q3_server_command_deliver(&lease->command_storage,lease->arguments,&result,
         lease,leased_effect,error)) return false;
     if(result.kind==QA_Q3_SERVER_DISCONNECT) return true;
-    return qa_q3_server_command_ack(&client->reliable,client->gamestate,number,&client->consumed_server_command,error);
+    bool clamped;
+    return application_q3_command_ack(&client->server_commands, number, &clamped, error) &&
+        qa_q3_server_command_ack(NULL,client->gamestate,number,&client->consumed_server_command,error);
 }
 
 static int32_t leased_current_command(void *context)
@@ -1533,7 +1538,7 @@ bool qa_native_q3_wire_reader_publication(const qa_native_q3_wire_reader *reader
         return application_fail(error, QA_ERROR_ARGUMENT, "Native reader publication has no current source");
     const native_q3_wire_client *client = &reader->wire->clients[reader->slot];
     *out = (qa_native_q3_wire_publication){.initial_command_sequence = reader->initial_command_sequence,
-        .latest_command_sequence = client->reliable.sequence,
+        .latest_command_sequence = client->server_commands.sequence,
         .reached_command_sequence = client->consumed_server_command,
         .snapshot_number = client->has_snapshot ? client->snapshot_sequence : 0,
         .user_command_number = client->command_sequence,
@@ -1550,11 +1555,10 @@ bool qa_native_q3_wire_reader_command(qa_native_q3_wire_reader *reader, int32_t 
         return application_fail(error, QA_ERROR_ARGUMENT, "Native reliable claim requires its idle actual reader");
     native_q3_wire_client *client = &reader->wire->clients[reader->slot];
     if (!client->gamestate || client->consumed_server_command == INT32_MAX ||
-        sequence != client->consumed_server_command + 1 || sequence > client->reliable.sequence)
+        sequence != client->consumed_server_command + 1 || sequence > client->server_commands.sequence)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native reliable claim must reach the next received command");
-    if ((int64_t)client->reliable.sequence - sequence >= QA_Q3_RELIABLE ||
-        !qa_q3_reliable_lookup(&client->reliable, sequence))
-        return application_fail(error, QA_ERROR_FORMAT, "Native reliable claim has left its retained command history");
+    const char *command;
+    if (!application_q3_command_lookup(&client->server_commands, sequence, &command, error)) return false;
     *out = (qa_native_q3_wire_receipt){0};
     reader->has_receipt = false;
     /* LocalQ3ClientState claims lastExecuted before CL_GetServerCommand effects.
@@ -1775,7 +1779,7 @@ static bool reader_fields(qa_source_save_io *io,const qa_native_q3_wire_basis *b
         !qa_source_save_i32(io,&continuation->receipt_sequence) ||
         !qa_source_save_bool(io,&continuation->has_receipt) ||
         !qa_source_save_bool(io,&continuation->receipt_present)) return false;
-    if (continuation->receipt_sequence<0 || continuation->receipt_sequence>client->reliable.sequence ||
+    if (continuation->receipt_sequence<0 || continuation->receipt_sequence>client->server_commands.sequence ||
         (continuation->has_receipt && (!continuation->receipt_sequence || !continuation->owned_arguments.storage)))
         return fields_failure(io,"Native reader receipt exceeds its actual reliable history");
     return true;
@@ -2003,8 +2007,8 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         !qa_source_save_u64(io, &client->entered_ns) ||
         !qa_source_save_f32(io, &client->sensitivity) ||
         !qa_source_save_bool(io, &client->has_snapshot) ||
-        !qa_source_save_i32(io, &client->reliable.sequence) ||
-        !qa_source_save_i32(io, &client->reliable.acknowledged)) return false;
+        !qa_source_save_i32(io, &client->server_commands.sequence) ||
+        !qa_source_save_i32(io, &client->server_commands.acknowledged)) return false;
     if (failure_code > QA_ERROR_NOT_FOUND || failure_offset > SIZE_MAX ||
         !memchr(client->drop_failure.message, 0, sizeof(client->drop_failure.message)))
         return fields_failure(io, "Native Q3 saved DROP failure is invalid");
@@ -2047,36 +2051,39 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
     }
     for(size_t i=0;i<QA_Q3_RELIABLE;++i) {
         char text[QA_Q3_COMMAND_CHARS]={0};
-        if(io->direction==QA_SOURCE_SAVE_WRITE)
-            snprintf(text,sizeof(text),"%s",qa_q3_reliable_lookup(&client->reliable,(int32_t)i));
+        if(io->direction==QA_SOURCE_SAVE_WRITE) {
+            const char *stored;
+            if (!application_q3_command_lookup_slot(&client->server_commands,i,&stored,io->error)) return false;
+            snprintf(text,sizeof(text),"%s",stored);
+        }
         if(!fixed_text_fields(io,text,sizeof(text)) ||
             (io->direction==QA_SOURCE_SAVE_READ &&
-             !qa_q3_reliable_restore_slot(&client->reliable,i,text,io->error))) return false;
+             !application_q3_command_restore_slot(&client->server_commands,i,text,io->error))) return false;
     }
     if (!gamestate_fields(io, &client->gamestate) ||
         !qa_source_save_i32(io, &client->initial_server_command) ||
         client->initial_server_command < 0 ||
-        client->initial_server_command > client->reliable.sequence ||
+        client->initial_server_command > client->server_commands.sequence ||
         (!client->gamestate && client->initial_server_command) ||
         (client->gamestate && client->initial_server_command > client->gamestate->command_sequence))
         return fields_failure(io, "Native Q3 initial reliable baseline is inconsistent");
     for (size_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i)
         if (!qa_source_save_i32(io, &client->config_commands[i]) ||
-            client->config_commands[i] < 0 || client->config_commands[i] > client->reliable.sequence ||
+            client->config_commands[i] < 0 || client->config_commands[i] > client->server_commands.sequence ||
             (client->gamestate ? client->config_commands[i] < client->initial_server_command : client->config_commands[i] != 0))
             return fields_failure(io, "Native Q3 reached configstring sequence is inconsistent");
     if (!continued_string_fields(io, client)) return false;
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i)
         if (!snapshot_fields(io, &client->snapshots[i], i)) return false;
-    if (client->command_sequence < 0 || client->reliable.sequence < 0 ||
-        client->reliable.acknowledged < 0 || client->reliable.acknowledged > client->reliable.sequence ||
-        ((int64_t)client->reliable.sequence - client->reliable.acknowledged > QA_Q3_RELIABLE &&
+    if (client->command_sequence < 0 || client->server_commands.sequence < 0 ||
+        client->server_commands.acknowledged < 0 || client->server_commands.acknowledged > client->server_commands.sequence ||
+        ((int64_t)client->server_commands.sequence - client->server_commands.acknowledged > QA_Q3_RELIABLE &&
          (!client->drop_pending ||
-          (int64_t)client->reliable.sequence - client->reliable.acknowledged != QA_Q3_RELIABLE + 1)) ||
+          (int64_t)client->server_commands.sequence - client->server_commands.acknowledged != QA_Q3_RELIABLE + 1)) ||
         (client->admitted && (!client->actor.registry || !client->userinfo)) ||
         (!client->admitted && (client->actor.registry || client->begun ||
-         client->bot || client->command_received || client->command_sequence || client->reliable.sequence ||
-         client->reliable.acknowledged || client->seat != UINT32_MAX)) ||
+         client->bot || client->command_received || client->command_sequence || client->server_commands.sequence ||
+         client->server_commands.acknowledged || client->seat != UINT32_MAX)) ||
         (client->bot && client->seat != UINT32_MAX))
         return fields_failure(io, "Native Q3 saved engine admission or sequence is invalid");
     if (!isfinite(client->sensitivity) || client->snapshot_sequence < 0 ||
@@ -2084,7 +2091,7 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         (client->drop_delivered && !client->drop_pending) ||
         (client->drop_failure.code && !client->drop_delivered) ||
         client->consumed_server_command < 0 ||
-        client->consumed_server_command > client->reliable.sequence ||
+        client->consumed_server_command > client->server_commands.sequence ||
         (!client->admitted && (client->gamestate || client->has_snapshot ||
          client->snapshot_sequence || client->big_configstring.length ||
          client->drop_pending)) ||
@@ -2096,7 +2103,7 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         const qa_q3_snapshot *snapshot = &client->snapshots[i].value;
         if (snapshot->valid && (!client->has_snapshot ||
             snapshot->message_number > client->snapshot_sequence ||
-            snapshot->server_command_number > client->reliable.sequence ||
+            snapshot->server_command_number > client->server_commands.sequence ||
             snapshot->server_command_number < 0))
             return fields_failure(io, "Native Q3 saved snapshot exceeds its retained source counters");
     }
@@ -2126,13 +2133,15 @@ static bool wire_fields(qa_source_save_io *io, struct application_native_q3_wire
             (client->admitted || client->userinfo != NULL);
         if (!qa_source_save_bool(io, &retained)) return false;
         if (!retained) continue;
+        if (io->direction == QA_SOURCE_SAVE_READ)
+            application_q3_command_init(&client->server_commands, wire->provider->application);
         if (!client_fields(io, client, checkpoint)) return false;
         if (slot >= maximum && wire->clients[slot].admitted)
             return fields_failure(io, "Native Q3 saved client exceeds source capacity");
         if (wire->clients[slot].gamestate &&
             (wire->clients[slot].gamestate->client_number != (int32_t)slot ||
              wire->clients[slot].gamestate->command_sequence < 0 ||
-             wire->clients[slot].gamestate->command_sequence > wire->clients[slot].reliable.sequence))
+             wire->clients[slot].gamestate->command_sequence > wire->clients[slot].server_commands.sequence))
             return fields_failure(io, "Native Q3 saved gamestate has no exact admitted source client");
     }
     return true;
@@ -2176,6 +2185,11 @@ bool application_native_q3_wire_restore(application_provider *provider, qa_bytes
     if (ok) {
         clients_clear(wire);
         memcpy(wire->clients, candidate->clients, sizeof(wire->clients));
+        for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
+            wire->clients[i].server_commands = (application_q3_command_cursor){0};
+            application_q3_command_move(&wire->clients[i].server_commands,
+                &candidate->clients[i].server_commands);
+        }
         wire->snapshot_storage=candidate->snapshot_storage;candidate->snapshot_storage=NULL;
         wire->max_clients = candidate->max_clients;
         wire->snapshot_bit = candidate->snapshot_bit;
@@ -2294,6 +2308,11 @@ static bool carry_apply(application_provider *provider,
     if (ok) {
         clients_clear(wire);
         memcpy(wire->clients, candidate->clients, sizeof(wire->clients));
+        for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
+            wire->clients[i].server_commands = (application_q3_command_cursor){0};
+            application_q3_command_move(&wire->clients[i].server_commands,
+                &candidate->clients[i].server_commands);
+        }
         wire->snapshot_storage=candidate->snapshot_storage;candidate->snapshot_storage=NULL;
         memset(candidate->clients, 0, sizeof(candidate->clients));
         wire->max_clients = maximum;

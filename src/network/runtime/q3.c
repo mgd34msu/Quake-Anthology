@@ -232,8 +232,9 @@ bool qa_network_q3_client_command(qa_network_runtime *runtime, qa_net_client_id 
 { q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_command(p->source, text, error); }
 bool qa_network_q3_client_usercmd(qa_network_runtime *runtime, qa_net_client_id id, const qa_q3_usercmd *command, qa_error *error)
 { q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_usercmd(p->source, command, error); }
-bool qa_network_q3_client_execute(qa_network_runtime *runtime, qa_net_client_id id, int32_t sequence, qa_error *error)
-{ q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_execute(p->source, sequence, false, error); }
+bool qa_network_q3_client_command_apply(qa_network_runtime *runtime,qa_net_client_id id,
+    const qa_q3_command *command,qa_error *error)
+{ q3_runtime_client *p=client_get(runtime,id,error); return p && qa_q3_client_peer_command_apply(p->source,command,error); }
 bool qa_network_q3_client_send(qa_network_runtime *runtime, qa_net_client_id id, int32_t now, qa_error *error)
 {
     q3_runtime_client *p = client_get(runtime, id, error); qa_q3_client_readiness ready; qa_q3_client_send send;

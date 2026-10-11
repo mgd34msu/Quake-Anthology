@@ -214,8 +214,10 @@ static bool snapshot(qa_source_save_io *io, q3g_snapshot *slot, size_t ordinal)
     return true;
 }
 
-static bool client(qa_source_save_io *io, q3g_client *value)
+static bool client(qa_source_save_io *io, struct application_q3_guest *engine, q3g_client *value)
 {
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        application_q3_command_init(&value->server_commands, engine->provider->application);
     bool ok = qa_source_save_actor(io, &value->actor) && owned_text(io, &value->userinfo) &&
         owned_text(io, &value->retirement_reason) && command(io, &value->command);
     for (size_t i = 0; ok && i < QA_Q3_USERCMDS; ++i) ok = command(io, &value->commands[i]);
@@ -223,24 +225,27 @@ static bool client(qa_source_save_io *io, q3g_client *value)
         qa_source_save_i32(io, &value->snapshot_sequence) &&
         qa_source_save_i32(io, &value->consumed_server_command) &&
         qa_source_save_i32(io, &value->server_id) && qa_source_save_u64(io, &value->entered_ns) &&
-        qa_source_save_i32(io, &value->reliable.sequence) &&
-        qa_source_save_i32(io, &value->reliable.acknowledged);
+        qa_source_save_i32(io, &value->server_commands.sequence) &&
+        qa_source_save_i32(io, &value->server_commands.acknowledged);
     if (!ok) return false;
-    int64_t outstanding = (int64_t)value->reliable.sequence - value->reliable.acknowledged;
+    int64_t outstanding = (int64_t)value->server_commands.sequence - value->server_commands.acknowledged;
     if (value->command_sequence < 0 || value->snapshot_sequence < 0 ||
-        value->reliable.sequence < 0 || value->reliable.acknowledged < 0 ||
+        value->server_commands.sequence < 0 || value->server_commands.acknowledged < 0 ||
         outstanding < 0 || outstanding > QA_Q3_RELIABLE ||
-        value->consumed_server_command < 0 || value->consumed_server_command > value->reliable.sequence)
+        value->consumed_server_command < 0 || value->consumed_server_command > value->server_commands.sequence)
         return state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 client sequence");
     for(size_t i=0;i<QA_Q3_RELIABLE;++i) {
         char text[QA_Q3_COMMAND_CHARS]={0};
-        if(io->direction==QA_SOURCE_SAVE_WRITE)
-            snprintf(text,sizeof(text),"%s",qa_q3_reliable_lookup(&value->reliable,(int32_t)i));
+        if(io->direction==QA_SOURCE_SAVE_WRITE) {
+            const char *stored;
+            if (!application_q3_command_lookup_slot(&value->server_commands,i,&stored,io->error)) return false;
+            snprintf(text,sizeof(text),"%s",stored);
+        }
         if(!qa_source_save_bytes(io,text,sizeof(text))) return false;
         if(!memchr(text,0,sizeof(text)))
             return state_fail(io,QA_ERROR_FORMAT,"Unterminated application Q3 reliable command");
         if(io->direction==QA_SOURCE_SAVE_READ &&
-            !qa_q3_reliable_restore_slot(&value->reliable,i,text,io->error)) return false;
+            !application_q3_command_restore_slot(&value->server_commands,i,text,io->error)) return false;
     }
     bool present = value->gamestate != NULL;
     if (!qa_source_save_bool(io, &present)) return false;
@@ -304,7 +309,7 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
         (engine->local_snapshot_server_bit != 0 && engine->local_snapshot_server_bit != 4))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 loaded compatibility");
     for (size_t i = 0; i < 64; ++i)
-        if (!qa_source_save_u32(io, &engine->seats[i]) || !client(io, &engine->clients[i])) return false;
+        if (!qa_source_save_u32(io, &engine->seats[i]) || !client(io, engine, &engine->clients[i])) return false;
     return true;
 }
 
@@ -351,6 +356,7 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
     }
     struct application_q3_guest *candidate = calloc(1, sizeof(*candidate));
     if (!candidate) return application_fail(error, QA_ERROR_MEMORY, "Restoring application Q3 client state");
+    candidate->provider = provider;
     candidate->product = engine->product;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, provider->application->session, bytes, error) &&
@@ -364,6 +370,11 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
     if (ok) {
         q3g_clients_clear(engine);
         memcpy(engine->clients, candidate->clients, sizeof(engine->clients));
+        for (size_t i = 0; i < 64; ++i) {
+            engine->clients[i].server_commands = (application_q3_command_cursor){0};
+            application_q3_command_move(&engine->clients[i].server_commands,
+                &candidate->clients[i].server_commands);
+        }
         memset(candidate->clients, 0, sizeof(candidate->clients));
         qa_command_tokens_free(&engine->arguments);
         engine->arguments = candidate->arguments; candidate->arguments = (qa_command_tokens){0};
@@ -1084,6 +1095,7 @@ static bool qualify_base(application_provider *provider, qa_world *world, q3g_re
 {
     struct application_q3_guest *base = calloc(1, sizeof(*base));
     if (!base) return application_fail(error, QA_ERROR_MEMORY, "Qualifying Q3 application source state");
+    base->provider = provider;
     base->product = !strcmp(product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, provider->application->session, saved->state, error) &&

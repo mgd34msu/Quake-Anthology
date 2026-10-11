@@ -498,6 +498,7 @@ typedef struct qa_q3_client_hooks {
     bool (*snapshot)(void *, const qa_q3_snapshot *, int32_t ping, qa_error *);
     bool (*download)(void *, const qa_q3_download *, qa_error *);
     bool (*command)(void *, int32_t sequence, const qa_q3_tokens *, qa_error *);
+    bool (*command_received)(void *, const qa_q3_command *, qa_error *);
     bool (*map_restart)(void *, qa_error *);
     bool (*disconnect)(void *, const char *, qa_error *);
     bool (*level_shot)(void *, qa_error *);
@@ -580,6 +581,7 @@ bool qa_q3_client_peer_record_seed(qa_q3_client_peer *, qa_q3_writer *,
 bool qa_q3_client_peer_receive_pending(const qa_q3_client_peer *);
 bool qa_q3_client_peer_continue(qa_q3_client_peer *, qa_error *);
 bool qa_q3_client_peer_execute(qa_q3_client_peer *, int32_t server_command_sequence, bool demo, qa_error *);
+bool qa_q3_client_peer_command_apply(qa_q3_client_peer *,const qa_q3_command *,qa_error *);
 bool qa_q3_client_peer_send(qa_q3_client_peer *, const qa_q3_client_send *, qa_error *);
 bool qa_q3_client_peer_ready(const qa_q3_client_peer *, const qa_q3_client_readiness *);
 bool qa_q3_client_peer_disconnect(qa_q3_client_peer *, const qa_q3_client_send *, qa_error *);

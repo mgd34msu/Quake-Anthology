@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include "q3_command_tokens.h"
+#include "unified_q3_events.h"
 #include "native_process_owner.h"
 #include "guest_q3_equipment_profile.h"
 #include "guest_q3_equipment.h"
@@ -37,7 +38,7 @@ typedef struct q3g_client {
     qa_q3_usercmd commands[QA_Q3_USERCMDS];
     int32_t command_sequence, snapshot_sequence, consumed_server_command, server_id;
     uint64_t entered_ns;
-    qa_q3_reliable reliable;
+    application_q3_command_cursor server_commands;
     qa_q3_gamestate *gamestate;
     q3g_snapshot snapshots[QA_Q3_PACKET_BACKUP];
     float sensitivity;

@@ -153,16 +153,17 @@ static bool valid_event(qa_application *application,
 
 bool application_event_stream_create(qa_application *app, size_t actors, qa_error *error)
 {
-    if (actors > SIZE_MAX / 4096 || actors > SIZE_MAX / 4 /
-            sizeof(*app->unified_persistent))
+    size_t command_slots=QA_Q3_RELIABLE*(actors<QA_Q3_SOURCE_CLIENTS?actors:QA_Q3_SOURCE_CLIENTS);
+    if (actors > SIZE_MAX / 4096 || actors > (SIZE_MAX /
+            sizeof(*app->unified_persistent)-command_slots)/4)
         return application_fail(error, QA_ERROR_MEMORY, "Application event load capacity overflows");
     size_t records = actors * 4;
     app->event_ring = qa_event_ring_create(actors * 4096, 16384, records, error);
     if (!app->event_ring) return false;
-    app->unified_persistent = calloc(records, sizeof(*app->unified_persistent));
+    app->unified_persistent = calloc(records+command_slots, sizeof(*app->unified_persistent));
     if (!app->unified_persistent)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating load-sized persistent event slots");
-    app->unified_persistent_capacity = records;
+    app->unified_persistent_capacity = records+command_slots;
     app->event_local_cursor = 1;
     app->event_source_cursor = 1;
     app->event_peer_cursor = UINT64_MAX;
@@ -1238,6 +1239,8 @@ uint64_t qa_application_events_local_first(const qa_application *app)
 { return app ? app->event_local_cursor : 1; }
 uint64_t qa_application_events_next(const qa_application *app)
 { return app && app->event_ring ? qa_event_ring_next(app->event_ring) : 1; }
+qa_event_lease *qa_application_event_retain(qa_application *app,uint64_t id)
+{ return app ? qa_event_ring_retain(app->event_ring,id) : NULL; }
 uint64_t qa_application_events_output_failures(const qa_application *app)
 { return app ? app->event_reliable_declines : 0; }
 
@@ -1421,6 +1424,7 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
         break;
     case QA_APPLICATION_EVENT_AUDIO: out->value.audio=&record->raw.audio; break;
     case QA_APPLICATION_EVENT_Q3_EFFECT: out->value.q3_effect=&record->raw.q3_effect; break;
+    case QA_APPLICATION_EVENT_Q3_COMMAND: out->value.q3_command=&record->raw.q3_command; break;
     case QA_APPLICATION_EVENT_LOG: out->value.log=&record->raw.log; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
     case QA_APPLICATION_EVENT_EQUIPMENT: break;

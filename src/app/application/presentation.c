@@ -129,7 +129,7 @@ static bool local_snapshots(application_provider *provider,
         } else {
             if (!local[slot] || !client->connected || !client->begun || client->pending_retirement) continue;
             publication = (application_native_q3_wire_publication){
-                .reliable_sequence = client->reliable.sequence,
+                .reliable_sequence = client->server_commands.sequence,
                 .snapshot_bit = snapshot_bit, .snapshot_needed = true, .has_snapshot = client->has_snapshot};
             if (client->has_snapshot) {
                 const qa_q3_snapshot *latest = &client->snapshots[

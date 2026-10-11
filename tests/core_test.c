@@ -41,6 +41,8 @@
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
+#include "../src/app/application/unified_q3_events.h"
+#include "../src/app/application/events_save.h"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -2340,7 +2342,11 @@ static void test_native_import_slot_identity(void)
     CHECK(qa_native_q2_import_dispatch(QA_NATIVE_Q2_GAME_API3,UINT32_MAX)==QA_NATIVE_Q2_IMPORT_NONE);
 }
 
-typedef struct q3_command_test { int32_t sequence; size_t calls; } q3_command_test;
+typedef struct q3_command_test {
+    int32_t sequence;
+    size_t calls, received;
+    application_q3_command_cursor *cursor;
+} q3_command_test;
 static uint64_t q3_test_generation(void *context) { (void)context; return 1; }
 static bool q3_test_ok(void *context,qa_error *error) { (void)context;(void)error;return true; }
 static bool q3_test_download_size(void *context,int32_t size,int32_t *out,qa_error *error)
@@ -2355,6 +2361,12 @@ static bool q3_test_download(void *context,const qa_q3_download *download,qa_err
 { (void)download;return q3_test_ok(context,error); }
 static bool q3_test_command(void *context,int32_t sequence,const qa_q3_tokens *tokens,qa_error *error)
 { (void)error;CHECK(tokens->count>0);q3_command_test *state=context;state->sequence=sequence;++state->calls;return true; }
+static bool q3_test_command_received(void *context,const qa_q3_command *command,qa_error *error)
+{
+    q3_command_test *state=context;
+    if(!application_q3_command_admit_received(state->cursor,command,error)) return false;
+    ++state->received;return true;
+}
 static bool q3_test_local(void *context) { (void)context;return false; }
 static void test_arena_progress_bound_store(void)
 {
@@ -2494,30 +2506,158 @@ static void test_q3_reliable_event_references(void)
 
 static void test_q3_received_commands(void)
 {
-    qa_error error={0};q3_command_test state={0};
+    qa_error error={0};qa_application app={0},restored_app={0};
+    CHECK(application_event_stream_create(&app,64,&error));
+    CHECK(application_event_stream_create(&restored_app,64,&error));
+    application_q3_command_cursor cursor={0},restored_cursor={0};
+    application_q3_command_init(&cursor,&app);
+    application_q3_command_init(&restored_cursor,&restored_app);
+    q3_command_test state={.cursor=&cursor},restored_state={.cursor=&restored_cursor};
     qa_q3_client_hooks hooks={.context=&state,.generation=q3_test_generation,.clear_active=q3_test_ok,
         .download_size=q3_test_download_size,.gamestate=q3_test_gamestate,.system_info=q3_test_text,
         .snapshot=q3_test_snapshot,.download=q3_test_download,.command=q3_test_command,
+        .command_received=q3_test_command_received,
         .map_restart=q3_test_ok,.disconnect=q3_test_text,.level_shot=q3_test_ok,.local_server_running=q3_test_local};
     qa_q3_client_peer *peer=NULL,*restored=NULL;
     CHECK(qa_q3_client_peer_create_demo((qa_q3_identity){0},QA_Q3_ARENA,&hooks,&peer,&error));
     const char *chunks[]={"bcs0 42 \"alpha \"","bcs1 42 \"beta \"","bcs2 42 \"gamma\""};
     for(int32_t sequence=1;sequence<=131;++sequence) {
+        char command[64];CHECK(snprintf(command,sizeof(command),"print sample-%d",sequence)>0);
+        const char *expected=sequence<=3?chunks[sequence-1]:command;
         uint8_t bytes[4096];qa_q3_writer writer;qa_q3_writer_init(&writer,bytes,sizeof(bytes),false,&error);
         CHECK(qa_q3_server_begin(&writer,0));
-        CHECK(qa_q3_server_command(&writer,sequence,sequence<=3 ? chunks[sequence-1] : "print sample"));
+        CHECK(qa_q3_server_command(&writer,sequence,expected));
         CHECK(qa_q3_server_end(&writer));
         CHECK(qa_q3_client_peer_message(peer,sequence,(qa_bytes){bytes,qa_q3_writer_size(&writer)},sequence,&error));
-        CHECK(qa_q3_client_peer_execute(peer,sequence,false,&error));
+        CHECK(state.received==(size_t)sequence && cursor.sequence==sequence);
+        const char *text=NULL;
+        CHECK(application_q3_command_lookup(&cursor,sequence,&text,&error) && !strcmp(text,expected));
+        qa_q3_command received={.sequence=sequence};
+        CHECK(snprintf(received.text,sizeof(received.text),"%s",text)>0);
+        CHECK(qa_q3_client_peer_command_apply(peer,&received,&error));
+        app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
+        bool clamped=false;
+        CHECK(application_q3_command_ack(&cursor,sequence,&clamped,&error) && !clamped);
+        application_events_retire(&app);
+        CHECK(qa_application_events_first(&app)==qa_application_events_next(&app));
         if(sequence==3) CHECK(!strcmp(qa_q3_configstring(qa_q3_client_peer_gamestate(peer),42),"alpha beta gamma"));
     }
     CHECK(state.sequence==131 && state.calls==129);
+    for(int32_t sequence=68;sequence<=131;++sequence) {
+        const char *text=NULL;char expected[64];
+        CHECK(snprintf(expected,sizeof(expected),"print sample-%d",sequence)>0);
+        CHECK(application_q3_command_lookup(&cursor,sequence,&text,&error) && !strcmp(text,expected));
+    }
+    const char *text=NULL;qa_error expired={0};
+    CHECK(!application_q3_command_lookup(&cursor,67,&text,&expired) && expired.code==QA_ERROR_FORMAT);
     qa_buffer saved={0};CHECK(qa_q3_client_peer_checkpoint(peer,&saved,&error));
+    hooks.context=&restored_state;
     CHECK(qa_q3_client_peer_restore((qa_bytes){saved.data,saved.size},(qa_q3_identity){0},&hooks,&restored,&error));
-    CHECK(qa_q3_client_peer_execute(restored,131,false,&error));
-    CHECK(state.sequence==131 && state.calls==130);
+    CHECK(restored_state.received==QA_Q3_RELIABLE && restored_cursor.sequence==131);
+    for(int32_t sequence=68;sequence<=131;++sequence) {
+        char expected[64];CHECK(snprintf(expected,sizeof(expected),"print sample-%d",sequence)>0);
+        CHECK(application_q3_command_lookup(&restored_cursor,sequence,&text,&error) && !strcmp(text,expected));
+    }
+    restored_app.event_local_cursor=restored_app.event_source_cursor=qa_application_events_next(&restored_app);
+    bool clamped=false;
+    CHECK(application_q3_command_ack(&restored_cursor,131,&clamped,&error) && !clamped);
+    application_events_retire(&restored_app);
+    CHECK(qa_application_events_first(&restored_app)==qa_application_events_next(&restored_app));
+    CHECK(application_q3_command_lookup(&restored_cursor,131,&text,&error));
+    qa_q3_command received={.sequence=131};
+    CHECK(snprintf(received.text,sizeof(received.text),"%s",text)>0);
+    CHECK(qa_q3_client_peer_command_apply(restored,&received,&error));
+    CHECK(restored_state.sequence==131 && restored_state.calls==1);
     CHECK(!strcmp(qa_q3_configstring(qa_q3_client_peer_gamestate(restored),42),"alpha beta gamma"));
     qa_buffer_free(&saved);qa_q3_client_peer_destroy(peer);qa_q3_client_peer_destroy(restored);
+    application_q3_command_clear(&cursor);application_q3_command_clear(&restored_cursor);
+    application_event_stream_dispose(&app);application_event_stream_dispose(&restored_app);
+    free(app.unified_persistent);free(restored_app.unified_persistent);
+}
+
+static void test_q3_command_cursors(void)
+{
+    qa_application app={0};qa_error error={0};
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=128,.component_capacity=1},&app.session,&error));
+    CHECK(application_event_stream_create(&app,128,&error));
+    application_q3_command_cursor first={0},second={0},moved={0},restored={0};
+    application_q3_command_init(&first,&app);application_q3_command_init(&second,&app);
+    application_q3_command_init(&moved,&app);application_q3_command_init(&restored,&app);
+    char command[]="print first";bool overflow=false,clamped=false;
+    CHECK(application_q3_command_admit(&first,command,UINT32_MAX,0,&overflow,&error) && !overflow);
+    command[6]='x';
+    CHECK(application_q3_command_admit(&second,"print second",UINT32_MAX,0,&overflow,&error) && !overflow);
+    const char *text=NULL;
+    CHECK(application_q3_command_lookup(&first,1,&text,&error) && !strcmp(text,"print first"));
+    CHECK(application_q3_command_lookup(&second,1,&text,&error) && !strcmp(text,"print second"));
+    app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
+    application_events_retire(&app);CHECK(qa_application_events_first(&app)==1);
+    application_q3_command_move(&moved,&first);
+    CHECK(first.sequence==0 && !first.delivery.application && moved.sequence==1);
+    CHECK(application_q3_command_ack(&moved,1,&clamped,&error) && !clamped);
+    application_events_retire(&app);CHECK(qa_application_events_first(&app)==2);
+    CHECK(application_q3_command_lookup(&second,1,&text,&error) && !strcmp(text,"print second"));
+    CHECK(application_q3_command_ack(&second,1,&clamped,&error) && !clamped);
+    application_events_retire(&app);CHECK(qa_application_events_first(&app)==3);
+    CHECK(application_q3_command_lookup(&moved,1,&text,&error) && !strcmp(text,"print first"));
+
+    for(int32_t sequence=2;sequence<=65;++sequence) {
+        char value[64];CHECK(snprintf(value,sizeof(value),"print local-%d",sequence)>0);
+        CHECK(application_q3_command_admit(&moved,value,UINT32_MAX,0,&overflow,&error) && !overflow);
+    }
+    uint64_t next=qa_application_events_next(&app);
+    CHECK(application_q3_command_admit(&moved,"print blocked",UINT32_MAX,0,&overflow,&error) && overflow);
+    CHECK(moved.sequence==65 && qa_application_events_next(&app)==next);
+    CHECK(application_q3_command_lookup(&moved,2,&text,&error) && !strcmp(text,"print local-2"));
+    app.event_local_cursor=app.event_source_cursor=next;
+    application_events_retire(&app);
+    uint64_t pending=qa_application_events_first(&app);
+    CHECK(application_q3_command_ack(&moved,33,&clamped,&error) && !clamped);
+    application_events_retire(&app);
+    CHECK(qa_application_events_first(&app)>pending && qa_application_events_first(&app)<next);
+    CHECK(application_q3_command_admit(&moved,"print local-66",UINT32_MAX,0,&overflow,&error) && !overflow);
+    qa_error expired={0};
+    CHECK(!application_q3_command_lookup(&moved,2,&text,&expired) && expired.code==QA_ERROR_FORMAT);
+    app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
+    CHECK(application_q3_command_ack(&moved,66,&clamped,&error) && !clamped);
+    application_events_retire(&app);
+    CHECK(qa_application_events_first(&app)==qa_application_events_next(&app));
+    CHECK(application_q3_command_lookup(&moved,66,&text,&error) && !strcmp(text,"print local-66"));
+    CHECK(application_q3_command_lookup(&second,1,&text,&error) && !strcmp(text,"print second"));
+
+    restored.sequence=restored.acknowledged=66;
+    for(size_t slot=0;slot<QA_Q3_RELIABLE;++slot) {
+        CHECK(application_q3_command_lookup_slot(&moved,slot,&text,&error));
+        CHECK(application_q3_command_restore_slot(&restored,slot,text,&error));
+    }
+    app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
+    application_events_retire(&app);
+    CHECK(qa_application_events_first(&app)==qa_application_events_next(&app));
+    for(int32_t sequence=3;sequence<=66;++sequence) {
+        char expected[64];CHECK(snprintf(expected,sizeof(expected),"print local-%d",sequence)>0);
+        CHECK(application_q3_command_lookup(&restored,sequence,&text,&error) && !strcmp(text,expected));
+    }
+    app.operation=APPLICATION_PERSISTING;
+    qa_buffer saved={0};CHECK(application_events_save_capture(&app,&saved,&error));
+    CHECK(application_events_save_restore(&app,(qa_bytes){saved.data,saved.size},&error));
+    qa_buffer_free(&saved);app.operation=APPLICATION_IDLE;
+    for(int32_t sequence=3;sequence<=66;++sequence) {
+        char expected[64];CHECK(snprintf(expected,sizeof(expected),"print local-%d",sequence)>0);
+        CHECK(application_q3_command_lookup(&restored,sequence,&text,&error) && !strcmp(text,expected));
+        CHECK(application_q3_command_lookup(&moved,sequence,&text,&error) && !strcmp(text,expected));
+    }
+    CHECK(application_q3_command_lookup(&second,1,&text,&error) && !strcmp(text,"print second"));
+    CHECK(application_q3_command_admit(&restored,"print local-67",UINT32_MAX,0,&overflow,&error) && !overflow);
+    CHECK(application_q3_command_lookup(&restored,67,&text,&error) && !strcmp(text,"print local-67"));
+    app.event_local_cursor=app.event_source_cursor=qa_application_events_next(&app);
+    CHECK(application_q3_command_ack(&restored,67,&clamped,&error) && !clamped);
+    application_events_retire(&app);
+    CHECK(qa_application_events_first(&app)==qa_application_events_next(&app));
+    application_q3_command_clear(&first);application_q3_command_clear(&second);
+    application_q3_command_clear(&moved);application_q3_command_clear(&restored);
+    CHECK(!app.event_subscribers && app.unified_persistent_count==0);
+    application_event_stream_dispose(&app);free(app.unified_persistent);
+    CHECK(qa_session_destroy(app.session,&error));
 }
 
 static bool player_feedback_test(void)
@@ -2568,6 +2708,7 @@ int main(int argc, char **argv)
     test_arena_progress_bound_store();
     test_q3_reliable_event_references();
     test_q3_received_commands();
+    test_q3_command_cursors();
     test_shared_cvar_archive();
     test_cvar_info_storage();
     test_shared_input_menu_defaults();

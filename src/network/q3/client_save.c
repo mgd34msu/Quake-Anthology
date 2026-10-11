@@ -178,6 +178,8 @@ bool qa_q3_client_peer_restore(qa_bytes bytes, qa_q3_identity identity,
         qa_q3_command command={.sequence=(int32_t)sequence};
         memcpy(command.text,commands[(uint32_t)sequence & (QA_Q3_RELIABLE-1)],sizeof(command.text));
         if(!q3_client_command_admit(p,&command,error)) goto failure;
+        if(p->hooks.command_received &&
+            !p->hooks.command_received(p->hooks.context,&command,error)) goto failure;
         if(sequence<=p->last_executed_server_command) p->command_cursor=qa_event_ring_next(p->command_events);
     }
     qa_event_ring_retire(p->command_events,p->command_cursor);

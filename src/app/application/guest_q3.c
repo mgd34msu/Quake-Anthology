@@ -223,7 +223,7 @@ bool application_guest_q3_create_empty(qa_application *application, application_
         &engine->model_names, error)) { free(engine); return false; }
     qa_q3_gamestate_init(&engine->gamestate);
     for (size_t i = 0; i < 64; ++i) {
-        qa_q3_reliable_init(&engine->clients[i].reliable);
+        application_q3_command_init(&engine->clients[i].server_commands, application);
         engine->clients[i].sensitivity = 1; engine->seats[i] = UINT32_MAX;
     }
     if (choices->seat_count > 64) {

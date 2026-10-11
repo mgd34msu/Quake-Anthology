@@ -5,6 +5,149 @@
 #include "native_q3_wire_state.h"
 #include "bots_private.h"
 #include "bots_transport.h"
+#include "event_stream.h"
+#include <limits.h>
+
+void application_q3_command_init(application_q3_command_cursor *cursor,qa_application *app)
+{ *cursor=(application_q3_command_cursor){.application=app}; }
+void application_q3_command_clear(application_q3_command_cursor *cursor)
+{
+    qa_application *app=cursor->application;
+    qa_application_events_unsubscribe(&cursor->delivery);
+    size_t kept=0;
+    for(size_t i=0;app && i<app->unified_persistent_count;++i) {
+        application_unified_persistent_event row=app->unified_persistent[i];
+        if(row.command && row.command->stream==cursor->serial) qa_event_lease_release(row.lease);
+        else app->unified_persistent[kept++]=row;
+    }
+    if(app) app->unified_persistent_count=kept;
+    application_q3_command_init(cursor,app);
+}
+void application_q3_command_move(application_q3_command_cursor *to,application_q3_command_cursor *from)
+{
+    if(to==from) return;
+    application_q3_command_clear(to);
+    *to=*from;
+    if(from->delivery.application) {
+        qa_application_event_subscription **at=&from->delivery.application->event_subscribers;
+        while(*at && *at!=&from->delivery) at=&(*at)->following;
+        if(*at) *at=&to->delivery;
+    }
+    application_q3_command_init(from,from->application);
+}
+static const application_unified_persistent_event *command_retained(
+    const application_q3_command_cursor *cursor,int32_t sequence)
+{
+    qa_application_q3_command_event command={.stream=cursor->serial,.sequence=sequence};
+    application_persistent_key key;
+    application_q3_command_key(&command,&key);
+    for(size_t i=0;i<cursor->application->unified_persistent_count;++i) {
+        const application_unified_persistent_event *row=&cursor->application->unified_persistent[i];
+        if(row->command && row->command->sequence==sequence &&
+            application_unified_persistent_key_equal(&row->key,&key)) return row;
+    }
+    return NULL;
+}
+static bool command_admit(application_q3_command_cursor *cursor,int32_t sequence,
+    const char *text,qa_error *error)
+{
+    qa_application *app=cursor->application;
+    if(!cursor->serial) cursor->serial=++app->q3_command_serial;
+    bool pending=sequence>cursor->acknowledged;
+    bool subscribed=cursor->delivery.application!=NULL;
+    if(pending && !subscribed) qa_application_events_subscribe(app,&cursor->delivery);
+    application_event_write write;
+    if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_Q3_COMMAND,&write,error)) goto blocked;
+    size_t bytes=strlen(text)+1;
+    char *copy=application_event_stream_alloc(app,bytes,1,error);
+    if(!copy) { application_event_stream_abort(app,&write,error); goto blocked; }
+    memcpy(copy,text,bytes);
+    write.envelope->raw.q3_command=(qa_application_q3_command_event){cursor->serial,sequence,copy};
+    if(application_event_stream_commit(app,&write,error)) return true;
+blocked:
+    if(pending && !subscribed) qa_application_events_unsubscribe(&cursor->delivery);
+    return false;
+}
+bool application_q3_command_admit(application_q3_command_cursor *cursor,const char *text,uint32_t config_index,uint32_t fragment,bool *overflow,qa_error *error)
+{
+    *overflow=cursor->sequence==INT32_MAX || (int64_t)cursor->sequence-cursor->acknowledged>=QA_Q3_RELIABLE;
+    if(*overflow) return true;
+    if(config_index!=UINT32_MAX) {
+        qa_q3_configstring_command(config_index,text,fragment,cursor->formatted);
+        text=cursor->formatted;
+    }
+    if(!command_admit(cursor,cursor->sequence+1,text,error)) {
+        if(error && error->code) return false;
+        *overflow=true; return true;
+    }
+    ++cursor->sequence;
+    return true;
+}
+bool application_q3_command_admit_received(application_q3_command_cursor *cursor,
+    const qa_q3_command *command,qa_error *error)
+{
+    if(command->sequence<=cursor->sequence) return true;
+    if(!command_admit(cursor,command->sequence,command->text,error)) return false;
+    cursor->sequence=command->sequence; return true;
+}
+bool application_q3_command_lookup(application_q3_command_cursor *cursor,int32_t sequence,
+    const char **text,qa_error *error)
+{
+    *text="";
+    if(sequence>cursor->sequence)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Q3 server command is in the future");
+    if(sequence<=0) return true;
+    if((int64_t)cursor->sequence-sequence>=QA_Q3_RELIABLE)
+        return application_fail(error,QA_ERROR_FORMAT,"Q3 server command has left its retained window");
+    if(cursor->delivery.application) {
+        uint64_t end=qa_application_events_next(cursor->application);
+        for(uint64_t id=cursor->delivery.next;id<end;++id) {
+            qa_application_event_view view;
+            if(qa_application_event_read(cursor->application,&(qa_application_event_cursor){.id=id},&view) &&
+                view.kind==QA_APPLICATION_EVENT_Q3_COMMAND && view.value.q3_command->stream==cursor->serial &&
+                view.value.q3_command->sequence==sequence) {
+                *text=view.value.q3_command->text; return true;
+            }
+        }
+    }
+    const application_unified_persistent_event *row=command_retained(cursor,sequence);
+    if(row) *text=row->command->text;
+    return true;
+}
+static int32_t command_slot_sequence(const application_q3_command_cursor *cursor,size_t slot)
+{
+    int64_t sequence=(int64_t)cursor->sequence-
+        (((uint32_t)cursor->sequence-(uint32_t)slot)&(QA_Q3_RELIABLE-1));
+    return sequence>0?(int32_t)sequence:0;
+}
+bool application_q3_command_lookup_slot(application_q3_command_cursor *cursor,size_t slot,
+    const char **text,qa_error *error)
+{
+    return application_q3_command_lookup(cursor,command_slot_sequence(cursor,slot),text,error);
+}
+bool application_q3_command_restore_slot(application_q3_command_cursor *cursor,size_t slot,
+    const char *text,qa_error *error)
+{
+    int32_t sequence=command_slot_sequence(cursor,slot);
+    return sequence<=0 || !*text || command_admit(cursor,sequence,text,error);
+}
+bool application_q3_command_ack(application_q3_command_cursor *cursor,int32_t sequence,
+    bool *clamped,qa_error *error)
+{
+    if(sequence<0 || sequence>cursor->sequence)
+        return application_fail(error,QA_ERROR_FORMAT,"Invalid Q3 command acknowledgement");
+    *clamped=(int64_t)sequence<(int64_t)cursor->sequence-QA_Q3_RELIABLE;
+    if(*clamped) return application_fail(error,QA_ERROR_FORMAT,"Stale Q3 command acknowledgement");
+    if(sequence>cursor->acknowledged) cursor->acknowledged=sequence;
+    if(cursor->acknowledged==cursor->sequence) qa_application_events_unsubscribe(&cursor->delivery);
+    else if(cursor->delivery.application) {
+        const application_unified_persistent_event *row=command_retained(cursor,cursor->acknowledged);
+        uint64_t id=row?qa_event_lease_id(row->lease):0;
+        if(row && qa_event_ring_at(cursor->application->event_ring,id)==qa_event_lease_record(row->lease) &&
+            id>=cursor->delivery.next) qa_application_events_consumed(&cursor->delivery,id+1);
+    }
+    return true;
+}
 
 static bool source(application_provider *p, qa_error *e)
 {

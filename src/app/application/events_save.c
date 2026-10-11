@@ -62,8 +62,12 @@ static bool state_extent(qa_source_save_io *io, size_t *count, size_t *capacity,
 
 static bool prefix(qa_source_save_io *io, event_store *store)
 {
+    size_t persistent_count=store->persistent_count;
+    if(io->direction==QA_SOURCE_SAVE_WRITE)
+        for(size_t i=0;i<store->persistent_count;++i)
+            if(store->persistent[i].command) --persistent_count;
     if (!signature(io) ||
-        !state_extent(io, &store->persistent_count, &store->persistent_capacity, sizeof(*store->persistent)) ||
+        !state_extent(io, &persistent_count, &store->persistent_capacity, sizeof(*store->persistent)) ||
         !state_extent(io, &store->owner_count, &store->owner_capacity, sizeof(*store->owners)) ||
         !qa_source_save_u64(io, &store->owner_generation) || store->owner_generation >= QA_UNIFIED_SAFE_INTEGER ||
         !state_extent(io, &store->resource_count, &store->resource_capacity, sizeof(*store->resources)) ||
@@ -72,6 +76,7 @@ static bool prefix(qa_source_save_io *io, event_store *store)
         !qa_source_save_u64(io, &store->world_text_map))
         return event_fail(io, QA_ERROR_FORMAT, "Invalid retained Source state extent");
     if (io->direction == QA_SOURCE_SAVE_READ) {
+        store->persistent_count=persistent_count;
         size_t remaining = io->input.size - io->offset;
         if (store->persistent_count > remaining / 60)
             return event_fail(io, QA_ERROR_FORMAT, "Truncated persistent Source presentation");
@@ -339,6 +344,7 @@ static bool persistent_rows(qa_source_save_io *io, event_store *store)
     for (size_t i = 0; i < store->persistent_count; ++i) {
         application_unified_persistent_event *row = store->persistent + i;
         if (io->direction == QA_SOURCE_SAVE_WRITE) {
+            if(row->command) continue;
             if (!persistent_field(io, store, &row->event)) return false;
         } else {
             application_unified_event_record decoded = {0};
@@ -358,6 +364,7 @@ static bool persistent_rows(qa_source_save_io *io, event_store *store)
                 return event_fail(io, QA_ERROR_FORMAT, "Source activation owner is duplicated");
     }
     for (size_t i = 0; i < store->persistent_count; ++i) {
+        if(store->persistent[i].command) continue;
         const application_unified_event_record *event = &store->persistent[i].event;
         bool found = false;
         for (size_t n = 0; n < store->owner_count; ++n) {
@@ -921,6 +928,14 @@ bool application_events_save_content_visit(qa_application *app,
 
 static void install_store(qa_application *app, event_store *store, uint64_t pending_first)
 {
+    /* Module codecs already restored their command window. Keep those sparse
+     * leases when the presentation store replaces its ring. */
+    size_t kept=0;
+    for(size_t i=0;i<app->unified_persistent_count;++i)
+        if(app->unified_persistent[i].command)
+            store->persistent[store->persistent_count++]=app->unified_persistent[i];
+        else app->unified_persistent[kept++]=app->unified_persistent[i];
+    app->unified_persistent_count=kept;
     application_unified_persistent_dispose(app);
     application_event_stream_dispose(app);
     free(app->unified_event_owners);
@@ -964,6 +979,7 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     qa_application staging = *app;
     staging.event_ring = NULL;
     staging.event_write = NULL;
+    staging.event_subscribers = NULL;
     staging.unified_persistent = NULL;
     staging.unified_persistent_count = staging.unified_persistent_capacity = 0;
     staging.unified_world_text = staging.unified_world_text_last = NULL;
@@ -976,6 +992,20 @@ bool application_events_save_restore(qa_application *app, qa_bytes bytes, qa_err
     qa_source_save_dispose(&io);
     qa_buffer_free(&normalized);
     if (ok) ok = resource_bindings(&store, app, error);
+    if(ok) {
+        size_t commands=0;
+        for(size_t i=0;i<app->unified_persistent_count;++i)
+            commands+=app->unified_persistent[i].command!=NULL;
+        size_t needed=store.persistent_count+commands;
+        if(needed>store.persistent_capacity) {
+            application_unified_persistent_event *rows=realloc(store.persistent,needed*sizeof(*rows));
+            if(!rows) ok=application_fail(error,QA_ERROR_MEMORY,"Loading retained module command slots");
+            else {
+                store.persistent=staging.unified_persistent=rows;
+                store.persistent_capacity=staging.unified_persistent_capacity=needed;
+            }
+        }
+    }
     if (ok) {
         application_unified_world_text *saved = store.world_text;
         for (size_t i = 0; ok && i < store.world_text_count; ++i) {

@@ -587,7 +587,12 @@ bool application_unified_event_append(qa_application *app,
     return true;
 }
 
-typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE, PERSIST_SKY, PERSIST_SHADOW } persistent_domain;
+typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE, PERSIST_SKY, PERSIST_SHADOW, PERSIST_Q3_COMMAND } persistent_domain;
+void application_q3_command_key(const qa_application_q3_command_event *command,application_persistent_key *key)
+{
+    *key=(application_persistent_key){.domain=PERSIST_Q3_COMMAND,.generation=command->stream,
+        .selector=(uint32_t)command->sequence&(QA_Q3_RELIABLE-1)};
+}
 void application_unified_persistent_key(qa_application *app, const application_unified_event_record *row,
     application_persistent_key *out, bool *remove)
 {
@@ -699,6 +704,14 @@ bool application_unified_persistent_prepare(qa_application *app,
             }
     }
     size_t count = app->unified_persistent_count;
+    if(envelope->kind==QA_APPLICATION_EVENT_Q3_COMMAND) {
+        application_persistent_key key;
+        application_q3_command_key(&envelope->raw.q3_command,&key);
+        bool present=false;
+        for(size_t i=0;i<app->unified_persistent_count;++i)
+            if(application_unified_persistent_key_equal(&key,&app->unified_persistent[i].key)) { present=true; break; }
+        if(!present) ++count;
+    }
     for (application_event_view *view = envelope->views; view; view = view->next) {
         if (!view->persistent_key.domain) continue;
         bool present = false;
@@ -715,21 +728,30 @@ bool application_unified_persistent_prepare(qa_application *app,
     return true;
 }
 
+static void persistent_remove(qa_application *app,const application_persistent_key *key)
+{
+    size_t index=0;
+    while(index<app->unified_persistent_count &&
+        !application_unified_persistent_key_equal(key,&app->unified_persistent[index].key)) ++index;
+    if(index<app->unified_persistent_count) {
+        qa_event_lease_release(app->unified_persistent[index].lease);
+        memmove(app->unified_persistent+index,app->unified_persistent+index+1,
+            (--app->unified_persistent_count-index)*sizeof(*app->unified_persistent));
+    }
+}
 void application_unified_persistent_publish(qa_application *app,
     application_event_envelope *envelope)
 {
-    for (application_event_view *view = envelope->views; view; view = view->next) {
-        if (!view->persistent_key.domain) continue;
-        size_t index = 0;
-        while (index < app->unified_persistent_count &&
-            !application_unified_persistent_key_equal(&view->persistent_key,
-                &app->unified_persistent[index].key)) ++index;
-        if (index < app->unified_persistent_count) {
-            qa_event_lease_release(app->unified_persistent[index].lease);
-            memmove(app->unified_persistent + index, app->unified_persistent + index + 1,
-                (--app->unified_persistent_count - index) * sizeof(*app->unified_persistent));
-        }
+    if(envelope->kind==QA_APPLICATION_EVENT_Q3_COMMAND) {
+        application_persistent_key key;
+        application_q3_command_key(&envelope->raw.q3_command,&key);
+        persistent_remove(app,&key);
+        app->unified_persistent[app->unified_persistent_count++]=
+            (application_unified_persistent_event){.key=key,.command=&envelope->raw.q3_command,
+                .lease=qa_event_ring_retain(app->event_ring,envelope->id)};
     }
+    for(application_event_view *view=envelope->views;view;view=view->next)
+        if(view->persistent_key.domain) persistent_remove(app,&view->persistent_key);
     for (application_event_view *view = envelope->views; view; view = view->next) {
         if (!view->persistent_key.domain) continue;
         if (!view->persistent_remove) {

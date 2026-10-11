@@ -56,7 +56,7 @@ bool qa_network_q3_client_acknowledged_command_time(qa_network_runtime *, qa_net
     bool *history_unavailable, qa_error *);
 bool qa_network_q3_client_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_q3_client_usercmd(qa_network_runtime *, qa_net_client_id, const qa_q3_usercmd *, qa_error *);
-bool qa_network_q3_client_execute(qa_network_runtime *, qa_net_client_id, int32_t, qa_error *);
+bool qa_network_q3_client_command_apply(qa_network_runtime *,qa_net_client_id,const qa_q3_command *,qa_error *);
 /* Explicit source send, including EOF acknowledgements. Uses the same actual
  * client policy and native sequence/channel owner as scheduled sends. */
 bool qa_network_q3_client_send(qa_network_runtime *, qa_net_client_id, int32_t real_time, qa_error *);
