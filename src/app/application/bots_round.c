@@ -62,9 +62,11 @@ static bool navigation_prepare(application_bots *bots,bot_round_graph *graphs,si
 }
 static void navigation_publish(application_bots *bots,bot_round_graph *graphs,size_t count,
     qa_bot_navigation **map_navigation) {
+    qa_actor_index_clear(&bots->actor_seats);
+    memset(bots->client_seats, 0, bots->seat_capacity * sizeof(*bots->client_seats));
     for(uint32_t i=0;i<bots->capacity;++i) {
         qa_bot_navigation_destroy(bots->seats[i].navigation);bots->seats[i].navigation=NULL;
-        bots->seats[i].actor=(qa_actor_id){0};bots->seats[i].retired=true;
+        bots->seats[i].actor=(qa_actor_id){0};
     }
     while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
         qa_bot_navigation_destroy(target->navigation);free(target);}
@@ -334,23 +336,20 @@ bool application_bots_round_prepare(qa_application *app,application_provider *pr
         bot_round_client *saved=cut->clients+cut->count++;
         saved->previous_actor=row->previous_actor;saved->seat=row->seat;saved->source_slot=row->source_slot;
         saved->seat_index=UINT32_MAX;
-        for(uint32_t j=0;j<bots->capacity;++j) {
-            const application_bot_seat *seat=bots->seats+j;
-            if(!seat->retired && qa_actor_id_equal(seat->actor,row->previous_actor)) {
-                if(seat->seat!=row->seat || !bots->population ||
-                   !qa_bots_admission_read(bots->population,seat->actor,&saved->admission,error) ||
-                   saved->admission.client!=seat->library_client) goto failed;
-                saved->native=true;saved->seat_index=j;
-                saved->character=copy_text(saved->admission.character_file,error);
-                saved->name=copy_text(saved->admission.name,error);
-                if(!saved->character || !saved->name) goto failed;
-                saved->admission.character_file=saved->character;saved->admission.name=saved->name;
-                size_t team_length=strlen(saved->admission.team);
-                if(team_length>=sizeof(saved->team)) goto invalid;
-                memcpy(saved->team,saved->admission.team,team_length+1);
-                saved->admission.team=saved->team;
-                break;
-            }
+        const application_bot_seat *seat = application_bot_seat_find(bots, row->previous_actor);
+        if (seat) {
+            if(seat->seat!=row->seat || !bots->population ||
+               !qa_bots_admission_read(bots->population,seat->actor,&saved->admission,error) ||
+               saved->admission.client!=seat->library_client) goto failed;
+            saved->native=true;saved->seat_index=(uint32_t)(seat-bots->seats);
+            saved->character=copy_text(saved->admission.character_file,error);
+            saved->name=copy_text(saved->admission.name,error);
+            if(!saved->character || !saved->name) goto failed;
+            saved->admission.character_file=saved->character;saved->admission.name=saved->name;
+            size_t team_length=strlen(saved->admission.team);
+            if(team_length>=sizeof(saved->team)) goto invalid;
+            memcpy(saved->team,saved->admission.team,team_length+1);
+            saved->admission.team=saved->team;
         }
         if(!saved->native) {
             struct application_q3_guest *engine=q3g_engine(provider);
@@ -365,7 +364,7 @@ bool application_bots_round_prepare(qa_application *app,application_provider *pr
                qa_actor_id_equal(cut->clients[j].previous_actor,saved->previous_actor)) goto invalid;
     }
     for(uint32_t i=0;i<bots->capacity;++i) {
-        const application_bot_seat *seat=bots->seats+i;if(seat->retired || !seat->actor.registry) continue;
+        const application_bot_seat *seat=bots->seats+i; if (!application_bot_seat_live(bots, seat)) continue;
         bool found=false;for(size_t j=0;j<cut->count;++j)
             found=found || (cut->clients[j].native && cut->clients[j].seat_index==i);
         if(!found) goto invalid;
@@ -457,7 +456,7 @@ bool application_bots_round_reconnect(application_bots_round *cut,
     if(saved->native) {
         application_bot_seat *seat=bots->seats+saved->seat_index;
         qa_bot_admission admission;
-        ok=!seat->retired && qa_actor_id_equal(seat->actor,actor) && seat->navigation &&
+        ok=application_bot_seat_live(bots, seat) && qa_actor_id_equal(seat->actor,actor) && seat->navigation &&
             seat->seat==saved->seat && seat->library_client==saved->admission.client &&
             qa_bots_admission_read(bots->population,actor,&admission,error) &&
             admission.client==saved->admission.client && admission.entity==(int32_t)row->source_slot;

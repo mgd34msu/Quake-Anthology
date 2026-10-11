@@ -14,9 +14,8 @@ qa_bot_navigation *application_bot_navigation(void *opaque,int32_t client) {
     }
     qa_actor_id actor=application_bot_client_actor(bots,client);
     if(!actor.registry) return NULL;
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && bots->seats[i].actor.registry &&
-           qa_actor_id_equal(bots->seats[i].actor,actor)) return bots->seats[i].navigation;
+    const application_bot_seat *seat = application_bot_seat_find(bots, actor);
+    if (seat) return seat->navigation;
     for(application_bot_target *target=bots->targets;target;target=target->next)
         if(qa_actor_id_equal(target->actor,actor) &&
            qa_actors_get(qa_session_actors(bots->application->session),target->actor)) return target->navigation;
@@ -159,9 +158,8 @@ bool application_bot_activation(void *opaque,qa_actor_id bot,int32_t number,qa_b
     qa_body_state body,target;
     if(!qa_world_body_read(bots->application->world,blocker,&body,error) ||
        !qa_world_body_read(bots->application->world,mover.activation,&target,error)) return false;
-    application_bot_seat *seat=NULL;
-    for(uint32_t i=0;i<bots->capacity;++i) if(qa_actor_id_equal(bots->seats[i].actor,bot)) {seat=&bots->seats[i];break;}
-    if(!seat || seat->retired) return true;
+    application_bot_seat *seat = application_bot_seat_find(bots, bot);
+    if (!seat) return true;
     qa_vec3 center=qa_vec_add(target.origin,qa_vec_scale(qa_vec_add(target.bounds.mins,target.bounds.maxs),.5f));
     qa_bounds local={qa_vec_sub(qa_vec_add(target.origin,target.bounds.mins),center),
                      qa_vec_sub(qa_vec_add(target.origin,target.bounds.maxs),center)};

@@ -215,15 +215,22 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
     if(!provider_field(io,app,&bots->source,true) || !map_field(io,bots) || !files_field(io,bots) || !script_files_field(io,bots) || !qa_source_save_u32(io,&bots->capacity) ||
         bots->capacity>INT32_MAX ||
         (bots->capacity && sizeof(*bots->seats)>SIZE_MAX/bots->capacity)) return false;
-    if(io->direction==QA_SOURCE_SAVE_READ && bots->capacity) {
-        if(bots->capacity>(io->input.size-io->offset)/14) return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application bot seats");
-        bots->seats=calloc(bots->capacity,sizeof(*bots->seats));
-        if(!bots->seats) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring application bot seats");
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        if (bots->capacity > qa_actors_capacity(qa_session_actors(app->session)) ||
+            bots->capacity > (io->input.size-io->offset)/14)
+            return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application bot seats");
+        if (!application_bots_seats_prepare(bots, io->error)) return false;
     }
     for(uint32_t i=0;i<bots->capacity;++i) {
         application_bot_seat *s=bots->seats+i;
+        bool retired = s->actor.registry && !application_bot_seat_live(bots, s);
         if(!qa_source_save_actor(io,&s->actor) || !qa_source_save_u32(io,&s->seat) ||
-            !qa_source_save_u32(io,&s->library_client) || !qa_source_save_bool(io,&s->retired)) return false;
+            !qa_source_save_u32(io,&s->library_client) || !qa_source_save_bool(io,&retired)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (application_bot_seat_live(bots, s) && (retired || s->library_client >= bots->seat_capacity))
+                return bot_save_fail(io, QA_ERROR_FORMAT, "Application live bot seat differs from restored roster");
+            application_bot_seat_index_bind(bots, s);
+        }
     }
     size_t count=0;
     if(io->direction==QA_SOURCE_SAVE_WRITE) for(application_bot_guest *g=bots->guests;g;g=g->next) ++count;
@@ -557,16 +564,13 @@ static bool agreement(application_bots *bots,qa_error *error) {
             const application_bot_seat *previous=bots->seats+j;
             if(previous->actor.registry &&
                 (qa_actor_id_equal(previous->actor,s->actor) ||
-                 (!previous->retired && !s->retired &&
+                 (application_bot_seat_live(bots, previous) && application_bot_seat_live(bots, s) &&
                   (previous->seat==s->seat || previous->library_client==s->library_client))))
                 return application_fail(error,QA_ERROR_FORMAT,"Application bot seats alias a saved actor or active roster seat");
         }
-        if(s->retired) continue;
-        application_player_record *record=NULL;
-        if(app->players) for(size_t j=0;j<app->players->count;++j)
-            if(!app->players->records[j].retiring && app->players->records[j].seat==s->seat &&
-                qa_actor_id_equal(app->players->records[j].actor,s->actor)) {record=app->players->records+j;break;}
-        if(!record || !application_player_identity(record)->bot || !qa_actors_get(qa_session_actors(app->session),s->actor))
+        if (!application_bot_seat_live(bots, s)) continue;
+        application_player_record *record = application_player_record_live(app->players, s->actor);
+        if(!record || record->seat != s->seat || !application_player_identity(record)->bot)
             return application_fail(error,QA_ERROR_FORMAT,"Application live bot seat differs from restored roster");
         if(bots->population && !qa_bot_runtime_closed(bots->runtime)) {
             qa_bot_view view;

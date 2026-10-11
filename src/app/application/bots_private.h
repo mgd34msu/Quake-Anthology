@@ -29,7 +29,6 @@ typedef struct application_bot_seat {
     qa_actor_id actor;
     uint32_t seat, library_client;
     qa_bot_navigation *navigation;
-    bool retired;
 } application_bot_seat;
 typedef enum application_bot_round_phase {
     APPLICATION_BOT_ROUND_ACTIVE, APPLICATION_BOT_ROUND_DETACHED,
@@ -84,7 +83,9 @@ typedef struct application_bots {
     application_bot_target *targets;
     application_bot_guest *guests;
     application_bot_seat *seats;
-    uint32_t capacity;
+    qa_actor_index actor_seats;
+    uint32_t *client_seats;
+    uint32_t capacity, seat_capacity;
     qa_bot_weapon_knowledge knowledge[QA_Q2_WEAPON_COUNT];
     struct application_bot_knowledge_owner *knowledge_owner;
     size_t knowledge_count,arsenal_leases;
@@ -105,6 +106,21 @@ typedef struct application_bots {
     uint64_t producer_host_ns;
     bool producing;
 } application_bots;
+
+static inline bool application_bot_seat_live(const application_bots *bots, const application_bot_seat *seat)
+{
+    return qa_actors_get(qa_session_actors(bots->application->session), seat->actor) != NULL;
+}
+static inline application_bot_seat *application_bot_seat_find(const application_bots *bots, qa_actor_id actor)
+{
+    size_t row;
+    if (!bots || !qa_actor_index_find(&bots->actor_seats, actor, &row) || row >= bots->capacity) return NULL;
+    application_bot_seat *seat = bots->seats + row;
+    return application_bot_seat_live(bots, seat) ? seat : NULL;
+}
+bool application_bots_seats_prepare(application_bots *, qa_error *);
+void application_bot_seat_index_bind(application_bots *, application_bot_seat *);
+void application_bot_seat_index_remove(application_bots *, application_bot_seat *);
 
 bool application_bot_player(void *,qa_actor_id,qa_bot_player *,qa_q3_player *,qa_error *);
 bool application_bot_inventory_update(void *,qa_actor_id,const qa_bot_player *,const qa_bot_player_state_view *,const qa_bot_inventory_target *,qa_error *);

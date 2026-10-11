@@ -42,9 +42,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
        !qa_session_frame_host_time(application->session,&host_ns) || host_ns!=bots->producer_host_ns ||
        admitted.number!=bots->producer_frame.number || admitted.time_ns!=bots->producer_frame.time_ns)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot movement escaped its admitted source interval");
-    application_bot_seat *seat=NULL;
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=&bots->seats[i];break;}
+    application_bot_seat *seat = application_bot_seat_find(bots, actor);
     if(!seat) return true;
     qa_player_state view;
     if(!qa_application_control_read(application,actor,&view)) return true;
@@ -55,7 +53,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
     if(arsenal && (arsenal->kind==APPLICATION_PROVIDER_Q1 || arsenal->kind==APPLICATION_PROVIDER_Q2) &&
        !application_bot_weapon_resolve(bots,actor,input->weapon,&requested_item,error)) return false;
     if(requested_item) requested_owner=arsenal->owner;
-    if(seat->retired || !qa_actors_get(qa_session_actors(application->session),actor)) return true;
+    if (!application_bot_seat_live(bots, seat)) return true;
     if(!qa_application_control_read(application,actor,&view)) return true;
     bool seen=false;uint64_t sequence=0;
     if(!application_control_frames_sequence(application,actor,&seen,&sequence))

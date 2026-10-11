@@ -289,6 +289,7 @@ static void roster_free(struct application_player_roster *roster)
         free(roster->records[i].guests);
         qa_q1_travel_destroy(roster->records[i].q1_entry);
     }
+    qa_actor_index_destroy(&roster->actors);
     free(roster->records);
     free(roster);
 }
@@ -732,6 +733,10 @@ bool application_players_prepare(qa_application *application,
         (travel->roster->capacity && !travel->roster->records)) {
         application_players_dispose(travel);
         return application_fail(error, QA_ERROR_MEMORY, "cannot reserve travel player roster");
+    }
+    if (!qa_actor_index_create(&travel->roster->actors, qa_session_actors(application->session), error)) {
+        application_players_dispose(travel);
+        return false;
     }
     if (local_count) memcpy(travel->seats, choices->seats, local_count * sizeof(*travel->seats));
     size_t cursor = local_count;
@@ -2543,6 +2548,9 @@ static bool record_actor_bind(struct application_player_roster *roster,
     const application_player_record *existing=actor.registry?application_player_record_find(roster,actor):NULL;
     if(existing && existing!=record)
         return application_fail(error,QA_ERROR_ARGUMENT,"Actor already has a player roster row");
+    size_t row = (size_t)(record - roster->records);
+    if (actor.registry) qa_actor_index_put(&roster->actors, actor, row);
+    if (!qa_actor_id_equal(record->actor, actor)) qa_actor_index_remove(&roster->actors, record->actor);
     record->actor=actor;return true;
 }
 
@@ -2828,6 +2836,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                         return false;
                     if (!qa_session_release(application->session, actor, error)) return false;
                 }
+                qa_actor_index_remove(&application->players->actors, record->actor);
                 record->actor = (qa_actor_id){0};
                 record->player = NULL;
                 record->retiring = true;
@@ -3329,6 +3338,7 @@ bool application_q3_round_players_prepare(qa_application *app,
     if ((count && (!cut->travel->seats || !cut->travel->carry || !cut->clients)) ||
         (roster->capacity && !roster->records))
         goto memory;
+    if (!qa_actor_index_create(&roster->actors, qa_session_actors(app->session), error)) goto failed;
     roster->map_provider = provider;
     roster->family = app->players->family;
     roster->spawn_point = app->players->spawn_point;
@@ -3661,7 +3671,7 @@ static bool retire_player(qa_application *app,application_provider *source,
     if(app->players!=roster||roster->map_provider!=source||app->publication_generation!=generation)
         return application_fail(error,QA_ERROR_ARGUMENT,"Player release changed its actual Source publication");
     found=application_player_record_find(roster,actor);
-    if(found) { record_free(found);found->dynamic=true; }
+    if(found) { qa_actor_index_remove(&roster->actors, found->actor); record_free(found);found->dynamic=true; }
     return true;
 }
 
@@ -3712,6 +3722,8 @@ static bool record_text(qa_application *application, application_player_record *
     if (userinfo != record->userinfo)
         record->userinfo = userinfo != NULL ? player_text(userinfo) : NULL;
     if (userinfo != NULL && record->userinfo == NULL) {
+        if (application_player_record_find(application->players, record->actor) == record)
+            qa_actor_index_remove(&application->players->actors, record->actor);
         record_free(record);
         return application_fail(error, QA_ERROR_MEMORY, "cannot retain player connection text");
     }
@@ -3852,13 +3864,15 @@ static bool record_append(qa_application *application, application_player_record
                            size_t *out, qa_error *error)
 {
     struct application_player_roster *roster = application->players;
-    if(!record_actor_bind(roster,&record,record.actor,error)) return false;
+    if (record.actor.registry && application_player_record_find(roster, record.actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Actor already has a player roster row");
     /* Stable addresses are required while nested guest calls admit bots. The
      * roster reserves one row per canonical actor before map publication. */
     for (size_t i = 0; i < roster->count; ++i)
         if (roster->records[i].dynamic && roster->records[i].actor.registry == 0 &&
             roster->records[i].character == NULL) {
             roster->records[i] = record;
+            if (!record_actor_bind(roster, roster->records + i, record.actor, error)) return false;
             ++roster->revision;
             application_actor_routes_bind(application, record.actor);
             *out = i;
@@ -3868,6 +3882,7 @@ static bool record_append(qa_application *application, application_player_record
         return application_fail(error, QA_ERROR_MEMORY, "canonical player roster capacity is exhausted");
     *out = roster->count;
     roster->records[roster->count++] = record;
+    if (!record_actor_bind(roster, roster->records + *out, record.actor, error)) return false;
     ++roster->revision;
     application_actor_routes_bind(application, record.actor);
     return true;
@@ -3958,6 +3973,7 @@ bool application_players_bot_allocate(qa_application *app,
     if (pending != SIZE_MAX) {
         index = pending;
         application_actor_routes_invalidate(app, app->players->records[index].actor);
+        qa_actor_index_remove(&app->players->actors, app->players->records[index].actor);
         record_free(&app->players->records[index]);
         app->players->records[index] = record;
         ++app->players->revision;
@@ -4374,6 +4390,10 @@ bool application_players_campaign_reenter(qa_application *candidate,
             if (qa_actors_get(qa_session_actors(candidate->session),candidate->players->records[i].actor))
                 return application_fail(error,QA_ERROR_FORMAT,"Departed world retained an active client");
     struct application_player_roster *roster=travel->roster;
+    if (candidate != previous) {
+        qa_actor_index_destroy(&roster->actors);
+        if (!qa_actor_index_create(&roster->actors, qa_session_actors(candidate->session), error)) return false;
+    }
     free(roster->points); roster->points=NULL; roster->point_count=0;
     travel->point_capacity=0;
     free(roster->q1_points); roster->q1_points=NULL; roster->q1_point_count=0;
@@ -4622,6 +4642,7 @@ bool application_players_guest_detach(qa_application *application,
             --record->guest_count;
             if (record->dynamic && !record->remote && record->character == provider && record->guest_count == 0) {
                 application_actor_routes_invalidate(application, actor);
+                qa_actor_index_remove(&roster->actors, record->actor);
                 record_free(record);
                 ++roster->revision;
                 record->dynamic = true;
@@ -4900,7 +4921,8 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
     roster->records = roster->capacity ? calloc(roster->capacity, sizeof(*roster->records)) : NULL;
     roster->points = points ? calloc(points, sizeof(*roster->points)) : NULL;
     roster->q1_points = q1_points ? calloc(q1_points, sizeof(*roster->q1_points)) : NULL;
-    bool ok = roster->map_provider && (!roster->capacity || roster->records) &&
+    bool ok = qa_actor_index_create(&roster->actors, actors, error) &&
+              roster->map_provider && (!roster->capacity || roster->records) &&
               (!points || roster->points) && (!q1_points || roster->q1_points);
     if (!ok) application_fail(error, roster->map_provider ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,
                               "roster map provider or allocation is missing");
@@ -4934,6 +4956,7 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         }
         for (size_t j = 0; j < 3; ++j) free(identity_text[j]);
         if (!ok) break;
+        if (!record_actor_bind(roster, record, record->actor, error)) { ok = false; break; }
         if (record->actor.registry) record_bind_identity(candidate, record);
         record->bot_skill = qa_net_read_f32(&reader); record->bot_delay_ms = qa_net_read_i32(&reader);
         if (reader.failed || !isfinite(record->bot_skill) || record->bot_skill < 0 || record->bot_delay_ms < 0 ||

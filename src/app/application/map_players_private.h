@@ -94,6 +94,7 @@ struct application_player_roster {
     uint64_t feedback_first,feedback_through,feedback_generation,feedback_revision;
     size_t feedback_count;
     application_player_record *records;
+    qa_actor_index actors;
     size_t count, capacity;
     application_player_point *points;
     size_t point_count;
@@ -108,9 +109,10 @@ struct application_player_roster {
 static inline application_player_record *application_player_record_find(
     const struct application_player_roster *roster,qa_actor_id actor)
 {
-    for(size_t i=0;roster && i<roster->count;++i)
-        if(qa_actor_id_equal(roster->records[i].actor,actor)) return roster->records+i;
-    return NULL;
+    size_t row;
+    if (!roster || !qa_actor_index_find(&roster->actors, actor, &row) || row >= roster->count) return NULL;
+    application_player_record *record = roster->records + row;
+    return qa_actor_id_equal(record->actor, actor) ? record : NULL;
 }
 static inline bool application_player_connection_equal(const application_player_record *record,
     qa_net_client_id client,qa_net_seat_id seat)

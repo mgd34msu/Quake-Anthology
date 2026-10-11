@@ -26,6 +26,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool application_bots_seats_prepare(application_bots *bots, qa_error *error)
+{
+    const qa_actor_registry *actors = qa_session_actors(bots->application->session);
+    bots->seat_capacity = qa_actors_capacity(actors);
+    bots->seats = calloc(bots->seat_capacity, sizeof(*bots->seats));
+    bots->client_seats = calloc(bots->seat_capacity, sizeof(*bots->client_seats));
+    if (!bots->seats || !bots->client_seats)
+        return application_fail(error, QA_ERROR_MEMORY, "allocating bot roster navigation bindings");
+    return qa_actor_index_create(&bots->actor_seats, actors, error);
+}
+void application_bot_seat_index_remove(application_bots *bots, application_bot_seat *seat)
+{
+    size_t row = (size_t)(seat - bots->seats);
+    qa_actor_index_remove(&bots->actor_seats, seat->actor);
+    if (seat->library_client < bots->seat_capacity && bots->client_seats[seat->library_client] == row + 1)
+        bots->client_seats[seat->library_client] = 0;
+}
+void application_bot_seat_index_bind(application_bots *bots, application_bot_seat *seat)
+{
+    if (!application_bot_seat_live(bots, seat)) return;
+    size_t row = (size_t)(seat - bots->seats);
+    qa_actor_index_put(&bots->actor_seats, seat->actor, row);
+    if (seat->library_client < bots->seat_capacity) bots->client_seats[seat->library_client] = (uint32_t)row + 1;
+}
+
 static application_provider *bot_source(application_bots *);
 static bool bot_source_client(void *,qa_actor_id,int32_t *,qa_error *);
 static uint32_t random_word(void *opaque) {
@@ -504,13 +529,8 @@ static qa_bot_navigation *bot_source_navigation(void *opaque,int32_t client) {
        (!bots->restoring && !qa_world_body_storage_serial(bots->application->world,actor))) return NULL;
     int32_t physical;
     if(!bot_source_client(bots,actor,&physical,NULL) || physical!=client) return NULL;
-    uint32_t input=actor.slot;
-    for(uint32_t i=0;i<bots->capacity;++i) {
-        const application_bot_seat *seat=bots->seats+i;
-        if(!seat->retired && qa_actor_id_equal(seat->actor,actor)) {
-            input=seat->library_client;break;
-        }
-    }
+    const application_bot_seat *seat = application_bot_seat_find(bots, actor);
+    uint32_t input = seat ? seat->library_client : actor.slot;
     if(input>INT32_MAX || !qa_actor_id_equal(application_bot_client_actor(bots,(int32_t)input),actor))
         return NULL;
     qa_bot_navigation *navigation=application_bot_navigation(bots,(int32_t)input);
@@ -530,13 +550,8 @@ static bool bot_source_action_client(void *opaque,int32_t client,uint32_t *out,q
     if(!bot_source_client(bots,actor,&actual,error)) return false;
     if(actual!=client)
         return application_fail(error,QA_ERROR_ARGUMENT,"Source action client changed its physical binding");
-    uint32_t input=UINT32_MAX;
-    for(uint32_t i=0;i<bots->capacity;++i) {
-        const application_bot_seat *seat=bots->seats+i;
-        if(!seat->retired && qa_actor_id_equal(seat->actor,actor)) {
-            input=seat->library_client;break;
-        }
-    }
+    const application_bot_seat *seat = application_bot_seat_find(bots, actor);
+    uint32_t input = seat ? seat->library_client : UINT32_MAX;
     if(input==UINT32_MAX) {
         /* Native setup reserves the canonical actor namespace, including real
          * human rows. Bot seats may instead retain their round input alias. */
@@ -706,11 +721,11 @@ qa_actor_id application_bot_client_actor(application_bots *bots,int32_t client) 
         qa_actor_id actor=engine?engine->clients[(uint32_t)client-guest->client_base].actor:(qa_actor_id){0};
         return qa_actors_get(qa_session_actors(bots->application->session),actor)?actor:(qa_actor_id){0};
     }
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && bots->seats[i].actor.registry &&
-           bots->seats[i].library_client==(uint32_t)client)
-            return qa_actors_get(qa_session_actors(bots->application->session),bots->seats[i].actor)?
-                bots->seats[i].actor:(qa_actor_id){0};
+    uint32_t row = (uint32_t)client < bots->seat_capacity ? bots->client_seats[client] : 0;
+    if (row && row <= bots->capacity) {
+        const application_bot_seat *seat = bots->seats + row - 1;
+        if (application_bot_seat_live(bots, seat)) return seat->actor;
+    }
     uint32_t cursor=(uint32_t)client;const qa_actor_record *record;
     return qa_actors_next(qa_session_actors(bots->application->session),&cursor,&record) &&
         record->id.slot==(uint32_t)client?record->id:(qa_actor_id){0};
@@ -721,13 +736,12 @@ static bool bot_command(void *opaque,int32_t client,const char *text,qa_error *e
         if(client>=0 && (uint32_t)client>=guest->client_base && (uint32_t)client-guest->client_base<64)
             return application_q3_guest_client_command(guest->provider,(uint32_t)client-guest->client_base,text,error);
     qa_actor_id actor=application_bot_client_actor(bots,client);
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {
-            application_provider *source=bot_source(bots);
-            return source && source->kind==APPLICATION_PROVIDER_Q3?
-                application_native_q3_client_text(source,actor,text,error):
-                qa_application_actor_command(bots->application,actor,text,error);
-        }
+    if (application_bot_seat_find(bots, actor)) {
+        application_provider *source=bot_source(bots);
+        return source && source->kind==APPLICATION_PROVIDER_Q3?
+            application_native_q3_client_text(source,actor,text,error):
+            qa_application_actor_command(bots->application,actor,text,error);
+    }
     return application_fail(error,QA_ERROR_NOT_FOUND,"bot command client has no current roster owner");
 }
 bool application_bots_guest_bind(qa_application *application,application_provider *provider,
@@ -780,7 +794,8 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     qa_bots_save_requirements_free(&bots->saved_requirements);
     application_bots_round_detach(bots->round);
     application_bots_original_detach(bots->original);
-    free(bots->train_stops);free(bots->seats);free(bots);return true;
+    qa_actor_index_destroy(&bots->actor_seats);
+    free(bots->client_seats);free(bots->train_stops);free(bots->seats);free(bots);return true;
 }
 bool application_bots_can_destroy(const qa_application *application) {
     application_bots *bots=application?application->bots:NULL;
@@ -820,14 +835,13 @@ bool application_bots_client_shutdown(qa_application *application,qa_actor_id ac
 bool application_bots_actor(const qa_application *application,qa_actor_id actor) {
     const application_bots *bots=application?application->bots:NULL;
     if(!bots || !qa_actors_get(qa_session_actors(application->session),actor)) return false;
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) return true;
-    return false;
+    return application_bot_seat_find(bots, actor) != NULL;
 }
 bool application_bots_actor_released(qa_application *application,qa_actor_record actor,qa_error *error) {
     application_bots *bots=application->bots;if(!bots) return true;
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(qa_actor_id_equal(bots->seats[i].actor,actor.id)) bots->seats[i].retired=true;
+    size_t row;
+    if (qa_actor_index_find(&bots->actor_seats, actor.id, &row) && row < bots->capacity)
+        application_bot_seat_index_remove(bots, bots->seats + row);
     return !bots->population || qa_bots_actor_released(bots->population,&actor,error);
 }
 bool application_bots_frame_at(qa_application *application,const qa_source_frame *frames,
@@ -942,8 +956,7 @@ static bool prepare_bots(qa_application *application,const qa_launch_choices *ch
         bots->guests=guest;++ordinal;
     }
     bots->map_resource=application->map_resource;qa_resource_retain(bots->map_resource);
-    bots->seats=capacity?calloc(capacity,sizeof(*bots->seats)):NULL;
-    if(capacity && !bots->seats) {application_fail(error,QA_ERROR_MEMORY,"allocating bot roster navigation bindings");goto fail;}
+    if (!application_bots_seats_prepare(bots, error)) goto fail;
     const qa_launch_snapshot *snapshot=application->routing_snapshot?application->routing_snapshot:qa_application_launch(application);
     bots->files_launch=true;
     bots->files=qa_vfs_clone(qa_launch_snapshot_mounts(snapshot),error);
@@ -1145,9 +1158,7 @@ bool application_bots_shared_connect(application_bots *bots,uint32_t client,bool
     *accepted=false;
     qa_actor_id actor=application_bot_transport_actor(bots->transport,client);
     if(!actor.registry) return application_fail(error,QA_ERROR_NOT_FOUND,"shared G_BotConnect lacks its actual local connection");
-    application_bot_seat *seat=NULL;
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=bots->seats+i;break;}
+    application_bot_seat *seat = application_bot_seat_find(bots, actor);
     if(!seat) return application_fail(error,QA_ERROR_NOT_FOUND,"shared G_BotConnect lacks its actual navigation seat");
     const char *info=application_bot_world_userinfo(bots->shared_world,client);
     char character[144],team[144],skill_text[1024],name[144];
@@ -1176,21 +1187,19 @@ bool application_bots_client_prepare(qa_application *app,qa_actor_id actor,uint3
     application_player_record *record=application_player_record_live(app->players,actor);
     if(!record || !application_player_identity(record)->bot || record->client_slot!=physical_client)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot admission has no genuine local source roster record");
-    application_bot_seat *seat=NULL;
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=bots->seats+i;break;}
+    application_bot_seat *seat = application_bot_seat_find(bots, actor);
     if(!seat) {
         for(uint32_t i=0;i<bots->capacity;++i)
-            if(!bots->seats[i].actor.registry || bots->seats[i].retired) {seat=bots->seats+i;break;}
+            if (!application_bot_seat_live(bots, bots->seats + i)) {seat=bots->seats+i;break;}
         if(!seat) {
-            if(bots->capacity==UINT32_MAX || (size_t)bots->capacity+1>SIZE_MAX/sizeof(*bots->seats))
+            if (bots->capacity == bots->seat_capacity)
                 return application_fail(error,QA_ERROR_MEMORY,"bot navigation roster exceeds its extent");
-            application_bot_seat *grown=realloc(bots->seats,((size_t)bots->capacity+1)*sizeof(*grown));
-            if(!grown) return application_fail(error,QA_ERROR_MEMORY,"growing actual bot navigation roster");
-            bots->seats=grown;seat=grown+bots->capacity++;*seat=(application_bot_seat){0};
+            seat = bots->seats + bots->capacity++;
         }
+        application_bot_seat_index_remove(bots, seat);
         qa_bot_navigation_destroy(seat->navigation);
         *seat=(application_bot_seat){.actor=actor,.seat=record->seat,.library_client=actor.slot};
+        application_bot_seat_index_bind(bots, seat);
     }
     if(!seat->navigation && !application_bot_navigation_bind(bots,seat,error)) return false;
     if(bots->shared_world) {
@@ -1226,28 +1235,26 @@ bool application_bots_native_q3_connect(application_provider *provider,qa_actor_
     if(!qa_parse_atof(skill_text,&parsed,error)) return false;
     float skill=(float)parsed;
     if(!isfinite(skill)) return application_fail(error,QA_ERROR_FORMAT,"bot source skill is outside its finite character domain");
-    application_bot_seat *seat=NULL;
+    application_bot_seat *seat = application_bot_seat_find(bots, actor);
     uint32_t round_seat=0,library_client=actor.slot;bool retained=false;
     if(!application_bots_round_client_binding(bots,source_client,&round_seat,&library_client,&retained,error)) return false;
-    if(retained) seat=bots->seats+round_seat;
-    for(uint32_t i=0;i<bots->capacity;++i)
-        if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=bots->seats+i;break;}
+    if (!seat && retained) seat=bots->seats+round_seat;
     if(!seat || !qa_actor_id_equal(seat->actor,actor)) {
         if(!seat) {
         for(uint32_t i=0;i<bots->capacity;++i)
-            if(!bots->seats[i].actor.registry || bots->seats[i].retired) {seat=bots->seats+i;break;}
+            if (!application_bot_seat_live(bots, bots->seats + i)) {seat=bots->seats+i;break;}
         if(!seat) {
-            if(bots->capacity==UINT32_MAX || (size_t)bots->capacity+1>SIZE_MAX/sizeof(*bots->seats))
+            if (bots->capacity == bots->seat_capacity)
                 return application_fail(error,QA_ERROR_MEMORY,"native bot navigation roster exceeds its extent");
-            application_bot_seat *seats=realloc(bots->seats,((size_t)bots->capacity+1)*sizeof(*seats));
-            if(!seats) return application_fail(error,QA_ERROR_MEMORY,"growing native bot navigation roster");
-            bots->seats=seats;seat=bots->seats+bots->capacity++;*seat=(application_bot_seat){0};
+            seat = bots->seats + bots->capacity++;
         }
         }
         const application_player_record *record=application_player_record_find(app->players,actor);
         uint32_t local_seat=record?record->seat:UINT32_MAX;
+        application_bot_seat_index_remove(bots, seat);
         qa_bot_navigation_destroy(seat->navigation);
         *seat=(application_bot_seat){.actor=actor,.seat=local_seat,.library_client=library_client};
+        application_bot_seat_index_bind(bots, seat);
         if(!application_bot_navigation_bind(bots,seat,error)) return false;
     }
     qa_bot_admission admission={.actor=actor,.client=seat->library_client,.entity=(int32_t)source_client,
