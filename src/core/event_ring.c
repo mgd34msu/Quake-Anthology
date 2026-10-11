@@ -1,21 +1,29 @@
 #include "qa/event_ring.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #define EVENT_PAGE_NONE SIZE_MAX
 
 typedef struct event_page {
     size_t capacity, used, records, next;
+    size_t contiguous_end;
+    uint8_t *payload;
 } event_page;
 
+typedef struct event_storage {
+    struct event_storage *next;
+    _Alignas(max_align_t) uint8_t payload[];
+} event_storage;
+
 struct qa_event_ring {
-    uint8_t *payload;
+    event_storage *storage;
     event_page *pages;
     qa_event_lease **records;
     size_t page_bytes, page_count, record_capacity, tail, live_leases;
     size_t payload_bytes, bytes_used, free_bytes, free_pages;
     uint64_t first, next;
-    bool retired;
+    bool retired, writing;
 };
 
 struct qa_event_lease {
@@ -27,10 +35,86 @@ struct qa_event_lease {
 
 static void destroy_storage(qa_event_ring *owner)
 {
-    free(owner->payload);
+    while (owner->storage) {
+        event_storage *next = owner->storage->next;
+        free(owner->storage);
+        owner->storage = next;
+    }
     free(owner->pages);
     free(owner->records);
     free(owner);
+}
+
+size_t qa_event_ring_record_storage_size(size_t payload_bytes)
+{
+    size_t overhead = sizeof(qa_event_lease) + _Alignof(qa_event_lease) - 1;
+    return payload_bytes > SIZE_MAX - overhead ? SIZE_MAX : payload_bytes + overhead;
+}
+
+bool qa_event_ring_reserve(qa_event_ring *owner, size_t payload_bytes,
+    size_t record_capacity, qa_error *error)
+{
+    if (!owner || owner->retired) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Event reservation requires its load-owned ring");
+        return false;
+    }
+    bool payload_growth = payload_bytes > owner->payload_bytes;
+    bool record_growth = record_capacity > owner->record_capacity;
+    if (!payload_growth && !record_growth) return true;
+    if (owner->writing) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Event reservation cannot grow an active transaction");
+        return false;
+    }
+    size_t added_pages = payload_growth ? 1 + (payload_bytes - 1) / owner->page_bytes : 0;
+    if (payload_bytes > (size_t)PTRDIFF_MAX ||
+        payload_bytes > SIZE_MAX - sizeof(event_storage) ||
+        (payload_growth && owner->payload_bytes > SIZE_MAX - payload_bytes) ||
+        added_pages > SIZE_MAX / sizeof(event_page) - owner->page_count ||
+        record_capacity > SIZE_MAX / sizeof(qa_event_lease *)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Event reservation exceeds addressable storage");
+        return false;
+    }
+    size_t page_count = owner->page_count + added_pages;
+    event_storage *storage = payload_growth ? malloc(sizeof(*storage) + payload_bytes) : NULL;
+    event_page *pages = payload_growth ? calloc(page_count, sizeof(*pages)) : owner->pages;
+    qa_event_lease **records = record_growth ? calloc(record_capacity, sizeof(*records)) : owner->records;
+    if ((payload_growth && (!storage || !pages)) || (record_growth && !records)) {
+        free(storage);
+        if (payload_growth) free(pages);
+        if (record_growth) free(records);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating load-sized event pages");
+        return false;
+    }
+    if (payload_growth) {
+        if (owner->page_count) memcpy(pages, owner->pages, owner->page_count * sizeof(*pages));
+        for (size_t i = owner->page_count; i < page_count; ++i) {
+            size_t offset = (i - owner->page_count) * owner->page_bytes;
+            pages[i] = (event_page){
+                .capacity = payload_bytes - offset < owner->page_bytes ? payload_bytes - offset : owner->page_bytes,
+                .next = EVENT_PAGE_NONE, .contiguous_end = page_count,
+                .payload = storage->payload + offset};
+        }
+    }
+    if (record_growth)
+        for (uint64_t id = owner->first; id < owner->next; ++id)
+            records[(size_t)((id - 1) % record_capacity)] =
+                owner->records[(size_t)((id - 1) % owner->record_capacity)];
+    if (payload_growth) {
+        storage->next = owner->storage;
+        owner->storage = storage;
+        free(owner->pages);
+        owner->pages = pages;
+        owner->page_count = page_count;
+        owner->payload_bytes += payload_bytes;
+        owner->free_bytes += payload_bytes;
+        owner->free_pages += added_pages;
+    }
+    if (record_growth) {
+        free(owner->records);
+        owner->records = records;
+        owner->record_capacity = record_capacity;
+    }
+    return true;
 }
 
 qa_event_ring *qa_event_ring_create(size_t payload_bytes,
@@ -42,35 +126,17 @@ qa_event_ring *qa_event_ring_create(size_t payload_bytes,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Event pages require load-sized payload and record storage");
         return NULL;
     }
-    size_t count = 1 + (payload_bytes - 1) / page_bytes;
-    if (count > SIZE_MAX / sizeof(event_page)) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Event page metadata exceeds addressable storage");
-        return NULL;
-    }
     qa_event_ring *owner = calloc(1, sizeof(*owner));
     if (!owner) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating event page owner");
         return NULL;
     }
-    owner->payload = malloc(payload_bytes);
-    owner->pages = calloc(count, sizeof(*owner->pages));
-    owner->records = calloc(record_capacity, sizeof(*owner->records));
-    if (!owner->payload || !owner->pages || !owner->records) {
-        destroy_storage(owner);
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating load-sized event pages");
-        return NULL;
-    }
     owner->page_bytes = page_bytes;
-    owner->page_count = count;
-    owner->record_capacity = record_capacity;
-    owner->payload_bytes = owner->free_bytes = payload_bytes;
-    owner->free_pages = count;
     owner->tail = EVENT_PAGE_NONE;
     owner->first = owner->next = 1;
-    for (size_t i = 0; i < count; ++i) {
-        size_t offset = i * page_bytes;
-        owner->pages[i].capacity = payload_bytes - offset < page_bytes ? payload_bytes - offset : page_bytes;
-        owner->pages[i].next = EVENT_PAGE_NONE;
+    if (!qa_event_ring_reserve(owner, payload_bytes, record_capacity, error)) {
+        destroy_storage(owner);
+        return NULL;
     }
     return owner;
 }
@@ -156,14 +222,15 @@ static void *allocate_run(qa_event_transaction *transaction, size_t size, size_t
     qa_event_ring *owner = transaction->owner;
     for (size_t first = 0; first < owner->page_count;) {
         if (owner->pages[first].used) { ++first; continue; }
-        uintptr_t address = (uintptr_t)(owner->payload + first * owner->page_bytes);
+        uintptr_t address = (uintptr_t)owner->pages[first].payload;
         size_t padding = (size_t)((-address) & (alignment - 1));
         size_t available = 0, last = first;
-        for (; last < owner->page_count && !owner->pages[last].used; ++last) {
+        size_t end = owner->pages[first].contiguous_end;
+        for (; last < end && !owner->pages[last].used; ++last) {
             available += owner->pages[last].capacity;
             if (padding <= available && size <= available - padding) break;
         }
-        if (last == owner->page_count || owner->pages[last].used) { first = last; continue; }
+        if (last == end || owner->pages[last].used) { first = last; continue; }
         size_t remaining = padding + size;
         for (size_t index = first; index <= last; ++index) {
             event_page *page = owner->pages + index;
@@ -178,7 +245,7 @@ static void *allocate_run(qa_event_transaction *transaction, size_t size, size_t
         owner->tail = last;
         if (transaction->first_page == EVENT_PAGE_NONE) transaction->first_page = first;
         transaction->last_page = last;
-        return owner->payload + first * owner->page_bytes + padding;
+        return owner->pages[first].payload + padding;
     }
     transaction->blocked = true;
     return NULL;
@@ -189,12 +256,12 @@ static void *allocate_tail(qa_event_transaction *transaction, size_t size, size_
     qa_event_ring *owner = transaction->owner;
     size_t first = owner->tail, last = first;
     event_page *page = owner->pages + first;
-    uintptr_t address = (uintptr_t)(owner->payload + first * owner->page_bytes + page->used);
+    uintptr_t address = (uintptr_t)(page->payload + page->used);
     size_t padding = (size_t)((-address) & (alignment - 1));
     size_t available = page->capacity - page->used;
     if (padding >= available) return NULL;
     while ((padding > available || size > available - padding) &&
-        last + 1 < owner->page_count && !owner->pages[last + 1].used) {
+        last + 1 < page->contiguous_end && !owner->pages[last + 1].used) {
         ++last;
         available += owner->pages[last].capacity;
     }
@@ -245,6 +312,7 @@ bool qa_event_ring_begin(qa_event_ring *owner, qa_event_transaction *transaction
         transaction->original_next = owner->pages[owner->tail].next;
     }
     transaction->active = true;
+    owner->writing = true;
     transaction->lease = qa_event_ring_alloc(transaction, sizeof(qa_event_lease),
         _Alignof(qa_event_lease), NULL);
     if (transaction->lease) return true;
@@ -271,6 +339,7 @@ void qa_event_ring_abort(qa_event_transaction *transaction)
     }
     owner->tail = transaction->original_tail;
     transaction->active = false;
+    owner->writing = false;
 }
 
 uint64_t qa_event_ring_commit(qa_event_transaction *transaction, void *record)
@@ -288,6 +357,7 @@ uint64_t qa_event_ring_commit(qa_event_transaction *transaction, void *record)
     owner->records[(size_t)((id - 1) % owner->record_capacity)] = transaction->lease;
     ++owner->live_leases;
     transaction->active = false;
+    owner->writing = false;
     return id;
 }
 
@@ -312,6 +382,7 @@ size_t qa_event_ring_contiguous_bytes(const qa_event_ring *owner)
 {
     size_t largest = 0, run = 0;
     for (size_t i = 0; i < owner->page_count; ++i) {
+        if (i && owner->pages[i - 1].contiguous_end == i) run = 0;
         const event_page *page = owner->pages + i;
         if (!page->used) run += page->capacity;
         else run = i == owner->tail ? page->capacity - page->used : 0;

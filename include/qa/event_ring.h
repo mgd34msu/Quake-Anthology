@@ -24,6 +24,16 @@ typedef struct qa_event_transaction {
  * that interval. Records and their payloads stay at fixed addresses. */
 qa_event_ring *qa_event_ring_create(size_t payload_bytes,
     size_t page_bytes, size_t record_capacity, qa_error *);
+/* Cold load/restore only, outside an active transaction. Capacities count raw
+ * backing bytes and record slots, as qa_event_capacity does. Growth preserves
+ * ids, order and all payload/lease addresses; the added contiguous backing may
+ * make total_bytes larger than requested. Append never grows the ring. */
+bool qa_event_ring_reserve(qa_event_ring *, size_t total_payload_bytes,
+    size_t total_records, qa_error *);
+/* Conservative raw bytes for one record, including its internal lease and
+ * lease alignment. Include each payload allocation's padding in payload_bytes.
+ * Returns SIZE_MAX on overflow. */
+size_t qa_event_ring_record_storage_size(size_t payload_bytes);
 /* Retained leases keep their pages and owner alive after destruction. */
 void qa_event_ring_destroy(qa_event_ring **);
 
