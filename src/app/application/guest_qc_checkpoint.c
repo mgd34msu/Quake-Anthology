@@ -394,6 +394,7 @@ static void dispose_candidate(struct application_qc_state *candidate)
     application_qc_precache_dispose(candidate);
     qa_buffer_free(&candidate->original_extension);
     application_qc_rerelease_destroy(candidate);
+    qa_actor_index_destroy(&candidate->client_index);
     free(candidate->resources); free(candidate->clients);
     free((void *)candidate->model_fields.entries);
 }
@@ -444,6 +445,7 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     candidate.clients = calloc((size_t)candidate.max_clients + 1, sizeof(*candidate.clients));
     if (candidate.clients == NULL) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC restored clients");
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
+    if (ok) ok = qa_actor_index_create(&candidate.client_index, actors, error);
     for (uint32_t i = 1; ok && i <= candidate.max_clients; ++i) {
         application_qc_client *client = &candidate.clients[i];
         client->seat = qa_net_read_u32(&reader);
@@ -480,10 +482,13 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         for (unsigned p = 0; ok && p < 16; ++p) client->parms[p] = qa_net_read_f32(&reader);
         if (reader.failed) ok = false;
         if (ok) ok = client_binding_matches(engine, i, client, error);
+        if (ok && client->connected && application_qc_client_for_actor(&candidate, client->actor))
+            ok = qa_net_reader_fail(&reader, "Duplicate QuakeC connected client seat or actor");
         for (uint32_t earlier = 1; ok && client->connected && earlier < i; ++earlier)
             if (candidate.clients[earlier].connected &&
-                (candidate.clients[earlier].seat == client->seat || qa_actor_id_equal(candidate.clients[earlier].actor, client->actor)))
+                candidate.clients[earlier].seat == client->seat)
                 ok = qa_net_reader_fail(&reader, "Duplicate QuakeC connected client seat or actor");
+        if (ok && client->connected) qa_actor_index_put(&candidate.client_index, client->actor, i);
     }
     if (ok) ok = application_qc_restore_client_outputs(&candidate, error);
     uint32_t resources = ok ? qa_net_read_u32(&reader) : 0;
@@ -570,10 +575,8 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
     if (ok) ok = qa_net_reader_finish(&reader);
     for (size_t i = 0; ok && i < candidate.message_count;) {
         const application_qc_message *message = candidate.messages + i;
-        bool connected = message->destination != 1;
-        for (uint32_t slot = 1; !connected && slot <= candidate.max_clients; ++slot)
-            connected = candidate.clients[slot].connected &&
-                qa_actor_id_equal(candidate.clients[slot].actor, message->recipient);
+        const application_qc_client *client = application_qc_client_for_actor(&candidate, message->recipient);
+        bool connected = message->destination != 1 || (client && client->connected);
         if (connected) ++i;
         else application_qc_messages_release(&candidate, message->recipient);
     }
@@ -627,6 +630,8 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         engine->messages = candidate.messages; engine->message_count = candidate.message_count; engine->message_capacity = candidate.message_capacity;
         candidate.messages = NULL; candidate.message_count = candidate.message_capacity = 0;
         engine->clients = candidate.clients; candidate.clients = NULL;
+        qa_actor_index_destroy(&engine->client_index);
+        engine->client_index = candidate.client_index; candidate.client_index = (qa_actor_index){0};
         engine->source_time_ns = candidate.source_time_ns; engine->serverflags = candidate.serverflags;
         qa_buffer_free(&engine->original_extension);
         engine->original_extension=candidate.original_extension;

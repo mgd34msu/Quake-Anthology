@@ -67,9 +67,8 @@ static bool message_target(struct application_qc_state *engine, qa_qc_instance *
         int32_t reference;
         if (global == NULL || global->type != QA_QC_ENTITY || !qa_qc_global_int(vm, global->offset, &reference, error) ||
             !qa_qc_reference_actor(vm, reference, &recipient, error)) return false;
-        bool connected = false;
-        for (uint32_t i = 1; i <= engine->max_clients; ++i)
-            if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, recipient)) { connected = true; break; }
+        const application_qc_client *client = application_qc_client_for_actor(engine, recipient);
+        bool connected = client && client->connected;
         if (!connected) {
             application_fail(error, QA_ERROR_ARGUMENT, "QuakeC MSG_ONE does not name a client");
             return false;

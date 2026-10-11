@@ -6,14 +6,8 @@
 
 static application_qc_client *client_for(struct application_qc_state *engine,qa_actor_id actor)
 {
-    application_qc_client *found=NULL;
-    for(uint32_t i=1;engine && engine->clients && i<=engine->max_clients;++i) {
-        application_qc_client *client=engine->clients+i;
-        if(!client->connected || !client->spawned || !qa_actor_id_equal(client->actor,actor)) continue;
-        if(found) return NULL;
-        found=client;
-    }
-    return found;
+    application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    return client && client->connected && client->spawned ? client : NULL;
 }
 static bool binding_for(struct application_qc_state *engine,qa_item_id item,
     qa_application_qc_weapon_ui_binding *binding,uint32_t *via,qa_error *error)

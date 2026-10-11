@@ -265,8 +265,9 @@ bool application_qc_rerelease_command(application_provider *provider,qa_actor_id
     struct application_qc_state *engine=provider && provider->kind==APPLICATION_PROVIDER_QC?provider->state.qc.engine:NULL;
     if (!engine || !command) return application_fail(error,QA_ERROR_ARGUMENT,"Rerelease command has no actual source owner");
     if (engine->profile!=QA_QC_RERELEASE) return true;
-    for (uint32_t slot=1;slot<=engine->max_clients;++slot) {
-        if (!engine->clients[slot].connected || !qa_actor_id_equal(engine->clients[slot].actor,actor)) continue;
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected) {
+        uint32_t slot = (uint32_t)(client - engine->clients);
         qc_prompt *prompt; int32_t reference; uint32_t actual;
         if (!qa_qc_slot_reference(provider->state.qc.instance,slot,&reference,error) ||
             !target(engine,provider->state.qc.instance,reference,true,&actual,error) ||
@@ -309,8 +310,9 @@ bool application_qc_rerelease_frame(struct application_qc_state *engine,qa_error
 void application_qc_rerelease_released(struct application_qc_state *engine,qa_actor_id actor)
 {
     if (!engine || !engine->rerelease || !engine->rerelease->prompts) return;
-    for (uint32_t slot=1;slot<=engine->max_clients;++slot) {
-        qc_prompt *prompt=engine->rerelease->prompts+slot;
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client) {
+        qc_prompt *prompt = engine->rerelease->prompts + (client - engine->clients);
         if (qa_actor_id_equal(prompt->actor,actor)) { prompt_clear(prompt,qa_session_elapsed(engine->services.session)); prompt->actor=(qa_actor_id){0}; }
     }
 }

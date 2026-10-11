@@ -43,10 +43,9 @@ bool application_qc_spawn_call(void *opaque, qa_qc_instance *vm,
     if (!qa_qc_global_int(vm, self->offset, &reference, error)) return false;
     qa_actor_id actor;
     if (!qa_qc_reference_actor(vm, reference, &actor, error)) return false;
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        if (engine->clients[i].connected && !engine->clients[i].spectator &&
-            qa_actor_id_equal(engine->clients[i].actor, actor)) { slot = i; break; }
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    uint32_t slot = client && client->connected && !client->spectator ?
+        (uint32_t)(client - engine->clients) : 0;
     if (!slot) return qa_qc_call_continue(next, error);
     if (!client_current(engine, vm, slot, actor, error) || !qa_qc_call_continue(next, error)) return false;
     if (!qa_qc_call_completed(next)) return true;

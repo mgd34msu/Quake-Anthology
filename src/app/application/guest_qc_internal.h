@@ -95,6 +95,7 @@ struct application_qc_state {
     size_t immutable_string_bytes;
     qa_entity_model_fields model_fields;
     application_qc_client *clients;
+    qa_actor_index client_index;
     uint32_t max_clients, check_slot;
     double check_time;
     int32_t check_cluster;
@@ -173,6 +174,7 @@ bool application_qc_reserve_player(application_provider *, uint32_t slot, uint32
 bool application_qc_begin_player(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_prepare_player(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_source_clients_initialize(struct application_qc_state *, qa_error *);
+application_qc_client *application_qc_client_for_actor(const struct application_qc_state *, qa_actor_id);
 bool application_qc_source_client_released(struct application_qc_state *, qa_actor_record, qa_error *);
 bool application_qc_control_source_client(const application_provider *, qa_actor_id, bool *, qa_error *);
 bool application_qc_player_source_actor(application_provider *, uint32_t, qa_actor_id *, qa_error *);

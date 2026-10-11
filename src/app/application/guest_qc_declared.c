@@ -325,9 +325,8 @@ bool application_qc_seed_fields(struct application_qc_state *engine, qa_actor_id
     if (!profile) return true;
     int32_t reference;
     if (!qa_qc_actor_reference(engine->provider->state.qc.instance, actor, false, &reference, error)) return false;
-    bool client = false;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
-        if (engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) { client = true; break; }
+    const application_qc_client *row = application_qc_client_for_actor(engine, actor);
+    bool client = row && row->connected;
     for (size_t i = 0; i < profile->field_count; ++i) {
         if (profile->fields[i].kind == QC_FIELD_CONSTANT &&
             !project_value(engine->provider->state.qc.instance, reference, profile->fields[i].definition,
@@ -369,9 +368,8 @@ static bool actor_current(struct application_qc_state *engine, qa_qc_instance *v
 }
 static bool declared_client(const struct application_qc_state *engine,qa_actor_id actor)
 {
-    for(uint32_t slot=1;slot<=engine->max_clients;++slot)
-        if(engine->clients[slot].connected&&qa_actor_id_equal(engine->clients[slot].actor,actor)) return true;
-    return false;
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    return client && client->connected;
 }
 static bool project_userinfo(qa_qc_instance *vm,int32_t reference,
     const application_qc_bound_field *field,const qa_buffer *value,qa_error *error)
@@ -501,9 +499,8 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
             break;
         }
         case QC_FIELD_VIEW: {
-            bool client = false, declared = false;
-            for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
-                if (engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) { client = true; break; }
+            const application_qc_client *row = application_qc_client_for_actor(engine, actor);
+            bool client = row && row->connected, declared = false;
             for (size_t j = 0; j < profile->client_output_count; ++j) {
                 const application_qc_client_output *output = profile->client_outputs + j;
                 if (output->channel == APPLICATION_CLIENT_VIEW_OFFSET && !output->height && output->field == field) { declared = true; break; }
@@ -655,9 +652,8 @@ bool application_qc_client_think(struct application_qc_state *engine, qa_actor_i
     if (!application_qc_reference(engine, actor, &reference, error)) return false;
     double now = (double)frame->time_ns / 1e9, end = now + (double)frame->elapsed_ns / 1e9;
     while (qa_actors_get(qa_session_actors(engine->services.session), actor)) {
-        bool admitted = false;
-        for (uint32_t i = 1; i <= engine->max_clients; ++i)
-            admitted |= engine->clients[i].spawned && qa_actor_id_equal(engine->clients[i].actor, actor);
+        const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+        bool admitted = client && client->spawned;
         if (!admitted) return true;
         float due; int32_t function;
         if (!qa_qc_entity_float(vm, reference, deadline->offset, &due, error) ||

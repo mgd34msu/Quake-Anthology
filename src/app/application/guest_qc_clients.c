@@ -8,6 +8,14 @@
 #include "qa/text.h"
 #include <stdio.h>
 
+application_qc_client *application_qc_client_for_actor(const struct application_qc_state *engine,
+    qa_actor_id actor)
+{
+    size_t slot;
+    return engine && qa_actor_index_find(&engine->client_index, actor, &slot) ?
+        &engine->clients[slot] : NULL;
+}
+
 static bool classic_qw(const struct application_qc_state *engine)
 {
     return engine && !engine->provider->state.qc.qualified && engine->profile == QA_QC_QUAKEWORLD &&
@@ -36,9 +44,9 @@ bool application_qc_control_source_client(const application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "QC source membership requires its actual imported client owner");
     *member = false;
     if (!qa_actors_get(qa_session_actors(engine->services.session), actor)) return true;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-        const application_qc_client *client = &engine->clients[slot];
-        if (!client->connected || !client->spawned || !qa_actor_id_equal(client->actor, actor)) continue;
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected && client->spawned) {
+        uint32_t slot = (uint32_t)(client - engine->clients);
         if (!source_binding(engine, slot, actor, error)) return false;
         *member = true; return true;
     }
@@ -96,11 +104,14 @@ bool application_qc_source_client_released(struct application_qc_state *engine,
         !qa_qc_reserved_actor_rebind_ready(engine->provider->state.qc.instance) ||
         engine->provider->application->operation == APPLICATION_PERSISTING ||
         !qa_session_actor_allocation_ready(engine->services.session, engine->provider->owner)) return true;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+    const application_qc_client *client = application_qc_client_for_actor(engine, released.id);
+    uint32_t slot = client ? (uint32_t)(client - engine->clients) :
+        released.owner == engine->provider->owner && released.has_source ? released.source_slot : 0;
+    if (slot && slot <= engine->max_clients) {
         qa_qc_slot_binding binding;
         if (!qa_qc_slot(engine->provider->state.qc.instance, slot, &binding) ||
             (binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED) ||
-            !qa_actor_id_equal(binding.actor, released.id)) continue;
+            !qa_actor_id_equal(binding.actor, released.id)) return true;
         qa_actor_definition definition; qa_actor_id actor;
         if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session),
             "quakec:reserved-client", &definition, error) ||
@@ -111,7 +122,6 @@ bool application_qc_source_client_released(struct application_qc_state *engine,
             (void)qa_session_release(engine->services.session, actor, NULL);
             return false;
         }
-        break;
     }
     return true;
 }
@@ -246,11 +256,8 @@ bool application_qc_host_command(application_provider *provider,
         enabled = (next & bit) != 0;
         if (!application_qc_set_float(engine, reference, engine->field_bindings->flags, (float)next, error)) return false;
     } else {
-        bool spectator = false;
-        for (uint32_t i = 1; i <= engine->max_clients; ++i)
-            if (qa_actor_id_equal(engine->clients[i].actor, context.actor)) {
-                spectator = engine->clients[i].spectator; break;
-            }
+        const application_qc_client *client = application_qc_client_for_actor(engine, context.actor);
+        bool spectator = client && client->spectator;
         if (!application_control_toggle_motion(provider->application, context.actor,
             fly ? QA_PHYSICS_FLY : QA_PHYSICS_NOCLIP, spectator, &enabled, error) ||
             !application_qc_set_float(engine, reference, engine->field_bindings->movetype, enabled ? fly ? 5 : 8 : 3, error)) return false;
@@ -273,10 +280,8 @@ bool application_qc_console_command(application_provider *provider, qa_actor_id 
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC console command requires an idle source owner");
     *handled = false;
     struct application_qc_state *engine = provider->state.qc.engine;
-    bool client = false;
-    for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        if (engine->clients[i].connected && engine->clients[i].spawned &&
-            qa_actor_id_equal(engine->clients[i].actor, actor)) { client = true; break; }
+    const application_qc_client *row = application_qc_client_for_actor(engine, actor);
+    bool client = row && row->connected && row->spawned;
     if (actor.registry && (!client || !qa_actors_get(qa_session_actors(provider->application->session), actor)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC command actor has no live source client");
     const char *name = client_command ? "SV_ParseClientCommand" : "ConsoleCmd";
@@ -362,12 +367,10 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     bool source_map_owned = application_provider_for(provider->application, actor, QA_ROLE_ENTITIES, "") == provider;
     if (!application_qc_player_map_ready(provider, primary_character, source_map_owned, error)) return false;
     if (qualified) {
-        uint32_t available = 0; slot = 0;
-        for (uint32_t i = 1; i <= engine->max_clients; ++i) {
-            if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, actor)) { slot = i; break; }
-            if (!available && !engine->clients[i].connected) available = i;
-        }
-        if (!slot) slot = available;
+        const application_qc_client *existing = application_qc_client_for_actor(engine, actor);
+        slot = existing && existing->connected ? (uint32_t)(existing - engine->clients) : 0;
+        if (!slot) for (uint32_t i = 1; i <= engine->max_clients; ++i)
+            if (!engine->clients[i].connected) { slot = i; break; }
         if (!slot) return application_fail(error, QA_ERROR_MEMORY, "QC component source client capacity exceeded");
     }
     application_qc_client *client = &engine->clients[slot];
@@ -377,9 +380,11 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
             return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC client slot is already occupied");
         if (client->spawned) return true;
     }
+    const application_qc_client *existing = application_qc_client_for_actor(engine, actor);
+    if (existing && existing != client && existing->connected)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Duplicate QuakeC client actor or seat");
     for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        if (i != slot && engine->clients[i].connected &&
-            (engine->clients[i].seat == seat || qa_actor_id_equal(engine->clients[i].actor, actor)))
+        if (i != slot && engine->clients[i].connected && engine->clients[i].seat == seat)
             return application_fail(error, QA_ERROR_ARGUMENT, "Duplicate QuakeC client actor or seat");
     const char *connect = spectator ? "SpectatorConnect" : "ClientConnect";
     uint32_t index;
@@ -407,7 +412,9 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
         client->receipt_seen = false; client->receipt_sequence = client->receipt_ordinal = 0;
     }
     if (!client->connected && new_player) client->colors = 0;
+    if (!qa_actor_id_equal(client->actor, actor)) qa_actor_index_remove(&engine->client_index, client->actor);
     client->actor = actor; client->seat = seat; client->connected = true; client->spectator = spectator;
+    qa_actor_index_put(&engine->client_index, actor, slot);
     client->primary_character = primary_character;
     if (qualified) {
         application_qc_inputs inputs = {.self = actor, .time_ns = engine->source_time_ns};
@@ -464,9 +471,9 @@ bool application_qc_prepare_player(application_provider *provider, qa_actor_id a
         provider->state.qc.engine : NULL;
     if (!classic_qw(engine) || !qa_qc_idle(provider->state.qc.instance) || !application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QW source Prepare requires its idle actual client owner");
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-        application_qc_client *client = &engine->clients[slot];
-        if (!client->connected || !qa_actor_id_equal(client->actor, actor)) continue;
+    application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected) {
+        uint32_t slot = (uint32_t)(client - engine->clients);
         if (client->spawned || !client->has_parms || !source_binding(engine, slot, actor, error))
             return application_fail(error, QA_ERROR_ARGUMENT, "QW source Prepare requires an inactive retained client");
         if (client->prepared) return true;
@@ -516,9 +523,9 @@ bool application_qc_begin_player(application_provider *provider, qa_actor_id act
     if (!engine || provider->state.qc.qualified ||
         !qa_qc_idle(provider->state.qc.instance) || !application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC source begin requires its idle reserved classic client");
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-        application_qc_client *client = &engine->clients[slot];
-        if (!client->connected || !qa_actor_id_equal(client->actor, actor)) continue;
+    application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected) {
+        uint32_t slot = (uint32_t)(client - engine->clients);
         if (client->spawned) return true;
         if (!client->has_parms || !source_binding(engine, slot, actor, error) ||
             (classic_qw(engine) && !client->prepared))
@@ -550,9 +557,9 @@ bool application_qc_client_colors(application_provider *provider, qa_actor_id ac
     uint32_t shirt = (uint32_t)top & 15u, pants = (uint32_t)bottom & 15u;
     if (shirt > 13) shirt = 13;
     if (pants > 13) pants = 13;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-        application_qc_client *client = &engine->clients[slot];
-        if (!client->connected || !qa_actor_id_equal(client->actor, actor)) continue;
+    application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected) {
+        uint32_t slot = (uint32_t)(client - engine->clients);
         int32_t reference;
         if (!source_binding(engine, slot, actor, error) || !application_qc_reference(engine, actor, &reference, error))
             return application_fail(error, QA_ERROR_ARGUMENT, "QC colors lack the connected physical client binding");
@@ -591,9 +598,9 @@ bool application_qc_player_receive(application_provider *provider, qa_actor_id a
     if (!engine || !command)
         return application_fail(error, QA_ERROR_ARGUMENT, "QC receipt needs its actual source and mutable command");
     if (engine->profile != QA_QC_RERELEASE) return true;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-        application_qc_client *client = &engine->clients[slot];
-        if (!client->connected || !client->spawned || !qa_actor_id_equal(client->actor, actor)) continue;
+    application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected && client->spawned) {
+        uint32_t slot = (uint32_t)(client - engine->clients);
         if (!source_binding(engine, slot, actor, error)) return false;
         if (client->receipt_seen && (command->sequence < client->receipt_sequence ||
             (command->sequence == client->receipt_sequence && ordinal <= client->receipt_ordinal)))
@@ -625,13 +632,9 @@ bool application_qc_player_command(application_provider *provider, qa_actor_id a
     if (angles == NULL || !qa_qc_set_entity_vector(provider->state.qc.instance, reference, angles->offset, command->angles, error) ||
         !application_qc_set_float(engine, reference, engine->field_bindings->button0, (command->buttons & 1u) ? 1.0f : 0.0f, error) ||
         !application_qc_set_float(engine, reference, engine->field_bindings->button2, (command->buttons & 2u) ? 1.0f : 0.0f, error)) return false;
-    bool received = false;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-        const application_qc_client *client = &engine->clients[slot];
-        received |= engine->profile == QA_QC_RERELEASE && client->connected && client->spawned &&
-            qa_actor_id_equal(client->actor, actor) && client->receipt_seen &&
-            command->sequence <= client->receipt_sequence;
-    }
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    bool received = engine->profile == QA_QC_RERELEASE && client && client->connected &&
+        client->spawned && client->receipt_seen && command->sequence <= client->receipt_sequence;
     if (!received && command->impulse != 0) {
         application_qc_weapon_command(engine,actor);
         if(!application_qc_set_float(engine, reference, engine->field_bindings->impulse, command->impulse, error)) return false;
@@ -642,25 +645,24 @@ bool application_qc_client_userinfo(application_provider *provider, qa_actor_id 
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     if (!engine) return application_fail(error, QA_ERROR_ARGUMENT, "QC userinfo has no engine owner");
-    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
-        application_qc_client *client = &engine->clients[i];
-        if (!client->connected || !qa_actor_id_equal(client->actor, actor)) continue;
+    application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected) {
         const struct application_qc_profile *profile = provider->state.qc.qualified;
         application_qc_inputs inputs = {.self = actor, .time_ns = engine->source_time_ns};
         if (profile) return client->spawned ? application_qc_run_calls(engine, &profile->userinfo, &inputs, error) :
             application_fail(error, QA_ERROR_NOT_FOUND, "QC userinfo client has not completed declared admission");
         if (engine->profile != QA_QC_QUAKEWORLD) {
             if (client->spawned) return true;
-            continue;
+        } else {
+            const char *raw; qa_qw_info info = {0}; int32_t reference;
+            if (!qa_application_network_qw_userinfo_read(provider->application, actor, &raw, error) ||
+                !qa_qw_info_parse(raw, &info, error)) return false;
+            const char *name = qa_qw_info_get(&info, "name");
+            bool ok = application_qc_reference(engine, actor, &reference, error) &&
+                qw_name(engine, (uint32_t)(client - engine->clients), reference, name ? name : "unnamed", error);
+            qa_qw_info_free(&info);
+            return ok;
         }
-        const char *raw; qa_qw_info info = {0}; int32_t reference;
-        if (!qa_application_network_qw_userinfo_read(provider->application, actor, &raw, error) ||
-            !qa_qw_info_parse(raw, &info, error)) return false;
-        const char *name = qa_qw_info_get(&info, "name");
-        bool ok = application_qc_reference(engine, actor, &reference, error) &&
-            qw_name(engine, i, reference, name ? name : "unnamed", error);
-        qa_qw_info_free(&info);
-        return ok;
     }
     return application_fail(error, QA_ERROR_NOT_FOUND, "QC userinfo requires a live admitted client");
 }
@@ -668,9 +670,8 @@ bool application_qc_disconnect_player(application_provider *provider, qa_actor_i
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     if (!engine) return application_fail(error, QA_ERROR_ARGUMENT, "QC disconnect has no engine owner");
-    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
-        application_qc_client *client = &engine->clients[i];
-        if (!client->connected || !qa_actor_id_equal(client->actor, actor)) continue;
+    application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected) {
         if (!client->spawned) return true;
         const struct application_qc_profile *profile = provider->state.qc.qualified;
         application_qc_inputs inputs = {.self = actor, .time_ns = engine->source_time_ns};
@@ -711,8 +712,8 @@ bool application_qc_actor_traits(application_provider *provider, qa_actor_id act
     qa_builtin_actor_traits value = {.monster = (bits & 32u) != 0, .no_target = (bits & 128u) != 0,
         .grounded = (bits & 512u) != 0, .aimed_damage = damage == 2, .damageable_target = damage != 0,
         .max_health = health, .view_height = 22};
-    for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, actor)) { value.player = true; break; }
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    value.player = client && client->connected;
     if (!qa_builtin_resource(&engine->services, text, &value.classname, &ignored)) return false;
     *out = value; return true;
 }

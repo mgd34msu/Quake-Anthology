@@ -429,6 +429,15 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     if (slot_count && !actors)
         ok = native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                               "native slot restore requires the shared actor registry");
+    if (ok && actors && host->kind == NATIVE_HOST_Q2_GAME &&
+        host->actor_slots.registry != qa_actors_identity(actors)) {
+        qa_actor_index restored = {0};
+        ok = qa_actor_index_create(&restored, actors, error);
+        if (ok) {
+            qa_actor_index_destroy(&host->actor_slots);
+            host->actor_slots = restored;
+        }
+    }
     for (uint32_t index = 0; ok && index < slot_count; ++index) {
         const qa_actor_record *record = qa_actors_resolve_saved(actors, slots[index].actor);
         if (!record) {
@@ -443,6 +452,8 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
             .owner = slots[index].owner,
             .source_slot = slots[index].source_slot};
         ok = qa_native_bind_slot(host->instance, &binding, error);
+        if (ok && host->kind == NATIVE_HOST_Q2_GAME)
+            qa_actor_index_put(&host->actor_slots, record->id, binding.slot);
     }
     if (ok && table.capacity) {
         bool *values = calloc(table.capacity, sizeof(*values));

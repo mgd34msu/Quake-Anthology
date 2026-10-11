@@ -135,9 +135,8 @@ bool application_qc_output_field_owned(const struct application_qc_state *engine
     qa_actor_id actor, const application_qc_bound_field *field)
 {
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
-    bool admitted = false;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
-        if (engine->clients[slot].spawned && qa_actor_id_equal(engine->clients[slot].actor, actor)) { admitted = true; break; }
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    bool admitted = client && client->spawned;
     if (!profile || !admitted) return false;
     for (size_t i = 0; i < profile->client_output_count; ++i) {
         const application_qc_client_output *output = profile->client_outputs + i;
@@ -198,16 +197,15 @@ bool application_qc_control_outputs(const qa_application *application, qa_actor_
         if (claimed & engine->output_channels)
             return application_fail(error, QA_ERROR_FORMAT, "QC output read found competing channel owners");
         claimed |= engine->output_channels;
-        for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-            const application_qc_client *client = engine->clients + slot;
-            if (!client->output_published || !qa_actor_id_equal(client->actor, actor)) continue;
+        const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+        if (client && client->output_published) {
+            uint32_t slot = (uint32_t)(client - engine->clients);
             if (!client_binding(engine, slot, true, NULL, error)) return false;
             const application_client_outputs *values = &client->outputs;
             if (values->has_view_offset) { out->has_view_offset = true; out->view_offset = values->view_offset; }
             if (values->has_mode) { out->has_mode = true; out->mode = values->mode; }
             if (values->has_stance) { out->has_stance = true; out->crouched = values->crouched; }
             if (values->has_body_bounds) { out->has_body_bounds = true; out->body_bounds = values->body_bounds; }
-            break;
         }
     }
     return true;

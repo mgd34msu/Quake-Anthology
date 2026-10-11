@@ -305,9 +305,8 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         int32_t reference; qa_actor_id actor; const char *text;
         if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_reference_actor(vm, reference, &actor, error) ||
             !qa_qc_arg_string(vm, 1, &text, error)) return false;
-        bool connected = false;
-        for (uint32_t i = 1; i <= engine->max_clients; ++i)
-            if (engine->clients[i].connected && qa_actor_id_equal(actor, engine->clients[i].actor)) connected = true;
+        const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+        bool connected = client && client->connected;
         if (!connected) return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC stuffcmd target is not a connected client");
         qa_nq_message message = {.op = QA_NQ_STUFFTEXT, .data.text = text};
         qa_qw_service service = {.kind = QA_QW_STUFFTEXT, .data.text.value = text};
@@ -339,10 +338,8 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
     case QA_QC_BUILTIN_SETSPAWNPARMS: {
         int32_t reference; qa_actor_id actor;
         if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_reference_actor(vm, reference, &actor, error)) return false;
-        application_qc_client *client = NULL;
-        for (uint32_t i = 1; i <= engine->max_clients; ++i)
-            if (engine->clients[i].connected && qa_actor_id_equal(actor, engine->clients[i].actor)) { client = &engine->clients[i]; break; }
-        if (client == NULL) return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC spawn parms require a client");
+        application_qc_client *client = application_qc_client_for_actor(engine, actor);
+        if (client == NULL || !client->connected) return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC spawn parms require a client");
         for (unsigned i = 0; i < 16; ++i) {
             const qa_qc_definition *def = engine->global_bindings->spawn_parameters[i];
             if (def == NULL || def->type != QA_QC_FLOAT || !qa_qc_set_global_float(vm, def->offset, client->parms[i], error)) return false;

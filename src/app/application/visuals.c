@@ -191,11 +191,9 @@ bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id r
             const struct application_qc_state *engine = source->state.qc.engine;
             /* Guest QW has no retained tracked-actor observation. Preserve
              * its observer's models until that Source provenance exists. */
-            if (engine && engine->profile == QA_QC_QUAKEWORLD)
-                for (uint32_t i = 1; i <= engine->max_clients; ++i)
-                    if (qa_actor_id_equal(engine->clients[i].actor, recipient) && engine->clients[i].spectator) {
-                        v->q1 = false; break;
-                    }
+            const application_qc_client *client = application_qc_client_for_actor(engine, recipient);
+            if (engine && engine->profile == QA_QC_QUAKEWORLD && client && client->spectator)
+                v->q1 = false;
         }
     } else if (source->product->family == QA_GAME_Q2) {
         bool found;

@@ -285,9 +285,8 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
     if (!before && (!scope || !qa_actor_id_equal(scope->actor, actor) || scope->movement_slice != movement_slice))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC input completion has no matching begun scope");
     if (!before && !qa_actors_get(qa_session_actors(engine->services.session), actor)) return close_scope(engine, true, error);
-    bool admitted = false;
-    for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        admitted |= engine->clients[i].spawned && qa_actor_id_equal(engine->clients[i].actor, actor);
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    bool admitted = client && client->spawned;
     if (!admitted) {
         if (!before && !close_through(engine, scope, true, error)) return false;
         return application_fail(error, QA_ERROR_ARGUMENT, "QC input requires a qualified admitted client");
@@ -313,13 +312,9 @@ bool application_qc_input(application_provider *provider, qa_actor_id actor, qa_
     }
     saved_input *saved = scope->saved;
     qa_qc_instance *vm = provider->state.qc.instance; bool ok = true;
-    bool received = false;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-        const application_qc_client *client = &engine->clients[slot];
-        received |= engine->profile == QA_QC_RERELEASE && client->connected && client->spawned &&
-            qa_actor_id_equal(client->actor, actor) && client->receipt_seen &&
-            command->sequence <= client->receipt_sequence;
-    }
+    client = application_qc_client_for_actor(engine, actor);
+    bool received = engine->profile == QA_QC_RERELEASE && client && client->connected &&
+        client->spawned && client->receipt_seen && command->sequence <= client->receipt_sequence;
     const qa_qc_definition *source_impulse = received ?
         provider->state.qc.engine->field_bindings->impulse : NULL;
     for (size_t i = 0; before && ok && i < profile->field_count; ++i) {

@@ -66,12 +66,8 @@ bool application_network_q1_qc_client(struct application_qc_state *engine,
 {
     if (!engine || !engine->clients || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 physical client owner");
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
-        if (!engine->clients[i].connected || !qa_actor_id_equal(engine->clients[i].actor, actor)) continue;
-        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Q1 actor occupies multiple physical client rows");
-        slot = i;
-    }
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    uint32_t slot = client && client->connected ? (uint32_t)(client - engine->clients) : 0;
     qa_qc_slot_binding binding;
     if (!slot || !binding_current(engine, slot, actor, &binding, error) ||
         (binding.kind != QA_QC_SLOT_BORROWED &&

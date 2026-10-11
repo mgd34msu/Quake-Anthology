@@ -261,11 +261,8 @@ bool qa_application_network_qw_signon_at(qa_application *app, size_t index,
 static bool qw_client_binding(struct application_qc_state *engine, qa_actor_id actor,
     uint32_t *out, qa_error *error)
 {
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        if (engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor, actor)) {
-            slot = i; break;
-        }
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    uint32_t slot = client && client->connected ? (uint32_t)(client - engine->clients) : 0;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), actor);
     qa_qc_slot_binding binding;
     if (!slot || !record || !qa_qc_slot(engine->provider->state.qc.instance, slot, &binding) ||

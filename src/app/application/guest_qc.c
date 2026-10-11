@@ -568,12 +568,15 @@ bool application_qc_control_reserved(application_provider *provider, qa_actor_id
     *reserved = false;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), actor);
     if (!record) return true;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    uint32_t slot = client ? (uint32_t)(client - engine->clients) :
+        record->owner == provider->owner && record->has_source ? record->source_slot : 0;
+    if (slot && slot <= engine->max_clients) {
         qa_qc_slot_binding binding;
         if (!qa_qc_slot(provider->state.qc.instance, slot, &binding) ||
             (binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED) ||
-            !qa_actor_id_equal(binding.actor, actor)) continue;
-        const application_qc_client *client = &engine->clients[slot];
+            !qa_actor_id_equal(binding.actor, actor)) return true;
+        client = &engine->clients[slot];
         if (binding.owner != record->owner || binding.source_slot != (record->has_source ? record->source_slot : 0) ||
             (binding.kind == QA_QC_SLOT_BORROWED ?
              !client->connected || !qa_actor_id_equal(client->actor, actor) :
@@ -588,9 +591,8 @@ bool application_qc_control_reserved(application_provider *provider, qa_actor_id
 static bool control_client(struct application_qc_state *engine, qa_actor_id actor,
                              int32_t *reference, bool *spectator, qa_error *error)
 {
-    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
-        application_qc_client *client = &engine->clients[i];
-        if (!client->spawned || !qa_actor_id_equal(client->actor, actor)) continue;
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->spawned) {
         *spectator = client->spectator;
         return application_qc_reference(engine, actor, reference, error);
     }
@@ -1124,10 +1126,9 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
     if (session != engine->services.session || !qa_session_execution(session, actor, &execution) ||
         execution != engine->provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC actor execution owner differs");
-    if (engine->provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD)
-        for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
-            if (engine->clients[slot].connected && !engine->clients[slot].spawned &&
-                qa_actor_id_equal(engine->clients[slot].actor, actor)) return true;
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if ((engine->provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD) &&
+        client && client->connected && !client->spawned) return true;
     int32_t reference;
     if (!application_qc_reference(engine, actor, &reference, error)) return false;
     const qa_qc_definition *retouch = engine->global_bindings->force_retouch;
@@ -1138,12 +1139,8 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
             !qa_physics_touch_triggers(engine->services.physics, actor, error))) return false;
         if (qa_actors_get(qa_session_actors(session), actor) == NULL) return true;
     }
-    bool player = false, spectator = false;
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
-        if (engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) {
-            player = true;
-            spectator = engine->clients[slot].spectator; break;
-        }
+    client = application_qc_client_for_actor(engine, actor);
+    bool player = client && client->connected, spectator = player && client->spectator;
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
     if (!profile && engine->profile == QA_QC_QUAKEWORLD) {
         bool reserved;
@@ -1344,6 +1341,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     engine->actors = calloc(engine->actor_capacity, sizeof(*engine->actors));
     if (!engine->clients || !engine->actors)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating QC physical client and actor rows");
+    if (!qa_actor_index_create(&engine->client_index, qa_session_actors(engine->services.session), error)) return false;
     if (!application_qc_messages_create(engine, error)) return false;
     int32_t difficulty = (int32_t)(fmaxf(0, fminf(3, skill->number)) + 0.5);
     static const qa_qc_builtin imports[] = {
@@ -1591,6 +1589,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     application_qc_items_destroy(engine);
     free((void *)engine->model_fields.entries);
     application_qc_precache_dispose(engine);
+    qa_actor_index_destroy(&engine->client_index);
     free(engine->resources); free(engine->clients); free(engine->actors); free(engine);
     provider->state.qc.engine = NULL;
     return true;
@@ -1609,18 +1608,19 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
     qa_qc_game_actor_released(provider->state.qc.game, record);
     if (record.id.slot < engine->actor_capacity && qa_actor_id_equal(engine->actors[record.id.slot].actor, record.id))
         engine->actors[record.id.slot] = (application_qc_actor){0};
-    for (uint32_t i = 1; i <= engine->max_clients; ++i)
-        if (qa_actor_id_equal(engine->clients[i].actor, record.id)) {
-            application_qc_messages_release(engine, record.id);
-            engine->clients[i].actor = (qa_actor_id){0}; engine->clients[i].connected = false; engine->clients[i].spawned = false;
-            engine->clients[i].prepared = false;
-            engine->clients[i].output_published = false;
-            engine->clients[i].outputs = (application_client_outputs){0};
-            engine->clients[i].receipt_seen = false;
-            engine->clients[i].receipt_sequence = engine->clients[i].receipt_ordinal = 0;
-            engine->clients[i].pending_weapon=0;
-            engine->clients[i].pending_weapon_following=false;
-        }
+    application_qc_client *client = application_qc_client_for_actor(engine, record.id);
+    if (client) {
+        application_qc_messages_release(engine, record.id);
+        qa_actor_index_remove(&engine->client_index, record.id);
+        client->actor = (qa_actor_id){0}; client->connected = false; client->spawned = false;
+        client->prepared = false;
+        client->output_published = false;
+        client->outputs = (application_client_outputs){0};
+        client->receipt_seen = false;
+        client->receipt_sequence = client->receipt_ordinal = 0;
+        client->pending_weapon=0;
+        client->pending_weapon_following=false;
+    }
     return true;
 }
 bool application_qc_physics_read(application_provider *provider, qa_actor_id actor, qa_physics_properties *out)

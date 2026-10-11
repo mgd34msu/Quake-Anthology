@@ -266,14 +266,14 @@ static bool client(const application_qc_protection *owner, qa_actor_id actor, ui
 {
     if (!held(owner, error) || !qa_actors_get(qa_session_actors(owner->engine->services.session), actor))
         return fail(error, QA_ERROR_ARGUMENT, "QC protection requires its live full actor");
-    for (uint32_t i = 1; i <= owner->engine->max_clients; ++i)
-        if (owner->engine->clients[i].connected && qa_actor_id_equal(owner->engine->clients[i].actor, actor)) {
-            int32_t reference; qa_actor_id actual;
-            if (!qa_qc_actor_reference(owner->engine->provider->state.qc.instance, actor, false, &reference, error) ||
-                !qa_qc_reference_actor(owner->engine->provider->state.qc.instance, reference, &actual, error) ||
-                !qa_actor_id_equal(actual, actor)) return false;
-            *out = i; return true;
-        }
+    const application_qc_client *row = application_qc_client_for_actor(owner->engine, actor);
+    if (row && row->connected) {
+        int32_t reference; qa_actor_id actual;
+        if (!qa_qc_actor_reference(owner->engine->provider->state.qc.instance, actor, false, &reference, error) ||
+            !qa_qc_reference_actor(owner->engine->provider->state.qc.instance, reference, &actual, error) ||
+            !qa_actor_id_equal(actual, actor)) return false;
+        *out = (uint32_t)(row - owner->engine->clients); return true;
+    }
     return fail(error, QA_ERROR_NOT_FOUND, "QC protection actor has no actual connected source client");
 }
 static protection_channel *find(application_qc_protection *owner, qa_actor_id actor, size_t definition)

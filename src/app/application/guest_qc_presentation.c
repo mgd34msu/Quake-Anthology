@@ -147,14 +147,13 @@ bool qa_application_qc_message_client(qa_application *app,const qa_application_q
     qa_actor_id actor,uint32_t *out,qa_error *error)
 {
     if(!out || !qa_application_qc_message_source_current(app,view)) return false;
-    application_provider *p=owner(app,view->provider); uint32_t found=0;
-    for(uint32_t slot=1;slot<=view->client_slots;++slot) {
-        const application_qc_client *client=&p->state.qc.engine->clients[slot];
-        if(!client->connected || !qa_actor_id_equal(client->actor,actor)) continue;
+    application_provider *p=owner(app,view->provider);
+    const application_qc_client *client=application_qc_client_for_actor(p->state.qc.engine,actor);
+    uint32_t found=client && client->connected ? (uint32_t)(client-p->state.qc.engine->clients) : 0;
+    if(found) {
         qa_actor_id bound;
-        if(found || !qa_application_qc_message_entity(app,view,slot,&bound,error) || !qa_actor_id_equal(bound,actor))
+        if(!qa_application_qc_message_entity(app,view,found,&bound,error) || !qa_actor_id_equal(bound,actor))
             return application_fail(error,QA_ERROR_FORMAT,"QC message client has an ambiguous physical source binding");
-        found=slot;
     }
     if(!found) return application_fail(error,QA_ERROR_ARGUMENT,"QC message recipient is not a connected source client");
     *out=found; return true;
@@ -296,10 +295,8 @@ bool qa_application_qc_client_presentation_read(qa_application *app,qa_actor_own
     if(!source_ready(p) || !p->state.qc.engine->clients)
         return application_fail(error,QA_ERROR_ARGUMENT,"Declared QC client presentation Source is not returned");
     const struct application_qc_state *engine=p->state.qc.engine;
-    bool admitted=false;
-    for(uint32_t slot=1;slot<=engine->max_clients;++slot)
-        admitted|=engine->clients[slot].connected && engine->clients[slot].spawned &&
-            qa_actor_id_equal(engine->clients[slot].actor,actor);
+    const application_qc_client *client=application_qc_client_for_actor(engine,actor);
+    bool admitted=client && client->connected && client->spawned;
     if(!admitted) return true;
     qa_application_qc_client_presentation value={.recipient=actor,
         .vitals=profile->presentation.vitals,.view=profile->presentation.view};

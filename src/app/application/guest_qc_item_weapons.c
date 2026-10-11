@@ -448,12 +448,12 @@ static bool source_selected(struct application_qc_state *engine,qa_qc_instance *
         return application_fail(e,QA_ERROR_ARGUMENT,"QC weapon stage lost its actual Source VM self");
     if(!qa_qc_global_int(vm,self->offset,&reference,e) || !qa_qc_reference_actor(vm,reference,&actor,e))return false;
     *out=true;
-    for(uint32_t i=1;engine->clients && i<=engine->max_clients;++i)if(engine->clients[i].connected && qa_actor_id_equal(engine->clients[i].actor,actor)) {
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    if (client && client->connected) {
         qa_application *app=engine->provider->application;
         *out=application_provider_for(app,actor,QA_ROLE_ARSENAL,"")==engine->provider ?
             qa_equipment_primary_selected(app->equipment,actor) :
             qa_equipment_weapon_selected(app->equipment,actor,engine->provider->owner);
-        break;
     }
     return true;
 }
