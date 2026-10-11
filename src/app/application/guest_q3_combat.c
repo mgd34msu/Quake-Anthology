@@ -362,17 +362,8 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
     owner->role = role; owner->profile = profile; *out = owner;
     const qa_actor_registry *registry = qa_session_actors(role->engine->provider->application->session);
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(profile);
-    size_t instructions_count;const qa_qvm_instruction *instructions=qa_qvm_image_instructions(role->image,&instructions_count);
-    (void)instructions_count;
-    size_t frame_bytes=(size_t)instructions[d->callbacks.damage].operand;
-    if(frame_bytes<sizeof(uint32_t))frame_bytes=sizeof(uint32_t);
-    size_t argument_bytes=2*sizeof(uint32_t)+d->damage_call.count*sizeof(uint32_t);
-    if(frame_bytes>argument_bytes)frame_bytes=argument_bytes;
-    /* Source damage-scope storage is sized from the qualified QVM frames.
-     * Actor payloads are separate: host callbacks may retain them outside a VM frame. */
-    size_t entered_capacity=qa_qvm_memory_size(role->vm)/frame_bytes;
     if (!qa_actor_index_create(&owner->actor_index, registry, error)) return false;
-    if (!application_q3_damage_scopes_create(role, profile, entered_capacity, &owner->scopes, error)) return false;
+    if (!application_q3_damage_scopes_create(role, profile, &owner->scopes, error)) return false;
     uint32_t entries[] = {d->callbacks.damage, d->callbacks.free, d->armor.check};
     qa_qvm_function_hook hooks[] = {damage, freed, armor_stage};
     for (size_t i = 0; i < 3; ++i) {
