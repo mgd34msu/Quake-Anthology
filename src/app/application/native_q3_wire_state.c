@@ -24,7 +24,6 @@
 /* CL_GetUserCmd uses the source CMD_BACKUP history, independently of the
  * smaller maximum usercmd bundle carried by a network message. */
 #define NATIVE_Q3_COMMAND_BACKUP 64u
-#define NATIVE_Q3_BIG_INFO_CHARS 8192u
 
 typedef struct native_q3_wire_snapshot {
     qa_q3_snapshot value;
@@ -52,8 +51,7 @@ typedef struct native_q3_wire_client {
     int32_t bot_entities[256];
     uint32_t bot_entity_count;
     native_q3_wire_snapshot snapshots[QA_Q3_PACKET_BACKUP];
-    char big_configstring[NATIVE_Q3_BIG_INFO_CHARS];
-    size_t big_configstring_length;
+    qa_q3_big_configstring big_configstring;
     bool admitted, begun, bot, command_received, has_snapshot;
     bool drop_pending, drop_delivered;
     bool drop_reason_static;
@@ -194,22 +192,7 @@ static char *copy_text(const char *text, qa_error *error)
     return copy;
 }
 
-static int32_t source_integer(const char *text)
-{
-    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t value = 0;
-    uint32_t limit = negative ? UINT32_C(2147483648) : UINT32_C(2147483647);
-    while (*text >= '0' && *text <= '9') {
-        uint32_t digit = (uint32_t)(*text++ - '0');
-        value = value > (limit - digit) / 10 ? limit : value * 10 + digit;
-    }
-    uint32_t bits = negative ? 0u - value : value;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
+
 
 static void bot_view_clear(native_q3_wire_client *client)
 {
@@ -226,8 +209,7 @@ static void client_world_clear(native_q3_wire_client *client)
     memset(client->source_actors, 0, sizeof(client->source_actors));
     free(client->gamestate);
     client->gamestate = NULL;
-    client->big_configstring[0] = 0;
-    client->big_configstring_length = 0;
+    qa_q3_big_configstring_clear(&client->big_configstring);
     client->initial_server_command = 0;
     memset(client->config_commands, 0, sizeof(client->config_commands));
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i) {
@@ -1230,9 +1212,10 @@ static bool leased_snapshot(void *context, int32_t number, const qa_q3_snapshot 
     return true;
 }
 
-static bool leased_effect(application_native_q3_wire_client_lease *lease,
+static bool leased_effect(void *context,
     qa_application_q3_client_effect effect, const char *text, qa_error *error)
 {
+    application_native_q3_wire_client_lease *lease=context;
     native_q3_wire_client *client = leased_client(lease, error);
     if (!client) return false;
     struct application_native_q3_wire *wire = lease->wire;
@@ -1243,24 +1226,12 @@ static bool leased_effect(application_native_q3_wire_client_lease *lease,
     qa_actor_id actor = client->actor;
     uint64_t revision = wire->client_revision[lease->slot];
     qa_q3_game *game = wire->provider->state.q3;
-    char *retained = copy_text(text, error);
-    if (!retained) return false;
-    text = retained;
-    if (effect == QA_APPLICATION_Q3_SYSTEM_INFO) {
-        char server[64];
-        if (!qa_q3_info_value(text, "sv_serverid", server, sizeof(server), error)) {
-            free(retained);
-            return false;
-        }
-        char *end;
-        long long value = strtoll(server, &end, 10);
-        client->server_id = end == server ? 0 : value > INT32_MAX ? INT32_MAX :
-                            value < INT32_MIN ? INT32_MIN : (int32_t)value;
-    } else if (effect == QA_APPLICATION_Q3_MAP_RESTART) {
-        /* Prediction history clears; the real accepted engine command remains
-         * available to ClientBegin and the following source ClientThink. */
-        memset(client->commands, 0, sizeof(client->commands));
-    }
+    char retained[QA_Q3_BIG_INFO_CHARS];
+    size_t size=strlen(text);
+    if(size>=sizeof(retained)) return application_fail(error,QA_ERROR_FORMAT,"Q3 client effect exceeds text storage");
+    memcpy(retained,text,size+1);text=retained;
+    if(!application_q3_client_effect_state_update(effect,text,&client->server_id,client->commands,
+        NATIVE_Q3_COMMAND_BACKUP,error)) return false;
     ++lease->calls;
     ++wire->calls;
     bool ok = app->q3_client_effect(app->guest_context, app, lease->receiver,
@@ -1272,7 +1243,6 @@ static bool leased_effect(application_native_q3_wire_client_lease *lease,
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client effect replaced or retired its source admission");
     --wire->calls;
     --lease->calls;
-    free(retained);
     return ok;
 }
 
@@ -1282,67 +1252,22 @@ bool application_native_q3_wire_client_effect(application_native_q3_wire_client_
     return leased_effect(lease, effect, text, error);
 }
 
-static bool leased_server_command(void *context, int32_t number, bool *present,
-    qa_error *error)
+static bool leased_server_command(void *context,int32_t number,bool *present,qa_error *error)
 {
-    application_native_q3_wire_client_lease *lease = context;
-    native_q3_wire_client *client = leased_client(lease, error);
-    if (!client) return false;
-    if (!present || number > client->reliable.sequence)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 server command is absent or in the future");
-    *present = false;
-    if (number <= 0) return true;
-    if ((int64_t)client->reliable.sequence - number >= QA_Q3_RELIABLE)
-        return application_fail(error, QA_ERROR_FORMAT, "Native Q3 server command has left its retained history");
-    const char *text = qa_q3_reliable_lookup(&client->reliable, number);
-    if (!text)
-        return application_fail(error, QA_ERROR_FORMAT, "Native Q3 server command predates its source gamestate");
-    if (!application_q3_command_parse(&lease->command_storage, text, lease->arguments, error)) return false;
-    qa_q3_tokens *tokens = &lease->command_storage.tokens;
-    const char *name = qa_q3_token(tokens, 0);
-    if (!strcmp(name, "disconnect")) {
-        const char *reason = tokens->count >= 2 ? qa_q3_token(tokens, 1) : "Server disconnected";
-        return leased_effect(lease, QA_APPLICATION_Q3_DISCONNECT, reason, error);
-    }
-    if (!qa_q3_big_configstring_feed(client->big_configstring, sizeof(client->big_configstring),
-        &client->big_configstring_length, tokens, present, error)) return false;
-    if (*present && !strcmp(name, "bcs2")) {
-        text = client->big_configstring;
-        if (!application_q3_command_parse(&lease->command_storage, text, lease->arguments, error)) return false;
-    }
-    qa_command_tokens *args = lease->arguments;
-    if (*present && args->count && !strcmp(args->values[0], "cs")) {
-        if (!client->gamestate)
-            return application_fail(error, QA_ERROR_FORMAT, "Native Q3 configstring command requires its client gamestate");
-        int32_t index = source_integer(args->count > 1 ? args->values[1] : "");
-        if (index < 0 || index >= QA_Q3_CONFIGSTRINGS)
-            return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q3 client configstring index");
-        const char *value = args->count > 1 ? args->args_text + strlen(args->values[1]) +
-            (args->count > 2 ? 1u : 0u) : "";
-        bool changed = strcmp(qa_q3_configstring(client->gamestate, (unsigned)index), value) != 0;
-        if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index,
-                                               value, error)) return false;
-        client->config_commands[index] = number;
-        if (changed && index == 1) {
-            char command_text[NATIVE_Q3_BIG_INFO_CHARS];
-            memcpy(command_text, text, strlen(text) + 1);
-            if (!leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
-                qa_q3_configstring(client->gamestate, 1), error) ||
-                !application_q3_command_parse(&lease->command_storage, command_text,
-                    lease->arguments, error)) return false;
-        }
-    }
-    if (*present && args->count && !strcmp(args->values[0], "map_restart") &&
-        !leased_effect(lease, QA_APPLICATION_Q3_MAP_RESTART, text, error)) return false;
-    if (*present && args->count && !strcmp(args->values[0], "clientLevelShot") &&
-        !leased_effect(lease, QA_APPLICATION_Q3_LEVEL_SHOT, text, error)) return false;
-    if (client->gamestate && number > client->gamestate->command_sequence)
-        client->gamestate->command_sequence = number;
-    bool clamped;
-    int32_t acknowledged = number > client->reliable.acknowledged ? number : client->reliable.acknowledged;
-    if (!qa_q3_reliable_ack(&client->reliable, QA_Q3_SERVER, acknowledged, &clamped, error)) return false;
-    if (number > client->consumed_server_command) client->consumed_server_command = number;
-    return true;
+    application_native_q3_wire_client_lease *lease=context;
+    native_q3_wire_client *client=leased_client(lease,error);
+    if(!client) return false;
+    *present=false;
+    qa_q3_server_command_result result;
+    if(!qa_q3_server_command_apply(&client->reliable,client->gamestate,&client->big_configstring,number,
+        qa_q3_reliable_lookup(&client->reliable,number),&lease->command_storage.tokens,&result,error)) return false;
+    if(number<=0) return true;
+    *present=result.kind!=QA_Q3_SERVER_FRAGMENT && result.kind!=QA_Q3_SERVER_DISCONNECT;
+    if(result.config_index!=UINT32_MAX) client->config_commands[result.config_index]=number;
+    if(!application_q3_server_command_deliver(&lease->command_storage,lease->arguments,&result,
+        lease,leased_effect,error)) return false;
+    if(result.kind==QA_Q3_SERVER_DISCONNECT) return true;
+    return qa_q3_server_command_ack(&client->reliable,client->gamestate,number,&client->consumed_server_command,error);
 }
 
 static int32_t leased_current_command(void *context)
@@ -2015,21 +1940,21 @@ static bool snapshot_fields(qa_source_save_io *io, native_q3_wire_snapshot *slot
 
 static bool continued_string_fields(qa_source_save_io *io, native_q3_wire_client *client)
 {
-    bool present = client->big_configstring_length != 0;
-    if (!qa_source_save_count(io, &client->big_configstring_length, NATIVE_Q3_BIG_INFO_CHARS - 1) ||
+    bool present = client->big_configstring.length != 0;
+    if (!qa_source_save_count(io, &client->big_configstring.length, QA_Q3_BIG_INFO_CHARS - 1) ||
         !qa_source_save_bool(io, &present)) return false;
-    if (!present && client->big_configstring_length)
+    if (!present && client->big_configstring.length)
         return fields_failure(io, "Native Q3 saved configstring continuation has no source storage");
     if (!present) return true;
     if (io->direction == QA_SOURCE_SAVE_READ) {
         if (io->offset > io->input.size ||
-            client->big_configstring_length + 1 > io->input.size - io->offset)
+            client->big_configstring.length + 1 > io->input.size - io->offset)
             return fields_failure(io, "Native Q3 saved configstring continuation is truncated");
 
     }
-    if (!qa_source_save_bytes(io, client->big_configstring, client->big_configstring_length + 1)) return false;
-    if (client->big_configstring[client->big_configstring_length] ||
-        memchr(client->big_configstring, 0, client->big_configstring_length))
+    if (!qa_source_save_bytes(io, client->big_configstring.text, client->big_configstring.length + 1)) return false;
+    if (client->big_configstring.text[client->big_configstring.length] ||
+        memchr(client->big_configstring.text, 0, client->big_configstring.length))
         return fields_failure(io, "Native Q3 saved configstring continuation is invalid");
     return true;
 }
@@ -2161,7 +2086,7 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         client->consumed_server_command < 0 ||
         client->consumed_server_command > client->reliable.sequence ||
         (!client->admitted && (client->gamestate || client->has_snapshot ||
-         client->snapshot_sequence || client->big_configstring_length ||
+         client->snapshot_sequence || client->big_configstring.length ||
          client->drop_pending)) ||
         (client->has_snapshot && (!client->gamestate || !client->begun ||
          !client->snapshots[(uint32_t)client->snapshot_sequence &

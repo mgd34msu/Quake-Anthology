@@ -217,3 +217,20 @@ bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error) {
     *out = (qa_buffer){data, (size_t)written};
     return true;
 }
+
+bool qa_text_join_words(const char *const *words,size_t count,char *out,size_t capacity,qa_error *error)
+{
+    size_t used=0;
+    for(size_t i=0;i<count;++i) {
+        size_t size=strlen(words[i]);
+        if(used>=capacity || size+(i?1u:0u)>=capacity-used) {
+            qa_error_set(error,QA_ERROR_FORMAT,0,"Joined words exceed text storage");
+            return false;
+        }
+        if(i) out[used++]=' ';
+        memcpy(out+used,words[i],size);used+=size;
+    }
+    if(!capacity) return false;
+    out[used]=0;
+    return true;
+}

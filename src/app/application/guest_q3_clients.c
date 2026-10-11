@@ -404,78 +404,28 @@ static bool snapshot(void *context, int32_t number, const qa_q3_snapshot **out, 
     return true;
 }
 
-static int32_t source_integer(const char *text)
-{
-    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
-    bool negative = *text == '-';
-    if (*text == '-' || *text == '+') ++text;
-    uint32_t value = 0, limit = negative ? UINT32_C(2147483648) : UINT32_C(2147483647);
-    while (*text >= '0' && *text <= '9') {
-        unsigned digit = (unsigned)(*text++ - '0');
-        value = value > (limit - digit) / 10 ? limit : value * 10 + digit;
-    }
-    uint32_t bits = negative ? 0u - value : value;
-    int32_t result;
-    memcpy(&result, &bits, sizeof(result));
-    return result;
-}
 
-static bool server_command(void *context, int32_t number, bool *present, qa_error *error)
+
+static bool client_effect(void *context,qa_application_q3_client_effect effect,const char *text,qa_error *error)
+{ return q3g_client_effect(context,effect,text,error); }
+
+static bool server_command(void *context,int32_t number,bool *present,qa_error *error)
 {
-    q3g_role *role = context; q3g_client *client = role_client(role, error); if (!client) return false;
-    *present = false;
-    if (number > client->reliable.sequence)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server command is in the future");
-    if (number <= 0) return true;
-    if ((int64_t)client->reliable.sequence - number >= QA_Q3_RELIABLE)
-        return application_fail(error, QA_ERROR_FORMAT, "Q3 server command has left the retained history");
-    const char *text = qa_q3_reliable_lookup(&client->reliable, number);
-    if (!application_q3_command_parse(&role->command_storage, text, &role->arguments, error)) return false;
-    qa_q3_tokens *tokens = &role->command_storage.tokens;
-    const char *name = qa_q3_token(tokens, 0);
-    if (!strcmp(name, "disconnect")) {
-        const char *reason = tokens->count >= 2 ? qa_q3_token(tokens, 1) : "Server disconnected";
-        return q3g_client_effect(role, QA_APPLICATION_Q3_DISCONNECT, reason, error);
-    }
-    if (!qa_q3_big_configstring_feed(client->big_configstring, sizeof(client->big_configstring),
-        &client->big_configstring_length, tokens, present, error)) return false;
-    if (*present && !strcmp(name, "bcs2")) {
-        text = client->big_configstring;
-        if (!application_q3_command_parse(&role->command_storage, text, &role->arguments, error)) return false;
-    }
-    if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "cs")) {
-        qa_command_tokens *args = &role->arguments;
-        if (!client->gamestate)
-            return application_fail(error, QA_ERROR_FORMAT, "Q3 configstring command requires admitted client gamestate");
-        int32_t index = source_integer(args->count > 1 ? args->values[1] : "");
-        if (index < 0 || index >= QA_Q3_CONFIGSTRINGS)
-            return application_fail(error, QA_ERROR_FORMAT, "invalid Q3 client configstring command index");
-        const char *value = args->count > 1 ? args->args_text + strlen(args->values[1]) +
-            (args->count > 2 ? 1u : 0u) : "";
-        bool changed = strcmp(qa_q3_configstring(client->gamestate, (unsigned)index), value) != 0;
-        if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index, value, error)) return false;
-        if (changed && index == 1) client->pending_system_info = true;
-        if (index == 1 && client->pending_system_info) {
-            char command_text[Q3G_BIG_INFO_CHARS];
-            memcpy(command_text, text, strlen(text) + 1);
-            if (!q3g_client_effect(role, QA_APPLICATION_Q3_SYSTEM_INFO,
-                    qa_q3_configstring(client->gamestate, 1), error)) return false;
-            client->pending_system_info = false;
-            if (!application_q3_command_parse(&role->command_storage, command_text,
-                &role->arguments, error)) return false;
-        }
-    }
-    if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "map_restart") &&
-        !q3g_client_effect(role, QA_APPLICATION_Q3_MAP_RESTART, text, error)) return false;
-    if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "clientLevelShot") &&
-        !q3g_client_effect(role, QA_APPLICATION_Q3_LEVEL_SHOT, text, error)) return false;
-    if (client->gamestate && number > client->gamestate->command_sequence)
-        client->gamestate->command_sequence = number;
-    bool clamped;
-    int32_t acknowledged = number > client->reliable.acknowledged ? number : client->reliable.acknowledged;
-    if (!qa_q3_reliable_ack(&client->reliable, QA_Q3_SERVER, acknowledged, &clamped, error)) return false;
-    if (number > client->consumed_server_command) client->consumed_server_command = number;
-    return true;
+    q3g_role *role=context;q3g_client *client=role_client(role,error);
+    if(!client) return false;
+    *present=false;
+    qa_q3_server_command_result result;
+    if(!qa_q3_server_command_apply(&client->reliable,client->gamestate,&client->big_configstring,number,
+        qa_q3_reliable_lookup(&client->reliable,number),&role->command_storage.tokens,&result,error)) return false;
+    if(number<=0) return true;
+    *present=result.kind!=QA_Q3_SERVER_FRAGMENT && result.kind!=QA_Q3_SERVER_DISCONNECT;
+    if(result.kind==QA_Q3_SERVER_SYSTEM_INFO) client->pending_system_info=true;
+    if(result.config_index==1 && client->pending_system_info) result.kind=QA_Q3_SERVER_SYSTEM_INFO;
+    if(!application_q3_server_command_deliver(&role->command_storage,&role->arguments,&result,
+        role,client_effect,error)) return false;
+    if(result.kind==QA_Q3_SERVER_SYSTEM_INFO) client->pending_system_info=false;
+    if(result.kind==QA_Q3_SERVER_DISCONNECT) return true;
+    return qa_q3_server_command_ack(&client->reliable,client->gamestate,number,&client->consumed_server_command,error);
 }
 static int32_t current_command(void *context)
 {

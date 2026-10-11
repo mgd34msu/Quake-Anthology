@@ -158,7 +158,7 @@ struct frontend_source_lease {
     size_t time_busy;
     qa_strings *names;
     const char *system_info;
-    char *disconnect_reason;
+    char disconnect_reason[QA_Q3_BIG_INFO_CHARS];
     const qa_q3_host *status_host;
     bool status_visible;
     bool disconnect_pending;
@@ -255,7 +255,7 @@ static bool lease_dispose(frontend_source_lease *lease)
     lease->equipment=NULL;
     if (!frontend_client_registry_release(&lease->registry,&error)) return false;
     *link=lease->next;
-    qa_strings_destroy(lease->names); free(lease->disconnect_reason); free(lease); return true;
+    qa_strings_destroy(lease->names); free(lease); return true;
 }
 static bool time_context_read(qa_frontend *f,qa_actor_owner owner,uint32_t seat,
     qa_application_q3_client_context *out,qa_error *error)
@@ -414,9 +414,11 @@ bool frontend_source_effect(void *context,qa_application *application,qa_actor_o
             qa_tools_capture_levelshot(frontend_tools_owner(f),&view.command_context,error);
         break;
     case QA_APPLICATION_Q3_DISCONNECT: {
-        size_t length=strlen(text); char *copy=length<SIZE_MAX?malloc(length+1):NULL;
-        if (!copy) { frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual local client disconnect"); break; }
-        memcpy(copy,text,length+1); free(lease->disconnect_reason); lease->disconnect_reason=copy;
+        size_t length=strlen(text);
+        if(length>=sizeof(lease->disconnect_reason)) {
+            frontend_fail(error,QA_ERROR_FORMAT,"Q3 disconnect reason exceeds text storage"); break;
+        }
+        memcpy(lease->disconnect_reason,text,length+1);
         lease->disconnect_pending=true; ok=true;
         break;
     }

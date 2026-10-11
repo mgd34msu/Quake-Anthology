@@ -35,8 +35,7 @@ struct qa_q3_client_peer {
     qa_q3_entity scratch[QA_Q3_ENTITY_NONE];
     qa_q3_usercmd commands[64];
     sent_packet packets[QA_Q3_PACKET_BACKUP];
-    char big_configstring[8192];
-    size_t big_configstring_length;
+    qa_q3_big_configstring big_configstring;
 };
 bool q3_client_command_admit(qa_q3_client_peer *,const qa_q3_command *,qa_error *);
 const char *q3_client_command_text(const qa_q3_client_peer *,size_t slot);

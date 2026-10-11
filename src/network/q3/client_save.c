@@ -90,7 +90,7 @@ bool qa_q3_client_peer_checkpoint(const qa_q3_client_peer *p, qa_buffer *out, qa
     for (size_t i = 0; ok && i < QA_Q3_PACKET_BACKUP; ++i)
         ok = qa_net_write_u64(&w, p->packets[i].command_number) &&
             qa_net_write_i32(&w, p->packets[i].server_time) && qa_net_write_i32(&w, p->packets[i].real_time);
-    ok = ok && q3_save_text(&w, p->big_configstring, sizeof(p->big_configstring)) &&
+    ok = ok && q3_save_text(&w, p->big_configstring.text, sizeof(p->big_configstring.text)) &&
         qa_net_write_u16(&w, p->receive_size);
     if (ok && p->receive_size)
         ok = qa_net_write_u8(&w, (uint8_t)p->receive_cursor.phase) &&
@@ -156,8 +156,8 @@ bool qa_q3_client_peer_restore(qa_bytes bytes, qa_q3_identity identity,
         p->packets[i].command_number = qa_net_read_u64(&r);
         p->packets[i].server_time = qa_net_read_i32(&r); p->packets[i].real_time = qa_net_read_i32(&r);
     }
-    if (!qa_net_read_string(&r, p->big_configstring, sizeof(p->big_configstring))) goto failure;
-    p->big_configstring_length = strlen(p->big_configstring);
+    if (!qa_net_read_string(&r, p->big_configstring.text, sizeof(p->big_configstring.text))) goto failure;
+    p->big_configstring.length = strlen(p->big_configstring.text);
     p->receive_size = qa_net_read_u16(&r);
     if (p->receive_size > sizeof(p->receive_packet)) {
         qa_net_reader_fail(&r, "Saved Q3 receive packet exceeds its actual native buffer"); goto failure;

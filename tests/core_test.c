@@ -2312,8 +2312,7 @@ static void test_q3_reliable_event_references(void)
     CHECK(qa_q3_reliable_ack(histories,QA_Q3_SERVER,3,&clamped,&error));
     CHECK(!clamped && histories[0].event_cursor==id+1);
     qa_q3_reliable_clear(histories);
-    char assembled[8192] = {0};
-    size_t assembled_size = 0;
+    qa_q3_big_configstring assembled = {0};
     for(int32_t sequence=1;sequence<=3;++sequence) {
         qa_q3_tokens tokens;
         CHECK(qa_q3_tokenize(qa_q3_reliable_lookup(histories+1,sequence),&tokens,&error));
@@ -2326,11 +2325,11 @@ static void test_q3_reliable_event_references(void)
         CHECK(!memcmp(qa_q3_token(&tokens,2),text+offset,count));
         CHECK(histories[1].slots[sequence].text==text && !histories[1].storage);
         bool complete;
-        CHECK(qa_q3_big_configstring_feed(assembled, sizeof(assembled), &assembled_size,
+        CHECK(qa_q3_big_configstring_feed(&assembled,
             &tokens, &complete, &error));
         CHECK(complete == (sequence == 3));
         if (complete) {
-            CHECK(qa_q3_tokenize(assembled, &tokens, &error));
+            CHECK(qa_q3_tokenize(assembled.text, &tokens, &error));
             CHECK(tokens.count == 3 && !strcmp(qa_q3_token(&tokens, 0), "cs"));
             CHECK(!strcmp(qa_q3_token(&tokens, 1), "42"));
             CHECK(!strcmp(qa_q3_token(&tokens, 2), text));
@@ -2339,14 +2338,38 @@ static void test_q3_reliable_event_references(void)
     }
     qa_q3_tokens fragment;
     bool complete;
-    assembled_size = 0;
+    qa_q3_big_configstring_clear(&assembled);
     CHECK(qa_q3_tokenize("bcs1 42 tail", &fragment, &error));
-    CHECK(!qa_q3_big_configstring_feed(assembled, sizeof(assembled), &assembled_size,
+    CHECK(!qa_q3_big_configstring_feed(&assembled,
         &fragment, &complete, &error));
-    CHECK(qa_q3_tokenize("bcs0 42 head", &fragment, &error));
-    CHECK(!qa_q3_big_configstring_feed(assembled, 8, &assembled_size,
-        &fragment, &complete, &error));
-    CHECK(assembled_size == 0);
+    assembled.length = sizeof(assembled.text) - 2;
+    CHECK(qa_q3_tokenize("bcs2 42 tail", &fragment, &error));
+    CHECK(!qa_q3_big_configstring_feed(&assembled, &fragment, &complete, &error));
+    qa_q3_big_configstring_clear(&assembled);
+    qa_q3_gamestate applied = {.string_bytes = 1};
+    qa_q3_server_command_result dispatch;
+    CHECK(qa_q3_server_command_apply(NULL, &applied, &assembled, 1,
+        "cs 1 \"\\sv_serverid\\2147483648\"", &fragment, &dispatch, &error));
+    CHECK(dispatch.kind == QA_Q3_SERVER_SYSTEM_INFO && dispatch.config_index == 1);
+    int32_t server_id = 0;
+    qa_q3_usercmd commands[2] = {{.serverTime = 71}, {.serverTime = 72}};
+    CHECK(qa_q3_client_command_state_update(dispatch.kind, dispatch.effect_text,
+        &server_id, commands, 2, &error));
+    CHECK(server_id == INT32_MAX && commands[1].serverTime == 72);
+    CHECK(qa_q3_server_command_apply(NULL, &applied, &assembled, 2,
+        "cs 1 \"\\sv_serverid\\2147483648\"", &fragment, &dispatch, &error));
+    CHECK(dispatch.kind == QA_Q3_SERVER_CONFIGSTRING);
+    CHECK(qa_q3_server_command_apply(NULL, &applied, &assembled, 3,
+        "map_restart", &fragment, &dispatch, &error));
+    CHECK(dispatch.kind == QA_Q3_SERVER_MAP_RESTART);
+    CHECK(qa_q3_client_command_state_update(dispatch.kind, dispatch.effect_text,
+        &server_id, commands, 2, &error));
+    CHECK(commands[0].serverTime == 0 && commands[1].serverTime == 0);
+    int32_t consumed = 1;
+    CHECK(qa_q3_server_command_ack(NULL, &applied, 3, &consumed, &error));
+    CHECK(consumed == 3 && applied.command_sequence == 3);
+    CHECK(qa_q3_parse_integer(" -999999999999") == INT32_MIN);
+    CHECK(qa_q3_parse_integer("+42suffix") == 42);
     qa_q3_reliable full={0};
     bool drop=false;
     lease=histories[1].slots[1].lease;

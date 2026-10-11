@@ -18,6 +18,7 @@ size_t qa_utf8_encode(uint32_t scalar, char out[4]);
 bool qa_text_to_source_bytes(qa_bytes, uint8_t *out, size_t capacity, size_t *size, qa_error *);
 bool qa_text_from_source_bytes(qa_bytes, char *out, size_t capacity, size_t *size, qa_error *);
 bool qa_unicode_whitespace(uint32_t scalar);
+bool qa_text_join_words(const char *const *,size_t,char *,size_t,qa_error *);
 /* Quake backslash info pairs, borrowed from the NUL-terminated input. Cursor
  * starts at the string and ends at the next delimiter or terminator. */
 bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value);

@@ -35,26 +35,17 @@ bool q3g_client_effect(q3g_role *role, qa_application_q3_client_effect effect,
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client effect lost its actual original source binding");
     if (!application->q3_client_effect)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 client prediction/frontend lifecycle owner is unbound");
-    char *retained = q3g_copy_text(text, error);
-    if (!retained) return false;
-    text = retained;
+    char retained[QA_Q3_BIG_INFO_CHARS];
+    size_t size=strlen(text);
+    if(size>=sizeof(retained)) return application_fail(error,QA_ERROR_FORMAT,"Q3 client effect exceeds text storage");
+    memcpy(retained,text,size+1);text=retained;
+    if(!application_q3_client_effect_state_update(effect,text,&client->server_id,client->commands,
+        QA_Q3_USERCMDS,error)) return false;
     qa_actor_id actor = client->actor;
     qa_q3_host *host = role->host;
     switch (effect) {
-    case QA_APPLICATION_Q3_SYSTEM_INFO: {
-        char server[64];
-        if (!qa_q3_info_value(text, "sv_serverid", server, sizeof(server), error)) {
-            free(retained);
-            return false;
-        }
-        char *end;
-        long long value = strtoll(server, &end, 10);
-        client->server_id = end == server ? 0 : value > INT32_MAX ? INT32_MAX :
-            value < INT32_MIN ? INT32_MIN : (int32_t)value;
-        break;
-    }
+    case QA_APPLICATION_Q3_SYSTEM_INFO:
     case QA_APPLICATION_Q3_MAP_RESTART:
-        memset(client->commands, 0, sizeof(client->commands));
         break;
     case QA_APPLICATION_Q3_DISCONNECT:
         client->connected = false;
@@ -62,7 +53,6 @@ bool q3g_client_effect(q3g_role *role, qa_application_q3_client_effect effect,
     case QA_APPLICATION_Q3_LEVEL_SHOT:
         break;
     default:
-        free(retained);
         return application_fail(error, QA_ERROR_ARGUMENT, "unknown Q3 client effect");
     }
     ++engine->calls;
@@ -80,6 +70,5 @@ bool q3g_client_effect(q3g_role *role, qa_application_q3_client_effect effect,
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Q3 client effect replaced or retired its original source admission");
     if (source != engine) --source->calls;
     --engine->calls;
-    free(retained);
     return ok;
 }

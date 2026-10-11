@@ -1,15 +1,10 @@
 /* Donor: network/q3/client.ts, snapshot-history.ts, client-server-command.ts. */
 #include "client_private.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <stdio.h>
 
 static bool fail(qa_error *e, qa_status code, const char *s) { qa_error_set(e, code, 0, "%s", s); return false; }
-static int32_t atoi32(const char *text) {
-    char *end;
-    long long n = strtoll(text, &end, 10);
-    if (end == text) return 0;
-    return n > INT32_MAX ? INT32_MAX : n < INT32_MIN ? INT32_MIN : (int32_t)n;
-}
 static bool current(const qa_q3_client_peer *p, qa_error *e) {
     if (p->hooks.generation(p->hooks.context) != p->generation) return fail(e, QA_ERROR_FORMAT, "Q3 client callback belongs to a retired session");
     return true;
@@ -49,9 +44,8 @@ bool q3_client_command_admit(qa_q3_client_peer *p,const qa_q3_command *value,qa_
 static const qa_q3_snapshot *history(void *user, int32_t sequence) { return &((qa_q3_client_peer *)user)->history[(uint32_t)sequence & 31].value; }
 static bool system_info(qa_q3_client_peer *p, qa_error *e) {
     const char *text = qa_q3_configstring(&p->gamestate, 1);
-    char server[64];
-    if (!text || !qa_q3_info_value(text, "sv_serverid", server, sizeof(server), e)) return false;
-    p->server_id = atoi32(server);
+    if (!text || !qa_q3_client_command_state_update(QA_Q3_SERVER_SYSTEM_INFO,text,
+        &p->server_id,p->commands,64,e)) return false;
     return p->hooks.system_info(p->hooks.context, text, e) && current(p, e);
 }
 static bool create_peer(qa_q3_identity identity, qa_q3_product product, const qa_net_address *remote,
@@ -145,7 +139,7 @@ static bool consume(void *user, const qa_q3_server_event *event, qa_error *e) {
         for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) qa_q3_slot_clear(&p->history[i], p->product);
         p->has_snapshot = false; p->latest_snapshot = 0; p->parse_entities_number = 0;
         p->command_number = 0; memset(p->commands, 0, sizeof(p->commands)); memset(p->packets, 0, sizeof(p->packets));
-        p->big_configstring[0] = 0; p->big_configstring_length = 0;
+        qa_q3_big_configstring_clear(&p->big_configstring);
         return true;
     case QA_Q3_EVENT_GAMESTATE:
         p->server_command_sequence = event->value.gamestate->command_sequence;
@@ -282,9 +276,13 @@ bool qa_q3_client_peer_receive(qa_q3_client_peer *p, qa_bytes datagram, int32_t 
     qa_q3_xor_server(plaintext, packet.payload.size, p->challenge, packet.sequence, qa_q3_reliable_lookup(&p->reliable, acknowledge));
     return qa_q3_client_peer_message(p, (int32_t)packet.sequence, (qa_bytes){plaintext, packet.payload.size}, now, e);
 }
-bool qa_q3_big_configstring_feed(char *buffer, size_t capacity, size_t *length,
-    const qa_q3_tokens *tokens, bool *complete, qa_error *error)
+void qa_q3_big_configstring_clear(qa_q3_big_configstring *state)
+{ state->length=0;state->text[0]=0; }
+
+bool qa_q3_big_configstring_feed(qa_q3_big_configstring *state,
+    const qa_q3_tokens *tokens,bool *complete,qa_error *error)
 {
+    char *buffer=state->text;size_t capacity=sizeof(state->text),*length=&state->length;
     const char *name = qa_q3_token(tokens, 0);
     bool start = !strcmp(name, "bcs0"), last = !strcmp(name, "bcs2");
     *complete = true;
@@ -314,45 +312,96 @@ bool qa_q3_big_configstring_feed(char *buffer, size_t capacity, size_t *length,
     return true;
 }
 
-static bool execute(qa_q3_client_peer *p, int32_t sequence, const char *text, qa_error *e) {
-    qa_q3_tokens tokens;
-    if (!qa_q3_tokenize(text, &tokens, e)) return false;
-    const char *name = qa_q3_token(&tokens, 0);
-    if (!strcmp(name, "disconnect")) {
-        p->disconnected = true;
-        return p->hooks.disconnect(p->hooks.context, tokens.count >= 2 ? qa_q3_token(&tokens, 1) : "Server disconnected", e);
+bool qa_q3_server_command_apply(qa_q3_reliable *history,qa_q3_gamestate *gamestate,
+    qa_q3_big_configstring *continued,int32_t sequence,const char *text,qa_q3_tokens *tokens,
+    qa_q3_server_command_result *result,qa_error *error)
+{
+    *result=(qa_q3_server_command_result){.kind=QA_Q3_SERVER_FRAGMENT,.config_index=UINT32_MAX,.text=text};
+    if(history) {
+        if(sequence>history->sequence) return fail(error,QA_ERROR_ARGUMENT,"Q3 server command is in the future");
+        if(sequence<=0) return true;
+        if((int64_t)history->sequence-sequence>=QA_Q3_RELIABLE)
+            return fail(error,QA_ERROR_FORMAT,"Q3 server command has left its retained history");
+    }
+    if(!qa_q3_tokenize(text,tokens,error)) return false;
+    const char *name=qa_q3_token(tokens,0);
+    if(!strcmp(name,"disconnect")) {
+        result->kind=QA_Q3_SERVER_DISCONNECT;
+        result->effect_text=tokens->count>=2?qa_q3_token(tokens,1):"Server disconnected";
+        return true;
     }
     bool complete;
-    if (!qa_q3_big_configstring_feed(p->big_configstring, sizeof(p->big_configstring),
-        &p->big_configstring_length, &tokens, &complete, e)) return false;
-    if (!complete) return true;
-    if (!strcmp(name, "bcs2")) {
-        if (!qa_q3_tokenize(p->big_configstring, &tokens, e)) return false;
-        name = qa_q3_token(&tokens, 0);
+    if(!qa_q3_big_configstring_feed(continued,tokens,&complete,error)) return false;
+    if(!complete) return true;
+    if(!strcmp(name,"bcs2")) {
+        result->text=continued->text;
+        if(!qa_q3_tokenize(continued->text,tokens,error)) return false;
+        name=qa_q3_token(tokens,0);
     }
-    if (!strcmp(name, "cs")) {
-        int32_t index = atoi32(qa_q3_token(&tokens, 1));
-        if (index < 0 || index >= QA_Q3_CONFIGSTRINGS) return fail(e, QA_ERROR_FORMAT, "Q3 server command has invalid configstring index");
-        char value[8192]; size_t used = 0;
-        for (size_t i = 2; i < tokens.count; ++i) {
-            size_t size = strlen(qa_q3_token(&tokens, i));
-            if (size + (i > 2 ? 1 : 0) >= sizeof(value) - used) return fail(e, QA_ERROR_FORMAT, "Q3 configstring command too long");
-            if (i > 2) value[used++] = ' ';
-            memcpy(value + used, qa_q3_token(&tokens, i), size); used += size;
-        }
-        value[used] = 0;
-        const char *old = qa_q3_configstring(&p->gamestate, (unsigned)index);
-        bool changed = !old || strcmp(old, value) != 0;
-        if (changed && !qa_q3_configstring_set(&p->gamestate, (unsigned)index, value, e)) return false;
-        if (changed && index == 1 && !system_info(p, e)) return false;
-    } else if (!strcmp(name, "map_restart")) {
-        memset(p->commands, 0, sizeof(p->commands));
-        if (!p->hooks.map_restart(p->hooks.context, e) || !current(p, e)) return false;
-    } else if (!strcmp(name, "clientLevelShot")) {
-        if (!p->hooks.local_server_running(p->hooks.context)) return true;
-        if (!p->hooks.level_shot(p->hooks.context, e) || !current(p, e)) return false;
+    result->kind=QA_Q3_SERVER_COMMAND;result->effect_text=result->text;
+    if(!strcmp(name,"cs")) {
+        int32_t index=qa_q3_parse_integer(qa_q3_token(tokens,1));
+        if(!gamestate || index<0 || index>=QA_Q3_CONFIGSTRINGS)
+            return fail(error,QA_ERROR_FORMAT,"Q3 server command has invalid configstring state or index");
+        const char *words[1024];
+        size_t count=tokens->count>2?tokens->count-2:0;
+        for(size_t i=0;i<count;++i) words[i]=qa_q3_token(tokens,i+2);
+        char value[QA_Q3_BIG_INFO_CHARS];
+        if(!qa_text_join_words(words,count,value,sizeof(value),error)) return false;
+        const char *old=qa_q3_configstring(gamestate,(unsigned)index);
+        bool changed=!old || strcmp(old,value)!=0;
+        if(changed && !qa_q3_configstring_set(gamestate,(unsigned)index,value,error)) return false;
+        result->config_index=(uint32_t)index;
+        result->effect_text=qa_q3_configstring(gamestate,(unsigned)index);
+        result->kind=changed && index==1?QA_Q3_SERVER_SYSTEM_INFO:QA_Q3_SERVER_CONFIGSTRING;
+    } else if(!strcmp(name,"map_restart")) result->kind=QA_Q3_SERVER_MAP_RESTART;
+    else if(!strcmp(name,"clientLevelShot")) result->kind=QA_Q3_SERVER_LEVEL_SHOT;
+    return true;
+}
+
+bool qa_q3_server_command_ack(qa_q3_reliable *history,qa_q3_gamestate *gamestate,
+    int32_t sequence,int32_t *consumed,qa_error *error)
+{
+    if(gamestate && sequence>gamestate->command_sequence) gamestate->command_sequence=sequence;
+    if(history) {
+        bool clamped;
+        int32_t acknowledged=sequence>history->acknowledged?sequence:history->acknowledged;
+        if(!qa_q3_reliable_ack(history,QA_Q3_SERVER,acknowledged,&clamped,error)) return false;
     }
-    return p->hooks.command(p->hooks.context, sequence, &tokens, e) && current(p, e);
+    if(sequence>*consumed) *consumed=sequence;
+    return true;
+}
+
+bool qa_q3_client_command_state_update(qa_q3_server_command_kind kind,const char *text,
+    int32_t *server_id,qa_q3_usercmd *commands,size_t count,qa_error *error)
+{
+    if(kind==QA_Q3_SERVER_SYSTEM_INFO) {
+        char value[64];
+        if(!qa_q3_info_value(text,"sv_serverid",value,sizeof(value),error)) return false;
+        *server_id=qa_q3_parse_integer(value);
+    } else if(kind==QA_Q3_SERVER_MAP_RESTART) memset(commands,0,count*sizeof(*commands));
+    return true;
+}
+
+static bool execute(qa_q3_client_peer *p,int32_t sequence,const char *text,qa_error *e)
+{
+    qa_q3_tokens tokens;qa_q3_server_command_result result;
+    if(!qa_q3_server_command_apply(NULL,&p->gamestate,&p->big_configstring,sequence,text,&tokens,&result,e)) return false;
+    if(result.kind==QA_Q3_SERVER_FRAGMENT) return true;
+    if(result.kind==QA_Q3_SERVER_DISCONNECT) {
+        p->disconnected=true;
+        return p->hooks.disconnect(p->hooks.context,result.effect_text,e);
+    }
+    if(result.kind==QA_Q3_SERVER_SYSTEM_INFO && !system_info(p,e)) return false;
+    if(result.kind==QA_Q3_SERVER_MAP_RESTART &&
+        (!qa_q3_client_command_state_update(result.kind,result.effect_text,&p->server_id,p->commands,64,e) ||
+        !p->hooks.map_restart(p->hooks.context,e) || !current(p,e))) return false;
+    if(result.kind==QA_Q3_SERVER_LEVEL_SHOT) {
+        if(!p->hooks.local_server_running(p->hooks.context)) return true;
+        if(!p->hooks.level_shot(p->hooks.context,e) || !current(p,e)) return false;
+    }
+    return p->hooks.command(p->hooks.context,sequence,&tokens,e) && current(p,e) &&
+        qa_q3_server_command_ack(NULL,&p->gamestate,sequence,&p->last_executed_server_command,e);
 }
 bool qa_q3_client_peer_execute(qa_q3_client_peer *p, int32_t sequence, bool demo, qa_error *e) {
     if (!p) return fail(e, QA_ERROR_ARGUMENT, "Missing Q3 client peer");

@@ -271,11 +271,34 @@ bool qa_q3_encode_client(qa_q3_writer *, const qa_q3_client_message *, int32_t c
 
 
 /* Connectionless dispatch leaves query/admin payloads intact for B29 consumers. */
+#define QA_Q3_BIG_INFO_CHARS 8192
+
+typedef struct qa_q3_big_configstring {
+    char text[QA_Q3_BIG_INFO_CHARS];
+    size_t length;
+} qa_q3_big_configstring;
+
 typedef struct qa_q3_tokens { size_t count; bool truncated; uint16_t offsets[1024]; char text[9216]; } qa_q3_tokens;
 bool qa_q3_tokenize(const char *, qa_q3_tokens *, qa_error *);
 const char *qa_q3_token(const qa_q3_tokens *, size_t);
-bool qa_q3_big_configstring_feed(char *buffer, size_t capacity, size_t *length,
-    const qa_q3_tokens *tokens, bool *complete, qa_error *error);
+void qa_q3_big_configstring_clear(qa_q3_big_configstring *);
+bool qa_q3_big_configstring_feed(qa_q3_big_configstring *,const qa_q3_tokens *,bool *complete,qa_error *);
+int32_t qa_q3_parse_integer(const char *);
+typedef enum qa_q3_server_command_kind {
+    QA_Q3_SERVER_FRAGMENT, QA_Q3_SERVER_COMMAND, QA_Q3_SERVER_CONFIGSTRING,
+    QA_Q3_SERVER_DISCONNECT, QA_Q3_SERVER_SYSTEM_INFO, QA_Q3_SERVER_MAP_RESTART,
+    QA_Q3_SERVER_LEVEL_SHOT
+} qa_q3_server_command_kind;
+typedef struct qa_q3_server_command_result {
+    qa_q3_server_command_kind kind;
+    uint32_t config_index;
+    const char *text, *effect_text;
+} qa_q3_server_command_result;
+bool qa_q3_server_command_apply(qa_q3_reliable *,qa_q3_gamestate *,qa_q3_big_configstring *,
+    int32_t,const char *,qa_q3_tokens *,qa_q3_server_command_result *,qa_error *);
+bool qa_q3_server_command_ack(qa_q3_reliable *,qa_q3_gamestate *,int32_t,int32_t *,qa_error *);
+bool qa_q3_client_command_state_update(qa_q3_server_command_kind,const char *,int32_t *,
+    qa_q3_usercmd *,size_t,qa_error *);
 bool qa_q3_info_value(const char *, const char *, char *, size_t, qa_error *);
 /* Remove the first exact-case key. Small strings prepend the new pair; the
  * 8192-byte source variant appends. Lookup remains ASCII-insensitive. */
@@ -598,7 +621,6 @@ bool qa_q3_select_snapshot_entities(const qa_q3_player *, const qa_q3_visibility
                                      qa_q3_visible_entities *, qa_error *);
 
 #define QA_Q3_SEARCH_PATHS 4096
-#define QA_Q3_BIG_INFO_CHARS 8192
 enum qa_q3_pak_reference_flags {
     QA_Q3_PAK_GENERAL = 1, QA_Q3_PAK_UI = 2, QA_Q3_PAK_CGAME = 4, QA_Q3_PAK_QAGAME = 8
 };

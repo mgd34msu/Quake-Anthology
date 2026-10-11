@@ -18,7 +18,7 @@ static bool equal(const char *a, const char *b) {
     while (*a && *b) if (tolower((unsigned char)*a++) != tolower((unsigned char)*b++)) return false;
     return *a == *b;
 }
-static int32_t number(const char *s) {
+int32_t qa_q3_parse_integer(const char *s) {
     bool negative = false;
     while (isspace((unsigned char)*s)) ++s;
     if (*s == '-' || *s == '+') negative = *s++ == '-';
@@ -202,7 +202,7 @@ bool qa_q3_client_admission_receive(qa_q3_client_admission *c, const qa_net_addr
         const char *command = qa_q3_token(&packet->tokens, 0);
         if (equal(command, "challengeResponse")) {
             if (c->phase == QA_Q3_CONNECTING) {
-                c->challenge = number(qa_q3_token(&packet->tokens, 1)); c->phase = QA_Q3_CHALLENGING;
+                c->challenge = qa_q3_parse_integer(qa_q3_token(&packet->tokens, 1)); c->phase = QA_Q3_CHALLENGING;
                 c->connect_packets = 0; c->connect_time = -99999; c->address = *from;
             }
             *result = QA_Q3_ADMISSION_HANDLED;
@@ -296,7 +296,7 @@ static bool server_authorize(qa_q3_server_admission *s, const qa_q3_admission_op
                              const qa_net_address *from, const qa_q3_tokens *tokens, int64_t now, qa_error *e) {
     if (from->kind != QA_NET_IPV4 || !o->authorize_address || o->authorize_address->kind != QA_NET_IPV4
         || !qa_net_address_equal(from, o->authorize_address, false)) return true;
-    int32_t n = number(qa_q3_token(tokens, 1));
+    int32_t n = qa_q3_parse_integer(qa_q3_token(tokens, 1));
     for (size_t i = 0; i < 1024; ++i) {
         qa_q3_challenge *c = &s->challenges[i];
         if (c->challenge != n) continue;
@@ -327,13 +327,13 @@ static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_opti
     memcpy(request.userinfo, input, input_size); request.userinfo[input_size] = 0;
     input = request.userinfo; char value[1024];
     if (!qa_q3_info_value(input, "protocol", value, sizeof(value), e)) return false;
-    if (number(value) != 68) return server_reply(s, from, "print\nServer uses protocol version 68.\n", e);
+    if (qa_q3_parse_integer(value) != 68) return server_reply(s, from, "print\nServer uses protocol version 68.\n", e);
     if (!qa_q3_info_value(input, "qport", value, sizeof(value), e)) return false;
-    int32_t port = number(value);
+    int32_t port = qa_q3_parse_integer(value);
     if (port < 0 || port > UINT16_MAX) return server_reply(s, from, "print\nInvalid qport.\n", e);
     request.qport = (uint16_t)port;
     if (!qa_q3_info_value(input, "challenge", value, sizeof(value), e)) return false;
-    request.challenge = number(value);
+    request.challenge = qa_q3_parse_integer(value);
     const qa_q3_admission_slot *selected = NULL;
     for (size_t i = 0; i < count; ++i) {
         const qa_q3_admission_slot *slot = &slots[i];

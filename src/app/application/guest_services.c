@@ -7,6 +7,7 @@
 #include "guest_q3_client_console.h"
 #include "startup_flow.h"
 #include "q3_command_tokens.h"
+#include "qa/text.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -16,21 +17,49 @@ bool application_q3_command_parse(application_q3_command_storage *storage,
 {
     qa_command_tokens_free(arguments);
     if (!qa_q3_tokenize(text, &storage->tokens, error)) return false;
-    size_t used = 0;
-    for (size_t i = 0; i < storage->tokens.count; ++i) {
-        const char *value = qa_q3_token(&storage->tokens, i);
-        storage->values[i] = (char *)value;
-        if (!i) continue;
-        if (i > 1) storage->args[used++] = ' ';
-        size_t size = strlen(value);
-        memcpy(storage->args + used, value, size);
-        used += size;
-    }
-    storage->args[used] = 0;
+    return application_q3_command_bind(storage,arguments,error);
+}
+
+bool application_q3_command_bind(application_q3_command_storage *storage,
+    qa_command_tokens *arguments,qa_error *error)
+{
+    qa_command_tokens_free(arguments);
+    for(size_t i=0;i<storage->tokens.count;++i)
+        storage->values[i]=(char *)qa_q3_token(&storage->tokens,i);
+    if(!qa_text_join_words((const char *const *)storage->values+1,
+        storage->tokens.count?storage->tokens.count-1:0,storage->args,sizeof(storage->args),error)) return false;
     *arguments = (qa_command_tokens){.count = storage->tokens.count,
         .values = storage->values, .args_text = storage->args,
         .storage = storage->tokens.text, .borrowed = true};
     return true;
+}
+
+bool application_q3_client_effect_state_update(qa_application_q3_client_effect effect,const char *text,
+    int32_t *server_id,qa_q3_usercmd *commands,size_t count,qa_error *error)
+{
+    qa_q3_server_command_kind kind=effect==QA_APPLICATION_Q3_SYSTEM_INFO?QA_Q3_SERVER_SYSTEM_INFO:
+        effect==QA_APPLICATION_Q3_MAP_RESTART?QA_Q3_SERVER_MAP_RESTART:QA_Q3_SERVER_COMMAND;
+    return qa_q3_client_command_state_update(kind,text,server_id,commands,count,error);
+}
+
+bool application_q3_server_command_deliver(application_q3_command_storage *storage,qa_command_tokens *arguments,
+    const qa_q3_server_command_result *result,void *context,
+    bool (*effect)(void *,qa_application_q3_client_effect,const char *,qa_error *),qa_error *error)
+{
+    if(!application_q3_command_bind(storage,arguments,error)) return false;
+    qa_application_q3_client_effect kind;
+    switch(result->kind) {
+    case QA_Q3_SERVER_SYSTEM_INFO: kind=QA_APPLICATION_Q3_SYSTEM_INFO; break;
+    case QA_Q3_SERVER_MAP_RESTART: kind=QA_APPLICATION_Q3_MAP_RESTART; break;
+    case QA_Q3_SERVER_DISCONNECT: kind=QA_APPLICATION_Q3_DISCONNECT; break;
+    case QA_Q3_SERVER_LEVEL_SHOT: kind=QA_APPLICATION_Q3_LEVEL_SHOT; break;
+    default: return true;
+    }
+    if(result->kind!=QA_Q3_SERVER_SYSTEM_INFO) return effect(context,kind,result->effect_text,error);
+    char command_text[QA_Q3_BIG_INFO_CHARS];
+    memcpy(command_text,result->text,strlen(result->text)+1);
+    return effect(context,kind,result->effect_text,error) &&
+        application_q3_command_parse(storage,command_text,arguments,error);
 }
 
 void application_console_print(void *context, const qa_command_context *command,

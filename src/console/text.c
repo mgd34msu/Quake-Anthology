@@ -233,13 +233,8 @@ bool qa_command_tokenize_span(const char *text, size_t length, qa_ruleset_id dia
         if (dialect == QA_RULESET_Q3 && out->count == maximum) break;
     }
     if (dialect == QA_RULESET_Q3) {
-        size_t args_used = 0;
-        for (size_t i = 1; i < out->count; ++i) {
-            if (i > 1) out->args_text[args_used++] = ' ';
-            size_t size = strlen(out->values[i]);
-            memcpy(out->args_text + args_used, out->values[i], size); args_used += size;
-        }
-        out->args_text[args_used] = 0;
+        if(!qa_text_join_words((const char *const *)out->values+1,out->count?out->count-1:0,
+            out->args_text,length+1,error)) goto fail;
     } else {
         size_t end = length;
         if (qac_q2(dialect)) while (end > args_start && (unsigned char)text[end - 1] <= 32) --end;
