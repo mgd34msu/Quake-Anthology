@@ -80,6 +80,7 @@ void bot_ai_source_match_bind(qa_bots *bots)
         ? bots->services.configuration(bots->services.context) : NULL;
     for (size_t index = 0; index < BOT_SOURCE_MATCH_CVARS; ++index)
         bots->source_match_handles[index] = qa_cvars_resolve(registry, cvar_names[index]);
+    bots->source_max_clients = qa_cvars_resolve(registry, "sv_maxclients");
 }
 
 bool bot_ai_source_match_setup(qa_bots *bots, qa_error *error)

@@ -36,7 +36,7 @@ static bool same(const char *a, const char *b) {
 static int32_t maximum(qa_bots *b, int32_t *cache) {
     if(!*cache) {
         qa_cvars *vars=b->services.configuration?b->services.configuration(b->services.context):NULL;
-        const qa_cvar_view *view=vars?qa_cvars_find(vars,"sv_maxclients"):NULL;
+        const qa_cvar_view *view=vars?qa_cvars_read(vars,b->source_max_clients):NULL;
         *cache=view?view->integer:0;
     }
     return *cache<64?*cache:64;

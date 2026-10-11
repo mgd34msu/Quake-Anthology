@@ -41,7 +41,7 @@ static bool maximum(qa_bots *b,int32_t *cell,int32_t *out,qa_error *e) {
     if(!*cell) {
         qa_cvars *registry=b->services.configuration(b->services.context);
         if(!registry) return bot_ai_fail(e,"Source chat cvar owner is unavailable");
-        const qa_cvar_view *value=qa_cvars_find(registry,"sv_maxclients");
+        const qa_cvar_view *value=qa_cvars_read(registry,b->source_max_clients);
         *cell=value?value->integer:0;
     }
     *out=*cell<64?*cell:64;return true;

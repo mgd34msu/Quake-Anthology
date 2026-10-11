@@ -97,6 +97,7 @@ struct qa_bots {
     bot_source_chat_globals source_chat;
     bot_source_match_globals source_match;
     qa_cvar_handle source_match_handles[BOT_SOURCE_MATCH_CVARS];
+    qa_cvar_handle source_max_clients;
     size_t source_match_exit_depth;
     int32_t inventory_scratch[QA_BOT_INVENTORY_SIZE];
     bool busy, checking_spawn, restore_pending, shutting_down, shutdown_restart;

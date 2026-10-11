@@ -13,9 +13,18 @@ typedef struct package_mount {
     char *game, *basename;
     bool archive;
 } package_mount;
+static const char *const report_names[] = {
+    "sv_paks", "sv_pakNames", "sv_referencedPaks", "sv_referencedPakNames"
+};
+static const qa_q3_pak_report_kind report_kinds[] = {
+    QA_Q3_PAK_LOADED_CHECKSUMS, QA_Q3_PAK_LOADED_NAMES,
+    QA_Q3_PAK_REFERENCED_CHECKSUMS, QA_Q3_PAK_REFERENCED_NAMES
+};
 struct frontend_q3_packages {
     qa_application *application;
     qa_actor_owner owner;
+    qa_cvars *cvars;
+    qa_cvar_handle pure, reports[4];
     qa_vfs *content;
     uint64_t source_generation, read_generation;
     size_t read_count, mount_count, pack_count, seen_count, seen_capacity;
@@ -29,6 +38,13 @@ struct frontend_q3_packages {
 static bool fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error, code, 0, "%s", message); return false; }
 static double loose_random(void *context) { (void)context; return 1; }
+static void cvars_bind(frontend_q3_packages *packages, qa_cvars *cvars)
+{
+    packages->cvars = cvars;
+    packages->pure = qa_cvars_resolve(cvars, "sv_pure");
+    for (size_t i = 0; i < 4; ++i)
+        packages->reports[i] = qa_cvars_resolve(cvars, report_names[i]);
+}
 static bool current(const frontend_q3_packages *packages, qa_error *error)
 {
     bool valid = packages && packages->application &&
@@ -129,6 +145,12 @@ bool frontend_q3_packages_create(qa_application *application, qa_actor_owner own
     }
     if (!qa_q3_pak_references_create(packages->packs, packages->pack_count, feed, loose_random, NULL, &packages->references, error) ||
         !frontend_q3_packages_collect(packages, error)) goto invalid;
+    qa_cvars *cvars = qa_application_network_q3_host_cvars(application, owner, error);
+    if (!cvars) goto invalid;
+    for (size_t i = 0; i < 4; ++i)
+        if (!qa_cvars_register(cvars, report_names[i], "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY,
+            owner, "Original Q3 mounted package report", error)) goto invalid;
+    cvars_bind(packages, cvars);
     *out = packages; return true;
 memory:
     fail(error, QA_ERROR_MEMORY, "Allocating actual Q3 package inventory");
@@ -188,7 +210,11 @@ bool frontend_q3_packages_view(frontend_q3_packages *packages,
     return true;
 }
 void frontend_q3_packages_rebind(frontend_q3_packages *packages, qa_application *application)
-{ if (packages) packages->application = application; }
+{
+    if (!packages) return;
+    packages->application = application;
+    cvars_bind(packages, qa_application_network_q3_host_cvars(application, packages->owner, NULL));
+}
 static bool receipt_valid(const frontend_q3_packages *packages, const qa_vfs_acquisition *receipt, bool native_identity, qa_error *error)
 {
     if (!receipt->resource_id)
@@ -207,8 +233,8 @@ static bool receipt_valid(const frontend_q3_packages *packages, const qa_vfs_acq
 static bool prepare(frontend_q3_packages *packages, bool restoring, bool native_identity, qa_error *error)
 {
     if (!frontend_q3_packages_collect(packages, error)) return false;
-    qa_cvars *cvars = qa_application_network_q3_host_cvars(packages->application, packages->owner, error);
-    const qa_cvar_view *pure = cvars ? qa_cvars_find(cvars, "sv_pure") : NULL;
+    qa_cvars *cvars = packages->cvars;
+    const qa_cvar_view *pure = qa_cvars_read(cvars, packages->pure);
     bool enabled = pure && pure->integer;
     if (!receipt_valid(packages, &packages->cgame, native_identity, error)) return false;
     if (enabled && !packages->cgame.resource_id) {
@@ -219,17 +245,14 @@ static bool prepare(frontend_q3_packages *packages, bool restoring, bool native_
         if (!frontend_q3_packages_collect(packages, error) || !receipt_valid(packages, &packages->cgame, false, error)) return false;
     }
     if (!cvars) return false;
-    const char *names[] = {"sv_paks", "sv_pakNames", "sv_referencedPaks", "sv_referencedPakNames"};
-    const qa_q3_pak_report_kind kinds[] = {QA_Q3_PAK_LOADED_CHECKSUMS, QA_Q3_PAK_LOADED_NAMES,
-        QA_Q3_PAK_REFERENCED_CHECKSUMS, QA_Q3_PAK_REFERENCED_NAMES};
     for (size_t i = 0; i < 4; ++i) {
         char report[QA_Q3_BIG_INFO_CHARS] = {0};
-        if ((i >= 2 || enabled) && !qa_q3_pak_report(packages->references, kinds[i], report, sizeof(report), error)) return false;
+        if ((i >= 2 || enabled) && !qa_q3_pak_report(packages->references, report_kinds[i], report, sizeof(report), error)) return false;
+        const qa_cvar_view *saved = qa_cvars_read(cvars, packages->reports[i]);
         if (restoring) {
-            const qa_cvar_view *saved = qa_cvars_find(cvars, names[i]);
             if (!saved || strcmp(saved->value, report)) return fail(error, QA_ERROR_FORMAT, "Saved Q3 package report differs from its actual opened resource journal");
-        } else if (!qa_cvars_register(cvars, names[i], "", QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY,
-            packages->owner, "Original Q3 mounted package report", error) || !qa_cvars_set(cvars, names[i], report, true, error)) return false;
+        } else if ((!saved || strcmp(saved->value, report)) &&
+            !qa_cvars_set(cvars, report_names[i], report, true, error)) return false;
     }
     return true;
 }
@@ -310,9 +333,9 @@ bool frontend_q3_packages_pure(frontend_q3_packages *packages, int32_t server_id
     qa_q3_pure_server *out, qa_error *error)
 {
     if (!out || !frontend_q3_packages_collect(packages, error)) return false;
-    qa_cvars *cvars = qa_application_network_q3_host_cvars(packages->application, packages->owner, error);
+    qa_cvars *cvars = packages->cvars;
     if (!cvars) return false;
-    const qa_cvar_view *pure = qa_cvars_find(cvars, "sv_pure");
+    const qa_cvar_view *pure = qa_cvars_read(cvars, packages->pure);
     uint32_t feed = qa_q3_pak_checksum_feed(packages->references);
     *out = (qa_q3_pure_server){.enabled = pure && pure->integer, .checksum_feed_server_id = server_id,
         .checksum_feed = feed <= INT32_MAX ? (int32_t)feed : (int32_t)((int64_t)feed - INT64_C(4294967296)),
