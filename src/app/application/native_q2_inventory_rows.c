@@ -263,7 +263,7 @@ static bool append(application_native_q2_inventory_readout *out,
 
 static bool original_label(application_native_q2_inventory_rows *owner, uint32_t index,
     char **out, qa_error *error) {
-    uint32_t base = owner->engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
+    uint32_t base = owner->engine->config_layout.items;
     if (index > UINT32_MAX - base || base + index >= owner->engine->config_layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Original inventory label leaves its source configstring namespace");
     const char *raw = qa_strings_cstr(qa_session_strings(owner->engine->provider->application->session), owner->engine->configstrings[base + index]);

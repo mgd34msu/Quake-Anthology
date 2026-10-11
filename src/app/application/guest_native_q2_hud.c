@@ -72,7 +72,7 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
             if (weapon < 0 || weapon >= 32)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 weapon wheel index is invalid");
             /* CS_WHEEL_WEAPONS = CS_PLAYERSKINS + MAX_CLIENTS + MAX_GENERAL. */
-            const char *text = qa_strings_cstr(qa_session_strings(source->provider->application->session), source->configstrings[12350 + weapon]);
+            const char *text = qa_strings_cstr(qa_session_strings(source->provider->application->session), source->configstrings[source->config_layout.wheel_weapons + (uint32_t)weapon]);
             if (!text || !*text)
                 return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 ammo warning has no source wheel definition");
             for (size_t i = 0; i < 6; ++i) {

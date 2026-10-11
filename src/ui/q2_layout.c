@@ -367,7 +367,7 @@ typedef struct layout_context {
     qa_string_id token_name;
     qa_hud_q2_table *table;
     float x, y, width, height;
-    int32_t images, items, skins, max_images, max_strings, max_clients;
+    int32_t images, items, skins, max_images, max_strings, max_clients, wheel_weapons;
     bool rerelease, failed;
     qa_hud_q2_stat_references *references;
 } layout_context;
@@ -659,10 +659,10 @@ static bool initialize(layout_context *c, const qa_hud_q2_options *options,
         frame->protocol.kind != QA_NET_Q2PRIVATE_4038) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 HUD requires a Q2 protocol"); return false;
     }
-    c->rerelease = frame->protocol.kind == QA_NET_Q2REPRO_1038 || frame->protocol.kind == QA_NET_Q2PRIVATE_4038 || frame->protocol.kind == QA_NET_Q2KEX_2023 ||
-                   frame->protocol.kind == QA_NET_Q2KEX_DEMO_2022;
+    c->rerelease = qa_q2_protocol_rerelease(frame->protocol);
     qa_q2_codec codec; qa_q2_config_layout layout;
     if (!qa_q2_codec_init(&codec, frame->protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    c->wheel_weapons = (int32_t)layout.wheel_weapons;
     c->images = (int32_t)layout.images; c->items = (int32_t)layout.items;
     c->skins = (int32_t)layout.player_skins; c->max_clients = (int32_t)layout.max_clients;
     c->max_images = (int32_t)layout.max_images; c->max_strings = (int32_t)layout.max_configs;
@@ -799,7 +799,7 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program) {
                                       : (((uint32_t)c->frame->server_frame >> 2) & 1) != 0;
             int32_t warning = 5;
             if (c->rerelease) {
-                const char *weapon = config(c, 12350 + stat_int(c, 53));
+                const char *weapon = config(c, c->wheel_weapons + stat_int(c, 53));
                 for (size_t i = 0; i < 6; ++i) { const char *bar = strchr(weapon, '|'); weapon = bar ? bar + 1 : ""; }
                 int32_t parsed = decimal(weapon); if (parsed) warning = parsed;
             }

@@ -4,6 +4,12 @@
 qa_net_protocol_id qa_q2_default_protocol(bool rerelease)
 { return (qa_net_protocol_id){.kind = rerelease ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34}; }
 
+bool qa_q2_protocol_rerelease(qa_net_protocol_id protocol)
+{
+    return protocol.kind==QA_NET_Q2REPRO_1038 || protocol.kind==QA_NET_Q2PRIVATE_4038 ||
+        protocol.kind==QA_NET_Q2KEX_2023 || protocol.kind==QA_NET_Q2KEX_DEMO_2022;
+}
+
 uint32_t qa_q2_protocol_version(qa_net_protocol_id p) {
     switch (p.kind) {
         case QA_NET_Q2_34: return 34;
@@ -63,12 +69,20 @@ bool qa_q2_config_layout_read(const qa_q2_codec *c, qa_q2_config_layout *out, qa
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 config layout lost its actual codec"); return false;
     }
     if (c->protocol.kind == QA_NET_Q2PRO_36 && c->protocol.revision >= 1024 && (c->wire_flags & 8u)) {
-        *out = (qa_q2_config_layout){62,8254,10302,12350,12606,12862,61,60,59,8192,2048,2048,QA_Q2_MAX_CONFIGSTRINGS,true,8192};
-    } else if (c->protocol.kind == QA_NET_Q2REPRO_1038 || c->protocol.kind == QA_NET_Q2PRIVATE_4038 || c->protocol.kind == QA_NET_Q2KEX_2023 ||
-        c->protocol.kind == QA_NET_Q2KEX_DEMO_2022) {
-        *out = (qa_q2_config_layout){62,8254,10302,10814,11326,11582,61,60,59,8192,2048,512,QA_Q2_RERELEASE_CONFIGSTRINGS,true,8192};
+        *out = (qa_q2_config_layout){ .models=62,.sounds=8254,.images=10302,.lights=12350,.items=12606,.player_skins=12862,
+            .map_checksum=61,.max_clients=60,.air_accelerate=59,.max_models=8192,.max_sounds=2048,
+            .max_images=2048,.max_configs=QA_Q2_MAX_CONFIGSTRINGS,.extended=true,.max_entities=8192,
+            .second_lights=UINT32_MAX,.wheel_weapons=UINT32_MAX,.n64_physics=UINT32_MAX};
+    } else if (qa_q2_protocol_rerelease(c->protocol)) {
+        *out = (qa_q2_config_layout){ .models=62,.sounds=8254,.images=10302,.lights=10814,.items=11326,.player_skins=11582,
+            .map_checksum=61,.max_clients=60,.air_accelerate=59,.max_models=8192,.max_sounds=2048,
+            .max_images=512,.max_configs=QA_Q2_RERELEASE_CONFIGSTRINGS,.extended=true,.max_entities=8192,
+            .second_lights=11070,.wheel_weapons=12350,.n64_physics=12103};
     } else {
-        *out = (qa_q2_config_layout){32,288,544,800,1056,1312,31,30,29,256,256,256,QA_Q2_CLASSIC_CONFIGSTRINGS,false,1024};
+        *out = (qa_q2_config_layout){ .models=32,.sounds=288,.images=544,.lights=800,.items=1056,.player_skins=1312,
+            .map_checksum=31,.max_clients=30,.air_accelerate=29,.max_models=256,.max_sounds=256,
+            .max_images=256,.max_configs=QA_Q2_CLASSIC_CONFIGSTRINGS,.max_entities=1024,
+            .second_lights=UINT32_MAX,.wheel_weapons=UINT32_MAX,.n64_physics=UINT32_MAX};
     }
     return true;
 }

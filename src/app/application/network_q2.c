@@ -30,8 +30,7 @@ bool qa_application_network_q2_host_source(qa_application *app, qa_net_protocol_
             qa_application_native_q2_presentation_selected(app, &value.source, &found, error))) return false;
     if (!found || protocol.kind == QA_NET_Q2KEX_DEMO_2022)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 wire requires a physical live Q2 GAME");
-    bool rerelease = protocol.kind == QA_NET_Q2REPRO_1038 || protocol.kind == QA_NET_Q2KEX_2023 ||
-        protocol.kind == QA_NET_Q2PRIVATE_4038;
+    bool rerelease = qa_q2_protocol_rerelease(protocol);
     if (rerelease != (value.source.edition == QA_Q2_RERELEASE))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 wire dialect differs from its physical GAME API");
     application_provider *provider = application_world_provider(app, QA_ROLE_ENTITIES, "");
@@ -120,8 +119,7 @@ bool application_network_q2_layout(qa_application_network_q2 *owner, qa_error *e
     owner->item_base = layout.items; owner->skin_base = layout.player_skins;
     owner->light_base = layout.lights; owner->checksum_index = layout.map_checksum;
     owner->clients_index = layout.max_clients; owner->air_index = layout.air_accelerate;
-    bool rr = owner->host.protocol.kind == QA_NET_Q2REPRO_1038 || owner->host.protocol.kind == QA_NET_Q2KEX_2023;
-    owner->n64_index = rr ? 12103u : UINT32_MAX;
+    owner->n64_index = layout.n64_physics;
     const uint32_t bases[] = {layout.models, layout.sounds, layout.images};
     const uint32_t maximum[] = {layout.max_models, layout.max_sounds, layout.max_images};
     owner->configs = calloc(owner->config_count, sizeof(*owner->configs));
@@ -208,11 +206,11 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
     if (!engine || !out || index >= engine->config_layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Q2 config lost its actual Source API index");
     bool rr = engine->profile == QA_NATIVE_Q2_GAME_API2023;
-    uint32_t air = rr ? 59u : 29u;
+    uint32_t air = engine->config_layout.air_accelerate;
     if (index < air && index < owner->air_index) { *out = index; return true; }
     if (index == air) { *out = owner->air_index; return true; }
-    if (index == air + 1) { *out = owner->clients_index; return true; }
-    if (index == air + 2) { *out = owner->checksum_index; return true; }
+    if (index == engine->config_layout.max_clients) { *out = owner->clients_index; return true; }
+    if (index == engine->config_layout.map_checksum) { *out = owner->checksum_index; return true; }
     for (unsigned kind = 0; kind < 3; ++kind) {
         uint32_t base = application_native_q2_resource_range(engine, kind).base;
         if (index >= base && index - base < application_native_q2_resource_range(engine, kind).count) {
@@ -221,8 +219,8 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
             *out = owner->resources[kind].base + resource; return true;
         }
     }
-    const uint32_t source[] = {rr ? 10814u : 800u, rr ? 11326u : 1056u,
-        rr ? 11582u : 1312u, rr ? 11838u : 1568u};
+    const uint32_t source[] = {engine->config_layout.lights, engine->config_layout.items,
+        engine->config_layout.player_skins, engine->config_layout.player_skins + 256};
     const uint32_t target[] = {owner->light_base, owner->item_base,
         owner->skin_base, owner->skin_base + 256};
     for (unsigned range = 0; range < 4; ++range) {
@@ -233,10 +231,10 @@ bool application_network_q2_source_config(qa_application_network_q2 *owner, uint
                 application_fail(error, QA_ERROR_FORMAT, "Q2 Source config exceeds its target range");
         }
     }
-    if (rr && owner->item_base - owner->light_base >= 512 && index >= 11070 && index < 11326) {
-        *out = owner->light_base + index - 10814; return true;
+    if (rr && owner->item_base - owner->light_base >= 512 && index >= engine->config_layout.second_lights && index < engine->config_layout.items) {
+        *out = owner->light_base + index - engine->config_layout.lights; return true;
     }
-    if (rr && owner->config_count == engine->config_layout.max_configs && index >= 12350) {
+    if (rr && owner->config_count == engine->config_layout.max_configs && index >= engine->config_layout.wheel_weapons) {
         *out = index; return true;
     }
     return application_fail(error, QA_ERROR_FORMAT, "Q2 Source config has no field in the admitted wire layout");
@@ -248,14 +246,14 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
     if (!engine || !engine->configstrings)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 publication lost its actual config owner");
     bool rr = engine->profile == QA_NATIVE_Q2_GAME_API2023;
-    uint32_t source_air = rr ? 59u : 29u;
+    uint32_t source_air = engine->config_layout.air_accelerate;
     uint32_t shared = source_air < owner->air_index ? source_air : owner->air_index;
     for (uint32_t i = 0; i < shared; ++i)
         if (!application_network_q2_config_id(owner, i, engine->configstrings[i], error)) return false;
     bool ok = true;
     for (uint32_t i = shared; ok && i < owner->air_index; ++i) ok = application_network_q2_config(owner, i, "", error);
-    const uint32_t source[] = {rr ? 10814u : 800u, rr ? 11326u : 1056u,
-        rr ? 11582u : 1312u, rr ? 11838u : 1568u};
+    const uint32_t source[] = {engine->config_layout.lights, engine->config_layout.items,
+        engine->config_layout.player_skins, engine->config_layout.player_skins + 256};
     for (unsigned range = 0; ok && range < 4; ++range) {
         uint32_t count = range == 3 ? 512u : 256u;
         for (uint32_t i = 0; ok && i < count; ++i) {
@@ -266,9 +264,9 @@ static bool observe_original(qa_application_network_q2 *owner, qa_error *error)
     }
     if (rr && owner->item_base - owner->light_base >= 512)
         for (uint32_t i = 0; ok && i < 256; ++i)
-            ok = application_network_q2_config_id(owner, owner->light_base + 256 + i, engine->configstrings[11070 + i], error);
+            ok = application_network_q2_config_id(owner, owner->light_base + 256 + i, engine->configstrings[engine->config_layout.second_lights + i], error);
     if (rr && owner->config_count == engine->config_layout.max_configs)
-        for (uint32_t i = 12350; ok && i < owner->config_count; ++i)
+        for (uint32_t i = engine->config_layout.wheel_weapons; ok && i < owner->config_count; ++i)
             ok = application_network_q2_config_id(owner, i, engine->configstrings[i], error);
     /* The map and vwep declarations establish actual client constructors before frames. */
     uint32_t mapped;

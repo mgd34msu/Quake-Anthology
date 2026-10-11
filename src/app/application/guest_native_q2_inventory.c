@@ -427,7 +427,7 @@ bool application_native_q2_weapon_request(application_provider *provider,qa_acto
     if(!*admitted||selected) return true;
     *admitted=false;
     struct application_native_q2 *engine=provider->state.native.q2_engine;
-    uint32_t base = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
+    uint32_t base = engine->config_layout.items;
     if (index > UINT32_MAX - base || base + index >= engine->config_layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Native weapon label leaves its real source configstring namespace");
     const char *label = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[base + index]);
@@ -621,7 +621,7 @@ bool application_native_q2_inventory_ui_read(application_provider *provider, qa_
     value.items = p->count ? application_unified_frame_alloc(lease, p->count, sizeof(*value.items), error) : NULL;
     if (p->count && !value.items)
         return application_fail(error, QA_ERROR_MEMORY, "Copying native Q2 UI inventory");
-    uint32_t label_base = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 11326u : 1056u;
+    uint32_t label_base = engine->config_layout.items;
     bool ok = true;
     ++engine->calls;
     for (size_t i = 0; ok && i < p->count; ++i) {

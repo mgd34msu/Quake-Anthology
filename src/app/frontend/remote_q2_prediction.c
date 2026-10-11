@@ -192,7 +192,7 @@ bool remote_q2_prediction_replay(frontend_remote_q2 *row, qa_error *error)
     if ((*air_text && (*end || !isfinite(air))) || air < -FLT_MAX || air > FLT_MAX)
         return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 prediction air acceleration is not a finite source number");
     if (rerelease) { profile.data.q2r.air_accelerate = (float)air;
-        profile.data.q2r.n64_physics = strtod(frontend_remote_q2_config(row, 12103), NULL) != 0; }
+        profile.data.q2r.n64_physics = strtod(frontend_remote_q2_config(row, row->hud_names.layout.n64_physics), NULL) != 0; }
     else { profile.data.q2.air_accelerate = (float)air; profile.data.q2.strafejump_hack = row->data.strafejump_hack; }
     qa_movement_services services = {.context = row, .trace = remote_q2_trace, .point_contents = contents, .is_bsp = is_brush};
     qa_movement_result *result = &row->prediction_scratch; bool ok = true; qa_vec3 pml = row->prediction_pml;

@@ -76,9 +76,7 @@ bool frontend_remote_q2_wire_seat(const frontend_remote_q2 *row, uint32_t *out, 
 }
 bool remote_q2_float_movement(const frontend_remote_q2 *row)
 {
-    qa_net_protocol kind = row->options.domain.protocol.kind;
-    return kind == QA_NET_Q2REPRO_1038 || kind == QA_NET_Q2PRIVATE_4038 ||
-        kind == QA_NET_Q2KEX_2023 || kind == QA_NET_Q2KEX_DEMO_2022;
+    return qa_q2_protocol_rerelease(row->options.domain.protocol);
 }
 bool remote_q2_rerelease_presentation(const frontend_remote_q2 *row)
 {
