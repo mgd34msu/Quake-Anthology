@@ -52,7 +52,7 @@ static void print(void *opaque, const qa_native_host_print *source)
         engine->platform.print(engine->platform.context, source);
 }
 
-static bool config_get(void *opaque, int32_t index, const char **out, qa_error *error)
+static bool config_get(void *opaque, int32_t index, qa_string_id *out, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
@@ -63,7 +63,7 @@ static bool config_get(void *opaque, int32_t index, const char **out, qa_error *
     }
     if (!out || index < 0 || (uint32_t)index >= engine->config_layout.max_configs)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 configstring exceeds its original API table");
-    *out = engine->configstrings[index] ? qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[index]) : "";
+    *out = engine->configstrings[index];
     return true;
 }
 
@@ -73,9 +73,10 @@ static bool register_file(struct application_native_q2 *, qa_native_host_resourc
 static bool config_set(void *opaque, int32_t index, const char *value, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
-    const char *prior;
+    qa_string_id prior;
     if (!value || !config_get(engine, index, &prior, error)) return false;
-    if (!strcmp(prior, value)) return true;
+    const char *prior_text = qa_strings_cstr(qa_session_strings(engine->provider->application->session), prior);
+    if (!strcmp(prior_text ? prior_text : "", value)) return true;
     for (unsigned kind = 0; kind <= QA_NATIVE_HOST_IMAGE; ++kind)
         if ((uint32_t)index > application_native_q2_resource_range(engine, kind).base &&
             (uint32_t)index - application_native_q2_resource_range(engine, kind).base < application_native_q2_resource_range(engine, kind).count &&

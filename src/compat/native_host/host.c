@@ -386,6 +386,7 @@ static void free_records(qa_native_host *host)
     native_host_movement_dispose(host);
     qa_arena_destroy(&host->call_storage);
     qa_arena_destroy(&host->text_storage);
+    free(host->command_arguments);
     native_host_memory_state memory={host->strings,host->cvar_shadows};
     native_host_memory_dispose(&memory); host->strings=(qa_id_index){0}; host->cvar_shadows=NULL;
     qa_strings_destroy(host->string_names); host->string_names=NULL;
@@ -623,6 +624,7 @@ bool qa_native_host_server_command(qa_native_host *host, qa_error *error)
     if (!host || !profile_is_q2_game(host->profile))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "ServerCommand requires a Q2 game host");
+    native_host_command_clear(host);
     return native_host_refresh_cvars(host, error) &&
            qa_native_call(host->instance, "ServerCommand", NULL, 0, NULL, error) &&
            native_host_reconcile(host, error);
@@ -930,6 +932,7 @@ bool qa_native_host_client_disconnect(qa_native_host *host, uint32_t slot, qa_er
 
 bool qa_native_host_client_command(qa_native_host *host, uint32_t slot, qa_error *error)
 {
+    native_host_command_clear(host);
     return native_host_refresh_cvars(host, error) &&
            client_entity_call(host, "ClientCommand", slot, error);
 }
@@ -948,6 +951,7 @@ bool qa_native_host_client_command_region(qa_native_host *host, uint32_t slot,
         return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
             "Native Q2 has no actual ClientCommand export");
     qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = entity};
+    native_host_command_clear(host);
     return native_host_refresh_cvars(host, error) &&
         qa_native_region_invoke(host->instance, event, entry, signature, &argument, 1, NULL, error) &&
         native_host_reconcile(host, error);

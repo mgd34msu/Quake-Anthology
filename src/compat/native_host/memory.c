@@ -164,15 +164,6 @@ bool native_host_string_id_address(qa_native_host *host, qa_string_id name,
     *out = value;
     return true;
 }
-bool native_host_string_address(qa_native_host *host, const char *text,
-    qa_native_address *out, qa_error *error)
-{
-    qa_string_id name;
-    return qa_strings_intern_cstr(host->string_names, text, &name, error) &&
-        native_host_string_id_address(host, name, out, error);
-}
-
-
 bool native_host_temporary_string(qa_native_host *host, const char *text,
                                   qa_native_address *out, qa_error *error)
 {
@@ -200,6 +191,59 @@ void native_host_temporary_free(qa_native_host *host, qa_native_address address)
         qa_native_free(host->instance, address, &ignored);
 }
 
+static bool string_buffer_write(qa_native_host *host, native_host_string_buffer *buffer,
+    const char *text, qa_error *error)
+{
+    size_t bytes = strlen(text) + 1;
+    if (bytes > host->maximum_string_bytes)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, bytes, "native string exceeds its source limit");
+    if (bytes > buffer->capacity) {
+        size_t capacity = buffer->capacity ? buffer->capacity : 64;
+        while (capacity < bytes && capacity <= host->maximum_string_bytes / 2) capacity *= 2;
+        if (capacity < bytes || capacity > host->maximum_string_bytes) capacity = bytes;
+        qa_native_address address = 0;
+        if (!qa_native_allocate(host->instance, capacity, INT32_MIN + 2, &address, error)) return false;
+        if (!native_host_write(host, address, text, bytes, error)) {
+            native_host_temporary_free(host, address);
+            return false;
+        }
+        native_host_temporary_free(host, buffer->address);
+        *buffer = (native_host_string_buffer){address, capacity};
+        return true;
+    }
+    return native_host_write(host, buffer->address, text, bytes, error);
+}
+
+void native_host_command_clear(qa_native_host *host)
+{
+    for (size_t i = 0; i < host->command_argument_count; ++i) {
+        native_host_temporary_free(host, host->command_arguments[i].address);
+        host->command_arguments[i] = (native_host_string_buffer){0};
+    }
+    native_host_temporary_free(host, host->command_tail.address);
+    host->command_tail = (native_host_string_buffer){0};
+}
+
+bool native_host_command_string(qa_native_host *host, size_t index, size_t count,
+    const char *text, qa_native_address *out, qa_error *error)
+{
+    native_host_string_buffer *buffer = &host->command_tail;
+    if (index < count) {
+        if (count > host->command_argument_count) {
+            native_host_string_buffer *rows = realloc(host->command_arguments, count * sizeof(*rows));
+            if (!rows) return native_host_fail(error, QA_ERROR_MEMORY, count, "allocating native command arguments");
+            memset(rows + host->command_argument_count, 0,
+                (count - host->command_argument_count) * sizeof(*rows));
+            host->command_arguments = rows;
+            host->command_argument_count = count;
+        }
+        buffer = &host->command_arguments[index];
+    }
+    if (!string_buffer_write(host, buffer, text, error)) return false;
+    *out = buffer->address;
+    return true;
+}
+
 static native_host_cvar_record *find_cvar(qa_native_host *host, const char *name)
 {
     for (native_host_cvar_record *record = host->cvar_shadows; record; record = record->next)
@@ -223,13 +267,25 @@ bool native_host_store_pointer(const qa_native_host *host, uint8_t *bytes,
 }
 
 static bool cvar_bytes(qa_native_host *host,
-                       const qa_cvar_view *view, native_host_cvar_record *next,
+                       native_host_cvar_record *record, const qa_cvar_view *view, native_host_cvar_record *next,
                        uint8_t bytes[56], qa_error *error)
 {
-    qa_native_address name, value, latched = 0;
-    if (!native_host_string_address(host, view->name, &name, error) ||
-        !native_host_string_address(host, view->value, &value, error) ||
-        (view->latched_value && !native_host_string_address(host, view->latched_value, &latched, error))) return false;
+    if (!record->name_address) {
+        qa_string_id name;
+        if (!qa_strings_intern_cstr(host->string_names, view->name, &name, error) ||
+            !native_host_string_id_address(host, name, &record->name_address, error)) return false;
+    }
+    bool changed = !record->published_valid || record->modification != view->modification_count;
+    if (changed || record->value_text != view->value) {
+        if (!string_buffer_write(host, &record->value, view->value, error)) return false;
+        record->value_text = view->value;
+    }
+    if (view->latched_value && (changed || record->latched_text != view->latched_value)) {
+        if (!string_buffer_write(host, &record->latched, view->latched_value, error)) return false;
+    }
+    record->latched_text = view->latched_value;
+    qa_native_address name = record->name_address, value = record->value.address;
+    qa_native_address latched = view->latched_value ? record->latched.address : 0;
     memset(bytes, 0, 56);
     if (host->profile == QA_NATIVE_Q2_GAME_API3) {
         const native_host_classic_layout *layout = host->classic;
@@ -259,7 +315,16 @@ static bool publish_cvar(qa_native_host *host, native_host_cvar_record *record,
                          bool restore, qa_error *error)
 {
     uint8_t bytes[56];
-    if (!cvar_bytes(host, view, next, bytes, error)) return false;
+    size_t flags_offset = host->classic ? host->classic->cvar.flags : 24;
+    size_t next_offset = host->classic ? host->classic->cvar.next : 40;
+    qa_native_address published_next = host->pointer_bytes == 4 ?
+        qa_load_u32le(record->published + next_offset) : qa_load_u64le(record->published + next_offset);
+    if (!restore && record->published_valid && record->modification == view->modification_count &&
+        record->value_text == view->value && record->latched_text == view->latched_value &&
+        qa_load_u32le(record->published + flags_offset) == view->flags &&
+        (!host->classic || qa_load_u32le(record->published + host->classic->cvar.modified) == (uint32_t)view->modified) &&
+        published_next == (next ? next->address : 0)) return true;
+    if (!cvar_bytes(host, record, view, next, bytes, error)) return false;
     size_t size = host->classic ? host->classic->cvar.bytes : sizeof(bytes);
     if (!restore) {
         if (!record->published_valid) {
@@ -276,7 +341,8 @@ static bool publish_cvar(qa_native_host *host, native_host_cvar_record *record,
                 lengths[0] = lengths[1] = lengths[2] = lengths[6] = host->pointer_bytes;
                 count = 7;
             }
-            bool value_changed = memcmp(record->published + offsets[1], bytes + offsets[1], lengths[1]) != 0;
+            bool value_changed = record->modification != view->modification_count ||
+                memcmp(record->published + offsets[1], bytes + offsets[1], lengths[1]) != 0;
             for (size_t i = 0; i < count; ++i) {
                 size_t offset = offsets[i], length = lengths[i];
                 bool changed = memcmp(record->published + offset, bytes + offset, length) != 0 ||
@@ -288,6 +354,16 @@ static bool publish_cvar(qa_native_host *host, native_host_cvar_record *record,
                 if (memcmp(actual, bytes + offset, length) &&
                     !native_host_write(host, record->address + offset, bytes + offset, length, error)) return false;
             }
+        }
+    }
+    if (restore) {
+        size_t offsets[2] = {host->classic ? host->classic->cvar.string : 8,
+            host->classic ? host->classic->cvar.latched : 16};
+        for (size_t i = 0; i < 2; ++i) {
+            uint8_t actual[8];
+            if (!native_host_read(host, record->address + offsets[i], actual, host->pointer_bytes, error)) return false;
+            if (memcmp(actual, bytes + offsets[i], host->pointer_bytes) &&
+                !native_host_write(host, record->address + offsets[i], bytes + offsets[i], host->pointer_bytes, error)) return false;
         }
     }
     memcpy(record->published, bytes, sizeof(bytes));
@@ -513,6 +589,22 @@ bool native_host_memory_fields(qa_source_save_io *io,qa_native_host *host,
             uint8_t pointer[8];
             if (!qa_native_read(host->instance,row->address,pointer,host->pointer_bytes,io->error)) return false;
             qa_native_address name=host->pointer_bytes==4?qa_load_u32le(pointer):qa_load_u64le(pointer);
+            if (reading) {
+                row->name_address = name;
+                size_t offsets[2] = {host->classic ? host->classic->cvar.string : 8,
+                    host->classic ? host->classic->cvar.latched : 16};
+                native_host_string_buffer *buffers[2] = {&row->value, &row->latched};
+                for (size_t j = 0; j < 2; ++j) {
+                    if (!native_host_read(host, row->address + offsets[j], pointer, host->pointer_bytes, io->error)) return false;
+                    buffers[j]->address = host->pointer_bytes == 4 ? qa_load_u32le(pointer) : qa_load_u64le(pointer);
+                    if (buffers[j]->address) {
+                        qa_native_allocation_info allocation;
+                        if (!qa_native_allocation_query(host->instance, buffers[j]->address, &allocation, io->error)) return false;
+                        if (allocation.tag == INT32_MIN + 2) buffers[j]->capacity = allocation.bytes;
+                        else *buffers[j] = (native_host_string_buffer){0};
+                    }
+                }
+            }
             qa_string_id id = qa_strings_find(host->string_names, (qa_bytes){(const uint8_t *)row->name, strlen(row->name)});
             qa_id_index_cursor cursor = qa_id_index_begin(&state->strings, id, 0);
             size_t address;

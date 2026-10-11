@@ -98,7 +98,7 @@ typedef struct qa_native_host_engine_services {
     void *context;
     qa_strings *strings;
     void (*print)(void *, const qa_native_host_print *);
-    bool (*configstring_get)(void *, int32_t, const char **, qa_error *);
+    bool (*configstring_get)(void *, int32_t, qa_string_id *, qa_error *);
     bool (*configstring_set)(void *, int32_t, const char *, qa_error *);
     bool (*resource_index)(void *, qa_native_host_resource_kind, const char *, int32_t *,
                            qa_error *);

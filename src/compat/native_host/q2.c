@@ -80,10 +80,10 @@ static bool configstring_get(qa_native_host *host, int32_t index,
     if (!host->engine.configstring_get)
         return native_host_fail(error, QA_ERROR_UNSUPPORTED, (size_t)(uint32_t)index,
                                 "native configstring reader is unbound");
-    const char *value = NULL;
+    qa_string_id value = QA_STRING_NONE;
     if (!host->engine.configstring_get(host->engine.context, index, &value, error))
         return false;
-    return native_host_string_address(host, value ? value : "", out, error);
+    return native_host_string_id_address(host, value, out, error);
 }
 
 static bool configstring_set(qa_native_host *host, const qa_native_import_call *call,
@@ -304,13 +304,17 @@ static bool command_import(qa_native_host *host, const qa_native_import_call *ca
         return true;
     }
     const char *text;
+    size_t slot = command.count;
     if ((dispatch == QA_NATIVE_Q2_IMPORT_argv)) {
         int32_t index = native_argument_i32(call, 0);
-        text = index >= 0 && (size_t)index < command.count ? command.arguments[index] : "";
+        if (index < 0 || (size_t)index >= command.count)
+            return native_host_string_id_address(host, host->empty_string, &result->as.address, error);
+        slot = (size_t)index;
+        text = command.arguments[slot];
     } else {
         text = command.tail ? command.tail : "";
     }
-    return native_host_string_address(host, text, &result->as.address, error);
+    return native_host_command_string(host, slot, command.count, text, &result->as.address, error);
 }
 
 static bool add_command(qa_native_host *host, const qa_native_import_call *call,
