@@ -16,10 +16,9 @@ qa_bot_navigation *application_bot_navigation(void *opaque,int32_t client) {
     if(!actor.registry) return NULL;
     const application_bot_seat *seat = application_bot_seat_find(bots, actor);
     if (seat) return seat->navigation;
-    for(application_bot_target *target=bots->targets;target;target=target->next)
-        if(qa_actor_id_equal(target->actor,actor) &&
-           qa_actors_get(qa_session_actors(bots->application->session),target->actor)) return target->navigation;
-    return NULL;
+    application_bot_target *target=application_bot_target_find(bots,actor);
+    return target && qa_actors_get(qa_session_actors(bots->application->session),actor)
+        ? target->navigation : NULL;
 }
 bool application_bot_movement_input(void *opaque,qa_actor_id actor,qa_movement_input *out,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
@@ -45,9 +44,8 @@ bool application_bot_movement_input(void *opaque,qa_actor_id actor,qa_movement_i
 static qa_actor_id source_actor(void *opaque,int32_t number) {
     application_bots *bots=opaque;
     if(number<0) return (qa_actor_id){0};
-    uint32_t cursor=(uint32_t)number;const qa_actor_record *actor;
-    return qa_actors_next(qa_session_actors(bots->application->session),&cursor,&actor) &&
-        actor->id.slot==(uint32_t)number?actor->id:(qa_actor_id){0};
+    const qa_actor_record *actor=qa_actors_at(qa_session_actors(bots->application->session),(uint32_t)number);
+    return actor?actor->id:(qa_actor_id){0};
 }
 static int32_t source_model(void *opaque,qa_actor_id actor) {
     application_bots *bots=opaque;qa_actor_collision collision;
@@ -658,8 +656,7 @@ bool application_bot_navigation_bind(application_bots *bots,application_bot_seat
 bool application_bots_guest_admit(qa_application *application,qa_actor_id actor,qa_error *error) {
     application_bots *bots=application->bots;
     if(!bots) return application_fail(error,QA_ERROR_NOT_FOUND,"guest bot shared library is absent");
-    for(application_bot_target *target=bots->targets;target;target=target->next)
-        if(qa_actor_id_equal(target->actor,actor)) return true;
+    if(application_bot_target_find(bots,actor)) return true;
     qa_player_state control;
     if(!qa_application_control_read(application,actor,&control))
         return application_fail(error,QA_ERROR_NOT_FOUND,"guest bot selected movement has not been admitted");
@@ -669,7 +666,8 @@ bool application_bots_guest_admit(qa_application *application,qa_actor_id actor,
     if(!application_bot_navigation_bind(bots,&seat,error)) {free(target);return false;}
     target->actor=actor;target->movement=application_provider_for(application,actor,QA_ROLE_MOVEMENT,NULL);
     target->profile=control.profile;target->bounds=control.bounds;target->navigation=seat.navigation;
-    target->next=bots->targets;bots->targets=target;return true;
+    target->next=bots->targets;bots->targets=target;
+    application_bot_target_index_bind(bots,target);return true;
 }
 bool application_bot_predict_motion(void *opaque,qa_actor_id actor,
                                      const qa_bot_movement_prediction_query *query,
@@ -680,10 +678,9 @@ bool application_bot_predict_motion(void *opaque,qa_actor_id actor,
     application_provider *movement=application_provider_for(application,actor,QA_ROLE_MOVEMENT,NULL);
     if(!movement || (movement->kind!=APPLICATION_PROVIDER_Q1 && movement->kind!=APPLICATION_PROVIDER_Q2 &&
                      movement->kind!=APPLICATION_PROVIDER_Q3)) return true;
-    application_bot_target *target=bots->targets;
-    while(target && !(qa_actor_id_equal(target->actor,actor) && target->movement==movement &&
-                      !memcmp(&target->profile,&control.profile,sizeof(control.profile)) &&
-                      !memcmp(&target->bounds,&control.bounds,sizeof(control.bounds)))) target=target->next;
+    application_bot_target *target=application_bot_target_find(bots,actor);
+    if(target && target->predicting)
+        return application_fail(error,QA_ERROR_ARGUMENT,"target movement prediction reentered its workspace");
     if(!target) {
         target=calloc(1,sizeof(*target));
         if(!target) return application_fail(error,QA_ERROR_MEMORY,"retaining selected target movement prediction");
@@ -692,9 +689,15 @@ bool application_bot_predict_motion(void *opaque,qa_actor_id actor,
         target->actor=actor;target->movement=movement;target->profile=control.profile;
         target->bounds=control.bounds;target->navigation=seat.navigation;
         target->next=bots->targets;bots->targets=target;
+        application_bot_target_index_bind(bots,target);
+    } else if(target->movement!=movement ||
+              memcmp(&target->profile,&control.profile,sizeof(control.profile)) ||
+              memcmp(&target->bounds,&control.bounds,sizeof(control.bounds))) {
+        application_bot_seat seat={.actor=actor};
+        if(!application_bot_navigation_bind(bots,&seat,error)) return false;
+        qa_bot_navigation_destroy(target->navigation);target->navigation=seat.navigation;
+        target->movement=movement;target->profile=control.profile;target->bounds=control.bounds;
     }
-    if(target->predicting)
-        return application_fail(error,QA_ERROR_ARGUMENT,"target movement prediction reentered its workspace");
     target->predicting=true;
     ++bots->calls;
     bool ok=qa_bot_navigation_predict_movement(target->navigation,query,out,error);

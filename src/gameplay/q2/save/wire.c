@@ -147,7 +147,7 @@ bool q2_save_wire(q2_save_io *io)
     qa_actor_id *actors = io->reading ? calloc(capacity, sizeof(*actors)) : NULL;
     uint64_t *freed = io->reading ? calloc(capacity, sizeof(*freed)) : g->wire_freed_ns;
     uint8_t *seen = calloc(g->capacity, 1);
-    qa_actor_index index = {0};
+    qa_actor_index index = {0}, shadow_index = {0};
     if ((io->reading && !actors) || !freed || !seen) {
         if (io->reading) { free(actors); free(freed); }
         free(seen);
@@ -155,8 +155,10 @@ bool q2_save_wire(q2_save_io *io)
         return false;
     }
     if (io->reading && (!qa_actor_index_create(&index, qa_session_actors(g->services.session), io->error) ||
-        !qa_actor_index_reverse_reserve(&index, capacity, io->error))) {
-        qa_actor_index_destroy(&index); free(actors); free(freed); free(seen); return false;
+        !qa_actor_index_reverse_reserve(&index, capacity, io->error) ||
+        !qa_actor_index_create(&shadow_index, qa_session_actors(g->services.session), io->error))) {
+        qa_actor_index_destroy(&index); qa_actor_index_destroy(&shadow_index);
+        free(actors); free(freed); free(seen); return false;
     }
     bool ok = true;
     for (uint32_t slot = 0; ok && slot < extent; ++slot) {
@@ -244,10 +246,15 @@ bool q2_save_wire(q2_save_io *io)
             ok = q2_save_fail(io, "Q2 continuation shadow light lost its true Source entity");
             break;
         }
-        for (uint32_t prior = 0; prior < i; ++prior)
-            if (qa_actor_id_equal(shadows[prior].actor, record->id))
-                ok = q2_save_fail(io, "Q2 continuation aliases a Source shadow light");
-        if (ok && io->reading) s->actor = record->id;
+        size_t previous;
+        qa_actor_index *shadow_bindings = io->reading ? &shadow_index : &g->wire_shadow_index;
+        bool bound = qa_actor_index_find(shadow_bindings, record->id, &previous);
+        if (bound && (io->reading || previous != i))
+            ok = q2_save_fail(io, "Q2 continuation aliases a Source shadow light");
+        if (ok && io->reading) {
+            s->actor = record->id;
+            qa_actor_index_put(&shadow_index, record->id, i);
+        }
     }
     size_t reference_count = io->reading ? 0 : qa_actor_index_retained_count(&g->wire_index);
     if (ok && reference_count > UINT32_MAX) ok = q2_save_fail(io, "Invalid Q2 continuation array");
@@ -288,8 +295,11 @@ bool q2_save_wire(q2_save_io *io)
         g->wire_frame = frame;
         for (uint32_t i = 0; i < 256; ++i) qa_lightstyles_set(&g->wire_lightstyles, i, styles[i]);
         memcpy(g->wire_shadows, shadows, sizeof(shadows)); g->wire_shadow_count = shadow_count;
+        qa_actor_index_destroy(&g->wire_shadow_index);
+        g->wire_shadow_index = shadow_index; shadow_index = (qa_actor_index){0};
     } else if (io->reading) free(freed);
     qa_actor_index_destroy(&index);
+    qa_actor_index_destroy(&shadow_index);
     free(actors);
     free(seen);
     return ok;

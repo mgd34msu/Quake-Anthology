@@ -283,6 +283,9 @@ static bool rogue_runes(q1_save_io *io, qa_q1_game *g) {
     if (count > g->capacity || (count && g->options.program != QA_Q1_ROGUE) ||
         ((io->values.direction == QA_SOURCE_SAVE_READ) && count > (io->values.input.size - io->values.offset) / 56))
         return q1_save_fail(io, "Invalid Rogue rune carrier count");
+    if (io->values.direction == QA_SOURCE_SAVE_READ &&
+        !qa_actor_index_create(&g->rogue_rune_index,
+            qa_session_actors(g->services.session), io->values.error)) return false;
     q1_rogue_rune_player **link = &g->rogue_rune_players;
     for (uint32_t i = 0; i < count; ++i) {
         if (io->values.direction == QA_SOURCE_SAVE_READ) {
@@ -296,9 +299,16 @@ static bool rogue_runes(q1_save_io *io, qa_q1_game *g) {
         if (!rune_number(io, &row->notice) || !rune_number(io, &row->earth_noise) ||
             !rune_number(io, &row->black_noise) || !rune_number(io, &row->hell_noise) ||
             !rune_number(io, &row->regeneration)) return false;
-        for (const q1_rogue_rune_player *prior = g->rogue_rune_players; prior != row; prior = prior->next)
-            if (qa_actor_id_equal(prior->actor, row->actor))
-                return q1_save_fail(io, "Duplicate Rogue rune carrier");
+        size_t value;
+        bool indexed = qa_actor_index_find(&g->rogue_rune_index, row->actor, &value);
+        if (indexed && (io->values.direction == QA_SOURCE_SAVE_READ ||
+            (q1_rogue_rune_player *)(uintptr_t)value != row))
+            return q1_save_fail(io, "Duplicate Rogue rune carrier");
+        if (io->values.direction == QA_SOURCE_SAVE_READ) {
+            row->previous = g->rogue_rune_last;
+            g->rogue_rune_last = row;
+            qa_actor_index_put(&g->rogue_rune_index, row->actor, (size_t)(uintptr_t)row);
+        }
         link = &row->next;
     }
     return true;
@@ -416,6 +426,8 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     candidate->maps = NULL;
     candidate->wire = NULL;
     candidate->rogue_rune_players = NULL;
+    candidate->rogue_rune_last = NULL;
+    candidate->rogue_rune_index = (qa_actor_index){0};
     q1_save_io io = {.game = candidate};
     if (!qa_source_save_reader(&io.values, candidate->services.session, bytes, error)) {
         qa_q1_game_restore_abort(ticket);

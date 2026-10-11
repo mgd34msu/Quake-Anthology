@@ -81,6 +81,7 @@ typedef struct application_bots {
     application_bot_graph *graphs;
     qa_bot_navigation *map_navigation;
     application_bot_target *targets;
+    qa_actor_index actor_targets;
     application_bot_guest *guests;
     application_bot_seat *seats;
     qa_actor_index actor_seats;
@@ -117,6 +118,16 @@ static inline application_bot_seat *application_bot_seat_find(const application_
     if (!bots || !qa_actor_index_find(&bots->actor_seats, actor, &row) || row >= bots->capacity) return NULL;
     application_bot_seat *seat = bots->seats + row;
     return application_bot_seat_live(bots, seat) ? seat : NULL;
+}
+static inline application_bot_target *application_bot_target_find(const application_bots *bots, qa_actor_id actor)
+{
+    size_t value;
+    return bots && qa_actor_index_find(&bots->actor_targets, actor, &value)
+        ? (application_bot_target *)(uintptr_t)value : NULL;
+}
+static inline void application_bot_target_index_bind(application_bots *bots, application_bot_target *target)
+{
+    qa_actor_index_put(&bots->actor_targets, target->actor, (size_t)(uintptr_t)target);
 }
 bool application_bots_seats_prepare(application_bots *, qa_error *);
 void application_bot_seat_index_bind(application_bots *, application_bot_seat *);

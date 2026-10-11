@@ -15,7 +15,7 @@ typedef struct npc_graph {
     qa_vfs_acquisition acquisition;
 } npc_graph;
 typedef struct npc_actor {
-    struct npc_actor *next;
+    struct npc_actor *next,*previous;
     qa_actor_id actor;
     npc_graph *graph;
     qa_navigation *navigation;
@@ -36,11 +36,33 @@ typedef struct application_bots_npc {
     qa_vfs *files;
     npc_graph *graphs;
     npc_actor *actors;
+    qa_actor_index actor_routes;
     qa_arena prediction_storage;
     qa_pool predictions;
     size_t prediction_points;
     bool busy;
 } application_bots_npc;
+
+static inline npc_actor *application_npc_actor_find(const application_bots_npc *owner,qa_actor_id actor)
+{
+    size_t value;
+    return qa_actor_index_find(&owner->actor_routes,actor,&value)
+        ? (npc_actor *)(uintptr_t)value : NULL;
+}
+static inline void application_npc_actor_link(application_bots_npc *owner,npc_actor *actor)
+{
+    actor->next=owner->actors;
+    if(actor->next) actor->next->previous=actor;
+    owner->actors=actor;
+    qa_actor_index_put(&owner->actor_routes,actor->actor,(size_t)(uintptr_t)actor);
+}
+static inline void application_npc_actor_unlink(application_bots_npc *owner,npc_actor *actor)
+{
+    if(actor->previous) actor->previous->next=actor->next;
+    else owner->actors=actor->next;
+    if(actor->next) actor->next->previous=actor->previous;
+    qa_actor_index_remove(&owner->actor_routes,actor->actor);
+}
 
 bool application_npc_owner_create(application_provider *,bool prepared,application_bots_npc **,qa_error *);
 void application_npc_owner_free(application_bots_npc *);

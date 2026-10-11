@@ -13,9 +13,9 @@ static bool current(qa_q1_game *g, qa_error *error) {
         fail(error, (qa_actor_id){0}, "Rogue runes lost their actual native composition");
 }
 static q1_rogue_rune_player *find(const qa_q1_game *g, qa_actor_id actor) {
-    for (q1_rogue_rune_player *row = g ? g->rogue_rune_players : NULL; row; row = row->next)
-        if (qa_actor_id_equal(row->actor, actor)) return row;
-    return NULL;
+    size_t value;
+    return g && qa_actor_index_find(&g->rogue_rune_index, actor, &value) ?
+        (q1_rogue_rune_player *)(uintptr_t)value : NULL;
 }
 static bool player_current(qa_q1_game *g, qa_actor_id actor,
     const q1_rogue_rune_player *row, qa_error *error) {
@@ -30,28 +30,31 @@ static q1_rogue_rune_player *state(qa_q1_game *g, qa_actor_id actor, qa_error *e
     }
     q1_rogue_rune_player *found = find(g, actor);
     if (found) return found;
+    if (!g->rogue_rune_index.entries &&
+        !qa_actor_index_create(&g->rogue_rune_index,
+            qa_session_actors(g->services.session), error)) return NULL;
     q1_rogue_rune_player *row = calloc(1, sizeof(*row));
     if (!row) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Creating Rogue rune carrier state");
         return NULL;
     }
     row->actor = actor;
-    q1_rogue_rune_player **tail = &g->rogue_rune_players;
-    while (*tail) tail = &(*tail)->next;
-    *tail = row;
+    row->previous = g->rogue_rune_last;
+    if (row->previous) row->previous->next = row;
+    else g->rogue_rune_players = row;
+    g->rogue_rune_last = row;
+    qa_actor_index_put(&g->rogue_rune_index, actor, (size_t)(uintptr_t)row);
     return row;
 }
 void q1_source_rogue_runes_release(qa_q1_game *g, qa_actor_id actor) {
-    q1_rogue_rune_player **link = &g->rogue_rune_players;
-    while (*link) {
-        q1_rogue_rune_player *row = *link;
-        if (qa_actor_id_equal(row->actor, actor)) {
-            *link = row->next;
-            free(row);
-            return;
-        }
-        link = &row->next;
-    }
+    q1_rogue_rune_player *row = find(g, actor);
+    if (!row) return;
+    qa_actor_index_remove(&g->rogue_rune_index, actor);
+    if (row->previous) row->previous->next = row->next;
+    else g->rogue_rune_players = row->next;
+    if (row->next) row->next->previous = row->previous;
+    else g->rogue_rune_last = row->previous;
+    free(row);
 }
 void q1_source_rogue_runes_free(qa_q1_game *g) {
     while (g->rogue_rune_players) {
@@ -59,6 +62,8 @@ void q1_source_rogue_runes_free(qa_q1_game *g) {
         free(g->rogue_rune_players);
         g->rogue_rune_players = next;
     }
+    g->rogue_rune_last = NULL;
+    qa_actor_index_destroy(&g->rogue_rune_index);
 }
 bool qa_q1_source_rogue_runes_read(const qa_q1_game *g, qa_actor_id actor,
     uint32_t *out, bool *found, qa_error *error) {

@@ -46,6 +46,7 @@ typedef struct application_bot_world_services {
     bool (*brush)(void *,qa_actor_id,bool *,qa_error *);
     bool (*weapon)(void *,qa_actor_id,int32_t *,int32_t *,qa_error *);
     qa_actor_id (*world_actor)(void *);
+    bool (*client_actor)(void *,uint32_t,qa_actor_id *,qa_error *);
     qa_actor_id (*bot_actor)(void *,int32_t);
     bool (*clock)(void *,int32_t *,int32_t *,qa_error *);
     bool (*print)(void *,const char *,qa_error *);

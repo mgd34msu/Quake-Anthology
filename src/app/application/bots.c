@@ -34,7 +34,8 @@ bool application_bots_seats_prepare(application_bots *bots, qa_error *error)
     bots->client_seats = calloc(bots->seat_capacity, sizeof(*bots->client_seats));
     if (!bots->seats || !bots->client_seats)
         return application_fail(error, QA_ERROR_MEMORY, "allocating bot roster navigation bindings");
-    return qa_actor_index_create(&bots->actor_seats, actors, error);
+    return qa_actor_index_create(&bots->actor_seats, actors, error) &&
+        qa_actor_index_create(&bots->actor_targets, actors, error);
 }
 void application_bot_seat_index_remove(application_bots *bots, application_bot_seat *seat)
 {
@@ -795,6 +796,7 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     application_bots_round_detach(bots->round);
     application_bots_original_detach(bots->original);
     qa_actor_index_destroy(&bots->actor_seats);
+    qa_actor_index_destroy(&bots->actor_targets);
     free(bots->client_seats);free(bots->train_stops);free(bots->seats);free(bots);return true;
 }
 bool application_bots_can_destroy(const qa_application *application) {
@@ -842,6 +844,7 @@ bool application_bots_actor_released(qa_application *application,qa_actor_record
     size_t row;
     if (qa_actor_index_find(&bots->actor_seats, actor.id, &row) && row < bots->capacity)
         application_bot_seat_index_remove(bots, bots->seats + row);
+    qa_actor_index_remove(&bots->actor_targets, actor.id);
     return !bots->population || qa_bots_actor_released(bots->population,&actor,error);
 }
 bool application_bots_frame_at(qa_application *application,const qa_source_frame *frames,
@@ -871,6 +874,7 @@ bool application_bots_frame_at(qa_application *application,const qa_source_frame
     while(*link) {
         application_bot_target *target=*link;
         if(qa_actors_get(qa_session_actors(application->session),target->actor)) {link=&target->next;continue;}
+        qa_actor_index_remove(&bots->actor_targets, target->actor);
         *link=target->next;qa_bot_navigation_destroy(target->navigation);free(target);
     }
     bots->producer_frame=admitted;bots->producer_host_ns=host_ns;bots->producing=true;

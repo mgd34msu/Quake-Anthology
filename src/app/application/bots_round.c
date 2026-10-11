@@ -63,6 +63,7 @@ static bool navigation_prepare(application_bots *bots,bot_round_graph *graphs,si
 static void navigation_publish(application_bots *bots,bot_round_graph *graphs,size_t count,
     qa_bot_navigation **map_navigation) {
     qa_actor_index_clear(&bots->actor_seats);
+    qa_actor_index_clear(&bots->actor_targets);
     memset(bots->client_seats, 0, bots->seat_capacity * sizeof(*bots->client_seats));
     for(uint32_t i=0;i<bots->capacity;++i) {
         qa_bot_navigation_destroy(bots->seats[i].navigation);bots->seats[i].navigation=NULL;

@@ -65,6 +65,7 @@ bool qa_q2_wire_entity_number(qa_q2_game *, qa_actor_id, uint32_t *, qa_error *)
 bool qa_q2_wire_linked(qa_q2_game *, const qa_linked_body *, qa_error *);
 bool qa_q2_wire_binding_read(const qa_q2_game *, uint32_t,
     qa_q2_wire_binding *, qa_error *);
+bool qa_q2_source_client_actor(const qa_q2_game *, uint32_t client, qa_actor_id *);
 bool qa_q2_wire_actor(const qa_q2_game *, qa_actor_id,
     qa_q2_wire_binding *, qa_error *);
 bool qa_q2_wire_next(const qa_q2_game *, uint64_t *source_order,
