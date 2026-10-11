@@ -843,6 +843,13 @@ Variable authored pickup/map paths are admitted at their cold setup boundary.
 The replaced text model/gib APIs are deleted. Normal build and seven core
 suites pass. The ambient/lightstyle and other effect emitters remain open.
 
+Names leftovers item 14, Q1 map emitters: ambient and lightstyle helpers now
+take retained IDs. Fixed ambient tables and lightstyle selectors are admitted
+with the game runtime names. Rogue explosion, lava-splash, saw sound and meat
+spray emitters read those IDs directly. Their per-call interning is deleted.
+Normal build and seven core suites pass. The expanded list's Q1 model and map
+emitter sites are migrated; Q2 monster emitters remain open in item 14.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

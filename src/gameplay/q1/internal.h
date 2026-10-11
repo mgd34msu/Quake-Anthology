@@ -18,6 +18,29 @@
 #define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
 
 #define Q1_RUNTIME_NAME_LIST(X) \
+    X(RESOURCE_AMBIENCE_FIRE1_WAV, "ambience/fire1.wav") \
+    X(RESOURCE_A, "a") \
+    X(RESOURCE_M, "m") \
+    X(RESOURCE_AMBIENCE_BUZZ1_WAV, "ambience/buzz1.wav") \
+    X(RESOURCE_AMBIENCE_FL_HUM1_WAV, "ambience/fl_hum1.wav") \
+    X(RESOURCE_AMBIENCE_HUM1_WAV, "ambience/hum1.wav") \
+    X(RESOURCE_AMBIENCE_SUCK1_WAV, "ambience/suck1.wav") \
+    X(RESOURCE_AMBIENCE_DRIP1_WAV, "ambience/drip1.wav") \
+    X(RESOURCE_AMBIENCE_THUNDER1_WAV, "ambience/thunder1.wav") \
+    X(RESOURCE_AMBIENCE_SWAMP1_WAV, "ambience/swamp1.wav") \
+    X(RESOURCE_AMBIENCE_SWAMP2_WAV, "ambience/swamp2.wav") \
+    X(RESOURCE_AMBIENCE_DRONE6_WAV, "ambience/drone6.wav") \
+    X(RESOURCE_AMBIENCE_COMP1_WAV, "ambience/comp1.wav") \
+    X(RESOURCE_AMBIENT_HUMMING_WAV, "ambient/humming.wav") \
+    X(RESOURCE_AMBIENT_RUSHING_WAV, "ambient/rushing.wav") \
+    X(RESOURCE_AMBIENT_RUNWATER_WAV, "ambient/runwater.wav") \
+    X(RESOURCE_AMBIENT_FANBLOW_WAV, "ambient/fanblow.wav") \
+    X(RESOURCE_AMBIENT_WATERFAL_WAV, "ambient/waterfal.wav") \
+    X(RESOURCE_AMBIENT_RIFTPOWR_WAV, "ambient/riftpowr.wav") \
+    X(RESOURCE_COLORED_EXPLOSION, "colored-explosion") \
+    X(RESOURCE_LAVA_SPLASH, "lava-splash") \
+    X(RESOURCE_MEAT_SPRAY, "meat-spray") \
+    X(RESOURCE_BUZZ_BUZZ1_WAV, "buzz/buzz1.wav") \
     X(RESOURCE_PROGS_MG1_RUNE1_MDL, "progs/mg1_rune1.mdl") \
     X(RESOURCE_PROGS_MG1_RUNE2_MDL, "progs/mg1_rune2.mdl") \
     X(RESOURCE_PROGS_MG1_RUNE3_MDL, "progs/mg1_rune3.mdl") \

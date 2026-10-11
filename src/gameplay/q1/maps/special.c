@@ -47,21 +47,21 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
     }
     static const struct {
         q1_runtime_name classname;
-        const char *sound;
+        q1_runtime_name sound;
         float volume;
-    } sounds[] = {{Q1_NAME_AMBIENT_SUCK_WIND, "ambience/suck1.wav", 1},
-                  {Q1_NAME_AMBIENT_FLOURO_BUZZ, "ambience/buzz1.wav", 1},
-                  {Q1_NAME_AMBIENT_DRIP, "ambience/drip1.wav", .5f},
-                  {Q1_NAME_AMBIENT_THUNDER, "ambience/thunder1.wav", .5f},
-                  {Q1_NAME_AMBIENT_LIGHT_BUZZ, "ambience/fl_hum1.wav", .5f},
-                  {Q1_NAME_AMBIENT_SWAMP1, "ambience/swamp1.wav", .5f},
-                  {Q1_NAME_AMBIENT_SWAMP2, "ambience/swamp2.wav", .5f},
-                  {Q1_NAME_AMBIENT_DRONE, "ambience/drone6.wav", .5f},
-                  {Q1_NAME_AMBIENT_COMP_HUM, "ambience/comp1.wav", 1}};
+    } sounds[] = {{Q1_NAME_AMBIENT_SUCK_WIND, Q1_NAME_RESOURCE_AMBIENCE_SUCK1_WAV, 1},
+                  {Q1_NAME_AMBIENT_FLOURO_BUZZ, Q1_NAME_RESOURCE_AMBIENCE_BUZZ1_WAV, 1},
+                  {Q1_NAME_AMBIENT_DRIP, Q1_NAME_RESOURCE_AMBIENCE_DRIP1_WAV, .5f},
+                  {Q1_NAME_AMBIENT_THUNDER, Q1_NAME_RESOURCE_AMBIENCE_THUNDER1_WAV, .5f},
+                  {Q1_NAME_AMBIENT_LIGHT_BUZZ, Q1_NAME_RESOURCE_AMBIENCE_FL_HUM1_WAV, .5f},
+                  {Q1_NAME_AMBIENT_SWAMP1, Q1_NAME_RESOURCE_AMBIENCE_SWAMP1_WAV, .5f},
+                  {Q1_NAME_AMBIENT_SWAMP2, Q1_NAME_RESOURCE_AMBIENCE_SWAMP2_WAV, .5f},
+                  {Q1_NAME_AMBIENT_DRONE, Q1_NAME_RESOURCE_AMBIENCE_DRONE6_WAV, .5f},
+                  {Q1_NAME_AMBIENT_COMP_HUM, Q1_NAME_RESOURCE_AMBIENCE_COMP1_WAV, 1}};
     for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i)
         if (q1_classnamed(g, id, g->runtime_names[sounds[i].classname])) {
             if (addon) {
-                if (!qa_q1_wire_declare_sound(g, sounds[i].sound, error)) return false;
+                if (!qa_q1_wire_declare_sound(g, q1_runtime_name_text(sounds[i].sound), error)) return false;
                 entity = q1_entity(g, id);
                 if (!entity || !entity->map) return true;
                 qa_body_state body;
@@ -70,7 +70,7 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
                 entity = q1_entity(g, id);
                 if (!entity || !entity->map) return true;
             }
-            if (!q1_map_ambient(g, origin, sounds[i].sound, sounds[i].volume, error))
+            if (!q1_map_ambient(g, origin, g->runtime_names[sounds[i].sound], sounds[i].volume, error))
                 return false;
             entity = q1_entity(g, id);
             return !addon || !entity || q1_map_make_static(g, entity, error);
@@ -177,7 +177,7 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                     entity = q1_entity(g, id);
                     if (!entity || !entity->map) return true;
                 }
-                if (!q1_map_ambient(g, body.origin, "ambience/fire1.wav", .5f, error)) return false;
+                if (!q1_map_ambient(g, body.origin, g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_FIRE1_WAV], .5f, error)) return false;
                 entity = q1_entity(g, id);
                 if (!entity || !entity->map) return true;
             }

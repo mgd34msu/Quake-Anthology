@@ -293,7 +293,7 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
             return !e || q1_remove(g, e, error);
         }
         e->map->use_enabled = true;
-        return q1_map_lightstyle(g, e, e->spawnflags & 1 ? "a" : "m", error);
+        return q1_map_lightstyle(g, e, e->spawnflags & 1 ? g->runtime_names[Q1_NAME_RESOURCE_A] : g->runtime_names[Q1_NAME_RESOURCE_M], error);
     }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, error))
@@ -302,7 +302,7 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
     if (!e)
         return true;
     if (spark)
-        return q1_map_ambient(g, body.origin, "ambience/buzz1.wav", .5f, error);
+        return q1_map_ambient(g, body.origin, g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_BUZZ1_WAV], .5f, error);
     qa_string_id model = q1_classnamed(g, id, g->runtime_names[Q1_NAME_LIGHT_TORCH_SMALL_WALLTORCH])
         ? g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME_MDL] : g->runtime_names[Q1_NAME_RESOURCE_PROGS_FLAME2_MDL];
     if (!q1_model(g, e, model, error))
@@ -327,7 +327,7 @@ bool q1_map_addon_light_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_erro
     if (!visual(g, id)) return true;
     if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
     if (!visual(g, id)) return true;
-    if (!q1_map_ambient(g, body.origin, "ambience/fire1.wav", .5f, error))
+    if (!q1_map_ambient(g, body.origin, g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_FIRE1_WAV], .5f, error))
         return false;
     e = visual(g, id);
     return !e || q1_map_make_static(g, e, error);

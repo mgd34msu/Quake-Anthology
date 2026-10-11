@@ -75,9 +75,7 @@ static bool saw_frame(qa_q1_game *g, q1_actor *entity, bool flying, qa_error *er
     qa_actor_id id = entity->id;
     entity->frame = flying ? 1 : 0;
     if (entity->map->cooldown < g->time) {
-        qa_string_id sound;
-        if (!qa_builtin_resource(&g->services, "buzz/buzz1.wav", &sound, error) ||
-            !q1_sound_resource(g, id, sound, 2, 1, .2f, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_BUZZ_BUZZ1_WAV], 2, 1, .2f, error))
             return false;
         entity = hazard(g, id);
         if (!entity)
@@ -182,8 +180,8 @@ static bool saw_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_err
                               .origin = self.origin,
                               .value = 1,
                               .count = 1};
-    if (!qa_builtin_resource(&g->services, "meat-spray", &event.resource, error) ||
-        !qa_builtin_emit(&g->services, &event, error))
+    event.resource=g->runtime_names[Q1_NAME_RESOURCE_MEAT_SPRAY];
+    if (!qa_builtin_emit(&g->services, &event, error))
         return false;
     if (!hazard(g, id) || !q1_alive(g, other))
         return true;

@@ -207,8 +207,8 @@ static bool boom(qa_q1_game *g, q1_actor *explosion, qa_error *error) {
                                   .origin = body.origin,
                                   .code = 244,
                                   .count = 3};
-        if (!qa_builtin_resource(&g->services, "colored-explosion", &event.resource, error) ||
-            !qa_builtin_emit(&g->services, &event, error))
+        event.resource=g->runtime_names[Q1_NAME_RESOURCE_COLORED_EXPLOSION];
+        if (!qa_builtin_emit(&g->services, &event, error))
             return false;
     }
     explosion = time_actor(g, id);
@@ -313,8 +313,8 @@ bool q1_map_time_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
                                       .origin = qa_vec_add(body.origin, qa_v3(0, 0, -80)),
                                       .value = 1,
                                       .count = 1};
-            if (!qa_builtin_resource(&g->services, "lava-splash", &event.resource, error) ||
-                !qa_builtin_emit(&g->services, &event, error))
+            event.resource=g->runtime_names[Q1_NAME_RESOURCE_LAVA_SPLASH];
+            if (!qa_builtin_emit(&g->services, &event, error))
                 return false;
             entity = time_actor(g, id);
             if (!entity)

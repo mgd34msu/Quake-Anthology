@@ -757,17 +757,12 @@ bool q1_map_player(qa_q1_game *g, qa_actor_id actor) {
 bool q1_map_targets(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     return qa_targets_use(g->maps->options.targets, entity->id, activator, g->time_ns, error);
 }
-bool q1_map_ambient(qa_q1_game *g, qa_vec3 origin, const char *sound, float volume,
+bool q1_map_ambient(qa_q1_game *g, qa_vec3 origin, qa_string_id sound, float volume,
                     qa_error *error) {
-    qa_string_id resource;
-    return qa_builtin_resource(&g->services, sound, &resource, error) &&
-           g->maps->options.ambient(g->maps->options.context, origin, resource, volume, 3, error);
+    return g->maps->options.ambient(g->maps->options.context, origin, sound, volume, 3, error);
 }
-bool q1_map_lightstyle(qa_q1_game *g, q1_actor *entity, const char *pattern, qa_error *error) {
-    qa_string_id resource;
-    return qa_builtin_resource(&g->services, pattern, &resource, error) &&
-           g->maps->options.lightstyle(g->maps->options.context, entity->map->style, resource,
-                                       error);
+bool q1_map_lightstyle(qa_q1_game *g, q1_actor *entity, qa_string_id pattern, qa_error *error) {
+    return g->maps->options.lightstyle(g->maps->options.context, entity->map->style, pattern, error);
 }
 
 static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *source,
@@ -1351,7 +1346,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
             return q1_remove(g, entity, error);
         if (state->style >= 32 && !q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUOROSPARK])) {
             state->use_enabled = true;
-            if (!q1_map_lightstyle(g, entity, entity->spawnflags & 1 ? "a" : "m", error))
+            if (!q1_map_lightstyle(g, entity, entity->spawnflags & 1 ? g->runtime_names[Q1_NAME_RESOURCE_A] : g->runtime_names[Q1_NAME_RESOURCE_M], error))
                 return false;
             if (!q1_alive(g, entity->id))
                 return true;
@@ -1360,8 +1355,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
             q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUOROSPARK]))
             if (!q1_map_ambient(g, body.origin,
                                 q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_LIGHT_FLUORO])
-                                    ? "ambience/fl_hum1.wav"
-                                    : "ambience/buzz1.wav",
+                                    ? g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_FL_HUM1_WAV]
+                                    : g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_BUZZ1_WAV],
                                 .5f, error))
                 return false;
         break;
@@ -1458,7 +1453,7 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
     }
     if (entity->map->kind == Q1_MAP_LIGHT) {
         entity->spawnflags ^= 1;
-        return q1_map_lightstyle(g, entity, entity->spawnflags & 1 ? "a" : "m", error);
+        return q1_map_lightstyle(g, entity, entity->spawnflags & 1 ? g->runtime_names[Q1_NAME_RESOURCE_A] : g->runtime_names[Q1_NAME_RESOURCE_M], error);
     }
     return q1_map_trigger_use(g, entity, other, activator, error);
 }

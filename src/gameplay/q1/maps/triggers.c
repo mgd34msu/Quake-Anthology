@@ -127,7 +127,7 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
                 !q1_map_ambient(g,
                                 qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f),
-                                "ambience/hum1.wav", .5f, error))
+                                g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_HUM1_WAV], .5f, error))
                 return false;
         }
         return !q1_alive(g, entity->id) || q1_link(g, entity, error);

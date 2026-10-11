@@ -102,19 +102,19 @@ bool q1_map_hip_misc_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     case Q1_MAP_HIP_AMBIENT: {
         static const struct {
             q1_runtime_name name;
-            const char *path;
-        } sounds[] = {{Q1_NAME_AMBIENT_HUMMING, "ambient/humming.wav"},
-                      {Q1_NAME_AMBIENT_RUSHING, "ambient/rushing.wav"},
-                      {Q1_NAME_AMBIENT_RUNNING_WATER, "ambient/runwater.wav"},
-                      {Q1_NAME_AMBIENT_FAN_BLOWING, "ambient/fanblow.wav"},
-                      {Q1_NAME_AMBIENT_WATERFALL, "ambient/waterfal.wav"},
-                      {Q1_NAME_AMBIENT_RIFTPOWER, "ambient/riftpowr.wav"}};
+            q1_runtime_name path;
+        } sounds[] = {{Q1_NAME_AMBIENT_HUMMING, Q1_NAME_RESOURCE_AMBIENT_HUMMING_WAV},
+                      {Q1_NAME_AMBIENT_RUSHING, Q1_NAME_RESOURCE_AMBIENT_RUSHING_WAV},
+                      {Q1_NAME_AMBIENT_RUNNING_WATER, Q1_NAME_RESOURCE_AMBIENT_RUNWATER_WAV},
+                      {Q1_NAME_AMBIENT_FAN_BLOWING, Q1_NAME_RESOURCE_AMBIENT_FANBLOW_WAV},
+                      {Q1_NAME_AMBIENT_WATERFALL, Q1_NAME_RESOURCE_AMBIENT_WATERFAL_WAV},
+                      {Q1_NAME_AMBIENT_RIFTPOWER, Q1_NAME_RESOURCE_AMBIENT_RIFTPOWR_WAV}};
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
         for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i)
             if (q1_classnamed(g, entity->id, g->runtime_names[sounds[i].name]))
-                return q1_map_ambient(g, body.origin, sounds[i].path,
+                return q1_map_ambient(g, body.origin, g->runtime_names[sounds[i].path],
                                       state->volume != 0 ? state->volume : .5f, error);
         return q1_map_fail(error, "unknown Hipnotic ambient source");
     }
