@@ -399,6 +399,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         for (uint32_t i = 0; i < 256; ++i)
             qa_lightstyles_set(&engine->lightstyles, i, engine->configstrings[styles + i]);
         engine->hud_source_owner = 0;
+        ok=application_native_q2_config_prepare(engine,error);
     }
     free(config);
     free(clients); free(map); free(spawn);

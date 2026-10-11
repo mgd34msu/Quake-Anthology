@@ -383,6 +383,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     engine->config_changes.slots = calloc(engine->config_layout.max_configs, sizeof(*engine->config_changes.slots));
     if (!engine->configstrings || !engine->config_changes.slots)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 source configstring table");
+    if (!application_native_q2_config_prepare(engine,error)) return false;
     if (!cgame) {
         qa_q2_message_options options = {.config_strings = engine->config_layout.max_configs,
             .inventory_slots = 256, .native_api2023 = rerelease};
@@ -591,7 +592,7 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
     if(!application_native_q2_activate(engine,error)||
         !qa_native_host_world_actor_bind(provider->state.native.host,engine->world_actor,error)||
         !application_unified_event_registration_clear(app,provider->owner,error))return false;
-    application_native_q2_config_clear(engine);
+    if (!application_native_q2_config_clear(engine,error)) return false;
     application_native_q2_wire_destroy(&engine->wire_engine);
     application_native_q2_visibility_destroy(&engine->visibility);
     if(!application_native_q2_combat_load(engine,error))return false;
@@ -648,7 +649,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (!application_native_q2_activate(engine, error)) return false;
     if (!qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
     if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
-    application_native_q2_config_clear(engine);
+    if (!application_native_q2_config_clear(engine,error)) return false;
     provider->application->physics->world_actor = engine->world_actor;
     for (size_t i = 1; i < 257; ++i) {
         engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
@@ -748,7 +749,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
             .cvars = engine->cvars, .owner_context = engine, .owner_idle = frontend_owner_idle};
         engine->application = NULL; engine->application_context = NULL;
         engine->hud_source_owner = 0;
-        application_native_q2_config_clear(engine);
+        if (!application_native_q2_config_clear(engine,error)) return false;
     }
     if(!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
     for (uint32_t i = 1; i < 257; ++i)

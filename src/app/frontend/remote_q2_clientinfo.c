@@ -24,18 +24,14 @@ static bool equal(const char *a, const char *b)
 }
 static void appearance(frontend_remote_q2 *row, const char *text, char model[64], char skin[64])
 {
-    const char *start = strchr(text, '\\'); start = start ? start + 1 : text;
-    const char *slash = strchr(start, '/');
-    if (!slash && !remote_q2_rerelease_presentation(row)) slash = strchr(start, '\\');
+    qa_hud_q2_player_names names = qa_hud_q2_player_names_read(text, remote_q2_rerelease_presentation(row));
     const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars,row->cvar_handles.cl_noskins);
     double noskins = setting ? setting->number : 0;
-    size_t length = slash ? (size_t)(slash - start) : 0;
+    size_t length = names.model.size;
     if (!length || length >= 64) strcpy(model, "male");
-    else { memcpy(model, start, length); model[length] = 0; }
-    const char *value = slash ? slash + 1 : "";
-    const char *end = strchr(value, '\\'); length = end ? (size_t)(end - value) : strlen(value);
-    if (length >= 64) length = 0;
-    memcpy(skin, value, length); skin[length] = 0;
+    else { memcpy(model, names.model.data, length); model[length] = 0; }
+    length = names.skin.size < 64 ? names.skin.size : 0;
+    memcpy(skin, names.skin.data, length); skin[length] = 0;
     if (remote_q2_rerelease_presentation(row)) {
         if (noskins == 2 || !component(skin)) {
             if (equal(model, "female")) { strcpy(model, "female"); strcpy(skin, "athena"); }
@@ -60,15 +56,29 @@ static bool skin_admit(frontend_remote_q2 *row, const char *path, const qa_mater
     if (*out && (*out)->default_shader) *out = NULL;
     return true;
 }
-static const char *weapon_name(frontend_remote_q2 *row, uint32_t weapon)
+static bool prepare_weapons(frontend_remote_q2 *row, uint32_t player, const char *model,
+    remote_q2_model *weapons[32], bool *has_default_weapon, qa_error *error)
 {
-    if (!weapon) return "weapon.md2";
-    uint32_t count = 0;
-    for (size_t i = 1; i < row->hud_names.layout.max_models && count < 31; ++i) {
-        const char *name = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + i));
-        if (name[0] == '#' && ++count == weapon) return name + 1;
+    memset(weapons,0,32*sizeof(*weapons));
+    *has_default_weapon=false;
+    for (uint32_t i=0;i<32;++i) {
+        if (i >= row->hud_names.weapons.count) break;
+        const char *name = qa_strings_cstr(row->hud_names.strings,row->hud_names.weapons.names[i]);
+        char path[256];
+        if (strlen(name)>127) return remote_q2_fail(error,QA_ERROR_FORMAT,"Q2 player weapon exceeds its native client-info path extent");
+        snprintf(path,sizeof(path),"players/%s/%s",model,name);
+        if (!model_admit(row,path,weapons+i,error)) return false;
+        if (!i) *has_default_weapon=weapons[i]!=NULL;
+        if (!weapons[i] && equal(model,"cyborg")) {
+            snprintf(path,sizeof(path),"players/male/%s",name);
+            if (!model_admit(row,path,weapons+i,error)) return false;
+        }
+        if (!weapons[i] && i) weapons[i]=weapons[0];
+        if (!weapons[i] && player!=256) {
+            if (!model_admit(row,"players/male/weapon.md2",weapons+i,error)) return false;
+        }
     }
-    return NULL;
+    return true;
 }
 static bool prepare_player(frontend_remote_q2 *row, uint32_t player, qa_error *error)
 {
@@ -96,24 +106,10 @@ static bool prepare_player(frontend_remote_q2 *row, uint32_t player, qa_error *e
         snprintf(value.skin,sizeof(value.skin),"players/%s/grunt.pcx",model);
         if (!skin_admit(row,value.skin,&value.skin_material,error)) return false;
     }
-    remote_q2_model *weapons[32]={0}; bool has_default_weapon=false;
-    for (uint32_t i=0;i<32;++i) {
-        const char *name=weapon_name(row,i); if (!name) break;
-        char path[256];
-        if (strlen(name)>127) return remote_q2_fail(error,QA_ERROR_FORMAT,"Q2 player weapon exceeds its native client-info path extent");
-        snprintf(path,sizeof(path),"players/%s/%s",model,name);
-        if (!model_admit(row,path,weapons+i,error)) return false;
-        if (!i) has_default_weapon=weapons[i]!=NULL;
-        if (!weapons[i] && equal(model,"cyborg")) {
-            snprintf(path,sizeof(path),"players/male/%s",name);
-            if (!model_admit(row,path,weapons+i,error)) return false;
-        }
-        if (!weapons[i] && i) weapons[i]=weapons[0];
-        if (!weapons[i] && player!=256) {
-            if (!model_admit(row,"players/male/weapon.md2",weapons+i,error)) return false;
-        }
-    }
-    qa_string_id icon=player==256?row->hud_names.default_icon:row->hud_names.icons[player];
+    remote_q2_model *weapons[32]; bool has_default_weapon;
+    if (!qa_strings_intern_cstr(row->hud_names.strings,model,&value.model_name,error) ||
+        !prepare_weapons(row,player,model,weapons,&has_default_weapon,error)) return false;
+    qa_string_id icon=player==256?row->hud_names.default_icon:row->hud_names.players[player].icon;
     qa_error issue={0};
     const qa_scene_image *image=qa_scene_q2_picture(row->images,row->hud_names.strings,icon,QA_IMAGE_USAGE_PICTURE,
         remote_q2_rerelease_presentation(row),QA_SCENE_LINEAR_MIPMAP_LINEAR,&issue);
@@ -156,7 +152,18 @@ bool remote_q2_clientinfo_config(frontend_remote_q2 *row, uint32_t index, bool w
 {
     if (index>=row->hud_names.layout.player_skins && index-row->hud_names.layout.player_skins<256)
         return prepare_player(row,index-row->hud_names.layout.player_skins,error);
-    if (weapon_changed) return remote_q2_clientinfo_prepare(row,error);
+    if (weapon_changed) {
+        for (uint32_t player=256;;--player) {
+            remote_q2_clientinfo *value=&row->clientinfo[player].value;
+            const char *model=qa_strings_cstr(row->hud_names.strings,value->model_name);
+            if (model) {
+                bool has_default;
+                if (!prepare_weapons(row,player,model,row->clientinfo[player].weapons,&has_default,error)) return false;
+                if (!has_default) value->valid=false;
+            }
+            if (!player) break;
+        }
+    }
     return true;
 }
 bool remote_q2_clientinfo_settings(frontend_remote_q2 *row, qa_error *error)

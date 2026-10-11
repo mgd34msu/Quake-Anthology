@@ -380,17 +380,18 @@ bool remote_q2_download_prepare(frontend_remote_q2 *row, qa_q2_preparation *resu
     }
     for (size_t i = 0; i < 256; ++i) {
         const char *value = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.player_skins + i));
-        const char *appearance = strchr(value, '\\'); appearance = appearance ? appearance + 1 : value;
-        const char *slash = strchr(appearance, '/');
-        if (!slash || slash == appearance || !slash[1]) continue;
-        size_t length = (size_t)(slash - appearance); char *prefix = malloc(length + 10);
-        if (!prefix) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining Q2 player download path");
-        snprintf(prefix, length + 10, "players/%.*s/", (int)length, appearance);
+        if (!*value) continue;
+        qa_hud_q2_player_names names = qa_hud_q2_player_names_read(value,remote_q2_rerelease_presentation(row));
+        char prefix[4096], skin[4096];
+        int bytes=snprintf(prefix,sizeof(prefix),"players/%.*s/",(int)names.model.size,(const char *)names.model.data);
+        if (bytes<0 || (size_t)bytes>=sizeof(prefix) || names.skin.size>=sizeof(skin))
+            return remote_q2_fail(error,QA_ERROR_FORMAT,"Q2 player download path is too long");
+        memcpy(skin,names.skin.data,names.skin.size);skin[names.skin.size]=0;
         const char *fixed[] = {"tris.md2", "weapon.md2", "weapon.pcx"}; bool ok = true;
         for (size_t j = 0; ok && j < 3 && !waiting; ++j) ok = path_join(row, prefix, fixed[j], "", &waiting, error);
-        if (ok && !waiting) ok = path_join(row, prefix, slash + 1, ".pcx", &waiting, error);
-        if (ok && !waiting) ok = path_join(row, prefix, slash + 1, "_i.pcx", &waiting, error);
-        free(prefix); if (!ok || waiting) return ok;
+        if (ok && !waiting) ok = path_join(row, prefix, skin, ".pcx", &waiting, error);
+        if (ok && !waiting) ok = path_join(row, prefix, skin, "_i.pcx", &waiting, error);
+        if (!ok || waiting) return ok;
     }
     const char *sky = frontend_remote_q2_config(row, 2);
     static const char *sides[] = {"rt", "bk", "lf", "ft", "up", "dn"};

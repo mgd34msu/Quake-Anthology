@@ -186,17 +186,49 @@ bool qa_hud_q2_picture_names_bind(qa_strings *strings,qa_hud_q2_picture_names *n
         qa_hud_q2_player_picture_names(strings,"",&names->player_icon,&names->tag,error);
 }
 
-qa_hud_q2_player_names qa_hud_q2_player_names_read(const char *info)
+qa_hud_q2_player_names qa_hud_q2_player_names_read(const char *info, bool rerelease)
 {
     const char *first = strchr(info, '\\');
-    const char *skin = first && first[1] ? first + 1 : "male/grunt";
-    const char *end = strchr(skin, '\\');
-    const char *tag = end && end[1] ? end + 1 : "default";
+    const char *appearance = first && first[1] ? first + 1 : "male/grunt";
+    const char *slash = strchr(appearance, '/');
+    const char *end = strchr(appearance, '\\');
+    if (slash && end && slash > end) slash = NULL;
+    if (!slash && !rerelease) slash = end;
+    const char *skin = slash ? slash + 1 : "grunt";
+    const char *skin_end = strchr(skin, '\\');
+    const char *appearance_end = slash ? skin_end : end;
+    const char *tag = appearance_end && appearance_end[1] ? appearance_end + 1 : "default";
     const char *tag_end = strchr(tag, '\\');
     return (qa_hud_q2_player_names){
         .name = {(const uint8_t *)info, first ? (size_t)(first - info) : 0},
-        .appearance = {(const uint8_t *)skin, end ? (size_t)(end - skin) : strlen(skin)},
-        .tag = {(const uint8_t *)tag, tag_end ? (size_t)(tag_end - tag) : strlen(tag)}};
+        .appearance = {(const uint8_t *)appearance, appearance_end ? (size_t)(appearance_end - appearance) : strlen(appearance)},
+        .tag = {(const uint8_t *)tag, tag_end ? (size_t)(tag_end - tag) : strlen(tag)},
+        .model = slash && slash != appearance ? (qa_bytes){(const uint8_t *)appearance, (size_t)(slash - appearance)} :
+            (qa_bytes){(const uint8_t *)"male", 4},
+        .skin = {(const uint8_t *)skin, skin_end ? (size_t)(skin_end - skin) : strlen(skin)}};
+}
+bool qa_hud_q2_player_model_path(qa_bytes model, qa_bytes member, const char *suffix,
+    char *path, size_t capacity, qa_error *error)
+{
+    int n = snprintf(path, capacity, "players/%.*s/%.*s%s", (int)model.size, (const char *)model.data,
+        (int)member.size, (const char *)member.data, suffix);
+    if (n < 0 || (size_t)n >= capacity) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 player model path is too long"); return false; }
+    return true;
+}
+bool qa_hud_q2_weapons_bind(qa_strings *strings, const qa_q2_config_layout *layout,
+    const qa_string_id *config, qa_hud_q2_weapons *out, qa_error *error)
+{
+    qa_hud_q2_weapons value = {0};
+    if (!qa_strings_intern_cstr(strings, "weapon.md2", value.names, error)) return false;
+    value.count = 1;
+    size_t limit = layout->extended ? 32 : 20;
+    for (uint32_t i = 1; i < layout->max_models && value.count < limit; ++i) {
+        const char *name = qa_strings_cstr(strings, config[layout->models + i]);
+        if (name && name[0] == '#' && !qa_strings_intern_cstr(strings, name + 1,
+                value.names + value.count++, error)) return false;
+    }
+    *out = value;
+    return true;
 }
 bool qa_hud_q2_player_icon_path(qa_bytes appearance,char *path,size_t capacity,qa_error *error)
 {
@@ -210,29 +242,42 @@ bool qa_hud_q2_player_icon(qa_strings *strings,const char *appearance,size_t len
     if (!qa_hud_q2_player_icon_path((qa_bytes){(const uint8_t *)appearance,length},path,sizeof(path),error)) return false;
     return qa_strings_intern_cstr(strings,path,icon,error);
 }
-static bool player_names(qa_strings *strings,const char *info,qa_string_id *appearance,qa_string_id *icon,qa_string_id *dogtag,qa_error *error)
+bool qa_hud_q2_player_ids_bind(qa_strings *strings, const char *info, bool rerelease,
+    qa_hud_q2_player_ids *out, qa_error *error)
 {
-    qa_hud_q2_player_names names=qa_hud_q2_player_names_read(info);
+    qa_hud_q2_player_names names = qa_hud_q2_player_names_read(info, rerelease);
+    qa_hud_q2_player_ids value = {0};
     char path[4096];
-    int n=snprintf(path,sizeof(path),"/tags/%.*s.pcx",(int)names.tag.size,(const char *)names.tag.data);
-    if(n<0||(size_t)n>=sizeof(path)) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q2 player tag path is too long");return false;}
-    return (!appearance || qa_strings_intern(strings,names.appearance,appearance,error)) &&
-        qa_hud_q2_player_icon(strings,(const char *)names.appearance.data,names.appearance.size,icon,error) &&
-        qa_strings_intern_cstr(strings,path,dogtag,error);
+    if (!qa_strings_intern(strings, names.name, &value.name, error) ||
+        !qa_strings_intern(strings, names.appearance, &value.appearance, error) ||
+        !qa_strings_intern(strings, names.model, &value.model, error) ||
+        !qa_strings_intern(strings, names.skin, &value.skin, error) ||
+        !qa_hud_q2_player_icon(strings, (const char *)names.appearance.data, names.appearance.size, &value.icon, error)) return false;
+    int n = snprintf(path, sizeof(path), "/tags/%.*s.pcx", (int)names.tag.size, (const char *)names.tag.data);
+    if (n < 0 || (size_t)n >= sizeof(path) || !qa_strings_intern_cstr(strings, path, &value.tag, error)) return false;
+    n = snprintf(path, sizeof(path), "%.*s.pcx", (int)names.tag.size, (const char *)names.tag.data);
+    if (n < 0 || (size_t)n >= sizeof(path) || !qa_strings_intern_cstr(strings, path, &value.native_tag, error)) return false;
+    *out = value;
+    return true;
 }
-bool qa_hud_q2_player_picture_names(qa_strings *strings,const char *info,qa_string_id *icon,qa_string_id *dogtag,qa_error *error)
-{ return player_names(strings,info,NULL,icon,dogtag,error); }
+bool qa_hud_q2_player_picture_names(qa_strings *strings, const char *info, qa_string_id *icon, qa_string_id *dogtag, qa_error *error)
+{
+    qa_hud_q2_player_ids names;
+    if (!qa_hud_q2_player_ids_bind(strings, info, true, &names, error)) return false;
+    *icon = names.icon; *dogtag = names.tag;
+    return true;
+}
 bool qa_hud_q2_names_init(qa_hud_q2_names *names,qa_strings *strings,qa_error *error)
 {
     *names=(qa_hud_q2_names){.strings=strings};
     return qa_hud_q2_program_create(strings,&names->status,error) &&
-        player_names(strings,"",NULL,&names->default_icon,&names->default_tag,error);
+        qa_hud_q2_player_picture_names(strings,"",&names->default_icon,&names->default_tag,error);
 }
 void qa_hud_q2_names_clear(qa_hud_q2_names *names)
 {
     memset(names->values,0,sizeof(names->values));
-    memset(names->appearances,0,sizeof(names->appearances));
-    memset(names->icons,0,sizeof(names->icons));memset(names->tags,0,sizeof(names->tags));
+    memset(names->players,0,sizeof(names->players));
+    names->weapons = (qa_hud_q2_weapons){0};
     qa_hud_q2_program_clear(names->status);
     names->images=NULL;
     names->images_ready=false;
@@ -246,7 +291,7 @@ bool qa_hud_q2_names_configure(qa_hud_q2_names *names,qa_net_protocol_id protoco
     if(names->configured) qa_hud_q2_names_clear(names);
     names->layout=layout;names->protocol=protocol;names->configured=true;
     names->rerelease=layout.extended;
-    return true;
+    return qa_hud_q2_weapons_bind(names->strings,&names->layout,names->values,&names->weapons,error);
 }
 bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id value,qa_error *error)
 {
@@ -256,15 +301,23 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id valu
     if(index==5&&!qa_hud_q2_program_update(names->status,text,names->rerelease,error)) return false;
     if(index>=names->layout.player_skins&&index-names->layout.player_skins<256) {
         uint32_t slot=index-names->layout.player_skins;
-        if(!player_names(names->strings,text,names->appearances+slot,names->icons+slot,names->tags+slot,error)) return false;
+        if(!qa_hud_q2_player_ids_bind(names->strings,text,names->rerelease,names->players+slot,error)) return false;
     }
+    qa_string_id prior = names->values[index];
     names->values[index]=value;
+    if (index >= names->layout.models && index - names->layout.models < names->layout.max_models) {
+        const char *old = prior ? qa_strings_cstr(names->strings, prior) : "";
+        if ((*text == '#' || *old == '#') &&
+            !qa_hud_q2_weapons_bind(names->strings, &names->layout, names->values, &names->weapons, error)) {
+            names->values[index] = prior; return false;
+        }
+    }
     if (names->images && index>names->layout.images && index-names->layout.images<names->layout.max_images)
         return image_prepare(names->images,names->strings,value,names->rerelease,names->filter,error);
     if (names->images && index>=names->layout.player_skins && index-names->layout.player_skins<256) {
         uint32_t slot=index-names->layout.player_skins;
-        return image_prepare(names->images,names->strings,names->icons[slot],names->rerelease,names->filter,error) &&
-            image_prepare(names->images,names->strings,names->tags[slot],names->rerelease,names->filter,error);
+        return image_prepare(names->images,names->strings,names->players[slot].icon,names->rerelease,names->filter,error) &&
+            image_prepare(names->images,names->strings,names->players[slot].tag,names->rerelease,names->filter,error);
     }
     return true;
 }
@@ -284,8 +337,8 @@ bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *names,qa_scene_resources *i
     for(uint32_t index=1;index<names->layout.max_images;++index)
         if (!image_prepare(images,names->strings,names->values[names->layout.images+index],names->rerelease,filter,error)) return false;
     for(unsigned slot=0;slot<256;++slot)
-        if (!image_prepare(images,names->strings,names->icons[slot],names->rerelease,filter,error) ||
-            !image_prepare(images,names->strings,names->tags[slot],names->rerelease,filter,error)) return false;
+        if (!image_prepare(images,names->strings,names->players[slot].icon,names->rerelease,filter,error) ||
+            !image_prepare(images,names->strings,names->players[slot].tag,names->rerelease,filter,error)) return false;
     names->image_generation=generation;names->images_ready=true;
     return true;
 }
@@ -295,7 +348,7 @@ qa_string_id qa_hud_q2_names_picture(const qa_hud_q2_names *names,int32_t index,
     if(!variant) return names->values[index];
     int32_t slot=index-(int32_t)names->layout.player_skins;
     if(slot<0||slot>=256) return QA_STRING_NONE;
-    qa_string_id name=variant==1?names->icons[slot]:names->tags[slot];
+    qa_string_id name=variant==1?names->players[slot].icon:names->players[slot].tag;
     return name?name:variant==1?names->default_icon:names->default_tag;
 }
 void qa_hud_q2_names_destroy(qa_hud_q2_names *names)

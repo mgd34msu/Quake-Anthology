@@ -6,6 +6,7 @@ struct remote_q2_model;
 typedef struct remote_q2_clientinfo {
     char model[256], skin[256];
     const char *weapon;
+    qa_string_id model_name;
     struct remote_q2_model *model_resource, *weapon_resource;
     const qa_material *skin_material;
     bool valid;

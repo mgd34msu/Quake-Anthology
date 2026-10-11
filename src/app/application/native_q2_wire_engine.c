@@ -171,7 +171,7 @@ bool application_native_q2_wire_resource(struct application_native_q2 *engine, u
     qa_string_id name;
     if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session),
         path, &name, error)) return false;
-    application_native_q2_config_update(engine, base + free_index, name);
+    if (!application_native_q2_config_update(engine, base + free_index, name, error)) return false;
     *out = free_index; return true;
 }
 

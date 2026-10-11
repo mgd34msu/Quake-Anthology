@@ -5,6 +5,7 @@
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/lightstyles.h"
+#include "qa/hud_q2.h"
 #include "qa/q2_config_changes.h"
 #include "qa/network_q2_messages.h"
 #include <stdlib.h>
@@ -32,6 +33,10 @@ typedef struct application_native_q2_client {
     qa_inventory_lease inventory_lease;
     bool inventory_bound, inventory_prepared;
 } application_native_q2_client;
+
+typedef struct application_native_q2_player_media {
+    qa_string_id model, skin, weapons[32];
+} application_native_q2_player_media;
 
 struct application_native_q2 {
     const struct application_native_q2_input_stage *input_stage;
@@ -79,6 +84,9 @@ struct application_native_q2 {
     qa_q2_messages *event_decoder;
     qa_net_protocol_id protocol;
     qa_q2_config_layout config_layout;
+    qa_hud_q2_player_ids player_names[256];
+    qa_hud_q2_weapons weapons;
+    application_native_q2_player_media player_media[256];
     qa_source_frame frame;
     qa_string_id map_name, spawn_point;
     char *entity_text;
@@ -116,18 +124,9 @@ static inline application_native_q2_resource_span application_native_q2_resource
     return (application_native_q2_resource_span){0};
 }
 
-static inline void application_native_q2_config_update(struct application_native_q2 *engine,
-    uint32_t index, qa_string_id name)
-{
-    if (engine->configstrings[index] == name) return;
-    engine->configstrings[index] = name;
-    qa_q2_config_changed(&engine->config_changes, index);
-}
-static inline void application_native_q2_config_clear(struct application_native_q2 *engine)
-{
-    for (uint32_t i = 0; i < engine->config_layout.max_configs; ++i)
-        application_native_q2_config_update(engine, i, QA_STRING_NONE);
-}
+bool application_native_q2_config_update(struct application_native_q2 *, uint32_t, qa_string_id, qa_error *);
+bool application_native_q2_config_clear(struct application_native_q2 *, qa_error *);
+bool application_native_q2_config_prepare(struct application_native_q2 *, qa_error *);
 
 bool application_construct_native_q2(qa_application *, application_provider *, qa_world *,
                                        const qa_product *, const qa_launch_choices *, qa_error *);

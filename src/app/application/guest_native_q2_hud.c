@@ -48,23 +48,14 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         int32_t index = call->import->arguments[0].as.i32;
         if (index < 0 || index >= 256)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD client index is invalid");
-        const char *skin = qa_strings_cstr(qa_session_strings(source->provider->application->session), source->configstrings[source->config_layout.player_skins + (uint32_t)index]);
-        if (!skin) skin = "";
-        qa_hud_q2_player_names names = qa_hud_q2_player_names_read(skin);
-        char text[1024] = {0};
-        if (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientName) {
-            if (names.name.size >= sizeof(text)) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client name is too long");
-            memcpy(text, names.name.data, names.name.size);
-        } else if (*skin) {
-            if (dispatch == QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag) {
-                int bytes = snprintf(text, sizeof(text), "%.*s.pcx", (int)names.tag.size, (const char *)names.tag.data);
-                if (bytes < 0 || (size_t)bytes >= sizeof(text))
-                    return application_fail(error, QA_ERROR_FORMAT, "Native Q2 client dogtag is too long");
-            } else if (!qa_hud_q2_player_icon_path(names.appearance,text,sizeof(text),error)) return false;
+        const qa_hud_q2_player_ids *names=source->player_names+(uint32_t)index;
+        qa_string_id name=names->name;
+        if (dispatch!=QA_NATIVE_Q2_IMPORT_CL_GetClientName) {
+            bool present=qa_strings_text(qa_session_strings(source->provider->application->session),
+                source->configstrings[source->config_layout.player_skins+(uint32_t)index]).size!=0;
+            name=present?(dispatch==QA_NATIVE_Q2_IMPORT_CL_GetClientDogtag?names->native_tag:names->icon):QA_STRING_NONE;
         }
-        qa_string_id name;
-        return qa_strings_intern_cstr(qa_session_strings(source->provider->application->session), text, &name, error) &&
-            qa_native_host_q2_retain_string(call->host, name, &result->as.address, error);
+        return qa_native_host_q2_retain_string(call->host,name,&result->as.address,error);
     }
     if ((dispatch == QA_NATIVE_Q2_IMPORT_CL_FrameValid) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_ClientTime) ||
         (dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerFrame) || (dispatch == QA_NATIVE_Q2_IMPORT_CL_ServerProtocol) ||

@@ -1,7 +1,7 @@
 #include "native_q2_appearance.h"
 #include "guest_native_q2_private.h"
 
-enum { Q2_CLIENT_MODEL = 255, Q2_CLASSIC_WEAPON_MODELS = 20 };
+enum { Q2_CLIENT_MODEL = 255 };
 
 static struct application_native_q2 *engine_read(qa_application *app,
     const qa_application_native_q2_presentation *source)
@@ -17,45 +17,70 @@ static struct application_native_q2 *engine_read(qa_application *app,
         !engine->calls && engine->configstrings ? engine : NULL;
 }
 
-static const char *resource(const struct application_native_q2 *engine, uint32_t index)
+static bool player_paths(struct application_native_q2 *engine, uint32_t slot,
+    bool body, qa_error *error)
 {
-    if (!index || application_native_q2_resource_range(engine, 0).base >= engine->config_layout.max_configs || index >= application_native_q2_resource_range(engine, 0).count ||
-        index >= engine->config_layout.max_configs - application_native_q2_resource_range(engine, 0).base) return "";
-    const char *value = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[application_native_q2_resource_range(engine, 0).base + index]);
-    return value ? value : "";
-}
-
-static bool player_path(qa_strings *strings, qa_string_id *out, const char *model, size_t model_size,
-    const char *name, const char *suffix, qa_error *error)
-{
-    size_t name_size = strlen(name), suffix_size = strlen(suffix);
-    if (model_size > SIZE_MAX - name_size - suffix_size - 10)
-        return application_fail(error, QA_ERROR_FORMAT, "Original Q2 player appearance path exceeds its extent");
-    size_t size = 8 + model_size + name_size + suffix_size + 2;
-    char *path = malloc(size);
-    if (!path) return application_fail(error, QA_ERROR_MEMORY, "Resolving original Q2 player appearance");
-    memcpy(path, "players/", 8);
-    memcpy(path + 8, model, model_size);
-    path[8 + model_size] = '/';
-    memcpy(path + 9 + model_size, name, name_size);
-    memcpy(path + 9 + model_size + name_size, suffix, suffix_size + 1);
-    bool ok = qa_strings_intern_cstr(strings, path, out, error);
-    free(path);
-    return ok;
-}
-
-static const char *weapon(const struct application_native_q2 *engine,
-    qa_q2_edition edition, uint32_t ordinal)
-{
-    if (!ordinal) return "weapon.md2";
-    uint32_t count = 1;
-    for (uint32_t i = 1; i < application_native_q2_resource_range(engine, 0).count; ++i) {
-        const char *name = resource(engine, i);
-        if (name[0] != '#') continue;
-        if (edition == QA_Q2_CLASSIC && count >= Q2_CLASSIC_WEAPON_MODELS) break;
-        if (count++ == ordinal) return name + 1;
+    qa_strings *strings = qa_session_strings(engine->provider->application->session);
+    const qa_hud_q2_player_ids *names = engine->player_names + slot;
+    qa_bytes model = qa_strings_text(strings,names->model);
+    application_native_q2_player_media value = engine->player_media[slot];
+    char path[4096];
+    if (body) {
+        if (!qa_hud_q2_player_model_path(model,(qa_bytes){(const uint8_t *)"tris.md2",8},"",path,sizeof(path),error) ||
+            !qa_strings_intern_cstr(strings,path,&value.model,error) ||
+            !qa_hud_q2_player_model_path(model,qa_strings_text(strings,names->skin),".pcx",path,sizeof(path),error) ||
+            !qa_strings_intern_cstr(strings,path,&value.skin,error)) return false;
     }
-    return "weapon.md2";
+    memset(value.weapons,0,sizeof(value.weapons));
+    for (size_t i=0;i<engine->weapons.count;++i) {
+        if (!qa_hud_q2_player_model_path(model,qa_strings_text(strings,engine->weapons.names[i]),"",path,sizeof(path),error) ||
+            !qa_strings_intern_cstr(strings,path,value.weapons+i,error)) return false;
+    }
+    engine->player_media[slot]=value;
+    return true;
+}
+bool application_native_q2_config_prepare(struct application_native_q2 *engine, qa_error *error)
+{
+    qa_strings *strings=qa_session_strings(engine->provider->application->session);
+    if (!qa_hud_q2_weapons_bind(strings,&engine->config_layout,engine->configstrings,&engine->weapons,error)) return false;
+    for (uint32_t slot=0;slot<256;++slot) {
+        const char *info=qa_strings_cstr(strings,engine->configstrings[engine->config_layout.player_skins+slot]);
+        if (!qa_hud_q2_player_ids_bind(strings,info?info:"",engine->config_layout.extended,engine->player_names+slot,error) ||
+            !player_paths(engine,slot,true,error)) return false;
+    }
+    return true;
+}
+bool application_native_q2_config_update(struct application_native_q2 *engine,
+    uint32_t index, qa_string_id name, qa_error *error)
+{
+    qa_string_id previous=engine->configstrings[index];
+    if (previous==name) return true;
+    qa_strings *strings=qa_session_strings(engine->provider->application->session);
+    engine->configstrings[index]=name;
+    bool ok=true;
+    if (index>=engine->config_layout.player_skins && index-engine->config_layout.player_skins<256) {
+        uint32_t slot=index-engine->config_layout.player_skins;
+        const char *info=qa_strings_cstr(strings,name);
+        ok=qa_hud_q2_player_ids_bind(strings,info?info:"",engine->config_layout.extended,engine->player_names+slot,error) &&
+            player_paths(engine,slot,true,error);
+    } else if (index>=engine->config_layout.models && index-engine->config_layout.models<engine->config_layout.max_models) {
+        const char *old=qa_strings_cstr(strings,previous),*next=qa_strings_cstr(strings,name);
+        if ((old&&old[0]=='#') || (next&&next[0]=='#')) {
+            ok=qa_hud_q2_weapons_bind(strings,&engine->config_layout,engine->configstrings,&engine->weapons,error);
+            for (uint32_t slot=0;ok&&slot<256;++slot) ok=player_paths(engine,slot,false,error);
+        }
+    }
+    if (!ok) {engine->configstrings[index]=previous;return false;}
+    qa_q2_config_changed(&engine->config_changes,index);
+    return true;
+}
+bool application_native_q2_config_clear(struct application_native_q2 *engine, qa_error *error)
+{
+    for (uint32_t i=0;i<engine->config_layout.max_configs;++i) {
+        if (engine->configstrings[i]) qa_q2_config_changed(&engine->config_changes,i);
+        engine->configstrings[i]=QA_STRING_NONE;
+    }
+    return application_native_q2_config_prepare(engine,error);
 }
 
 bool application_native_q2_appearance_read(qa_application *app,
@@ -73,38 +98,16 @@ bool application_native_q2_appearance_read(qa_application *app,
     const qa_q2_entity *state = &value.entity.state;
     uint32_t indexes[] = {state->modelindex, state->modelindex2, state->modelindex3, state->modelindex4};
     value.skin = state->skinnum;
-    bool custom = false;
-    for (unsigned i = 0; i < 4; ++i) custom |= indexes[i] == Q2_CLIENT_MODEL;
     bool ok = true;
-    qa_strings *strings = qa_session_strings(app->session);
-    const char *model = "male", *skin = "grunt", *held = "weapon.md2";
-    size_t model_size = 4;
-    if (custom) {
-        uint32_t base = engine->config_layout.player_skins;
-        uint32_t index = base + (state->skinnum & 255u);
-        if (index >= engine->config_layout.max_configs) ok = application_fail(error, QA_ERROR_FORMAT,
-            "Original Q2 player skin exceeds its actual configstring table");
-        else {
-            const char *info = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->configstrings[index]);
-            if (!info) info = "player\\male/grunt";
-            const char *appearance = strchr(info, '\\');
-            appearance = appearance ? appearance + 1 : info;
-            const char *slash = strchr(appearance, '/');
-            if (slash) { model = appearance; model_size = (size_t)(slash - appearance); skin = slash + 1; }
-            held = weapon(engine, source->edition, (state->skinnum >> 8) & 255u);
-        }
-    }
-    for (unsigned i = 0; ok && i < 4; ++i) {
-        if (indexes[i] == Q2_CLIENT_MODEL) {
-            ok = player_path(strings, value.models + i, model, model_size, i ? held : "tris.md2", "", error);
-            if (ok && !i) {
-                value.skin = 0;
-                ok = player_path(strings, &value.skin_path, model, model_size, skin, ".pcx", error);
-            }
-        } else if (indexes[i] && indexes[i] < application_native_q2_resource_range(engine, 0).count &&
-            application_native_q2_resource_range(engine, 0).base < engine->config_layout.max_configs &&
-            indexes[i] < engine->config_layout.max_configs - application_native_q2_resource_range(engine, 0).base)
-            value.models[i] = engine->configstrings[application_native_q2_resource_range(engine, 0).base + indexes[i]];
+    const application_native_q2_player_media *media=engine->player_media+(state->skinnum&255u);
+    uint32_t ordinal=(state->skinnum>>8)&255u;
+    qa_string_id held=ordinal<engine->weapons.count?media->weapons[ordinal]:media->weapons[0];
+    for (unsigned i=0;i<4;++i) {
+        if (indexes[i]==Q2_CLIENT_MODEL) {
+            value.models[i]=i?held:media->model;
+            if (!i) {value.skin=0;value.skin_path=media->skin;}
+        } else if (indexes[i] && indexes[i]<engine->config_layout.max_models)
+            value.models[i]=engine->configstrings[engine->config_layout.models+indexes[i]];
     }
     if (ok && !application_native_q2_appearance_current(app, &value))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 appearance changed its physical Source or configstrings");
