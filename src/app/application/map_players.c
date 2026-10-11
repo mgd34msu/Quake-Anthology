@@ -3711,9 +3711,7 @@ bool application_players_native_q3_retire(qa_application *app,
     if (client.rule.connected != QA_Q3_CLIENT_DISCONNECTED || admitted)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "native Q3 retirement precedes its actual source and wire disconnect");
-    size_t index = 0;
-    while (index < app->players->count && !qa_actor_id_equal(app->players->records[index].actor, actor)) ++index;
-    if (index == app->players->count)
+    if (!application_player_record_find(app->players,actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 retiring client has no canonical roster row");
     return retire_player(app,provider,actor,error);
 }
@@ -4537,9 +4535,8 @@ bool application_players_guest_attach(qa_application *application,
         !qa_actors_get(qa_session_actors(application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "guest roster admission requires its live canonical actor");
     struct application_player_roster *roster = application->players;
-    size_t index;
-    for (index = 0; index < roster->count; ++index)
-        if (qa_actor_id_equal(roster->records[index].actor, actor)) break;
+    application_player_record *actor_row=application_player_record_find(roster,actor);
+    size_t index=actor_row?(size_t)(actor_row-roster->records):roster->count;
     for (size_t i = 0; i < roster->count; ++i)
         for (size_t j = 0; j < roster->records[i].guest_count; ++j) {
             application_player_guest_binding *binding = &roster->records[i].guests[j];
