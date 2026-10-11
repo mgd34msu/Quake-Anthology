@@ -53,7 +53,7 @@ bool qa_q1_grapple_weapon_tick(qa_q1_game *g, qa_actor_id actor, const qa_q1_inp
                 return false;
         } else if (!q1_entity(g, q1_ref_actor(g, player->grapple_weapon.animation))) {
             q1_actor *timer;
-            if (!q1_create(g, "ctf_hook_animation", Q1_TIMER, actor, &timer, error))
+            if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_CTF_HOOK_ANIMATION], Q1_TIMER, actor, &timer, error))
                 return false;
             player->grapple_weapon.animation = q1_ref_from(g, timer->id);
             player->grapple_weapon.frame = 2;

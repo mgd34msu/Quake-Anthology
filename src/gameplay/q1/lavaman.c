@@ -114,7 +114,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, bool first, qa_error *error) {
     qa_vec3 delta = qa_vec_sub(target.origin, origin), direction = qa_vec_normalize(delta);
     float t = fmaxf(1, fminf(1.75f, qa_vec_length(delta) / 380));
     q1_actor *shot;
-    if (!q1_create(g, "lavaman_ball", Q1_PROJECTILE, entity->id, &shot, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_LAVAMAN_BALL], Q1_PROJECTILE, entity->id, &shot, error))
         return false;
     shot->state.projectile =
         (q1_projectile){.kind = mg3 ? Q1_MG3_LAVAMAN_BALL : Q1_LAVAMAN_BALL,

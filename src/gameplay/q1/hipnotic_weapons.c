@@ -114,7 +114,7 @@ bool q1_hipnotic_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         return finish(g, player, q1_weapon_interval(player->weapon), 1, -2, error);
     }
     q1_actor *strike;
-    if (!q1_create(g, "hipnotic_hammer_strike", Q1_TIMER, player->id, &strike, error) ||
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_HIPNOTIC_HAMMER_STRIKE], Q1_TIMER, player->id, &strike, error) ||
         !q1_schedule(g, strike, q1_weapon_shape(player->weapon)->launch_delay,
                       Q1_THINK_HAMMER_STRIKE, error))
         return false;
@@ -291,7 +291,7 @@ static bool hammer_damage(qa_q1_game *g, qa_actor_id from, qa_vec3 start, qa_vec
 bool q1_hipnotic_hammer_base(qa_q1_game *g, q1_player *player, qa_vec3 origin, qa_q1_weapon weapon,
                              qa_error *error) {
     q1_actor *base;
-    if (!q1_create(g, "hipnotic_mjolnir_base", Q1_TIMER, player->id, &base, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_HIPNOTIC_MJOLNIR_BASE], Q1_TIMER, player->id, &base, error))
         return false;
     qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
     base->state.projectile.movedir = g->forward;
@@ -307,7 +307,7 @@ bool q1_hipnotic_hammer_base(qa_q1_game *g, q1_player *player, qa_vec3 origin, q
         return false;
     for (unsigned i = 0; i < 4; ++i) {
         q1_actor *bolt;
-        if (!q1_create(g, "hipnotic_mjolnir_lightning", Q1_TIMER, base->id, &bolt, error))
+        if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_HIPNOTIC_MJOLNIR_LIGHTNING], Q1_TIMER, base->id, &bolt, error))
             return false;
         bolt->state.projectile.activator = q1_ref_from(g, player->id);
         bolt->state.projectile.weapon = weapon;

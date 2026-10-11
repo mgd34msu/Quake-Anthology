@@ -397,7 +397,7 @@ bool q1_map_addon_effect_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, 
         qa_string_id name = e->target;
         float delay = e->delay;
         q1_actor *manager;
-        if (!q1_create(g, "fade_manager", Q1_MAP, id, &manager, error))
+        if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_FADE_MANAGER], Q1_MAP, id, &manager, error))
             return false;
         qa_actor_id child = manager->id;
         if (!q1_map_allocate(g, manager, error)) {

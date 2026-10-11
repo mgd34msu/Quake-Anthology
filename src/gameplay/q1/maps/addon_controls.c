@@ -163,7 +163,7 @@ static bool repeat_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!e)
         return true;
     q1_actor *child;
-    if (!q1_create(g, "spawned_explosion", Q1_MAP, id, &child, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_SPAWNED_EXPLOSION], Q1_MAP, id, &child, error))
         return false;
     qa_actor_id child_id = child->id;
     q1_map_state *state = q1_map_allocate(g, child, error);

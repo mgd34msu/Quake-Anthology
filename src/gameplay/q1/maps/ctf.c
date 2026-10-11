@@ -190,7 +190,7 @@ static bool nextlevel(qa_q1_game *g, qa_string_id map, qa_error *error) {
     if (!q1_alive(g, g->maps->world_actor))
         return true;
     q1_actor *helper;
-    if (!q1_create(g, "ctf_nextlevel", Q1_MAP, (qa_actor_id){0}, &helper, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_CTF_NEXTLEVEL], Q1_MAP, (qa_actor_id){0}, &helper, error))
         return false;
     qa_actor_id id = helper->id;
     if (!q1_map_allocate(g, helper, error)) {

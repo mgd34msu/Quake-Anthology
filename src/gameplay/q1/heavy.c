@@ -42,7 +42,7 @@ static bool lightning_child(qa_q1_game *g, q1_actor *e, bool fast, qa_error *err
     if (!body(g, e, &parent, error))
         return false;
     q1_actor *child;
-    if (!q1_create(g, fast ? "" : "lightning_child", Q1_TIMER, fast ? (qa_actor_id){0} : e->id,
+    if (!q1_create(g, fast ? g->runtime_names[Q1_NAME_CLASS_EMPTY] : g->runtime_names[Q1_NAME_LIGHTNING_CHILD], Q1_TIMER, fast ? (qa_actor_id){0} : e->id,
                    &child, error))
         return false;
     e->state.monster.source.heavy.child = q1_ref_from(g, child->id);

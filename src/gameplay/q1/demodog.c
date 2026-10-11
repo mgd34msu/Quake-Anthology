@@ -73,7 +73,7 @@ static bool grenade(qa_q1_game *g, q1_actor *entity, bool vertical, qa_error *er
     if (!q1_alive(g, entity->id))
         return true;
     q1_actor *shot;
-    if (!q1_create(g, "grenade", Q1_PROJECTILE, entity->id, &shot, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_GRENADE], Q1_PROJECTILE, entity->id, &shot, error))
         return false;
     shot->state.projectile =
         (q1_projectile){.kind = Q1_DEMODOG_GRENADE,

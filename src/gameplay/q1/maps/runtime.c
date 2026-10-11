@@ -1714,7 +1714,7 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
 }
 
-bool q1_map_timer(qa_q1_game *g, const char *name, q1_actor **out, qa_error *error) {
+bool q1_map_timer(qa_q1_game *g, qa_string_id name, q1_actor **out, qa_error *error) {
     if (!g || !g->maps)
         return q1_map_fail(error, "Q1 map services are not bound");
     q1_actor *entity;
@@ -1732,7 +1732,7 @@ bool qa_q1_game_map_defer_targets(qa_q1_game *g, const qa_target_use *use, qa_er
     if (!use || !isfinite(use->fields.delay_seconds))
         return q1_map_fail(error, "invalid Q1 delayed target use");
     q1_actor *entity;
-    if (!q1_map_timer(g, "DelayedUse", &entity, error))
+    if (!q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_DELAYEDUSE], &entity, error))
         return false;
     entity->map->pending.delayed.dialect = use->dialect;
     entity->map->pending.delayed.shader_old = use->fields.shader_old;
@@ -1748,7 +1748,7 @@ bool qa_q1_game_map_defer_targets(qa_q1_game *g, const qa_target_use *use, qa_er
 }
 bool qa_q1_game_map_defer_level(qa_q1_game *g, double delay, qa_error *error) {
     q1_actor *entity;
-    if (!q1_map_timer(g, "nextlevel", &entity, error))
+    if (!q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_NEXTLEVEL], &entity, error))
         return false;
     if (q1_map_schedule(g, entity, delay, Q1_MAP_PENDING_LEVEL, error))
         return true;
@@ -1766,7 +1766,7 @@ bool qa_q1_game_map_defer_remove(qa_q1_game *g, qa_actor_id target, double delay
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
     q1_actor *entity = NULL;
-    bool ok = q1_map_timer(g, "DelayedRemove", &entity, error);
+    bool ok = q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_DELAYEDREMOVE], &entity, error);
     if (ok) {
         entity->owner = q1_ref_from(g, target);
         ok = q1_map_schedule(g, entity, delay, Q1_MAP_FOREIGN_REMOVE, error);
@@ -1786,7 +1786,7 @@ bool qa_q1_game_map_defer_finale(qa_q1_game *g, qa_q1_campaign_timer kind, doubl
         kind > QA_Q1_CAMPAIGN_FINISH_FINALE)
         return q1_map_fail(error, "invalid Q1 campaign timer");
     q1_actor *entity;
-    if (!q1_map_timer(g, "finale_timer", &entity, error))
+    if (!q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_FINALE_TIMER], &entity, error))
         return false;
     entity->map->pending.finale = kind;
     if (q1_map_schedule(g, entity, delay, Q1_MAP_FINALE_TIMER, error))

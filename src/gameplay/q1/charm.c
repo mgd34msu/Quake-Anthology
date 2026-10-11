@@ -23,7 +23,7 @@ static bool update_goal(qa_q1_game *g, q1_actor *entity, q1_actor **out, qa_erro
         return false;
     q1_actor *goal = q1_entity(g, q1_ref_actor(g, m->charm_goal));
     if (m->hunting_charmer == 1) {
-        if (!q1_create(g, "charmed_goal", Q1_ENTITY, (qa_actor_id){0}, &goal, error))
+        if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_CHARMED_GOAL], Q1_ENTITY, (qa_actor_id){0}, &goal, error))
             return false;
         qa_body_state destination = {.origin = owner.origin};
         if (!qa_world_body_write(g->services.world, goal->id, &destination, error))

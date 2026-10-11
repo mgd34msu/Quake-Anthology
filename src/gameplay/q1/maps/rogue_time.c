@@ -4,7 +4,7 @@ static q1_actor *time_actor(qa_q1_game *g, qa_actor_id id) {
     q1_actor *entity = q1_entity(g, id);
     return entity && entity->map && q1_map_is_time_actor(entity->map->kind) ? entity : NULL;
 }
-static bool create_time_actor(qa_q1_game *g, const char *name, q1_map_kind kind, qa_actor_id owner,
+static bool create_time_actor(qa_q1_game *g, qa_string_id name, q1_map_kind kind, qa_actor_id owner,
                               q1_actor **out, qa_error *error) {
     q1_actor *entity;
     if (!q1_create(g, name, Q1_MAP, owner, &entity, error))
@@ -24,7 +24,7 @@ static bool chunk(qa_q1_game *g, qa_actor_id explosion, qa_actor_id machine, qa_
     qa_vec3 forward, up;
     qa_builtin_angle_vectors(source.angles, &forward, NULL, &up);
     q1_actor *gib;
-    if (!q1_create(g, "time_machine_gib", Q1_GIB, (qa_actor_id){0}, &gib, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_TIME_MACHINE_GIB], Q1_GIB, (qa_actor_id){0}, &gib, error))
         return false;
     qa_actor_id gib_id = gib->id;
     gib->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -79,7 +79,7 @@ static bool pain(qa_q1_game *g, q1_actor *machine, qa_error *error) {
         qa_vec3 forward, right, up;
         qa_builtin_angle_vectors(body.angles, &forward, &right, &up);
         q1_actor *explosion;
-        if (!create_time_actor(g, "time_machine_pain", Q1_MAP_TIME_BOOM, id, &explosion, error))
+        if (!create_time_actor(g, g->runtime_names[Q1_NAME_CLASS_TIME_MACHINE_PAIN], Q1_MAP_TIME_BOOM, id, &explosion, error))
             return false;
         qa_actor_id boom_id = explosion->id;
         machine = time_actor(g, id);
@@ -224,7 +224,7 @@ static bool boom(qa_q1_game *g, q1_actor *explosion, qa_error *error) {
         return true;
     qa_string_id target = explosion->target;
     q1_actor *stop;
-    if (!create_time_actor(g, "time_stop_shake", Q1_MAP_TIME_STOP, (qa_actor_id){0}, &stop, error))
+    if (!create_time_actor(g, g->runtime_names[Q1_NAME_CLASS_TIME_STOP_SHAKE], Q1_MAP_TIME_STOP, (qa_actor_id){0}, &stop, error))
         return false;
     stop->target = target;
     if (q1_map_schedule(g, stop, .7, Q1_MAP_TIME_STOP_SHAKE, error))

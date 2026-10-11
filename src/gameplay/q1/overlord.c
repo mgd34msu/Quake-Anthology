@@ -103,7 +103,7 @@ static bool toss(qa_q1_game *g, q1_actor *entity, const char *model, qa_error *e
         qa_vec_add(qa_vec_add(qa_vec_scale(g->forward, 250), qa_vec_scale(g->up, 300 + z)),
                    qa_vec_scale(g->right, side));
     q1_actor *gib;
-    if (!q1_create(g, "gib", Q1_GIB, (qa_actor_id){0}, &gib, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GIB], Q1_GIB, (qa_actor_id){0}, &gib, error))
         return false;
     gib->physics.motion = QA_PHYSICS_BOUNCE;
     char path[64];

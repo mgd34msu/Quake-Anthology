@@ -87,7 +87,7 @@ bool q1_map_rogue_rubble_throw(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return true;
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(destination.origin, body.origin));
     q1_actor *piece;
-    if (!q1_create(g, "rubble", Q1_MAP, source, &piece, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_RUBBLE], Q1_MAP, source, &piece, error))
         return false;
     qa_actor_id id = piece->id;
     e = misc_actor(g, source);

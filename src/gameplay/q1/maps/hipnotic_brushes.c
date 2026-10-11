@@ -42,7 +42,7 @@ bool q1_map_hip_brush_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                q1_link(g, entity, error);
 
     q1_actor *proxy;
-    if (!q1_create(g, "pushablewallproxy", Q1_MAP, id, &proxy, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_PUSHABLEWALLPROXY], Q1_MAP, id, &proxy, error))
         return false;
     qa_actor_id proxy_id = proxy->id;
     if (!q1_map_allocate(g, proxy, error)) {

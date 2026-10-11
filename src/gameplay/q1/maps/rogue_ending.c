@@ -437,7 +437,7 @@ bool q1_map_rogue_ending(qa_q1_game *g, qa_actor_id player, qa_error *error) {
     if (!q1_alive(g, player))
         return true;
     q1_actor *actor;
-    if (!q1_map_timer(g, "actor", &actor, error))
+    if (!q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_ACTOR], &actor, error))
         return false;
     qa_actor_id id = actor->id;
     actor->map->kind = Q1_MAP_ENDING_ACTOR;
@@ -491,7 +491,7 @@ bool q1_map_rogue_ending(qa_q1_game *g, qa_actor_id player, qa_error *error) {
     if (!q1_alive(g, player))
         return true;
     q1_actor *tracker;
-    if (!q1_map_timer(g, "rogue_camera_tracker", &tracker, error))
+    if (!q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_ROGUE_CAMERA_TRACKER], &tracker, error))
         return false;
     tracker->map->kind = Q1_MAP_CAMERA_TRACKER;
     tracker->owner = q1_ref_from(g, player);

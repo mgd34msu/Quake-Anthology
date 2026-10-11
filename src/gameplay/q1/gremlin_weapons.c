@@ -384,7 +384,7 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
 bool q1_gremlin_backpack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id source = entity->id;
     q1_actor *pack;
-    if (!q1_create(g, "item_backpack", Q1_PICKUP, (qa_actor_id){0}, &pack, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_ITEM_BACKPACK], Q1_PICKUP, (qa_actor_id){0}, &pack, error))
         return false;
     qa_actor_id child = pack->id;
     pack->touch_disabled = true;

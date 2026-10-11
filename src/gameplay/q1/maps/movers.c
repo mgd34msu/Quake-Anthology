@@ -261,9 +261,9 @@ static bool plat_move(qa_q1_game *g, q1_actor *entity, bool up, qa_error *error)
 static bool helper_trigger(qa_q1_game *g, q1_actor *owner, q1_map_kind kind, qa_bounds bounds,
                            qa_error *error) {
     qa_actor_id owner_id = owner->id;
-    const char *name = kind == Q1_MAP_DOOR_TRIGGER         ? "door_trigger"
-                       : kind == Q1_MAP_ROGUE_PLAT_TRIGGER ? "rogue_plat2_trigger"
-                                                           : "plat_trigger";
+    qa_string_id name = kind == Q1_MAP_DOOR_TRIGGER         ? g->runtime_names[Q1_NAME_CLASS_DOOR_TRIGGER]
+                       : kind == Q1_MAP_ROGUE_PLAT_TRIGGER ? g->runtime_names[Q1_NAME_CLASS_ROGUE_PLAT2_TRIGGER]
+                                                           : g->runtime_names[Q1_NAME_CLASS_PLAT_TRIGGER];
     q1_actor *trigger;
     if (!q1_create(g, name, Q1_MAP, owner_id, &trigger, error))
         return false;

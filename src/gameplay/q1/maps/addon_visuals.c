@@ -79,7 +79,7 @@ static bool rope_segment(qa_q1_game *g, qa_actor_id parent_id, bool *published,
                          qa_error *error) {
     *published = false;
     q1_actor *child;
-    if (!q1_create(g, "misc_rope_segment", Q1_MAP, (qa_actor_id){0}, &child, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_MISC_ROPE_SEGMENT], Q1_MAP, (qa_actor_id){0}, &child, error))
         return false;
     qa_actor_id child_id = child->id;
     if (!q1_map_allocate(g, child, error))
@@ -383,7 +383,7 @@ bool q1_map_addon_visual_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     }
     e->alpha = .6f;
     q1_actor *child;
-    if (!q1_create(g, "gas_flame", Q1_MAP, (qa_actor_id){0}, &child, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GAS_FLAME], Q1_MAP, (qa_actor_id){0}, &child, error))
         return false;
     qa_actor_id child_id = child->id;
     e = visual(g, id);

@@ -221,7 +221,7 @@ static bool rubble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     for (size_t i = 0; (double)i < count; ++i) {
         int32_t model = variant ? variant : (int32_t)floorf(1 + 3 * q1_random(g));
         q1_actor *piece;
-        if (!q1_create(g, "hip_rubble", Q1_MAP, (qa_actor_id){0}, &piece, error))
+        if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_HIP_RUBBLE], Q1_MAP, (qa_actor_id){0}, &piece, error))
             return false;
         qa_actor_id child = piece->id;
         entity = q1_entity(g, parent);

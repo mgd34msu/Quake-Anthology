@@ -1127,7 +1127,7 @@ bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
                       qa_actor_id *out, qa_error *error) {
     *out = (qa_actor_id){0};
     q1_actor *decoy;
-    if (!q1_create(g, "monster_decoy", Q1_MONSTER, (qa_actor_id){0}, &decoy, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_MONSTER_DECOY], Q1_MONSTER, (qa_actor_id){0}, &decoy, error))
         return false;
     qa_actor_id id = decoy->id;
     decoy->target = target;

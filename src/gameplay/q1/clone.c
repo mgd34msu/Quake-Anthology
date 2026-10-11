@@ -15,7 +15,7 @@ bool q1_body_queue_initialize(qa_q1_game *g, qa_error *error) {
     q1_actor *bodies[4] = {0};
     size_t count = 0;
     for (; count < 4; ++count) {
-        if (!q1_create(g, q1_body_queue_classname(g), Q1_BODY, (qa_actor_id){0},
+        if (!q1_create(g, g->body_queue_class, Q1_BODY, (qa_actor_id){0},
             &bodies[count], error)) goto fail;
         bodies[count]->physics.water_type = 0;
         bodies[count]->physics.yaw_speed = 0;
@@ -51,10 +51,8 @@ bool q1_body_queue_validate(const qa_q1_game *g, qa_error *error) {
         const q1_actor *body = g->actors[slot];
         if (!body || body->kind != Q1_BODY) continue;
         if (count == 4) goto invalid;
-        const char *classname = qa_strings_cstr(qa_session_strings(g->services.session),
-            body->classname);
         if (q1_entity_const(g, body->id) != body || !body->native || body->map ||
-            !classname || strcmp(classname, q1_body_queue_classname(g))) goto invalid;
+            body->classname != g->body_queue_class) goto invalid;
         nodes[count] = q1_ref_from(g, body->id);
         if (g->wire && (nodes[count].kind != QA_ACTOR_REFERENCE_SOURCE ||
             nodes[count].value.source.owner != g->options.provider)) goto invalid;
@@ -119,9 +117,7 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
         return false;
     }
     q1_actor *target;
-    const char *classname =
-        qa_strings_cstr(qa_session_strings(g->services.session), source->classname);
-    if (!q1_create(g, classname, source->kind, q1_ref_actor(g, source->owner), &target, error))
+    if (!q1_create(g, source->classname, source->kind, q1_ref_actor(g, source->owner), &target, error))
         return false;
     qa_actor_id id = target->id;
     source = q1_entity(g, actor);

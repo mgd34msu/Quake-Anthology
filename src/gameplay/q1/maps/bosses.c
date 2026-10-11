@@ -192,7 +192,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     if (!q1_alive(g, oldone->id))
         return true;
     q1_actor *timer;
-    if (!q1_map_timer(g, "finale_timer", &timer, error))
+    if (!q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_FINALE_TIMER], &timer, error))
         return false;
     timer->owner = q1_ref_from(g, oldone->id);
     return q1_map_schedule(g, timer, 1, Q1_MAP_FINALE_TWO, error);
@@ -223,7 +223,7 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
             error))
         return false;
     q1_actor *victory;
-    if (!q1_create(g, "finale_player", Q1_ENTITY, (qa_actor_id){0}, &victory, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_FINALE_PLAYER], Q1_ENTITY, (qa_actor_id){0}, &victory, error))
         return false;
     victory->frame = 1;
     qa_body_state pose = {.origin = qa_vec_sub(body.origin, qa_v3(32, 264, 0)),
@@ -236,7 +236,7 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
     if (g->options.edition == QA_Q1_CLASSIC)
         return true;
     q1_actor *timer;
-    return q1_map_timer(g, "finale_wait", &timer, error) &&
+    return q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_FINALE_WAIT], &timer, error) &&
            q1_map_schedule(g, timer, 1, Q1_MAP_FINALE_WAIT, error);
 }
 bool qa_q1_game_map_finale(qa_q1_game *g, qa_actor_id actor, bool finish, qa_error *error) {

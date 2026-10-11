@@ -310,7 +310,7 @@ static bool fireball_fly(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     float y = q1_random(g) * 100 - 50;
     float z = entity->speed + q1_random(g) * 200;
     q1_actor *ball;
-    if (!q1_create(g, "fireball", Q1_MAP, entity->id, &ball, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_FIREBALL], Q1_MAP, entity->id, &ball, error))
         return false;
     if (!q1_map_allocate(g, ball, error)) {
         (void)q1_remove(g, ball, NULL);

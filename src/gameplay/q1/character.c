@@ -224,7 +224,7 @@ static bool cause_named(qa_q1_game *g, qa_actor_id actor, const char *name) {
 }
 static bool bubbles(qa_q1_game *g, qa_actor_id actor, unsigned count, qa_error *error) {
     q1_actor *timer;
-    if (!q1_create(g, "death_bubbles", Q1_TIMER, actor, &timer, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_DEATH_BUBBLES], Q1_TIMER, actor, &timer, error))
         return false;
     timer->count = (float)count;
     return q1_schedule(g, timer, 0.1, Q1_THINK_DEATH_BUBBLES, error);
@@ -537,7 +537,7 @@ bool qa_q1_character_environment(qa_q1_game *g, qa_actor_id actor, bool suit, bo
 
 bool q1_spawn_bubble(qa_q1_game *g, qa_vec3 origin, qa_vec3 velocity, bool split, qa_error *error) {
     q1_actor *bubble;
-    if (!q1_create(g, "bubble", Q1_TIMER, (qa_actor_id){0}, &bubble, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_BUBBLE], Q1_TIMER, (qa_actor_id){0}, &bubble, error))
         return false;
     bubble->physics.motion = QA_PHYSICS_NOCLIP;
     bubble->physics.solid = QA_PHYSICS_NOT_SOLID;

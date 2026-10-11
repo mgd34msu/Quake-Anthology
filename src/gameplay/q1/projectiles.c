@@ -7,7 +7,7 @@ bool q1_meat_spray(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 veloc
     qa_actor_id owner_id = owner->id;
     q1_actor *spray;
     qa_body_state body;
-    if (!q1_create(g, "meat_spray", Q1_GIB, owner_id, &spray, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_MEAT_SPRAY], Q1_GIB, owner_id, &spray, error))
         return false;
     qa_actor_id child = spray->id;
     bool ok = qa_world_body_read(g->services.world, owner_id, &body, error);
@@ -48,11 +48,11 @@ cleanup:
 bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
                          q1_projectile_kind kind, qa_vec3 origin, qa_vec3 velocity, q1_actor **out,
                          qa_error *error) {
-    static const char *const names[] = {
-        "spike",           "superspike",     "missile",           "grenade",        "wizard_spike",
-        "knight_spike",    "enforcer_laser", "ogre_grenade",      "zombie_grenade", "vore_ball",
-        "chthon_lavaball", "hiplaser",       "proximity_grenade", "lava_spike",     "MultiGrenade",
-        "MultiRocket",     "plasma"};
+    static const q1_runtime_name names[] = {
+        Q1_NAME_CLASS_SPIKE,           Q1_NAME_CLASS_SUPERSPIKE,     Q1_NAME_MISSILE,           Q1_NAME_GRENADE,        Q1_NAME_CLASS_WIZARD_SPIKE,
+        Q1_NAME_CLASS_KNIGHT_SPIKE,    Q1_NAME_CLASS_ENFORCER_LASER, Q1_NAME_CLASS_OGRE_GRENADE,      Q1_NAME_CLASS_ZOMBIE_GRENADE, Q1_NAME_CLASS_VORE_BALL,
+        Q1_NAME_CLASS_CHTHON_LAVABALL, Q1_NAME_HIPLASER,       Q1_NAME_PROXIMITY_GRENADE, Q1_NAME_LAVA_SPIKE,     Q1_NAME_CLASS_MULTIGRENADE,
+        Q1_NAME_CLASS_MULTIROCKET,     Q1_NAME_PLASMA};
     static const char *const models[] = {
         "progs/spike.mdl",    "progs/s_spike.mdl", "progs/missile.mdl",  "progs/grenade.mdl",
         "progs/w_spike.mdl",  "progs/k_spike.mdl", "progs/laser.mdl",    "progs/grenade.mdl",
@@ -64,7 +64,7 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
         return false;
     }
     q1_actor *entity;
-    if (!q1_create(g, names[kind], Q1_PROJECTILE, owner, &entity, error))
+    if (!q1_create(g, g->runtime_names[names[kind]], Q1_PROJECTILE, owner, &entity, error))
         return false;
     entity->state.projectile = (q1_projectile){.kind = kind,
                                                .weapon = weapon,
@@ -356,7 +356,7 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_gib_at(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, float health, const char *model,
                qa_error *error) {
     q1_actor *gib;
-    if (!q1_create(g, "gib", Q1_GIB, owner, &gib, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GIB], Q1_GIB, owner, &gib, error))
         return false;
     qa_actor_id child = gib->id;
     bool ok = true;

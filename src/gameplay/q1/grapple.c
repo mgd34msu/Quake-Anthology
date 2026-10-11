@@ -209,7 +209,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     if (ctf && !q1_aim(g, actor, forward, &direction, error))
         return false;
     q1_actor *hook;
-    if (!q1_create(g, ctf ? "ctf_hook" : "hook", Q1_PROJECTILE, actor, &hook, error))
+    if (!q1_create(g, ctf ? g->runtime_names[Q1_NAME_CLASS_CTF_HOOK] : g->runtime_names[Q1_NAME_CLASS_HOOK], Q1_PROJECTILE, actor, &hook, error))
         return false;
     player->hook = q1_ref_from(g, hook->id);
     hook->state.projectile.kind = ctf ? Q1_CTF_HOOK : Q1_ROGUE_HOOK;
@@ -243,7 +243,7 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     if (ctf && g->options.edition == QA_Q1_CLASSIC)
         for (int number = 3; number > 0; --number) {
             q1_actor *link;
-            if (!q1_create(g, "ctf_hook_link", Q1_TIMER, hook->id, &link, error))
+            if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_CTF_HOOK_LINK], Q1_TIMER, hook->id, &link, error))
                 return false;
             hook->state.projectile.links[number - 1] = q1_ref_from(g, link->id);
             link->count = (float)number / 4;

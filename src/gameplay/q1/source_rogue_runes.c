@@ -119,7 +119,7 @@ static qa_vec3 velocity(qa_q1_game *g) {
 }
 static bool spawn(qa_q1_game *g, uint32_t rune, qa_vec3 origin, qa_error *error) {
     q1_actor *e;
-    if (!current(g, error) || !q1_create(g, "rogue_rune", Q1_SOURCE_ROGUE_RUNE,
+    if (!current(g, error) || !q1_create(g, g->runtime_names[Q1_NAME_CLASS_ROGUE_RUNE], Q1_SOURCE_ROGUE_RUNE,
         (qa_actor_id){0}, &e, error)) return false;
     qa_actor_id actor = e->id;
     char word[32];
@@ -208,7 +208,7 @@ static bool frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         if ((integer & 1) && owner->rogue_runes_spawned == 0) {
             owner->rogue_runes_spawned = 1;
             q1_actor *timer;
-            if (!q1_create(g, "rogue_rune_spawner", Q1_SOURCE_ROGUE_RUNE_TIMER,
+            if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_ROGUE_RUNE_SPAWNER], Q1_SOURCE_ROGUE_RUNE_TIMER,
                 (qa_actor_id){0}, &timer, error) || !current(g, error) ||
                 !q1_schedule(g, timer, .1, Q1_THINK_SOURCE_ROGUE_RUNE_SPAWN, error)) return false;
         }

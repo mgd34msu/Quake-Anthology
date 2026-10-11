@@ -69,7 +69,7 @@ static bool child(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, marker, &target, error))
         return false;
     q1_actor *point = q1_entity(g, marker), *next;
-    if (!q1_create(g, "monster_morph", Q1_MONSTER, entity->id, &next, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_MONSTER_MORPH], Q1_MONSTER, entity->id, &next, error))
         return false;
     next->model = entity->model;
     next->target = entity->target;

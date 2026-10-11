@@ -135,7 +135,7 @@ bool q1_dragon_launch_fireball(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin,
     q1_actor *source = q1_entity(g, owner), *shot;
     if (source)
         source->effects |= 2;
-    if (!q1_create(g, "fireball", Q1_PROJECTILE, owner, &shot, error) ||
+    if (!q1_create(g, g->runtime_names[Q1_NAME_FIREBALL], Q1_PROJECTILE, owner, &shot, error) ||
         !q1_model(g, shot, "progs/fireball.mdl", error))
         return false;
     shot->state.projectile =
@@ -254,7 +254,7 @@ static bool finish_death(qa_q1_game *g, q1_actor *entity, unsigned count, qa_err
             velocity = qa_vec_add(
                 velocity, qa_vec_add(qa_vec_scale(g->right, right), qa_vec_scale(g->up, up)));
             q1_actor *gib;
-            if (!q1_create(g, "gib", Q1_GIB, (qa_actor_id){0}, &gib, error))
+            if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GIB], Q1_GIB, (qa_actor_id){0}, &gib, error))
                 return false;
             char path[32];
             snprintf(path, sizeof(path), "progs/gib%u.mdl", model);

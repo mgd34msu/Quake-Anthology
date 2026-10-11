@@ -165,7 +165,7 @@ static bool wizard_fast(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     for (unsigned i = 0; i < 2; ++i) {
         float side = i ? -1 : 1;
         q1_actor *timer;
-        if (!q1_create(g, "wizard_fastfire", Q1_TIMER, entity->id, &timer, error))
+        if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_WIZARD_FASTFIRE], Q1_TIMER, entity->id, &timer, error))
             return false;
         timer->state.projectile.enemy = q1_ref_from(g, enemy);
         timer->state.projectile.right = qa_vec_scale(right, side);
@@ -500,7 +500,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         if (!q1_schedule(g, entity, 0.3, Q1_THINK_MONSTER_FRAME, error) ||
             !q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error) ||
             !q1_monster_face(g, entity, error) ||
-            !q1_create(g, "shambler_light", Q1_TIMER, entity->id, &missile, error))
+            !q1_create(g, g->runtime_names[Q1_NAME_CLASS_SHAMBLER_LIGHT], Q1_TIMER, entity->id, &missile, error))
             return false;
         entity->owner = q1_ref_from(g, missile->id);
         return q1_model(g, missile, "progs/s_light.mdl", error) &&

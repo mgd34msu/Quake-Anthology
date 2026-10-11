@@ -331,7 +331,7 @@ bool q1_armagon_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &source, error))
         return false;
     q1_actor *part;
-    if (!q1_create(g, "armagon_body", Q1_TIMER, (qa_actor_id){0}, &part, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_ARMAGON_BODY], Q1_TIMER, (qa_actor_id){0}, &part, error))
         return false;
     qa_body_state body = {.origin = qa_vec_sub(source.origin, qa_v3(0, 0, 64)),
                           .bounds = {{-16, -16, -16}, {16, 16, 16}}};

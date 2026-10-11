@@ -4,20 +4,21 @@
 
 typedef struct drop_weapon {
     qa_q1_weapon weapon, powered;
-    const char *classname, *model, *name, *localized;
+    q1_runtime_name classname;
+    const char *model, *name, *localized;
 } drop_weapon;
 static const drop_weapon drop_weapons[] = {
-    {QA_Q1_SUPER_SHOTGUN, QA_Q1_WEAPON_COUNT, "weapon_supershotgun", "progs/g_shot.mdl",
+    {QA_Q1_SUPER_SHOTGUN, QA_Q1_WEAPON_COUNT, Q1_NAME_CLASS_WEAPON_SUPERSHOTGUN, "progs/g_shot.mdl",
      "Double-barrelled Shotgun", "$qc_double_shotgun"},
-    {QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN, "weapon_nailgun", "progs/g_nail.mdl", "nailgun",
+    {QA_Q1_NAILGUN, QA_Q1_LAVA_NAILGUN, Q1_NAME_CLASS_WEAPON_NAILGUN, "progs/g_nail.mdl", "nailgun",
      "$qc_nailgun"},
-    {QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN, "weapon_supernailgun", "progs/g_nail2.mdl",
+    {QA_Q1_SUPER_NAILGUN, QA_Q1_LAVA_SUPER_NAILGUN, Q1_NAME_CLASS_WEAPON_SUPERNAILGUN, "progs/g_nail2.mdl",
      "Super Nailgun", "$qc_super_nailgun"},
-    {QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE, "weapon_grenadelauncher", "progs/g_rock.mdl",
+    {QA_Q1_GRENADE, QA_Q1_MULTI_GRENADE, Q1_NAME_CLASS_WEAPON_GRENADELAUNCHER, "progs/g_rock.mdl",
      "Grenade Launcher", "$qc_grenade_launcher"},
-    {QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET, "weapon_rocketlauncher", "progs/g_rock2.mdl",
+    {QA_Q1_ROCKET, QA_Q1_MULTI_ROCKET, Q1_NAME_CLASS_WEAPON_ROCKETLAUNCHER, "progs/g_rock2.mdl",
      "Rocket Launcher", "$qc_rocket_launcher"},
-    {QA_Q1_LIGHTNING, QA_Q1_PLASMA, "weapon_lightning", "progs/g_light.mdl", "Thunderbolt",
+    {QA_Q1_LIGHTNING, QA_Q1_PLASMA, Q1_NAME_CLASS_WEAPON_LIGHTNING, "progs/g_light.mdl", "Thunderbolt",
      "$qc_thunderbolt"}};
 typedef struct drop_ammo {
     qa_q1_ammo ammo;
@@ -154,7 +155,7 @@ bool qa_q1_ctf_toss_ammo(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_inpu
     if (available <= 0)
         return true;
     q1_actor *pack;
-    if (!q1_create(g, "ctf_backpack", Q1_PICKUP, actor, &pack, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_CTF_BACKPACK], Q1_PICKUP, actor, &pack, error))
         return false;
     pack->state.pickup.drop = Q1_DROP_CTF_AMMO;
     pack->state.pickup.weapon = QA_Q1_WEAPON_COUNT;
@@ -215,7 +216,7 @@ static bool toss_weapon(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_input
     if (owned < 1)
         return true;
     q1_actor *item;
-    if (!q1_create(g, definition->classname, Q1_PICKUP, actor, &item, error))
+    if (!q1_create(g, g->runtime_names[definition->classname], Q1_PICKUP, actor, &item, error))
         return false;
     item->state.pickup.drop = rogue ? Q1_DROP_ROGUE_WEAPON : Q1_DROP_CTF_WEAPON;
     item->state.pickup.weapon = definition->weapon;

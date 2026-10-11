@@ -7,7 +7,7 @@ bool qa_q1_spawn_teleport_fog(qa_q1_game *g, qa_vec3 origin, qa_actor_id *out, q
         return false;
     }
     q1_actor *fog;
-    if (!q1_create(g, "teleport_fog", Q1_TIMER, (qa_actor_id){0}, &fog, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_TELEPORT_FOG], Q1_TIMER, (qa_actor_id){0}, &fog, error))
         return false;
     fog->classname = 0;
     qa_body_state body = {.origin = origin};
@@ -44,7 +44,7 @@ bool q1_spawn_teledeath(qa_q1_game *g, qa_vec3 origin, qa_actor_id owner, double
                            .bounds = {qa_vec_sub(body.bounds.mins, qa_v3(1, 1, 1)),
                                       qa_vec_add(body.bounds.maxs, qa_v3(1, 1, 1))}};
     q1_actor *death;
-    if (!q1_create(g, "teledeath", Q1_TIMER, owner, &death, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_TELEDEATH], Q1_TIMER, owner, &death, error))
         return false;
     death->physics.solid = QA_PHYSICS_TRIGGER;
     if (!qa_world_body_write(g->services.world, death->id, &body, error) ||

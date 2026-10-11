@@ -1320,7 +1320,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         float choice = q1_random(g);
         attack = choice < 0.25f ? 0 : choice < 0.5f ? 1 : choice < 0.75f ? 2 : 3;
         player->animation_base = (choice >= 0.25f && choice < 0.5f) || choice >= 0.75f ? 5 : 1;
-        if (!q1_create(g, "axe_strike", Q1_TIMER, player->id, &projectile, error) ||
+        if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_AXE_STRIKE], Q1_TIMER, player->id, &projectile, error) ||
             !q1_schedule(g, projectile, q1_weapon_shape(weapon)->launch_delay, Q1_THINK_AXE, error))
             return false;
         break;

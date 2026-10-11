@@ -162,7 +162,7 @@ static bool make_bolt(qa_q1_game *g, q1_actor *e, bool tesla, qa_vec3 start, qa_
     float distance = e->map->distance, duration = e->map->duration, damage = e->damage;
     qa_actor_id from = q1_ref_actor(g, tesla ? e->map->pending.hazard.last_victim : q1_ref_from(g, source));
     q1_actor *created;
-    if (!q1_create(g, tesla ? "hipnotic_tesla_lightning" : "hipnotic_lightning", Q1_MAP,
+    if (!q1_create(g, tesla ? g->runtime_names[Q1_NAME_CLASS_HIPNOTIC_TESLA_LIGHTNING] : g->runtime_names[Q1_NAME_CLASS_HIPNOTIC_LIGHTNING], Q1_MAP,
                     tesla ? source : (qa_actor_id){0}, &created, error))
         return false;
     if (!q1_alive(g, source))

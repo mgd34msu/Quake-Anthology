@@ -707,6 +707,7 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     for (unsigned i = 0; i < Q1_NAME_COUNT; ++i)
         if (!qa_strings_intern_cstr(qa_session_strings(services->session), runtime_names[i], &g->runtime_names[i], error))
             goto fail;
+    if (!qa_builtin_resource(services, q1_body_queue_classname(g), &g->body_queue_class, error)) goto fail;
     if (!qa_targets_bind_field_keys(qa_session_strings(services->session), g->field_keys, error))
         goto fail;
     source_bind(g);
@@ -951,13 +952,10 @@ static q1_actor *allocate_state(qa_q1_game *g, qa_actor_id actor, qa_error *erro
     g->actors[actor.slot] = entity;
     return entity;
 }
-static bool create_state(qa_q1_game *g, const char *classname, q1_entity_kind kind, qa_actor_id owner,
+static bool create_state(qa_q1_game *g, qa_string_id classname, q1_entity_kind kind, qa_actor_id owner,
     const uint32_t *source_slot, q1_actor **out, qa_error *error) {
-    qa_string_id name;
-    if (!qa_builtin_resource(&g->services, classname, &name, error))
-        return false;
     qa_combat_state combat = {.mass = 100};
-    qa_builtin_spawn spawn = {.owner = g->options.provider, .definition = name, .combat = &combat};
+    qa_builtin_spawn spawn = {.owner = g->options.provider, .definition = classname, .combat = &combat};
     if (source_slot) {
         spawn.has_source = true; spawn.source_slot = *source_slot;
         if (!q1_wire_spawn_slot_valid(g, *source_slot)) return false;
@@ -971,7 +969,7 @@ static bool create_state(qa_q1_game *g, const char *classname, q1_entity_kind ki
         return false;
     }
     entity->owner = q1_ref_from(g, owner);
-    entity->classname = name;
+    entity->classname = classname;
     entity->kind = kind;
     entity->native = true;
     entity->physics = qa_physics_properties_default(QA_GAME_Q1);
@@ -982,11 +980,11 @@ static bool create_state(qa_q1_game *g, const char *classname, q1_entity_kind ki
     *out = entity;
     return true;
 }
-bool q1_create(qa_q1_game *g, const char *classname, q1_entity_kind kind, qa_actor_id owner,
+bool q1_create(qa_q1_game *g, qa_string_id classname, q1_entity_kind kind, qa_actor_id owner,
     q1_actor **out, qa_error *error) {
     return create_state(g, classname, kind, owner, NULL, out, error);
 }
-bool q1_create_source(qa_q1_game *g, const char *classname, q1_entity_kind kind, uint32_t slot,
+bool q1_create_source(qa_q1_game *g, qa_string_id classname, q1_entity_kind kind, uint32_t slot,
     q1_actor **out, qa_error *error) {
     return create_state(g, classname, kind, (qa_actor_id){0}, &slot, out, error);
 }

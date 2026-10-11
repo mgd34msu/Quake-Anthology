@@ -97,10 +97,10 @@ static bool marker_update(qa_q1_game *g, qa_actor_id player, qa_actor_id target,
     if (!row)
         return false;
     qa_actor_id id = q1_ref_actor(g, secret ? row->secret_marker : row->exit_marker);
-    const char *name = secret ? "secret_marker" : "exit_marker";
+    qa_string_id name = secret ? g->runtime_names[Q1_NAME_CLASS_SECRET_MARKER] : g->runtime_names[Q1_NAME_CLASS_EXIT_MARKER];
     q1_actor *marker = q1_entity(g, id);
     if (marker && (!marker->native || !q1_ref_equal(marker->owner, q1_ref_from(g, target)) ||
-                   !classname(g, marker->classname, name)))
+                   marker->classname != name))
         return q1_map_fail(error, "MG3 marker continuation has a different owner");
     bool created = !marker;
     if (created) {

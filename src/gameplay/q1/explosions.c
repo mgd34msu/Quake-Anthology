@@ -25,7 +25,7 @@ bool q1_multi_explosion_think(qa_q1_game *g, q1_actor *entity, qa_error *error) 
     qa_vec3 low = qa_vec_add(body.origin, body.bounds.mins),
             high = qa_vec_add(body.origin, body.bounds.maxs);
     q1_actor *explosion;
-    if (!q1_create(g, "hip_explosion", Q1_TIMER, q1_ref_actor(g, entity->owner), &explosion, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_HIP_EXPLOSION], Q1_TIMER, q1_ref_actor(g, entity->owner), &explosion, error))
         return false;
     qa_actor_id child = explosion->id;
     entity = q1_entity(g, parent);
@@ -112,7 +112,7 @@ bool qa_q1_spawn_multi_explosion(qa_q1_game *g, qa_vec3 origin, float radius, fl
     qa_actor_id parent = {0};
     q1_actor *entity;
     qa_actor_id world = g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
-    if (!q1_create(g, "hip_multi_explosion", Q1_TIMER, world, &entity,
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_HIP_MULTI_EXPLOSION], Q1_TIMER, world, &entity,
                    error))
         goto finish;
     ok = true;

@@ -9,7 +9,7 @@ bool q1_final_end(qa_q1_game *, qa_error *);
 qa_vec3 q1_boss_angles(qa_vec3);
 bool q1_boss_colored_explosion(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_boss_damageable(qa_q1_game *, q1_actor *, bool, qa_error *);
-bool q1_boss_child_create(qa_q1_game *, const char *, q1_boss_child_kind, qa_actor_id owner,
+bool q1_boss_child_create(qa_q1_game *, qa_string_id, q1_boss_child_kind, qa_actor_id owner,
                           q1_actor **, qa_error *);
 bool q1_boss_child_schedule(qa_q1_game *, q1_actor *, q1_boss_child_kind, double, qa_error *);
 q1_ref q1_boss_enemy(const q1_actor *);

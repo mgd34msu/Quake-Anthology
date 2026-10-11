@@ -4,7 +4,7 @@ static bool locomotion_sound(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *monster = &entity->state.monster;
     if (!monster->source.scourge.initialized) {
         q1_actor *trigger;
-        if (!q1_create(g, "scourge_trigger", Q1_TIMER, (qa_actor_id){0}, &trigger, error))
+        if (!q1_create(g, g->runtime_names[Q1_NAME_SCOURGE_TRIGGER], Q1_TIMER, (qa_actor_id){0}, &trigger, error))
             return false;
         trigger->activator = q1_ref_from(g, entity->id);
         monster->source.scourge.trigger = q1_ref_from(g, trigger->id);

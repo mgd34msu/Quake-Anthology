@@ -192,7 +192,7 @@ bool q1_source_rogue_flag_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_er
     float team = red ? 5 : blue ? 14 : 0;
     e->state.rogue_flag.values[0] = team;
     q1_actor *base;
-    if (!q1_create(g, red ? "item_flagbase_team1" : blue ? "item_flagbase_team2" : "item_flagbase",
+    if (!q1_create(g, red ? g->runtime_names[Q1_NAME_CLASS_ITEM_FLAGBASE_TEAM1] : blue ? g->runtime_names[Q1_NAME_CLASS_ITEM_FLAGBASE_TEAM2] : g->runtime_names[Q1_NAME_CLASS_ITEM_FLAGBASE],
         Q1_SOURCE_ROGUE_FLAG_BASE, (qa_actor_id){0}, &base, error) || q1_entity(g, actor) != e) return false;
     qa_actor_id base_actor = base->id;
     if (!base) return fail(error, base_actor, "Rogue base retired during native creation");

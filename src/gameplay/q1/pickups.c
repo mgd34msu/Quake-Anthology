@@ -1154,8 +1154,8 @@ static bool mg3_upgrade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recip
 
 bool q1_mg3_debug_upgrade(qa_q1_game *g, qa_actor_id recipient, unsigned type,
     uint32_t flag, qa_error *error) {
-    static const char *const classnames[] = {"item_upgrade_health", "item_upgrade_shells",
-        "item_upgrade_nails", "item_upgrade_rockets", "item_upgrade_cells"};
+    static const q1_runtime_name classnames[] = {Q1_NAME_CLASS_ITEM_UPGRADE_HEALTH, Q1_NAME_CLASS_ITEM_UPGRADE_SHELLS,
+        Q1_NAME_CLASS_ITEM_UPGRADE_NAILS, Q1_NAME_CLASS_ITEM_UPGRADE_ROCKETS, Q1_NAME_CLASS_ITEM_UPGRADE_CELLS};
     q1_player *player = q1_player_get(g, recipient);
     if (g->options.program != QA_Q1_MG3 || !player || !q1_alive(g, recipient) ||
         type >= sizeof(classnames) / sizeof(*classnames)) {
@@ -1163,7 +1163,7 @@ bool q1_mg3_debug_upgrade(qa_q1_game *g, qa_actor_id recipient, unsigned type,
         return false;
     }
     q1_actor *entity;
-    if (!q1_create(g, classnames[type], Q1_PICKUP, (qa_actor_id){0}, &entity, error)) return false;
+    if (!q1_create(g, g->runtime_names[classnames[type]], Q1_PICKUP, (qa_actor_id){0}, &entity, error)) return false;
     qa_actor_id created = entity->id;
     if (g->destroy_pending || q1_player_get(g, recipient) != player || !q1_alive(g, recipient) ||
         q1_entity(g, created) != entity || !q1_alive(g, created)) {
@@ -1238,8 +1238,10 @@ static bool spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_bod
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 external pickup spawn");
         return false;
     }
+    qa_string_id classname;
+    if (!qa_builtin_resource(&g->services, spawn->classname, &classname, error)) return false;
     q1_actor *entity;
-    if (!q1_create(g, spawn->classname, Q1_PICKUP, (qa_actor_id){0}, &entity, error))
+    if (!q1_create(g, classname, Q1_PICKUP, (qa_actor_id){0}, &entity, error))
         return false;
     entity->spawnflags = spawn->spawnflags;
     entity->source_movement_flags = spawn->source_movement_flags;
@@ -1417,7 +1419,7 @@ static bool construct_backpack(qa_q1_game *g, qa_actor_id source, qa_actor_id ow
     if (total == 0 || (source.registry && !q1_alive(g, source)))
         return true;
     q1_actor *pack;
-    if (!q1_create(g, "item_backpack", Q1_PICKUP, owner, &pack, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_ITEM_BACKPACK], Q1_PICKUP, owner, &pack, error))
         return false;
     qa_actor_id child = pack->id;
     if (!q1_entity(g, child) || (source.registry && !q1_alive(g, source)))

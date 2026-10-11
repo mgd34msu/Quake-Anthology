@@ -1314,7 +1314,9 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     const original_projectile *projectile = source.projectile;
     q1_map_kind map = source.map;
     q1_entity_kind kind = source.kind;
-    if (!q1_create_source(game, name, kind, slot, out, error)) return false;
+    qa_string_id classname;
+    if (!qa_builtin_resource(&game->services, name, &classname, error)) return false;
+    if (!q1_create_source(game, classname, kind, slot, out, error)) return false;
     q1_actor *entity = *out;
     if (species) entity->state.monster.species = species;
     if (map != Q1_MAP_FIELDS) {
@@ -2357,7 +2359,7 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
             if (frame==2 || frame==3) {
                 q1_actor *timer;
                 double due=saved_number(save->entities+1,"nextthink")+(frame==2?.1:0);
-                okay=q1_create(game,"axe_strike",Q1_TIMER,slots[1],&timer,error) &&
+                okay=q1_create(game,game->runtime_names[Q1_NAME_CLASS_AXE_STRIKE],Q1_TIMER,slots[1],&timer,error) &&
                     q1_schedule(game,timer,due-game->time,Q1_THINK_AXE,error);
             }
             break;

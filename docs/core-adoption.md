@@ -729,6 +729,13 @@ Q2 runtime-name table. Their per-event and per-spawn interning is deleted.
 The normal build and seven core suites pass. The remaining projectile
 emitters and Q1 runtime resources are still being migrated.
 
+Names item 14, Q1 entity creation: every internal constructor now accepts
+`qa_string_id`, and fixed projectile, timer, drop and helper classes are
+admitted by the existing runtime-name table. Clones retain their source ID;
+body-queue checks compare the edition's bound ID. Authored external spawns
+and original-save import intern text at their parsing boundaries. The old
+per-spawn text conversion is deleted. Normal build and seven core suites pass.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

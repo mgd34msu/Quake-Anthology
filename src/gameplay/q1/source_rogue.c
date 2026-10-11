@@ -69,7 +69,7 @@ bool qa_q1_rogue_state(qa_q1_game *game, qa_actor_id player, qa_actor_id *out,
         !qa_q1_rogue_state_find(game, player, &state, &found, error)) goto finish;
     if (!found) {
         q1_actor *created;
-        if (!q1_create(game, "rogue_team_state", Q1_ROGUE_TEAM_STATE, player,
+        if (!q1_create(game, game->runtime_names[Q1_NAME_CLASS_ROGUE_TEAM_STATE], Q1_ROGUE_TEAM_STATE, player,
             &created, error)) goto finish;
         state = created->id;
         if (!player_current(&operation, player, client, slot, error) ||

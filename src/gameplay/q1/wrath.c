@@ -18,7 +18,7 @@ bool q1_wrath_launch(qa_q1_game *g, q1_actor *entity, unsigned attack, qa_error 
                                 qa_vec_add(qa_vec_scale(g->up, up),
                                            qa_vec_scale(g->right, attack == 3 ? 20 : 0))));
     q1_actor *shot;
-    if (!q1_create(g, "wrath_missile", Q1_PROJECTILE, entity->id, &shot, error) ||
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_WRATH_MISSILE], Q1_PROJECTILE, entity->id, &shot, error) ||
         !q1_model(g, shot, "progs/w_ball.mdl", error))
         return false;
     shot->state.projectile =

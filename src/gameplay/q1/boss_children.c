@@ -32,7 +32,7 @@ static bool armed_eye(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind, f
     if (!read(g, owner, &body, error))
         return false;
     q1_actor *e;
-    if (!q1_boss_child_create(g, "oldnew_child", kind, owner->id, &e, error))
+    if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_OLDNEW_CHILD], kind, owner->id, &e, error))
         return false;
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
     body.origin =
@@ -87,7 +87,7 @@ bool q1_boss_child_spawn(qa_q1_game *g, q1_actor *owner, q1_boss_child_kind kind
         return false;
     q1_actor *e;
     bool eye = kind == Q1_CHILD_EYE;
-    if (!q1_boss_child_create(g, eye ? "oldnew_eye" : "oldnew_child", kind, owner->id, &e, error))
+    if (!q1_boss_child_create(g, eye ? g->runtime_names[Q1_NAME_OLDNEW_EYE] : g->runtime_names[Q1_NAME_OLDNEW_CHILD], kind, owner->id, &e, error))
         return false;
     qa_body_state body = {.origin = parent.origin};
     double delay = .1;
@@ -142,7 +142,7 @@ bool q1_boss_cleanup(qa_q1_game *g, qa_error *error) {
     if (!ok)
         return false;
     q1_actor *timer;
-    return q1_boss_child_create(g, "", Q1_CHILD_ZOMBIE_CLEANUP, (qa_actor_id){0}, &timer, error) &&
+    return q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], Q1_CHILD_ZOMBIE_CLEANUP, (qa_actor_id){0}, &timer, error) &&
            q1_schedule(g, timer, 2, Q1_THINK_BOSS_CHILD, error);
 }
 static bool eye_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *error) {
@@ -259,7 +259,7 @@ static bool spammer(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_vec3 velocity = qa_vec_scale(g->forward, oomph + 25 * e->count);
     velocity.z = 200;
     q1_actor *shot;
-    if (!q1_boss_child_create(g, "spam", Q1_CHILD_SPAM, q1_ref_actor(g, e->owner), &shot, error))
+    if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_SPAM], Q1_CHILD_SPAM, q1_ref_actor(g, e->owner), &shot, error))
         return false;
     shot->physics.solid = QA_PHYSICS_BOX;
     shot->physics.motion = QA_PHYSICS_TOSS;

@@ -141,7 +141,7 @@ static bool flee_goal(qa_q1_game *g, qa_actor_id source, q1_actor **out, qa_erro
     if (!q1_entity(g, source))
         return true;
     q1_actor *goal;
-    if (!q1_create(g, "gremlin_goal", Q1_ENTITY, (qa_actor_id){0}, &goal, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_GREMLIN_GOAL], Q1_ENTITY, (qa_actor_id){0}, &goal, error))
         return false;
     qa_actor_id child = goal->id;
     if (!q1_entity(g, source) || !q1_entity(g, child))

@@ -652,7 +652,7 @@ bool q1_map_special_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_special_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_special_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 void q1_map_cancel(qa_q1_game *, q1_actor *);
-bool q1_map_timer(qa_q1_game *, const char *, q1_actor **, qa_error *);
+bool q1_map_timer(qa_q1_game *, qa_string_id, q1_actor **, qa_error *);
 bool q1_map_door_down(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_lightning_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_boss_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);

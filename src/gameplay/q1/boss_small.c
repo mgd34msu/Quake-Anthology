@@ -236,7 +236,7 @@ static bool ghost_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_
     case Q1_ACTION_GHOST_GHOST_DIEA1:
         if (e->physics.water_level == 3) {
             q1_actor *timer;
-            if (!q1_create(g, "death_bubbles", Q1_TIMER, e->id, &timer, error))
+            if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_DEATH_BUBBLES], Q1_TIMER, e->id, &timer, error))
                 return false;
             timer->count = 20;
             qa_body_state state = {.origin = value.origin};
@@ -713,7 +713,7 @@ bool q1_spawn_shub_zombie(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     }
     qa_builtin_snapshot_release(snapshot);
     q1_actor *zombie;
-    if (!q1_create(g, "monster_szombie", Q1_MONSTER, point, &zombie, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_MONSTER_SZOMBIE], Q1_MONSTER, point, &zombie, error))
         return false;
     if (!q1_monster_spawn(g, zombie, q1_species_find("monster_szombie"), error)) {
         q1_remove(g, zombie, NULL);

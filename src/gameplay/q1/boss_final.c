@@ -265,7 +265,7 @@ static bool upgrade(qa_q1_game *g, q1_actor *e, qa_error *error) {
         qa_body_state spawn = {.origin = qa_vec_add(body.origin, qa_v3(0, 0, 60)),
                                .angles = q1_boss_angles(qa_vec_normalize(direction))};
         q1_actor *spiral;
-        if (!q1_boss_child_create(g, "", Q1_CHILD_FINAL_SPIRAL, e->id, &spiral, error))
+        if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], Q1_CHILD_FINAL_SPIRAL, e->id, &spiral, error))
             return false;
         spiral->delay = g->options.skill <= 2 ? .2f : .15f;
         spiral->count = 50;
@@ -283,7 +283,7 @@ static bool death_start(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_body_state spawn = {.origin = qa_vec_add(body.origin, qa_v3(0, 0, 60))};
     for (unsigned delay = 1; delay <= 5; delay += 2) {
         q1_actor *timer;
-        if (!q1_boss_child_create(g, "", Q1_CHILD_FINAL_CIRCLE, (qa_actor_id){0}, &timer, error))
+        if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], Q1_CHILD_FINAL_CIRCLE, (qa_actor_id){0}, &timer, error))
             return false;
         if (!qa_world_body_write(g->services.world, timer->id, &spawn, error) ||
             !q1_schedule(g, timer, delay, Q1_THINK_BOSS_CHILD, error))
@@ -309,7 +309,7 @@ static bool death_finish(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!q1_sound(g, e->id, "boss2/pop2.wav", 2, 1, error) || !q1_boss_gib_vectors(g, e, error))
         return false;
     q1_actor *timer;
-    return q1_boss_child_create(g, "", Q1_CHILD_FINAL_END, (qa_actor_id){0}, &timer, error) &&
+    return q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], Q1_CHILD_FINAL_END, (qa_actor_id){0}, &timer, error) &&
            q1_schedule(g, timer, 8, Q1_THINK_BOSS_CHILD, error) && q1_remove(g, e, error);
 }
 bool q1_final_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_error *error) {

@@ -161,7 +161,92 @@
     X(FUNC_MOVEWALL, "func_movewall") \
     X(ROTATE_OBJECT, "rotate_object") \
     X(TRIGGER_HURT, "trigger_hurt") \
-    X(PATH_ROTATE, "path_rotate")
+    X(PATH_ROTATE, "path_rotate") \
+    X(CLASS_ACTOR, "actor") \
+    X(CLASS_ARMAGON_BODY, "armagon_body") \
+    X(CLASS_AXE_STRIKE, "axe_strike") \
+    X(CLASS_BUBBLE, "bubble") \
+    X(CLASS_CHARMED_GOAL, "charmed_goal") \
+    X(CLASS_CHTHON_LAVABALL, "chthon_lavaball") \
+    X(CLASS_CTF_BACKPACK, "ctf_backpack") \
+    X(CLASS_CTF_HOOK, "ctf_hook") \
+    X(CLASS_CTF_HOOK_ANIMATION, "ctf_hook_animation") \
+    X(CLASS_CTF_HOOK_LINK, "ctf_hook_link") \
+    X(CLASS_CTF_NEXTLEVEL, "ctf_nextlevel") \
+    X(CLASS_CTF_RUNE_SPAWN, "ctf_rune_spawn") \
+    X(CLASS_DEATH_BUBBLES, "death_bubbles") \
+    X(CLASS_DELAYEDREMOVE, "DelayedRemove") \
+    X(CLASS_DELAYEDUSE, "DelayedUse") \
+    X(CLASS_DOOR_TRIGGER, "door_trigger") \
+    X(CLASS_EMPTY, "") \
+    X(CLASS_ENFORCER_LASER, "enforcer_laser") \
+    X(CLASS_EXIT_MARKER, "exit_marker") \
+    X(CLASS_FADE_MANAGER, "fade_manager") \
+    X(CLASS_FINALE_PLAYER, "finale_player") \
+    X(CLASS_FINALE_TIMER, "finale_timer") \
+    X(CLASS_FINALE_WAIT, "finale_wait") \
+    X(CLASS_GAS_FLAME, "gas_flame") \
+    X(CLASS_GIB, "gib") \
+    X(CLASS_GREMLIN_GOAL, "gremlin_goal") \
+    X(CLASS_HIPNOTIC_HAMMER_STRIKE, "hipnotic_hammer_strike") \
+    X(CLASS_HIPNOTIC_LIGHTNING, "hipnotic_lightning") \
+    X(CLASS_HIPNOTIC_MJOLNIR_BASE, "hipnotic_mjolnir_base") \
+    X(CLASS_HIPNOTIC_MJOLNIR_LIGHTNING, "hipnotic_mjolnir_lightning") \
+    X(CLASS_HIPNOTIC_TESLA_LIGHTNING, "hipnotic_tesla_lightning") \
+    X(CLASS_HIP_EXPLOSION, "hip_explosion") \
+    X(CLASS_HIP_MULTI_EXPLOSION, "hip_multi_explosion") \
+    X(CLASS_HIP_RUBBLE, "hip_rubble") \
+    X(CLASS_HOOK, "hook") \
+    X(CLASS_ITEM_BACKPACK, "item_backpack") \
+    X(CLASS_ITEM_FLAGBASE, "item_flagbase") \
+    X(CLASS_ITEM_FLAGBASE_TEAM1, "item_flagbase_team1") \
+    X(CLASS_ITEM_FLAGBASE_TEAM2, "item_flagbase_team2") \
+    X(CLASS_ITEM_RUNE_HASTE, "item_rune_haste") \
+    X(CLASS_ITEM_RUNE_REGENERATION, "item_rune_regeneration") \
+    X(CLASS_ITEM_RUNE_RESISTANCE, "item_rune_resistance") \
+    X(CLASS_ITEM_RUNE_STRENGTH, "item_rune_strength") \
+    X(CLASS_ITEM_UPGRADE_CELLS, "item_upgrade_cells") \
+    X(CLASS_ITEM_UPGRADE_HEALTH, "item_upgrade_health") \
+    X(CLASS_ITEM_UPGRADE_NAILS, "item_upgrade_nails") \
+    X(CLASS_ITEM_UPGRADE_ROCKETS, "item_upgrade_rockets") \
+    X(CLASS_ITEM_UPGRADE_SHELLS, "item_upgrade_shells") \
+    X(CLASS_KNIGHT_SPIKE, "knight_spike") \
+    X(CLASS_LAVAMAN_BALL, "lavaman_ball") \
+    X(CLASS_MEAT_SPRAY, "meat_spray") \
+    X(CLASS_MG3_HAMMER_STRIKE, "mg3_hammer_strike") \
+    X(CLASS_MISC_ROPE_SEGMENT, "misc_rope_segment") \
+    X(CLASS_MULTIGRENADE, "MultiGrenade") \
+    X(CLASS_MULTIROCKET, "MultiRocket") \
+    X(CLASS_NEXTLEVEL, "nextlevel") \
+    X(CLASS_OGRE_GRENADE, "ogre_grenade") \
+    X(CLASS_PLAT_TRIGGER, "plat_trigger") \
+    X(CLASS_PUSHABLEWALLPROXY, "pushablewallproxy") \
+    X(CLASS_ROGUE_CAMERA_TRACKER, "rogue_camera_tracker") \
+    X(CLASS_ROGUE_PLAT2_TRIGGER, "rogue_plat2_trigger") \
+    X(CLASS_ROGUE_RUNE, "rogue_rune") \
+    X(CLASS_ROGUE_RUNE_SPAWNER, "rogue_rune_spawner") \
+    X(CLASS_ROGUE_TEAM_STATE, "rogue_team_state") \
+    X(CLASS_RUBBLE, "rubble") \
+    X(CLASS_SECRET_MARKER, "secret_marker") \
+    X(CLASS_SHAMBLER_LIGHT, "shambler_light") \
+    X(CLASS_SPAM, "spam") \
+    X(CLASS_SPIKE, "spike") \
+    X(CLASS_SUPERSPIKE, "superspike") \
+    X(CLASS_TELEPORT_FOG, "teleport_fog") \
+    X(CLASS_TIME_MACHINE_GIB, "time_machine_gib") \
+    X(CLASS_TIME_MACHINE_PAIN, "time_machine_pain") \
+    X(CLASS_TIME_STOP_SHAKE, "time_stop_shake") \
+    X(CLASS_VORE_BALL, "vore_ball") \
+    X(CLASS_WEAPON_GRENADELAUNCHER, "weapon_grenadelauncher") \
+    X(CLASS_WEAPON_LIGHTNING, "weapon_lightning") \
+    X(CLASS_WEAPON_NAILGUN, "weapon_nailgun") \
+    X(CLASS_WEAPON_ROCKETLAUNCHER, "weapon_rocketlauncher") \
+    X(CLASS_WEAPON_SUPERNAILGUN, "weapon_supernailgun") \
+    X(CLASS_WEAPON_SUPERSHOTGUN, "weapon_supershotgun") \
+    X(CLASS_WIZARD_FASTFIRE, "wizard_fastfire") \
+    X(CLASS_WIZARD_SPIKE, "wizard_spike") \
+    X(CLASS_WRATH_MISSILE, "wrath_missile") \
+    X(CLASS_ZOMBIE_GRENADE, "zombie_grenade")
 
 typedef enum q1_runtime_name {
 #define Q1_RUNTIME_NAME_ENUM(key, text) Q1_NAME_##key,
@@ -603,6 +688,7 @@ struct qa_q1_game {
     qa_q1_options options;
     qa_q1_host host;
     qa_string_id runtime_names[Q1_NAME_COUNT];
+    qa_string_id body_queue_class;
     qa_string_id field_keys[QA_TARGET_KEY_TOTAL];
     qa_cvar_handle source_settings[QA_Q1_SOURCE_SETTING_COUNT];
     qa_q1_source_flags_services source_flags;
@@ -775,9 +861,9 @@ bool q1_sound_resource(qa_q1_game *, qa_actor_id, qa_string_id, int32_t channel,
                        float volume, qa_error *);
 bool q1_effect(qa_q1_game *, qa_builtin_event_kind, qa_actor_id, qa_vec3, float, int32_t,
                qa_error *);
-bool q1_create(qa_q1_game *, const char *, q1_entity_kind, qa_actor_id owner, q1_actor **,
+bool q1_create(qa_q1_game *, qa_string_id, q1_entity_kind, qa_actor_id owner, q1_actor **,
                qa_error *);
-bool q1_create_source(qa_q1_game *, const char *, q1_entity_kind, uint32_t source_slot,
+bool q1_create_source(qa_q1_game *, qa_string_id, q1_entity_kind, uint32_t source_slot,
     q1_actor **, qa_error *);
 const char *q1_body_queue_classname(const qa_q1_game *);
 bool q1_body_queue_initialize(qa_q1_game *, qa_error *);

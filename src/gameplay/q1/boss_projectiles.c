@@ -8,7 +8,7 @@ qa_vec3 q1_boss_target(qa_q1_game *g, const q1_actor *e) {
     return qa_world_body_read(g->services.world, q1_ref_actor(g, q1_boss_enemy(e)), &value, NULL) ? value.origin
                                                                                  : qa_v3(0, 0, 0);
 }
-bool q1_boss_child_create(qa_q1_game *g, const char *classname, q1_boss_child_kind kind,
+bool q1_boss_child_create(qa_q1_game *g, qa_string_id classname, q1_boss_child_kind kind,
                           qa_actor_id owner, q1_actor **out, qa_error *error) {
     if (!q1_create(g, classname, Q1_BOSS_CHILD, owner, out, error))
         return false;
@@ -48,7 +48,7 @@ bool q1_boss_sphere_manager(qa_q1_game *g, q1_actor *source, int32_t maximum, bo
     if (!qa_world_body_read(g->services.world, source->id, &owner, error))
         return false;
     q1_actor *manager;
-    if (!q1_boss_child_create(g, "", chunk ? Q1_CHILD_SPHERE_CHUNK : Q1_CHILD_SPHERE, source->id,
+    if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], chunk ? Q1_CHILD_SPHERE_CHUNK : Q1_CHILD_SPHERE, source->id,
                               &manager, error))
         return false;
     qa_body_state body = {.origin = owner.origin};
@@ -241,7 +241,7 @@ bool q1_boss_teledeath(qa_q1_game *g, q1_actor *owner, qa_error *error) {
     if (!qa_world_body_read(g->services.world, owner->id, &body, error))
         return false;
     q1_actor *death;
-    if (!q1_boss_child_create(g, "teledeath", Q1_CHILD_TELEDEATH, owner->id, &death, error))
+    if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_TELEDEATH], Q1_CHILD_TELEDEATH, owner->id, &death, error))
         return false;
     death->physics.solid = QA_PHYSICS_TRIGGER;
     body.velocity = body.angles = qa_v3(0, 0, 0);
@@ -286,7 +286,7 @@ bool q1_boss_gib_vectors(qa_q1_game *g, q1_actor *source, qa_error *error) {
         if (point.z <= 0)
             continue;
         q1_actor *gib;
-        if (!q1_create(g, "", Q1_GIB, (qa_actor_id){0}, &gib, error))
+        if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_EMPTY], Q1_GIB, (qa_actor_id){0}, &gib, error))
             return false;
         float choice = q1_random(g), speed = 800 + (2 * q1_random(g) - 1) * 200;
         qa_body_state body = {

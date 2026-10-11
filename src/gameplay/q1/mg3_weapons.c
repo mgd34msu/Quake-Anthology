@@ -11,7 +11,7 @@ static bool attack_delay(qa_q1_game *g, q1_player *player, float delay, qa_error
 }
 bool q1_mg3_hammer_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     q1_actor *strike;
-    if (!q1_create(g, "mg3_hammer_strike", Q1_TIMER, player->id, &strike, error))
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_MG3_HAMMER_STRIKE], Q1_TIMER, player->id, &strike, error))
         return false;
     player->mg3_hammer_body = q1_ammo_count(g, player->id, QA_Q1_CELLS) < 30 ? 31 : 37;
     if (!q1_schedule(g, strike, q1_weapon_shape(player->weapon)->launch_delay,

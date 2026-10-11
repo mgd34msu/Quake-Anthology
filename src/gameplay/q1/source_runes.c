@@ -2,8 +2,8 @@
 
 static const char *const rune_names[QA_Q1_RUNE_COUNT] = {
     "resistance", "strength", "haste", "regeneration"};
-static const char *const rune_classes[QA_Q1_RUNE_COUNT] = {
-    "item_rune_resistance", "item_rune_strength", "item_rune_haste", "item_rune_regeneration"};
+static const q1_runtime_name rune_classes[QA_Q1_RUNE_COUNT] = {
+    Q1_NAME_CLASS_ITEM_RUNE_RESISTANCE, Q1_NAME_CLASS_ITEM_RUNE_STRENGTH, Q1_NAME_CLASS_ITEM_RUNE_HASTE, Q1_NAME_CLASS_ITEM_RUNE_REGENERATION};
 static const char *const rune_models[QA_Q1_RUNE_COUNT] = {
     "progs/end1.mdl", "progs/end2.mdl", "progs/end3.mdl", "progs/end4.mdl"};
 
@@ -103,7 +103,7 @@ static bool drop(qa_q1_game *game, qa_q1_source_rune rune, qa_vec3 origin,
         return (!error || error->code == QA_OK) ?
             fail(error, (qa_actor_id){0}, "Invalid CTF rune source creation") : false;
     q1_actor *entity;
-    if (!q1_create(game, rune_classes[rune], Q1_SOURCE_CTF_RUNE, (qa_actor_id){0},
+    if (!q1_create(game, game->runtime_names[rune_classes[rune]], Q1_SOURCE_CTF_RUNE, (qa_actor_id){0},
         &entity, error)) return false;
     qa_actor_id actor = entity->id;
     if (!actor_current(game, actor, entity, Q1_SOURCE_CTF_RUNE, error) ||
@@ -163,7 +163,7 @@ bool q1_source_runes_start(qa_q1_game *game, qa_error *error) {
     if (owner->ctf_runes_spawned != 0) return true;
     owner->ctf_runes_spawned = 1;
     q1_actor *timer;
-    if (!q1_create(game, "ctf_rune_spawn", Q1_SOURCE_CTF_RUNE_TIMER, (qa_actor_id){0},
+    if (!q1_create(game, game->runtime_names[Q1_NAME_CLASS_CTF_RUNE_SPAWN], Q1_SOURCE_CTF_RUNE_TIMER, (qa_actor_id){0},
         &timer, error)) return false;
     if (!live(game, error) || q1_entity(game, timer->id) != timer || !timer->native ||
         timer->kind != Q1_SOURCE_CTF_RUNE_TIMER)
