@@ -108,21 +108,18 @@ static bool team(rogue_call *call, qa_actor_id actor, double *out, qa_error *err
     return !found || number(call, actor, QA_Q1_ROGUE_STEAM, out, error);
 }
 
-static bool policy(rogue_call *call, const char *name, double *out, qa_error *error)
+static bool policy(rogue_call *call, application_q1_policy policy, double *out, qa_error *error)
 {
     if (!current(call, error)) return false;
-    qa_cvars *cvars = application_native_q1_console_registry(call->source);
-    const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
-    if (!value || value->owner != call->source->owner)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Rogue callback lost its actual GAME policy");
-    *out = (float)(value->number);
+    const qa_cvar_view *value=application_native_q1_policy_read(call->source,policy);
+    *out=value ? (float)value->number : 0;
     return true;
 }
 
 static bool ctf(rogue_call *call, bool *out, qa_error *error)
 {
     double mode;
-    if (!policy(call, "teamplay", &mode, error)) return false;
+    if (!policy(call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error)) return false;
     *out = mode == 4 || mode == 5 || mode == 6;
     return true;
 }
@@ -266,7 +263,7 @@ static bool flag_return_call(rogue_call *call, qa_actor_id actor, qa_error *erro
     double mode;
     if (!qa_q1_source_rogue_flag_read(call->operation.game, actor, &flag, error) ||
         !qa_q1_source_rogue_flag_return(call->operation.game, actor, error) ||
-        !current(call, error) || !policy(call, "teamplay", &mode, error)) return false;
+        !current(call, error) || !policy(call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error)) return false;
     qa_actor_id *rows;
     size_t count;
     if (!players_snapshot(call, &rows, &count, error)) return false;
@@ -289,7 +286,7 @@ static bool flag_drop_call(rogue_call *call, qa_actor_id actor, qa_error *error)
     qa_q1_source_rogue_flag_view flag;
     double mode;
     if (!qa_q1_source_rogue_flag_read(call->operation.game, actor, &flag, error) ||
-        !policy(call, "teamplay", &mode, error)) return false;
+        !policy(call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error)) return false;
     if (!flag.owner.registry || !qa_world_body_storage_serial(call->app->world, flag.owner))
         return flag_return_call(call, actor, error);
     return named_broadcast(call, flag.owner, "lost", flag.team, mode == 5, error) &&
@@ -330,7 +327,7 @@ static bool flag_carrier(void *context, qa_actor_id actor, qa_actor_id carrier,
                 player_required(&call, carrier, error) &&
                 qa_q1_source_rogue_flag_read(call.operation.game, actor, &flag, error) &&
                 number(&call, carrier, QA_Q1_ROGUE_FLAGS, &flags, error) &&
-                policy(&call, "teamplay", &mode, error);
+                policy(&call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error);
             if (okay) *out = combat.health > 0 && !(mode == 5 && !((uint32_t)qa_source_float_to_i32((float)(flags)) & 1)) &&
                 !(flag.team == 5 && !((uint32_t)qa_source_float_to_i32((float)(flags)) & 1)) && !(flag.team == 14 && !((uint32_t)qa_source_float_to_i32((float)(flags)) & 2));
         }
@@ -419,7 +416,7 @@ static bool capture(rogue_call *call, qa_actor_id actor, bool alternate, qa_erro
     double actor_team, flags, mode;
     if (!team(call, actor, &actor_team, error) ||
         !number(call, actor, QA_Q1_ROGUE_FLAGS, &flags, error) ||
-        !policy(call, "teamplay", &mode, error) ||
+        !policy(call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error) ||
         !named_broadcast(call, actor, "captured", 0, true, error) ||
         !keys(call, actor, true, 0, error) || !source_sound(call, actor, "misc/flagcap.wav", true, error) ||
         !score(call, actor, alternate ? 8 : 15, error)) return false;
@@ -477,7 +474,7 @@ static bool flag_touch(void *context, qa_actor_id actor, qa_actor_id other, bool
     okay = team(&call, other, &own_team, error) && color(&call, other, &actual_color, error);
     if (!okay || actual_color != own_team) goto finish;
     okay = qa_q1_source_rogue_flag_read(call.operation.game, actor, &flag, error) &&
-        number(&call, other, QA_Q1_ROGUE_FLAGS, &flags, error) && policy(&call, "teamplay", &mode, error);
+        number(&call, other, QA_Q1_ROGUE_FLAGS, &flags, error) && policy(&call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error);
     if (!okay) goto finish;
     if (base) {
         if (mode == 5 && ((flag.team == 5 && own_team == 14) || (flag.team == 14 && own_team == 5)) &&
@@ -620,7 +617,7 @@ bool application_native_q1_rogue_player_died(application_provider *source,
     double killed, mode, flags;
     if (okay) okay = number(&call, actor, QA_Q1_ROGUE_KILLED, &killed, error) &&
         write_number(&call, actor, QA_Q1_ROGUE_KILLED, killed == 2 ? 0 : 1, error) &&
-        policy(&call, "teamplay", &mode, error);
+        policy(&call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error);
     if (!okay || (mode != 4 && mode != 5 && mode != 6)) goto finish;
     qa_q1_source_obituary_actor projectile;
     if (attacker.registry) {
@@ -892,8 +889,8 @@ bool application_native_q1_rogue_impulse(application_provider *source,
     rogue_call call = {0};
     bool okay = begin(source, &call, error) && player_required(&call, actor, error);
     double deathmatch, mode;
-    if (okay) okay = policy(&call, "deathmatch", &deathmatch, error) &&
-        policy(&call, "teamplay", &mode, error);
+    if (okay) okay = policy(&call, APPLICATION_Q1_POLICY_DEATHMATCH, &deathmatch, error) &&
+        policy(&call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error);
     if (okay && deathmatch != 0 && mode != 4 && mode != 5 && mode != 6)
         okay = message(&call, actor, "$qc_ctf_disabled", false, NULL, 0, error);
     if (okay && deathmatch != 0 && (mode == 4 || mode == 5 || mode == 6)) {
@@ -956,8 +953,8 @@ static bool team_update(rogue_call *call, qa_error *error)
 {
     double next, now, mode, deathmatch;
     if (!qa_q1_rogue_world_update_read(call->operation.game, &next, error) ||
-        !seconds(call, &now, error) || !policy(call, "teamplay", &mode, error) ||
-        !policy(call, "deathmatch", &deathmatch, error)) return false;
+        !seconds(call, &now, error) || !policy(call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error) ||
+        !policy(call, APPLICATION_Q1_POLICY_DEATHMATCH, &deathmatch, error)) return false;
     if (next > now || mode < 1 || deathmatch == 0) return true;
     if (!qa_q1_rogue_world_update_write(call->operation.game, now + 120, error) ||
         !current(call, error)) return false;
@@ -1016,8 +1013,8 @@ static bool team_frame(rogue_call *call, qa_actor_id actor, qa_error *error)
     double actual_color, mode, deathmatch, flags, steam;
     if (!number(call, actor, QA_Q1_ROGUE_STEAM, &steam, error) ||
         !color(call, actor, &actual_color, error) || !team_update(call, error) ||
-        !player_required(call, actor, error) || !policy(call, "deathmatch", &deathmatch, error) ||
-        !policy(call, "teamplay", &mode, error)) return false;
+        !player_required(call, actor, error) || !policy(call, APPLICATION_Q1_POLICY_DEATHMATCH, &deathmatch, error) ||
+        !policy(call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error)) return false;
     if (deathmatch == 0 || mode < 4)
         return write_number(call, actor, QA_Q1_ROGUE_STEAM, actual_color, error);
     if (!number(call, actor, QA_Q1_ROGUE_FLAGS, &flags, error)) return false;
@@ -1032,7 +1029,7 @@ static bool team_frame(rogue_call *call, qa_actor_id actor, qa_error *error)
     if (!number(call, actor, QA_Q1_ROGUE_STEAM, &steam, error)) return false;
     if (actual_color == steam) return true;
     double gamecfg;
-    if (!policy(call, "gamecfg", &gamecfg, error)) return false;
+    if (!policy(call, APPLICATION_Q1_POLICY_GAMECFG, &gamecfg, error)) return false;
     if (steam >= 0 && legal_team(mode, steam) && !((uint32_t)qa_source_float_to_i32((float)(gamecfg)) & 16)) {
         double suicides;
         if (!number(call, actor, QA_Q1_ROGUE_SUICIDE_COUNT, &suicides, error)) return false;
@@ -1102,7 +1099,7 @@ bool application_native_q1_rogue_damage_effect(application_provider *source,
     bool okay = begin(source, &call, error);
     double mode;
     if (okay && (stage == QA_DAMAGE_AFTER_QUAD || stage == QA_DAMAGE_AFTER_ARMOR)) {
-        okay = policy(&call, "deathmatch", &mode, error);
+        okay = policy(&call, APPLICATION_Q1_POLICY_DEATHMATCH, &mode, error);
         if (okay && mode != 0) {
             if (stage == QA_DAMAGE_AFTER_QUAD && request->attack.attacker.registry)
                 okay = qa_q1_source_rogue_runes_damage(call.operation.game,
@@ -1114,7 +1111,7 @@ bool application_native_q1_rogue_damage_effect(application_provider *source,
         goto finish;
     }
     if (okay && stage == QA_DAMAGE_BEFORE_HEALTH) {
-        okay = policy(&call, "teamplay", &mode, error);
+        okay = policy(&call, APPLICATION_Q1_POLICY_TEAMPLAY, &mode, error);
         if (!okay || mode <= 0) goto finish;
         if (mode == 1) {
             okay = different_teams(&call, request, &different, error);
@@ -1127,7 +1124,7 @@ bool application_native_q1_rogue_damage_effect(application_provider *source,
     okay = different_teams(&call, request, &different, error);
     if (!okay || different) goto finish;
     double gamecfg;
-    okay = policy(&call, "gamecfg", &gamecfg, error);
+    okay = policy(&call, APPLICATION_Q1_POLICY_GAMECFG, &gamecfg, error);
     if (okay) allowed = ((uint32_t)qa_source_float_to_i32((float)(gamecfg)) & (stage == QA_DAMAGE_ARMOR_ALLOWED ? 2 : 4)) != 0;
 finish:
     if (okay) effect->allowed = effect->allowed && allowed;

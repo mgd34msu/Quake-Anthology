@@ -15,6 +15,11 @@ bool application_native_q1_console_restore(application_provider *, qa_bytes, qa_
 bool application_native_q1_console_at(application_provider *, qa_console **, qa_cvars **,
                                       qa_command_context *);
 qa_cvars *application_native_q1_console_registry(const application_provider *);
+typedef enum application_q1_policy {
+    APPLICATION_Q1_POLICY_TEAMPLAY, APPLICATION_Q1_POLICY_GAMECFG,
+    APPLICATION_Q1_POLICY_DEATHMATCH, APPLICATION_Q1_POLICY_COUNT
+} application_q1_policy;
+const qa_cvar_view *application_native_q1_policy_read(const application_provider *,application_q1_policy);
 bool application_q1_chat(application_provider *, const qa_command_invocation *,
     qa_q1_chat_mode, qa_error *);
 void application_native_q1_source_console_print(void *, const char *);

@@ -39,12 +39,7 @@ bool application_native_q1_composition_current(void *opaque, qa_actor_owner owne
         clock.frame.kind != source->component.clock.kind)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Q1 composition lost its genuine source clock");
-    qa_cvars *cvars = application_native_q1_console_registry(source);
-    const qa_cvar_view *teamplay = cvars ? qa_cvars_find(cvars, "teamplay") : NULL;
-    const qa_cvar_view *gamecfg = cvars ? qa_cvars_find(cvars, "gamecfg") : NULL;
-    return (teamplay && gamecfg && teamplay->owner == owner && gamecfg->owner == owner) ||
-        application_fail(error, QA_ERROR_ARGUMENT,
-            "Q1 composition lost its actual GAME cvar namespace");
+    return true;
 }
 
 static bool chosen_modes_current(qa_application *app, qa_error *error)

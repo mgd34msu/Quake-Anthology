@@ -36,6 +36,7 @@ struct application_native_q1_console {
     qa_console *console;
     qa_cvars *cvars;
     qa_cvar_handle highchars;
+    qa_cvar_handle policy[APPLICATION_Q1_POLICY_COUNT];
     size_t calls;
     /* svs.info and localinfo survive SV_Spawn; reliable_datagram does not. */
     char serverinfo[513], localinfo[32769];
@@ -94,6 +95,11 @@ qa_cvars *application_native_q1_console_registry(const application_provider *pro
 {
     return provider && provider->kind == APPLICATION_PROVIDER_Q1 && provider->native_q1_console
         ? provider->native_q1_console->cvars : NULL;
+}
+const qa_cvar_view *application_native_q1_policy_read(const application_provider *provider,application_q1_policy policy)
+{
+    const struct application_native_q1_console *owner=provider->native_q1_console;
+    return owner ? qa_cvars_read(owner->cvars,owner->policy[policy]) : NULL;
 }
 
 bool application_native_q1_console_idle(const application_provider *provider)
@@ -782,6 +788,9 @@ bool application_native_q1_console_create_restored(application_provider *provide
         qa_cvars_detach_callbacks(owner->cvars); qa_cvars_destroy(owner->cvars); free(owner); return false;
     }
     owner->highchars = qa_cvars_resolve(owner->cvars, "sv_highchars");
+    static const char *const policy_names[APPLICATION_Q1_POLICY_COUNT]={"teamplay","gamecfg","deathmatch"};
+    for(size_t i=0;i<APPLICATION_Q1_POLICY_COUNT;++i)
+        owner->policy[i]=qa_cvars_resolve(owner->cvars,policy_names[i]);
     options.context.cvar_view = qa_cvars_view_identity(owner->cvars);
     if (owner->cvars && qa_console_bind_source(provider->application->console, &options, error))
         owner->console = provider->application->console;

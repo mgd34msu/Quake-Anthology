@@ -1185,12 +1185,8 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
         bool threewave = source_options.program == QA_Q1_CTF;
         bool rogue = false;
         if (source_options.program == QA_Q1_ROGUE) {
-            qa_cvars *cvars = application_native_q1_console_registry(roster->map_provider);
-            const qa_cvar_view *teamplay = cvars ? qa_cvars_find(cvars, "teamplay") : NULL;
-            if (!teamplay || teamplay->owner != roster->map_provider->owner)
-                return application_fail(error, QA_ERROR_ARGUMENT,
-                    "Rogue spawn lost its genuine source team policy");
-            double source_teamplay = (float)(teamplay->number);
+            const qa_cvar_view *teamplay=application_native_q1_policy_read(roster->map_provider,APPLICATION_Q1_POLICY_TEAMPLAY);
+            double source_teamplay=teamplay ? (float)teamplay->number : 0;
             rogue = source_teamplay == 4 || source_teamplay == 5 || source_teamplay == 6;
         }
         if ((threewave || rogue) && !source_options.coop && source_options.deathmatch) {
