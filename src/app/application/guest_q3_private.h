@@ -23,12 +23,6 @@
 #include <math.h>
 
 
-typedef struct q3g_snapshot {
-    qa_q3_snapshot value;
-    qa_q3_entity *entities;
-    size_t capacity;
-    int32_t ping;
-} q3g_snapshot;
 typedef struct q3g_client {
     qa_actor_id actor;
     q3g_fire_continuation fire;
@@ -40,7 +34,8 @@ typedef struct q3g_client {
     uint64_t entered_ns;
     application_q3_command_cursor server_commands;
     qa_q3_gamestate *gamestate;
-    q3g_snapshot snapshots[QA_Q3_PACKET_BACKUP];
+    qa_arena snapshot_storage;
+    qa_q3_snapshot_slot snapshots[QA_Q3_PACKET_BACKUP];
     float sensitivity;
     int32_t weapon;
     qa_q3_big_configstring big_configstring;
@@ -225,6 +220,8 @@ bool application_q3_guest_services_descriptor(qa_application *, application_prov
     const qa_launch_instance *, qa_qvm_role, uint32_t, uint64_t, qa_q3_host_options *, qa_error *);
 char *q3g_copy_text(const char *, qa_error *);
 void q3g_clients_clear(struct application_q3_guest *);
+bool q3g_clients_prepare(struct application_q3_guest *, qa_error *);
+void q3g_clients_destroy(struct application_q3_guest *);
 bool application_guest_q3_create_empty(qa_application *, application_provider *, qa_world *,
     const qa_product *, const qa_launch_choices *, bool restoring, qa_error *);
 void application_guest_q3_save_clear(struct application_q3_guest *);

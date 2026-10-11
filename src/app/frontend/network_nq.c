@@ -21,7 +21,6 @@ typedef struct nq_batch {
     frontend_nq_host *host;
     qa_net_protocol_id protocol;
 } nq_batch;
-static char *copy_text(const char *, qa_error *);
 static bool reliable_emit(void *, qa_bytes, qa_error *);
 static bool peer_actor(nq_frontend_peer *peer, qa_actor_id *out, qa_error *error)
 {
@@ -59,18 +58,7 @@ static bool batch_message(nq_batch *batch, const qa_nq_message *message, qa_nq_o
 {
     uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     if (!qa_nq_write(&writer, batch->protocol, options, message, NULL, 0)) return false;
-    char *name = NULL;
-    if (batch->host && message->op == QA_NQ_NAME) {
-        name = copy_text(message->data.indexed_text.text, error);
-        if (!name) return false;
-    }
-    bool ok = batch_bytes(batch, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
-    if (ok && name) {
-        uint8_t index = message->data.indexed_text.index;
-        free(batch->host->published_names[index]);
-        batch->host->published_names[index] = name;
-    } else free(name);
-    return ok;
+    return batch_bytes(batch, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 static bool batch_source_emit(void *context, qa_bytes bytes, qa_error *error)
 { return batch_bytes(context, bytes, error); }
@@ -96,6 +84,7 @@ static bool status_messages(nq_batch *batch, qa_application_network_q1_status_pl
         qa_nq_message message = {.op = QA_NQ_NAME,
             .data.indexed_text = {(uint8_t)(players[i].source_slot - 1), players[i].name}};
         if (!batch_message(batch, &message, options, error)) return false;
+        if (batch->host) batch->host->published_names[players[i].source_slot - 1] = players[i].name_id;
         message = (qa_nq_message){.op = QA_NQ_FRAGS,
             .data.indexed = {(uint8_t)(players[i].source_slot - 1), wire_frags(players[i].frags)}};
         if (!batch_message(batch, &message, options, error)) return false;
@@ -273,7 +262,8 @@ static bool source_ping(nq_frontend_peer *sender, qa_error *error)
         nq_frontend_peer *peer = ordered[i]; double sum = 0;
         for (size_t j = 0; j < peer->ping_count; ++j) sum += peer->pings[j];
         double ping = peer->ping_count ? trunc(sum / peer->ping_count) : 0;
-        const char *name = host->published_names[peer->source_slot - 1];
+        const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(
+            host->frontend->application)), host->published_names[peer->source_slot - 1]);
         if (!name || !*name) name = "unconnected";
         qa_buffer number = {0};
         if (!qa_unified_checkpoint_number(ping == 0 ? 0 : ping, &number, error)) return false;
@@ -307,7 +297,8 @@ static bool source_status(nq_frontend_peer *sender, qa_error *error)
         const qa_net_client *client = qa_net_connections_get(qa_network_connections(host->runtime), peer->client);
         if (!client) return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake status peer has no actual connection");
         if (!qa_net_address_format(&client->endpoint, address, sizeof(address), error)) return false;
-        const char *name = host->published_names[peer->source_slot - 1];
+        const char *name = qa_strings_cstr(qa_session_strings(qa_application_session(
+            host->frontend->application)), host->published_names[peer->source_slot - 1]);
         if (!name || !*name) name = "unconnected";
         length = snprintf(text + used, sizeof(text) - used, "#%u %s %s\n", peer->source_slot, name, address);
         if (length < 0 || (size_t)length >= sizeof(text) - used)
@@ -562,9 +553,6 @@ void frontend_nq_destroy(frontend_nq_host *host)
 {
     if (!host) return;
     for (size_t i = 0; i < NQ_CLIENTS; ++i) free(host->peers[i].baselines);
-    for (size_t i = 0; i < 256; ++i) {
-        free(host->board[i].name); free(host->published_names[i]);
-    }
     free(host);
 }
 void frontend_nq_disconnected(frontend_nq_host *host, qa_net_client_id id)
@@ -614,7 +602,7 @@ bool frontend_nq_prepare(frontend_nq_host *host, qa_error *error)
         if (!host_source(host, error)) return false;
         host->composition = generation;
         host->generation = generation; host->submillisecond_ns = 0;
-        for (size_t i = 0; i < 256; ++i) { free(host->board[i].name); host->board[i] = (nq_status_cache){0}; }
+        memset(host->board, 0, sizeof(host->board));
         memset(host->styles, 0, sizeof(host->styles));
         for (size_t i = 0; i < NQ_CLIENTS; ++i) {
             nq_frontend_peer *peer = host->peers + i;
@@ -683,12 +671,6 @@ static bool broadcast_emit(void *context, qa_bytes bytes, qa_error *error)
     }
     return true;
 }
-static char *copy_text(const char *text, qa_error *error)
-{
-    size_t length = strlen(text); char *copy = malloc(length + 1);
-    if (!copy) { frontend_fail(error, QA_ERROR_MEMORY, "Retaining NetQuake source status"); return NULL; }
-    memcpy(copy, text, length + 1); return copy;
-}
 static bool publish_status(frontend_nq_host *host,
     const qa_application_network_q1_world *world, qa_net_protocol_id protocol,
     qa_q1_emit_fn emit, void *context, qa_error *error)
@@ -701,34 +683,24 @@ static bool publish_status(frontend_nq_host *host,
     qa_application_network_q1_status_player players[255]; size_t count;
     if (!qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error)) return false;
     nq_status_cache next[256] = {0};
-    bool owned[256] = {0}, ok = true;
-    char *published[255] = {0}; bool published_owned[255] = {0};
-    for (size_t i = 0; ok && i < count; ++i) {
+    qa_strings *strings = qa_session_strings(qa_application_session(host->frontend->application));
+    bool ok = true;
+    for (size_t i = 0; i < count; ++i) {
         uint32_t slot = players[i].source_slot;
-        char *name = host->board[slot].name;
-        if (!name || strcmp(name, players[i].name)) { name = copy_text(players[i].name, error); owned[slot] = name != NULL; }
-        next[slot] = (nq_status_cache){.name = name,
+        next[slot] = (nq_status_cache){.name = players[i].name_id,
             .frags = players[i].frags, .source_frags = players[i].source_frags,
             .colors = players[i].colors, .present = true};
-        ok = next[slot].name != NULL;
-    }
-    for (uint32_t slot = 1; ok && source.source_board_events && slot <= world->max_clients; ++slot) {
-        const char *name = next[slot].name ? next[slot].name : "";
-        published[slot - 1] = host->published_names[slot - 1];
-        if (!published[slot - 1] || strcmp(published[slot - 1], name)) {
-            published[slot - 1] = copy_text(name, error);
-            published_owned[slot - 1] = published[slot - 1] != NULL;
-        }
-        ok = published[slot - 1] != NULL;
     }
     nq_batch batch = {.emit = emit, .context = context, .host = host, .protocol = protocol}; qa_nq_options options = {.standard_quake = world->standard_quake};
     for (uint32_t slot = 1; ok && !source.source_board_events && slot <= world->max_clients; ++slot) {
         const nq_status_cache *old = host->board + slot, *current = next + slot;
-        const char *before = old->name ? old->name : "", *after = current->name ? current->name : "";
         qa_nq_message message;
-        if (old->present != current->present || strcmp(before, after)) {
-            message = (qa_nq_message){.op = QA_NQ_NAME, .data.indexed_text = {(uint8_t)(slot - 1), after}};
+        if (old->present != current->present || old->name != current->name) {
+            const char *after = qa_strings_cstr(strings, current->name);
+            message = (qa_nq_message){.op = QA_NQ_NAME,
+                .data.indexed_text = {(uint8_t)(slot - 1), after ? after : ""}};
             ok = batch_message(&batch, &message, options, error);
+            if (ok) host->published_names[slot - 1] = current->name;
         }
         if (ok && (old->present != current->present || old->source_frags != current->source_frags)) {
             message = (qa_nq_message){.op = QA_NQ_FRAGS, .data.indexed = {(uint8_t)(slot - 1), wire_frags(current->frags)}};
@@ -747,18 +719,11 @@ static bool publish_status(frontend_nq_host *host,
         }
     if (ok) ok = batch_flush(&batch, error);
     if (ok) {
-        for (size_t i = 0; i < 256; ++i) {
-            if (host->board[i].name != next[i].name) free(host->board[i].name);
-            host->board[i] = next[i]; owned[i] = false;
-        }
+        memcpy(host->board, next, sizeof(host->board));
         memcpy(host->styles, world->lightstyle_ids, sizeof(host->styles));
-        for (uint32_t slot = 1; source.source_board_events && slot <= world->max_clients; ++slot) {
-            if (host->published_names[slot - 1] != published[slot - 1]) free(host->published_names[slot - 1]);
-            host->published_names[slot - 1] = published[slot - 1]; published_owned[slot - 1] = false;
-        }
+        for (uint32_t slot = 1; source.source_board_events && slot <= world->max_clients; ++slot)
+            host->published_names[slot - 1] = next[slot].name;
     }
-    for (size_t i = 0; i < 256; ++i) if (owned[i]) free(next[i].name);
-    for (size_t i = 0; i < 255; ++i) if (published_owned[i]) free(published[i]);
     return ok;
 }
 static const qa_q1_entity *baseline(const qa_q1_entity *values, size_t count, uint32_t number)
@@ -1205,7 +1170,9 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
     }
     for (size_t i = 0; i < 256; ++i) {
         const nq_status_cache *v = host->board + i;
-        if (host->published_names[i] && strlen(host->published_names[i]) > NQ_MESSAGE - 3)
+        const char *published = qa_strings_cstr(qa_session_strings(qa_application_session(
+            host->frontend->application)), host->published_names[i]);
+        if (published && strlen(published) > NQ_MESSAGE - 3)
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake published name exceeds its real source service extent");
         if (!isfinite(v->source_frags) || (v->present && (!i || !v->name || (v->colors & 15) > 13 || (v->colors >> 4) > 13)) ||
             (!v->present && (v->name || v->frags || v->source_frags != 0 || v->colors)))

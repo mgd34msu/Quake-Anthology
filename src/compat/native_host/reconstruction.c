@@ -80,7 +80,7 @@ bool qa_native_host_reconstruction_begin(qa_native_host *target, qa_native_host 
         memcpy(retained, baseline->retained_clients, baseline->retained_capacity * sizeof(*retained));
     }
     qa_actor_index actor_slots = {0};
-    if (!qa_actor_index_create(&actor_slots, actors, error)) { free(retained); free(phase); return false; }
+    if (!qa_actor_index_create(&actor_slots, actors, NULL, error)) { free(retained); free(phase); return false; }
     if (!clear_slots(target, error)) {
         qa_actor_index_destroy(&actor_slots); free(retained); free(phase); return false;
     }

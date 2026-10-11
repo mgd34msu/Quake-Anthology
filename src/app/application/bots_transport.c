@@ -1,5 +1,6 @@
 #include "bots_transport.h"
 #include "unified_q3_events.h"
+#include "control_frame.h"
 #include "../../bots/save_fields.h"
 #include <limits.h>
 #include <math.h>
@@ -7,6 +8,8 @@
 #include <string.h>
 
 typedef struct bot_connection {
+    struct bot_connection *next;
+    qa_unified_frame_lease *storage;
     uint32_t client;
     qa_actor_id actor;
     application_q3_command_cursor server_commands;
@@ -16,27 +19,43 @@ typedef struct bot_connection {
 } bot_connection;
 struct application_bot_transport {
     application_bot_transport_services services;
-    bot_connection **connections;
+    bot_connection *first,*last;
     size_t count,calls;
     double elapsed_ms;
 };
 static bool fail(qa_error *error,const char *text) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"%s",text);return false;}
 static bot_connection *connection(const application_bot_transport *transport,uint32_t client) {
-    for(size_t i=0;transport && i<transport->count;++i) {
-        bot_connection *entry=transport->connections[i];
+    for(bot_connection *entry=transport?transport->first:NULL;entry;entry=entry->next) {
         if(entry->active && entry->client==client) return entry;
     }
     return NULL;
 }
 static void sweep(application_bot_transport *transport) {
     if(transport->calls) return;
-    size_t retained=0;
-    for(size_t i=0;i<transport->count;++i) {
-        bot_connection *entry=transport->connections[i];
-        if(entry->active) transport->connections[retained++]=entry;
-        else {application_q3_command_clear(&entry->server_commands);free(entry);}
+    bot_connection **at=&transport->first,*previous=NULL;
+    while(*at) {
+        bot_connection *entry=*at;
+        if(entry->active) {previous=entry;at=&entry->next;}
+        else {
+            *at=entry->next;
+            if(transport->last==entry) transport->last=previous;
+            --transport->count;
+            application_q3_command_clear(&entry->server_commands);
+            qa_unified_frame_lease_release(entry->storage);
+        }
     }
-    transport->count=retained;
+}
+static bot_connection *connection_take(application_bot_transport *transport,qa_error *error) {
+    qa_unified_frame_lease *storage=application_control_storage_acquire(transport->services.application,error);
+    if(!storage) return NULL;
+    bot_connection *entry=qa_unified_frame_lease_alloc(storage,1,sizeof(*entry),_Alignof(bot_connection),error);
+    if(!entry) {qa_unified_frame_lease_release(storage);return NULL;}
+    entry->storage=storage;entry->active=true;
+    application_q3_command_init(&entry->server_commands,transport->services.application);
+    if(transport->last) transport->last->next=entry;
+    else transport->first=entry;
+    transport->last=entry;++transport->count;
+    return entry;
 }
 bool application_bot_transport_create(const application_bot_transport_services *services,
     application_bot_transport **out,qa_error *error) {
@@ -49,11 +68,12 @@ bool application_bot_transport_create(const application_bot_transport_services *
 bool application_bot_transport_destroy(application_bot_transport *transport,qa_error *error) {
     if(!transport) return true;
     if(transport->calls) return fail(error,"local bot transport is executing a source callback");
-    for(size_t i=0;i<transport->count;++i) {
-        application_q3_command_clear(&transport->connections[i]->server_commands);
-        free(transport->connections[i]);
+    while(transport->first) {
+        bot_connection *entry=transport->first;transport->first=entry->next;
+        application_q3_command_clear(&entry->server_commands);
+        qa_unified_frame_lease_release(entry->storage);
     }
-    free(transport->connections);free(transport);return true;
+    free(transport);return true;
 }
 bool application_bot_transport_can_destroy(const application_bot_transport *transport) {return !transport || !transport->calls;}
 bool application_bot_transport_open(application_bot_transport *transport,uint32_t client,qa_actor_id actor,qa_error *error) {
@@ -62,17 +82,12 @@ bool application_bot_transport_open(application_bot_transport *transport,uint32_
        !qa_actors_get(qa_session_actors(transport->services.session),actor) ||
        !transport->services.client(transport->services.context,actor,&actual,error) || actual!=client)
         return fail(error,"local bot connection lacks its actual unique physical source client");
-    for(size_t i=0;i<transport->count;++i)
-        if(transport->connections[i]->active && qa_actor_id_equal(transport->connections[i]->actor,actor))
+    for(bot_connection *entry=transport->first;entry;entry=entry->next)
+        if(entry->active && qa_actor_id_equal(entry->actor,actor))
             return fail(error,"local bot actor already has a source connection");
-    if(transport->count>=SIZE_MAX/sizeof(*transport->connections)) return fail(error,"local bot transport roster exceeds its extent");
-    bot_connection *entry=calloc(1,sizeof(*entry));
-    if(!entry) {qa_error_set(error,QA_ERROR_MEMORY,0,"allocating local bot reliable owner");return false;}
-    bot_connection **entries=realloc(transport->connections,(transport->count+1)*sizeof(*entries));
-    if(!entries) {application_q3_command_clear(&entry->server_commands);free(entry);qa_error_set(error,QA_ERROR_MEMORY,0,"growing local bot connection map");return false;}
-    transport->connections=entries;entry->client=client;entry->actor=actor;entry->active=true;
-    application_q3_command_init(&entry->server_commands, transport->services.application);
-    entries[transport->count++]=entry;return true;
+    bot_connection *entry=connection_take(transport,error);
+    if(!entry) return false;
+    entry->client=client;entry->actor=actor;return true;
 }
 bool application_bot_transport_close(application_bot_transport *transport,uint32_t client,qa_error *error) {
     if(!transport) return fail(error,"local bot transport owner is absent");
@@ -87,8 +102,7 @@ static bool bot_output(void *context,int32_t client,const char *text,
 {
     application_bot_transport *transport=context;
     (void)text; (void)lease;
-    for(size_t i=0;i<transport->count;++i) {
-        bot_connection *entry=transport->connections[i];
+    for(bot_connection *entry=transport->first;entry;entry=entry->next) {
         if(!entry->active || (client>=0 && entry->client!=(uint32_t)client)) continue;
         bool overflow;
         if(!application_q3_command_admit(&entry->server_commands,event->text,
@@ -146,8 +160,7 @@ bool application_bot_transport_snapshot(application_bot_transport *transport,uin
 bool application_bot_transport_frame(application_bot_transport *transport,double elapsed_ms,qa_error *error) {
     if(!transport || transport->calls) return fail(error,"local bot frame reset requires its idle transport");
     transport->elapsed_ms=elapsed_ms;
-    for(size_t i=0;i<transport->count;++i) {
-        bot_connection *entry=transport->connections[i];
+    for(bot_connection *entry=transport->first;entry;entry=entry->next) {
         entry->snapshot_count=0;entry->snapshot_present=false;
     }
     return true;
@@ -206,26 +219,22 @@ bool application_bot_transport_fields(qa_source_save_io *io,application_bot_tran
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
     application_bot_transport *scratch=NULL,*owner=transport;bool okay=true;
     if(reading) {
-        if(io->offset>io->input.size || count>(io->input.size-io->offset)/8 || count>SIZE_MAX/sizeof(*scratch->connections))
+        if(io->offset>io->input.size || count>(io->input.size-io->offset)/8)
             return bot_save_fail(io,QA_ERROR_FORMAT,"local bot connections exceed their saved extent");
         if(!application_bot_transport_create(&transport->services,&scratch,io->error)) return false;
         scratch->elapsed_ms=elapsed;
-        scratch->connections=count?calloc(count,sizeof(*scratch->connections)):NULL;
-        if(count && !scratch->connections) {
-            application_bot_transport_destroy(scratch,NULL);return bot_save_fail(io,QA_ERROR_MEMORY,"allocating local bot connection continuation");
-        }
         owner=scratch;
     }
+    bot_connection *current=owner->first;
     for(size_t i=0;okay && i<count;++i) {
         bot_connection *entry;
         if(reading) {
-            entry=calloc(1,sizeof(*entry));
-            if(!entry) {okay=bot_save_fail(io,QA_ERROR_MEMORY,"allocating restored local bot reliable owner");break;}
-            entry->active=true;owner->connections[owner->count++]=entry;
-        } else entry=owner->connections[i];
+            entry=connection_take(owner,io->error);
+            if(!entry) {okay=false;break;}
+        } else {entry=current;current=entry->next;}
         okay=connection_fields(io,owner,entry);
-        for(size_t j=0;okay && j<i;++j)
-            if(owner->connections[j]->client==entry->client || qa_actor_id_equal(owner->connections[j]->actor,entry->actor))
+        for(bot_connection *prior=owner->first;okay && prior!=entry;prior=prior->next)
+            if(prior->client==entry->client || qa_actor_id_equal(prior->actor,entry->actor))
                 okay=bot_save_fail(io,QA_ERROR_FORMAT,"duplicate local bot physical connection continuation");
     }
     if(reading) {

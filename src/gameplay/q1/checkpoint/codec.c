@@ -285,7 +285,7 @@ static bool rogue_runes(q1_save_io *io, qa_q1_game *g) {
         return q1_save_fail(io, "Invalid Rogue rune carrier count");
     if (io->values.direction == QA_SOURCE_SAVE_READ &&
         !qa_actor_index_create(&g->rogue_rune_index,
-            qa_session_actors(g->services.session), io->values.error)) return false;
+            qa_session_actors(g->services.session), NULL, io->values.error)) return false;
     q1_rogue_rune_player **link = &g->rogue_rune_players;
     for (uint32_t i = 0; i < count; ++i) {
         if (io->values.direction == QA_SOURCE_SAVE_READ) {

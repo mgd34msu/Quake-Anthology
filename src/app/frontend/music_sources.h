@@ -2,53 +2,17 @@
 #define QA_FRONTEND_MUSIC_SOURCES_H
 #include "shared_music_policy.h"
 #include "qa/executable_recipe.h"
+#include "qa/music_cue.h"
 
 typedef struct frontend_music_sources frontend_music_sources;
 typedef enum frontend_music_slot { FRONTEND_MUSIC_MENU, FRONTEND_MUSIC_WORLD } frontend_music_slot;
-typedef enum frontend_music_origin_kind {
-    FRONTEND_MUSIC_SOURCE, FRONTEND_MUSIC_NATIVE, FRONTEND_MUSIC_REMOTE, FRONTEND_MUSIC_MODULE,
-    FRONTEND_MUSIC_COMPONENT
-} frontend_music_origin_kind;
-/* The actual first-role declaration and player, supplied by the constructor
- * which owns this bus. Equal declarations may share a SOURCE group; different
- * declarations must retain their own real group. Callbacks are borrowed only
- * until that actual caller retires this origin. */
-typedef struct frontend_music_origin {
-    frontend_music_origin_kind kind;
-    uint64_t bus;
-    uint32_t physical_seat;
-    uint64_t receiver;
-    const qa_launch_instance *descriptor;
-    /* A remote COMPONENT instead borrows its actual executable recipe/provider.
-     * Its caller retains that recipe until explicit_retire; no local launch
-     * descriptor is synthesized for the remote declaration. */
-    const qa_executable_recipe *recipe;
-    const qa_recipe_provider *recipe_provider;
-    const char *recipe_content;
-    qa_catalog *catalog;
-    qa_product_id product;
-    const qa_vfs *files;
-    qa_audio_music *music;
-    void *context;
-    bool (*current)(void *, const struct frontend_music_origin *);
-    /* Optional retained caller proof for capture and isolated cold binding.
-     * It proves this exact declaration/player after connection retirement;
-     * ordinary playback continues to require current. */
-    bool (*checkpoint_current)(void *, const struct frontend_music_origin *);
-    bool (*stop)(void *, qa_error *);
-} frontend_music_origin;
-/* Borrowed state belonging to the module's existing music bus. */
-typedef struct frontend_music_cue_state {
-    qa_audio_music **player;
-    char **intro, **loop;
-    bool *looping, *attached, *pending;
-} frontend_music_cue_state;
-bool frontend_music_cue_start(qa_frontend *, qa_audio_bank *, qa_game_family,
+bool frontend_music_cue_request(qa_frontend *, qa_audio_bank *, qa_game_family,
     frontend_music_cue_state, frontend_music_origin, bool published,
     const char *intro, const char *loop, qa_error *);
 bool frontend_music_cue_publish(qa_frontend *, frontend_music_cue_state,
     frontend_music_origin, qa_error *);
-bool frontend_music_cue_stop(qa_frontend *, frontend_music_cue_state, uint64_t bus, qa_error *);
+bool frontend_music_cue_drain(qa_frontend *, qa_error *);
+bool frontend_music_cue_cleanup(qa_frontend *, frontend_music_cue_state, uint64_t bus, qa_error *);
 qa_game_family frontend_music_family(const qa_catalog *, qa_product_id);
 /* Fresh construction selects independent menu mounts from the actual initial
  * catalog/--game declaration. An empty catalog truthfully has no soundtrack.

@@ -203,7 +203,7 @@ static bool music_stop(void *context, qa_error *e)
     struct frontend_component_scene *owner = context;
     frontend_music_cue_state cue = {&owner->music, &owner->music_intro, &owner->music_loop,
         &owner->music_looping, NULL, &owner->music_pending};
-    return frontend_music_cue_stop(owner->frontend, cue, owner->identity, e);
+    return frontend_music_cue_cleanup(owner->frontend, cue, owner->identity, e);
 }
 static bool music_current(void *context,const frontend_music_origin *origin)
 {
@@ -236,6 +236,7 @@ static frontend_music_origin music_origin(struct frontend_component_scene *owner
 }
 static bool music_publish(struct frontend_component_scene *owner, qa_error *e)
 {
+    if(!frontend_music_cue_drain(owner->frontend,e)) return false;
     if (!owner->music_pending || !music_published(owner)) return true;
     frontend_music_cue_state cue = {&owner->music, &owner->music_intro, &owner->music_loop,
         &owner->music_looping, NULL, &owner->music_pending};
@@ -248,7 +249,7 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
     if (!owner->frontend->audio) return frontend_fail(e, QA_ERROR_UNSUPPORTED, "Component music output is disabled");
     frontend_music_cue_state cue = {&owner->music, &owner->music_intro, &owner->music_loop,
         &owner->music_looping, NULL, &owner->music_pending};
-    return frontend_music_cue_start(owner->frontend, owner->sounds, frontend_music_family(owner->request.catalog, music_origin(owner).product), cue,
+    return frontend_music_cue_request(owner->frontend, owner->sounds, frontend_music_family(owner->request.catalog, music_origin(owner).product), cue,
         music_origin(owner), music_published(owner), intro, loop, e) &&
         owner->request.source.current(owner->request.source.context, &view);
 }
@@ -426,7 +427,12 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
         packet_copy(owner,definition,options,entities,entity_count,polygons,polygon_count,vertices,vertex_count,lights,light_count,e) &&
         owner->request.source.current(owner->request.source.context,&source);
 }
-static void release_host(void *context) { ((struct frontend_component_scene *)context)->host_borrow=false; }
+static void release_host(void *context)
+{
+    struct frontend_component_scene *owner=context;qa_error delivery={0};
+    if(!frontend_music_cue_drain(owner->frontend,&delivery)) frontend_print(owner->frontend,delivery.message);
+    owner->host_borrow=false;
+}
 static bool idle(const void *context)
 {
     const struct frontend_component_scene *owner=context;
@@ -438,6 +444,7 @@ static bool retire(void *context,qa_error *e)
     struct frontend_component_scene *owner=context;
     if (!owner || owner->host_borrow || !idle(owner) || owner->frontend->capture || owner->frontend->resource_inventory)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component retirement retains its host or output borrower");
+    if(!frontend_music_cue_drain(owner->frontend,e)) return false;
     if (owner->retired) return qa_q3_assets_services_retire(owner->assets,e);
     if ((owner->frontend->music_sources &&
         !frontend_music_sources_explicit_retire(owner->frontend->music_sources,owner,e)) ||
@@ -453,6 +460,7 @@ static bool destroy(void **slot,qa_error *e)
     if (!owner) return true;
     if (owner->host_borrow || !idle(owner) || owner->frontend->capture || owner->frontend->resource_inventory)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component renderer retains its real host or output borrower");
+    if(!frontend_music_cue_drain(owner->frontend,e)) return false;
     if ((owner->frontend->music_sources &&
         !frontend_music_sources_explicit_retire(owner->frontend->music_sources,owner,e)) || !music_stop(owner,e)) return false;
     qa_audio_music_release(owner->music); owner->music=NULL;
@@ -512,6 +520,7 @@ static bool completed(void *context,uint64_t sequence,const qa_scene_frame **out
     if (!out || !retained(owner) || !owner->begun || owner->sequence!=sequence)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Component output completion differs from its real Draw sequence");
     if (!idle(owner)) return frontend_fail(e,QA_ERROR_ARGUMENT,"Component output completion retains entered children");
+    if(!frontend_music_cue_drain(owner->frontend,e)) return false;
     *out=&owner->frame; return true;
 }
 bool frontend_component_scenes_idle(const qa_frontend *f)

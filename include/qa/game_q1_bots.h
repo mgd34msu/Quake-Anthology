@@ -23,6 +23,7 @@ typedef struct qa_q1_source_client_view {
     qa_actor_id actor;
     uint32_t slot;
     const char *name;
+    qa_string_id name_id;
     float frags,team;
     uint8_t shirt,pants;
     bool observer,no_target,god_mode;

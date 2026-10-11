@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+static inline void nav_arena_init(qa_arena *arena, const qa_arena *source) {
+    if (source && source->pages) qa_arena_init_pool(arena, source->pages);
+    else *arena = (qa_arena){0};
+}
+
 struct qa_nav_asset {
     atomic_uint references;
     qa_nav_asset_kind kind;

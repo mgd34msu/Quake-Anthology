@@ -23,6 +23,7 @@ struct qa_q3_server_peer {
     qa_q3_reliable reliable;
     char last_command[QA_Q3_COMMAND_CHARS];
     qa_q3_gamestate gamestate;
+    qa_arena snapshot_storage;
     qa_q3_snapshot_slot history[QA_Q3_PACKET_BACKUP];
     uint64_t entity_number;
     qa_arena queue_storage;

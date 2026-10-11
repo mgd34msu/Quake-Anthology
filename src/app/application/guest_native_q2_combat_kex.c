@@ -245,7 +245,7 @@ bool application_q2_kex_damage_prepare(application_q2_combat_profile *profile,
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing original KEX damage observer");
     *out = p; p->profile = profile;
     const qa_actor_registry *registry = qa_session_actors(profile->engine->provider->application->session);
-    if (!qa_actor_index_create(&p->record_index, registry, error)) return false;
+    if (!qa_actor_index_create(&p->record_index, registry, NULL, error)) return false;
     uint32_t offsets[] = {profile->monster_attacker, profile->monster_inflictor, profile->monster_blood,
         profile->monster_knockback, profile->monster_point, profile->monster_mod, profile->monster_invincible};
     uint32_t sizes[] = {8, 8, 4, 4, 12, 3, 8};
@@ -457,7 +457,7 @@ bool application_q2_kex_damage_restore_prepare(struct application_q2_kex_damage 
     if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Preparing KEX deferred continuation");
     qa_source_save_io io = {0}; size_t count = 0;
     const qa_actor_registry *registry = qa_session_actors(p->profile->engine->provider->application->session);
-    bool ok = qa_actor_index_create(&prepared->record_index, registry, error) &&
+    bool ok = qa_actor_index_create(&prepared->record_index, registry, NULL, error) &&
         qa_source_save_reader(&io, p->profile->engine->provider->application->session, bytes, error) &&
         qa_source_save_count(&io, &count, 65536);
     qa_native_entity_table table;

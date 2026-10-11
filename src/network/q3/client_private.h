@@ -28,6 +28,7 @@ struct qa_q3_client_peer {
     uint8_t receive_packet[QA_Q3_MESSAGE_BYTES];
     qa_q3_server_cursor receive_cursor;
     qa_q3_gamestate gamestate;
+    qa_arena snapshot_storage;
     qa_q3_snapshot_slot history[QA_Q3_PACKET_BACKUP];
     int32_t latest_snapshot;
     bool has_snapshot;

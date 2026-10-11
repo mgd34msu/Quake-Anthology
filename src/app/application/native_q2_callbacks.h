@@ -13,6 +13,7 @@ struct qa_application;
 struct application_native_q2_records;
 struct application_native_q2_items;
 typedef struct application_native_q2_callbacks application_native_q2_callbacks;
+typedef struct application_native_q2_scratch application_native_q2_scratch;
 typedef struct application_native_callback_inputs {
     const application_q3_mod_value *values;
     qa_bytes user_command;
@@ -46,6 +47,12 @@ bool application_native_q2_callbacks_call_scoped(application_native_q2_callbacks
 bool application_native_q2_callbacks_transfer(application_native_q2_callbacks *,
     bool (*execute)(void *, qa_error *), void *, qa_error *);
 bool application_native_q2_callbacks_transfer_current(const application_native_q2_callbacks *);
+/* Borrow native bytes for an admitted synchronous source call. A partially
+ * acquired borrow is returned through the same release operation. */
+bool application_native_q2_callbacks_scratch_acquire(application_native_q2_callbacks *,
+    qa_bytes, application_native_q2_scratch **, qa_native_address *, qa_error *);
+void application_native_q2_callbacks_scratch_release(application_native_q2_callbacks *,
+    application_native_q2_scratch **);
 bool application_native_q2_callbacks_storage_transfer(application_native_q2_callbacks *,
     bool (*execute)(void *, qa_error *), void *, qa_error *);
 struct application_native_q2_records *application_native_q2_callbacks_records(

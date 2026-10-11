@@ -3,6 +3,7 @@
 
 #include "qa/common.h"
 #include "qa/math.h"
+#include "qa/arena.h"
 
 typedef enum qa_nav_asset_kind { QA_NAV_AAS, QA_NAV_NAV2, QA_NAV_NAV3 } qa_nav_asset_kind;
 typedef enum qa_aas_lump {
@@ -132,7 +133,7 @@ typedef struct qa_nav_crossings {
     size_t count, capacity;
 } qa_nav_crossings;
 void qa_nav_crossings_free(qa_nav_crossings *);
-bool qa_aas_query_create(qa_aas_query **, qa_error *);
+bool qa_aas_query_create(qa_arena *, qa_aas_query **, qa_error *);
 bool qa_aas_query_prepare(qa_aas_query *, size_t nodes, size_t areas, qa_error *);
 void qa_aas_query_destroy(qa_aas_query *);
 bool qa_aas_point_area(const qa_aas_view *, qa_vec3, uint32_t *, qa_error *);

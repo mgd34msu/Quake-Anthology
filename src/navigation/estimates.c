@@ -47,11 +47,12 @@ bool nav_aas_estimate_topology(qa_nav_graph *g, qa_error *e) {
     if (aas == NULL)
         return true;
     size_t count = aas->count[QA_AAS_PORTALS];
-    g->portal_maxima = calloc(count == 0 ? 1 : count, sizeof(*g->portal_maxima));
+    g->portal_maxima = qa_arena_alloc(&g->storage, (count ? count : 1) * sizeof(*g->portal_maxima), _Alignof(uint16_t), e);
     if (g->portal_maxima == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating shared AAS portal travel times");
         return false;
     }
+    memset(g->portal_maxima, 0, (count ? count : 1) * sizeof(*g->portal_maxima));
     for (size_t i = 0; i < count; ++i) {
         uint32_t area = (uint32_t)aas->portals[i].area, index = nav_node_index(g, area);
         if (index == QA_NAV_NO_INDEX)

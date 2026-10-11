@@ -7,6 +7,7 @@
 #include <float.h>
 
 struct qa_nav_graph {
+    qa_arena storage;
     atomic_uint references;
     qa_nav_graph_view view;
     qa_nav_node *nodes;
@@ -34,6 +35,7 @@ typedef struct nav_nearest_candidate {
 typedef struct nav_estimate_cache nav_estimate_cache;
 typedef struct estimate_update estimate_update;
 struct qa_navigation {
+    qa_arena storage;
     qa_nav_graph *graph;
     qa_navigation_services services;
     int8_t *enabled;
@@ -52,6 +54,7 @@ struct qa_navigation {
     qa_pool nearest_candidates;
 };
 struct qa_nav_workspace {
+    qa_arena owner_storage;
     qa_arena storage;
     qa_aas_query *aas;
     float *costs;
@@ -111,7 +114,7 @@ bool nav_contents(const qa_navigation_services *, const qa_nav_profile *, qa_act
                   bool geometry_only, uint32_t *, qa_error *);
 bool nav_crouch_profile(const qa_nav_profile *, qa_nav_profile *);
 bool nav_node_profile(const qa_nav_profile *, const qa_nav_node *, qa_nav_profile *);
-bool nav_graph_new(const qa_nav_map *, const qa_nav_profile *, qa_nav_graph **, qa_error *);
+bool nav_graph_new(const qa_nav_map *, const qa_nav_profile *, qa_arena *, qa_nav_graph **, qa_error *);
 bool nav_graph_node(qa_nav_graph *, const qa_nav_node *, qa_error *);
 bool nav_graph_edge(qa_nav_graph *, const qa_nav_edge *, qa_error *);
 bool nav_graph_finish(qa_nav_graph *, qa_error *);

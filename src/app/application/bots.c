@@ -34,8 +34,8 @@ bool application_bots_seats_prepare(application_bots *bots, qa_error *error)
     bots->client_seats = calloc(bots->seat_capacity, sizeof(*bots->client_seats));
     if (!bots->seats || !bots->client_seats)
         return application_fail(error, QA_ERROR_MEMORY, "allocating bot roster navigation bindings");
-    return qa_actor_index_create(&bots->actor_seats, actors, error) &&
-        qa_actor_index_create(&bots->actor_targets, actors, error);
+    return qa_actor_index_create(&bots->actor_seats, actors, NULL, error) &&
+        qa_actor_index_create(&bots->actor_targets, actors, NULL, error);
 }
 void application_bot_seat_index_remove(application_bots *bots, application_bot_seat *seat)
 {

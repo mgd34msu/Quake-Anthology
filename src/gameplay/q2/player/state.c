@@ -57,13 +57,6 @@ void q2_players_close(qa_q2_game *g) {
     for (size_t i = 0; i < 5; i++)
         free(g->player_runtime->rule_strings[i]);
     free(g->player_runtime->rotation_maps);
-    q2_player_list *list = g->player_runtime->lists;
-    while (list) {
-        q2_player_list *next = list->next;
-        free(list->rows);
-        free(list);
-        list = next;
-    }
     qa_arena_destroy(&g->player_runtime->scratch_storage);
     free(g->player_runtime);
     g->player_runtime = NULL;
@@ -461,36 +454,32 @@ bool q2_player_score_read(qa_q2_game *g, qa_actor_id id, int32_t *out, qa_error 
     return true;
 }
 q2_player_list *q2_player_list_acquire(qa_q2_game *g, bool scores, qa_error *e) {
-    q2_player_list *list = g->player_runtime->lists;
-    while (list && list->active)
-        list = list->next;
+    q2_players *owner = g->player_runtime;
+    qa_arena storage;
+    qa_arena_init_pool(&storage, &owner->scratch_pages);
+    q2_player_list *list = qa_arena_alloc(&storage, sizeof(*list),
+                                         _Alignof(q2_player_list), e);
     if (!list) {
-        list = calloc(1, sizeof(*list));
-        if (!list) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating nested Q2 player listing");
-            return NULL;
-        }
-        list->next = g->player_runtime->lists;
-        g->player_runtime->lists = list;
+        qa_arena_destroy(&storage);
+        return NULL;
     }
-    list->active = true;
-    list->count = 0;
+    *list = (q2_player_list){.owner = owner, .storage = storage};
+    ++owner->active_lists;
     qa_builtin_snapshot_frame *roster = q2_player_roster(g, e);
     if (!roster)
         goto fail;
-    if (list->capacity < roster->snapshot.count) {
+    if (roster->snapshot.count) {
         size_t capacity = roster->snapshot.count;
         if (capacity > SIZE_MAX / sizeof(*list->rows)) {
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 player listing is too large");
             goto release;
         }
-        q2_player_row *rows = realloc(list->rows, capacity * sizeof(*rows));
+        q2_player_row *rows = qa_arena_alloc(&list->storage, capacity * sizeof(*rows),
+                                            _Alignof(q2_player_row), e);
         if (!rows) {
-            qa_error_set(e, QA_ERROR_MEMORY, 0, "Growing Q2 player listing");
             goto release;
         }
         list->rows = rows;
-        list->capacity = capacity;
     }
     for (size_t i = 0; i < roster->snapshot.count; ++i) {
         q2_player_row row = {.actor = roster->snapshot.ids[i]};
@@ -505,8 +494,13 @@ q2_player_list *q2_player_list_acquire(qa_q2_game *g, bool scores, qa_error *e) 
 release:
     qa_builtin_snapshot_release(roster);
 fail:
-    list->active = false;
+    q2_player_list_release(list);
     return NULL;
+}
+void q2_player_list_release(q2_player_list *list) {
+    qa_arena storage = list->storage;
+    --list->owner->active_lists;
+    qa_arena_destroy(&storage);
 }
 bool q2_client_slot(qa_q2_game *g, qa_actor_id id, uint32_t *slot) {
     q2_actor *a = q2_actor_get(g, id, false, NULL);

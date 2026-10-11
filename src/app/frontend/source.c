@@ -555,7 +555,7 @@ static bool source_music_reset(frontend_source *source, qa_error *error)
 {
     frontend_music_cue_state cue = {&source->music, &source->music_intro, &source->music_loop,
         &source->music_looping, &source->music_attached, &source->music_pending};
-    return frontend_music_cue_stop(source->frontend, cue, source->identity, error);
+    return frontend_music_cue_cleanup(source->frontend, cue, source->identity, error);
 }
 static bool music_origin_stop(void *context, qa_error *error)
 {
@@ -578,11 +578,12 @@ static bool music(void *context, const char *intro, const char *loop, qa_error *
     if (!source->frontend->audio) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source music output is disabled");
     frontend_music_cue_state cue = {&source->music, &source->music_intro, &source->music_loop,
         &source->music_looping, &source->music_attached, &source->music_pending};
-    return frontend_music_cue_start(source->frontend, source->sounds, frontend_music_family(source->music_catalog, source->music_product), cue,
+    return frontend_music_cue_request(source->frontend, source->sounds, frontend_music_family(source->music_catalog, source->music_product), cue,
         music_origin(source), music_published(source), intro, loop, error);
 }
 bool frontend_source_publish_music(qa_frontend *frontend,qa_error *error)
 {
+    if(!frontend_music_cue_drain(frontend,error)) return false;
     for (frontend_source *source=frontend->sources;source;source=source->next) {
         if (!source->music_pending) continue;
         if (!music_published(source))
@@ -965,6 +966,7 @@ static bool source_free(frontend_source *source)
     if (!source) return true;
     qa_frontend *frontend = source->frontend;
     qa_error retirement_error={0};
+    if(!frontend_music_cue_drain(frontend,&retirement_error)) return false;
     if (frontend->capture || frontend->resource_inventory || source->retired_leases) return false;
     if (source->world_retirement && !qa_q3_presentation_retire_world_dispose(&source->world_retirement,&retirement_error)) return false;
     if (!source_idle(source) ||
@@ -1019,6 +1021,11 @@ static bool source_free(frontend_source *source)
 static void release_source(void *context)
 {
     frontend_source_lease *lease = context; frontend_source *source = lease->source;
+    qa_error delivery={0};
+    if(!frontend_music_cue_drain(source->frontend,&delivery)) frontend_print(source->frontend,delivery.message);
+    if(source->leases==1 && source->frontend->music_sources &&
+        !frontend_music_sources_explicit_retire(source->frontend->music_sources,source,&delivery))
+        frontend_print(source->frontend,delivery.message);
     frontend_source_lease **held=&source->lease_list;
     while (*held && *held!=lease) held=&(*held)->next;
     if (*held) *held=lease->next;
@@ -1943,7 +1950,8 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 {
     for (frontend_source *source=frontend?frontend->sources:NULL;source;source=source->next)
         if (source->world_retirement && !qa_q3_presentation_retire_world_dispose(&source->world_retirement,error)) return false;
-    if (!source_worlds_ready(frontend,NULL,false,error) || !frontend_selected_effects_idle(frontend)) return false;
+    if (!source_worlds_ready(frontend,NULL,false,error) || !frontend_selected_effects_idle(frontend) ||
+        !frontend_music_cue_drain(frontend,error)) return false;
     for (frontend_source *source=frontend->sources;source;source=source->next)
         if (!source->private_map &&
             !frontend_selected_effects_retire_parent(frontend,source->presentation,error)) return false;
@@ -1983,6 +1991,8 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 }
 void frontend_source_audio_stopped(qa_frontend *frontend)
 {
+    qa_error delivery={0};
+    if(!frontend_music_cue_drain(frontend,&delivery)) frontend_print(frontend,delivery.message);
     for (frontend_source *source=frontend->sources;source;source=source->next) {
         qa_error error = {0};
         if (!source_music_reset(source, &error)) frontend_print(frontend, error.message);
@@ -2020,7 +2030,8 @@ bool frontend_source_round_ready(const qa_frontend *frontend, qa_actor_owner own
 }
 bool frontend_source_reset_round(qa_frontend *frontend, qa_actor_owner owner, qa_error *error)
 {
-    if (!frontend_source_round_ready(frontend, owner, error)) return false;
+    if (!frontend_source_round_ready(frontend, owner, error) ||
+        !frontend_music_cue_drain(frontend,error)) return false;
     for (frontend_source *source = frontend->sources; source; source = source->next) {
         if (!qa_q3_presentation_clear(source->presentation, error)) return false;
         source->has_listener = false;
@@ -2286,7 +2297,7 @@ static bool present_without_cgame_lease(qa_frontend *f,uint32_t seat,uint32_t re
     qa_material_source_scratch *scratch=controls?qa_render_controls_source_scratch(controls,&flush):NULL;
     bool flushed=scratch && qa_material_source_frame_end(scratch,&f->frame,drawn,&flush);
     if (!drawn || !flushed) { if (error) *error=drawn?flush:draw; return false; }
-    return true;
+    return frontend_music_cue_drain(f,error);
 }
 static bool component_pictures(frontend_source_lease *lease,qa_error *error)
 {
@@ -2367,7 +2378,7 @@ bool frontend_source_present(qa_frontend *f,uint32_t physical,uint32_t seat,
     }
     if (!drawn || !refreshed) { if (error) *error=drawn?refresh_error:draw_error; return false; }
     *hud_drawn=true;
-    return true;
+    return frontend_music_cue_drain(f,error);
 }
 bool frontend_source_listener(qa_frontend *frontend, uint32_t seat, qa_audio_listener *out)
 {

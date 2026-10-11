@@ -1,7 +1,7 @@
 #include "internal.h"
 
 typedef struct item_row {
-    const char *classname, *name, *icon;
+    mode_name classname, name, icon, item;
     qa_mode_object_kind kind;
     qa_relic_kind relic;
     unsigned team;
@@ -10,23 +10,45 @@ typedef struct item_row {
     qa_mode_console_give policy;
 } item_row;
 static const item_row ctf_items[] = {
-    {"item_flag_team1", "Red Flag", "i_ctf1", QA_MODE_OBJECT_FLAG, 0, 0, 1, 0, QA_MODE_GIVE_INDIVIDUAL_ONLY},
-    {"item_flag_team2", "Blue Flag", "i_ctf2", QA_MODE_OBJECT_FLAG, 0, 1, 1, 0, QA_MODE_GIVE_INDIVIDUAL_ONLY},
-    {"item_tech1", "Disruptor Shield", "tech1", QA_MODE_OBJECT_RELIC, QA_RELIC_RESISTANCE, 0, 1, QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY},
-    {"item_tech2", "Power Amplifier", "tech2", QA_MODE_OBJECT_RELIC, QA_RELIC_STRENGTH, 0, 1, QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY},
-    {"item_tech3", "Time Accel", "tech3", QA_MODE_OBJECT_RELIC, QA_RELIC_HASTE, 0, 1, QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY},
-    {"item_tech4", "AutoDoc", "tech4", QA_MODE_OBJECT_RELIC, QA_RELIC_REGENERATION, 0, 1, QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY}
+    {MODE_NAME_ITEM_FLAG_TEAM1, MODE_NAME_LABEL_RED_FLAG, MODE_NAME_PIC_I_CTF1,
+     MODE_NAME_Q2_ITEM_FLAG_TEAM1, QA_MODE_OBJECT_FLAG, 0, 0, 1, 0, QA_MODE_GIVE_INDIVIDUAL_ONLY},
+    {MODE_NAME_ITEM_FLAG_TEAM2, MODE_NAME_LABEL_BLUE_FLAG, MODE_NAME_PIC_I_CTF2,
+     MODE_NAME_Q2_ITEM_FLAG_TEAM2, QA_MODE_OBJECT_FLAG, 0, 1, 1, 0, QA_MODE_GIVE_INDIVIDUAL_ONLY},
+    {MODE_NAME_ITEM_TECH1, MODE_NAME_LABEL_DISRUPTOR_SHIELD, MODE_NAME_PIC_TECH1,
+     MODE_NAME_Q2_ITEM_TECH1, QA_MODE_OBJECT_RELIC, QA_RELIC_RESISTANCE, 0, 1,
+     QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY},
+    {MODE_NAME_ITEM_TECH2, MODE_NAME_LABEL_POWER_AMPLIFIER, MODE_NAME_PIC_TECH2,
+     MODE_NAME_Q2_ITEM_TECH2, QA_MODE_OBJECT_RELIC, QA_RELIC_STRENGTH, 0, 1,
+     QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY},
+    {MODE_NAME_ITEM_TECH3, MODE_NAME_LABEL_TIME_ACCEL, MODE_NAME_PIC_TECH3,
+     MODE_NAME_Q2_ITEM_TECH3, QA_MODE_OBJECT_RELIC, QA_RELIC_HASTE, 0, 1,
+     QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY},
+    {MODE_NAME_ITEM_TECH4, MODE_NAME_LABEL_AUTODOC, MODE_NAME_PIC_TECH4,
+     MODE_NAME_Q2_ITEM_TECH4, QA_MODE_OBJECT_RELIC, QA_RELIC_REGENERATION, 0, 1,
+     QA_ITEM_DROP, QA_MODE_GIVE_INDIVIDUAL_ONLY}
 };
 static const item_row lm_items[] = {
-    {"flag", "Enemy Flag", "a_redflag", QA_MODE_OBJECT_FLAG, 0, 0, 32767, QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
-    {"damage_rune", "Damage Artifact", "a_strength", QA_MODE_OBJECT_RELIC, QA_RELIC_STRENGTH, 0, 1, QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
-    {"haste_rune", "Haste Artifact", "a_haste", QA_MODE_OBJECT_RELIC, QA_RELIC_HASTE, 0, 1, QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
-    {"resist_rune", "Resist Artifact", "a_resist", QA_MODE_OBJECT_RELIC, QA_RELIC_RESISTANCE, 0, 1, QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
-    {"regen_rune", "Regen Artifact", "a_regen", QA_MODE_OBJECT_RELIC, QA_RELIC_REGENERATION, 0, 1, QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
-    {"vampire_rune", "Vampire Artifact", "k_redkey", QA_MODE_OBJECT_RELIC, QA_RELIC_VAMPIRE, 0, 1, QA_ITEM_USE, QA_MODE_GIVE_PICKUP}
+    {MODE_NAME_FLAG, MODE_NAME_LABEL_ENEMY_FLAG, MODE_NAME_PIC_A_REDFLAG,
+     MODE_NAME_Q2_FLAG, QA_MODE_OBJECT_FLAG, 0, 0, 32767, QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
+    {MODE_NAME_DAMAGE_RUNE, MODE_NAME_LABEL_DAMAGE_ARTIFACT, MODE_NAME_PIC_A_STRENGTH,
+     MODE_NAME_Q2_DAMAGE_RUNE, QA_MODE_OBJECT_RELIC, QA_RELIC_STRENGTH, 0, 1,
+     QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
+    {MODE_NAME_HASTE_RUNE, MODE_NAME_LABEL_HASTE_ARTIFACT, MODE_NAME_PIC_A_HASTE,
+     MODE_NAME_Q2_HASTE_RUNE, QA_MODE_OBJECT_RELIC, QA_RELIC_HASTE, 0, 1,
+     QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
+    {MODE_NAME_RESIST_RUNE, MODE_NAME_LABEL_RESIST_ARTIFACT, MODE_NAME_PIC_A_RESIST,
+     MODE_NAME_Q2_RESIST_RUNE, QA_MODE_OBJECT_RELIC, QA_RELIC_RESISTANCE, 0, 1,
+     QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
+    {MODE_NAME_REGEN_RUNE, MODE_NAME_LABEL_REGEN_ARTIFACT, MODE_NAME_PIC_A_REGEN,
+     MODE_NAME_Q2_REGEN_RUNE, QA_MODE_OBJECT_RELIC, QA_RELIC_REGENERATION, 0, 1,
+     QA_ITEM_USE, QA_MODE_GIVE_PICKUP},
+    {MODE_NAME_VAMPIRE_RUNE, MODE_NAME_LABEL_VAMPIRE_ARTIFACT, MODE_NAME_PIC_K_REDKEY,
+     MODE_NAME_Q2_VAMPIRE_RUNE, QA_MODE_OBJECT_RELIC, QA_RELIC_VAMPIRE, 0, 1,
+     QA_ITEM_USE, QA_MODE_GIVE_PICKUP}
 };
 static const item_row tag_item = {
-    "dm_tag_token", "Tag Token", "i_tagtoken", QA_MODE_OBJECT_TAG, 0, 0, 32767, 0, QA_MODE_GIVE_FORBIDDEN
+    MODE_NAME_DM_TAG_TOKEN, MODE_NAME_LABEL_TAG_TOKEN, MODE_NAME_PIC_I_TAGTOKEN,
+    MODE_NAME_Q2_DM_TAG_TOKEN, QA_MODE_OBJECT_TAG, 0, 0, 32767, 0, QA_MODE_GIVE_FORBIDDEN
 };
 static const item_row *rows(mode_instance *v, size_t *count) {
     *count = 0;
@@ -52,25 +74,20 @@ size_t qa_modes_item_count(qa_modes *m, qa_mode_id id) {
     rows(mode_get(m, id), &count);
     return count;
 }
-static bool row_id(qa_modes *m, const item_row *row, qa_item_id *out, qa_error *e) {
-    char text[64] = "q2:";
-    size_t length = strlen(row->classname);
-    memcpy(text + 3, row->classname, length + 1);
-    return qa_builtin_resource(&m->options.services, text, out, e);
-}
 bool qa_modes_item_at(qa_modes *m, qa_mode_id id, size_t index, qa_mode_item *out, qa_error *e) {
     size_t count;
     const item_row *list = rows(mode_get(m, id), &count);
     if (!out || index >= count)
         return mode_fail(e, "mode item index outside selected catalog");
     const item_row *row = &list[index];
-    qa_item_id item, source;
-    if (!row_id(m, row, &source, e) ||
-        !mode_inventory_item(m, mode_get(m, id), source, &item, e))
+    qa_item_id item, source = m->runtime_names[row->item];
+    if (!mode_inventory_item(m, mode_get(m, id), source, &item, e))
         return false;
+    const qa_strings *strings = qa_session_strings(m->options.services.session);
     *out = (qa_mode_item){.mode = id, .source_item = source,
         .definition = {.item = item, .owner = m->options.owner,
-        .label = row->name, .actions = row->actions}, .classname = row->classname,
+        .label = qa_strings_cstr(strings, m->runtime_names[row->name]), .actions = row->actions},
+        .classname = qa_strings_cstr(strings, m->runtime_names[row->classname]),
         .capacity = row->capacity, .console_give = row->policy};
     return true;
 }
@@ -112,10 +129,8 @@ static bool give_complete(void *context, const qa_pickup_offer *offer, bool acce
     qa_modes *m = call->modes;
     if (!accepted || !mode_live(m, offer->recipient))
         return true;
-    qa_string_id icon, name;
-    if (!qa_builtin_resource(&m->options.services, call->row->icon, &icon, e) ||
-        !qa_builtin_resource(&m->options.services, call->row->name, &name, e))
-        return false;
+    qa_string_id icon = m->runtime_names[call->row->icon],
+                 name = m->runtime_names[call->row->name];
     mode_instance *v = mode_get(m, call->mode);
     if (!v) return true;
     qa_builtin_event event = {.kind = QA_BUILTIN_ITEM,
@@ -138,9 +153,8 @@ static bool give_item(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_item_id 
     const item_row *list = rows(v, &length), *row = NULL;
     qa_item_id source = 0;
     for (size_t i = 0; i < length; ++i) {
-        qa_item_id candidate, inventory;
-        if (!row_id(m, &list[i], &candidate, e) ||
-            !mode_inventory_item(m, v, candidate, &inventory, e))
+        qa_item_id candidate = m->runtime_names[list[i].item], inventory;
+        if (!mode_inventory_item(m, v, candidate, &inventory, e))
             return false;
         if (inventory == item) { row = &list[i]; source = candidate; break; }
     }

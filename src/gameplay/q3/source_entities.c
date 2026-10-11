@@ -538,7 +538,7 @@ bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
     qa_actor_index *out, q3_client_names *names, qa_error *error) {
     if (saved->source_count < QA_Q3_SOURCE_CLIENTS || saved->source_count > QA_Q3_SOURCE_WORLD)
         return q3_fail(error, "Invalid Q3 physical entity count");
-    if (!qa_actor_index_create(out, qa_session_actors(game->options.services.session), error))
+    if (!qa_actor_index_create(out, qa_session_actors(game->options.services.session), NULL, error))
         return false;
     if (!qa_actor_index_reverse_reserve(out, QA_Q3_SOURCE_ENTITIES, error)) {
         qa_actor_index_destroy(out);

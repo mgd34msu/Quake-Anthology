@@ -25,6 +25,7 @@ struct frontend_music_sources {
     bool has_origin, origin_bound, origin_recipe;
     frontend_music_slot output;
     bool busy, restoring;
+    qa_application_event_subscription requests;
 };
 bool frontend_music_sources_current(const frontend_music_sources *);
 bool frontend_music_sources_origin_checkpoint_current(const frontend_music_sources *);

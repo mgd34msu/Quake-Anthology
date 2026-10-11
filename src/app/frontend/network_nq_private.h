@@ -23,7 +23,7 @@ typedef struct nq_frontend_peer {
     char reason[256];
 } nq_frontend_peer;
 typedef struct nq_status_cache {
-    char *name;
+    qa_string_id name;
     int32_t frags;
     float source_frags;
     uint8_t colors;
@@ -41,7 +41,7 @@ struct frontend_nq_host {
     bool previous_pause;
     char reply_address[128];
     nq_status_cache board[256];
-    char *published_names[256];
+    qa_string_id published_names[256];
     qa_string_id styles[64];
 };
 bool frontend_nq_source_hooks(frontend_nq_host *, const qa_net_client *,

@@ -122,11 +122,12 @@ static bool from_kex(qa_nav_graph *g, const qa_nav_source_view *asset,
             return false;
     }
     const qa_nav_source_entity **bindings =
-        calloc(asset->link_count == 0 ? 1 : asset->link_count, sizeof(*bindings));
+        qa_arena_alloc(&g->storage, (asset->link_count ? asset->link_count : 1) * sizeof(*bindings), _Alignof(qa_nav_binding), e);
     if (bindings == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Indexing navigation entity bindings");
         return false;
     }
+    memset(bindings, 0, (asset->link_count ? asset->link_count : 1) * sizeof(*bindings));
     for (size_t i = 0; i < asset->entity_count; ++i)
         bindings[asset->entities[i].link] = asset->entities + i;
     bool ok = true;
@@ -139,19 +140,19 @@ static bool from_kex(qa_nav_graph *g, const qa_nav_source_view *asset,
             ok = nav_graph_edge(g, &edge, e);
         }
     }
-    free(bindings);
+
     return ok;
 }
 bool qa_nav_graph_from_asset(const qa_nav_map *map, qa_nav_asset *asset,
                              const qa_nav_profile *profile, const qa_navigation_services *services,
-                             qa_nav_graph **out, qa_error *e) {
+                             qa_arena *source, qa_nav_graph **out, qa_error *e) {
     if (asset == NULL || out == NULL || !nav_services_valid(services, false, e)) {
         if (asset == NULL || out == NULL)
             qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing navigation graph asset/output");
         return false;
     }
     qa_nav_graph *g;
-    if (!nav_graph_new(map, profile, &g, e))
+    if (!nav_graph_new(map, profile, source, &g, e))
         return false;
     qa_nav_asset_retain(asset);
     g->view.asset = asset;

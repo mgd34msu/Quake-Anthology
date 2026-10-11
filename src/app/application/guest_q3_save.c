@@ -181,7 +181,7 @@ static bool gamestate(qa_source_save_io *io, qa_q3_gamestate *value)
     return true;
 }
 
-static bool snapshot(qa_source_save_io *io, q3g_snapshot *slot, size_t ordinal)
+static bool snapshot(qa_source_save_io *io, qa_q3_snapshot_slot *slot, size_t ordinal)
 {
     qa_q3_snapshot *value = &slot->value;
     bool ok = qa_source_save_bool(io, &value->valid) &&
@@ -192,8 +192,8 @@ static bool snapshot(qa_source_save_io *io, q3g_snapshot *slot, size_t ordinal)
         qa_source_save_u64(io, &value->parse_entities_number) &&
         qa_source_save_u8(io, &value->flags) && qa_source_save_u8(io, &value->area_bytes) &&
         qa_source_save_bytes(io, value->area_mask, sizeof(value->area_mask)) &&
-        player(io, &value->player) && qa_source_save_count(io, &value->entity_count, 256) &&
-        qa_source_save_count(io, &slot->capacity, 256) && qa_source_save_i32(io, &slot->ping);
+        player(io, &value->player) && qa_source_save_count(io, &value->entity_count, QA_Q3_SNAPSHOT_ENTITIES) &&
+        qa_source_save_count(io, &slot->capacity, QA_Q3_SNAPSHOT_ENTITIES) && qa_source_save_i32(io, &slot->ping);
     if (!ok) return false;
     if (value->area_bytes > sizeof(value->area_mask) || value->entity_count > slot->capacity ||
         (value->valid && (value->message_number < 0 ||
@@ -202,9 +202,6 @@ static bool snapshot(qa_source_save_io *io, q3g_snapshot *slot, size_t ordinal)
     if (io->direction == QA_SOURCE_SAVE_READ) {
         if (slot->capacity > (io->input.size - io->offset) / 208)
             return state_fail(io, QA_ERROR_FORMAT, "Truncated application Q3 snapshot entities");
-        slot->entities = slot->capacity ? calloc(slot->capacity, sizeof(*slot->entities)) : NULL;
-        if (slot->capacity && !slot->entities)
-            return state_fail(io, QA_ERROR_MEMORY, "Restoring application Q3 snapshot entities");
         value->entities = slot->entities;
     } else if ((slot->capacity && !slot->entities) || value->entities != slot->entities) {
         return state_fail(io, QA_ERROR_FORMAT, "Application Q3 snapshot entity storage differs");
@@ -308,6 +305,7 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
         (!engine->loaded_compatibility && (engine->loaded_game_type || engine->loaded_max_clients)) ||
         (engine->local_snapshot_server_bit != 0 && engine->local_snapshot_server_bit != 4))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 loaded compatibility");
+    if (io->direction == QA_SOURCE_SAVE_READ && !q3g_clients_prepare(engine, io->error)) return false;
     for (size_t i = 0; i < 64; ++i)
         if (!qa_source_save_u32(io, &engine->seats[i]) || !client(io, engine, &engine->clients[i])) return false;
     return true;
@@ -351,7 +349,7 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
             value->big_configstring.length || value->allocated || value->connected)
             return application_fail(error, QA_ERROR_ARGUMENT, "Application Q3 state requires empty candidate clients");
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
-            if (value->snapshots[j].entities)
+            if (value->snapshots[j].value.valid || value->snapshots[j].capacity)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Application Q3 state requires empty candidate history");
     }
     struct application_q3_guest *candidate = calloc(1, sizeof(*candidate));
@@ -368,7 +366,7 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
         (engine->entity_text && strcmp(engine->entity_text, candidate->entity_text))))
         ok = application_fail(error, QA_ERROR_FORMAT, "Application Q3 entity text differs from its prepared immutable map");
     if (ok) {
-        q3g_clients_clear(engine);
+        q3g_clients_destroy(engine);
         memcpy(engine->clients, candidate->clients, sizeof(engine->clients));
         for (size_t i = 0; i < 64; ++i) {
             engine->clients[i].server_commands = (application_q3_command_cursor){0};
@@ -391,7 +389,7 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
         engine->local_snapshot_server_bit = candidate->local_snapshot_server_bit;
         engine->role_sequence = candidate->role_sequence;
     }
-    q3g_clients_clear(candidate); qa_command_tokens_free(&candidate->arguments);
+    q3g_clients_destroy(candidate); qa_command_tokens_free(&candidate->arguments);
     free(candidate->entity_text); free(candidate);
     return ok;
 }
@@ -1121,7 +1119,7 @@ static bool qualify_base(application_provider *provider, qa_world *world, q3g_re
     if (ok) {
         memcpy(saved->seats, base->seats, sizeof(saved->seats));
     }
-    q3g_clients_clear(base); qa_command_tokens_free(&base->arguments);
+    q3g_clients_destroy(base); qa_command_tokens_free(&base->arguments);
     free(base->entity_text); free(base);
     return ok;
 }

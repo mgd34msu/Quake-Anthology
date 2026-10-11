@@ -327,10 +327,36 @@ void q3g_clients_clear(struct application_q3_guest *engine)
     for (size_t i = 0; i < 64; ++i) {
         q3g_client *client = &engine->clients[i];
         free(client->userinfo); free(client->retirement_reason); free(client->gamestate);
-        for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j) free(client->snapshots[j].entities);
         application_q3_command_clear(&client->server_commands);
-        *client = (q3g_client){.sensitivity = 1};
+        qa_arena storage = client->snapshot_storage;
+        qa_q3_snapshot_slot retained[QA_Q3_PACKET_BACKUP];
+        memcpy(retained, client->snapshots, sizeof(retained));
+        for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
+            qa_q3_slot_clear(retained + j, QA_Q3_ARENA);
+        *client = (q3g_client){.sensitivity = 1, .snapshot_storage = storage};
+        memcpy(client->snapshots, retained, sizeof(retained));
         application_q3_command_init(&client->server_commands, engine->provider->application);
+    }
+}
+
+bool q3g_clients_prepare(struct application_q3_guest *engine, qa_error *error)
+{
+    for (size_t i = 0; i < 64; ++i) {
+        q3g_client *client = engine->clients + i;
+        if (!client->snapshots[0].entities && !qa_q3_slots_prepare(&client->snapshot_storage,
+            client->snapshots, QA_Q3_PACKET_BACKUP, QA_Q3_SNAPSHOT_ENTITIES,
+            QA_Q3_ARENA, error)) return false;
+    }
+    return true;
+}
+
+void q3g_clients_destroy(struct application_q3_guest *engine)
+{
+    q3g_clients_clear(engine);
+    for (size_t i = 0; i < 64; ++i) {
+        q3g_client *client = engine->clients + i;
+        qa_arena_destroy(&client->snapshot_storage);
+        memset(client->snapshots, 0, sizeof(client->snapshots));
     }
 }
 
@@ -340,20 +366,15 @@ bool application_q3_guest_publish_snapshot(application_provider *provider, uint3
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || slot >= 64 || !value || !value->valid || value->message_number < 0 ||
-        value->entity_count > 256 || (value->entity_count && !value->entities) ||
+        value->entity_count > QA_Q3_SNAPSHOT_ENTITIES || (value->entity_count && !value->entities) ||
         value->area_bytes > sizeof(value->area_mask))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 snapshot publication");
     q3g_client *client = &engine->clients[slot];
     if (client->has_snapshot && value->message_number <= client->snapshot_sequence)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 snapshot publication is stale");
-    q3g_snapshot *snapshot = &client->snapshots[(uint32_t)value->message_number & (QA_Q3_PACKET_BACKUP - 1)];
-    if (snapshot->capacity < value->entity_count) {
-        qa_q3_entity *entities = realloc(snapshot->entities, value->entity_count * sizeof(*entities));
-        if (!entities) return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 snapshot entities");
-        snapshot->entities = entities; snapshot->capacity = value->entity_count;
-    }
-    if (value->entity_count) memcpy(snapshot->entities, value->entities, value->entity_count * sizeof(*value->entities));
-    snapshot->value = *value; snapshot->value.entities = snapshot->entities; snapshot->ping = ping;
+    qa_q3_snapshot_slot *snapshot = &client->snapshots[(uint32_t)value->message_number & (QA_Q3_PACKET_BACKUP - 1)];
+    if (!qa_q3_slot_store(snapshot, value, error)) return false;
+    snapshot->ping = ping;
     client->snapshot_sequence = value->message_number; client->has_snapshot = true;
     return true;
 }
@@ -381,7 +402,7 @@ static bool snapshot(void *context, int32_t number, const qa_q3_snapshot **out, 
     if (number > client->snapshot_sequence) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 snapshot is in the future");
     *out = NULL; *ping = 0;
     if (number < 0 || !client->has_snapshot || (int64_t)client->snapshot_sequence - number >= QA_Q3_PACKET_BACKUP) return true;
-    const q3g_snapshot *value = &client->snapshots[(uint32_t)number & (QA_Q3_PACKET_BACKUP - 1)];
+    const qa_q3_snapshot_slot *value = &client->snapshots[(uint32_t)number & (QA_Q3_PACKET_BACKUP - 1)];
     if (value->value.valid && value->value.message_number == number) {
         const qa_q3_snapshot *latest = &client->snapshots[(uint32_t)client->snapshot_sequence &
             (QA_Q3_PACKET_BACKUP - 1)].value;

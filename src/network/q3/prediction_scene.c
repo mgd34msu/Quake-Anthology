@@ -20,7 +20,8 @@ struct qa_q3_prediction_scene {
     const qa_actor_id *projected;
     qa_actor_owner owner;
     qa_actor_id solid_actors[256];
-    qa_q3_snapshot_slot snap, next;
+    qa_arena snapshot_storage;
+    qa_q3_snapshot_slot snapshots[2];
     prediction_entity entities[QA_Q3_ENTITIES];
     uint16_t solids[256], triggers[256];
     size_t solid_count, trigger_count;
@@ -52,6 +53,10 @@ bool qa_q3_prediction_scene_create(qa_q3_product product, qa_q3_prediction_scene
         return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 prediction scene constructor");
     qa_q3_prediction_scene *s = calloc(1, sizeof(*s));
     if (!s) return fail(error, QA_ERROR_MEMORY, "Allocating Q3 prediction scene");
+    if (!qa_q3_slots_prepare(&s->snapshot_storage, s->snapshots, 2,
+        QA_Q3_SNAPSHOT_ENTITIES, product, error)) {
+        qa_q3_prediction_scene_destroy(s); return false;
+    }
     s->product = product; s->revision = 1; *out = s; return true;
 }
 static void dispose_world(qa_q3_prediction_scene *s)
@@ -62,14 +67,18 @@ static void dispose_world(qa_q3_prediction_scene *s)
     s->world=NULL; s->geometry=NULL; s->projected=NULL; s->owner=0;
 }
 void qa_q3_prediction_scene_destroy(qa_q3_prediction_scene *s)
-{ if (s) { dispose_world(s); free(s->snap.entities); free(s->next.entities); free(s); } }
+{ if (s) { dispose_world(s); qa_arena_destroy(&s->snapshot_storage); free(s); } }
 void qa_q3_prediction_scene_clear(qa_q3_prediction_scene *s)
 {
     if (!s) return;
     qa_q3_product product = s->product;
     uint64_t revision = s->revision == UINT64_MAX ? UINT64_MAX : s->revision + 1;
     dispose_world(s);
-    free(s->snap.entities); free(s->next.entities); memset(s, 0, sizeof(*s));
+    qa_arena storage = s->snapshot_storage;
+    qa_q3_snapshot_slot retained[2] = {s->snapshots[0], s->snapshots[1]};
+    qa_q3_slot_clear(retained, product); qa_q3_slot_clear(retained + 1, product);
+    memset(s, 0, sizeof(*s));
+    s->snapshot_storage = storage; memcpy(s->snapshots, retained, sizeof(retained));
     s->product = product; s->revision = revision;
 }
 bool qa_q3_prediction_scene_prepare(qa_q3_prediction_scene *s, qa_actor_registry *actors,
@@ -193,7 +202,7 @@ static void player_kinematics(const qa_q3_player *p, qa_q3_entity *e)
 static void solid_list(qa_q3_prediction_scene *s)
 {
     const qa_q3_snapshot *snap = s->has_next && !s->next_teleport && !s->this_teleport ?
-        &s->next.value : &s->snap.value;
+        &s->snapshots[1].value : &s->snapshots[0].value;
     s->solid_count = 0; s->trigger_count = 0;
     for (size_t i = 0; i < snap->entity_count; ++i) {
         uint16_t number = (uint16_t)snap->entities[i].number;
@@ -210,45 +219,45 @@ static void published(prediction_entity *e, const qa_q3_snapshot *snap)
 { e->published = true; e->publication_message = snap->message_number; }
 static bool initial(qa_q3_prediction_scene *s, const qa_q3_snapshot *snap, qa_error *error)
 {
-    if (!store(&s->snap, snap, s->product, error)) return false;
+    if (!store(&s->snapshots[0], snap, s->product, error)) return false;
     s->has_snap = true;
-    player_kinematics(&s->snap.value.player, &s->entities[s->snap.value.player.clientNum].current);
-    published(&s->entities[s->snap.value.player.clientNum], &s->snap.value);
+    player_kinematics(&s->snapshots[0].value.player, &s->entities[s->snapshots[0].value.player.clientNum].current);
+    published(&s->entities[s->snapshots[0].value.player.clientNum], &s->snapshots[0].value);
     solid_list(s);
-    for (size_t i = 0; i < s->snap.value.entity_count; ++i) {
-        const qa_q3_entity *row = &s->snap.value.entities[i]; prediction_entity *e = &s->entities[row->number];
-        e->current = *row; published(e, &s->snap.value);
+    for (size_t i = 0; i < s->snapshots[0].value.entity_count; ++i) {
+        const qa_q3_entity *row = &s->snapshots[0].value.entities[i]; prediction_entity *e = &s->entities[row->number];
+        e->current = *row; published(e, &s->snapshots[0].value);
         e->valid = true; e->interpolate = false; reset_pose(e);
     }
     return true;
 }
 static bool next_snapshot(qa_q3_prediction_scene *s, const qa_q3_snapshot *snap, qa_error *error)
 {
-    if (!store(&s->next, snap, s->product, error)) return false;
+    if (!store(&s->snapshots[1], snap, s->product, error)) return false;
     s->has_next = true;
-    player_kinematics(&s->next.value.player, &s->entities[s->next.value.player.clientNum].next);
-    s->entities[s->snap.value.player.clientNum].interpolate = true;
-    for (size_t i = 0; i < s->next.value.entity_count; ++i) {
-        const qa_q3_entity *row = &s->next.value.entities[i]; prediction_entity *e = &s->entities[row->number];
+    player_kinematics(&s->snapshots[1].value.player, &s->entities[s->snapshots[1].value.player.clientNum].next);
+    s->entities[s->snapshots[0].value.player.clientNum].interpolate = true;
+    for (size_t i = 0; i < s->snapshots[1].value.entity_count; ++i) {
+        const qa_q3_entity *row = &s->snapshots[1].value.entities[i]; prediction_entity *e = &s->entities[row->number];
         e->next = *row; e->interpolate = e->valid && !((e->current.eFlags ^ row->eFlags) & 4);
     }
-    s->next_teleport = ((s->next.value.player.eFlags ^ s->snap.value.player.eFlags) & 4) != 0 ||
-        s->next.value.player.clientNum != s->snap.value.player.clientNum ||
-        ((s->next.value.flags ^ s->snap.value.flags) & 4) != 0;
+    s->next_teleport = ((s->snapshots[1].value.player.eFlags ^ s->snapshots[0].value.player.eFlags) & 4) != 0 ||
+        s->snapshots[1].value.player.clientNum != s->snapshots[0].value.player.clientNum ||
+        ((s->snapshots[1].value.flags ^ s->snapshots[0].value.flags) & 4) != 0;
     solid_list(s); return true;
 }
 static void transition(qa_q3_prediction_scene *s)
 {
-    bool teleport = ((s->next.value.player.eFlags ^ s->snap.value.player.eFlags) & 4) != 0;
-    for (size_t i = 0; i < s->snap.value.entity_count; ++i)
-        s->entities[s->snap.value.entities[i].number].valid = false;
-    qa_q3_snapshot_slot old = s->snap; s->snap = s->next; s->next = old;
-    player_kinematics(&s->snap.value.player, &s->entities[s->snap.value.player.clientNum].current);
-    published(&s->entities[s->snap.value.player.clientNum], &s->snap.value);
-    s->entities[s->snap.value.player.clientNum].interpolate = false;
-    for (size_t i = 0; i < s->snap.value.entity_count; ++i) {
-        prediction_entity *e = &s->entities[s->snap.value.entities[i].number];
-        e->current = e->next; published(e, &s->snap.value); e->valid = true;
+    bool teleport = ((s->snapshots[1].value.player.eFlags ^ s->snapshots[0].value.player.eFlags) & 4) != 0;
+    for (size_t i = 0; i < s->snapshots[0].value.entity_count; ++i)
+        s->entities[s->snapshots[0].value.entities[i].number].valid = false;
+    qa_q3_snapshot_slot old = s->snapshots[0]; s->snapshots[0] = s->snapshots[1]; s->snapshots[1] = old;
+    player_kinematics(&s->snapshots[0].value.player, &s->entities[s->snapshots[0].value.player.clientNum].current);
+    published(&s->entities[s->snapshots[0].value.player.clientNum], &s->snapshots[0].value);
+    s->entities[s->snapshots[0].value.player.clientNum].interpolate = false;
+    for (size_t i = 0; i < s->snapshots[0].value.entity_count; ++i) {
+        prediction_entity *e = &s->entities[s->snapshots[0].value.entities[i].number];
+        e->current = e->next; published(e, &s->snapshots[0].value); e->valid = true;
         if (!e->interpolate) reset_pose(e);
         e->interpolate = false;
     }
@@ -281,24 +290,24 @@ bool qa_q3_prediction_scene_process(qa_q3_prediction_scene *s, int32_t latest,
             const qa_q3_snapshot *snap = read_next(s, lookup, context);
             if (!snap) break;
             if (!next_snapshot(s, snap, error)) return false;
-            if (s->next.value.server_time < s->snap.value.server_time)
+            if (s->snapshots[1].value.server_time < s->snapshots[0].value.server_time)
                 return fail(error, QA_ERROR_FORMAT, "Q3 collision snapshot time went backwards");
         }
-        if (s->time >= s->snap.value.server_time && s->time < s->next.value.server_time) break;
+        if (s->time >= s->snapshots[0].value.server_time && s->time < s->snapshots[1].value.server_time) break;
         transition(s);
     }
-    if (s->time < s->snap.value.server_time) s->time = s->snap.value.server_time;
+    if (s->time < s->snapshots[0].value.server_time) s->time = s->snapshots[0].value.server_time;
     s->physics_next = s->has_next && !s->next_teleport && !s->this_teleport;
     s->physics_time = s->physics_next ?
-        s->next.value.server_time : s->snap.value.server_time;
+        s->snapshots[1].value.server_time : s->snapshots[0].value.server_time;
     return true;
 }
 bool qa_q3_prediction_scene_read(const qa_q3_prediction_scene *s, qa_q3_prediction_scene_view *out)
 {
     if (!s || !out || !s->has_snap) return false;
-    *out = (qa_q3_prediction_scene_view){.snapshot = &s->snap.value,
-        .next_snapshot = s->has_next ? &s->next.value : NULL,
-        .prediction_snapshot = s->physics_next ? &s->next.value : &s->snap.value,
+    *out = (qa_q3_prediction_scene_view){.snapshot = &s->snapshots[0].value,
+        .next_snapshot = s->has_next ? &s->snapshots[1].value : NULL,
+        .prediction_snapshot = s->physics_next ? &s->snapshots[1].value : &s->snapshots[0].value,
         .time = s->time, .physics_time = s->physics_time, .processed_snapshot = s->processed,
         .this_frame_teleport = s->this_teleport, .next_frame_teleport = s->next_teleport, .revision = s->revision};
     return true;
@@ -336,30 +345,30 @@ static bool pose(qa_q3_prediction_scene *s, prediction_entity *e, bool smooth, q
     if (!smooth && e->current.number < 64) { e->current.pos.type = 1; e->next.pos.type = 1; }
     if (e->interpolate && (e->current.pos.type == 1 || (e->current.pos.type == 3 && e->current.number < 64))) {
         if (!s->has_next) return fail(error, QA_ERROR_FORMAT, "Q3 collision interpolated entity lost its next snapshot");
-        int32_t delta = difference(s->next.value.server_time, s->snap.value.server_time);
-        float fraction = delta ? (float)difference(s->time, s->snap.value.server_time) / (float)delta : 0;
+        int32_t delta = difference(s->snapshots[1].value.server_time, s->snapshots[0].value.server_time);
+        float fraction = delta ? (float)difference(s->time, s->snapshots[0].value.server_time) / (float)delta : 0;
         qa_vec3 a, b;
-        if (!position(&e->current.pos, s->snap.value.server_time, &a, error) ||
-            !position(&e->next.pos, s->next.value.server_time, &b, error)) return false;
+        if (!position(&e->current.pos, s->snapshots[0].value.server_time, &a, error) ||
+            !position(&e->next.pos, s->snapshots[1].value.server_time, &b, error)) return false;
         e->origin = qa_vec_lerp(a, b, fraction);
-        if (!position(&e->current.apos, s->snap.value.server_time, &a, error) ||
-            !position(&e->next.apos, s->next.value.server_time, &b, error)) return false;
+        if (!position(&e->current.apos, s->snapshots[0].value.server_time, &a, error) ||
+            !position(&e->next.apos, s->snapshots[1].value.server_time, &b, error)) return false;
         e->angles = qa_v3(qa_angle_lerp(a.x, b.x, fraction), qa_angle_lerp(a.y, b.y, fraction), qa_angle_lerp(a.z, b.z, fraction));
         return true;
     }
     if (!position(&e->current.pos, s->time, &e->origin, error) ||
         !position(&e->current.apos, s->time, &e->angles, error)) return false;
     return adjust_mover(s, e->origin, e->current.groundEntityNum,
-        s->snap.value.server_time, s->time, &e->origin, error);
+        s->snapshots[0].value.server_time, s->time, &e->origin, error);
 }
 bool qa_q3_prediction_scene_publish_poses(qa_q3_prediction_scene *s, bool smooth, qa_error *error)
 {
     if (!s || !s->has_snap || !changed(s, error)) return false;
     /* CG_AddPacketEntities first calculates the actual viewed player, then
      * visits each source append row, including repeated entity numbers. */
-    if (!pose(s, &s->entities[s->snap.value.player.clientNum], smooth, error)) return false;
-    for (size_t i = 0; i < s->snap.value.entity_count; ++i) {
-        prediction_entity *e = &s->entities[s->snap.value.entities[i].number];
+    if (!pose(s, &s->entities[s->snapshots[0].value.player.clientNum], smooth, error)) return false;
+    for (size_t i = 0; i < s->snapshots[0].value.entity_count; ++i) {
+        prediction_entity *e = &s->entities[s->snapshots[0].value.entities[i].number];
         if (e->current.eType < 13 && !pose(s, e, smooth, error)) return false;
     }
     return !s->projected || qa_q3_prediction_scene_project(s,s->owner,s->projected,error);
@@ -378,7 +387,7 @@ bool qa_q3_prediction_scene_mark_teleport(qa_q3_prediction_scene *s,
     if (!changed(s, error)) return false;
     s->this_teleport = true;
     s->physics_next = false;
-    s->physics_time = s->snap.value.server_time;
+    s->physics_time = s->snapshots[0].value.server_time;
     return !s->projected || qa_q3_prediction_scene_project(s,s->owner,s->projected,error);
 }
 static bool entity_at(const qa_q3_prediction_scene *s, const qa_q3_prediction_scene_view *v,
@@ -516,19 +525,19 @@ static bool scene_valid(const qa_q3_prediction_scene *s, qa_error *error)
         s->solid_count + s->trigger_count > 256 || (s->has_next && !s->has_snap) ||
         (s->physics_next && !s->has_next))
         return fail(error, QA_ERROR_FORMAT, "Invalid Q3 prediction scene owner cut");
-    if (s->has_snap && (!s->snap.value.valid || s->snap.value.entity_count > 256 ||
-        s->snap.value.message_number < 0 || s->snap.value.message_number > s->processed || s->snap.value.player.clientNum < 0 ||
-        s->snap.value.player.clientNum >= QA_Q3_ENTITIES || s->time < s->snap.value.server_time))
+    if (s->has_snap && (!s->snapshots[0].value.valid || s->snapshots[0].value.entity_count > 256 ||
+        s->snapshots[0].value.message_number < 0 || s->snapshots[0].value.message_number > s->processed || s->snapshots[0].value.player.clientNum < 0 ||
+        s->snapshots[0].value.player.clientNum >= QA_Q3_ENTITIES || s->time < s->snapshots[0].value.server_time))
         return fail(error, QA_ERROR_FORMAT, "Invalid Q3 prediction current snapshot cut");
-    if (s->has_next && (!s->next.value.valid || s->next.value.entity_count > 256 ||
-        s->next.value.message_number < 0 ||
-        s->next.value.message_number <= s->snap.value.message_number ||
-        s->next.value.message_number > s->processed || s->next.value.player.clientNum < 0 ||
-        s->next.value.player.clientNum >= QA_Q3_ENTITIES || s->next.value.server_time <= s->time))
+    if (s->has_next && (!s->snapshots[1].value.valid || s->snapshots[1].value.entity_count > 256 ||
+        s->snapshots[1].value.message_number < 0 ||
+        s->snapshots[1].value.message_number <= s->snapshots[0].value.message_number ||
+        s->snapshots[1].value.message_number > s->processed || s->snapshots[1].value.player.clientNum < 0 ||
+        s->snapshots[1].value.player.clientNum >= QA_Q3_ENTITIES || s->snapshots[1].value.server_time <= s->time))
         return fail(error, QA_ERROR_FORMAT, "Invalid Q3 prediction future snapshot cut");
     if (!s->has_snap && (s->solid_count || s->trigger_count || s->has_next))
         return fail(error, QA_ERROR_FORMAT, "Cold Q3 scene retains collision membership");
-    if (s->has_snap && s->physics_time != (s->physics_next ? s->next.value.server_time : s->snap.value.server_time))
+    if (s->has_snap && s->physics_time != (s->physics_next ? s->snapshots[1].value.server_time : s->snapshots[0].value.server_time))
         return fail(error, QA_ERROR_FORMAT, "Q3 physics clock differs from its actual selected prediction snapshot");
     for (size_t i = 0; i < s->solid_count; ++i)
         if (s->solids[i] >= QA_Q3_ENTITY_NONE)
@@ -542,7 +551,7 @@ static bool scene_valid(const qa_q3_prediction_scene *s, qa_error *error)
             (e->current.number != 0 && e->current.number != (int32_t)i) ||
             (e->next.number != 0 && e->next.number != (int32_t)i) ||
             (e->published && (!s->has_snap || e->publication_message < 0 ||
-                e->publication_message > s->snap.value.message_number || e->current.number != (int32_t)i)) ||
+                e->publication_message > s->snapshots[0].value.message_number || e->current.number != (int32_t)i)) ||
             (e->valid && !e->published) ||
             (!e->published && (e->publication_message != 0 || !cold_entity(&e->current) || e->interpolate ||
                 e->origin.x != 0 || e->origin.y != 0 || e->origin.z != 0 ||
@@ -568,8 +577,8 @@ bool qa_q3_prediction_scene_checkpoint(const qa_q3_prediction_scene *s, qa_buffe
         qa_net_write_u8(&w, s->has_snap) && qa_net_write_u8(&w, s->has_next) &&
         qa_net_write_u8(&w, s->this_teleport) && qa_net_write_u8(&w, s->next_teleport) &&
         qa_net_write_u8(&w, s->physics_next);
-    if (ok && s->has_snap) ok = q3_save_snapshot(&w, &s->snap);
-    if (ok && s->has_next) ok = q3_save_snapshot(&w, &s->next);
+    if (ok && s->has_snap) ok = q3_save_snapshot(&w, &s->snapshots[0]);
+    if (ok && s->has_next) ok = q3_save_snapshot(&w, &s->snapshots[1]);
     if (ok) ok = qa_net_write_u32(&w, (uint32_t)s->solid_count);
     for (size_t i = 0; ok && i < s->solid_count; ++i) ok = qa_net_write_u16(&w, s->solids[i]);
     if (ok) ok = qa_net_write_u32(&w, (uint32_t)s->trigger_count);
@@ -603,8 +612,8 @@ bool qa_q3_prediction_scene_restore(qa_bytes bytes, qa_q3_product product,
     s->this_teleport = q3_save_bool(&r); s->next_teleport = q3_save_bool(&r);
     s->physics_next = q3_save_bool(&r);
     bool ok = !r.failed;
-    if (ok && s->has_snap) ok = q3_restore_snapshot(&r, &s->snap, product);
-    if (ok && s->has_next) ok = q3_restore_snapshot(&r, &s->next, product);
+    if (ok && s->has_snap) ok = q3_restore_snapshot(&r, &s->snapshots[0], product);
+    if (ok && s->has_next) ok = q3_restore_snapshot(&r, &s->snapshots[1], product);
     if (ok) {
         s->solid_count = qa_net_read_u32(&r);
         if (s->solid_count > 256) ok = qa_net_reader_fail(&r, "Q3 prediction solid list exceeds physical retail capacity");

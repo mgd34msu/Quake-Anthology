@@ -13,7 +13,7 @@ static void cue_names_clear(frontend_music_cue_state state)
     free(*state.intro); free(*state.loop);
     *state.intro = *state.loop = NULL; *state.looping = false;
 }
-bool frontend_music_cue_stop(qa_frontend *f, frontend_music_cue_state state,
+bool frontend_music_cue_cleanup(qa_frontend *f, frontend_music_cue_state state,
     uint64_t bus, qa_error *error)
 {
     qa_audio_music *attached = qa_audio_engine_bus_music(f->audio, bus);
@@ -52,11 +52,12 @@ static bool cue_publish(qa_frontend *f, frontend_music_cue_state state,
 bool frontend_music_cue_publish(qa_frontend *f, frontend_music_cue_state state,
     frontend_music_origin origin, qa_error *error)
 {
+    if(!frontend_music_cue_drain(f,error)) return false;
     origin.music = *state.player;
     return frontend_music_sources_explicit_begin(f->music_sources, &origin, error) &&
         cue_publish(f, state, origin, error);
 }
-bool frontend_music_cue_start(qa_frontend *f, qa_audio_bank *sounds, qa_game_family family,
+static bool cue_deliver(qa_frontend *f, qa_audio_bank *sounds, qa_game_family family,
     frontend_music_cue_state state, frontend_music_origin origin, bool published,
     const char *intro, const char *loop, qa_error *error)
 {
@@ -107,6 +108,48 @@ bool frontend_music_cue_start(qa_frontend *f, qa_audio_bank *sounds, qa_game_fam
         qa_audio_music_start(*state.player, first, last);
     }
     return !published || cue_publish(f, state, origin, error);
+}
+
+bool frontend_music_cue_request(qa_frontend *f, qa_audio_bank *sounds, qa_game_family family,
+    frontend_music_cue_state state, frontend_music_origin origin, bool published,
+    const char *intro, const char *loop, qa_error *error)
+{
+    frontend_music_sources *owner=f->music_sources;
+    bool subscribed=owner->requests.application!=NULL;
+    if(!subscribed) qa_application_events_subscribe(f->application,&owner->requests);
+    qa_application_music_event event={.action=intro && *intro?QA_MUSIC_CUE_START:QA_MUSIC_CUE_STOP,
+        .recipient=f,.sounds=sounds,.family=family,.state=state,
+        .origin=origin,.published=published,.intro=intro?intro:"",.loop=loop?loop:""};
+    bool admitted=false;
+    bool okay=qa_application_music_emit(f->application,&event,&admitted,error);
+    if(!subscribed && !admitted) qa_application_events_unsubscribe(&owner->requests);
+    return okay;
+}
+bool frontend_music_cue_drain(qa_frontend *f, qa_error *error)
+{
+    frontend_music_sources *owner=f->music_sources;
+    if(!owner || !owner->requests.application) return true;
+    bool okay=true;
+    qa_error first_error={0};
+    while(owner->requests.next<qa_application_events_next(f->application)) {
+        uint64_t id=owner->requests.next;
+        qa_application_event_view view;
+        if(qa_application_event_read(f->application,&(qa_application_event_cursor){.id=id},&view) &&
+            view.kind==QA_APPLICATION_EVENT_MUSIC && view.value.music->recipient==f) {
+            qa_application_music_event cue=*view.value.music;
+            qa_event_lease *lease=qa_application_event_retain(f->application,id);
+            qa_application_events_consumed(&owner->requests,id+1);
+            qa_error delivery={0};
+            bool delivered=cue_deliver(f,cue.sounds,cue.family,cue.state,cue.origin,cue.published,
+                cue.action==QA_MUSIC_CUE_START?cue.intro:"",
+                cue.action==QA_MUSIC_CUE_START?cue.loop:"",&delivery);
+            qa_event_lease_release(lease);
+            if(!delivered && okay) { first_error=delivery;okay=false; }
+        } else qa_application_events_consumed(&owner->requests,id+1);
+    }
+    qa_application_events_unsubscribe(&owner->requests);
+    if(!okay && error) *error=first_error;
+    return okay;
 }
 
 static bool recipe_origin(const frontend_music_origin *origin) {
@@ -684,6 +727,8 @@ bool frontend_music_sources_content_visit(const frontend_music_sources *owner, c
 bool frontend_music_sources_destroy(frontend_music_sources **in, qa_error *e) {
     if (!in || !*in) return true;
     frontend_music_sources *owner = *in;
+    if(!frontend_music_cue_drain(owner->frontend,e)) return false;
+    qa_application_events_unsubscribe(&owner->requests);
     if (!frontend_music_sources_current(owner) || owner->busy || owner->frontend->capture ||
         (!owner->restoring && !frontend_music_sources_idle(owner))) return fail(e, "Music sources still retain a callback or resource preparation");
     if (owner->restoring) {

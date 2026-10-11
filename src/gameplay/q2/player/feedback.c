@@ -38,7 +38,7 @@ bool q2_player_end_server_frames(qa_q2_game *game, qa_error *error) {
             actor->client->info.slot != row.info.slot) continue;
         okay = qa_q2_player_end_frame(game, row.actor, error);
     }
-    players->active = false;
+    q2_player_list_release(players);
     return okay;
 }
 

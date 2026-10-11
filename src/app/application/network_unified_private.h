@@ -12,11 +12,11 @@ bool application_players_connection_disconnect(qa_application *, qa_net_client_i
 bool application_unified_player_bind_local(qa_application *, const qa_net_client *,
     qa_net_seat_id, uint32_t application_seat, qa_unified_session_player *, qa_error *);
 
-typedef struct retained_input {
-    qa_usercmd value;
-    qa_buffer provider, weapon;
-    size_t provider_capacity, weapon_capacity;
-} retained_input;
+typedef struct application_unified_input_group {
+    struct application_unified_input_group *next;
+    size_t count;
+    qa_usercmd commands[];
+} application_unified_input_group;
 struct application_unified_inputs {
     qa_application *application;
     qa_network_runtime *runtime;
@@ -26,11 +26,15 @@ struct application_unified_inputs {
     qa_actor_owner source;
     uint32_t epoch, source_slot;
     uint64_t publication, map_revision, runtime_epoch;
-    retained_input *commands;
-    size_t count, cursor, capacity;
+    qa_strings *names;
+    qa_string_id arsenal;
+    qa_unified_frame_lease *storage;
+    application_unified_input_group *first, *last;
+    size_t count, cursor;
     int64_t queued, submitted;
     bool advancing;
 };
+qa_usercmd *application_unified_inputs_group_take(application_unified_inputs *, size_t, qa_error *);
 struct application_unified_server {
     qa_application *application;
     qa_network_runtime *runtime;

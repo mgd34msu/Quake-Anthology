@@ -120,10 +120,96 @@ typedef struct mode_objective {
     X(MAP_RESTART, "map_restart 0\n") \
     X(KEY_GOLD, "q1:key/gold") \
     X(KEY_SILVER, "q1:key/silver") \
+    X(MONSTER_ARMY, "monster_army") \
+    X(MONSTER_DOG, "monster_dog") \
+    X(MONSTER_ENFORCER, "monster_enforcer") \
+    X(MONSTER_OGRE, "monster_ogre") \
+    X(MONSTER_KNIGHT, "monster_knight") \
     X(MONSTER_ZOMBIE, "monster_zombie") \
+    X(MONSTER_WIZARD, "monster_wizard") \
+    X(MONSTER_HELL_KNIGHT, "monster_hell_knight") \
+    X(MONSTER_SHAMBLER, "monster_shambler") \
+    X(MONSTER_DEMON1, "monster_demon1") \
+    X(MONSTER_SHALRATH, "monster_shalrath") \
     X(ITEM_HEALTH, "item_health") \
     X(ITEM_HEALTH_SMALL, "item_health_small") \
     X(ITEM_HEALTH_LARGE, "item_health_large") \
+    X(ITEM_SHELLS, "item_shells") \
+    X(ITEM_SPIKES, "item_spikes") \
+    X(ITEM_ROCKETS, "item_rockets") \
+    X(ITEM_CELLS, "item_cells") \
+    X(ITEM_ARMOR1, "item_armor1") \
+    X(ITEM_KEY1, "item_key1") \
+    X(ITEM_KEY2, "item_key2") \
+    X(ITEM_ARTIFACT_INVULNERABILITY, "item_artifact_invulnerability") \
+    X(ITEM_ARTIFACT_SUPER_DAMAGE, "item_artifact_super_damage") \
+    X(Q1_AMMO_SHELLS, "q1:ammo/shells") \
+    X(Q1_AMMO_NAILS, "q1:ammo/nails") \
+    X(Q1_AMMO_ROCKETS, "q1:ammo/rockets") \
+    X(Q1_AMMO_CELLS, "q1:ammo/cells") \
+    X(Q1_ITEM_ARMOR1, "q1:item_armor1") \
+    X(Q2_ITEM_ARMOR_JACKET, "q2:item_armor_jacket") \
+    X(ITEM_FLAG_TEAM1, "item_flag_team1") \
+    X(ITEM_FLAG_TEAM2, "item_flag_team2") \
+    X(ITEM_TECH1, "item_tech1") \
+    X(ITEM_TECH2, "item_tech2") \
+    X(ITEM_TECH3, "item_tech3") \
+    X(ITEM_TECH4, "item_tech4") \
+    X(FLAG, "flag") \
+    X(DAMAGE_RUNE, "damage_rune") \
+    X(HASTE_RUNE, "haste_rune") \
+    X(RESIST_RUNE, "resist_rune") \
+    X(REGEN_RUNE, "regen_rune") \
+    X(VAMPIRE_RUNE, "vampire_rune") \
+    X(DM_TAG_TOKEN, "dm_tag_token") \
+    X(Q2_ITEM_FLAG_TEAM1, "q2:item_flag_team1") \
+    X(Q2_ITEM_FLAG_TEAM2, "q2:item_flag_team2") \
+    X(Q2_ITEM_TECH1, "q2:item_tech1") \
+    X(Q2_ITEM_TECH2, "q2:item_tech2") \
+    X(Q2_ITEM_TECH3, "q2:item_tech3") \
+    X(Q2_ITEM_TECH4, "q2:item_tech4") \
+    X(Q2_FLAG, "q2:flag") \
+    X(Q2_DAMAGE_RUNE, "q2:damage_rune") \
+    X(Q2_HASTE_RUNE, "q2:haste_rune") \
+    X(Q2_RESIST_RUNE, "q2:resist_rune") \
+    X(Q2_REGEN_RUNE, "q2:regen_rune") \
+    X(Q2_VAMPIRE_RUNE, "q2:vampire_rune") \
+    X(Q2_DM_TAG_TOKEN, "q2:dm_tag_token") \
+    X(LABEL_RED_FLAG, "Red Flag") \
+    X(LABEL_BLUE_FLAG, "Blue Flag") \
+    X(LABEL_DISRUPTOR_SHIELD, "Disruptor Shield") \
+    X(LABEL_POWER_AMPLIFIER, "Power Amplifier") \
+    X(LABEL_TIME_ACCEL, "Time Accel") \
+    X(LABEL_AUTODOC, "AutoDoc") \
+    X(LABEL_ENEMY_FLAG, "Enemy Flag") \
+    X(LABEL_DAMAGE_ARTIFACT, "Damage Artifact") \
+    X(LABEL_HASTE_ARTIFACT, "Haste Artifact") \
+    X(LABEL_RESIST_ARTIFACT, "Resist Artifact") \
+    X(LABEL_REGEN_ARTIFACT, "Regen Artifact") \
+    X(LABEL_VAMPIRE_ARTIFACT, "Vampire Artifact") \
+    X(LABEL_TAG_TOKEN, "Tag Token") \
+    X(PIC_I_CTF1, "i_ctf1") \
+    X(PIC_I_CTF2, "i_ctf2") \
+    X(PIC_TECH1, "tech1") \
+    X(PIC_TECH2, "tech2") \
+    X(PIC_TECH3, "tech3") \
+    X(PIC_TECH4, "tech4") \
+    X(PIC_A_REDFLAG, "a_redflag") \
+    X(PIC_A_STRENGTH, "a_strength") \
+    X(PIC_A_HASTE, "a_haste") \
+    X(PIC_A_RESIST, "a_resist") \
+    X(PIC_A_REGEN, "a_regen") \
+    X(PIC_K_REDKEY, "k_redkey") \
+    X(PIC_I_TAGTOKEN, "i_tagtoken") \
+    X(QC_ALREADY_HAVE_RUNE, "$qc_already_have_rune") \
+    X(QC_RUNE_RESISTANCE, "$qc_rune_resistance") \
+    X(QC_RUNE_STRENGTH, "$qc_rune_strength") \
+    X(QC_RUNE_HASTE, "$qc_rune_haste") \
+    X(QC_RUNE_REGENERATION, "$qc_rune_regeneration") \
+    X(QC_GOT_TOKEN, "$qc_got_token") \
+    X(QC_LOST_TOKEN, "$qc_lost_token") \
+    X(QC_HAS_TOKEN, "$qc_has_token") \
+    X(QC_GOT_QUAD, "$qc_got_quad") \
     X(BODYQUE, "bodyque") \
     X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
     X(INFO_PLAYER_START, "info_player_start") \

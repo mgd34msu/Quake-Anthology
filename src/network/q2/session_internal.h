@@ -41,6 +41,8 @@ typedef struct q2_server {
     int32_t wire_frame;
     bool has_source_frame;
     char *drop_reason;
+    /* Largest protocol packet text, with newline and NUL encoding headroom. */
+    char drop_storage[UINT16_MAX + 2u];
     bool drop_notice, drop_queued, drop_sent, drop_hook_done;
     qa_resource *download;
     qa_q2_download_policy download_policy;

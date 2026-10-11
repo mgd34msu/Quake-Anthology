@@ -432,7 +432,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     if (ok && actors && host->kind == NATIVE_HOST_Q2_GAME &&
         host->actor_slots.registry != qa_actors_identity(actors)) {
         qa_actor_index restored = {0};
-        ok = qa_actor_index_create(&restored, actors, error);
+        ok = qa_actor_index_create(&restored, actors, NULL, error);
         if (ok) {
             qa_actor_index_destroy(&host->actor_slots);
             host->actor_slots = restored;

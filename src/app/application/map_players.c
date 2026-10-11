@@ -735,7 +735,7 @@ bool application_players_prepare(qa_application *application,
         application_players_dispose(travel);
         return application_fail(error, QA_ERROR_MEMORY, "cannot reserve travel player roster");
     }
-    if (!qa_actor_index_create(&travel->roster->actors, qa_session_actors(application->session), error)) {
+    if (!qa_actor_index_create(&travel->roster->actors, qa_session_actors(application->session), NULL, error)) {
         application_players_dispose(travel);
         return false;
     }
@@ -3339,7 +3339,7 @@ bool application_q3_round_players_prepare(qa_application *app,
     if ((count && (!cut->travel->seats || !cut->travel->carry || !cut->clients)) ||
         (roster->capacity && !roster->records))
         goto memory;
-    if (!qa_actor_index_create(&roster->actors, qa_session_actors(app->session), error)) goto failed;
+    if (!qa_actor_index_create(&roster->actors, qa_session_actors(app->session), NULL, error)) goto failed;
     roster->map_provider = provider;
     roster->family = app->players->family;
     roster->spawn_point = app->players->spawn_point;
@@ -4393,7 +4393,7 @@ bool application_players_campaign_reenter(qa_application *candidate,
     struct application_player_roster *roster=travel->roster;
     if (candidate != previous) {
         qa_actor_index_destroy(&roster->actors);
-        if (!qa_actor_index_create(&roster->actors, qa_session_actors(candidate->session), error)) return false;
+        if (!qa_actor_index_create(&roster->actors, qa_session_actors(candidate->session), NULL, error)) return false;
     }
     free(roster->points); roster->points=NULL; roster->point_count=0;
     travel->point_capacity=0;
@@ -4922,7 +4922,7 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
     roster->records = roster->capacity ? calloc(roster->capacity, sizeof(*roster->records)) : NULL;
     roster->points = points ? calloc(points, sizeof(*roster->points)) : NULL;
     roster->q1_points = q1_points ? calloc(q1_points, sizeof(*roster->q1_points)) : NULL;
-    bool ok = qa_actor_index_create(&roster->actors, actors, error) &&
+    bool ok = qa_actor_index_create(&roster->actors, actors, NULL, error) &&
               roster->map_provider && (!roster->capacity || roster->records) &&
               (!points || roster->points) && (!q1_points || roster->q1_points);
     if (!ok) application_fail(error, roster->map_provider ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,

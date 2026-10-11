@@ -15,7 +15,7 @@ typedef struct horde_state {
     bool prepared, checking, finishing, wave_check_active;
 } horde_state;
 typedef struct squad_member {
-    const char *name;
+    mode_name classname;
     qa_vec3 offset;
 } squad_member;
 typedef struct squad {
@@ -329,81 +329,81 @@ static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int cat
     switch (pick) {
     case 0:
         result.count = skill > 0 ? 3 : 2;
-        result.members[0] = (squad_member){"army", {skill > 0 ? 0 : -40, skill > 0 ? -40 : 0, 0}};
-        result.members[1] = (squad_member){"army", {40, skill > 0 ? 40 : 0, 0}};
-        result.members[2] = (squad_member){"army", {-40, 40, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_ARMY, {skill > 0 ? 0 : -40, skill > 0 ? -40 : 0, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_ARMY, {40, skill > 0 ? 40 : 0, 0}};
+        result.members[2] = (squad_member){MODE_NAME_MONSTER_ARMY, {-40, 40, 0}};
         break;
     case 1:
         result.count = 3;
-        result.members[0] = (squad_member){"dog", {44, 0, 0}};
-        result.members[1] = (squad_member){"army", {-40, -40, 0}};
-        result.members[2] = (squad_member){"army", {-40, 40, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_DOG, {44, 0, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_ARMY, {-40, -40, 0}};
+        result.members[2] = (squad_member){MODE_NAME_MONSTER_ARMY, {-40, 40, 0}};
         break;
     case 2:
         result.count = skill > 0 ? 2 : 1;
-        result.members[0] = (squad_member){"dog", {0, -44, 0}};
-        result.members[1] = (squad_member){"dog", {0, 44, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_DOG, {0, -44, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_DOG, {0, 44, 0}};
         break;
     case 3:
         result.count = 1;
-        result.members[0] = (squad_member){"enforcer", {0, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_ENFORCER, {0, 0, 0}};
         break;
     case 4:
         result.count = skill > 0 ? 2 : 1;
-        result.members[0] = (squad_member){"enforcer", {skill > 0 ? 40 : 0, 0, 0}};
-        result.members[1] = (squad_member){"enforcer", {-40, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_ENFORCER, {skill > 0 ? 40 : 0, 0, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_ENFORCER, {-40, 0, 0}};
         break;
     case 5:
         result.count = 1;
-        result.members[0] = (squad_member){"ogre", {0, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_OGRE, {0, 0, 0}};
         break;
     case 6:
         result.count = skill > 0 ? 2 : 1;
-        result.members[0] = (squad_member){"knight", {40, 0, 0}};
-        result.members[1] = (squad_member){"knight", {-40, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_KNIGHT, {40, 0, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_KNIGHT, {-40, 0, 0}};
         break;
     case 7:
         result.count = 2;
-        result.members[0] = (squad_member){"zombie", {40, 0, 0}};
-        result.members[1] = (squad_member){"zombie", {-40, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_ZOMBIE, {40, 0, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_ZOMBIE, {-40, 0, 0}};
         break;
     case 8:
         result.count = 1;
-        result.members[0] = (squad_member){"wizard", {0, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_WIZARD, {0, 0, 0}};
         break;
     case 9:
         result.count = skill > 0 ? 2 : 1;
-        result.members[0] = (squad_member){"hell_knight", {0, 40, 0}};
-        result.members[1] = (squad_member){"hell_knight", {0, -40, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_HELL_KNIGHT, {0, 40, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_HELL_KNIGHT, {0, -40, 0}};
         break;
     case 10:
         result.count = 3;
-        result.members[0] = (squad_member){"hell_knight", {40, 0, 0}};
-        result.members[1] = (squad_member){"knight", {-40, 40, 0}};
-        result.members[2] = (squad_member){"knight", {-40, -40, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_HELL_KNIGHT, {40, 0, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_KNIGHT, {-40, 40, 0}};
+        result.members[2] = (squad_member){MODE_NAME_MONSTER_KNIGHT, {-40, -40, 0}};
         break;
     case 11:
         result.count = skill > 0 ? 3 : 2;
-        result.members[0] = (squad_member){"wizard", {40, 40, 40}};
-        result.members[1] = (squad_member){"wizard", {-40, 40, 40}};
-        result.members[2] = (squad_member){"wizard", {-40, -40, 40}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_WIZARD, {40, 40, 40}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_WIZARD, {-40, 40, 40}};
+        result.members[2] = (squad_member){MODE_NAME_MONSTER_WIZARD, {-40, -40, 40}};
         break;
     case 12:
         result.count = 1;
-        result.members[0] = (squad_member){"shambler", {0, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_SHAMBLER, {0, 0, 0}};
         break;
     case 13: {
         result.double_demon = true;
         result.count = skill >= 1 ? 2 : 1;
         result.members[0] =
-            (squad_member){"demon1",
+            (squad_member){MODE_NAME_MONSTER_DEMON1,
                            {result.count == 2 ? 40 : 0, result.count == 2 ? 40 : 0, 0}};
-        result.members[1] = (squad_member){"demon1", {-40, -40, 0}};
+        result.members[1] = (squad_member){MODE_NAME_MONSTER_DEMON1, {-40, -40, 0}};
         break;
     }
     case 14:
         result.count = 1;
-        result.members[0] = (squad_member){"shalrath", {0, 0, 0}};
+        result.members[0] = (squad_member){MODE_NAME_MONSTER_SHALRATH, {0, 0, 0}};
         break;
     default:
         break;
@@ -412,7 +412,7 @@ static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int cat
 }
 static bool spawn_loot(qa_modes *m, mode_instance *v, horde_state *h, size_t point_index,
                        horde_loot_kind kind, qa_vec3 origin, qa_vec3 velocity, qa_error *e) {
-    const char *classname = "item_health", *identity = NULL;
+    qa_string_id classname = m->runtime_names[MODE_NAME_ITEM_HEALTH], item = 0;
     float amount = 25, capacity = 100;
     bool big = false;
     qa_bounds bounds = {{0, 0, 0}, {32, 32, 56}};
@@ -420,21 +420,21 @@ static bool spawn_loot(qa_modes *m, mode_instance *v, horde_state *h, size_t poi
         big = random_value(m, v) * 4 <= 1;
         float roll = random_value(m, v) * 20;
         if (roll <= 7) {
-            classname = "item_shells";
-            identity = "q1:ammo/shells";
+            classname = m->runtime_names[MODE_NAME_ITEM_SHELLS];
+            item = m->runtime_names[MODE_NAME_Q1_AMMO_SHELLS];
             amount = big ? 40 : 20;
         } else if (roll <= 14) {
-            classname = "item_spikes";
-            identity = "q1:ammo/nails";
+            classname = m->runtime_names[MODE_NAME_ITEM_SPIKES];
+            item = m->runtime_names[MODE_NAME_Q1_AMMO_NAILS];
             amount = big ? 50 : 25;
             capacity = 200;
         } else if (roll <= 17) {
-            classname = "item_rockets";
-            identity = "q1:ammo/rockets";
+            classname = m->runtime_names[MODE_NAME_ITEM_ROCKETS];
+            item = m->runtime_names[MODE_NAME_Q1_AMMO_ROCKETS];
             amount = big ? 10 : 5;
         } else {
-            classname = "item_cells";
-            identity = "q1:ammo/cells";
+            classname = m->runtime_names[MODE_NAME_ITEM_CELLS];
+            item = m->runtime_names[MODE_NAME_Q1_AMMO_CELLS];
             amount = big ? 12 : 6;
         }
         float offset = big ? 16 : 12;
@@ -446,30 +446,26 @@ static bool spawn_loot(qa_modes *m, mode_instance *v, horde_state *h, size_t poi
         origin.y -= 16;
         origin.z += 1;
     } else if (kind == HORDE_ARMOR) {
-        classname = "item_armor1";
-        identity = "q1:item_armor1";
+        classname = m->runtime_names[MODE_NAME_ITEM_ARMOR1];
+        item = m->runtime_names[MODE_NAME_Q1_ITEM_ARMOR1];
         amount = 100;
         origin.z += 1;
         bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
     } else if (kind == HORDE_SILVER || kind == HORDE_GOLD) {
-        classname = kind == HORDE_GOLD ? "item_key2" : "item_key1";
-        identity = kind == HORDE_GOLD ? "q1:key/gold" : "q1:key/silver";
+        classname = m->runtime_names[kind == HORDE_GOLD ? MODE_NAME_ITEM_KEY2 : MODE_NAME_ITEM_KEY1];
+        item = m->runtime_names[kind == HORDE_GOLD ? MODE_NAME_KEY_GOLD : MODE_NAME_KEY_SILVER];
         origin.z += 32;
         velocity.z = 255;
         amount = 1;
         capacity = 1;
         bounds = (qa_bounds){{-16, -16, -25}, {16, 16, 32}};
     } else if (kind == HORDE_POWER) {
-        classname = random_value(m, v) < .25f ? "item_artifact_invulnerability"
-                                                : "item_artifact_super_damage";
+        classname = m->runtime_names[random_value(m, v) < .25f
+            ? MODE_NAME_ITEM_ARTIFACT_INVULNERABILITY : MODE_NAME_ITEM_ARTIFACT_SUPER_DAMAGE];
         bounds = (qa_bounds){{-12, -12, -12}, {12, 12, 12}};
     }
-    qa_string_id name, item = 0;
-    if (!qa_builtin_resource(&m->options.services, classname, &name, e) ||
-        (identity && !qa_builtin_resource(&m->options.services, identity, &item, e)))
-        return false;
     qa_actor_id actor;
-    qa_mode_loot_spawn spawn = {.classname = name,
+    qa_mode_loot_spawn spawn = {.classname = classname,
                                 .body = {.origin = origin, .velocity = velocity, .bounds = bounds},
                                 .spawnflags = big ? 1u : 0,
                                 .bounce = kind == HORDE_POWER};
@@ -571,16 +567,11 @@ static bool spawn_squad(qa_modes *m, mode_instance *v, horde_state *h, qa_error 
     }
     if (s.double_demon && h->options.skill >= 3 && random_value(m, v) > .8f)
         for (size_t i = 0; i < s.count; ++i)
-            s.members[i].name = "shambler";
+            s.members[i].classname = MODE_NAME_MONSTER_SHAMBLER;
     for (size_t i = 0; i < s.count; ++i) {
-        char name[48];
-        size_t n = strlen(s.members[i].name);
-        memcpy(name, "monster_", 8);
-        memcpy(name + 8, s.members[i].name, n + 1);
-        qa_string_id classname;
+        qa_string_id classname = m->runtime_names[s.members[i].classname];
         qa_actor_id actor;
-        if (!qa_builtin_resource(&m->options.services, name, &classname, e) ||
-            !m->options.hooks.spawn_monster(m->options.hooks.context, v->id, classname,
+        if (!m->options.hooks.spawn_monster(m->options.hooks.context, v->id, classname,
                                             qa_vec_add(point->origin, s.members[i].offset),
                                             point->angles, choose_target(m, v), &actor, e))
             return false;

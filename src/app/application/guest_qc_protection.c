@@ -301,7 +301,8 @@ static protection_channel *channel_create(application_qc_protection *owner,qa_ac
     *row=(protection_channel){.next=owner->channels,.actor_next=actor_first(owner,actor),.owner=owner,.actor=actor,.client=client,
         .definition=definition};
     if(row->actor_next)row->actor_next->actor_previous=row;
-    if(row->next)row->next->previous=row;owner->channels=row;
+    if(row->next)row->next->previous=row;
+    owner->channels=row;
     qa_actor_index_put(owner->indexes+definition,actor,(size_t)(uintptr_t)row);return row;
 }
 static void channel_retire(protection_channel *row)
@@ -507,7 +508,7 @@ bool application_qc_protection_create(struct application_qc_state *engine, qa_er
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
     bool prepared=true;
     for(size_t i=0;prepared&&i<owner->profile->count;++i)
-        prepared=qa_actor_index_create(owner->indexes+i,registry,error);
+        prepared=qa_actor_index_create(owner->indexes+i,registry,NULL,error);
     if(!prepared){
         for(size_t i=0;i<owner->profile->count;++i)qa_actor_index_destroy(owner->indexes+i);
         free(owner);return false;

@@ -2,6 +2,7 @@
 #include "native_q2_source_invocation.h"
 #include "native_q2_source_damage.h"
 #include "native_q2_client_stages.h"
+#include "control_frame.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
 #include <math.h>
@@ -25,6 +26,7 @@ typedef struct declared_damage_actor {
 typedef struct declared_damage_frame {
     struct declared_damage_frame *outer,*retained_next;
     struct application_native_q2_source_damage *owner;
+    qa_unified_frame_lease *storage;
     qa_actor_id target;
     uint32_t slot;
     const qa_damage_request *request;
@@ -33,6 +35,7 @@ typedef struct declared_damage_frame {
     qa_native_write_observer *health_watch,*velocity_watch;
     application_native_q2_armor_watch *armor_watch;
     qa_native_address scratch;
+    application_native_q2_scratch *scratch_storage;
     float health;
     qa_vec3 velocity;
     bool active,reacting;
@@ -229,13 +232,14 @@ static bool armor_changed(void *context,const qa_armor *before,const qa_armor *a
 }
 static bool frame_close(declared_damage_frame *f,qa_error *e)
 {
+    application_native_q2_callbacks_scratch_release(f->owner->engine->callbacks,&f->scratch_storage);
+    f->scratch=0;
     if(f->health_watch&&!qa_native_unobserve_writes(f->health_watch,e))return false;
     f->health_watch=NULL;
     if(f->velocity_watch&&!qa_native_unobserve_writes(f->velocity_watch,e))return false;
     f->velocity_watch=NULL;
     if(!application_native_q2_armor_observe_end(&f->armor_watch,e))return false;
-    if(f->scratch&&!qa_native_free(instance(f->owner),f->scratch,e))return false;
-    f->scratch=0;return true;
+    return true;
 }
 static bool original_damage(void *context,qa_error *e)
 {
@@ -250,8 +254,8 @@ static bool original_damage(void *context,qa_error *e)
         !application_native_q2_source_combat_cause_lower(o->state,&r->attack.cause,cause,&mod,e))return false;
     qa_vec3 vectors[]={r->direction,r->point,r->normal};
     for(size_t i=0;i<3;++i){qa_store_f32le(raw+i*12,vectors[i].x);qa_store_f32le(raw+i*12+4,vectors[i].y);qa_store_f32le(raw+i*12+8,vectors[i].z);}
-    if(!qa_native_allocate(instance(o),36,INT32_MIN+12,&f->scratch,e)||
-        !qa_native_write(instance(o),f->scratch,(qa_bytes){raw,36},e))return false;
+    if(!application_native_q2_callbacks_scratch_acquire(o->engine->callbacks,
+        (qa_bytes){raw,sizeof(raw)},&f->scratch_storage,&f->scratch,e))return false;
     arguments[0]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=target};
     arguments[1]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=inflictor};
     arguments[2]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=attacker};
@@ -263,8 +267,10 @@ static bool original_damage(void *context,qa_error *e)
         (r->radius?1u:0u)|(flags.no_armor?2u:0u)|(flags.energy?4u:0u)|(flags.no_knockback?8u:0u)|(flags.no_protection?32u:0u);
     arguments[8]=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=(int32_t)source_flags};arguments[9]=mod;
     qa_native_value result={.type=QA_NATIVE_VOID};bool cancelled=false;
-    return application_native_q2_callbacks_source_before(o->engine,e)&&
+    bool ok=application_native_q2_callbacks_source_before(o->engine,e)&&
         application_native_q2_source_invoke_original(o->engine,r->target,o->binding,arguments,10,&result,&cancelled,e);
+    application_native_q2_callbacks_scratch_release(o->engine->callbacks,&f->scratch_storage);
+    f->scratch=0;return ok;
 }
 static bool observed_damage(void *context,qa_error *e)
 {
@@ -294,15 +300,17 @@ static bool execute_damage(void *context,qa_combat *combat,const qa_damage_reque
         actor->actor,actor->serial,actor))))return application_fail(e,QA_ERROR_ARGUMENT,"Declared damage lost its original primary binding");
     if(!eligible(o,request->target)||!eligible(o,request->attack.attacker)||!eligible(o,request->attack.inflictor)){
         *result=(qa_damage_result){0};return true;}
-    declared_damage_frame *f=calloc(1,sizeof(*f));
-    if(!f)return application_fail(e,QA_ERROR_MEMORY,"Retaining declared source damage observations");
-    *f=(declared_damage_frame){.outer=o->frames,.owner=o,.target=request->target,
+    qa_unified_frame_lease *storage=application_control_storage_acquire(o->engine->provider->application,e);
+    if(!storage)return false;
+    declared_damage_frame *f=qa_unified_frame_lease_alloc(storage,1,sizeof(*f),_Alignof(declared_damage_frame),e);
+    if(!f){qa_unified_frame_lease_release(storage);return false;}
+    *f=(declared_damage_frame){.outer=o->frames,.owner=o,.storage=storage,.target=request->target,
         .request=request,.observer=observer,.active=true};
     o->frames=f;++o->engine->calls;++o->calls;++origin->calls;
     bool ok=application_native_q2_callbacks_transfer(o->engine->callbacks,observed_damage,f,e);
     --o->engine->calls;--o->calls;--origin->calls;o->frames=f->outer;
     f->active=false;f->request=NULL;f->observer=NULL;if(ok)*result=f->result;
-    qa_error cleanup={0};if(frame_close(f,&cleanup))free(f);
+    qa_error cleanup={0};if(frame_close(f,&cleanup))qa_unified_frame_lease_release(f->storage);
     else {f->retained_next=o->retained;o->retained=f;if(ok&&e)*e=cleanup;ok=false;}
     actors_collect(o);return ok;
 }
@@ -376,9 +384,12 @@ static bool incoming(void *context,qa_native_instance *native,qa_native_entry_ob
     if(!provenance(o,r.target,&r.attack,e))return false;
     declared_damage_actor *actor=actor_find(o,r.target);qa_damage_outcome outcome={0};
     declared_foreign_damage foreign={app->combat,&r,&outcome};
+    bool original=actor&&actor->bound;
+    if(original)++actor->calls;
     ++o->engine->calls;++o->calls;
-    bool ok=actor&&actor->bound?qa_combat_run_source(app->combat,&r,execute_damage,actor,&outcome,e):
+    bool ok=original?qa_combat_run_source(app->combat,&r,execute_damage,actor,&outcome,e):
         application_native_q2_callbacks_transfer(o->engine->callbacks,foreign_damage,&foreign,e);
+    if(original)--actor->calls;
     --o->engine->calls;--o->calls;qa_damage_outcome_release(&outcome);actors_collect(o);
     if(ok)ok=application_native_q2_callbacks_source_before(o->engine,e);
     if(ok&&result)*result=(qa_native_value){.type=QA_NATIVE_VOID};
@@ -445,7 +456,7 @@ bool application_native_q2_source_damage_create(struct application_native_q2 *n,
     o->engine=n;o->state=state;o->velocity=velocity;o->entry=qa_json_get(d,damage,"entry");
     o->rerelease=qa_json_string_equal(d,qa_json_get(d,damage,"abi"),"q2-rerelease");*out=o;
     const qa_actor_registry *registry=qa_session_actors(n->provider->application->session);qa_native_entity_table admission_table;
-    if(!qa_actor_index_create(&o->actor_index,registry,e)||
+    if(!qa_actor_index_create(&o->actor_index,registry,NULL,e)||
         !qa_native_entity_table_get(instance(o),&admission_table,e))return false;
     o->prepared_capacity=admission_table.capacity;o->prepared_actors=calloc(o->prepared_capacity,sizeof(*o->prepared_actors));
     if(o->prepared_capacity&&!o->prepared_actors)return application_fail(e,QA_ERROR_MEMORY,"Owning declared combat restore slots");
@@ -513,7 +524,8 @@ bool application_native_q2_source_damage_suspend(struct application_native_q2_so
     if(!o)return true;
     if(o->calls||o->frames||o->processing)return application_fail(e,QA_ERROR_ARGUMENT,"Declared original damage remains entered");
     o->suspended=true;
-    while(o->retained){declared_damage_frame *f=o->retained;if(!frame_close(f,e))return false;o->retained=f->retained_next;free(f);}
+    while(o->retained){declared_damage_frame *f=o->retained;if(!frame_close(f,e))return false;
+        o->retained=f->retained_next;qa_unified_frame_lease_release(f->storage);}
     for(declared_damage_actor *r=o->actors;r;r=r->next)if(!actor_watches_close(r,e))return false;
     if(o->process_binding&&!qa_native_unobserve_entry(o->process_binding,e))return false;
     o->process_binding=NULL;

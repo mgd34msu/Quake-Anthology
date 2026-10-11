@@ -225,20 +225,10 @@ static bool sound(void *opaque, const qa_native_host_sound *source, qa_error *er
     uint32_t slot = 0;
     qa_native_host_q2_entity actual = {0};
     if (source->actor.registry) {
-        qa_native_entity_table table;
-        qa_native_instance *instance = qa_native_host_instance(engine->provider->state.native.host);
-        if (!instance || !qa_native_entity_table_get(instance, &table, error)) return false;
-        bool found = false;
-        for (uint32_t i = 0; i < table.capacity; ++i) {
-            qa_native_slot_binding binding;
-            if (!qa_native_slot(instance, i, &binding, error)) return false;
-            if (binding.kind != QA_NATIVE_SLOT_FREE && qa_actor_id_equal(binding.actor, source->actor)) {
-                slot = i; found = true; break;
-            }
-        }
-        if (!found) return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound actor projection retired");
+        if (!qa_native_host_slot_for_actor(engine->provider->state.native.host, source->actor, &slot))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound actor projection retired");
         if (!qa_native_host_q2_wire_entity_import(engine->provider->state.native.host, slot, &actual, error)) return false;
-        if (!qa_actor_id_equal(actual.binding.actor, source->actor))
+        if (actual.binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(actual.binding.actor, source->actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 sound Source binding changed during its import");
     }
     qa_vec3 origin = source->origin;

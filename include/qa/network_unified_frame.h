@@ -47,6 +47,10 @@ typedef struct qa_unified_resource_state {
     char *content, *path;
     uint64_t byte_length;
 } qa_unified_resource_state;
+typedef struct qa_unified_producer_sample {
+    qa_string_id provider;
+    double seconds;
+} qa_unified_producer_sample;
 
 
 /* This shared world cut can be retained by all recipients of the same actual
@@ -57,6 +61,8 @@ typedef struct qa_unified_world_frame {
     size_t references;
     qa_source_frame source;
     double presentation_seconds;
+    qa_unified_producer_sample *producer_samples;
+    size_t producer_sample_count;
     qa_unified_actor_state *actors;
     size_t actor_count;
     qa_unified_body_state *bodies;

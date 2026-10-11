@@ -352,14 +352,10 @@ static bool protocol_capacity(application_provider *provider,
         uint32_t source_slot = 0;
         if (provider->kind == APPLICATION_PROVIDER_QC) {
             const struct application_qc_state *engine = provider->state.qc.engine;
-            for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
-                const application_qc_client *client = engine->clients + slot;
-                if (client->connected && qa_actor_id_equal(client->actor, player->actor) &&
-                    (!qw || client->spawned)) {
-                    receives = true;
-                    source_slot = slot;
-                    break;
-                }
+            const application_qc_client *client = application_qc_client_for_actor(engine, player->actor);
+            if (client && client->connected && (!qw || client->spawned)) {
+                receives = true;
+                source_slot = (uint32_t)(client - engine->clients);
             }
         } else {
             receives = qa_q1_native_client_slot_prepared(provider->state.q1, player->actor, &source_slot, NULL) &&
@@ -1324,6 +1320,29 @@ blocked:
     *overflow=true;
     return true;
 }
+bool qa_application_music_emit(qa_application *app,const qa_application_music_event *event,
+    bool *admitted,qa_error *error)
+{
+    *admitted=false;
+    application_event_write write;
+    if(!application_event_stream_begin(app,QA_APPLICATION_EVENT_MUSIC,&write,error))
+        return application_event_stream_decline(app,&write,true,error);
+    size_t intro_bytes=strlen(event->intro)+1,loop_bytes=strlen(event->loop)+1;
+    char *names=application_event_stream_alloc(app,intro_bytes+loop_bytes,1,error);
+    if(!names) {
+        application_event_stream_abort(app,&write,error);
+        return application_event_stream_decline(app,&write,true,error);
+    }
+    memcpy(names,event->intro,intro_bytes);
+    memcpy(names+intro_bytes,event->loop,loop_bytes);
+    write.envelope->raw.music=*event;
+    write.envelope->raw.music.intro=names;
+    write.envelope->raw.music.loop=names+intro_bytes;
+    if(!application_event_stream_commit(app,&write,error))
+        return application_event_stream_decline(app,&write,true,error);
+    *admitted=true;
+    return true;
+}
 uint64_t qa_application_events_audio_first(const qa_application *app)
 { return app->event_audio_cursor; }
 void qa_application_events_audio_consume(qa_application *app, uint64_t next)
@@ -1444,6 +1463,7 @@ bool qa_application_event_read(const qa_application *app, qa_application_event_c
     case QA_APPLICATION_EVENT_Q3_EFFECT: out->value.q3_effect=&record->raw.q3_effect; break;
     case QA_APPLICATION_EVENT_Q3_COMMAND: out->value.q3_command=&record->raw.q3_command; break;
     case QA_APPLICATION_EVENT_QW_COMMAND: out->value.qw_command=&record->raw.qw_command; break;
+    case QA_APPLICATION_EVENT_MUSIC: out->value.music=&record->raw.music; break;
     case QA_APPLICATION_EVENT_LOG: out->value.log=&record->raw.log; break;
     case QA_APPLICATION_EVENT_UNIFIED: case QA_APPLICATION_EVENT_PROTOCOL:
     case QA_APPLICATION_EVENT_EQUIPMENT: break;

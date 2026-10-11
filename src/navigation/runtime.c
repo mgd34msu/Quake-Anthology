@@ -18,7 +18,7 @@ memory:
     qa_error_set(e, QA_ERROR_MEMORY, need, "Growing retained navigation workspace");
     return false;
 }
-bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_navigation **out,
+bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_arena *source, qa_navigation **out,
                           qa_error *e) {
     if (g == NULL || out == NULL || !nav_services_valid(s, false, e)) {
         if (g == NULL || out == NULL)
@@ -30,16 +30,21 @@ bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_n
                      "Navigation prediction lease requires paired begin/end hooks");
         return false;
     }
-    qa_navigation *n = calloc(1, sizeof(*n));
-    if (n == NULL)
-        goto memory;
+    qa_arena storage; nav_arena_init(&storage, source);
+    qa_navigation *n = qa_arena_alloc(&storage, sizeof(*n), _Alignof(qa_navigation), e);
+    if (n == NULL) { qa_arena_destroy(&storage); goto memory; }
+    memset(n, 0, sizeof(*n)); n->storage = storage;
+    nav_arena_init(&n->estimate_storage, source);
+    nav_arena_init(&n->prediction_storage, source);
+    nav_arena_init(&n->nearest_storage, source);
     n->graph = g;
     qa_nav_graph_retain(g);
     n->services = *s;
     size_t nodes = g->view.node_count, edges = g->view.edge_count;
-    n->enabled = malloc(nodes == 0 ? 1 : nodes);
-    n->blocked = calloc(edges == 0 ? 1 : edges, 1);
-    n->admission_seconds = malloc((edges == 0 ? 1 : edges) * sizeof(*n->admission_seconds));
+    n->enabled = qa_arena_alloc(&n->storage, nodes ? nodes : 1, _Alignof(int8_t), e);
+    n->blocked = qa_arena_alloc(&n->storage, edges ? edges : 1, _Alignof(uint8_t), e);
+    n->admission_seconds = qa_arena_alloc(&n->storage,
+        (edges ? edges : 1) * sizeof(*n->admission_seconds), _Alignof(float), e);
     if (n->enabled == NULL || n->blocked == NULL || n->admission_seconds == NULL) {
         qa_navigation_destroy(n);
         goto memory;
@@ -49,6 +54,7 @@ bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_n
         return false;
     }
     memset(n->enabled, -1, nodes);
+    memset(n->blocked, 0, edges);
     for (size_t i = 0; i < edges; ++i)
         n->admission_seconds[i] = NAN;
     if (!qa_pool_prepare(&n->prediction_results, &n->prediction_storage, 32,
@@ -58,7 +64,7 @@ bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_n
     }
     memset(n->prediction_results.values, 0,
         n->prediction_results.capacity * n->prediction_results.stride);
-    for (size_t i = 0; i < n->prediction_results.capacity; ++i)
+    for (size_t i = 0; !s->traversal_admit && i < n->prediction_results.capacity; ++i)
         if (!qa_movement_result_reserve(qa_pool_at(&n->prediction_results, i), 64, e)) {
             qa_navigation_destroy(n);
             return false;
@@ -94,10 +100,8 @@ void qa_navigation_destroy(qa_navigation *n) {
     qa_arena_destroy(&n->prediction_storage);
     qa_arena_destroy(&n->nearest_storage);
     qa_nav_graph_release(n->graph);
-    free(n->enabled);
-    free(n->blocked);
-    free(n->admission_seconds);
-    free(n);
+    qa_arena storage = n->storage;
+    qa_arena_destroy(&storage);
 }
 static void invalidate(qa_navigation *n, bool topology) {
     ++n->generation;
@@ -216,18 +220,21 @@ bool qa_navigation_block(qa_navigation *n, uint32_t edge, bool blocked, qa_error
     invalidate(n, true);
     return true;
 }
-bool qa_nav_workspace_create(qa_nav_workspace **out, qa_error *e) {
+bool qa_nav_workspace_create(qa_arena *source, qa_nav_workspace **out, qa_error *e) {
     if (out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing navigation workspace output");
         return false;
     }
-    qa_nav_workspace *w = calloc(1, sizeof(*w));
+    qa_arena storage; nav_arena_init(&storage, source);
+    qa_nav_workspace *w = qa_arena_alloc(&storage, sizeof(*w), _Alignof(qa_nav_workspace), e);
     if (w == NULL) {
+        qa_arena_destroy(&storage);
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating navigation workspace");
         return false;
     }
-    if (!qa_aas_query_create(&w->aas, e)) {
-        free(w);
+    memset(w, 0, sizeof(*w)); w->owner_storage = storage;
+    if (!qa_aas_query_create(source, &w->aas, e)) {
+        qa_arena_destroy(&storage);
         return false;
     }
     *out = w;
@@ -238,7 +245,8 @@ void qa_nav_workspace_destroy(qa_nav_workspace *w) {
         return;
     qa_aas_query_destroy(w->aas);
     qa_arena_destroy(&w->storage);
-    free(w);
+    qa_arena storage = w->owner_storage;
+    qa_arena_destroy(&storage);
 }
 qa_nav_workspace_limits qa_nav_workspace_limits_read(const qa_nav_graph_view *graph) {
     const qa_aas_view *aas = graph ? qa_nav_asset_aas(graph->asset) : NULL;
@@ -261,7 +269,7 @@ bool qa_nav_workspace_prepare(qa_nav_workspace *w, qa_nav_workspace_limits limit
     if (edges > (SIZE_MAX - padding) / sizeof(uint32_t) ||
         nodes > (SIZE_MAX - padding - edges * sizeof(uint32_t)) / node_stride)
         goto memory;
-    qa_arena storage = {0};
+    qa_arena storage; nav_arena_init(&storage, &w->owner_storage);
     if (!qa_arena_reserve(&storage, padding + nodes * node_stride +
             edges * sizeof(uint32_t), e))
         return false;
@@ -370,10 +378,31 @@ bool nav_queue_pop(qa_nav_workspace *w, nav_queue_entry *out) {
     *out=w->queue[0];nav_queue_remove(w,out->node);
     return true;
 }
-bool nav_route_point(qa_nav_route *route, qa_vec3 point, qa_error *e) {
-    if (!nav_reserve((void **)&route->points, &route->point_capacity, route->point_count + 1,
-                     sizeof(*route->points), e))
+static bool route_span(qa_nav_route *route, void **data, size_t *capacity,
+    size_t need, size_t stride, size_t alignment, qa_error *e) {
+    if (need <= *capacity) return true;
+    size_t count = *capacity < 64 ? 64 : *capacity;
+    while (count < need && count <= SIZE_MAX / 2) count *= 2;
+    if (count < need || count > SIZE_MAX / stride) {
+        qa_error_set(e, QA_ERROR_MEMORY, need, "Navigation route extent overflow");
         return false;
+    }
+    void *next = qa_arena_grow(&route->storage, *data, *capacity * stride,
+        count * stride, alignment, e);
+    if (!next) return false;
+    *data = next; *capacity = count; return true;
+}
+bool qa_nav_route_reserve(qa_nav_route *route, size_t nodes, size_t edges,
+    size_t points, qa_error *e) {
+    return route_span(route, (void **)&route->nodes, &route->node_capacity,
+               nodes, sizeof(*route->nodes), _Alignof(uint32_t), e) &&
+        route_span(route, (void **)&route->edges, &route->edge_capacity,
+               edges, sizeof(*route->edges), _Alignof(uint32_t), e) &&
+        route_span(route, (void **)&route->points, &route->point_capacity,
+               points, sizeof(*route->points), _Alignof(qa_vec3), e);
+}
+bool nav_route_point(qa_nav_route *route, qa_vec3 point, qa_error *e) {
+    if (!qa_nav_route_reserve(route, 0, 0, route->point_count + 1, e)) return false;
     route->points[route->point_count++] = point;
     return true;
 }
@@ -381,8 +410,6 @@ void qa_nav_route_free(qa_nav_route *r) {
     if (r == NULL)
         return;
     qa_nav_graph_release(r->graph);
-    free(r->nodes);
-    free(r->edges);
-    free(r->points);
+    qa_arena_destroy(&r->storage);
     *r = (qa_nav_route){0};
 }

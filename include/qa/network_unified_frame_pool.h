@@ -2,6 +2,7 @@
 #define QA_NETWORK_UNIFIED_FRAME_POOL_H
 
 #include "qa/common.h"
+#include "qa/arena.h"
 
 typedef struct qa_unified_frame_pool qa_unified_frame_pool;
 typedef struct qa_unified_frame_lease qa_unified_frame_lease;
@@ -22,5 +23,8 @@ size_t qa_unified_frame_lease_used(const qa_unified_frame_lease *);
 void *qa_unified_frame_lease_alloc(qa_unified_frame_lease *, size_t count,
     size_t stride, size_t alignment, qa_error *);
 void *qa_unified_frame_lease_alloc_callback(void *, size_t, size_t, qa_error *);
+/* Child arenas may borrow the same fixed pages. Retain the lease until all
+ * children and their retained objects have released those pages. */
+qa_arena *qa_unified_frame_lease_arena(qa_unified_frame_lease *);
 
 #endif

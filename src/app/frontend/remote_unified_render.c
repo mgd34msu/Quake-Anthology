@@ -3,6 +3,7 @@
 #include "remote_unified_render.h"
 #include "view_settings.h"
 #include "legacy_render_policy.h"
+#include "particle_clock.h"
 #include "remote_unified_material_movies_bridge.h"
 #include "material_movies.h"
 #include "equipment_media.h"
@@ -23,6 +24,9 @@
 
 typedef struct unified_render_model {
     const qa_unified_model_state *source;
+    const qa_recipe_provider *body_source;
+    const qa_unified_producer_sample *body_sample;
+    qa_ruleset_id body_rules;
     frontend_unified_model media;
     qa_scene_model_input input;
     const qa_product *product;
@@ -173,7 +177,7 @@ static bool player_blend_read(frontend_unified_render *r,qa_error *e)
 static bool model_beam_read(unified_render_model *m, qa_error *e)
 {
     m->input.model_beam = m->input.family == QA_GAME_Q2 &&
-        qa_q2_model_beam(qa_product_ruleset(m->product,QA_GAME_Q2),
+        qa_q2_model_beam(m->body_rules,
             m->input.flags, m->media.scene != NULL);
     m->input.beam_segment_length = (float)m->input.frame;
     if (m->flat_beam && m->input.frame > INT32_MAX)
@@ -185,6 +189,22 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
     unified_render_model *m,qa_error *e)
 {
     m->source=source;
+    if (source->body_provider) {
+        const qa_executable_recipe *recipe = frontend_unified_media_recipe(r->media);
+        for (size_t i = 0; i < qa_executable_recipe_provider_count(recipe); ++i) {
+            const qa_recipe_provider *provider = qa_executable_recipe_provider(recipe, i);
+            if (provider->instance_name == source->body_provider) {
+                m->body_source = provider;
+                break;
+            }
+        }
+        const qa_unified_world_frame *world = qa_unified_document_frame(r->frame)->world;
+        for (size_t i = 0; i < world->producer_sample_count; ++i)
+            if (world->producer_samples[i].provider == source->body_provider) {
+                m->body_sample = world->producer_samples + i;
+                break;
+            }
+    }
     m->flat_beam=source->family==QA_GAME_Q2 && (source->visual.render_flags&128u) && source->path && !qa_strings_text(r->replica->strings, source->path).size;
     qa_game_family kind=source->family;
     m->source_client=source->render_source!=NULL;
@@ -219,6 +239,9 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
         (m->flat_beam || frontend_unified_media_model(r->media,source->content,source->path,kind,&images,&m->media,e));
     m->path=qa_strings_cstr(r->replica->strings,source->path);
     if (okay) {
+        m->body_rules = m->body_source ? m->body_source->selection.clock.kind :
+            qa_ruleset_from_family_tag(kind, m->product->edition == QA_EDITION_RERELEASE,
+                qa_product_ruleset(m->product, kind));
         m->input.family=kind; m->input.skin=source->visual.skin<0 && !m->flat_beam?0:(uint32_t)source->visual.skin;
         m->input.flags=source->visual.render_flags;
         m->input.entity=m->actor.slot; m->input.material_library=frontend_unified_model_materials(m->media.scene); m->input.source_path=m->path;
@@ -432,10 +455,25 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
             position=qa_vec_add(position,predicted->origin_shift); previous=qa_vec_add(previous,predicted->origin_shift);
         }
         if (input.view_model && input.family==QA_GAME_Q1) { position.z+=2; previous.z+=2; }
-        qa_vec3 angles = input.view_model ? m->angles : frontend_legacy_entity_angles(
-            qa_ruleset_from_family_tag(input.family, m->product->edition == QA_EDITION_RERELEASE,
-                qa_product_ruleset(m->product, input.family)),
-            m->media.model, m->effects, m->angles, world->seconds, world->milliseconds);
+        qa_vec3 angles = m->angles;
+        if (!input.view_model) {
+            double seconds = m->body_sample ? m->body_sample->seconds : world->seconds;
+            int64_t milliseconds = m->body_sample ? m->body_rules == QA_RULESET_Q3 ?
+                llround(seconds * 1000) : (int64_t)(seconds * 1000) : world->milliseconds;
+            const qa_ruleset_descriptor *descriptor = qa_ruleset_read(m->body_rules);
+            if (descriptor && descriptor->family == QA_GAME_Q2 && (m->effects & 1u) && m->body_source) {
+                bool found;
+                double client_seconds;
+                qa_error optional = {0};
+                if (frontend_particle_q2_client_time(r->frontend, m->body_source->instance_name,
+                    &client_seconds, &found, &optional) && found) {
+                    seconds = client_seconds;
+                    milliseconds = llround(seconds * 1000);
+                }
+            }
+            angles = frontend_legacy_entity_angles(m->body_rules, m->media.model, m->effects,
+                angles, seconds, milliseconds);
+        }
         qa_model_transform_identity(&input.transform); qa_vec3 axes[3]; qa_angle_axis(angles,axes,QA_ANGLE_FLOAT_MATH);
         input.transform.origin[0]=position.x;input.transform.origin[1]=position.y;input.transform.origin[2]=position.z;
         for (unsigned a=0;a<3;++a) { input.transform.axes[a][0]=axes[a].x; input.transform.axes[a][1]=axes[a].y;

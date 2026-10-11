@@ -236,7 +236,7 @@ static bool bot_snapshot_entity(void *context, int32_t client, int32_t sequence,
     if (client < 0 || client >= 64 || sequence < 0)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 bot snapshot entity");
     q3g_client *source = &role->engine->clients[client];
-    const q3g_snapshot *snapshot = &source->snapshots[(uint32_t)source->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)];
+    const qa_q3_snapshot_slot *snapshot = &source->snapshots[(uint32_t)source->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)];
     *out = source->has_snapshot && (size_t)sequence < snapshot->value.entity_count ?
         snapshot->value.entities[sequence].number : -1; return true;
 }

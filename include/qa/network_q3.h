@@ -5,6 +5,7 @@
 #include "qa/game_q3_product.h"
 #include "qa/world.h"
 #include "qa/movement.h"
+#include "qa/arena.h"
 #include <string.h>
 
 #define QA_Q3_PROTOCOL 68
@@ -19,6 +20,7 @@
 #define QA_Q3_COMMAND_CHARS 1024
 #define QA_Q3_PACKET_BACKUP 32
 #define QA_Q3_PARSE_ENTITIES 2048
+#define QA_Q3_SNAPSHOT_ENTITIES 256
 #define QA_Q3_USERCMDS 32
 #define QA_Q3_DOWNLOAD_BYTES 2048
 #define QA_Q3_DOWNLOAD_WINDOW 8
@@ -176,6 +178,19 @@ typedef struct qa_q3_snapshot {
     size_t entity_count;
     const qa_q3_entity *entities;
 } qa_q3_snapshot;
+typedef struct qa_q3_snapshot_slot {
+    qa_q3_snapshot value;
+    qa_q3_entity *entities;
+    /* Capacity is the retained high-water extent used by guest checkpoints;
+     * limit is the fixed physical reservation established at load. */
+    size_t capacity, limit;
+    int32_t ping, sent_time, ack_time;
+    size_t message_size;
+} qa_q3_snapshot_slot;
+bool qa_q3_slots_prepare(qa_arena *, qa_q3_snapshot_slot *, size_t count,
+    size_t entity_limit, qa_q3_product, qa_error *);
+bool qa_q3_slot_store(qa_q3_snapshot_slot *, const qa_q3_snapshot *, qa_error *);
+void qa_q3_slot_clear(qa_q3_snapshot_slot *, qa_q3_product);
 typedef enum qa_q3_snapshot_validity {
     QA_Q3_SNAPSHOT_VALID, QA_Q3_SNAPSHOT_MISSING_DELTA,
     QA_Q3_SNAPSHOT_INVALID_DELTA, QA_Q3_SNAPSHOT_STALE_DELTA,

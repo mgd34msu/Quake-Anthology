@@ -216,9 +216,9 @@ bool q2_monsters_init(qa_q2_game *game, qa_error *error) {
   const qa_actor_registry *registry = qa_session_actors(game->services.session);
   game->monster_runtime->no_actor_trail = SIZE_MAX;
   game->monster_runtime->no_player_alert = SIZE_MAX;
-  if (!qa_actor_index_create(&game->monster_runtime->trail_index, registry, error) ||
-      !qa_actor_index_create(&game->monster_runtime->alert_index, registry, error) ||
-      !qa_actor_index_create(&game->monster_runtime->observer_index, registry, error)) {
+  if (!qa_actor_index_create(&game->monster_runtime->trail_index, registry, NULL, error) ||
+      !qa_actor_index_create(&game->monster_runtime->alert_index, registry, NULL, error) ||
+      !qa_actor_index_create(&game->monster_runtime->observer_index, registry, NULL, error)) {
     q2_monsters_close(game);
     return false;
   }
@@ -404,9 +404,9 @@ bool qa_q2_monsters_restore(qa_q2_game *game,
   }
 
   const qa_actor_registry *registry = qa_session_actors(game->services.session);
-  if (!qa_actor_index_create(&trail_index, registry, error) ||
-      !qa_actor_index_create(&alert_index, registry, error) ||
-      !qa_actor_index_create(&observer_index, registry, error)) goto failure;
+  if (!qa_actor_index_create(&trail_index, registry, NULL, error) ||
+      !qa_actor_index_create(&alert_index, registry, NULL, error) ||
+      !qa_actor_index_create(&observer_index, registry, NULL, error)) goto failure;
 
   qa_actor_id sight_client = {0}, sight_observer = {0};
   if (!q2_resolve_reference(game, saved->sight_client, &sight_client, error) ||

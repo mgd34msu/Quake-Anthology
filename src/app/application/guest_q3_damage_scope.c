@@ -1,11 +1,11 @@
 #include "guest_q3_damage_scope.h"
 #include "guest_q3_private.h"
-#include "qa/pool.h"
+#include "control_frame.h"
 
 typedef struct damage_change { uint32_t address; qa_damage_mutation mutation; } damage_change;
 typedef struct damage_delivery {
     struct damage_delivery *next;
-    size_t storage_slot;
+    qa_unified_frame_lease *storage;
     uint64_t sequence;
     damage_change changes[3];
     size_t count;
@@ -20,7 +20,7 @@ typedef struct reaction_watch {
 struct application_q3_damage_frame {
     struct application_q3_damage_frame *previous, *retained_next;
     struct application_q3_damage_scopes *owner;
-    size_t storage_slot;
+    qa_unified_frame_lease *storage;
     application_q3_combat_actor source;
     qa_qvm_call call;
     const qa_damage_request *request;
@@ -38,8 +38,7 @@ struct application_q3_damage_scopes {
     q3g_role *role;
     const application_q3_combat_profile *profile;
     application_q3_damage_frame *current, *retained;
-    qa_pool frames, deliveries;
-    qa_arena frame_storage, delivery_storage;
+    size_t frame_bytes;
 };
 static bool fail(qa_error *error, qa_status status, const char *text)
 { return application_fail(error, status, text); }
@@ -165,10 +164,13 @@ static bool store_publish(void *context, qa_qvm *vm,
                 .value.velocity = {before, frame->velocity, frame->request->attack.movement_provider}}};
     }
     if (report && count) {
-        size_t slot;
-        damage_delivery *delivery = qa_pool_take(&frame->owner->deliveries, &slot);
-        if (!delivery) return fail(error, QA_ERROR_MEMORY, "Retaining original Q3 committed damage stores");
-        *delivery = (damage_delivery){.storage_slot = slot, .sequence = event->sequence};
+        qa_unified_frame_lease *storage = application_control_storage_acquire(
+            frame->owner->role->engine->provider->application, error);
+        if (!storage) return false;
+        damage_delivery *delivery = qa_unified_frame_lease_alloc(storage, 1,
+            sizeof(*delivery), _Alignof(damage_delivery), error);
+        if (!delivery) { qa_unified_frame_lease_release(storage); return false; }
+        delivery->storage = storage; delivery->sequence = event->sequence;
         for (size_t i = 1; i < count; ++i) {
             damage_change value = changes[i]; size_t j = i;
             while (j && changes[j - 1].address > value.address) { changes[j] = changes[j - 1]; --j; }
@@ -189,7 +191,7 @@ static bool store_after(void *context, qa_qvm *vm,
     while (*link && (*link)->sequence != event->sequence) link = &(*link)->next;
     if (!*link) return true;
     damage_delivery delivery = **link; damage_delivery *owned = *link;
-    *link = owned->next; qa_pool_release(&frame->owner->deliveries, owned->storage_slot);
+    *link = owned->next; qa_unified_frame_lease_release(owned->storage);
     for (size_t i = 0; i < delivery.count; ++i) {
         bool report;
         if (!reporting(frame, &report, error)) return false;
@@ -212,7 +214,7 @@ static void store_dispose(void *context, const qa_qvm_committed_write *event)
     if (!*link) return;
     damage_delivery *delivery = *link;
     *link = delivery->next;
-    qa_pool_release(&frame->owner->deliveries, delivery->storage_slot);
+    qa_unified_frame_lease_release(delivery->storage);
 }
 static bool frame_close(application_q3_damage_frame *frame, qa_error *error)
 {
@@ -234,14 +236,13 @@ static void frame_free(application_q3_damage_frame *frame)
 {
     while (frame->deliveries) {
         damage_delivery *next = frame->deliveries->next;
-        qa_pool_release(&frame->owner->deliveries, frame->deliveries->storage_slot);
+        qa_unified_frame_lease_release(frame->deliveries->storage);
         frame->deliveries = next;
     }
-    qa_pool_release(&frame->owner->frames, frame->storage_slot);
+    qa_unified_frame_lease_release(frame->storage);
 }
 bool application_q3_damage_scopes_create(q3g_role *role,
-    const application_q3_combat_profile *profile, size_t entered_capacity,
-    application_q3_damage_scopes **out, qa_error *error)
+    const application_q3_combat_profile *profile, application_q3_damage_scopes **out, qa_error *error)
 {
     if (!role || !profile || !out || *out || !role->vm || role->kind != QA_QVM_GAME ||
         role->image != application_q3_combat_profile_image(profile) || role->abi != application_q3_combat_profile_abi(profile))
@@ -256,14 +257,7 @@ bool application_q3_damage_scopes_create(q3g_role *role,
         return fail(error, QA_ERROR_MEMORY, "Original Q3 damage frame storage size overflow");
     }
     size_t ranges = 6 + definition->armor.mode_count;
-    if (!qa_pool_reserve_pages(&owner->frames, &owner->frame_storage, entered_capacity,
-            sizeof(application_q3_damage_frame) + ranges * sizeof(qa_qvm_write_range),
-            _Alignof(application_q3_damage_frame), error) ||
-        !qa_pool_reserve_pages(&owner->deliveries, &owner->delivery_storage, entered_capacity,
-            sizeof(damage_delivery), _Alignof(damage_delivery), error)) {
-        qa_arena_destroy(&owner->frame_storage); qa_arena_destroy(&owner->delivery_storage);
-        free(owner); return false;
-    }
+    owner->frame_bytes = sizeof(application_q3_damage_frame) + ranges * sizeof(qa_qvm_write_range);
     owner->role = role; owner->profile = profile; *out = owner; return true;
 }
 bool application_q3_damage_scopes_idle(const application_q3_damage_scopes *owner)
@@ -280,7 +274,6 @@ bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **out, qa
         if (!frame_close(frame, error)) return false;
         owner->retained = frame->retained_next; frame_free(frame);
     }
-    qa_arena_destroy(&owner->frame_storage); qa_arena_destroy(&owner->delivery_storage);
     free(owner); *out = NULL; return true;
 }
 bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
@@ -300,10 +293,13 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
     bool live;
     if (!application_q3_combat_actor_live(source, &live, error)) return false;
     if (!live) { *out = (qa_damage_result){0}; return true; }
-    size_t storage_slot;
-    application_q3_damage_frame *frame = qa_pool_take(&owner->frames, &storage_slot);
-    if (!frame) return fail(error, QA_ERROR_MEMORY, "Retaining original Q3 entered damage frame");
-    *frame = (application_q3_damage_frame){.storage_slot = storage_slot};
+    qa_unified_frame_lease *storage = application_control_storage_acquire(
+        owner->role->engine->provider->application, error);
+    if (!storage) return false;
+    application_q3_damage_frame *frame = qa_unified_frame_lease_alloc(storage, 1,
+        owner->frame_bytes, _Alignof(application_q3_damage_frame), error);
+    if (!frame) { qa_unified_frame_lease_release(storage); return false; }
+    frame->storage = storage;
     frame->owner = owner; frame->source = *source; frame->call = *call;
     frame->request = request; frame->observer = observer; frame->active = true;
     frame->previous = owner->current; owner->current = frame;

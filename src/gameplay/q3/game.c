@@ -269,7 +269,7 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
         return false;
     }
     if (!qa_actor_index_create(&game->foreign_clients,
-            qa_session_actors(options->services.session), error)) goto fail;
+            qa_session_actors(options->services.session), NULL, error)) goto fail;
     if (!qa_actor_index_reverse_reserve(&game->foreign_clients,
             QA_Q3_SOURCE_ENTITIES, error)) goto fail;
     if (!qa_targets_bind_field_keys(qa_session_strings(options->services.session), game->field_keys, error))

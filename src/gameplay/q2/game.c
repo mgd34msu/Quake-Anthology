@@ -4,7 +4,7 @@
 #include "entities/internal.h"
 #include "monsters/internal.h"
 
-bool q2_actor_live(qa_q2_game *g, qa_actor_id id) {
+bool q2_actor_live(const qa_q2_game *g, qa_actor_id id) {
     return qa_actors_get(qa_session_actors(g->services.session), id) != NULL;
 }
 qa_actor_id qa_q2_current_actor(const qa_q2_game *g) {

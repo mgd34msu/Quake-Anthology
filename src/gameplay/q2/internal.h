@@ -615,7 +615,7 @@ qa_actor_id q2_wire_actor_at(const qa_q2_game *, uint32_t);
 void q2_wire_release(qa_q2_game *, q2_actor *, qa_actor_record);
 bool q2_wire_names_prepare(qa_q2_game *,qa_error *);
 void q2_wire_reset(qa_q2_game *);
-bool q2_actor_live(qa_q2_game *, qa_actor_id);
+bool q2_actor_live(const qa_q2_game *, qa_actor_id);
 enum q2_environment_flags {
     Q2_ENV_IN_WATER = 8u, Q2_ENV_IMMUNE_SLIME = 64u, Q2_ENV_IMMUNE_LAVA = 128u
 };

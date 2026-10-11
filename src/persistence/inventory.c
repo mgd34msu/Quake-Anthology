@@ -169,9 +169,10 @@ static bool store_fields(qa_source_save_io *io, qa_inventory *table, inventory_s
         !qa_source_save_u64(io, &store->revision) || !qa_source_save_bool(io, &store->local) ||
         !qa_source_save_count(io, &store->count, SIZE_MAX / sizeof(*store->entries))) return false;
     if (reading) {
-        store->entries = store->count ? calloc(store->count, sizeof(*store->entries)) : NULL;
-        if (store->count && !store->entries) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Allocating native inventory counts"); return false; }
-        store->capacity = store->count; store->references = 1; store->attached = true;
+        size_t count = store->count;
+        store->count = 0;
+        if (!qa_inventory_store_reserve_entries(table, store, count, io->error)) return false;
+        store->count = count; store->references = 1; store->attached = true;
     }
     for (size_t i = 0; i < store->count; ++i) {
         if (!entry_fields(io, store->entries + i)) return false;
@@ -277,7 +278,7 @@ bool qa_persistence_inventory_restore(qa_session *session, qa_inventory *table,
         previous = store->actor.slot; scratch->stores[store->actor.slot] = store;
         io.offset = record_offset;
         qa_inventory_hold(table);
-        ok = store_fields(&io, table, store, resolve);
+        ok = store_fields(&io, scratch, store, resolve);
         qa_inventory_unhold(table);
         if (ok) ok = persistence_serial_append(&serials, &serial_count, &serial_capacity, store->serial, scratch->serial, error);
         for (item_group *group = store->groups; ok && group; group = group->next)

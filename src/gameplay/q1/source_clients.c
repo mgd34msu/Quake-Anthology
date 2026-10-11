@@ -10,12 +10,19 @@ static const q1_player *client_const(const qa_q1_game *game,qa_actor_id actor) {
     if(!qa_q1_player_source_present(game,actor)) return NULL;
     const q1_player *player=game->players[actor.slot];return player->source_client?player:NULL;
 }
+static qa_string_id info_id(const q1_player *player,qa_string_id key) {
+    if(!key) return QA_STRING_NONE;
+    for(size_t i=0;i<player->source_info_count;++i)
+        if(player->source_info[i].key==key) return player->source_info[i].value;
+    return QA_STRING_NONE;
+}
+static const char *info_named(const qa_q1_game *game,const q1_player *player,qa_string_id key) {
+    qa_string_id value=info_id(player,key);
+    return value?qa_strings_cstr(qa_session_strings(game->services.session),value):NULL;
+}
 static const char *info(const qa_q1_game *game,const q1_player *player,const char *key) {
     qa_strings *strings=qa_session_strings(game->services.session);
-    for(size_t i=0;i<player->source_info_count;++i)
-        if(!strcmp(qa_strings_cstr(strings,player->source_info[i].key),key))
-            return qa_strings_cstr(strings,player->source_info[i].value);
-    return NULL;
+    return info_named(game,player,qa_strings_find(strings,(qa_bytes){(const uint8_t *)key,strlen(key)}));
 }
 static uint8_t color(const char *text) {
     if (!text) return 0;
@@ -29,10 +36,15 @@ bool qa_q1_source_client_info(const qa_q1_game *game,qa_actor_id actor,const cha
 }
 bool qa_q1_source_client_read(const qa_q1_game *game,qa_actor_id actor,qa_q1_source_client_view *out) {
     const q1_player *player=client_const(game,actor);if(!player || !out) return false;
-    const char *name=info(game,player,"name");
-    *out=(qa_q1_source_client_view){.actor=actor,.slot=player->client_slot,.name=name && *name?name:"unconnected",
-        .frags=player->source_frags,.team=player->source_team,.shirt=color(info(game,player,"topcolor")),
-        .pants=color(info(game,player,"bottomcolor")),.observer=player->source_observer,
+    qa_string_id name_id=info_id(player,game->runtime_names[Q1_NAME_USERINFO_NAME]);
+    const char *name=name_id?qa_strings_cstr(qa_session_strings(game->services.session),name_id):NULL;
+    if(!name || !*name) {
+        name_id=game->runtime_names[Q1_NAME_USERINFO_UNCONNECTED];
+        name=qa_strings_cstr(qa_session_strings(game->services.session),name_id);
+    }
+    *out=(qa_q1_source_client_view){.actor=actor,.slot=player->client_slot,.name=name,.name_id=name_id,
+        .frags=player->source_frags,.team=player->source_team,.shirt=color(info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_TOPCOLOR])),
+        .pants=color(info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_BOTTOMCOLOR])),.observer=player->source_observer,
         .spectator_goal=q1_ref_actor(game, player->source_spectator_goal),
         .spectator_track=q1_ref_actor(game, player->source_spectator_track),
         .spectator_goal_ordinal=q1_ref_ordinal(player->source_spectator_goal),
@@ -90,7 +102,7 @@ static bool apply(qa_q1_game *game,q1_player *player,qa_error *error) {
     combat.team=team;
     if(!qa_combat_set_traits(game->services.combat,player->id,&combat,error)) return false;
     if(!q1_alive(game,player->id)) return true;
-    const char *automatic=info(game,player,"qts_weapon_autoswitch");
+    const char *automatic=info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_AUTOSWITCH]);
     if(automatic) player->auto_switch=!strcmp(automatic,"new")?QA_Q1_SWITCH_NEW:
         !strcmp(automatic,"never")?QA_Q1_SWITCH_NEVER:QA_Q1_SWITCH_ALWAYS;
     return true;
@@ -101,7 +113,7 @@ static bool userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,const c
     if(!text || !qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
     if(!player) {qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 source userinfo client is absent");goto finish;}
-    uint8_t previous=color(info(game,player,"bottomcolor"));
+    uint8_t previous=color(info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_BOTTOMCOLOR]));
     q1_source_client_clear(player);
     const char *cursor=strchr(text,'\\');
     qa_strings *strings=qa_session_strings(game->services.session);
@@ -121,8 +133,9 @@ static bool userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,const c
         }
         player->source_info[index]=(q1_source_info){key_id,value_id};cursor=next;
     }
-    if(name && !info(game,player,"name") && !info_set(game,player,"name",name,error)) goto finish;
-    if(color(info(game,player,"bottomcolor"))!=previous) player->source_team=(float)color(info(game,player,"bottomcolor"))+1;
+    if(name && !info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_NAME]) && !info_set(game,player,"name",name,error)) goto finish;
+    uint8_t current=color(info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_BOTTOMCOLOR]));
+    if(current!=previous) player->source_team=(float)current+1;
     okay=apply(game,player,error) && (!q1_alive(game,actor) || publish(game,player,error));
 finish:
     qa_q1_game_operation_end(&operation);return okay;

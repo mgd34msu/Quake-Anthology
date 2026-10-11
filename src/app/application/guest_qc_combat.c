@@ -297,7 +297,8 @@ static combat_actor *actor_create(application_qc_combat *owner,qa_actor_id id,ui
     if(!actor){application_fail(error,QA_ERROR_MEMORY,"Owning QC combat callback context");return NULL;}
     *actor=(combat_actor){.next=owner->actors,.owner=owner,.actor=id,.slot=physical,
         .reference=reference};
-    if(actor->next)actor->next->previous=actor;owner->actors=actor;
+    if(actor->next)actor->next->previous=actor;
+    owner->actors=actor;
     qa_actor_index_put(&owner->index,id,(size_t)(uintptr_t)actor);return actor;
 }
 static void actor_retire(combat_actor *actor)
@@ -465,7 +466,7 @@ bool application_qc_combat_create(struct application_qc_state *engine, qa_error 
     engine->combat = calloc(1, sizeof(*engine->combat));
     if (!engine->combat) return application_fail(error, QA_ERROR_MEMORY, "Owning QC combat callback contexts");
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
-    if (!qa_actor_index_create(&engine->combat->index,registry,error)) {
+    if (!qa_actor_index_create(&engine->combat->index,registry,NULL,error)) {
         free(engine->combat); engine->combat = NULL;
         return false;
     }

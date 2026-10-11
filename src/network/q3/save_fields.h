@@ -209,17 +209,11 @@ static inline bool q3_restore_snapshot(qa_net_reader *r, qa_q3_snapshot_slot *sl
     if (v->area_bytes > 32) return qa_net_reader_fail(r, "Invalid Q3 checkpoint area mask extent");
     if (!qa_net_read_data(r, v->area_mask, 32) || !q3_restore_player(r, &v->player, product)) return false;
     v->entity_count = qa_net_read_u32(r);
-    if (v->entity_count > SIZE_MAX / sizeof(*slot->entities) ||
+    if (v->entity_count > slot->limit ||
         r->bytes.size > SIZE_MAX / 8 || r->bit > r->bytes.size * 8 ||
         v->entity_count > (r->bytes.size - r->bit / 8) / Q3_SAVE_ENTITY_BYTES)
         return qa_net_reader_fail(r, "Invalid Q3 checkpoint entity count");
-    if (v->entity_count) {
-        slot->entities = calloc(v->entity_count, sizeof(*slot->entities));
-        if (!slot->entities) {
-            qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Restoring Q3 snapshot entity history"); r->failed = true; return false;
-        }
-        slot->capacity = v->entity_count;
-    }
+    slot->capacity = v->entity_count;
     v->entities = slot->entities;
     for (size_t i = 0; i < v->entity_count; ++i) {
         if (!q3_restore_entity(r, &slot->entities[i])) return false;

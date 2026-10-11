@@ -199,8 +199,8 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing native source attack producer");
     engine->source_attack = p; p->engine = engine;
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
-    if (!qa_actor_index_create(&p->factor_index, registry, error) ||
-        !qa_actor_index_create(&p->projectile_index, registry, error) ||
+    if (!qa_actor_index_create(&p->factor_index, registry, NULL, error) ||
+        !qa_actor_index_create(&p->projectile_index, registry, NULL, error) ||
         !qa_pool_reserve_pages(&p->projectile_pool, &p->projectile_storage,
             qa_actors_capacity(registry), sizeof(attack_projectile), _Alignof(attack_projectile), error)) return false;
     if (!qa_json_parse(qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
@@ -371,15 +371,6 @@ static bool factor_entry(void *opaque, qa_native_instance *native, qa_native_ent
     }
     --factor->calls; factor_reclaim(p, factor); (void)native; return ok;
 }
-static bool forget_address(struct application_native_q2_attack *p, qa_native_address address,
-    qa_error *error)
-{
-    qa_actor_id actor;
-    if (!qa_native_host_source_actor(p->engine->provider->state.native.host, address, false, &actor, error)) return false;
-    attack_projectile *lease = projectile_for(p, actor);
-    if (lease) projectile_release(p, lease);
-    return true;
-}
 static bool spawn_entry(void *opaque, qa_native_instance *native, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
@@ -392,8 +383,7 @@ static bool spawn_entry(void *opaque, qa_native_instance *native, qa_native_entr
         ok=application_fail(error,QA_ERROR_FORMAT,"Original native G_Spawn returned no source entity");
     qa_actor_id actor={0};
     if(ok) {
-        ok=forget_address(p,result->as.address,error)&&
-            qa_native_host_source_birth(p->engine->provider->state.native.host,result->as.address,&actor,error);
+        ok=qa_native_host_source_birth(p->engine->provider->state.native.host,result->as.address,&actor,error);
     }
     if(ok&&!actor.registry)
         ok=application_fail(error,QA_ERROR_NOT_FOUND,"Original allocation did not publish its actual Source actor");
@@ -424,8 +414,7 @@ static bool free_entry(void *opaque, qa_native_instance *native, qa_native_entry
     --p->engine->calls;
     if (!ok) return false;
     (void)native;
-    return forget_address(p, arguments[0].as.address, error) &&
-        qa_native_host_source_reconcile(p->engine->provider->state.native.host, error);
+    return qa_native_host_source_reconcile(p->engine->provider->state.native.host, error);
 }
 bool application_native_q2_attack_activate(struct application_native_q2 *engine, qa_error *error)
 {
@@ -738,8 +727,8 @@ bool application_native_q2_attack_restore_prepare(struct application_native_q2 *
     if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Preparing native attack continuation");
     qa_source_save_io io = {0};
     const qa_actor_registry *registry = qa_session_actors(engine->provider->application->session);
-    bool ok = qa_actor_index_create(&prepared->factor_index, registry, error) &&
-        qa_actor_index_create(&prepared->projectile_index, registry, error) &&
+    bool ok = qa_actor_index_create(&prepared->factor_index, registry, NULL, error) &&
+        qa_actor_index_create(&prepared->projectile_index, registry, NULL, error) &&
         qa_pool_reserve_pages(&prepared->projectile_pool, &prepared->projectile_storage,
             qa_actors_capacity(registry), sizeof(attack_projectile), _Alignof(attack_projectile), error) &&
         qa_source_save_reader(&io, engine->provider->application->session, bytes, error);

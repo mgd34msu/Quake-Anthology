@@ -473,6 +473,7 @@ static const qa_unified_record_layout entity_visual_layout = QA_UNIFIED_LAYOUT(q
 static const qa_unified_field qa_unified_model_state_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_model_state, actor, qa_unified_actor_layout),
     QA_UNIFIED_FIELD(qa_unified_model_state, family, QA_UNIFIED_FIELD_I32),
+    QA_UNIFIED_FIELD(qa_unified_model_state, body_provider, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_RECORD(qa_unified_model_state, visual, entity_visual_layout),
     QA_UNIFIED_FIELD(qa_unified_model_state, content, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_model_state, path, QA_UNIFIED_FIELD_NAME),
@@ -873,9 +874,16 @@ static const qa_unified_field qa_clock_config_fields[] = {
 };
 static const qa_unified_record_layout qa_clock_config_layout = QA_UNIFIED_LAYOUT(qa_clock_config, qa_clock_config_fields);
 
+static const qa_unified_field qa_unified_producer_sample_fields[] = {
+    QA_UNIFIED_FIELD(qa_unified_producer_sample, provider, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_producer_sample, seconds, QA_UNIFIED_FIELD_F64),
+};
+static const qa_unified_record_layout qa_unified_producer_sample_layout = QA_UNIFIED_LAYOUT(qa_unified_producer_sample, qa_unified_producer_sample_fields);
+
 static const qa_unified_field qa_unified_world_frame_fields[] = {
     QA_UNIFIED_RECORD(qa_unified_world_frame, source, qa_source_frame_layout),
     QA_UNIFIED_FIELD(qa_unified_world_frame, presentation_seconds, QA_UNIFIED_FIELD_F64),
+    QA_UNIFIED_ARRAY(qa_unified_world_frame, producer_samples, producer_sample_count, qa_unified_producer_sample_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_world_frame, collisions, collision_count, qa_spatial_actor_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_world_frame, actors, actor_count, qa_unified_actor_state_layout, 65536),
     QA_UNIFIED_ARRAY(qa_unified_world_frame, bodies, body_count, qa_unified_body_state_layout, 65536),

@@ -20,11 +20,10 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 map entry overlaps a source query");
             return false;
         }
-    for (q2_player_list *list = game->player_runtime->lists; list; list = list->next)
-        if (list->active) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 map entry overlaps a player query");
-            return false;
-        }
+    if (game->player_runtime->active_lists) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 map entry overlaps a player query");
+        return false;
+    }
     qa_strings *strings = qa_session_strings(game->services.session);
     const char *map = qa_strings_cstr(strings, map_name);
     const char *spot = spawn_point ? qa_strings_cstr(strings, spawn_point) : "";
@@ -67,13 +66,13 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
     qa_q2_player_services services = players->services;
     char *owned[5];
     memcpy(owned, players->rule_strings, sizeof(owned));
-    q2_player_list *lists = players->lists;
+    qa_arena scratch_storage = players->scratch_storage;
+    qa_pool scratch_pages = players->scratch_pages;
     qa_string_id *rotation_maps = players->rotation_maps;
     *players = (q2_players){.rules = rules, .services = services,
-                            .rotation_maps = rotation_maps, .lists = lists};
+                            .rotation_maps = rotation_maps, .scratch_storage = scratch_storage,
+                            .scratch_pages = scratch_pages};
     memcpy(players->rule_strings, owned, sizeof(owned));
-    for (q2_player_list *list = lists; list; list = list->next)
-        list->count = 0;
     q2_entities *entities = game->entity_runtime;
     q2_entities previous_entities = *entities;
     *entities = (q2_entities){.services = entities->services,

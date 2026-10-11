@@ -283,12 +283,13 @@ bool application_unified_server_restore_dispose(application_unified_server **slo
     application_unified_server *owner = *slot;
     if (!owner->restore_pending || owner->session || owner->entered)
         return application_fail(e, QA_ERROR_ARGUMENT, "Quiet import cleanup requires its never-published Source owner");
+    if (!application_unified_inputs_destroy(owner->inputs, e)) return false;
+    owner->inputs = NULL;
     const qa_net_client *peer = qa_net_connections_get(qa_network_connections(owner->runtime), owner->client);
     if (peer && peer->attachment == QA_NET_LOCAL_SEAT &&
         !application_players_connection_disconnect(owner->application, owner->client, owner->seat, e)) return false;
     owner->bound = owner->player_attached = owner->admitted = false;
     owner->closed = true;
-    if (owner->inputs && !owner->inputs->commands) owner->inputs->count = owner->inputs->cursor = 0;
     if (!application_unified_server_destroy(owner, e)) return false;
     *slot = NULL; return true;
 }

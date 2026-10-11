@@ -100,6 +100,8 @@ void qa_unified_frame_lease_release(qa_unified_frame_lease *lease)
 
 size_t qa_unified_frame_lease_used(const qa_unified_frame_lease *lease)
 { return lease?lease->used:0; }
+qa_arena *qa_unified_frame_lease_arena(qa_unified_frame_lease *lease)
+{ return &lease->arena; }
 
 void *qa_unified_frame_lease_alloc_callback(void *lease,size_t bytes,size_t alignment,
     qa_error *error)

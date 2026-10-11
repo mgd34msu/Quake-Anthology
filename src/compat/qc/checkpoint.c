@@ -347,6 +347,10 @@ static bool stage_strings(const qa_qc_instance *instance,
         }
         out->engine_count = i + 1u;
     }
+    if (!qc_strings_bind_identities(out, instance->strings.identities,
+                                    instance->program->string_bytes, error)) {
+        qc_strings_destroy(out); return false;
+    }
     return true;
 }
 
@@ -486,6 +490,12 @@ bool qa_qc_checkpoint_restore(qa_qc_instance *instance,
     instance->entity_count = checkpoint->entity_count;
     qc_actor_slots_rebuild(instance);
     instance->random_state = checkpoint->random_state;
+    for (uint32_t slot = 0; slot < instance->entity_count; ++slot)
+        if (!qc_prepare_string_fields(instance, slot, 0,
+                                       instance->layout.field_words, error)) {
+            instance->checkpointing = false;
+            return false;
+        }
     /* Coupled adapters rebuild from the restored guest image. This order also
      * matches the QVM/QuakeC continuation contract. A callback failure leaves
      * the committed guest image visible and is a failed load boundary. */
