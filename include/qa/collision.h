@@ -139,7 +139,17 @@ bool qa_collision_trace_q3_model(const qa_collision_geometry *, qa_trace_scratch
 bool qa_collision_trace_q3_box(const qa_trace_query *, qa_bounds, bool transformed,
                                qa_trace_result *, qa_error *);
 bool qa_collision_point_contents(const qa_collision_geometry *, qa_trace_scratch *, const qa_point_query *, qa_point_contents *, qa_error *);
-typedef enum qa_leaf_query_rule { QA_LEAF_COLLISION, QA_LEAF_Q1 } qa_leaf_query_rule;
+typedef enum qa_leaf_query_rule { QA_LEAF_COLLISION, QA_LEAF_Q1, QA_LEAF_RENDER } qa_leaf_query_rule;
+typedef enum qa_leaf_visit { QA_LEAF_CONTINUE, QA_LEAF_STOP, QA_LEAF_FAILED } qa_leaf_visit;
+typedef qa_leaf_visit (*qa_leaf_visit_fn)(void *, const qa_collision_leaf *, qa_error *);
+typedef enum qa_collision_box_rule { QA_BOX_CENTRE, QA_BOX_CORNERS, QA_BOX_AXIAL } qa_collision_box_rule;
+unsigned qa_collision_box_plane_side(qa_bounds, const qa_collision_plane *, qa_collision_box_rule);
+bool qa_collision_walk_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds,
+    qa_leaf_query_rule, qa_leaf_visit_fn, void *, qa_leaf_list *, qa_error *);
+typedef qa_leaf_visit (*qa_collision_segment_visit_fn)(void *, uint32_t node, qa_vec3 middle, qa_error *);
+/* Invokes the node callback after the near subtree, before the far subtree. */
+bool qa_collision_walk_segment(const qa_collision_geometry *, qa_trace_scratch *, int32_t root,
+    qa_vec3 start, qa_vec3 end, qa_collision_segment_visit_fn, void *, qa_error *);
 /* Mod_PointInLeaf starts node0 and uses float d > 0; collision keeps the
  * authored world root and ties front. */
 bool qa_collision_point_leaf(const qa_collision_geometry *, qa_vec3, qa_leaf_query_rule, qa_collision_leaf *, qa_error *);
@@ -150,6 +160,13 @@ bool qa_collision_cluster_visible(const qa_collision_geometry *, int32_t from, i
 bool qa_collision_clusters_visible(const qa_collision_geometry *, qa_trace_scratch *,
     const int32_t *from, size_t from_count, qa_bytes targets, bool phs, bool *, qa_error *);
 uint32_t qa_collision_cluster_count(const qa_collision_geometry *);
+size_t qa_collision_visibility_bytes(const qa_collision_geometry *);
+/* Q1 selector is a leaf; Q2/Q3 selector is a cluster. NULL data means
+ * unrestricted visibility. Non-NULL bytes borrow the admitted geometry. */
+bool qa_collision_visibility_row(const qa_collision_geometry *, int32_t selector,
+    bool phs, qa_bytes *, qa_error *);
+bool qa_collision_subtree_visible(const qa_collision_geometry *, qa_trace_scratch *, int32_t root,
+    const int32_t *from, size_t from_count, bool phs, bool *, qa_error *);
 /* Original Q1 fat-PVS unions source leaf rows within signed plane distance 8.
  * Query the exact output extent first; no other-family visibility is implied.
  * The resulting caller-owned row can serve every entity in one source frame. */

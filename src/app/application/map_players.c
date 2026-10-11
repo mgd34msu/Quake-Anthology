@@ -2353,25 +2353,12 @@ static bool q1_spawn_overlap(qa_application *app, application_provider *source,
         !q1_player_current(app, source, character, arsenal, actor, begun, &ordinal, error) ||
         !qa_world_body_read(app->world, death, &body, error)) return false;
     qa_bounds bounds = qa_bounds_translate(body.bounds, body.origin);
-    size_t count = qa_actors_count(qa_session_actors(app->session));
-    if (count > SIZE_MAX / sizeof(qa_actor_id))
-        return application_fail(error, QA_ERROR_MEMORY, "Q1 spawn observations exceed memory extent");
-    qa_actor_id *targets = count ? malloc(count * sizeof(*targets)) : NULL;
-    if (count && !targets)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q1 spawn observations");
-    uint32_t cursor = 0;
-    const qa_actor_record *target_record;
-    size_t written = 0;
-    while (qa_actors_next(qa_session_actors(app->session), &cursor, &target_record)) {
-        if (written == count) {
-            free(targets);
-            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 spawn observation extent changed");
-        }
-        targets[written++] = target_record->id;
-    }
+    qa_world_actor_snapshot targets;
+    if (!qa_world_snapshot_capture(app->world, bounds, QA_COLLISION_BOTH,
+                                  QA_WORLD_ORDER_ACTOR_SLOT, &targets, error)) return false;
     bool okay = true;
-    for (size_t i = 0; okay && i < written; ++i) {
-        qa_actor_id target = targets[i];
+    for (size_t i = 0; okay && i < targets.count; ++i) {
+        qa_actor_id target = targets.actors[i];
         if (qa_actor_id_equal(actor, target)) continue;
         qa_combat_state target_traits;
         qa_error target_error = {0};
@@ -2396,7 +2383,7 @@ static bool q1_spawn_overlap(qa_application *app, application_provider *source,
             &(qa_touch_contact){.self = death, .other = target}, error);
         if (okay) okay = q1_player_current(app, source, character, arsenal, actor, begun, &ordinal, error);
     }
-    free(targets);
+    qa_world_snapshot_release(&targets);
     return okay;
 }
 

@@ -237,6 +237,8 @@ static bool load_surface(qa_scene_world *world, q3_data *data, const qa_bsp_mate
         qa_error_set(error, QA_ERROR_FORMAT, index, "Q3 surface shader is outside its material table"); return false;
     }
     const qa_bsp_shader *shader = materials->shaders + materials->surfaces[index];
+    surface->source_flags = (uint32_t)shader->surface_flags;
+    surface->source_contents = (uint32_t)shader->content_flags;
     surface->skip = source.type == QA_BSP_SURFACE_PATCH && ((uint32_t)shader->surface_flags & 0x80u) != 0;
     surface->flare = source.type == QA_BSP_SURFACE_FLARE;
     int32_t lightmap = source.type == QA_BSP_SURFACE_PLANAR || source.type == QA_BSP_SURFACE_PATCH ? source.lightmap : -3;

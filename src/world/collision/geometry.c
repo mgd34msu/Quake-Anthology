@@ -7,11 +7,17 @@
 #include <stdlib.h>
 
 typedef struct geometry_portal { uint32_t contributions; bool known, primary; } geometry_portal;
+typedef struct geometry_segment_frame {
+    uint32_t node;
+    int32_t far_child;
+    qa_vec3 middle, end;
+} geometry_segment_frame;
 struct qa_trace_scratch {
     const qa_collision_geometry *geometry;
     const qa_collision_ops *ops;
     void *kernel;
     int32_t *nodes;
+    geometry_segment_frame *segments;
     qa_stamp_set leaves;
     uint8_t *visibility_pending;
     size_t visibility_capacity;
@@ -31,9 +37,10 @@ struct qa_collision_geometry {
     int32_t root;
 
     uint32_t cluster_count;
-    size_t visibility_bytes, visibility_slots;
+    size_t visibility_bytes, visibility_slots, visibility_stride;
     uint8_t **pvs, **phs;
     uint8_t *pvs_rows, *phs_rows;
+    uint8_t *visibility_missing;
 
     uint32_t area_count;
     uint32_t *flood, *area_stack, *area_pairs;
@@ -81,6 +88,8 @@ bool qa_trace_scratch_create(const qa_collision_geometry *geometry,
     if(scratch->visibility_capacity && !scratch->visibility_pending) goto failed;
     scratch->nodes = geometry_array(geometry->node_count + 1, sizeof(*scratch->nodes), error);
     if (!scratch->nodes) goto failed;
+    scratch->segments = geometry_array(geometry->node_count + 1, sizeof(*scratch->segments), error);
+    if (!scratch->segments) goto failed;
     size_t leaves = geometry->family == QA_GAME_Q1 ? geometry->leaf_count : 0;
     uint32_t *marks = geometry_array(leaves, sizeof(*marks), error);
     if (leaves && !marks) goto failed;
@@ -100,6 +109,7 @@ void qa_trace_scratch_destroy(qa_trace_scratch *scratch)
     if (scratch->kernel) scratch->ops->destroy_scratch(scratch->kernel);
     free(scratch->visibility_pending);
     free(scratch->nodes);
+    free(scratch->segments);
     free(scratch->leaves.marks);
     free(scratch);
 }
@@ -163,6 +173,7 @@ void qa_collision_destroy(qa_collision_geometry *geometry)
     free(geometry->phs_rows);
     free(geometry->pvs);
     free(geometry->phs);
+    free(geometry->visibility_missing);
     free(geometry->planes);
     free(geometry->nodes);
     free(geometry->leaves);
@@ -275,6 +286,16 @@ static bool load_topology(qa_collision_geometry *geometry, qa_error *error)
         geometry->visibility_bytes = bit_bytes(geometry->cluster_count);
     }
     geometry->visibility_slots = geometry->family == QA_GAME_Q1 ? geometry->leaf_count : geometry->cluster_count;
+    geometry->visibility_stride = geometry->family == QA_GAME_Q3 && vis.size ?
+        qa_load_u32le(vis.data + 4) : geometry->visibility_bytes;
+    if (geometry->family == QA_GAME_Q2 && vis.size && geometry->visibility_slots) {
+        geometry->visibility_missing = geometry_array(geometry->visibility_slots, 1, error);
+        if (!geometry->visibility_missing) return false;
+        for (size_t i = 0; i < geometry->visibility_slots; ++i)
+            geometry->visibility_missing[i] =
+                (qa_load_i32le(vis.data + 4 + i * 8) < 0 ? 1u : 0u) |
+                (qa_load_i32le(vis.data + 8 + i * 8) < 0 ? 2u : 0u);
+    }
     if (geometry->visibility_slots != 0 && geometry->visibility_bytes != 0) {
         if (geometry->family != QA_GAME_Q3) {
             geometry->pvs = geometry_array(geometry->visibility_slots, sizeof(*geometry->pvs), error);
@@ -499,17 +520,17 @@ bool qa_collision_point_leaf(const qa_collision_geometry *geometry, qa_vec3 poin
     return true;
 }
 
-static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds,
-    const qa_collision_plane *plane, bool q1_touched)
+unsigned qa_collision_box_plane_side(qa_bounds bounds,
+    const qa_collision_plane *plane, qa_collision_box_rule rule)
 {
-    if (geometry->family == QA_GAME_Q1 && !q1_touched) {
+    if (rule == QA_BOX_CENTRE) {
         qa_vec3 center = qa_vec_scale(qa_vec_add(bounds.mins, bounds.maxs), 0.5f);
         qa_vec3 extents = qa_vec_scale(qa_vec_sub(bounds.maxs, bounds.mins), 0.5f);
         float distance = qa_vec_dot(center, plane->normal) - plane->distance;
         float radius = fabsf(plane->normal.x) * extents.x + fabsf(plane->normal.y) * extents.y + fabsf(plane->normal.z) * extents.z;
         return distance >= radius ? 1u : distance < -radius ? 2u : 3u;
     }
-    if ((q1_touched || geometry->family == QA_GAME_Q3) && plane->type < 3) {
+    if (rule == QA_BOX_AXIAL && plane->type < 3) {
         unsigned axis = (unsigned)plane->type;
         return plane->distance <= qa_vec_component(bounds.mins, axis) ? 1u
             : plane->distance >= qa_vec_component(bounds.maxs, axis) ? 2u : 3u;
@@ -525,44 +546,101 @@ static unsigned box_side(const qa_collision_geometry *geometry, qa_bounds bounds
         | (qa_vec_dot(near_corner, normal) < plane->distance ? 2u : 0u);
 }
 
-bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_scratch *scratch, qa_bounds bounds, bool q1_touched,
-    qa_leaf_visit_fn visit, void *context, qa_leaf_list *out, qa_error *error)
+bool qa_collision_tree_box(const qa_collision_plane *planes, const qa_collision_node *nodes,
+    int32_t root, qa_bounds bounds, qa_collision_box_rule rule, int32_t *stack,
+    qa_collision_box_leaf_fn visit, void *context, int32_t *topnode)
 {
-    if (!q1_touched && geometry->family == QA_GAME_Q1)
-        qa_stamp_set_begin(&scratch->leaves);
-    qa_leaf_list result = {.topnode = -1};
     size_t count = 1;
-    scratch->nodes[0] = geometry->root;
-    while (count != 0) {
-        int32_t child = scratch->nodes[--count];
+    stack[0] = root;
+    if (topnode) *topnode = -1;
+    while (count) {
+        int32_t child = stack[--count];
         if (child < 0) {
-            size_t leaf = qa_collision_leaf_index(child);
-            if (q1_touched) {
-                if (qa_collision_bits_overlap(geometry->leaves[leaf].contents, qa_collision_bit(QA_CONTENT_SOLID))) continue;
-            } else if (geometry->family == QA_GAME_Q1) {
-                if (leaf == 0 || !qa_stamp_set_mark(&scratch->leaves, leaf)) continue;
-            }
-            if (geometry->family == QA_GAME_Q3 && geometry->leaves[leaf].cluster != -1)
-                result.last_leaf = (uint32_t)leaf;
-            ++result.count;
-            qa_leaf_visit next = visit(context, &geometry->leaves[leaf], error);
-            if (next == QA_LEAF_FAILED) return false;
-            if (next == QA_LEAF_STOP) break;
+            if (!visit(context, (uint32_t)qa_collision_leaf_index(child))) return false;
             continue;
         }
-        const qa_collision_node *node = &geometry->nodes[(size_t)child];
-        unsigned side = box_side(geometry, bounds, &geometry->planes[node->plane], q1_touched);
-        if ((side == 3 || (geometry->family == QA_GAME_Q3 && side == 0)) && result.topnode == -1) result.topnode = child;
-        if (geometry->family == QA_GAME_Q3) {
-            if (side != 1) scratch->nodes[count++] = node->children[1];
-            if (side != 2) scratch->nodes[count++] = node->children[0];
-        } else {
-            if ((side & 2u) != 0) scratch->nodes[count++] = node->children[1];
-            if ((side & 1u) != 0) scratch->nodes[count++] = node->children[0];
-        }
+        const qa_collision_node *node = &nodes[(size_t)child];
+        unsigned side = qa_collision_box_plane_side(bounds, &planes[node->plane], rule);
+        bool back = rule == QA_BOX_AXIAL ? side != 1 : (side & 2u) != 0;
+        bool front = rule == QA_BOX_AXIAL ? side != 2 : (side & 1u) != 0;
+        if (topnode && *topnode == -1 && back && front) *topnode = child;
+        if (back) stack[count++] = node->children[1];
+        if (front) stack[count++] = node->children[0];
     }
-    *out = result;
     return true;
+}
+
+typedef struct geometry_leaf_walk {
+    const qa_collision_geometry *geometry;
+    qa_trace_scratch *scratch;
+    qa_leaf_query_rule rule;
+    qa_leaf_visit_fn visit;
+    void *context;
+    qa_leaf_list result;
+    qa_error *error;
+    bool failed;
+} geometry_leaf_walk;
+
+static bool geometry_visit_leaf(void *context, uint32_t index)
+{
+    geometry_leaf_walk *walk = context;
+    const qa_collision_leaf *leaf = &walk->geometry->leaves[index];
+    if (walk->rule == QA_LEAF_Q1) {
+        if (qa_collision_bits_overlap(leaf->contents, qa_collision_bit(QA_CONTENT_SOLID))) return true;
+    } else if (walk->rule == QA_LEAF_COLLISION && walk->geometry->family == QA_GAME_Q1) {
+        if (index == 0 || !qa_stamp_set_mark(&walk->scratch->leaves, index)) return true;
+    }
+    if (walk->geometry->family == QA_GAME_Q3 && leaf->cluster != -1)
+        walk->result.last_leaf = index;
+    ++walk->result.count;
+    qa_leaf_visit next = walk->visit(walk->context, leaf, walk->error);
+    walk->failed = next == QA_LEAF_FAILED;
+    return next == QA_LEAF_CONTINUE;
+}
+
+bool qa_collision_walk_leaves(const qa_collision_geometry *geometry, qa_trace_scratch *scratch,
+    qa_bounds bounds, qa_leaf_query_rule rule, qa_leaf_visit_fn visit, void *context,
+    qa_leaf_list *out, qa_error *error)
+{
+    if (rule == QA_LEAF_COLLISION && geometry->family == QA_GAME_Q1)
+        qa_stamp_set_begin(&scratch->leaves);
+    geometry_leaf_walk walk = {geometry, scratch, rule, visit, context, {.topnode = -1}, error, false};
+    qa_collision_box_rule box_rule = rule != QA_LEAF_COLLISION || geometry->family == QA_GAME_Q3 ?
+        QA_BOX_AXIAL : geometry->family == QA_GAME_Q1 ? QA_BOX_CENTRE : QA_BOX_CORNERS;
+    int32_t root = rule == QA_LEAF_RENDER ? (geometry->node_count ? 0 : -1) : geometry->root;
+    (void)qa_collision_tree_box(geometry->planes, geometry->nodes, root, bounds, box_rule,
+        scratch->nodes, geometry_visit_leaf, &walk, &walk.result.topnode);
+    *out = walk.result;
+    return !walk.failed;
+}
+
+bool qa_collision_walk_segment(const qa_collision_geometry *geometry, qa_trace_scratch *scratch,
+    int32_t child, qa_vec3 start, qa_vec3 end, qa_collision_segment_visit_fn visit,
+    void *context, qa_error *error)
+{
+    size_t depth = 0;
+    for (;;) {
+        while (child >= 0) {
+            const qa_collision_node *node = &geometry->nodes[(size_t)child];
+            const qa_collision_plane *plane = &geometry->planes[node->plane];
+            float front = qa_vec_dot(start, plane->normal) - plane->distance;
+            float back = qa_vec_dot(end, plane->normal) - plane->distance;
+            unsigned side = front < 0 ? 1u : 0u;
+            if ((back < 0 ? 1u : 0u) == side) { child = node->children[side]; continue; }
+            qa_vec3 middle = qa_vec_lerp(start, end, front / (front - back));
+            scratch->segments[depth++] = (geometry_segment_frame){(uint32_t)child,
+                node->children[side ^ 1u], middle, end};
+            child = node->children[side];
+            end = middle;
+        }
+        if (!depth) return true;
+        geometry_segment_frame frame = scratch->segments[--depth];
+        qa_leaf_visit next = visit(context, frame.node, frame.middle, error);
+        if (next != QA_LEAF_CONTINUE) return next == QA_LEAF_STOP;
+        child = frame.far_child;
+        start = frame.middle;
+        end = frame.end;
+    }
 }
 
 typedef struct leaf_output { uint32_t *leaves; size_t capacity, count; } leaf_output;
@@ -582,7 +660,7 @@ bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_trace_scr
         return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid box-leaf query");
     leaf_output output = {leaves, capacity, 0};
     qa_leaf_list value;
-    if (!qa_collision_walk_leaves(geometry, scratch, bounds, false, output_leaf, &output, &value, error)) return false;
+    if (!qa_collision_walk_leaves(geometry, scratch, bounds, QA_LEAF_COLLISION, output_leaf, &output, &value, error)) return false;
     value.count = output.count < capacity ? output.count : capacity;
     value.overflow = output.count > capacity;
     *out = value;
@@ -640,11 +718,49 @@ static bool visibility_row(const qa_collision_geometry *geometry, size_t index,
     if (!geometry->visibility_bytes) { *out = (qa_bytes){0}; return true; }
     if (geometry->family == QA_GAME_Q3 && !phs) {
         qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
-        size_t width = qa_load_u32le(vis.data + 4);
+        size_t width = geometry->visibility_stride;
         *out = (qa_bytes){vis.data + 8 + index * width, width};
     } else {
         uint8_t *const *rows = phs ? geometry->phs : geometry->pvs;
         *out = (qa_bytes){rows[index], geometry->visibility_bytes};
+    }
+    return true;
+}
+
+size_t qa_collision_visibility_bytes(const qa_collision_geometry *geometry)
+{ return geometry ? geometry->visibility_stride : 0; }
+
+bool qa_collision_visibility_row(const qa_collision_geometry *geometry, int32_t selector,
+    bool phs, qa_bytes *out, qa_error *error)
+{
+    *out = (qa_bytes){NULL, geometry->visibility_stride};
+    if (selector < 0 || (size_t)(uint32_t)selector >= geometry->visibility_slots ||
+        !geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes.size ||
+        (geometry->visibility_missing &&
+            (geometry->visibility_missing[selector] & (phs ? 2u : 1u)))) return true;
+    return visibility_row(geometry, (size_t)(uint32_t)selector, phs, out, error);
+}
+
+bool qa_collision_subtree_visible(const qa_collision_geometry *geometry, qa_trace_scratch *scratch,
+    int32_t root, const int32_t *from, size_t from_count, bool phs, bool *out, qa_error *error)
+{
+    if ((root >= 0 && (size_t)root >= geometry->node_count) ||
+        (root < 0 && qa_collision_leaf_index(root) >= geometry->leaf_count))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Visibility subtree is outside loaded geometry");
+    size_t count = 1;
+    scratch->nodes[0] = root;
+    *out = false;
+    while (count && !*out) {
+        int32_t child = scratch->nodes[--count];
+        if (child >= 0) {
+            const qa_collision_node *node = &geometry->nodes[(size_t)child];
+            scratch->nodes[count++] = node->children[1];
+            scratch->nodes[count++] = node->children[0];
+        } else {
+            int32_t cluster = (int32_t)geometry->leaves[qa_collision_leaf_index(child)].cluster;
+            for (size_t i = 0; i < from_count && !*out; ++i)
+                if (!qa_collision_cluster_visible(geometry, from[i], cluster, phs, out, error)) return false;
+        }
     }
     return true;
 }

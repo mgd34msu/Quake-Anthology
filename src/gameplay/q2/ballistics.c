@@ -443,7 +443,7 @@ static qa_vec3 closest(qa_vec3 p, qa_bounds b) {
     return qa_v3(fmaxf(b.mins.x, fminf(b.maxs.x, p.x)), fmaxf(b.mins.y, fminf(b.maxs.y, p.y)),
                  fmaxf(b.mins.z, fminf(b.maxs.z, p.z)));
 }
-static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot, qa_error *e) {
+static bool chainfist_run(q2_weapon_call *c, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
     if (c->rules == QA_RULESET_Q2_RERELEASE && !q2_continues(c) && (s->frame == 13 || s->frame == 23 || s->frame >= 32)) {
         s->frame = 33;
@@ -495,12 +495,15 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
     qa_bounds own_bounds = qa_bounds_translate(own.bounds, own.origin), search = own_bounds;
     search.mins = qa_vec_sub(search.mins, qa_v3(23, 23, 23));
     search.maxs = qa_vec_add(search.maxs, qa_v3(23, 23, 23));
-    if (!qa_builtin_observations(&c->game->services, snapshot, e))
+    qa_world_actor_snapshot snapshot;
+    if (!qa_world_snapshot_capture(c->game->services.world, search, QA_COLLISION_BOTH,
+                                  QA_WORLD_ORDER_ACTOR_SLOT, &snapshot, e))
         return false;
+    bool okay = false;
     int count = 0;
     bool hit = false;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id target = snapshot->ids[i];
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        qa_actor_id target = snapshot.actors[i];
         qa_combat_state combat;
         if (qa_actor_id_equal(target, c->actor->id) || !damageable(c->game, target, &combat))
             continue;
@@ -512,7 +515,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
             continue;
         qa_body_state body;
         if (!qa_world_body_read(c->game->services.world, target, &body, e))
-            return false;
+            goto out;
         qa_bounds bounds = qa_bounds_translate(body.bounds, body.origin);
         if (!qa_bounds_overlap(bounds, search))
             continue;
@@ -537,7 +540,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         if (!qa_builtin_can_damage(&c->game->services, source ? body.origin : own.origin,
                                    source ? c->actor->id : target, source ? target : c->actor->id,
                                    policy, false, &visible, e))
-            return false;
+            goto out;
         if (!visible)
             continue;
         if (target.slot < c->game->capacity && c->game->actors[target.slot] != NULL &&
@@ -552,9 +555,14 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
         if (!q2_multiplier(c, &multiplier, e) || !q2_damage(c->game, &attack, target,
                        spec.damage * multiplier, spec.kick, dir, point,
                        qa_vec_scale(dir, -1), false, e))
-            return false;
+            goto out;
         hit = true;
     }
+    okay = true;
+out:
+    qa_world_snapshot_release(&snapshot);
+    if (!okay)
+        return false;
     if (hit && s->empty_sound_ns < c->now_ns) {
         s->empty_sound_ns = q2_deadline(c->now_ns, 500 * Q2_MS);
         if (!q2_sound(c, QA_Q2_SFX_WEAPONS_SAWSLICE, 1, 1, e))
@@ -575,12 +583,5 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
            q2_weapon_fired(c->game, c->actor->id, c->definition->weapon, e);
 }
 bool q2_fire_chainfist(q2_weapon_call *c, qa_error *e) {
-    if (c->rules != QA_RULESET_Q2_RERELEASE)
-        return chainfist_run(c, NULL, e);
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(c->game, e);
-    if (scratch == NULL)
-        return false;
-    bool ok = chainfist_run(c, &scratch->snapshot, e);
-    qa_builtin_snapshot_release(scratch);
-    return ok;
+    return chainfist_run(c, e);
 }

@@ -1444,3 +1444,27 @@ Navigation scratch retains its existing first-use/larger-graph sizing at
 `src/navigation/runtime.c:235`, `aas_sample.c:36` and
 `src/bots/navigation/core.c:8`; moving that sizing out of play belongs to the
 remaining heap kind. Spatial, identity and heap adoption remain open.
+
+## TA-3196 spatial-query adoption
+
+All six supplied spatial entries now use common geometry or world queries.
+
+| Item | Shared implementation | Migrated callers and deleted copies |
+| --- | --- | --- |
+| 1 | `src/world/collision/geometry.c:730` retained visibility rows | `src/render/scene/world.c:803` borrows Q1/Q3 rows and merges Q2's second row in load-sized scratch. Raw visibility-header parsing, row re-decoding and the second decode buffer are deleted. Missing Q2 row offsets are resolved at admission. |
+| 2 | `geometry.c:601` leaf walk and `:520` box-plane rule | `src/render/scene/world/marks.c` uses the shared render leaf rule. Its private recursive walk and plane-side implementation are deleted. Q3 source flags are retained in `world/q3.c` at surface admission instead of rescanning IBSP44 brushes per candidate. |
+| 3 | `geometry.c:617` segment walk | `src/render/scene/world/legacy/lighting.c:722` samples faces between near and far subtrees with load-sized geometry scratch. The private descent, local stack and malloc growth are deleted. |
+| 4 | `geometry.c:744` subtree visibility | `src/app/application/visual_visibility.c` uses the shared query. Private raw-node traversal and recipient pending storage in `network_q2_frame.c` and `visuals.c` are deleted. |
+| 5 | `src/world/spatial.c:316` pool-backed candidate snapshot | Q2 killbox, Tesla and chainfist; Q3 invulnerability; Q1 horde and addon teleport; and application Q1 spawn overlap use linked candidates with actor-slot ordering and existing live victim filters. Full registry/observation overlap scans and Q1 spawn malloc are deleted. Snapshot sorting uses no heap storage. |
+| 6 | `geometry.c:549` box traversal | Q2 stationary/media and Q3 stationary/media queries use caller-owned scratch and caller-selected corner/axial behavior. Private Q2/Q3 box walks are deleted; leaf limits and early-stop rules remain at their callers. |
+
+Geometry tables remain read-only during queries. Existing world trace and
+trigger consumers keep their spatial candidate order; damaging overlap callers
+request actor-slot order. Snapshots borrow the existing world pool and are
+released on every caller exit. Scene mark/light scratch is created at world
+admission and destroyed before its geometry.
+
+The normal production build and all seven existing core suites passed, recorded
+in `/tmp/qa-spatial-adoption-20261011-build.log` and
+`/tmp/qa-spatial-adoption-20261011-core.log`. This establishes build/core-suite
+results, not live-play or timing proof. Identity and heap adoption remain open.

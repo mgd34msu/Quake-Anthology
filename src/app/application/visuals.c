@@ -144,11 +144,6 @@ struct qa_application_visual_visibility {
 static size_t visual_visibility_bytes(const qa_application *app)
 {
     size_t pvs = app && app->geometry ? qa_collision_q1_pvs_bytes(app->geometry) : 0;
-    if (app && app->geometry) {
-        size_t pending = application_q2_visibility_pending_capacity(app);
-        if (!pending) return 0;
-        if (pending * sizeof(int32_t) > pvs) pvs = pending * sizeof(int32_t);
-    }
     return pvs > SIZE_MAX - sizeof(qa_application_visual_visibility) ? 0 :
         sizeof(qa_application_visual_visibility) + pvs;
 }
@@ -222,10 +217,6 @@ bool qa_application_visual_visibility_prepare(qa_application *app, qa_actor_id r
                 v->no_vis |= novis && novis->number != 0;
                 if (!application_q2_visibility_recipient_prepare(app, recipient, slot, pvs_origin,
                     &v->q2_recipient, error)) return false;
-                if (v->q2_source.kind == QA_APPLICATION_NATIVE_Q2_ORIGINAL) {
-                    v->q2_recipient.pending = (int32_t *)(v + 1);
-                    v->q2_recipient.pending_capacity = application_q2_visibility_pending_capacity(app);
-                }
                 v->q2 = true;
             }
         }

@@ -1864,6 +1864,42 @@ bool qa_q3_client_movement_water_read(const qa_q3_game *game, qa_actor_id actor,
     *type = entry->water_type;
     return true;
 }
+static bool invulnerability_overlap(qa_q3_game *game, qa_actor_id actor,
+    qa_bounds bounds, bool source_clients, bool *stuck, qa_error *error) {
+    qa_world_actor_snapshot targets;
+    if (!qa_world_snapshot_capture(game->options.services.world, bounds, QA_COLLISION_BOTH,
+                                  QA_WORLD_ORDER_ACTOR_SLOT, &targets, error)) return false;
+    bool okay = true;
+    *stuck = false;
+    for (size_t i = 0; i < targets.count; ++i) {
+        qa_actor_id other = targets.actors[i];
+        if (qa_actor_id_equal(other, actor)) continue;
+        uint32_t slot = 0;
+        if (source_clients) {
+            if (!q3_actor_const(game, other) ||
+                !qa_q3_source_actor_slot(game, other, &slot, NULL) ||
+                slot >= QA_Q3_SOURCE_CLIENTS || !game->source_entities[slot].in_use) continue;
+        } else if (!q3_is_player(game, other)) continue;
+        qa_combat_state combat;
+        qa_error local = {0};
+        if (!qa_combat_read(game->options.services.combat, other, &combat, &local)) {
+            if (!source_clients) continue;
+            if (error) *error = local;
+            okay = false;
+            break;
+        }
+        if (combat.health <= 0 || (source_clients &&
+            !qa_actor_id_equal(game->source_entities[slot].actor, other))) continue;
+        qa_linked_body linked;
+        if (qa_world_linked(game->options.services.world, other, &linked) &&
+            qa_bounds_overlap(bounds, linked.absolute_bounds)) {
+            *stuck = true;
+            break;
+        }
+    }
+    qa_world_snapshot_release(&targets);
+    return okay;
+}
 static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
                                    qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
@@ -1888,21 +1924,8 @@ static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
         qa_linked_body linked;
         qa_bounds source_bounds = qa_world_linked(game->options.services.world, actor, &linked)
             ? linked.absolute_bounds : (qa_bounds){0};
-        for (uint32_t slot = 0; okay && !stuck && slot < QA_Q3_SOURCE_CLIENTS; ++slot) {
-            qa_actor_id other = game->source_entities[slot].actor;
-            if (slot == native_slot || !game->source_entities[slot].in_use ||
-                !other.registry || !q3_actor_const(game, other)) continue;
-            qa_combat_state combat;
-            if (!qa_combat_read(game->options.services.combat, other, &combat, error)) {
-                okay = false;
-                break;
-            }
-            if (!qa_actor_id_equal(game->source_entities[slot].actor, other) || combat.health <= 0)
-                continue;
-            qa_bounds other_bounds = qa_world_linked(game->options.services.world, other, &linked)
-                ? linked.absolute_bounds : (qa_bounds){0};
-            stuck = qa_bounds_overlap(source_bounds, other_bounds);
-        }
+        if (okay)
+            okay = invulnerability_overlap(game, actor, source_bounds, true, &stuck, error);
         if (okay && !stuck && q3_actor_get(game, actor)) {
             policy.pm_flags = (int32_t)((uint32_t)policy.pm_flags | 0x4000u);
             okay = qa_q3_wire_player_policy_update(game, actor, QA_Q3_WIRE_PM_FLAGS, &policy, error);
@@ -1928,22 +1951,9 @@ static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
         return false;
     qa_bounds bounds =
         qa_bounds_translate((qa_bounds){qa_v3(-42, -42, -42), qa_v3(42, 42, 42)}, body.origin);
-    uint32_t cursor = 0;
-    const qa_actor_record *record;
-    while (qa_actors_next(qa_session_actors(game->options.services.session), &cursor, &record)) {
-        qa_actor_id other = record->id;
-        if (qa_actor_id_equal(other, actor) || !q3_is_player(game, other))
-            continue;
-        qa_combat_state combat;
-        qa_error ignored = {0};
-        if (!qa_combat_read(game->options.services.combat, other, &combat, &ignored) ||
-            combat.health <= 0)
-            continue;
-        qa_linked_body linked;
-        if (qa_world_linked(game->options.services.world, other, &linked) &&
-            qa_bounds_overlap(bounds, linked.absolute_bounds))
-            return true;
-    }
+    bool stuck;
+    if (!invulnerability_overlap(game, actor, bounds, false, &stuck, error)) return false;
+    if (stuck) return true;
     entry = q3_actor_get(game, actor);
     if (entry && entry->kind == Q3_ACTOR_PLAYER &&
         entry->state.player.invulnerability_until > game->now_ms)

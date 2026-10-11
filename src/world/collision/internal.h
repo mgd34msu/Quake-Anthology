@@ -5,11 +5,6 @@
 #include "qa/stamp.h"
 #include <string.h>
 
-typedef enum qa_leaf_visit { QA_LEAF_CONTINUE, QA_LEAF_STOP, QA_LEAF_FAILED } qa_leaf_visit;
-typedef qa_leaf_visit (*qa_leaf_visit_fn)(void *, const qa_collision_leaf *, qa_error *);
-bool qa_collision_walk_leaves(const qa_collision_geometry *, qa_trace_scratch *, qa_bounds, bool q1_touched,
-    qa_leaf_visit_fn, void *, qa_leaf_list *, qa_error *);
-
 typedef struct qa_collision_ops {
     void (*destroy)(void *);
     /* Results retain canonical contents and surface flags; the shared layer adapts contact metadata.
@@ -21,6 +16,9 @@ typedef struct qa_collision_ops {
 } qa_collision_ops;
 typedef struct qa_collision_kernel { void *state; const qa_collision_ops *ops; } qa_collision_kernel;
 typedef struct qa_collision_node { uint32_t plane; int32_t children[2]; } qa_collision_node;
+typedef bool (*qa_collision_box_leaf_fn)(void *, uint32_t leaf);
+bool qa_collision_tree_box(const qa_collision_plane *, const qa_collision_node *, int32_t root,
+    qa_bounds, qa_collision_box_rule, int32_t *stack, qa_collision_box_leaf_fn, void *, int32_t *topnode);
 int32_t qa_collision_tree_point(const qa_collision_plane *, const qa_collision_node *,
     int32_t root, qa_vec3 point, bool axial_planes, bool front_on_plane);
 static inline size_t qa_collision_leaf_index(int32_t child)

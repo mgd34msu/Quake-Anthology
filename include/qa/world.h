@@ -322,6 +322,21 @@ typedef qa_spatial_visit (*qa_spatial_visit_fn)(void *, const qa_spatial_actor *
  * Visits preserve sector order and family-specific insertion order. */
 bool qa_world_visit(qa_world *, qa_bounds, qa_collision_role, qa_spatial_visit_fn, void *, qa_error *);
 bool qa_world_query(qa_world *, qa_bounds, qa_collision_role, qa_actor_id *, size_t capacity, size_t *count, bool *overflow, qa_error *);
+typedef struct qa_world_snapshot_frame qa_world_snapshot_frame;
+typedef struct qa_world_actor_snapshot {
+    qa_actor_id local[8], *actors;
+    size_t count, capacity;
+    qa_world *world;
+    qa_world_snapshot_frame *frame;
+    qa_error *error;
+    bool failed;
+} qa_world_actor_snapshot;
+typedef enum qa_world_snapshot_order { QA_WORLD_ORDER_SPATIAL, QA_WORLD_ORDER_ACTOR_SLOT } qa_world_snapshot_order;
+/* Captures linked candidates in the world's load-sized pool. BOTH includes
+ * nonsolid bodies. Callbacks may release actors; callers re-read each live id. */
+bool qa_world_snapshot_capture(qa_world *, qa_bounds, qa_collision_role,
+    qa_world_snapshot_order, qa_world_actor_snapshot *, qa_error *);
+void qa_world_snapshot_release(qa_world_actor_snapshot *);
 /* CLIENT membership borrows decoded append order over the common linked
  * bodies. NULL actors retains the normal spatial candidate order. */
 typedef enum qa_world_trace_merge {

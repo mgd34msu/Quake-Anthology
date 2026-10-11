@@ -187,12 +187,13 @@ bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_
         return false;
     qa_bounds overlap = {qa_vec_add(death_body.origin, death_body.bounds.mins),
                          qa_vec_add(death_body.origin, death_body.bounds.maxs)};
-    qa_builtin_snapshot_frame *snapshot;
-    if (!q1_snapshot_actors(g, &snapshot, error))
+    qa_world_actor_snapshot snapshot;
+    if (!qa_world_snapshot_capture(g->services.world, overlap, QA_COLLISION_BOTH,
+                                  QA_WORLD_ORDER_ACTOR_SLOT, &snapshot, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; i < snapshot->snapshot.count; ++i) {
-        qa_actor_id victim = snapshot->snapshot.ids[i];
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        qa_actor_id victim = snapshot.actors[i];
         qa_body_state target;
         if (!qa_world_body_read(g->services.world, victim, &target, NULL))
             continue;
@@ -205,7 +206,7 @@ bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_
         if (!q1_alive(g, death_id))
             break;
     }
-    qa_builtin_snapshot_release(snapshot);
+    qa_world_snapshot_release(&snapshot);
     if (ok)
         *out = actor;
     return ok;

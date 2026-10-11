@@ -340,24 +340,6 @@ static void q2_trace_leaf(q2_work *work, size_t index)
     }
 }
 
-/* Push back first so the front child is visited first, including exact ties. */
-static void q2_box_children(const q2_collision *collision, q2_scratch *scratch, const qa_collision_node *node,
-                            qa_bounds bounds, size_t *depth)
-{
-    const qa_collision_plane *plane = &collision->planes[node->plane];
-    qa_vec3 normal = plane->normal;
-    qa_vec3 far_corner = qa_v3(normal.x < 0 ? bounds.mins.x : bounds.maxs.x,
-                               normal.y < 0 ? bounds.mins.y : bounds.maxs.y,
-                               normal.z < 0 ? bounds.mins.z : bounds.maxs.z);
-    qa_vec3 near_corner = qa_v3(normal.x < 0 ? bounds.maxs.x : bounds.mins.x,
-                                normal.y < 0 ? bounds.maxs.y : bounds.mins.y,
-                                normal.z < 0 ? bounds.maxs.z : bounds.mins.z);
-    if (qa_vec_dot(near_corner, normal) < plane->distance)
-        scratch->node_stack[(*depth)++] = node->children[1];
-    if (qa_vec_dot(far_corner, normal) >= plane->distance)
-        scratch->node_stack[(*depth)++] = node->children[0];
-}
-
 static qa_bounds q2_envelope(qa_vec3 start, qa_vec3 end, qa_bounds bounds)
 {
     return (qa_bounds){
@@ -369,22 +351,23 @@ static qa_bounds q2_envelope(qa_vec3 start, qa_vec3 end, qa_bounds bounds)
               fmaxf(start.z, end.z) + bounds.maxs.z + 1)};
 }
 
+typedef struct q2_position_visit { q2_work *work; size_t leaves; } q2_position_visit;
+
+static bool q2_position_leaf(void *context, uint32_t index)
+{
+    q2_position_visit *visit = context;
+    ++visit->leaves;
+    q2_trace_leaf(visit->work, index);
+    return !visit->work->result.all_solid && visit->leaves < Q2_POSITION_LEAF_LIMIT;
+}
+
 static void q2_position_test(q2_work *work, int32_t headnode)
 {
     const q2_collision *collision = work->collision;
     qa_bounds bounds = q2_envelope(work->start, work->start, work->bounds);
-    size_t depth = 1, leaves = 0;
-    work->scratch->node_stack[0] = headnode;
-    while (depth != 0 && leaves < Q2_POSITION_LEAF_LIMIT) {
-        int32_t child = work->scratch->node_stack[--depth];
-        if (child < 0) {
-            ++leaves;
-            q2_trace_leaf(work, qa_collision_leaf_index(child));
-            if (work->result.all_solid) return;
-        } else {
-            q2_box_children(collision, work->scratch, &collision->nodes[(size_t)child], bounds, &depth);
-        }
-    }
+    q2_position_visit visit = {work, 0};
+    qa_collision_tree_box(collision->planes, collision->nodes, headnode, bounds,
+        QA_BOX_CORNERS, work->scratch->node_stack, q2_position_leaf, &visit, NULL);
 }
 
 static float q2_tree_extent(void *context, uint32_t plane)
@@ -470,25 +453,29 @@ static bool q2_uncovered(float first, float last, const q2_interval *parts, size
     return first == last || position < last;
 }
 
+typedef struct q2_media_visit { q2_work *work; size_t leaves, count; } q2_media_visit;
+
+static bool q2_media_leaf(void *context, uint32_t index)
+{
+    q2_media_visit *visit = context;
+    const q2_collision *collision = visit->work->collision;
+    const q2_leaf *leaf = &collision->leaves[index];
+    ++visit->leaves;
+    for (size_t i = 0; i < (size_t)leaf->brushes.count; ++i)
+        q2_brush_medium(visit->work, collision->leaf_brushes[(size_t)leaf->brushes.first + i], &visit->count);
+    return visit->leaves < collision->leaf_count;
+}
+
 static void q2_trace_media(q2_work *work, int32_t headnode)
 {
     const q2_collision *collision = work->collision;
     qa_vec3 reached = qa_vec_lerp(work->start, work->end, work->result.fraction);
     qa_bounds bounds = q2_envelope(work->start, reached, work->bounds);
-    size_t depth = 1, leaves = 0, count = 0;
-    work->scratch->node_stack[0] = headnode;
+    q2_media_visit visit = {work, 0, 0};
     qa_stamp_set_begin(&work->scratch->trace_marks);
-    while (depth != 0 && leaves < collision->leaf_count) {
-        int32_t child = work->scratch->node_stack[--depth];
-        if (child < 0) {
-            ++leaves;
-            const q2_leaf *leaf = &collision->leaves[qa_collision_leaf_index(child)];
-            for (size_t i = 0; i < (size_t)leaf->brushes.count; ++i)
-                q2_brush_medium(work, collision->leaf_brushes[(size_t)leaf->brushes.first + i], &count);
-        } else {
-            q2_box_children(collision, work->scratch, &collision->nodes[(size_t)child], bounds, &depth);
-        }
-    }
+    qa_collision_tree_box(collision->planes, collision->nodes, headnode, bounds,
+        QA_BOX_CORNERS, work->scratch->node_stack, q2_media_leaf, &visit, NULL);
+    size_t count = visit.count;
     q2_interval_sort(work->scratch->intervals, count);
     work->result.in_open = q2_uncovered(0, work->result.fraction, work->scratch->intervals, count);
     size_t solid_count = 0;

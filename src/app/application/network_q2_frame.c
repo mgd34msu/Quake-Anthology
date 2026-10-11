@@ -78,8 +78,6 @@ static struct application_native_q2 *original_engine(qa_application_network_q2 *
 
 struct application_q2_wire_capture {
     qa_application_native_q2_entity_prefix *rows;
-    int32_t *visibility_pending;
-    size_t visibility_pending_capacity;
     uint32_t count, capacity;
     qa_application_native_q2_presentation source;
     qa_world *world;
@@ -92,7 +90,7 @@ void application_network_q2_capture_dispose(application_provider *provider)
 {
     struct application_q2_wire_capture *capture = provider->q2_wire_capture;
     if (!capture) return;
-    free(capture->visibility_pending); free(capture->rows); free(capture);
+    free(capture->rows); free(capture);
     provider->q2_wire_capture = NULL;
 }
 
@@ -126,15 +124,6 @@ static bool capture_source(qa_application_network_q2 *owner,
     }
     if (count) memset(capture->rows, 0, (size_t)count * sizeof(*capture->rows));
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
-    if (!builtin && owner->host.source.edition == QA_RULESET_Q2_CLASSIC) {
-        size_t capacity = application_q2_visibility_pending_capacity(app);
-        if (!capacity) return application_fail(error, QA_ERROR_MEMORY, "Q2 visibility headnode extent overflows");
-        if (capacity > capture->visibility_pending_capacity) {
-            int32_t *pending = realloc(capture->visibility_pending, capacity * sizeof(*pending));
-            if (!pending) return application_fail(error, QA_ERROR_MEMORY, "Growing Q2 capture visibility scratch");
-            capture->visibility_pending = pending; capture->visibility_pending_capacity = capacity;
-        }
-    }
     for (uint32_t slot = builtin ? 1u : 0u; slot < count; ++slot) {
         bool present;
         if (!qa_application_native_q2_presentation_entity(app, &owner->host.source, slot,
@@ -676,11 +665,6 @@ bool qa_application_network_q2_frame(qa_application_network_q2 *owner, const qa_
     if (ok) ok = application_network_q2_entities(owner, error);
     struct application_q2_wire_capture *capture = NULL;
     if (ok) ok = capture_source(owner, &capture, error);
-    if (ok) for (size_t i = 0; i < seats; ++i) {
-        recipients[i].pending = capture->visibility_pending;
-        recipients[i].pending_capacity = capture->visibility_pending ?
-            application_q2_visibility_pending_capacity(owner->app) : 0;
-    }
     size_t count = 0;
     for (size_t i = 0; ok && i < owner->source_entity_count; ++i) {
         qa_q2_entity state = owner->source_entities[i];

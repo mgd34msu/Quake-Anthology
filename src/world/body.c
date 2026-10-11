@@ -787,7 +787,7 @@ bool qa_world_leaf_visibility(qa_world *world,qa_actor_id actor,const qa_bounds 
     aggregate.result.portal_areas=aggregate.result.native_areas;
     aggregate.result.maximum_cluster=-1;
     qa_leaf_list list;
-    if(!qa_collision_walk_leaves(world->geometry,scratch,bounds,touched,leaf_aggregate_visit,&aggregate,&list,error)) return false;
+    if(!qa_collision_walk_leaves(world->geometry,scratch,bounds,touched?QA_LEAF_Q1:QA_LEAF_COLLISION,leaf_aggregate_visit,&aggregate,&list,error)) return false;
     if(touched) {
         memcpy(cache->leaf_visibility.q1_leaves,aggregate.result.q1_leaves,aggregate.result.q1_count*sizeof(uint32_t));
         cache->leaf_visibility.q1_count=aggregate.result.q1_count;

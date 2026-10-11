@@ -22,14 +22,6 @@ typedef struct qa_world_snapshot_frame {
     qa_actor_id *actors;
     size_t capacity, slot;
 } qa_world_snapshot_frame;
-typedef struct qa_world_actor_snapshot {
-    qa_actor_id local[8], *actors;
-    size_t count, capacity;
-    qa_world *world;
-    qa_world_snapshot_frame *frame;
-    qa_error *error;
-    bool failed;
-} qa_world_actor_snapshot;
 typedef struct qa_attachment_transport {
     qa_actor_id actor;
     qa_body_attachment attachment;
@@ -158,10 +150,5 @@ typedef qa_spatial_visit (*qa_spatial_raw_fn)(void *, uint32_t);
 bool qa_spatial_visit_raw(qa_world *, qa_bounds, qa_spatial_raw_fn, void *, qa_error *);
 bool qa_world_refresh(qa_world *, qa_actor_id, qa_entity_pose,
                       qa_entity_body_components, qa_spatial_actor *, qa_error *);
-
-/* BOTH captures raw links; filtered roles retain current provider readers. */
-bool qa_world_snapshot_capture(qa_world *, qa_bounds, qa_collision_role,
-                               qa_world_actor_snapshot *, qa_error *);
-void qa_world_snapshot_release(qa_world_actor_snapshot *);
 
 #endif

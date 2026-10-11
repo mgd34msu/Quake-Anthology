@@ -110,41 +110,6 @@ fail:
     return NULL;
 }
 
-static unsigned q3_box_side(qa_bounds bounds, qa_collision_plane plane) {
-    if (plane.type < 3) {
-        unsigned axis = (unsigned)plane.type;
-        if (plane.distance <= qa_vec_component(bounds.mins, axis)) return 1;
-        if (plane.distance >= qa_vec_component(bounds.maxs, axis)) return 2;
-        return 3;
-    }
-    uint8_t signs = plane.signbits;
-    qa_vec3 near = qa_v3((signs & 1u) != 0 ? bounds.maxs.x : bounds.mins.x,
-                        (signs & 2u) != 0 ? bounds.maxs.y : bounds.mins.y,
-                        (signs & 4u) != 0 ? bounds.maxs.z : bounds.mins.z);
-    qa_vec3 far = qa_v3((signs & 1u) != 0 ? bounds.mins.x : bounds.maxs.x,
-                       (signs & 2u) != 0 ? bounds.mins.y : bounds.maxs.y,
-                       (signs & 4u) != 0 ? bounds.mins.z : bounds.maxs.z);
-    return (qa_vec_dot(far, plane.normal) >= plane.distance ? 1u : 0u)
-         | (qa_vec_dot(near, plane.normal) < plane.distance ? 2u : 0u);
-}
-
-typedef bool (*q3_leaf_visit)(void *, uint32_t);
-static void q3_visit_box(const q3_map *map, q3_scratch *scratch, qa_bounds bounds, q3_leaf_visit visit, void *context) {
-    size_t count = 0;
-    scratch->pending[count++] = map->node_count != 0 ? 0 : -1;
-    while (count != 0) {
-        int32_t index = scratch->pending[--count];
-        if (index < 0) {
-            if (!visit(context, (uint32_t)(-1 - index))) return;
-            continue;
-        }
-        const qa_collision_node *node = &map->nodes[index];
-        unsigned side = q3_box_side(bounds, map->planes[node->plane]);
-        if (side != 1) scratch->pending[count++] = node->children[1];
-        if (side != 2) scratch->pending[count++] = node->children[0];
-    }
-}
-
 static qa_collision_side_distances q3_brush_distances(void *context, size_t index, bool need_last) {
     q3_work *work = context;
     qa_collision_plane plane = work->map->planes[work->map->sides[index].plane];
@@ -308,7 +273,8 @@ static void q3_trace_media(q3_work *work, uint32_t model) {
         qa_bounds envelope = qa_bounds_union(q3_shape_bounds(&work->shape, work->start), q3_shape_bounds(&work->shape, reached));
         envelope.mins = qa_vec_sub(envelope.mins, qa_v3(1, 1, 1));
         envelope.maxs = qa_vec_add(envelope.maxs, qa_v3(1, 1, 1));
-        q3_visit_box(map, scratch, envelope, q3_media_leaf, &media);
+        qa_collision_tree_box(map->planes, map->nodes, map->node_count != 0 ? 0 : -1,
+            envelope, QA_BOX_AXIAL, scratch->pending, q3_media_leaf, &media, NULL);
     }
     if (media.solid_count > 1) qsort(scratch->intervals, media.solid_count, sizeof(*scratch->intervals), q3_compare_interval);
     work->result.in_water = false;
@@ -397,7 +363,8 @@ bool qa_q3_trace_model_source(const void *state, void *scratch_state, const qa_t
         qa_bounds bounds = {qa_vec_sub(qa_vec_add(work.start, work.shape.mins), qa_v3(1, 1, 1)),
                             qa_vec_add(qa_vec_add(work.start, work.shape.extents), qa_v3(1, 1, 1))};
         q3_position_visit visit = {&work, 0};
-        q3_visit_box(map, scratch, bounds, q3_position_leaf, &visit);
+        qa_collision_tree_box(map->planes, map->nodes, map->node_count != 0 ? 0 : -1,
+            bounds, QA_BOX_AXIAL, scratch->pending, q3_position_leaf, &visit, NULL);
     } else q3_trace_tree(&work);
     if (query->policy.behavior->hull_boxes) q3_trace_media(&work, model);
     if (rotated && work.result.fraction != 1)

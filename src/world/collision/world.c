@@ -210,7 +210,7 @@ static bool query_candidates(qa_world *world,qa_bounds bounds,
         *count=world->query_rules.count;
         return true;
     }
-    if(!qa_world_snapshot_capture(world,bounds,QA_COLLISION_BOTH,snapshot,error)) return false;
+    if(!qa_world_snapshot_capture(world,bounds,QA_COLLISION_BOTH,QA_WORLD_ORDER_SPATIAL,snapshot,error)) return false;
     *actors=snapshot->actors; *count=snapshot->count; return true;
 }
 

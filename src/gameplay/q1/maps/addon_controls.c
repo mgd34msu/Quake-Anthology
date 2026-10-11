@@ -301,14 +301,15 @@ static bool silent_teleport(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_er
     qa_actor_id death;
     if (!q1_spawn_teledeath(g, destination, other, .2, false, &death, error))
         return false;
-    qa_builtin_snapshot_frame *victims;
-    if (!q1_snapshot_actors(g, &victims, error))
-        return false;
     qa_bounds box = {qa_vec_add(destination, qa_vec_sub(body.bounds.mins, qa_v3(1, 1, 1))),
                      qa_vec_add(destination, qa_vec_add(body.bounds.maxs, qa_v3(1, 1, 1)))};
+    qa_world_actor_snapshot victims;
+    if (!qa_world_snapshot_capture(g->services.world, box, QA_COLLISION_BOTH,
+                                  QA_WORLD_ORDER_ACTOR_SLOT, &victims, error))
+        return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < victims->snapshot.count && control(g, id) && q1_alive(g, death); ++i) {
-        qa_actor_id victim = victims->snapshot.ids[i];
+    for (size_t i = 0; ok && i < victims.count && control(g, id) && q1_alive(g, death); ++i) {
+        qa_actor_id victim = victims.actors[i];
         if (!q1_alive(g, victim))
             continue;
         qa_body_state state;
@@ -322,7 +323,7 @@ static bool silent_teleport(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_er
         if (control(g, id) && helper && q1_alive(g, victim) && qa_bounds_overlap(box, bounds))
             ok = q1_teledeath_touch(g, helper, victim, error);
     }
-    qa_builtin_snapshot_release(victims);
+    qa_world_snapshot_release(&victims);
     if (!ok || !control(g, id) || !q1_alive(g, other))
         return ok;
     body.origin = destination;

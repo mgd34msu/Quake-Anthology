@@ -60,17 +60,16 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
         return false;
     qa_bounds box = {qa_vec_add(body.origin, body.bounds.mins),
                      qa_vec_add(body.origin, body.bounds.maxs)};
-    qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);
-    if (!frame)
+    qa_world_actor_snapshot targets;
+    if (!qa_world_snapshot_capture(g->services.world, box, QA_COLLISION_BOTH,
+                                  QA_WORLD_ORDER_ACTOR_SLOT, &targets, e))
         return false;
     bool okay = false;
-    if (!qa_builtin_observations(&g->services, &frame->snapshot, e))
-        goto out;
     qa_builtin_actor_traits source_traits = {0};
     if (g->services.actor_traits)
         g->services.actor_traits(g->services.context, id, &source_traits);
-    for (size_t i = 0; i < frame->snapshot.count; i++) {
-        qa_actor_id target = frame->snapshot.ids[i];
+    for (size_t i = 0; i < targets.count; i++) {
+        qa_actor_id target = targets.actors[i];
         qa_linked_body linked;
         if (qa_actor_id_equal(id, target) || !q2_actor_live(g, target) ||
             !qa_world_linked(g->services.world, target, &linked) ||
@@ -114,7 +113,7 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
     }
     okay = true;
 out:
-    qa_builtin_snapshot_release(frame);
+    qa_world_snapshot_release(&targets);
     return okay;
 }
 bool qa_q2_entities_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool *clear,

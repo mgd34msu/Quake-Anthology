@@ -275,8 +275,7 @@ static bool tesla_activate(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot
         q2_deadline(g->now_ns, g->options.rules == QA_RULESET_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns);
     return true;
 }
-static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
-                         qa_error *e) {
+static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_actor_id id = a->id;
     q2_projectile p = a->projectile;
     if (g->now_ns > p.expire_ns)
@@ -287,22 +286,27 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         return false;
     qa_bounds bounds = qa_bounds_translate(trigger.bounds, trigger.origin);
     qa_vec3 start = qa_vec_add(mine.origin, qa_v3(0, 0, 16));
-    if (!qa_builtin_observations(&g->services, snapshot, e))
+    qa_world_actor_snapshot snapshot;
+    if (!qa_world_snapshot_capture(g->services.world, bounds, QA_COLLISION_BOTH,
+                                  QA_WORLD_ORDER_ACTOR_SLOT, &snapshot, e))
         return false;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id target = snapshot->ids[i];
-        if (!q2_actor_live(g, id))
-            return true;
+    bool okay = false;
+    for (size_t i = 0; i < snapshot.count; ++i) {
+        qa_actor_id target = snapshot.actors[i];
+        if (!q2_actor_live(g, id)) {
+            okay = true;
+            goto out;
+        }
         if (qa_actor_id_equal(target, id) || !q2_target_damageable(g, target))
             continue;
         qa_combat_state health;
         if (!qa_combat_read(g->services.combat, target, &health, e))
-            return false;
+            goto out;
         if (health.health < 1)
             continue;
         bool player, is_creature;
         if (!q2_target_creature(g, target, &is_creature, &player, e))
-            return false;
+            goto out;
         if (player && !g->options.deathmatch)
             continue;
         if (g->options.rules == QA_RULESET_Q2_RERELEASE && player && g->hooks.can_target != NULL &&
@@ -318,7 +322,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
             continue;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, target, &body, e))
-            return false;
+            goto out;
         if (!qa_bounds_overlap(bounds, qa_bounds_translate(body.bounds, body.origin)))
             continue;
         qa_trace_query query = {.start = start,
@@ -329,12 +333,12 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
             qa_collision_contents_mask(g->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
-            return false;
+            goto out;
         if (trace.fraction < 1 &&
             !(trace.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(trace.actor, target)))
             continue;
         if (p.damage > 3 && !sound(g, a, QA_Q2_SFX_ITEMS_DAMAGE3, 3, e))
-            return false;
+            goto out;
         qa_physics_properties physics;
         bool grounded_monster = !player && is_creature && g->services.physics != NULL &&
                                 g->services.physics->services.read(
@@ -344,7 +348,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         if (!q2_damage(g, &attack, target, p.damage, grounded_monster ? 0 : 8,
                        qa_vec_sub(body.origin, start), trace.end, trace.contact_plane.normal, false,
                        e))
-            return false;
+            goto out;
         bool rerelease=g->options.rules==QA_RULESET_Q2_RERELEASE;
         qa_builtin_event beam = {.kind = QA_BUILTIN_BEAM,
             .family = QA_GAME_Q2, .provider = g->options.owner,
@@ -354,11 +358,14 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
             .q2_multicast = {QA_BUILTIN_Q2_MULTICAST_PVS,start},
             .value = (float)((double)g->frame_ns / 1e9)};
         beam.resource=g->runtime_names[Q2_NAME_RESOURCE_Q2_LIGHTNING];
-        if (!qa_builtin_emit(&g->services, &beam, e)) return false;
+        if (!qa_builtin_emit(&g->services, &beam, e)) goto out;
     }
     a->projectile.next_ns =
         q2_deadline(g->now_ns, g->options.rules == QA_RULESET_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns);
-    return true;
+    okay = true;
+out:
+    qa_world_snapshot_release(&snapshot);
+    return okay;
 }
 
 static bool trap_gibs(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_error *e) {
@@ -634,7 +641,7 @@ bool q2_mine_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     if (p->kind == Q2_TESLA) {
         if (p->phase == MINE_ACTIVE)
-            return mine_scan(g, a, tesla_active, e);
+            return tesla_active(g, a, e);
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;

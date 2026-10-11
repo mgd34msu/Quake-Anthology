@@ -293,8 +293,28 @@ void qa_world_snapshot_release(qa_world_actor_snapshot *snapshot)
     }
 }
 
+static void snapshot_actor_sift(qa_actor_id *actors,size_t root,size_t count)
+{
+    while(root<count/2) {
+        size_t child=root*2+1;
+        if(child+1<count && actors[child].slot<actors[child+1].slot) ++child;
+        if(actors[root].slot>=actors[child].slot) return;
+        qa_actor_id temporary=actors[root]; actors[root]=actors[child]; actors[child]=temporary;
+        root=child;
+    }
+}
+
+static void snapshot_actor_order(qa_actor_id *actors,size_t count)
+{
+    for(size_t root=count/2;root;--root) snapshot_actor_sift(actors,root-1,count);
+    for(size_t end=count;end>1;--end) {
+        qa_actor_id temporary=actors[0]; actors[0]=actors[end-1]; actors[end-1]=temporary;
+        snapshot_actor_sift(actors,0,end-1);
+    }
+}
+
 bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_role role,
-                               qa_world_actor_snapshot *out,qa_error *error)
+                               qa_world_snapshot_order order,qa_world_actor_snapshot *out,qa_error *error)
 {
     out->actors=out->local;
     out->count=0;
@@ -310,6 +330,8 @@ bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_rol
         qa_world_snapshot_release(out);
         return false;
     }
+    if(order==QA_WORLD_ORDER_ACTOR_SLOT && out->count>1)
+        snapshot_actor_order(out->actors,out->count);
     return true;
 }
 
@@ -368,7 +390,7 @@ bool qa_world_touch_triggers(qa_world *world,qa_actor_id actor,qa_game_family fa
         return !context.failed;
     }
     qa_world_actor_snapshot candidates;
-    if(!qa_world_snapshot_capture(world,moving.absolute_bounds,QA_COLLISION_TRIGGER,&candidates,error)) return false;
+    if(!qa_world_snapshot_capture(world,moving.absolute_bounds,QA_COLLISION_TRIGGER,QA_WORLD_ORDER_SPATIAL,&candidates,error)) return false;
     for(size_t i=0;i<candidates.count && !context.failed && qa_actors_get(world->actors,actor)!=NULL;++i) touch_candidate(&context,candidates.actors[i]);
     bool ok=!context.failed;
     if(context.failed && error!=NULL) *error=context.error;

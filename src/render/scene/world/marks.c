@@ -15,61 +15,12 @@ typedef struct mark_candidates {
     qa_vec3 direction;
     uint32_t surfaces[MARK_SURFACES];
     size_t count;
-    qa_error *error;
 } mark_candidates;
 
 static bool mark_fail(qa_error *error, const char *message)
 {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
-}
-
-static unsigned mark_box_side(qa_bounds bounds, qa_scene_plane plane)
-{
-    qa_vec3 n = plane.normal;
-    int axis = n.x == 1 ? 0 : n.y == 1 ? 1 : n.z == 1 ? 2 : -1;
-    if (axis >= 0) {
-        float min = axis == 0 ? bounds.mins.x : axis == 1 ? bounds.mins.y : bounds.mins.z;
-        float max = axis == 0 ? bounds.maxs.x : axis == 1 ? bounds.maxs.y : bounds.maxs.z;
-        return plane.distance <= min ? 1u : plane.distance >= max ? 2u : 3u;
-    }
-    qa_vec3 front = qa_v3(n.x < 0 ? bounds.mins.x : bounds.maxs.x,
-        n.y < 0 ? bounds.mins.y : bounds.maxs.y, n.z < 0 ? bounds.mins.z : bounds.maxs.z);
-    qa_vec3 back = qa_v3(n.x < 0 ? bounds.maxs.x : bounds.mins.x,
-        n.y < 0 ? bounds.maxs.y : bounds.mins.y, n.z < 0 ? bounds.maxs.z : bounds.mins.z);
-    return (qa_vec_dot(front, n) - plane.distance >= 0 ? 1u : 0u) |
-        (qa_vec_dot(back, n) - plane.distance < 0 ? 2u : 0u);
-}
-
-/* IBSP44's interned material table is temporary at world preparation. Read
- * its original flag derivation from the retained immutable BSP instead. The
- * last brush containing a side supplies that side's contents, as in the
- * actual qa_bsp_build_materials producer. */
-static bool mark_q3_flags(const qa_scene_world *world, uint32_t index,
-    uint32_t *flags, uint32_t *contents, qa_error *error)
-{
-    qa_bsp_surface source;
-    if (!qa_bsp_read_surface(&world->bsp, index, &source, error)) return false;
-    *flags = *contents = 0;
-    if (world->bsp.format != QA_BSP_IBSP44) {
-        qa_bsp_shader shader;
-        if (!qa_bsp_read_shader(&world->bsp, (size_t)source.shader, &shader, error)) return false;
-        *flags = (uint32_t)shader.surface_flags;
-        *contents = (uint32_t)shader.content_flags;
-    } else if (source.brush_side >= 0) {
-        qa_bsp_brush_side side;
-        if (!qa_bsp_read_brush_side(&world->bsp, (size_t)source.brush_side, &side, error)) return false;
-        *flags = (uint32_t)side.flags;
-        size_t count = qa_bsp_record_count(&world->bsp, QA_BSP_BRUSHES);
-        for (size_t i = 0; i < count; ++i) {
-            qa_bsp_brush brush;
-            if (!qa_bsp_read_brush(&world->bsp, i, &brush, error)) return false;
-            uint32_t member = (uint32_t)source.brush_side;
-            if (member >= brush.sides.first && member - brush.sides.first < brush.sides.count)
-                *contents = (uint32_t)brush.contents;
-        }
-    }
-    return true;
 }
 
 static bool mark_eligible(const qa_scene_world *world, uint32_t index,
@@ -79,9 +30,7 @@ static bool mark_eligible(const qa_scene_world *world, uint32_t index,
     *eligible = false;
     if (world->bsp.family == QA_BSP_Q3) {
         if (!surface->patch && (surface->type != QA_BSP_SURFACE_PLANAR || !surface->has_plane)) return true;
-        uint32_t flags, contents;
-        if (!mark_q3_flags(world, index, &flags, &contents, error)) return false;
-        *eligible = (flags & 0x30u) == 0 && (contents & 64u) == 0;
+        *eligible = (surface->source_flags & 0x30u) == 0 && (surface->source_contents & 64u) == 0;
         return true;
     }
     if (!surface->has_plane || !surface->legacy) return true;
@@ -99,36 +48,31 @@ static bool mark_eligible(const qa_scene_world *world, uint32_t index,
     return true;
 }
 
-static bool mark_box_surfaces(mark_candidates *marks, int32_t child)
+static qa_leaf_visit mark_leaf_surfaces(void *context, const qa_collision_leaf *source,
+                                        qa_error *error)
 {
+    mark_candidates *marks = context;
     const qa_scene_world *world = marks->world;
-    while (child >= 0) {
-        if (marks->count == MARK_SURFACES) return true;
-        const qa_bsp_node *node = &world->nodes[child];
-        const qa_bsp_plane *plane = &world->planes[node->plane];
-        unsigned side = mark_box_side(marks->bounds, (qa_scene_plane){plane->normal, plane->distance});
-        if (side == 1) child = node->children[0];
-        else if (side == 2) child = node->children[1];
-        else {
-            if (!mark_box_surfaces(marks, node->children[0])) return false;
-            child = node->children[1];
-        }
-    }
-    const qa_bsp_leaf *leaf = &world->leaves[(size_t)(-1 - (int64_t)child)];
+    const qa_bsp_leaf *leaf = &world->leaves[source->leaf];
     for (size_t i = 0; i < leaf->faces.count && marks->count < MARK_SURFACES; ++i) {
         uint32_t index = world->leaf_surfaces[(size_t)leaf->faces.first + i];
         size_t seen = 0;
         while (seen < marks->count && marks->surfaces[seen] != index) ++seen;
         if (seen < marks->count) continue;
         bool eligible;
-        if (!mark_eligible(world, index, &eligible, marks->error)) return false;
+        if (!mark_eligible(world, index, &eligible, error)) return QA_LEAF_FAILED;
         if (!eligible) continue;
         const qaw_surface *surface = &world->surfaces[index];
-        if (!surface->patch && (mark_box_side(marks->bounds, surface->plane) != 3 ||
-            qa_vec_dot(surface->plane.normal, marks->direction) > -0.5f)) continue;
+        if (!surface->patch) {
+            qa_vec3 normal = surface->plane.normal;
+            qa_collision_plane plane = {.normal = normal, .distance = surface->plane.distance,
+                .type = normal.x == 1 ? 0 : normal.y == 1 ? 1 : normal.z == 1 ? 2 : 3};
+            if (qa_collision_box_plane_side(marks->bounds, &plane, QA_BOX_AXIAL) != 3 ||
+                qa_vec_dot(normal, marks->direction) > -0.5f) continue;
+        }
         marks->surfaces[marks->count++] = index;
     }
-    return true;
+    return marks->count == MARK_SURFACES ? QA_LEAF_STOP : QA_LEAF_CONTINUE;
 }
 
 /* R_ChopPolyBehindPlane keeps the front side, drops an all-on polygon, and
@@ -200,7 +144,7 @@ bool qa_scene_world_mark_fragments(const qa_scene_world *world,
         world->admission_change_count || world->checkpoint_active)
         return mark_fail(error, "Mark projection requires the actual prepared world and valid borrowed spans");
     mark_candidates marks = {.world = world, .direction = qa_vec_normalize(projection),
-        .bounds = {qa_v3(99999, 99999, 99999), qa_v3(-99999, -99999, -99999)}, .error = error};
+        .bounds = {qa_v3(99999, 99999, 99999), qa_v3(-99999, -99999, -99999)}};
     for (size_t i = 0; i < point_count; ++i) {
         if (!qa_vec_finite(points[i])) return mark_fail(error, "Mark projection input point is nonfinite");
         mark_bounds_point(&marks.bounds, points[i]);
@@ -220,7 +164,9 @@ bool qa_scene_world_mark_fragments(const qa_scene_world *world,
     planes[count] = (qa_scene_plane){marks.direction, qa_vec_dot(marks.direction, points[0]) - 32};
     qa_vec3 inverse = qa_vec_scale(marks.direction, -1);
     planes[count + 1] = (qa_scene_plane){inverse, qa_vec_dot(inverse, points[0]) - 20};
-    if (!mark_box_surfaces(&marks, world->node_count ? 0 : -1)) return false;
+    qa_leaf_list leaves;
+    if (!qa_collision_walk_leaves(world->options.geometry, world->spatial_scratch, marks.bounds,
+        QA_LEAF_RENDER, mark_leaf_surfaces, &marks, &leaves, error)) return false;
     for (size_t i = 0; i < marks.count; ++i) {
         const qaw_surface *surface = &world->surfaces[marks.surfaces[i]];
         const qa_scene_vertex *vertices = surface->mesh.vertices;

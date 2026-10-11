@@ -1,7 +1,6 @@
 #include "visual_visibility.h"
 #include "internal.h"
 #include "native_q2_visibility.h"
-#include "qa/bsp.h"
 #include <math.h>
 
 static bool cluster_visible(qa_collision_geometry *geometry, const application_q2_visibility_recipient *recipient,
@@ -49,39 +48,6 @@ static bool membership_cluster_visible(qa_collision_geometry *geometry,qa_trace_
     *out|=seen;
     return true;
 }
-static bool headnode_visible(qa_collision_geometry *geometry, const application_q2_visibility_recipient *recipient,
-    int32_t headnode, bool phs, bool *out, qa_error *error)
-{
-    const qa_bsp_view *map = qa_collision_bsp(geometry);
-    size_t capacity = recipient->pending_capacity, count = 1, visits = 0;
-    int32_t *pending = recipient->pending;
-    if (!pending || !capacity)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q2 visibility requires its view's headnode scratch");
-    pending[0] = headnode; *out = false;
-    bool ok = true;
-    while (ok && count && !*out) {
-        int32_t child = pending[--count];
-        if (++visits > capacity) { ok = application_fail(error, QA_ERROR_FORMAT, "Q2 visibility headnode is cyclic"); break; }
-        if (child < 0) {
-            uint32_t index = (uint32_t)(-(int64_t)child - 1);
-            qa_collision_leaf leaf;
-            ok = qa_collision_leaf_at(geometry, index, &leaf, error) &&
-                cluster_visible(geometry, recipient, (int32_t)leaf.cluster, phs, out, error);
-        } else {
-            qa_bsp_node node;
-            ok = count <= capacity - 2 && qa_bsp_read_node(map, (uint32_t)child, &node, error);
-            if (ok) { pending[count++] = node.children[1]; pending[count++] = node.children[0]; }
-        }
-    }
-    return ok;
-}
-
-size_t application_q2_visibility_pending_capacity(const qa_application *app)
-{
-    size_t nodes = qa_bsp_record_count(qa_collision_bsp(app->geometry), QA_BSP_NODES);
-    return nodes > (SIZE_MAX / sizeof(int32_t) - 1) / 2 ? 0 : nodes * 2 + 1;
-}
-
 bool application_q2_visibility_recipient_prepare(qa_application *app, qa_actor_id actor,
     uint32_t slot, qa_vec3 origin, application_q2_visibility_recipient *out, qa_error *error)
 {
@@ -132,7 +98,9 @@ bool application_q2_visibility_test(qa_application *app, struct application_nati
         if (beam && original->cluster_count > 0) {
             if (!qa_collision_cluster_visible(geometry, (int32_t)recipient->leaf.cluster, original->clusters[0], true, &visible, error)) return false;
         } else if (original->cluster_count == -1) {
-            if (!headnode_visible(geometry, recipient, original->headnode, false, &visible, error)) return false;
+            if (!qa_collision_subtree_visible(geometry, qa_world_trace_scratch(app->world, geometry),
+                original->headnode, recipient->clusters, recipient->cluster_count, false,
+                &visible, error)) return false;
         } else for (int32_t i = 0; !visible && i < original->cluster_count; ++i)
             if (!cluster_visible(geometry, recipient, original->clusters[i], false, &visible, error)) return false;
     } else {

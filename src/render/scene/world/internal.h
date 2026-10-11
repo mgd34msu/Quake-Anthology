@@ -24,6 +24,7 @@ typedef struct qaw_surface {
     qa_bsp_surface_type type;
     float sort;
     uint32_t source_index, fog_index;
+    uint32_t source_flags, source_contents;
     qa_scene_fog fog;
     qaw_legacy *legacy;
     qaw_patch *patch;
@@ -62,8 +63,8 @@ struct qa_scene_world_scratch {
     uint32_t *visible_surfaces, *surface_lights;
     size_t visible_count;
     qaw_pending *pending;
-    uint8_t *pvs, *secondary_pvs;
-    size_t pvs_size;
+    qa_bytes pvs;
+    uint8_t *merged_pvs;
     int32_t pvs_selector, pvs_secondary, source_view_cluster;
     bool pvs_cached, pvs_all, pvs_nodes_cached;
     uint8_t source_area_mask[32];
@@ -82,6 +83,7 @@ struct qa_scene_world {
     qa_scene_resources *resources;
     qa_material_library *materials;
     qa_scene_world_options options;
+    qa_trace_scratch *spatial_scratch;
     qa_bsp_plane *planes;
     qa_bsp_node *nodes;
     qa_bsp_leaf *leaves;
@@ -104,7 +106,7 @@ struct qa_scene_world {
     const qa_scene_frame *admission_frame;
     uint64_t admission_sequence;
     size_t admission_view;
-    size_t pvs_capacity, visibility_area_limit, visibility_area_capacity;
+    size_t visibility_area_limit, visibility_area_capacity;
     uint32_t *source_dlight_masks;
     uint32_t cluster_count;
     bool sky_drawn;

@@ -667,11 +667,41 @@ static bool sample_surface(const qa_scene_world *world, const qaw_surface *surfa
     return sample_floor_pixel(world, surface, input, pixel, color);
 }
 
-typedef struct light_trace_frame {
-    uint32_t node;
-    int32_t far_child;
-    qa_vec3 middle, end;
-} light_trace_frame;
+typedef struct floor_sample {
+    const qa_scene_world *world;
+    const qa_scene_world_input *input;
+    qawl_point_light *entry;
+    qa_vec3 *color, *hit;
+    bool *found, done;
+} floor_sample;
+
+static qa_leaf_visit sample_floor_node(void *context, uint32_t index, qa_vec3 middle,
+                                      qa_error *error)
+{
+    floor_sample *sample = context;
+    const qa_scene_world *world = sample->world;
+    const qa_bsp_node *node = &world->nodes[index];
+    (void)error;
+    if (node->faces.first > world->surface_count || node->faces.count > world->surface_count - node->faces.first)
+        return QA_LEAF_FAILED;
+    for (size_t i = 0; i < node->faces.count; ++i) {
+        const qaw_surface *surface = &world->surfaces[node->faces.first + i];
+        size_t pixel;
+        if (sample_surface(world, surface, sample->input, middle, sample->color, &pixel)) {
+            if (sample->entry) {
+                sample->entry->kind = QAWL_POINT_FLOOR;
+                sample->entry->sample.floor.surface = surface;
+                sample->entry->sample.floor.pixel = pixel;
+                sample->entry->sample.floor.hit = middle;
+            }
+            if (sample->hit) *sample->hit = middle;
+            if (sample->found) *sample->found = true;
+            sample->done = true;
+            return QA_LEAF_STOP;
+        }
+    }
+    return QA_LEAF_CONTINUE;
+}
 
 static bool trace_floor(const qa_scene_world *world,const qa_scene_world_input *input, qa_vec3 point, qa_vec3 *color,
                          qa_vec3 *hit, bool *found)
@@ -689,66 +719,12 @@ static bool trace_floor(const qa_scene_world *world,const qa_scene_world_input *
         entry->kind = QAWL_POINT_NONE;
     }
     if (world->model_count == 0 || world->node_count == 0) return true;
-    light_trace_frame local[64], *stack = local;
-    size_t capacity = sizeof(local) / sizeof(local[0]), depth = 0;
-    qa_vec3 start = point, end = qa_vec_add(point, qa_v3(0, 0, -2048));
-    int32_t child = world->models[0].source.headnodes[0];
-    bool valid = true, done = false;
-    while (!done) {
-        while (child >= 0) {
-            if ((size_t)child >= world->node_count) { valid = false; break; }
-            const qa_bsp_node *node = &world->nodes[child];
-            if (node->plane >= world->plane_count) { valid = false; break; }
-            const qa_bsp_plane *plane = &world->planes[node->plane];
-            float front = qa_vec_dot(start, plane->normal) - plane->distance;
-            float back = qa_vec_dot(end, plane->normal) - plane->distance;
-            if (!isfinite(front) || !isfinite(back)) { valid = false; break; }
-            unsigned side = front < 0 ? 1u : 0u;
-            if ((back < 0 ? 1u : 0u) == side) { child = node->children[side]; continue; }
-            qa_vec3 middle = qa_vec_lerp(start, end, front / (front - back));
-            if (depth == capacity) {
-                if (capacity > SIZE_MAX / 2 / sizeof(*stack)) { valid = false; break; }
-                size_t next_capacity = capacity * 2;
-                light_trace_frame *replacement = malloc(next_capacity * sizeof(*replacement));
-                if (replacement == NULL) { valid = false; break; }
-                memcpy(replacement, stack, depth * sizeof(*stack));
-                if (stack != local) free(stack);
-                stack = replacement;
-                capacity = next_capacity;
-            }
-            stack[depth++] = (light_trace_frame){(uint32_t)child, node->children[side ^ 1u], middle, end};
-            child = node->children[side];
-            end = middle;
-        }
-        if (!valid || depth == 0) break;
-        light_trace_frame frame = stack[--depth];
-        const qa_bsp_node *node = &world->nodes[frame.node];
-        if (node->faces.first > world->surface_count || node->faces.count > world->surface_count - node->faces.first) {
-            valid = false;
-            break;
-        }
-        for (size_t i = 0; i < node->faces.count; ++i) {
-            const qaw_surface *surface = &world->surfaces[node->faces.first + i];
-            size_t pixel;
-            if (sample_surface(world, surface, input, frame.middle, color, &pixel)) {
-                if (entry) {
-                    entry->kind = QAWL_POINT_FLOOR;
-                    entry->sample.floor.surface = surface;
-                    entry->sample.floor.pixel = pixel;
-                    entry->sample.floor.hit = frame.middle;
-                }
-                if (hit) *hit = frame.middle;
-                if (found) *found = true;
-                done = true;
-                break;
-            }
-        }
-        child = frame.far_child;
-        start = frame.middle;
-        end = frame.end;
-    }
-    if (stack != local) free(stack);
-    if (valid && !done && entry) {
+    floor_sample sample = {.world = world, .input = input, .entry = entry,
+        .color = color, .hit = hit, .found = found};
+    bool valid = qa_collision_walk_segment(world->options.geometry, world->spatial_scratch,
+        world->models[0].source.headnodes[0], point, qa_vec_add(point, qa_v3(0, 0, -2048)),
+        sample_floor_node, &sample, NULL);
+    if (valid && !sample.done && entry) {
         entry->kind = QAWL_POINT_FLOOR;
         entry->sample.floor.surface = NULL;
     }

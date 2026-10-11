@@ -606,15 +606,6 @@ static bool world_topology(qa_scene_world *world, qa_error *error)
         }
     }
     world->bounds = world->model_count != 0 ? bsp_bounds(world->models[0].source.bounds) : (qa_bounds){0};
-    size_t capacity = world->bsp.family == QA_BSP_Q1 ? (world->leaf_count + 7) / 8
-        : ((size_t)world->cluster_count + 7) / 8;
-    qa_bytes vis = world->bsp.lumps[QA_BSP_VISIBILITY].bytes;
-    if (vis.size != 0 && world->bsp.family != QA_BSP_Q1) {
-        size_t row = world->bsp.family == QA_BSP_Q3 ? qa_load_u32le(vis.data + 4)
-            : ((size_t)qa_load_u32le(vis.data) + 7) / 8;
-        if (row > capacity) capacity = row;
-    }
-    world->pvs_capacity = capacity;
     return true;
 }
 
@@ -638,8 +629,8 @@ bool qa_scene_world_scratch_create(const qa_scene_world *world,
     SCRATCH_ALLOC(visible_surfaces, world->surface_count);
     SCRATCH_ALLOC(surface_lights, world->surface_count);
     SCRATCH_ALLOC(pending, world->node_count + 1);
-    SCRATCH_ALLOC(pvs, world->pvs_capacity);
-    SCRATCH_ALLOC(secondary_pvs, world->pvs_capacity);
+    if (world->bsp.family == QA_BSP_Q2)
+        SCRATCH_ALLOC(merged_pvs, qa_collision_visibility_bytes(world->options.geometry));
     SCRATCH_ALLOC(visible_cache.areas, world->visibility_area_capacity);
 #undef SCRATCH_ALLOC
     qa_stamp_set_init(&scratch->pvs_nodes, scratch->pvs_nodes.marks, world->node_count);
@@ -659,7 +650,7 @@ void qa_scene_world_scratch_destroy(qa_scene_world_scratch *scratch)
     if (!scratch) return;
     free(scratch->pvs_nodes.marks); free(scratch->source_vis.marks); free(scratch->surfaces.marks);
     free(scratch->visible_surfaces); free(scratch->surface_lights); free(scratch->pending);
-    free(scratch->pvs); free(scratch->secondary_pvs); free(scratch->visible_cache.areas);
+    free(scratch->merged_pvs); free(scratch->visible_cache.areas);
     free(scratch);
 }
 
@@ -720,6 +711,8 @@ bool qa_scene_world_create(const qa_bsp_view *bsp, qa_scene_resources *resources
     if (!world_topology(world, error)) goto fail;
     if (!world->options.geometry && world->leaf_count &&
         !qa_collision_create(&world->bsp, &world->options.geometry, error)) goto fail;
+    if (world->options.geometry &&
+        !qa_trace_scratch_create(world->options.geometry, &world->spatial_scratch, error)) goto fail;
     if (world->bsp.family != QA_BSP_Q3) {
         if (!qa_bsp_select_lighting(&world->bsp, world->options.external_lit, &world->lighting, error)) goto fail;
         qa_bsp_extension extension;
@@ -760,6 +753,7 @@ void qa_scene_world_destroy(qa_scene_world *world)
     free(world->admission_changes);
     free(world->visibility_parent_heads); free(world->visibility_parents);
     free(world->sky_name);
+    qa_trace_scratch_destroy(world->spatial_scratch);
     qa_collision_destroy(world->options.geometry);
     qa_buffer_free(&world->bytes); qa_buffer_free(&world->lit_bytes); qa_buffer_free(&world->entity_bytes);
     qa_buffer_free(&world->palette_bytes); qa_buffer_free(&world->translation_bytes);
@@ -809,26 +803,18 @@ static bool update_pvs(const qa_scene_world *world, int32_t eye, qa_vec3 origin,
     if (scratch->pvs_cached && selector == scratch->pvs_selector && second == scratch->pvs_secondary) return true;
     scratch->pvs_cached = false;
     scratch->pvs_nodes_cached = false;
-    scratch->pvs_all = selector < 0 || world->bsp.lumps[QA_BSP_VISIBILITY].bytes.size == 0;
-    qa_bytes vis = world->bsp.lumps[QA_BSP_VISIBILITY].bytes;
-    if (!scratch->pvs_all && world->bsp.family == QA_BSP_Q2) {
-        uint32_t clusters = qa_load_u32le(vis.data);
-        if ((uint32_t)selector >= clusters || (second >= 0 && (uint32_t)second >= clusters))
-            return world_error(error, QA_ERROR_ARGUMENT, "scene PVS cluster is outside map visibility");
-        scratch->pvs_all = qa_load_i32le(vis.data + 4 + (size_t)selector * 8) < 0
-            || (second >= 0 && qa_load_i32le(vis.data + 4 + (size_t)second * 8) < 0);
-    }
-    if (!scratch->pvs_all && world->bsp.family == QA_BSP_Q3
-        && (uint32_t)selector >= qa_load_u32le(vis.data)) scratch->pvs_all = true;
-    if (!scratch->pvs_all) {
-        if (!qa_bsp_visibility(&world->bsp, selector, false, world->cluster_count,
-            scratch->pvs, world->pvs_capacity, &scratch->pvs_size, error)) return false;
-        if (world->bsp.family == QA_BSP_Q2 && second >= 0) {
-            size_t bytes;
-            if (!qa_bsp_visibility(&world->bsp, second, false, world->cluster_count,
-                scratch->secondary_pvs, world->pvs_capacity, &bytes, error)) return false;
-            if (bytes != scratch->pvs_size) return world_error(error, QA_ERROR_FORMAT, "secondary PVS width differs");
-            for (size_t i = 0; i < bytes; ++i) scratch->pvs[i] |= scratch->secondary_pvs[i];
+    if (!qa_collision_visibility_row(world->options.geometry, selector, false, &scratch->pvs, error)) return false;
+    scratch->pvs_all = scratch->pvs.data == NULL;
+    if (!scratch->pvs_all && world->bsp.family == QA_BSP_Q2 && second >= 0) {
+        qa_bytes row;
+        if (!qa_collision_visibility_row(world->options.geometry, second, false, &row, error)) return false;
+        if (row.data == NULL) {
+            scratch->pvs = row;
+            scratch->pvs_all = true;
+        } else {
+            for (size_t i = 0; i < row.size; ++i)
+                scratch->merged_pvs[i] = scratch->pvs.data[i] | row.data[i];
+            scratch->pvs = (qa_bytes){scratch->merged_pvs, row.size};
         }
     }
     scratch->pvs_selector = selector;
@@ -860,8 +846,8 @@ static void mark_pvs_nodes(const qa_scene_world *world, qa_scene_world_scratch *
     qa_stamp_set_begin(&scratch->pvs_nodes);
     for (size_t i = world->bsp.family == QA_BSP_Q1 ? 1u : 0u; i < world->leaf_count; ++i) {
         int64_t bit = world->bsp.family == QA_BSP_Q1 ? (int64_t)i - 1 : world->leaves[i].cluster;
-        if (bit < 0 || (uint64_t)bit / 8 >= scratch->pvs_size ||
-            !(scratch->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7)))) continue;
+        if (bit < 0 || (uint64_t)bit / 8 >= scratch->pvs.size ||
+            !(scratch->pvs.data[(size_t)bit / 8] & (1u << ((unsigned)bit & 7)))) continue;
         mark_visibility_ancestors(world, scratch, i, &scratch->pvs_nodes);
     }
     scratch->pvs_nodes_cached = true;
@@ -917,8 +903,8 @@ static bool source_mark_leaves(const qa_scene_world *world, int32_t eye, qa_vec3
         if (!all) {
             int64_t bit = leaf->cluster;
             if (bit < 0 || (uint64_t)bit >= world->cluster_count) continue;
-            if (!scratch->pvs_all && ((uint64_t)bit / 8 >= scratch->pvs_size ||
-                !(scratch->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))))) continue;
+            if (!scratch->pvs_all && ((uint64_t)bit / 8 >= scratch->pvs.size ||
+                !(scratch->pvs.data[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))))) continue;
             if (leaf->area < 0 || (uint64_t)leaf->area / 8 >= 32 ||
                 (scratch->source_area_mask[(size_t)leaf->area / 8] & (1u << ((unsigned)leaf->area & 7)))) continue;
         }
@@ -1049,8 +1035,8 @@ static bool world_visible(const qa_scene_world *world, const qa_scene_world_inpu
         if (!source && world->bsp.family == QA_BSP_Q3 && (input->no_vis || world->leaves[eye].cluster < 0) && leaf->cluster == -1) continue;
         if (!source && !input->no_vis && !scratch->pvs_all) {
             int64_t bit = world->bsp.family == QA_BSP_Q1 ? (int64_t)index - 1 : leaf->cluster;
-            if (bit < 0 || (uint64_t)bit / 8 >= scratch->pvs_size
-                || (scratch->pvs[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))) == 0) continue;
+            if (bit < 0 || (uint64_t)bit / 8 >= scratch->pvs.size
+                || (scratch->pvs.data[(size_t)bit / 8] & (1u << ((unsigned)bit & 7))) == 0) continue;
         }
         if (!remaining_planes(bsp_bounds(leaf->bounds), planes, plane_count, &item.planes)) continue;
         if (source) {
