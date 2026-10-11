@@ -6,9 +6,32 @@
 #include "guest_q3_private.h"
 #include "guest_q3_client_console.h"
 #include "startup_flow.h"
+#include "q3_command_tokens.h"
 
 #include <stdio.h>
 #include <string.h>
+
+bool application_q3_command_parse(application_q3_command_storage *storage,
+    const char *text, qa_command_tokens *arguments, qa_error *error)
+{
+    qa_command_tokens_free(arguments);
+    if (!qa_q3_tokenize(text, &storage->tokens, error)) return false;
+    size_t used = 0;
+    for (size_t i = 0; i < storage->tokens.count; ++i) {
+        const char *value = qa_q3_token(&storage->tokens, i);
+        storage->values[i] = (char *)value;
+        if (!i) continue;
+        if (i > 1) storage->args[used++] = ' ';
+        size_t size = strlen(value);
+        memcpy(storage->args + used, value, size);
+        used += size;
+    }
+    storage->args[used] = 0;
+    *arguments = (qa_command_tokens){.count = storage->tokens.count,
+        .values = storage->values, .args_text = storage->args,
+        .storage = storage->tokens.text, .borrowed = true};
+    return true;
+}
 
 void application_console_print(void *context, const qa_command_context *command,
                                  const char *text)

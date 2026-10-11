@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_PRIVATE_H
 
 #include "internal.h"
+#include "q3_command_tokens.h"
 #include "native_process_owner.h"
 #include "guest_q3_equipment_profile.h"
 #include "guest_q3_equipment.h"
@@ -42,7 +43,7 @@ typedef struct q3g_client {
     q3g_snapshot snapshots[QA_Q3_PACKET_BACKUP];
     float sensitivity;
     int32_t weapon;
-    char *big_configstring;
+    char big_configstring[Q3G_BIG_INFO_CHARS];
     size_t big_configstring_length;
     bool allocated, connected, begun, bot, has_snapshot, pending_system_info;
     bool pending_bot, pending_retirement, disconnect_pending, disconnect_started;
@@ -119,6 +120,7 @@ typedef struct q3g_role {
     bool draw_entry;
     char *path;
     qa_command_tokens arguments;
+    application_q3_command_storage command_storage;
     qa_q3_host_common_services common;
     qa_q3_host_server_services server;
     qa_q3_host_client_services client_services;
@@ -164,6 +166,7 @@ struct application_q3_guest {
     q3g_client clients[64];
     uint32_t seats[64];
     qa_command_tokens arguments;
+    application_q3_command_storage command_storage;
     char *entity_text;
     struct q3g_restore *restoration;
     int32_t milliseconds, random_seed;

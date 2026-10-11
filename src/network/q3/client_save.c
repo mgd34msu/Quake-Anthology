@@ -157,6 +157,7 @@ bool qa_q3_client_peer_restore(qa_bytes bytes, qa_q3_identity identity,
         p->packets[i].server_time = qa_net_read_i32(&r); p->packets[i].real_time = qa_net_read_i32(&r);
     }
     if (!qa_net_read_string(&r, p->big_configstring, sizeof(p->big_configstring))) goto failure;
+    p->big_configstring_length = strlen(p->big_configstring);
     p->receive_size = qa_net_read_u16(&r);
     if (p->receive_size > sizeof(p->receive_packet)) {
         qa_net_reader_fail(&r, "Saved Q3 receive packet exceeds its actual native buffer"); goto failure;

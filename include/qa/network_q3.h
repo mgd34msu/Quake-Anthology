@@ -274,6 +274,8 @@ bool qa_q3_encode_client(qa_q3_writer *, const qa_q3_client_message *, int32_t c
 typedef struct qa_q3_tokens { size_t count; bool truncated; uint16_t offsets[1024]; char text[9216]; } qa_q3_tokens;
 bool qa_q3_tokenize(const char *, qa_q3_tokens *, qa_error *);
 const char *qa_q3_token(const qa_q3_tokens *, size_t);
+bool qa_q3_big_configstring_feed(char *buffer, size_t capacity, size_t *length,
+    const qa_q3_tokens *tokens, bool *complete, qa_error *error);
 bool qa_q3_info_value(const char *, const char *, char *, size_t, qa_error *);
 /* Remove the first exact-case key. Small strings prepend the new pair; the
  * 8192-byte source variant appends. Lookup remains ASCII-insensitive. */

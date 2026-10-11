@@ -256,14 +256,12 @@ static bool client(qa_source_save_io *io, q3g_client *value)
         if (!snapshot(io, &value->snapshots[i], i)) return false;
     if (!qa_source_save_f32(io, &value->sensitivity) || !qa_source_save_i32(io, &value->weapon) ||
         !qa_source_save_count(io, &value->big_configstring_length, Q3G_BIG_INFO_CHARS - 1)) return false;
-    present = value->big_configstring != NULL;
+    present = value->big_configstring_length != 0;
     if (!qa_source_save_bool(io, &present)) return false;
     if (present && io->direction == QA_SOURCE_SAVE_READ) {
         if (value->big_configstring_length + 1 > io->input.size - io->offset)
             return state_fail(io, QA_ERROR_FORMAT, "Truncated application Q3 continued configstring");
-        value->big_configstring = malloc(Q3G_BIG_INFO_CHARS);
-        if (!value->big_configstring)
-            return state_fail(io, QA_ERROR_MEMORY, "Restoring application Q3 continued configstring");
+
     }
     if (present && (!qa_source_save_bytes(io, value->big_configstring, value->big_configstring_length + 1) ||
         value->big_configstring[value->big_configstring_length] ||
@@ -277,7 +275,7 @@ static bool client(qa_source_save_io *io, q3g_client *value)
     if (!q3g_fire_fields(io, &value->fire) || !q3g_fire_valid(&value->fire, value->actor))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid original Q3 fire continuation");
     if (!isfinite(value->sensitivity) ||
-        (!value->big_configstring && value->big_configstring_length) ||
+        (!present && value->big_configstring_length) ||
         (value->connected && (!value->actor.registry || !value->allocated)) ||
         (value->has_snapshot && (!value->snapshots[(uint32_t)value->snapshot_sequence &
          (QA_Q3_PACKET_BACKUP - 1)].value.valid ||
@@ -345,7 +343,7 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
     for (size_t i = 0; i < 64; ++i) {
         const q3g_client *value = &engine->clients[i];
         if (value->actor.registry || value->userinfo || value->retirement_reason || value->gamestate ||
-            value->big_configstring || value->allocated || value->connected)
+            value->big_configstring_length || value->allocated || value->connected)
             return application_fail(error, QA_ERROR_ARGUMENT, "Application Q3 state requires empty candidate clients");
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
             if (value->snapshots[j].entities)

@@ -2312,6 +2312,8 @@ static void test_q3_reliable_event_references(void)
     CHECK(qa_q3_reliable_ack(histories,QA_Q3_SERVER,3,&clamped,&error));
     CHECK(!clamped && histories[0].event_cursor==id+1);
     qa_q3_reliable_clear(histories);
+    char assembled[8192] = {0};
+    size_t assembled_size = 0;
     for(int32_t sequence=1;sequence<=3;++sequence) {
         qa_q3_tokens tokens;
         CHECK(qa_q3_tokenize(qa_q3_reliable_lookup(histories+1,sequence),&tokens,&error));
@@ -2323,7 +2325,28 @@ static void test_q3_reliable_event_references(void)
         CHECK(strlen(qa_q3_token(&tokens,2))==count);
         CHECK(!memcmp(qa_q3_token(&tokens,2),text+offset,count));
         CHECK(histories[1].slots[sequence].text==text && !histories[1].storage);
+        bool complete;
+        CHECK(qa_q3_big_configstring_feed(assembled, sizeof(assembled), &assembled_size,
+            &tokens, &complete, &error));
+        CHECK(complete == (sequence == 3));
+        if (complete) {
+            CHECK(qa_q3_tokenize(assembled, &tokens, &error));
+            CHECK(tokens.count == 3 && !strcmp(qa_q3_token(&tokens, 0), "cs"));
+            CHECK(!strcmp(qa_q3_token(&tokens, 1), "42"));
+            CHECK(!strcmp(qa_q3_token(&tokens, 2), text));
+        }
+
     }
+    qa_q3_tokens fragment;
+    bool complete;
+    assembled_size = 0;
+    CHECK(qa_q3_tokenize("bcs1 42 tail", &fragment, &error));
+    CHECK(!qa_q3_big_configstring_feed(assembled, sizeof(assembled), &assembled_size,
+        &fragment, &complete, &error));
+    CHECK(qa_q3_tokenize("bcs0 42 head", &fragment, &error));
+    CHECK(!qa_q3_big_configstring_feed(assembled, 8, &assembled_size,
+        &fragment, &complete, &error));
+    CHECK(assembled_size == 0);
     qa_q3_reliable full={0};
     bool drop=false;
     lease=histories[1].slots[1].lease;

@@ -145,7 +145,7 @@ static bool consume(void *user, const qa_q3_server_event *event, qa_error *e) {
         for (unsigned i = 0; i < QA_Q3_PACKET_BACKUP; ++i) qa_q3_slot_clear(&p->history[i], p->product);
         p->has_snapshot = false; p->latest_snapshot = 0; p->parse_entities_number = 0;
         p->command_number = 0; memset(p->commands, 0, sizeof(p->commands)); memset(p->packets, 0, sizeof(p->packets));
-        p->big_configstring[0] = 0;
+        p->big_configstring[0] = 0; p->big_configstring_length = 0;
         return true;
     case QA_Q3_EVENT_GAMESTATE:
         p->server_command_sequence = event->value.gamestate->command_sequence;
@@ -282,6 +282,38 @@ bool qa_q3_client_peer_receive(qa_q3_client_peer *p, qa_bytes datagram, int32_t 
     qa_q3_xor_server(plaintext, packet.payload.size, p->challenge, packet.sequence, qa_q3_reliable_lookup(&p->reliable, acknowledge));
     return qa_q3_client_peer_message(p, (int32_t)packet.sequence, (qa_bytes){plaintext, packet.payload.size}, now, e);
 }
+bool qa_q3_big_configstring_feed(char *buffer, size_t capacity, size_t *length,
+    const qa_q3_tokens *tokens, bool *complete, qa_error *error)
+{
+    const char *name = qa_q3_token(tokens, 0);
+    bool start = !strcmp(name, "bcs0"), last = !strcmp(name, "bcs2");
+    *complete = true;
+    if (!start && !last && strcmp(name, "bcs1")) return true;
+    *complete = false;
+    const char *fragment = qa_q3_token(tokens, 2);
+    if (start) {
+        int used = snprintf(buffer, capacity, "cs %s \"%s", qa_q3_token(tokens, 1), fragment);
+        if (used < 0 || (size_t)used >= capacity) {
+            *length = 0;
+            buffer[0] = 0;
+            return fail(error, QA_ERROR_FORMAT, "Q3 big configstring overflow");
+        }
+        *length = (size_t)used;
+        return true;
+    }
+    size_t added = strlen(fragment), quote = last ? 1u : 0u;
+    if (!*length || *length >= capacity || added + quote >= capacity - *length)
+        return fail(error, QA_ERROR_FORMAT, "Q3 big configstring overflow or missing start");
+    memcpy(buffer + *length, fragment, added + 1);
+    *length += added;
+    if (last) {
+        buffer[(*length)++] = '"';
+        buffer[*length] = 0;
+        *complete = true;
+    }
+    return true;
+}
+
 static bool execute(qa_q3_client_peer *p, int32_t sequence, const char *text, qa_error *e) {
     qa_q3_tokens tokens;
     if (!qa_q3_tokenize(text, &tokens, e)) return false;
@@ -290,18 +322,11 @@ static bool execute(qa_q3_client_peer *p, int32_t sequence, const char *text, qa
         p->disconnected = true;
         return p->hooks.disconnect(p->hooks.context, tokens.count >= 2 ? qa_q3_token(&tokens, 1) : "Server disconnected", e);
     }
-    if (!strcmp(name, "bcs0")) {
-        int n = snprintf(p->big_configstring, sizeof(p->big_configstring), "cs %s \"%s", qa_q3_token(&tokens, 1), qa_q3_token(&tokens, 2));
-        if (n < 0 || (size_t)n >= sizeof(p->big_configstring)) return fail(e, QA_ERROR_FORMAT, "Q3 big configstring overflow");
-        return true;
-    }
-    if (!strcmp(name, "bcs1") || !strcmp(name, "bcs2")) {
-        size_t used = strlen(p->big_configstring), added = strlen(qa_q3_token(&tokens, 2));
-        bool last = !strcmp(name, "bcs2");
-        if (!used || added + (last ? 1 : 0) >= sizeof(p->big_configstring) - used) return fail(e, QA_ERROR_FORMAT, "Q3 big configstring overflow or missing start");
-        memcpy(p->big_configstring + used, qa_q3_token(&tokens, 2), added + 1);
-        if (!last) return true;
-        p->big_configstring[used + added] = '"'; p->big_configstring[used + added + 1] = 0;
+    bool complete;
+    if (!qa_q3_big_configstring_feed(p->big_configstring, sizeof(p->big_configstring),
+        &p->big_configstring_length, &tokens, &complete, e)) return false;
+    if (!complete) return true;
+    if (!strcmp(name, "bcs2")) {
         if (!qa_q3_tokenize(p->big_configstring, &tokens, e)) return false;
         name = qa_q3_token(&tokens, 0);
     }

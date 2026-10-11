@@ -335,7 +335,7 @@ void q3g_clients_clear(struct application_q3_guest *engine)
 {
     for (size_t i = 0; i < 64; ++i) {
         q3g_client *client = &engine->clients[i];
-        free(client->userinfo); free(client->retirement_reason); free(client->big_configstring); free(client->gamestate);
+        free(client->userinfo); free(client->retirement_reason); free(client->gamestate);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j) free(client->snapshots[j].entities);
         qa_q3_reliable_clear(&client->reliable);
         *client = (q3g_client){.sensitivity = 1};
@@ -430,44 +430,19 @@ static bool server_command(void *context, int32_t number, bool *present, qa_erro
     if ((int64_t)client->reliable.sequence - number >= QA_Q3_RELIABLE)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 server command has left the retained history");
     const char *text = qa_q3_reliable_lookup(&client->reliable, number);
-rescan: ;
-    qa_command_tokens tokens = {0};
-    if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &tokens, NULL, NULL, error)) return false;
-    qa_command_tokens_free(&role->arguments); role->arguments = tokens;
-    if (tokens.count && !strcmp(tokens.values[0], "disconnect")) {
-        const char *reason = tokens.count >= 2 ? tokens.values[1] : "Server disconnected";
+    if (!application_q3_command_parse(&role->command_storage, text, &role->arguments, error)) return false;
+    qa_q3_tokens *tokens = &role->command_storage.tokens;
+    const char *name = qa_q3_token(tokens, 0);
+    if (!strcmp(name, "disconnect")) {
+        const char *reason = tokens->count >= 2 ? qa_q3_token(tokens, 1) : "Server disconnected";
         return q3g_client_effect(role, QA_APPLICATION_Q3_DISCONNECT, reason, error);
     }
-    if (tokens.count && (!strcmp(tokens.values[0], "bcs0") ||
-        !strcmp(tokens.values[0], "bcs1") || !strcmp(tokens.values[0], "bcs2"))) {
-        const char *fragment = tokens.count > 2 ? tokens.values[2] : "";
-        if (!client->big_configstring) {
-            client->big_configstring = malloc(Q3G_BIG_INFO_CHARS);
-            if (!client->big_configstring)
-                return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 configstring continuation");
-            client->big_configstring[0] = 0;
-        }
-        if (!strcmp(tokens.values[0], "bcs0")) {
-            const char *index_text = tokens.count > 1 ? tokens.values[1] : "";
-            int length = snprintf(client->big_configstring, Q3G_BIG_INFO_CHARS,
-                "cs %s \"%s", index_text, fragment);
-            if (length < 0)
-                return application_fail(error, QA_ERROR_FORMAT, "Q3 continued configstring start cannot be encoded");
-            client->big_configstring_length = strlen(client->big_configstring);
-        } else {
-            size_t size = strlen(fragment), quote = !strcmp(tokens.values[0], "bcs2") ? 1u : 0u;
-            if (size + quote >= Q3G_BIG_INFO_CHARS - client->big_configstring_length)
-                return application_fail(error, QA_ERROR_FORMAT, "Q3 continued configstring exceeds capacity");
-            memcpy(client->big_configstring + client->big_configstring_length, fragment, size + 1);
-            client->big_configstring_length += size;
-        }
-        if (!strcmp(tokens.values[0], "bcs2")) {
-            client->big_configstring[client->big_configstring_length++] = '"';
-            client->big_configstring[client->big_configstring_length] = 0;
-            text = client->big_configstring;
-            goto rescan;
-        }
-    } else *present = true;
+    if (!qa_q3_big_configstring_feed(client->big_configstring, sizeof(client->big_configstring),
+        &client->big_configstring_length, tokens, present, error)) return false;
+    if (*present && !strcmp(name, "bcs2")) {
+        text = client->big_configstring;
+        if (!application_q3_command_parse(&role->command_storage, text, &role->arguments, error)) return false;
+    }
     if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "cs")) {
         qa_command_tokens *args = &role->arguments;
         if (!client->gamestate)
@@ -481,13 +456,14 @@ rescan: ;
         if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index, value, error)) return false;
         if (changed && index == 1) client->pending_system_info = true;
         if (index == 1 && client->pending_system_info) {
+            char command_text[Q3G_BIG_INFO_CHARS];
+            memcpy(command_text, text, strlen(text) + 1);
             if (!q3g_client_effect(role, QA_APPLICATION_Q3_SYSTEM_INFO,
                     qa_q3_configstring(client->gamestate, 1), error)) return false;
             client->pending_system_info = false;
+            if (!application_q3_command_parse(&role->command_storage, command_text,
+                &role->arguments, error)) return false;
         }
-        qa_command_tokens restored = {0};
-        if (!qa_command_tokenize(text, QA_RULESET_Q3, false, &restored, NULL, NULL, error)) return false;
-        qa_command_tokens_free(&role->arguments); role->arguments = restored;
     }
     if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "map_restart") &&
         !q3g_client_effect(role, QA_APPLICATION_Q3_MAP_RESTART, text, error)) return false;
