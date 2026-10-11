@@ -1491,5 +1491,68 @@ retained historical generations have separate lifetimes in that one implementati
 The listed sites and neighboring actor-lookup copies were checked against the
 final source. Each source slice passed one normal production build and all seven
 existing core suites. This is source/build/core-test evidence, without a live-play
-or timing claim. Heap adoption remains open, including growth of retained history
-and the remaining message, frame and callback storage callers.
+or timing claim. The heap section below records the subsequent migration of
+retained history, message, frame and callback storage callers.
+
+## TA-3196 heap adoption and supplied-list closure
+
+The twenty heap entries in the current primitive foundation list now use common
+arena/pool storage or retained IDs at the supplied callers. `src/core/arena.c`
+and `src/core/pool.c` remain the storage implementations. Each owner prepares its
+storage at admission; independent leases preserve nested and retained lifetimes.
+
+| Item | Migrated callers and removed allocation paths |
+| --- | --- |
+| 1 | QW physical frames and NQ/QW recipient PVS buffers use the frontend frame arena in `network_qw.c` and `network_nq.c`. Their per-frame malloc/free pairs are deleted. |
+| 2 | `src/network/runtime/q1_messages.h` supplies pooled NQ/QW/client reliable queues. QW send and Q1 client decode, precache, flush, continuation, command and stufftext paths reuse load-owned buffers. Constructors and restores prepare the same storage. |
+| 3 | QW connectionless parsing and synchronous replies use buffer-backed arenas or bounded stack storage. Status/log output uses the frame arena. Deferred commands use pool slots with inline text, released after execution. |
+| 4 | Every tokenizer/copy caller supplies storage; `src/console/text.c` has no NULL-allocator heap fallback. Q2 commands use buffer arenas or console pages; Q3 commands use fixed depth-indexed storage. Native callbacks borrow entered arguments. Remote component histories retain command-document leases instead of copying each update. |
+| 5 | Q2 compression state, blast/zpacket decode buffers and KEX pending payloads use admission-owned storage and pools. Q3 fragmented-message FIFO uses the existing 64-message bound with pooled records. Private per-packet malloc/realloc paths are deleted. |
+| 6 | Combat journals use pool runs in `src/gameplay/combat.c`; `qa_damage_outcome_release` returns their leases. All listed damage callers migrated and `qa_damage_outcome_free` is deleted. Retained outcomes remain valid after combat-owner destruction. |
+| 7 | QVM damage frames/ranges/deliveries, native Q2 frames/arguments and declared-source damage frames use load-prepared pools or common control leases. Their listed per-hit calloc paths are deleted. |
+| 8 | Pickup cargo, grant buffers, receipts, previews and inventory snapshots share inventory-owned pool pages. QVM continuations use control leases; native pickup scopes/watch arrays use prepared pools. Retained snapshots survive inventory-owner destruction. |
+| 9 | Q2 monsters, beams and death controllers use `q2m_monster_take`; items and companions use `q2_item_state_take`. Game admission reserves their pools; release and restore use those same slots. |
+| 10 | Bot transport keeps fixed storage for its existing 1022-entity namespace. Bot chat construction, expansion and synonym replacement use shared prepared workspace pages; nested scratch leases stay independent. |
+| 11 | Component scenes consume shared output-ring records through their event cursor. The private allocating component-event queue is deleted. |
+| 12 | QVM component frame snapshots use embedded actor storage. Frame branches, weapon predicates and drop continuations use `application_control_storage_acquire` leases through callback/projection cleanup. |
+| 13 | NPC prediction uses pooled records with retained trajectories. Navigation estimate caches and area/portal relaxation queues use load-owned storage; portal results remain pinned during nested area queries. |
+| 14 | Q1 score scratch is map-owned; Q2 spawn candidates use pooled scratch and inventory publication uses shared snapshots. Native observations, pending writes and callback scopes use prepared pools. Travel carries inventory leases rather than freeing borrowed entries. |
+| 15 | Native Q2 HUD imports borrow `qa_native_string_span` and use the shared picture cache. Damage team reads use retained numeric, cooperative, model and skin IDs; userinfo refresh occurs at admission/change boundaries. The general allocating string-copy API remains for other owners, but these callers no longer use it. |
+| 16 | Q2 config publication compares retained IDs and skips unchanged revisions. QW lightstyles compare retained IDs. Per-peer config text copies and per-frame string comparisons at the supplied sites are deleted. |
+| 17 | `qa_usercmd` carries admitted arsenal IDs. Network prediction history retains the string-table owner and IDs; Unified input supplies the existing provider ID. Per-command arsenal text buffers are deleted. |
+| 18 | Demo admission reserves one sealed prefix arena. Append encodes the prefix through the shared codec and writes borrowed packet payloads directly; the per-packet framing allocation is deleted. |
+| 19 | Native ABI decode/invoke/return, variadic runtime imports, formatting and aggregate outputs use scoped arenas over the guest's common page pool. SysV and Windows callback plan construction uses the same scratch. Write observers retain independent leases until unobserve or successful whole-memory retirement. |
+| 20 | Remote Q1 command joins, chat and localized arguments use frame storage. UI field editing, accepted text and click identities use prepared scratch, reset between completed held-axis repeat iterations. |
+
+Native scratch reservation is computed at guest admission in
+`src/compat/native/guest/memory.c:74`, from backing/stack budgets, page-based
+nested-call headroom and the existing formatter limits. Owned SysV/Windows
+process and SysV program constructors/restores pass their admitted stack size.
+Public lower-guest create/restore uses the backing allowance as a conservative
+unknown-stack budget. With the current x64 1 GiB backing and 8 MiB stack defaults,
+the page payload reservation is 2,603,040,768 bytes plus 5,084,064 bytes of pool
+metadata. Payload reservation does not initialize the whole payload. This is a
+finite memory budget, not an entitlement to unlimited overlapping host watches.
+Overflow uses the common pool failure/counting path; no runtime heap fallback
+or new execution-depth/watch-count limit is introduced.
+
+Write observers remain attached through guest finalizers and failed process
+retirement. `src/compat/native/process.c:6` releases them only at successful
+whole-memory retirement, before guest backing and scratch destruction. Cold
+signature bindings still own persistent ABI plans; call-scoped plans borrow the
+scratch arena. Scratch is rebuilt on restore and is not saved game state.
+
+Final source checks covered every supplied heap site in
+`c-remaining-kinds-current-2026-10-10.md` and the remaining event readers in
+`c-events-status-1100-2026-10-11.md`. No listed old hot allocation or event bypass
+remains. The final native slice passed the normal production build and the
+existing platform_services, core, archive, VFS, BSP, image and model suites:
+`/tmp/qa-heap-native-abi-20261011-build.log` and
+`/tmp/qa-heap-native-abi-20261011-core.log`.
+
+The supplied TA-3196 implementation list is complete and ready for supervisor
+review. This source/build/core evidence does not establish a whole-engine zero
+allocation count, live game/mod/protocol qualification, or the absence of
+additional sites outside the supplied lists. Cold construction, content/name
+admission and save encoding can still allocate. Held commit-audit/internal
+duplicate lists remain separate work.

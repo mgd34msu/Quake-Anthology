@@ -31,7 +31,7 @@ bool qa_native_region_scope_argument_bytes(const qa_native_signature *signature,
     if (!signature || signature->variadic || !out)
         return fail(error, "Region argument extent requires its actual fixed ABI signature");
     guest_abi_plan *plan = NULL;
-    if (!guest_abi_plan_native(signature, NULL, 0, &plan, error)) return false;
+    if (!guest_abi_plan_native(signature, NULL, 0, NULL, &plan, error)) return false;
     *out = guest_abi_argument_bytes(plan);
     guest_abi_plan_destroy(plan);
     return true;

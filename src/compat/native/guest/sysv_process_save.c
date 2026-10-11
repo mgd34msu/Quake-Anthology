@@ -355,7 +355,7 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
         callback_resolver resolver = {owner->runtime, bindings};
         sysv_baseline source = {owner, prepared};
         qa_native_guest_baseline baseline = {pristine, &source};
-        okay = qa_native_guest_restore(guest, &owner->options.guest,
+        okay = guest_restore(guest, &owner->options.guest, owner->options.stack_bytes,
             resolve_callback, &resolver, &baseline, &owner->guest, error);
     }
     if (okay) okay = allocations_match(owner, error) && guest_sysv_attach(owner->runtime, owner->guest, error);

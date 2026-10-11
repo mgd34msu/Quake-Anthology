@@ -298,7 +298,7 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
     windows_restore_callbacks callbacks = {owner->runtime, bindings};
     windows_baseline source = {owner, NULL, records};
     qa_native_guest_baseline baseline = {pristine, &source};
-    if (okay) okay = qa_native_guest_restore(guest, &owner->options.guest,
+    if (okay) okay = guest_restore(guest, &owner->options.guest, owner->options.stack_bytes,
         restore_callback, &callbacks, &baseline, &owner->guest, error);
     guest_windows_capabilities actual = windows_process_capabilities(owner);
     if (okay) okay = windows_process_storage(owner, error) &&

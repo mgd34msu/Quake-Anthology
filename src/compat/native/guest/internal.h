@@ -3,6 +3,7 @@
 
 #include "qa/native_guest.h"
 #include "qa/binary.h"
+#include "qa/pool.h"
 #include "host_child.h"
 #include <unicorn/unicorn.h>
 #include <limits.h>
@@ -50,6 +51,8 @@ struct qa_native_guest {
     guest_profile_guard_receipt profile;
     guest_profile_cpu_domain source_domain;
     uc_hook store_hook, fault_hook;
+    qa_arena scratch_storage;
+    qa_pool scratch_pages;
     guest_backing *backings;
     size_t backing_count, backing_capacity, backing_bytes;
     qa_native_guest_mapping *mappings;
@@ -98,7 +101,10 @@ bool guest_publish(qa_native_guest *, const qa_native_guest_commit *, qa_error *
 bool guest_callback_failure(qa_native_guest *, const qa_error *);
 bool guest_call_prepared(const qa_native_guest *);
 bool guest_callback_cancelled(const qa_native_guest *, const qa_error *);
-bool guest_create(const qa_native_guest_options *, bool, qa_native_guest **, qa_error *);
+bool guest_create(const qa_native_guest_options *, bool, size_t, qa_native_guest **, qa_error *);
+bool guest_restore(qa_bytes, const qa_native_guest_options *, size_t,
+    qa_native_guest_callback_resolve_fn, void *, const qa_native_guest_baseline *,
+    qa_native_guest **, qa_error *);
 bool guest_cpu_open(qa_native_guest *, bool, qa_error *);
 bool guest_cpu_transfer(qa_native_guest *, qa_native_guest_cpu *, bool, qa_error *);
 size_t guest_allocation_extent(const guest_allocation *);

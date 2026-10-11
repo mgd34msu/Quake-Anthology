@@ -278,21 +278,23 @@ static bool process_entry(void *context, qa_native_guest *guest, uint64_t id, qa
     if (count > NATIVE_MAX_ARGUMENTS) return native_fail(error, QA_ERROR_ARGUMENT, count, "observed source ABI exceeds its argument limit");
     qa_native_value arguments[NATIVE_MAX_ARGUMENTS] = {{0}};
     qa_native_value result = {.type = binding->signature.result.kind};
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
     qa_buffer storage = {0}, output = {0};
     if (result.type == QA_NATIVE_BYTES) {
         output.size = guest_abi_result_bytes(binding->guest_plan);
-        output.data = calloc(1, output.size);
-        if (!output.data) return native_fail(error, QA_ERROR_MEMORY, id, "owning actual observed aggregate result");
+        output.data = qa_arena_alloc(&scratch, output.size, _Alignof(max_align_t), error);
+        if (output.data) memset(output.data, 0, output.size);
+        if (!output.data) { qa_arena_destroy(&scratch); return false; }
         result.as.bytes = (qa_native_memory){output.data, output.size};
     }
-    bool okay = guest_abi_decode(binding->guest_plan, guest, arguments, count, &storage, error);
+    bool okay = guest_abi_decode(binding->guest_plan, guest, arguments, count, &scratch, &storage, error);
     if (okay) {
         ++binding->active_calls; ++instance->callback_depth;
         okay = binding->callback(binding->context, instance, binding, arguments, count, &result, error);
         --instance->callback_depth; --binding->active_calls;
     }
     if (okay) okay = guest_abi_return(binding->guest_plan, guest, &result, error);
-    qa_buffer_free(&storage); qa_buffer_free(&output); return okay;
+    qa_arena_destroy(&scratch); return okay;
 }
 
 static bool signature_equal(const qa_native_signature *a,const qa_native_signature *b,qa_error *error)
@@ -354,7 +356,7 @@ bool native_observers_fields(qa_source_save_io *io,qa_native_instance *instance)
             for (qa_native_entry_observer *other=row->next;other;other=other->next)
                 if (other->id==row->id || other->address==row->address)
                     return native_fail(io->error,QA_ERROR_FORMAT,row->id,"Saved Source observer identity repeats");
-            if (!guest_abi_plan_native(&row->signature,NULL,0,&row->guest_plan,io->error)) return false;
+            if (!guest_abi_plan_native(&row->signature,NULL,0,NULL,&row->guest_plan,io->error)) return false;
         } else row=row->next;
     }
     return true;
@@ -392,7 +394,7 @@ static bool process_entry_bind(qa_native_entry_observer *binding, qa_error *erro
     if (instance->process_kind == QA_NATIVE_PROCESS_WINDOWS &&
         binding->guest_id >= qa_native_windows_process_callback_minimum())
         return native_fail(error, QA_ERROR_ARGUMENT, binding->id, "source observer overlaps the actual Windows service namespace");
-    if (!guest_abi_plan_native(&binding->signature, NULL, 0, &binding->guest_plan, error)) return false;
+    if (!guest_abi_plan_native(&binding->signature, NULL, 0, NULL, &binding->guest_plan, error)) return false;
     qa_native_guest_callback callback = {binding->guest_id, binding->address, process_entry, binding};
     bool stopped=stopped_write_subscription(instance);
     if(stopped&&instance->guest->stopped_write_bindings==UINT_MAX)
@@ -724,6 +726,13 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
     qa_unified_frame_lease_release(storage); return okay;
 }
 
+static void write_observer_destroy(qa_native_write_observer *binding)
+{
+    qa_arena storage = binding->storage;
+    binding->storage = (qa_arena){0};
+    qa_arena_destroy(&storage);
+}
+
 bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address address,
                               size_t bytes, qa_native_write_observer_fn callback, void *context,
                               qa_native_write_observer **out, qa_error *error) {
@@ -732,9 +741,10 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
     if (!address || !bytes || bytes > NATIVE_MAX_WATCH_BYTES ||
         bytes > UINT64_MAX - address || !callback || !out)
         return native_fail(error, QA_ERROR_ARGUMENT, bytes, "native write watch range is invalid");
-    qa_native_write_observer *binding = calloc(1, sizeof(*binding));
-    if (!binding)
-        return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native write observer");
+    qa_arena storage; qa_arena_init_pool(&storage, &instance->guest->scratch_pages);
+    qa_native_write_observer *binding = qa_arena_alloc(&storage, sizeof(*binding), _Alignof(qa_native_write_observer), error);
+    if (!binding) { qa_arena_destroy(&storage); return false; }
+    *binding = (qa_native_write_observer){0};
     binding->instance = instance;
     binding->address = address;
     binding->size = bytes;
@@ -742,7 +752,7 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
     binding->context = context;
     bool ok = next_id(instance, &binding->id, error);
     if (ok) {
-        binding->snapshot.data = malloc(bytes); binding->snapshot.size = bytes;
+        binding->snapshot.data = qa_arena_alloc(&storage, bytes, 1, error); binding->snapshot.size = bytes;
         if (!binding->snapshot.data) ok = native_fail(error, QA_ERROR_MEMORY, binding->id, "owning actual write watch snapshot");
         if (ok) ok = qa_native_guest_read(instance->guest, address, binding->snapshot.data, bytes, error);
         if (ok && !instance->process_observing) {
@@ -753,9 +763,10 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
             binding->id, address, bytes, false, error);
     }
     if (!ok) {
-        qa_buffer_free(&binding->snapshot); free(binding);
+        qa_arena_destroy(&storage);
         return false;
     }
+    binding->storage = storage; storage = (qa_arena){0};
     binding->next = instance->write_observers;
     instance->write_observers = binding;
     *out = binding;
@@ -780,7 +791,7 @@ bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *err
         cursor = &(*cursor)->next;
     if (*cursor)
         *cursor = binding->next;
-    qa_buffer_free(&binding->snapshot); free(binding);
+    write_observer_destroy(binding);
     return true;
 }
 
@@ -801,6 +812,6 @@ void native_observers_destroy(qa_native_instance *instance) {
     while (instance->write_observers) {
         qa_native_write_observer *binding = instance->write_observers;
         instance->write_observers = binding->next;
-        qa_buffer_free(&binding->snapshot); free(binding);
+        write_observer_destroy(binding);
     }
 }

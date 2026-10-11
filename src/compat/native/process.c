@@ -7,6 +7,7 @@ static void process_memory_retiring(void *context, uint64_t address, size_t byte
 {
     native_entity_notify(context, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX, address, bytes,
         (qa_actor_id){0});
+    if (!address && !bytes) native_observers_destroy(context);
 }
 
 static void observe_memory(qa_native_instance *instance)
@@ -230,14 +231,16 @@ static bool import_entry(void *context, qa_native_guest *guest, uint64_t id, qa_
     size_t count = binding->spec.signature.parameter_count;
     qa_native_value arguments[NATIVE_MAX_ARGUMENTS] = {{0}};
     qa_native_value result = {.type = binding->spec.signature.result.kind};
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
     qa_buffer storage = {0}, output = {0};
     if (result.type == QA_NATIVE_BYTES) {
         output.size = guest_abi_result_bytes(binding->guest_plan);
-        output.data = calloc(1, output.size);
-        if (!output.data) return native_fail(error, QA_ERROR_MEMORY, id, "owning native import aggregate result");
+        output.data = qa_arena_alloc(&scratch, output.size, _Alignof(max_align_t), error);
+        if (output.data) memset(output.data, 0, output.size);
+        if (!output.data) { qa_arena_destroy(&scratch); return false; }
         result.as.bytes = (qa_native_memory){output.data, output.size};
     }
-    bool okay = guest_abi_decode(binding->guest_plan, guest, arguments, count, &storage, error);
+    bool okay = guest_abi_decode(binding->guest_plan, guest, arguments, count, &scratch, &storage, error);
     qa_buffer formatted = {0};
     uint64_t temporary = 0;
     if (okay && binding->spec.signature.variadic) {
@@ -245,7 +248,7 @@ static bool import_entry(void *context, qa_native_guest *guest, uint64_t id, qa_
             okay = native_fail(error, QA_ERROR_FORMAT, id, "formatted SDK import lacks its genuine format argument");
         uint64_t format = okay ? arguments[count - 1].as.address : 0;
         if (okay) okay = guest_format_render_entry(guest, &binding->spec.signature,
-            format, NATIVE_MAX_STRING - 1, &formatted, error);
+            format, NATIVE_MAX_STRING - 1, &scratch, &formatted, error);
         if (okay) okay = qa_native_guest_allocate(guest, formatted.size + 1, INT32_C(0x4e46524d), &temporary, error) &&
             qa_native_guest_write(guest, temporary, (qa_bytes){formatted.data, formatted.size + 1}, error);
         if (okay) {
@@ -259,8 +262,7 @@ static bool import_entry(void *context, qa_native_guest *guest, uint64_t id, qa_
         if (!qa_native_guest_free(guest, temporary, &cleanup) && okay) { okay = false; if (error) *error = cleanup; }
     }
     if (okay) okay = guest_abi_return(binding->guest_plan, guest, &result, error);
-    qa_buffer_free(&formatted);
-    qa_buffer_free(&storage); qa_buffer_free(&output); return okay;
+    qa_arena_destroy(&scratch); return okay;
 }
 
 bool native_process_import_bind(native_import_binding *binding, qa_native_instance *instance,
@@ -271,7 +273,7 @@ bool native_process_import_bind(native_import_binding *binding, qa_native_instan
     size_t index = (size_t)(binding - instance->imports);
     binding->guest_id = instance->first_callback + index;
     binding->guest_address = instance->callback_base + index * 16;
-    if (!guest_abi_plan_native(&binding->spec.signature, NULL, 0, &binding->guest_plan, error)) return false;
+    if (!guest_abi_plan_native(&binding->spec.signature, NULL, 0, NULL, &binding->guest_plan, error)) return false;
     qa_native_guest_callback callback = {binding->guest_id, binding->guest_address, import_entry, binding};
     return qa_native_guest_bind(instance->guest, &callback, error);
 }
@@ -285,11 +287,12 @@ static bool syscall_entry(void *context, qa_native_guest *guest, uint64_t id, qa
     qa_native_signature signature = {.abi = instance->module->info.image.target.abi,
         .parameters = &service_type, .parameter_count = 1, .variadic = true,
         .result = {.kind = instance->module->info.image.target.pointer_bytes == 8 ? QA_NATIVE_I64 : QA_NATIVE_I32, .count = 1}};
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
     guest_abi_plan *fixed = NULL, *complete = NULL;
     qa_buffer storage = {0}; qa_native_value arguments[NATIVE_MAX_ARGUMENTS + 1] = {{0}};
     const qa_native_value_type *types = NULL; size_t count = 0;
-    bool okay = guest_abi_plan_native(&signature, NULL, 0, &fixed, error) &&
-        guest_abi_decode(fixed, guest, arguments, 1, &storage, error);
+    bool okay = guest_abi_plan_native(&signature, NULL, 0, &scratch, &fixed, error) &&
+        guest_abi_decode(fixed, guest, arguments, 1, &scratch, &storage, error);
     int32_t service = arguments[0].as.i32;
     if (okay) {
         ++instance->callback_depth;
@@ -312,9 +315,9 @@ static bool syscall_entry(void *context, qa_native_guest *guest, uint64_t id, qa
         size_t alignment = signature.abi == QA_NATIVE_ABI_SYSTEM_V_I386 && bytes > 4 ? 4 : bytes;
         extras[i] = (guest_abi_layout){.kind = type, .bytes = bytes, .alignment = alignment};
     }
-    qa_buffer_free(&storage);
-    if (okay) okay = guest_abi_plan_native(&signature, extras, count, &complete, error) &&
-        guest_abi_decode(complete, guest, arguments, count + 1, &storage, error);
+    storage = (qa_buffer){0};
+    if (okay) okay = guest_abi_plan_native(&signature, extras, count, &scratch, &complete, error) &&
+        guest_abi_decode(complete, guest, arguments, count + 1, &scratch, &storage, error);
     for (size_t i = 0; okay && i < count; ++i) {
         qa_native_value *value = arguments + i + 1;
         switch (types[i]) {
@@ -336,7 +339,7 @@ static bool syscall_entry(void *context, qa_native_guest *guest, uint64_t id, qa
     qa_native_value result = {.type = signature.result.kind};
     if (result.type == QA_NATIVE_I64) result.as.i64 = actual; else result.as.i32 = (int32_t)actual;
     if (okay) okay = guest_abi_return(complete, guest, &result, error);
-    qa_buffer_free(&storage); guest_abi_plan_destroy(fixed); guest_abi_plan_destroy(complete); return okay;
+    guest_abi_plan_destroy(fixed); guest_abi_plan_destroy(complete); qa_arena_destroy(&scratch); return okay;
 }
 
 bool native_process_q3_bind(qa_native_instance *instance, qa_native_address *out, qa_error *error)
@@ -621,7 +624,7 @@ bool native_process_restore(qa_native_instance *instance, const qa_native_proces
             binding->instance = instance; binding->spec = profile->imports[i];
             binding->spec.signature.abi = instance->module->info.image.target.abi;
             binding->guest_id = instance->first_callback + i; binding->guest_address = instance->callback_base + i * 16;
-            if (!guest_abi_plan_native(&binding->spec.signature, NULL, 0, &binding->guest_plan, error)) return false;
+            if (!guest_abi_plan_native(&binding->spec.signature, NULL, 0, NULL, &binding->guest_plan, error)) return false;
         }
     } else if (!instance->options.describe_syscall || !instance->options.syscall)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native cold Q3 requires its true syscall descriptor");

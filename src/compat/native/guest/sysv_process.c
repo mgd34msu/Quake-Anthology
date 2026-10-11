@@ -267,7 +267,7 @@ bool qa_native_sysv_process_create(const qa_native_sysv_process_options *options
         okay = guest_runtime_resources_file(owner->resources, file->handle,
             file->name, file->creation, &capability, error);
     }
-    if (okay) okay = qa_native_guest_create(&options->guest, &owner->guest, error);
+    if (okay) okay = guest_create(&options->guest, true, options->stack_bytes, &owner->guest, error);
     if (okay) okay = qa_native_guest_allocate_aligned(owner->guest, options->stack_bytes,
         16, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, INT32_C(0x53595053), &owner->stack, error) &&
         qa_native_guest_allocate_aligned(owner->guest, 16, 16,
@@ -467,8 +467,13 @@ static bool process_invoke(qa_native_sysv_process *owner, uint64_t original, uin
     if (!owner || !signature || signature->variadic ||
         signature->abi != owner->options.guest.image.target.abi)
         return guest_fail(error, QA_ERROR_ARGUMENT, target, "System V invocation needs the actual fixed source ABI");
+    qa_arena scratch = {0};
+    if (owner->guest) qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+    else qa_arena_seal(&scratch);
     guest_abi_plan *plan = NULL;
-    if (!guest_abi_plan_native(signature, NULL, 0, &plan, error)) return false;
+    if (!guest_abi_plan_native(signature, NULL, 0, &scratch, &plan, error)) {
+        qa_arena_destroy(&scratch); return false;
+    }
     bool enclosing_busy = owner->busy;
     bool nested = owner->guest &&
         ((enclosing_busy&&owner->guest->run&&owner->guest->callback_depth)||
@@ -507,7 +512,7 @@ static bool process_invoke(qa_native_sysv_process *owner, uint64_t original, uin
         if (!invoked && owner->guest->failed) owner->failed = true;
         okay = invoked;
     }
-    guest_abi_plan_destroy(plan); return okay;
+    guest_abi_plan_destroy(plan); qa_arena_destroy(&scratch); return okay;
 }
 bool qa_native_sysv_process_invoke(qa_native_sysv_process *owner, uint64_t target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,

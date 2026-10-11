@@ -188,7 +188,7 @@ bool qa_native_windows_process_create(const qa_native_windows_process_options *o
     }
     if (okay) okay = windows_process_artifacts(owner, true, error) &&
         options->capabilities.current(options->capabilities.context, error) &&
-        qa_native_guest_create(&options->guest, &owner->guest, error);
+        guest_create(&options->guest, true, options->stack_bytes, &owner->guest, error);
     for (size_t i = 0; okay && i < owner->image_count; ++i)
         okay = guest_pe_memory_attach(owner->images[i].artifact, owner->guest, &owner->images[i].memory, error);
     if (okay) okay = qa_native_guest_allocate_aligned(owner->guest, options->stack_bytes, 16,
@@ -351,8 +351,13 @@ static bool process_invoke(qa_native_windows_process *owner, uint64_t original, 
 {
     if (!owner || !signature || signature->variadic || signature->abi != owner->options.guest.image.target.abi)
         return guest_fail(error, QA_ERROR_ARGUMENT, target, "Windows invocation requires the actual fixed source ABI");
+    qa_arena scratch = {0};
+    if (owner->guest) qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+    else qa_arena_seal(&scratch);
     guest_abi_plan *plan = NULL;
-    if (!guest_abi_plan_native(signature, NULL, 0, &plan, error)) return false;
+    if (!guest_abi_plan_native(signature, NULL, 0, &scratch, &plan, error)) {
+        qa_arena_destroy(&scratch); return false;
+    }
     bool outer_busy = owner->busy;
     bool nested = owner->guest &&
         ((owner->guest->run&&owner->guest->callback_depth)||
@@ -373,7 +378,7 @@ static bool process_invoke(qa_native_windows_process *owner, uint64_t original, 
         okay = end(owner, okay);
         owner->busy = outer_busy;
     }
-    guest_abi_plan_destroy(plan); return okay;
+    guest_abi_plan_destroy(plan); qa_arena_destroy(&scratch); return okay;
 }
 bool qa_native_windows_process_invoke(qa_native_windows_process *owner, uint64_t target,
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,

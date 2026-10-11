@@ -279,15 +279,23 @@ bool sysv_invoke(guest_sysv_runtime *runtime, uint64_t target,
     for (size_t i = 0; i < count; ++i) parameters[i] = sysv_layout(runtime, types[i]);
     guest_abi_signature signature = {.abi = runtime->target.abi, .parameters = parameters,
         .parameter_count = count, .result = sysv_layout(runtime, result_type)};
+    qa_arena scratch;
+    qa_arena_init_pool(&scratch, &runtime->guest->scratch_pages);
     guest_abi_plan *plan = NULL;
-    if (!guest_abi_plan_create(&signature, NULL, 0, &plan, error)) return false;
+    if (!guest_abi_plan_create(&signature, NULL, 0, &scratch, &plan, error)) {
+        qa_arena_destroy(&scratch);
+        return false;
+    }
     ++runtime->calls;
     bool ok = runtime->execution == QA_NATIVE_GUEST_HOST_X86_64 ?
         guest_abi_invoke_native(plan, runtime->guest, target, runtime->options.return_trap,
             arguments, count, result, error) :
         guest_abi_invoke(plan, runtime->guest, target, runtime->options.return_trap,
             arguments, count, result, runtime->budget, error);
-    --runtime->calls; guest_abi_plan_destroy(plan); return ok;
+    --runtime->calls;
+    guest_abi_plan_destroy(plan);
+    qa_arena_destroy(&scratch);
+    return ok;
 }
 static bool target_valid(const qa_native_target *target)
 {

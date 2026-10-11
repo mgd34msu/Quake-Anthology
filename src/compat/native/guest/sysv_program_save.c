@@ -247,7 +247,7 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
     program_baseline source = {owner, count};
     qa_native_guest_baseline baseline = {pristine, &source};
     if (okay) okay = bindings->services.current(bindings->services.context, error) &&
-        qa_native_guest_restore(parts[4], &owner->options.guest, no_callback, owner,
+        guest_restore(parts[4], &owner->options.guest, owner->options.stack_bytes, no_callback, owner,
             &baseline, &owner->guest, error);
     for (size_t i = 0; okay && i < count; ++i)
         okay = guest_elf_memory_restore_attach(owner->memory[i], owner->guest, error);

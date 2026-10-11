@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "unicorn_state.h"
+#include "abi.h"
+#include "sysv_libc_format.h"
 
 typedef struct guest_heap_chunk {
     uint64_t base, backing;
@@ -69,7 +71,7 @@ bool qa_native_guest_idle(const qa_native_guest *guest)
         !guest->stepping && !guest->restoring && !guest->failed && !guest->faulting;
 }
 
-bool guest_create(const qa_native_guest_options *options, bool fresh,
+bool guest_create(const qa_native_guest_options *options, bool fresh, size_t stack_bytes,
     qa_native_guest **out, qa_error *error)
 {
     if (!options || !out || *out || !options->maximum_backing_bytes ||
@@ -97,7 +99,17 @@ bool guest_create(const qa_native_guest_options *options, bool fresh,
     guest->options = *options;
     guest->next_mapping = guest->next_backing = 1;
     guest->allocation_cursor = options->allocation_base;
-    if (!guest_cpu_open(guest, fresh, error)) {
+    size_t scratch_bytes = 0, formatting = guest_format_scratch_bytes();
+    bool scratch_sized = guest_abi_scratch_bytes(options->maximum_backing_bytes,
+        stack_bytes, &scratch_bytes, error);
+    if (scratch_sized && formatting > SIZE_MAX - scratch_bytes)
+        scratch_sized = guest_fail(error, QA_ERROR_MEMORY, 0, "native format scratch extent overflows");
+    if (scratch_sized) scratch_bytes += formatting;
+    size_t pages = scratch_bytes / QA_NATIVE_GUEST_PAGE +
+        (scratch_bytes % QA_NATIVE_GUEST_PAGE != 0);
+    if (!scratch_sized || !qa_pool_reserve_pages(&guest->scratch_pages, &guest->scratch_storage,
+        pages, QA_NATIVE_GUEST_PAGE, _Alignof(max_align_t), error) ||
+        !guest_cpu_open(guest, fresh, error)) {
         guest->options.host_executable = NULL;
         guest->options.profile_guard = NULL;
         if (guest->child && !guest_host_child_destroy(&guest->child, error)) {
@@ -108,6 +120,7 @@ bool guest_create(const qa_native_guest_options *options, bool fresh,
             *out = guest;
             return false;
         }
+        qa_arena_destroy(&guest->scratch_storage);
         free(guest);
         return false;
     }
@@ -119,7 +132,7 @@ bool guest_create(const qa_native_guest_options *options, bool fresh,
 
 bool qa_native_guest_create(const qa_native_guest_options *options,
     qa_native_guest **out, qa_error *error)
-{ return guest_create(options, true, out, error); }
+{ return guest_create(options, true, options ? options->maximum_backing_bytes : 0, out, error); }
 
 bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
 {
@@ -141,6 +154,7 @@ bool qa_native_guest_destroy(qa_native_guest **owner, qa_error *error)
         if (!guest->backings[i].child_owned) free(guest->backings[i].data);
     heap_destroy(guest->heap);
     free(guest->backings); free(guest->mappings); free(guest->allocations); free(guest->callbacks);
+    qa_arena_destroy(&guest->scratch_storage);
     free(guest); *owner = NULL;
     return true;
 }

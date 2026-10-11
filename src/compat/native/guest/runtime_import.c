@@ -194,25 +194,26 @@ static bool dispatch(void *context, qa_native_guest *guest, uint64_t id, qa_erro
     guest_runtime_function descriptor = f->descriptor;
     guest_abi_plan *plan = f->plan;
     size_t count = guest_abi_argument_count(plan);
-    qa_native_value *args = count ? calloc(count, sizeof(*args)) : NULL;
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
+    qa_native_value *args = count ? qa_arena_alloc(&scratch, count * sizeof(*args), _Alignof(qa_native_value), e) : NULL;
     qa_buffer storage = {0}; guest_abi_plan *expanded = NULL;
     bool okay = !count || args;
     if (!okay) guest_fail(e, QA_ERROR_MEMORY, id, "owning actual import arguments");
-    if (okay) okay = guest_abi_decode(plan, guest, args, count, &storage, e);
+    if (okay) okay = guest_abi_decode(plan, guest, args, count, &scratch, &storage, e);
     if (okay && descriptor.signature.variadic) {
         const guest_abi_layout *extras = NULL; size_t extra_count = 0;
         okay = descriptor.variadic(descriptor.context, guest, args, count, &extras, &extra_count, e);
         f = function_at(o, id);
         if (okay && (!f || f->plan != plan || !f->bound))
             okay = guest_fail(e, QA_ERROR_FORMAT, id, "variadic selector lost its retained import declaration");
-        if (okay) okay = guest_abi_plan_create(&descriptor.signature, extras, extra_count, &expanded, e);
+        if (okay) okay = guest_abi_plan_create(&descriptor.signature, extras, extra_count, &scratch, &expanded, e);
         if (okay) {
-            qa_buffer_free(&storage); free(args); args = NULL;
+            storage = (qa_buffer){0}; args = NULL;
             count = guest_abi_argument_count(expanded);
             if (count > SIZE_MAX / sizeof(*args)) okay = guest_fail(e, QA_ERROR_MEMORY, id, "expanded import arguments overflow");
-            else args = count ? calloc(count, sizeof(*args)) : NULL;
+            else args = count ? qa_arena_alloc(&scratch, count * sizeof(*args), _Alignof(qa_native_value), e) : NULL;
             if (okay && count && !args) okay = guest_fail(e, QA_ERROR_MEMORY, id, "owning expanded import arguments");
-            if (okay) okay = guest_abi_decode(expanded, guest, args, count, &storage, e);
+            if (okay) okay = guest_abi_decode(expanded, guest, args, count, &scratch, &storage, e);
         }
     }
     qa_native_value result = {.type = QA_NATIVE_VOID};
@@ -238,7 +239,7 @@ static bool dispatch(void *context, qa_native_guest *guest, uint64_t id, qa_erro
             memcpy(f->last_failure_detail, message, sizeof(message));
         }
     }
-    guest_abi_plan_destroy(expanded); qa_buffer_free(&storage); free(args); --o->calls;
+    guest_abi_plan_destroy(expanded); qa_arena_destroy(&scratch); --o->calls;
     return okay;
 }
 
@@ -300,7 +301,7 @@ bool guest_runtime_imports_function(guest_runtime_imports *o, const guest_runtim
     if (!add_row(o, key, &row, e)) return false;
     import_function f = {.descriptor = *d, .bound = true}; memset(&f.descriptor.signature, 0, sizeof(f.descriptor.signature));
     bool okay = signature_copy(&d->signature, &f.descriptor.signature, e) &&
-        guest_abi_plan_create(&f.descriptor.signature, NULL, 0, &f.plan, e) &&
+        guest_abi_plan_create(&f.descriptor.signature, NULL, 0, NULL, &f.plan, e) &&
         guest_grow((void **)&o->functions, &o->function_capacity, o->function_count + 1, sizeof(*o->functions), e);
     qa_native_guest_callback callback = {d->id, d->address, dispatch, o};
     if (okay) okay = qa_native_guest_bind(o->guest, &callback, e);
@@ -670,7 +671,7 @@ bool guest_runtime_imports_decode(qa_bytes bytes, const qa_native_target *target
             d.address == f->descriptor.address && d.variadic_id == f->descriptor.variadic_id && d.invoke &&
             (f->descriptor.signature.variadic ? d.variadic != NULL : d.variadic == NULL) &&
             same_signature(&f->descriptor.signature, &d.signature);
-        if (okay) okay = guest_abi_plan_create(&f->descriptor.signature, NULL, 0, &f->plan, e);
+        if (okay) okay = guest_abi_plan_create(&f->descriptor.signature, NULL, 0, NULL, &f->plan, e);
         if (okay && f->bound) {
             f->descriptor.invoke = d.invoke; f->descriptor.variadic = d.variadic; f->descriptor.context = d.context;
         }

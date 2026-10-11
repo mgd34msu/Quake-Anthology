@@ -295,7 +295,7 @@ static bool restore_callbacks(qa_source_save_io *io, qa_native_guest *guest,
     return true;
 }
 
-bool qa_native_guest_restore(qa_bytes encoded, const qa_native_guest_options *options,
+bool guest_restore(qa_bytes encoded, const qa_native_guest_options *options, size_t stack_bytes,
     qa_native_guest_callback_resolve_fn resolve, void *context,
     const qa_native_guest_baseline *baseline, qa_native_guest **out, qa_error *error)
 {
@@ -326,7 +326,7 @@ bool qa_native_guest_restore(qa_bytes encoded, const qa_native_guest_options *op
         if (okay) okay = qa_source_save_span(&io, (size_t)length, &hardware);
     } else if (okay) okay = cpu(&io, &state);
     qa_native_guest *candidate = NULL;
-    if (okay) okay = guest_create(options, false, &candidate, error);
+    if (okay) okay = guest_create(options, false, stack_bytes, &candidate, error);
     guest_host_x86_64_state physical = {0};
     if (okay && backend == QA_NATIVE_GUEST_HOST_X86_64) {
         okay = same_profile(&profile, &domain, &candidate->profile, &candidate->source_domain);
@@ -363,4 +363,12 @@ bool qa_native_guest_restore(qa_bytes encoded, const qa_native_guest_options *op
     }
     qa_source_save_dispose(&io);
     return false;
+}
+
+bool qa_native_guest_restore(qa_bytes encoded, const qa_native_guest_options *options,
+    qa_native_guest_callback_resolve_fn resolve, void *context,
+    const qa_native_guest_baseline *baseline, qa_native_guest **out, qa_error *error)
+{
+    return guest_restore(encoded, options, options ? options->maximum_backing_bytes : 0,
+        resolve, context, baseline, out, error);
 }

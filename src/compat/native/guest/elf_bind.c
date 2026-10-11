@@ -58,7 +58,7 @@ static bool indirect(const guest_elf_binding *binding, relocation_value resolver
     guest_abi_signature signature = {.abi = image->image.target.abi,
         .result = {.kind = QA_NATIVE_ADDRESS, .bytes = width, .alignment = width}};
     guest_abi_plan *plan = NULL;
-    if (!guest_abi_plan_create(&signature, NULL, 0, &plan, error)) return false;
+    if (!guest_abi_plan_create(&signature, NULL, 0, NULL, &plan, error)) return false;
     qa_native_value result = {0};
     bool okay = native ? guest_abi_invoke_native(plan, binding->guest, resolver.low,
         binding->return_trap, NULL, 0, &result, error) :

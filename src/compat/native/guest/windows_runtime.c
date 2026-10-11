@@ -169,15 +169,23 @@ bool windows_invoke(guest_windows *owner, uint64_t target, const qa_native_value
     guest_abi_signature signature = {.abi = owner->target.abi,
         .convention = system && owner->target.pointer_bytes == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT,
         .parameters = parameters, .parameter_count = count, .result = layout(owner, result_type)};
+    qa_arena scratch;
+    qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
     guest_abi_plan *plan = NULL;
-    if (!guest_abi_plan_create(&signature, NULL, 0, &plan, error)) return false;
+    if (!guest_abi_plan_create(&signature, NULL, 0, &scratch, &plan, error)) {
+        qa_arena_destroy(&scratch);
+        return false;
+    }
     ++owner->busy;
     bool okay = owner->execution == QA_NATIVE_GUEST_HOST_X86_64 ?
         guest_abi_invoke_native(plan, owner->guest, target, owner->return_trap,
             arguments, count, result, error) :
         guest_abi_invoke(plan, owner->guest, target, owner->return_trap,
             arguments, count, result, owner->instruction_budget, error);
-    --owner->busy; guest_abi_plan_destroy(plan); return okay;
+    --owner->busy;
+    guest_abi_plan_destroy(plan);
+    qa_arena_destroy(&scratch);
+    return okay;
 }
 
 static bool executable(guest_windows *owner, uint64_t target, qa_error *error)

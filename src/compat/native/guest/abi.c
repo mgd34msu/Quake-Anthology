@@ -22,7 +22,49 @@ struct guest_abi_plan {
     unsigned word, integers, vectors, ordinal;
     argument result, hidden;
     bool variadic, memory_result, x87_result;
+    qa_arena *arena;
 };
+
+typedef struct call_argument {
+    uint8_t *data;
+    uint8_t pointer[8];
+    uint64_t temporary;
+} call_argument;
+
+static void *abi_storage(qa_arena *arena, size_t bytes, size_t alignment, qa_error *error)
+{
+    if (!bytes) return NULL;
+    void *data = arena ? qa_arena_alloc(arena, bytes, alignment, error) : calloc(1, bytes);
+    if (data && arena) memset(data, 0, bytes);
+    return data;
+}
+
+bool guest_abi_scratch_bytes(size_t backing, size_t stack,
+    size_t *out, qa_error *error)
+{
+    /* Inputs and snapshots share the admitted backing/stack byte allowance.
+     * Reserve an invoke/import/return page cluster per stack page as nested
+     * headroom, independently of guest RAM. This is storage headroom, not a
+     * new execution-depth or watch-count limit. */
+    const size_t value = sizeof(argument) + 2 * sizeof(guest_abi_layout) +
+        2 * sizeof(qa_native_value) + sizeof(call_argument) +
+        3 * sizeof(guest_abi_field) + 2 * sizeof(uint64_t);
+    const size_t frame = sizeof(guest_abi_plan) + 14 * value +
+        3 * QA_NATIVE_GUEST_PAGE;
+    size_t frames = stack / QA_NATIVE_GUEST_PAGE +
+        (stack % QA_NATIVE_GUEST_PAGE != 0) + 1;
+    if (frames > SIZE_MAX / frame || backing > SIZE_MAX / 2 || stack > SIZE_MAX / 2 ||
+        2 * stack > SIZE_MAX - 2 * backing ||
+        frames * frame > SIZE_MAX - 2 * backing - 2 * stack)
+        return guest_fail(error, QA_ERROR_MEMORY, 0, "native ABI scratch extent overflows");
+    *out = 2 * backing + 2 * stack + frames * frame;
+    return true;
+}
+
+size_t guest_abi_format_plan_bytes(size_t arguments)
+{
+    return sizeof(guest_abi_plan) + arguments * sizeof(argument);
+}
 
 size_t guest_abi_result_bytes(const guest_abi_plan *plan)
 { return plan ? plan->result.layout.bytes : 0; }
@@ -50,7 +92,7 @@ static size_t scalar_bytes(qa_native_value_type kind, unsigned word)
 }
 
 static bool layout_copy(guest_abi_layout *out, const guest_abi_layout *source,
-    unsigned word, bool result, qa_error *error)
+    unsigned word, bool result, qa_arena *arena, qa_error *error)
 {
     if (source->kind == QA_NATIVE_VOID) {
         if (!result || source->bytes || source->fields || source->field_count || source->stack_only)
@@ -74,7 +116,7 @@ static bool layout_copy(guest_abi_layout *out, const guest_abi_layout *source,
         if (!bytes || field->offset > source->bytes || field->count > (source->bytes - field->offset) / bytes)
             return guest_fail(error, QA_ERROR_ARGUMENT, i, "guest ABI field exceeds its aggregate");
     }
-    guest_abi_field *fields = source->field_count ? malloc(source->field_count * sizeof(*fields)) : NULL;
+    guest_abi_field *fields = source->field_count ? abi_storage(arena, source->field_count * sizeof(*fields), _Alignof(guest_abi_field), error) : NULL;
     if (source->field_count && !fields) return guest_fail(error, QA_ERROR_MEMORY, 0, "owning guest ABI scalar fields");
     if (source->field_count) memcpy(fields, source->fields, source->field_count * sizeof(*fields));
     *out = *source; out->fields = fields;
@@ -83,7 +125,7 @@ static bool layout_copy(guest_abi_layout *out, const guest_abi_layout *source,
 
 void guest_abi_plan_destroy(guest_abi_plan *plan)
 {
-    if (!plan) return;
+    if (!plan || plan->arena) return;
     for (size_t i = 0; i < plan->count; ++i) free((void *)plan->arguments[i].layout.fields);
     free((void *)plan->result.layout.fields);
     free(plan->arguments); free(plan);
@@ -192,7 +234,7 @@ static bool assign(guest_abi_plan *plan, argument *arg, bool hidden, size_t inde
 }
 
 bool guest_abi_plan_create(const guest_abi_signature *signature, const guest_abi_layout *extra,
-    size_t extra_count, guest_abi_plan **out, qa_error *error)
+    size_t extra_count, qa_arena *arena, guest_abi_plan **out, qa_error *error)
 {
     if (!signature || !out || *out || (signature->parameter_count && !signature->parameters) ||
         (extra_count && (!extra || !signature->variadic)) ||
@@ -205,22 +247,23 @@ bool guest_abi_plan_create(const guest_abi_signature *signature, const guest_abi
     size_t count = signature->parameter_count + extra_count;
     if (count > SIZE_MAX / sizeof(argument) || count > UINT_MAX - 1)
         return guest_fail(error, QA_ERROR_MEMORY, count, "guest ABI argument extent overflows");
-    guest_abi_plan *plan = calloc(1, sizeof(*plan));
+    guest_abi_plan *plan = abi_storage(arena, sizeof(*plan), _Alignof(guest_abi_plan), error);
     if (!plan) return guest_fail(error, QA_ERROR_MEMORY, 0, "allocating guest ABI plan");
+    plan->arena = arena;
     plan->abi = signature->abi; plan->convention = signature->convention;
     plan->word = signature->abi == QA_NATIVE_ABI_CDECL_I386 || signature->abi == QA_NATIVE_ABI_SYSTEM_V_I386 ? 4 : 8;
     plan->fixed = signature->parameter_count; plan->variadic = signature->variadic;
     plan->stack_bytes = plan->word + (signature->abi == QA_NATIVE_ABI_MICROSOFT_X64 ? 32 : 0);
     plan->stack_alignment = signature->abi == QA_NATIVE_ABI_CDECL_I386 ? 4 : 16;
-    plan->arguments = count ? calloc(count, sizeof(*plan->arguments)) : NULL;
+    plan->arguments = count ? abi_storage(arena, count * sizeof(*plan->arguments), _Alignof(argument), error) : NULL;
     if (count && !plan->arguments) {
         guest_abi_plan_destroy(plan);
         return guest_fail(error, QA_ERROR_MEMORY, count, "allocating guest ABI argument locations");
     }
-    bool okay = layout_copy(&plan->result.layout, &signature->result, plan->word, true, error);
+    bool okay = layout_copy(&plan->result.layout, &signature->result, plan->word, true, arena, error);
     for (size_t i = 0; okay && i < count; ++i) {
         const guest_abi_layout *layout = i < signature->parameter_count ? &signature->parameters[i] : &extra[i - signature->parameter_count];
-        okay = layout_copy(&plan->arguments[i].layout, layout, plan->word, false, error);
+        okay = layout_copy(&plan->arguments[i].layout, layout, plan->word, false, arena, error);
         if (okay && i >= signature->parameter_count && (layout->kind == QA_NATIVE_F32 ||
             layout->kind == QA_NATIVE_I8 || layout->kind == QA_NATIVE_U8 ||
             layout->kind == QA_NATIVE_I16 || layout->kind == QA_NATIVE_U16))
@@ -275,7 +318,7 @@ typedef struct type_chain { const qa_native_type *type; const struct type_chain 
 typedef struct field_owner { guest_abi_field *fields; size_t count, capacity; } field_owner;
 
 static bool natural_type(const qa_native_type *type, qa_native_abi abi,
-    const type_chain *parent, guest_abi_layout *out, qa_error *error)
+    const type_chain *parent, guest_abi_layout *out, qa_arena *arena, qa_error *error)
 {
     for (const type_chain *p = parent; p; p = p->parent)
         if (p->type == type) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "recursive native ABI descriptor");
@@ -298,21 +341,31 @@ static bool natural_type(const qa_native_type *type, qa_native_abi abi,
             if (p->type == source) { okay = guest_fail(error, QA_ERROR_ARGUMENT, i, "recursive native ABI field"); break; }
         guest_abi_layout field = {0};
         if (!okay) break;
-        okay = source->count && natural_type(source, abi, &chain, &field, error);
+        okay = source->count && natural_type(source, abi, &chain, &field, arena, error);
         if (!okay) { if (!source->count) guest_fail(error, QA_ERROR_ARGUMENT, i, "empty native ABI repeated field"); break; }
         if (!field.bytes || !align_size(extent, field.alignment, &extent, error) ||
             source->count > (SIZE_MAX - extent) / field.bytes) {
-            free((void *)field.fields); okay = guest_fail(error, QA_ERROR_ARGUMENT, i, "native ABI aggregate extent overflows"); break;
+            if (!arena) free((void *)field.fields);
+            okay = guest_fail(error, QA_ERROR_ARGUMENT, i, "native ABI aggregate extent overflows"); break;
         }
         size_t additions = field.kind == QA_NATIVE_BYTES ? field.field_count : 1;
         if (field.kind == QA_NATIVE_BYTES && source->count > SIZE_MAX / additions) {
-            free((void *)field.fields); okay = guest_fail(error, QA_ERROR_MEMORY, i, "native ABI field table overflows"); break;
+            if (!arena) free((void *)field.fields);
+            okay = guest_fail(error, QA_ERROR_MEMORY, i, "native ABI field table overflows"); break;
         }
         if (field.kind == QA_NATIVE_BYTES) additions *= source->count;
         if (additions > SIZE_MAX - owner.count) {
-            free((void *)field.fields); okay = guest_fail(error, QA_ERROR_MEMORY, i, "native ABI flattened field count overflows"); break;
+            if (!arena) free((void *)field.fields);
+            okay = guest_fail(error, QA_ERROR_MEMORY, i, "native ABI flattened field count overflows"); break;
         }
-        if (!guest_grow((void **)&owner.fields, &owner.capacity, owner.count + additions, sizeof(*owner.fields), error)) {
+        if (arena) {
+            size_t total = owner.count + additions;
+            guest_abi_field *fields = qa_arena_grow(arena, owner.fields,
+                owner.count * sizeof(*fields), total * sizeof(*fields), _Alignof(guest_abi_field), error);
+            if (!fields) { okay = false; break; }
+            owner.fields = fields; owner.capacity = total;
+        } else if (!guest_grow((void **)&owner.fields, &owner.capacity,
+            owner.count + additions, sizeof(*owner.fields), error)) {
             free((void *)field.fields); okay = false; break;
         }
         if (field.kind != QA_NATIVE_BYTES)
@@ -324,35 +377,37 @@ static bool natural_type(const qa_native_type *type, qa_native_abi abi,
             }
         extent += field.bytes * source->count;
         if (alignment < field.alignment) alignment = field.alignment;
-        free((void *)field.fields);
+        if (!arena) free((void *)field.fields);
     }
     if (okay) okay = align_size(extent, alignment, &extent, error);
-    if (!okay) { free(owner.fields); return false; }
+    if (!okay) { if (!arena) free(owner.fields); return false; }
     *out = (guest_abi_layout){.kind = QA_NATIVE_BYTES, .bytes = extent, .alignment = alignment,
         .fields = owner.fields, .field_count = owner.count};
     return true;
 }
 
 bool guest_abi_plan_native(const qa_native_signature *source, const guest_abi_layout *extra,
-    size_t extra_count, guest_abi_plan **out, qa_error *error)
+    size_t extra_count, qa_arena *arena, guest_abi_plan **out, qa_error *error)
 {
     if (!source || source->result.count != 1 || (source->parameter_count && !source->parameters) ||
         source->parameter_count > SIZE_MAX / sizeof(guest_abi_layout))
         return guest_fail(error, QA_ERROR_ARGUMENT, 0, "native ABI signature is required");
-    guest_abi_layout *parameters = source->parameter_count ? calloc(source->parameter_count, sizeof(*parameters)) : NULL;
+    guest_abi_layout *parameters = source->parameter_count ? abi_storage(arena, source->parameter_count * sizeof(*parameters), _Alignof(guest_abi_layout), error) : NULL;
     if (source->parameter_count && !parameters)
         return guest_fail(error, QA_ERROR_MEMORY, 0, "owning native ABI layouts");
     guest_abi_signature signature = {source->abi, GUEST_ABI_DEFAULT, parameters,
         source->parameter_count, {0}, source->variadic};
-    bool okay = natural_type(&source->result, source->abi, NULL, &signature.result, error);
+    bool okay = natural_type(&source->result, source->abi, NULL, &signature.result, arena, error);
     for (size_t i = 0; okay && i < source->parameter_count; ++i) {
         if (source->parameters[i].count != 1)
             okay = guest_fail(error, QA_ERROR_ARGUMENT, i, "native ABI parameter must have count one");
-        else okay = natural_type(&source->parameters[i], source->abi, NULL, &parameters[i], error);
+        else okay = natural_type(&source->parameters[i], source->abi, NULL, &parameters[i], arena, error);
     }
-    if (okay) okay = guest_abi_plan_create(&signature, extra, extra_count, out, error);
-    for (size_t i = 0; i < source->parameter_count; ++i) free((void *)parameters[i].fields);
-    free((void *)signature.result.fields); free(parameters);
+    if (okay) okay = guest_abi_plan_create(&signature, extra, extra_count, arena, out, error);
+    if (!arena) {
+        for (size_t i = 0; i < source->parameter_count; ++i) free((void *)parameters[i].fields);
+        free((void *)signature.result.fields); free(parameters);
+    }
     return okay;
 }
 
@@ -457,27 +512,27 @@ static void write_registers(const argument *arg, const uint8_t *data, qa_native_
 }
 
 bool guest_abi_decode_argument(const guest_abi_plan *plan, const qa_native_guest *guest,
-    size_t index, qa_native_value *out, qa_buffer *storage, qa_error *error)
+    size_t index, qa_native_value *out, qa_arena *arena, qa_buffer *storage, qa_error *error)
 {
     if (!plan_guest(plan, guest, error)) return false;
     if (!out || !storage || storage->data || storage->size || index >= plan->count)
         return guest_fail(error, QA_ERROR_ARGUMENT, index, "single guest ABI decode requires its actual location and empty storage");
     const argument *arg = &plan->arguments[index];
     size_t bytes = arg->layout.bytes < 8 ? 8 : arg->layout.bytes;
-    uint8_t *data = calloc(1, bytes), pointer[8] = {0};
+    uint8_t *data = abi_storage(arena, bytes, _Alignof(max_align_t), error), pointer[8] = {0};
     if (!data) return guest_fail(error, QA_ERROR_MEMORY, index, "owning one decoded guest ABI argument");
     qa_native_guest_cpu cpu;
     bool okay = qa_native_guest_cpu_read(guest, &cpu, error) &&
         read_locations(arg, guest, &cpu, arg->indirect ? pointer : data, error);
     if (okay && arg->indirect)
         okay = qa_native_guest_read(guest, load_integer(pointer, plan->word), data, arg->layout.bytes, error);
-    if (!okay) { free(data); return false; }
+    if (!okay) return false;
     decode_value(&arg->layout, data, out);
     *storage = (qa_buffer){data, bytes}; return true;
 }
 
 bool guest_abi_decode(const guest_abi_plan *plan, const qa_native_guest *guest,
-    qa_native_value *out, size_t count, qa_buffer *storage, qa_error *error)
+    qa_native_value *out, size_t count, qa_arena *arena, qa_buffer *storage, qa_error *error)
 {
     if (!plan_guest(plan, guest, error)) return false;
     if (count != plan->count || (count && !out) || !storage || storage->data || storage->size)
@@ -489,10 +544,10 @@ bool guest_abi_decode(const guest_abi_plan *plan, const qa_native_guest *guest,
         if (size > SIZE_MAX - bytes) return guest_fail(error, QA_ERROR_MEMORY, 0, "guest ABI decode extent overflows");
         bytes += size;
     }
-    qa_native_value *values = count ? calloc(count, sizeof(*values)) : NULL;
-    uint8_t *data = bytes ? calloc(1, bytes) : NULL;
+    qa_native_value *values = count ? abi_storage(arena, count * sizeof(*values), _Alignof(qa_native_value), error) : NULL;
+    uint8_t *data = bytes ? abi_storage(arena, bytes, _Alignof(max_align_t), error) : NULL;
     if ((count && !values) || (bytes && !data)) {
-        free(values); free(data); return guest_fail(error, QA_ERROR_MEMORY, 0, "owning decoded guest ABI arguments");
+        return guest_fail(error, QA_ERROR_MEMORY, 0, "owning decoded guest ABI arguments");
     }
     qa_native_guest_cpu cpu; bool okay = qa_native_guest_cpu_read(guest, &cpu, error); size_t offset = 0;
     for (size_t i = 0; okay && i < count; ++i) {
@@ -502,9 +557,9 @@ bool guest_abi_decode(const guest_abi_plan *plan, const qa_native_guest *guest,
         if (okay) decode_value(&arg->layout, data + offset, &values[i]);
         offset += arg->layout.bytes < 8 ? 8 : arg->layout.bytes;
     }
-    if (!okay) { free(values); free(data); return false; }
+    if (!okay) return false;
     if (count) memcpy(out, values, count * sizeof(*out));
-    *storage = (qa_buffer){data, bytes}; free(values); return true;
+    *storage = (qa_buffer){data, bytes}; return true;
 }
 
 static bool floating_result(const guest_abi_plan *plan, qa_native_guest *guest,
@@ -528,8 +583,9 @@ bool guest_abi_return(const guest_abi_plan *plan, qa_native_guest *guest,
     if (!plan_guest(plan, guest, error) || !guest_mutable(guest, error)) return false;
     const guest_abi_layout *layout = &plan->result.layout;
     size_t bytes = layout->bytes < 8 ? 8 : layout->bytes;
-    uint8_t *data = calloc(1, bytes);
-    if (!data) return guest_fail(error, QA_ERROR_MEMORY, 0, "retaining guest ABI callback result");
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
+    uint8_t *data = abi_storage(&scratch, bytes, _Alignof(max_align_t), error);
+    if (!data) { qa_arena_destroy(&scratch); return false; }
     bool okay = encode_value(layout, result, data, error);
     qa_native_guest_cpu cpu; uint8_t address[8] = {0}, hidden[8] = {0}; uint64_t destination = 0;
     if (okay) okay = qa_native_guest_cpu_read(guest, &cpu, error);
@@ -564,14 +620,9 @@ bool guest_abi_return(const guest_abi_plan *plan, qa_native_guest *guest,
         effected = true; okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
     if (!okay && effected && !guest_callback_cancelled(guest,error)) guest->failed = true;
-    free(data); return okay;
+    qa_arena_destroy(&scratch); return okay;
 }
 
-typedef struct call_argument {
-    uint8_t *data;
-    uint8_t pointer[8];
-    uint64_t temporary;
-} call_argument;
 
 static bool write_stack(const argument *arg, qa_native_guest *guest, uint64_t sp,
     const uint8_t *data, qa_error *error)
@@ -623,10 +674,11 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     }
     if (needed > SIZE_MAX - plan->stack_alignment - plan->word)
         return guest_fail(error, QA_ERROR_MEMORY, 0, "guest ABI stack reserve overflows");
-    call_argument *arguments = count ? calloc(count, sizeof(*arguments)) : NULL;
-    uint8_t *data = calloc(1, owned);
+    qa_arena scratch; qa_arena_init_pool(&scratch, &guest->scratch_pages);
+    call_argument *arguments = count ? abi_storage(&scratch, count * sizeof(*arguments), _Alignof(call_argument), error) : NULL;
+    uint8_t *data = abi_storage(&scratch, owned, _Alignof(max_align_t), error);
     if ((count && !arguments) || !data) {
-        free(arguments); free(data); return guest_fail(error, QA_ERROR_MEMORY, 0, "retaining guest ABI call values");
+        qa_arena_destroy(&scratch); return guest_fail(error, QA_ERROR_MEMORY, 0, "retaining guest ABI call values");
     }
     size_t offset = layout->bytes < 8 ? 8 : layout->bytes;
     bool okay = true;
@@ -723,7 +775,7 @@ static bool invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t 
     }
     if (!okay && effected && !guest_callback_cancelled(guest,error)) guest->failed = true;
     guest_host_x86_64_state_free(&hardware);
-    free(arguments); free(data); return okay;
+    qa_arena_destroy(&scratch); return okay;
 }
 
 bool guest_abi_invoke(const guest_abi_plan *plan, qa_native_guest *guest, uint64_t target,

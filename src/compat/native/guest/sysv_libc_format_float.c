@@ -1,6 +1,21 @@
 #include "sysv_libc_private.h"
 #include "sysv_libc_format_float.h"
 
+bool sysv_format_span_grow(qa_arena *arena, void **data, size_t *capacity,
+    size_t count, size_t stride, qa_error *error)
+{
+    if (count <= *capacity) return true;
+    if (!stride || count > SIZE_MAX / stride)
+        return sysv_fail(error, QA_ERROR_MEMORY, "guest format span extent overflows");
+    size_t next = *capacity ? *capacity : 16;
+    while (next < count) next = next <= SIZE_MAX / 2 ? next * 2 : count;
+    if (next > SIZE_MAX / stride) next = count;
+    void *grown = qa_arena_grow(arena, *data, *capacity * stride,
+        next * stride, _Alignof(max_align_t), error);
+    if (!grown) return false;
+    *data = grown; *capacity = next; return true;
+}
+
 sysv_format_binary sysv_format_decode(uint64_t bits,uint16_t high,bool extended)
 {
     sysv_format_binary value = {.extended = extended};
@@ -25,7 +40,7 @@ sysv_format_binary sysv_format_decode(uint64_t bits,uint16_t high,bool extended)
     }
     return value;
 }
-typedef struct integer_digits { uint32_t *words; size_t count,capacity; } integer_digits;
+typedef struct integer_digits { uint32_t *words; size_t count,capacity; qa_arena *arena; } integer_digits;
 static bool multiply(integer_digits *n,uint32_t factor,qa_error *error)
 {
     uint64_t carry = 0;
@@ -34,7 +49,7 @@ static bool multiply(integer_digits *n,uint32_t factor,qa_error *error)
         n->words[i] = (uint32_t)(value%UINT64_C(1000000000)); carry = value/UINT64_C(1000000000);
     }
     if (carry) {
-        if (!guest_grow((void **)&n->words,&n->capacity,n->count+1,sizeof(*n->words),error)) return false;
+        if (!sysv_format_span_grow(n->arena, (void **)&n->words,&n->capacity,n->count+1,sizeof(*n->words),error)) return false;
         n->words[n->count++] = (uint32_t)carry;
     }
     return true;
@@ -46,11 +61,11 @@ static size_t unsigned_digits(uint64_t value,unsigned base,char *out)
     for (size_t i = 0; i < n; ++i) out[i] = reverse[n-i-1];
     return n;
 }
-static bool exact_decimal(sysv_format_binary value,char **out,size_t *length,int *scale,qa_error *error)
+static bool exact_decimal(sysv_format_binary value,char **out,size_t *length,int *scale,qa_arena *arena,qa_error *error)
 {
-    integer_digits n = {0}; uint64_t coefficient = value.coefficient;
+    integer_digits n = {.arena = arena}; uint64_t coefficient = value.coefficient;
     do {
-        if (!guest_grow((void **)&n.words,&n.capacity,n.count+1,sizeof(*n.words),error)) { free(n.words); return false; }
+        if (!sysv_format_span_grow(arena, (void **)&n.words,&n.capacity,n.count+1,sizeof(*n.words),error)) { return false; }
         n.words[n.count++] = (uint32_t)(coefficient%UINT64_C(1000000000)); coefficient /= UINT64_C(1000000000);
     } while (coefficient);
     int exponent = value.exponent; bool ok = true;
@@ -66,10 +81,10 @@ static bool exact_decimal(sysv_format_binary value,char **out,size_t *length,int
             ok = multiply(&n,factor,error); exponent += (int)step;
         }
     } else *scale = 0;
-    if (!ok) { free(n.words); return false; }
-    char *digits = malloc(n.count*9+1);
+    if (!ok) { return false; }
+    char *digits = qa_arena_alloc(arena, n.count*9+1, 1, error);
     if (!digits) {
-        free(n.words); sysv_fail(error,QA_ERROR_MEMORY,"allocating exact guest floating decimal digits");
+        sysv_fail(error,QA_ERROR_MEMORY,"allocating exact guest floating decimal digits");
         return false;
     }
     size_t at = unsigned_digits(n.words[n.count-1],10,digits);
@@ -77,18 +92,18 @@ static bool exact_decimal(sysv_format_binary value,char **out,size_t *length,int
         char chunk[9]; size_t bytes = unsigned_digits(n.words[i-1],10,chunk);
         memset(digits+at,'0',9-bytes); memcpy(digits+at+9-bytes,chunk,bytes); at += 9;
     }
-    digits[at] = 0; free(n.words); *out = digits; *length = at; return true;
+    digits[at] = 0; *out = digits; *length = at; return true;
 }
 static bool round_up(bool remainder,int half,bool odd,bool negative,unsigned mode)
 {
     return remainder && (mode == 0 ? half > 0 || (!half && odd) : mode == 1 ? negative : mode == 2 ? !negative : false);
 }
 static bool scaled_digits(const char *exact,size_t length,int scale,int places,
-    bool negative,unsigned mode,char **out,size_t *out_length,qa_error *error)
+    bool negative,unsigned mode,char **out,size_t *out_length,qa_arena *arena,qa_error *error)
 {
     int64_t kept = (int64_t)length+places-scale;
     size_t bytes = kept > 0 ? (size_t)kept : 1;
-    char *digits = malloc(bytes+2);
+    char *digits = qa_arena_alloc(arena, bytes+2, 1, error);
     if (!digits) return sysv_fail(error,QA_ERROR_MEMORY,"rounding exact guest floating digits");
     if (kept <= 0) digits[0] = '0';
     else {
@@ -112,40 +127,40 @@ static bool scaled_digits(const char *exact,size_t length,int scale,int places,
     }
     digits[bytes] = 0; *out = digits; *out_length = bytes; return true;
 }
-static bool append(qa_buffer *out,const void *bytes,size_t count,qa_error *error)
+static bool append(qa_arena *arena,qa_buffer *out,const void *bytes,size_t count,qa_error *error)
 {
     if (!count) return true;
     if (out->size > SIZE_MAX-count) return sysv_fail(error,QA_ERROR_MEMORY,"guest floating format extent overflow");
-    uint8_t *data = realloc(out->data,out->size+count);
+    uint8_t *data = qa_arena_grow(arena, out->data, out->size, out->size+count, 1, error);
     if (!data) return sysv_fail(error,QA_ERROR_MEMORY,"allocating guest floating format output");
     memcpy(data+out->size,bytes,count); out->data = data; out->size += count; return true;
 }
-static bool zeros(qa_buffer *out,size_t count,qa_error *error)
+static bool zeros(qa_arena *arena,qa_buffer *out,size_t count,qa_error *error)
 {
     if (!count) return true;
     if (out->size > SIZE_MAX-count) return false;
-    uint8_t *data = realloc(out->data,out->size+count);
+    uint8_t *data = qa_arena_grow(arena, out->data, out->size, out->size+count, 1, error);
     if (!data) return sysv_fail(error,QA_ERROR_MEMORY,"padding guest floating digits");
     memset(data+out->size,'0',count); out->data = data; out->size += count; return true;
 }
-static bool fixed(qa_buffer *out,const char *digits,size_t count,size_t places,bool point,qa_error *error)
+static bool fixed(qa_arena *arena,qa_buffer *out,const char *digits,size_t count,size_t places,bool point,qa_error *error)
 {
-    if (!places) return append(out,digits,count,error) && (!point || append(out,".",1,error));
+    if (!places) return append(arena,out,digits,count,error) && (!point || append(arena,out,".",1,error));
     size_t padded = count > places ? count : places+1, head = padded-places, leading = padded-count;
     if (leading) {
-        if (!zeros(out,head,error) || !append(out,".",1,error) || !zeros(out,leading-head,error)) return false;
-        return append(out,digits,count,error);
+        if (!zeros(arena,out,head,error) || !append(arena,out,".",1,error) || !zeros(arena,out,leading-head,error)) return false;
+        return append(arena,out,digits,count,error);
     }
-    return append(out,digits,head,error) && append(out,".",1,error) && append(out,digits+head,places,error);
+    return append(arena,out,digits,head,error) && append(arena,out,".",1,error) && append(arena,out,digits+head,places,error);
 }
-static bool suffix(qa_buffer *out,int exponent,char marker,size_t minimum,qa_error *error)
+static bool suffix(qa_arena *arena,qa_buffer *out,int exponent,char marker,size_t minimum,qa_error *error)
 {
     char digits[16],head[] = {marker,exponent < 0 ? '-' : '+'};
     unsigned magnitude = exponent < 0 ? (unsigned)-exponent : (unsigned)exponent;
     size_t count = unsigned_digits(magnitude,10,digits);
-    return append(out,head,2,error) && zeros(out,count < minimum ? minimum-count : 0,error) && append(out,digits,count,error);
+    return append(arena,out,head,2,error) && zeros(arena,out,count < minimum ? minimum-count : 0,error) && append(arena,out,digits,count,error);
 }
-static bool hex_float(sysv_format_binary value,int precision,bool alternate,unsigned mode,bool windows,qa_buffer *out,qa_error *error)
+static bool hex_float(sysv_format_binary value,int precision,bool alternate,unsigned mode,bool windows,qa_arena *arena,qa_buffer *out,qa_error *error)
 {
     int fraction = value.extended ? 60 : 52;
     size_t natural = (size_t)fraction/4, places = precision < 0 ? natural : (size_t)precision;
@@ -162,17 +177,17 @@ static bool hex_float(sysv_format_binary value,int precision,bool alternate,unsi
         count = 1; digits[0] = '1'; trailing = places; exponent += 4;
     }
     size_t leading = places+1-count-trailing;
-    qa_buffer full = {0}; bool ok = zeros(&full,leading,error) && append(&full,digits,count,error) && zeros(&full,trailing,error);
+    qa_buffer full = {0}; bool ok = zeros(arena,&full,leading,error) && append(arena,&full,digits,count,error) && zeros(arena,&full,trailing,error);
     if (ok) {
         size_t tail = places;
         if (precision < 0 && !windows) while (tail && full.data[tail] == '0') --tail;
-        ok = append(out,"0x",2,error) && append(out,full.data,1,error) &&
-            (!(tail || alternate) || (append(out,".",1,error) && append(out,full.data+1,tail,error))) && suffix(out,exponent,'p',1,error);
+        ok = append(arena,out,"0x",2,error) && append(arena,out,full.data,1,error) &&
+            (!(tail || alternate) || (append(arena,out,".",1,error) && append(arena,out,full.data+1,tail,error))) && suffix(arena,out,exponent,'p',1,error);
     }
-    qa_buffer_free(&full); return ok;
+    return ok;
 }
 bool sysv_format_float_dialect(sysv_format_binary value,char conversion,int precision,bool alternate,
-    unsigned mode,bool windows,qa_buffer *out,qa_error *error)
+    unsigned mode,bool windows,qa_arena *arena,qa_buffer *out,qa_error *error)
 {
     if (!out || out->data || out->size || precision > SYSV_MAX_STRING || mode > 3)
         return sysv_fail(error,QA_ERROR_ARGUMENT,"invalid guest floating format request");
@@ -181,34 +196,34 @@ bool sysv_format_float_dialect(sysv_format_binary value,char conversion,int prec
     if (value.kind) {
         const char *text = value.kind == 1 ? "inf" : windows && value.signaling ? "nan(snan)" :
             windows && value.indefinite ? "nan(ind)" : "nan";
-        ok = append(out,text,strlen(text),error);
-    } else if (lower == 'a') ok = hex_float(value,precision,alternate,mode,windows,out,error);
+        ok = append(arena,out,text,strlen(text),error);
+    } else if (lower == 'a') ok = hex_float(value,precision,alternate,mode,windows,arena,out,error);
     else {
         char *exact = NULL,*digits = NULL; size_t length,count; int scale;
-        if (!exact_decimal(value,&exact,&length,&scale,error)) return false;
+        if (!exact_decimal(value,&exact,&length,&scale,arena,error)) return false;
         int places = precision < 0 ? 6 : precision;
         int exponent = value.coefficient ? (int)length-1-scale : 0;
         if (lower == 'f') {
-            ok = scaled_digits(exact,length,scale,places,value.negative,mode,&digits,&count,error) &&
-                fixed(out,digits,count,(size_t)places,alternate,error);
+            ok = scaled_digits(exact,length,scale,places,value.negative,mode,&digits,&count,arena,error) &&
+                fixed(arena,out,digits,count,(size_t)places,alternate,error);
         } else {
             size_t significant = lower == 'e' ? (size_t)places+1 : places ? (size_t)places : 1;
-            ok = scaled_digits(exact,length,scale,(int)significant-1-exponent,value.negative,mode,&digits,&count,error);
+            ok = scaled_digits(exact,length,scale,(int)significant-1-exponent,value.negative,mode,&digits,&count,arena,error);
             if (ok) {
                 if (count > significant) { ++exponent; count = significant; }
                 if (count < significant) {
-                    char *expanded = realloc(digits,significant+1);
+                    char *expanded = qa_arena_grow(arena, digits, count, significant+1, 1, error);
                     if (!expanded) ok = sysv_fail(error,QA_ERROR_MEMORY,"padding significant guest floating digits");
                     else { memmove(expanded+significant-count,expanded,count); memset(expanded,'0',significant-count); digits = expanded; count = significant; }
                 }
                 if (ok && (lower == 'e' || exponent < -4 || exponent >= (int)significant)) {
                     size_t tail = count-1;
                     if (lower == 'g' && !alternate) while (tail && digits[tail] == '0') --tail;
-                    ok = append(out,digits,1,error) && (!(tail || alternate) ||
-                        (append(out,".",1,error) && append(out,digits+1,tail,error))) && suffix(out,exponent,'e',2,error);
+                    ok = append(arena,out,digits,1,error) && (!(tail || alternate) ||
+                        (append(arena,out,".",1,error) && append(arena,out,digits+1,tail,error))) && suffix(arena,out,exponent,'e',2,error);
                 } else if (ok) {
                     size_t decimal_places = (size_t)((int)significant-1-exponent);
-                    ok = fixed(out,digits,count,decimal_places,alternate,error);
+                    ok = fixed(arena,out,digits,count,decimal_places,alternate,error);
                     if (ok && !alternate) {
                         bool has_point = memchr(out->data,'.',out->size) != NULL;
                         if (has_point) { while (out->size && out->data[out->size-1] == '0') --out->size;
@@ -217,12 +232,12 @@ bool sysv_format_float_dialect(sysv_format_binary value,char conversion,int prec
                 }
             }
         }
-        free(exact); free(digits);
+
     }
-    if (!ok) { qa_buffer_free(out); return false; }
+    if (!ok) { *out = (qa_buffer){0}; return false; }
     if (upper) for (size_t i = 0; i < out->size; ++i) if (out->data[i] >= 'a' && out->data[i] <= 'z') out->data[i] -= 'a'-'A';
     return true;
 }
 bool sysv_format_float(sysv_format_binary value,char conversion,int precision,bool alternate,
-    unsigned mode,qa_buffer *out,qa_error *error)
-{ return sysv_format_float_dialect(value,conversion,precision,alternate,mode,false,out,error); }
+    unsigned mode,qa_arena *arena,qa_buffer *out,qa_error *error)
+{ return sysv_format_float_dialect(value,conversion,precision,alternate,mode,false,arena,out,error); }

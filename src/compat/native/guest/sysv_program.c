@@ -61,7 +61,7 @@ bool qa_native_sysv_program_create(const qa_native_sysv_program_options *options
     if (okay) okay = guest_profile_artifacts_create(provenance, count, &owner->provenance, error) &&
         guest_profile_artifacts_match(owner->provenance, provenance, count, error) &&
         options->services.current(options->services.context, error) &&
-        qa_native_guest_create(&options->guest, &owner->guest, error);
+        guest_create(&options->guest, true, options->stack_bytes, &owner->guest, error);
     guest_elf_memory_options memory = {options->anonymous_permissions, options->read_implies_execute};
     for (size_t i = 0; okay && i < count; ++i)
         okay = guest_elf_memory_attach(owner->artifacts[i], owner->guest, &memory, &owner->memory[i], error);

@@ -3,6 +3,7 @@
 
 typedef struct scan_entry {
     qa_native_guest *guest;
+    qa_arena *scratch;
     guest_abi_plan *plan;
     size_t next;
 } scan_entry;
@@ -11,9 +12,8 @@ static bool destination(void *context, uint64_t *out, qa_error *error)
     scan_entry *entry = context;
     qa_native_value value = {0}; qa_buffer storage = {0};
     bool okay = guest_abi_decode_argument(entry->plan, entry->guest,
-        entry->next++, &value, &storage, error);
+        entry->next++, &value, entry->scratch, &storage, error);
     if (okay) *out = value.as.address;
-    qa_buffer_free(&storage);
     return okay;
 }
 bool sysv_scan_install(guest_sysv_runtime *runtime, qa_error *error)
@@ -38,10 +38,11 @@ bool sysv_scan_call(sysv_service *service, const qa_native_value *arguments,
     if (!guest_scan_prepare(runtime->guest, arguments[1].as.address,
         service->operation == 5, &program, error)) return false;
     size_t count = guest_scan_argument_count(program), width = runtime->target.pointer_bytes;
-    guest_abi_layout *extra = count ? calloc(count, sizeof(*extra)) : NULL;
+    qa_arena scratch; qa_arena_init_pool(&scratch, &runtime->guest->scratch_pages);
+    guest_abi_layout *extra = count ? qa_arena_alloc(&scratch, count * sizeof(*extra), _Alignof(guest_abi_layout), error) : NULL;
     if (count && !extra) {
-        guest_scan_destroy(program);
-        return sysv_fail(error, QA_ERROR_MEMORY, "Preparing scanner destination ABI layouts");
+        guest_scan_destroy(program); qa_arena_destroy(&scratch);
+        return false;
     }
     for (size_t i = 0; i < count; ++i)
         extra[i] = (guest_abi_layout){.kind = QA_NATIVE_ADDRESS, .bytes = width, .alignment = width};
@@ -49,14 +50,14 @@ bool sysv_scan_call(sysv_service *service, const qa_native_value *arguments,
         {.kind = QA_NATIVE_ADDRESS, .count = 1}};
     qa_native_signature signature = {.abi = runtime->target.abi, .parameters = fixed,
         .parameter_count = 2, .result = {.kind = QA_NATIVE_I32, .count = 1}, .variadic = true};
-    scan_entry entry = {.guest = runtime->guest, .next = 2};
-    bool okay = guest_abi_plan_native(&signature, extra, count, &entry.plan, error);
-    free(extra);
+    scan_entry entry = {.guest = runtime->guest, .scratch = &scratch, .next = 2};
+    bool okay = guest_abi_plan_native(&signature, extra, count, &scratch, &entry.plan, error);
     int32_t assigned = 0;
     if (okay) okay = guest_scan_execute(program, runtime->guest, arguments[0].as.address,
         UINT64_MAX, destination, &entry, &assigned, error);
     if (okay) *out = (qa_native_value){.type = QA_NATIVE_I32, .as.i32 = assigned};
     guest_abi_plan_destroy(entry.plan);
     guest_scan_destroy(program);
+    qa_arena_destroy(&scratch);
     return okay;
 }

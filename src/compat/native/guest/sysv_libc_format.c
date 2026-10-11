@@ -22,6 +22,7 @@ typedef struct format_reader { uint64_t descriptor,cursor,registers; uint32_t gp
 typedef struct formatter {
     guest_sysv_runtime *runtime;
     qa_native_guest *guest;
+    qa_arena *scratch;
     qa_native_target target;
     qa_buffer output;
     size_t output_capacity, supplied_count;
@@ -41,6 +42,22 @@ typedef struct formatter {
     unsigned rounding;
     int format_errno;
 } formatter;
+
+size_t guest_format_scratch_bytes(void)
+{
+    /* A literal plus a two-byte conversion is the densest token sequence;
+     * %*d is the densest argument sequence, both two entries per three bytes.
+     * Their largest power-of-two capacity is SYSV_MAX_STRING, and geometric
+     * growth retains less than twice that capacity. Float conversion storage
+     * also covers exact x87 digits and the existing precision limit. */
+    const size_t chars = SYSV_MAX_STRING;
+    const size_t arguments = (2 * chars + 2) / 3;
+    return sizeof(formatter) + 2 * chars * (1 + sizeof(format_token) + sizeof(format_type)) +
+        arguments * (sizeof(format_value) + sizeof(guest_abi_layout)) +
+        guest_abi_format_plan_bytes(arguments) + 4 * chars + 16 * (chars + 16384) +
+        3 * QA_NATIVE_GUEST_PAGE;
+}
+
 static void formatter_free(formatter *);
 static bool invalid(formatter *f,int code)
 { f->format_errno = code; return false; }
@@ -75,17 +92,12 @@ static bool format_store(formatter *f, uint64_t address, size_t bytes, uint64_t 
 }
 static bool format_string(formatter *f, qa_error *error)
 {
-    if (f->runtime) {
-        bool terminated;
-        return sysv_string(f->runtime, f->format, SYSV_MAX_STRING, &f->text, &terminated, error) &&
-            (terminated || sysv_fail(error, QA_ERROR_ARGUMENT, "guest format is not terminated"));
-    }
     size_t capacity = 0;
     for (size_t i = 0; i < SYSV_MAX_STRING; ++i) {
         uint64_t byte;
         if (f->format > UINT64_MAX-i || !format_unsigned(f, f->format+i, 1, &byte, error)) return false;
         if (!byte) return true;
-        if (!guest_grow((void **)&f->text.data, &capacity, f->text.size+1, 1, error)) return false;
+        if (!sysv_format_span_grow(f->scratch, (void **)&f->text.data, &capacity, f->text.size+1, 1, error)) return false;
         f->text.data[f->text.size++] = (uint8_t)byte;
     }
     return sysv_fail(error, QA_ERROR_ARGUMENT, "guest format exceeds its terminated string limit");
@@ -116,7 +128,7 @@ static bool reference(formatter *f,format_type type,size_t supplied,size_t *out,
     else {
         f->positional = true; *out = supplied;
     }
-    if (*out == SIZE_MAX || !guest_grow((void **)&f->types, &f->type_capacity,
+    if (*out == SIZE_MAX || !sysv_format_span_grow(f->scratch, (void **)&f->types, &f->type_capacity,
         *out+1, sizeof(*f->types), error)) return false;
     if (*out >= f->type_count) {
         memset(f->types+f->type_count, 0, (*out+1-f->type_count)*sizeof(*f->types));
@@ -136,7 +148,7 @@ static bool amount(formatter *f,size_t *at,format_amount *out,qa_error *error)
 }
 static bool token_add(formatter *f,format_token token,qa_error *error)
 {
-    if (!guest_grow((void **)&f->tokens,&f->token_capacity,f->token_count+1,sizeof(*f->tokens),error)) return false;
+    if (!sysv_format_span_grow(f->scratch, (void **)&f->tokens,&f->token_capacity,f->token_count+1,sizeof(*f->tokens),error)) return false;
     f->tokens[f->token_count++] = token; return true;
 }
 static bool parse(formatter *f,qa_error *error)
@@ -258,10 +270,11 @@ static bool decoded_value(formatter *f, format_type type, const qa_native_value 
 }
 static bool entry_value(formatter *f, size_t index, format_type type, format_value *out, qa_error *error)
 {
+    qa_arena scratch; qa_arena_init_pool(&scratch, &f->guest->scratch_pages);
     qa_buffer storage = {0}; qa_native_value value = {0};
     bool okay = guest_abi_decode_argument(f->entry_plan, f->guest, f->fixed_count+index,
-        &value, &storage, error) && decoded_value(f, type, &value, out, error);
-    qa_buffer_free(&storage); return okay;
+        &value, &scratch, &storage, error) && decoded_value(f, type, &value, out, error);
+    qa_arena_destroy(&scratch); return okay;
 }
 static bool value_get(formatter *f,size_t index,format_type type,format_value *out,qa_error *error)
 {
@@ -287,7 +300,7 @@ static bool output_append(formatter *f,const void *data,size_t bytes,qa_error *e
         if (f->output.size > f->capacity || bytes > f->capacity-f->output.size ||
             f->total > INT32_MAX || bytes > INT32_MAX-f->total)
             return sysv_fail(error, QA_ERROR_ARGUMENT, "formatted source message exceeds its actual output limit");
-        if (!guest_grow((void **)&f->output.data, &f->output_capacity, f->output.size+bytes+1, 1, error)) return false;
+        if (!sysv_format_span_grow(f->scratch, (void **)&f->output.data, &f->output_capacity, f->output.size+bytes+1, 1, error)) return false;
         if (bytes) memcpy(f->output.data+f->output.size, data, bytes);
         f->output.size += bytes; f->total += bytes; return true;
     }
@@ -339,13 +352,13 @@ static bool readonly_format(formatter *f)
     }
     return true;
 }
-static bool body_string(formatter *f,uint64_t address,bool wide,int64_t precision,qa_buffer *out,qa_error *error)
+static bool body_string(formatter *f,uint64_t address,bool wide,int64_t precision,qa_arena *arena,qa_buffer *out,qa_error *error)
 {
     if (!address) {
         size_t bytes = precision >= 0 && precision < 6 ?
             f->target.os == QA_NATIVE_OS_WINDOWS ? (size_t)precision : 0 : 6;
         if (!bytes) return true;
-        out->data = malloc(bytes);
+        out->data = qa_arena_alloc(arena, bytes, 1, error);
         if (!out->data) return sysv_fail(error,QA_ERROR_MEMORY,"formatting null guest string");
         memcpy(out->data,"(null)",bytes); out->size = bytes; return true;
     }
@@ -356,7 +369,7 @@ static bool body_string(formatter *f,uint64_t address,bool wide,int64_t precisio
         if (address > UINT64_MAX-i*width || !format_unsigned(f,address+i*width,width,&value,error)) return false;
         if (!value) return true;
         if (wide && value > (f->target.os == QA_NATIVE_OS_WINDOWS ? 255u : 127u)) return invalid(f,84);
-        if (!guest_grow((void **)&out->data,&capacity,out->size+1,1,error)) return false;
+        if (!sysv_format_span_grow(arena, (void **)&out->data,&capacity,out->size+1,1,error)) return false;
         out->data[out->size++] = (uint8_t)value;
     }
     return precision >= 0 || sysv_fail(error,QA_ERROR_ARGUMENT,"guest printf string exceeds actual terminated runtime limit");
@@ -380,6 +393,7 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
     format_value value;
     if (!value_get(f,token->index,token->type,&value,error)) return false;
     char code = token->code,prefix[4]; size_t prefix_bytes = 0; qa_buffer body = {0};
+    qa_arena body_storage; qa_arena_init_pool(&body_storage, &f->guest->scratch_pages);
     char integer_body[64]; size_t integer_count = 0; uint64_t precision_zeros = 0;
     bool zero = (token->flags&FF_ZERO) && !left,ok = true;
     if (strchr("diouxX",code)) {
@@ -398,7 +412,7 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
         if (precision >= 0) zero = false;
     } else if (strchr("fFeEgGaA",code)) {
         ok = sysv_format_float_dialect(value.floating,code,(int)precision,(token->flags&FF_ALTERNATE) != 0,
-            f->rounding,f->target.os == QA_NATIVE_OS_WINDOWS,&body,error);
+            f->rounding,f->target.os == QA_NATIVE_OS_WINDOWS,&body_storage,&body,error);
         if (value.floating.negative) prefix[prefix_bytes++] = '-'; else if (token->flags&FF_PLUS) prefix[prefix_bytes++] = '+';
         else if (token->flags&FF_SPACE) prefix[prefix_bytes++] = ' ';
         if (value.floating.kind) zero = false;
@@ -418,7 +432,7 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
             if (precision > (int64_t)integer_count) precision_zeros = (uint64_t)precision-integer_count; }
     } else if (code == 's' || code == 'S') {
         bool wide = token->length == FL_L || (code == 'S' && token->length != FL_H);
-        ok = body_string(f,value.integer,wide,precision,&body,error); zero = false;
+        ok = body_string(f,value.integer,wide,precision,&body_storage,&body,error); zero = false;
     } else if (code == 'c' || code == 'C') {
         bool wide = token->length == FL_L || (code == 'C' && token->length != FL_H);
         uint32_t character = wide ? f->target.os == QA_NATIVE_OS_WINDOWS ? (uint16_t)value.integer : (uint32_t)value.integer : (uint8_t)value.integer;
@@ -438,17 +452,17 @@ static bool conversion(formatter *f,const format_token *token,qa_error *error)
     if (ok && precision_zeros) ok = output_repeat(f,'0',precision_zeros,error);
     if (ok) ok = output_append(f,body.data,body.size,error) && output_append(f,integer_body,integer_count,error);
     if (ok && left) ok = output_repeat(f,' ',padding,error);
-    qa_buffer_free(&body); return ok;
+    qa_arena_destroy(&body_storage); return ok;
 }
 static bool format_layouts(formatter *f, guest_abi_layout **out, qa_error *error)
 {
     if (f->conflict) return invalid(f,22);
     size_t count = f->distinct;
-    guest_abi_layout *layouts = count ? calloc(count, sizeof(*layouts)) : NULL;
+    guest_abi_layout *layouts = count ? qa_arena_alloc(f->scratch, count * sizeof(*layouts), _Alignof(guest_abi_layout), error) : NULL;
     if (count && !layouts) return sysv_fail(error, QA_ERROR_MEMORY, "owning promoted guest format layouts");
     for (size_t i = 0; i < count; ++i) {
         format_type type = f->types[i];
-        if (!type) { free(layouts); return invalid(f,22); }
+        if (!type) return invalid(f,22);
         size_t bytes = type == FT_POINTER ? f->target.pointer_bytes :
             type == FT_INT ? 4 : type == FT_EXTENDED ? f->target.pointer_bytes == 8 ? 16 : 12 : 8;
         size_t alignment = f->target.pointer_bytes == 4 ? 4 : bytes;
@@ -462,7 +476,7 @@ static bool format_layouts(formatter *f, guest_abi_layout **out, qa_error *error
 static bool entry_values(formatter *f, qa_error *error)
 {
     if (!f->positional || !f->distinct) return true;
-    f->values = calloc(f->distinct,sizeof(*f->values));
+    f->values = qa_arena_alloc(f->scratch, f->distinct*sizeof(*f->values), _Alignof(format_value), error);
     if (!f->values) return sysv_fail(error,QA_ERROR_MEMORY,"owning positional guest entry values");
     for (size_t i = 0; i < f->distinct; ++i)
         if (!entry_value(f,i,f->types[i],f->values+i,error)) return false;
@@ -488,8 +502,8 @@ bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_nativ
     if (service->operation >= 4) return sysv_scan_call(service,args,out,error);
     bool checked = service->operation == 2;
     bool entry = service->operation == 3;
-    formatter *f = calloc(1,sizeof(*f));
-    if (!f) return sysv_fail(error,QA_ERROR_MEMORY,"allocating guest format argument graph");
+    qa_arena scratch; qa_arena_init_pool(&scratch, &service->runtime->guest->scratch_pages);
+    formatter owner = {.scratch = &scratch}; formatter *f = &owner;
     f->runtime = service->runtime; f->guest = f->runtime->guest; f->target = f->runtime->target;
     f->destination = args[0].as.address; f->capacity = sysv_integer(args+1);
     f->format = args[checked ? 4 : 2].as.address;
@@ -502,11 +516,7 @@ bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_nativ
         else ok = sysv_store(f->runtime,f->destination,1,0,error);
     }
     if (ok && !f->format) { f->format_errno = 22; goto finish; }
-    if (ok) {
-        bool terminated;
-        ok = sysv_string(f->runtime,f->format,SYSV_MAX_STRING,&f->text,&terminated,error);
-        if (ok && !terminated) ok = sysv_fail(error,QA_ERROR_ARGUMENT,"guest format exceeds actual terminated string limit");
-    }
+    if (ok) ok = format_string(f,error);
     if (ok) {
         qa_native_guest_cpu cpu;
         ok = qa_native_guest_cpu_read(f->runtime->guest,&cpu,error);
@@ -518,8 +528,7 @@ bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_nativ
         guest_abi_signature signature = {.abi = f->target.abi, .parameters = service->parameters,
             .parameter_count = service->parameter_count, .result = service->result, .variadic = true};
         ok = format_layouts(f,&layouts,error) &&
-            guest_abi_plan_create(&signature,layouts,f->distinct,&f->entry_plan,error);
-        free(layouts);
+            guest_abi_plan_create(&signature,layouts,f->distinct,f->scratch,&f->entry_plan,error);
         f->fixed_count = service->parameter_count;
         if (ok) ok = entry_values(f,error);
     }
@@ -527,7 +536,7 @@ bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_nativ
     if (ok && !entry && f->positional) {
         if (f->conflict) ok = invalid(f,22);
         else {
-            f->values = calloc(4096,sizeof(*f->values));
+            f->values = qa_arena_alloc(f->scratch, f->distinct*sizeof(*f->values), _Alignof(format_value), error);
             if (!f->values) ok = sysv_fail(error,QA_ERROR_MEMORY,"retaining positional guest printf arguments");
             for (size_t i = 0; i < f->distinct && ok; ++i)
                 ok = f->types[i] ? next_argument(f,f->types[i],f->values+i,error) : invalid(f,22);
@@ -546,21 +555,21 @@ finish:
         if (ok && f->format_errno) ok = sysv_errno(f->runtime,f->format_errno,error);
         out->as.i32 = f->format_errno ? -1 : (int32_t)f->total;
     }
-    formatter_free(f); return ok;
+    formatter_free(f); qa_arena_destroy(&scratch); return ok;
 }
 
 static void formatter_free(formatter *f)
 {
     if (!f) return;
-    qa_buffer_free(&f->text); qa_buffer_free(&f->output);
-    free(f->tokens); free(f->types); free(f->values); guest_abi_plan_destroy(f->entry_plan); free(f);
+    guest_abi_plan_destroy(f->entry_plan);
 }
-static formatter *formatter_guest(const qa_native_guest *guest, uint64_t format, qa_error *error)
+static formatter *formatter_guest(const qa_native_guest *guest, uint64_t format, qa_arena *arena, qa_error *error)
 {
     if (!format) { sysv_fail(error, QA_ERROR_ARGUMENT, "guest source format is null"); return NULL; }
     if (!guest_ready(guest, error)) return NULL;
-    formatter *f = calloc(1, sizeof(*f));
+    formatter *f = qa_arena_alloc(arena, sizeof(*f), _Alignof(formatter), error);
     if (!f) { sysv_fail(error, QA_ERROR_MEMORY, "owning stopped guest format"); return NULL; }
+    *f = (formatter){.scratch = arena};
     f->guest = (qa_native_guest *)guest; f->target = guest->options.image.target; f->format = format;
     if (!format_string(f, error) || !parse(f, error) || f->conflict || f->format_errno) {
         if (error && error->code == QA_OK) sysv_fail(error, QA_ERROR_ARGUMENT, "invalid promoted guest format argument graph");
@@ -573,15 +582,15 @@ static formatter *formatter_guest(const qa_native_guest *guest, uint64_t format,
     return f;
 }
 bool guest_format_select(const qa_native_guest *guest, uint64_t format,
-    guest_abi_layout **out, size_t *count, qa_error *error)
+    qa_arena *arena, guest_abi_layout **out, size_t *count, qa_error *error)
 {
     if (!out || *out || !count)
         return sysv_fail(error, QA_ERROR_ARGUMENT, "guest format selector needs empty owned layouts");
-    formatter *f = formatter_guest(guest, format, error);
+    formatter *f = formatter_guest(guest, format, arena, error);
     if (!f) return false;
     guest_abi_layout *layouts = NULL;
     bool okay = format_layouts(f,&layouts,error);
-    if (okay) { *out = layouts; *count = f->distinct; } else free(layouts);
+    if (okay) { *out = layouts; *count = f->distinct; }
     formatter_free(f); return okay;
 }
 static bool render_output(formatter *f, size_t maximum, qa_buffer *out, qa_error *error)
@@ -598,7 +607,7 @@ static bool render_output(formatter *f, size_t maximum, qa_buffer *out, qa_error
     if (okay && f->format_errno) okay = sysv_fail(error, QA_ERROR_ARGUMENT, "guest source format conversion failed");
     if (okay) {
         if (!f->output.data) {
-            f->output.data = malloc(1);
+            f->output.data = qa_arena_alloc(f->scratch, 1, 1, error);
             if (!f->output.data) okay = sysv_fail(error, QA_ERROR_MEMORY, "owning empty guest formatted output");
         }
         if (okay) { f->output.data[f->output.size] = 0; *out = f->output; f->output = (qa_buffer){0}; }
@@ -606,18 +615,18 @@ static bool render_output(formatter *f, size_t maximum, qa_buffer *out, qa_error
     return okay;
 }
 bool guest_format_render(qa_native_guest *guest, uint64_t format, const qa_native_value *values,
-    size_t count, size_t maximum, qa_buffer *out, qa_error *error)
+    size_t count, size_t maximum, qa_arena *arena, qa_buffer *out, qa_error *error)
 {
     if (!out || out->data || out->size || !maximum || maximum > INT32_MAX ||
         (count && !values))
         return sysv_fail(error, QA_ERROR_ARGUMENT, "guest format output requires actual stopped ownership and empty storage");
     if (!guest_mutable(guest, error)) return false;
-    formatter *f = formatter_guest(guest, format, error);
+    formatter *f = formatter_guest(guest, format, arena, error);
     if (!f) return false;
     bool okay = count == f->distinct;
     if (!okay) sysv_fail(error, QA_ERROR_ARGUMENT, "promoted guest format differs from its complete ABI argument count");
     if (okay && count) {
-        f->values = calloc(count, sizeof(*f->values));
+        f->values = qa_arena_alloc(f->scratch, count * sizeof(*f->values), _Alignof(format_value), error);
         if (!f->values) okay = sysv_fail(error, QA_ERROR_MEMORY, "owning decoded guest format values");
     }
     for (size_t i = 0; okay && i < count; ++i)
@@ -631,17 +640,16 @@ bool guest_format_render(qa_native_guest *guest, uint64_t format, const qa_nativ
     formatter_free(f); return okay;
 }
 bool guest_format_render_entry(qa_native_guest *guest, const qa_native_signature *signature,
-    uint64_t format, size_t maximum, qa_buffer *out, qa_error *error)
+    uint64_t format, size_t maximum, qa_arena *arena, qa_buffer *out, qa_error *error)
 {
     if (!guest || !signature || !signature->variadic || signature->abi != guest->options.image.target.abi ||
         !out || out->data || out->size || !maximum || maximum > INT32_MAX)
         return sysv_fail(error, QA_ERROR_ARGUMENT, "guest format entry needs its genuine variadic prefix and empty output");
     if (!guest_mutable(guest, error)) return false;
     guest_abi_layout *layouts = NULL;
-    formatter *f = formatter_guest(guest, format, error);
+    formatter *f = formatter_guest(guest, format, arena, error);
     bool okay = f && format_layouts(f,&layouts,error) &&
-        guest_abi_plan_native(signature,layouts,f->distinct,&f->entry_plan,error);
-    free(layouts);
+        guest_abi_plan_native(signature,layouts,f->distinct,f->scratch,&f->entry_plan,error);
     if (okay) f->fixed_count = signature->parameter_count;
     if (okay) okay = entry_values(f,error);
     if (okay) okay = render_output(f, maximum, out, error);
