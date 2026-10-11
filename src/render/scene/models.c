@@ -220,7 +220,7 @@ void qa_scene_model_destroy(qa_scene_model *model) {
     free(model->sampled_pose_frames);
     scene_model_images_destroy(model);
     while (model->material_bindings) {
-        scene_model_material_binding *binding = model->material_bindings;
+        scene_model_resource_binding *binding = model->material_bindings;
         model->material_bindings = binding->next;
         if (binding->retained) qa_material_release(binding->material);
         free(binding);
@@ -763,6 +763,8 @@ void qa_scene_model_image_policy_publish(qa_scene_model_image_policy *ticket)
         model_policy_node *node = &ticket->nodes[i]; qa_scene_model *owner = node->owner;
         if (!node->prepared) continue;
         scene_model_image *images = owner->images; owner->images = node->images.images; node->images.images = images;
+        for (scene_model_resource_binding *binding = owner->material_bindings; binding; binding = binding->next)
+            if (!binding->library) binding->image = model_policy_binding(node, binding->image);
         scene_model_image **skins = owner->skins; owner->skins = node->images.skins; node->images.skins = skins;
         scene_model_image **sprites = owner->sprites; owner->sprites = node->images.sprites; node->images.sprites = sprites;
         for (size_t j = 0; j < owner->source->mesh_count; ++j) {
@@ -831,7 +833,7 @@ static void repair_frames(const qa_scene_model *model, qa_scene_model_input *inp
 
 static bool select_image(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
                           const size_t *skin_mappings, scene_model_image *external,
-                          qa_scene_frame *frame, scene_model_image **out, qa_error *error) {
+                          scene_model_image **out, qa_error *error) {
     const qa_model_mesh *mesh = &model->source->meshes[index];
     *out = NULL;
     if (input->indexed_skin && model->source->format == QA_MODEL_MDL)
@@ -852,7 +854,7 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
                     input->custom_skin->mappings[i].shader_id, &external->material, error)) return false;
                 *out = external; return true;
             }
-            return scene_model_external(model, input->custom_skin->mappings[i].shader, frame, out, error);
+            return scene_model_external_id(model, input->custom_skin->mappings[i].shader_id, out, error);
         }
         return true;
     }
@@ -1653,7 +1655,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
                 if (!deferred_mesh && !mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;
             }
             if (!mesh_visible) continue;
-            if (!select_image(model, &input, i, skin_mappings, &external, frame, &image, error)) return false;
+            if (!select_image(model, &input, i, skin_mappings, &external, &image, error)) return false;
             if (deferred_mesh) {
                 if (image && image->material && !scene_model_has_shell(&input)) {
                     if (!mesh_geometry(model, &input, i, cull, frame, &mesh, &mesh_visible, error)) return false;

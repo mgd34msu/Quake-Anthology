@@ -712,6 +712,17 @@ is deleted. Normal build and seven core suites pass:
 `/tmp/qa-ta3196-skin-mesh-indexes-20261011-core.log`.
 Non-source skin image binding is the remaining related draw-time reader.
 
+Names item 13, retained skin images: non-source custom skins now select
+images by shared shader ID through the model's existing resource bindings.
+Path normalization and image registration run only when admitting a new
+binding. Image-policy publication remaps these handles with the model's
+other retained images. Q3 skin comparisons also read shared shader IDs.
+Normal build and seven core suites pass:
+`/tmp/qa-ta3196-skin-image-ids-20261011-build.log` and
+`/tmp/qa-ta3196-skin-image-ids-20261011-core.log`.
+Names items 1-13 are migrated at the audited sites; 14-17 and the later
+adoption kinds remain open. No new live presentation or timing claim.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

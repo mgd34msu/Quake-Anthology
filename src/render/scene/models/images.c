@@ -69,7 +69,7 @@ static scene_model_image *image_entry(qa_scene_model *model, const char *name, q
 
 bool scene_model_material(qa_scene_model *model, qa_material_library *materials,
     qa_string_id shader, const qa_material **out, qa_error *error) {
-    for (scene_model_material_binding *binding = model->material_bindings; binding; binding = binding->next)
+    for (scene_model_resource_binding *binding = model->material_bindings; binding; binding = binding->next)
         if (binding->library == materials && binding->shader == shader) {
             *out = binding->material; return true;
         }
@@ -82,12 +82,12 @@ bool scene_model_material(qa_scene_model *model, qa_material_library *materials,
     free(owned);
     bool retain = materials != model->materials;
     if (!okay || (retain && !qa_material_retain(material, error))) return false;
-    scene_model_material_binding *binding = malloc(sizeof(*binding));
+    scene_model_resource_binding *binding = malloc(sizeof(*binding));
     if (!binding) {
         if (retain) qa_material_release(material);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining model material binding"); return false;
     }
-    *binding = (scene_model_material_binding){.next=model->material_bindings,
+    *binding = (scene_model_resource_binding){.next=model->material_bindings,
         .library=materials, .shader=shader, .material=material, .retained=retain};
     model->material_bindings = binding; *out = material; return true;
 }
@@ -141,6 +141,19 @@ fail:
     free(image->name);
     free(image);
     return false;
+}
+
+bool scene_model_external_id(qa_scene_model *model, qa_string_id shader,
+    scene_model_image **out, qa_error *error) {
+    for (scene_model_resource_binding *binding = model->material_bindings; binding; binding = binding->next)
+        if (!binding->library && binding->shader == shader) { *out = binding->image; return true; }
+    const char *name = qa_strings_cstr(model->strings, shader);
+    if (!scene_model_external(model, name, NULL, out, error)) return false;
+    scene_model_resource_binding *binding = malloc(sizeof(*binding));
+    if (!binding) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining model image binding"); return false; }
+    *binding = (scene_model_resource_binding){.next=model->material_bindings,
+        .shader=shader, .image=*out};
+    model->material_bindings = binding; return true;
 }
 
 static bool flood_skin(uint8_t *pixels, uint32_t width, uint32_t height,
