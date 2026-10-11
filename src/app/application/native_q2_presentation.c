@@ -160,9 +160,8 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
             value.view.health = combat.health; value.view.armor = combat.armor.regular.points;
             for (size_t i = 0; i < qa_q2_item_count(value.game); ++i) {
                 const qa_q2_item_definition *item = qa_q2_item_at(value.game, i);
-                if (combat.armor.regular.points > 0 && item->item == combat.armor.regular.item && item->icon)
-                    value.view.armor_icon = qa_strings_find(qa_session_strings(app->session),
-                        (qa_bytes){(const uint8_t *)item->icon, strlen(item->icon)});
+                if (combat.armor.regular.points > 0 && item->item == combat.armor.regular.item)
+                    value.view.armor_icon = item->icon_id;
             }
         }
         for (size_t i = 0; (value.view.layouts & 2) && i < qa_q2_item_count(value.game) &&

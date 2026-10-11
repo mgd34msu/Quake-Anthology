@@ -354,7 +354,7 @@ bool application_network_q2_source_resources(qa_application_network_q2 *owner, q
             if (!application_network_q2_resource(owner, 0, text(owner, source->visual.models[i]),
                 &ignored, error)) return false;
         if (source->flare && (source->visual.render_flags & 256) &&
-            !application_network_q2_resource(owner, 2, text(owner, source->flare_image), &ignored, error)) return false;
+            !application_network_q2_resource_id(owner, 2, source->flare_image, &ignored, error)) return false;
         if (!application_network_q2_resource(owner, 1, text(owner, source->loop_sound), &ignored, error) ||
             !application_network_q2_resource(owner, 1, text(owner, source->precache_sound), &ignored, error) ||
             (source->has_weapon && !application_network_q2_resource(owner, 1,
