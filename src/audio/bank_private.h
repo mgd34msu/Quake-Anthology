@@ -25,7 +25,8 @@ typedef struct bank_entry {
 } bank_entry;
 
 struct qa_audio_bank {
-    qa_id_index sexed_paths, sexed_models;
+    qa_id_index sexed_paths;
+    qa_string_id male_model;
     qa_string_id *sexed_names;
     size_t sexed_capacity;
     const qa_string_id *compiled_names;

@@ -1,4 +1,5 @@
 #include "bank_private.h"
+#include "qa/player_names.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -91,8 +92,9 @@ bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out
         return false;
     }
     if (!qa_q2_sound_names_bind(strings,&bank->compiled_names,error) ||
+        !qa_strings_intern_cstr(strings,"male",&bank->male_model,error) ||
         !qa_audio_bank_sexed_reserve(bank, 32, error)) {
-        qa_id_index_destroy(&bank->sexed_paths); qa_id_index_destroy(&bank->sexed_models); free(bank->sexed_names); free(bank); return false;
+        qa_id_index_destroy(&bank->sexed_paths); free(bank->sexed_names); free(bank); return false;
     }
     bank->view = view;
     bank->strings = strings; qa_strings_retain(strings);
@@ -151,7 +153,7 @@ static void bank_entry_release(bank_entry *entry)
 { qa_audio_asset_release(entry->asset); }
 static void bank_clear_entries(qa_audio_bank *bank)
 {
-    qa_id_index_clear(&bank->sexed_paths); qa_id_index_clear(&bank->sexed_models);
+    qa_id_index_clear(&bank->sexed_paths);
     for(size_t i=0;i<bank->count;++i)bank_entry_release(bank->entries+i);
     bank->count=0;bank_index_reset(bank);
 }
@@ -177,7 +179,7 @@ void qa_audio_bank_destroy(qa_audio_bank *bank) {
     qa_audio_bank_clear(bank);
     free(bank->entries);
     qa_id_index_destroy(&bank->names);
-    qa_id_index_destroy(&bank->sexed_paths); qa_id_index_destroy(&bank->sexed_models); free(bank->sexed_names);
+    qa_id_index_destroy(&bank->sexed_paths); free(bank->sexed_names);
     qa_strings_destroy(bank->strings);
     free(bank);
 }
@@ -420,16 +422,14 @@ qa_string_id qa_audio_bank_q2_name(const qa_audio_bank *bank,qa_q2_sound_index i
 bool qa_audio_bank_sexed(qa_audio_bank *bank,const char *base,const char *model,
     qa_audio_asset **out,qa_error *error)
 {
-    qa_string_id base_id,model_id;
+    qa_string_id base_id,skin_id,model_id;
     return bank&&base&&model&&qa_strings_intern_cstr(bank->strings,base,&base_id,error)&&
-        qa_strings_intern_cstr(bank->strings,model,&model_id,error)&&qa_audio_bank_sexed_id(bank,base_id,model_id,out,error);
+        qa_player_skin_bind(bank->strings,model,false,&skin_id,&model_id,error)&&qa_audio_bank_sexed_id(bank,base_id,model_id,out,error);
 }
 bool qa_audio_bank_sexed_reserve(qa_audio_bank *bank, size_t pairs, qa_error *error)
 {
     if (!bank || !qa_id_index_reserve(&bank->sexed_paths,
-        pairs > bank->sexed_paths.count ? pairs - bank->sexed_paths.count : 0, error) ||
-        !qa_id_index_reserve(&bank->sexed_models,
-            pairs > bank->sexed_models.count ? pairs - bank->sexed_models.count : 0, error)) return false;
+        pairs > bank->sexed_paths.count ? pairs - bank->sexed_paths.count : 0, error)) return false;
     if (bank->sexed_capacity >= bank->sexed_paths.capacity) return true;
     qa_string_id *names = realloc(bank->sexed_names, bank->sexed_paths.capacity * sizeof(*names));
     if (!names) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Reserving player sound paths"); return false; }
@@ -443,20 +443,7 @@ bool qa_audio_bank_sexed_id(qa_audio_bank *bank,qa_string_id base_id,qa_string_i
     qa_audio_bank_sync(bank);
     if (!(qa_strings_name_flags(bank->strings,base_id)&QA_NAME_SEXED_SOUND))
         return qa_audio_bank_register_id(bank,base_id,QA_GAME_Q2,out,error);
-    qa_id_index_cursor models=qa_id_index_begin(&bank->sexed_models,model_id,0);
-    size_t prefix;
-    if (!qa_id_index_next(&bank->sexed_models,&models,&prefix)) {
-        if (bank->sexed_models.count==bank->sexed_models.capacity) {
-            qa_error_set(error,QA_ERROR_CAPACITY,0,"Player sound model storage is full");return false;
-        }
-        const char *model=qa_strings_cstr(bank->strings,model_id);
-        size_t length=model?strcspn(model,"/"):0;
-        qa_string_id name;
-        if (!(length ? qa_strings_intern(bank->strings,(qa_bytes){(const uint8_t *)model,length},&name,error) :
-                qa_strings_intern_cstr(bank->strings,"male",&name,error))) return false;
-        qa_id_index_insert(&bank->sexed_models,model_id,0,name);prefix=name;
-    }
-    model_id=(qa_string_id)prefix;
+    if (!model_id) model_id = bank->male_model;
     qa_id_index_cursor cursor=qa_id_index_begin(&bank->sexed_paths,base_id,model_id);
     size_t row;
     if (qa_id_index_next(&bank->sexed_paths,&cursor,&row))

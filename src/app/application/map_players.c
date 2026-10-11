@@ -1679,7 +1679,7 @@ static bool q2_player_event(void *context, const qa_q2_player_event *event, qa_e
         if (application_provider_for(app, event->actor, QA_ROLE_CHARACTER, "") == provider &&
             !qa_strings_intern_cstr(strings, event->text, &identity->name, error)) return false;
         if (application_provider_for(app, event->actor, QA_ROLE_SKIN, "") == provider &&
-            !qa_strings_intern_cstr(strings, event->skin, &identity->skin, error)) return false;
+            !qa_player_skin_bind(strings, event->skin, provider->product->edition == QA_EDITION_RERELEASE, &identity->skin, &identity->model, error)) return false;
     }
     return application_emit_q2_player(context, event, error);
 }
@@ -3775,11 +3775,7 @@ static bool record_text(qa_application *application, application_player_record *
                         const char *userinfo, qa_error *error)
 {
     record->strings = qa_session_strings(application->session);
-    qa_actor_player *identity = application_player_identity_mut(record);
-    if (!qa_strings_intern_cstr(record->strings, name ? name : "", &identity->name, error) ||
-        !qa_strings_intern_cstr(record->strings, team ? team : "", &identity->team, error) ||
-        !qa_strings_intern_cstr(record->strings, skin ? skin : "", &identity->skin, error)) return false;
-    identity->present = true;
+    if (!application_player_identity_text(record, name ? name : "", team ? team : "", skin ? skin : "", error)) return false;
     if (userinfo != record->userinfo)
         record->userinfo = userinfo != NULL ? player_text(userinfo) : NULL;
     if (userinfo != NULL && record->userinfo == NULL) {
@@ -4508,7 +4504,8 @@ bool application_players_campaign_reenter(qa_application *candidate,
         if (candidate != previous) {
             if (!campaign_string(candidate, previous, &record->pending_identity.name, error) ||
                 !campaign_string(candidate, previous, &record->pending_identity.team, error) ||
-                !campaign_string(candidate, previous, &record->pending_identity.skin, error)) return false;
+                !campaign_string(candidate, previous, &record->pending_identity.skin, error) ||
+                !campaign_string(candidate, previous, &record->pending_identity.model, error)) return false;
             record->strings = qa_session_strings(candidate->session);
         }
         travel->seats[i].name=application_player_name(record); travel->seats[i].team=application_player_team(record);
@@ -5029,10 +5026,7 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
             roster_read_text(&reader, &record->bot_definition, error);
         if (ok) {
             record->strings = qa_session_strings(candidate->session);
-            ok = qa_strings_intern_cstr(record->strings, identity_text[0], &record->pending_identity.name, error) &&
-                qa_strings_intern_cstr(record->strings, identity_text[1], &record->pending_identity.team, error) &&
-                qa_strings_intern_cstr(record->strings, identity_text[2], &record->pending_identity.skin, error);
-            record->pending_identity.present = true;
+            ok = application_player_identity_text(record, identity_text[0], identity_text[1], identity_text[2], error);
         }
         for (size_t j = 0; j < 3; ++j) free(identity_text[j]);
         if (!ok) break;

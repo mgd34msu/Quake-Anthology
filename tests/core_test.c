@@ -765,6 +765,14 @@ static void test_shared_audio_preparation(void)
     CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&first,&error) && first);
     CHECK(qa_audio_bank_sexed(bank,"*jump1.wav","custom/grunt",&again,&error) && again==first);
     qa_audio_asset_release(first);qa_audio_asset_release(again);
+    qa_string_id sound, skin, model;
+    CHECK(qa_strings_intern_cstr(names,"*jump1.wav",&sound,&error));
+    CHECK(qa_player_skin_bind(names,"custom/grunt",false,&skin,&model,&error));
+    CHECK(!strcmp(qa_strings_cstr(names,model),"custom"));
+    CHECK(qa_audio_bank_sexed_id(bank,sound,model,&first,&error) && first);
+    CHECK(qa_player_skin_bind(names,"custom/other",false,&skin,&model,&error));
+    CHECK(qa_audio_bank_sexed_id(bank,sound,model,&again,&error) && again==first);
+    qa_audio_asset_release(first);qa_audio_asset_release(again);
     const char environment_json[] = "{\"environments\":[{\"reverbs\":["
         "{\"materials\":[\"WOOD\"],\"preset\":\"room\"},"
         "{\"materials\":[\"wood\"],\"preset\":\"generic\"},"

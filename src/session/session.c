@@ -1,4 +1,5 @@
 #include "qa/session.h"
+#include "qa/player_names.h"
 #include "qa/source_frame_time.h"
 
 #include <stdlib.h>
@@ -349,6 +350,19 @@ bool qa_session_create_restored(const qa_session_options *options, const qa_acto
     session->actors = restored;
     session->scheduler = scheduler;
     session->strings = owned_strings;
+    for (uint32_t i = 0; i < actors->count; ++i) {
+        if (!actors->slots[i].active || !actors->slots[i].player.present) continue;
+        qa_actor_id id;
+        const qa_actor_record *record = qa_actors_resolve_saved(restored,
+            (qa_saved_actor_id){.slot = i, .generation = actors->slots[i].generation});
+        if (!record) continue;
+        id = record->id;
+        qa_actor_player *player = qa_actors_player(restored, id);
+        const char *skin = qa_strings_cstr(owned_strings, player->skin);
+        if (!qa_player_skin_bind(owned_strings, skin ? skin : "", false, &player->skin, &player->model, error)) {
+            (void)qa_session_destroy(session, NULL); return false;
+        }
+    }
     session->restored_world_pending = true;
     qa_actors_set_release_observer(restored, actor_released, session);
     *out = session;

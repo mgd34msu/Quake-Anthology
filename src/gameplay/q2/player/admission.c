@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/player_names.h"
 #include "../entities/internal.h"
 
 bool q2_player_userinfo_value(const char *info, const char *key, char *out, size_t capacity) {
@@ -231,11 +232,13 @@ static bool player_userinfo(void *context, qa_actor_id id, qa_error *e) {
         q2_player_userinfo_value(s->rule.userinfo, "dogtag", s->rule.dogtag, sizeof(s->rule.dogtag));
     }
     qa_strings *strings = qa_session_strings(g->services.session);
+    qa_string_id model;
     if (!qa_strings_intern_cstr(strings, name, &s->source_name, e) ||
-        !qa_strings_intern_cstr(strings, skin, &s->source_skin, e)) return false;
+        !qa_player_skin_bind(strings, skin, rr, &s->source_skin, &model, e)) return false;
     if (!s->player->present || !g->services.player_info) {
         s->player->name = s->source_name;
         s->player->skin = s->source_skin;
+        s->player->model = model;
         s->player->present = true;
     }
     if (!q2_player_emit(g,

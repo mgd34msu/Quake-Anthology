@@ -1,5 +1,6 @@
 #include "../entities/checkpoint_internal.h"
 #include "internal.h"
+#include "qa/player_names.h"
 
 void qa_q2_player_checkpoint_free(qa_q2_player_checkpoint *s) {
     if (!s)
@@ -179,8 +180,9 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
         .flashlight = info->flashlight,
     };
     qa_strings *strings = qa_session_strings(g->services.session);
+    qa_string_id model;
     if (!qa_strings_intern_cstr(strings, info->name, &state->source_name, e) ||
-        !qa_strings_intern_cstr(strings, info->skin, &state->source_skin, e)) {
+        !qa_player_skin_bind(strings, info->skin, g->options.edition == QA_Q2_RERELEASE, &state->source_skin, &model, e)) {
         free(state); return false;
     }
     /* Shared identity is restored by the actor checkpoint. Standalone/legacy
@@ -194,6 +196,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
             free(state); return false;
         }
         state->player->skin = state->source_skin;
+        state->player->model = model;
         state->player->ping = info->ping;
         state->player->bot = saved->value.bot;
         state->player->spectator = info->spectator;

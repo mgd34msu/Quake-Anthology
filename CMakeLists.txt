@@ -49,6 +49,7 @@ add_library(qa_core STATIC
     src/core/common_parse.c
     src/core/json_writer.c
     src/core/strings.c
+    src/core/player_names.c
     src/core/id_index.c
     src/core/tokenizer.c
     src/core/normals.c)

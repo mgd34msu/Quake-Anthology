@@ -430,7 +430,7 @@ bool qa_q2_player_projection(qa_q2_game *g, qa_actor_id id,
     const char *skin = qa_strings_cstr(strings, identity ? identity->skin : s->source_skin);
     *out = (qa_builtin_player_info){.name = identity || name ? name : "",
         .skin = identity || skin ? skin : "",
-        .skin_id = identity ? identity->skin : s->source_skin, .slot = s->info.slot,
+        .skin_id = identity ? identity->skin : s->source_skin, .model_id = player->model, .slot = s->info.slot,
         .ping = player->ping, .entered_ns = s->rule.entered_ns,
         .view_height = s->info.view_height, .killer_yaw = s->rule.killer_yaw,
         .connected = true, .spectator = identity ? identity->spectator : s->info.spectator,

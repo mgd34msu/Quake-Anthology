@@ -4,6 +4,7 @@
 #include "qa/localization.h"
 #include "qa/network_q2.h"
 #include "qa/console.h"
+#include "qa/player_names.h"
 
 typedef struct qa_hud_q2_item {
     const char *label;
@@ -24,20 +25,11 @@ typedef struct qa_hud_q2_picture_names {
     qa_string_id digits[2][11], field, ping, inventory, conchars, marker, player_icon, tag;
 } qa_hud_q2_picture_names;
 bool qa_hud_q2_picture_names_bind(qa_strings *, qa_hud_q2_picture_names *, qa_error *);
-bool qa_hud_q2_player_picture_names(qa_strings *, const char *, qa_string_id *, qa_string_id *, qa_error *);
-typedef struct qa_hud_q2_player_names { qa_bytes name, appearance, tag, model, skin; } qa_hud_q2_player_names;
-qa_hud_q2_player_names qa_hud_q2_player_names_read(const char *, bool rerelease);
-typedef struct qa_hud_q2_player_ids {
-    qa_string_id name, appearance, model, skin, icon, tag, native_tag;
-} qa_hud_q2_player_ids;
-bool qa_hud_q2_player_ids_bind(qa_strings *, const char *, bool rerelease, qa_hud_q2_player_ids *, qa_error *);
 typedef struct qa_hud_q2_weapons { qa_string_id names[32], configs[32]; int32_t warnings[32]; size_t count; } qa_hud_q2_weapons;
 void qa_hud_q2_weapons_warning(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, uint32_t, qa_hud_q2_weapons *);
 bool qa_hud_q2_weapon_add(qa_strings *, const qa_q2_config_layout *, qa_string_id, qa_hud_q2_weapons *, qa_error *);
 bool qa_hud_q2_weapons_config(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, uint32_t, qa_string_id, qa_hud_q2_weapons *, bool *, qa_error *);
 bool qa_hud_q2_weapons_bind(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, qa_hud_q2_weapons *, qa_error *);
-bool qa_hud_q2_player_model_path(qa_bytes model, qa_bytes member, const char *suffix, char *, size_t, qa_error *);
-bool qa_hud_q2_player_icon_path(qa_bytes appearance, char *, size_t, qa_error *);
 enum { QA_HUD_Q2_LAYOUT_BYTES = 65536, QA_HUD_Q2_LAYOUT_SCRATCH_BYTES = 16 * QA_HUD_Q2_LAYOUT_BYTES };
 typedef struct qa_hud_q2_names {
     qa_strings *strings;
@@ -61,7 +53,6 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *, uint32_t, qa_string_id, bool *weapon
 qa_string_id qa_hud_q2_names_picture(const qa_hud_q2_names *, int32_t, unsigned variant);
 void qa_hud_q2_names_clear(qa_hud_q2_names *);
 void qa_hud_q2_names_destroy(qa_hud_q2_names *);
-bool qa_hud_q2_player_icon(qa_strings *, const char *appearance, size_t, qa_string_id *, qa_error *);
 
 bool qa_hud_q2_program_create(qa_strings *, qa_hud_q2_program **, qa_error *);
 bool qa_hud_q2_program_update(qa_hud_q2_program *, const char *, bool rerelease, qa_error *);

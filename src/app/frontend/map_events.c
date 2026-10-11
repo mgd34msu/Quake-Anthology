@@ -1134,7 +1134,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     if (family == QA_GAME_Q2 && (qa_strings_name_flags(strings, event->resource) & QA_NAME_SEXED_SOUND)) {
         qa_builtin_player_info player = {0};
         (void)qa_application_player_info_read(frontend->application, event->actor, &player);
-        if (!qa_audio_bank_sexed_id(resources->sounds, event->resource, player.skin_id, &asset, error))
+        if (!qa_audio_bank_sexed_id(resources->sounds, event->resource, player.model_id, &asset, error))
             return false;
     } else if (!qa_audio_bank_register_id(resources->sounds, event->resource, family, &asset, error)) return false;
     if (resources->gear && !resources_current(frontend->application, resources)) {

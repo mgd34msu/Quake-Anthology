@@ -4,6 +4,7 @@
 #include "map_private.h"
 #include "qa/application_players.h"
 #include "qa/modes_map.h"
+#include "qa/player_names.h"
 #include "qa/game_q1_travel.h"
 
 typedef struct application_guest_carry {
@@ -69,7 +70,7 @@ static inline bool application_player_identity_text(application_player_record *r
     qa_actor_player next = *identity;
     if ((name && !qa_strings_intern_cstr(record->strings, name, &next.name, error)) ||
         (team && !qa_strings_intern_cstr(record->strings, team, &next.team, error)) ||
-        (skin && !qa_strings_intern_cstr(record->strings, skin, &next.skin, error))) return false;
+        (skin && !qa_player_skin_bind(record->strings, skin, false, &next.skin, &next.model, error))) return false;
     next.present = true;
     *identity = next;
     return true;

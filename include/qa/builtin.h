@@ -142,7 +142,7 @@ typedef struct qa_builtin_actor_traits {
  * to an explicitly selected mode and are queried through that mode's owner. */
 typedef struct qa_builtin_player_info {
     const char *name, *skin;
-    qa_string_id skin_id;
+    qa_string_id skin_id, model_id;
     uint32_t slot;
     int32_t ping;
     uint64_t entered_ns;
