@@ -1,4 +1,5 @@
 #include "asset_internal.h"
+#include "qa/stamp.h"
 
 typedef struct aas_frame {
     int32_t node;
@@ -8,7 +9,7 @@ typedef struct aas_frame {
 struct qa_aas_query {
     aas_frame *stack;
     uint32_t *areas;
-    uint8_t *seen;
+    qa_stamp_set seen;
     size_t stack_capacity, area_capacity;
 };
 bool qa_aas_query_create(qa_aas_query **out, qa_error *e) {
@@ -28,7 +29,7 @@ void qa_aas_query_destroy(qa_aas_query *q) {
     if (q != NULL) {
         free(q->stack);
         free(q->areas);
-        free(q->seen);
+        free(q->seen.marks);
         free(q);
     }
 }
@@ -47,16 +48,16 @@ static bool reserve(qa_aas_query *q, const qa_aas_view *v, qa_error *e) {
     }
     if (areas > q->area_capacity) {
         uint32_t *p = malloc(areas * sizeof(*p));
-        uint8_t *seen = malloc(areas);
+        uint32_t *seen = malloc(areas * sizeof(*seen));
         if (p == NULL || seen == NULL) {
             free(p);
             free(seen);
             goto memory;
         }
         free(q->areas);
-        free(q->seen);
+        free(q->seen.marks);
         q->areas = p;
-        q->seen = seen;
+        qa_stamp_set_init(&q->seen, seen, areas);
         q->area_capacity = areas;
     }
     return true;
@@ -202,8 +203,7 @@ bool qa_aas_bbox_areas(const qa_aas_view *v, qa_aas_query *q, qa_bounds bounds, 
     }
     if (!reserve(q, v, e))
         return false;
-    if (v->count[QA_AAS_AREAS] != 0)
-        memset(q->seen, 0, v->count[QA_AAS_AREAS]);
+    qa_stamp_set_begin(&q->seen);
     size_t used = 1, found = 0;
     q->stack[0] = (aas_frame){.node = 1};
     while (used != 0) {
@@ -214,8 +214,7 @@ bool qa_aas_bbox_areas(const qa_aas_view *v, qa_aas_query *q, qa_bounds bounds, 
                 qa_error_set(e, QA_ERROR_FORMAT, area, "Invalid AAS bounds leaf");
                 return false;
             }
-            if (area != 0 && !q->seen[area]) {
-                q->seen[area] = 1;
+            if (area != 0 && qa_stamp_set_mark(&q->seen, area)) {
                 q->areas[found++] = (uint32_t)area;
             }
             continue;

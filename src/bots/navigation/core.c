@@ -12,7 +12,7 @@ bool bot_nav_scratch(qa_bot_navigation *n, size_t count, qa_error *e) {
     uint32_t *areas = malloc(count * sizeof(*areas)), *stack = malloc(count * sizeof(*stack));
     uint32_t *starts = malloc(count * sizeof(*starts)), *goals = malloc(count * sizeof(*goals));
     uint32_t *next = malloc(count * sizeof(*next));
-    uint8_t *visited = malloc(count);
+    uint32_t *visited = malloc(count * sizeof(*visited));
     qa_nav_adjacency_cursor *adjacency = malloc(count * sizeof(*adjacency));
     if (!areas || !stack || !starts || !goals || !visited || !next || !adjacency) {
         free(areas); free(stack); free(starts); free(goals); free(visited); free(next);
@@ -20,14 +20,14 @@ bool bot_nav_scratch(qa_bot_navigation *n, size_t count, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, count, "allocating bot navigation query workspace");
         return false;
     }
-    free(n->areas); free(n->stack); free(n->start_times); free(n->goal_times); free(n->visited);
+    free(n->areas); free(n->stack); free(n->start_times); free(n->goal_times); free(n->visited.marks);
     free(n->next_neighbor);
     free(n->adjacency);
     n->areas = areas;
     n->stack = stack;
     n->start_times = starts;
     n->goal_times = goals;
-    n->visited = visited;
+    qa_stamp_set_init(&n->visited, visited, count);
     n->next_neighbor = next;
     n->adjacency = adjacency;
     n->capacity = count;
@@ -59,7 +59,7 @@ void qa_bot_navigation_destroy(qa_bot_navigation *n) {
     qa_nav_route_free(&n->trajectory);
     qa_nav_prediction_result_free(&n->prediction);
     free(n->crossings);
-    free(n->areas); free(n->stack); free(n->start_times); free(n->goal_times); free(n->visited);
+    free(n->areas); free(n->stack); free(n->start_times); free(n->goal_times); free(n->visited.marks);
     free(n->next_neighbor);
     free(n->adjacency);
     free(n);

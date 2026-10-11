@@ -193,6 +193,8 @@ void qa_render_controls_init_cpu(qa_render_controls *controls, qa_cpu_renderer *
         .values.compiled_vertex_arrays = true, .source_filter = QA_SCENE_LINEAR_MIPMAP_NEAREST,
         .source_cull_type = QA_CULL_FRONT, .source_cull_valid = true};
     controls->source.owner = controls;
+    qa_stamp_set_init(&controls->image_used, controls->image_marks,
+        sizeof(controls->image_marks) / sizeof(*controls->image_marks));
     qa_render_source_attributes_init(&controls->attributes);
     qa_render_source_texture_init(&controls->zero_texture);
 }
@@ -202,6 +204,8 @@ void qa_render_controls_init_gl(qa_render_controls *controls, qa_gl_renderer *ow
         .values.compiled_vertex_arrays = true, .source_filter = QA_SCENE_LINEAR_MIPMAP_NEAREST,
         .source_cull_type = QA_CULL_FRONT, .source_cull_valid = true};
     controls->source.owner = controls;
+    qa_stamp_set_init(&controls->image_used, controls->image_marks,
+        sizeof(controls->image_marks) / sizeof(*controls->image_marks));
     qa_render_source_attributes_init(&controls->attributes);
     qa_render_source_texture_init(&controls->zero_texture);
 }
@@ -1272,7 +1276,7 @@ void qa_render_source_report(qa_render_controls *controls,uint32_t width,uint32_
         size_t count=controls->backend==QA_RENDER_CONTROLS_CPU?qa_cpu_source_images_metadata_count(controls):
             qa_gl_source_images_metadata_count(controls);
         for (size_t i=0;i<count;++i) {
-            if (!controls->image_used[i]) continue;
+            if (!qa_stamp_set_test(&controls->image_used, i)) continue;
             const qa_scene_image *image=controls->backend==QA_RENDER_CONTROLS_CPU?
                 qa_cpu_source_image_metadata_at(controls,i):qa_gl_source_image_metadata_at(controls,i);
             if (image && image->level_count) pixels+=(uint64_t)image->levels[0].width*image->levels[0].height;
@@ -1301,5 +1305,5 @@ void qa_render_source_report(qa_render_controls *controls,uint32_t width,uint32_
     }
     if (text[0] && controls->source_print) controls->source_print(controls->source_print_context,text);
     *pc=(qa_render_source_counters){0};
-    memset(controls->image_used,0,sizeof(controls->image_used));
+    qa_stamp_set_begin(&controls->image_used);
 }

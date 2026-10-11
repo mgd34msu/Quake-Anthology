@@ -2,6 +2,7 @@
 #define QA_BOT_NAVIGATION_INTERNAL_H
 
 #include "qa/bot_navigation.h"
+#include "qa/stamp.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +22,7 @@ struct qa_bot_navigation {
     qa_nav_adjacency_cursor *adjacency;
     size_t capacity;
     uint32_t *start_times, *goal_times;
-    uint8_t *visited;
+    qa_stamp_set visited;
 };
 bool bot_nav_scratch(qa_bot_navigation *, size_t, qa_error *);
 bool bot_nav_fail(qa_error *, const char *);

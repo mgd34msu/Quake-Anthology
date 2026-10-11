@@ -132,6 +132,7 @@ bool q3nn_allocate(const q3n_native_options *options,bool restoring,q3n_native *
     if(!restoring && !qa_application_native_q3_presentation_read(options->application,basis.source_owner,&source,e))return false;
     q3n_native *o=calloc(1,sizeof(*o));
     if(!o)return q3nn_fail(e,QA_ERROR_MEMORY,"Allocating native CGAME");
+    qa_stamp_set_init(&o->seen,o->seen_storage,QA_Q3_SOURCE_ENTITIES);
     o->options=*options; o->options.view.source=NULL; o->options.player_state.source=NULL; o->options.hud.source=NULL;
     o->source_game=basis.source_game; o->session=basis.session; o->source_owner=basis.source_owner;
     o->content_product=basis.content_product; o->product=basis.product; o->map_revision=basis.map_revision;
@@ -241,7 +242,7 @@ bool q3nn_entity(q3n_native *o,const q3n_frame *f,uint32_t physical,
             q3n_player_reset(&cent->player,array_vector(actual->state.angles)); cent->client_media_revision=ci->media_revision;
         }
     }
-    o->seen[physical]=true; *out=cent; return true;
+    qa_stamp_set_mark(&o->seen,physical); *out=cent; return true;
 }
 static int32_t packet_rand(void *context)
 { return q3n_events_rand(((q3n_native *)context)->events); }
@@ -392,7 +393,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
             !qa_application_native_q3_presentation_current(f->application,&source))return false;
     }
     bool fresh=!o->has_source_frame || o->source_frame_number!=source.source_frame.number;
-    memset(o->seen,0,sizeof(o->seen));
+    qa_stamp_set_begin(&o->seen);
     if(fresh)for(unsigned i=0;i<QA_Q3_SOURCE_ENTITIES;++i)o->entities[i].loop_stopped=false;
     qa_application_native_q3_entity followed; q3n_entity *predicted;
     if(!q3nn_entity(o,f,(uint32_t)f->local_player.clientNum,&followed,&predicted,e) ||
@@ -406,7 +407,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
             if(physical!=(uint32_t)f->local_player.clientNum && !q3n_events_apply(f,&actual,cent,e))return false;
             cent->snapshot_time=f->time;
         }
-        for(unsigned i=0;i<QA_Q3_SOURCE_ENTITIES;++i)if(!o->seen[i])o->entities[i].valid=false;
+        for(unsigned i=0;i<QA_Q3_SOURCE_ENTITIES;++i)if(!qa_stamp_set_test(&o->seen,i))o->entities[i].valid=false;
         o->source_frame_number=source.source_frame.number; o->has_source_frame=true;
     }
     const q3n_weapon_selection *selection=q3n_weapons_selection(o->weapons);

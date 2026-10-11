@@ -3,6 +3,7 @@
 #include "asset_internal.h"
 #include "qa/navigation.h"
 #include "qa/pool.h"
+#include "qa/stamp.h"
 #include <float.h>
 
 struct qa_nav_graph {
@@ -43,8 +44,8 @@ struct qa_nav_workspace {
     float *costs;
     uint32_t *parents, *path, *repair;
     size_t *queue_positions;
-    int8_t *grounded, *waiting;
-    uint8_t *rejected;
+    bool *grounded, *waiting;
+    qa_stamp_set grounded_valid, waiting_valid, rejected;
     nav_queue_entry *queue;
     nav_crossing *crossings;
     size_t node_capacity, edge_capacity, queue_capacity, queue_count, crossing_capacity;

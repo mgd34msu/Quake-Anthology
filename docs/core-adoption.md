@@ -1421,3 +1421,26 @@ platform_services, core, archive, VFS, BSP, image and model suites. The final
 world/remote-retention slice passed all seven suites. This is source and core-test
 evidence; it does not establish live play or complete the remaining stamps,
 spatial, identity and heap entries.
+
+## TA-3196 stamp-set adoption
+
+All six stamp items in `c-remaining-kinds-current-2026-10-10.md` use the
+caller-owned `qa_stamp_set` in `include/qa/stamp.h:9`.
+
+| Item | Migrated callers | Replaced storage and logic |
+| --- | --- | --- |
+| 1 | `src/render/cpu/renderer.c:797`, `:808`, `:894`, `:972` | Skin slot epochs, frame rollover and current-slot rehash now use one stamp set. Marks share the slot allocation. |
+| 2 | `src/navigation/aas_sample.c:60`, `:206`, `:217` | AAS bbox queries use stamp membership instead of byte flags and a full clear. |
+| 3 | `src/bots/navigation/core.c:30`, `routes.c:183`, `:207`, `:213`, `:219` | Alternative-route traversal uses common begin/test/mark operations. |
+| 4 | `src/navigation/runtime.c:281`, `:290`, `:293`, `eligibility.c:159`, `route.c:9`, `:29`, `:255` | Grounded/waiting result payloads retain separate stamp validity; rejected edges use stamps. Sentinel validity and per-query clears are deleted. |
+| 5 | `src/render/controls.c:196`, `:207`, `:1279`, `:1308`, `cpu/renderer.c:1286`, `:1344`, `gl/resources.c:297` | CPU and GL image-use flags use fixed caller-owned marks, reset at the existing report boundary. |
+| 6 | `src/presentation/q3_native/native.c:135`, `:245`, `:396`, `:410` | Native Q3 frame membership uses fixed marks instead of a boolean array and per-draw clear. |
+
+Every listed site was checked against the final source. The normal production
+build and the seven existing core suites passed; logs are
+`/tmp/qa-stamp-adoption-20261011-build.log` and
+`/tmp/qa-stamp-adoption-20261011-core.log`. No live-play or timing claim is made.
+Navigation scratch retains its existing first-use/larger-graph sizing at
+`src/navigation/runtime.c:235`, `aas_sample.c:36` and
+`src/bots/navigation/core.c:8`; moving that sizing out of play belongs to the
+remaining heap kind. Spatial, identity and heap adoption remain open.

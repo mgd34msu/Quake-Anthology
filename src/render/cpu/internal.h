@@ -66,7 +66,6 @@ typedef struct cpu_skin_binding {
 typedef struct cpu_skin_slot {
   const void *owner;
   const qa_scene_skin_pose *pose;
-  uint64_t epoch;
   size_t job;
 } cpu_skin_slot;
 struct qa_cpu_renderer {
@@ -99,7 +98,7 @@ struct qa_cpu_renderer {
   qa_model_vertex *skin_transient;
   size_t skin_job_count, skin_job_capacity, skin_slot_capacity;
   size_t skin_transient_capacity;
-  uint64_t skin_epoch;
+  qa_stamp_set skin_marks;
   bool skin_frame_prepared;
   struct cpu_brush_context *brush_spans;
   struct cpu_surface_cache *surface_cache;

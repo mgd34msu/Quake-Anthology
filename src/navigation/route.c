@@ -6,7 +6,7 @@ static float edge_seconds(const qa_navigation *n, uint32_t index) {
 }
 static bool relax_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_route_query *q,
                        uint32_t index, qa_error *e) {
-    if (w->rejected[index]) return true;
+    if (qa_stamp_set_test(&w->rejected, index)) return true;
     const qa_nav_edge *edge = n->graph->edges + index;
     uint32_t from = nav_node_index(n->graph, edge->from),
              to = nav_node_index(n->graph, edge->to);
@@ -26,7 +26,7 @@ static bool repair_edge(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rout
     const qa_nav_edge *edge = g->edges + index;
     uint32_t from = nav_node_index(g, edge->from), to = nav_node_index(g, edge->to);
     float cost = w->costs[from] + edge_seconds(n, index);
-    if (w->parents[to] != index || (!w->rejected[index] && cost <= w->costs[to]))
+    if (w->parents[to] != index || (!qa_stamp_set_test(&w->rejected, index) && cost <= w->costs[to]))
         return relax_edge(n, w, q, index, e);
     size_t count = 1;
     w->repair[0] = to;
@@ -252,7 +252,7 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
             ok = traverse(n, &prediction, q->actor, w->path[i], route, &admitted, e);
             if (!ok || !admitted) {
                 if (ok)
-                    w->rejected[w->path[i]] = 1;
+                    qa_stamp_set_mark(&w->rejected, w->path[i]);
                 for (size_t changed = 0; ok && changed <= i; ++changed)
                     ok = repair_edge(n, w, q, w->path[changed], e);
                 failed = true;

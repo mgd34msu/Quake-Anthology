@@ -180,7 +180,7 @@ bool qa_bot_navigation_alternatives(qa_bot_navigation *n, const qa_bot_nav_route
     const qa_nav_graph_view *g = qa_navigation_graph(n->runtime);
     if (!g->node_count) return true;
     memset(n->start_times, 0, g->node_count * sizeof(*n->start_times));
-    memset(n->visited, 0, g->node_count);
+    qa_stamp_set_begin(&n->visited);
     for (size_t i = 0; i < g->node_count; ++i) {
         uint32_t area = qa_bot_navigation_source_area(n, g->nodes[i].id);
         qa_bot_nav_area info = qa_bot_navigation_area(n, area);
@@ -204,19 +204,19 @@ bool qa_bot_navigation_alternatives(qa_bot_navigation *n, const qa_bot_nav_route
         n->goal_times[i] = goal.travel_time;
     }
     for (size_t first = 0; first < g->node_count; ++first) {
-        if (!n->start_times[first] || n->visited[first]) continue;
+        if (!n->start_times[first] || qa_stamp_set_test(&n->visited, first)) continue;
         size_t depth = 1, cluster_count = 1;
         n->stack[0] = (uint32_t)first;
         n->next_neighbor[0] = 0;
         n->adjacency[0] = (qa_nav_adjacency_cursor){0};
         n->areas[0] = (uint32_t)first;
-        n->visited[first] = 1;
+        qa_stamp_set_mark(&n->visited, first);
         while (depth) {
             bool present;
             size_t other = neighbor_at(n, n->stack[depth - 1], depth - 1, &present);
             if (!present) { --depth; continue; }
-            if (other == SIZE_MAX || !n->start_times[other] || n->visited[other]) continue;
-            n->visited[other] = 1;
+            if (other == SIZE_MAX || !n->start_times[other] ||
+                !qa_stamp_set_mark(&n->visited, other)) continue;
             n->areas[cluster_count++] = (uint32_t)other;
             n->stack[depth] = (uint32_t)other;
             n->adjacency[depth] = (qa_nav_adjacency_cursor){0};

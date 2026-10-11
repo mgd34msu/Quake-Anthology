@@ -294,7 +294,7 @@ bool gl_source_texture_bind(qa_gl_renderer *renderer,const qa_scene_image *image
     gl_texture_entry *object=source_entry(renderer,image);
     if (object && object->source_admitted) image=object->image;
     if (object && object->source_admitted)
-        renderer->controls.image_used[object->source_ordinal] = true;
+        qa_stamp_set_mark(&renderer->controls.image_used, object->source_ordinal);
     uint32_t unit=renderer->controls.attributes.texture_unit;
     gl_state_active_texture(renderer, GL_TEXTURE0+unit);
     gl_texture_entry *texture=NULL;

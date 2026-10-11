@@ -155,14 +155,17 @@ bool nav_edge_allowed(qa_navigation *n, qa_nav_workspace *w, qa_actor_id actor, 
     bool waiting = awaiting_train ||
                    (has_elevator && elevator.data.elevator.phase != QA_NAV_MOVER_BOTTOM),
          node_allowed;
-    int8_t *cache = w == NULL ? NULL : waiting ? w->waiting : w->grounded;
-    if (cache != NULL && cache[to] >= 0)
-        node_allowed = cache[to] != 0;
+    bool *cache = w == NULL ? NULL : waiting ? w->waiting : w->grounded;
+    qa_stamp_set *valid = w == NULL ? NULL : waiting ? &w->waiting_valid : &w->grounded_valid;
+    if (valid != NULL && qa_stamp_set_test(valid, to))
+        node_allowed = cache[to];
     else {
         if (!nav_node_allowed(n, actor, to, q, waiting, &node_allowed, e))
             return false;
-        if (cache != NULL)
-            cache[to] = node_allowed ? 1 : 0;
+        if (cache != NULL) {
+            cache[to] = node_allowed;
+            qa_stamp_set_mark(valid, to);
+        }
     }
     if (!node_allowed || (edge->has_entity && (!has_source || !source.enabled || source.locked)))
         return true;

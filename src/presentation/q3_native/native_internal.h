@@ -4,6 +4,7 @@
 #include "native.h"
 #include "qa/q3_presentation_save.h"
 #include "qa/q3_assets_save.h"
+#include "qa/stamp.h"
 
 struct q3n_native {
     q3n_native_options options;
@@ -27,7 +28,8 @@ struct q3n_native {
     q3n_hud *hud;
     q3n_server_commands *commands;
     q3n_entity entities[QA_Q3_SOURCE_ENTITIES];
-    bool seen[QA_Q3_SOURCE_ENTITIES];
+    qa_stamp_set seen;
+    uint32_t seen_storage[QA_Q3_SOURCE_ENTITIES];
     uint64_t source_frame_number;
     int32_t old_time, frame_milliseconds, client_frame;
     qa_q3_refdef previous_refdef;

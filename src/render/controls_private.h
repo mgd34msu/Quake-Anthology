@@ -1,6 +1,7 @@
 #ifndef QA_RENDER_CONTROLS_PRIVATE_H
 #define QA_RENDER_CONTROLS_PRIVATE_H
 #include "qa/render_controls.h"
+#include "qa/stamp.h"
 #include "material/source_scratch_private.h"
 #include <math.h>
 
@@ -52,7 +53,8 @@ struct qa_render_controls {
     qa_render_source_frame_values frame_values;
     qa_render_source_counters counters;
     bool finish_called;
-    bool image_used[2048];
+    qa_stamp_set image_used;
+    uint32_t image_marks[2048];
     void (*source_print)(void *,const char *);
     void *source_print_context;
 };

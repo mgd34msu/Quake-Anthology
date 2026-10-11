@@ -225,7 +225,9 @@ void qa_nav_workspace_destroy(qa_nav_workspace *w) {
     free(w->queue_positions);
     free(w->grounded);
     free(w->waiting);
-    free(w->rejected);
+    free(w->grounded_valid.marks);
+    free(w->waiting_valid.marks);
+    free(w->rejected.marks);
     free(w->queue);
     free(w->crossings);
     free(w);
@@ -240,9 +242,11 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
         uint32_t *parents = malloc(n * sizeof(*parents)), *path = malloc(n * sizeof(*path)),
                  *repair = malloc(n * sizeof(*repair));
         size_t *positions = malloc(n * sizeof(*positions));
-        int8_t *grounded = malloc(n), *waiting = malloc(n);
+        bool *grounded = malloc(n * sizeof(*grounded)), *waiting = malloc(n * sizeof(*waiting));
+        uint32_t *grounded_marks = malloc(n * sizeof(*grounded_marks)),
+                 *waiting_marks = malloc(n * sizeof(*waiting_marks));
         if (costs == NULL || parents == NULL || path == NULL || repair == NULL || positions == NULL ||
-            grounded == NULL || waiting == NULL) {
+            grounded == NULL || waiting == NULL || grounded_marks == NULL || waiting_marks == NULL) {
             free(costs);
             free(parents);
             free(path);
@@ -250,6 +254,8 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
             free(positions);
             free(grounded);
             free(waiting);
+            free(grounded_marks);
+            free(waiting_marks);
             goto memory;
         }
         for (size_t i = 0; i < n; ++i)
@@ -263,6 +269,8 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
         free(w->queue_positions);
         free(w->grounded);
         free(w->waiting);
+        free(w->grounded_valid.marks);
+        free(w->waiting_valid.marks);
         w->costs = costs;
         w->parents = parents;
         w->path = path;
@@ -270,21 +278,21 @@ bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error 
         w->queue_positions = positions;
         w->grounded = grounded;
         w->waiting = waiting;
+        qa_stamp_set_init(&w->grounded_valid, grounded_marks, n);
+        qa_stamp_set_init(&w->waiting_valid, waiting_marks, n);
         w->node_capacity = n;
     }
     if (w->edge_capacity < m) {
-        uint8_t *rejected = realloc(w->rejected, m);
+        if (m > SIZE_MAX / sizeof(*w->rejected.marks)) goto memory;
+        uint32_t *rejected = realloc(w->rejected.marks, m * sizeof(*rejected));
         if (rejected == NULL)
             goto memory;
-        w->rejected = rejected;
+        qa_stamp_set_init(&w->rejected, rejected, m);
         w->edge_capacity = m;
     }
-    if (n != 0) {
-        memset(w->grounded, -1, n);
-        memset(w->waiting, -1, n);
-    }
-    if (m != 0)
-        memset(w->rejected, 0, m);
+    qa_stamp_set_begin(&w->grounded_valid);
+    qa_stamp_set_begin(&w->waiting_valid);
+    qa_stamp_set_begin(&w->rejected);
     nav_queue_clear(w);
     return true;
 memory:
