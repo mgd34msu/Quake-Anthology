@@ -49,7 +49,7 @@ typedef struct qa_hud_q2_names {
 bool qa_hud_q2_names_prepare_images(qa_hud_q2_names *binding,const qa_hud_q2_names *,qa_scene_resources *,const qa_hud_q2_picture_names *,qa_scene_filter,qa_error *);
 bool qa_hud_q2_program_prepare_images(qa_hud_q2_program *,qa_scene_resources *,bool,qa_scene_filter,qa_error *);
 bool qa_hud_q2_names_init(qa_hud_q2_names *, qa_strings *, qa_error *);
-bool qa_hud_q2_names_configure(qa_hud_q2_names *, qa_net_protocol_id, qa_error *);
+bool qa_hud_q2_names_configure(qa_hud_q2_names *, qa_net_protocol_id,const qa_q2_config_layout *negotiated, qa_error *);
 bool qa_hud_q2_names_set(qa_hud_q2_names *, uint32_t, qa_string_id, bool *weapons_changed, qa_error *);
 qa_string_id qa_hud_q2_names_picture(const qa_hud_q2_names *, int32_t, unsigned variant);
 void qa_hud_q2_names_clear(qa_hud_q2_names *);
@@ -106,6 +106,7 @@ typedef struct qa_hud_q2_options {
     float font_line_height;
     qa_hud_q2_table *table;
     const qa_hud_q2_program *status;
+    const qa_hud_q2_names *names;
     const qa_hud_q2_picture_names *picture_names;
     const qa_hud_q2_weapons *weapons;
     void *context;

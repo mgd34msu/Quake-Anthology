@@ -81,6 +81,27 @@ static void test_source_text(void)
     CHECK(!qa_text_to_source_bytes((qa_bytes){malformed,sizeof(malformed)},roundtrip,sizeof(roundtrip),&restored,&error));
     CHECK(qa_text_to_source_bytes((qa_bytes){0},roundtrip,1,&restored,&error) && !restored && !roundtrip[0]);
 }
+static void test_q2_hud_configuration(void)
+{
+    qa_strings *strings=NULL;qa_error error={0};qa_hud_q2_names names;
+    CHECK(qa_strings_create(&strings,&error) && qa_hud_q2_names_init(&names,strings,&error));
+    qa_net_protocol_id protocol={.kind=QA_NET_Q2PRO_36,.revision=1024};
+    qa_q2_codec codec;qa_q2_config_layout layout;
+    CHECK(qa_q2_codec_init(&codec,protocol,&error));
+    codec.wire_flags=8;
+    CHECK(qa_q2_config_layout_read(&codec,&layout,&error));
+    CHECK(qa_hud_q2_names_configure(&names,protocol,&layout,&error));
+    qa_string_id info;
+    CHECK(qa_strings_intern_cstr(strings,"player\\custom\\tag",&info,&error));
+    CHECK(qa_hud_q2_names_set(&names,names.layout.player_skins,info,NULL,&error));
+    CHECK(!strcmp(qa_strings_cstr(strings,names.players[0].model),"male"));
+    CHECK(!strcmp(qa_strings_cstr(strings,names.players[0].skin),"grunt"));
+    CHECK(qa_hud_q2_names_configure(&names,qa_q2_default_protocol(false),NULL,&error));
+    CHECK(qa_hud_q2_names_set(&names,names.layout.player_skins,info,NULL,&error));
+    CHECK(!strcmp(qa_strings_cstr(strings,names.players[0].model),"custom"));
+    CHECK(!strcmp(qa_strings_cstr(strings,names.players[0].skin),"tag"));
+    qa_hud_q2_names_destroy(&names);qa_strings_destroy(strings);
+}
 static void test_json_caller_storage(void)
 {
     const char source[]="\"A\\u0000B\\ud83d\\ude00\\n\"";
@@ -2040,6 +2061,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_source_text();
+    test_q2_hud_configuration();
     test_compiled_sound_names();
     test_native_import_slot_identity();
     test_q2_weapon_names();

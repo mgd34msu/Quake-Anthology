@@ -87,10 +87,11 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
     qa_net_protocol_id protocol = row->options.domain.protocol;
     if (protocol.kind == QA_NET_Q2PRO_36) {
         if (data->protocol_revision) protocol.revision = data->protocol_revision;
-        protocol.flags = data->wire_flags;
     }
     qa_q2_config_layout layout; qa_q2_codec codec;
-    if (!qa_q2_codec_init(&codec, protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    if (!qa_q2_codec_init(&codec,protocol,error)) return false;
+    codec.wire_flags=data->wire_flags;
+    if (!qa_q2_config_layout_read(&codec,&layout,error)) return false;
     if (!layout.max_configs) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 SERVERDATA has no admitted config namespace");
     if (layout.max_configs != row->hud_names.layout.max_configs || layout.max_models != row->hud_names.layout.max_models) {
         remote_q2_model_slot *model_slots = calloc(layout.max_models, sizeof(*model_slots));
@@ -106,7 +107,7 @@ bool remote_q2_layout_adopt(frontend_remote_q2 *row, const qa_q2_serverdata *dat
         free(row->flare_standard); row->flare_standard=flags;
     }
     qa_strings *strings = qa_session_strings(qa_application_session(row->options.domain.application));
-    return qa_hud_q2_names_configure(&row->hud_names,protocol,error) &&
+    return qa_hud_q2_names_configure(&row->hud_names,protocol,&layout,error) &&
         (row->hud_overlay || qa_hud_q2_program_create(strings, &row->hud_overlay, error));
 }
 const char *frontend_remote_q2_config(const frontend_remote_q2 *row, uint32_t index)
@@ -225,7 +226,7 @@ bool frontend_remote_q2_create(qa_frontend *f, const frontend_remote_q2_options 
     if (!row) return remote_q2_fail(error, QA_ERROR_MEMORY, "Retaining remote Q2 CLIENT");
     row->frontend = f; row->options = *options;
     if (!qa_hud_q2_names_init(&row->hud_names,qa_session_strings(qa_application_session(f->application)),error) ||
-        !qa_hud_q2_names_configure(&row->hud_names,d->protocol,error)) {
+        !qa_hud_q2_names_configure(&row->hud_names,d->protocol,NULL,error)) {
         qa_hud_q2_names_destroy(&row->hud_names); free(row); return false;
     }
     remote_q2_cvars_bind(row);

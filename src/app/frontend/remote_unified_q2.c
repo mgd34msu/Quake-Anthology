@@ -618,7 +618,7 @@ static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activa
             qa_hud_q2_picture_names_bind(o->replica->strings,&b->picture_names,e);
         if (okay) {
             qa_net_protocol_id protocol=qa_q2_default_protocol(profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE);
-            okay=qa_hud_q2_names_configure(&b->hud_names,protocol,e) &&
+            okay=qa_hud_q2_names_configure(&b->hud_names,protocol,NULL,e) &&
                 qa_hud_q2_names_prepare_images(&b->hud_names,&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
         }
         if (!okay) { qa_hud_q2_names_destroy(&b->hud_names);free(b); return false; }
@@ -807,7 +807,7 @@ static const qa_scene_image *native_picture(void *context,qa_string_id name_id,q
 {
     q2_native *v=context;
     return qa_scene_q2_picture_read(v->bank->images,v->bank->owner->replica->strings,name_id,QA_IMAGE_USAGE_PICTURE,
-        v->protocol.kind==QA_NET_Q2KEX_2023,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
+        v->bank->hud_names.rerelease,QA_SCENE_LINEAR_MIPMAP_LINEAR,e);
 }
 static qa_string_id native_config_picture(void *context,int32_t index,unsigned variant)
 {
@@ -816,7 +816,7 @@ static qa_string_id native_config_picture(void *context,int32_t index,unsigned v
 }
 static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
 {
-    if (!qa_hud_q2_names_configure(&v->bank->hud_names,v->protocol,e) ||
+    if (!qa_hud_q2_names_configure(&v->bank->hud_names,v->protocol,NULL,e) ||
         !qa_hud_q2_names_prepare_images(&v->bank->hud_names,&v->bank->hud_names,v->bank->images,&v->bank->picture_names,
             QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     if (!v->bank->native_font) {
@@ -833,7 +833,7 @@ static bool native_hud_bind(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     const void *source=v->configuration?(const void *)v->configuration:(const void *)v->config_source;
     const qa_unified_document *document=v->configuration?o->status_metadata:v->config_document;
     if (b->hud_name_source==source && b->hud_name_document==document) return true;
-    if (!qa_hud_q2_names_configure(&b->hud_names,v->protocol,e) ||
+    if (!qa_hud_q2_names_configure(&b->hud_names,v->protocol,NULL,e) ||
         !qa_hud_q2_names_prepare_images(&b->hud_names,&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     size_t count=v->configuration?v->configuration->configstring_count:v->config_source->configstring_count;
     const qa_q2_config_name *rows=v->configuration?v->configuration->configstrings:v->config_source->configstrings;
@@ -916,7 +916,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     v->player_number=row->player_number;
     for (size_t i=0;i<256;++i) v->inventory[i]=row->inventory[i];
     if (!okay) return false;
-    return qa_hud_q2_program_update(v->layout_program,v->layout,v->protocol.kind==QA_NET_Q2KEX_2023,e)&&native_font(o,v,e);
+    return qa_hud_q2_program_update(v->layout_program,v->layout,v->bank->hud_names.rerelease,e)&&native_font(o,v,e);
 }
 bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -969,7 +969,7 @@ static bool native_frame_read(frontend_unified_q2 *o,const qa_unified_document *
             (row->hud!=NULL)!=v->hud || (row->view!=NULL)!=v->camera ||
             !frontend_remote_unified_source_actor(o->replica,frame,row->viewer,false,&actual,e) ||
             !qa_actor_id_equal(actual,viewer) || (row->hud && row->hud->stat_count!=(v->protocol.kind==QA_NET_Q2_34?32u:64u)) ||
-            (row->view && row->view->rerelease!=(v->protocol.kind==QA_NET_Q2KEX_2023)))
+            (row->view && row->view->rerelease!=(v->bank->hud_names.rerelease)))
             return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 frame changed its admitted source or full viewer");
         cameras+=row->view!=NULL; replacements+=v->replace_status;
         for (size_t k=0;k<i;++k) if (row->provider==components->native[k].provider) return false;
@@ -1833,14 +1833,14 @@ static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_nat
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (!native_hud_bind(o,v,e) || !qa_hud_q2_program_prepare_images((qa_hud_q2_program *)layout,
-        v->bank->images,v->protocol.kind==QA_NET_Q2KEX_2023,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
+        v->bank->images,v->bank->hud_names.rerelease,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
         .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
         .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture,
-        .config_picture=native_config_picture,.picture_names=&v->bank->picture_names,.weapons=&v->bank->hud_names.weapons,.status=v->bank->hud_names.status};
+        .config_picture=native_config_picture,.picture_names=&v->bank->picture_names,.weapons=&v->bank->hud_names.weapons,.status=v->bank->hud_names.status,.names=&v->bank->hud_names};
     options.fonts.classic=v->font;
     const qa_cvar_view *use_font=qa_cvars_read(d->cvars,o->replica->legacy_cvars.hud.use_font);
-    options.use_font=v->protocol.kind==QA_NET_Q2KEX_2023 && use_font && use_font->integer!=0;
+    options.use_font=v->bank->hud_names.rerelease && use_font && use_font->integer!=0;
     qa_hud_q2_frame hud={.protocol=v->protocol,.stats=state->stats,.stat_count=state->stat_count,
         .inventory=inventory,.inventory_count=256,.layout=layout,.player_number=player_number,
         .server_frame=state->server_frame,.time_ns=nanoseconds(state->time_ms*.001),

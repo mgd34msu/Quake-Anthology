@@ -40,6 +40,11 @@ static bool retain_clipboard(void *context, const char *text, qa_error *error)
     if (!copy) return frontend_fail(error,QA_ERROR_MEMORY,"retaining scratch native Q2 clipboard");
     memcpy(copy,text,length+1); free(baseline->clipboard); baseline->clipboard=copy; return true;
 }
+bool frontend_clipboard_read(void *context,qa_buffer *out,qa_error *error)
+{
+    (void)context;
+    return qa_platform_clipboard_read(out,error);
+}
 bool frontend_clipboard_write(qa_frontend *frontend, const char *text, qa_error *error)
 {
     if (!frontend || !text) return frontend_fail(error,QA_ERROR_ARGUMENT,"clipboard requires a frontend and text");

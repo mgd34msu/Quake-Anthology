@@ -264,15 +264,19 @@ void qa_hud_q2_names_clear(qa_hud_q2_names *names)
     names->images=NULL;
     names->images_ready=false;
 }
-bool qa_hud_q2_names_configure(qa_hud_q2_names *names,qa_net_protocol_id protocol,qa_error *error)
+bool qa_hud_q2_names_configure(qa_hud_q2_names *names,qa_net_protocol_id protocol,
+    const qa_q2_config_layout *negotiated,qa_error *error)
 {
     if(names->configured && names->protocol.kind==protocol.kind &&
-        names->protocol.revision==protocol.revision && names->protocol.flags==protocol.flags) return true;
+        names->protocol.revision==protocol.revision && names->protocol.flags==protocol.flags &&
+        (!negotiated || (names->layout.max_configs==negotiated->max_configs &&
+            names->layout.max_models==negotiated->max_models && names->layout.max_images==negotiated->max_images))) return true;
     qa_q2_codec codec;qa_q2_config_layout layout;
-    if(!qa_q2_codec_init(&codec,protocol,error)||!qa_q2_config_layout_read(&codec,&layout,error)) return false;
+    if (negotiated) layout=*negotiated;
+    else if(!qa_q2_codec_init(&codec,protocol,error)||!qa_q2_config_layout_read(&codec,&layout,error)) return false;
     if(names->configured) qa_hud_q2_names_clear(names);
     names->layout=layout;names->protocol=protocol;names->configured=true;
-    names->rerelease=qa_q2_protocol_rerelease(protocol);
+    names->rerelease=layout.extended;
     return qa_hud_q2_weapons_bind(names->strings,&names->layout,names->values,&names->weapons,error);
 }
 bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id value,bool *weapons_changed,qa_error *error)
@@ -639,9 +643,10 @@ static bool initialize(layout_context *c, const qa_hud_q2_options *options,
     if (!qa_q2_protocol_valid(frame->protocol)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 HUD requires a Q2 protocol"); return false;
     }
-    c->rerelease = qa_q2_protocol_rerelease(frame->protocol);
     qa_q2_codec codec; qa_q2_config_layout layout;
-    if (!qa_q2_codec_init(&codec, frame->protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    if (options->names) layout=options->names->layout;
+    else if (!qa_q2_codec_init(&codec, frame->protocol, error) || !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    c->rerelease=layout.extended;
     c->images = (int32_t)layout.images; c->items = (int32_t)layout.items;
     c->skins = (int32_t)layout.player_skins; c->max_clients = (int32_t)layout.max_clients;
     c->max_images = (int32_t)layout.max_images; c->max_strings = (int32_t)layout.max_configs;

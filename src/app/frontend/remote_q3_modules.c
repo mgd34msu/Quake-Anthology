@@ -374,7 +374,7 @@ static bool client_command(void *context, const char *text, qa_error *error)
 static bool clipboard(void *context, qa_buffer *out, qa_error *error)
 {
     if (!out || out->data || !entered(context, NULL, NULL, error)) return false;
-    return qa_platform_clipboard_read(out, error);
+    return frontend_clipboard_read(context,out,error);
 }
 static bool actor(void *context, int32_t number, uint64_t *out, qa_error *error)
 {

@@ -933,11 +933,6 @@ static bool common_mods(void *context, qa_vfs_listing *out, qa_error *error)
     return lease->common.installed_mods ? lease->common.installed_mods(lease->common.context, out, error) :
         frontend_fail(error, QA_ERROR_UNSUPPORTED, "source installed mod listing owner is unavailable");
 }
-static bool common_clipboard(void *context, qa_buffer *out, qa_error *error)
-{
-    (void)context;
-    return qa_platform_clipboard_read(out, error);
-}
 static bool source_idle(const frontend_source *source)
 {
     if (!source || source->role_operations) return false;
@@ -1471,7 +1466,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     host->common = (qa_q3_host_common_services){lease, common_print, common_milliseconds,
         common_calendar, host->common.arguments ? common_arguments : NULL,
         (host->common.client_command || packet_client) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
-        common_clipboard};
+        frontend_clipboard_read};
     if (frontend->source_restoring) return true;
     return source_publish_backend(source, error) &&
         qa_q3_presentation_frame(source->presentation, &frontend->frame,

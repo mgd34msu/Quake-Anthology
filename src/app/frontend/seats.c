@@ -71,17 +71,12 @@ static bool focus(void *context, qa_input_focus kind, bool team, qa_error *error
     seat->chat_team = kind == QA_INPUT_CHAT && team;
     return true;
 }
-static bool clipboard(void *context, qa_buffer *out, qa_error *error)
-{
-    (void)context;
-    return qa_platform_clipboard_read(out, error);
-}
 static const char *ui_clipboard(void *context)
 {
     frontend_seat *seat = context;
     free(seat->clipboard); seat->clipboard = NULL;
     qa_buffer text = {0};
-    if (qa_platform_clipboard_read(&text, NULL)) seat->clipboard = (char *)text.data;
+    if (frontend_clipboard_read(seat,&text,NULL)) seat->clipboard = (char *)text.data;
     return seat->clipboard ? seat->clipboard : "";
 }
 static bool chat(void *context, const char *text, bool team, bool targeted, int32_t target, qa_error *error)
@@ -214,7 +209,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     }
     qa_net_protocol_id protocol=source->original ? source->names->protocol :
         qa_q2_default_protocol(source->edition==QA_Q2_RERELEASE);
-    if (!qa_hud_q2_names_configure(&seat->q2_hud_names,protocol,error)) return false;
+    if (!qa_hud_q2_names_configure(&seat->q2_hud_names,protocol,source->original?&source->names->layout:NULL,error)) return false;
     hud.names=source->original?source->names:&seat->q2_hud_names;
     hud.config=hud.names->layout;
     if(seat->q2_hud_status_text!=source->statusbar||seat->q2_hud_config_revision!=source->config_revision||
@@ -265,7 +260,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,
         .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
-        .binding = local_q2_binding,.status=seat->q2_hud_names.status,
+        .binding = local_q2_binding,.status=seat->q2_hud_names.status,.names=hud.names,
         .picture_names=&seat->q2_hud_pictures,.weapons=&hud.names->weapons,.config_picture=local_q2_config_picture};
     options.fonts.classic = seat->q2_hud_classic;
     const qa_cvar_view *use_font = source->hud_cvars ?
@@ -675,7 +670,7 @@ static bool seat_services_create(frontend_seat *seat, qa_error *error)
     if (!seat->input || !qa_input_default_bindings(seat->input, (int32_t)i, error)) return false;
     qa_seat_console_options console = {.seat=i,.command = command, .commands = input.console,
         .context = seat,.context_ready=frontend_seat_context_ready,
-        .now_ms = input_now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
+        .now_ms = input_now_ms, .connected = connected, .clipboard = frontend_clipboard_read, .focus = focus, .chat = chat};
     seat->console = qa_seat_console_create(&console, error);
     return seat->console != NULL;
 }

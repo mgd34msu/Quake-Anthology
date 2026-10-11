@@ -736,7 +736,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         qa_hud_q2_options options = {.viewport = view.viewport, .scale = 1, .font_line_height = 8, .white = row->white,
             .fonts = f->seats[seat].fonts, .table = &row->hud_table, .context = row,
             .configstring = hud_config, .picture = remote_q2_picture_read,
-            .config_picture=hud_config_picture,.picture_names=&row->hud_pictures,.weapons=&row->hud_names.weapons,.status=row->hud_names.status};
+            .config_picture=hud_config_picture,.picture_names=&row->hud_pictures,.weapons=&row->hud_names.weapons,.status=row->hud_names.status,.names=&row->hud_names};
         options.fonts.classic = row->classic;
         qa_hud_q2_frame hud = {.protocol = row->options.domain.protocol, .stats = frame->player.stats,
             .stat_count = QA_Q2_MAX_STATS, .inventory = row->inventory, .inventory_count = 256,

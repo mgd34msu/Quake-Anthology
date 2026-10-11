@@ -375,6 +375,7 @@ void frontend_engine_cvars_bind(qa_frontend *);
 bool frontend_fail(qa_error *, qa_status, const char *);
 bool frontend_save_image_release(qa_frontend *,qa_save_image **,qa_error *);
 bool frontend_clipboard_write(qa_frontend *, const char *, qa_error *);
+bool frontend_clipboard_read(void *,qa_buffer *,qa_error *);
 bool frontend_tools_create_diagnostics(qa_frontend *, qa_vfs *, qa_error *);
 bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
 bool frontend_launch(qa_frontend *, qa_error *);

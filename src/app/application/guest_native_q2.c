@@ -377,7 +377,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     bool rerelease = engine->profile != QA_NATIVE_Q2_GAME_API3;
     engine->protocol = qa_q2_default_protocol(rerelease);
     if (!qa_hud_q2_names_init(&engine->hud_names,qa_session_strings(app->session),error) ||
-        !qa_hud_q2_names_configure(&engine->hud_names,engine->protocol,error)) return false;
+        !qa_hud_q2_names_configure(&engine->hud_names,engine->protocol,NULL,error)) return false;
     engine->lightstyles.count = 256;
     engine->config_changes.slots = calloc(engine->hud_names.layout.max_configs, sizeof(*engine->config_changes.slots));
     if (!engine->config_changes.slots)
