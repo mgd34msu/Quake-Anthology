@@ -59,24 +59,37 @@ static scene_model_image *image_entry(qa_scene_model *model, const char *name, q
     }
     entry->name = copy_name(name, error);
     if (!entry->name) { free(entry); return NULL; }
+    if (!qa_strings_intern_cstr(model->strings, name, &entry->name_id, error)) {
+        free(entry->name); free(entry); return NULL;
+    }
     entry->next = model->images;
     model->images = entry;
     return entry;
 }
 
-bool scene_model_external_material(qa_scene_model *model, qa_material_library *materials,
-    const char *name, qa_scene_frame *frame, const qa_material **out, qa_error *error) {
-    const char *path = name;
-    if (!qa_material_library_has_source_profile(materials)) {
-        if (!name) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model image path is absent");
-            return false;
+bool scene_model_material(qa_scene_model *model, qa_material_library *materials,
+    qa_string_id shader, const qa_material **out, qa_error *error) {
+    for (scene_model_material_binding *binding = model->material_bindings; binding; binding = binding->next)
+        if (binding->library == materials && binding->shader == shader) {
+            *out = binding->material; return true;
         }
-        char *scratch = qa_arena_alloc(&frame->storage, strlen(name) + 1, 1, error);
-        if (!scratch || !image_path_write(name, scratch, error)) return false;
-        path = scratch;
+    const char *name = qa_strings_cstr(model->strings, shader);
+    char *owned = NULL;
+    const char *path = qa_material_library_has_source_profile(materials) ? name :
+        (owned = qa_scene_model_image_path(name, error));
+    const qa_material *material = NULL;
+    bool okay = path && qa_material_register(materials, path, &model->options, false, &material, error);
+    free(owned);
+    bool retain = materials != model->materials;
+    if (!okay || (retain && !qa_material_retain(material, error))) return false;
+    scene_model_material_binding *binding = malloc(sizeof(*binding));
+    if (!binding) {
+        if (retain) qa_material_release(material);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining model material binding"); return false;
     }
-    return qa_material_register(materials, path, &model->options, false, out, error);
+    *binding = (scene_model_material_binding){.next=model->material_bindings,
+        .library=materials, .shader=shader, .material=material, .retained=retain};
+    model->material_bindings = binding; *out = material; return true;
 }
 
 bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_frame *frame, scene_model_image **out,
@@ -98,8 +111,7 @@ bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_fram
     free(owned);
     if (!image) return false;
     if (model->options.family == QA_GAME_Q3) {
-        if (!qa_material_register(model->materials, image->name, &model->options, false,
-                                  &image->material, error)) goto fail;
+        if (!scene_model_material(model, model->materials, image->name_id, &image->material, error)) goto fail;
         if (qa_material_library_has_source_profile(model->materials) && image->material->default_shader &&
             (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
             image->material = qa_material_library_builtin(model->materials, QA_MATERIAL_BUILTIN_DEFAULT);

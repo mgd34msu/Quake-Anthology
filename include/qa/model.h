@@ -214,6 +214,7 @@ bool qa_player_animation_load(qa_bytes text, qa_player_animation_config *out,
                               qa_model_diagnostic diagnostic, void *context, qa_error *error);
 typedef struct qa_model_skin_mapping {
     qa_string_id surface;
+    qa_string_id shader_id;
     char *shader;
 } qa_model_skin_mapping;
 typedef struct qa_model_skin_map {

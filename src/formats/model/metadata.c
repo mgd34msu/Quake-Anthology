@@ -235,6 +235,7 @@ bool qa_model_skin_map_load(qa_bytes text, qa_strings *strings, qa_model_skin_ma
             surface[i] = (char)lower((uint8_t)name[i]);
         surface[length] = '\0';
         if (!qa_strings_intern_cstr(strings, surface, &entry->surface, error)) goto fail;
+        if (!qa_strings_intern_cstr(strings, shader, &entry->shader_id, error)) goto fail;
         size_t shader_length = strlen(shader);
         entry->shader = model_alloc(&r, shader_length + 1, 1);
         if (!r.ok)

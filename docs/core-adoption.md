@@ -640,6 +640,19 @@ records. Normal build and seven core suites pass:
 Item 12's per-library image and Unified skin bindings remain next; no new
 installation or renderer runtime claim.
 
+Names item 12, model-material slice: embedded model shaders and custom skin
+shaders retain a material binding keyed by shared shader ID and material-library
+pointer. Skin parsing and single-shader registration admit the shader ID once.
+Draw selection reads the retained binding; the text-based external-material
+helper and repeated registration of each mesh shader are deleted. Foreign
+library bindings retain their material owner until model destruction. Missing
+MD3 defaults keep the existing Source fallback. Normal build and seven core
+suites pass:
+`/tmp/qa-ta3196-model-material-bindings-20261011-build.log` and
+`/tmp/qa-ta3196-model-material-bindings-20261011-core.log`.
+The Unified model skin binding is the remaining item-12 slice. This records
+source/build/core checks only.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

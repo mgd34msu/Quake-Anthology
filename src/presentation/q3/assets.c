@@ -304,6 +304,7 @@ static bool register_source_skin(qa_q3_presentation_assets *a, const char *path,
                 skin->map.capacity = 8; skin->map.count = 1;
                 skin->map.strings = a->options.strings; qa_strings_retain(skin->map.strings);
                 ok = qa_strings_intern_cstr(skin->map.strings, "", &skin->map.mappings[0].surface, error);
+                if (ok) ok = qa_strings_intern_cstr(skin->map.strings, path, &skin->map.mappings[0].shader_id, error);
                 skin->map.mappings[0].shader = malloc(length + 1);
                 if (!skin->map.mappings[0].shader) ok = q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source skin shader");
                 else memcpy(skin->map.mappings[0].shader, path, length + 1);

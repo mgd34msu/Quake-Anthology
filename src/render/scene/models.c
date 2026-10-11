@@ -207,6 +207,12 @@ void qa_scene_model_destroy(qa_scene_model *model) {
     free(model->sampled_pose);
     free(model->sampled_pose_frames);
     scene_model_images_destroy(model);
+    while (model->material_bindings) {
+        scene_model_material_binding *binding = model->material_bindings;
+        model->material_bindings = binding->next;
+        if (binding->retained) qa_material_release(binding->material);
+        free(binding);
+    }
     scene_model_shadow_identity *identity = model->shadow_identities;
     while (identity) { scene_model_shadow_identity *next = identity->next; free(identity); identity = next; }
     if (model->animation_lease.release) model->animation_lease.release(model->animation_lease.context);
@@ -565,6 +571,7 @@ static bool model_policy_node_prepare(model_policy_node *node, qa_scene_resource
 {
     qa_scene_model *owner = node->owner;
     node->images.source = owner->source;
+    node->images.strings = owner->strings;
     node->images.options = owner->options;
     memcpy(node->images.palette, owner->palette, sizeof(owner->palette));
     memcpy(node->images.translation, owner->translation, sizeof(owner->translation));
@@ -829,8 +836,8 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
                     *out = external; return true;
                 }
                 if (input->material_library) {
-                    if (!scene_model_external_material(model, input->material_library,
-                        input->custom_skin->mappings[i].shader, frame, &external->material, error)) return false;
+                    if (!scene_model_material(model, input->material_library,
+                        input->custom_skin->mappings[i].shader_id, &external->material, error)) return false;
                     *out = external; return true;
                 }
                 return scene_model_external(model, input->custom_skin->mappings[i].shader, frame, out, error);
@@ -853,8 +860,8 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
         if (input->material_library) {
             scene_model_image *registered = model->meshes[index].shaders[skin];
             if (!registered) return true;
-            if (!qa_material_register(input->material_library, registered->name, &model->options,
-                false, &external->material, error)) return false;
+            if (!scene_model_material(model, input->material_library, registered->name_id,
+                &external->material, error)) return false;
             if (qa_material_library_has_source_profile(input->material_library) && external->material->default_shader &&
                 (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
                 external->material = qa_material_library_builtin(input->material_library, QA_MATERIAL_BUILTIN_DEFAULT);

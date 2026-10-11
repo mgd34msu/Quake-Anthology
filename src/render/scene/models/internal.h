@@ -10,6 +10,7 @@
 
 typedef struct scene_model_image {
     char *name;
+    qa_string_id name_id;
     const qa_material *material;
     const qa_scene_image *base, *fullbright;
     qa_buffer indexed_pixels;
@@ -17,6 +18,14 @@ typedef struct scene_model_image {
     bool indexed_override;
     struct scene_model_image *next;
 } scene_model_image;
+
+typedef struct scene_model_material_binding {
+    struct scene_model_material_binding *next;
+    qa_material_library *library;
+    qa_string_id shader;
+    const qa_material *material;
+    bool retained;
+} scene_model_material_binding;
 
 enum { SCENE_MODEL_POSE_VARIANTS = 8, SCENE_MODEL_BIND_SAMPLE = 8, SCENE_MODEL_TRANSIENT_SAMPLE = 9 };
 typedef struct scene_model_pose_variant {
@@ -78,6 +87,7 @@ struct qa_scene_model {
     bool destroy_pending;
     scene_model_image **skins, **sprites;
     scene_model_image *images;
+    scene_model_material_binding *material_bindings;
     struct qa_scene_model *replacement;
     struct qa_scene_model *replacement_next;
     struct qa_scene_model *replacement_parent;
@@ -107,8 +117,8 @@ static inline void model_bounds_add(qa_bounds *b, qa_vec3 p) {
 }
 
 bool scene_model_external(qa_scene_model *, const char *, qa_scene_frame *, scene_model_image **, qa_error *);
-bool scene_model_external_material(qa_scene_model *, qa_material_library *, const char *,
-                                   qa_scene_frame *, const qa_material **, qa_error *);
+bool scene_model_material(qa_scene_model *, qa_material_library *, qa_string_id,
+                         const qa_material **, qa_error *);
 bool scene_model_indexed(qa_scene_model *, const char *, qa_bytes, uint32_t, uint32_t,
                          bool sprite, scene_model_image **, qa_error *);
 bool scene_model_indexed_override(qa_scene_model *, const qa_scene_model_indexed_skin *,
