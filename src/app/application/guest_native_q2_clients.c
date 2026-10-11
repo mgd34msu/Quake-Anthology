@@ -10,6 +10,14 @@
 #include "qa/native_host_q2_wire.h"
 #include <math.h>
 
+uint32_t application_native_q2_client_slot(const struct application_native_q2 *engine,qa_actor_id actor)
+{
+    if (!engine || !actor.registry) return 0;
+    for (uint32_t i=1;i<257;++i)
+        if (engine->clients[i].reserved && qa_actor_id_equal(engine->clients[i].actor,actor))return i;
+    return 0;
+}
+
 static uint32_t source_client_slot(const application_provider *provider, qa_actor_id actor)
 {
     const struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE

@@ -299,9 +299,8 @@ static bool eligible(struct application_native_q2_source_damage *o,qa_actor_id a
 {
     if(!actor.registry)return true;
     if(!qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor))return false;
-    for(uint32_t i=1;i<257;++i)if(o->engine->clients[i].reserved&&
-        qa_actor_id_equal(o->engine->clients[i].actor,actor))return !o->engine->clients[i].denied;
-    return true;
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
+    return !slot || !o->engine->clients[slot].denied;
 }
 static bool provenance(struct application_native_q2_source_damage *o,qa_actor_id target,qa_attack *attack,qa_error *e)
 {

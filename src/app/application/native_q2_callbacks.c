@@ -310,7 +310,7 @@ static bool original_record(void *context,qa_actor_id actor,size_t name,
     application_native_q2_callbacks *o=context; *found=false; *out=0;
     const qa_actor_record *r=qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor);
     if(!current(o,e)||!r) return application_fail(e,QA_ERROR_ARGUMENT,"Native original record actor retired");
-    for(uint32_t i=1;i<257;++i) if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,actor)) return true;
+    if(application_native_q2_client_slot(o->engine,actor))return true;
     qa_native_entity_table table; uint32_t slot=UINT32_MAX;
     if(!qa_native_entity_table_get(instance(o),&table,e)) return false;
     for(uint32_t i=0;i<table.count;++i) {
@@ -330,45 +330,34 @@ static bool client_slot(void *context,qa_actor_id actor,uint32_t *out,bool *foun
 {
     application_native_q2_callbacks *o=context; *found=false;
     if(!current(o,e)||!qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor)) return false;
-    for(uint32_t i=1;i<257;++i) if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,actor)) {
-        if(*found) return fail(e,"Declared native client repeats its full actor");
-        *out=i-1; *found=true;
-    }
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
+    if(slot) {*out=slot-1;*found=true;}
     return true;
 }
 static bool client_admitted(void *context,qa_actor_id actor)
 {
     application_native_q2_callbacks *o=context;
-    for(uint32_t i=1;i<257;++i) {
-        const application_native_q2_client *c=o->engine->clients+i;
-        if(c->reserved&&c->connected&&!c->denied&&!c->disconnect_started&&qa_actor_id_equal(c->actor,actor)) return true;
-    }
-    return false;
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
+    const application_native_q2_client *c=o->engine->clients+slot;
+    return slot && c->connected && !c->denied && !c->disconnect_started;
 }
 static bool client_rejected(void *context,qa_actor_id actor)
 {
     application_native_q2_callbacks *o=context;
-    for(uint32_t i=1;i<257;++i) {
-        const application_native_q2_client *client=o->engine->clients+i;
-        if(client->reserved&&client->denied&&qa_actor_id_equal(client->actor,actor)) return true;
-    }
-    return false;
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
+    return slot && o->engine->clients[slot].denied;
 }
 static bool retained_client(application_native_q2_callbacks *o,qa_actor_id actor,bool admitted,uint32_t *out,qa_error *e)
 {
     if(!current(o,e)) return false;
     if(!qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor))
         return application_fail(e,QA_ERROR_ARGUMENT,"Native protection client generation retired");
-    uint32_t slot=0;
-    for(uint32_t i=1;i<257;++i) {
-        const application_native_q2_client *client=o->engine->clients+i;
-        if(!client->reserved||!qa_actor_id_equal(client->actor,actor)) continue;
-        if(slot||(admitted&&!client->connected)||client->denied||
-            (client->disconnect_started&&o->engine->disconnect_client!=i))
-            return application_fail(e,QA_ERROR_ARGUMENT,"Native protection client is not uniquely admitted");
-        slot=i;
-    }
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
     if(!slot) return application_fail(e,QA_ERROR_ARGUMENT,"Native protection actor has no retained source client");
+    const application_native_q2_client *client=o->engine->clients+slot;
+    if((admitted&&!client->connected)||client->denied||
+        (client->disconnect_started&&o->engine->disconnect_client!=slot))
+        return application_fail(e,QA_ERROR_ARGUMENT,"Native protection client is not admitted");
     *out=slot;return true;
 }
 bool application_native_q2_callbacks_client_reserved_current(application_native_q2_callbacks *o,
@@ -381,13 +370,7 @@ bool application_native_q2_callbacks_client_live_read(application_native_q2_call
     *live=false;
     if(!current(o,e)) return false;
     if(!qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor)) return true;
-    uint32_t slot=0;
-    for(uint32_t i=1;i<257;++i) {
-        const application_native_q2_client *retained=o->engine->clients+i;
-        if(!retained->reserved||!qa_actor_id_equal(retained->actor,actor)) continue;
-        if(slot) return application_fail(e,QA_ERROR_ARGUMENT,"Native client repeats its full actor");
-        slot=i;
-    }
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
     if(!slot) return true;
     const application_native_q2_client *retained=o->engine->clients+slot;
     if(!retained->connected||retained->denied||
@@ -517,9 +500,8 @@ static bool pickup_actor_foreign(application_native_q2_callbacks *o,qa_actor_id 
     const qa_actor_record *row=qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor);
     if(!row||row->owner==o->engine->provider->owner||qa_actor_id_equal(actor,o->engine->world_actor))
         return fail(e,"Native pickup context requires a live foreign source actor");
-    for(uint32_t i=1;i<257;++i)
-        if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,actor))
-            return fail(e,"Native pickup context cannot use a retained source client");
+    if(application_native_q2_client_slot(o->engine,actor))
+        return fail(e,"Native pickup context cannot use a retained source client");
     qa_native_entity_table table;
     if(!qa_native_entity_table_get(instance(o),&table,e)) return false;
     for(uint32_t i=0;i<table.count;++i) {
@@ -652,8 +634,7 @@ static bool lower(application_native_q2_callbacks *o,qa_json_id id,const applica
     }
     if(argument->kind==NATIVE_ARGUMENT_CLIENT||argument->kind==NATIVE_ARGUMENT_USERINFO) {
         if(value->kind!=Q3_MOD_VALUE_ACTOR) return fail(e,"Native client input has the wrong type");
-        uint32_t slot=0;
-        for(uint32_t i=1;i<257;++i) if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,value->as.actor)) { slot=i; break; }
+        uint32_t slot=application_native_q2_client_slot(o->engine,value->as.actor);
         if(!slot) return fail(e,"Native client input has no retained physical client");
         if(argument->kind==NATIVE_ARGUMENT_CLIENT) { *storage=4; *out=(qa_native_value){.type=QA_NATIVE_I32,.as.i32=(int32_t)slot-1}; return true; }
         size_t capacity=o->engine->profile==QA_NATIVE_Q2_GAME_API3?512u:2048u;

@@ -87,9 +87,8 @@ static bool eligible(struct application_native_q2_source_actors *o,qa_actor_id a
 {
     if(!actor.registry)return true;
     if(!qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor))return false;
-    for(uint32_t i=1;i<257;++i)if(o->engine->clients[i].reserved&&qa_actor_id_equal(o->engine->clients[i].actor,actor))
-        return !o->engine->clients[i].denied;
-    return true;
+    uint32_t slot=application_native_q2_client_slot(o->engine,actor);
+    return !slot || !o->engine->clients[slot].denied;
 }
 static bool request_eligible(struct application_native_q2_source_actors *o,
     application_q3_mod_operation operation,const application_q3_mod_actor_request *r)

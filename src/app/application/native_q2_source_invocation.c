@@ -45,10 +45,8 @@ static bool capture(struct application_native_q2_source_invocation *s,qa_error *
         s->seat=r->seat;s->client_slot=r->client_slot;s->source_slot=r->source_slot;
         s->remote=r->remote;s->remote_client=r->remote_client;s->remote_seat=r->remote_seat;
     }
-    for(uint32_t i=1;i<257;++i)if(n->clients[i].reserved&&qa_actor_id_equal(n->clients[i].actor,s->actor)) {
-        if(s->native_client)return application_fail(e,QA_ERROR_ARGUMENT,"Source invocation repeats its actual reserved client");
-        s->native_client=i;s->native_seat=n->clients[i].seat;
-    }
+    s->native_client=application_native_q2_client_slot(n,s->actor);
+    if(s->native_client)s->native_seat=n->clients[s->native_client].seat;
     return true;
 }
 static bool current(const struct application_native_q2_source_invocation *s)
