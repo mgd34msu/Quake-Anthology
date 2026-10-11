@@ -685,10 +685,12 @@ static bool local_q2_create(qa_frontend *frontend,frontend_particle_owner *owner
     uint32_t *marks=qa_arena_alloc(&owner->q2_storage,capacity*sizeof(*marks),_Alignof(uint32_t),error);
     if (!owner->q2_poses || !marks) return false;
     qa_stamp_set_init(&owner->q2_pose_stamps,marks,capacity);qa_arena_seal(&owner->q2_storage);
+    qa_audio_bank *sounds;
+    if (!frontend_event_sounds(frontend, owner->provider, QA_GAME_Q2, &sounds, error)) return false;
     frontend_remote_q2_effects_source source={.session=qa_application_session(frontend->application),
         .actor_capacity=(uint32_t)capacity,.identity=owner->provider,.content_generation=map.revision,
         .profile=owner->q2_edition==QA_Q2_RERELEASE?FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE:FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
-        .map=map.resource,.files=media.mounts,.images=owner->images,.materials=media.materials,
+        .map=map.resource,.files=media.mounts,.sounds=sounds,.images=owner->images,.materials=media.materials,
         .world=frontend->scene_world,.white=qa_scene_white(owner->images),.context=owner,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend,
         .current=local_q2_source_current,.actor=local_q2_number_pose,.actor_pose=local_q2_pose,

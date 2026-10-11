@@ -418,6 +418,7 @@ bool frontend_event_sound(qa_frontend *, const qa_builtin_event *, qa_error *);
 bool frontend_event_audio(qa_frontend *, qa_error *);
 bool frontend_event_debug(qa_frontend *, const qa_scene_view *, qa_error *);
 bool frontend_event_retire_checked(qa_frontend *,qa_error *);
+bool frontend_event_sounds(qa_frontend *, qa_actor_owner, qa_game_family, qa_audio_bank **, qa_error *);
 bool frontend_event_images(qa_frontend *, qa_actor_owner, qa_game_family, qa_scene_resources **, qa_error *);
 bool frontend_particle_events(qa_frontend *, qa_error *);
 bool frontend_particle_advance(qa_frontend *, qa_error *);

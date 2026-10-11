@@ -1079,6 +1079,7 @@ bool qa_application_player_info_read(qa_application *application, qa_actor_id ac
     if (!matched) return false;
     out->name = qa_strings_cstr(strings, identity->name);
     out->skin = qa_strings_cstr(strings, identity->skin);
+    out->skin_id = identity->skin;
     qa_builtin_actor_traits traits = {0};
     if (provider_traits(provider, actor, &traits)) out->view_height = traits.view_height;
     qa_combat_state combat;

@@ -1,6 +1,7 @@
 #ifndef QA_FRONTEND_REMOTE_Q2_EFFECTS_H
 #define QA_FRONTEND_REMOTE_Q2_EFFECTS_H
 #include "qa/q2_sound.h"
+#include "qa/audio.h"
 #include "qa/network_q2_messages.h"
 #include "qa/scene_effects.h"
 #include "qa/source_save.h"
@@ -79,6 +80,7 @@ typedef struct frontend_remote_q2_effects_source {
     qa_net_protocol_id protocol;
     const qa_resource *map;
     qa_vfs *files;
+    qa_audio_bank *sounds;
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_scene_world *world;

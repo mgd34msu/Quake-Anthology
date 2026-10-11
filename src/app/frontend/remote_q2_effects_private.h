@@ -60,7 +60,6 @@ typedef struct q2fx_flashlight {
     int32_t hand;
 } q2fx_flashlight;
 struct frontend_remote_q2_effects {
-    qa_string_id sound_names[QA_Q2_SFX_COUNT];
     frontend_remote_q2_effects_source source;
     frontend_remote_q2_effects_policy *pending;
     unsigned busy;

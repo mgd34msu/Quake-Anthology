@@ -489,7 +489,7 @@ static bool source_current(void *ctx,const frontend_remote_q2_effects_source *s,
     frontend_remote_q2_effects_source expected=source(b);
     bool okay=s && s->context==b && s->identity==frontend_unified_events_audio_owner(b->owner->events) &&
         s->content_generation==frontend_remote_unified_epoch(b->owner->replica) &&
-        s->files==b->files && s->images==b->images && s->materials==b->materials &&
+        s->files==b->files && s->sounds==b->sounds && s->images==b->images && s->materials==b->materials &&
         s->world==frontend_unified_media_world(b->owner->media) &&
         s->map==qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)) &&
         s->session==expected.session && s->white==expected.white && s->protocol.kind==expected.protocol.kind &&
@@ -623,7 +623,7 @@ static frontend_remote_q2_effects_source source(q2_bank *b)
         .identity=frontend_unified_events_audio_owner(b->owner->events),
         .content_generation=frontend_remote_unified_epoch(b->owner->replica),
         .profile=b->profile,
-        .map=qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)),.files=b->files,
+        .map=qa_executable_recipe_map(frontend_remote_unified_recipe(b->owner->replica)),.files=b->files,.sounds=b->sounds,
         .images=b->images,.materials=b->materials,.world=frontend_unified_media_world(b->owner->media),.white=qa_scene_white(b->images),.context=b,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=b->owner->frontend,
         .current=source_current,.actor=pose,.actor_pose=full_pose,.actor_live=actor_live,.viewer=viewer,.model=model,.sound=sound,.hit_marker=hit,

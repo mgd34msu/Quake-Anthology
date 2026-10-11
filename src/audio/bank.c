@@ -92,16 +92,6 @@ bool qa_audio_bank_create(qa_vfs *view, qa_strings *strings, qa_audio_bank **out
     }
     bank->view = view;
     bank->strings = strings; qa_strings_retain(strings);
-    static const char *const q2_names[] = {
-        NULL,
-#define QA_Q2_SOUND_PATH(name) QA_Q2_SOUND_##name,
-        QA_Q2_SOUND_LIST(QA_Q2_SOUND_PATH)
-#undef QA_Q2_SOUND_PATH
-    };
-    for (size_t i=1;i<QA_Q2_SFX_COUNT;++i)
-        if (!qa_strings_intern_cstr(strings,q2_names[i],bank->q2_names+i,error)) {
-            qa_audio_bank_destroy(bank); return false;
-        }
     bank->registration = 1;
     bank->lookup_generation = qa_vfs_lookup_generation(view);
     *out = bank;
@@ -441,6 +431,13 @@ bool qa_audio_bank_register_id(qa_audio_bank *bank, qa_string_id id, qa_game_fam
     return true;
 }
 
+bool qa_audio_bank_q2_bind(qa_audio_bank *bank, qa_error *error) {
+    for (size_t i = 1; i < QA_Q2_SFX_COUNT; ++i)
+        if (!bank->q2_names[i] &&
+            !qa_strings_intern_cstr(bank->strings, qa_q2_sound_path(i - 1), bank->q2_names + i, error))
+            return false;
+    return true;
+}
 qa_string_id qa_audio_bank_q2_name(const qa_audio_bank *bank,qa_q2_sound_index index)
 { return bank&&index>QA_Q2_SFX_NONE&&index<QA_Q2_SFX_COUNT?bank->q2_names[index]:QA_STRING_NONE; }
 bool qa_audio_bank_sexed(qa_audio_bank *bank,const char *base,const char *model,

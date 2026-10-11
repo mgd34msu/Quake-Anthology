@@ -7,7 +7,7 @@ static bool rerelease(const frontend_remote_q2_effects *o)
 { return o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE; }
 static bool play(frontend_remote_q2_effects *o,const frontend_remote_q2_effects_pose *p,
     qa_q2_sound_index path,double time,int32_t channel,float volume,float attenuation,qa_error *e)
-{ return o->source.sound(o->source.context,o->sound_names[path],p->origin,p->actor,time,channel,volume,attenuation,0,e) && q2fx_source_current(o,e); }
+{ return o->source.sound(o->source.context,qa_audio_bank_q2_name(o->source.sounds, path),p->origin,p->actor,time,channel,volume,attenuation,0,e) && q2fx_source_current(o,e); }
 static bool frame_events(frontend_remote_q2_effects *o,
     const frontend_remote_q2_effects_sample *s,bool audio,qa_error *e)
 {

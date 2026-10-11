@@ -1131,10 +1131,10 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     frontend_event_resources *resources;
     if (!resources_read(frontend, event->provider, family, &resources, error)) return false;
     qa_audio_asset *asset = NULL;
-    if (family == QA_GAME_Q2 && name[0] == '*') {
+    if (family == QA_GAME_Q2 && (qa_strings_name_flags(strings, event->resource) & QA_NAME_SEXED_SOUND)) {
         qa_builtin_player_info player = {0};
         (void)qa_application_player_info_read(frontend->application, event->actor, &player);
-        if (!qa_audio_bank_sexed(resources->sounds, name, player.skin ? player.skin : "", &asset, error))
+        if (!qa_audio_bank_sexed_id(resources->sounds, event->resource, player.skin_id, &asset, error))
             return false;
     } else if (!qa_audio_bank_register_id(resources->sounds, event->resource, family, &asset, error)) return false;
     if (resources->gear && !resources_current(frontend->application, resources)) {
@@ -1251,6 +1251,14 @@ const qa_scene_resources *frontend_event_images_at(qa_frontend *frontend, size_t
     frontend_event_resources *entry = frontend && frontend->events ? frontend->events->resources : NULL;
     while (entry && index) { entry = entry->next; --index; }
     return entry ? entry->images : NULL;
+}
+
+bool frontend_event_sounds(qa_frontend *frontend, qa_actor_owner owner, qa_game_family family,
+    qa_audio_bank **out, qa_error *error)
+{
+    frontend_event_resources *entry;
+    if (!resources_read(frontend, owner, audio_family(family), &entry, error)) return false;
+    *out = entry->sounds; return true;
 }
 
 bool frontend_event_images(qa_frontend *frontend, qa_actor_owner owner, qa_game_family family,

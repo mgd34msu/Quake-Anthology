@@ -134,6 +134,7 @@ static bool prepare_source_sound(void *context, const char *path, qa_error *erro
 }
 bool frontend_ui_audio_prepare_q2_source(qa_frontend *f, qa_audio_bank *bank, qa_actor_owner owner, qa_error *error)
 {
+    if (!qa_audio_bank_q2_bind(bank, error)) return false;
     for (size_t i = 0; i < qa_q2_sound_count(); ++i)
         if (!frontend_ui_audio_prepare_sound(f, bank, qa_q2_sound_path(i), QA_GAME_Q2, error)) return false;
     source_audio_preparation preparation = {f, bank};

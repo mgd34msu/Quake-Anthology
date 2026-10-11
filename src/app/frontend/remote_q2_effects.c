@@ -162,7 +162,7 @@ bool frontend_remote_q2_effects_current(const frontend_remote_q2_effects *owner,
     const frontend_remote_q2_effects_source *a = &owner->source;
     return a->session == s->session && a->identity == s->identity && a->content_generation == s->content_generation && a->profile == s->profile &&
         a->protocol.kind == s->protocol.kind && a->protocol.revision == s->protocol.revision && a->protocol.flags == s->protocol.flags &&
-        a->map == s->map && a->files == s->files && a->images == s->images && a->materials == s->materials && a->world == s->world &&
+        a->map == s->map && a->files == s->files && a->sounds == s->sounds && a->images == s->images && a->materials == s->materials && a->world == s->world &&
         a->white == s->white && a->video_frame == s->video_frame && a->video_context == s->video_context &&
         a->context == s->context && a->current == s->current && a->actor == s->actor &&
         a->actor_pose == s->actor_pose && a->actor_live == s->actor_live && a->viewer == s->viewer && a->model == s->model && a->sound == s->sound &&
@@ -192,15 +192,6 @@ bool frontend_remote_q2_effects_create(const frontend_remote_q2_effects_source *
     if (!out || *out || !q2fx_source_valid(source)) return q2fx_fail(error, QA_ERROR_ARGUMENT, "Q2 effects require their actual private CLIENT resources");
     frontend_remote_q2_effects *owner = calloc(1, sizeof(*owner));
     if (!owner) return q2fx_fail(error, QA_ERROR_MEMORY, "Allocating remote Q2 effect pools");
-    static const char *const names[] = {
-        NULL,
-#define QA_Q2_SOUND_PATH(name) QA_Q2_SOUND_##name,
-        QA_Q2_SOUND_LIST(QA_Q2_SOUND_PATH)
-#undef QA_Q2_SOUND_PATH
-    };
-    qa_strings *strings=qa_session_strings(source->session);
-    for (size_t i=1;i<QA_Q2_SFX_COUNT;++i)
-        if (!qa_strings_intern_cstr(strings,names[i],owner->sound_names+i,error)) { free(owner); return false; }
     owner->source = *source; owner->particles.family = QA_GAME_Q2; qa_builtin_random_seed(&owner->random, 1);
     frontend_q2_effect_particles_initialize(&owner->particles,&owner->random,
         source->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE);
@@ -289,7 +280,7 @@ static qa_vec3 direction_angles(qa_vec3 d)
 }
 static bool sound(frontend_remote_q2_effects *o, qa_q2_sound_index path, qa_vec3 origin,
     qa_actor_id actor, double time, int32_t channel, float volume, float attenuation, double delay, qa_error *e)
-{ return o->source.sound(o->source.context, o->sound_names[path], origin, actor, time, channel, volume, attenuation, delay, e) && q2fx_source_current(o, e); }
+{ return o->source.sound(o->source.context, qa_audio_bank_q2_name(o->source.sounds, path), origin, actor, time, channel, volume, attenuation, delay, e) && q2fx_source_current(o, e); }
 static void light(frontend_remote_q2_effects *o, qa_actor_id actor, qa_vec3 origin,
     double time, float radius, double duration, qa_vec3 color, float decay, float minimum)
 {
