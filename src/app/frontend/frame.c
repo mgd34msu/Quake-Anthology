@@ -11,6 +11,7 @@
 #include "capture.h"
 #include "save_commands.h"
 #include "campaign.h"
+#include "rankings.h"
 #include "campaign_ui.h"
 #include "campaign_cinematic.h"
 #include "ui_features.h"
@@ -509,6 +510,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
             output.kind != QA_APPLICATION_EVENT_BUILTIN) continue;
         qa_builtin_event event = *output.value.builtin;
         if (event.kind == QA_BUILTIN_LOG) continue;
+        if (!frontend_ranking_event(frontend,&event,error)) return false;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
             bool center = event.kind == QA_BUILTIN_CENTERPRINT;

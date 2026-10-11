@@ -182,11 +182,16 @@ bool qa_application_rankings_client_slot(const qa_application *app, qa_actor_id 
     *out=slot; return true;
 }
 static bool output(qa_application *app, application_provider *provider, qa_actor_id actor,
-    qa_application_ranking_effect effect, const qa_ranking_player *state, qa_error *error)
+    bool menu, const qa_ranking_player *state, qa_error *error)
 {
-    if (!app->ranking_effect) return true;
-    return app->ranking_effect(app->guest_context, app, provider->owner, actor,
-        effect, state, error);
+    uint32_t slot;
+    if (!qa_application_rankings_client_slot(app, actor, &slot)) return true;
+    const qa_application_ui_names *names=qa_application_ui_names_read(app);
+    qa_builtin_event event={.kind=QA_BUILTIN_EFFECT,.family=QA_GAME_Q3,
+        .provider=provider->owner,.actor=actor,.time_ns=qa_session_elapsed(app->session),
+        .resource=menu?names->ranking_menu:names->ranking_status,
+        .code=(int32_t)state->kind,.frame=(int32_t)slot};
+    return application_emit(app,&event,error);
 }
 static application_rankings *account_owner(qa_application *app, int32_t slot, qa_error *error)
 {
@@ -420,14 +425,14 @@ static bool frame_players(qa_application *app, application_rankings *owner,
         qa_ranking_player state=qa_rankings_player(app->rankings,(int32_t)row->slot);
         bool changed=!row->has_observed || row->observed.kind!=state.kind;
         row->observed=state; row->has_observed=true;
-        if (changed && !output(app,provider,actor,QA_APPLICATION_RANKING_STATUS,&state,error)) return false;
+        if (changed && !output(app,provider,actor,false,&state,error)) return false;
         if (!player(app,provider,slot,actor))
             return application_fail(error,QA_ERROR_ARGUMENT,"Ranking output changed its actual source client generation");
         if ((state.kind==QA_RANKING_NEW_PLAYER || state.kind==QA_RANKING_SPECTATOR) && !member.state.spectator) {
             if (!application_rankings_source_effect(app,provider,actor,APPLICATION_RANKING_SPECTATOR,error)) return false;
             if (!player(app,provider,slot,actor))
                 return application_fail(error,QA_ERROR_ARGUMENT,"Ranking spectator changed its actual source client generation");
-            if (!output(app,provider,actor,QA_APPLICATION_RANKING_MENU,&state,error)) return false;
+            if (!output(app,provider,actor,true,&state,error)) return false;
         } else if (state.kind==QA_RANKING_DENIED_PLAYER) {
             if (!backend_result(app,owner,qa_rankings_reset(app->rankings,(int32_t)row->slot,error))) return false;
         } else if (state.kind==QA_RANKING_ACTIVE_PLAYER) {
@@ -711,59 +716,41 @@ static bool owner_fields(qa_source_save_io *io, application_rankings **value)
     return reading || !client || application_fail(io->error,QA_ERROR_ARGUMENT,"Ranked client extent changed");
 }
 bool application_rankings_prepare(const qa_application_options *options,
-    const qa_application_persistence_ops *ops, qa_bytes bytes, qa_error *error)
+    qa_bytes bytes, qa_error *error)
 {
     if (!options) return application_fail(error,QA_ERROR_ARGUMENT,"Ranked source admission lacks actual application options");
     ranking_record record={0}; bool ok=record_read(bytes,&record,error);
-    if (ok && (!key_equal(options->ranking_game_key,record.key) ||
-        record.effect!=(options->ranking_effect!=NULL)))
-        ok=application_fail(error,QA_ERROR_FORMAT,"Saved ranked source key or consumer presence changed");
-    if (ok && record.effect && (!ops || !ops->ranking_source ||
-        !ops->ranking_source->capture || !ops->ranking_source->resolve))
-        ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Ranked source output bridge lacks its real logical binding codec");
+    if (ok && !key_equal(options->ranking_game_key,record.key))
+        ok=application_fail(error,QA_ERROR_FORMAT,"Saved ranked source key changed");
     free(record.key); return ok;
 }
-bool application_rankings_capture(qa_application *app, const qa_application_persistence_ops *ops,
+bool application_rankings_capture(qa_application *app,
     qa_buffer *out, qa_error *error)
 {
     if (!app || !out || out->data || out->size || !application_rankings_idle(app))
         return application_fail(error,QA_ERROR_ARGUMENT,"Ranked source capture requires idle actual owners and an empty output");
-    qa_buffer bridge={0}, body={0};
+    qa_buffer body={0};
     bool ok=true;
-    if (app->ranking_effect) {
-        const qa_application_ranking_checkpoint_refs *refs=ops ? ops->ranking_source : NULL;
-        if (!refs || !refs->capture || !refs->resolve)
-            ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Ranked source output bridge lacks actual continuation bindings");
-        else ok=refs->capture(refs->context,app->ranking_effect,app->guest_context,&bridge,error) && bridge.size;
-    }
     qa_source_save_io io={0};
     if (ok && app->ranked_source) ok=agreement(app,app->ranked_source,error);
     if (ok) ok=qa_source_save_writer(&io,app->session,error) && owner_fields(&io,&app->ranked_source) &&
         qa_source_save_finish(&io,&body);
     qa_source_save_dispose(&io); io=(qa_source_save_io){0};
-    ranking_record record={.key=app->ranking_game_key,.effect=app->ranking_effect!=NULL,
-        .bridge={bridge.data,bridge.size},.owner={body.data,body.size}};
+    ranking_record record={.key=app->ranking_game_key,.owner={body.data,body.size}};
     if (ok) ok=qa_source_save_writer(&io,NULL,error) && record_fields(&io,&record) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); qa_buffer_free(&bridge); qa_buffer_free(&body);
+    qa_source_save_dispose(&io); qa_buffer_free(&body);
     if (!ok && error && error->code==QA_OK) application_fail(error,QA_ERROR_FORMAT,"Unqualified ranked source continuation");
     return ok;
 }
-bool application_rankings_restore(qa_application *app, const qa_application_persistence_ops *ops,
+bool application_rankings_restore(qa_application *app,
     qa_bytes bytes, qa_error *error)
 {
     if (!app || app->operation!=APPLICATION_PERSISTING || app->ranked_source)
         return application_fail(error,QA_ERROR_ARGUMENT,"Ranked source import requires an empty leased candidate");
     ranking_record record={0}; application_rankings *owner=NULL; qa_source_save_io io={0};
     bool ok=record_read(bytes,&record,error);
-    if (ok && (!key_equal(app->ranking_game_key,record.key) || record.effect!=(app->ranking_effect!=NULL)))
+    if (ok && !key_equal(app->ranking_game_key,record.key))
         ok=application_fail(error,QA_ERROR_FORMAT,"Ranked source differs from actual candidate construction");
-    if (ok && record.effect) {
-        const qa_application_ranking_checkpoint_refs *refs=ops ? ops->ranking_source : NULL;
-        qa_application_ranking_effect_fn effect=NULL; void *context=NULL;
-        ok=refs && refs->resolve && refs->resolve(refs->context,record.bridge,&effect,&context,error);
-        if (ok && (effect!=app->ranking_effect || context!=app->guest_context))
-            ok=application_fail(error,QA_ERROR_FORMAT,"Ranked source consumer differs from its actual prepared binding");
-    }
     if (ok) ok=qa_source_save_reader(&io,app->session,record.owner,error) && owner_fields(&io,&owner) &&
         qa_source_save_finish(&io,NULL);
     if (ok && owner) {

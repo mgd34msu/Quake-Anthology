@@ -409,7 +409,6 @@ void frontend_application_options(qa_frontend *frontend, qa_application_options 
     application->q3_client_effect = frontend_source_effect;
     application->q3_campaign_command = frontend_campaign_source_command;
     application->q3_round_services = frontend_q3_round_services();
-    application->ranking_effect = frontend_ranking_effect;
     application->native_q2_services = frontend_native_q2_services;
     application->world_change_ready = frontend_world_change_ready;
     application->before_world_change = frontend_before_world_change;

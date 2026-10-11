@@ -287,7 +287,6 @@ struct qa_application {
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
-    qa_application_ranking_effect_fn ranking_effect;
     char *ranking_game_key;
     struct application_rankings *ranked_source;
     qa_application_native_q2_services_fn native_q2_services;

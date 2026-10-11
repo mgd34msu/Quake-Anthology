@@ -216,7 +216,6 @@ static bool create_application(const qa_application_options *options,
     application->q3_client_effect = options->q3_client_effect;
     application->q3_campaign_command = options->q3_campaign_command;
     application->q3_round_services = options->q3_round_services;
-    application->ranking_effect = options->ranking_effect;
     application->native_q2_services = options->native_q2_services;
     application->model_admission = options->model_admission;
     application->world_change_ready = options->world_change_ready;

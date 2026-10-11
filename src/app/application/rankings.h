@@ -31,11 +31,11 @@ bool application_rankings_idle(const qa_application *);
 /* Private cleanup never closes the shared rankings backend. Ordinary map and
  * round close must end that backend before disposing this source state. */
 void application_rankings_dispose(qa_application *);
-bool application_rankings_prepare(const qa_application_options *, const qa_application_persistence_ops *,
+bool application_rankings_prepare(const qa_application_options *,
     qa_bytes, qa_error *);
-bool application_rankings_capture(qa_application *, const qa_application_persistence_ops *,
+bool application_rankings_capture(qa_application *,
     qa_buffer *empty, qa_error *);
-bool application_rankings_restore(qa_application *, const qa_application_persistence_ops *,
+bool application_rankings_restore(qa_application *,
     qa_bytes, qa_error *);
 bool application_rankings_restore_ready(qa_application *, qa_error *);
 void application_rankings_publish_restored(qa_application *);

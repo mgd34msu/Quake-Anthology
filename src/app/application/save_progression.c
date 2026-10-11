@@ -71,7 +71,7 @@ bool application_save_progression_prepare(const qa_application_options *options,
              (!record.progress_present || options->player_profile_root != NULL)) ||
             fail(error, QA_ERROR_FORMAT, "Saved progression differs from actual installed backend/profile presence")) &&
            backend_ready(record.configured, ops, error) &&
-           application_rankings_prepare(options, ops, record.source, error))) return false;
+           application_rankings_prepare(options, record.source, error))) return false;
     *construction = *options;
     if (!record.progress_present) construction->player_profile_root = NULL;
     return true;
@@ -86,7 +86,7 @@ bool application_save_progression_capture(qa_application *application,
                                      &rankings, error);
     if (ok && application->progress)
         ok = qa_player_progress_checkpoint(application->progress, &progress, error);
-    if (ok) ok = application_rankings_capture(application, ops, &source, error);
+    if (ok) ok = application_rankings_capture(application, &source, error);
     progression_record record = {.rankings_present = true,
         .progress_present = application->progress != NULL,
         .configured = qa_rankings_provider_configured(application->rankings),
@@ -113,7 +113,7 @@ bool application_save_progression_restore(qa_application *candidate,
     return qa_rankings_restore(candidate->rankings, ops ? ops->rankings : NULL, record.rankings, error) &&
            (!record.progress_present || qa_player_progress_restore(candidate->progress,
                record.progress, error)) &&
-           application_rankings_restore(candidate, ops, record.source, error);
+           application_rankings_restore(candidate, record.source, error);
 }
 bool application_save_progression_handoff(qa_application *active, qa_application *candidate,
     const qa_application_persistence_ops *ops, bool *relinquish_active, qa_error *error) {

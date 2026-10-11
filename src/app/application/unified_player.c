@@ -176,6 +176,7 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
         {"misc/h2ohit1.wav", &names->landing_sounds[2]}, {"progs/player.mdl", &names->q1_player_model},
         {"i_health", &names->q2_health_icon}, {"i_help", &names->q2_help_icon},
         {"music", &names->music}, {"q1:fog", &names->fog}, {"misc/talk.wav", &names->talk_sound},
+        {"rank_status", &names->ranking_status}, {"rank_menu", &names->ranking_menu},
         {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
         {"debug-bounds", &names->debug_bounds}, {"colored-explosion", &names->colored_explosion},
         {"developer-message", &names->developer_message}, {"cutscene", &names->cutscene},

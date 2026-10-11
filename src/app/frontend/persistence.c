@@ -52,7 +52,6 @@ typedef struct frontend_persistence {
     qa_frontend **slot;
     const qa_application_persistence_ops *services;
     qa_application_persistence_ops ops;
-    qa_application_ranking_checkpoint_refs ranking;
     frontend_native_resource_context native_resources;
     qa_application_native_resource_refs native_resource_refs;
     frontend_persistence_native native;
@@ -141,22 +140,6 @@ static bool replay(void *context,qa_application *candidate,const qa_save_image *
     return (!operation->replay || operation->replay(operation->replay_context,f,error)) &&
         frontend_scene_sync(f,error) &&
         frontend_input_profile_bind(f,error);
-}
-static bool ranking_capture(void *context,qa_application_ranking_effect_fn installed,
-    void *binding,qa_buffer *out,qa_error *error)
-{
-    frontend_persistence *operation=context;
-    qa_frontend *f=binding==operation->active?operation->active:
-        binding==operation->candidate?operation->candidate:NULL;
-    qa_application_ranking_checkpoint_refs refs=frontend_ranking_refs(f);
-    return refs.capture(refs.context,installed,binding,out,error);
-}
-static bool ranking_resolve(void *context,qa_bytes bytes,qa_application_ranking_effect_fn *installed,
-    void **binding,qa_error *error)
-{
-    frontend_persistence *operation=context;
-    qa_application_ranking_checkpoint_refs refs=frontend_ranking_refs(operation->candidate);
-    return refs.resolve(refs.context,bytes,installed,binding,error);
 }
 static bool ranking_handoff(void *context,qa_rankings *active,qa_rankings *candidate,
     bool *relinquish,qa_error *error)
@@ -290,13 +273,12 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         ((services->publish_ready!=NULL)!=(services->publish!=NULL)))))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Persistence requires an idle application and paired publication callbacks");
     operation->active=active; operation->services=services;
-    operation->ranking=(qa_application_ranking_checkpoint_refs){operation,ranking_capture,ranking_resolve};
     operation->native_resource_refs=frontend_native_resource_refs(&operation->native_resources);
     operation->ops=(qa_application_persistence_ops){.context=operation,
         .owners=services?services->owners:NULL,.owner_count=services?services->owner_count:0,
         .visit_content=content_visit,
         .native_resources=services && services->native_resources?services->native_resources:&operation->native_resource_refs,
-        .rankings=services?services->rankings:NULL,.ranking_source=&operation->ranking,
+        .rankings=services?services->rankings:NULL,
         .rankings_handoff=services && services->rankings_handoff?ranking_handoff:NULL,
         .prepare_services=prepare_services,.prepare_native_baseline=native_baseline,.prepare_content=prepare_content,
         .reconnect=reconnect,
