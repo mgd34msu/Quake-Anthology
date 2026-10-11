@@ -119,7 +119,7 @@ bool application_q3_gear_checkpoint(application_q3_gear *gear, qa_buffer *out, q
 bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
     const qa_console_save_resolvers *resolvers, qa_error *error)
 {
-    if (!gear || !gear->restoring || gear->initialized || gear->capacity || !application_q3_gear_idle(gear))
+    if (!gear || !gear->restoring || gear->initialized || !application_q3_gear_idle(gear))
         return q3gear_fail(error, QA_ERROR_ARGUMENT, "Separate QVM gear restore requires its fresh isolated owner");
     qa_source_save_io io = {0}; qa_buffer parts[4] = {{0}}, entities = {0}, services = {0};
     qa_qvm_saved_function constructed[4]; qa_qvm_binding saved[4] = {0};
