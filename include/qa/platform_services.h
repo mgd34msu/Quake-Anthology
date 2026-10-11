@@ -53,4 +53,8 @@ bool qa_platform_calendar(int64_t unix_ms, bool local, qa_platform_calendar_fiel
 bool qa_platform_calendar_format(int64_t unix_ms, const char *format,
                                  char *text, size_t capacity);
 
+/* Read returns a qa_buffer-owned, NUL-terminated UTF-8 string; size excludes NUL. */
+bool qa_platform_clipboard_read(qa_buffer *, qa_error *);
+bool qa_platform_clipboard_write(const char *, qa_error *);
+
 #endif

@@ -374,11 +374,7 @@ static bool client_command(void *context, const char *text, qa_error *error)
 static bool clipboard(void *context, qa_buffer *out, qa_error *error)
 {
     if (!out || out->data || !entered(context, NULL, NULL, error)) return false;
-    char *text = SDL_GetClipboardText();
-    if (!text) { qa_error_set(error, QA_ERROR_IO, 0, "Reading clipboard: %s", SDL_GetError()); return false; }
-    size_t size = strlen(text); uint8_t *copy = malloc(size + 1);
-    if (!copy) { SDL_free(text); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining remote module clipboard text"); }
-    memcpy(copy, text, size + 1); SDL_free(text); *out = (qa_buffer){copy, size}; return true;
+    return qa_platform_clipboard_read(out, error);
 }
 static bool actor(void *context, int32_t number, uint64_t *out, qa_error *error)
 {

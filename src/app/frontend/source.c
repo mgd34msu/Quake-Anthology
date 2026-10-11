@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "source_cinematics.h"
 #include "source_renderer_runtime.h"
 #include "renderer_materials.h"
@@ -940,11 +941,7 @@ static bool common_mods(void *context, qa_vfs_listing *out, qa_error *error)
 static bool common_clipboard(void *context, qa_buffer *out, qa_error *error)
 {
     (void)context;
-    char *text = SDL_GetClipboardText();
-    if (!text) { qa_error_set(error, QA_ERROR_IO, 0, "reading clipboard: %s", SDL_GetError()); return false; }
-    size_t length = strlen(text); uint8_t *copy = malloc(length + 1);
-    if (!copy) { SDL_free(text); return frontend_fail(error, QA_ERROR_MEMORY, "retaining clipboard text"); }
-    memcpy(copy, text, length + 1); SDL_free(text); *out = (qa_buffer){copy, length}; return true;
+    return qa_platform_clipboard_read(out, error);
 }
 static bool source_idle(const frontend_source *source)
 {

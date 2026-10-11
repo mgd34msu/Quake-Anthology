@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "internal.h"
 #include "native_q2_baseline.h"
 
@@ -43,8 +44,7 @@ bool frontend_clipboard_write(qa_frontend *frontend, const char *text, qa_error 
 {
     if (!frontend || !text) return frontend_fail(error,QA_ERROR_ARGUMENT,"clipboard requires a frontend and text");
     if (frontend->native_clipboard) return frontend->native_clipboard(frontend->native_output_context,text,error);
-    if (SDL_SetClipboardText(text)==0) return true;
-    qa_error_set(error,QA_ERROR_IO,0,"writing clipboard: %s",SDL_GetError()); return false;
+    return qa_platform_clipboard_write(text, error);
 }
 static bool services(void *context, qa_application *application, qa_actor_owner owner,
     qa_native_profile profile, qa_native_host_engine_services *engine,

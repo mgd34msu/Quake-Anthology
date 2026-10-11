@@ -1,3 +1,4 @@
+#include "qa/platform_services.h"
 #include "source_prompt.h"
 #include "remote_q1_client.h"
 #include "remote_q1_hud.h"
@@ -73,18 +74,14 @@ static bool focus(void *context, qa_input_focus kind, bool team, qa_error *error
 static bool clipboard(void *context, qa_buffer *out, qa_error *error)
 {
     (void)context;
-    char *text = SDL_GetClipboardText();
-    if (!text) return frontend_fail(error, QA_ERROR_IO, "reading clipboard");
-    size_t size = strlen(text);
-    out->data = malloc(size ? size : 1);
-    if (!out->data) { SDL_free(text); return frontend_fail(error, QA_ERROR_MEMORY, "retaining clipboard"); }
-    memcpy(out->data, text, size); out->size = size;
-    SDL_free(text); return true;
+    return qa_platform_clipboard_read(out, error);
 }
 static const char *ui_clipboard(void *context)
 {
     frontend_seat *seat = context;
-    SDL_free(seat->clipboard); seat->clipboard = SDL_GetClipboardText();
+    free(seat->clipboard); seat->clipboard = NULL;
+    qa_buffer text = {0};
+    if (qa_platform_clipboard_read(&text, NULL)) seat->clipboard = (char *)text.data;
     return seat->clipboard ? seat->clipboard : "";
 }
 static bool chat(void *context, const char *text, bool team, bool targeted, int32_t target, qa_error *error)
@@ -860,7 +857,7 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
         frontend_bindings_destroy(seat);
         free(seat->player_source_titles); free(seat->player_source_products);
         seat->player_source_titles=NULL; seat->player_source_products=NULL;
-        SDL_free(seat->clipboard); seat->clipboard = NULL;
+        free(seat->clipboard); seat->clipboard = NULL;
         free(seat->wheel_items); free(seat->wheel_definitions); free(seat->wheel_labels);
         *seat=(frontend_seat){.frontend=frontend,.id=i};
     }

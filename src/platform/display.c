@@ -1,6 +1,7 @@
 #include "qa/display.h"
 #include "qa/display_save.h"
 #include "qa/display_settings.h"
+#include "qa/platform_services.h"
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -11,6 +12,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+
+bool qa_platform_clipboard_read(qa_buffer *out, qa_error *error)
+{
+    char *text = SDL_GetClipboardText();
+    if (!text) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Reading clipboard: %s", SDL_GetError()); return false;
+    }
+    size_t size = strlen(text);
+    uint8_t *copy = malloc(size + 1);
+    if (!copy) {
+        SDL_free(text); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining clipboard text"); return false;
+    }
+    memcpy(copy, text, size + 1); SDL_free(text);
+    *out = (qa_buffer){copy, size}; return true;
+}
+bool qa_platform_clipboard_write(const char *text, qa_error *error)
+{
+    if (SDL_SetClipboardText(text) == 0) return true;
+    qa_error_set(error, QA_ERROR_IO, 0, "Writing clipboard: %s", SDL_GetError()); return false;
+}
 
 typedef struct display_native_lease {
     size_t references;
