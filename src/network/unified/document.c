@@ -487,8 +487,8 @@ bool qa_unified_metadata_apply(const qa_unified_document *previous, const qa_uni
                 const qa_unified_q3_configuration *row=next->q3_configurations+i;
                 for (size_t p=0;p<old->q3_configuration_count;++p) {
                     const qa_unified_q3_configuration *prior=old->q3_configurations+p;
-                    if (strcmp(prior->provider_name,row->provider_name) || strcmp(prior->instance,row->instance) ||
-                        strcmp(prior->content,row->content) || prior->publication!=row->publication || prior->map_revision!=row->map_revision) continue;
+                    if (prior->provider_name!=row->provider_name || prior->instance!=row->instance ||
+                        prior->content!=row->content || prior->publication!=row->publication || prior->map_revision!=row->map_revision) continue;
                     if (row->configuration_revision<prior->configuration_revision ||
                         (row->configuration_revision==prior->configuration_revision &&
                             !qa_unified_record_equal(&qa_unified_q3_configuration_layout,prior,row, NULL, NULL)))

@@ -330,9 +330,9 @@ static const qa_unified_field qa_unified_frame_q3_fields[] = {
 const qa_unified_record_layout qa_unified_q3_frame_layout = QA_UNIFIED_LAYOUT(qa_unified_frame_q3, qa_unified_frame_q3_fields);
 
 static const qa_unified_field qa_unified_q3_source_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q3_source, provider_name, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q3_source, instance, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q3_source, content, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_q3_source, provider_name, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_q3_source, instance, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_q3_source, content, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_q3_source, publication, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_q3_source, map_revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_q3_source, configuration_revision, QA_UNIFIED_FIELD_U64),
@@ -1914,8 +1914,8 @@ static bool q3_sources_check(const qa_unified_frame_q3 *section, uint64_t regist
     for (size_t s = 0; s < section->source_count; ++s) {
         const qa_unified_q3_source *source = section->sources + s;
         const qa_unified_q3_entity *entities[QA_Q3_ENTITIES] = {0};
-        if (!source->provider_name || !*source->provider_name || !source->instance || !*source->instance ||
-            !source->content || !*source->content || !source->max_clients || source->max_clients > 64 ||
+        if (!source->provider_name || !source->instance || !source->content ||
+            !source->max_clients || source->max_clients > 64 ||
             (source->snapshot_bit != 0 && source->snapshot_bit != 4) || source->entity_count > QA_Q3_ENTITIES ||
             source->client_count > source->max_clients)
             return frame_bad(error, "Typed Q3 source lost its actual owner or client bounds");
@@ -2119,9 +2119,9 @@ static const qa_unified_field style_pattern_fields[] = {
 };
 static const qa_unified_record_layout style_pattern_layout = QA_UNIFIED_LAYOUT(qa_unified_style_pattern, style_pattern_fields);
 static const qa_unified_field q3_configuration_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_q3_configuration, provider_name, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q3_configuration, instance, QA_UNIFIED_FIELD_STRING),
-    QA_UNIFIED_FIELD(qa_unified_q3_configuration, content, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, provider_name, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, instance, QA_UNIFIED_FIELD_NAME),
+    QA_UNIFIED_FIELD(qa_unified_q3_configuration, content, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_q3_configuration, publication, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_q3_configuration, map_revision, QA_UNIFIED_FIELD_U64),
     QA_UNIFIED_FIELD(qa_unified_q3_configuration, configuration_revision, QA_UNIFIED_FIELD_U64),
@@ -2187,11 +2187,10 @@ bool qa_unified_metadata_check(const qa_unified_frame_metadata *value, size_t *b
     }
     for (size_t i=0;i<value->q3_configuration_count;++i) {
         const qa_unified_q3_configuration *row=value->q3_configurations+i;
-        if (!row->provider_name || !*row->provider_name || !row->instance || !*row->instance ||
-            !row->content || !*row->content || !q3_gamestate_check(row->game_state,error))
+        if (!row->provider_name || !row->instance || !row->content || !q3_gamestate_check(row->game_state,error))
             return frame_bad(error,"Unified Q3 metadata lost its actual Source owner or gamestate");
         for (size_t prior=0;prior<i;++prior)
-            if (!strcmp(value->q3_configurations[prior].provider_name,row->provider_name))
+            if (value->q3_configurations[prior].provider_name==row->provider_name)
                 return frame_bad(error,"Unified Q3 metadata repeats its actual Source provider");
     }
     return true;

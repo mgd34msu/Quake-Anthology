@@ -12,7 +12,7 @@ typedef struct received_source {
     frontend_unified_q3_source_entity entities[QA_Q3_ENTITIES];
     frontend_unified_q3_source_player *players;
     uint16_t visible_entities[256];
-    const char *provider_name, *instance, *content;
+    qa_string_id provider_name, instance, content;
     qa_unified_document *metadata;
     qa_unified_frame_lease *lease;
     size_t references;
@@ -101,8 +101,8 @@ static bool source_configuration(frontend_unified_q3_sources *o, const qa_unifie
         const qa_unified_q3_configuration *configuration = metadata->q3_configurations+i;
         if (configuration->publication != source->publication || configuration->map_revision != source->map_revision ||
             configuration->configuration_revision != source->configuration_revision ||
-            strcmp(configuration->provider_name,source->provider_name) || strcmp(configuration->instance,source->instance) ||
-            strcmp(configuration->content,source->content)) continue;
+            configuration->provider_name!=source->provider_name || configuration->instance!=source->instance ||
+            configuration->content!=source->content) continue;
         if (!qa_unified_document_retain(document,&r->metadata,e)) return false;
         r->view.game_state = configuration->game_state;
         r->view.configstring_revisions = configuration->config_revisions;
@@ -131,12 +131,12 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_frame *
         frontend_remote_unified_source_actor(o->replica,frame,source->viewer,restoring,&v->viewer,e);
     for (size_t i = 0; ok && i < qa_executable_recipe_provider_count(o->recipe); ++i) {
         const qa_recipe_provider *p = qa_executable_recipe_provider(o->recipe,i);
-        if (!strcmp(p->selection.instance,r->instance)) { v->provider = p; break; }
+        if (p->instance_name==r->instance) { v->provider = p; break; }
     }
     if (ok) ok = v->provider && v->provider->registered && v->provider->selection.runtime == QA_PROGRAM_BUILTIN &&
         v->provider->selection.clock.kind == QA_RULESET_Q3 &&
-        (restoring ? qa_executable_recipe_content_read(o->recipe,r->content,&v->files,&v->content_product) :
-            qa_executable_recipe_content(o->recipe,r->content,&v->files,&v->content_product,e)) &&
+        (restoring ? qa_executable_recipe_content_read(o->recipe,qa_strings_cstr(o->replica->strings,r->content),&v->files,&v->content_product) :
+            qa_executable_recipe_content(o->recipe,qa_strings_cstr(o->replica->strings,r->content),&v->files,&v->content_product,e)) &&
         qa_vfs_lookup_equal(v->files,v->provider->content) && v->content_product->family == QA_GAME_Q3 &&
         v->content_product->id == v->provider->selection.product;
     qa_actor_id viewer; uint32_t source_entity;
@@ -169,7 +169,7 @@ static bool source_read(frontend_unified_q3_sources *o, const qa_unified_frame *
         v->visible_entities = r->visible_entities; v->area_mask = source->visibility->area_mask;
     }
     if (ok && restoring) ok = frontend_unified_media_q3_assets_read(o->media,v->content_product,&v->assets);
-    else if (ok) ok = frontend_unified_media_q3_assets(o->media,r->content,&v->assets,e);
+    else if (ok) ok = frontend_unified_media_q3_assets(o->media,qa_strings_cstr(o->replica->strings,r->content),&v->assets,e);
     if (ok) { v->entities = r->entities; v->players = r->players; v->player_count = source->client_count; }
     if (!ok) { source_free(r); return e && e->code ? false : fail(e,QA_ERROR_FORMAT,"Compiled Q3 received Source disagrees with its admitted recipe"); }
     *out = r; return true;
@@ -196,16 +196,16 @@ static bool prepare(frontend_unified_q3_sources *o, const qa_unified_document *d
     for (size_t i = 0; ok && i < count; ++i) {
         ok = source_read(o,frame,sources->sources+i,t->revision,restoring,false,t->rows+i,e);
         for (size_t k = 0; ok && k < i; ++k)
-            if (!strcmp(t->rows[k]->instance,t->rows[i]->instance) ||
-                !strcmp(t->rows[k]->provider_name,t->rows[i]->provider_name))
+            if (t->rows[k]->instance==t->rows[i]->instance ||
+                t->rows[k]->provider_name==t->rows[i]->provider_name)
                 ok = fail(e,QA_ERROR_FORMAT,"Compiled Q3 Source roster repeats its descriptor or event owner");
         for (size_t k = 0; ok && k < o->count; ++k) {
             const received_source *old = o->rows[k], *next = t->rows[i];
-            if (strcmp(old->instance,next->instance)) continue;
+            if (old->instance!=next->instance) continue;
             if (old->view.publication == next->view.publication && old->view.map_revision == next->view.map_revision &&
-                (strcmp(old->provider_name,next->provider_name) || old->view.product != next->view.product || old->view.max_clients != next->view.max_clients ||
+                (old->provider_name!=next->provider_name || old->view.product != next->view.product || old->view.max_clients != next->view.max_clients ||
                  old->view.has_client != next->view.has_client || old->view.client_number != next->view.client_number ||
-                 (!qa_actor_id_equal(old->view.viewer,next->view.viewer) && old->view.snapshot_bit == next->view.snapshot_bit) || strcmp(old->content,next->content)))
+                 (!qa_actor_id_equal(old->view.viewer,next->view.viewer) && old->view.snapshot_bit == next->view.snapshot_bit) || old->content!=next->content))
                 ok = fail(e,QA_ERROR_FORMAT,"Compiled Q3 retained activation changed its physical recipient or content");
         }
     }

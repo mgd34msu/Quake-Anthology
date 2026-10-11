@@ -10,7 +10,7 @@ typedef struct qa_unified_style_pattern {
     char *pattern;
 } qa_unified_style_pattern;
 typedef struct qa_unified_q3_configuration {
-    char *provider_name, *instance, *content;
+    qa_string_id provider_name, instance, content;
     uint64_t publication, map_revision, configuration_revision;
     qa_q3_gamestate *game_state;
     uint64_t config_revisions[QA_Q3_CONFIGSTRINGS];

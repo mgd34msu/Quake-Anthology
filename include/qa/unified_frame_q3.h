@@ -26,7 +26,7 @@ typedef struct qa_unified_q3_visibility {
     size_t entity_count;
 } qa_unified_q3_visibility;
 typedef struct qa_unified_q3_source {
-    char *provider_name, *instance, *content;
+    qa_string_id provider_name, instance, content;
     uint64_t publication, map_revision, configuration_revision;
     qa_q3_product product;
     int32_t server_time, level_start, game_type;

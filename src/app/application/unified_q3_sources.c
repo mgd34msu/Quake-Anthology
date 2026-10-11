@@ -244,10 +244,8 @@ static bool source_capture(qa_unified_q3_source *out, application_unified_q3_sou
     compiled_source *r, qa_error *e)
 {
     const application_provider *p = r->provider;
-    if (!application_unified_frame_string(v->lease, &out->provider_name,
-            qa_strings_cstr(qa_session_strings(v->source.session), p->owner), e) ||
-        !application_unified_frame_string(v->lease, &out->instance, r->launch->selection.instance, e) ||
-        !application_unified_frame_string(v->lease, &out->content, r->content->identity, e)) return false;
+    out->provider_name = out->instance = p->owner;
+    out->content = p->content_name;
     out->publication = v->source.publication; out->map_revision = v->source.map_revision;
     out->configuration_revision = r->configuration_revision;
     out->product = r->product; out->server_time = r->time; out->level_start = r->level_start;
@@ -381,8 +379,8 @@ bool application_unified_q3_sources_metadata_current(const application_unified_q
         const qa_unified_q3_configuration *saved = metadata->q3_configurations + i;
         if (source->publication != saved->publication || source->map_revision != saved->map_revision ||
             source->configuration_revision != saved->configuration_revision ||
-            strcmp(source->provider_name, saved->provider_name) ||
-            strcmp(source->instance, saved->instance) || strcmp(source->content, saved->content)) return false;
+            source->provider_name != saved->provider_name ||
+            source->instance != saved->instance || source->content != saved->content) return false;
     }
     return true;
 }
@@ -402,10 +400,9 @@ bool application_unified_q3_sources_metadata(const application_unified_q3_source
         qa_unified_q3_configuration *row = out->q3_configurations + i;
         row->publication = source->publication; row->map_revision = source->map_revision;
         row->configuration_revision = source->configuration_revision;
-        if (!application_unified_frame_string(lease, &row->provider_name, source->provider_name, e) ||
-            !application_unified_frame_string(lease, &row->instance, source->instance, e) ||
-            !application_unified_frame_string(lease, &row->content, source->content, e) ||
-            !game_state(row, v, v->rows + i, lease, e)) return false;
+        row->provider_name = source->provider_name; row->instance = source->instance;
+        row->content = source->content;
+        if (!game_state(row, v, v->rows + i, lease, e)) return false;
     }
     return application_unified_q3_sources_current(v) ||
         application_fail(e, QA_ERROR_ARGUMENT, "Compiled Q3 configuration changed during reliable capture");

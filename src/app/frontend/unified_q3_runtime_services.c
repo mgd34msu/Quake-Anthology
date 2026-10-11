@@ -420,7 +420,7 @@ bool frontend_unified_q3_runtime_services_create(const frontend_unified_q3_runti
     for(size_t i=0;i<frontend_unified_media_bank_count(options->media);++i){
         frontend_unified_bank_view bank;
         if(!frontend_unified_media_bank_read(options->media,i,&bank))break;
-        if(!strcmp(bank.content,options->source.content) && bank.q3_assets==o->assets && bank.files==o->files){
+        if(bank.product->id==options->source.provider->selection.product && bank.q3_assets==o->assets && bank.files==o->files){
             o->fonts=bank.fonts;o->content_product=bank.product;bank_found=true;break;}
     }
     /* Only the admitted constructor observes the received row. Every later

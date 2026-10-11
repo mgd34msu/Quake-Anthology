@@ -19,7 +19,6 @@ struct frontend_unified_q3_runtime_factory {
     frontend_unified_q3_runtime_services *services;
     frontend_unified_q3_runtime *runtime;
     frontend_unified_q3_commands *commands;
-    char *source_instance,*source_content;
     qa_audio_bank *sounds;
     qa_media_library *movies;
     qa_q3_cinematic_source *cinematics;
@@ -32,8 +31,6 @@ struct frontend_unified_q3_runtime_factory {
 };
 static bool fail(qa_error *e,const char *text)
 { return frontend_fail(e,QA_ERROR_ARGUMENT,text); }
-static char *copy_text(const char *text)
-{ if(!text)return NULL;size_t n=strlen(text)+1;char *out=malloc(n);if(out)memcpy(out,text,n);return out; }
 bool frontend_unified_q3_runtime_factory_current(const frontend_unified_q3_runtime_factory *o)
 {
     return o && !o->retiring && o->options.current(o->options.context,&o->options,false) &&
@@ -310,16 +307,12 @@ bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtim
         !options->current(options->context,options,false))return fail(e,"Compiled factory requires its real retained Source services");
     frontend_unified_q3_runtime_factory *o=calloc(1,sizeof(*o));if(!o)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining compiled CG factory");
     o->options=*options;*out=o;
-    o->options.source.instance=NULL;o->options.source.content=NULL;
     o->options.source.source=NULL;o->options.source.entities=NULL;o->options.source.players=NULL;
     o->options.source.game_state=NULL;o->options.source.configstring_revisions=NULL;
     o->options.source.visible_entities=NULL;o->options.source.area_mask=NULL;
-    o->source_instance=copy_text(options->source.instance);o->options.source.instance=o->source_instance;
-    o->source_content=copy_text(options->source.content);o->options.source.content=o->source_content;
-    if(!o->source_instance || !o->source_content)return frontend_fail(e,QA_ERROR_MEMORY,"Retaining compiled Source activation names");
     for(size_t i=0;i<frontend_unified_media_bank_count(options->media);++i){frontend_unified_bank_view bank;
         if(!frontend_unified_media_bank_read(options->media,i,&bank))return fail(e,"Compiled factory media inventory lost an actual bank");
-        if(bank.content && !strcmp(bank.content,options->source.content) && bank.files==options->source.files &&
+        if(bank.product->id==options->source.provider->selection.product && bank.files==options->source.files &&
            bank.q3_assets==options->source.assets){
             frontend_material_movies *provider=NULL; qa_q3_cinematic_source *parent=NULL;
             const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(options->replica);
@@ -402,7 +395,7 @@ bool frontend_unified_q3_runtime_factory_destroy(frontend_unified_q3_runtime_fac
     if(!frontend_unified_q3_runtime_services_destroy(&o->services,e))return false;
     if(o->reset_constructor && !frontend_unified_q3_client_constructor_reset(o->options.client,o,constructor_closed,e))return false;
     qa_audio_music_release(o->music);free(o->intro);free(o->loop);
-    free(o->source_instance);free(o->source_content);free(o);*out=NULL;return true;
+    free(o);*out=NULL;return true;
 }
 bool frontend_unified_q3_runtime_factory_constructor_abort(frontend_unified_q3_runtime_factory **out,qa_error *e)
 {

@@ -282,6 +282,18 @@ codec. The normal build and seven existing core suites pass; logs are
 `/tmp/qa-ta3192-provider-names-20261010-core.log`. This is bounded build/core
 verification, without an installed gameplay, protocol-session or timing claim.
 
+TA-3192 also moves Q3 frame/configuration provider, instance and content names
+to `qa_string_id`. `unified_q3_sources.c` publishes the provider's admitted IDs;
+it no longer copies those names into each frame. Reliable metadata, received
+source selection, roster checks, client activation and retained factories compare
+the same IDs. Client/factory name allocations and their private frees are
+deleted. The existing NAME codec retains nullable UTF-8 wire bytes; native
+module and scoped-command interfaces still receive text at their boundaries.
+The normal production build and seven core suites pass
+(`/tmp/qa-ta3192-q3-names-20261011-{build,core}.log`). Text-based media/event
+adapters and the other listed name callers remain open; no gameplay or timing
+claim is made by this slice.
+
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent
 selection. Numeric/save/command components preserve 125 role combinations and

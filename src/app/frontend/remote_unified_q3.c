@@ -766,7 +766,8 @@ static bool character_read(frontend_unified_q3 *o,const qa_unified_character_sta
     if(!character_source(o,row,id,&source,&player,e))return false;
     if(!player)return true;
     unified_q3_bank *bank=NULL;
-    if(!bank_read(o,source.content,source.instance,0,&bank,e))return false;
+    if(!bank_read(o,qa_strings_cstr(o->replica->strings,source.content),
+        qa_strings_cstr(o->replica->strings,source.instance),0,&bank,e))return false;
     if(bank->clients && (bank->character_publication!=source.publication ||
         bank->character_map_revision!=source.map_revision)) {
         q3n_clients_destroy(bank->clients);bank->clients=NULL;

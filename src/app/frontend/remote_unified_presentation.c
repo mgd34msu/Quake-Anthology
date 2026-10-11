@@ -524,7 +524,7 @@ static bool q3_factory_current(void *context,const frontend_unified_q3_runtime_f
         source.provider==options->source.provider && source.files==options->source.files &&
         source.assets==options->source.assets && source.product==options->source.product &&
         options->source.instance && options->source.content &&
-        !strcmp(source.instance,options->source.instance) && !strcmp(source.content,options->source.content) &&
+        source.instance==options->source.instance && source.content==options->source.content &&
         (checkpoint?frontend_unified_q3_client_checkpoint_stage_current(row->client,row->frame):
             frontend_unified_q3_client_current(row->client));
 }
@@ -549,7 +549,7 @@ static bool q3_factory_retirement_current(void *context,
         frontend_unified_bank_view bank;
         if (!frontend_unified_media_bank_read(p->media,i,&bank)) return false;
         if (bank.files==options->source.files && bank.q3_assets==options->source.assets &&
-            bank.content && (!options->source.content || !strcmp(bank.content,options->source.content))) {
+            (!options->source.content || bank.product->id==options->source.provider->selection.product)) {
             bank_found=true; break;
         }
     }
@@ -588,7 +588,7 @@ static bool q3_send_client(void *context,frontend_unified_q3_client *client,
     if (!qa_command_tokenize(text,QA_RULESET_Q3,false,&arguments,
         qa_arena_alloc_callback,&p->frontend->frame.storage,error)) return false;
     bool okay=p->replica->options.source_command(p->replica->options.context,
-        &p->replica->options.domain,source.instance,source.publication,source.map_revision,origin,&arguments,error);
+        &p->replica->options.domain,qa_strings_cstr(p->replica->strings,source.instance),source.publication,source.map_revision,origin,&arguments,error);
     qa_command_tokens_free(&arguments);
     return okay && frontend_remote_unified_current(p->replica,error);
 }
@@ -602,7 +602,7 @@ bool frontend_remote_unified_presentation_source_command_current(const frontend_
     for (const unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         frontend_unified_q3_source_view source;
         if (!q3_row_source(row,false,&source,error)) return false;
-        if (strcmp(source.instance,instance)) continue;
+        if (strcmp(qa_strings_cstr(replica->strings,source.instance),instance)) continue;
         return (source.publication==publication && source.map_revision==map_revision && q3_command_current(row,origin)) ||
             frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source command lost its real compiled CLIENT origin");
     }
@@ -1173,7 +1173,7 @@ static bool source_model(void *context,qa_actor_id actor,uint32_t provider,const
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         frontend_unified_q3_source_view source;
         if (!q3_row_source(row,false,&source,error)) return false;
-        if (source.provider->source_owner!=provider || strcmp(source.instance,instance)) continue;
+        if (source.provider->source_owner!=provider || strcmp(qa_strings_cstr(p->replica->strings,source.instance),instance)) continue;
         frontend_unified_q3_runtime_scene_owner receipt; bool present=false;
         if (!row->cg_prepared || !frontend_unified_q3_runtime_factory_scene_actor(row->factory,actor,&receipt,&present,error)) return false;
         if (present && (receipt.provider!=provider || !receipt.instance || strcmp(receipt.instance,instance) ||
@@ -1194,7 +1194,7 @@ static bool equipment_model(void *context,qa_actor_id actor,uint32_t provider,co
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         frontend_unified_q3_source_view source;
         if (!q3_row_source(row,false,&source,error)) return false;
-        if (source.provider->source_owner!=provider || strcmp(source.instance,instance)) continue;
+        if (source.provider->source_owner!=provider || strcmp(qa_strings_cstr(p->replica->strings,source.instance),instance)) continue;
         if (!row->cg_prepared) return true;
         frontend_unified_q3_runtime_scene_owner receipt; bool present=false;
         if (!frontend_unified_q3_runtime_factory_scene_view_weapon(row->factory,actor,&receipt,&present,error)) return false;

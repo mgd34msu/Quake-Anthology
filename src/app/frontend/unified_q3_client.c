@@ -67,7 +67,8 @@ struct frontend_unified_q3_client {
     const frontend_remote_unified_domain *domain;
     uint64_t receiver;
     qa_command_context command_context;
-    char *provider_name, *instance;
+    qa_string_id provider_name, instance;
+    qa_strings *strings;
     qa_arena storage;
     qa_pool snapshots, commands, gamestates;
     client_history histories[2], *history;
@@ -84,8 +85,6 @@ struct frontend_unified_q3_client {
 };
 static bool fail(qa_error *e, qa_status code, const char *s)
 { qa_error_set(e,code,0,"%s",s); return false; }
-static char *copy(const char *s)
-{ size_t n = strlen(s)+1; char *p = malloc(n); if (p) memcpy(p,s,n); return p; }
 static bool activation(const frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v)
 {
     const frontend_unified_q3_source_view *a = &c->constructor;
@@ -93,7 +92,7 @@ static bool activation(const frontend_unified_q3_client *c, const frontend_unifi
         v->publication == a->publication && v->map_revision == a->map_revision && v->product == a->product &&
         v->files == a->files && v->assets == a->assets && v->max_clients == a->max_clients &&
         v->has_client && v->client_number == a->client_number &&
-        !strcmp(v->provider_name,c->provider_name) && !strcmp(v->instance,c->instance);
+        v->provider_name==c->provider_name && v->instance==c->instance;
 }
 static bool identity(const frontend_unified_q3_client *c, const frontend_unified_q3_source_view *v)
 { return activation(c,v) && qa_actor_id_equal(v->viewer,c->constructor.viewer) && v->snapshot_bit == c->constructor.snapshot_bit; }
@@ -150,7 +149,8 @@ bool frontend_unified_q3_client_event_matches(const frontend_unified_q3_client *
 {
     frontend_unified_q3_source_view v;
     return provider_name && content && observation(c,&v) && v.epoch == source_epoch &&
-        !strcmp(v.provider_name,provider_name) && !strcmp(v.content,content) && frontend_unified_q3_source_current(&v);
+        !strcmp(qa_strings_cstr(c->strings,v.provider_name),provider_name) &&
+        !strcmp(qa_strings_cstr(c->strings,v.content),content) && frontend_unified_q3_source_current(&v);
 }
 bool frontend_unified_q3_client_idle(const frontend_unified_q3_client *c)
 { return !c || (!c->busy && !c->prepared && !c->video); }
@@ -350,7 +350,7 @@ static bool source_basis(frontend_unified_q3_client *c,const frontend_unified_q3
     int32_t max_clients = source_integer(value);
     *out = (q3n_compiled_source_basis){.application=c->domain->application,
         .registry=frontend_remote_unified_registry(c->replica),.provider=v->provider->source_owner,.receiver=c->receiver,
-        .instance=c->instance,.content=v->files,.assets=v->assets,.product=v->product,
+        .instance=qa_strings_cstr(c->strings,c->instance),.content=v->files,.assets=v->assets,.product=v->product,
         .publication=v->publication,.map_revision=v->map_revision,.serial=revision,.viewer=v->viewer,
         .seat=c->domain->seat.index,.physical_seat=c->domain->physical_seat,.client_number=(int32_t)v->client_number,
         .time=h->time,.game_type=game_type,.max_clients=max_clients,.level_start_time=source_integer(qa_q3_configstring(&h->reached->value,21)),
@@ -449,8 +449,9 @@ bool frontend_unified_q3_client_create(frontend_remote_unified *replica, fronten
     c->replica = replica; c->sources = sources; c->constructor = *v; c->receiver = receiver;
     c->domain = domain; c->revision = 1;
     c->command_context=domain->command_context;
-    c->provider_name = copy(v->provider_name); c->instance = copy(v->instance);
-    bool ok = c->provider_name && c->instance && history_storage(c,e) &&
+    c->provider_name = v->provider_name; c->instance = v->instance;
+    c->strings = qa_session_strings(qa_application_session(domain->application));
+    bool ok = history_storage(c,e) &&
         receive(c->history,v,true,false,e) && create_source(c,e);
     if (!ok) { frontend_unified_q3_client_destroy(&c,NULL); return e && e->code ? false : fail(e,QA_ERROR_MEMORY,"Retaining compiled CLIENT source declaration"); }
     *out = c; return true;
@@ -516,7 +517,7 @@ bool frontend_unified_q3_client_destroy(frontend_unified_q3_client **out, qa_err
     if (!q3n_compiled_source_destroy(&c->source,e)) return false;
     if (c->retirement && !frontend_unified_q3_source_retirement_client_drop(c->retirement,c,e)) return false;
     history_free(c->history); qa_arena_destroy(&c->storage);
-    free(c->cvar_cache); free(c->provider_name); free(c->instance); free(c); *out = NULL; return true;
+    free(c->cvar_cache); free(c); *out = NULL; return true;
 }
 bool frontend_unified_q3_client_video_current(const frontend_unified_q3_client_video *t)
 {

@@ -28,8 +28,7 @@ typedef struct frontend_unified_q3_source_view {
     uint64_t revision, publication, map_revision;
     uint32_t epoch;
     const qa_recipe_provider *provider;
-    const char *provider_name; /* literal Source owner name carried by events */
-    const char *instance, *content; /* retained executable descriptor identity */
+    qa_string_id provider_name, instance, content;
     qa_vfs *files;
     const qa_product *content_product;
     qa_q3_presentation_assets *assets;
