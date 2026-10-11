@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "player/feedback.h"
 #include "entities/internal.h"
+#include "monsters/internal.h"
 
 bool q2_actor_live(qa_q2_game *g, qa_actor_id id) {
     return qa_actors_get(qa_session_actors(g->services.session), id) != NULL;
@@ -317,6 +318,7 @@ static void close_game(void *context) {
     qa_arena_destroy(&g->actor_storage);
     q2_entities_close(g);
     q2_monsters_close(g);
+    qa_arena_destroy(&g->monster_storage);
     q2_players_close(g);
     q2_items_close(g);
     free(g->actors);
@@ -393,6 +395,14 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
         g->all_actors = a;
     }
     qa_arena_seal(&g->actor_storage);
+    /* Actor generations and their replaced revive/controller state may both
+     * remain leased until the existing source-frame retirement boundary. */
+    if (!qa_pool_reserve_pages(&g->monster_records, &g->monster_storage,
+            g->actor_records.capacity * 2, sizeof(struct qa_q2_monster),
+            _Alignof(struct qa_q2_monster), e)) {
+        close_game(g);
+        return false;
+    }
     g->frame_ns = qa_q2_component(g).clock.interval_ns;
     if (!q2_definitions(g, e) || !q2_items_init(g, e) || !q2_players_init(g, e) ||
         !q2_entities_init(g, e) || !q2_monsters_init(g, e)) {

@@ -90,12 +90,10 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (!a)
         goto fail;
-    a->item = calloc(1, sizeof(*a->item));
+    a->item = q2_item_state_take(g, e);
     if (!a->item)
         goto memory;
-    a->item->companion = calloc(1, sizeof(*a->item->companion));
-    if (!a->item->companion)
-        goto memory;
+    a->item->companion = q2_item_companion(a->item);
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     qa_actor_reference credit_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, credit);
     *a->item->companion = (q2_companion){.kind = kind,
@@ -234,12 +232,10 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (!a)
         goto fail;
-    a->item = calloc(1, sizeof(*a->item));
+    a->item = q2_item_state_take(g, e);
     if (!a->item)
         goto memory;
-    a->item->companion = calloc(1, sizeof(*a->item->companion));
-    if (!a->item->companion)
-        goto memory;
+    a->item->companion = q2_item_companion(a->item);
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, owner);
     *a->item->companion = (q2_companion){.kind = Q2_DOPPLEGANGER,
                                          .owner = owner_reference,
@@ -269,12 +265,10 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
     q2_actor *child = q2_actor_get(g, child_id, true, e);
     if (!child)
         goto fail;
-    child->item = calloc(1, sizeof(*child->item));
+    child->item = q2_item_state_take(g, e);
     if (!child->item)
         goto memory;
-    child->item->companion = calloc(1, sizeof(*child->item->companion));
-    if (!child->item->companion)
-        goto memory;
+    child->item->companion = q2_item_companion(child->item);
     qa_actor_reference base_reference = qa_actor_reference_from_actor(qa_session_actors(g->services.session), g->options.owner, id);
     *child->item->companion = (q2_companion){.kind = Q2_DOPPLEGANGER_BODY,
                                              .owner = base_reference,

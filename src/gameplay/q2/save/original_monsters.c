@@ -974,7 +974,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
     struct qa_q2_monster *m = actor->monster;
     bool created = false;
     if (!m && io->reading && !io->references_only) {
-        m = calloc(1, sizeof(*m));
+        m = q2m_monster_take(game, error);
         if (!m) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring original Q2 monster state");
             return false;
@@ -997,7 +997,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         m->can_take_damage = true;
         m->attack_state = Q2M_STRAIGHT;
         if (!m->move_set) {
-            free(m);
+            q2m_free_monster(m);
             return monster_error(io, "classname", "Monster has no exact Source move table");
         }
     }

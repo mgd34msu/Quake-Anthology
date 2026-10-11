@@ -1584,7 +1584,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
                  "Q2 monster birth epoch exhausted");
     return false;
   }
-  struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
+  struct qa_q2_monster *monster = q2m_monster_take(game, error);
   if (monster == NULL) {
     qa_error_set(error, QA_ERROR_MEMORY, 0,
                  "Allocating native Q2 monster state");
@@ -1994,11 +1994,23 @@ void q2_monster_release_state(q2_actor *actor) {
   actor->monster = NULL;
 }
 
+struct qa_q2_monster *q2m_monster_take(qa_q2_game *game, qa_error *error) {
+  size_t slot;
+  struct qa_q2_monster *monster = qa_pool_take(&game->monster_records, &slot);
+  if (!monster) {
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Q2 monster state pool exhausted");
+    return NULL;
+  }
+  *monster = (struct qa_q2_monster){
+      .storage = &game->monster_records, .storage_slot = slot};
+  return monster;
+}
+
 void q2m_free_monster(struct qa_q2_monster *monster) {
   if (monster) {
     q2m_summon_clear(monster->summons);
     free(monster->summons);
-    free(monster);
+    qa_pool_release(monster->storage, monster->storage_slot);
   }
 }
 

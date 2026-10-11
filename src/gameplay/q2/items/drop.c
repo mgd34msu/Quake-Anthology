@@ -49,7 +49,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (!a)
         goto fail;
-    a->item = calloc(1, sizeof(*a->item));
+    a->item = q2_item_state_take(g, e);
     if (!a->item) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating dropped Q2 pickup");
         goto fail;
@@ -236,7 +236,7 @@ bool qa_q2_item_give(qa_q2_game *g, qa_actor_id player, const char *name, int co
     q2_actor *a = q2_actor_get(g, id, true, e);
     bool ok = false;
     if (a) {
-        a->item = calloc(1, sizeof(*a->item));
+        a->item = q2_item_state_take(g, e);
         if (!a->item)
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating direct Q2 pickup");
         else {

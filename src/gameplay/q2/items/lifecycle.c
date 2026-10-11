@@ -8,6 +8,10 @@ bool q2_items_init(qa_q2_game *g, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 items");
         return false;
     }
+    if (!qa_pool_reserve_pages(&g->item_runtime->records, &g->item_runtime->storage,
+            g->actor_records.capacity, sizeof(q2_item_storage),
+            _Alignof(q2_item_storage), e))
+        return false;
     g->item_runtime->options.weapon_respawn_seconds = 30;
     g->item_runtime->options.instanced_coop = g->options.rules == QA_RULESET_Q2_RERELEASE;
     g->item_runtime->food_classname=g->runtime_names[Q2_NAME_RESOURCE_FOODCUBE];
@@ -19,9 +23,26 @@ void q2_items_close(qa_q2_game *g) {
         free(g->item_runtime->admissions);
         free(g->item_runtime->by_id);
         free(g->item_runtime->definitions);
+        qa_arena_destroy(&g->item_runtime->storage);
         free(g->item_runtime);
         g->item_runtime = NULL;
     }
+}
+q2_item_state *q2_item_state_take(qa_q2_game *g, qa_error *e) {
+    size_t slot;
+    q2_item_storage *value = qa_pool_take(&g->item_runtime->records, &slot);
+    if (!value) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 item state pool exhausted");
+        return NULL;
+    }
+    *value = (q2_item_storage){0};
+    value->item.storage = &g->item_runtime->records;
+    value->item.storage_slot = slot;
+    return &value->item;
+}
+q2_companion *q2_item_companion(q2_item_state *item) {
+    q2_item_storage *value = qa_pool_at(item->storage, item->storage_slot);
+    return &value->companion;
 }
 void q2_items_release_state(q2_actor *a) {
     if (a->item) {
@@ -32,8 +53,7 @@ void q2_items_release_state(q2_actor *a) {
             a->entity_game = NULL;
         }
         free(a->item->picked_slots);
-        free(a->item->companion);
-        free(a->item);
+        qa_pool_release(a->item->storage, a->item->storage_slot);
         a->item = NULL;
     }
     if (a->powers)
@@ -201,7 +221,7 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 actor already has item state");
         return false;
     }
-    a->item = calloc(1, sizeof(*a->item));
+    a->item = q2_item_state_take(g, e);
     if (!a->item) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 pickup state");
         return false;

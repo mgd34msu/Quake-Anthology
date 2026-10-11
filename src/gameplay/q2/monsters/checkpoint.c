@@ -468,7 +468,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     return false;
   }
   if (controller) {
-    struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
+    struct qa_q2_monster *monster = q2m_monster_take(game, error);
     if (monster == NULL) {
       qa_error_set(error, QA_ERROR_MEMORY, 0,
                    "Q2 monster controller checkpoint allocation failed");
@@ -531,7 +531,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 corpse continuation differs from its source species");
     return false;
   }
-  struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
+  struct qa_q2_monster *monster = q2m_monster_take(game, error);
   if (monster == NULL) {
     qa_error_set(error, QA_ERROR_MEMORY, 0,
                  "Q2 monster checkpoint allocation failed");

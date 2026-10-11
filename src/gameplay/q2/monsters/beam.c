@@ -195,7 +195,7 @@ static bool spawn_beam(q2m_context *context, qa_actor_id target,
     qa_session_release(context->game->services.session, id, NULL);
     return false;
   }
-  struct qa_q2_monster *beam = calloc(1, sizeof(*beam));
+  struct qa_q2_monster *beam = q2m_monster_take(context->game, error);
   if (beam == NULL) {
     qa_session_release(context->game->services.session, id, NULL);
     qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -557,7 +557,7 @@ bool q2m_spawn_boss_exploder(q2m_context *context, qa_error *error) {
     qa_session_release(context->game->services.session, id, NULL);
     return false;
   }
-  struct qa_q2_monster *controller = calloc(1, sizeof(*controller));
+  struct qa_q2_monster *controller = q2m_monster_take(context->game, error);
   if (controller == NULL) {
     qa_session_release(context->game->services.session, id, NULL);
     qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -640,7 +640,7 @@ bool q2m_schedule_makron_spawn(q2m_context *context, qa_error *error) {
     qa_session_release(context->game->services.session, id, NULL);
     return false;
   }
-  struct qa_q2_monster *controller = calloc(1, sizeof(*controller));
+  struct qa_q2_monster *controller = q2m_monster_take(context->game, error);
   if (controller == NULL) {
     qa_session_release(context->game->services.session, id, NULL);
     qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -719,7 +719,7 @@ static bool makron_spawn_tick(qa_q2_game *game, q2_actor *actor,
   qa_actor_id child = actor->id;
   actor->monster = NULL;
   actor->physics_bound = false;
-  free(controller);
+  q2m_free_monster(controller);
   qa_q2_monster_spawn_options options = {
       .classname = "monster_makron",
       .scale = game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
@@ -780,7 +780,7 @@ static bool create_source_child(q2m_context *context, const char *name,
     *out = NULL;
     return true;
   }
-  struct qa_q2_monster *controller = calloc(1, sizeof(*controller));
+  struct qa_q2_monster *controller = q2m_monster_take(context->game, error);
   if (!controller) {
     qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q2 Source child continuation");
     qa_session_release(game->services.session, child->id, NULL);

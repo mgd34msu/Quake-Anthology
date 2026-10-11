@@ -526,6 +526,8 @@ struct qa_q2_game {
     q2_actor **actors, *all_actors, *retired_actors;
     qa_arena actor_storage;
     qa_pool actor_records;
+    qa_arena monster_storage;
+    qa_pool monster_records;
     qa_arena entity_storage;
     qa_arena entity_fields;
     qa_pool entity_records;

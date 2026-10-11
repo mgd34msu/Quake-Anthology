@@ -295,6 +295,8 @@ typedef enum q2m_corpse_phase {
 } q2m_corpse_phase;
 
 struct qa_q2_monster {
+  qa_pool *storage;
+  size_t storage_slot;
   struct qa_q2_monster *retired_next;
   struct q2m_summon_state *summons;
   const q2m_definition *definition;
@@ -376,6 +378,7 @@ bool q2m_lifecycle_use(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_lifecycle_killed(q2m_context *, qa_error *);
 bool q2m_lifecycle_route(q2m_context *, bool found_target, bool *routed, qa_error *);
 bool q2m_show(q2m_context *, qa_error *);
+struct qa_q2_monster *q2m_monster_take(qa_q2_game *, qa_error *);
 void q2m_free_monster(struct qa_q2_monster *);
 void q2m_retire_monster(qa_q2_game *, struct qa_q2_monster *);
 bool q2m_health_target(q2m_context *, qa_error *);

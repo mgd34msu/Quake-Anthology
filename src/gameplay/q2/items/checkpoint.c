@@ -127,7 +127,7 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
     }
     q2_actor candidate = {.id = id};
     if (s->present) {
-        candidate.item = calloc(1, sizeof(*candidate.item));
+        candidate.item = q2_item_state_take(g, e);
         if (!candidate.item)
             goto memory;
         q2_item_state *v = candidate.item;
@@ -157,9 +157,7 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
         v->picked_slots = copy;
         v->owner = s->owner;
         if (s->companion.kind != Q2_COMPANION_NONE) {
-            v->companion = calloc(1, sizeof(*v->companion));
-            if (!v->companion)
-                goto memory;
+            v->companion = q2_item_companion(v);
             const qa_q2_companion_checkpoint *saved = &s->companion;
             q2_companion *c = v->companion;
             *c = (q2_companion){.kind = (q2_companion_kind)saved->kind,

@@ -21,6 +21,8 @@ typedef enum q2_companion_kind {
     Q2_DOPPLEGANGER_BODY
 } q2_companion_kind;
 typedef struct q2_item_state {
+    qa_pool *storage;
+    size_t storage_slot;
     const qa_q2_item_definition *definition;
     qa_q2_item_spawn spawn;
     qa_actor_reference owner;
@@ -52,7 +54,13 @@ typedef struct q2_companion {
     qa_string_id loop_sound;
     bool active, decoy, camera;
 } q2_companion;
+typedef struct q2_item_storage {
+    q2_item_state item;
+    q2_companion companion;
+} q2_item_storage;
 typedef struct q2_items {
+    qa_arena storage;
+    qa_pool records;
     qa_q2_item_definition *definitions;
     const qa_q2_item_definition **by_id;
     qa_item_id powers[QA_Q2_POWER_COUNT];
@@ -69,6 +77,8 @@ static inline qa_string_id q2_item_classname(qa_q2_game *g, const qa_q2_item_def
 }
 
 q2_power_state *q2_powers(qa_q2_game *, qa_actor_id, qa_error *);
+q2_item_state *q2_item_state_take(qa_q2_game *, qa_error *);
+q2_companion *q2_item_companion(q2_item_state *);
 bool q2_item_usable(const qa_q2_item_definition *);
 bool q2_item_bind_actions(qa_q2_game *, qa_actor_id, q2_power_state *, qa_error *);
 const qa_q2_item_definition *q2_item_by_id(qa_q2_game *, qa_item_id);
