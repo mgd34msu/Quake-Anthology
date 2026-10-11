@@ -381,16 +381,12 @@ static bool open_file(guest_sysv_runtime *r,uint64_t name_address,uint64_t mode_
     qa_buffer name = {0}, text = {0}; bool present;
     *out = 0;
     if (!name_address || !mode_address) return sysv_fail(error,QA_ERROR_ARGUMENT,"fopen requires actual path and mode strings");
-    if (!sysv_string(r,name_address,SYSV_MAX_STRING,&name,&present,error)) goto failed;
+    qa_arena temporary;
+    qa_arena_init_pool(&temporary, &r->guest->scratch_pages);
+    if (!sysv_string(r,name_address,SYSV_MAX_STRING,&temporary,&name,&present,error)) goto failed;
     if (!present) { sysv_fail(error,QA_ERROR_ARGUMENT,"fopen path is not terminated"); goto failed; }
-    if (!sysv_string(r,mode_address,16,&text,&present,error)) goto failed;
+    if (!sysv_string(r,mode_address,16,&temporary,&text,&present,error)) goto failed;
     if (!present) { sysv_fail(error,QA_ERROR_ARGUMENT,"fopen mode is not terminated"); goto failed; }
-    uint8_t *name_bytes = realloc(name.data,name.size+1);
-    if (!name_bytes) { sysv_fail(error,QA_ERROR_MEMORY,"holding fopen path"); goto failed; }
-    name.data = name_bytes; name.data[name.size] = 0;
-    uint8_t *mode_bytes = realloc(text.data,text.size+1);
-    if (!mode_bytes) { sysv_fail(error,QA_ERROR_MEMORY,"holding fopen mode"); goto failed; }
-    text.data = mode_bytes; text.data[text.size] = 0;
     const char *mode = (const char *)text.data;
     uint32_t rights = mode[0] == 'r' ? GUEST_RUNTIME_FILE_READ : GUEST_RUNTIME_FILE_WRITE;
     bool plus = false, binary = false, append = mode[0] == 'a';
@@ -455,12 +451,12 @@ static bool open_file(guest_sysv_runtime *r,uint64_t name_address,uint64_t mode_
     if (!guest_runtime_resources_seek(r->options.bindings.resources,view.id,start,error)) goto failed;
     if (!publish_file(r, &view, rights, append, out, error)) goto failed;
 done:
-    qa_buffer_free(&name); qa_buffer_free(&text); return true;
+    qa_arena_destroy(&temporary); return true;
 invalid:
     if (!sysv_errno(r,22,error)) goto failed;
     goto done;
 failed:
-    qa_buffer_free(&name); qa_buffer_free(&text); return false;
+    qa_arena_destroy(&temporary); return false;
 }
 static bool close_file(guest_sysv_runtime *r,uint64_t address,int32_t *out,qa_error *error)
 {

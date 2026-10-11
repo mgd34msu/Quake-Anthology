@@ -90,7 +90,7 @@ bool sysv_unsigned(guest_sysv_runtime *, uint64_t, size_t, uint64_t *, qa_error 
 bool sysv_store(guest_sysv_runtime *, uint64_t, size_t, uint64_t, qa_error *);
 bool sysv_pointer(guest_sysv_runtime *, uint64_t, uint64_t *, qa_error *);
 bool sysv_put_pointer(guest_sysv_runtime *, uint64_t, uint64_t, qa_error *);
-bool sysv_string(guest_sysv_runtime *, uint64_t, size_t, qa_buffer *, bool *, qa_error *);
+bool sysv_string(guest_sysv_runtime *, uint64_t, size_t, qa_arena *, qa_buffer *, bool *, qa_error *);
 bool sysv_string_new(guest_sysv_runtime *, const char *, uint64_t *, qa_error *);
 bool sysv_allocate(guest_sysv_runtime *, uint64_t, bool, uint64_t *, qa_error *);
 bool sysv_free(guest_sysv_runtime *, uint64_t, qa_error *);

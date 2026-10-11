@@ -2,6 +2,7 @@
 #define QA_QC_INTERNAL_H
 
 #include "qa/binary.h"
+#include "qa/pool.h"
 #include "qa/qc.h"
 
 #include <limits.h>
@@ -100,6 +101,8 @@ struct qa_qc_instance {
     uint64_t *profiles;
     qc_strings strings;
     qa_arena scratch;
+    qa_arena findradius_storage;
+    qa_pool findradius_snapshots;
     qc_frame *frames;
     uint32_t *locals;
     uint32_t entity_count, frame_count, local_count;

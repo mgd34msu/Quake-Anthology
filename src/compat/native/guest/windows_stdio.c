@@ -47,15 +47,19 @@ bool windows_stdio_file_in_use(const guest_windows *r, uint64_t handle)
         if (r->crt->files[i].handle == handle) return true;
     return false;
 }
-static bool path_string(guest_windows *r, uint64_t address, char **out, qa_error *e)
+static bool path_string(guest_windows *r, uint64_t address, qa_arena *scratch,
+    char **out, qa_error *e)
 {
     uint16_t *units = NULL; size_t count = 0;
     if (!address) return guest_fail(e, QA_ERROR_ARGUMENT, 0, "Windows fopen requires terminated path and mode strings");
-    if (!windows_string(r, address, false, &units, &count, e)) return false;
-    char *text = malloc(count + 1);
-    if (!text) { free(units); return guest_fail(e, QA_ERROR_MEMORY, 0, "holding Windows fopen string"); }
+    qa_arena temporary; qa_arena_init_pool(&temporary, &r->guest->scratch_pages);
+    if (!windows_string(r, address, false, &temporary, &units, &count, e)) {
+        qa_arena_destroy(&temporary); return false;
+    }
+    char *text = qa_arena_alloc(scratch, count + 1, 1, e);
+    if (!text) { qa_arena_destroy(&temporary); return false; }
     for (size_t i = 0; i < count; ++i) text[i] = (char)units[i];
-    text[count] = 0; free(units); *out = text; return true;
+    text[count] = 0; qa_arena_destroy(&temporary); *out = text; return true;
 }
 static void pending_remove(guest_windows_crt *crt, size_t i)
 {
@@ -70,7 +74,8 @@ static bool open_file(windows_service *service, uint64_t name_address, uint64_t 
     guest_windows *r = service->owner; guest_windows_crt *crt = r->crt;
     char *name = NULL, *mode = NULL; bool okay = false; *out = 0;
     if (!name_address || !mode_address) return crt_errno(r, 22, e);
-    if (!path_string(r, name_address, &name, e) || !path_string(r, mode_address, &mode, e)) goto done;
+    qa_arena scratch; qa_arena_init_pool(&scratch, &r->guest->scratch_pages);
+    if (!path_string(r, name_address, &scratch, &name, e) || !path_string(r, mode_address, &scratch, &mode, e)) goto done;
     bool plus = false, binary = false, text = false;
     if (!*name || (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a')) goto invalid;
     for (size_t i = 1; mode[i]; ++i) {
@@ -104,7 +109,12 @@ static bool open_file(windows_service *service, uint64_t name_address, uint64_t 
         if (!r->capabilities.open_file) { okay = crt_errno(r, busy ? 16 : 2, e); goto allocation_failed; }
         windows_stdio_pending *pending = calloc(1, sizeof(*pending));
         if (!pending) { guest_fail(e, QA_ERROR_MEMORY, 0, "retaining Windows fopen capability"); goto allocation_failed; }
-        pending->name = name; name = NULL; pending->creation = creation;
+        size_t name_bytes = strlen(name) + 1;
+        pending->name = malloc(name_bytes);
+        if (!pending->name) {
+            free(pending); guest_fail(e, QA_ERROR_MEMORY, 0, "retaining Windows fopen capability"); goto allocation_failed;
+        }
+        memcpy(pending->name, name, name_bytes); pending->creation = creation;
         if (!guest_grow((void **)&crt->pending_files, &crt->pending_file_capacity,
             crt->pending_file_count + 1, sizeof(*crt->pending_files), e)) {
             free(pending->name); free(pending); goto allocation_failed;
@@ -152,7 +162,7 @@ invalid:
 allocation_failed:
     if (!windows_free(r, f.address, 0, e)) okay = false;
 done:
-    free(name); free(mode); return okay;
+    qa_arena_destroy(&scratch); return okay;
 }
 static bool pending_write(guest_windows *r, windows_stdio_file *f, qa_error *e)
 {
