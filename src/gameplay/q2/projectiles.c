@@ -99,30 +99,7 @@ qa_attack q2_projectile_attack(qa_q2_game *g, qa_actor_id id, const q2_projectil
 }
 bool q2_projectile_loop(qa_q2_game *g, q2_actor *a, qa_string_id resource, bool stop_previous,
                         qa_error *e) {
-    if (resource == a->projectile.loop_sound)
-        return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, a->id, &body, e))
-        return false;
-    qa_builtin_event event = {.kind = QA_BUILTIN_STOP_SOUND,
-                              .family = QA_GAME_Q2,
-                              .provider = g->options.owner,
-                              .actor = a->id,
-                              .time_ns = g->now_ns,
-                              .origin = body.origin,
-                              .channel = 0,
-                              .volume = 1,
-                              .attenuation = 1,
-                              .resource = a->projectile.loop_sound};
-    a->projectile.loop_sound = resource;
-    if (stop_previous && event.resource != 0 && !qa_builtin_emit(&g->services, &event, e))
-        return false;
-    if (resource == 0 || !q2_actor_live(g, a->id) || a->projectile.loop_sound != resource)
-        return true;
-    event.kind = QA_BUILTIN_SOUND;
-    event.resource = resource;
-    event.flags = 1;
-    return qa_builtin_emit(&g->services, &event, e);
+    return q2_actor_loop(g,a->id,&a->projectile.loop_sound,resource,0,stop_previous,e);
 }
 bool q2_projectile_noise(qa_q2_game *g, const q2_projectile *p, qa_vec3 origin, qa_error *e) {
     return !live(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) || q2_noise_for_actor(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), origin, true, e);
@@ -1181,7 +1158,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
             return true;
         if (fuse <= 0)
             return grenade_explode(g, id, (qa_actor_id){0}, e);
-        if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_HGRENT1A, 1, 1, e))
+        if (!q2_sound(c, Q2_NAME_SOUND_WEAPONS_HGRENT1A, 1, 1, e))
             return false;
         if (!live(g, id) || !live(g, c->actor->id))
             return true;

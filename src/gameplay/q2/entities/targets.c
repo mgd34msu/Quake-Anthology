@@ -63,9 +63,9 @@ static bool key_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error 
         if (!q2_entity_message(g, a, activator, message, e))
             return false;
         return !q2_actor_live(g, activator) ||
-               q2_player_sound(g, activator, QA_Q2_SOUND_MISC_KEYTRY, 0, e);
+               q2_player_sound(g, activator, Q2_NAME_SOUND_MISC_KEYTRY, 0, e);
     }
-    if (!q2_player_sound(g, activator, QA_Q2_SOUND_MISC_KEYUSE, 0, e))
+    if (!q2_player_sound(g, activator, Q2_NAME_SOUND_MISC_KEYUSE, 0, e))
         return false;
     if (!q2_actor_live(g, a->id) || !q2_actor_live(g, activator))
         return true;

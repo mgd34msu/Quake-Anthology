@@ -82,7 +82,7 @@ static bool reserve(q2_weapon_call *c, bool *reserved, qa_error *e) {
     c->state->hand_reservation = QA_Q2_HAND_FINITE;
     *reserved = true;
     if (c->rerelease && before > c->definition->warning && before - 1 <= c->definition->warning &&
-        !q2_sound(c, QA_Q2_SOUND_WEAPONS_LOWAMMO, 0, 1, e))
+        !q2_sound(c, Q2_NAME_SOUND_WEAPONS_LOWAMMO, 0, 1, e))
         return false;
     return c->game->hooks.ammo_changed == NULL ||
            c->game->hooks.ammo_changed(c->game->hooks.context, c->actor->id, item, e);
@@ -153,8 +153,8 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
     int idle = d->fire_last + 1, ready = c->rerelease && hand ? d->idle_last + 1 : idle;
     int sound_frame = hand || trap ? 5 : 99, hold_frame = hand || trap ? 11 : 1,
         fire_frame = hand || trap ? 12 : 2;
-    const char *cock = hand ? QA_Q2_SOUND_WEAPONS_HGRENA1B : QA_Q2_SOUND_WEAPONS_TRAPCOCK;
-    const char *loop = hand ? QA_Q2_SOUND_WEAPONS_HGRENC1B : trap ? QA_Q2_SOUND_WEAPONS_TRAPLOOP : "";
+    q2_runtime_name cock = hand ? Q2_NAME_SOUND_WEAPONS_HGRENA1B : Q2_NAME_SOUND_WEAPONS_TRAPCOCK;
+    q2_runtime_name loop = hand ? Q2_NAME_SOUND_WEAPONS_HGRENC1B : trap ? Q2_NAME_SOUND_WEAPONS_TRAPLOOP : Q2_NAME_NONE;
     bool explodes = hand || (trap && !c->rerelease);
     uint64_t now = c->now_ns;
     if (s->handoff == QA_Q2_PRIMARY_HOLSTERING)
@@ -231,7 +231,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
         if ((!c->rerelease || !s->grenade_blew_up) && !q2_loop(c, loop, e))
             return false;
         if (explodes && !s->grenade_blew_up && now >= s->grenade_ns) {
-            if ((c->rerelease && !q2_power_sound(c, e)) || !q2_loop(c, "", e) ||
+            if ((c->rerelease && !q2_power_sound(c, e)) || !q2_loop(c, Q2_NAME_NONE, e) ||
                 !q2_throw(c, true, e))
                 return false;
             s->grenade_blew_up = true;
@@ -251,7 +251,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
             if (c->rerelease && !q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
         } else if (c->rerelease) {
             ++s->frame;
-            if (!q2_power_sound(c, e) || !q2_loop(c, "", e) || !q2_throw(c, false, e))
+            if (!q2_power_sound(c, e) || !q2_loop(c, Q2_NAME_NONE, e) || !q2_throw(c, false, e))
                 return false;
             s->grenade_finished_ns = q2_deadline(now, wait);
             if (!q2_animation(c, c->input.ducked ? 0 : 2, c->input.ducked ? 159 : 119,
@@ -260,7 +260,7 @@ bool q2_throw_frame(q2_weapon_call *c, qa_error *e) {
         }
     }
     if (!c->rerelease && s->frame == fire_frame)
-        if (!q2_loop(c, "", e) || !q2_throw(c, !hand && !trap, e))
+        if (!q2_loop(c, Q2_NAME_NONE, e) || !q2_throw(c, !hand && !trap, e))
             return false;
     if (c->rerelease && !q2_animation_deadline(c, now, 0, &s->think_ns, e)) return false;
     if (s->frame == d->fire_last && now < (c->rerelease ? s->grenade_finished_ns : s->grenade_ns))

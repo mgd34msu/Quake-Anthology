@@ -190,29 +190,8 @@ bool q2_player_print(qa_q2_game *g, qa_actor_id id, int level, const char *text,
             .kind = QA_Q2_PLAYER_PRINT, .actor = id, .level = level, .text = text},
         e);
 }
-bool q2_player_sound(qa_q2_game *g, qa_actor_id id, const char *path, int channel, qa_error *e) {
-    if (!q2_actor_live(g, id))
-        return true;
-    qa_body_state body;
-    qa_string_id sound;
-    if (!qa_world_body_read(g->services.world, id, &body, e))
-        return !q2_actor_live(g, id);
-    if (!q2_actor_live(g, id))
-        return true;
-    if (!qa_builtin_resource(&g->services, path, &sound, e))
-        return false;
-    return qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                                               .family = QA_GAME_Q2,
-                                               .provider = g->options.owner,
-                                               .actor = id,
-                                               .resource = sound,
-                                               .origin = body.origin,
-                                               .channel = channel,
-                                               .volume = 1,
-                                               .attenuation = 1,
-                                               .time_ns = g->now_ns},
-                           e);
+bool q2_player_sound(qa_q2_game *g, qa_actor_id id, q2_runtime_name name, int channel, qa_error *e) {
+    return q2_emit_sound(g,id,NULL,g->runtime_names[name],channel,1,1,0,e);
 }
 bool q2_player_observe(qa_q2_game *g, q2_actor *a, qa_q2_player_movement *m, qa_error *e) {
     qa_q2_player_services *s = &g->player_runtime->services;

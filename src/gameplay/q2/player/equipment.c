@@ -19,7 +19,7 @@ bool q2_client_sphere_camera(qa_q2_game *g, qa_actor_id id, qa_actor_id sphere, 
     if (sphere.registry) {
         bool first = !s->rule.sphere_camera.registry;
         if (first) {
-            if (!q2_player_sound(g, id, QA_Q2_SOUND_MISC_UDEATH, 4, e))
+            if (!q2_player_sound(g, id, Q2_NAME_SOUND_MISC_UDEATH, 4, e))
                 return false;
             for (int i = 0; i < 5 && q2_actor_live(g, id); i++)
                 if (!q2_spawn_gib(g, id,
@@ -178,7 +178,7 @@ bool q2_client_item_action(qa_q2_game *g, qa_actor_id id, bool flashlight, bool 
     if (!reachable || !count) {
         if (!send_poi(g, a, e))
             return false;
-        return !q2_actor_live(g, id) || q2_player_sound(g, id, QA_Q2_SOUND_MISC_HELP_MARKER, 0, e);
+        return !q2_actor_live(g, id) || q2_player_sound(g, id, Q2_NAME_SOUND_MISC_HELP_MARKER, 0, e);
     }
     if (count > 128)
         count = 128;

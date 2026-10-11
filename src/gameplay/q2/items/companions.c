@@ -21,37 +21,7 @@ static bool set_body(qa_q2_game *g, q2_actor *a, const qa_body_state *body, qa_e
            (!q2_actor_live(g, a->id) || qa_world_link(g->services.world, a->id, NULL, e));
 }
 static bool loop(qa_q2_game *g, q2_actor *a, q2_runtime_name name, qa_error *e) {
-    q2_companion *c = a->item->companion;
-    qa_string_id sound=g->runtime_names[name];
-    if (c->loop_sound == sound)
-        return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, a->id, &body, e))
-        return false;
-    if (c->loop_sound && !qa_builtin_emit(&g->services,
-                                          &(qa_builtin_event){.kind = QA_BUILTIN_STOP_SOUND,
-                                                              .family = QA_GAME_Q2,
-                                                              .provider = g->options.owner,
-                                                              .actor = a->id,
-                                                              .resource = c->loop_sound,
-                                                              .time_ns = g->now_ns},
-                                          e))
-        return false;
-    if (!q2_actor_live(g, a->id))
-        return true;
-    c->loop_sound = sound;
-    return qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                                               .family = QA_GAME_Q2,
-                                               .provider = g->options.owner,
-                                               .actor = a->id,
-                                               .origin = body.origin,
-                                               .resource = sound,
-                                               .volume = 1,
-                                               .attenuation = 1,
-                                               .flags = 1,
-                                               .time_ns = g->now_ns},
-                           e);
+    return q2_actor_loop(g,a->id,&a->item->companion->loop_sound,g->runtime_names[name],0,true,e);
 }
 static bool expire(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_companion *c = a->item->companion;

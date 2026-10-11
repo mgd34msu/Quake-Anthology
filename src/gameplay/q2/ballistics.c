@@ -558,7 +558,7 @@ static bool chainfist_run(q2_weapon_call *c, qa_builtin_actor_snapshot *snapshot
     }
     if (hit && s->empty_sound_ns < c->now_ns) {
         s->empty_sound_ns = q2_deadline(c->now_ns, 500 * Q2_MS);
-        if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_SAWSLICE, 1, 1, e))
+        if (!q2_sound(c, Q2_NAME_SOUND_WEAPONS_SAWSLICE, 1, 1, e))
             return false;
     }
     if (!q2_noise(c, start, e))

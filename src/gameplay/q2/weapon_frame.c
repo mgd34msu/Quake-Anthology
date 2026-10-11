@@ -133,7 +133,7 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
             if (!q2_actor_live(c->game, c->actor->id))
                 return true;
             if (fastswitch != 0)
-                return q2_loop(c, "", e) && q2_change_weapon(c, e);
+                return q2_loop(c, Q2_NAME_NONE, e) && q2_change_weapon(c, e);
         }
         if (s->frame == idle + 1)
             s->phase = QA_Q2_READY;

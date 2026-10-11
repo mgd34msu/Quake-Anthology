@@ -39,15 +39,15 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         if (!q2_actor_live(g, a->id))
             return true;
         if (!q2_player_sound(g, a->id,
-                             level == 0            ? QA_Q2_SOUND_PLAYER_WATR_OUT
-                             : (m->water_type & 8) ? QA_Q2_SOUND_PLAYER_LAVA_IN
-                                                   : QA_Q2_SOUND_PLAYER_WATR_IN,
+                             level == 0            ? Q2_NAME_SOUND_PLAYER_WATR_OUT
+                             : (m->water_type & 8) ? Q2_NAME_SOUND_PLAYER_LAVA_IN
+                                                   : Q2_NAME_SOUND_PLAYER_WATR_IN,
                              4, e))
             return false;
     }
     if (!q2_actor_live(g, a->id))
         return true;
-    if (old != 3 && level == 3 && !q2_player_sound(g, a->id, QA_Q2_SOUND_PLAYER_WATR_UN, 4, e))
+    if (old != 3 && level == 3 && !q2_player_sound(g, a->id, Q2_NAME_SOUND_PLAYER_WATR_UN, 4, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -56,12 +56,12 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         return false;
     if (old == 3 && level != 3 && (!rr || combat.health > 0)) {
         if (s->rule.air_ns < now) {
-            if (!q2_player_sound(g, a->id, QA_Q2_SOUND_PLAYER_GASP1, 2, e))
+            if (!q2_player_sound(g, a->id, Q2_NAME_SOUND_PLAYER_GASP1, 2, e))
                 return false;
             if (q2_actor_live(g, a->id) && !q2_player_noise(g, a->id, body.origin, false, e))
                 return false;
         } else if (s->rule.air_ns < q2_deadline(now, 11 * Q2_NS) &&
-                   !q2_player_sound(g, a->id, QA_Q2_SOUND_PLAYER_GASP2, 2, e))
+                   !q2_player_sound(g, a->id, Q2_NAME_SOUND_PLAYER_GASP2, 2, e))
             return false;
     }
     if (!q2_actor_live(g, a->id))
@@ -79,7 +79,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
             if (remainder % (rr ? 2500u : 25u) == 0) {
                 if (!q2_player_sound(
                         g, a->id,
-                        s->rule.breather_sound ? QA_Q2_SOUND_PLAYER_U_BREATH2 : QA_Q2_SOUND_PLAYER_U_BREATH1, 0, e))
+                        s->rule.breather_sound ? Q2_NAME_SOUND_PLAYER_U_BREATH2 : Q2_NAME_SOUND_PLAYER_U_BREATH1, 0, e))
                     return false;
                 s->rule.breather_sound ^= 1;
                 if (!q2_actor_live(g, a->id))
@@ -93,10 +93,10 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         if (s->rule.air_ns < now && s->rule.drown_ns < now && combat.health > 0) {
             s->rule.drown_ns = q2_deadline(now, Q2_NS);
             s->rule.drown_damage = s->rule.drown_damage + 2 > 15 ? 15 : s->rule.drown_damage + 2;
-            const char *sound = combat.health <= (float)s->rule.drown_damage
-                                    ? (rr ? QA_Q2_SOUND__DROWN1 : QA_Q2_SOUND_PLAYER_DROWN1)
-                                : q2_random(g) < .5f ? QA_Q2_SOUND__GURP2
-                                                     : QA_Q2_SOUND__GURP1;
+            q2_runtime_name sound = combat.health <= (float)s->rule.drown_damage
+                                    ? (rr ? Q2_NAME_SOUND__DROWN1 : Q2_NAME_SOUND_PLAYER_DROWN1)
+                                : q2_random(g) < .5f ? Q2_NAME_SOUND__GURP2
+                                                     : Q2_NAME_SOUND__GURP1;
             if (!q2_player_sound(g, a->id, sound, 2, e))
                 return false;
             if (!q2_actor_live(g, a->id))
@@ -105,8 +105,8 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
             if (!q2_player_environment_damage(g, a, (float)s->rule.drown_damage, 17, 2, e))
                 return false;
         } else if (rr && s->rule.air_ns <= q2_deadline(now, 3 * Q2_NS) && s->rule.drown_ns < now) {
-            char sound[32];
-            snprintf(sound, sizeof(sound), "player/wade%u.wav", 1 + (unsigned)((now / Q2_NS) % 3));
+            static const q2_runtime_name wade[]={Q2_NAME_SOUND_PLAYER_WADE1,Q2_NAME_SOUND_PLAYER_WADE2,Q2_NAME_SOUND_PLAYER_WADE3};
+            q2_runtime_name sound=wade[(now/Q2_NS)%3];
             s->rule.drown_ns = q2_deadline(now, Q2_NS);
             if (!q2_player_sound(g, a->id, sound, 2, e))
                 return false;
@@ -124,7 +124,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
             if (combat.health > 0 && s->rule.pain_ns <= now && powers.invulnerability_until_ns < now) {
                 s->rule.pain_ns = q2_deadline(now, Q2_NS);
                 if (!q2_player_sound(g, a->id,
-                                     q2_random(g) < .5f ? QA_Q2_SOUND_PLAYER_BURN2 : QA_Q2_SOUND_PLAYER_BURN1,
+                                     q2_random(g) < .5f ? Q2_NAME_SOUND_PLAYER_BURN2 : Q2_NAME_SOUND_PLAYER_BURN1,
                                      2, e))
                     return false;
             }

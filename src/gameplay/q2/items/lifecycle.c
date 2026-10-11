@@ -54,25 +54,7 @@ bool qa_q2_items_configure(qa_q2_game *g, const qa_q2_item_options *options, qa_
     return true;
 }
 bool q2_item_sound(qa_q2_game *g, qa_actor_id id, qa_string_id sound, qa_error *e) {
-    if (!q2_actor_live(g, id))
-        return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, e))
-        return !q2_actor_live(g, id);
-    if (!q2_actor_live(g, id))
-        return true;
-    return qa_builtin_emit(&g->services,
-                           &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
-                                               .family = QA_GAME_Q2,
-                                               .provider = g->options.owner,
-                                               .actor = id,
-                                               .resource = sound,
-                                               .origin = body.origin,
-                                               .channel = 3,
-                                               .volume = 1,
-                                               .attenuation = 1,
-                                               .time_ns = g->now_ns},
-                           e);
+    return q2_emit_sound(g,id,NULL,sound,3,1,1,0,e);
 }
 bool q2_item_visual(qa_q2_game *g, q2_actor *a, qa_error *e) {
     a->item->visual.visible = a->item->visible;

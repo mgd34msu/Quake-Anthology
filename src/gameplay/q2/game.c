@@ -599,7 +599,7 @@ bool q2_consume(q2_weapon_call *c, int quantity, bool honor_infinite, qa_error *
     if (!q2_ammo(c, &after, e))
         return false;
     if (c->rerelease && before > c->definition->warning && after <= c->definition->warning &&
-        !q2_sound(c, QA_Q2_SOUND_WEAPONS_LOWAMMO, 0, 1, e))
+        !q2_sound(c, Q2_NAME_SOUND_WEAPONS_LOWAMMO, 0, 1, e))
         return false;
     return !q2_actor_live(g, c->actor->id) || g->hooks.ammo_changed == NULL ||
            g->hooks.ammo_changed(g->hooks.context, c->actor->id, ammo, e);

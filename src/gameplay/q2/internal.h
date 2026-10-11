@@ -478,8 +478,12 @@ bool q2_count(qa_q2_game *, qa_actor_id, qa_item_id, int *, qa_error *);
 bool q2_ammo(q2_weapon_call *, int *, qa_error *);
 bool q2_infinite_ammo(const q2_weapon_call *);
 bool q2_consume(q2_weapon_call *, int, bool honor_infinite, qa_error *);
-bool q2_sound(q2_weapon_call *, const char *, int, float attenuation, qa_error *);
-bool q2_loop(q2_weapon_call *, const char *, qa_error *);
+bool q2_emit_sound(qa_q2_game *, qa_actor_id, const qa_vec3 *origin, qa_string_id,
+    int channel, float volume, float attenuation, uint32_t flags, qa_error *);
+bool q2_actor_loop(qa_q2_game *, qa_actor_id, qa_string_id *current, qa_string_id next,
+    int channel, bool stop_previous, qa_error *);
+bool q2_sound(q2_weapon_call *, q2_runtime_name, int, float attenuation, qa_error *);
+bool q2_loop(q2_weapon_call *, q2_runtime_name, qa_error *);
 bool q2_event(q2_weapon_call *, qa_builtin_event_kind, int, qa_vec3, qa_vec3, qa_error *);
 bool q2_event_named(q2_weapon_call *, qa_builtin_event_kind, const char *, int,
     qa_vec3, qa_vec3, qa_error *);

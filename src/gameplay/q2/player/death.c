@@ -45,7 +45,7 @@ static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     return qa_world_set_collision(g->services.world, a->id, rr ? &collision : NULL, e);
 }
 static bool throw_gibs(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
-    if (!q2_player_sound(g, a->id, QA_Q2_SOUND_MISC_UDEATH, 4, e))
+    if (!q2_player_sound(g, a->id, Q2_NAME_SOUND_MISC_UDEATH, 4, e))
         return false;
     for (int i = 0; i < 4 && q2_actor_live(g, a->id); i++)
         if (!q2_spawn_gib(g, a->id, "models/objects/gibs/sm_meat/tris.md2", damage, 0, 0, 1, e))
@@ -452,8 +452,8 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
             s->rule.animation_priority = 5;
             s->rule.visual.frame = movement.ducked ? 172 : index == 0 ? 177 : index == 1 ? 183 : 189;
             s->rule.animation_end = movement.ducked ? 177 : index == 0 ? 183 : index == 1 ? 189 : 197;
-            char sound[32];
-            snprintf(sound, sizeof(sound), "*death%d.wav", (int)(q2_random(g) * 4) + 1);
+            static const q2_runtime_name deaths[]={Q2_NAME_SOUND__DEATH1,Q2_NAME_SOUND__DEATH2,Q2_NAME_SOUND__DEATH3,Q2_NAME_SOUND__DEATH4};
+            q2_runtime_name sound=deaths[(int)(q2_random(g)*4)];
             if (!q2_player_sound(g, a->id, sound, 2, e))
                 goto fail;
         }

@@ -87,7 +87,7 @@ static bool wind_sound(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     if (r->wind[slot].until_ns >= g->now_ns)
         return true;
     r->wind[slot].until_ns = q2_deadline(g->now_ns, 1500 * Q2_MS);
-    return q2_player_sound(g, id, QA_Q2_SOUND_MISC_WINDFLY, 0, e);
+    return q2_player_sound(g, id, Q2_NAME_SOUND_MISC_WINDFLY, 0, e);
 }
 bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
@@ -348,7 +348,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
                         : g->frame_ns && ((g->now_ns + g->frame_ns / 2) / g->frame_ns) % 10 == 0;
         if (!(s->spawnflags & 4) && sound) {
             s->sound_ns = q2_deadline(g->now_ns, Q2_NS);
-            if (!q2_player_sound(g, id, QA_Q2_SOUND_WORLD_ELECTRO, 0, e))
+            if (!q2_player_sound(g, id, Q2_NAME_SOUND_WORLD_ELECTRO, 0, e))
                 return false;
             if (!q2_actor_live(g, a->id) || !q2_actor_live(g, id))
                 return true;

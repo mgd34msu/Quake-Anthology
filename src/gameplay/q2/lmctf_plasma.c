@@ -38,7 +38,7 @@ bool q2_lmctf_plasma_weapon(q2_weapon_call *c, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
     bool activating = s->phase == QA_Q2_ACTIVATING && s->frame == 3;
     if (s->phase == QA_Q2_READY && s->frame == 35 && !c->input.attack && !s->latched_attack &&
-        s->pending == QA_Q2_WEAPON_NONE && !q2_sound(c, QA_Q2_SOUND_WEAPONS_PLASMA_VENT, 1, 1, e))
+        s->pending == QA_Q2_WEAPON_NONE && !q2_sound(c, Q2_NAME_SOUND_WEAPONS_PLASMA_VENT, 1, 1, e))
         return false;
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
@@ -139,7 +139,7 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
         ++c->state->frame;
         if (c->now_ns >= c->state->empty_sound_ns) {
             c->state->empty_sound_ns = q2_deadline(c->now_ns, Q2_NS);
-            if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_PLASMA_EMPTY, 2, 1, e))
+            if (!q2_sound(c, Q2_NAME_SOUND_WEAPONS_PLASMA_EMPTY, 2, 1, e))
                 return false;
         }
         return !q2_actor_live(g, c->actor->id) || q2_no_ammo(c, false, e);
@@ -152,7 +152,7 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
         q2_recoil(c, &kick_origin, &kick_angles);
         q2_kick(c, qa_vec_scale(forward, -2), kick_angles, c->rerelease ? 0.2f : 0);
         bool bounce = c->actor->lmctf_plasma_bounce;
-        if (!q2_sound(c, bounce ? QA_Q2_SOUND_WEAPONS_PLASMA_FIRE1 : QA_Q2_SOUND_WEAPONS_PLASMA_FIRE2, 1, 1,
+        if (!q2_sound(c, bounce ? Q2_NAME_SOUND_WEAPONS_PLASMA_FIRE1 : Q2_NAME_SOUND_WEAPONS_PLASMA_FIRE2, 1, 1,
                       e) ||
             !launch(c, start, direction, bounce, e))
             return false;
@@ -194,19 +194,9 @@ bool q2_lmctf_plasma_fire(q2_weapon_call *c, qa_error *e) {
         ++c->state->frame;
     return true;
 }
-static bool impact_sound(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, const char *path,
-                         float attenuation, qa_error *e) {
-    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                              .family = QA_GAME_Q2,
-                              .provider = g->options.owner,
-                              .actor = id,
-                              .time_ns = g->now_ns,
-                              .origin = origin,
-                              .channel = 4,
-                              .volume = 1,
-                              .attenuation = attenuation};
-    return qa_builtin_resource(&g->services, path, &event.resource, e) &&
-           qa_builtin_emit(&g->services, &event, e);
+static bool impact_sound(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, q2_runtime_name name,
+    float attenuation, qa_error *e) {
+    return q2_emit_sound(g,id,&origin,g->runtime_names[name],4,1,attenuation,0,e);
 }
 bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     q2_actor *a = q2_actor_get(g, contact->self, false, e);
@@ -264,8 +254,8 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
     if (!q2_actor_live(g, a->id))
         return true;
     if (bounce && !hurt)
-        return impact_sound(g, a->id, body.origin, QA_Q2_SOUND_WEAPONS_PLASMA_BOUNCE, 3, e);
-    if (!impact_sound(g, a->id, body.origin, QA_Q2_SOUND_WEAPONS_PLASMA_HIT, 2, e))
+        return impact_sound(g, a->id, body.origin, Q2_NAME_SOUND_WEAPONS_PLASMA_BOUNCE, 3, e);
+    if (!impact_sound(g, a->id, body.origin, Q2_NAME_SOUND_WEAPONS_PLASMA_HIT, 2, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;

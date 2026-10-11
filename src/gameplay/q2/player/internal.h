@@ -43,7 +43,7 @@ bool q2_player_animate_reference(qa_q2_game *, qa_actor_id, const qa_body_state 
                                  qa_error *);
 bool q2_player_emit(qa_q2_game *, const qa_q2_player_event *, qa_error *);
 bool q2_player_print(qa_q2_game *, qa_actor_id, int, const char *, qa_error *);
-bool q2_player_sound(qa_q2_game *, qa_actor_id, const char *, int, qa_error *);
+bool q2_player_sound(qa_q2_game *, qa_actor_id, q2_runtime_name, int, qa_error *);
 bool q2_player_jump(qa_q2_game *, qa_actor_id, qa_vec3 origin, qa_error *);
 bool q2_player_loop(qa_q2_game *, q2_actor *, qa_string_id, qa_error *);
 bool q2_player_clear_powerups(qa_q2_game *, q2_actor *, qa_error *);

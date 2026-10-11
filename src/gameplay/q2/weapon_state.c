@@ -175,7 +175,7 @@ bool q2_no_ammo(q2_weapon_call *c, bool sound, qa_error *e) {
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
     if (sound && c->now_ns >= c->state->empty_sound_ns) {
-        if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_NOAMMO, c->rerelease ? 1 : 2, 1, e))
+        if (!q2_sound(c, Q2_NAME_SOUND_WEAPONS_NOAMMO, c->rerelease ? 1 : 2, 1, e))
             return false;
         c->state->empty_sound_ns = q2_deadline(c->now_ns, Q2_NS);
         if (!q2_actor_live(c->game, c->actor->id))
@@ -274,12 +274,12 @@ bool q2_change_weapon(q2_weapon_call *c, qa_error *e) {
         s->handoff = QA_Q2_PRIMARY_HOLSTERED;
         s->pending = QA_Q2_WEAPON_NONE;
         s->latched_attack = s->fire_buffered = false;
-        return q2_loop(c, "", e);
+        return q2_loop(c, Q2_NAME_NONE, e);
     }
     s->handoff = QA_Q2_PRIMARY_ACTIVE;
     if (s->weapon != QA_Q2_WEAPON_NONE && s->pending != QA_Q2_WEAPON_NONE &&
         s->pending != s->weapon && c->rerelease)
-        if (!q2_sound(c, QA_Q2_SOUND_WEAPONS_CHANGE, 1, 1, e))
+        if (!q2_sound(c, Q2_NAME_SOUND_WEAPONS_CHANGE, 1, 1, e))
             return false;
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
@@ -290,7 +290,7 @@ bool q2_change_weapon(q2_weapon_call *c, qa_error *e) {
     s->view_model = 0;
     s->view_skin = 0;
     c->definition = qa_q2_weapon_definition_at(c->game, s->weapon);
-    if (!q2_loop(c, "", e))
+    if (!q2_loop(c, Q2_NAME_NONE, e))
         return false;
     if (!q2_actor_live(c->game, c->actor->id))
         return true;
@@ -374,9 +374,9 @@ static bool run(q2_weapon_call *c, qa_error *e) {
             else if (!chainfist_smoke(c, e))
                 return false;
             if (!q2_loop(c,
-                         s->phase == QA_Q2_FIRING     ? QA_Q2_SOUND_WEAPONS_SAWHIT
-                         : s->phase == QA_Q2_DROPPING ? ""
-                                                      : QA_Q2_SOUND_WEAPONS_SAWIDLE,
+                         s->phase == QA_Q2_FIRING     ? Q2_NAME_SOUND_WEAPONS_SAWHIT
+                         : s->phase == QA_Q2_DROPPING ? Q2_NAME_NONE
+                                                      : Q2_NAME_SOUND_WEAPONS_SAWIDLE,
                          e))
                 return false;
         } else if (w == QA_Q2_ETF_RIFLE && s->phase == QA_Q2_FIRING) {
@@ -388,7 +388,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
         } else if (w == QA_Q2_HEATBEAM) {
             s->view_model = 0;
             if (s->phase == QA_Q2_FIRING) {
-                if (!q2_loop(c, QA_Q2_SOUND_WEAPONS_BFG__L1A, e))
+                if (!q2_loop(c, Q2_NAME_SOUND_WEAPONS_BFG__L1A, e))
                     return false;
                 int ammo;
                 if (!q2_ammo(c, &ammo, e))
@@ -399,7 +399,7 @@ static bool run(q2_weapon_call *c, qa_error *e) {
                     s->view_model=c->game->runtime_names[Q2_NAME_RESOURCE_MODELS_WEAPONS_V_BEAMER2_TRIS_MD2];
                 } else
                     s->frame = 13;
-            } else if (!q2_loop(c, "", e))
+            } else if (!q2_loop(c, Q2_NAME_NONE, e))
                 return false;
         }
     }
@@ -411,9 +411,9 @@ static bool run(q2_weapon_call *c, qa_error *e) {
         if (c->rerelease)
             return chainfist_smoke(c, e) &&
                    q2_loop(c,
-                           s->phase == QA_Q2_FIRING     ? QA_Q2_SOUND_WEAPONS_SAWHIT
-                           : s->phase == QA_Q2_DROPPING ? ""
-                                                        : QA_Q2_SOUND_WEAPONS_SAWIDLE,
+                           s->phase == QA_Q2_FIRING     ? Q2_NAME_SOUND_WEAPONS_SAWHIT
+                           : s->phase == QA_Q2_DROPPING ? Q2_NAME_NONE
+                                                        : Q2_NAME_SOUND_WEAPONS_SAWIDLE,
                            e);
         if (q2_continues(c) && (s->frame == 13 || s->frame == 23 || s->frame == 32)) {
             last_sequence = s->frame;
@@ -548,12 +548,12 @@ static bool weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input 
                 return true;
             if (c.input.source_rules == QA_Q2_WEAPON_RULES_LMCTF) {
                 if (c.input.haste) {
-                    if (a->weapon.source_firing && !q2_sound(&c, QA_Q2_SOUND_PLAYER_LAVA1, 3, 1, e))
+                    if (a->weapon.source_firing && !q2_sound(&c, Q2_NAME_SOUND_PLAYER_LAVA1, 3, 1, e))
                         return false;
                     if (a->weapon.frame != 0 && !run(&c, e))
                         return false;
                 } else if (c.input.rune_damage && a->weapon.source_firing &&
-                           !q2_sound(&c, QA_Q2_SOUND_CTF_STRENGTH, 3, 1, e))
+                           !q2_sound(&c, Q2_NAME_SOUND_CTF_STRENGTH, 3, 1, e))
                     return false;
                 if (!q2_actor_live(g, id))
                     return true;

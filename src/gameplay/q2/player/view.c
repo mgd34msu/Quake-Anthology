@@ -56,8 +56,12 @@ static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                        : combat.health < 50 ? 50
                        : combat.health < 75 ? 75
                                             : 100;
-        char sound[32];
-        snprintf(sound, sizeof(sound), "*pain%d_%d.wav", severity, (int)(q2_random(g) * 2) + 1);
+        static const q2_runtime_name pain[4][2]={
+            {Q2_NAME_SOUND__PAIN25_1,Q2_NAME_SOUND__PAIN25_2},
+            {Q2_NAME_SOUND__PAIN50_1,Q2_NAME_SOUND__PAIN50_2},
+            {Q2_NAME_SOUND__PAIN75_1,Q2_NAME_SOUND__PAIN75_2},
+            {Q2_NAME_SOUND__PAIN100_1,Q2_NAME_SOUND__PAIN100_2}};
+        q2_runtime_name sound=pain[severity/25-1][(int)(q2_random(g)*2)];
         s->rule.pain_ns = q2_deadline(g->now_ns, 700 * Q2_MS);
         if (!q2_player_sound(g, a->id, sound, 2, e))
             return false;
@@ -165,41 +169,7 @@ static bool flashing(uint64_t until, uint64_t now) {
            (until - now > 3 * Q2_NS || (((until - now + 50 * Q2_MS) / (100 * Q2_MS)) & 4) != 0);
 }
 bool q2_player_loop(qa_q2_game *g, q2_actor *a, qa_string_id loop, qa_error *e) {
-    if (!q2_actor_live(g, a->id))
-        return true;
-    q2_client_state *s = a->client;
-    if (loop == s->rule.loop_sound)
-        return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, a->id, &body, e))
-        return !q2_actor_live(g, a->id);
-    if (!q2_actor_live(g, a->id))
-        return true;
-    qa_builtin_event event = {.family = QA_GAME_Q2,
-                              .provider = g->options.owner,
-                              .actor = a->id,
-                              .origin = body.origin,
-                              .volume = 1,
-                              .attenuation = 1,
-                              .time_ns = g->now_ns,
-                              .channel = 0};
-    qa_string_id previous = s->rule.loop_sound;
-    s->rule.loop_sound = loop;
-    if (previous) {
-        event.kind = QA_BUILTIN_STOP_SOUND;
-        event.resource = previous;
-        if (!qa_builtin_emit(&g->services, &event, e))
-            return false;
-    }
-    if (!q2_actor_live(g, a->id) || s->rule.loop_sound != loop)
-        return true;
-    if (loop) {
-        event.kind = QA_BUILTIN_SOUND;
-        event.resource = loop;
-        event.flags = 1;
-        return qa_builtin_emit(&g->services, &event, e);
-    }
-    return true;
+    return q2_actor_loop(g,a->id,&a->client->rule.loop_sound,loop,0,true,e);
 }
 static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                     const qa_q2_powerups *powers, const qa_combat_state *combat,
@@ -393,13 +363,13 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     else if (mask & 32)
         view.blend = blend_add(view.blend, qa_v3(.5f, .3f, .2f), .4f);
     static const struct {
-        const char *item, *sound;
+        const char *item; q2_runtime_name sound;
         qa_vec3 color;
         float alpha;
-    } table[] = {{"item_quad", QA_Q2_SOUND_ITEMS_DAMAGE2, {0, 0, 1}, .08f},
-                 {"item_invulnerability", QA_Q2_SOUND_ITEMS_PROTECT2, {1, 1, 0}, .08f},
-                 {"item_enviro", QA_Q2_SOUND_ITEMS_AIROUT, {0, 1, 0}, .08f},
-                 {"item_breather", QA_Q2_SOUND_ITEMS_AIROUT, {.4f, 1, .4f}, .04f}};
+    } table[] = {{"item_quad", Q2_NAME_SOUND_ITEMS_DAMAGE2, {0, 0, 1}, .08f},
+                 {"item_invulnerability", Q2_NAME_SOUND_ITEMS_PROTECT2, {1, 1, 0}, .08f},
+                 {"item_enviro", Q2_NAME_SOUND_ITEMS_AIROUT, {0, 1, 0}, .08f},
+                 {"item_breather", Q2_NAME_SOUND_ITEMS_AIROUT, {.4f, 1, .4f}, .04f}};
     uint64_t until[] = {powers.quad_until_ns, powers.invulnerability_until_ns,
                         powers.enviro_until_ns, powers.breather_until_ns};
     for (size_t i = 0; i < 4; i++)

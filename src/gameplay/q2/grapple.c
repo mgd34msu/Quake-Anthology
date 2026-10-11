@@ -55,27 +55,11 @@ static bool velocity(qa_q2_game *g, qa_actor_id id, qa_vec3 v, qa_error *e) {
     return qa_world_body_write(g->services.world, id, &body, e) &&
            qa_world_link(g->services.world, id, NULL, e);
 }
-static bool sound(qa_q2_game *g, qa_actor_id id, qa_actor_id owner, const char *path, int channel,
-                  float volume, bool reliable, qa_error *e) {
-    if (!q2_actor_live(g, id))
-        return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, e))
-        return false;
-    q2_actor *a = find(g, owner);
-    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                              .family = QA_GAME_Q2,
-                              .provider = g->options.owner,
-                              .actor = id,
-                              .time_ns = g->now_ns,
-                              .origin = body.origin,
-                              .channel = channel,
-                              .volume =
-                                  volume < 0 ? (a != NULL && a->silencer > 0 ? 0.2f : 1) : volume,
-                              .attenuation = 1,
-                              .flags = reliable ? 2u : 0u};
-    return qa_builtin_resource(&g->services, path, &event.resource, e) &&
-           qa_builtin_emit(&g->services, &event, e);
+static bool sound(qa_q2_game *g, qa_actor_id id, qa_actor_id owner, q2_runtime_name name,
+    int channel, float volume, bool reliable, qa_error *e) {
+    q2_actor *a=find(g,owner);
+    if (volume<0) volume=a && a->silencer>0 ? .2f : 1;
+    return q2_emit_sound(g,id,NULL,g->runtime_names[name],channel,volume,1,reliable?2u:0u,e);
 }
 static bool loop(qa_q2_game *g, q2_actor *hook, qa_string_id path, qa_error *e) {
     return q2_projectile_loop(g, hook, path, true, e);
@@ -91,12 +75,11 @@ static q2_anchor anchor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind, 
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
     if (!record)
         return ANCHOR_NONE;
-    const char *name =
-        qa_strings_cstr(qa_session_strings(g->services.session),
-                        traits.classname != 0 ? traits.classname : record->definition);
-    if (name != NULL && strcmp(name, "bodyque") == 0)
-        return ANCHOR_CORPSE;
-    if (kind == QA_Q2_LMCTF_GRAPPLE && name != NULL &&
+    qa_string_id classname=traits.classname?traits.classname:record->definition;
+    if (classname==g->runtime_names[Q2_NAME_BODYQUE]) return ANCHOR_CORPSE;
+    const char *name=kind==QA_Q2_LMCTF_GRAPPLE?
+        qa_strings_cstr(qa_session_strings(g->services.session),classname):NULL;
+    if (name != NULL &&
         (strncmp(name, "info_flag", 9) == 0 || strncmp(name, "func", 4) == 0))
         return ANCHOR_BRUSH;
     qa_physics_properties physical;
@@ -193,7 +176,7 @@ bool qa_q2_grapple_reset(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
                 return false;
         }
     } else if (q2_actor_live(g, hook_id)) {
-        if (!sound(g, id, id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRRESET, 1, -1,
+        if (!sound(g, id, id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRRESET, 1, -1,
                    g->options.edition == QA_Q2_CLASSIC, e))
             return false;
         if (!q2_actor_live(g, id) || !qa_actor_id_equal(s->hook, hook_id))
@@ -348,11 +331,11 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         if (!attach(g, hook, contact->other, classification, e))
             return false;
         if (g->options.edition == QA_Q2_CLASSIC &&
-            !sound(g, owner_id, owner_id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRPULL, 1, -1, true, e))
+            !sound(g, owner_id, owner_id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRPULL, 1, -1, true, e))
             return false;
         if (!q2_actor_live(g, hook_id))
             return true;
-        if (!sound(g, hook_id, owner_id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHIT, 1, -1, false, e))
+        if (!sound(g, hook_id, owner_id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRHIT, 1, -1, false, e))
             return false;
         if (!q2_actor_live(g, hook_id))
             return true;
@@ -374,11 +357,11 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
                     player = g->hooks.grapple_player_hit(g->hooks.context, contact->other);
                 if (player &&
                     !sound(g, hook_id, owner_id,
-                           repeated ? QA_Q2_SOUND_WEAPONS_GRAPPLE_GKILLING : QA_Q2_SOUND_WEAPONS_GRAPPLE_GHIT,
+                           repeated ? Q2_NAME_SOUND_WEAPONS_GRAPPLE_GKILLING : Q2_NAME_SOUND_WEAPONS_GRAPPLE_GHIT,
                            0, 1, false, e))
                     return false;
                 if (!player && !repeated &&
-                    !sound(g, hook_id, owner_id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GHITWALL, 0, 0.8f, false, e))
+                    !sound(g, hook_id, owner_id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GHITWALL, 0, 0.8f, false, e))
                     return false;
                 if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, owner_id))
                     return true;
@@ -512,7 +495,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
            : Q2_SHOT_MASK;
     s->hook = id;
     s->phase = QA_Q2_GRAPPLE_FLY;
-    if (lm && !sound(g, owner->id, owner->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFIRE, 0, 0.8f, false, e))
+    if (lm && !sound(g, owner->id, owner->id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRFIRE, 0, 0.8f, false, e))
         return false;
     if (!q2_actor_live(g, id) || !q2_actor_live(g, owner->id))
         return true;
@@ -602,7 +585,7 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_vec3 start, direction;
     if (!project_pose(&call, false, &p, &start, &direction, e))
         return false;
-    if (!call.rerelease && !sound(g, a->id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFIRE, 1, -1, true, e))
+    if (!call.rerelease && !sound(g, a->id, a->id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRFIRE, 1, -1, true, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
@@ -612,7 +595,7 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (call.rerelease && launched &&
-        !sound(g, a->id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRFIRE, 1, -1, false, e))
+        !sound(g, a->id, a->id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRFIRE, 1, -1, false, e))
         return false;
     call.now_ns = g->now_ns;
     return !q2_actor_live(g, a->id) || q2_noise(&call, start, e);
@@ -750,7 +733,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
                 return false;
             if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, a->id))
                 return true;
-            if (!sound(g, hook_id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHURT, 1, -1, false, e))
+            if (!sound(g, hook_id, a->id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRHURT, 1, -1, false, e))
                 return false;
         }
         if (!q2_actor_live(g, hook_id) || !q2_actor_live(g, a->id))
@@ -796,7 +779,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
         } else {
             qa_q2_grapple_motion change = {.set_prediction = true, .prediction_suppressed = true};
             if (!motion(g, a->id, &change, e) ||
-                !sound(g, a->id, a->id, QA_Q2_SOUND_WEAPONS_GRAPPLE_GRHANG, 1, -1, true, e))
+                !sound(g, a->id, a->id, Q2_NAME_SOUND_WEAPONS_GRAPPLE_GRHANG, 1, -1, true, e))
                 return false;
         }
     }
@@ -832,7 +815,7 @@ bool q2_grapple_think(qa_q2_game *g, q2_actor *hook, qa_error *e) {
         return true;
     bool flying = qa_actor_reference_present(hook->projectile.enemy) == 0;
     if (!sound(g, hook->id, owner->id,
-               flying ? QA_Q2_SOUND_WEAPONS_GRAPPLE_GFLYAIR : QA_Q2_SOUND_WEAPONS_GRAPPLE_GPULLING, 0, 1, false,
+               flying ? Q2_NAME_SOUND_WEAPONS_GRAPPLE_GFLYAIR : Q2_NAME_SOUND_WEAPONS_GRAPPLE_GPULLING, 0, 1, false,
                e))
         return false;
     if (q2_actor_live(g, hook->id))

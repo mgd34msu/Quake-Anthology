@@ -52,20 +52,7 @@ static bool player_start(qa_q2_game *g, qa_actor_id id) {
 }
 static bool mine_sound(qa_q2_game *g, q2_actor *a, q2_runtime_name name, int channel, float attenuation,
                        qa_error *e) {
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, a->id, &body, e))
-        return false;
-    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                              .family = QA_GAME_Q2,
-                              .provider = g->options.owner,
-                              .actor = a->id,
-                              .time_ns = g->now_ns,
-                              .origin = body.origin,
-                              .channel = channel,
-                              .volume = 1,
-                              .attenuation = attenuation};
-    event.resource=g->runtime_names[name];
-    return qa_builtin_emit(&g->services, &event, e);
+    return q2_emit_sound(g,a->id,NULL,g->runtime_names[name],channel,1,attenuation,0,e);
 }
 static bool sound(qa_q2_game *g, q2_actor *a, q2_runtime_name name, int channel, qa_error *e) {
     return mine_sound(g, a, name, channel, 1, e);
