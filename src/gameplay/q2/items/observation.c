@@ -206,7 +206,7 @@ static bool native_preview(item_inspection *call, q2_actor *actor, qa_error *err
     case QA_Q2_ITEM_SPHERE:
     case QA_Q2_ITEM_COMPASS:
         if (d->console_give == QA_Q2_GIVE_INVENTORY_ONLY ||
-            (g->options.edition == QA_Q2_RERELEASE && g->options.skill == 0 && entry.count >= 3) ||
+            (g->options.rules == QA_RULESET_Q2_RERELEASE && g->options.skill == 0 && entry.count >= 3) ||
             (g->options.skill == 1 && entry.count >= 2) || (g->options.skill >= 2 && entry.count >= 1) ||
             (g->options.cooperative && !instanced && d->coop_stay && entry.count > 0) ||
             (d->kind == QA_Q2_ITEM_SPHERE && powers && q2_actor_live(g, powers->sphere)))

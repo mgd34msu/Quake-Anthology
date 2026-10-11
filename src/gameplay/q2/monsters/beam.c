@@ -64,7 +64,7 @@ static bool beam_damage(qa_q2_game *game, q2_actor *actor, qa_actor_id target,
     game->services.actor_traits(game->services.context, target, &traits);
   if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
     return true;
-  if (beam->controller_damage < 0 && game->options.edition == QA_Q2_RERELEASE) {
+  if (beam->controller_damage < 0 && game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (combat.health >= traits.max_health)
       return true;
     return qa_combat_set_health(game->services.combat, target,
@@ -79,7 +79,7 @@ static bool beam_damage(qa_q2_game *game, q2_actor *actor, qa_actor_id target,
       .attacker = beam->controller_owner,
       .inflictor = actor->id,
       .combat_provider = game->options.owner,
-      .cause = qa_q2_damage_cause(game->options.edition, game->options.product,
+      .cause = qa_q2_damage_cause(game->options.rules, game->options.product,
                                   30, 4u),
   };
   if (!q2_damage(game, &attack, target, beam->controller_damage,
@@ -120,7 +120,7 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, bool damage, qa_error *
         .policy = qa_collision_default_policy(QA_GAME_Q2),
     };
     query.policy.contents_mask = qa_collision_contents_mask(UINT32_C(0x06000001), QA_GAME_Q2);
-    if (game->options.edition == QA_Q2_RERELEASE)
+    if (game->options.rules == QA_RULESET_Q2_RERELEASE)
       query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_GAME_Q2));
     qa_trace_result trace;
     if (!qa_world_trace(game->services.world, &query, &trace, error))
@@ -128,7 +128,7 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, bool damage, qa_error *
     if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
       return true;
     endpoint = trace.end;
-    if (game->options.edition == QA_Q2_RERELEASE && trace.contact)
+    if (game->options.rules == QA_RULESET_Q2_RERELEASE && trace.contact)
       endpoint = qa_vec_add(endpoint, trace.contact_plane.normal);
     if (trace.hit != QA_TRACE_HIT_ACTOR) {
       if (damage && trace.hit != QA_TRACE_HIT_NONE &&
@@ -236,7 +236,7 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
   qa_vec3 forward, right, up;
   qa_angle_vectors(context->body.angles, &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
   if (species == Q2M_FIXBOT) {
-    if (context->game->options.edition == QA_Q2_CLASSIC) {
+    if (context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
       *direction = qa_vec_normalize(qa_vec_sub(enemy.origin, context->body.origin));
       *origin = qa_vec_add(context->body.origin, qa_vec_scale(*direction, 16));
       qa_vec3 point = qa_vec_add(enemy.origin,
@@ -256,7 +256,7 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
     return true;
   }
   if (species == Q2M_BRAIN) {
-    if (context->game->options.edition == QA_Q2_CLASSIC)
+    if (context->game->options.rules == QA_RULESET_Q2_CLASSIC)
       qa_angle_vectors(qa_vec_angles(qa_vec_sub(enemy.origin,
           context->body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
     static const qa_vec3 eyes[2][11] = {
@@ -279,7 +279,7 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
     *origin = qa_vec_add(context->body.origin,
         qa_vec_add(qa_vec_scale(right, eye.x),
             qa_vec_add(qa_vec_scale(forward, eye.y), qa_vec_scale(up, eye.z))));
-    if (context->game->options.edition == QA_Q2_CLASSIC) {
+    if (context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
       qa_vec3 point = qa_vec_add(enemy.origin,
           qa_vec_scale(qa_vec_add(enemy.bounds.mins, enemy.bounds.maxs), .5f));
       *direction = qa_vec_normalize(qa_vec_sub(point, *origin));
@@ -290,7 +290,7 @@ static bool source_beam_pose(q2m_context *context, int channel, int flash,
     qa_vec3 offset;
     if (!q2m_muzzle_offset(context, flash, &offset, error))
       return false;
-    if (context->game->options.edition == QA_Q2_CLASSIC) {
+    if (context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
       qa_angle_vectors(qa_vec_angles(qa_vec_sub(enemy.origin,
           context->body.origin),QA_DIRECTION_FLOAT,QA_VECTOR_VIEW), &forward, &right, &up,QA_ANGLE_FLOAT_MATH);
       *origin = qa_vec_add(context->body.origin,
@@ -328,7 +328,7 @@ static bool source_beam(q2m_context *context, float damage, int channel,
   if (!available || !q2m_alive(context))
     return true;
   qa_q2_game *game = context->game;
-  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   q2_actor *actor = NULL;
   if (rerelease)
     for (q2_actor *candidate = game->first_actor; candidate; candidate = candidate->live_next)
@@ -381,7 +381,7 @@ bool q2m_soldier_laser_beam(q2m_context *context, int flash, qa_error *error) {
 }
 
 bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
-  if (context->game->options.edition == QA_Q2_CLASSIC &&
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC &&
       q2m_random(context->game) > .8f &&
       !q2m_sound(context, QA_Q2_SFX_MISC_LASFLY, 0, 3, error))
     return false;
@@ -392,7 +392,7 @@ bool q2m_brain_laser_beam(q2m_context *context, qa_error *error) {
 }
 
 bool q2m_fixbot_laser_beam(q2m_context *context, qa_error *error) {
-  if (context->game->options.edition == QA_Q2_CLASSIC &&
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC &&
       !q2m_sound(context, QA_Q2_SFX_MISC_LASFLY, 0, 3, error))
     return false;
   if (!q2m_alive(context))
@@ -432,7 +432,7 @@ static bool guardian_trace(qa_q2_game *game, q2_actor *actor, bool damage,
       if (can_damage && q2_actor_live(game, trace.actor)) {
         qa_attack attack = {.attacker = beam->controller_owner, .inflictor = actor->id,
             .combat_provider = game->options.owner,
-            .cause = qa_q2_damage_cause(game->options.edition, game->options.product, 30, 4u)};
+            .cause = qa_q2_damage_cause(game->options.rules, game->options.product, 30, 4u)};
         if (!q2_damage(game, &attack, trace.actor, beam->controller_damage,
             (float)game->options.skill, beam->controller_direction, trace.end,
             qa_v3(0, 0, 0), false, error)) return false;
@@ -722,7 +722,7 @@ static bool makron_spawn_tick(qa_q2_game *game, q2_actor *actor,
   free(controller);
   qa_q2_monster_spawn_options options = {
       .classname = "monster_makron",
-      .scale = game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
+      .scale = game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
       .health_multiplier = 1.0f,
   };
   if (!qa_q2_monster_spawn(game, child, &options, error)) {
@@ -857,7 +857,7 @@ bool q2m_shambler_lightning(q2m_context *context, bool windup, qa_error *error) 
 }
 
 bool q2m_turret_lasersight(q2m_context *context, qa_error *error) {
-  if (context->game->options.edition != QA_Q2_RERELEASE ||
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE ||
       (context->monster->spawnflags & (1u << 18)))
     return true;
   q2_actor *child = source_child(context, Q2M_CONTROLLER_VISUAL_CHILD, 1);
@@ -943,7 +943,7 @@ bool q2m_controller_tick(qa_q2_game *game, q2_actor *actor,
       if (controller->controller_fired)
         return game->now_ns < controller->controller_ns ||
             qa_session_release(game->services.session, actor->id, error);
-      if (game->options.edition == QA_Q2_RERELEASE &&
+      if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
           !qa_actor_id_equal(owner->monster->goal, actor->id))
         return qa_session_release(game->services.session, actor->id, error);
     }
@@ -976,7 +976,7 @@ bool q2m_controller_postthink(qa_q2_game *game, q2_actor *actor, qa_error *error
   if (actor->monster->controller_kind == Q2M_CONTROLLER_GUARDIAN_BEAM)
     return guardian_update(game, actor, error);
   if (actor->monster->controller_kind != Q2M_CONTROLLER_BEAM ||
-      game->options.edition != QA_Q2_RERELEASE)
+      game->options.rules != QA_RULESET_Q2_RERELEASE)
     return true;
   struct qa_q2_monster *beam = actor->monster;
   q2_actor *owner = q2_actor_get(game, beam->controller_owner, false, NULL);

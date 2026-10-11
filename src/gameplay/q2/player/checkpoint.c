@@ -118,7 +118,7 @@ static bool valid_state(qa_q2_game *g, const qa_q2_player_state *s, qa_error *e)
     } else if (s->rule.character_model || s->rule.character_skin)
         return false;
     if (s->rule.hit_marker_damage < INT16_MIN || s->rule.hit_marker_damage > INT16_MAX ||
-        (g->options.edition != QA_Q2_RERELEASE && s->rule.hit_marker_damage)) return false;
+        (g->options.rules != QA_RULESET_Q2_RERELEASE && s->rule.hit_marker_damage)) return false;
     if (!qa_armor_validate(armor, e) || !q2_saved_resource(g, armor->powered.source_owner))
         return false;
     if ((unsigned)armor->regular.kind > QA_ARMOR_SOURCE ||
@@ -188,7 +188,7 @@ bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_chec
     if (!state->rule.corpse && !state->player->present) {
         char name[32];
         bool named = q2_player_userinfo_value(state->rule.userinfo, "name", name,
-            g->options.edition == QA_Q2_RERELEASE ? sizeof(name) : 16u);
+            g->options.rules == QA_RULESET_Q2_RERELEASE ? sizeof(name) : 16u);
         state->player->name = state->source_name;
         if (named && !qa_strings_intern_cstr(strings, name, &state->player->name, e)) {
             free(state); return false;

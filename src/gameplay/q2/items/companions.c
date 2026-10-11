@@ -107,7 +107,7 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
     a->item->owner = decoy ? credit_reference : owner_reference;
     a->item->visible = true;
     a->item->visual = (qa_entity_visual){
-        .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true, .old_frame = -1, .render_flags = 8 | 0x8000};
+        .scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true, .old_frame = -1, .render_flags = 8 | 0x8000};
     qa_string_id model=g->runtime_names[kind==Q2_SPHERE_DEFENDER ? Q2_NAME_RESOURCE_MODELS_ITEMS_DEFENDER_TRIS_MD2 :
         kind==Q2_SPHERE_HUNTER ? Q2_NAME_RESOURCE_MODELS_ITEMS_HUNTER_TRIS_MD2 : Q2_NAME_RESOURCE_MODELS_ITEMS_VENGNCE_TRIS_MD2];
     a->item->visual.models[0]=model;
@@ -115,7 +115,7 @@ static bool launch(qa_q2_game *g, qa_actor_id owner, q2_companion_kind kind, boo
         a->item->visual.models[1]=g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SHELL_TRIS_MD2];
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics_bound = true;
-    a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
+    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_FLY_MISSILE;
     a->physics.clip_mask = a->physics.q2_rerelease ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK;
     if (kind == Q2_SPHERE_VENGEANCE)
@@ -249,11 +249,11 @@ static bool decoy(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_definition 
                                          .expires_ns = q2_deadline(g->now_ns, 30 * Q2_NS)};
     a->item->owner = owner_reference;
     a->item->visible = false;
-    a->item->visual = (qa_entity_visual){.render_flags = 0x8000, .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1};
+    a->item->visual = (qa_entity_visual){.render_flags = 0x8000, .scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1, .alpha = 1};
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics_bound = true;
     a->physics.motion = QA_PHYSICS_TOSS;
-    a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
+    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!q2_item_change_collision(g, a, QA_PHYSICS_BOX, e) || !q2_item_visual(g, a, e))
         goto fail;
     if (!q2_actor_live(g, id) || !q2_actor_live(g, owner)) {
@@ -330,7 +330,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (g->now_ns < c->next_ns)
         return true;
     c->next_ns = q2_deadline(g->now_ns,
-        c->kind == Q2_DOPPLEGANGER_BODY && g->options.edition == QA_Q2_RERELEASE ?
+        c->kind == Q2_DOPPLEGANGER_BODY && g->options.rules == QA_RULESET_Q2_RERELEASE ?
             g->frame_ns : 100 * Q2_MS);
     if (g->now_ns >= c->expires_ns)
         return expire(g, a, e);
@@ -353,11 +353,11 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 c->turn_ns = q2_deadline(g->now_ns, Q2_NS);
             }
         } else {
-            float speed = g->options.edition == QA_Q2_RERELEASE ?
+            float speed = g->options.rules == QA_RULESET_Q2_RERELEASE ?
                 30 * (float)((double)g->frame_ns / (double)(100 * Q2_MS)) : 30;
             body.angles.y = qa_angle_wrap(yaw + fmaxf(-speed, fminf(speed, delta)));
         }
-        if (g->options.edition != QA_Q2_RERELEASE || g->now_ns >= c->attack_ns) {
+        if (g->options.rules != QA_RULESET_Q2_RERELEASE || g->now_ns >= c->attack_ns) {
             a->item->visual.frame = (a->item->visual.frame + 1) % 40;
             c->attack_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
         }

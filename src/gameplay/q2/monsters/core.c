@@ -124,7 +124,7 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
       return true;
     event.has_muzzle_pose = true;
     event.muzzle_angles = body.angles;
-    event.muzzle_scale = context->game->options.edition == QA_Q2_RERELEASE &&
+    event.muzzle_scale = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                                  context->monster->entity_scale != 0
                              ? context->monster->entity_scale
                              : 1.0f;
@@ -177,7 +177,7 @@ bool q2m_animation(q2m_context *context, qa_error *error) {
     return true;
 
   struct qa_q2_monster *monster = context->monster;
-  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   const q2m_move *move = monster->move;
   bool run_frame =
       !rerelease || monster->next_frame_ns <= context->game->now_ns;
@@ -281,7 +281,7 @@ bool q2m_set_move(q2m_context *context, q2m_move_id name, bool immediate,
                  move ? q2m_move_name(move) : "(unavailable)");
     return false;
   }
-  if (context->game->options.edition == QA_Q2_RERELEASE && !immediate) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE && !immediate) {
     context->monster->next_move = move;
   } else {
     context->monster->move = move;
@@ -324,7 +324,7 @@ static bool set_duck_bounds(q2m_context *context, bool down, qa_error *error) {
 static void dodge_capabilities(const q2m_context *context, bool *duck,
                                bool *sidestep) {
   const q2m_species species = context->monster->definition->species;
-  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   const bool rogue = context->game->options.product == QA_Q2_ROGUE;
 
   *duck = false;
@@ -655,7 +655,7 @@ static bool source_dodge(q2m_context *context, qa_actor_id attacker,
                          bool gravity, qa_error *error) {
   qa_q2_game *g = context->game;
   struct qa_q2_monster *m = context->monster;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   float admission = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
   if (context->combat.health < 1) return true;
   bool duck = !rerelease || !gravity, sidestep = !m->stand_ground;
@@ -755,18 +755,18 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
   q2m_species species = monster->definition->species;
   if (species == Q2M_GUN_COMMANDER ||
       ((species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) &&
-       (game->options.edition == QA_Q2_RERELEASE ||
+       (game->options.rules == QA_RULESET_Q2_RERELEASE ||
         game->options.product == QA_Q2_ROGUE || species == Q2M_MEDIC_COMMANDER)))
     return source_dodge(&context, attacker, eta_seconds, trace, gravity, error);
   if (monster->dead || context.combat.health < 1.0f ||
       game->now_ns < monster->dodge_ns)
     return true;
 
-  if ((game->options.edition == QA_Q2_CLASSIC &&
+  if ((game->options.rules == QA_RULESET_Q2_CLASSIC &&
        game->options.product != QA_Q2_ROGUE) ||
       (game->options.product == QA_Q2_XATRIX &&
        (monster->definition->species == Q2M_GEKK ||
-        (game->options.edition == QA_Q2_CLASSIC &&
+        (game->options.rules == QA_RULESET_Q2_CLASSIC &&
          species_is_soldierh(monster->definition->species)))))
     return classic_dodge(&context, attacker, eta_seconds, error);
 
@@ -779,7 +779,7 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
     }
     if (eta_seconds < 0.1f || eta_seconds > 5.0f)
       return true;
-    if (game->options.edition == QA_Q2_RERELEASE) {
+    if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
       if (monster->timestamp_ns > game->now_ns)
         return true;
       monster->timestamp_ns = q2m_after(game->now_ns, 1.0 + q2m_random(game) * 4.0);
@@ -789,14 +789,14 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
 
   bool duck, sidestep;
   dodge_capabilities(&context, &duck, &sidestep);
-  if (game->options.edition == QA_Q2_RERELEASE && gravity)
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE && gravity)
     duck = false;
   if (monster->stand_ground)
     sidestep = false;
   if (!duck && !sidestep)
     return true;
 
-  const bool rogue = game->options.edition == QA_Q2_CLASSIC &&
+  const bool rogue = game->options.rules == QA_RULESET_Q2_CLASSIC &&
                      game->options.product == QA_Q2_ROGUE;
   const float admission = q2m_random(game);
   if (monster->enemy.registry == 0) {
@@ -998,7 +998,7 @@ bool qa_q2_monster_turret_admit(qa_q2_game *game, qa_actor_id id,
   if (actor->monster == NULL) {
     qa_q2_monster_spawn_options options = {
         .classname = "turret_driver",
-        .scale = game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
+        .scale = game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
         .health_multiplier = 1.0f,
     };
     if (!qa_q2_monster_spawn(game, id, &options, error))
@@ -1152,7 +1152,7 @@ bool qa_q2_monster_turret_release(qa_q2_game *game, qa_actor_id id,
 
 static qa_bounds monster_bounds(const qa_q2_game *game, const q2m_definition *definition) {
   qa_bounds bounds = definition->bounds;
-  if (game->options.edition == QA_Q2_RERELEASE) {
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (definition->species == Q2M_FLIPPER) { bounds.mins.z = -8; bounds.maxs.z = 20; }
     else if (definition->species == Q2M_FLOATER) bounds.maxs.z = 48;
     else if (definition->species == Q2M_FLYER) bounds.maxs.z = 16;
@@ -1388,7 +1388,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
       monster->spawnflags &= ~64u;
       monster->spawnflags |= 8u;
     }
-    monster->yaw_speed = game->options.edition == QA_Q2_RERELEASE
+    monster->yaw_speed = game->options.rules == QA_RULESET_Q2_RERELEASE
                              ? 10 * (float)game->options.skill : 45;
     monster->manual_steering = true;
     switch (monster->turret_orientation) {
@@ -1405,7 +1405,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   monster->normal_height = body.bounds.maxs.z;
   monster->view_height = monster->definition->view_height;
   if (monster->view_height == 0.0f)
-    monster->view_height = game->options.edition == QA_Q2_RERELEASE
+    monster->view_height = game->options.rules == QA_RULESET_Q2_RERELEASE
                                ? truncf(monster->normal_height - 8.0f)
                            : monster->definition->locomotion == Q2M_SWIM
                                ? 10.0f
@@ -1420,13 +1420,13 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   if (!q2m_alive(&context))
     return true;
   actor->physics = qa_physics_properties_default(QA_GAME_Q2);
-  actor->physics.q2_rerelease = game->options.edition == QA_Q2_RERELEASE;
+  actor->physics.q2_rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   actor->physics.motion = monster->definition->locomotion == Q2M_STATIONARY
                               ? QA_PHYSICS_STATIONARY
                               : QA_PHYSICS_STEP;
   actor->physics.solid = QA_PHYSICS_BOX;
   actor->physics.flags = QA_PHYSICS_MONSTER;
-  if ((game->options.product == QA_Q2_ROGUE || game->options.edition == QA_Q2_RERELEASE) &&
+  if ((game->options.product == QA_Q2_ROGUE || game->options.rules == QA_RULESET_Q2_RERELEASE) &&
       (monster->definition->species == Q2M_WIDOW || monster->definition->species == Q2M_WIDOW2))
     actor->physics.flags |= QA_PHYSICS_KEEP_MOVE_WHILE_TURNING;
   if (monster->definition->locomotion == Q2M_FLY)
@@ -1435,7 +1435,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
     actor->physics.flags |= QA_PHYSICS_SWIMMING;
   actor->physics.clip_mask =
       Q2M_MONSTER_MASK |
-      (game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0);
+      (game->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0);
   actor->physics.gravity_direction = qa_v3(0, 0, -1);
   actor->physics.gravity_scale = 1.0f;
   actor->physics.ideal_yaw = body.angles.y;
@@ -1603,13 +1603,13 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   monster->spawnflags = selected ? mission.ambush ? 1u : 0 : options->spawnflags;
   monster->old_frame = -1;
-  monster->render_flags = game->options.edition == QA_Q2_CLASSIC ? 64u : 32768u;
+  monster->render_flags = game->options.rules == QA_RULESET_Q2_CLASSIC ? 64u : 32768u;
   monster->entity_scale = options->scale > 0.0f ? options->scale
-      : game->options.edition == QA_Q2_RERELEASE ? 0 : 1;
+      : game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1;
   if (definition->species == Q2M_GUN_COMMANDER &&
-      (game->options.edition == QA_Q2_RERELEASE || options->scale == 0.0f))
+      (game->options.rules == QA_RULESET_Q2_RERELEASE || options->scale == 0.0f))
     monster->entity_scale = 1.25f;
-  if (game->options.edition == QA_Q2_RERELEASE &&
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (definition->species == Q2M_TANK || definition->species == Q2M_TANK_COMMANDER) &&
       (monster->spawnflags & 8u) && monster->entity_scale == 0)
     monster->entity_scale = 1.5f;
@@ -1639,7 +1639,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
         (game->options.cooperative ? 500.0f * (float)game->options.skill : 0.0f);
   monster->max_health = monster->base_health;
   monster->gib_health = definition->species == Q2M_INFANTRY &&
-                                game->options.edition == QA_Q2_RERELEASE
+                                game->options.rules == QA_RULESET_Q2_RERELEASE
                             ? -65.0f
                             : definition->gib_health;
   monster->yaw_speed = definition->yaw_speed > 0.0f ? definition->yaw_speed
@@ -1652,12 +1652,12 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   monster->do_not_count =
       options->summoned || (definition->flags & Q2M_DO_NOT_COUNT) != 0;
   monster->good_guy = (definition->flags & Q2M_GOOD_GUY) != 0 ||
-                      (game->options.edition == QA_Q2_RERELEASE &&
+                      (game->options.rules == QA_RULESET_Q2_RERELEASE &&
                        (options->spawnflags & UINT32_C(524288)) != 0);
   monster->ignore_shots = definition->species == Q2M_CARRIER ||
                           definition->species == Q2M_MEDIC_COMMANDER ||
                           definition->species == Q2M_TANK_COMMANDER;
-  if (game->options.edition == QA_Q2_RERELEASE &&
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (definition->species == Q2M_JORG || definition->species == Q2M_MAKRON))
     monster->ignore_shots = true;
   monster->can_take_damage = true;
@@ -1701,13 +1701,13 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   else if (definition->species == Q2M_BOSS5)
     monster->skin = 2;
   else if (definition->species == Q2M_CHICK_HEAT)
-    monster->skin = game->options.edition == QA_Q2_RERELEASE ? 2 : 3;
+    monster->skin = game->options.rules == QA_RULESET_Q2_RERELEASE ? 2 : 3;
   else if (definition->species == Q2M_INSANE && (options->spawnflags & 8u) == 0)
     monster->skin = (int)floorf(q2m_random(game) * 3.0f);
   if (definition->species == Q2M_TANK_COMMANDER &&
-      game->options.edition == QA_Q2_RERELEASE)
+      game->options.rules == QA_RULESET_Q2_RERELEASE)
     monster->count = 1;
-  if (game->options.edition == QA_Q2_RERELEASE &&
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (species_is_soldier(definition->species) ||
        species_is_soldierh(definition->species))) {
     monster->count = monster->skin;
@@ -1716,7 +1716,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       monster->skin += 6;
     }
   }
-  if (game->options.edition == QA_Q2_RERELEASE) {
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
     switch (definition->species) {
     case Q2M_GEKK:
       monster->fly_thrusters = false;
@@ -1781,7 +1781,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     monster->commander = previous->commander;
     monster->monster_slots = previous->monster_slots;
     monster->monster_used = previous->monster_used;
-    if (game->options.edition == QA_Q2_RERELEASE) {
+    if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
       monster->summons = previous->summons;
       previous->summons = NULL;
       if (monster->summons) {
@@ -1821,7 +1821,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   qa_actor_collision collision = {
       .family = QA_GAME_Q2,
       .shape = QA_SHAPE_BOX,
-      .contents = qa_collision_q2_source_contents(2, 4, game->options.edition == QA_Q2_RERELEASE),
+      .contents = qa_collision_q2_source_contents(2, 4, game->options.rules == QA_RULESET_Q2_RERELEASE),
       .role = QA_COLLISION_SOLID,
       .monster = true,
   };
@@ -1892,7 +1892,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       monster->max_power_armor = fuel.count;
     }
   }
-  if (previous && game->options.edition == QA_Q2_RERELEASE) {
+  if (previous && game->options.rules == QA_RULESET_Q2_RERELEASE) {
     monster->max_health = previous->max_health;
     monster->base_health = previous->base_health;
     monster->health_scaling = previous->health_scaling;
@@ -1920,7 +1920,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       return !q2m_alive(&context);
   }
   bool automatic = !(definition->species == Q2M_TURRET && (monster->spawnflags & 128u));
-  if (game->options.edition == QA_Q2_RERELEASE &&
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (species_is_soldier(definition->species) || species_is_soldierh(definition->species))) {
     monster->move = NULL;
     if (!q2m_callback_run(&context, monster->spawnflags & 8u ? Q2M_CALLBACK_soldier_blind : Q2M_CALLBACK_soldier_stand, error))
@@ -2051,7 +2051,7 @@ static bool process_pending(q2m_context *context, qa_error *error) {
   monster->pending_kick = 0.0f;
   if (!result || !q2m_alive(context))
     return result;
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (!q2m_refresh(context, error))
       return false;
     if (death && context->combat.health > monster->gib_health &&
@@ -2093,7 +2093,7 @@ bool qa_q2_monsters_end_frame(qa_q2_game *game, qa_error *error) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 monster frame owner");
     return false;
   }
-  if (game->options.edition != QA_Q2_RERELEASE)
+  if (game->options.rules != QA_RULESET_Q2_RERELEASE)
     return true;
   qa_builtin_snapshot_frame *snapshot = q2_scratch_acquire(game, error);
   if (!snapshot)
@@ -2215,11 +2215,11 @@ bool q2_monster_tick(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     return true;
   if (handled)
     return true;
-  if (game->options.edition == QA_Q2_RERELEASE) {
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
     context.monster->render_flags &= ~((UINT32_C(1) << 22) | (UINT32_C(1) << 26));
     context.monster->old_frame = -1;
   }
-  if (game->options.edition == QA_Q2_RERELEASE &&
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       !process_pending(&context, error))
     return false;
   if (!q2m_alive(&context))
@@ -2241,7 +2241,7 @@ bool q2_monster_tick(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     return true;
   if (context.monster->turret_attached)
     return true;
-  if (game->options.edition == QA_Q2_RERELEASE &&
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       !check_dodge_projectiles(&context, error))
     return false;
   if (!q2m_alive(&context))
@@ -2306,7 +2306,7 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
   bool dying = outcome->result.reaction == QA_REACTION_DEATH ||
                context.combat.health <= 0.0f;
   bool q2_feedback = outcome->result.has_feedback && outcome->result.feedback_family == QA_GAME_Q2;
-  if (dying || game->options.edition == QA_Q2_CLASSIC || !outcome->result.has_q2_damage ||
+  if (dying || game->options.rules == QA_RULESET_Q2_CLASSIC || !outcome->result.has_q2_damage ||
       outcome->result.q2_damage > 0.0f) {
     monster->last_attack = outcome->request.attack;
     monster->last_damage_point = outcome->request.point;
@@ -2314,7 +2314,7 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
     monster->pending_kick += outcome->result.has_feedback ? outcome->result.knockback :
                                                           outcome->request.knockback;
   }
-  bool reacts = (q2_feedback && game->options.edition == QA_Q2_CLASSIC) ||
+  bool reacts = (q2_feedback && game->options.rules == QA_RULESET_Q2_CLASSIC) ||
       (outcome->result.has_q2_damage ? outcome->result.q2_damage > 0.0f :
                                       outcome->result.applied_damage > 0.0f);
   if (!dying && reacts &&
@@ -2324,7 +2324,7 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
     return true;
   monster = context.monster;
   if (dying) {
-    if (game->options.edition == QA_Q2_RERELEASE) {
+    if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
       if (context.combat.health < -999.0f &&
           !qa_combat_set_health(game->services.combat, id, -999.0f, error))
         return false;
@@ -2338,7 +2338,7 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
              outcome->result.applied_damage > 0.0f) {
     monster->pending_pain = true;
   }
-  if (game->options.edition == QA_Q2_RERELEASE)
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE)
     return true;
   return process_pending(&context, error);
 }

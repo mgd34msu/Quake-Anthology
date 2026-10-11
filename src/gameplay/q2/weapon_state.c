@@ -71,7 +71,7 @@ bool qa_q2_weapon_select(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, boo
     q2_actor *a = weapon_actor(g, id, e);
     if (a == NULL || out == NULL)
         return false;
-    if (g->options.product == QA_Q2_XATRIX && g->options.edition == QA_Q2_CLASSIC) {
+    if (g->options.product == QA_Q2_XATRIX && g->options.rules == QA_RULESET_Q2_CLASSIC) {
         qa_q2_weapon alternative = weapon == QA_Q2_HYPERBLASTER ? QA_Q2_IONRIPPER
                                    : weapon == QA_Q2_RAILGUN    ? QA_Q2_PHALANX
                                                                 : QA_Q2_WEAPON_NONE;
@@ -167,7 +167,7 @@ static bool context(qa_q2_game *g, q2_actor *a, const qa_q2_weapon_input *in, ui
                             .definition = qa_q2_weapon_definition_at(g, a->weapon.weapon),
                             .now_ns = now,
                             .frame_ns = frame,
-                            .rerelease = g->options.edition == QA_Q2_RERELEASE,
+                            .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE,
                             .silenced = a->silencer > 0};
     return out->definition != NULL;
 }
@@ -610,7 +610,7 @@ static void reconcile_firing_credit(q2_actor *a) {
 static bool prepare_firing_credit(qa_q2_game *g, q2_actor *a,
     const qa_q2_weapon_input *input, qa_error *e) {
     reconcile_firing_credit(a);
-    if (g->options.edition != QA_Q2_CLASSIC || input->spectator ||
+    if (g->options.rules != QA_RULESET_Q2_CLASSIC || input->spectator ||
         a->weapon.phase != QA_Q2_FIRING || a->weapon.weapon == QA_Q2_WEAPON_NONE) return true;
     qa_combat_state combat;
     if (!qa_combat_read(g->services.combat, a->id, &combat, e)) return false;

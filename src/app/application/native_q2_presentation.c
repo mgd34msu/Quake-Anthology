@@ -64,7 +64,7 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         struct application_native_q2 *engine = hud->state.native.q2_engine;
         if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
             engine->profile != QA_NATIVE_Q2_GAME_API2023)) return true;
-        value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        value->edition = hud->component.clock.kind;
     } else return true;
     selected.original = hud->kind == APPLICATION_PROVIDER_NATIVE ? hud :
         character && character->product && character->product->family == QA_GAME_Q2 &&
@@ -82,7 +82,7 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         value->configstrings = engine->hud_names.values;
         value->config_changes = &engine->config_changes;
         value->configstring_count = engine->hud_names.layout.max_configs;
-        value->edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        value->edition = selected.original->component.clock.kind;
         value->statusbar_id = value->configstring_count > 5 ? value->configstrings[5] : QA_STRING_NONE;
         value->statusbar = value->configstring_count > 5 && value->configstrings[5] ?
             qa_strings_cstr(value->strings, value->configstrings[5]) : "";
@@ -132,7 +132,7 @@ bool qa_application_native_q2_hud_configs(qa_application *app,
                 rows[(*count)++] = (qa_q2_config_name){i, source->configstrings[i]};
         return true;
     }
-    qa_q2_codec codec = {.protocol = qa_q2_default_protocol(source->edition == QA_Q2_RERELEASE)};
+    qa_q2_codec codec = {.protocol = qa_q2_default_protocol(source->edition == QA_RULESET_Q2_RERELEASE)};
     qa_q2_config_layout layout;
     uint32_t actor_capacity, clients;
     if (!qa_q2_config_layout_read(&codec, &layout, error) ||
@@ -238,7 +238,7 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
 }
 
 bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_owner owner,
-    qa_q2_edition *out, uint64_t *interval_ns, bool *found, qa_error *error)
+    qa_ruleset_id *out, uint64_t *interval_ns, bool *found, qa_error *error)
 {
     if (!app || !owner || !out || !interval_ns || !found || app->destroy_requested)
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile requires its actual emitting owner");
@@ -249,11 +249,11 @@ bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_ow
     if (!provider || !provider->product || provider->product->family!=QA_GAME_Q2) return true;
     if (provider->application!=app || !provider->constructed || provider->close_pending)
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile names an unavailable GAME owner");
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     if (provider->kind==APPLICATION_PROVIDER_Q2) {
         qa_q2_combat_rules rules;
         if (!provider->state.q2 || !qa_q2_combat_rules_read(provider->state.q2,&rules) ||
-            rules.owner!=owner || (rules.edition!=QA_Q2_CLASSIC && rules.edition!=QA_Q2_RERELEASE))
+            rules.owner!=owner || (rules.edition!=QA_RULESET_Q2_CLASSIC && rules.edition!=QA_RULESET_Q2_RERELEASE))
             return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile lost its compiled GAME rules");
         edition=rules.edition;
     } else if (provider->kind==APPLICATION_PROVIDER_NATIVE) {
@@ -263,17 +263,16 @@ bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_ow
         if (engine->profile==QA_NATIVE_Q2_CGAME_API2023) return true;
         if (engine->profile!=QA_NATIVE_Q2_GAME_API3 && engine->profile!=QA_NATIVE_Q2_GAME_API2023)
             return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile has an unsupported original GAME ABI");
-        edition=engine->profile==QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        edition=provider->component.clock.kind;
     } else return true;
     const qa_clock_config *clock=&provider->component.clock;
-    if (!clock->interval_ns || clock->kind!=(edition==QA_Q2_CLASSIC ?
-            QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE))
+    if (!clock->interval_ns || clock->kind!=edition)
         return application_fail(error,QA_ERROR_FORMAT,"Q2 Source profile lost its admitted frame interval");
     *out=edition; *interval_ns=clock->interval_ns; *found=true;
     return true;
 }
 bool qa_application_native_q2_source_profile_read(qa_application *app, qa_actor_owner owner,
-    qa_q2_edition *out, bool *found, qa_error *error)
+    qa_ruleset_id *out, bool *found, qa_error *error)
 {
     uint64_t interval;
     return qa_application_native_q2_source_clock_read(app,owner,out,&interval,found,error);
@@ -354,14 +353,14 @@ static bool observe(qa_application *app, bool retained,
         view.kind = QA_APPLICATION_NATIVE_Q2_ORIGINAL;
         view.source.original.host = provider->state.native.host;
         view.source.original.profile = engine->profile;
-        view.edition = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_Q2_CLASSIC : QA_Q2_RERELEASE;
+        view.edition = provider->component.clock.kind;
         view.server_time_ns = view.clock.frame.time_ns;
     } else {
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Q2 presentation requires an actual compiled or original Q2 GAME");
     }
     if (view.server_time_ns != view.clock.frame.time_ns ||
-        (view.edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) != view.clock.frame.kind)
+        view.edition != view.clock.frame.kind)
         return application_fail(error, QA_ERROR_FORMAT,
             "Q2 physical GAME time differs from its completed source frame");
     *out = view; *found = true;
@@ -498,7 +497,7 @@ bool qa_application_native_q2_presentation_sample(qa_application *app,
         if (state->solid==QA_PHYSICS_BRUSH) solid=31;
         else if (state->solid==QA_PHYSICS_BOX && !(state->server_flags&2u)) {
             qa_bounds bounds=state->body.bounds;
-            if (source->edition==QA_Q2_CLASSIC)
+            if (source->edition==QA_RULESET_Q2_CLASSIC)
                 solid=source_solid_part(bounds.maxs.x/8,1,31) |
                     (source_solid_part(-bounds.mins.z/8,1,31)<<5) |
                     (source_solid_part((bounds.maxs.z+32)/8,1,63)<<10);
@@ -515,7 +514,7 @@ bool qa_application_native_q2_presentation_sample(qa_application *app,
         return application_fail(error,QA_ERROR_FORMAT,"Q2 Source sample has a nonfinite pose");
     if (solid && solid!=31) {
         float x,y,down,up;
-        if (source->edition==QA_Q2_CLASSIC) {
+        if (source->edition==QA_RULESET_Q2_CLASSIC) {
             x=(float)(solid&31u)*8; y=x;
             down=(float)((solid>>5)&31u)*8; up=(float)((solid>>10)&63u)*8-32;
         } else {

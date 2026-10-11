@@ -68,10 +68,10 @@ bool q2m_corpse_phase_valid(const qa_q2_game *game, q2m_species species,
     case Q2M_CORPSE_HOVER:
         return species == Q2M_HOVER || species == Q2M_DAEDALUS;
     case Q2M_CORPSE_DEAD_THINK:
-        return game->options.edition == QA_Q2_RERELEASE && dead_think_species(species);
+        return game->options.rules == QA_RULESET_Q2_RERELEASE && dead_think_species(species);
     case Q2M_CORPSE_FLIES_ON:
     case Q2M_CORPSE_FLIES_OFF:
-        return game->options.edition == QA_Q2_CLASSIC &&
+        return game->options.rules == QA_RULESET_Q2_CLASSIC &&
                (species == Q2M_INFANTRY || species == Q2M_TURRET_DRIVER ||
                 species == Q2M_MUTANT);
     }
@@ -83,7 +83,7 @@ bool q2m_corpse_callback(q2m_context *c, q2m_callback_id callback, qa_error *err
         return true;
     struct qa_q2_monster *m = c->monster;
     q2m_species species = m->definition->species;
-    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = c->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (species == Q2M_GEKK && m->water_level > 0)
         return true;
     bool widow2 = species == Q2M_WIDOW2;
@@ -155,7 +155,7 @@ bool q2m_corpse_callback(q2m_context *c, q2m_callback_id callback, qa_error *err
         qa_actor_collision collision = {.family = QA_GAME_Q2,
                                         .shape = QA_SHAPE_BOX,
                                         .contents = qa_collision_q2_source_contents(2, 2,
-                                            c->game->options.edition == QA_Q2_RERELEASE),
+                                            c->game->options.rules == QA_RULESET_Q2_RERELEASE),
                                         .role = QA_COLLISION_SOLID,
                                         .dead_monster = true};
         if (!qa_world_set_collision(c->game->services.world, c->actor->id, &collision, error))

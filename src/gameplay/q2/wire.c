@@ -62,7 +62,7 @@ bool q2_wire_names_prepare(qa_q2_game *g, qa_error *error)
 }
 qa_string_id qa_q2_wire_statusbar_name(const qa_q2_game *g)
 {
-    unsigned kind=g->options.edition==QA_Q2_CLASSIC?(g->options.deathmatch?1:0):
+    unsigned kind=g->options.rules==QA_RULESET_Q2_CLASSIC?(g->options.deathmatch?1:0):
         g->options.deathmatch?4:g->options.cooperative?3:2;
     return g->wire_statusbar_names[kind];
 }
@@ -130,7 +130,7 @@ bool qa_q2_wire_stats(const qa_q2_game *g, const qa_q2_player_view *view,
         if (view->selected_item_name && view->selected_item_name==item->name_id)
             stat_word((int32_t)resources->items_base + (int32_t)i + 1, &stats[51]);
     }
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         stat_word(view->hit_marker_damage, &stats[50]);
         for (unsigned i = 0; i < 3; ++i)
             if (!stat_image(resources, view->key_icons[i], &stats[44 + i], error)) return false;
@@ -372,7 +372,7 @@ const qa_lightstyles *qa_q2_wire_lightstyles(const qa_q2_game *g, qa_error *erro
 bool q2_wire_shadow_event(qa_q2_game *g, qa_q2_map_event *event, qa_error *error)
 {
     q2_actor *a = event->actor.slot < g->capacity ? g->actors[event->actor.slot] : NULL;
-    if (g->options.edition != QA_Q2_RERELEASE || !a || !qa_actor_id_equal(a->id, event->actor) ||
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE || !a || !qa_actor_id_equal(a->id, event->actor) ||
         !a->entity || a->entity->kind != Q2E_DYNAMIC_LIGHT || a->entity->stage != 1) return true;
     if (event->radius <= 0) return true;
     float cone = q2_field_float(g, a->entity, g->field_keys[QA_TARGET_KEY_SHADOWLIGHTCONEANGLE], 45);
@@ -452,8 +452,7 @@ bool qa_q2_wire_view_read(const qa_q2_game *g, qa_actor_id id,
              !qa_actors_get(qa_session_actors(g->services.session),g->current_actor)) ||
             !qa_session_clock(g->services.session,g->options.owner,&clock) ||
             clock.frame.provider!=g->options.owner || clock.frame.time_ns!=g->now_ns ||
-            clock.frame.kind!=(g->options.edition==QA_Q2_RERELEASE?
-                QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC)) {
+            clock.frame.kind!=(g->options.rules)) {
             qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 VIEW lost its executing Source clock");
             return false;
         }
@@ -539,8 +538,8 @@ bool qa_q2_player_movement_read(const qa_q2_game *game, qa_actor_id id,
     qa_body_state body;
     if (!a || !q2_player_observe(g, a, &current, error) ||
         !qa_world_body_read(g->services.world, id, &body, error)) return false;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
-    qa_movement_state state = {.kind = rr ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC};
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    qa_movement_state state = {.kind = g->options.rules};
     if (current.source_movement) state = *current.state;
     else {
         source_policy_read(&a->source_pm, &state);
@@ -575,7 +574,7 @@ bool qa_q2_player_movement_prepare(qa_q2_game *g, qa_actor_id id,
     q2_client_state *client = a->client;
     qa_q2_player_movement current;
     if (!q2_player_observe(g, a, &current, error)) return false;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     qa_movement_state *state = &out->state;
     a->source_pm.frame = g->wire_frame; a->source_pm.time_ns = g->now_ns;
     a->source_pm.command_angles = source_command_angles(command);
@@ -631,7 +630,7 @@ bool qa_q2_player_movement_complete(qa_q2_game *g, qa_actor_id id,
     a->source_pm.source_sequence = command->sequence; a->source_pm.command_seen = true;
     if (!result) return true;
     a->client->info.view_height = result->view_height;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     bool jumped = rr ? result->jump_sound &&
         !(source_movement && (result->state.data.q2r.flags & 128u)) :
         was_grounded && result->ground.hit == QA_TRACE_HIT_NONE && command->up_move >= 10 &&
@@ -644,7 +643,7 @@ bool q2_player_source_motion_rules(qa_q2_game *g, q2_actor *a,
 {
     qa_q2_player_movement current;
     if (!q2_player_observe(g, a, &current, error)) return false;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (change->kind == QA_Q2_PLAYER_SPAWN && !change->preserve_view_angles) {
         uint64_t sequence = a->source_pm.source_sequence, pending = a->source_pm.pending_sequence;
         bool seen = a->source_pm.command_seen, command_pending = a->source_pm.command_pending;
@@ -734,7 +733,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         ? a->entity->beam_end : a->projectile.kind == Q2_BFG_LASER ||
             a->projectile.kind == Q2_RERELEASE_SPAWN_BEAM
         ? a->projectile.movedir : value.body.origin;
-    value.model_beam = qa_q2_model_beam(g->options.edition, value.visual.render_flags,
+    value.model_beam = qa_q2_model_beam(g->options.rules, value.visual.render_flags,
         value.visual.models[0] != QA_STRING_NONE);
     value.solid = a->physics_bound ? a->physics.solid : QA_PHYSICS_NOT_SOLID;
     qa_actor_collision collision;
@@ -778,7 +777,7 @@ bool qa_q2_wire_entity_read(qa_q2_game *g, uint32_t slot,
         if (a->entity->kind == Q2E_SPEAKER && (a->entity->spawnflags & 3) && a->entity->active) {
             value.loop_sound = a->entity->noise;
             value.volume = 1;
-            if (g->options.edition == QA_Q2_RERELEASE && a->entity->attenuation == -1)
+            if (g->options.rules == QA_RULESET_Q2_RERELEASE && a->entity->attenuation == -1)
                 value.server_flags |= 1024;
         }
         value.solid = a->entity->collision.inline_model ? QA_PHYSICS_BRUSH : value.solid;

@@ -27,7 +27,7 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         .end = qa_vec_add(body.origin, qa_vec_scale(s->direction, 2048)),
         .shape = {.kind = QA_SHAPE_POINT},
         .pass_actor = a->id,
-        .policy = {.behavior = &qa_trace_behaviors[(g->options.edition == QA_Q2_RERELEASE) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
+        .policy = {.behavior = &qa_trace_behaviors[g->options.rules],
                    .contents_mask = qa_collision_contents_mask(0x6000001, QA_GAME_Q2)}};
     qa_builtin_snapshot_frame *frame = q2_scratch_acquire(g, e);
     if (!frame)
@@ -50,7 +50,7 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 .inflictor = a->id,
                 .attacker = s->activator,
                 .combat_provider = g->options.owner,
-                .cause = qa_q2_damage_cause(g->options.edition, g->options.product, 30, 4)};
+                .cause = qa_q2_damage_cause(g->options.rules, g->options.product, 30, 4)};
             if (!q2_damage(g, &attack, actor, s->damage, 1, s->direction, hit.end, qa_v3(0, 0, 0),
                            false, e))
                 goto out;
@@ -467,7 +467,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
     }
     case Q2E_BLASTER: {
         qa_body_state b;
-        uint64_t effects = g->options.edition == QA_Q2_CLASSIC ? 8
+        uint64_t effects = g->options.rules == QA_RULESET_Q2_CLASSIC ? 8
                            : (s->spawnflags & 2)               ? 0
                            : (s->spawnflags & 1)               ? 64
                                                                : 8;

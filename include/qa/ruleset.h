@@ -19,5 +19,8 @@ typedef struct qa_ruleset_descriptor {
 extern const qa_ruleset_descriptor qa_ruleset_descriptors[QA_RULESET_Q3 + 1];
 const qa_ruleset_descriptor *qa_ruleset_read(qa_ruleset_id);
 const char *qa_ruleset_settings_name(qa_ruleset_id);
+/* Q2 archive fields retain their 0/1 encoding at the boundary. */
+unsigned qa_ruleset_q2_tag(qa_ruleset_id);
+qa_ruleset_id qa_ruleset_q2_from_tag(unsigned);
 
 #endif

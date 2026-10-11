@@ -137,9 +137,9 @@ static bool set_fov(void *context, qa_actor_id id, qa_error *e)
     if (call->source) {
         double requested;
         if (!qa_q2_userinfo_field_of_view_read(state->rule.userinfo, &requested, e)) return false;
-        bool fixed = g->options.edition != QA_Q2_RERELEASE && g->options.deathmatch &&
+        bool fixed = g->options.rules != QA_RULESET_Q2_RERELEASE && g->options.deathmatch &&
             (g->options.deathmatch_flags & 32768u);
-        float ordinary = fixed ? 90 : g->options.edition == QA_Q2_RERELEASE ?
+        float ordinary = fixed ? 90 : g->options.rules == QA_RULESET_Q2_RERELEASE ?
             q2_clamp((float)requested, 1, 160) : requested < 1 ? 90 : fminf((float)requested, 160);
         bool preserve = !fixed && (call->preserve || state->info.chase_target.registry || state->rule.sphere_vehicle ||
             (call->restoring && previous != ordinary));

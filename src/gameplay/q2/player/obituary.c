@@ -84,7 +84,7 @@ bool q2_player_obituary(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *out
     bool player_attacker = q2_player_info(g, attacker, &attacker_info);
     bool self = player_attacker && qa_actor_id_equal(attacker, a->id);
     bool friendly = (raw & 0x8000000) || (g->options.cooperative && player_attacker);
-    bool rr = g->options.edition == QA_Q2_RERELEASE,
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE,
          no_loss = outcome->request.attack.cause.kind == QA_CAUSE_Q2 &&
                    outcome->request.attack.cause.source.q2.no_point_loss;
     const q2_obituary *environment = NULL, *kill = NULL;

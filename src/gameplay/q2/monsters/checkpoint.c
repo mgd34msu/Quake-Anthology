@@ -415,7 +415,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
       ((!saved->has_summons || !saved->reinforcements_configured) &&
        (saved->reinforcement_source || saved->reinforcement_count)) ||
       (!saved->has_summons && saved->reinforcements_configured) ||
-      (game->options.edition == QA_Q2_CLASSIC &&
+      (game->options.rules == QA_RULESET_Q2_CLASSIC &&
        (saved->reinforcements_configured || saved->reinforcement_count)) ||
       (saved->weapon_sound && !qa_strings_text(qa_session_strings(game->services.session),
                                                saved->weapon_sound).size) ||
@@ -430,7 +430,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
        (!saved->controller_owner.present || saved->count < 0 ||
         saved->count > (saved->controller_kind == Q2M_CONTROLLER_VISUAL_CHILD ? 1 : 0))) ||
       (saved->controller_kind == Q2M_CONTROLLER_GUARDIAN_BEAM &&
-       (game->options.edition != QA_Q2_RERELEASE || saved->count < 0 || saved->count > 1 ||
+       (game->options.rules != QA_RULESET_Q2_RERELEASE || saved->count < 0 || saved->count > 1 ||
         !saved->controller_owner.present || saved->controller_damage != 25.0f)) ||
       !valid_name(saved->definition, sizeof(saved->definition), controller) ||
       !valid_name(saved->move, sizeof(saved->move), controller) ||
@@ -438,7 +438,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
       saved->attack_state > Q2M_BLIND || saved->spawned_by > Q2M_SPAWN_WIDOW ||
       (!controller &&
        (saved->entity_scale < 0.0f ||
-        (game->options.edition != QA_Q2_RERELEASE && saved->entity_scale == 0.0f) ||
+        (game->options.rules != QA_RULESET_Q2_RERELEASE && saved->entity_scale == 0.0f) ||
         saved->animation_scale <= 0.0f ||
         saved->health_scaling <= 0.0f || saved->normal_height < 0.0f ||
         saved->fly_min_distance < 0.0f ||
@@ -684,7 +684,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   monster->sound_target.time_ns = saved->sound_target.time_ns;
   monster->sound_target.present = saved->sound_target.present;
   bool source_medic = definition->species == Q2M_MEDIC_COMMANDER ||
-      (definition->species == Q2M_MEDIC && (game->options.edition == QA_Q2_RERELEASE ||
+      (definition->species == Q2M_MEDIC && (game->options.rules == QA_RULESET_Q2_RERELEASE ||
                                            game->options.product == QA_Q2_ROGUE));
   if (saved->summon_count > 5 || saved->summon_strength < 0 || saved->summon_strength > 6 ||
       saved->has_summons != source_medic ||

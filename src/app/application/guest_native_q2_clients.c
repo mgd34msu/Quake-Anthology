@@ -189,7 +189,7 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
         after.source_slot!=binding.source_slot||!qa_actor_id_equal(after.actor,binding.actor))
         return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 physical player read changed its Source binding");
     qa_movement_state state = player_movement(&player,
-        classic ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE, body.origin);
+        provider->component.clock.kind, body.origin);
     *out = (qa_movement_result){.status=QA_MOVEMENT_ACTIVE,.actor=actor,.state=state,
         .view_angles=qa_v3(player.viewangles[0],player.viewangles[1],player.viewangles[2]),
         .view_offset=qa_v3(player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]),
@@ -207,7 +207,7 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     qa_vec3 origin=qa_movement_origin(&out->state);
     qa_point_query query={.point=qa_v3(origin.x,origin.y,origin.z+body.bounds.mins.z+1.f),
         .policy=qa_collision_default_policy(QA_GAME_Q2),.pass_actor=actor};
-    query.policy.behavior=&qa_trace_behaviors[classic ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE];
+    query.policy.behavior=&qa_trace_behaviors[provider->component.clock.kind];
     qa_point_contents contents;
     if(!qa_world_point_contents(engine->world,&query,&contents,error)) return false;
     int32_t native_contents=qa_collision_point_contents_export(contents.contents,QA_GAME_Q2,contents.q1_opaque_token);
@@ -319,7 +319,7 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
         engine->input_stage || engine->movement_stage || !engine->map_ready)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 raw input requires its current synchronous Source stage");
     bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
-    if (command->kind != (classic ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) ||
+    if (command->kind != provider->component.clock.kind ||
         command->milliseconds > UINT8_MAX || command->buttons > UINT8_MAX ||
         !isfinite(command->forward_move) || !isfinite(command->side_move) ||
         !isfinite(command->up_move) || !qa_vec_finite(command->angles))
@@ -376,7 +376,7 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
         application_native_q2_client_slot(engine, actor) : 0;
     bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
     if (!slot || !engine->map_ready || actor.slot >= app->control_capacity ||
-        command->kind != (classic ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) ||
+        command->kind != provider->component.clock.kind ||
         command->milliseconds > UINT8_MAX || command->buttons > UINT8_MAX ||
         !isfinite(command->forward_move) || !isfinite(command->side_move) ||
         !isfinite(command->up_move) || !qa_vec_finite(command->angles))

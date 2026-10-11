@@ -57,7 +57,7 @@ static void player_profile(qa_application_network_q2 *owner, qa_q2_player *state
     if (!kex_fields(owner) && owner->host.protocol.kind != QA_NET_Q2PRO_36) {
         state->clientnum = 0; state->clientnum_present = false;
     }
-    if (owner->host.source.edition != QA_Q2_RERELEASE || kex_fields(owner)) return;
+    if (owner->host.source.edition != QA_RULESET_Q2_RERELEASE || kex_fields(owner)) return;
     if (state->pmove.float_delta_angles) {
         for (unsigned i = 0; i < 3; ++i) {
             uint16_t bits = qa_angle_to_word(state->pmove.delta_angles_f[i],QA_ANGLE_WORD_NATIVE);
@@ -126,7 +126,7 @@ static bool capture_source(qa_application_network_q2 *owner,
     }
     if (count) memset(capture->rows, 0, (size_t)count * sizeof(*capture->rows));
     bool builtin = owner->host.source.kind == QA_APPLICATION_NATIVE_Q2_BUILTIN;
-    if (!builtin && owner->host.source.edition == QA_Q2_CLASSIC) {
+    if (!builtin && owner->host.source.edition == QA_RULESET_Q2_CLASSIC) {
         size_t capacity = application_q2_visibility_pending_capacity(app);
         if (!capacity) return application_fail(error, QA_ERROR_MEMORY, "Q2 visibility headnode extent overflows");
         if (capacity > capture->visibility_pending_capacity) {
@@ -274,7 +274,7 @@ static bool original_entity(qa_application_network_q2 *owner, uint32_t number,
         if (!source->in_use || !qa_actor_id_equal(source->binding.actor, row->actor)) return true;
         if (source->server_flags & 1) return true;
         value = source->state; value.number = number;
-        if (owner->host.source.edition == QA_Q2_CLASSIC && value.solid && value.solid != 31 &&
+        if (owner->host.source.edition == QA_RULESET_Q2_CLASSIC && value.solid && value.solid != 31 &&
             (owner->host.protocol.kind == QA_NET_Q2PRO_36 ||
              (owner->host.protocol.kind == QA_NET_R1Q2_35 && owner->host.protocol.revision >= 1905)))
             value.solid = packed_solid(owner->host.protocol, source->bounds);
@@ -485,7 +485,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
             physical.source_slot, actor, &value, error) ||
             !application_network_q2_source_resource(owner, 0, value.gunindex, &value.gunindex, error)) return false;
         qa_hud_q2_stat_references refs = owner->status_references;
-        bool rr = owner->host.source.edition == QA_Q2_RERELEASE;
+        bool rr = owner->host.source.edition == QA_RULESET_Q2_RERELEASE;
         const application_q2_layout_receipt *overlay = &owner->layouts[physical.source_slot];
         if (qa_actor_id_equal(overlay->actor, actor)) {
             refs.images |= overlay->references.images; refs.configstrings |= overlay->references.configstrings;
@@ -569,7 +569,7 @@ bool application_network_q2_player_state(qa_application_network_q2 *owner, qa_ac
         value.gunframe = (uint32_t)entity.weapon.frame; value.gunskin = (uint32_t)entity.weapon.view_skin;
         if (!isfinite(entity.weapon.gun_rate) || entity.weapon.gun_rate < 0 || (double)entity.weapon.gun_rate > UINT32_MAX)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 Source gun rate exceeds its wire field");
-        value.gunrate = owner->host.source.edition == QA_Q2_CLASSIC && entity.weapon.gun_rate == 10 ?
+        value.gunrate = owner->host.source.edition == QA_RULESET_Q2_CLASSIC && entity.weapon.gun_rate == 10 ?
             0 : (uint32_t)entity.weapon.gun_rate;
     }
     if (!qa_q2_wire_stats(game, &view, &(qa_q2_wire_stat_resources){
@@ -634,7 +634,7 @@ static bool source_visible(qa_application_network_q2 *owner, const application_q
     application_q2_visibility_entity entity = {.actor = visibility_actor,
         .bounds = bounds, .flags = flags, .original = original};
     return application_q2_visibility_test(owner->app, original_engine(owner),
-        owner->host.source.edition == QA_Q2_RERELEASE, builtin,
+        owner->host.source.edition == QA_RULESET_Q2_RERELEASE, builtin,
         recipient, &entity, state, novis, out, error);
 }
 

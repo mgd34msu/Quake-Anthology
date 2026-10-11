@@ -9,7 +9,7 @@ bool q2_player_source_identity_bind(qa_q2_game *g,q2_client_state *s,const char 
     qa_strings *strings=qa_session_strings(g->services.session);
     qa_string_id model;
     if (!qa_strings_intern_cstr(strings,name,&s->source_name,error) ||
-        !qa_player_skin_bind(strings,skin,g->options.edition==QA_Q2_RERELEASE,&s->source_skin,&model,error)) return false;
+        !qa_player_skin_bind(strings,skin,g->options.rules==QA_RULESET_Q2_RERELEASE,&s->source_skin,&model,error)) return false;
     if (s->source_model!=model || !s->source_model_resource) {
         char path[4096];
         if (!qa_hud_q2_player_model_path(qa_strings_text(strings,model),
@@ -131,7 +131,7 @@ bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_conne
     bool spectator = wants_spectator(g, info);
     char value[256];
     const char *reason = NULL;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     q2_player_userinfo_value(info, "ip", value, sizeof(value));
     if (!rr && p->services.banned && p->services.banned(p->services.context, value))
         reason = "Banned.";
@@ -178,7 +178,7 @@ static bool player_userinfo(void *context, qa_actor_id id, qa_error *e) {
     if (!a || !source)
         return false;
     q2_client_state *s = a->client;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!rr && (strchr(source, '"') || strchr(source, ';')))
         source = "\\name\\badinfo\\skin\\male/grunt";
     snprintf(s->rule.userinfo, sizeof(s->rule.userinfo), "%.*s", rr ? 2047 : 511, source);
@@ -315,7 +315,7 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
     s->rule.drown_damage = 2;
     s->rule.animation_end = 39;
     s->rule.auto_shield = -1;
-    s->rule.visual = (qa_entity_visual){.old_frame = -1, .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true};
+    s->rule.visual = (qa_entity_visual){.old_frame = -1, .scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1, .alpha = 1, .visible = true};
     snprintf(s->rule.social_id, sizeof(s->rule.social_id), "%s",
              admission->social_id ? admission->social_id : "");
     if (g->options.cooperative && g->player_runtime->rules.coop_lives)
@@ -353,7 +353,7 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         if (!q2_campaign_enter(g, e)) return false;
         if (s->rule.auto_shield >= 0)
             s->rule.auto_shield_enabled = true;
@@ -389,7 +389,7 @@ bool q2_player_collision(qa_q2_game *g, q2_actor *a, bool solid, qa_error *e) {
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2,
-                                        8u | (a->client->info.dead ? 2u : 0u), g->options.edition == QA_Q2_RERELEASE),
+                                        8u | (a->client->info.dead ? 2u : 0u), g->options.rules == QA_RULESET_Q2_RERELEASE),
                                     .role = QA_COLLISION_SOLID,
                                     .dead_monster = a->client->info.dead};
     return qa_world_set_collision(g->services.world, a->id, solid ? &collision : NULL, e);

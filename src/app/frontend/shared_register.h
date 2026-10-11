@@ -16,7 +16,7 @@ bool frontend_shared_menu_track_valid(const char *);
 bool frontend_source_q2_settings_register(const qa_launch_instance *,qa_cvars *,
     const qa_command_context *,qa_error *);
 bool frontend_source_q2_effects_register(qa_cvars *, const qa_command_context *,
-    frontend_remote_q2_effects_profile, qa_error *);
+    qa_ruleset_id, qa_error *);
 /* The actual first/restarted physical Source renderer applies R_Register
  * latches and near-clip initialization before consuming its policy rows.
  * Imported renderers retain their decoded continuation. */

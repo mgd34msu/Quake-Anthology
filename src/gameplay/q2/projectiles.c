@@ -87,7 +87,7 @@ qa_attack q2_projectile_attack(qa_q2_game *g, qa_actor_id id, const q2_projectil
     attack.inflictor = id;
     attack.projectile = id;
     attack.attacker = qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner);
-    qa_q2_edition edition = p->kind == Q2_LMCTF_HOOK ? QA_Q2_CLASSIC : g->options.edition;
+    qa_ruleset_id edition = p->kind == Q2_LMCTF_HOOK ? QA_RULESET_Q2_CLASSIC : g->options.rules;
     attack.cause = qa_q2_damage_cause(edition, g->options.product, mod, flags);
     if (p->kind == Q2_GREEN_BOLT)
         attack.weapon = 0;
@@ -218,7 +218,7 @@ static bool bfg_target(qa_q2_game *g, qa_actor_id id, bool *eligible, qa_error *
     if (g->services.actor_traits != NULL)
         g->services.actor_traits(g->services.context, id, &traits);
     *eligible = live(g, id) && (traits.classname == g->runtime_names[Q2_NAME_MISC_EXPLOBOX] ||
-           (g->options.edition == QA_Q2_RERELEASE && traits.damageable_target));
+           (g->options.rules == QA_RULESET_Q2_RERELEASE && traits.damageable_target));
     return true;
 }
 static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
@@ -230,7 +230,7 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
         if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner)) ||
             !q2_target_damageable(g, target))
             continue;
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             bool eligible;
             if (!bfg_target(g, target, &eligible, e))
                 return false;
@@ -267,12 +267,12 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
                 return false;
             }
         }
-        if (g->options.edition == QA_Q2_RERELEASE && g->hooks.can_target != NULL &&
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && g->hooks.can_target != NULL &&
             !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), target))
             continue;
         float damage = truncf(p->damage * (1 - sqrtf(distance / p->radius)));
         qa_attack attack = q2_projectile_attack(g, id, p, 14, 4);
-        if (g->options.edition == QA_Q2_CLASSIC &&
+        if (g->options.rules == QA_RULESET_Q2_CLASSIC &&
             !q2_projectile_event(g, id, QA_BUILTIN_EXPLOSION, g->runtime_names[Q2_NAME_RESOURCE_Q2_BFG_EXPLOSION], 0, body.origin,
                                  qa_v3(0, 0, 0), e))
             return false;
@@ -283,12 +283,12 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
         if (!qa_world_body_read(g->services.world, id, &blast, e))
             return false;
         if (!q2_damage(g, &attack, target, damage, 0, blast.velocity,
-                       g->options.edition == QA_Q2_CLASSIC ? body.origin : center, qa_v3(0, 0, 0),
+                       g->options.rules == QA_RULESET_Q2_CLASSIC ? body.origin : center, qa_v3(0, 0, 0),
                        false, e))
             return false;
         if (!live(g, id))
             return true;
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             if (!qa_world_body_read(g->services.world, id, &blast, e) ||
                 !q2_projectile_event(g, id, QA_BUILTIN_BEAM, g->runtime_names[Q2_NAME_RESOURCE_Q2_BFG_ZAP], 0, blast.origin, center,
                                      e))
@@ -321,7 +321,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
             return false;
         if (!eligible)
             continue;
-        if (g->hooks.can_target != NULL && g->options.edition == QA_Q2_RERELEASE &&
+        if (g->hooks.can_target != NULL && g->options.rules == QA_RULESET_Q2_RERELEASE &&
             !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p->owner), target))
             continue;
         qa_body_state body;
@@ -335,7 +335,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
                                 .pass_actor = id,
                                 .policy = qa_collision_default_policy(QA_GAME_Q2)};
         qa_trace_result trace;
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             query.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
             query.pass_actor = (qa_actor_id){0};
             if (!qa_world_trace(g->services.world, &query, &trace, e))
@@ -346,8 +346,8 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
         query.pass_actor = id;
         query.end = qa_vec_add(origin, qa_vec_scale(direction, 2048));
         query.policy.contents_mask =
-            qa_collision_contents_mask(UINT32_C(0x06000001) | (g->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
-        size_t count = 0, limit = g->options.edition == QA_Q2_RERELEASE ? 16 : g->capacity;
+            qa_collision_contents_mask(UINT32_C(0x06000001) | (g->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
+        size_t count = 0, limit = g->options.rules == QA_RULESET_Q2_RERELEASE ? 16 : g->capacity;
         for (;;) {
             if (!qa_world_trace_excluding(g->services.world, &query, excluded, count, &trace, e))
                 return false;
@@ -373,7 +373,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
             if (!q2_target_creature(g, hit, &creature, NULL, e))
                 return false;
             if (!creature &&
-                !(g->options.edition == QA_Q2_RERELEASE && hit_traits.damageable_target)) {
+                !(g->options.rules == QA_RULESET_Q2_RERELEASE && hit_traits.damageable_target)) {
                 qa_builtin_event spark = {.kind = QA_BUILTIN_IMPACT,
                                           .family = QA_GAME_Q2,
                                           .provider = g->options.owner,
@@ -394,7 +394,7 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
             if (duplicate || count >= limit)
                 break;
             excluded[count++] = hit;
-            if (g->options.edition == QA_Q2_CLASSIC) {
+            if (g->options.rules == QA_RULESET_Q2_CLASSIC) {
                 query.start = trace.end;
                 query.pass_actor = hit;
             }
@@ -485,7 +485,7 @@ static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_refer
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (a == NULL)
         return false;
-    uint64_t interval = g->options.edition == QA_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns;
+    uint64_t interval = g->options.rules == QA_RULESET_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns;
     a->projectile = *p;
     a->projectile.kind = Q2_TRACKER_DAEMON;
     a->projectile.enemy = target;
@@ -498,7 +498,7 @@ static bool tracker_daemon(qa_q2_game *g, const q2_projectile *p, qa_actor_refer
     a->projectile.born_ns = g->now_ns;
     a->projectile.expire_ns = q2_deadline(g->now_ns, 500 * Q2_MS);
     a->projectile.next_ns =
-        g->options.edition == QA_Q2_RERELEASE ? g->now_ns : q2_deadline(g->now_ns, interval);
+        g->options.rules == QA_RULESET_Q2_RERELEASE ? g->now_ns : q2_deadline(g->now_ns, interval);
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
     a->physics.motion = QA_PHYSICS_STATIONARY;
@@ -584,8 +584,8 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_vec3 center = qa_vec_add(
         target.origin, qa_vec_scale(qa_vec_add(target.bounds.mins, target.bounds.maxs), 0.5f));
     if (p.kind == Q2_TRACKER_DAEMON) {
-        uint64_t interval = g->options.edition == QA_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns;
-        qa_vec3 point = g->options.edition == QA_Q2_RERELEASE ? center : target.origin;
+        uint64_t interval = g->options.rules == QA_RULESET_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns;
+        qa_vec3 point = g->options.rules == QA_RULESET_Q2_RERELEASE ? center : target.origin;
         qa_attack attack = q2_projectile_attack(g, id, &p, 51, 268);
         if (!q2_damage(g, &attack, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.enemy), p.damage, 0, qa_v3(0, 0, 0), point, qa_v3(0, 0, 1),
                        false, e))
@@ -749,7 +749,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
             g, id, &p, p.direct_mod,
             p.kind == Q2_FLECHETTE ? 128u
             : p.kind == Q2_BOLT || p.kind == Q2_BLUE_BOLT || p.kind == Q2_ION ||
-                    (p.kind == Q2_BFG_BALL && g->options.edition == QA_Q2_RERELEASE)
+                    (p.kind == Q2_BFG_BALL && g->options.rules == QA_RULESET_Q2_RERELEASE)
                 ? 4u
                 : 0u);
         if (!q2_damage(g, &attack, contact->other, damage, p.kind == Q2_ION ? 1 : p.kick,
@@ -779,7 +779,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     }
     if (p.kind == Q2_BFG_BALL) {
         if (!q2_projectile_radius(g, id, &p, body.origin, contact->other, q2_bfg_impact_damage(), q2_bfg_impact_radius(), 13,
-                                  g->options.edition == QA_Q2_RERELEASE ? 4u : 0u, e))
+                                  g->options.rules == QA_RULESET_Q2_RERELEASE ? 4u : 0u, e))
             return false;
         if (!live(g, id))
             return true;
@@ -818,7 +818,7 @@ static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         return false;
     if (!live(g, id))
         return true;
-    qa_vec3 origin = p.kind == Q2_PLASMA || g->options.edition == QA_Q2_CLASSIC
+    qa_vec3 origin = p.kind == Q2_PLASMA || g->options.rules == QA_RULESET_Q2_CLASSIC
                          ? qa_vec_add(body.origin, qa_vec_scale(body.velocity, -0.02f))
                          : qa_vec_add(body.origin, normal);
     qa_point_query query = {.point = body.origin,
@@ -1300,7 +1300,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (p.next_ns <= g->now_ns) {
             if (p.armed && p.frame >= 5)
                 return qa_session_release(g->services.session, id, e);
-            if (g->options.edition == QA_Q2_RERELEASE && !bfg_laser_spawn(g, id, body.origin, e))
+            if (g->options.rules == QA_RULESET_Q2_RERELEASE && !bfg_laser_spawn(g, id, body.origin, e))
                 return false;
             if (!live(g, id))
                 return true;
@@ -1350,7 +1350,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return p.kind == Q2_GRENADE ? grenade_explode(g, id, (qa_actor_id){0}, e)
                                     : qa_session_release(g->services.session, id, e);
     }
-    if (p.kind == Q2_GRENADE && p.armed && g->options.edition == QA_Q2_RERELEASE &&
+    if (p.kind == Q2_GRENADE && p.armed && g->options.rules == QA_RULESET_Q2_RERELEASE &&
         p.next_ns <= g->now_ns) {
         float speed_squared = qa_vec_dot(body.velocity, body.velocity);
         if (speed_squared != 0) {
@@ -1372,8 +1372,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     }
     qa_source_frame frame = {.provider = g->options.owner,
-                             .kind = g->options.edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC
-                                                                         : QA_RULESET_Q2_RERELEASE,
+                             .kind = g->options.rules,
                              .phase = QA_ENTITY_PHYSICS,
                              .time_ns = g->now_ns,
                              .elapsed_ns = g->frame_ns,

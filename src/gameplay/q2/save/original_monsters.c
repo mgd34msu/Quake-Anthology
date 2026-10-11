@@ -239,7 +239,7 @@ static bool monster_error(q2_original_record_io *io, const char *member,
 
 static const char *const *callbacks_for(const qa_q2_game *game, const char *classname)
 {
-    unsigned source = game->options.edition == QA_Q2_RERELEASE ? 3u :
+    unsigned source = game->options.rules == QA_RULESET_Q2_RERELEASE ? 3u :
         (unsigned)game->options.product;
     for (size_t i = 0; i < sizeof(monster_bindings) / sizeof(*monster_bindings); ++i)
         if (monster_bindings[i].source == source &&
@@ -253,7 +253,7 @@ static const char *const *callbacks_for(const qa_q2_game *game, const char *clas
 static bool callback(qa_q2_game *game, q2_original_record_io *io,
     const char *field, uint16_t offset, const char *name, bool data_relative)
 {
-    if (io->edition == QA_Q2_RERELEASE || !data_relative) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE || !data_relative) {
         if (!io->reading) return q2_original_function(game, io, field, offset, name);
         bool matches = false;
         return q2_original_function_matches(game, io, field, offset, name, &matches) &&
@@ -281,7 +281,7 @@ static bool callback(qa_q2_game *game, q2_original_record_io *io,
 static bool move_record(q2_original_record_io *io, const char *field, uint16_t offset,
     struct qa_q2_monster *m, const q2m_move **move)
 {
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         if (!io->reading) {
             if (*move) {
                 qa_json_writer_key(io->writer, field);
@@ -351,7 +351,7 @@ static bool integer_double(q2_original_record_io *io, const char *field,
 
 static bool hostile_record(q2_original_record_io *io, uint64_t *native)
 {
-    if (io->edition == QA_Q2_RERELEASE)
+    if (io->edition == QA_RULESET_Q2_RERELEASE)
         return q2_original_scalar(io, "show_hostile", Q2_ORIGINAL_TIME, 496, 496, 496, native);
     /* Classic show_hostile is qboolean storage, but its users store/compare
      * an integer level.time deadline. It is not a float or a true/false flag. */
@@ -379,7 +379,7 @@ static bool integer_wide(q2_original_record_io *io, const char *field,
 static bool power_kind(q2_original_record_io *io, const char *field,
     uint16_t offset, qa_power_kind *kind)
 {
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         static const char *const names[] = {NULL, "item_power_screen", "item_power_shield"};
         if (!io->reading) {
             if ((unsigned)*kind >= sizeof(names) / sizeof(*names))
@@ -429,7 +429,7 @@ static const monster_flag_field monster_flags[] = {
 static bool flags_record(q2_original_record_io *io, q2_actor *actor,
     struct qa_q2_monster *m)
 {
-    bool rr = io->edition == QA_Q2_RERELEASE;
+    bool rr = io->edition == QA_RULESET_Q2_RERELEASE;
     bool rogue = io->product == QA_Q2_ROGUE;
     uint64_t bits = 0;
     for (size_t i = 0; i < sizeof(monster_flags) / sizeof(*monster_flags); ++i) {
@@ -555,13 +555,13 @@ static bool references_record(qa_q2_game *g, q2_original_record_io *io,
     REF("enemy", 540, enemy); REF("oldenemy", 544, old_enemy);
     REF("goalentity", 412, goal); REF("movetarget", 416, move_target);
     REF("activator", 548, activator);
-    if (io->edition == QA_Q2_RERELEASE || io->product == QA_Q2_ROGUE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE) {
         REF("monsterinfo.badMedic1", 908, bad_medic[0]);
         REF("monsterinfo.badMedic2", 912, bad_medic[1]);
         REF("monsterinfo.last_player_enemy", 944, last_player_enemy);
         REF("monsterinfo.commander", 976, commander);
         REF("bad_area", 1020, hazard);
-        if (io->edition == QA_Q2_RERELEASE) {
+        if (io->edition == QA_RULESET_Q2_RERELEASE) {
             REF("monsterinfo.healer", 916, healer);
             REF("proboscus", 65535, proboscis);
         }
@@ -598,12 +598,12 @@ static bool monster_callbacks_record(qa_q2_game *game, q2_original_record_io *io
         if (!q2_original_function_matches(game, io, "use", 448, "turret_activate", &wall_dormant)) return false;
     }
     for (size_t i = 0; i < Q2_MONSTER_CALLBACK_COUNT; ++i) {
-        if (io->edition == QA_Q2_CLASSIC && (i == 10 ||
+        if (io->edition == QA_RULESET_Q2_CLASSIC && (i == 10 ||
             (i >= 11 && i <= 14 && io->product != QA_Q2_ROGUE))) continue;
         const char *name = wall_dormant && i < 9 ? NULL : bindings[i];
         if (i == 0 && m->definition->species >= Q2M_SOLDIER_LIGHT &&
             m->definition->species <= Q2M_SOLDIER_SS && (m->spawnflags & 8u) &&
-            (io->edition == QA_Q2_RERELEASE || io->product == QA_Q2_ROGUE))
+            (io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE))
             name = "soldier_blind";
         if (!callback(game, io, fields[i], offsets[i], name, i >= 11 && i <= 14)) return false;
     }
@@ -612,7 +612,7 @@ static bool monster_callbacks_record(qa_q2_game *game, q2_original_record_io *io
 
 static bool weapon_flags_record(q2_original_record_io *io, struct qa_q2_monster *m)
 {
-    if (io->edition != QA_Q2_RERELEASE) return true;
+    if (io->edition != QA_RULESET_Q2_RERELEASE) return true;
     q2m_species species = m->definition->species;
     if (species == Q2M_INFANTRY || species == Q2M_TURRET_DRIVER) {
         int32_t cocked = m->cocked ? 1 : 0;
@@ -689,7 +689,7 @@ static bool summons_record(qa_q2_game *game, q2_original_record_io *io,
 {
     bool medic = m->definition->species == Q2M_MEDIC_COMMANDER ||
         (m->definition->species == Q2M_MEDIC &&
-            (io->edition == QA_Q2_RERELEASE || io->product == QA_Q2_ROGUE));
+            (io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE));
     if (!medic) return true;
     q2m_summon_state *state = m->summons;
     if (io->reading && !state) {
@@ -700,7 +700,7 @@ static bool summons_record(qa_q2_game *game, q2_original_record_io *io,
         }
         m->summons = state;
     }
-    if (io->edition == QA_Q2_CLASSIC) {
+    if (io->edition == QA_RULESET_Q2_CLASSIC) {
         int32_t strength = state ? state->classic_strength : 0;
         if (!q2_original_scalar(io, "plat2flags", Q2_ORIGINAL_I32, 65535, 65535, 992, &strength))
             return false;
@@ -807,7 +807,7 @@ static bool statue(const struct qa_q2_monster *m)
 static bool stationary_source(const q2_original_record_io *io, const struct qa_q2_monster *m)
 {
     return m->definition->locomotion == Q2M_STATIONARY ||
-        (io->edition == QA_Q2_RERELEASE && m->definition->species == Q2M_INSANE && (m->spawnflags & 8u));
+        (io->edition == QA_RULESET_Q2_RERELEASE && m->definition->species == Q2M_INSANE && (m->spawnflags & 8u));
 }
 
 static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
@@ -822,7 +822,7 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
             m->definition->locomotion == Q2M_WALK ? "walkmonster_start_go" :
             m->definition->locomotion == Q2M_SWIM ? "swimmonster_start_go" :
             "flymonster_start_go";
-        if (io->edition == QA_Q2_CLASSIC && m->definition->species == Q2M_INSANE && (m->spawnflags & 8u))
+        if (io->edition == QA_RULESET_Q2_CLASSIC && m->definition->species == Q2M_INSANE && (m->spawnflags & 8u))
             think = "flymonster_start_go";
         due = m->start_due_ns;
         break;
@@ -909,7 +909,7 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     m->visible = m->start_phase != Q2M_START_DORMANT;
     m->start_due_ns = due;
     if (m->corpse || m->turret_attached || m->death_ns) m->next_frame_ns = UINT64_MAX;
-    else if (io->edition == QA_Q2_CLASSIC) m->next_frame_ns = due;
+    else if (io->edition == QA_RULESET_Q2_CLASSIC) m->next_frame_ns = due;
     if (selected >= 5 && selected <= 8) {
         m->corpse = true;
         m->corpse_phase = (q2m_corpse_phase)(selected - 4);
@@ -948,7 +948,7 @@ static bool monster_projectile_owner(qa_q2_game *game, q2_original_record_io *io
 
 static bool monster_deadflag_record(q2_original_record_io *io, bool *dead)
 {
-    if (io->edition == QA_Q2_RERELEASE)
+    if (io->edition == QA_RULESET_Q2_RERELEASE)
         return q2_original_scalar(io, "deadflag", Q2_ORIGINAL_BOOL, 492, 492, 492, dead);
     int32_t value = io->reading ? 0 : *dead ? 2 : 0; /* DEAD_DEAD / DEAD_NO. */
     if (!q2_original_scalar(io, "deadflag", Q2_ORIGINAL_I32, 492, 492, 492, &value)) return false;
@@ -983,7 +983,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         m->definition = definition;
         m->move_set = q2m_move_set_for(game, definition);
         m->classname = actor->entity->classname;
-        m->entity_scale = io->edition == QA_Q2_CLASSIC ? 1 : 0;
+        m->entity_scale = io->edition == QA_RULESET_Q2_CLASSIC ? 1 : 0;
         m->health_scaling = 1;
         m->animation_scale = definition->scale;
         m->normal_height = definition->bounds.maxs.z;
@@ -1010,7 +1010,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         if (!io->reading && (!strncmp(field->name, "s.", 2) ||
             !strcmp(field->name, "ideal_yaw") || !strcmp(field->name, "yaw_speed") ||
             !strcmp(field->name, "waterlevel") || !strcmp(field->name, "watertype") ||
-            (!strcmp(field->name, "count") && io->edition == QA_Q2_RERELEASE &&
+            (!strcmp(field->name, "count") && io->edition == QA_RULESET_Q2_RERELEASE &&
                 (definition->species == Q2M_INFANTRY || definition->species == Q2M_TURRET_DRIVER)))) continue;
         if (!io->reading && !strcmp(field->name, "timestamp") && m->corpse_phase == Q2M_CORPSE_HOVER) {
             okay = q2_original_value(io, field, &m->corpse_end_ns);
@@ -1034,11 +1034,11 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
     if (okay) okay = q2_original_scalar(io, "monsterinfo.pausetime", Q2_ORIGINAL_TIME,
         828, 828, 828, &pause);
     if (io->reading) m->pause_ns = pause >= UINT64_C(100000000000000000) ? UINT64_MAX : pause;
-    int32_t attack = (int32_t)m->attack_state + (io->edition == QA_Q2_RERELEASE ? 1 : 0);
+    int32_t attack = (int32_t)m->attack_state + (io->edition == QA_RULESET_Q2_RERELEASE ? 1 : 0);
     if (okay) okay = q2_original_scalar(io, "monsterinfo.attack_state", Q2_ORIGINAL_I32,
         868, 868, 868, &attack);
     if (okay && io->reading) {
-        if (io->edition == QA_Q2_RERELEASE && attack > 0) --attack;
+        if (io->edition == QA_RULESET_Q2_RERELEASE && attack > 0) --attack;
         if (attack < 0 || attack > Q2M_BLIND)
             okay = monster_error(io, "monsterinfo.attack_state", "Invalid original attack state");
         else m->attack_state = (q2m_attack_state)attack;
@@ -1057,33 +1057,33 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         }
     }
     if (okay) okay = flags_record(io, actor, m);
-    if (okay && (io->edition == QA_Q2_RERELEASE || io->product == QA_Q2_ROGUE)) {
+    if (okay && (io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE)) {
         okay = integer_wide(io, "monsterinfo.monster_slots", 968, &m->monster_slots) &&
             integer_wide(io, "monsterinfo.monster_used", 972, &m->monster_used) &&
             q2_original_scalar(io, "monsterinfo.blind_fire_delay", Q2_ORIGINAL_SECONDS_TIME,
                 65535, 65535, 952, &m->blind_fire_delay);
     }
-    if (okay && io->edition == QA_Q2_RERELEASE)
+    if (okay && io->edition == QA_RULESET_Q2_RERELEASE)
         okay = integer_float(io, "monsterinfo.base_health", 65535, &m->base_health) &&
             integer_float(io, "monsterinfo.health_scaling", 65535, &m->health_scaling);
     bool wall_dormant = m->definition->species == Q2M_TURRET && (m->spawnflags & 128u) &&
         m->start_phase == Q2M_START_MANUAL;
     const q2m_move *source_move = !io->reading && (statue(m) || m->turret_attached || wall_dormant) ? NULL : m->move;
-    if (okay) okay = move_record(io, io->edition == QA_Q2_RERELEASE ?
+    if (okay) okay = move_record(io, io->edition == QA_RULESET_Q2_RERELEASE ?
         "monsterinfo.active_move" : "monsterinfo.currentmove", 772, m, &source_move);
     if (okay && io->reading) m->move = source_move;
-    if (okay && io->edition == QA_Q2_RERELEASE)
+    if (okay && io->edition == QA_RULESET_Q2_RERELEASE)
         okay = move_record(io, "monsterinfo.next_move", 65535, m, &m->next_move);
     if (okay) okay = references_record(game, io, m) &&
         (!io->reading || q2_original_string(game, io, "combattarget", 320, &m->combat_target)) &&
         (!io->reading || q2_original_resource(game, io, level, "s.modelindex",
             40, 40, 40, 32, &m->model));
-    if (okay && io->edition == QA_Q2_RERELEASE)
+    if (okay && io->edition == QA_RULESET_Q2_RERELEASE)
         okay = q2_original_resource(game, io, level, "monsterinfo.weapon_sound",
             65535, 65535, 65535, 288, &m->weapon_sound);
     if (okay) okay = monster_deadflag_record(io, &m->dead);
     if (okay && io->reading) {
-        if (io->edition == QA_Q2_RERELEASE) {
+        if (io->edition == QA_RULESET_Q2_RERELEASE) {
             okay =
                 q2_original_scalar(io, "takedamage", Q2_ORIGINAL_BOOL, 512, 512, 512, &m->can_take_damage);
         } else {
@@ -1094,10 +1094,10 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         m->death_notified = m->dead;
         m->old_frame = m->frame;
         m->corpse = m->dead && (actor->physics.flags & QA_PHYSICS_DEAD) != 0;
-        if (io->edition == QA_Q2_CLASSIC) m->entity_scale = 1;
+        if (io->edition == QA_RULESET_Q2_CLASSIC) m->entity_scale = 1;
         if (!(m->animation_scale > 0)) m->animation_scale = definition->scale *
             (m->entity_scale != 0 ? m->entity_scale : 1);
-        if (io->edition == QA_Q2_CLASSIC) m->base_health = m->max_health;
+        if (io->edition == QA_RULESET_Q2_CLASSIC) m->base_health = m->max_health;
     }
     if (okay) okay = monster_callbacks_record(game, io, m, bindings) && schedule_record(game, io, actor, m) &&
         summons_record(game, io, m);
@@ -1120,7 +1120,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
             qa_q2_combat_power_armor_source(game, &combat.armor.powered);
             okay = qa_combat_set_armor(game->services.combat, actor->id, &combat.armor, error);
         }
-        if (okay && io->edition == QA_Q2_RERELEASE) {
+        if (okay && io->edition == QA_RULESET_Q2_RERELEASE) {
             okay = power_kind(io, "monsterinfo.initial_power_armor_type", 65535, &m->initial_power_armor) &&
                 integer_double(io, "monsterinfo.max_power_armor_power", 65535, &m->max_power_armor);
             qa_item_id armor_item = combat.armor.regular.item;

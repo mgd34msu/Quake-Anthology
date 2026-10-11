@@ -372,11 +372,11 @@ static bool q2_client_register(qa_cvars *registry, const qa_command_context *com
     return true;
 }
 bool frontend_source_q2_effects_register(qa_cvars *registry, const qa_command_context *command,
-    frontend_remote_q2_effects_profile profile, qa_error *error)
+    qa_ruleset_id rules, qa_error *error)
 {
     if (!registry || !command || !command->owner || command->origin != QA_COMMAND_SEAT ||
         qa_cvars_dialect(registry) != command->dialect || !qa_cvars_observer_idle(registry) ||
-        (profile != FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC && profile != FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE))
+        (rules != QA_RULESET_Q2_CLASSIC && rules != QA_RULESET_Q2_RERELEASE))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 effects declarations require their reached Source profile and physical CLIENT heap");
     return q2_client_register(registry, command, Q2_CLIENT_EFFECTS, Q2_CLIENT_HAND, true, error);
 }
@@ -392,7 +392,7 @@ bool frontend_source_q2_settings_register(const qa_launch_instance *descriptor,q
         !descriptor->storage || !descriptor->content ||
         !registry || !command || !command->owner || command->origin!=QA_COMMAND_SEAT ||
         (profile->edition!=QA_EDITION_CLASSIC && profile->edition!=QA_EDITION_RERELEASE) ||
-        command->dialect!=(profile->edition==QA_EDITION_RERELEASE?QA_RULESET_Q2_RERELEASE:QA_RULESET_Q2_CLASSIC) ||
+        command->dialect!=qa_product_ruleset(profile,QA_GAME_Q2) ||
         qa_cvars_dialect(registry)!=command->dialect || !qa_cvars_observer_idle(registry))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 CLIENT declarations require their actual normalized profile and new private heap");
     return q2_client_register(registry,command,Q2_CLIENT_LAYOUT,Q2_CLIENT_EFFECTS,false,error) &&

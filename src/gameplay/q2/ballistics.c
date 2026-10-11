@@ -4,7 +4,7 @@
 
 float q2_hitscan_range(void) { return 8192; }
 void q2_chainfist_spec(const qa_q2_game *g, q2_shot_spec *out) {
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     *out = (q2_shot_spec){.offset = {0, rr ? 0 : 8, -4},
         .damage = g->options.deathmatch ? (rr ? 15 : 30) : (rr ? 7 : 15),
         .kick = 50, .range = rr ? 24 : 64, .shots = 1, .melee = true};
@@ -52,7 +52,7 @@ bool q2_prepare_damage(void *context, qa_damage_request *request, bool *allowed,
     request->attack.time_ns = g->now_ns;
     if (g->hooks.prepare_damage)
         return g->hooks.prepare_damage(g->hooks.context, request, allowed, e);
-    if (g->options.edition != QA_Q2_RERELEASE || request->attack.cause.kind != QA_CAUSE_Q2 ||
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE || request->attack.cause.kind != QA_CAUSE_Q2 ||
         qa_actor_id_equal(request->target, request->attack.attacker) ||
         qa_attack_flags(&request->attack).no_protection)
         return true;

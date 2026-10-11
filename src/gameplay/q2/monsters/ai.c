@@ -212,7 +212,7 @@ bool qa_q2_monsters_capture(qa_q2_game *game,
       .sight_time_ns = runtime->sight_time_ns,
       .last_frame_ns = runtime->last_frame_ns,
       .began_frame = runtime->began_frame,
-      .trail_count = game->options.edition == QA_Q2_RERELEASE ? runtime->trail_count : 0,
+      .trail_count = game->options.rules == QA_RULESET_Q2_RERELEASE ? runtime->trail_count : 0,
       .alert_count = runtime->alert_count,
       .classic_trail_head = runtime->classic_trail_head,
       .classic_trail_active = runtime->classic_trail_active,
@@ -455,7 +455,7 @@ static q2_actor *classic_node(qa_q2_game *game, uint32_t index) {
 bool q2_player_trail_begin(qa_q2_game *game, qa_error *error) {
   if (!q2_monsters_init(game, error)) return false;
   q2_monsters_runtime *runtime = game->monster_runtime;
-  if (game->options.edition == QA_Q2_RERELEASE || game->options.deathmatch ||
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE || game->options.deathmatch ||
       runtime->classic_trail_active) return true;
   for (uint32_t i = 0; i < Q2M_TRAIL_POINTS; ++i) {
     q2_actor *node;
@@ -473,7 +473,7 @@ bool q2_player_trail_begin(qa_q2_game *game, qa_error *error) {
 }
 
 void q2_player_trail_read_level(qa_q2_game *game) {
-  if (game->options.edition == QA_Q2_CLASSIC)
+  if (game->options.rules == QA_RULESET_Q2_CLASSIC)
     game->monster_runtime->classic_trail_head = 0;
 }
 
@@ -492,7 +492,7 @@ bool q2_player_trail_client(qa_q2_game *game, qa_actor_id player, bool reading,
 }
 
 bool q2_player_trail_destroy(qa_q2_game *game, qa_actor_id player, qa_error *error) {
-  if (!game || game->options.edition != QA_Q2_RERELEASE || !game->monster_runtime)
+  if (!game || game->options.rules != QA_RULESET_Q2_RERELEASE || !game->monster_runtime)
     return true;
   for (q2_actor *actor = game->first_actor, *next; actor; actor = next) {
     next = actor->live_next;
@@ -532,7 +532,7 @@ static bool trail_add(qa_q2_game *game, q2m_player_trail *trail,
   q2_monsters_runtime *runtime = game->monster_runtime;
   q2_actor *node;
   qa_body_state body = {.origin = origin};
-  if (game->options.edition == QA_Q2_CLASSIC) {
+  if (game->options.rules == QA_RULESET_Q2_CLASSIC) {
     if (!runtime->classic_trail_active) return true;
     uint32_t index = runtime->classic_trail_head;
     node = classic_node(game, index);
@@ -590,7 +590,7 @@ bool q2_player_trail_step(qa_q2_game *game, qa_actor_id player, qa_error *error)
   if (trail->updated && trail->updated_ns == game->now_ns) return true;
   qa_body_state body;
   if (!qa_world_body_read(game->services.world, player, &body, error)) return false;
-  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   q2_monsters_runtime *runtime = game->monster_runtime;
   q2_actor *last = rerelease ? trail_reference(game, trail->head) :
       runtime->classic_trail_active ? classic_node(game,
@@ -612,7 +612,7 @@ static bool trail_pick(q2m_context *context, bool next, q2_actor **out,
   qa_q2_game *game = context->game;
   q2_monsters_runtime *runtime = game->monster_runtime;
   *out = NULL;
-  if (game->options.edition == QA_Q2_CLASSIC) {
+  if (game->options.rules == QA_RULESET_Q2_CLASSIC) {
     if (!runtime->classic_trail_active) return true;
     uint32_t index = runtime->classic_trail_head;
     for (unsigned i = 0; i < Q2M_TRAIL_POINTS; ++i) {
@@ -838,9 +838,9 @@ static bool in_front(q2m_context *context, qa_actor_id id) {
                                  target.origin, context->body.origin))) > 0.3f;
 }
 
-float q2m_body_distance(qa_q2_edition edition, const qa_body_state *self,
+float q2m_body_distance(qa_ruleset_id edition, const qa_body_state *self,
                         const qa_body_state *target) {
-  if (edition == QA_Q2_CLASSIC)
+  if (edition == QA_RULESET_Q2_CLASSIC)
     return qa_vec_length(qa_vec_sub(target->origin, self->origin));
   float x = fmaxf(
       0.0f, fmaxf(target->origin.x + target->bounds.mins.x -
@@ -865,7 +865,7 @@ float q2m_distance(q2m_context *context, qa_actor_id id) {
   qa_error ignored = {0};
   if (!qa_world_body_read(context->game->services.world, id, &target, &ignored))
     return FLT_MAX;
-  return q2m_body_distance(context->game->options.edition, &context->body, &target);
+  return q2m_body_distance(context->game->options.rules, &context->body, &target);
 }
 
 bool q2m_visible(q2m_context *context, qa_actor_id id, bool *visible,
@@ -934,7 +934,7 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
       .pass_actor = context->actor->id,
       .policy = qa_collision_default_policy(QA_GAME_Q2),
   };
-  query.policy.contents_mask = qa_collision_contents_mask(context->game->options.edition == QA_Q2_RERELEASE
+  query.policy.contents_mask = qa_collision_contents_mask(context->game->options.rules == QA_RULESET_Q2_RERELEASE
                                    ? Q2M_ATTACK_MASK | UINT32_C(0x40004000)
                                    : Q2M_ATTACK_MASK, QA_GAME_Q2);
   qa_trace_result trace;
@@ -944,7 +944,7 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
     return true;
   bool player = false;
   if (trace.hit == QA_TRACE_HIT_ACTOR && !qa_actor_id_equal(trace.actor, target_id) &&
-      trace.fraction != 1.0f && context->game->options.edition == QA_Q2_RERELEASE) {
+      trace.fraction != 1.0f && context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (!actor_traits(context, trace.actor, &traits, error))
       return false;
     if (!q2m_alive(context))
@@ -993,7 +993,7 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
     if (actor_callback && !q2m_callback_run(context,
         context->monster->stand_ground ? Q2M_CALLBACK_actor_stand : Q2M_CALLBACK_actor_run, error))
       return false;
-    bool medic_callback = context->game->options.edition == QA_Q2_RERELEASE &&
+    bool medic_callback = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         (context->monster->definition->species == Q2M_MEDIC ||
          context->monster->definition->species == Q2M_MEDIC_COMMANDER);
     if (medic_callback && !q2m_callback_run(context,
@@ -1033,7 +1033,7 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
       !qa_actor_id_equal(context->monster->enemy, id))
     return true;
   context->monster->ideal_yaw = vector_yaw(qa_vec_sub(target.origin, context->body.origin));
-  if (context->game->options.edition == QA_Q2_CLASSIC && !context->monster->stand_ground)
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC && !context->monster->stand_ground)
     context->monster->attack_ns = q2m_after(context->game->now_ns, 1);
   return true;
 }
@@ -1076,7 +1076,7 @@ bool q2m_found_target(q2m_context *context, qa_actor_id id, qa_error *error) {
   monster->blind_fire_delay = 0.0f;
   bool first_trail = monster->trail_ns == 0;
   monster->trail_ns = context->game->now_ns;
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (first_trail)
       monster->attack_ns = q2m_after(context->game->now_ns, 0.6);
     monster->attack_ns = q2m_after(monster->attack_ns,
@@ -1160,7 +1160,7 @@ bool qa_q2_before_monster_step(qa_q2_game *game, qa_actor_id id, qa_vec3 *displa
   *handled = false;
   q2_actor *actor = native_monster_actor(game, id);
   if (!actor || (game->options.product != QA_Q2_ROGUE &&
-                 game->options.edition != QA_Q2_RERELEASE))
+                 game->options.rules != QA_RULESET_Q2_RERELEASE))
     return true;
   q2m_context context = {.game = game, .actor = actor, .monster = actor->monster};
   if (!q2m_refresh(&context, error))
@@ -1181,7 +1181,7 @@ bool qa_q2_before_monster_step(qa_q2_game *game, qa_actor_id id, qa_vec3 *displa
     if (!q2m_alive(&context))
       return true;
     const char *name = trait_classname(&context, &traits);
-    const char *tesla = game->options.edition == QA_Q2_RERELEASE ? "tesla_mine" : "tesla";
+    const char *tesla = game->options.rules == QA_RULESET_Q2_RERELEASE ? "tesla_mine" : "tesla";
     if (name && !strcmp(name, tesla)) {
       qa_body_state area;
       if (!qa_world_body_read(game->services.world, area_id, &area, error))
@@ -1218,7 +1218,7 @@ bool qa_q2_accept_ground(qa_q2_game *game, qa_actor_id id, qa_vec3 origin,
   *accepted = true;
   q2_actor *actor = native_monster_actor(game, id);
   if (!actor || (game->options.product != QA_Q2_ROGUE &&
-                 game->options.edition != QA_Q2_RERELEASE))
+                 game->options.rules != QA_RULESET_Q2_RERELEASE))
     return true;
   q2m_context context = {.game = game, .actor = actor, .monster = actor->monster};
   if (!q2m_refresh(&context, error))
@@ -1241,7 +1241,7 @@ bool qa_q2_accept_ground(qa_q2_game *game, qa_actor_id id, qa_vec3 origin,
   if (!q2m_alive(&context))
     return true;
   const char *owner_name = trait_classname(&context, &owner_traits);
-  const char *tesla_name = game->options.edition == QA_Q2_RERELEASE ? "tesla_mine" : "tesla";
+  const char *tesla_name = game->options.rules == QA_RULESET_Q2_RERELEASE ? "tesla_mine" : "tesla";
   if (!owner_name || strcmp(owner_name, tesla_name))
     return true;
   qa_actor_id enemy = context.monster->enemy;
@@ -1250,7 +1250,7 @@ bool qa_q2_accept_ground(qa_q2_game *game, qa_actor_id id, qa_vec3 origin,
   if (!q2m_alive(&context))
     return true;
   const char *enemy_name = trait_classname(&context, &enemy_traits);
-  const char *protected_name = game->options.edition == QA_Q2_RERELEASE ? "tesla_mine" : "telsa";
+  const char *protected_name = game->options.rules == QA_RULESET_Q2_RERELEASE ? "tesla_mine" : "telsa";
   bool engage = !q2_actor_live(game, enemy);
   if (!engage && (!enemy_name || strcmp(enemy_name, protected_name))) {
     bool visible = false;
@@ -1275,7 +1275,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
     return true;
   struct qa_q2_monster *monster = context->monster;
   const bool rogue = context->game->options.product == QA_Q2_ROGUE ||
-                     context->game->options.edition == QA_Q2_RERELEASE;
+                     context->game->options.rules == QA_RULESET_Q2_RERELEASE;
 
   if (rogue && monster->last_attack.inflictor.registry != 0) {
     qa_builtin_actor_traits inflictor_traits = {0};
@@ -1285,7 +1285,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
       return true;
     {
       const char *name = trait_classname(context, &inflictor_traits);
-      const char *tesla_name = context->game->options.edition == QA_Q2_RERELEASE
+      const char *tesla_name = context->game->options.rules == QA_RULESET_Q2_RERELEASE
                                    ? "tesla_mine"
                                    : "tesla";
       if (name != NULL && strcmp(name, tesla_name) == 0) {
@@ -1296,7 +1296,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
           return false;
         if (!q2m_alive(context))
           return true;
-        bool engage = context->game->options.edition == QA_Q2_CLASSIC
+        bool engage = context->game->options.rules == QA_RULESET_Q2_CLASSIC
                           ? created
                           : created || (q2_rerelease_word(context->game) & 1u);
         if (engage && !qa_actor_id_equal(monster->enemy,
@@ -1330,7 +1330,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
         return true;
       monster->target_anger = false;
     }
-    if (context->game->options.edition == QA_Q2_RERELEASE &&
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         monster->react_ns > context->game->now_ns)
       return true;
     if (monster->enemy.registry != 0 && monster->medic) {
@@ -1341,7 +1341,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
       if (!q2m_alive(context))
         return true;
     }
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
       monster->react_ns = q2m_after(
           context->game->now_ns,
           (double)q2_rerelease_time_ms(context->game, 3000, 5000) / 1000.0);
@@ -1374,7 +1374,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
     bool ignore = false;
     bool retaliate = false;
     if (other != NULL) {
-      if (rogue || context->game->options.edition == QA_Q2_RERELEASE)
+      if (rogue || context->game->options.rules == QA_RULESET_Q2_RERELEASE)
         ignore = monster->ignore_shots || other->monster->ignore_shots;
       else
         ignore = other->monster->definition->species == Q2M_TANK ||
@@ -1417,7 +1417,7 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
 static bool hear_target(q2m_context *context, bool *found, qa_error *error) {
   *found = false;
   qa_q2_player_noise_record noise = {0};
-  uint64_t age = context->game->options.edition == QA_Q2_CLASSIC
+  uint64_t age = context->game->options.rules == QA_RULESET_Q2_CLASSIC
                      ? Q2M_TENTH
                      : context->game->frame_ns;
   bool present = qa_q2_player_noise_read(context->game, false, &noise);
@@ -1512,7 +1512,7 @@ static bool visual_candidate(q2m_context *context, qa_actor_id candidate,
   if (!living || !q2m_alive(context))
     return true;
   float distance = q2m_distance(context, candidate);
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (distance > 940.0f)
       return true;
     if ((context->monster->spawnflags & 1u) == 0 && distance <= 440.0f &&
@@ -1561,11 +1561,11 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
     return true;
   q2_monsters_runtime *runtime = context->game->monster_runtime;
   qa_actor_id candidate = {0};
-  uint64_t recent_age = context->game->options.edition == QA_Q2_CLASSIC
+  uint64_t recent_age = context->game->options.rules == QA_RULESET_Q2_CLASSIC
                             ? Q2M_TENTH
                             : context->game->frame_ns;
 
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     qa_builtin_snapshot_frame *players = q2_player_roster(context->game, error);
     if (players == NULL)
       return false;
@@ -1647,7 +1647,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
       *found = true;
       return true;
     }
-    candidate = context->game->options.edition == QA_Q2_CLASSIC
+    candidate = context->game->options.rules == QA_RULESET_Q2_CLASSIC
                     ? runtime->sight_client
                     : (qa_actor_id){0};
   }
@@ -1686,7 +1686,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
     return true;
   monster = context->monster;
   if (monster->definition->sight_sound != Q2_NAME_NONE &&
-      (context->game->options.edition == QA_Q2_CLASSIC ||
+      (context->game->options.rules == QA_RULESET_Q2_CLASSIC ||
        !monster->close_sight_tripped)) {
     if (!q2m_sound(context, monster->definition->sight_sound, 2, 1.0f, error))
       return false;
@@ -1776,7 +1776,7 @@ typedef struct attack_chances {
 static bool default_attack(q2m_context *context, bool *selected, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *game = context->game;
-  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = rerelease || game->options.product == QA_Q2_ROGUE;
   q2m_species species = m->definition->species;
   bool boss_profile = species == Q2M_JORG || species == Q2M_MAKRON || species == Q2M_BOSS2;
@@ -1880,7 +1880,7 @@ static bool default_attack(q2m_context *context, bool *selected, qa_error *error
     return false;
   if (!present || !q2_actor_live(game, enemy))
     return true;
-  float distance = q2m_body_distance(game->options.edition, &context->body, &target);
+  float distance = q2m_body_distance(game->options.rules, &context->body, &target);
   if (classic_boss)
     m->ideal_yaw = vector_yaw(qa_vec_sub(target.origin, context->body.origin));
   if (rerelease ? distance <= 20 : distance < 80) {
@@ -1972,7 +1972,7 @@ static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *e
   if (!second && (monster->move->id == Q2M_MOVE_widow_move_run) &&
       ((monster->frame >= 14 && monster->frame <= 18) || monster->frame == 22))
     return true;
-  float distance = q2m_body_distance(game->options.edition, &context->body, &target);
+  float distance = q2m_body_distance(game->options.rules, &context->body, &target);
   bool slots = q2m_summon_has_slots(monster, 2);
   if (q2m_random(game) < .8f && slots && distance > 150.0f) {
     monster->source_blocked = true;
@@ -2071,7 +2071,7 @@ static bool pending_attack(const struct qa_q2_monster *monster, bool blind) {
 bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_error *error) {
   *selected = *started = false;
   struct qa_q2_monster *monster = context->monster;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE;
   if (monster->combat_point)
     return true;
@@ -2241,7 +2241,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
               : monster->definition->attack2_move;
   switch (species) {
   case Q2M_PARASITE:
-    if (context->game->options.edition == QA_Q2_RERELEASE) {
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
       bool clear;
       if (!q2m_clear_shot(context, q2m_project_offset(context, qa_v3(-1.7f, 0, 1.2f)),
                           &clear, error))
@@ -2257,9 +2257,9 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
   case Q2M_TURRET_DRIVER:
     if (melee ||
         distance <
-            (context->game->options.edition == QA_Q2_CLASSIC ? 80.0f : 20.0f)) {
+            (context->game->options.rules == QA_RULESET_Q2_CLASSIC ? 80.0f : 20.0f)) {
       *move = Q2M_MOVE_infantry_move_attack2;
-    } else if (context->game->options.edition == QA_Q2_RERELEASE &&
+    } else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                !monster->cocked) {
       *move = q2m_random(context->game) <= 0.1f ? Q2M_MOVE_infantry_move_attack5
                                                 : Q2M_MOVE_infantry_move_attack3;
@@ -2277,7 +2277,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
           q2m_after(context->game->now_ns, 1.5 + q2m_random(context->game));
     } else if (species == Q2M_SOLDIER_SS) {
       *move = Q2M_MOVE_soldier_move_attack4;
-    } else if (context->game->options.edition == QA_Q2_RERELEASE &&
+    } else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                !monster->stand_ground && distance >= 220.0f &&
                q2m_random(context->game) < 0.25f) {
       *move = Q2M_MOVE_soldier_move_attack6;
@@ -2308,7 +2308,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     if (melee)
       *move = q2m_random(context->game) < 0.5f ? Q2M_MOVE_floater_move_attack3
                                                : Q2M_MOVE_floater_move_attack2;
-    else if (context->game->options.edition == QA_Q2_RERELEASE &&
+    else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
              q2m_random(context->game) > 0.5f &&
              q2m_move_find(monster, Q2M_MOVE_floater_move_attack1a) != NULL) {
       monster->attack_state = Q2M_SLIDING;
@@ -2374,10 +2374,10 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                 : Q2M_MOVE_hover_move_start_attack;
     break;
   case Q2M_JORG:
-    if ((context->game->options.edition == QA_Q2_RERELEASE
+    if ((context->game->options.rules == QA_RULESET_Q2_RERELEASE
              ? q2_rerelease_float(context->game, 0, 1) : q2m_random(context->game)) <= 0.75f) {
       if (!q2m_sound(context, QA_Q2_SFX_BOSS3_BS3ATCK1,
-                       context->game->options.edition == QA_Q2_RERELEASE ? 1 : 2,
+                       context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 1 : 2,
                        1.0f, error))
         return false;
       if (!q2m_alive(context)) return true;
@@ -2432,7 +2432,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     break;
   case Q2M_BOSS2: {
     bool guns = distance <= 125.0f || q2m_random(context->game) <= 0.6f;
-    bool n64 = context->game->options.edition == QA_Q2_RERELEASE &&
+    bool n64 = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                (monster->spawnflags & 8u) != 0;
     *move = guns  ? n64 ? Q2M_MOVE_boss2_move_attack_hb : Q2M_MOVE_boss2_move_attack_pre_mg
             : n64 ? Q2M_MOVE_boss2_move_attack_rocket2
@@ -2440,7 +2440,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     break;
   }
   case Q2M_ACTOR:
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
       monster->fire_ns = q2m_after(context->game->now_ns, 1.0 + q2m_random(context->game) * 1.6);
     else
       monster->pause_ns = q2m_after(context->game->now_ns,
@@ -2466,7 +2466,7 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
                                                : Q2M_MOVE_stalker_move_swing_r;
     else {
       float luck = q2m_random(context->game);
-      if (context->game->options.edition == QA_Q2_RERELEASE
+      if (context->game->options.rules == QA_RULESET_Q2_RERELEASE
               ? luck > 0.5f
               : context->game->options.skill == 0 ||
                     luck > 1.0f - 0.5f / (float)context->game->options.skill)
@@ -2599,7 +2599,7 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
     if (!q2m_medic_attack_move(context, INFINITY, &move, error))
       return false;
     return !q2m_alive(context) || !move || q2m_set_move(context, move,
-        context->game->options.edition == QA_Q2_RERELEASE, error);
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE, error);
   }
   qa_builtin_actor_traits traits;
   qa_body_state enemy;
@@ -2612,7 +2612,7 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
   q2m_move_id move;
   if (!select_species_attack(context, &move, error))
     return false;
-  bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
+  bool immediate = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                    (species == Q2M_JORG || species == Q2M_MEDIC ||
                     species == Q2M_MEDIC_COMMANDER);
   return !q2m_alive(context) || move == Q2M_MOVE_NONE || q2m_set_move(context, move, immediate, error);
@@ -2643,7 +2643,7 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     return true;
   if (move == Q2M_MOVE_NONE)
     return true;
-  bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
+  bool immediate = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                    (monster->definition->species == Q2M_JORG ||
                     monster->definition->species == Q2M_MEDIC ||
                     monster->definition->species == Q2M_MEDIC_COMMANDER);
@@ -2651,7 +2651,7 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (rerelease && !melee)
     monster->attack_ns = q2m_after(context->game->now_ns, 1 + q2m_random(context->game));
   if (!rerelease || pending_attack(monster, true))
@@ -2719,7 +2719,7 @@ static bool alternate_fly(q2m_context *context, bool *handled,
                           qa_error *error) {
   *handled = false;
   struct qa_q2_monster *monster = context->monster;
-  if (context->game->options.edition != QA_Q2_RERELEASE ||
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE ||
       !monster->alternate_fly)
     return true;
   *handled = true;
@@ -2958,7 +2958,7 @@ static bool alternate_fly(q2m_context *context, bool *handled,
 
 static uint32_t monster_move_mask(const qa_q2_game *game) {
   return Q2M_MONSTER_MASK |
-         (game->options.edition == QA_Q2_RERELEASE ? UINT32_C(0x40000000)
+         (game->options.rules == QA_RULESET_Q2_RERELEASE ? UINT32_C(0x40000000)
                                                     : 0u);
 }
 
@@ -3132,7 +3132,7 @@ static bool chase_goal(q2m_context *context, qa_vec3 goal, float distance,
   const float directions[] = {x, y, old};
   bool medic_blocked = monster->definition->species == Q2M_MEDIC_COMMANDER ||
       (monster->definition->species == Q2M_MEDIC &&
-       (context->game->options.edition == QA_Q2_RERELEASE ||
+       (context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
         context->game->options.product == QA_Q2_ROGUE));
   for (size_t index = 0; index < sizeof(directions) / sizeof(directions[0]);
        ++index) {
@@ -3401,7 +3401,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
     return q2m_move_to_goal(context, distance, error);
   }
   case Q2M_AI_CHARGE:
-    if ((context->game->options.edition == QA_Q2_RERELEASE ||
+    if ((context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
          context->game->options.product == QA_Q2_ROGUE) &&
         monster->enemy.registry == 0)
       return true;
@@ -3412,15 +3412,15 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       return true;
     if (distance == 0.0f)
       return true;
-    if ((context->game->options.edition == QA_Q2_RERELEASE ||
+    if ((context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
          context->game->options.product == QA_Q2_ROGUE) &&
         monster->charging)
       return q2m_move_to_goal(context, distance, error);
-    if ((context->game->options.edition == QA_Q2_RERELEASE ||
+    if ((context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
          context->game->options.product == QA_Q2_ROGUE) &&
         monster->attack_state == Q2M_SLIDING) {
       float side = monster->lefty ? 90.0f : -90.0f;
-      float sideways = context->game->options.edition == QA_Q2_CLASSIC
+      float sideways = context->game->options.rules == QA_RULESET_Q2_CLASSIC
                            ? distance
                            : distance * monster->move->sidestep_scale;
       bool moved = false;
@@ -3453,7 +3453,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
     if (!q2m_find_target(context, &found, error))
       return false;
     return !q2m_alive(context) || found ||
-           (context->game->options.edition == QA_Q2_RERELEASE && monster->manual_steering) ||
+           (context->game->options.rules == QA_RULESET_Q2_RERELEASE && monster->manual_steering) ||
            q2m_change_yaw(context, error);
   }
   case Q2M_AI_STAND2:

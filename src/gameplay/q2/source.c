@@ -13,7 +13,7 @@ static const char *setting_name(const qa_q2_game *game, qa_q2_source_setting set
         [QA_Q2_SOURCE_DISABLED_WEAPONS] = "disabled_weps",
         [QA_Q2_SOURCE_NO_QUADFIRE_DROP] = "g_dm_no_quadfire_drop",
     };
-    return setting == QA_Q2_SOURCE_STRONG_MINES && game->options.edition == QA_Q2_RERELEASE ?
+    return setting == QA_Q2_SOURCE_STRONG_MINES && game->options.rules == QA_RULESET_Q2_RERELEASE ?
         "g_dm_strong_mines" : names[setting];
 }
 
@@ -215,8 +215,7 @@ static bool same_rotation(const qa_string_id *first, const qa_string_id *second,
 bool qa_q2_source_apply(qa_q2_game *game, const qa_cvars *cvars, bool reset_rotation,
                          qa_error *error) {
     if (!game || !cvars || !game->player_runtime || !game->item_runtime ||
-        qa_cvars_dialect(cvars) != (game->options.edition == QA_Q2_RERELEASE ?
-            QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)) {
+        qa_cvars_dialect(cvars) != (game->options.rules)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 source settings require their constructed GAME owner");
         return false;
     }

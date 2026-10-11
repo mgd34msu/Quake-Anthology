@@ -61,7 +61,7 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
     *kind = Q2_PROJECTILE_NONE;
     for (size_t i = 0; name && i < sizeof(names) / sizeof(names[0]); ++i)
         if (!strcmp(name, names[i].name)) { *kind = names[i].kind; break; }
-    if (*kind == Q2_SPAWN_GROWTH && io->edition == QA_Q2_RERELEASE)
+    if (*kind == Q2_SPAWN_GROWTH && io->edition == QA_RULESET_Q2_RERELEASE)
         *kind = Q2_RERELEASE_SPAWN_GROWTH;
     bool found;
     if (!matches(g, io, "think", 436, "heat_think", &found)) return false;
@@ -101,7 +101,7 @@ static bool identify(qa_q2_game *g, q2_original_record_io *io,
         if (!matches(g, io, callbacks[i].field, callbacks[i].offset, callbacks[i].name, &found))
             return false;
         if (found) {
-            *kind = callbacks[i].kind == Q2_SPAWN_GROWTH && io->edition == QA_Q2_RERELEASE ?
+            *kind = callbacks[i].kind == Q2_SPAWN_GROWTH && io->edition == QA_RULESET_Q2_RERELEASE ?
                 Q2_RERELEASE_SPAWN_GROWTH : callbacks[i].kind;
             return true;
         }
@@ -185,7 +185,7 @@ static bool read_phase(qa_q2_game *g, q2_original_record_io *io, q2_projectile *
 static bool callbacks(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
 {
     q2_projectile *p = &a->projectile;
-    bool rr = io->edition == QA_Q2_RERELEASE;
+    bool rr = io->edition == QA_RULESET_Q2_RERELEASE;
     const char *think = "G_FreeEdict", *touch = NULL, *die = NULL;
     switch (p->kind) {
     case Q2_BOLT: case Q2_BLUE_BOLT: touch = "blaster_touch"; break;
@@ -266,7 +266,7 @@ static bool references(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
 {
     q2_projectile *p = &a->projectile;
     bool mine = p->kind == Q2_PROX || p->kind == Q2_TESLA || p->kind == Q2_NUKE ||
-        (p->kind == Q2_TRAP && io->edition == QA_Q2_RERELEASE);
+        (p->kind == Q2_TRAP && io->edition == QA_RULESET_Q2_RERELEASE);
     qa_actor_reference owner = p->owner;
     if (!io->reading) {
         if (mine) {
@@ -315,7 +315,7 @@ static bool references(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
 
 static bool deadlines(q2_original_record_io *io, q2_projectile *p)
 {
-    bool rr = io->edition == QA_Q2_RERELEASE;
+    bool rr = io->edition == QA_RULESET_Q2_RERELEASE;
     uint64_t next = p->next_ns;
     bool expiry_think = p->kind == Q2_BOLT || p->kind == Q2_BLUE_BOLT || p->kind == Q2_GREEN_BOLT ||
         p->kind == Q2_ROCKET || p->kind == Q2_ION || p->kind == Q2_PLASMA ||
@@ -419,7 +419,7 @@ static void attack(qa_q2_game *g, q2_actor *a, uint32_t flags)
         .weapon = weapon < QA_Q2_WEAPON_COUNT ? g->items[weapon] : 0,
         .weapon_provider = g->options.owner, .powerup_owner = g->options.owner,
         .powerup_applied = true,
-        .cause = qa_q2_damage_cause(g->options.edition, g->options.product, p->direct_mod, 0)};
+        .cause = qa_q2_damage_cause(g->options.rules, g->options.product, p->direct_mod, 0)};
 }
 
 bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
@@ -445,11 +445,11 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
     }
     if (p->kind == Q2_PROJECTILE_NONE) return true;
     if ((p->kind == Q2_BFG_LASER || p->kind == Q2_RERELEASE_SPAWN_GROWTH ||
-        p->kind == Q2_RERELEASE_SPAWN_BEAM) && io->edition != QA_Q2_RERELEASE)
+        p->kind == Q2_RERELEASE_SPAWN_BEAM) && io->edition != QA_RULESET_Q2_RERELEASE)
         return unsupported(io, 436, "Original Q2 projectile requires the rerelease");
-    if (p->kind == Q2_SPAWN_GROWTH && io->edition == QA_Q2_RERELEASE)
+    if (p->kind == Q2_SPAWN_GROWTH && io->edition == QA_RULESET_Q2_RERELEASE)
         return unsupported(io, 436, "Original Q2 rerelease growth requires its native controller");
-    if (io->edition == QA_Q2_CLASSIC &&
+    if (io->edition == QA_RULESET_Q2_CLASSIC &&
         ((io->product != QA_Q2_XATRIX && (p->kind == Q2_ION || p->kind == Q2_PLASMA ||
             p->kind == Q2_TRAP || p->kind == Q2_BLUE_BOLT || p->kind == Q2_HEAT_ROCKET)) ||
          (io->product != QA_Q2_ROGUE && (p->kind == Q2_FLECHETTE || p->kind == Q2_TRACKER ||
@@ -464,11 +464,11 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
     if (io->reading && p->kind == Q2_GIB && !(p->gib_flags & Q2_GIB_WIDOW_LEGS) &&
         qa_actor_reference_present(p->owner) && a->physics.gravity_scale == .25f)
         p->gib_flags |= Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED;
-    if (io->edition == QA_Q2_CLASSIC && io->product != QA_Q2_ROGUE &&
+    if (io->edition == QA_RULESET_Q2_CLASSIC && io->product != QA_Q2_ROGUE &&
         (p->gib_flags & (Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED | Q2_GIB_WIDOW_LEGS)))
         return unsupported(io, 436, "Q2 widow gib does not belong to the selected original game");
     uint32_t flags = p->kind == Q2_GRENADE ? (p->hand ? 1u : 0) | (p->held ? 2u : 0) :
-        p->kind == Q2_TRAP && io->edition == QA_Q2_CLASSIC ? 1u | (p->held ? 2u : 0) :
+        p->kind == Q2_TRAP && io->edition == QA_RULESET_Q2_CLASSIC ? 1u | (p->held ? 2u : 0) :
         (p->kind == Q2_BOLT || p->kind == Q2_BLUE_BOLT) && p->direct_mod == 10 ? 1u : 0;
     bool growth = p->kind == Q2_RERELEASE_SPAWN_GROWTH || p->kind == Q2_RERELEASE_SPAWN_BEAM;
     int32_t damage = io->reading || growth || p->kind == Q2_BFG_BALL ? 0 : qa_source_float_to_i32(p->damage);
@@ -490,11 +490,11 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
         attack(g, a, flags);
         if (p->kind == Q2_FLECHETTE) p->kick = radius;
     }
-    if ((p->kind == Q2_TRACKER || (p->kind == Q2_HEAT_ROCKET && io->edition == QA_Q2_RERELEASE) ||
-        (p->kind == Q2_GRENADE && io->edition == QA_Q2_RERELEASE && p->armed) ||
+    if ((p->kind == Q2_TRACKER || (p->kind == Q2_HEAT_ROCKET && io->edition == QA_RULESET_Q2_RERELEASE) ||
+        (p->kind == Q2_GRENADE && io->edition == QA_RULESET_Q2_RERELEASE && p->armed) ||
         (p->kind == Q2_NUKE && p->phase)) &&
         !scalar(io, "speed", Q2_ORIGINAL_F32, 328, &p->speed)) return false;
-    if (p->kind == Q2_HEAT_ROCKET && io->edition == QA_Q2_RERELEASE &&
+    if (p->kind == Q2_HEAT_ROCKET && io->edition == QA_RULESET_Q2_RERELEASE &&
         !scalar(io, "accel", Q2_ORIGINAL_F32, 332, &p->turn_fraction)) return false;
     if (p->kind == Q2_RERELEASE_SPAWN_GROWTH &&
         (!scalar(io, "accel", Q2_ORIGINAL_F32, 332, &p->radius) ||
@@ -512,7 +512,7 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
             p->wait = qa_source_float_to_i32(wait);
             p->captured_mass = (float)mass * (g->options.deathmatch ? 4 : 10);
         }
-        if (io->edition == QA_Q2_RERELEASE &&
+        if (io->edition == QA_RULESET_Q2_RERELEASE &&
             !scalar(io, "accel", Q2_ORIGINAL_F32, 332, &p->captured_mass)) return false;
         if (io->reading && qa_actor_reference_present(p->enemy)) {
             q2_actor *enemy = q2_actor_get(g, qa_actor_reference_resolve(
@@ -527,7 +527,7 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
             !qa_strings_intern_cstr(qa_session_strings(g->services.session), QA_Q2_SOUND_MISC_FHIT3,
                 &sound, io->error)) return false;
         if (!q2_original_resource(g, io, engine,
-            io->edition == QA_Q2_RERELEASE ? "style" : "plat2flags",
+            io->edition == QA_RULESET_Q2_RERELEASE ? "style" : "plat2flags",
             UINT16_MAX, UINT16_MAX, 992, 288, &sound)) return false;
         if (io->reading && sound) {
             const char *path = qa_strings_cstr(qa_session_strings(g->services.session), sound);
@@ -539,7 +539,7 @@ bool q2_original_projectile_record(qa_q2_game *g, q2_original_record_io *io,
     if (io->reading && (p->kind == Q2_GIB || p->kind == Q2_DEBRIS || p->kind == Q2_TRAP_ORBIT_GIB) &&
         !(p->gib_flags & Q2_GIB_WIDOW_LEGS)) {
         p->gib_flags |= a->physics.motion == QA_PHYSICS_BOUNCE ? Q2_GIB_METALLIC : 0;
-        if (io->edition == QA_Q2_RERELEASE) {
+        if (io->edition == QA_RULESET_Q2_RERELEASE) {
             uint64_t source_flags = 0;
             if (!scalar(io, "flags", Q2_ORIGINAL_U64, 264, &source_flags)) return false;
             p->gib_flags |= source_flags & UINT64_C(0x10000000) ? Q2_GIB_UPRIGHT : 0;

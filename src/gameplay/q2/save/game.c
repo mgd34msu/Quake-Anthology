@@ -176,7 +176,7 @@ static bool unit_entities(qa_q2_game *g, const qa_q2_game *current,
     qa_q2_entities_checkpoint *entities, qa_error *e)
 {
     const q2_entities *source = current->entity_runtime;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         if (!unit_string(g, current, source->primary, &entities->primary, e) ||
             !unit_string(g, current, source->secondary, &entities->secondary, e)) return false;
         entities->primary_changes = source->primary_changes;
@@ -209,7 +209,7 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_save_purpose purpose, const qa_q2_game
         return false;
     }
     bool transition = purpose == QA_SAVE_TRANSITION;
-    if (transition && (!current || current == g || current->options.edition != g->options.edition ||
+    if (transition && (!current || current == g || current->options.rules != g->options.rules ||
         current->options.product != g->options.product)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 level restore requires its actual current unit GAME");
         return false;

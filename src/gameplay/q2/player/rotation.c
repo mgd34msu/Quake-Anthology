@@ -18,7 +18,7 @@ bool qa_q2_players_end_deathmatch_level(qa_q2_game *game,qa_error *error) {
         size_t count=players->rules.map_list_count,index=0;
         while(index<count && !same_map(qa_strings_cstr(strings,players->rotation_maps[index]),current)) ++index;
         if(index<count) {
-            if(game->options.edition==QA_Q2_RERELEASE && players->rules.map_list_shuffle && count>1 && index==count-1) {
+            if(game->options.rules==QA_RULESET_Q2_RERELEASE && players->rules.map_list_shuffle && count>1 && index==count-1) {
                 qa_string_id *shuffled=malloc(count*sizeof(*shuffled));
                 if(!shuffled) {qa_error_set(error,QA_ERROR_MEMORY,0,"Copying Q2 source rotation for shuffle");return false;}
                 memcpy(shuffled,players->rotation_maps,count*sizeof(*shuffled));
@@ -38,7 +38,7 @@ bool qa_q2_players_end_deathmatch_level(qa_q2_game *game,qa_error *error) {
                     free(players->rotation_maps);players->rotation_maps=shuffled;players->rules.map_list=shuffled;
                 }
                 next=qa_strings_cstr(strings,first);
-            } else if(game->options.edition!=QA_Q2_RERELEASE || count!=1)
+            } else if(game->options.rules!=QA_RULESET_Q2_RERELEASE || count!=1)
                 next=qa_strings_cstr(strings,players->rotation_maps[(index+1)%count]);
         } else {
             const char *configured=qa_strings_cstr(strings,players->rules.next_map);

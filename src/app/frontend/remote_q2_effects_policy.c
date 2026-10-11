@@ -13,7 +13,7 @@ static bool current(const frontend_remote_q2_effects_policy *t, bool parent)
     if (!t || !t->owner || t->owner->pending!=t || t->owner->busy ||
         t->owner->source.images!=t->source.images || t->owner->source.identity!=t->source.identity ||
         t->owner->source.content_generation!=t->source.content_generation ||
-        t->owner->source.profile!=t->source.profile ||
+        t->owner->source.rules!=t->source.rules ||
         t->owner->source.map!=t->source.map || t->owner->source.files!=t->source.files ||
         t->owner->source.materials!=t->source.materials || t->owner->source.world!=t->source.world || t->owner->source.context!=t->source.context ||
         t->owner->source.session!=t->source.session ||

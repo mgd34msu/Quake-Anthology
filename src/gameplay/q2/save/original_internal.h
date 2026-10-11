@@ -45,7 +45,7 @@ typedef struct q2_original_layout {
 /* The caller stages the real typed state on reads. Classic offsets describe
  * the original MSVC x86 ABI; they are independent of our native C layout. */
 typedef struct q2_original_record_io {
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     qa_q2_product product;
     qa_json_writer *writer;
     const qa_json_document *document;
@@ -108,7 +108,7 @@ bool q2_original_scalar(q2_original_record_io *, const char *, q2_original_field
     uint16_t, uint16_t, uint16_t, void *);
 bool q2_original_item(qa_q2_game *, q2_original_record_io *, const char *,
     uint16_t, uint16_t, uint16_t, qa_item_id *);
-bool q2_original_config_layout(qa_q2_edition, const qa_q2_save_level *, qa_q2_config_layout *, qa_error *);
+bool q2_original_config_layout(qa_ruleset_id, const qa_q2_save_level *, qa_q2_config_layout *, qa_error *);
 bool q2_original_resource(qa_q2_game *, q2_original_record_io *, const qa_q2_save_level *,
     const char *, uint16_t, uint16_t, uint16_t, uint32_t, qa_string_id *);
 bool q2_original_object_begin(q2_original_record_io *, const char *, q2_original_record_io *, bool *);

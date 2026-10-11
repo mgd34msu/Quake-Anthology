@@ -6,7 +6,7 @@ static bool destination(qa_q2_game *g, q2_actor *a, qa_actor_id corner, qa_vec3 
         !qa_world_body_read(g->services.world, corner, &target, e))
         return false;
     q2_entity_state *s = a->entity;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     *out = rr && (s->spawnflags & 32) ? target.origin : qa_vec_sub(target.origin, body.bounds.mins);
     if (rr && !(s->spawnflags & 32) && (s->spawnflags & 16))
         *out = qa_vec_sub(*out, qa_v3(1, 1, 1));
@@ -67,7 +67,7 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
         m->destination = id;
         q2_actor *target = q2_ent(g, id);
         float speed = target ? target->entity->speed : q2_actor_field_float(g, id, g->field_keys[QA_TARGET_KEY_SPEED], 0);
-        if (g->options.edition == QA_Q2_RERELEASE && speed != 0) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && speed != 0) {
             s->speed = speed;
             float accel = target ? target->entity->accel : q2_actor_field_float(g, id, g->field_keys[QA_TARGET_KEY_ACCEL], 0);
             float decel = target ? target->entity->decel : q2_actor_field_float(g, id, g->field_keys[QA_TARGET_KEY_DECEL], 0);
@@ -82,7 +82,7 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
         qa_vec3 delta = qa_vec_sub(goal, body.origin);
         if (!q2_move_start(g, a, goal, false, Q2MD_TRAIN_WAIT, e))
             return false;
-        if (g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 8))
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && (s->spawnflags & 8))
             for (q2_actor *part = q2_ent(g, qa_actor_reference_resolve(actors, s->team_next)); part;) {
                 q2_entity_state *p = part->entity;
                 qa_actor_reference next = p->team_next;
@@ -124,9 +124,7 @@ bool q2_train_wait(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 &(qa_target_use){.source = destination,
                                  .activator = s->activator,
                                  .fields = authored,
-                                 .dialect = g->options.edition == QA_Q2_CLASSIC
-                                                ? QA_RULESET_Q2_CLASSIC
-                                                : QA_RULESET_Q2_RERELEASE,
+                                 .dialect = g->options.rules,
                                  .time_ns = g->now_ns},
                 e);
         }
@@ -143,7 +141,7 @@ bool q2_train_wait(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (wait > 0)
         q2_entity_schedule(g, a, Q2ET_TRAIN_NEXT, wait);
     else if (s->spawnflags & 2) {
-        if (g->options.edition == QA_Q2_RERELEASE)
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE)
             s->mover->destination = (qa_actor_id){0};
         else if (!q2_train_next(g, a, e))
             return false;

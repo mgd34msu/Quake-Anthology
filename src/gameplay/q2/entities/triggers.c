@@ -23,7 +23,7 @@ bool q2_entity_clip(qa_q2_game *g, q2_actor *a, qa_actor_id other, bool *inside,
     qa_trace_query q = {.start = b.origin,
                         .end = b.origin,
                         .shape = {.kind = QA_SHAPE_BOX, .bounds = b.bounds},
-                        .policy = {.behavior = &qa_trace_behaviors[(g->options.edition == QA_Q2_RERELEASE) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
+                        .policy = {.behavior = &qa_trace_behaviors[g->options.rules],
                                    .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_GAME_Q2)},
                         .target = {.inline_model = true,
                                    .model = a->entity->collision.model,
@@ -92,7 +92,7 @@ static bool wind_sound(qa_q2_game *g, qa_actor_id id, qa_error *e) {
 bool q2_trigger_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     *handled = true;
     if (!strcmp(name, "trigger_once") || !strcmp(name, "trigger_multiple")) {
         s->kind = Q2E_MULTI;
@@ -238,7 +238,7 @@ bool q2_trigger_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
                       qa_error *e) {
     q2_entity_state *s = a->entity;
     qa_actor_id id = contact->other;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     qa_builtin_actor_traits traits = {0};
     if (g->services.actor_traits)
         g->services.actor_traits(g->services.context, id, &traits);

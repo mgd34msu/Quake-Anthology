@@ -364,7 +364,7 @@ static bool defaults(frontend_remote_q2_source *source, qa_error *error)
     return frontend_legacy_source_register(source->domain.cvars,
         source->domain.command_context.dialect, source->domain.command_context.owner, error) &&
         qa_input_settings_register(source->domain.cvars,
-        source->domain.command_context.dialect == QA_RULESET_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC, error);
+        source->domain.command_context.dialect, error);
 }
 bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_source_options *options,
     frontend_remote_q2_source **out, qa_error *error)
@@ -402,7 +402,7 @@ bool frontend_remote_q2_source_create(qa_frontend *f, const frontend_remote_q2_s
         source->domain.command_context.script)
         return remote_q2_fail(error, QA_ERROR_ARGUMENT, "Q2 app namespace changed its pending transport/content claim");
     const qa_product *profile = qa_catalog_product(options->metadata.catalog, options->metadata.profile);
-    qa_ruleset_id dialect = profile->edition == QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
+    qa_ruleset_id dialect = qa_product_ruleset(profile,QA_GAME_Q2);
     if (source->domain.command_context.dialect != dialect || source->domain.command_context.seat != options->metadata.seat) return false;
     qa_cvar_options variables = {.dialect = dialect, .side = QA_CVAR_SIDE_CLIENT,
         .role = QA_CVAR_ROLE_CGAME, .seat = options->metadata.seat, .user = source, .print = cvar_print,

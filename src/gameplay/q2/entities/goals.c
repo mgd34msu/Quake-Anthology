@@ -18,7 +18,7 @@ bool q2_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
     q2_entities *r = g->entity_runtime;
     if (s->kind == Q2E_HELP) {
         qa_string_id *text = (s->spawnflags & 1) ? &r->primary : &r->secondary;
-        bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+        bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
         uint32_t *changes = !rerelease || (s->spawnflags & 1)
                                 ? &r->primary_changes : &r->secondary_changes;
         if (!rerelease || *text != s->message) {
@@ -217,7 +217,7 @@ bool qa_q2_entities_player_reset(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
-    if (g->options.edition != QA_Q2_RERELEASE)
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE)
         return true;
     a->client->rule.wanted_fog = g->entity_runtime->world_fog;
     a->client->rule.fog_transition = 0;

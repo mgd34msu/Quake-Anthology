@@ -38,7 +38,7 @@ static const melee_action actions[Q2M_CALLBACK_COUNT] = {
 bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *handled,
                        qa_error *error) {
     *handled = false;
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     struct qa_q2_monster *monster = context->monster;
     if (callback == Q2M_CALLBACK_guncmdr_kick) {
         *handled = true;
@@ -107,7 +107,7 @@ bool q2m_species_melee(q2m_context *context, q2m_callback_id callback, bool *han
         qa_attack attack = {.attacker = context->actor->id,
             .inflictor = context->actor->id,
             .combat_provider = context->game->options.owner,
-            .cause = qa_q2_damage_cause(context->game->options.edition,
+            .cause = qa_q2_damage_cause(context->game->options.rules,
                 context->game->options.product, 36, 8u)};
         if (!q2_damage(context->game, &attack, enemy, 5, 0,
                          qa_vec_sub(start, body.origin), body.origin,

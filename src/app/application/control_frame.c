@@ -2464,7 +2464,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
                     &value.latest, &controls[value.actor.slot])) ||
                 value.latest.sequence != value.sequence ||
                 (value.domain == CONTROL_COMMAND_Q2_SOURCE && value.latest.kind !=
-                    (source->component.clock.kind == QA_RULESET_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)))) ||
+                    source->component.clock.kind))) ||
             (!value.seen && value.domain != CONTROL_COMMAND_SELECTED) ||
             (value.retained && value.seen && value.latest.impulse != 0)) {
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved retained input has no exact control owner"); break;
@@ -2528,7 +2528,7 @@ bool application_control_frames_fields(qa_source_save_io *io, qa_application *ap
                 (value.domain != CONTROL_COMMAND_UNIFIED || unified_owner(app, value.actor, &value.unified,
                     &command, &controls[value.actor.slot])) &&
                 (value.domain != CONTROL_COMMAND_Q2_SOURCE || command.kind ==
-                    (actor_source->component.clock.kind == QA_RULESET_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC)) &&
+                    actor_source->component.clock.kind) &&
                 (j && value.quakeworld ? command.sequence == last : !seen || command.sequence > last) &&
                 command.sequence <= owner->inputs[value.actor.slot].value.sequence;
             if (ok) { seen = true; last = command.sequence; if (reading) group->commands[j] = command; }

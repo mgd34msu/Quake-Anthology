@@ -39,7 +39,7 @@ typedef struct frontend_particle_owner {
     qa_builtin_random random;
     float gravity;
     uint64_t q2_interval_ns;
-    qa_q2_edition q2_edition;
+    qa_ruleset_id q2_edition;
     frontend_fx_q1_state *q1;
     bool q1_quakeworld, q1_rerelease;
     qa_scene_model *q1_beam_models[QA_Q1_BEAM_MODELS]; /* borrowed from the actual appearance owner */
@@ -87,7 +87,7 @@ typedef struct frontend_visual_sample {
     uint64_t animation_source_frame, animation_sample_frame;
     double animation_server_ms, animation_client_ms, animation_tick_ms;
     uint32_t animation_previous_frame;
-    qa_q2_edition animation_edition;
+    qa_ruleset_id animation_edition;
     uint64_t frame;
     bool found, sampled;
 } frontend_visual_sample;
@@ -112,7 +112,7 @@ struct frontend_particle_state {
     frontend_q2_client_sample source_clients[QA_INPUT_LOCAL_SEATS];
     size_t source_client_count;
     bool source_ready;
-    qa_q2_edition source_edition;
+    qa_ruleset_id source_edition;
     frontend_q1_trail *q1_trails;
     size_t q1_trail_capacity;
     frontend_visual_sample *visual_samples;
@@ -299,7 +299,7 @@ bool frontend_particle_source_complete(qa_frontend *frontend, qa_error *error)
             bool continuous=state->source_ready && held->frame+1==source.clock.frame.number &&
                 player.present && held->player.present && qa_actor_id_equal(held->client.actor,client.actor) &&
                 frontend_q2_lerp_near(held->player.origin,player.origin,256);
-            if (continuous && player.edition==QA_Q2_RERELEASE) {
+            if (continuous && player.edition==QA_RULESET_Q2_RERELEASE) {
                 const qa_application_native_q2_entity_sample *entity=client.client_slot+1<extent &&
                     state->source_entities[client.client_slot+1].current.actor.registry ?
                     &state->source_entities[client.client_slot+1].current : NULL;
@@ -390,7 +390,7 @@ bool frontend_particle_q2_player_sample(qa_frontend *frontend, uint32_t seat, qa
     *back_lerp=(float)((double)(state->server_ns-state->client_ns)/(double)state->client_interval_ns);
     frontend_q2_lerp_player(&client->previous,&client->player,1-*back_lerp,out,old_gun_frame);
     frontend_q2_animation_sample animation=frontend_q2_animation_lerp(&client->gun_animation,
-        client->player.edition==QA_Q2_RERELEASE,true,out->gun_frame,*old_gun_frame,0,
+        client->player.edition==QA_RULESET_Q2_RERELEASE,true,out->gun_frame,*old_gun_frame,0,
         (double)state->client_ns/1000000.0,(double)state->client_interval_ns/1000000.0,
         1000.0/(client->player.gun_rate>0?client->player.gun_rate:10),*back_lerp);
     out->gun_frame=animation.frame;*old_gun_frame=animation.old_frame;*back_lerp=animation.back_lerp;
@@ -420,7 +420,7 @@ bool frontend_particle_q2_entity_sample(qa_frontend *frontend, qa_application_vi
         view->previous_origin=sample.previous_origin;
         if (view->family==QA_GAME_Q2 && view->provider==state->clock_source) {
             frontend_q2_animation_sample animation=frontend_q2_animation_lerp(&held->animation,
-                state->source_edition==QA_Q2_RERELEASE,false,sample.frame,
+                state->source_edition==QA_RULESET_Q2_RERELEASE,false,sample.frame,
                 sample.render_flags&(UINT32_C(1)<<22)?sample.old_frame:old_frame,sample.render_flags,
                 (double)state->client_ns/1000000.0,(double)state->client_interval_ns/1000000.0,100,*back_lerp);
             view->visual.frame=(int32_t)animation.frame;view->visual.old_frame=(int32_t)animation.old_frame;
@@ -434,7 +434,7 @@ bool frontend_particle_q2_entity_sample(qa_frontend *frontend, qa_application_vi
         if (qa_actor_id_equal(held->actor,view->actor) &&
             held->animation_sample_frame==frontend->frame_number && held->animation_provider==view->provider) {
             frontend_q2_animation_sample animation=frontend_q2_animation_lerp(&held->animation,
-                held->animation_edition==QA_Q2_RERELEASE,false,
+                held->animation_edition==QA_RULESET_Q2_RERELEASE,false,
                 view->visual.frame>=0?(uint32_t)view->visual.frame:0,
                 view->visual.render_flags&(UINT32_C(1)<<22)?(view->visual.old_frame>=0?(uint32_t)view->visual.old_frame:0):held->animation_previous_frame,
                 view->visual.render_flags,held->animation_client_ms,held->animation_tick_ms,100,
@@ -689,7 +689,7 @@ static bool local_q2_create(qa_frontend *frontend,frontend_particle_owner *owner
     if (!frontend_event_sounds(frontend, owner->provider, QA_GAME_Q2, &sounds, error)) return false;
     frontend_remote_q2_effects_source source={.session=qa_application_session(frontend->application),
         .actor_capacity=(uint32_t)capacity,.identity=owner->provider,.content_generation=map.revision,
-        .profile=owner->q2_edition==QA_Q2_RERELEASE?FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE:FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC,
+        .rules=owner->q2_edition,
         .map=map.resource,.files=media.mounts,.sounds=sounds,.images=owner->images,.materials=media.materials,
         .world=frontend->scene_world,.white=qa_scene_white(owner->images),.context=owner,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend,
@@ -712,7 +712,7 @@ static bool particle_owner(qa_frontend *frontend, qa_actor_owner provider, qa_ga
         if (owner->provider == provider && owner->family == family &&
             owner->world_source == world_source && owner->map_identity == map_identity &&
             qa_actor_id_equal(owner->recipient, recipient)) { *out = owner; return true; }
-    qa_q2_edition edition = QA_Q2_CLASSIC;
+    qa_ruleset_id edition = QA_RULESET_Q2_CLASSIC;
     uint64_t interval = 0;
     if (family==QA_GAME_Q2) {
         bool found;

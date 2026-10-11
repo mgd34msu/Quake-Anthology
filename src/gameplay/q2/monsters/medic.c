@@ -14,7 +14,7 @@ static const qa_vec3 cable_offsets[] = {
 };
 
 static bool rerelease(const q2m_context *c) {
-    return c->game->options.edition == QA_Q2_RERELEASE;
+    return c->game->options.rules == QA_RULESET_Q2_RERELEASE;
 }
 
 static bool rogue(const q2m_context *c) {
@@ -180,7 +180,7 @@ bool q2m_medic_abort(q2m_context *c, bool change_frame, bool gib, bool mark,
             return true;
         qa_attack attack = {.attacker = c->actor->id, .inflictor = c->actor->id,
                             .weapon_provider = c->game->options.owner,
-                            .cause = qa_q2_damage_cause(c->game->options.edition,
+                            .cause = qa_q2_damage_cause(c->game->options.rules,
                                                        c->game->options.product, 0, 0)};
         if (!q2_damage(c->game, &attack, id, amount, 0, (qa_vec3){0},
                         target.body.origin, qa_v3(0, 0, 1), false, error))
@@ -946,7 +946,7 @@ bool q2m_medic_callback(q2m_context *c, q2m_callback_id name, bool *handled,
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                      .shape = QA_SHAPE_BOX,
                                      .contents = qa_collision_q2_source_contents(2, 2,
-                                         c->game->options.edition == QA_Q2_RERELEASE),
+                                         c->game->options.rules == QA_RULESET_Q2_RERELEASE),
                                      .role = QA_COLLISION_SOLID,
                                      .dead_monster = true};
     if (!qa_world_set_collision(c->game->services.world, c->actor->id, &collision, error))

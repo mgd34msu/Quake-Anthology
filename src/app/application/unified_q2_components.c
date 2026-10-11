@@ -86,7 +86,7 @@ static bool hud_frame(application_unified_q2_source_documents *v, qa_error *e)
     if (frame->number > INT32_MAX)
         return application_fail(e, QA_ERROR_FORMAT, "Unified Q2 HUD frame exceeds its signed Source counter");
     qa_unified_native_hud *out = &v->hud_frame;
-    out->stat_count = v->physical.edition == QA_Q2_CLASSIC ? 32 : 64;
+    out->stat_count = v->physical.edition == QA_RULESET_Q2_CLASSIC ? 32 : 64;
     memcpy(out->stats, v->player_state.stats, out->stat_count * sizeof(*out->stats));
     out->server_frame = (int32_t)frame->number;
     out->time_ms = (double)v->physical.server_time_ns / 1000000.0;
@@ -98,7 +98,7 @@ static bool hud_frame(application_unified_q2_source_documents *v, qa_error *e)
 static void camera(application_unified_q2_source_documents *v)
 {
     const qa_q2_player *s = &v->player_state;
-    bool classic = v->physical.edition == QA_Q2_CLASSIC;
+    bool classic = v->physical.edition == QA_RULESET_Q2_CLASSIC;
     qa_unified_native_camera *out = &v->camera;
     qa_vec3 movement = classic ? qa_v3((float)s->pmove.origin[0] / 8,
         (float)s->pmove.origin[1] / 8, (float)s->pmove.origin[2] / 8) :
@@ -237,7 +237,7 @@ bool application_unified_q2_component_state(qa_application *app,
     *state=(qa_unified_component_q2){.owner={(char *)name,v->publication.activation_generation},
         .identity=*v->publication.identity,.generation=v->publication.generation,
         .hud=(qa_unified_component_hud)v->publication.hud,
-        .protocol=qa_q2_default_protocol(v->source.physical.edition!=QA_Q2_CLASSIC)};
+        .protocol=qa_q2_default_protocol(v->source.physical.edition!=QA_RULESET_Q2_CLASSIC)};
     if (state->hud==QA_UNIFIED_COMPONENT_HUD_NONE) return true;
     struct application_native_q2 *native=engine(app,&v->source);
     state->replace_configstrings=configs; state->layout=(char *)v->source.layout;

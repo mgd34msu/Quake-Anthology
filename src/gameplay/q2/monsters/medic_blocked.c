@@ -3,7 +3,7 @@
 bool q2m_medic_blocked(q2m_context *context, float distance, bool *accepted,
                        qa_error *error) {
     *accepted = false;
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!q2m_alive(context) || context->combat.health <= 0 ||
         (rerelease && context->monster->target_anger))
         return true;

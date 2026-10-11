@@ -9,7 +9,7 @@ bool q2_items_init(qa_q2_game *g, qa_error *e) {
         return false;
     }
     g->item_runtime->options.weapon_respawn_seconds = 30;
-    g->item_runtime->options.instanced_coop = g->options.edition == QA_Q2_RERELEASE;
+    g->item_runtime->options.instanced_coop = g->options.rules == QA_RULESET_Q2_RERELEASE;
     g->item_runtime->food_classname=g->runtime_names[Q2_NAME_RESOURCE_FOODCUBE];
     return q2_item_catalog(g, e);
 }
@@ -72,7 +72,7 @@ bool q2_item_change_collision(qa_q2_game *g, q2_actor *a, qa_physics_solid solid
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(
                                         (uint32_t)(solid == QA_PHYSICS_CORPSE ? QA_PHYSICS_BOX : solid),
-                                        0, g->options.edition == QA_Q2_RERELEASE),
+                                        0, g->options.rules == QA_RULESET_Q2_RERELEASE),
                                     .owner = a->item->owner,
                                     .role = solid == QA_PHYSICS_TRIGGER ? QA_COLLISION_TRIGGER
                                                                         : QA_COLLISION_SOLID};
@@ -105,13 +105,13 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d, bool *out,
         if ((flags & 8192) && ((d->kind == QA_Q2_ITEM_AMMO && d->weapon == QA_Q2_WEAPON_NONE) ||
                                d->weapon == QA_Q2_BFG))
             return true;
-        if (g->options.edition == QA_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE &&
+        if (g->options.rules == QA_RULESET_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE &&
             (((flags & 0x20000) &&
               ((d->rule_flags & QA_Q2_ITEM_PROX_AMMO) || (d->rule_flags & QA_Q2_ITEM_TESLA_AMMO))) ||
              ((flags & 0x80000) && d->kind == QA_Q2_ITEM_NUKE) ||
              ((flags & 0x100000) && d->kind == QA_Q2_ITEM_SPHERE)))
             return true;
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             const qa_q2_item_options *options = &g->item_runtime->options;
             if ((options->no_mines &&
                  (d->weapon == QA_Q2_PROXLAUNCHER || (d->rule_flags & QA_Q2_ITEM_PROX_AMMO) ||
@@ -120,7 +120,7 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d, bool *out,
                 (options->no_spheres && d->kind == QA_Q2_ITEM_SPHERE))
                 return true;
         }
-        if (g->options.edition == QA_Q2_CLASSIC &&
+        if (g->options.rules == QA_RULESET_Q2_CLASSIC &&
             g->arsenal_rules == QA_Q2_WEAPON_RULES_LMCTF) {
             float source_flags, disabled;
             if (!qa_q2_source_value(g, QA_Q2_SOURCE_CTF_FLAGS, 0, &source_flags, e) ||
@@ -139,7 +139,7 @@ static bool suppressed(qa_q2_game *g, const qa_q2_item_definition *d, bool *out,
             if (mask & d->disabled_weapon_mask) return true;
         }
     }
-    if (g->options.edition == QA_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE) {
+    if (g->options.rules == QA_RULESET_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE) {
         if (d->weapon == QA_Q2_DISINTEGRATOR || (d->rule_flags & QA_Q2_ITEM_DISRUPTOR_AMMO))
             return true;
         if (!g->options.deathmatch && (d->kind == QA_Q2_ITEM_NUKE || d->kind == QA_Q2_ITEM_DECOY ||
@@ -158,7 +158,7 @@ bool qa_q2_item_spawn_actor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_spaw
         return false;
     }
     const char *name = spawn->classname;
-    bool rogue = g->options.product == QA_Q2_ROGUE, rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rogue = g->options.product == QA_Q2_ROGUE, rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (rogue || rr) {
         if (!strcmp(name, "weapon_nailgun"))
             name = "weapon_etf_rifle";
@@ -299,7 +299,7 @@ static bool respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 selected->item->spawn.team_next) : (qa_actor_id){0};
         }
     }
-    if (selected->item && selected->item->definition && g->options.edition == QA_Q2_CLASSIC &&
+    if (selected->item && selected->item->definition && g->options.rules == QA_RULESET_Q2_CLASSIC &&
         !q2_item_randomize(g, &selected, e))
         return false;
     if (!q2_actor_live(g, selected->id))
@@ -332,7 +332,7 @@ static bool respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
                          e))
         return false;
     return !q2_actor_live(g, selected->id) || !selected->item || !selected->item->definition ||
-           g->options.edition != QA_Q2_RERELEASE || q2_item_randomize(g, &selected, e);
+           g->options.rules != QA_RULESET_Q2_RERELEASE || q2_item_randomize(g, &selected, e);
 }
 static bool floor_item(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;

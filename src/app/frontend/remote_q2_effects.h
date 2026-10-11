@@ -13,9 +13,6 @@
 
 typedef struct frontend_remote_q2_effects frontend_remote_q2_effects;
 typedef struct frontend_remote_q2_effects_policy frontend_remote_q2_effects_policy;
-typedef enum frontend_remote_q2_effects_profile {
-    FRONTEND_REMOTE_Q2_EFFECTS_CLASSIC=1, FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE
-} frontend_remote_q2_effects_profile;
 typedef bool (*frontend_q2_muzzle_sound_fn)(void *, qa_q2_sound_index, int32_t channel,
     float volume, float attenuation, double delay_seconds, qa_error *);
 bool frontend_q2_player_muzzle_sounds(qa_builtin_random *, uint32_t flash,
@@ -74,7 +71,7 @@ typedef struct frontend_remote_q2_effects_source {
     qa_session *session;
     uint32_t actor_capacity;
     uint64_t identity, content_generation;
-    frontend_remote_q2_effects_profile profile;
+    qa_ruleset_id rules;
     /* Zero transport belongs to a genuine semantic Source whose rules/ABI
      * profile is declared independently from received raw TEMP records. */
     qa_net_protocol_id protocol;

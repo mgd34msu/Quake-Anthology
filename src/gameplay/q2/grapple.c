@@ -136,11 +136,11 @@ static bool clear_owner(qa_q2_game *g, q2_actor *a, qa_q2_grapple_kind kind, qa_
     s->hook_state = 0;
     s->hook_length = 0;
     if (kind == QA_Q2_CTF_GRAPPLE) {
-        s->release_ns = q2_deadline(g->now_ns, g->options.edition == QA_Q2_RERELEASE ? Q2_NS : 0);
+        s->release_ns = q2_deadline(g->now_ns, g->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_NS : 0);
         if (!restore_knockback(g, a, e))
             return false;
         qa_q2_grapple_motion change = {.set_prediction = true, .prediction_suppressed = false};
-        return g->options.edition != QA_Q2_CLASSIC || !q2_actor_live(g, a->id) ||
+        return g->options.rules != QA_RULESET_Q2_CLASSIC || !q2_actor_live(g, a->id) ||
                motion(g, a->id, &change, e);
     }
     if (s->equipment_bound && s->equipment.phase == QA_Q2_FIRING)
@@ -176,7 +176,7 @@ bool qa_q2_grapple_reset(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
         }
     } else if (q2_actor_live(g, hook_id)) {
         if (!sound(g, id, id, QA_Q2_SFX_WEAPONS_GRAPPLE_GRRESET, 1, -1,
-                   g->options.edition == QA_Q2_CLASSIC, e))
+                   g->options.rules == QA_RULESET_Q2_CLASSIC, e))
             return false;
         if (!q2_actor_live(g, id) || !qa_actor_id_equal(s->hook, hook_id))
             return true;
@@ -266,7 +266,7 @@ static bool attach(qa_q2_game *g, q2_actor *hook, qa_actor_id target, q2_anchor 
     if (has_collision) {
         collision.role = QA_COLLISION_TRIGGER;
         collision.contents = qa_collision_q2_source_contents(1, 0,
-            g->options.edition == QA_Q2_RERELEASE);
+            g->options.rules == QA_RULESET_Q2_RERELEASE);
         if (!qa_world_set_collision(g->services.world, hook->id, &collision, e))
             return false;
     } else if (!lm && !qa_world_set_collision(g->services.world, hook->id, NULL, e))
@@ -317,7 +317,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
             return true;
         if (q2_target_damageable(g, contact->other)) {
             qa_attack attack = q2_projectile_attack(g, hook_id, &hook->projectile, 56, 0);
-            if ((g->options.edition == QA_Q2_CLASSIC || hook->projectile.damage != 0) &&
+            if ((g->options.rules == QA_RULESET_Q2_CLASSIC || hook->projectile.damage != 0) &&
                 !q2_damage(g, &attack, contact->other, hook->projectile.damage, 1, body.velocity,
                            body.origin, normal, false, e))
                 return false;
@@ -329,7 +329,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
             return reset_hook(g, hook, e);
         if (!attach(g, hook, contact->other, classification, e))
             return false;
-        if (g->options.edition == QA_Q2_CLASSIC &&
+        if (g->options.rules == QA_RULESET_Q2_CLASSIC &&
             !sound(g, owner_id, owner_id, QA_Q2_SFX_WEAPONS_GRAPPLE_GRPULL, 1, -1, true, e))
             return false;
         if (!q2_actor_live(g, hook_id))
@@ -338,7 +338,7 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
             return false;
         if (!q2_actor_live(g, hook_id))
             return true;
-        if (g->options.edition == QA_Q2_RERELEASE &&
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE &&
             !loop(g, hook, g->runtime_names[QA_Q2_SFX_WEAPONS_GRAPPLE_GRPULL], e))
             return false;
     } else {
@@ -408,7 +408,7 @@ static bool draw_lm(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 end
            cable(g, owner, start, end, qa_v3(0, 0, 0), true, e);
 }
 void q2_grapple_spec(const qa_q2_game *g, bool lm, q2_shot_spec *out) {
-    bool rr = !lm && g->options.edition == QA_Q2_RERELEASE;
+    bool rr = !lm && g->options.rules == QA_RULESET_Q2_RERELEASE;
     *out = (q2_shot_spec){.offset = lm ? qa_v3(8, 8, -8) : qa_v3(24, 8, -6),
         .damage = lm ? 2 : rr ? g->grapple_options.damage : 10,
         .speed = lm ? 800 : rr ? g->grapple_options.fly_speed : 650,
@@ -425,7 +425,7 @@ static bool launch(qa_q2_game *g, q2_actor *owner, qa_q2_grapple_kind kind, qa_v
     qa_q2_grapple_state *s = &owner->grapples[kind];
     if (s->hook.registry != 0)
         return true;
-    bool lm = kind == QA_Q2_LMCTF_GRAPPLE, rr = !lm && g->options.edition == QA_Q2_RERELEASE;
+    bool lm = kind == QA_Q2_LMCTF_GRAPPLE, rr = !lm && g->options.rules == QA_RULESET_Q2_RERELEASE;
     q2_shot_spec spec;
     q2_grapple_spec(g, lm, &spec);
     float speed = spec.speed;
@@ -573,7 +573,7 @@ static bool fire_ctf(qa_q2_game *g, q2_actor *a, qa_error *e) {
                            .actor = a,
                            .state = &a->weapon,
                            .input = a->input,
-                           .rerelease = g->options.edition == QA_Q2_RERELEASE};
+                           .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE};
     qa_vec3 start, direction;
     if (!project_pose(&call, false, &p, &start, &direction, e))
         return false;
@@ -690,7 +690,7 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
     if (!pose(g, a, QA_Q2_CTF_GRAPPLE, &p, e) ||
         !qa_world_body_read(g->services.world, hook_id, &hook_body, e))
         return false;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     qa_actor_id target = qa_actor_reference_resolve(qa_session_actors(g->services.session), hook->projectile.enemy);
     if (target.registry != 0) {
         qa_error observed = {0};

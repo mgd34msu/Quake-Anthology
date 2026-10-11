@@ -3,7 +3,7 @@
 
 bool qa_q2_bot_arsenal_configuration_read(const qa_q2_game *game,qa_q2_bot_arsenal_configuration *out,qa_error *error) {
     if(!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 bot arsenal requires its actual source configuration");return false;}
-    *out=(qa_q2_bot_arsenal_configuration){game->options.edition,game->options.deathmatch};return true;
+    *out=(qa_q2_bot_arsenal_configuration){game->options.rules,game->options.deathmatch};return true;
 }
 bool qa_q2_bot_arsenal_rules_read(const qa_q2_game *game,qa_q2_weapon_rules *out,qa_error *error) {
     if (!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 arsenal rules require their source owner");return false;}
@@ -56,7 +56,7 @@ bool qa_q2_bot_weapon_read(qa_q2_game *game, qa_actor_id id, qa_q2_weapon weapon
     }
     q2_weapon_call call = {.game = game, .actor = actor, .state = &state, .input = actor->input,
         .definition = definition, .now_ns = game->now_ns, .frame_ns = game->frame_ns,
-        .rerelease = game->options.edition == QA_Q2_RERELEASE};
+        .rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE};
     bool throwing = weapon == QA_Q2_GRENADES || weapon == QA_Q2_TRAP || weapon == QA_Q2_TESLA;
     q2_shot_spec spec;
     if (throwing) {

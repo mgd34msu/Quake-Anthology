@@ -348,22 +348,22 @@ static bool classic_field(q2_original_record_io *io, const q2_original_field *fi
 
 bool q2_original_value(q2_original_record_io *io, const q2_original_field *field, void *value)
 {
-    return io->edition == QA_Q2_RERELEASE ? json_field(io, field, value) :
+    return io->edition == QA_RULESET_Q2_RERELEASE ? json_field(io, field, value) :
         classic_field(io, field, value);
 }
 
 bool q2_original_record(q2_original_record_io *io, q2_original_record_kind kind, void *value)
 {
     const q2_original_layout *layout = q2_original_layout_for(kind);
-    if (!io || !value || !layout || (unsigned)io->edition > QA_Q2_RERELEASE || (unsigned)io->product > QA_Q2_N64 ||
-        (io->edition == QA_Q2_CLASSIC && io->product > QA_Q2_ROGUE))
+    if (!io || !value || !layout || (io->edition != QA_RULESET_Q2_CLASSIC && io->edition != QA_RULESET_Q2_RERELEASE) || (unsigned)io->product > QA_Q2_N64 ||
+        (io->edition == QA_RULESET_Q2_CLASSIC && io->product > QA_Q2_ROGUE))
         return false;
-    if (io->edition == QA_Q2_RERELEASE &&
+    if (io->edition == QA_RULESET_Q2_RERELEASE &&
         (io->reading ? qa_json_type(io->document, io->object) != QA_JSON_OBJECT : !io->writer))
         return fail(io, io->object, "Q2 original record requires an object");
     for (size_t i = 0; i < layout->count; ++i) {
         const q2_original_field *field = &layout->fields[i];
-        if (io->edition == QA_Q2_RERELEASE && kind == Q2_ORIGINAL_GAME &&
+        if (io->edition == QA_RULESET_Q2_RERELEASE && kind == Q2_ORIGINAL_GAME &&
             !strcmp(field->name, "num_items")) continue; /* Original RR GAME has no such member. */
         void *member = (uint8_t *)value + field->offset;
         if (!q2_original_value(io, field, member))
@@ -382,7 +382,7 @@ bool q2_original_scalar(q2_original_record_io *io, const char *name,
 bool q2_original_source_text(q2_original_record_io *io, qa_q2_game *g, const char *name,
     qa_string_id *value, size_t capacity)
 {
-    if (io->edition != QA_Q2_RERELEASE)
+    if (io->edition != QA_RULESET_Q2_RERELEASE)
         return fail(io, 0, "Variable Q2 strings require their original string field");
     char *text = calloc(capacity, 1);
     if (!text) {
@@ -406,10 +406,10 @@ bool q2_original_source_text(q2_original_record_io *io, qa_q2_game *g, const cha
     return okay;
 }
 
-static const char *original_item_name(qa_q2_edition edition,
+static const char *original_item_name(qa_ruleset_id edition,
     const qa_q2_item_definition *definition)
 {
-    if (edition == QA_Q2_CLASSIC &&
+    if (edition == QA_RULESET_Q2_CLASSIC &&
         (definition->kind == QA_Q2_ITEM_HEALTH || definition->kind == QA_Q2_ITEM_FOOD))
         return "item_health";
     return definition->classname;
@@ -421,7 +421,7 @@ bool q2_original_item(qa_q2_game *g, q2_original_record_io *io, const char *name
     const qa_q2_item_definition *definition = *item ? q2_item_by_id(g, *item) : NULL;
     if (!io->reading && *item && !definition)
         return fail(io, *item, "Q2 original item has no actual GAME definition");
-    if (io->edition == QA_Q2_CLASSIC) {
+    if (io->edition == QA_RULESET_Q2_CLASSIC) {
         int32_t index = -1;
         if (!io->reading && definition &&
             !q2_original_symbol_encode(Q2_ORIGINAL_ITEM, g->options.product,
@@ -496,7 +496,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             carry->inventory[i] = (qa_inventory_entry){definition->item, 0,
                 definition->capacity, QA_COUNT_SOURCE_INT32};
         }
-        if (io->edition == QA_Q2_CLASSIC) {
+        if (io->edition == QA_RULESET_Q2_CLASSIC) {
             for (int32_t ordinal = 0; ordinal < 256; ++ordinal) {
                 uint16_t offset = (uint16_t)(740 + ordinal * 4);
                 int32_t value = 0;
@@ -510,7 +510,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             }
         }
     }
-    if (io->edition == QA_Q2_RERELEASE && io->reading) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE && io->reading) {
         qa_json_id inventory = qa_json_get(io->document, io->object, "inventory");
         if (inventory != QA_JSON_NONE && qa_json_type(io->document, inventory) != QA_JSON_NULL) {
             if (qa_json_type(io->document, inventory) != QA_JSON_OBJECT)
@@ -533,7 +533,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
                 entry->count = (double)count;
             }
         }
-    } else if (io->edition == QA_Q2_CLASSIC) {
+    } else if (io->edition == QA_RULESET_Q2_CLASSIC) {
         int32_t values[256] = {0};
         bool present[256] = {0};
         for (size_t i = 0; i < carry->count; ++i) {
@@ -599,13 +599,13 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
         qa_json_writer_end(io->writer);
         if (!written(io)) return false;
     }
-    qa_json_id maxima = io->reading && io->edition == QA_Q2_RERELEASE ?
+    qa_json_id maxima = io->reading && io->edition == QA_RULESET_Q2_RERELEASE ?
         qa_json_get(io->document, io->object, "max_ammo") : QA_JSON_NONE;
-    if (io->edition == QA_Q2_RERELEASE && io->reading && maxima != QA_JSON_NONE &&
+    if (io->edition == QA_RULESET_Q2_RERELEASE && io->reading && maxima != QA_JSON_NONE &&
         (qa_json_type(io->document, maxima) != QA_JSON_ARRAY ||
          qa_json_size(io->document, maxima) != sizeof(ammo_fields) / sizeof(ammo_fields[0])))
         return fail(io, maxima, "Original Q2 max_ammo requires its actual fixed array");
-    if (io->edition == QA_Q2_RERELEASE && !io->reading) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE && !io->reading) {
         qa_json_writer_key(io->writer, "max_ammo");
         qa_json_writer_array(io->writer);
     }
@@ -617,7 +617,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
             entry->capacity > INT32_MAX || trunc(entry->capacity) != entry->capacity))
             return fail(io, i, "Q2 Source ammo capacity exceeds its original field");
         int32_t maximum = entry ? (int32_t)entry->capacity : 0;
-        if (io->edition == QA_Q2_CLASSIC) {
+        if (io->edition == QA_RULESET_Q2_CLASSIC) {
             uint16_t offset = field->offsets[io->product];
             if (offset == UINT16_MAX) continue;
             if (!q2_original_scalar(io, field->classname, Q2_ORIGINAL_I32, offset, offset, offset, &maximum)) return false;
@@ -637,7 +637,7 @@ static bool inventory_record(qa_q2_game *g, q2_original_record_io *io,
         if (io->reading && entry) entry->capacity = maximum;
         if (io->reading && maximum < 0) return fail(io, i, "Negative original Q2 ammo capacity");
     }
-    if (io->edition == QA_Q2_RERELEASE && !io->reading) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE && !io->reading) {
         qa_json_writer_end(io->writer);
         if (!written(io)) return false;
     }
@@ -650,7 +650,7 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
     if ((unsigned)*weapon >= QA_Q2_WEAPON_COUNT)
         return fail(io, (unsigned)*weapon, "Q2 Source weapon exceeds its actual catalog");
     qa_item_id item = io->reading ? 0 : g->items[*weapon];
-    if (io->edition == QA_Q2_CLASSIC && raw_pointer) {
+    if (io->edition == QA_RULESET_Q2_CLASSIC && raw_pointer) {
         int32_t ordinal = -1;
         const q2_original_library *library = q2_original_library_for(g->options.product);
         uint32_t pointer = 0;
@@ -686,16 +686,16 @@ static bool original_weapon(qa_q2_game *g, q2_original_record_io *io, const char
     return true;
 }
 
-bool q2_original_config_layout(qa_q2_edition edition, const qa_q2_save_level *level,
+bool q2_original_config_layout(qa_ruleset_id edition, const qa_q2_save_level *level,
     qa_q2_config_layout *layout, qa_error *error)
 {
-    if (level && level->rerelease != (edition == QA_Q2_RERELEASE)) {
+    if (level && level->rerelease != (edition == QA_RULESET_Q2_RERELEASE)) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Original Q2 resource table differs from its actual GAME edition");
         return false;
     }
     /* The shared layout reads only protocol and wire_flags, not frame state. */
     qa_q2_codec codec;
-    codec.protocol = (qa_net_protocol_id){.kind = edition == QA_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
+    codec.protocol = (qa_net_protocol_id){.kind = edition == QA_RULESET_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
     codec.wire_flags = 0;
     return qa_q2_config_layout_read(&codec, layout, error);
 }
@@ -713,7 +713,7 @@ bool q2_original_resource(qa_q2_game *g, q2_original_record_io *io,
         case 544: table_base = layout.images; count = layout.max_images; break;
         default: return fail(io, table_base, "Original Q2 resource has no actual engine namespace");
     }
-    uint32_t width = io->edition == QA_Q2_RERELEASE ? QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES : QA_Q2_SAVE_CONFIGSTRING_BYTES;
+    uint32_t width = io->edition == QA_RULESET_Q2_RERELEASE ? QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES : QA_Q2_SAVE_CONFIGSTRING_BYTES;
     int32_t index = 0;
     if (!io->reading && *resource) {
         const char *text = qa_strings_cstr(qa_session_strings(g->services.session), *resource);
@@ -801,7 +801,7 @@ static bool persistent_record(qa_q2_game *g, q2_original_record_io *io,
 
 static bool movement_record(q2_original_record_io *io, qa_movement_result *movement)
 {
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         qa_json_id saved = io->object;
         if (io->reading) {
             io->object = qa_json_get(io->document, saved, "pmove");
@@ -874,7 +874,7 @@ bool q2_original_object_begin(q2_original_record_io *parent, const char *name,
 {
     *child = *parent;
     *present = true;
-    if (parent->edition != QA_Q2_RERELEASE) return true;
+    if (parent->edition != QA_RULESET_Q2_RERELEASE) return true;
     if (parent->reading) {
         child->object = qa_json_get(parent->document, parent->object, name);
         *present = child->object != QA_JSON_NONE &&
@@ -889,7 +889,7 @@ bool q2_original_object_begin(q2_original_record_io *parent, const char *name,
 
 bool q2_original_object_end(q2_original_record_io *parent)
 {
-    if (parent->edition == QA_Q2_RERELEASE && !parent->reading) {
+    if (parent->edition == QA_RULESET_Q2_RERELEASE && !parent->reading) {
         qa_json_writer_end(parent->writer);
         return written(parent);
     }
@@ -906,14 +906,14 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         !q2_original_record(&child, Q2_ORIGINAL_VIEW, &state->view) ||
         !q2_original_resource(g, &child, level, "gunindex", 88, 88, 88, 32, &state->weapon.view_model) ||
         !q2_original_scalar(&child, "gunframe", Q2_ORIGINAL_I32, 92, 92, 92, &state->weapon.frame) ||
-        (io->edition == QA_Q2_RERELEASE &&
+        (io->edition == QA_RULESET_Q2_RERELEASE &&
          !q2_original_scalar(&child, "gunskin", Q2_ORIGINAL_I32, 65535, 65535, 65535, &state->weapon.view_skin))))
         return false;
     if (!q2_original_object_end(io) || !q2_original_object_begin(io, "pers", &child, &present)) return false;
     if (present && !persistent_record(g, &child, &state->player, &state->persistent,
         false, &state->weapon.last_weapon)) return false;
     if (!q2_original_object_end(io) || !q2_original_object_begin(io, "resp.coop_respawn", &child, &present)) return false;
-    if (io->edition == QA_Q2_CLASSIC) {
+    if (io->edition == QA_RULESET_Q2_CLASSIC) {
         static const size_t shifts[] = {1628, 1636, 1644};
         size_t shift = shifts[io->product];
         if (io->reading) {
@@ -943,7 +943,7 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
         !q2_original_scalar(io, "silencer_shots", Q2_ORIGINAL_I32, 3732, 3752, 3764, &state->silencer) ||
         !q2_original_resource(g, io, level, "weapon_sound", 3736, 3756, 3768, 288, &state->weapon.loop_sound))
         return false;
-    if (io->edition == QA_Q2_CLASSIC) {
+    if (io->edition == QA_RULESET_Q2_CLASSIC) {
         if (!q2_original_scalar(io, "connected", Q2_ORIGINAL_BOOL, 720, 720, 720, &state->player.info.connected) ||
             !q2_original_scalar(io, "showscores", Q2_ORIGINAL_BOOL, 3496, 3512, 3528, &state->player.rule.show_scores) ||
             !q2_original_scalar(io, "showinventory", Q2_ORIGINAL_BOOL, 3500, 3516, 3532, &state->player.rule.show_inventory) ||
@@ -972,7 +972,7 @@ bool q2_original_client_record(qa_q2_game *g, q2_original_record_io *io,
     if (io->reading) {
         state->weapon.weapon = state->persistent.weapon;
         state->weapon.gun_rate = 10;
-        if (io->edition == QA_Q2_CLASSIC) state->weapon.kick_seconds = .2f;
+        if (io->edition == QA_RULESET_Q2_CLASSIC) state->weapon.kick_seconds = .2f;
         state->player.rule.fov = state->view.fov;
         state->player.rule.loop_sound = state->weapon.loop_sound;
         state->movement.view_offset = state->view.offset;
@@ -1005,9 +1005,9 @@ bool q2_original_game_open(qa_q2_game *g, qa_bytes bytes,
     qa_json_document **document, q2_original_record_io *io,
     q2_original_game_state *state, qa_error *error)
 {
-    *io = (q2_original_record_io){.edition = g->options.edition, .product = g->options.product,
+    *io = (q2_original_record_io){.edition = g->options.rules, .product = g->options.product,
         .reading = true, .error = error};
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         if (!qa_json_parse(bytes, document, error)) return false;
         io->document = *document;
         qa_json_id root = qa_json_root(*document);
@@ -1042,7 +1042,7 @@ bool q2_original_game_open(qa_q2_game *g, qa_bytes bytes,
 static bool campaign_record(qa_q2_game *g, q2_original_record_io *io,
     qa_q2_campaign_level levels[QA_Q2_CAMPAIGN_LEVEL_LIMIT], uint32_t *count)
 {
-    if (io->edition != QA_Q2_RERELEASE) return true;
+    if (io->edition != QA_RULESET_Q2_RERELEASE) return true;
     qa_json_id list = io->reading ? qa_json_get(io->document, io->object, "level_entries") : QA_JSON_NONE;
     if (io->reading && (list == QA_JSON_NONE || qa_json_type(io->document, list) == QA_JSON_NULL)) {
         *count = 0;
@@ -1122,7 +1122,7 @@ bool qa_q2_game_original_read_game(qa_q2_game *g, qa_bytes bytes, qa_error *erro
     if (okay && (g->wire_capacity != state.entities || g->wire_clients != state.clients))
         okay = qa_q2_wire_configure(g, state.entities, state.clients, error);
     if (okay) okay = q2_entity_flags(g, true, false, &state.level_flags, error);
-    if (okay && g->options.edition == QA_Q2_RERELEASE)
+    if (okay && g->options.rules == QA_RULESET_Q2_RERELEASE)
         okay = q2_entity_flags(g, true, true, &state.unit_flags, error);
     if (okay) {
         /* ReadGame precedes actual Client services installation. Restore the
@@ -1197,7 +1197,7 @@ static bool actual_game_state(qa_q2_game *g, bool autosave,
     *state = (q2_original_game_state){.clients = g->wire_clients,
         .entities = g->wire_capacity, .autosave = autosave,
         .help_changes = {entities->primary_changes, entities->secondary_changes}};
-    if (g->options.edition == QA_Q2_CLASSIC)
+    if (g->options.rules == QA_RULESET_Q2_CLASSIC)
         state->items = (uint32_t)q2_original_item_count(g->options.product);
     qa_string_id ids[] = {entities->primary, entities->secondary};
     for (size_t i = 0; i < 2; ++i) {
@@ -1218,7 +1218,7 @@ static bool actual_game_state(qa_q2_game *g, bool autosave,
     }
     if (length) memcpy(state->spawnpoint, point, length);
     return q2_entity_flags(g, false, false, &state->level_flags, error) &&
-        (g->options.edition != QA_Q2_RERELEASE ||
+        (g->options.rules != QA_RULESET_Q2_RERELEASE ||
          q2_entity_flags(g, false, true, &state->unit_flags, error));
 }
 
@@ -1232,11 +1232,11 @@ bool q2_original_write_game(qa_q2_game *g, bool autosave,
     }
     q2_original_game_state state;
     if (!actual_game_state(g, autosave, &state, error)) return false;
-    q2_original_record_io io = {.edition = g->options.edition, .product = g->options.product,
+    q2_original_record_io io = {.edition = g->options.rules, .product = g->options.product,
         .error = error};
     qa_buffer encoded = {0};
     qa_json_writer writer = {0};
-    if (io.edition == QA_Q2_CLASSIC) {
+    if (io.edition == QA_RULESET_Q2_CLASSIC) {
         size_t stride = q2_original_client_size(g->options.product);
         if (!stride) return fail(&io, 0, "Actual Q2 product has no original classic client ABI");
         encoded.size = 16 + 1564 + (size_t)state.clients * stride;
@@ -1258,7 +1258,7 @@ bool q2_original_write_game(qa_q2_game *g, bool autosave,
         qa_json_writer_object(&writer);
     }
     bool okay = q2_original_record(&io, Q2_ORIGINAL_GAME, &state);
-    if (okay && io.edition == QA_Q2_RERELEASE) {
+    if (okay && io.edition == QA_RULESET_Q2_RERELEASE) {
         qa_q2_campaign_level levels[QA_Q2_CAMPAIGN_LEVEL_LIMIT];
         memcpy(levels, g->entity_runtime->levels, sizeof(levels));
         uint32_t count = g->entity_runtime->level_count;
@@ -1271,16 +1271,16 @@ bool q2_original_write_game(qa_q2_game *g, bool autosave,
         q2_actor *actor = q2_actor_get(g, g->wire_actors[slot + 1], false, NULL);
         q2_original_client_state client = {0};
         okay = q2_original_client_capture(g, actor, &client, error);
-        if (io.edition == QA_Q2_CLASSIC) {
+        if (io.edition == QA_RULESET_Q2_CLASSIC) {
             size_t stride = q2_original_client_size(g->options.product);
             io.output = (qa_buffer){encoded.data + 16 + 1564 + (size_t)slot * stride, stride};
         } else qa_json_writer_object(&writer);
         if (okay) okay = q2_original_client_record(g, &io, level, &client) &&
             q2_original_trail_client(g, &io, actor ? actor->id : (qa_actor_id){0});
-        if (io.edition == QA_Q2_RERELEASE) qa_json_writer_end(&writer);
+        if (io.edition == QA_RULESET_Q2_RERELEASE) qa_json_writer_end(&writer);
         q2_original_client_free(&client);
     }
-    if (okay && io.edition == QA_Q2_RERELEASE) {
+    if (okay && io.edition == QA_RULESET_Q2_RERELEASE) {
         qa_json_writer_end(&writer);
         qa_json_writer_end(&writer);
         okay = qa_json_writer_finish(&writer, &encoded, error);

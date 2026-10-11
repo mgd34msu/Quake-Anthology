@@ -21,7 +21,7 @@ static float angle_difference(float old, float current) {
 static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                      const qa_q2_powerups *powers, int *flashes, qa_error *e) {
     q2_client_state *s = a->client;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     int flash =
         (s->rule.damage_blood != 0 ? 1 : 0) |
         (s->rule.damage_armor != 0 && !s->info.god && powers->invulnerability_until_ns <= g->now_ns ? 2
@@ -101,7 +101,7 @@ static void animation(qa_q2_game *g, q2_client_state *s, qa_entity_visual *visua
                       const qa_q2_player_movement *m, float speed) {
     if (!m->animate_q2 || s->rule.gibbed)
         return;
-    bool rr = g->options.edition == QA_Q2_RERELEASE, run = speed != 0, duck = m->ducked;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE, run = speed != 0, duck = m->ducked;
     int priority = rr && s->rule.animation_priority == 6 ? 256 : s->rule.animation_priority;
     bool reverse = rr ? (priority & 256) != 0 : priority == 6;
     bool changed = (duck != s->rule.animation_duck && priority < 5) ||
@@ -175,9 +175,9 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                     const qa_q2_powerups *powers, const qa_combat_state *combat,
                     const qa_q2_character_weapon *weapon, qa_error *e) {
     q2_client_state *s = a->client;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     s->rule.visual.effects = 0;
-    s->rule.visual.render_flags = g->options.edition == QA_Q2_RERELEASE ? 32768 : 0;
+    s->rule.visual.render_flags = g->options.rules == QA_RULESET_Q2_RERELEASE ? 32768 : 0;
     if (combat->health > 0) {
         if (s->rule.power_armor_ns > g->now_ns) {
             if (combat->armor.powered.kind == QA_POWER_SCREEN)
@@ -234,7 +234,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         !qa_combat_read(g->services.combat, a->id, &combat, e) ||
         !qa_q2_powerups_read(g, a->id, &powers, e))
         return false;
-    bool rr = g->options.edition == QA_Q2_RERELEASE, intermission = players->intermission;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE, intermission = players->intermission;
     int flashes = 0;
     if (!intermission && !feedback(g, a, m, &powers, &flashes, e))
         return false;
@@ -350,7 +350,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
             g->services.world,
             &(qa_point_query){.point = eye,
                               .pass_actor = a->id,
-                              .policy = {.behavior = &qa_trace_behaviors[(rr) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],}},
+                              .policy = {.behavior = &qa_trace_behaviors[g->options.rules],}},
             &contents, e))
         return false;
     int mask = rr ? qa_collision_point_contents_export(contents.merged, QA_GAME_Q2, contents.q1_opaque_token) : qa_collision_point_contents_export(contents.contents, QA_GAME_Q2, contents.q1_opaque_token);

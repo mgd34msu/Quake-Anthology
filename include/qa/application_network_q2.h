@@ -38,7 +38,7 @@ typedef struct qa_application_network_q2_resource_view {
 typedef struct qa_application_network_q2_metadata {
     qa_actor_owner source_owner;
     qa_application_native_q2_source_kind kind;
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     qa_net_protocol_id protocol;
     uint32_t client_slots, entity_slots;
     int32_t server_count;

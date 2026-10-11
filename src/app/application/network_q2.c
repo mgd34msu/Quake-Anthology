@@ -32,7 +32,7 @@ bool qa_application_network_q2_host_source(qa_application *app, qa_net_protocol_
     if (!found || protocol.kind == QA_NET_Q2KEX_DEMO_2022)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 wire requires a physical live Q2 GAME");
     bool rerelease = qa_q2_protocol_rerelease(protocol);
-    if (rerelease != (value.source.edition == QA_Q2_RERELEASE))
+    if (rerelease != (value.source.edition == QA_RULESET_Q2_RERELEASE))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q2 wire dialect differs from its physical GAME API");
     application_provider *provider = application_world_provider(app, QA_ROLE_ENTITIES, "");
     value.content = value.source.content;
@@ -95,7 +95,7 @@ bool application_network_q2_config_id(qa_application_network_q2 *owner, uint32_t
     if (owner->configs[index] == name) return true;
     qa_hud_q2_stat_references references = {0};
     if (index == 5 && !qa_hud_q2_layout_stat_references(text,
-        owner->host.source.edition == QA_Q2_RERELEASE, &owner->layout_scratch,
+        owner->host.source.edition == QA_RULESET_Q2_RERELEASE, &owner->layout_scratch,
         &references, error)) return false;
     owner->configs[index] = name;
     if (index == 5) owner->status_references = references;
@@ -700,14 +700,14 @@ static bool map_config_event(qa_application_network_q2 *owner,const qa_q2_map_ev
     case QA_Q2_MAP_SKY: {
         char axis[128],rotation[64];
         snprintf(axis,sizeof(axis),"%.9g %.9g %.9g",event->direction.x,event->direction.y,event->direction.z);
-        if(owner->host.source.edition==QA_Q2_RERELEASE)
+        if(owner->host.source.edition==QA_RULESET_Q2_RERELEASE)
             snprintf(rotation,sizeof(rotation),"%.9g %u",event->value,(event->flags&1u)?1u:0u);
         else snprintf(rotation,sizeof(rotation),"%.9g",event->value);
         return application_network_q2_config_id(owner,2,event->resource,error) &&
             application_network_q2_config(owner,3,axis,error) && application_network_q2_config(owner,4,rotation,error);
     }
     case QA_Q2_MAP_DYNAMIC_LIGHT: {
-        if (!(event->flags&QA_Q2_MAP_LIGHT_SHADOW) || owner->host.source.edition!=QA_Q2_RERELEASE ||
+        if (!(event->flags&QA_Q2_MAP_LIGHT_SHADOW) || owner->host.source.edition!=QA_RULESET_Q2_RERELEASE ||
             owner->item_base-owner->light_base<512) return true;
         char config[512]={0};
         if(event->radius>0) snprintf(config,sizeof(config),

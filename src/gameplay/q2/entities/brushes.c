@@ -105,7 +105,7 @@ static bool platform_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     s->visual.visible = true;
     a->physics.motion = QA_PHYSICS_PUSH;
     bool locked =
-        s->targetname && !(second && g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 8));
+        s->targetname && !(second && g->options.rules == QA_RULESET_Q2_RERELEASE && (s->spawnflags & 8));
     if (second) {
         m->activated = !locked;
         s->debounce_ns = 2 * Q2_NS;
@@ -473,7 +473,7 @@ bool q2_brush_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id act
         return true;
     case Q2E_KILLBOX: {
         bool clear, previous = g->player_runtime->deadly_killbox,
-                    rr = g->options.edition == QA_Q2_RERELEASE;
+                    rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
         if (rr) {
             g->player_runtime->deadly_killbox = (s->spawnflags & 2) != 0;
             if (!q2_entity_solid(g, a, QA_PHYSICS_TRIGGER, e)) {

@@ -11,7 +11,7 @@ static bool style(qa_q2_game *g, q2_actor *a, qa_string_id pattern, qa_error *e)
 static bool speaker(qa_q2_game *g, q2_actor *a, int operation, qa_error *e) {
     q2_entity_state *s = a->entity;
     float attenuation = operation == 0                              ? s->attenuation
-                        : g->options.edition == QA_Q2_CLASSIC       ? 1
+                        : g->options.rules == QA_RULESET_Q2_CLASSIC       ? 1
                         : s->attenuation == -1                      ? 0
                         : s->attenuation > 0 && s->attenuation != 3 ? s->attenuation / 5
                                                                     : 1;
@@ -71,7 +71,7 @@ static bool key_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error 
         return true;
     bool cube =
         (d->rule_flags & QA_Q2_ITEM_POWER_CUBE) ||
-        (g->options.edition == QA_Q2_RERELEASE && (d->rule_flags & QA_Q2_ITEM_EXPLOSIVE_CHARGES));
+        (g->options.rules == QA_RULESET_Q2_RERELEASE && (d->rule_flags & QA_Q2_ITEM_EXPLOSIVE_CHARGES));
     unsigned bit = 0;
     if (cube && g->options.cooperative) {
         q2_power_state *p = q2_powers(g, activator, e);
@@ -140,7 +140,7 @@ static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_
             }
     }
     qa_actor_id world = g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
-    bool allow_exit = g->options.edition == QA_Q2_RERELEASE
+    bool allow_exit = g->options.rules == QA_RULESET_Q2_RERELEASE
                           ? g->player_runtime->rules.deathmatch_allow_exit
                           : (g->options.deathmatch_flags & 4096) != 0;
     if (g->options.deathmatch && !allow_exit && other.registry &&
@@ -153,7 +153,7 @@ static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_
         return q2_entity_damage(g, a, other, a->id,
                                 10 * (traits.max_health != 0 ? traits.max_health : 100), 1000, 28, 0, e);
     }
-    if (g->options.edition == QA_Q2_RERELEASE && g->options.deathmatch && g->now_ns < 10 * Q2_NS)
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE && g->options.deathmatch && g->now_ns < 10 * Q2_NS)
         return true;
     const char *map = qa_strings_cstr(qa_session_strings(g->services.session), s->map);
     bool end = strchr(map, '*') != NULL;
@@ -161,7 +161,7 @@ static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_
         uint32_t flags;
         if (!q2_entity_flags(g, false, false, &flags, e))
             return false;
-        flags &= g->options.edition == QA_Q2_RERELEASE ? 0xff00u : ~255u;
+        flags &= g->options.rules == QA_RULESET_Q2_RERELEASE ? 0xff00u : ~255u;
         if (!q2_entity_flags(g, true, false, &flags, e))
             return false;
     }
@@ -186,7 +186,7 @@ static bool changelevel(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_
         landmark = &carry;
     }
     s->active = true;
-    if (g->options.edition == QA_Q2_RERELEASE)
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE)
         return qa_q2_players_intermission(g, map, landmark, s->spawnflags, e);
     return q2_map_transition(g, a->id, activator, s->map, landmark, end, e);
 }
@@ -304,7 +304,7 @@ bool q2_target_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->noise = q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]);
         if (s->volume == 0)
             s->volume = 1;
-        bool loop = g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 3);
+        bool loop = g->options.rules == QA_RULESET_Q2_RERELEASE && (s->spawnflags & 3);
         if (s->attenuation == -1)
             s->attenuation = loop ? -1 : 0;
         else if (s->attenuation == 0)
@@ -410,7 +410,7 @@ bool q2_target_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id ac
         return q2_goal_use(g, a, activator, e);
     case Q2E_SECRET:
     case Q2E_GOAL: {
-        if (g->options.edition == QA_Q2_RERELEASE)
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE)
             return q2_goal_use(g, a, activator, e);
         qa_string_id noise = q2_field_id(s, g->field_keys[QA_TARGET_KEY_NOISE]);
         if (!q2_entity_sound(g, a, noise && noise!=g->runtime_names[Q2_NAME_RESOURCE_EMPTY] ? noise : g->runtime_names[QA_Q2_SFX_MISC_SECRET], 2, 1, 1, 0, e))

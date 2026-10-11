@@ -33,7 +33,7 @@ static bool gib_contents(qa_q2_game *g, qa_vec3 point, int32_t *contents, qa_err
 bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, q2_runtime_name model, float damage,
                   uint32_t flags, int skin, float scale, qa_error *e) {
     bool head = (flags & Q2_GIB_HEAD) != 0, metal = (flags & Q2_GIB_METALLIC) != 0,
-         rr = g->options.edition == QA_Q2_RERELEASE,
+         rr = g->options.rules == QA_RULESET_Q2_RERELEASE,
          debris = rr && (flags & Q2_GIB_DEBRIS) != 0;
     qa_body_state source_body;
     if (!qa_world_body_read(g->services.world, source, &source_body, e))
@@ -176,7 +176,7 @@ static bool debris(qa_q2_game *g, qa_body_state body, q2_runtime_name model, flo
         return false;
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
+    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_NOT_SOLID;
     a->physics.angular_velocity.x = q2_random(g) * 600;
@@ -218,7 +218,7 @@ static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    if (g->options.edition == QA_Q2_RERELEASE && (p->gib_flags & Q2_GIB_WIDOW) == 0) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE && (p->gib_flags & Q2_GIB_WIDOW) == 0) {
         if ((p->gib_flags & Q2_GIB_UPRIGHT) != 0 && contact->has_plane &&
             contact->plane.normal.z > 0.7f) {
             body.angles.x = fmaxf(-5, fminf(5, body.angles.x));
@@ -266,7 +266,7 @@ bool q2_gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     return qa_q2_run_actor(g, contact->self, gib_contact, &call, e);
 }
 bool q2_gib_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
-    if (g->options.edition == QA_Q2_CLASSIC ||
+    if (g->options.rules == QA_RULESET_Q2_CLASSIC ||
         (outcome->request.attack.cause.kind == QA_CAUSE_Q2 &&
          outcome->request.attack.cause.source.q2.means_of_death == 20))
         return qa_session_release(g->services.session, a->id, e);

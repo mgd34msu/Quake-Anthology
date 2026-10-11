@@ -328,11 +328,11 @@ static void close_game(void *context) {
 bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *options,
                   const qa_q2_hooks *hooks, qa_q2_game **out, qa_error *e) {
     if (options == NULL || out == NULL || options->owner == 0 ||
-        (unsigned)options->edition > QA_Q2_RERELEASE || (unsigned)options->product > QA_Q2_N64 ||
+        (options->rules != QA_RULESET_Q2_CLASSIC && options->rules != QA_RULESET_Q2_RERELEASE) || (unsigned)options->product > QA_Q2_N64 ||
         (unsigned)options->arsenal_rules > QA_Q2_WEAPON_RULES_LMCTF ||
-        (unsigned)options->hook_edition > QA_Q2_RERELEASE ||
+        (options->hook_ruleset != QA_RULESET_Q2_CLASSIC && options->hook_ruleset != QA_RULESET_Q2_RERELEASE) ||
         (unsigned)options->equipment_hook_rules > QA_Q2_WEAPON_RULES_LMCTF ||
-        (unsigned)options->equipment_hook_edition > QA_Q2_RERELEASE ||
+        (options->equipment_hook_ruleset != QA_RULESET_Q2_CLASSIC && options->equipment_hook_ruleset != QA_RULESET_Q2_RERELEASE) ||
         (options->arsenal_rules == QA_Q2_WEAPON_RULES_BASE && options->native_hook) ||
         (hooks != NULL && ((hooks->lag_begin == NULL) != (hooks->lag_end == NULL))) ||
         !qa_builtin_services_validate(services, e)) {
@@ -426,9 +426,7 @@ qa_component qa_q2_component(qa_q2_game *g) {
                               .actor_frame = actor_frame,
                               .command_actor = command_actor,
                               .actor_released = released};
-    component.clock = qa_clock_defaults(g->options.edition == QA_Q2_CLASSIC
-                                            ? QA_RULESET_Q2_CLASSIC
-                                            : QA_RULESET_Q2_RERELEASE);
+    component.clock = qa_clock_defaults(g->options.rules);
     if (g->options.frame_ns != 0)
         component.clock.interval_ns = g->options.frame_ns;
     return component;
@@ -508,9 +506,9 @@ bool qa_q2_actor_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *
         a->projectile.kind == Q2_PROX || a->projectile.kind == Q2_TESLA ||
         a->projectile.kind == Q2_NUKE || a->projectile.kind == Q2_LMCTF_HOOK ||
         ((a->projectile.kind == Q2_TRAP || a->projectile.kind == Q2_CTF_HOOK) &&
-         g->options.edition == QA_Q2_RERELEASE);
+         g->options.rules == QA_RULESET_Q2_RERELEASE);
     out->no_source_friendly_fire =
-        g->options.edition == QA_Q2_RERELEASE &&
+        g->options.rules == QA_RULESET_Q2_RERELEASE &&
         (a->projectile.kind == Q2_TESLA || a->projectile.kind == Q2_TRAP);
     out->monster = a->physics_bound && (a->physics.flags & QA_PHYSICS_MONSTER);
     return true;
@@ -612,11 +610,11 @@ qa_attack q2_attack(q2_weapon_call *c, int mod, uint32_t flags) {
     if (c->game->hooks.inventory_provider)
         attack.inventory_provider = c->game->hooks.inventory_provider(
             c->game->hooks.context, attack.attacker, attack.weapon);
-    attack.cause = qa_q2_damage_cause(c->rerelease ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+    attack.cause = qa_q2_damage_cause(c->rerelease ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC,
                                       c->game->options.product, mod, flags);
     return attack;
 }
-qa_damage_cause qa_q2_damage_cause(qa_q2_edition edition, qa_q2_product product, int canonical,
+qa_damage_cause qa_q2_damage_cause(qa_ruleset_id edition, qa_q2_product product, int canonical,
                                    uint32_t flags) {
     qa_damage_cause cause = {.kind = QA_CAUSE_Q2,
                              .source.q2 = {.means_of_death = canonical, .flags = flags}};
@@ -626,7 +624,7 @@ qa_damage_cause qa_q2_damage_cause(qa_q2_edition edition, qa_q2_product product,
     if (canonical < 0 || id > 58)
         return cause;
     cause.source.q2.friendly_fire = friendly;
-    if (edition == QA_Q2_RERELEASE) {
+    if (edition == QA_RULESET_Q2_RERELEASE) {
         cause.source.q2.native = QA_Q2_CAUSE_RERELEASE;
         cause.source.q2.native_value = (int32_t)(id < 22    ? id
                                                  : id <= 55 ? id + 1

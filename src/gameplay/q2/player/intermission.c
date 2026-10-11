@@ -7,7 +7,7 @@ bool qa_q2_players_in_intermission(const qa_q2_game *g) {
 }
 static bool camera_actor(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 angles, bool entering,
                          qa_error *e) {
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     q2_client_state *s = a->client;
     qa_combat_state combat;
     if (!qa_combat_read(g->services.combat, a->id, &combat, e))
@@ -100,7 +100,7 @@ static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
     if (!players)
         return false;
     q2_players *p = g->player_runtime;
-    bool okay = false, rr = g->options.edition == QA_Q2_RERELEASE;
+    bool okay = false, rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     for (size_t i = 0; i < players->snapshot.count; ++i) {
         qa_actor_id id = players->snapshot.ids[i];
         q2_actor *a = q2_actor_get(g, id, false, NULL);
@@ -176,7 +176,7 @@ bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_land
     if (landmark)
         p->landmark = *landmark;
     p->exit = false;
-    bool rr = g->options.edition == QA_Q2_RERELEASE, end_unit = strchr(map, '*') != NULL;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE, end_unit = strchr(map, '*') != NULL;
     if (!prepare_intermission(g, end_unit, e))
         return false;
     if (rr) q2_campaign_update(g);
@@ -259,7 +259,7 @@ bool qa_q2_players_frame(qa_q2_game *g, qa_error *e) {
     qa_string_id map = p->next_map;
     qa_q2_landmark landmark = p->landmark;
     bool has_landmark = p->has_landmark;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!rr) { p->intermission = false; p->exit = false; }
     if (!q2_player_end_server_frames(g, e)) return false;
     if (rr) { p->intermission = false; p->exit = false; }

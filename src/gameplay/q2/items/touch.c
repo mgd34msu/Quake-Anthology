@@ -181,7 +181,7 @@ static bool complete(void *context, const qa_pickup_offer *offer, bool accepted,
          * cannot fire an unbounded second copy of this target chain. */
         item->targets_used = true;
         qa_string_id message = item->spawn.message;
-        if (instanced(g) || (g->options.edition == QA_Q2_RERELEASE && g->options.deathmatch))
+        if (instanced(g) || (g->options.rules == QA_RULESET_Q2_RERELEASE && g->options.deathmatch))
             item->spawn.message = 0;
         bool okay = qa_q2_entity_use_targets(g, a->id, call->player, false, e);
         if (q2_actor_live(g, a->id))

@@ -731,7 +731,7 @@ bool qa_q2_entities_player_begin(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 map recipient");
         return false;
     }
-    if (g->options.edition != QA_Q2_RERELEASE)
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE)
         return true;
     q2_actor *player = q2_actor_get(g, id, false, NULL);
     if (player && player->client) {
@@ -762,7 +762,7 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 map recipient");
         return false;
     }
-    if (g->options.edition != QA_Q2_RERELEASE)
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE)
         return true;
     q2_entities *r = g->entity_runtime;
     for (size_t slot = 0; slot < 2; slot++) {

@@ -117,7 +117,7 @@ static bool save_widow_disrupt_location(q2m_context *context) {
 static bool toss_makron(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
-  if (context->game->options.edition == QA_Q2_CLASSIC)
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC)
     return q2m_schedule_makron_spawn(context, error);
 
   const qa_actor_id jorg = context->actor->id;
@@ -130,7 +130,7 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
 
   qa_q2_monster_spawn_options options = {
       .classname = "monster_makron",
-      .scale = context->game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
+      .scale = context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
       .health_multiplier = 1.0f,
       .enemy = enemy,
   };
@@ -202,7 +202,7 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
     resumed.monster->next_frame = resumed.monster->frame;
   }
 
-  return context->game->options.edition != QA_Q2_RERELEASE ||
+  return context->game->options.rules != QA_RULESET_Q2_RERELEASE ||
          qa_q2_healthbar_transfer(context->game, jorg, child, error);
 }
 
@@ -217,7 +217,7 @@ static bool publish_duck(q2m_context *context, bool down, qa_error *error) {
 static bool set_duck(q2m_context *context, bool down, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (!down && !monster->ducked &&
-      !(context->game->options.edition == QA_Q2_CLASSIC &&
+      !(context->game->options.rules == QA_RULESET_Q2_CLASSIC &&
         monster->definition->species == Q2M_GUN_COMMANDER))
     return true;
   return publish_duck(context, down, error);
@@ -232,7 +232,7 @@ static bool duck_action(q2m_context *context, q2m_callback_id callback,
       (callback == Q2M_CALLBACK_medic_duck_down) || (callback == Q2M_CALLBACK_monster_duck_down);
   bool hold = (callback == Q2M_CALLBACK_brain_duck_hold) || (callback == Q2M_CALLBACK_chick_duck_hold) ||
       (callback == Q2M_CALLBACK_medic_duck_hold) || (callback == Q2M_CALLBACK_monster_duck_hold);
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (down) {
     if (!shared && m->ducked) return true;
     if (shared) {
@@ -272,7 +272,7 @@ static bool jump_action(q2m_context *context, q2m_callback_id callback,
       callback == Q2M_CALLBACK_parasite_jump_wait_land;
   if (wait) {
     if (!qa_actor_reference_present(context->body.ground) &&
-        context->game->options.edition == QA_Q2_RERELEASE) {
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
       qa_vec3 forward;
       qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
       qa_vec3 projected = qa_v3(context->body.velocity.x * forward.x,
@@ -371,7 +371,7 @@ static bool source_sound_callback(q2m_context *context, q2m_callback_id callback
   if ((callback == Q2M_CALLBACK_insane_shake) ||
       (callback == Q2M_CALLBACK_insane_moan) ||
       (callback == Q2M_CALLBACK_insane_scream)) {
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     bool shake = (callback == Q2M_CALLBACK_insane_shake);
     if (rerelease && ((context->monster->spawnflags & 64u) ||
         (!shake && context->monster->attack_ns >= context->game->now_ns)))
@@ -408,13 +408,13 @@ bool q2m_weapon_sound(q2m_context *context, q2_runtime_name path, qa_error *erro
 
 bool q2m_jorg_sound_end(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || !context->monster->weapon_sound) return true;
-  if (context->game->options.edition == QA_Q2_RERELEASE &&
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       !q2m_sound(context, QA_Q2_SFX_BOSS3_BS3ATCK1_END, 1, 1, error)) return false;
   return !q2m_alive(context) || q2m_weapon_sound(context, Q2_NAME_NONE, error);
 }
 
 bool q2m_soldier_sound_end(q2m_context *context, qa_error *error) {
-  if (context->game->options.edition != QA_Q2_RERELEASE ||
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE ||
       !context->monster->weapon_sound)
     return true;
   if (context->monster->count >= 2 && context->monster->count < 4 &&
@@ -425,7 +425,7 @@ bool q2m_soldier_sound_end(q2m_context *context, qa_error *error) {
 
 static bool soldier_laser_sound(q2m_context *context, bool start,
                                 qa_error *error) {
-  if (context->game->options.edition != QA_Q2_RERELEASE)
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE)
     return true;
   if (!start)
     return q2m_soldier_sound_end(context, error);
@@ -536,7 +536,7 @@ static bool project_flash_angles(q2m_context *context, int flash,
   qa_vec3 offset;
   if (!q2m_muzzle_offset(context, flash, &offset, error))
     return false;
-  float scale = context->game->options.edition == QA_Q2_RERELEASE &&
+  float scale = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                         context->monster->entity_scale != 0
                     ? context->monster->entity_scale
                     : 1.0f;
@@ -601,7 +601,7 @@ static bool soldier_aim(q2m_context *context, int flash, unsigned index,
   qa_angle_vectors(context->body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   if (index == 5 || index == 6) {
     if (!heavy && !rogue &&
-        context->game->options.edition == QA_Q2_RERELEASE &&
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         (context->monster->spawnflags & UINT32_C(65536)) != 0)
       return true;
     *direction = forward;
@@ -701,7 +701,7 @@ static bool soldier_fire_exact(q2m_context *context, unsigned index,
       monster->pause_ns =
           q2m_after(context->game->now_ns, (double)tenths * 0.1);
     }
-    if (context->game->options.edition == QA_Q2_CLASSIC &&
+    if (context->game->options.rules == QA_RULESET_Q2_CLASSIC &&
         q2m_random(context->game) > 0.8f &&
         !q2m_sound(context, QA_Q2_SFX_MISC_LASFLY, 0, 3.0f, error))
       return false;
@@ -737,7 +737,7 @@ static bool soldier_fire_exact(q2m_context *context, unsigned index,
     spec.kick = 1.0f;
     spec.speed = 600.0f;
     spec.fuse = 2.0f;
-    spec.direct_mod = context->game->options.edition == QA_Q2_RERELEASE ? 58
+    spec.direct_mod = context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 58
                                                                          : 1;
     spec.has_projectile_effects = true;
     spec.projectile_effects = UINT64_C(0x400000);
@@ -755,18 +755,18 @@ static bool soldier_fire_exact(q2m_context *context, unsigned index,
     spec.damage = 2.0f;
     spec.kick = 1.0f;
     spec.horizontal_spread =
-        context->game->options.edition == QA_Q2_RERELEASE && !rogue ? 1500.0f
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE && !rogue ? 1500.0f
                                                                     : 1000.0f;
     spec.vertical_spread =
-        context->game->options.edition == QA_Q2_RERELEASE && !rogue ? 750.0f
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE && !rogue ? 750.0f
                                                                     : 500.0f;
     spec.pellets =
-        context->game->options.edition == QA_Q2_RERELEASE && !rogue ? 9 : 12;
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE && !rogue ? 9 : 12;
     spec.direct_mod = Q2M_MOD_SHOTGUN;
     monster->cocked = false;
   } else {
     if (!monster->hold_frame) {
-      if (context->game->options.edition == QA_Q2_RERELEASE && !rogue) {
+      if (context->game->options.rules == QA_RULESET_Q2_RERELEASE && !rogue) {
         monster->fire_ns = q2m_after(
             context->game->now_ns, 0.3 + q2m_random(context->game) * 0.8);
       } else if (rogue) {
@@ -792,7 +792,7 @@ static bool soldier_fire_exact(q2m_context *context, unsigned index,
     return false;
   if (q2m_alive(context) && species == Q2M_SOLDIER_SS)
     monster->hold_frame = context->game->now_ns <
-                          (context->game->options.edition == QA_Q2_RERELEASE &&
+                          (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                                    !rogue
                                ? monster->fire_ns
                                : monster->pause_ns);
@@ -837,7 +837,7 @@ static bool soldier_refire(q2m_context *context, bool force, bool *result,
                            qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   float distance = q2m_distance(context, monster->enemy);
-  if (context->game->options.edition == QA_Q2_CLASSIC) {
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
     *result = (context->game->options.skill == 3 &&
                q2m_random(context->game) < 0.5f) ||
               distance <= 80.0f;
@@ -853,7 +853,7 @@ static bool soldier_refire(q2m_context *context, bool force, bool *result,
 
 static bool soldier_run(q2m_context *context, qa_error *error) {
   context->monster->dodging = false;
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (context->monster->attack_state == Q2M_SLIDING)
       context->monster->attack_state = Q2M_STRAIGHT;
     if (!q2m_soldier_sound_end(context, error)) return false;
@@ -897,7 +897,7 @@ static bool soldier_callbacks(q2m_context *context, q2m_callback_id callback,
   }
 
   if (callback == Q2M_CALLBACK_soldier_attack1_refire1) {
-    if (context->game->options.edition == QA_Q2_RERELEASE &&
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         soldier_blaster(monster))
       monster->next_frame = 9;
     if (monster->manual_steering) {
@@ -926,7 +926,7 @@ static bool soldier_callbacks(q2m_context *context, q2m_callback_id callback,
     return true;
   }
   if (callback == Q2M_CALLBACK_soldier_attack2_refire1) {
-    if (context->game->options.edition == QA_Q2_RERELEASE &&
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         soldier_blaster(monster))
       monster->next_frame = 27;
     if (!soldier_blaster(monster) || !enemy_alive(context))
@@ -936,16 +936,16 @@ static bool soldier_callbacks(q2m_context *context, q2m_callback_id callback,
       return false;
     if (refire)
       monster->next_frame = 15;
-    else if (context->game->options.edition == QA_Q2_CLASSIC)
+    else if (context->game->options.rules == QA_RULESET_Q2_CLASSIC)
       monster->next_frame = 27;
     return true;
   }
   if (callback == Q2M_CALLBACK_soldier_attack3_refire) {
-    if (context->game->options.edition == QA_Q2_RERELEASE &&
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         soldier_shotgun(monster) && !monster->cocked)
       monster->hold_frame = context->game->now_ns < monster->duck_ns;
     else {
-      uint64_t until = context->game->options.edition == QA_Q2_CLASSIC
+      uint64_t until = context->game->options.rules == QA_RULESET_Q2_CLASSIC
                            ? monster->pause_ns
                            : monster->duck_ns;
       if (q2m_after(context->game->now_ns, 0.4) < until)
@@ -1111,19 +1111,19 @@ static bool soldier_callbacks(q2m_context *context, q2m_callback_id callback,
   };
   if (shots[callback].callback == callback) {
     if (shots[callback].extra) {
-      if (context->game->options.edition == QA_Q2_RERELEASE) {
+      if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
         if (monster->count >= 4 ||
             ((shots[callback].index == 2 || shots[callback].index == 7) && monster->skin < 6) ||
             (shots[callback].index == 8 && !monster->style)) return true;
       } else if (soldierh_laser(monster)) return true;
     }
-    if (base && shots[callback].index == 2 && context->game->options.edition == QA_Q2_CLASSIC) {
+    if (base && shots[callback].index == 2 && context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
       monster->pause_ns = q2m_after(context->game->now_ns, 1);
       if (!set_duck(context, true, error)) return false;
     }
     if (!soldier_fire_exact(context, shots[callback].index, shots[callback].limited, error)) return false;
     if (q2m_alive(context) && (callback == Q2M_CALLBACK_soldier_fire6) &&
-        context->game->options.edition == QA_Q2_RERELEASE &&
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         soldier_shotgun(monster) && !monster->cocked)
       monster->next_frame = 297;
     return true;
@@ -1152,7 +1152,7 @@ static const qa_vec3 infantry_death_aim[] = {
 };
 
 static bool infantry_machinegun(q2m_context *context, qa_error *error) {
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   int frame = context->monster->frame;
   bool running = rerelease && frame >= 232 && frame <= 239;
   bool normal = rerelease ? frame == 186 || frame == 227 || frame == 255 ||
@@ -1249,7 +1249,7 @@ static bool infantry_fire(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  if (context->game->options.edition == QA_Q2_CLASSIC) {
+  if (context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
     monster->hold_frame = context->game->now_ns < monster->pause_ns;
     return true;
   }
@@ -1298,7 +1298,7 @@ static bool infantry_callbacks(q2m_context *context, q2m_callback_id callback,
   if (callback == Q2M_CALLBACK_infantry_fire)
     return infantry_fire(context, error);
   if (callback == Q2M_CALLBACK_infantry_cock_gun) {
-    if (context->game->options.edition == QA_Q2_CLASSIC) {
+    if (context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
       unsigned tenths = 10u + (unsigned)(q2m_random(context->game) * 16.0f);
       monster->pause_ns =
           q2m_after(context->game->now_ns, (double)tenths * 0.1);
@@ -1995,7 +1995,7 @@ static bool widow2_tongue(q2m_context *context, qa_error *error) {
     return true;
   qa_attack attack = {.attacker = context->actor->id, .inflictor = context->actor->id,
       .combat_provider = context->game->options.owner,
-      .cause = qa_q2_damage_cause(context->game->options.edition,
+      .cause = qa_q2_damage_cause(context->game->options.rules,
                                   context->game->options.product, 0, 8u)};
   return q2_damage(context->game, &attack, enemy_id, 2.0f, 0.0f,
                    qa_vec_sub(start, enemy.origin), enemy.origin, qa_v3(0, 0, 0),
@@ -2129,7 +2129,7 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
     bool visible;
     if (!visible_enemy(context, &visible, error))
       return false;
-    float chance = context->game->options.edition == QA_Q2_RERELEASE ? 0.7f
+    float chance = context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 0.7f
                    : context->game->options.product == QA_Q2_ROGUE
                        ? 0.6f + 0.05f * (float)context->game->options.skill
                        : 0.6f;
@@ -2193,7 +2193,7 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
     if (!q2m_visible(context, monster->enemy, &visible, error))
       return false;
     if (!q2m_alive(context)) return true;
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (visible && (rerelease ? q2_rerelease_float(context->game, 0, 1) :
                               q2m_random(context->game)) < 0.9f)
       return q2m_set_move(context, Q2M_MOVE_jorg_move_attack1, rerelease, error);
@@ -2212,7 +2212,7 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
     if (!q2m_visible(context, monster->enemy, &visible, error))
       return false;
     float chance =
-        supertank && context->game->options.edition == QA_Q2_RERELEASE ? 0.3f
+        supertank && context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 0.3f
                                                                        : 0.9f;
     bool repeat =
         visible &&
@@ -2246,7 +2246,7 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
     bool visible;
     if (!visible_enemy(context, &visible, error))
       return false;
-    bool skill_allows = context->game->options.edition == QA_Q2_RERELEASE ||
+    bool skill_allows = context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
                         context->game->options.skill >= 2;
     bool repeat = skill_allows && visible &&
                   q2m_random(context->game) <= (rocket ? 0.4f : 0.6f);
@@ -2314,7 +2314,7 @@ static bool conditional_transition(q2m_context *context, q2m_callback_id callbac
 }
 
 static bool turret_ready_gun(q2m_context *context, qa_error *error) {
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (rerelease && context->monster->move &&
       context->monster->move->id == Q2M_MOVE_turret_move_ready_gun)
     return true;
@@ -2333,7 +2333,7 @@ static bool callback_turret_run(q2m_context *context, q2m_callback_id callback, 
   }
   if (context->monster->frame < run->first_frame)
     return turret_ready_gun(context, error);
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (rerelease) context->monster->high_tick_rate = true;
   if (!q2m_set_move(context, Q2M_MOVE_turret_move_run, false, error))
     return false;
@@ -2347,7 +2347,7 @@ static bool callback_turret_run(q2m_context *context, q2m_callback_id callback, 
 
 static bool end_transition(q2m_context *context, q2m_callback_id callback,
                            bool *handled, qa_error *error) {
-  if (context->game->options.edition == QA_Q2_RERELEASE &&
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (context->monster->definition->species == Q2M_MEDIC ||
        context->monster->definition->species == Q2M_MEDIC_COMMANDER) &&
       ((callback == Q2M_CALLBACK_medic_stand) || (callback == Q2M_CALLBACK_medic_walk))) {
@@ -2377,14 +2377,14 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
         context->game->now_ns < Q2M_SECOND) {
       unsigned frames = (unsigned)(context->monster->move->last_frame -
                                    context->monster->move->first_frame + 1);
-      unsigned choice = context->game->options.edition == QA_Q2_RERELEASE
+      unsigned choice = context->game->options.rules == QA_RULESET_Q2_RERELEASE
                             ? q2_random_bounded(context->game, frames)
                             : qa_builtin_random_integer(&context->game->random) % frames;
       context->monster->frame = context->monster->move->first_frame + (int)choice;
     }
     return true;
   }
-  if (context->game->options.edition == QA_Q2_RERELEASE &&
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       ((callback == Q2M_CALLBACK_jorg_stand) || (callback == Q2M_CALLBACK_jorg_run))) {
     *handled = true;
     bool stand = (callback == Q2M_CALLBACK_jorg_stand) || context->monster->stand_ground;
@@ -2392,7 +2392,7 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
       return false;
     return q2m_jorg_sound_end(context, error);
   }
-  if (context->game->options.edition == QA_Q2_RERELEASE &&
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       ((callback == Q2M_CALLBACK_soldier_stand) ||
        (callback == Q2M_CALLBACK_soldier_run))) {
     *handled = true;
@@ -2449,7 +2449,7 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
     *handled = true;
     if (callback == Q2M_CALLBACK_guncmdr_run) {
       context->monster->dodging = false;
-      if (context->game->options.edition == QA_Q2_RERELEASE &&
+      if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
           context->monster->attack_state == Q2M_SLIDING)
         context->monster->attack_state = Q2M_STRAIGHT;
     }
@@ -2520,11 +2520,11 @@ static bool foundational_species_callback(q2m_context *context,
   if (callback == Q2M_CALLBACK_brain_swing_left)
     return q2m_sound(context, QA_Q2_SFX_BRAIN_MELEE2, 4, 1.0f, error);
   if (callback == Q2M_CALLBACK_brain_chest_open) {
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
       monster->count = 0;
     else
       monster->spawnflags &= ~UINT32_C(65536);
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
       monster->count = 0;
     else
       monster->spawnflags &= ~UINT32_C(65536);
@@ -2544,7 +2544,7 @@ static bool foundational_species_callback(q2m_context *context,
       return false;
     if (!q2m_alive(context))
       return true;
-    if (context->game->options.edition == QA_Q2_RERELEASE) {
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
       if (!monster->count)
         return true;
       monster->count = 0;
@@ -2566,7 +2566,7 @@ static bool foundational_species_callback(q2m_context *context,
   if (callback == Q2M_CALLBACK_ChickReload)
     return q2m_sound(context, QA_Q2_SFX_CHICK_CHKATCK5, 2, 1.0f, error);
   if (callback == Q2M_CALLBACK_ChickRocket) {
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
     bool heat = monster->definition->species == Q2M_CHICK_HEAT &&
                 monster->skin > 1;
@@ -2678,7 +2678,7 @@ static bool foundational_species_callback(q2m_context *context,
 
 
   if (callback == Q2M_CALLBACK_floater_fire_blaster) {
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     bool effect = rerelease ? monster->frame % 4 == 0
                             : monster->frame == 34 || monster->frame == 37;
     return fire_source_exact(context, Q2M_ATTACK_BLASTER, 1.0f, 82, 0.0f,
@@ -2698,7 +2698,7 @@ static bool foundational_species_callback(q2m_context *context,
   if ((callback == Q2M_CALLBACK_flyer_fireleft) ||
       (callback == Q2M_CALLBACK_flyer_fireright)) {
     int flash = (callback == Q2M_CALLBACK_flyer_fireleft) ? 58 : 59;
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     bool effect = rerelease ? monster->frame % 4 == 0
                             : monster->frame == 82 || monster->frame == 85 ||
                                   monster->frame == 88;
@@ -2731,7 +2731,7 @@ static bool foundational_species_callback(q2m_context *context,
     int flash = 45 + monster->frame - 144;
     qa_vec3 start, direction;
     bool available;
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     bool aimed = rerelease
                      ? q2m_predict_shot(context, flash, 0.0f, true, -0.2f,
                                         &start, &direction, &available, error)
@@ -2763,7 +2763,7 @@ static bool foundational_species_callback(q2m_context *context,
 
   if (callback == Q2M_CALLBACK_hover_fire_blaster) {
     bool daedalus = monster->definition->species == Q2M_DAEDALUS;
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     int source_flash = rerelease && !daedalus && (monster->frame & 1) != 0
                            ? 263
                            : 62;
@@ -2792,7 +2792,7 @@ static bool foundational_species_callback(q2m_context *context,
   }
 
   if (callback == Q2M_CALLBACK_medic_fire_blaster) {
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE ||
                  monster->definition->species == Q2M_MEDIC_COMMANDER;
     bool commander = rogue && context->combat.mass > 400;
@@ -2860,7 +2860,7 @@ static bool foundational_species_callback(q2m_context *context,
     if (!q2m_alive(context))
       return true;
     context->body.origin.z += 1.0f;
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     context->body.velocity = qa_vec_scale(forward, rerelease ? 425.0f : 600.0f);
     context->body.velocity.z = rerelease ? 160.0f : 250.0f;
     context->body.ground = (qa_actor_reference){0};
@@ -3001,7 +3001,7 @@ static bool foundational_species_callback(q2m_context *context,
 static bool boss2_bullet(q2m_context *context, int flash, qa_error *error) {
   qa_vec3 start, direction;
   bool available;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
   float lead = rogue && flash == 133 ? 0.2f : -0.2f;
   bool aimed = rerelease
@@ -3020,7 +3020,7 @@ static bool boss2_bullet(q2m_context *context, int flash, qa_error *error) {
 
 static bool boss2_rockets(q2m_context *context, bool force_predictive,
                           qa_error *error) {
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
   if (!rerelease && !rogue) {
     for (int flash = 78; flash <= 81; ++flash) {
@@ -3154,7 +3154,7 @@ static bool jorg_bullets(q2m_context *context, int only_flash,
       continue;
     qa_vec3 start, direction;
     bool available;
-    bool aimed = context->game->options.edition == QA_Q2_RERELEASE
+    bool aimed = context->game->options.rules == QA_RULESET_Q2_RERELEASE
                      ? q2m_predict_shot(context, flash, 0.0f, false,
                                         flash == 120 ? 0.2f : -0.2f, &start,
                                         &direction, &available, error)
@@ -3208,7 +3208,7 @@ static bool makron_hyperblaster(q2m_context *context, qa_error *error) {
   qa_vec3 direction;
   qa_angle_vectors(qa_v3(pitch, yaw, 0.0f), &direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
   int emitted_flash =
-      context->game->options.edition == QA_Q2_RERELEASE ? source_flash : 102;
+      context->game->options.rules == QA_RULESET_Q2_RERELEASE ? source_flash : 102;
   q2m_fire_spec spec = q2m_fire_default(
       context, Q2M_ATTACK_BLASTER, 15.0f, emitted_flash, start, direction);
   spec.speed = 1000.0f;
@@ -3227,7 +3227,7 @@ static bool supertank_machinegun(q2m_context *context, qa_error *error) {
     return false;
   qa_vec3 direction;
   bool available;
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (!q2m_predict_from(context, start, 0.0f, true, -0.1f, NULL,
                           &direction, &available, error))
       return false;
@@ -3253,7 +3253,7 @@ static bool supertank_machinegun(q2m_context *context, qa_error *error) {
 static bool supertank_rocket(q2m_context *context, qa_error *error) {
   int frame = context->monster->frame;
   int flash = frame == 27 ? 70 : frame == 30 ? 71 : 72;
-  if (context->game->options.edition != QA_Q2_RERELEASE)
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE)
     return fire_source_exact(context, Q2M_ATTACK_ROCKET, 50.0f, flash, 0.0f,
                              500.0f, false, 0, error);
 
@@ -3321,13 +3321,13 @@ static bool tank_blaster(q2m_context *context, qa_error *error) {
   bool available;
   if (!q2m_project_flash(context, flash, &start, error))
     return false;
-  if (context->game->options.edition == QA_Q2_RERELEASE &&
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       context->monster->manual_steering) {
     if (!blind_direction(context, start, context->monster->blind_fire_target,
                          20.0f, UINT32_C(0x46004003), &direction, &available,
                          error))
       return false;
-  } else if (context->game->options.edition == QA_Q2_RERELEASE) {
+  } else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (!q2m_predict_from(context, start, 0.0f, false, 0.0f, NULL,
                           &direction, &available, error))
       return false;
@@ -3357,7 +3357,7 @@ static bool tank_machinegun(q2m_context *context, qa_error *error) {
   bool available;
   if (!target_body(context, &enemy, &traits, &available) || !q2m_alive(context))
     return true;
-  if (!available && context->game->options.edition == QA_Q2_RERELEASE)
+  if (!available && context->game->options.rules == QA_RULESET_Q2_RERELEASE)
     return true;
   float pitch = 0.0f;
   if (available) {
@@ -3467,7 +3467,7 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
 
 static bool gunner_grenade(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
   int frame = monster->frame;
   if (!rerelease && !rogue) {
@@ -3671,7 +3671,7 @@ static bool gladb_gun(q2m_context *context, qa_error *error) {
   qa_vec3 start;
   if (!q2m_project_flash(context, 61, &start, error))
     return false;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   float damage = 35, radius = 45;
   if (rerelease && context->monster->frame > 48) {
     damage = 17;
@@ -3718,7 +3718,7 @@ static bool actor_fire(q2m_context *context, qa_error *error) {
     return false;
   if (q2m_alive(context))
     context->monster->hold_frame = context->game->now_ns <
-        (context->game->options.edition == QA_Q2_RERELEASE
+        (context->game->options.rules == QA_RULESET_Q2_RERELEASE
              ? context->monster->fire_ns : context->monster->pause_ns);
   return true;
 }
@@ -3807,7 +3807,7 @@ static bool shambler_lightning(q2m_context *context, qa_error *error) {
       .policy = qa_collision_default_policy(QA_GAME_Q2),
   };
   query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK, QA_GAME_Q2);
-  if (context->game->options.edition == QA_Q2_RERELEASE)
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
     query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_GAME_Q2));
   qa_trace_result trace;
   if (!qa_world_trace(context->game->services.world, &query, &trace, error))
@@ -3897,7 +3897,7 @@ static bool turret_aim(q2m_context *context, qa_error *error) {
     break;
   }
   float speed = context->monster->yaw_speed *
-      (context->game->options.edition == QA_Q2_RERELEASE ? context->elapsed * 10 : 1);
+      (context->game->options.rules == QA_RULESET_Q2_RERELEASE ? context->elapsed * 10 : 1);
   float move = ideal.x - context->body.angles.x;
   while (move >= 360) move -= 360;
   if (move >= 90) move -= 360;
@@ -3926,7 +3926,7 @@ static bool turret_fire(q2m_context *context, bool blind, qa_error *error) {
     return false;
   if (!q2m_alive(context) || !available)
     return true;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   uint32_t flags = context->monster->spawnflags;
   qa_vec3 point = blind || (rerelease && context->monster->lost_sight)
                      ? context->monster->blind_fire_target : enemy.origin;
@@ -4025,7 +4025,7 @@ static bool turret_fire(q2m_context *context, bool blind, qa_error *error) {
 }
 
 static bool supertank_grenade(q2m_context *context, qa_error *error) {
-  if (context->game->options.edition != QA_Q2_RERELEASE)
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE)
     return true;
   int flash = context->monster->frame == 74 ? 261 : 262;
   qa_vec3 start;
@@ -4069,7 +4069,7 @@ static bool supertank_grenade(q2m_context *context, qa_error *error) {
 static bool tank_rocket(q2m_context *context, qa_error *error) {
   int frame = context->monster->frame;
   int flash = frame == 138 ? 23 : frame == 141 ? 24 : 25;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
   if (!rerelease && !rogue)
     return fire_source_exact(context, Q2M_ATTACK_ROCKET, 50.0f, flash, 0.0f,
@@ -4221,7 +4221,7 @@ static bool heavy_weapon_callback(q2m_context *context, q2m_callback_id callback
   if (callback == Q2M_CALLBACK_jorg_firebullet_right)
     return jorg_bullets(context, 126, error);
   if (callback == Q2M_CALLBACK_jorgBFG) {
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!q2m_sound(context,
                    rerelease ? QA_Q2_SFX_MAKRON_BFG_FIRE : QA_Q2_SFX_BOSS3_BS3ATCK2,
                    rerelease ? 1 : 2, 1.0f, error))
@@ -4295,7 +4295,7 @@ static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *err
   } else {
     float longest = 0;
     query.policy.contents_mask = qa_collision_contents_mask(Q2M_ATTACK_MASK |
-        (context->game->options.edition == QA_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
+        (context->game->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PLAYER_CONTENTS : 0), QA_GAME_Q2);
     for (int i = 0; i < 12; ++i) {
       qa_vec3 angles = context->body.angles, forward;
       angles.y += (float)(i < 6 ? 30 * i : -30 * (i - 6));
@@ -4322,7 +4322,7 @@ static bool fixbot_goal_create(q2m_context *context, int vertical, qa_error *err
 static bool fixbot_roam(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   bool acquired = false;
-  if (!(context->game->options.edition == QA_Q2_RERELEASE ? m->enemy.registry : m->goal.registry) &&
+  if (!(context->game->options.rules == QA_RULESET_Q2_RERELEASE ? m->enemy.registry : m->goal.registry) &&
       !q2m_medic_acquire(context, true, &acquired, error))
     return false;
   if (!q2m_alive(context) || acquired) return true;
@@ -4428,7 +4428,7 @@ static bool fixbot_weld_state(q2m_context *context, qa_error *error) {
     if (!qa_combat_read(context->game->services.combat, m->goal, &combat, error))
       return !q2_actor_live(context->game, m->goal);
     if (!q2m_alive(context)) return true;
-    if (context->game->options.edition == QA_Q2_RERELEASE ? combat.health <= 0 : combat.health < 0) {
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE ? combat.health <= 0 : combat.health < 0) {
       q2_actor *enemy = q2_actor_get(context->game, m->enemy, false, NULL);
       if (enemy && enemy->entity) enemy->entity->owner = (qa_actor_id){0};
       return q2m_set_move(context, Q2M_MOVE_fixbot_move_weld_end, false, error);
@@ -4754,7 +4754,7 @@ static bool callback_monster_done_dodge_36(q2m_context *context, q2m_callback_id
     (void)error;
     struct qa_q2_monster *monster = context->monster;
     monster->dodging = false;
-    if (monster->attack_state == Q2M_SLIDING && context->game->options.edition == QA_Q2_RERELEASE)
+    if (monster->attack_state == Q2M_SLIDING && context->game->options.rules == QA_RULESET_Q2_RERELEASE)
         monster->attack_state = Q2M_STRAIGHT;
     return true;
 }
@@ -4773,7 +4773,7 @@ static bool callback_brain_chest_open_38(q2m_context *context, q2m_callback_id c
                                          qa_error *error) {
     (void)callback;
     struct qa_q2_monster *monster = context->monster;
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
         monster->count = 0;
     else
         monster->spawnflags &= ~UINT32_C(65536);
@@ -4796,12 +4796,12 @@ static bool callback_brain_chest_closed_39(q2m_context *context, q2m_callback_id
         return false;
     if (!q2m_alive(context))
         return true;
-    bool follow = context->game->options.edition == QA_Q2_RERELEASE
+    bool follow = context->game->options.rules == QA_RULESET_Q2_RERELEASE
                       ? monster->count != 0
                       : (monster->spawnflags & UINT32_C(65536)) != 0;
     if (!follow)
         return true;
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
         monster->count = 0;
     else
         monster->spawnflags &= ~UINT32_C(65536);
@@ -5325,14 +5325,14 @@ static bool callback_gekk_search_94(q2m_context *context, q2m_callback_id callba
 static bool callback_TreadSound(q2m_context *context, q2m_callback_id callback, qa_error *error) {
     (void)callback;
     return q2m_sound(context, QA_Q2_SFX_BOSSTANK_BTKENGN1,
-                     context->game->options.edition == QA_Q2_RERELEASE ? 4 : 2, 1, error);
+                     context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 4 : 2, 1, error);
 }
 
 static bool callback_stalker_idle_noise(q2m_context *context, q2m_callback_id callback,
                                         qa_error *error) {
     (void)callback;
     return q2m_sound_volume(context, QA_Q2_SFX_STALKER_IDLE,
-                            context->game->options.edition == QA_Q2_RERELEASE ? 2 : 1, 2, .5f,
+                            context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 2 : 1, 2, .5f,
                             error);
 }
 

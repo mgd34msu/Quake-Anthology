@@ -25,7 +25,7 @@ static void model(qa_unified_frame_visuals *out,
     qa_string_id content, qa_string_id path, bool held)
 {
     const qa_q2_entity *state = &view->entity.state;
-    bool rerelease = view->source.edition == QA_Q2_RERELEASE;
+    bool rerelease = view->source.edition == QA_RULESET_Q2_RERELEASE;
     qa_unified_model_state *row = out->models + out->model_count++;
     *row = (qa_unified_model_state){.actor = view->entity.binding.actor, .family = QA_GAME_Q2,
         .visual.frame = (int32_t)state->frame, .visual.old_frame = (int32_t)(rerelease ? state->old_frame : state->frame),

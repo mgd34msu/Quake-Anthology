@@ -460,7 +460,7 @@ static bool input_values(struct application_native_q2_input *s,application_q3_mo
     double milliseconds=round(v[Q3_MOD_ELAPSED].as.scalar*1000),impulse=v[Q3_MOD_IMPULSE].as.scalar;
     if(milliseconds<0||milliseconds>255||impulse<0||impulse>255||impulse!=trunc(impulse))
         return application_fail(e,QA_ERROR_ARGUMENT,"Native user command exceeds its source byte ABI");
-    qa_ruleset_id kind = rerelease ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
+    qa_ruleset_id kind = s->owner->engine->provider->component.clock.kind;
     qa_input_move_intent moves = {v[Q3_MOD_FORWARD].as.scalar, v[Q3_MOD_SIDE].as.scalar, v[Q3_MOD_UP].as.scalar};
     if(!rerelease&&v[Q3_MOD_JUMP].as.scalar!=0) moves.z=fmax(1,moves.z);
     double scaled_moves[] = {moves.x * qa_input_command_units(kind), moves.y * qa_input_command_units(kind),

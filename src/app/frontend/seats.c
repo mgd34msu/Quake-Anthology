@@ -177,7 +177,7 @@ static const qa_scene_image *local_q2_picture(void *context, qa_string_id name, 
 {
     local_q2_hud *hud = context;
     return qa_scene_q2_picture_read(hud->media.images,(qa_strings *)hud->source->strings,name,QA_IMAGE_USAGE_PICTURE,
-        hud->source->edition == QA_Q2_RERELEASE,QA_SCENE_NEAREST,error);
+        hud->source->edition == QA_RULESET_Q2_RERELEASE,QA_SCENE_NEAREST,error);
 }
 static qa_string_id local_q2_config_picture(void *context,int32_t index,unsigned variant)
 { return qa_hud_q2_names_picture(((local_q2_hud *)context)->names,index,variant); }
@@ -208,7 +208,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         if(!qa_hud_q2_picture_names_bind((qa_strings *)source->strings,&seat->q2_hud_pictures,error))return false;
     }
     qa_net_protocol_id protocol=source->original ? source->names->protocol :
-        qa_q2_default_protocol(source->edition==QA_Q2_RERELEASE);
+        qa_q2_default_protocol(source->edition==QA_RULESET_Q2_RERELEASE);
     if (!qa_hud_q2_names_configure(&seat->q2_hud_names,protocol,source->original?&source->names->layout:NULL,error)) return false;
     hud.names=source->original?source->names:&seat->q2_hud_names;
     hud.config=hud.names->layout;
@@ -216,7 +216,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         seat->q2_hud_config_provider!=source->data_provider) {
         if(source->original) {
             if (!qa_hud_q2_program_update(seat->q2_hud_names.status,source->statusbar,
-                source->edition==QA_Q2_RERELEASE,error)) return false;
+                source->edition==QA_RULESET_Q2_RERELEASE,error)) return false;
         } else {
             qa_application_native_q2_hud_source selected = {
                 .provider=source->provider,.data_provider=source->data_provider,.config_revision=source->config_revision,
@@ -249,14 +249,14 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
             "local-q2:conchars", conchars, QA_FONT_BAKED_COLOR, &seat->q2_hud_classic, error)) return false;
     }
     if(seat->q2_hud_layout_revision!=source->layout_revision) {
-        if(!qa_hud_q2_program_update(seat->q2_hud_layout,source->layout,source->edition==QA_Q2_RERELEASE,error))return false;
+        if(!qa_hud_q2_program_update(seat->q2_hud_layout,source->layout,source->edition==QA_RULESET_Q2_RERELEASE,error))return false;
         seat->q2_hud_layout_revision=source->layout_revision;
     }
     if (!source->original && !qa_q2_wire_stats(source->game, &source->view,
         &(qa_q2_wire_stat_resources){.context = &hud, .items_base = hud.config.items,
             .image = local_q2_image}, source->stats, error)) return false;
     if (!qa_hud_q2_program_prepare_images(seat->q2_hud_layout,hud.media.images,
-        source->edition==QA_Q2_RERELEASE,QA_SCENE_NEAREST,error)) return false;
+        source->edition==QA_RULESET_Q2_RERELEASE,QA_SCENE_NEAREST,error)) return false;
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,
         .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
@@ -265,7 +265,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     options.fonts.classic = seat->q2_hud_classic;
     const qa_cvar_view *use_font = source->hud_cvars ?
         qa_cvars_read(source->cvars, source->hud_cvars->use_font) : NULL;
-    options.use_font = source->edition == QA_Q2_RERELEASE && use_font && use_font->integer != 0;
+    options.use_font = source->edition == QA_RULESET_Q2_RERELEASE && use_font && use_font->integer != 0;
     qa_hud_q2_frame received = {.protocol = protocol, .stats = source->stats,
         .stat_count = QA_Q2_MAX_STATS, .inventory = source->inventory,
         .inventory_count = sizeof(source->inventory) / sizeof(source->inventory[0]), .layout = seat->q2_hud_layout,

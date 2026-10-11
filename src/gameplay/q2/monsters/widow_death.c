@@ -63,7 +63,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, q2_runtime_name model,
   qa_vec3 angular;
   angular.x = q2_random(game) * (sized ? 400 : 600);
   angular.y = q2_random(game) * (sized ? 400 : 600);
-  angular.z = q2_random(game) * (sized ? game->options.edition == QA_Q2_RERELEASE ? 400 : 200 : 600);
+  angular.z = q2_random(game) * (sized ? game->options.rules == QA_RULESET_Q2_RERELEASE ? 400 : 200 : 600);
   velocity.x *= 2; velocity.y *= 2;
   qa_bounds bounds = {0};
   if (sized) {
@@ -82,7 +82,7 @@ static bool gib(qa_q2_game *game, qa_actor_id source, q2_runtime_name model,
   qa_combat_state combat = {.can_take_damage = true, .no_knockback = true};
   qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
       .contents = qa_collision_q2_source_contents(2, 0,
-          game->options.edition == QA_Q2_RERELEASE), .owner = owner_reference, .role = QA_COLLISION_SOLID};
+          game->options.rules == QA_RULESET_Q2_RERELEASE), .owner = owner_reference, .role = QA_COLLISION_SOLID};
   qa_builtin_spawn spawn = {.owner = game->options.owner, .definition = definition,
       .body = {.origin = origin, .velocity = velocity, .bounds = bounds}, .combat = &combat,
       .collision = sized ? &collision : NULL};
@@ -95,15 +95,15 @@ static bool gib(qa_q2_game *game, qa_actor_id source, q2_runtime_name model,
   if (!actor) return release_failed(game, id, error);
   actor->projectile = (q2_projectile){.kind = Q2_GIB,
       .owner = sized ? owner_reference : (qa_actor_reference){0}, .classname = classname,
-      .effects = 2, .render_flags = 32768, .scale = game->options.edition == QA_Q2_RERELEASE ? 0 : 1, .alpha = 1,
-      .armed = game->options.edition == QA_Q2_RERELEASE && !sized,
+      .effects = 2, .render_flags = 32768, .scale = game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1, .alpha = 1,
+      .armed = game->options.rules == QA_RULESET_Q2_RERELEASE && !sized,
       .visible = true, .expire_ns = q2_deadline(game->now_ns, q2_duration(lifetime)),
       .gib_flags = Q2_GIB_WIDOW | (organic ? 0 : Q2_GIB_METALLIC) |
                    (sized ? Q2_GIB_WIDOW_SIZED : 0) |
                    (hit_sound ? Q2_GIB_WIDOW_HIT_SOUND : 0)};
   actor->physics_bound = true;
   actor->physics = qa_physics_properties_default(QA_GAME_Q2);
-  actor->physics.q2_rerelease = game->options.edition == QA_Q2_RERELEASE;
+  actor->physics.q2_rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   actor->physics.motion = organic ? QA_PHYSICS_TOSS : QA_PHYSICS_BOUNCE;
   actor->physics.solid = sized ? QA_PHYSICS_BOX : QA_PHYSICS_NOT_SOLID;
   actor->physics.angular_velocity = angular;
@@ -147,7 +147,7 @@ static bool spawn_legs(q2m_context *context, qa_error *error) {
   if (!actor) return release_failed(context->game, id, error);
   actor->projectile = (q2_projectile){.kind = Q2_GIB, .classname = definition,
       .render_flags = 32768,
-      .scale = context->game->options.edition == QA_Q2_RERELEASE ? 0 : 1,
+      .scale = context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
       .alpha = 1, .visible = true,
       .gib_flags = Q2_GIB_WIDOW_LEGS,
       .next_ns = q2_deadline(context->game->now_ns, 100 * Q2_MS), .expire_ns = UINT64_MAX};
@@ -186,7 +186,7 @@ bool q2_widow_legs_think(qa_q2_game *game, q2_actor *actor, qa_error *error) {
         .origin = body.origin, .end = body.angles};
     return qa_builtin_emit(&game->services, &event, error);
   }
-  bool rr = game->options.edition == QA_Q2_RERELEASE;
+  bool rr = game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (actor->projectile.delay == 0)
     actor->projectile.delay = rr ?
         (float)(q2_deadline(game->now_ns, Q2_NS) / Q2_MS) / 1000.0f :

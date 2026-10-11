@@ -173,7 +173,7 @@ static bool player_blend_read(frontend_unified_render *r,qa_error *e)
 static bool model_beam_read(unified_render_model *m, qa_error *e)
 {
     m->input.model_beam = m->input.family == QA_GAME_Q2 &&
-        qa_q2_model_beam(m->product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+        qa_q2_model_beam(qa_product_ruleset(m->product,QA_GAME_Q2),
             m->input.flags, m->media.scene != NULL);
     m->input.beam_segment_length = (float)m->input.frame;
     if (m->flat_beam && m->input.frame > INT32_MAX)

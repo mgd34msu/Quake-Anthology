@@ -16,7 +16,7 @@ static const char *const item_thinks[] = {
  * slots use the same physical-client zero-based index. */
 static bool picked_slots(q2_original_record_io *io, q2_item_state *state, uint32_t clients)
 {
-    if (io->edition != QA_Q2_RERELEASE) return true;
+    if (io->edition != QA_RULESET_Q2_RERELEASE) return true;
     if (io->reading) {
         qa_json_id id = qa_json_get(io->document, io->object, "item_picked_up_by");
         qa_buffer text = {0};
@@ -106,7 +106,7 @@ static bool companion_record(qa_q2_game *game, q2_original_record_io *io,
     }
     *handled = kind != Q2_COMPANION_NONE;
     if (!*handled) return true;
-    if (io->edition == QA_Q2_CLASSIC && io->product != QA_Q2_ROGUE)
+    if (io->edition == QA_RULESET_Q2_CLASSIC && io->product != QA_Q2_ROGUE)
         return item_error(error, 436, "Original Q2 companion is not part of this Source GAME");
     if (!actor->item) {
         qa_q2_item_checkpoint state = {.present = true,
@@ -166,11 +166,11 @@ static bool companion_record(qa_q2_game *game, q2_original_record_io *io,
                 !companion_callback(game, io, "die", 456, "doppleganger_die")) return false;
         } else {
             qa_actor_reference credit = companion->credit;
-            if (!io->reading && io->edition == QA_Q2_RERELEASE && !qa_actor_reference_present(credit)) {
+            if (!io->reading && io->edition == QA_RULESET_Q2_RERELEASE && !qa_actor_reference_present(credit)) {
                 q2_actor *base = q2_actor_get(game, qa_actor_reference_resolve(qa_session_actors(game->services.session), companion->owner), false, NULL);
                 if (base && base->item && base->item->companion) credit = base->item->companion->owner;
             }
-            if (io->edition == QA_Q2_RERELEASE &&
+            if (io->edition == QA_RULESET_Q2_RERELEASE &&
                 !q2_original_source_reference(game, io, "owner", 256, &credit)) return false;
             if (io->reading) companion->credit = credit;
             if (io->references_only) return true;
@@ -182,7 +182,7 @@ static bool companion_record(qa_q2_game *game, q2_original_record_io *io,
                 companion->expires_ns = base && base->item && base->item->companion ?
                     base->item->companion->expires_ns : UINT64_MAX;
             }
-            if (io->edition == QA_Q2_RERELEASE &&
+            if (io->edition == QA_RULESET_Q2_RERELEASE &&
                 !q2_original_scalar(io, "teleport_time", Q2_ORIGINAL_TIME,
                     UINT16_MAX, UINT16_MAX, UINT16_MAX, &companion->attack_ns)) return false;
         }
@@ -254,9 +254,9 @@ bool q2_original_item_record(qa_q2_game *game, q2_original_record_io *io,
         !q2_original_scalar(io, "nextthink", Q2_ORIGINAL_TIME, 428, 428, 428, &state->due_ns)) return false;
     if (io->reading) {
         if (health && style != expected_style &&
-            !(io->edition == QA_Q2_RERELEASE && style == 0))
+            !(io->edition == QA_RULESET_Q2_RERELEASE && style == 0))
             return item_error(error, 644, "Original Q2 health style differs from its actual native behavior");
-        if (io->edition == QA_Q2_CLASSIC && definition->kind == QA_Q2_ITEM_HEALTH && count == 0)
+        if (io->edition == QA_RULESET_Q2_CLASSIC && definition->kind == QA_Q2_ITEM_HEALTH && count == 0)
             return item_error(error, 532, "Original Q2 zero-count health has no native zero-grant behavior");
         state->spawn.count = count;
         state->spawn.spawnflags = flags;

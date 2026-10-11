@@ -135,7 +135,7 @@ bool qa_q2_grapple_equipment_tick(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_k
                         .definition = &g->definitions[s->weapon],
                         .now_ns = now,
                         .frame_ns = frame,
-                        .rerelease = g->options.edition == QA_Q2_RERELEASE,
+                        .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE,
                         .silenced = a->silencer > 0,
                         .equipment = true};
     c.input.source_rules =

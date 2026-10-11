@@ -22,7 +22,7 @@ typedef struct qa_application_native_q2_presentation {
     qa_vfs *content;
     qa_actor_owner source_owner;
     qa_product_id content_product;
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     qa_application_native_q2_source_kind kind;
     union {
         const qa_q2_game *game;
@@ -84,9 +84,9 @@ bool qa_application_native_q2_presentation_current(qa_application *,
  * including during its source callback. This grants no transport dialect or
  * PresentationOwner. Other source families leave edition unchanged. */
 bool qa_application_native_q2_source_profile_read(qa_application *, qa_actor_owner,
-    qa_q2_edition *edition, bool *found, qa_error *);
+    qa_ruleset_id *edition, bool *found, qa_error *);
 bool qa_application_native_q2_source_clock_read(qa_application *, qa_actor_owner,
-    qa_q2_edition *edition, uint64_t *interval_ns, bool *found, qa_error *);
+    qa_ruleset_id *edition, uint64_t *interval_ns, bool *found, qa_error *);
 
 /* Load-time declarations from any actual Q2 provider, including in a mixed
  * world. Remote-only recipe providers have no local GAME to visit. */
@@ -96,7 +96,7 @@ bool qa_application_native_q2_sound_resources(qa_application *, qa_actor_owner,
 typedef struct qa_application_native_q2_hud_source {
     qa_actor_owner provider, data_provider;
     uint64_t config_revision;
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     bool deathmatch, cooperative, original;
     const qa_q2_game *game;
     qa_string_id statusbar_id;
@@ -120,7 +120,7 @@ typedef struct qa_application_native_q2_hud {
     qa_actor_owner provider, data_provider;
     uint64_t config_revision;
     bool deathmatch, cooperative;
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     const qa_cvars *cvars;
     const qa_hud_cvar_handles *hud_cvars;
     const qa_q2_game *game;

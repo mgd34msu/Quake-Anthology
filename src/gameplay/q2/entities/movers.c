@@ -1,7 +1,7 @@
 #include "internal.h"
 
 static bool rotating_accelerated(const qa_q2_game *g, const q2_entity_state *s) {
-    uint32_t flag = g->options.edition == QA_Q2_RERELEASE ? 0x10000u :
+    uint32_t flag = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0x10000u :
         g->options.product == QA_Q2_ROGUE ? 8192u : 0;
     return (s->spawnflags & flag) != 0;
 }
@@ -76,9 +76,9 @@ bool q2_mover_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->direction = qa_vec_scale(s->direction, -1);
         if (s->speed == 0)
             s->speed = 100;
-        if (g->options.edition == QA_Q2_RERELEASE ? !*q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_DMG]) : s->damage == 0)
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE ? !*q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_DMG]) : s->damage == 0)
             s->damage = 2;
-        if (g->options.edition == QA_Q2_CLASSIC) s->noise = 0;
+        if (g->options.rules == QA_RULESET_Q2_CLASSIC) s->noise = 0;
         a->physics.motion = (s->spawnflags & 32) ? QA_PHYSICS_STOP : QA_PHYSICS_PUSH;
         s->usable = true;
         s->visual.visible = true;
@@ -183,7 +183,7 @@ bool q2_mover_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id obstacle, qa_error
     q2_entity_state *s = a->entity;
     switch (s->kind) {
     case Q2E_WATER:
-        return g->options.edition != QA_Q2_RERELEASE || !(s->spawnflags & 2) ||
+        return g->options.rules != QA_RULESET_Q2_RERELEASE || !(s->spawnflags & 2) ||
                q2_door_blocked(g, a, obstacle, e);
     case Q2E_DOOR:
     case Q2E_BUTTON:
@@ -195,7 +195,7 @@ bool q2_mover_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id obstacle, qa_error
         return !q2_target_damageable(g, obstacle) ||
                q2_entity_damage(g, a, obstacle, a->id, s->damage, 1, 20, 0, e);
     case Q2E_ROTATING:
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             if (s->damage == 0 || g->now_ns < s->debounce_ns) return true;
             s->debounce_ns = q2_deadline(g->now_ns, 100 * Q2_MS);
         }

@@ -21,7 +21,7 @@ static q2_weapon_call monster_weapon(q2m_context *context,
       .definition = qa_q2_weapon_definition_at(context->game, weapon),
       .now_ns = context->game->now_ns,
       .frame_ns = context->game->frame_ns,
-      .rerelease = context->game->options.edition == QA_Q2_RERELEASE,
+      .rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE,
   };
   return call;
 }
@@ -57,7 +57,7 @@ bool q2m_damage_enemy(q2m_context *context, float range, int canonical_mod,
       .attacker = context->actor->id,
       .inflictor = context->actor->id,
       .combat_provider = context->game->options.owner,
-      .cause = qa_q2_damage_cause(context->game->options.edition,
+      .cause = qa_q2_damage_cause(context->game->options.rules,
                                   context->game->options.product, canonical_mod,
                                   flags),
   };
@@ -91,9 +91,9 @@ bool q2m_hit(q2m_context *context, qa_vec3 aim, float damage, float kick,
     return !q2m_alive(context) || !q2_actor_live(game, enemy);
   if (!q2m_alive(context) || !q2_actor_live(game, enemy))
     return true;
-  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   qa_vec3 delta = qa_vec_sub(target_body.origin, context->body.origin);
-  float range = q2m_body_distance(game->options.edition, &context->body, &target_body);
+  float range = q2m_body_distance(game->options.rules, &context->body, &target_body);
   if (range > aim.x)
     return true;
   float side = aim.y;
@@ -148,7 +148,7 @@ bool q2m_hit(q2m_context *context, qa_vec3 aim, float damage, float kick,
           qa_vec_add(qa_vec_scale(right, side), qa_vec_scale(up, aim.z))));
   qa_attack attack = {.attacker = context->actor->id, .inflictor = context->actor->id,
       .combat_provider = game->options.owner,
-      .cause = qa_q2_damage_cause(game->options.edition, game->options.product,
+      .cause = qa_q2_damage_cause(game->options.rules, game->options.product,
                                   Q2M_MOD_HIT, 8u)};
   if (!q2_damage(game, &attack, target, damage, truncf(kick / 2.0f),
                    qa_vec_sub(impact, target_body.origin), impact, qa_v3(0, 0, 0), false, error))
@@ -196,7 +196,7 @@ static float monster_projectile_speed(const q2m_context *context,
         species == Q2M_CHICK_HEAT || species == Q2M_CARRIER)
       return 500.0f;
     if (species == Q2M_SUPERTANK)
-      return context->game->options.edition == QA_Q2_RERELEASE ? 750.0f
+      return context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 750.0f
                                                                : 500.0f;
   }
   if (kind == Q2M_ATTACK_GRENADE)
@@ -220,7 +220,7 @@ static float monster_bfg_radius(const q2m_context *context) {
 qa_vec3 q2m_project_offset(const q2m_context *context, qa_vec3 offset) {
   qa_vec3 forward, right;
   qa_angle_vectors(context->body.angles, &forward, &right, NULL,QA_ANGLE_FLOAT_MATH);
-  float scale = context->game->options.edition == QA_Q2_RERELEASE &&
+  float scale = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                         context->monster->entity_scale != 0
                     ? context->monster->entity_scale
                     : 1.0f;
@@ -234,7 +234,7 @@ bool q2m_muzzle_offset(const q2m_context *context, int flash, qa_vec3 *offset,
                        qa_error *error) {
   const qa_vec3 *offsets;
   size_t count;
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     offsets = q2m_rerelease_muzzle_offsets;
     count = sizeof(q2m_rerelease_muzzle_offsets) /
             sizeof(q2m_rerelease_muzzle_offsets[0]);
@@ -312,7 +312,7 @@ bool q2m_predict_from(q2m_context *context, qa_vec3 start, float speed,
       !q2m_alive(context))
     return true;
 
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   qa_vec3 initial_target = enemy.origin;
   if (eye)
     initial_target.z += view_height;
@@ -520,13 +520,13 @@ q2m_fire_spec q2m_fire_default(q2m_context *context, q2m_attack_kind kind,
     break;
   case Q2M_ATTACK_SHOTGUN:
     spec.kick = 1.0f;
-    spec.horizontal_spread = context->game->options.edition == QA_Q2_RERELEASE
+    spec.horizontal_spread = context->game->options.rules == QA_RULESET_Q2_RERELEASE
                                  ? 1500.0f
                                  : 1000.0f;
-    spec.vertical_spread = context->game->options.edition == QA_Q2_RERELEASE
+    spec.vertical_spread = context->game->options.rules == QA_RULESET_Q2_RERELEASE
                                ? 750.0f
                                : 500.0f;
-    spec.pellets = context->game->options.edition == QA_Q2_RERELEASE ? 9 : 12;
+    spec.pellets = context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 9 : 12;
     spec.direct_mod = Q2M_MOD_SHOTGUN;
     break;
   case Q2M_ATTACK_BLASTER:
@@ -582,7 +582,7 @@ q2m_fire_spec q2m_fire_default(q2m_context *context, q2m_attack_kind kind,
   case Q2M_ATTACK_BLUE_BOLT:
     spec.kick = 1.0f;
     spec.fuse = 2.0f;
-    spec.direct_mod = context->game->options.edition == QA_Q2_RERELEASE ? 58
+    spec.direct_mod = context->game->options.rules == QA_RULESET_Q2_RERELEASE ? 58
                                                                          : 1;
     spec.has_projectile_effects = true;
     spec.projectile_effects = UINT64_C(0x400000);
@@ -629,7 +629,7 @@ bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
 
-  qa_vec3 offset = context->game->options.edition == QA_Q2_RERELEASE
+  qa_vec3 offset = context->game->options.rules == QA_RULESET_Q2_RERELEASE
                        ? qa_v3(64.72f, 14.50f, 88.81f)
                        : qa_v3(57.72f, 14.50f, 88.81f);
   qa_vec3 start = q2m_project_offset(context, offset);
@@ -645,7 +645,7 @@ bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
     bool eye = true;
     qa_vec3 initial = qa_vec_sub(
         qa_vec_add(enemy.origin, qa_v3(0, 0, traits.view_height)), start);
-    if (context->game->options.edition == QA_Q2_RERELEASE) {
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
       qa_trace_query query = {
           .start = start,
           .end = qa_vec_add(start, initial),
@@ -667,7 +667,7 @@ bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
     float time = qa_vec_length(initial) / speed;
     qa_vec3 target =
         qa_vec_add(enemy.origin, qa_vec_scale(enemy.velocity, time));
-    if (context->game->options.edition == QA_Q2_RERELEASE) {
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
       qa_vec3 initial_direction = qa_vec_normalize(initial);
       qa_vec3 predicted_direction = qa_vec_normalize(qa_vec_sub(target, start));
       if (qa_vec_dot(initial_direction, predicted_direction) < 0.0f) {
@@ -813,7 +813,7 @@ static bool stop_loop_sound(q2m_context *context, q2_runtime_name path, int chan
 static bool pain_brain_mutant(q2m_context *context, bool brain, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
   if (g->now_ns < m->pain_ns)
@@ -843,7 +843,7 @@ static bool pain_brain_mutant(q2m_context *context, bool brain, qa_error *error)
 static bool pain_flipper_flyer(q2m_context *context, bool flyer, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
   if (g->now_ns < m->pain_ns)
@@ -881,7 +881,7 @@ static bool pain_flipper_flyer(q2m_context *context, bool flyer, qa_error *error
 static bool pain_berserk(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
@@ -908,7 +908,7 @@ static bool pain_berserk(q2m_context *context, qa_error *error) {
 static bool pain_chick(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = g->options.product == QA_Q2_ROGUE;
   float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) {
@@ -939,7 +939,7 @@ static bool pain_chick(q2m_context *context, qa_error *error) {
 static bool pain_gunner(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = g->options.product == QA_Q2_ROGUE;
   float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
@@ -971,7 +971,7 @@ static bool pain_gunner(q2m_context *context, qa_error *error) {
 static bool pain_hover(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = g->options.product == QA_Q2_ROGUE || m->definition->species == Q2M_DAEDALUS;
   float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) {
@@ -1010,7 +1010,7 @@ static bool pain_hover(q2m_context *context, qa_error *error) {
 static bool pain_soldier(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool heavy = m->definition->species == Q2M_SOLDIER_RIPPER ||
                m->definition->species == Q2M_SOLDIER_HYPER ||
                m->definition->species == Q2M_SOLDIER_LASER;
@@ -1064,7 +1064,7 @@ static bool pain_soldier(q2m_context *context, qa_error *error) {
 static bool pain_tank(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool chainfist = rerelease && last_attack_chainfist(m);
   float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin |= 1;
@@ -1100,7 +1100,7 @@ static bool infantry_pain_dodge(q2m_context *context, qa_error *error) {
 static bool pain_infantry(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = g->options.product == QA_Q2_ROGUE;
   bool ordinary_think = !m->turret_attached;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
@@ -1135,7 +1135,7 @@ static bool pain_infantry(q2m_context *context, qa_error *error) {
 static bool pain_supertank(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool boss5 = m->definition->species == Q2M_BOSS5;
   float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) {
@@ -1192,7 +1192,7 @@ static bool pain_classic_makron(q2m_context *context, qa_error *error) {
 static bool pain_jorg(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   float damage = m->pending_damage;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
@@ -1230,12 +1230,12 @@ static bool pain_jorg(q2m_context *context, qa_error *error) {
 
 static bool pain_floater(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (context->combat.health < monster->max_health * .5f) monster->skin = 1;
   else if (rerelease) monster->skin = 0;
   if (context->game->now_ns < monster->pain_ns)
     return true;
-  if (context->game->options.edition == QA_Q2_RERELEASE &&
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       monster->move != NULL &&
       ((monster->move->id == Q2M_MOVE_floater_move_disguise) ||
        (monster->move->id == Q2M_MOVE_floater_move_pop)))
@@ -1263,7 +1263,7 @@ static bool pain_floater(q2m_context *context, qa_error *error) {
 static bool pain_boss2(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   if (context->combat.health < m->max_health * .5f) m->skin = 1;
   else if (rerelease) m->skin = 0;
   if (g->now_ns < m->pain_ns) return true;
@@ -1292,7 +1292,7 @@ static bool pain_classic_parasite(q2m_context *context, qa_error *error) {
 static bool pain_gekk(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   if (rerelease)
     m->skin = context->combat.health < m->max_health * .25f ? 2 :
               context->combat.health < m->max_health * .5f ? 1 : 0;
@@ -1325,7 +1325,7 @@ static bool pain_gekk(q2m_context *context, qa_error *error) {
 static bool pain_insane(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3.0);
   unsigned variant = 1u + (rerelease ? (q2_random_bounded(g, 2) == 0 ? 1u : 0u) :
@@ -1351,7 +1351,7 @@ static bool pain_insane(q2m_context *context, qa_error *error) {
 
 static bool pain_gladiator(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   const bool chainfist = last_attack_chainfist(monster);
   if (context->combat.health < monster->max_health * .5f) {
     if (rerelease) monster->skin |= 1;
@@ -1392,7 +1392,7 @@ static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->now_ns < monster->pain_ns)
     return true;
-  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (rerelease) {
     monster->fly_position_ns = 0;
     monster->fly_acceleration = 5;
@@ -1416,7 +1416,7 @@ static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
 static bool pain_arachnid(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   bool chainfist = last_attack_chainfist(m);
   if (g->now_ns < m->pain_ns) return true;
   m->pain_ns = q2m_after(g->now_ns, 3);
@@ -1431,7 +1431,7 @@ static bool pain_arachnid(q2m_context *context, qa_error *error) {
 static bool pain_shambler(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   float damage = m->pending_damage;
   bool chainfist = last_attack_chainfist(m);
   if (g->now_ns < m->timestamp_ns) return true;
@@ -1451,17 +1451,17 @@ static bool pain_shambler(q2m_context *context, qa_error *error) {
 static bool commander_pain_dodge(q2m_context *context, qa_actor_id attacker,
                                  qa_error *error) {
   qa_q2_game *g = context->game;
-  float choice = g->options.edition == QA_Q2_RERELEASE
+  float choice = g->options.rules == QA_RULESET_Q2_RERELEASE
                      ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
   return choice >= .3f || q2_monster_dodge(g, context->actor->id,
-      attacker, g->options.edition == QA_Q2_RERELEASE ? context->elapsed : .1f,
+      attacker, g->options.rules == QA_RULESET_Q2_RERELEASE ? context->elapsed : .1f,
       NULL, false, error);
 }
 
 static bool pain_gun_commander(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   float damage = m->pending_damage;
   qa_actor_id attacker = m->last_attack.attacker;
   bool chainfist = last_attack_chainfist(m);
@@ -1513,7 +1513,7 @@ static bool pain_gun_commander(q2m_context *context, qa_error *error) {
 
 static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   const bool chainfist = last_attack_chainfist(monster);
   if (context->combat.health < monster->max_health * .5f)
     monster->skin = 1;
@@ -1549,7 +1549,7 @@ static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
 static bool pain_widow(q2m_context *context, float damage, bool sequel,
                        qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   const bool chainfist = last_attack_chainfist(monster);
   const int skill = context->game->options.skill;
   if (context->combat.health < monster->max_health * .5f)
@@ -1664,7 +1664,7 @@ static bool pain_rerelease_parasite(q2m_context *context, qa_error *error) {
 static bool pain_actor(q2m_context *context, qa_error *error) {
   qa_q2_game *game = context->game;
   struct qa_q2_monster *monster = context->monster;
-  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool wounded = context->combat.health < monster->max_health * .5f;
   if (wounded || rerelease)
     monster->skin = wounded ? 1 : 0;
@@ -1728,7 +1728,7 @@ static bool pain_actor(q2m_context *context, qa_error *error) {
 
 static bool pain_medic(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = rerelease || context->game->options.product != QA_Q2_XATRIX ||
                m->definition->species == Q2M_MEDIC_COMMANDER;
   bool commander = context->combat.mass > 400;
@@ -1809,7 +1809,7 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     return true;
   if (species == Q2M_KAMIKAZE ||
       (species == Q2M_FLYER && context->combat.mass != 50 &&
-       (context->game->options.edition == QA_Q2_RERELEASE ||
+       (context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
         context->game->options.product == QA_Q2_ROGUE)))
     return true;
   if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER)
@@ -1840,9 +1840,9 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_CARRIER) return pain_carrier(context, monster->pending_damage, error);
   if (species == Q2M_WIDOW || species == Q2M_WIDOW2)
     return pain_widow(context, monster->pending_damage, species == Q2M_WIDOW2, error);
-  if (species == Q2M_MAKRON && context->game->options.edition != QA_Q2_RERELEASE)
+  if (species == Q2M_MAKRON && context->game->options.rules != QA_RULESET_Q2_RERELEASE)
     return pain_classic_makron(context, error);
-  if (species == Q2M_PARASITE && context->game->options.edition != QA_Q2_RERELEASE)
+  if (species == Q2M_PARASITE && context->game->options.rules != QA_RULESET_Q2_RERELEASE)
     return pain_classic_parasite(context, error);
   if (species == Q2M_SOLDIER_LIGHT || species == Q2M_SOLDIER ||
       species == Q2M_SOLDIER_SS || species == Q2M_SOLDIER_RIPPER ||
@@ -1851,7 +1851,7 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   float damage = monster->pending_damage;
   if (context->combat.health < monster->base_health * 0.5f)
     monster->skin |= 1;
-  else if (context->game->options.edition == QA_Q2_RERELEASE)
+  else if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
     monster->skin &= ~1;
   switch (species) {
   case Q2M_GUARDIAN:
@@ -1860,11 +1860,11 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     return q2m_stalker_pain(context, reacts_to_pain(context),
                             last_attack_chainfist(monster), error);
   case Q2M_MAKRON:
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
       return pain_rerelease_makron(context, damage, error);
     break;
   case Q2M_PARASITE:
-    if (context->game->options.edition == QA_Q2_RERELEASE)
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE)
       return pain_rerelease_parasite(context, error);
     break;
   default:
@@ -2257,7 +2257,7 @@ static bool spawn_death_gibs(q2m_context *context, float damage,
                              qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
-  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
   if (!rerelease) {
     if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER)
       return SPAWN_RECIPE(classic_tank_gibs, damage);
@@ -2416,7 +2416,7 @@ static bool classic_boss_explosion(q2m_context *context, qa_error *error) {
 bool q2m_start_boss_explosion(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
-  if (context->game->options.edition == QA_Q2_RERELEASE) {
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if ((context->monster->spawnflags & UINT32_C(65536)) != 0)
       return true;
     return q2m_spawn_boss_exploder(context, error);
@@ -2438,7 +2438,7 @@ bool q2m_finish_boss_death(q2m_context *context, qa_error *error) {
     return true;
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
-  if (context->game->options.edition != QA_Q2_RERELEASE)
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE)
     return species == Q2M_JORG ? true : q2m_corpse(context, error);
 
   if ((species == Q2M_SUPERTANK || species == Q2M_BOSS5 ||
@@ -2581,7 +2581,7 @@ static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
         .attacker = context->actor->id,
         .inflictor = context->actor->id,
         .combat_provider = context->game->options.owner,
-        .cause = qa_q2_damage_cause(context->game->options.edition,
+        .cause = qa_q2_damage_cause(context->game->options.rules,
                                     context->game->options.product, 0, 8),
     };
     if (!q2_damage(context->game, &attack, id, combat.health + 1.0f, 0.0f,
@@ -2668,14 +2668,14 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   if (monster->definition->species == Q2M_PARASITE &&
-      context->game->options.edition == QA_Q2_RERELEASE) {
+      context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (!q2m_parasite_interrupt(context, true, error))
       return false;
     if (!q2m_alive(context))
       return true;
   }
 
-  if (context->game->options.edition == QA_Q2_RERELEASE &&
+  if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (monster->definition->species == Q2M_FLOATER ||
        monster->definition->species == Q2M_FLYER))
     return rerelease_flying_explosion(context, error);
@@ -2712,14 +2712,14 @@ bool q2m_die(q2m_context *context, qa_error *error) {
       species == Q2M_SUPERTANK || species == Q2M_BOSS5 ||
       species == Q2M_BOSS2 || species == Q2M_JORG || species == Q2M_CARRIER;
   bool special_boss_gib =
-      context->game->options.edition == QA_Q2_RERELEASE &&
+      context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (monster->spawnflags & UINT32_C(65536)) != 0 &&
       (species == Q2M_SUPERTANK || species == Q2M_BOSS5 ||
        species == Q2M_BOSS2);
   bool gib = (monster->definition->flags & Q2M_NO_GIB) == 0 &&
              (!scripted_boss || special_boss_gib) &&
              (context->combat.health <= monster->gib_health ||
-              (context->game->options.edition == QA_Q2_RERELEASE &&
+              (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
                monster->dead && crushed));
   if (gib) {
     monster->dead = true;
@@ -2753,7 +2753,7 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     return true;
 
   if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) {
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     bool commander = (rerelease || context->game->options.product == QA_Q2_ROGUE ||
                       species == Q2M_MEDIC_COMMANDER) &&
                      context->combat.mass != 400;
@@ -2908,7 +2908,7 @@ bool q2m_hover_explode(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  if (context->game->options.edition != QA_Q2_RERELEASE ||
+  if (context->game->options.rules != QA_RULESET_Q2_RERELEASE ||
       context->monster->definition->species == Q2M_DAEDALUS)
     return q2m_release(context, error);
   if (!spawn_death_gibs(context, 150, error))
@@ -2934,7 +2934,7 @@ static bool environment_damage(qa_q2_game *g, q2_actor *a, qa_vec3 origin,
   qa_actor_id world = g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
   qa_attack attack = {.time_ns = g->now_ns, .attacker = world, .inflictor = world,
       .combat_provider = g->options.owner,
-      .cause = qa_q2_damage_cause(g->options.edition, g->options.product, means, flags)};
+      .cause = qa_q2_damage_cause(g->options.rules, g->options.product, means, flags)};
   return q2_damage(g, &attack, a->id, damage, 0, qa_v3(0, 0, 0), origin,
                    qa_v3(0, 0, 0), false, error);
 }
@@ -2949,7 +2949,7 @@ bool q2_world_effects(qa_q2_game *g, q2_actor *a, const qa_body_state *body,
                       uint64_t *damage_ns, qa_error *error) {
   float health = current->health;
   int water = a->physics.water_level, contents = a->physics.water_type;
-  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
   if (health > 0) {
     bool swimming = (a->physics.flags & QA_PHYSICS_SWIMMING) != 0;
     if (swimming ? water > 0 : water < 3)
@@ -3059,7 +3059,7 @@ static bool touch_damage(q2m_context *context, qa_actor_id target,
       .inflictor = context->actor->id,
       .combat_provider = context->game->options.owner,
       .cause =
-          qa_q2_damage_cause(context->game->options.edition,
+          qa_q2_damage_cause(context->game->options.rules,
                              context->game->options.product, canonical_mod, 0),
   };
   if (!q2_damage(context->game, &attack, target, damage, kick, direction, point,
@@ -3200,7 +3200,7 @@ bool q2m_touch(q2m_context *context, const qa_touch_contact *contact,
 
   q2m_species species = monster->definition->species;
   if (species == Q2M_BERSERK) {
-    if (context->game->options.edition == QA_Q2_RERELEASE &&
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
         qa_actor_reference_present(context->body.ground))
       return q2m_berserk_land(context, error);
     return true;
@@ -3210,11 +3210,11 @@ bool q2m_touch(q2m_context *context, const qa_touch_contact *contact,
 
   float speed = qa_vec_length(context->body.velocity);
   float threshold = species == Q2M_GEKK ? 200.0f
-                    : context->game->options.edition == QA_Q2_RERELEASE
+                    : context->game->options.rules == QA_RULESET_Q2_RERELEASE
                         ? 30.0f
                         : 400.0f;
   if (speed > threshold && (species != Q2M_MUTANT ||
-                            context->game->options.edition != QA_Q2_RERELEASE ||
+                            context->game->options.rules != QA_RULESET_Q2_RERELEASE ||
                             monster->style == 1)) {
     qa_vec3 normal = qa_vec_normalize(context->body.velocity);
     qa_vec3 point =
@@ -3230,7 +3230,7 @@ bool q2m_touch(q2m_context *context, const qa_touch_contact *contact,
     if (!q2m_alive(context))
       return true;
     if (hit && species == Q2M_MUTANT &&
-        context->game->options.edition == QA_Q2_RERELEASE)
+        context->game->options.rules == QA_RULESET_Q2_RERELEASE)
       monster->style = 0;
   }
 

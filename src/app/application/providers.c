@@ -287,9 +287,9 @@ bool application_instance_configuration(void *opaque,
                 return false;
             profile_word(encoded, &size, selected.arsenal_rules);
             profile_word(encoded, &size, selected.native_hook);
-            profile_word(encoded, &size, selected.hook_edition);
+            profile_word(encoded, &size, qa_ruleset_q2_tag(selected.hook_ruleset));
             profile_word(encoded, &size, selected.equipment_hook_rules);
-            profile_word(encoded, &size, selected.equipment_hook_edition);
+            profile_word(encoded, &size, qa_ruleset_q2_tag(selected.equipment_hook_ruleset));
         }
         break;
     case QA_GAME_Q3:
@@ -628,9 +628,9 @@ static bool q2_selected_options(const qa_launch_provider *selection, uint64_t ro
             selected = rules;
         }
     bool native_hook = false;
-    qa_q2_edition hook_edition = QA_Q2_CLASSIC;
+    qa_ruleset_id hook_ruleset = QA_RULESET_Q2_CLASSIC;
     qa_q2_weapon_rules equipment_rules = QA_Q2_WEAPON_RULES_BASE;
-    qa_q2_edition equipment_edition = QA_Q2_CLASSIC;
+    qa_ruleset_id equipment_ruleset = QA_RULESET_Q2_CLASSIC;
     for (size_t i = 0; i < choices->equipment_count; ++i) {
         const qa_launch_equipment *equipment = choices->equipment + i;
         qa_q2_weapon_rules rules = equipment->selection.grapple == QA_GRAPPLE_Q2_CTF
@@ -639,24 +639,24 @@ static bool q2_selected_options(const qa_launch_provider *selection, uint64_t ro
         if (equipment->selection.binding != QA_EQUIPMENT_WEAPON_SLOT ||
             rules == QA_Q2_WEAPON_RULES_BASE ||
             strcmp(equipment->grapple_source, selection->instance)) continue;
-        qa_q2_edition edition = rules == QA_Q2_WEAPON_RULES_CTF &&
-            product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC;
+        qa_ruleset_id hook_source = rules == QA_Q2_WEAPON_RULES_CTF
+            ? selection->clock.kind : QA_RULESET_Q2_CLASSIC;
         if (equipment_rules != QA_Q2_WEAPON_RULES_BASE &&
-            (equipment_rules != rules || equipment_edition != edition))
+            (equipment_rules != rules || equipment_ruleset != hook_source))
             return application_fail(error, QA_ERROR_UNSUPPORTED, "One Q2 source selects conflicting hook equipment definitions");
         equipment_rules = rules;
-        equipment_edition = edition;
+        equipment_ruleset = hook_source;
         if (selected != rules) continue;
         const qa_launch_binding *arsenal = qa_launch_binding_for(choices, equipment->scope, QA_ROLE_ARSENAL, "");
         if (!arsenal || strcmp(arsenal->instance, selection->instance)) continue;
         native_hook = true;
-        hook_edition = edition;
+        hook_ruleset = hook_source;
     }
     options->arsenal_rules = selected;
     options->native_hook = native_hook;
-    options->hook_edition = hook_edition;
+    options->hook_ruleset = hook_ruleset;
     options->equipment_hook_rules = equipment_rules;
-    options->equipment_hook_edition = equipment_edition;
+    options->equipment_hook_ruleset = equipment_ruleset;
     return true;
 }
 
@@ -684,7 +684,8 @@ static bool arsenal_profile(const qa_launch_provider *selection, uint64_t roles,
         return true;
     case QA_GAME_Q2:
         out->source.q2 = (qa_q2_options){
-            .edition = product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+            .rules = selection->clock.kind,
+            .hook_ruleset = QA_RULESET_Q2_CLASSIC, .equipment_hook_ruleset = QA_RULESET_Q2_CLASSIC,
             .product = q2_product(product->campaign)};
         return q2_selected_options(selection, roles, product, choices, &out->source.q2, error);
     case QA_GAME_Q3:
@@ -776,9 +777,9 @@ bool application_native_q2_arsenal_prepare(application_provider *provider,
     qa_q2_options options = {0};
     return q2_arsenal_options(provider, choices, &options, error) &&
         qa_q2_bot_arsenal_register_multiplayer(provider->state.q2, options.arsenal_rules,
-            options.native_hook, options.hook_edition, error) &&
+            options.native_hook, options.hook_ruleset, error) &&
         qa_q2_bot_equipment_register_hook(provider->state.q2, options.equipment_hook_rules,
-            options.equipment_hook_edition, error);
+            options.equipment_hook_ruleset, error);
 }
 
 static bool q2_equipment_animation(void *context, qa_actor_id actor, bool reverse,
@@ -797,9 +798,9 @@ static bool construct_q2(qa_application *application,
         return false;
     qa_q2_options options = {
         .owner = provider->owner,
-        .edition = product->edition == QA_EDITION_RERELEASE
-                       ? QA_Q2_RERELEASE
-                       : QA_Q2_CLASSIC,
+        .rules = provider->launch->selection.clock.kind,
+        .hook_ruleset = QA_RULESET_Q2_CLASSIC,
+        .equipment_hook_ruleset = QA_RULESET_Q2_CLASSIC,
         .product = q2_product(product->campaign),
         .deathmatch = profile.deathmatch,
         .cooperative = profile.cooperative,
@@ -842,7 +843,7 @@ static bool construct_q2(qa_application *application,
         return false;
     qa_q2_item_options items = {.context = provider, .supply_for = application_supplies_source_for,
         .visibility = application_unified_q2_native_item_visibility,
-        .instanced_coop = options.edition == QA_Q2_RERELEASE, .weapon_respawn_seconds = 30};
+        .instanced_coop = options.rules == QA_RULESET_Q2_RERELEASE, .weapon_respawn_seconds = 30};
     if (!qa_q2_monsters_bind_missions(provider->state.q2,
         &(qa_monster_missions){.context = application->targets,
             .lookup = qa_targets_monster_lookup}, error) ||
@@ -967,7 +968,8 @@ static bool provider_console_prepare(qa_application *application,
     }
     case APPLICATION_PROVIDER_Q2: {
         qa_q2_options options = {.owner = provider->owner,
-            .edition = product->edition == QA_EDITION_RERELEASE ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+            .rules = provider->launch->selection.clock.kind,
+            .hook_ruleset = QA_RULESET_Q2_CLASSIC, .equipment_hook_ruleset = QA_RULESET_Q2_CLASSIC,
             .product = q2_product(product->campaign), .skill = profile.skill,
             .deathmatch = profile.deathmatch, .cooperative = profile.cooperative};
         return application_native_q2_console_prepare(provider, &options, choices, error) &&

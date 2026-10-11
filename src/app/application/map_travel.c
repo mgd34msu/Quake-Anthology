@@ -90,7 +90,7 @@ static bool campaign_q2_policy(qa_application *application, bool *retain,
     *retain=false; *reload=false;
     application_provider *source=application_world_provider(application,QA_ROLE_ENTITIES,"");
     if (!source || !source->product || source->product->family!=QA_GAME_Q2) return true;
-    qa_q2_edition edition=QA_Q2_CLASSIC;
+    qa_ruleset_id edition=QA_RULESET_Q2_CLASSIC;
     bool found=false;
     if (!qa_application_native_q2_source_profile_read(application,source->owner,&edition,&found,error)) return false;
     if (!found) return application_fail(error,QA_ERROR_UNSUPPORTED,
@@ -105,11 +105,11 @@ static bool campaign_q2_policy(qa_application *application, bool *retain,
     const qa_cvar_view *noreload=qa_cvars_find(physical.cvars,"sv_noreload");
     if (!deathmatch) return application_fail(error,QA_ERROR_FORMAT,
         "Campaign travel lost its selected Q2 deathmatch setting");
-    bool competitive=edition==QA_Q2_CLASSIC ? deathmatch->number!=0 : deathmatch->integer!=0;
-    bool fresh=noreload && (edition==QA_Q2_CLASSIC ? noreload->number!=0 : noreload->integer!=0);
+    bool competitive=edition==QA_RULESET_Q2_CLASSIC ? deathmatch->number!=0 : deathmatch->integer!=0;
+    bool fresh=noreload && (edition==QA_RULESET_Q2_CLASSIC ? noreload->number!=0 : noreload->integer!=0);
     /* Classic SV_GameMap_f writes every non-* departure. The enhanced
      * rerelease host omits deathmatch saves; neither host reloads them. */
-    *retain=edition==QA_Q2_CLASSIC || !competitive;
+    *retain=edition==QA_RULESET_Q2_CLASSIC || !competitive;
     *reload=!competitive && !fresh;
     return true;
 }

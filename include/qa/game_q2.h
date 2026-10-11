@@ -2,6 +2,7 @@
 #define QA_GAME_Q2_H
 
 #include "qa/builtin.h"
+#include "qa/ruleset.h"
 
 typedef struct qa_q2_game qa_q2_game;
 typedef struct qa_command_invocation qa_command_invocation;
@@ -13,13 +14,12 @@ bool qa_q2_game_console_command(qa_q2_game *, qa_actor_id, const qa_command_invo
 typedef bool (*qa_q2_actor_fn)(void *, qa_actor_id, qa_error *);
 qa_actor_id qa_q2_current_actor(const qa_q2_game *);
 bool qa_q2_run_actor(qa_q2_game *, qa_actor_id, qa_q2_actor_fn, void *, qa_error *);
-typedef enum qa_q2_edition { QA_Q2_CLASSIC, QA_Q2_RERELEASE } qa_q2_edition;
 /* RF_BEAM uses model segments only in the rerelease and only when its Source
  * model is an actual alias model, rather than MODELINDEX_WORLD or no model. */
-static inline bool qa_q2_model_beam(qa_q2_edition edition, uint32_t render_flags,
+static inline bool qa_q2_model_beam(qa_ruleset_id edition, uint32_t render_flags,
     bool model_resource)
 {
-    return edition == QA_Q2_RERELEASE && (render_flags & 128u) && model_resource;
+    return edition == QA_RULESET_Q2_RERELEASE && (render_flags & 128u) && model_resource;
 }
 typedef enum qa_q2_product { QA_Q2_BASE, QA_Q2_XATRIX, QA_Q2_ROGUE, QA_Q2_N64 } qa_q2_product;
 typedef enum qa_q2_classic_cause_profile {
@@ -28,7 +28,7 @@ typedef enum qa_q2_classic_cause_profile {
     QA_Q2_NATIVE_ROGUE,
     QA_Q2_NATIVE_CTF
 } qa_q2_classic_cause_profile;
-qa_damage_cause qa_q2_damage_cause(qa_q2_edition, qa_q2_product, int canonical, uint32_t flags);
+qa_damage_cause qa_q2_damage_cause(qa_ruleset_id, qa_q2_product, int canonical, uint32_t flags);
 typedef enum qa_q2_weapon {
     QA_Q2_WEAPON_NONE,
     QA_Q2_BLASTER,
@@ -218,13 +218,13 @@ typedef struct qa_q2_hand_grenade_input {
 
 typedef struct qa_q2_options {
     qa_actor_owner owner;
-    qa_q2_edition edition;
+    qa_ruleset_id rules;
     qa_q2_product product;
     qa_q2_weapon_rules arsenal_rules;
     bool native_hook;
-    qa_q2_edition hook_edition;
+    qa_ruleset_id hook_ruleset;
     qa_q2_weapon_rules equipment_hook_rules;
-    qa_q2_edition equipment_hook_edition;
+    qa_ruleset_id equipment_hook_ruleset;
     bool deathmatch, cooperative;
     uint32_t deathmatch_flags;
     int skill;
@@ -386,16 +386,16 @@ typedef struct qa_q2_saved_reference {
     bool present;
 } qa_q2_saved_reference;
 typedef struct qa_q2_runtime_checkpoint {
-    qa_q2_edition edition;
+    qa_ruleset_id rules;
     qa_q2_product product;
     qa_builtin_random random;
     uint32_t definition_count;
     qa_q2_weapon definition_order[QA_Q2_WEAPON_COUNT];
     qa_q2_weapon_rules arsenal_rules;
     bool native_hook;
-    qa_q2_edition hook_edition;
+    qa_ruleset_id hook_ruleset;
     qa_q2_weapon_rules equipment_hook_rules;
-    qa_q2_edition equipment_hook_edition;
+    qa_ruleset_id equipment_hook_ruleset;
     uint32_t rerelease_words[624], rerelease_index;
     uint64_t rerelease_draws, sequence, actor_sequence, now_ns, frame_ns;
     qa_q2_grapple_options grapple_options;

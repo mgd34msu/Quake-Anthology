@@ -25,8 +25,8 @@ bool q2_original_seconds(q2_original_record_io *io, const char *name,
     if (io->reading) {
         /* Rerelease gtime_t::from_sec(float) truncates the float product to
          * integer milliseconds. Classic game DLLs retain float seconds. */
-        uint64_t unit = io->edition == QA_Q2_RERELEASE ? Q2_MS : 1;
-        double ticks = io->edition == QA_Q2_RERELEASE ? (double)(value * 1000.0f) :
+        uint64_t unit = io->edition == QA_RULESET_Q2_RERELEASE ? Q2_MS : 1;
+        double ticks = io->edition == QA_RULESET_Q2_RERELEASE ? (double)(value * 1000.0f) :
             (double)value * (double)Q2_NS;
         if (!isfinite(ticks) || ticks < 0 || ticks >= (double)UINT64_MAX / (double)unit)
             return malformed(io, offset, "Original Q2 float-second deadline is invalid");
@@ -39,7 +39,7 @@ bool q2_original_function(qa_q2_game *game, q2_original_record_io *io,
     const char *field, uint16_t offset, const char *name)
 {
     if (io->reading) return malformed(io, offset, "Original Q2 callback writer requires its Source name");
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         if (name) {
             qa_json_writer_key(io->writer, field);
             qa_json_writer_string(io->writer, name);
@@ -57,7 +57,7 @@ bool q2_original_function_matches(qa_q2_game *game, q2_original_record_io *io,
     const char *field, uint16_t offset, const char *name, bool *matches)
 {
     if (!io->reading) return malformed(io, offset, "Original Q2 callback reader requires its Source file");
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         qa_json_id id = qa_json_get(io->document, io->object, field);
         if (id == QA_JSON_NONE || qa_json_type(io->document, id) == QA_JSON_NULL) {
             *matches = name == NULL;
@@ -83,7 +83,7 @@ bool q2_original_string_write(q2_original_record_io *io,const char *name,uint16_
 {
     if (text.size>=INT32_MAX || (text.size && memchr(text.data,0,text.size)))
         return malformed(io,offset,"Original Q2 string has no terminated Source value");
-    if (io->edition==QA_Q2_RERELEASE) {
+    if (io->edition==QA_RULESET_Q2_RERELEASE) {
         if (text.size) { qa_json_writer_key(io->writer,name); qa_json_writer_string(io->writer,(const char *)text.data); }
         if (io->writer->failed) { if(io->error)*io->error=io->writer->failure; return false; }
         return true;
@@ -98,7 +98,7 @@ bool q2_original_string_write(q2_original_record_io *io,const char *name,uint16_
 bool q2_original_string(qa_q2_game *game, q2_original_record_io *io,
     const char *name, uint16_t offset, qa_string_id *value)
 {
-    if (io->reading && io->edition == QA_Q2_RERELEASE)
+    if (io->reading && io->edition == QA_RULESET_Q2_RERELEASE)
         return q2_original_source_text(io, game, name, value, 65536);
     if (offset == UINT16_MAX) {
         if (io->reading) *value = QA_STRING_NONE;
@@ -141,7 +141,7 @@ bool q2_original_string(qa_q2_game *game, q2_original_record_io *io,
 static bool physical_reference(qa_q2_game *game, q2_original_record_io *io,
     const char *name, uint16_t offset, int32_t *number)
 {
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         if (!io->reading) {
             if (*number >= 0) { qa_json_writer_key(io->writer, name); qa_json_writer_number(io->writer, *number); }
             if (io->writer->failed) { if (io->error) *io->error = io->writer->failure; return false; }
@@ -248,18 +248,18 @@ static bool physics_record(qa_q2_game *game, q2_original_record_io *io, q2_actor
             return malformed(io, 260, "Original Q2 physics has an invalid movetype or solid");
         physics->family = QA_GAME_Q2;
         physics->yaw_speed = yaw_speed;
-        physics->q2_rerelease = io->edition == QA_Q2_RERELEASE;
+        physics->q2_rerelease = io->edition == QA_RULESET_Q2_RERELEASE;
         physics->motion = motion[movetype];
         physics->solid = solid == 1 ? QA_PHYSICS_TRIGGER : solid == 2 ? QA_PHYSICS_BOX :
             solid == 3 ? QA_PHYSICS_BRUSH : QA_PHYSICS_NOT_SOLID;
-        if (io->edition == QA_Q2_RERELEASE &&
+        if (io->edition == QA_RULESET_Q2_RERELEASE &&
             qa_json_get(io->document, io->object, "gravity") == QA_JSON_NONE) physics->gravity_scale = 1;
         actor->physics_bound = true;
     }
-    if (io->edition == QA_Q2_RERELEASE || io->product == QA_Q2_ROGUE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE || io->product == QA_Q2_ROGUE) {
         if (!q2_original_scalar(io, "gravityVector", Q2_ORIGINAL_VECTOR,
             UINT16_MAX, UINT16_MAX, 1008, &physics->gravity_direction)) return false;
-        if (io->reading && io->edition == QA_Q2_RERELEASE &&
+        if (io->reading && io->edition == QA_RULESET_Q2_RERELEASE &&
             qa_json_get(io->document, io->object, "gravityVector") == QA_JSON_NONE)
             physics->gravity_direction = qa_v3(0, 0, -1);
     } else if (io->reading) physics->gravity_direction = qa_v3(0, 0, -1);
@@ -376,7 +376,7 @@ static bool visual_record(qa_q2_game *game, q2_original_record_io *io,
         visual->scale = visual->alpha = 1;
         if (actor->client) actor->client->rule.gibbed = !custom_skin && visual->models[0] && (visual->effects & 2u);
     }
-    if (io->edition == QA_Q2_RERELEASE) {
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
         if (!q2_original_scalar(io, "s.alpha", Q2_ORIGINAL_F32,
             UINT16_MAX, UINT16_MAX, UINT16_MAX, &visual->alpha) ||
             !q2_original_scalar(io, "s.scale", Q2_ORIGINAL_F32,
@@ -410,7 +410,7 @@ bool q2_original_edict_visual(qa_q2_game *game, q2_original_record_io *io,
         actor->projectile.skin = visual.skin; actor->projectile.effects = visual.effects;
         actor->projectile.render_flags = visual.render_flags; actor->projectile.alpha = visual.alpha;
         actor->projectile.scale = visual.scale; actor->projectile.visible = visual.visible;
-        if (io->edition == QA_Q2_RERELEASE) {
+        if (io->edition == QA_RULESET_Q2_RERELEASE) {
             uint64_t entity_flags = 0;
             if (!q2_original_scalar(io, "flags", Q2_ORIGINAL_U64, 264, 264, 264, &entity_flags)) return false;
             actor->projectile.dodgeable = (entity_flags & (UINT64_C(1) << 25)) != 0;
@@ -491,7 +491,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     int32_t mass = io->reading ? 0 : qa_source_float_to_i32(combat.mass);
     int32_t damage = io->reading ? 0 : combat.can_take_damage ?
         actor->item && actor->item->companion && actor->item->companion->kind == Q2_DOPPLEGANGER &&
-            io->edition == QA_Q2_CLASSIC ? 2 : 1 : 0;
+            io->edition == QA_RULESET_Q2_CLASSIC ? 2 : 1 : 0;
     uint64_t flags = io->reading ? 0 :
         (actor->physics.flags & QA_PHYSICS_FLYING ? 1u : 0) |
         (actor->physics.flags & QA_PHYSICS_SWIMMING ? 2u : 0) |
@@ -505,7 +505,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
     uint32_t svflags = io->reading ? 0 : (!visual.visible ? 1u : 0) |
         (actor->physics.flags & QA_PHYSICS_MONSTER ? 4u : 0) |
         (actor->physics.flags & QA_PHYSICS_DEAD ? 2u : 0);
-    if (!io->reading && io->edition == QA_Q2_RERELEASE) {
+    if (!io->reading && io->edition == QA_RULESET_Q2_RERELEASE) {
         qa_actor_reference master = actor->item && (actor->item->think != Q2_ITEM_FLOOR || !actor->entity)
             ? actor->item->spawn.team_master : actor->entity ? actor->entity->team_master : (qa_actor_reference){0};
         bool teamed = (actor->item && actor->item->spawn.team) || (actor->entity && actor->entity->team);
@@ -548,9 +548,9 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
             (flags & 1024u ? QA_PHYSICS_TEAM_SLAVE : 0) |
             (svflags & 4u ? QA_PHYSICS_MONSTER : 0) |
             (svflags & 2u ? QA_PHYSICS_DEAD : 0) |
-            (io->edition == QA_Q2_RERELEASE && (flags & (UINT64_C(1) << 28)) ? QA_PHYSICS_ALWAYS_TOUCH : 0) |
+            (io->edition == QA_RULESET_Q2_RERELEASE && (flags & (UINT64_C(1) << 28)) ? QA_PHYSICS_ALWAYS_TOUCH : 0) |
             (actor->client && !actor->client->rule.corpse ? QA_PHYSICS_PLAYER : 0);
-        actor->character_no_damage_effects = io->edition == QA_Q2_RERELEASE && (flags & (UINT64_C(1) << 20)) != 0;
+        actor->character_no_damage_effects = io->edition == QA_RULESET_Q2_RERELEASE && (flags & (UINT64_C(1) << 20)) != 0;
         combat.health = (float)health; combat.mass = (float)mass;
         combat.can_take_damage = damage != 0; combat.invulnerable = (flags & 16u) != 0;
         combat.no_knockback = (flags & 2048u) != 0;

@@ -87,7 +87,7 @@ static const char *replacement(qa_q2_game *g, const qa_q2_item_definition *d) {
     const qa_q2_item_options *o = &g->item_runtime->options;
     if (!o->random_items)
         return NULL;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     const char *name = d->classname;
     if (!rr) {
         if (g->options.product != QA_Q2_ROGUE || d->kind == QA_Q2_ITEM_POWER_ARMOR ||
@@ -167,7 +167,7 @@ bool q2_item_randomize(qa_q2_game *g, q2_actor **actor, qa_error *e) {
                      name);
         return false;
     }
-    if (g->options.edition == QA_Q2_CLASSIC) {
+    if (g->options.rules == QA_RULESET_Q2_CLASSIC) {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;

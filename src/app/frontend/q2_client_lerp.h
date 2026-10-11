@@ -20,10 +20,10 @@ static inline bool frontend_q2_lerp_near(qa_vec3 a, qa_vec3 b, float limit)
 {
     return fabsf(a.x-b.x)<=limit && fabsf(a.y-b.y)<=limit && fabsf(a.z-b.z)<=limit;
 }
-static inline bool frontend_q2_lerp_live_angles(qa_q2_edition edition, int32_t type, uint32_t flags)
+static inline bool frontend_q2_lerp_live_angles(qa_ruleset_id edition, int32_t type, uint32_t flags)
 {
-    return type < (edition==QA_Q2_CLASSIC ? 2 : 4) &&
-        !(edition==QA_Q2_RERELEASE && (flags&256u));
+    return type < (edition==QA_RULESET_Q2_CLASSIC ? 2 : 4) &&
+        !(edition==QA_RULESET_Q2_RERELEASE && (flags&256u));
 }
 static inline qa_vec3 frontend_q2_lerp_camera_angles(
     const qa_application_native_q2_player_sample *player, qa_vec3 predicted)

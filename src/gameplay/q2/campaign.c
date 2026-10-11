@@ -40,7 +40,7 @@ static bool visit(q2_entities *state, qa_string_id map, qa_error *error) {
     return true;
 }
 bool q2_campaign_enter(qa_q2_game *game, qa_error *error) {
-    if (game->options.edition != QA_Q2_RERELEASE || game->options.deathmatch) return true;
+    if (game->options.rules != QA_RULESET_Q2_RERELEASE || game->options.deathmatch) return true;
     q2_actor *world = NULL;
     for (q2_actor *actor = game->first_actor; actor; actor = actor->live_next)
         if (actor->entity && actor->entity->kind == Q2E_WORLD) { world = actor; break; }
@@ -93,7 +93,7 @@ bool q2_campaign_enter(qa_q2_game *game, qa_error *error) {
     return true;
 }
 void q2_campaign_update(qa_q2_game *game) {
-    if (game->options.edition != QA_Q2_RERELEASE) return;
+    if (game->options.rules != QA_RULESET_Q2_RERELEASE) return;
     const char *map = game->player_runtime->rules.map_name;
     qa_strings *strings = qa_session_strings(game->services.session);
     q2_entities *state = game->entity_runtime;
@@ -110,7 +110,7 @@ void q2_campaign_update(qa_q2_game *game) {
     }
 }
 bool q2_campaign_frame(qa_q2_game *game, qa_error *error) {
-    if (game->options.edition != QA_Q2_RERELEASE || game->player_runtime->intermission) return true;
+    if (game->options.rules != QA_RULESET_Q2_RERELEASE || game->player_runtime->intermission) return true;
     bool connected = false;
     for (q2_actor *actor = game->first_actor; actor; actor = actor->live_next)
         if (actor->client && actor->client->info.slot == 0) { connected = actor->client->info.connected; break; }
@@ -128,7 +128,7 @@ bool q2_campaign_frame(qa_q2_game *game, qa_error *error) {
     return true;
 }
 void q2_campaign_leave(qa_q2_game *game) {
-    if (game->options.edition != QA_Q2_RERELEASE) return;
+    if (game->options.rules != QA_RULESET_Q2_RERELEASE) return;
     memset(game->entity_runtime->levels, 0, sizeof(game->entity_runtime->levels));
     game->entity_runtime->level_count = 0;
     if (game->player_runtime->rules.coop_lives)

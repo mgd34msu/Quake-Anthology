@@ -44,7 +44,7 @@ static bool player_start(qa_q2_game *g, qa_actor_id id) {
         !g->services.actor_traits(g->services.context, id, &traits))
         return false;
     qa_string_id name=traits.classname;
-    if (g->options.edition == QA_Q2_RERELEASE)
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE)
         return (qa_strings_name_flags(qa_session_strings(g->services.session),name)&(QA_NAME_PLAYER_START|QA_NAME_ITEM_FLAG))!=0 ||
             name==g->runtime_names[Q2_NAME_MISC_TELEPORTER_DEST];
     return name==g->runtime_names[Q2_NAME_INFO_PLAYER_DEATHMATCH] || name==g->runtime_names[Q2_NAME_INFO_PLAYER_START] ||
@@ -135,7 +135,7 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(1, 0,
-                                        g->options.edition == QA_Q2_RERELEASE),
+                                        g->options.rules == QA_RULESET_Q2_RERELEASE),
                                     .role = QA_COLLISION_TRIGGER,
                                     .owner = qa_actor_reference_source(g->options.owner, mine->wire_slot)};
     qa_builtin_spawn spawn = {.owner = g->options.owner,
@@ -177,10 +177,10 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
             return false;
         ++p->frame;
         p->next_ns = q2_deadline(g->now_ns,
-                                 g->options.edition == QA_Q2_RERELEASE ? 100 * Q2_MS : 50 * Q2_MS);
+                                 g->options.rules == QA_RULESET_Q2_RERELEASE ? 100 * Q2_MS : 50 * Q2_MS);
         return frame_event(g, a, e);
     }
-    if ((g->options.edition == QA_Q2_CLASSIC || g->options.deathmatch) &&
+    if ((g->options.rules == QA_RULESET_Q2_CLASSIC || g->options.deathmatch) &&
         !clear_collision_owner(g, a, e))
         return false;
     p->armed = true;
@@ -209,7 +209,7 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
         bool living = is_creature &&
                       qa_combat_read(g->services.combat, target, &health, &ignored) &&
                       health.health > 0;
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             if (player && !g->options.deathmatch)
                 living = false;
             if (g->hooks.can_target != NULL &&
@@ -272,7 +272,7 @@ static bool tesla_activate(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot
     a->projectile.phase = MINE_ACTIVE;
     a->projectile.expire_ns = q2_deadline(g->now_ns, 30 * Q2_NS);
     a->projectile.next_ns =
-        q2_deadline(g->now_ns, g->options.edition == QA_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns);
+        q2_deadline(g->now_ns, g->options.rules == QA_RULESET_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns);
     return true;
 }
 static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
@@ -305,13 +305,13 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
             return false;
         if (player && !g->options.deathmatch)
             continue;
-        if (g->options.edition == QA_Q2_RERELEASE && player && g->hooks.can_target != NULL &&
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && player && g->hooks.can_target != NULL &&
             !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), p.owner), target))
             continue;
         qa_builtin_actor_traits traits = {0};
         if (g->services.actor_traits != NULL)
             g->services.actor_traits(g->services.context, target, &traits);
-        if (g->options.edition == QA_Q2_RERELEASE && !g->options.deathmatch &&
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && !g->options.deathmatch &&
             traits.no_source_friendly_fire)
             continue;
         if (!is_creature && !traits.damageable_target)
@@ -326,7 +326,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
                                 .pass_actor = id,
                                 .policy = qa_collision_default_policy(QA_GAME_Q2)};
         query.policy.contents_mask =
-            qa_collision_contents_mask(g->options.edition == QA_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_GAME_Q2);
+            qa_collision_contents_mask(g->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, QA_GAME_Q2);
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;
@@ -345,7 +345,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
                        qa_vec_sub(body.origin, start), trace.end, trace.contact_plane.normal, false,
                        e))
             return false;
-        bool rerelease=g->options.edition==QA_Q2_RERELEASE;
+        bool rerelease=g->options.rules==QA_RULESET_Q2_RERELEASE;
         qa_builtin_event beam = {.kind = QA_BUILTIN_BEAM,
             .family = QA_GAME_Q2, .provider = g->options.owner,
             .actor = rerelease ? id : target, .other = rerelease ? target : id,
@@ -357,7 +357,7 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
         if (!qa_builtin_emit(&g->services, &beam, e)) return false;
     }
     a->projectile.next_ns =
-        q2_deadline(g->now_ns, g->options.edition == QA_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns);
+        q2_deadline(g->now_ns, g->options.rules == QA_RULESET_Q2_RERELEASE ? 100 * Q2_MS : g->frame_ns);
     return true;
 }
 
@@ -409,7 +409,7 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
                        qa_error *e) {
     q2_projectile *p = &a->projectile;
     qa_actor_id id = a->id;
-    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e))
         return false;
@@ -690,11 +690,11 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
         if (mine == NULL)
             return false;
         if (mine->projectile.kind == Q2_PROX && (mine->projectile.phase == MINE_WARNING ||
-            (g->options.edition == QA_Q2_CLASSIC && mine->projectile.phase == MINE_FLIGHT)))
+            (g->options.rules == QA_RULESET_Q2_CLASSIC && mine->projectile.phase == MINE_FLIGHT)))
             return true;
         if (!qa_actor_id_equal(qa_actor_reference_resolve(qa_session_actors(g->services.session), mine->projectile.child), a->id))
             return qa_session_release(g->services.session, a->id, e);
-        if (g->options.edition == QA_Q2_RERELEASE &&
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE &&
             ((player && !g->options.deathmatch) ||
              (g->hooks.can_target != NULL &&
               !g->hooks.can_target(g->hooks.context, qa_actor_reference_resolve(qa_session_actors(g->services.session), mine->projectile.owner), contact->other))))
@@ -776,8 +776,8 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
         !qa_world_body_write(g->services.world, a->id, &body, e))
         return false;
     p->phase = MINE_OPENING;
-    p->next_ns = q2_deadline(g->now_ns, g->options.edition == QA_Q2_RERELEASE ? 0 : 50 * Q2_MS);
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    p->next_ns = q2_deadline(g->now_ns, g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 50 * Q2_MS);
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         p->dodgeable = false;
         qa_actor_collision collision;
         if (!qa_world_get_collision(g->services.world, a->id, &collision, e))
@@ -1001,7 +1001,7 @@ bool qa_q2_spawn_bad_area(qa_q2_game *g, qa_bounds absolute, uint64_t lifespan, 
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(1, 0,
-                                        g->options.edition == QA_Q2_RERELEASE),
+                                        g->options.rules == QA_RULESET_Q2_RERELEASE),
                                     .role = QA_COLLISION_TRIGGER,
                                     .owner = owner_reference};
     qa_builtin_spawn spawn = {

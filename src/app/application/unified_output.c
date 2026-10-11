@@ -71,7 +71,7 @@ static bool q2_configuration_same(const qa_unified_q2_hud_configuration *old,
     return !found ? !old : old && old->data_provider == hud->data_provider &&
         old->revision == hud->config_revision && old->deathmatch == hud->deathmatch &&
         old->cooperative == hud->cooperative && old->protocol.kind ==
-            qa_q2_default_protocol(hud->edition != QA_Q2_CLASSIC).kind;
+            qa_q2_default_protocol(hud->edition != QA_RULESET_Q2_CLASSIC).kind;
 }
 
 static bool q2_configuration(qa_application *app, qa_unified_frame_lease *lease,
@@ -85,7 +85,7 @@ static bool q2_configuration(qa_application *app, qa_unified_frame_lease *lease,
     row->q2_hud = out;
     out->data_provider = hud.data_provider; out->revision = hud.config_revision;
     out->deathmatch = hud.deathmatch; out->cooperative = hud.cooperative;
-    out->protocol = qa_q2_default_protocol(hud.edition != QA_Q2_CLASSIC);
+    out->protocol = qa_q2_default_protocol(hud.edition != QA_RULESET_Q2_CLASSIC);
     size_t capacity;
     if (!qa_application_native_q2_hud_configs(app, &hud, NULL, 0, &capacity, error)) return false;
     out->configstrings = application_unified_frame_alloc(lease, capacity, sizeof(*out->configstrings), error);
@@ -135,7 +135,7 @@ static bool q2_hud_state(const qa_application_native_q2_hud *hud,
             &(qa_q2_wire_stat_resources){.context = &images, .items_base = layout.items, .image = q2_stat_image},
             state->frame.stats, error)) return false;
     }
-    state->frame.stat_count = hud->edition == QA_Q2_CLASSIC ? 32 : 64;
+    state->frame.stat_count = hud->edition == QA_RULESET_Q2_CLASSIC ? 32 : 64;
     state->frame.server_frame = hud->server_frame;
     state->frame.time_ms = (double)hud->time_ns / 1000000;
     state->frame.has_frame_time = hud->frame_ns != 0;

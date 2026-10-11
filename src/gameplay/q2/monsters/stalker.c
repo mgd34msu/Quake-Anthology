@@ -23,7 +23,7 @@ bool qa_q2_monster_physics_changed(qa_q2_game *g, qa_actor_id id, bool was_groun
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 physics change owner");
         return false;
     }
-    if (!was_grounded || g->options.edition != QA_Q2_RERELEASE || !q2_actor_live(g, id))
+    if (!was_grounded || g->options.rules != QA_RULESET_Q2_RERELEASE || !q2_actor_live(g, id))
         return true;
     return qa_q2_run_actor(g, id, physics_changed, g, error);
 }
@@ -38,7 +38,7 @@ static bool trace(q2m_context *c, qa_vec3 start, qa_vec3 end, const qa_bounds *b
     qa_trace_query query = {.start = start, .end = end, .pass_actor = c->actor->id,
                             .policy = qa_collision_default_policy(QA_GAME_Q2)};
     query.policy.contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2);
-    if (c->game->options.edition == QA_Q2_RERELEASE)
+    if (c->game->options.rules == QA_RULESET_Q2_RERELEASE)
         query.policy.contents_mask = qa_collision_bits_union(query.policy.contents_mask, qa_collision_contents_mask(UINT32_C(0x40000000), QA_GAME_Q2));
     if (bounds)
         query.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX, .bounds = *bounds};
@@ -95,7 +95,7 @@ static bool reactivate(q2m_context *c, qa_error *error) {
 }
 bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *error) {
     struct qa_q2_monster *m = c->monster;
-    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = c->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (rerelease)
         m->skin = c->combat.health < m->max_health * .5f ? 1 : 0;
     else if (c->combat.health < truncf(m->max_health * .5f))
@@ -201,7 +201,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
     qa_vec3 delta = qa_vec_sub(enemy->origin, c->body.origin);
     qa_vec3 angles = qa_vec_angles(delta,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW);
     if (!isfinite(angles.y) ||
-        (c->game->options.edition == QA_Q2_RERELEASE
+        (c->game->options.rules == QA_RULESET_Q2_RERELEASE
              ? fabsf(angles.y - c->body.angles.y)
              : fabsf(truncf(angles.y - c->body.angles.y))) > 45)
         return true;
@@ -210,7 +210,7 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
         return false;
     if (!q2m_alive(c) || qa_vec_length(delta) > 450)
         return true;
-    if (c->game->options.edition == QA_Q2_RERELEASE) {
+    if (c->game->options.rules == QA_RULESET_Q2_RERELEASE) {
         static const float pitches[] = {-80, -70, -60, -50, -40, -30, -20, -10, -5};
         float gravity = c->game->services.physics ? c->game->services.physics->gravity : 800;
         for (float speed = 400.1f; speed <= 800; speed += 200) {
@@ -366,7 +366,7 @@ bool q2m_blocked_platform(q2m_context *c, const qa_body_state *enemy, float dist
 static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accepted,
                          qa_error *error) {
     *accepted = false;
-    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = c->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (rerelease && ((c->monster->spawnflags & 16) || c->monster->jump_ns > c->game->now_ns))
         return true;
     float self_min = c->body.origin.z + c->body.bounds.mins.z;
@@ -473,7 +473,7 @@ bool q2m_stalker_blocked(q2m_context *c, float distance, bool *accepted, qa_erro
         return !q2m_alive(c) || !q2_actor_live(c->game, target);
     if (!q2m_alive(c) || !q2_actor_live(c->game, target) || combat.health <= 0)
         return true;
-    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = c->game->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!rerelease) {
         if (!q2m_blocked_tesla(c, accepted, error))
             return false;
@@ -547,7 +547,7 @@ static bool shoot(q2m_context *c, qa_error *error) {
     }
     qa_vec3 start = q2m_project_offset(c, qa_v3(24, 0, 6));
     qa_vec3 direction = qa_vec_sub(enemy.origin, start), end = enemy.origin;
-    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = c->game->options.rules == QA_RULESET_Q2_RERELEASE;
     float chance = rerelease ? .3f : .2f + .1f * (float)c->game->options.skill;
     if (q2m_random(c->game) < chance) {
         if (rerelease) {
@@ -585,7 +585,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
     if (name == Q2M_CALLBACK_stalker_heal) {
         int skill = c->game->options.skill;
         float health = c->combat.health + (skill == 2 ? 2 : skill == 3 ? 3 : 1);
-        bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+        bool rerelease = c->game->options.rules == QA_RULESET_Q2_RERELEASE;
         if (rerelease)
             c->monster->skin = health < c->monster->max_health * .5f ? 1 : 0;
         else if (health > truncf(c->monster->max_health * .5f))
@@ -599,7 +599,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
     if (name == Q2M_CALLBACK_stalker_shoot_attack)
         return shoot(c, error);
     if (name == Q2M_CALLBACK_stalker_shoot_attack2) {
-        float chance = c->game->options.edition == QA_Q2_RERELEASE
+        float chance = c->game->options.rules == QA_RULESET_Q2_RERELEASE
                            ? .5f : .4f + .1f * (float)c->game->options.skill;
         return q2m_random(c->game) >= chance || shoot(c, error);
     }
@@ -609,7 +609,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
         bool up = (name == Q2M_CALLBACK_stalker_jump_up);
         qa_vec3 forward, vertical;
         qa_angle_vectors(c->body.angles, &forward, NULL, &vertical,QA_ANGLE_FLOAT_MATH);
-        if (c->game->options.edition == QA_Q2_CLASSIC) {
+        if (c->game->options.rules == QA_RULESET_Q2_CLASSIC) {
             c->monster->timestamp_ns = c->game->now_ns;
         }
         c->body.velocity = qa_vec_add(c->body.velocity,
@@ -617,7 +617,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
         return q2m_write_body(c, true, error);
     }
     if (name == Q2M_CALLBACK_stalker_jump_wait_land) {
-        float chance = c->game->options.edition == QA_Q2_RERELEASE
+        float chance = c->game->options.rules == QA_RULESET_Q2_RERELEASE
                            ? .4f : .3f + .1f * (float)c->game->options.skill;
         if (q2m_random(c->game) < chance &&
             c->game->now_ns >= c->monster->attack_ns) {
@@ -630,7 +630,7 @@ bool q2m_stalker_callback(q2m_context *c, q2m_callback_id name, bool *handled, q
         bool finished = qa_actor_reference_present(c->body.ground);
         if (!finished) {
             c->actor->physics.gravity_scale = 1.3f;
-            if (c->game->options.edition == QA_Q2_CLASSIC)
+            if (c->game->options.rules == QA_RULESET_Q2_CLASSIC)
                 finished = c->game->now_ns > q2m_after(c->monster->timestamp_ns, 3);
             else {
                 qa_vec3 forward;

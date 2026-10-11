@@ -3,7 +3,7 @@
 #include "qa/game_q2_feedback.h"
 
 void q2_player_feedback_begin(qa_q2_game *game) {
-    if (game->options.edition != QA_Q2_RERELEASE) return;
+    if (game->options.rules != QA_RULESET_Q2_RERELEASE) return;
     for (q2_actor *actor = game->first_actor; actor; actor = actor->live_next)
         if (actor->client && actor->client->info.connected && q2_actor_live(game, actor->id))
             actor->client->rule.hit_marker_damage = 0;
@@ -50,7 +50,7 @@ bool q2_player_frame_begin(qa_q2_game *game, qa_error *error) {
 
 bool qa_q2_player_hit_marker_add(qa_q2_game *game, qa_actor_id id, int64_t damage,
                                 bool *found, qa_error *error) {
-    if (!game || !found || game->options.edition != QA_Q2_RERELEASE ||
+    if (!game || !found || game->options.rules != QA_RULESET_Q2_RERELEASE ||
         game->continuation_pending || game->continuation_failed || game->restoring_continuation) {
         qa_error_set(error, QA_ERROR_ARGUMENT, id.slot,
                      "Q2 hit marker requires its current rerelease client owner");

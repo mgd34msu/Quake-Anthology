@@ -866,12 +866,11 @@ bool application_unified_event_emit(qa_application *app, qa_actor_owner owner,
         .clock = source.clock, .presentation_clock = source.clock, .time_ns = time_ns,
         .simulation_time_ns = time_ns, .source_entity = has_source_entity ? source_entity : 0,
         .has_source_entity = has_source_entity, .link_presentation = link_presentation};
-    qa_q2_edition q2_edition; bool q2_profile; uint64_t q2_interval;
+    qa_ruleset_id q2_edition; bool q2_profile; uint64_t q2_interval;
     if (!qa_application_native_q2_source_clock_read(app, owner, &q2_edition, &q2_interval, &q2_profile, e)) return false;
     if (q2_profile) {
-        qa_ruleset_id actual = q2_edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE;
-        if (source.clock != actual) return application_fail(e, QA_ERROR_FORMAT, "Q2 Source rules differ from its emitted clock receipt");
-        borrowed.q2_source_profile = q2_edition == QA_Q2_CLASSIC ? 1 : 2; borrowed.q2_source_interval_ns = q2_interval;
+        if (source.clock != q2_edition) return application_fail(e, QA_ERROR_FORMAT, "Q2 Source rules differ from its emitted clock receipt");
+        borrowed.q2_source_profile = q2_edition == QA_RULESET_Q2_CLASSIC ? 1 : 2; borrowed.q2_source_interval_ns = q2_interval;
     }
     bool activated = false;
     for (size_t i = 0; i < app->unified_event_owner_count; ++i) {

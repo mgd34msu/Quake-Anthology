@@ -249,7 +249,7 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
             return true;
         if (!q2_item_ensure(g, recipient, d, e) || !q2_count(g, recipient, d->item, &previous, e))
             return false;
-        if ((g->options.edition == QA_Q2_RERELEASE && g->options.skill == 0 && previous >= 3) ||
+        if ((g->options.rules == QA_RULESET_Q2_RERELEASE && g->options.skill == 0 && previous >= 3) ||
             (g->options.skill == 1 && previous >= 2) || (g->options.skill >= 2 && previous >= 1) ||
             (g->options.cooperative && !instanced && d->coop_stay && previous > 0))
             return true;

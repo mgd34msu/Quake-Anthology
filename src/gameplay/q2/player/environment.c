@@ -10,7 +10,7 @@ bool q2_player_environment_damage(qa_q2_game *g, q2_actor *a, float amount, int 
         .time_ns = g->now_ns,
         .inflictor = g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0},
         .combat_provider = g->options.owner,
-        .cause = qa_q2_damage_cause(g->options.edition, g->options.product, means, flags)};
+        .cause = qa_q2_damage_cause(g->options.rules, g->options.product, means, flags)};
     attack.attacker = attack.inflictor;
     return q2_damage(g, &attack, a->id, amount, 0, means == 22 ? qa_v3(0, 0, 1) : qa_v3(0, 0, 0),
                      body.origin, qa_v3(0, 0, 0), false, e);
@@ -19,7 +19,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
                            qa_error *e) {
     q2_client_state *s = a->client;
     uint64_t now = g->now_ns;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (s->info.noclip || s->info.spectator) {
         s->rule.air_ns = q2_deadline(now, 12 * Q2_NS);
         return true;
@@ -144,7 +144,7 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
 }
 bool q2_player_falling(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m, qa_error *e) {
     q2_client_state *s = a->client;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (s->info.noclip || s->info.spectator || (!rr && !m->animate_q2) || m->water_level == 3)
         return true;
     float delta;

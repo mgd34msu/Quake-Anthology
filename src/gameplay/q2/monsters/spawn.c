@@ -11,7 +11,7 @@ static bool trace_world(const qa_q2_game *game, const qa_trace_result *trace) {
 
 static uint32_t spawn_mask(const qa_q2_game *game) {
   return Q2M_MONSTER_MASK |
-         (game->options.edition == QA_Q2_RERELEASE ? UINT32_C(0x40000000) : 0);
+         (game->options.rules == QA_RULESET_Q2_RERELEASE ? UINT32_C(0x40000000) : 0);
 }
 
 static bool trace_box(qa_q2_game *game, qa_vec3 start, qa_vec3 end,

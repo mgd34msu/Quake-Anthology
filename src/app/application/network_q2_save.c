@@ -10,7 +10,7 @@ static bool header_write(qa_application_network_q2 *owner, bool archival, qa_net
         qa_net_write_u32(writer, owner->host.protocol.kind) && qa_net_write_u32(writer, owner->host.protocol.revision) &&
         qa_net_write_u32(writer, owner->host.protocol.flags) && qa_net_write_i32(writer, owner->server_count) &&
         qa_net_write_u8(writer, owner->materials_bound ? 1 : 0) && qa_net_write_u8(writer, owner->materials_capability ? 1 : 0) &&
-        qa_net_write_u32(writer, source->kind) && qa_net_write_u32(writer, source->edition) &&
+        qa_net_write_u32(writer, source->kind) && qa_net_write_u32(writer, qa_ruleset_q2_tag(source->edition)) &&
         qa_net_write_u32(writer, source->source_owner) &&
         qa_net_write_u64(writer, source->publication_generation) && qa_net_write_u64(writer, source->map_revision) &&
         qa_net_write_u32(writer, owner->host.client_slots) && qa_net_write_u32(writer, owner->host.entity_slots) &&
@@ -168,12 +168,12 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
         qa_net_protocol_id protocol = {(qa_net_protocol)kind, revision, flags};
         if (!qa_q2_codec_init(&codec, protocol, error) || !clients || clients > 256 ||
             entities <= clients || entities > 65536 || !*instance || !*map ||
-            source_kind > QA_APPLICATION_NATIVE_Q2_ORIGINAL || edition > QA_Q2_RERELEASE || !interval)
+            source_kind > QA_APPLICATION_NATIVE_Q2_ORIGINAL || edition > 1 || !interval)
             return application_fail(error, QA_ERROR_FORMAT, "Q2 archive lost its retained Source metadata");
         owner->host.protocol = protocol; owner->server_count = server_count;
         owner->host.client_slots = clients; owner->host.entity_slots = entities;
         owner->host.source.kind = (qa_application_native_q2_source_kind)source_kind;
-        owner->host.source.edition = (qa_q2_edition)edition;
+        owner->host.source.edition = qa_ruleset_q2_from_tag(edition);
         owner->host.source.source_owner = source_owner; owner->host.source.publication_generation = publication_generation;
         owner->host.source.map_revision = map_revision; owner->host.source.clock = clock;
         owner->host.source.server_time_ns = time;
@@ -187,7 +187,7 @@ static bool header_read(qa_application_network_q2 *owner, qa_net_reader *reader,
     const qa_application_native_q2_presentation *source = &owner->host.source;
     if (owner->materials_bound != (materials_bound != 0) || owner->materials_capability != (materials_capability != 0) ||
         kind != (uint32_t)owner->host.protocol.kind || revision != owner->host.protocol.revision || flags != owner->host.protocol.flags ||
-        server_count != owner->server_count || source_kind != (uint32_t)source->kind || edition != (uint32_t)source->edition ||
+        server_count != owner->server_count || source_kind != (uint32_t)source->kind || edition != qa_ruleset_q2_tag(source->edition) ||
         clients != owner->host.client_slots || entities != owner->host.entity_slots ||
         frame != source->clock.frame_number || time != source->server_time_ns || interval != source->clock_config.interval_ns ||
         clock.host_origin_ns != source->clock.host_origin_ns || clock.elapsed_ns != source->clock.elapsed_ns ||

@@ -968,7 +968,7 @@ static bool builtin_muzzle_sound(void *context, qa_q2_sound_index name, int32_t 
 }
 static bool q2_muzzle_deliver(qa_frontend *frontend, const qa_builtin_event *event,
     const qa_application_protocol_event *message, const qa_application_q2_audience *audience,
-    bool monster, qa_q2_edition edition, qa_error *error)
+    bool monster, qa_ruleset_id edition, qa_error *error)
 {
     frontend_event_state *state;
     if (!state_read(frontend,&state,error)) return false;
@@ -991,16 +991,16 @@ static bool q2_muzzle_deliver(qa_frontend *frontend, const qa_builtin_event *eve
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 muzzle lost its physical CLIENT controls");
         builtin_muzzle_audio audio={frontend,event,seat,monster || message!=NULL};
         bool ok=monster?frontend_q2_monster_muzzle_sounds(&state->light_random,(uint32_t)event->code,
-            edition==QA_Q2_RERELEASE,builtin_muzzle_sound,&audio,error):
+            edition==QA_RULESET_Q2_RERELEASE,builtin_muzzle_sound,&audio,error):
             frontend_q2_player_muzzle_sounds(&state->light_random,(uint32_t)event->code,
-                (event->flags&128u)!=0,edition==QA_Q2_RERELEASE,modern,builtin_muzzle_sound,&audio,error);
+                (event->flags&128u)!=0,edition==QA_RULESET_Q2_RERELEASE,modern,builtin_muzzle_sound,&audio,error);
         if (!ok) return false;
     }
     return true;
 }
 bool frontend_native_q2_muzzle_sound(qa_frontend *frontend,
     const qa_application_protocol_event *message, const qa_application_q2_audience *audience,
-    const qa_builtin_event *event, bool monster, qa_q2_edition edition, qa_error *error)
+    const qa_builtin_event *event, bool monster, qa_ruleset_id edition, qa_error *error)
 {
     if (!frontend->audio || frontend_network_client_only(frontend)) return true;
     return q2_muzzle_deliver(frontend,event,message,audience,monster,edition,error);
@@ -1010,7 +1010,7 @@ static bool builtin_muzzle(qa_frontend *frontend, const qa_builtin_event *event,
     if (frontend_network_client_only(frontend)) return true;
     bool monster=event->resource==qa_application_ui_names_read(frontend->application)->monster_muzzle;
     if (event->resource && !monster) return true;
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     bool found;
     if (!qa_application_native_q2_source_profile_read(frontend->application,event->provider,
         &edition,&found,error) || !found)
@@ -1034,11 +1034,11 @@ bool frontend_audio_actor_position(qa_frontend *frontend, qa_actor_id actor, uin
     if (!qa_audio_engine_position(frontend->audio, identity, *origin, error)) return false;
     if (!present || !collision.inline_model || collision.family != QA_GAME_Q2) return true;
     const qa_actor_record *record = qa_actors_get(qa_world_actors(world), actor);
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     bool found;
     if (!qa_application_native_q2_source_profile_read(frontend->application, record->owner,
         &edition, &found, error)) return false;
-    if (!found || edition != QA_Q2_RERELEASE) return true;
+    if (!found || edition != QA_RULESET_Q2_RERELEASE) return true;
     qa_vec3 mins = qa_vec_add(body->origin, body->bounds.mins);
     qa_vec3 maxs = qa_vec_add(body->origin, body->bounds.maxs);
     for (uint32_t seat = 0; seat < frontend->options.seats; ++seat) {

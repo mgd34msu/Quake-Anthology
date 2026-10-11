@@ -91,7 +91,7 @@ static bool final(qa_q2_game *g, q2_actor *a, qa_error *e) {
     else if (m->remaining == 0)
         return finish(g, a, e);
     else
-        delta = g->options.edition == QA_Q2_RERELEASE ? qa_vec_sub(m->destination, body.origin)
+        delta = g->options.rules == QA_RULESET_Q2_RERELEASE ? qa_vec_sub(m->destination, body.origin)
                                                       : qa_vec_scale(m->direction, m->remaining);
     if (m->angular && qa_vec_dot(delta, delta) == 0)
         return finish(g, a, e);
@@ -273,10 +273,10 @@ bool q2_move_start(qa_q2_game *g, q2_actor *a, qa_vec3 destination, bool angular
         return false;
     if (angular)
         m->current_speed =
-            g->options.edition == QA_Q2_RERELEASE && s->accel != s->speed ? 0 : s->speed;
+            g->options.rules == QA_RULESET_Q2_RERELEASE && s->accel != s->speed ? 0 : s->speed;
     else if (s->speed != s->accel || s->speed != s->decel) {
         m->accelerated = true;
-        if (g->options.edition == QA_Q2_RERELEASE && g->frame_ns != 100 * Q2_MS) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && g->frame_ns != 100 * Q2_MS) {
             m->curve = true;
             m->curve_distance = distance;
             float subframes = .1f / ((float)g->frame_ns / Q2_NS) - 1;
@@ -306,7 +306,7 @@ bool q2_move_tick(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error *e
     q2_motion *m = &s->mover->motion;
     if (m->curve)
         return curve(g, a, e);
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
             return false;
@@ -314,8 +314,8 @@ bool q2_move_tick(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error *e
     } else
         m->remaining -= m->current_speed;
     if (m->current_speed == 0)
-        calculate(m, s, g->options.edition == QA_Q2_RERELEASE);
-    accelerate(m, s, g->options.edition == QA_Q2_RERELEASE);
+        calculate(m, s, g->options.rules == QA_RULESET_Q2_RERELEASE);
+    accelerate(m, s, g->options.rules == QA_RULESET_Q2_RERELEASE);
     if (m->remaining <= m->current_speed)
         return final(g, a, e);
     if (!velocity(g, a,

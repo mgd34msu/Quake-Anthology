@@ -9,7 +9,7 @@ typedef struct qa_q2_bot_entity {
     bool present,hidden,worldspawn;
 } qa_q2_bot_entity;
 typedef struct qa_q2_bot_arsenal_configuration {
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     bool deathmatch;
 } qa_q2_bot_arsenal_configuration;
 /* Native launch recipe observation. Random spreads/damage are nominal means;
@@ -30,10 +30,10 @@ bool qa_q2_bot_weapon_read(qa_q2_game *,qa_actor_id,qa_q2_weapon,
                            qa_q2_bot_weapon_fact *,bool *found,qa_error *);
 bool qa_q2_bot_arsenal_configuration_read(const qa_q2_game *,qa_q2_bot_arsenal_configuration *,qa_error *);
 bool qa_q2_bot_arsenal_register_multiplayer(qa_q2_game *,qa_q2_weapon_rules,
-                                           bool native_hook,qa_q2_edition hook_edition,qa_error *);
+                                           bool native_hook,qa_ruleset_id hook_ruleset,qa_error *);
 bool qa_q2_bot_arsenal_rules_read(const qa_q2_game *,qa_q2_weapon_rules *,qa_error *);
 bool qa_q2_bot_equipment_register_hook(qa_q2_game *,qa_q2_weapon_rules,
-                                      qa_q2_edition,qa_error *);
+                                      qa_ruleset_id,qa_error *);
 bool qa_q2_bot_arsenal_definition_read(const qa_q2_game *,uint32_t ordinal,
                                       const qa_q2_weapon_definition **,qa_error *);
 bool qa_q2_bot_arsenal_definition_count(const qa_q2_game *,uint32_t *,qa_error *);

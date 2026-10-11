@@ -518,7 +518,7 @@ bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
   game->monster_definition_count = count;
   for (size_t i = 0; i < count; ++i) {
     q2m_definition *row = game->monster_definitions + i;
-    if (game->options.edition == QA_Q2_RERELEASE)
+    if (game->options.rules == QA_RULESET_Q2_RERELEASE)
       for (size_t j = 0; j < sizeof(rerelease) / sizeof(*rerelease); ++j)
         if (!strcmp(row->classname, rerelease[j]->classname)) { *row = *rerelease[j]; break; }
     if (!qa_builtin_resource(&game->services, row->classname, &row->classname_id, error)) return false;
@@ -538,7 +538,7 @@ const q2m_definition *q2m_definition_for(const qa_q2_game *game, qa_string_id cl
 }
 
 static const char *base_move_set(const qa_q2_game *game, q2m_species species) {
-  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool rerelease = game->options.rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = game->options.product == QA_Q2_ROGUE;
   bool xatrix = game->options.product == QA_Q2_XATRIX;
   switch (species) {
@@ -630,9 +630,9 @@ const q2m_move_set *q2m_move_set_for(const qa_q2_game *game,
                                      const q2m_definition *definition) {
   if (game == NULL || definition == NULL)
     return NULL;
-  if (game->options.edition == QA_Q2_RERELEASE && definition->species == Q2M_STALKER)
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE && definition->species == Q2M_STALKER)
     return q2m_stalker_rerelease_moves();
-  if (game->options.edition == QA_Q2_RERELEASE &&
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (definition->species == Q2M_MEDIC || definition->species == Q2M_MEDIC_COMMANDER))
     return q2m_moves_named("rerelease/medic:medicMoves");
   const char *key = definition->move_set;

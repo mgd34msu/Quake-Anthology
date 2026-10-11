@@ -296,7 +296,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
     qa_actor_collision collision = {.family = QA_GAME_Q2,
                                     .shape = QA_SHAPE_BOX,
                                     .role = QA_COLLISION_SOLID,
-                                    .contents = qa_collision_q2_source_contents(2, 0, g->options.edition == QA_Q2_RERELEASE),
+                                    .contents = qa_collision_q2_source_contents(2, 0, g->options.rules == QA_RULESET_Q2_RERELEASE),
                                     .owner = owner_reference};
     qa_combat_state combat = {.health = 10000, .can_take_damage = true};
     qa_builtin_spawn spawn = {
@@ -323,7 +323,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                         .weapon_provider = g->options.owner,
                         .powerup_applied = true,
                         .powerup_owner = g->options.owner,
-                        .cause = qa_q2_damage_cause(g->options.edition, g->options.product, 47, 1)};
+                        .cause = qa_q2_damage_cause(g->options.rules, g->options.product, 47, 1)};
     a->projectile = (q2_projectile){.kind = Q2_NUKE,
                                     .owner = owner_reference,
                                     .attack = attack,
@@ -333,7 +333,7 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                                     .splash_mod = 47,
                                     .effects = 32,
                                     .render_flags = 0x8000,
-                                    .scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1,
+                                    .scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
                                     .visible = true,
                                     .dodgeable = true,
                                     .born_ns = g->now_ns,
@@ -341,11 +341,11 @@ bool q2_fire_nuke(qa_q2_game *g, qa_actor_id owner, qa_vec3 start, qa_vec3 direc
                                     .next_ns = q2_deadline(g->now_ns, g->frame_ns)};
     a->physics_bound = true;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
+    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_BOUNCE;
     a->physics.solid = QA_PHYSICS_BOX;
     a->physics.clip_mask =
-        g->options.edition == QA_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK;
+        g->options.rules == QA_RULESET_Q2_RERELEASE ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK;
     if (!q2_launch_behavior(g, a, QA_BUILTIN_GRENADE, NULL, e))
         return false;
     if (!q2_actor_live(g, id))

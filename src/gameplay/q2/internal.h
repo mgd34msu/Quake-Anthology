@@ -523,9 +523,9 @@ struct qa_q2_game {
     uint32_t definition_count;
     qa_q2_weapon_rules arsenal_rules;
     bool native_hook;
-    qa_q2_edition hook_edition;
+    qa_ruleset_id hook_ruleset;
     qa_q2_weapon_rules equipment_hook_rules;
-    qa_q2_edition equipment_hook_edition;
+    qa_ruleset_id equipment_hook_ruleset;
     qa_item_id items[QA_Q2_WEAPON_COUNT], ammo[QA_Q2_WEAPON_COUNT];
     qa_string_id view_models[QA_Q2_WEAPON_COUNT];
     q2_actor **actors, *all_actors, *retired_actors;

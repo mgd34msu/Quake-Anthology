@@ -34,7 +34,7 @@ static bool movement_fields(q2_save_io *io, q2_actor *actor, bool player)
     if (!q2_save_u32(io, &water) || !q2_save_i32(io, &movement.water_level) ||
         !q2_save_f32(io, &movement.view_height) || !q2_save_u32(io, &kind)) return false;
     qa_q2_game *g = io->game;
-    if (kind != (uint32_t)(g->options.edition == QA_Q2_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC) ||
+    if (kind != (uint32_t)(g->options.rules) ||
         movement.water_level < 0 || movement.water_level > 3 ||
         (!rules->command_seen && rules->source_sequence) || rules->command_pending || rules->pending_sequence)
         return q2_save_fail(io, "Q2 Source pmove continuation has invalid edition or command state");
@@ -205,7 +205,7 @@ bool q2_save_wire(q2_save_io *io)
     q2_shadow_slot shadows[256];
     memcpy(shadows, g->wire_shadows, sizeof(shadows));
     if (ok && (!q2_save_u32(io, &shadow_count) || shadow_count > 256 ||
-        (shadow_count && g->options.edition != QA_Q2_RERELEASE)))
+        (shadow_count && g->options.rules != QA_RULESET_Q2_RERELEASE)))
         ok = q2_save_fail(io, "Q2 continuation shadow-light table exceeds its Source edition");
     if (io->reading) memset(shadows, 0, sizeof(shadows));
     for (uint32_t i = 0; ok && i < shadow_count; ++i) {

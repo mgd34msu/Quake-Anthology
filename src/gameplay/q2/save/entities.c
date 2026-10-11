@@ -112,11 +112,11 @@ bool q2_save_entities(q2_save_io *io, qa_q2_entities_checkpoint *s) {
     }
     if (!q2_save_fog(io, &s->world_fog)) return false;
     Q2N(sky); Q2N(goals);
-    if (!io->level_only || io->game->options.edition != QA_Q2_RERELEASE) {
+    if (!io->level_only || io->game->options.rules != QA_RULESET_Q2_RERELEASE) {
         Q2N(primary); Q2N(secondary);
     }
     Q2V(sky_axis); Q2F(sky_rotation);
-    if (!io->level_only || io->game->options.edition != QA_Q2_RERELEASE) {
+    if (!io->level_only || io->game->options.rules != QA_RULESET_Q2_RERELEASE) {
         Q2U(primary_changes); Q2U(secondary_changes);
     }
     Q2U(goal_number); Q2B(sky_auto); Q2B(has_goals);

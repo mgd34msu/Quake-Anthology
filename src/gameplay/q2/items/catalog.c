@@ -297,11 +297,11 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
         return false;
     }
     install(r, base, N(base));
-    if (g->options.product == QA_Q2_XATRIX || g->options.edition == QA_Q2_RERELEASE)
+    if (g->options.product == QA_Q2_XATRIX || g->options.rules == QA_RULESET_Q2_RERELEASE)
         install(r, xatrix, N(xatrix));
-    if (g->options.product == QA_Q2_ROGUE || g->options.edition == QA_Q2_RERELEASE)
+    if (g->options.product == QA_Q2_ROGUE || g->options.rules == QA_RULESET_Q2_RERELEASE)
         install(r, rogue, N(rogue));
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         install(r, rerelease, N(rerelease));
         static const char *const key_order[] = {
             "key_data_cd", "key_power_cube", "key_explosive_charges", "key_yellow_key",
@@ -345,7 +345,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             .respawn_seconds = 30,
             .rotate = true,
             .coop_stay =
-                i <= QA_Q2_BFG || i == QA_Q2_LMCTF_PLASMA || g->options.edition == QA_Q2_RERELEASE,
+                i <= QA_Q2_BFG || i == QA_Q2_LMCTF_PLASMA || g->options.rules == QA_RULESET_Q2_RERELEASE,
             .droppable = i != QA_Q2_BLASTER && i != QA_Q2_GRAPPLE && i != QA_Q2_LMCTF_HOOK,
             .console_give = i == QA_Q2_GRAPPLE || i == QA_Q2_LMCTF_HOOK ? QA_Q2_GIVE_INVENTORY_ONLY
                                                                         : QA_Q2_GIVE_PICKUP};
@@ -373,9 +373,9 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
         if (!strcmp(d->classname, "item_breather") || !strcmp(d->classname, "item_enviro"))
             d->coop_stay = true;
         if (!strcmp(d->classname, "ammo_tesla") ||
-            (g->options.edition == QA_Q2_RERELEASE && !strcmp(d->classname, "ammo_trap")))
+            (g->options.rules == QA_RULESET_Q2_RERELEASE && !strcmp(d->classname, "ammo_trap")))
             d->infinite_quantity = false;
-        if (g->options.edition == QA_Q2_RERELEASE && !strcmp(d->classname, "item_compass")) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && !strcmp(d->classname, "item_compass")) {
             d->model = "";
             d->name = "Compass";
             d->sound = "";

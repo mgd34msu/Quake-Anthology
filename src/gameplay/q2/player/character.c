@@ -33,8 +33,7 @@ static bool respawned(void *context, qa_actor_id id, qa_error *e) {
         !qa_world_body_storage_serial(g->services.world, id) ||
         !qa_session_clock(g->services.session, g->options.owner, &clock) ||
         clock.frame.provider != g->options.owner ||
-        clock.frame.kind != (g->options.edition == QA_Q2_RERELEASE
-                                 ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC) ||
+        clock.frame.kind != (g->options.rules) ||
         clock.frame.time_ns > UINT64_MAX - 12 * Q2_NS ||
         a->character_birth_epoch == UINT64_MAX) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0,
@@ -67,7 +66,7 @@ static bool respawned(void *context, qa_actor_id id, qa_error *e) {
     s->rule.visual.models[0] = s->rule.character_model;
     s->rule.visual.skin = s->rule.character_skin;
     s->rule.visual.effects = 0;
-    s->rule.visual.render_flags = g->options.edition == QA_Q2_RERELEASE ? 32768 : 0;
+    s->rule.visual.render_flags = g->options.rules == QA_RULESET_Q2_RERELEASE ? 32768 : 0;
     s->info.view_height = 22;
     s->rule.event = 6;
     return q2_publish_visual(g, id, &s->rule.visual, e);

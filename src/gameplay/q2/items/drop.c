@@ -64,7 +64,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
     item->visible = true;
     item->touchable = true;
     item->temporary = !options->immediate_touch;
-    item->visual = (qa_entity_visual){.scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1,
+    item->visual = (qa_entity_visual){.scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1,
                                   .alpha = 1,
                                   .old_frame = -1,
                                   .visible = true,
@@ -72,7 +72,7 @@ bool q2_item_drop_definition(qa_q2_game *g, qa_actor_id owner, const qa_q2_item_
                                   .render_flags = 512 | 0x8000};
     item->visual.models[0] = d->model_id;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
+    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     a->physics.motion = QA_PHYSICS_TOSS;
     a->physics_bound = true;
     if (item->temporary) {
@@ -189,7 +189,7 @@ bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float 
         goto fail;
     a->physics.motion = QA_PHYSICS_TOSS;
     a->item->visual.scale = scale;
-    if (g->options.edition != QA_Q2_RERELEASE)
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE)
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e))

@@ -140,7 +140,7 @@ bool q2_light_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
     bool shadow = !strcmp(name, "dynamic_light"),
-         target = !strcmp(name, "target_light") && g->options.edition == QA_Q2_RERELEASE;
+         target = !strcmp(name, "target_light") && g->options.rules == QA_RULESET_Q2_RERELEASE;
     *handled = shadow || target;
     if (!*handled)
         return true;

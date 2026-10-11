@@ -5,7 +5,7 @@
 
 typedef struct qa_q2_combat_rules {
     qa_actor_owner owner;
-    qa_q2_edition edition;
+    qa_ruleset_id edition;
     qa_q2_product product;
     int skill;
     uint32_t deathmatch_flags;

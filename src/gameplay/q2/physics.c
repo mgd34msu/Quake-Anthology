@@ -29,7 +29,7 @@ static bool think_due(const qa_q2_game *g, const q2_actor *a) {
 
 static qa_source_frame source_frame(const qa_q2_game *g) {
     return (qa_source_frame){.provider = g->options.owner,
-        .kind = g->options.edition == QA_Q2_CLASSIC ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE,
+        .kind = g->options.rules,
         .phase = QA_ENTITY_PHYSICS, .time_ns = g->now_ns, .elapsed_ns = g->frame_ns,
         .start_ns = g->now_ns >= g->frame_ns ? g->now_ns - g->frame_ns : 0};
 }
@@ -111,10 +111,10 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
             break;
         }
         if (result.status == QA_PHYSICS_BLOCKED) {
-            if (g->options.edition == QA_Q2_RERELEASE && result.obstacle.registry &&
+            if (g->options.rules == QA_RULESET_Q2_RERELEASE && result.obstacle.registry &&
                 !q2_actor_live(g, result.obstacle))
                 continue;
-            if (g->options.edition == QA_Q2_CLASSIC && !g->services.physics->services.blocked)
+            if (g->options.rules == QA_RULESET_Q2_CLASSIC && !g->services.physics->services.blocked)
                 for (size_t i = 0; i < count; ++i) {
                     part = q2_actor_get(g, parts[i].actor, false, NULL);
                     if (part && part->entity && part->entity->due_ns)
@@ -138,7 +138,7 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 
 static bool step_environment(qa_q2_game *g, q2_actor *a, bool was_grounded, qa_error *e) {
-    if (g->options.edition != QA_Q2_RERELEASE || !a->monster ||
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE || !a->monster ||
         !a->monster->definition || !(a->physics.flags & QA_PHYSICS_MONSTER))
         return true;
     if (!qa_physics_check_ground(g->services.physics, a->id, e) ||
@@ -160,7 +160,7 @@ static bool recover_step_origin(qa_q2_game *g, qa_actor_id id, qa_vec3 previous,
     if (!qa_world_body_read(g->services.world, id, &body, e)) return false;
     if (body.origin.x == previous.x && body.origin.y == previous.y && body.origin.z == previous.z)
         return true;
-    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     uint32_t mask = UINT32_C(0x02010003);
     if (rerelease) {
         mask = a->physics.clip_mask;
@@ -189,7 +189,7 @@ static bool actor_physics(qa_q2_game *g, q2_actor *a, qa_error *e) {
     bool owned = record && record->owner == g->options.owner;
     bool recover = owned && a->physics_bound && a->physics.motion == QA_PHYSICS_STEP &&
         !a->client && a->projectile.kind == Q2_PROJECTILE_NONE &&
-        (g->options.edition == QA_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE);
+        (g->options.rules == QA_RULESET_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE);
     qa_body_state previous = {0};
     if (recover && !qa_world_body_read(g->services.world, id, &previous, e)) return false;
     if (a->entity && !q2_entity_prethink(g, a, e)) return false;

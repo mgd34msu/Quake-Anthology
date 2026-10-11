@@ -128,15 +128,26 @@ bool q2_save_actor(q2_save_io *io, qa_q2_actor_checkpoint *s) {
     }
     Q2B(hand_grenade_bound); return hand(io, &s->hand_grenade);
 }
+static bool q2_save_ruleset(q2_save_io *io, qa_ruleset_id *rules) {
+    uint32_t tag = qa_ruleset_q2_tag(*rules);
+    if (!q2_save_u32(io, &tag)) return false;
+    if (io->reading) {
+        if (tag > 1u) return q2_save_fail(io, "Invalid Q2 continuation edition");
+        *rules = qa_ruleset_q2_from_tag(tag);
+    }
+    return true;
+}
 bool q2_save_runtime(q2_save_io *io, qa_q2_runtime_checkpoint *s) {
     if (io->level_only) {
         Q2T(actor_sequence); Q2T(now_ns); Q2T(frame_ns);
         Q2B(lmctf_plasma_quad); Q2U8(widow_damage_multiplier); Q2U8(widow_shot_phase);
         return true;
     }
-    Q2U(edition); Q2U(product);
-    Q2U(arsenal_rules); Q2B(native_hook); Q2U(hook_edition); Q2U(definition_count);
-    Q2U(equipment_hook_rules); Q2U(equipment_hook_edition);
+    if (!q2_save_ruleset(io, &s->rules)) return false;
+    Q2U(product); Q2U(arsenal_rules); Q2B(native_hook);
+    if (!q2_save_ruleset(io, &s->hook_ruleset)) return false;
+    Q2U(definition_count); Q2U(equipment_hook_rules);
+    if (!q2_save_ruleset(io, &s->equipment_hook_ruleset)) return false;
     if (s->definition_count >= QA_Q2_WEAPON_COUNT)
         return q2_save_fail(io,"Invalid Q2 source arsenal count");
     for (uint32_t i = 0; i < s->definition_count; ++i) Q2U(definition_order[i]);

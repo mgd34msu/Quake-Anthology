@@ -225,8 +225,7 @@ bool qa_q2_game_target_binding(qa_q2_game *g, qa_actor_id id, qa_target_binding 
         return false;
     }
     *out = (qa_target_binding){.actor = id,
-                               .source = g->options.edition == QA_Q2_CLASSIC
-                                             ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE,
+                               .source = g->options.rules,
                                .context = g,
                                .read = authored,
                                .use = use,
@@ -392,7 +391,7 @@ bool qa_q2_entity_visual(qa_q2_game *g, qa_actor_id id, qa_entity_visual *out, q
 }
 bool q2_entity_schedule(qa_q2_game *g, q2_actor *a, q2_entity_think think, float seconds) {
     uint64_t duration = q2_item_seconds(seconds);
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         float milliseconds = seconds * 1000.0f;
         duration = milliseconds <= 0 ? 0 : (double)milliseconds >= (double)(UINT64_MAX / Q2_MS) ?
             UINT64_MAX : (uint64_t)milliseconds * Q2_MS;
@@ -417,7 +416,7 @@ bool q2_entity_solid(qa_q2_game *g, q2_actor *a, qa_physics_solid solid, qa_erro
     s->collision.dead_monster = (a->physics.flags & QA_PHYSICS_DEAD) != 0;
     s->collision.contents = qa_collision_q2_source_contents(
         (uint32_t)(solid == QA_PHYSICS_CORPSE ? QA_PHYSICS_BOX : solid),
-        s->collision.dead_monster ? 2u : 0u, g->options.edition == QA_Q2_RERELEASE);
+        s->collision.dead_monster ? 2u : 0u, g->options.rules == QA_RULESET_Q2_RERELEASE);
     return qa_world_set_collision(g->services.world, a->id,
                                   solid == QA_PHYSICS_NOT_SOLID ? NULL : &s->collision, e) &&
            (!q2_actor_live(g, a->id) || qa_world_link(g->services.world, a->id, NULL, e));
@@ -445,10 +444,10 @@ bool q2_entity_native_spawn(qa_q2_game *g, const char *name, const qa_body_state
     a->entity->classname = classname;
     a->entity_game = g;
     a->entity->kind = kind;
-    a->entity->visual.scale = g->options.edition == QA_Q2_RERELEASE ? 0 : 1;
+    a->entity->visual.scale = g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1;
     a->entity->visual.alpha = 1;
     a->physics = qa_physics_properties_default(QA_GAME_Q2);
-    a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
+    a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!q2_entity_bind(g, a, e)) {
         qa_session_release(g->services.session, id, NULL);
         return false;
@@ -503,9 +502,7 @@ bool q2_entity_targets(qa_q2_game *g, q2_actor *a, qa_actor_id activator, bool i
     return qa_targets_use_now(targets,
                               &(qa_target_use){.source = a->id,
                                                .activator = activator,
-                                               .dialect = g->options.edition == QA_Q2_CLASSIC
-                                                              ? QA_RULESET_Q2_CLASSIC
-                                                              : QA_RULESET_Q2_RERELEASE,
+                                               .dialect = g->options.rules,
                                                .fields = fields,
                                                .time_ns = g->now_ns},
                               e);
@@ -551,9 +548,7 @@ bool qa_q2_entity_use_targets(qa_q2_game *g, qa_actor_id id, qa_actor_id activat
     return q2_entity_targets(g, a, activator, ignore_delay, e);
 }
 bool qa_q2_entity_defer_targets(qa_q2_game *g, const qa_target_use *request, qa_error *e) {
-    qa_ruleset_id dialect = g && g->options.edition == QA_Q2_RERELEASE
-                                ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
-    if (!g || !request || request->dialect != dialect ||
+    if (!g || !request || request->dialect != g->options.rules ||
         !isfinite(request->fields.delay_seconds) || request->fields.delay_seconds == 0) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 delayed target request");
         return false;
@@ -582,7 +577,7 @@ bool q2_entity_damage(qa_q2_game *g, q2_actor *a, qa_actor_id target, qa_actor_i
                         .attacker = credit,
                         .combat_provider = g->options.owner,
                         .cause =
-                            qa_q2_damage_cause(g->options.edition, g->options.product, mod, flags)};
+                            qa_q2_damage_cause(g->options.rules, g->options.product, mod, flags)};
     return q2_damage(g, &attack, target, amount, kick, qa_v3(0, 0, 0), body.origin, qa_v3(0, 0, 0),
                      false, e);
 }
@@ -596,7 +591,7 @@ bool q2_entity_radius(qa_q2_game *g, q2_actor *a, qa_actor_id credit, float amou
                    .inflictor = a->id,
                    .attacker = credit,
                    .combat_provider = g->options.owner,
-                   .cause = qa_q2_damage_cause(g->options.edition, g->options.product, mod, 1)},
+                   .cause = qa_q2_damage_cause(g->options.rules, g->options.product, mod, 1)},
         .origin = body.origin,
         .radius = radius,
         .damage = amount,
@@ -655,7 +650,7 @@ bool q2_entity_pick(qa_q2_game *g, qa_string_id target, qa_actor_id *out) {
         n++;
     if (!n)
         return false;
-    uint32_t index = g->options.edition == QA_Q2_RERELEASE ? q2_random_bounded(g, (uint32_t)n)
+    uint32_t index = g->options.rules == QA_RULESET_Q2_RERELEASE ? q2_random_bounded(g, (uint32_t)n)
                                                            : (uint32_t)(q2_random(g) * (float)n);
     *out = ids[index < n ? index : n - 1];
     return true;

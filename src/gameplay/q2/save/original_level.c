@@ -84,16 +84,16 @@ bool q2_original_level_open(qa_q2_game *game, qa_bytes bytes,
 {
     if (!game || !out || !bytes.data || !bytes.size ||
         (unsigned)game->options.product > QA_Q2_N64 ||
-        (game->options.edition == QA_Q2_CLASSIC && game->options.product > QA_Q2_ROGUE)) {
+        (game->options.rules == QA_RULESET_Q2_CLASSIC && game->options.product > QA_Q2_ROGUE)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Original Q2 LEVEL requires its selected GAME and file");
         return false;
     }
     q2_original_level_file file = {0};
-    q2_original_record_io io = {.reading = true, .edition = game->options.edition,
+    q2_original_record_io io = {.reading = true, .edition = game->options.rules,
         .product = game->options.product, .error = error};
     size_t capacity = 0;
     bool okay = true;
-    if (io.edition == QA_Q2_RERELEASE) {
+    if (io.edition == QA_RULESET_Q2_RERELEASE) {
         okay = qa_json_parse(bytes, &file.document, error);
         if (!okay) goto done;
         qa_json_id root = qa_json_root(file.document);
@@ -207,7 +207,7 @@ const q2_original_edict_row *q2_original_level_actor(const q2_original_level_fil
 static q2_original_record_io edict_reader(qa_q2_game *game,
     const q2_original_level_file *file, const q2_original_edict_row *row, qa_error *error)
 {
-    return (q2_original_record_io){.reading = true, .edition = game->options.edition,
+    return (q2_original_record_io){.reading = true, .edition = game->options.rules,
         .product = game->options.product, .document = file->document,
         .object = row->object, .input = row->fields, .strings = row->strings, .error = error};
 }
@@ -239,7 +239,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     if (okay && slot >= globals.clients)
         okay = level_error(error, slot, "Original Q2 client is outside its GAME file");
     if (okay) {
-        if (game->options.edition == QA_Q2_RERELEASE) {
+        if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
             qa_json_id clients = qa_json_get(document, qa_json_root(document), "clients");
             io.object = qa_json_at(document, clients, slot);
         } else {
@@ -305,7 +305,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
             source->silencer = client.silencer;
             if (source->powers) {
                 source->powers->values = client.powers;
-                if (game->options.edition == QA_Q2_CLASSIC && game->options.product == QA_Q2_ROGUE)
+                if (game->options.rules == QA_RULESET_Q2_CLASSIC && game->options.product == QA_Q2_ROGUE)
                     source->powers->sphere = client.sphere;
             }
         }
@@ -338,7 +338,7 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
     }
     if (okay) okay = q2_original_trail_client(game, &client_io, actor);
     if (okay && live_level) {
-        io = (q2_original_record_io){.reading = true, .edition = game->options.edition,
+        io = (q2_original_record_io){.reading = true, .edition = game->options.rules,
             .product = game->options.product, .document = level.document, .object = level.level_object,
             .input = level.level_fields, .strings = level.level_strings, .error = error};
         okay = level_perception(game, &io);
@@ -410,7 +410,7 @@ static bool original_edict(qa_q2_game *g, q2_original_record_io *io,
 static bool level_perception(qa_q2_game *g, q2_original_record_io *io)
 {
     q2_players *players = g->player_runtime;
-    if (io->edition != QA_Q2_CLASSIC) return true;
+    if (io->edition != QA_RULESET_Q2_CLASSIC) return true;
     qa_actor_id sight = {0}, observer = {0};
     int32_t sight_frame = 0;
     qa_q2_monsters_checkpoint perception = {0};
@@ -488,7 +488,7 @@ static bool level_state(qa_q2_game *g, q2_original_record_io *io,
             (name && !level_copy_text(state->name, sizeof(state->name), name, io->error))) return false;
     }
     if (!q2_original_record(io, Q2_ORIGINAL_LEVEL, state)) return false;
-    if (io->edition == QA_Q2_CLASSIC &&
+    if (io->edition == QA_RULESET_Q2_CLASSIC &&
         !q2_original_scalar(io, "framenum", Q2_ORIGINAL_U32, 0, 0, 0, &state->frame)) return false;
     qa_string_id changemap = io->reading ? QA_STRING_NONE : players->next_map;
     if (!q2_original_string(g, io, "changemap", 204, &changemap)) return false;
@@ -536,12 +536,12 @@ static void classic_null_references(qa_buffer fields, qa_q2_product product, boo
 static bool write_level(qa_q2_game *g, bool transition,
     const qa_q2_save_level *engine, qa_buffer *out, qa_error *error)
 {
-    q2_original_record_io io = {.edition = g->options.edition, .product = g->options.product, .error = error};
+    q2_original_record_io io = {.edition = g->options.rules, .product = g->options.product, .error = error};
     q2_save_io raw = {.game = g, .error = error};
     qa_json_writer writer = {0};
     qa_buffer fields = {0};
     bool okay = true;
-    if (io.edition == QA_Q2_CLASSIC) {
+    if (io.edition == QA_RULESET_Q2_CLASSIC) {
         size_t size = q2_original_entity_size(io.product);
         uint32_t edict_size = (uint32_t)size, init_game = q2_original_library_for(io.product)->init_game;
         okay = q2_save_u32(&raw, &edict_size) && q2_save_u32(&raw, &init_game);
@@ -560,17 +560,17 @@ static bool write_level(qa_q2_game *g, bool transition,
     io.string_tail = &strings;
     q2_original_level_state state = {0};
     if (okay) okay = level_state(g, &io, engine, &state);
-    if (okay && io.edition == QA_Q2_CLASSIC)
+    if (okay && io.edition == QA_RULESET_Q2_CLASSIC)
         okay = q2_save_raw(&raw, fields.data, fields.size) && q2_save_raw(&raw, strings.output.data, strings.output.size);
     qa_buffer_free(&strings.output); strings = (q2_save_io){.game = g, .error = error};
     io.string_tail = &strings;
-    if (io.edition == QA_Q2_RERELEASE) {
+    if (io.edition == QA_RULESET_Q2_RERELEASE) {
         qa_json_writer_end(&writer); qa_json_writer_key(&writer, "entities"); qa_json_writer_object(&writer);
     }
     for (uint32_t slot = 0; okay && slot < g->wire_extent; ++slot) {
         q2_actor *actor = q2_actor_get(g, g->wire_actors[slot], false, NULL);
         if (!actor || (transition && slot > 0 && slot <= g->wire_clients)) continue;
-        if (io.edition == QA_Q2_CLASSIC) {
+        if (io.edition == QA_RULESET_Q2_CLASSIC) {
             okay = q2_save_u32(&raw, &slot);
             fields.size = q2_original_entity_size(io.product);
             memset(fields.data, 0, fields.size); io.output = fields;
@@ -587,13 +587,13 @@ static bool write_level(qa_q2_game *g, bool transition,
                 q2_original_scalar(&io, "inuse", Q2_ORIGINAL_BOOL, 88, 88, 88, &live);
         }
         if (okay) okay = original_edict(g, &io, actor, engine, error);
-        if (okay && io.edition == QA_Q2_CLASSIC)
+        if (okay && io.edition == QA_RULESET_Q2_CLASSIC)
             okay = q2_save_raw(&raw, fields.data, fields.size) &&
                 q2_save_raw(&raw, strings.output.data, strings.output.size);
         strings.offset = strings.output.size = 0;
-        if (io.edition == QA_Q2_RERELEASE) qa_json_writer_end(&writer);
+        if (io.edition == QA_RULESET_Q2_RERELEASE) qa_json_writer_end(&writer);
     }
-    if (okay && io.edition == QA_Q2_CLASSIC) {
+    if (okay && io.edition == QA_RULESET_Q2_CLASSIC) {
         int32_t terminal = -1; okay = q2_save_i32(&raw, &terminal);
     } else if (okay) {
         qa_json_writer_end(&writer); qa_json_writer_end(&writer);
@@ -607,7 +607,7 @@ static bool write_level(qa_q2_game *g, bool transition,
 
 static bool original_player_models(qa_q2_game *game, qa_q2_save_level *engine, qa_error *error)
 {
-    if (game->options.edition != QA_Q2_CLASSIC) return true;
+    if (game->options.rules != QA_RULESET_Q2_CLASSIC) return true;
     /* SP_worldspawn order is also the high byte of s.skinnum. */
     static const char *const base[] = {"#w_blaster.md2", "#w_shotgun.md2", "#w_sshotgun.md2",
         "#w_machinegun.md2", "#w_chaingun.md2", "#a_grenades.md2", "#w_glauncher.md2",
@@ -667,7 +667,7 @@ static bool level_clock(qa_q2_game *g, const q2_original_level_state *state, qa_
         state->time_ns < recipe.initial_time_ns)
         return level_error(error, 0, "Original Q2 level has no admitted native Source clock");
     uint64_t duration = recipe.interval_ns ? recipe.interval_ns : Q2_NS / 10;
-    uint64_t number = g->options.edition == QA_Q2_RERELEASE ? state->time_ns / duration : state->frame;
+    uint64_t number = g->options.rules == QA_RULESET_Q2_RERELEASE ? state->time_ns / duration : state->frame;
     clock.elapsed_ns = state->time_ns - recipe.initial_time_ns;
     clock.debt_ns = 0; clock.frame_number = number;
     clock.frame = (qa_source_frame){.provider = g->options.owner, .kind = recipe.kind,
@@ -771,7 +771,7 @@ static bool level_links(qa_q2_game *g, const q2_original_level_file *file,
         uint32_t solid = actor->physics.solid == QA_PHYSICS_BRUSH ? 3u :
             actor->physics.solid == QA_PHYSICS_TRIGGER ? 1u :
             actor->physics.solid == QA_PHYSICS_NOT_SOLID ? 0u : 2u;
-        collision.contents = qa_collision_q2_source_contents(solid, svflags, g->options.edition == QA_Q2_RERELEASE);
+        collision.contents = qa_collision_q2_source_contents(solid, svflags, g->options.rules == QA_RULESET_Q2_RERELEASE);
         if (!q2_original_source_reference(g, &io, "owner", 256, &collision.owner) ||
             !q2_original_scalar(&io, "linkcount", Q2_ORIGINAL_U32, 92, 92, 92, &links) ||
             !qa_world_set_collision(g->services.world, actor->id,
@@ -813,7 +813,7 @@ bool qa_q2_game_original_read_level(qa_q2_game *game, qa_bytes bytes,
         okay = actor && original_edict(game, &io, actor, engine, error);
     }
     if (okay) {
-        q2_original_record_io io = {.reading = true, .edition = game->options.edition,
+        q2_original_record_io io = {.reading = true, .edition = game->options.rules,
             .product = game->options.product, .document = file.document, .object = file.level_object,
             .input = file.level_fields, .strings = file.level_strings, .error = error};
         okay = level_state(game, &io, engine, &file.state) && level_links(game, &file, engine, error);

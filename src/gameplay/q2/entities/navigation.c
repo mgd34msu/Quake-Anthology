@@ -191,9 +191,9 @@ static bool inspect(void *opaque, qa_actor_id actor, qa_error *error) {
         view.navigation.kind = QA_NAV_ENTITY_TRAIN;
         view.navigation.data.train.origin = body.origin;
         view.navigation.data.train.running = (s->spawnflags & 1u) != 0;
-        qa_vec3 offset = g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 32u)
+        qa_vec3 offset = g->options.rules == QA_RULESET_Q2_RERELEASE && (s->spawnflags & 32u)
             ? qa_v3(0, 0, 0) : qa_vec_scale(source.bounds.mins, -1);
-        if (g->options.edition == QA_Q2_RERELEASE && !(s->spawnflags & 32u) && (s->spawnflags & 16u))
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && !(s->spawnflags & 32u) && (s->spawnflags & 16u))
             offset = qa_vec_sub(offset, qa_v3(1, 1, 1));
         offset = qa_vec_add(offset, qa_vec_sub(body.origin, source.origin));
         if (!route(query, view.controller, offset, &view, error)) return false;

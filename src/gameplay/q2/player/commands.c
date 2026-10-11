@@ -2,7 +2,7 @@
 
 bool qa_q2_player_cheats_allowed(const qa_q2_game *game) {
     const q2_players *players = game ? game->player_runtime : NULL;
-    return players && (!(game->options.edition == QA_Q2_RERELEASE
+    return players && (!(game->options.rules == QA_RULESET_Q2_RERELEASE
                             ? players->rules.max_clients > 1 : game->options.deathmatch) ||
                        players->rules.cheats);
 }
@@ -112,7 +112,7 @@ static bool select_item(qa_q2_game *g, q2_actor *a, int direction, int filter, q
             return false;
         if (owned > 0) {
             a->client->info.selected_item = d->item;
-            if (g->options.edition == QA_Q2_RERELEASE) {
+            if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
                 if (!qa_builtin_resource(&g->services, d->name, &a->selected_item_name, e))
                     return false;
                 a->selected_item_name_until_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
@@ -165,7 +165,7 @@ static bool drop_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d
     if (!d)
         return q2_player_print(g, a->id, 2, "unknown item\n", e);
     if (!d->droppable || (g->options.cooperative && d->coop_stay &&
-                          !(g->options.edition == QA_Q2_RERELEASE &&
+                          !(g->options.rules == QA_RULESET_Q2_RERELEASE &&
                             (g->player_runtime->rules.coop_instanced_items ||
                              g->player_runtime->rules.coop_squad_respawn))))
         return q2_player_print(g, a->id, 2, "Item is not dropable.\n", e);
@@ -293,7 +293,7 @@ static bool write_count(qa_q2_game *g, qa_actor_id actor, qa_item_id item, doubl
 static bool give_lookup(qa_q2_game *g, const char *requested, const char *first,
                         const qa_q2_item_definition **native, qa_q2_supplemental_item *extra) {
     *native = NULL;
-    for (unsigned pass = 0; pass < (g->options.edition == QA_Q2_RERELEASE ? 3u : 2u); ++pass) {
+    for (unsigned pass = 0; pass < (g->options.rules == QA_RULESET_Q2_RERELEASE ? 3u : 2u); ++pass) {
         const char *text = pass == 0 ? requested : first;
         if (!text)
             continue;
@@ -401,7 +401,7 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
                  bool selected, qa_error *e) {
     char requested[1024];
     join_arguments(count, args, requested, sizeof(requested));
-    bool all = equal_name(requested, "all"), rr = g->options.edition == QA_Q2_RERELEASE;
+    bool all = equal_name(requested, "all"), rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     qa_q2_player_services *services = &g->player_runtime->services;
     if (all || (count && equal_name(args[0], "health"))) {
         float health = count == 2  ? (float)argument_integer(args[1])
@@ -650,7 +650,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
     if (equal_name(command, "players") || equal_name(command, "playerlist"))
         return players_list(g, a, equal_name(command, "players"), e);
     if (equal_name(command, "score") || equal_name(command, "help")) {
-        if (g->options.edition == QA_Q2_RERELEASE && !g->options.deathmatch &&
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && !g->options.deathmatch &&
             equal_name(command, "help"))
             return qa_q2_player_help_computer(g, id, e);
         s->rule.show_inventory = false;
@@ -728,7 +728,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         return true;
     }
     if (equal_name(command, "kill")) {
-        if ((g->options.edition == QA_Q2_RERELEASE && s->info.spectator) ||
+        if ((g->options.rules == QA_RULESET_Q2_RERELEASE && s->info.spectator) ||
             g->now_ns < q2_deadline(s->rule.respawn_ns, 5 * Q2_NS))
             return true;
         qa_combat_state combat;
@@ -739,9 +739,9 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
             .attack = {.attacker = id, .inflictor = id, .weapon_provider = g->options.owner,
                 .combat_provider = g->options.owner,
                 .time_ns = g->now_ns,
-                .cause = qa_q2_damage_cause(g->options.edition, g->options.product, 23, 0)}};
+                .cause = qa_q2_damage_cause(g->options.rules, g->options.product, 23, 0)}};
         if (!qa_attack_next(&g->sequence, &suicide.attack, e)) return false;
-        if (g->options.edition == QA_Q2_RERELEASE)
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE)
             suicide.attack.cause.source.q2.no_point_loss = p->rules.teamplay;
         s->info.god = false;
         combat.invulnerable = false;
@@ -750,7 +750,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         if (!q2_actor_live(g, id)) return true;
         if (!qa_combat_set_health(g->services.combat, id, 0, e)) return false;
         if (!q2_actor_live(g, id)) return true;
-        if (g->options.edition == QA_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE) {
             if (!qa_q2_clear_trackers(g, id, e)) return false;
             if (!q2_actor_live(g, id)) return true;
             if (a->powers && a->powers->sphere.registry) {
@@ -788,7 +788,7 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
         return q2_player_print(g, id, 2, names[wave], e);
     }
     if (equal_name(command, "god") ||
-        (g->options.edition == QA_Q2_RERELEASE && equal_name(command, "immortal")) ||
+        (g->options.rules == QA_RULESET_Q2_RERELEASE && equal_name(command, "immortal")) ||
         equal_name(command, "notarget") ||
         equal_name(command, "noclip") || equal_name(command, "give") ||
         equal_name(command, "target")) {

@@ -419,7 +419,7 @@ static const char *scenery_think(qa_q2_game *g, const q2_entity_state *s)
         return s->stage == Q2_BARREL_EXPLODE ? "barrel_explode" :
             s->stage == Q2_BARREL_BURN ? "barrel_burn" :
             s->stage == Q2_BARREL_IDLE ? "barrel_think" :
-            g->options.edition == QA_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE ?
+            g->options.rules == QA_RULESET_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE ?
                 "barrel_start" : "M_droptofloor";
     case Q2S_ROTATING_LIGHT: return "rotating_light_alarm";
     case Q2S_REPAIR: return s->stage == 1 ? "object_repair_dead" :
@@ -574,7 +574,7 @@ static bool entity_motion(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
     if (!io->reading) {
         if (s->kind == Q2E_PLAT) { source.start = m->end; source.end = m->start; }
         else if (s->kind == Q2E_SECRET_DOOR) source.start = m->intermediate;
-        if (angular && io->edition == QA_Q2_RERELEASE) source.motion.direction = m->safe_direction;
+        if (angular && io->edition == QA_RULESET_Q2_RERELEASE) source.motion.direction = m->safe_direction;
     }
     if (!q2_original_record(io, Q2_ORIGINAL_MOVER, &source)) return false;
     bool platform = s->kind == Q2E_PLAT;
@@ -612,7 +612,7 @@ static bool entity_motion(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         m->angular = angular;
         if (angular) {
             m->motion.current_speed = move_speed;
-            if (io->edition == QA_Q2_RERELEASE) m->safe_direction = source.motion.direction;
+            if (io->edition == QA_RULESET_Q2_RERELEASE) m->safe_direction = source.motion.direction;
         } else {
             s->speed = move_speed; s->accel = move_accel; s->decel = move_decel;
         }
@@ -634,7 +634,7 @@ static bool entity_motion(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
         m->motion.angular = m->angular;
         m->motion.accelerated = s->think == Q2ET_MOVE_ACCEL;
     }
-    if (angular && io->edition == QA_Q2_RERELEASE &&
+    if (angular && io->edition == QA_RULESET_Q2_RERELEASE &&
         (!q2_original_scalar(io, "moveinfo.reversing", Q2_ORIGINAL_BOOL,
             UINT16_MAX, UINT16_MAX, UINT16_MAX, &m->reversed) ||
          !q2_original_scalar(io, "moveinfo.end_angles_reversed", Q2_ORIGINAL_VECTOR,
@@ -656,7 +656,7 @@ static bool entity_motion(qa_q2_game *g, q2_original_record_io *io, q2_actor *a)
     if (s->kind == Q2E_SECRET_DOOR && !strcmp(qa_strings_cstr(
         qa_session_strings(g->services.session), s->classname), "func_door_secret2") && !io->reading &&
         !scalar(io, "move_origin", Q2_ORIGINAL_VECTOR, 616, &m->start)) return false;
-    if (!angular && io->edition == QA_Q2_RERELEASE &&
+    if (!angular && io->edition == QA_RULESET_Q2_RERELEASE &&
         !scalar(io, "moveinfo.dest", Q2_ORIGINAL_VECTOR, UINT16_MAX, &m->motion.destination)) return false;
     return true;
 }
@@ -672,7 +672,7 @@ static bool curve_emit(void *context, float distance, qa_error *error)
 
 static bool entity_curve(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
 {
-    if (!s->mover || io->edition != QA_Q2_RERELEASE) return true;
+    if (!s->mover || io->edition != QA_RULESET_Q2_RERELEASE) return true;
     q2_motion *m = &s->mover->motion;
     if (io->reading) {
         bool accelerated;
@@ -764,7 +764,7 @@ static bool entity_callbacks(qa_q2_game *g, q2_original_record_io *io, q2_actor 
     const original_entity_class *type = entity_class(g, s);
     static const char *const fields[] = {"use", "touch", "blocked", "die"};
     static const uint16_t offsets[] = {448, 444, 440, 456};
-    const char *blocked_field = io->edition == QA_Q2_RERELEASE ? "moveinfo.blocked" : "blocked";
+    const char *blocked_field = io->edition == QA_RULESET_Q2_RERELEASE ? "moveinfo.blocked" : "blocked";
     for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i) {
         const char *field = i == 2 ? blocked_field : fields[i];
         if (!io->reading) {
@@ -830,7 +830,7 @@ static bool entity_callbacks(qa_q2_game *g, q2_original_record_io *io, q2_actor 
 static bool entity_turret(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
 {
     if (s->kind != Q2E_TURRET_BREACH && s->kind != Q2E_TURRET_DRIVER &&
-        !(io->edition == QA_Q2_RERELEASE && s->kind == Q2E_TURRET_BASE)) return true;
+        !(io->edition == QA_RULESET_Q2_RERELEASE && s->kind == Q2E_TURRET_BASE)) return true;
     if (!s->turret) {
         s->turret = calloc(1, sizeof(*s->turret));
         if (!s->turret) {
@@ -839,7 +839,7 @@ static bool entity_turret(qa_q2_game *g, q2_original_record_io *io, q2_entity_st
         }
     }
     q2_turret *t = s->turret;
-    if (io->edition == QA_Q2_RERELEASE && s->kind != Q2E_TURRET_DRIVER &&
+    if (io->edition == QA_RULESET_Q2_RERELEASE && s->kind != Q2E_TURRET_DRIVER &&
         !scalar(io, "dmg_radius", Q2_ORIGINAL_F32, 524, &t->rocket_scale)) return false;
     if (s->kind == Q2E_TURRET_BASE) return true;
     if (s->kind == Q2E_TURRET_DRIVER) {
@@ -908,7 +908,7 @@ static bool entity_q64(q2_original_record_io *io, q2_actor *a)
 {
     q2_entity_state *s = a->entity;
     if (s->kind != Q2E_EYE && s->kind != Q2E_CAMERA && s->kind != Q2E_CAMERA_DUMMY) return true;
-    if (io->edition != QA_Q2_RERELEASE)
+    if (io->edition != QA_RULESET_Q2_RERELEASE)
         return entity_error(io, 0, "Q2 camera and eye continuation requires its original rerelease fields");
     if (!s->q64) {
         s->q64 = calloc(1, sizeof(*s->q64));

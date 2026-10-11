@@ -50,7 +50,7 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a)
         a = &local;
-    if (g->options.edition == QA_Q2_CLASSIC)
+    if (g->options.rules == QA_RULESET_Q2_CLASSIC)
         return classic(g, a, credited, clear, e);
     *clear = true;
     if (a->client && a->client->info.noclip)

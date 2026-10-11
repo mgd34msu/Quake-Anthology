@@ -608,7 +608,7 @@ bool application_q2_native_cause_lower(bool rerelease,qa_q2_classic_cause_profil
         else {
             qa_q2_product product = classic == QA_Q2_NATIVE_XATRIX ? QA_Q2_XATRIX :
                 classic == QA_Q2_NATIVE_ROGUE ? QA_Q2_ROGUE : QA_Q2_BASE;
-            lowered = qa_q2_damage_cause(rerelease ? QA_Q2_RERELEASE : QA_Q2_CLASSIC,
+            lowered = qa_q2_damage_cause(rerelease ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC,
                 product, cause->source.q2.means_of_death, cause->source.q2.flags);
             if (!rerelease && classic == QA_Q2_NATIVE_CTF &&
                 lowered.source.q2.native == QA_Q2_CAUSE_CLASSIC &&

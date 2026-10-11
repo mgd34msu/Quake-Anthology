@@ -19,3 +19,13 @@ const char *qa_ruleset_settings_name(qa_ruleset_id ruleset)
     const qa_ruleset_descriptor *descriptor = qa_ruleset_read(ruleset);
     return descriptor ? descriptor->settings_name : NULL;
 }
+
+unsigned qa_ruleset_q2_tag(qa_ruleset_id ruleset)
+{
+    return ruleset == QA_RULESET_Q2_RERELEASE;
+}
+
+qa_ruleset_id qa_ruleset_q2_from_tag(unsigned tag)
+{
+    return tag ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
+}

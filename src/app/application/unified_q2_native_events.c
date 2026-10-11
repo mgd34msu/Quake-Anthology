@@ -177,7 +177,7 @@ bool application_unified_q2_native_builtin(qa_application *app, const qa_builtin
                 {.name = QA_Q2_TEMP_POSITION1, .kind = QA_Q2_TEMP_VECTOR, .vector = v->origin},
                 {.name = QA_Q2_TEMP_POSITION2, .kind = QA_Q2_TEMP_VECTOR, .vector = v->end}};
             qa_unified_presentation_payload temporary = {.kind = QA_UNIFIED_PRESENTATION_Q2_TEMPORARY,
-                .value.q2_temporary = {.type = QA_Q2_TE_LIGHTNING, .rerelease = rules.edition == QA_Q2_RERELEASE,
+                .value.q2_temporary = {.type = QA_Q2_TE_LIGHTNING, .rerelease = rules.edition == QA_RULESET_Q2_RERELEASE,
                     .fields = fields, .field_count = 4}};
             ok = emit(p, &temporary, sim, v->actor, (qa_actor_id){0}, v->time_ns, audience, e);
         } else if (!e || e->code == QA_OK) application_fail(e, QA_ERROR_FORMAT, "Q2 lightning lost its actual GAME rules");

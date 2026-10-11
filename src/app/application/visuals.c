@@ -324,7 +324,7 @@ static bool q2_visual_visible(const qa_application_visual_visibility *v, qa_acto
         state.modelindex = 1;
     }
     return application_q2_visibility_test(app, builtin ? NULL : v->source->state.native.q2_engine,
-        v->q2_source.edition == QA_Q2_RERELEASE, builtin, &v->q2_recipient, &entity,
+        v->q2_source.edition == QA_RULESET_Q2_RERELEASE, builtin, &v->q2_recipient, &entity,
         &state, v->no_vis, out, error);
 }
 

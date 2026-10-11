@@ -60,7 +60,7 @@ bool q2_player_map_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e)
     bool start = !strcmp(name, "info_player_start"), coop = !strcmp(name, "info_player_coop"),
          deathmatch = !strcmp(name, "info_player_deathmatch"),
          intermission = !strcmp(name, "info_player_intermission"),
-         lava = g->options.edition == QA_Q2_RERELEASE && !strcmp(name, "info_player_coop_lava");
+         lava = g->options.rules == QA_RULESET_Q2_RERELEASE && !strcmp(name, "info_player_coop_lava");
     *handled = start || coop || deathmatch || intermission || lava;
     if (!*handled)
         return true;
@@ -81,7 +81,7 @@ bool q2_player_map_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e)
                 (q2_entity_solid(g, a, QA_PHYSICS_BOX, e) &&
                  (!q2_actor_live(g, a->id) || q2_entity_show(g, a, e))));
     }
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         qa_body_state body;
         qa_trace_result hit;
         const qa_bounds bounds = {{-16, -16, -24}, {16, 16, 32}};

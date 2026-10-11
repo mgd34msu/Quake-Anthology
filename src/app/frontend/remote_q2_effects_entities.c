@@ -4,7 +4,7 @@
 
 static uint32_t draw(frontend_remote_q2_effects *o) { return qa_builtin_random_integer(&o->random); }
 static bool rerelease(const frontend_remote_q2_effects *o)
-{ return o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE; }
+{ return o->source.rules==QA_RULESET_Q2_RERELEASE; }
 static bool play(frontend_remote_q2_effects *o,const frontend_remote_q2_effects_pose *p,
     qa_q2_sound_index path,double time,int32_t channel,float volume,float attenuation,qa_error *e)
 { return o->source.sound(o->source.context,qa_audio_bank_q2_name(o->source.sounds, path),p->origin,p->actor,time,channel,volume,attenuation,0,e) && q2fx_source_current(o,e); }

@@ -304,7 +304,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         !application_native_q2_attack_prepare(engine, error)) return false;
     if (!application_native_q2_combat_prepare(engine, error) ||
         !application_q2_control_prepare(engine, error)) return false;
-    qa_ruleset_id dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE;
+    qa_ruleset_id dialect = provider->launch->selection.clock.kind;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
     qa_cvar_options cvars = {.dialect = dialect,

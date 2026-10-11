@@ -154,7 +154,7 @@ static bool command(void *context, qa_net_client_id id, qa_net_seat_id seat,
 static bool info_valid(qa_application_network_q2 *owner, const char *text, qa_error *error)
 {
     size_t length = strlen(text);
-    bool rr = owner->host.source.edition == QA_Q2_RERELEASE;
+    bool rr = owner->host.source.edition == QA_RULESET_Q2_RERELEASE;
     bool enhanced = owner->host.protocol.kind == QA_NET_R1Q2_35 ||
         owner->host.protocol.kind == QA_NET_Q2PRO_36;
     if (length >= (rr ? 2048u : 512u) ||
@@ -452,7 +452,7 @@ bool qa_application_network_q2_unicast(qa_application *app, qa_actor_owner sourc
     qa_clock_state clock;
     if (!engine || !engine->calls || !engine->network_unicast || !app->map_resource ||
         !qa_session_clock(app->session, source, &clock) || clock.frame.provider != source ||
-        clock.frame.kind != (engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE) ||
+        clock.frame.kind != provider->component.clock.kind ||
         (clock.frame.number && (engine->frame.provider != source ||
             engine->frame.number != clock.frame.number || engine->frame.time_ns != clock.frame.time_ns)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 unicast lost its executing Source clock or cache owner");

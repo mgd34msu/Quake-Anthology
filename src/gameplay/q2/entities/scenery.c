@@ -61,7 +61,7 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     qa_vec3 size = qa_vec_scale(qa_vec_sub(body.bounds.maxs, body.bounds.mins), .5f);
-    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!rerelease) {
         body.origin = qa_vec_add(qa_vec_add(body.origin, body.bounds.mins), size);
         if (!q2_entity_body(g, a, &body, false, e)) return false;
@@ -138,7 +138,7 @@ static bool barrel_blast(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         static const struct { q2_runtime_name model; unsigned count; } pieces[] = {
             {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS1_TRIS_MD2, 2},
             {Q2_NAME_RESOURCE_MODELS_OBJECTS_DEBRIS3_TRIS_MD2, 4},
@@ -202,7 +202,7 @@ static bool barrel_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         bool dropped;
         if (!qa_physics_drop_to_floor(g->services.physics, a->id, 256, &dropped, e)) return false;
         if (!q2_actor_live(g, a->id)) return true;
-        if (g->options.edition != QA_Q2_RERELEASE && g->options.product != QA_Q2_ROGUE)
+        if (g->options.rules != QA_RULESET_Q2_RERELEASE && g->options.product != QA_Q2_ROGUE)
             return true;
         s->stage = Q2_BARREL_IDLE;
         return q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
@@ -220,10 +220,10 @@ static bool barrel_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 static bool barrel_die(qa_q2_game *g, q2_actor *a, qa_actor_id attacker, float damage, qa_error *e) {
     q2_entity_state *s = a->entity;
-    if (g->options.edition == QA_Q2_RERELEASE &&
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE &&
         (s->stage == Q2_BARREL_BURN || s->stage == Q2_BARREL_EXPLODE)) return true;
     s->activator = attacker;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         s->stage = damage >= 90 ? Q2_BARREL_EXPLODE : Q2_BARREL_BURN;
         if (s->stage == Q2_BARREL_BURN)
             s->timestamp_ns = q2_deadline(g->now_ns, 750 * Q2_MS);
@@ -447,11 +447,11 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         } else {
             s->usable = s->targetname != 0;
             if (s->usable && (s->spawnflags & 8) &&
-                (g->options.edition == QA_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE))
+                (g->options.rules == QA_RULESET_Q2_RERELEASE || g->options.product == QA_Q2_ROGUE))
                 s->stage = 2;
         }
         if ((s->spawnflags & 1) || !s->targetname ||
-            (g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 16))) {
+            (g->options.rules == QA_RULESET_Q2_RERELEASE && (s->spawnflags & 16))) {
             if (s->health == 0)
                 s->health = 100;
             float mass = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MASS], 75);
@@ -468,15 +468,15 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             s->health = 10;
         if (s->damage == 0)
             s->damage = 150;
-        float default_mass = g->options.edition == QA_Q2_RERELEASE ? 50 : 400;
+        float default_mass = g->options.rules == QA_RULESET_Q2_RERELEASE ? 50 : 400;
         float mass = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_MASS], default_mass);
         if (!health(g, a, s->health, mass != 0 ? mass : default_mass, true, false, e))
             return false;
         a->physics.motion = QA_PHYSICS_STEP;
         s->touchable = true;
-        if (g->options.edition == QA_Q2_RERELEASE) s->noise=g->runtime_names[QA_Q2_SFX_WEAPONS_BFG__L1A];
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) s->noise=g->runtime_names[QA_Q2_SFX_WEAPONS_BFG__L1A];
         q2_entity_schedule(g, a, Q2ET_SCENERY,
-            g->options.edition == QA_Q2_RERELEASE ? .05f : 2 * (float)g->frame_ns / Q2_NS);
+            g->options.rules == QA_RULESET_Q2_RERELEASE ? .05f : 2 * (float)g->frame_ns / Q2_NS);
         return model(g, a, "models/objects/barrels/tris.md2",
                      (qa_bounds){{-16, -16, 0}, {16, 16, 40}}, QA_PHYSICS_BOX, e);
     }
@@ -659,7 +659,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return model(g, a, "models/ships/bigviper/tris.md2",
                          (qa_bounds){{-176, -120, -24}, {176, 120, 72}}, QA_PHYSICS_BOX, e);
         if (!strcmp(name, "misc_teleporter_dest")) {
-            if (g->options.edition == QA_Q2_RERELEASE)
+            if (g->options.rules == QA_RULESET_Q2_RERELEASE)
                 s->visual.scale = .75f;
             return model(g, a, "models/objects/dmspot/tris.md2",
                          (qa_bounds){{-32, -32, -24}, {32, 32, -16}}, QA_PHYSICS_BOX, e);

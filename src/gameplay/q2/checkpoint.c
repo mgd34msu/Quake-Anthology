@@ -41,14 +41,14 @@ bool q2_checkpoint_idle(qa_q2_game *g, qa_error *e) {
 bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_error *e) {
     if (g == NULL || out == NULL || !q2_checkpoint_idle(g, e))
         return false;
-    *out = (qa_q2_runtime_checkpoint){.edition = g->options.edition,
+    *out = (qa_q2_runtime_checkpoint){.rules = g->options.rules,
                                       .product = g->options.product,
                                       .definition_count = g->definition_count,
                                       .arsenal_rules = g->arsenal_rules,
                                       .native_hook = g->native_hook,
-                                      .hook_edition = g->hook_edition,
+                                      .hook_ruleset = g->hook_ruleset,
                                       .equipment_hook_rules = g->equipment_hook_rules,
-                                      .equipment_hook_edition = g->equipment_hook_edition,
+                                      .equipment_hook_ruleset = g->equipment_hook_ruleset,
                                       .random = g->random,
                                       .rerelease_index = g->rerelease_random.index,
                                       .rerelease_draws = g->rerelease_random.draws,
@@ -68,14 +68,14 @@ bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_erro
 }
 bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state, qa_error *e) {
     if (g == NULL || state == NULL ||
-        state->edition != g->options.edition ||
+        state->rules != g->options.rules ||
         state->product != g->options.product || state->widow_shot_phase >= 4 ||
         state->definition_count != g->definition_count ||
         state->definition_count >= QA_Q2_WEAPON_COUNT ||
         state->arsenal_rules != g->arsenal_rules || state->native_hook != g->native_hook ||
-        state->hook_edition != g->hook_edition ||
+        state->hook_ruleset != g->hook_ruleset ||
         state->equipment_hook_rules != g->equipment_hook_rules ||
-        state->equipment_hook_edition != g->equipment_hook_edition ||
+        state->equipment_hook_ruleset != g->equipment_hook_ruleset ||
         state->random.front >= 31 ||
         state->random.rear >= 31 || state->rerelease_index > 624 || state->frame_ns == 0 ||
         (state->widow_damage_multiplier != 1 && state->widow_damage_multiplier != 2 &&
@@ -212,14 +212,14 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         !isfinite(s->weapon_turn.firing_credit) || s->weapon_turn.firing_credit < 0 ||
         s->weapon_turn.firing_credit >= 1 ||
         (s->weapon_turn.firing_weapon == QA_Q2_WEAPON_NONE ? s->weapon_turn.firing_credit != 0 :
-            (g->options.edition != QA_Q2_CLASSIC || s->weapon_turn.firing_weapon != s->weapon.weapon)) ||
+            (g->options.rules != QA_RULESET_Q2_CLASSIC || s->weapon_turn.firing_weapon != s->weapon.weapon)) ||
         ((s->character_immortal || s->character_no_damage_effects) &&
-         g->options.edition != QA_Q2_RERELEASE) ||
+         g->options.rules != QA_RULESET_Q2_RERELEASE) ||
         (s->combat_life_present ? !s->combat_life_owner :
          (s->combat_life_owner || s->combat_life_birth_epoch || s->combat_death_ns ||
           s->combat_no_knockback || s->combat_alive_knockback_only)) ||
-        (s->combat_no_knockback && g->options.edition != QA_Q2_CLASSIC) ||
-        (s->combat_alive_knockback_only && g->options.edition != QA_Q2_RERELEASE) ||
+        (s->combat_no_knockback && g->options.rules != QA_RULESET_Q2_CLASSIC) ||
+        (s->combat_alive_knockback_only && g->options.rules != QA_RULESET_Q2_RERELEASE) ||
         (!s->combat_alive_knockback_only && s->combat_death_ns) ||
         !isfinite(s->alpha) ||
         !qa_vec_finite(s->input.angles) || !isfinite(s->input.gravity) ||
@@ -237,7 +237,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     }
     const qa_q2_projectile_checkpoint *p = &s->projectile;
     if (p->kind > Q2_BFG_LASER ||
-        (p->kind == Q2_BFG_LASER && g->options.edition != QA_Q2_RERELEASE) ||
+        (p->kind == Q2_BFG_LASER && g->options.rules != QA_RULESET_Q2_RERELEASE) ||
         ((p->gib_flags & Q2_GIB_WIDOW_LEGS) != 0 &&
          (p->kind != Q2_GIB || p->frame < 0 || p->frame > 23 ||
           p->phase < 0 || p->phase > 1 || p->expire_ns != UINT64_MAX ||
@@ -253,7 +253,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
          (p->phase < Q2_PROBOSCIS_FLYING || p->phase > Q2_PROBOSCIS_RETURNED)) ||
         (p->kind == Q2_PROBOSCIS_SEGMENT && p->phase != 0) ||
         ((p->kind == Q2_RERELEASE_SPAWN_GROWTH || p->kind == Q2_RERELEASE_SPAWN_BEAM) &&
-         (p->phase != 0 || g->options.edition != QA_Q2_RERELEASE)) ||
+         (p->phase != 0 || g->options.rules != QA_RULESET_Q2_RERELEASE)) ||
         (p->kind == Q2_RERELEASE_SPAWN_GROWTH && p->delay <= 0) ||
         !qa_vec_finite(p->movedir) || !isfinite(p->damage) ||
         !isfinite(p->kick) || !isfinite(p->radius_damage) || !isfinite(p->radius) ||

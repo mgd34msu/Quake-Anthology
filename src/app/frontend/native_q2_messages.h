@@ -12,5 +12,5 @@ bool frontend_native_q2_sound_event(qa_frontend *, const qa_application_protocol
     const qa_unified_q2_protocol_event *, qa_actor_id, qa_error *);
 bool frontend_native_q2_muzzle_sound(qa_frontend *, const qa_application_protocol_event *,
     const qa_application_q2_audience *, const qa_builtin_event *, bool monster,
-    qa_q2_edition, qa_error *);
+    qa_ruleset_id, qa_error *);
 #endif

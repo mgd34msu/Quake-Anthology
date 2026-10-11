@@ -67,7 +67,7 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
             (qa_q2_clear_input(g, a->id, e) && q2_player_trail_step(g, a->id, e));
     q2_client_state *s = a->client;
     q2_players *p = g->player_runtime;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (!s->rule.character_configured && rr && s->rule.awaiting_respawn)
         return (g->now_ns / Q2_MS) % 500 == 0 ? qa_q2_player_spawn(g, a->id, true, NULL, e) : true;
     if (!s->rule.character_configured && g->options.deathmatch &&
@@ -145,7 +145,7 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 bool q2_player_jump(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_error *e) {
     if (!q2_player_sound(g, id, QA_Q2_SFX__JUMP1, 2, e)) return false;
-    return g->options.edition == QA_Q2_RERELEASE || !q2_actor_live(g, id) ||
+    return g->options.rules == QA_RULESET_Q2_RERELEASE || !q2_actor_live(g, id) ||
         q2_player_noise(g, id, origin, false, e);
 }
 typedef struct q2_player_move_completion {
@@ -206,7 +206,7 @@ static bool after_movement(void *context, qa_actor_id id, qa_error *e) {
             !q2_player_update_chase(g, watcher, e))
             return false;
     }
-    if (!s->rule.character_configured && g->options.edition == QA_Q2_RERELEASE &&
+    if (!s->rule.character_configured && g->options.rules == QA_RULESET_Q2_RERELEASE &&
         q2_actor_live(g, id))
         return q2_player_falling(g, a, &m, e);
     return true;
@@ -231,7 +231,7 @@ static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
     if (!q2_actor_live(g, id))
         return true;
     if (controlled) return q2_player_build_view(g, a, &m, e);
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (rr && !qa_q2_entities_player_begin(g, id, e))
         return false;
     if (!q2_actor_live(g, id))
@@ -250,7 +250,7 @@ static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
             s->rule.bob_time = 0;
             s->rule.bob_move = 0;
         } else if (m.grounded)
-            s->rule.bob_move = g->options.edition == QA_Q2_RERELEASE
+            s->rule.bob_move = g->options.rules == QA_RULESET_Q2_RERELEASE
                               ? (float)((double)g->frame_ns / Q2_NS) / (speed > 210   ? .4f
                                                                         : speed > 100 ? .8f
                                                                                       : 1.6f)
@@ -258,7 +258,7 @@ static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
                           : speed > 100 ? .125f
                                         : .0625f;
         s->rule.bob_time += s->rule.bob_move;
-        if (!s->rule.character_configured && g->options.edition == QA_Q2_CLASSIC &&
+        if (!s->rule.character_configured && g->options.rules == QA_RULESET_Q2_CLASSIC &&
             !q2_player_falling(g, a, &m, e))
             return false;
     }
@@ -347,7 +347,7 @@ bool q2_client_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_erro
         s->rule.power_armor_ns = q2_deadline(g->now_ns, 200 * Q2_MS);
     if (q2)
         s->rule.last_damage_ns = q2_deadline(g->now_ns, 2 * Q2_NS);
-    if (g->options.edition == QA_Q2_RERELEASE && s->info.connected) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE && s->info.connected) {
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
@@ -436,7 +436,7 @@ bool q2_client_item_received(qa_q2_game *g, qa_actor_id id, const qa_q2_item_def
     q2_client_state *s = a->client;
     s->rule.bonus_alpha = .25f;
     if (q2_item_usable(d)) {
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             int owned;
             if (!q2_count(g, id, d->item, &owned, e))
                 return false;

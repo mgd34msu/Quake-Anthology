@@ -1,7 +1,7 @@
 #include "internal.h"
 
 static bool post_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    if (g->options.edition == QA_Q2_RERELEASE &&
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE &&
         (a->client->rule.awaiting_respawn || !a->client->rule.visual.visible))
         return true;
     qa_body_state body;
@@ -123,7 +123,7 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (landmark) {
         s->rule.pending_landmark = *landmark;
         s->rule.has_pending_landmark = true;
@@ -403,7 +403,7 @@ bool qa_q2_player_respawn(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     if (!g->options.deathmatch && !g->options.cooperative)
         return q2_player_emit(g, &(qa_q2_player_event){.kind = QA_Q2_PLAYER_LOAD_MENU, .actor = id},
                               e);
-    if ((g->options.edition == QA_Q2_RERELEASE ? !a->client->info.spectator
+    if ((g->options.rules == QA_RULESET_Q2_RERELEASE ? !a->client->info.spectator
                                                : !a->client->info.noclip) &&
         !q2_player_copy_corpse(g, a, e))
         return false;

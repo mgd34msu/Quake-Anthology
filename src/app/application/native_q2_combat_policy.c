@@ -144,23 +144,23 @@ static bool prepare(void *opaque, qa_damage_request *request, bool *allowed,
                 target.birth_epoch, target_q2.birth_preserves_death_knockback, error)) return false;
     }
     if (!target.player || !attacker.player) return true;
-    if (rules.edition == QA_Q2_RERELEASE) {
+    if (rules.edition == QA_RULESET_Q2_RERELEASE) {
         int32_t instagib;
         if (!application_native_q2_combat_integer(policy, APPLICATION_Q2_COMBAT_INSTAGIB, &instagib, error)) return false;
         if (instagib) request->amount = 9999;
     }
     if (qa_actor_id_equal(request->target, request->attack.attacker) ||
-        (rules.edition == QA_Q2_RERELEASE && qa_attack_flags(&request->attack).no_protection))
+        (rules.edition == QA_RULESET_Q2_RERELEASE && qa_attack_flags(&request->attack).no_protection))
         return true;
     bool ctf, lmctf, railgun;
     if (!mode_teams(app, &ctf, &lmctf, &railgun, error)) return false;
     int32_t teamplay = 0;
-    if (rules.edition == QA_Q2_RERELEASE &&
+    if (rules.edition == QA_RULESET_Q2_RERELEASE &&
         !application_native_q2_combat_integer(policy, APPLICATION_Q2_COMBAT_TEAMPLAY, &teamplay, error)) return false;
     bool classic_team = (rules.deathmatch || rules.cooperative) &&
         (rules.deathmatch_flags & (64u | 128u)) != 0;
-    bool same = rules.edition == QA_Q2_RERELEASE && rules.cooperative;
-    bool team_game = rules.edition == QA_Q2_CLASSIC ? classic_team :
+    bool same = rules.edition == QA_RULESET_Q2_RERELEASE && rules.cooperative;
+    bool team_game = rules.edition == QA_RULESET_Q2_CLASSIC ? classic_team :
         ctf || (lmctf && !railgun) || teamplay != 0;
     if (!same && team_game) {
         qa_combat_state attacker_state;
@@ -169,11 +169,11 @@ static bool prepare(void *opaque, qa_damage_request *request, bool *allowed,
     }
     if (same) {
         bool disabled = (rules.deathmatch_flags & 256u) != 0;
-        bool nuke = (rules.edition == QA_Q2_RERELEASE || rules.product == QA_Q2_ROGUE) &&
+        bool nuke = (rules.edition == QA_RULESET_Q2_RERELEASE || rules.product == QA_Q2_ROGUE) &&
             request->attack.cause.kind == QA_CAUSE_Q2 &&
             (((uint32_t)request->attack.cause.source.q2.means_of_death & ~UINT32_C(0x08000000)) == 47);
         if (request->attack.cause.kind == QA_CAUSE_Q2 &&
-            (rules.edition == QA_Q2_RERELEASE || !disabled || nuke)) {
+            (rules.edition == QA_RULESET_Q2_RERELEASE || !disabled || nuke)) {
             request->attack.cause.source.q2.friendly_fire = true;
             request->attack.cause.source.q2.means_of_death |= INT32_C(0x08000000);
             if (request->attack.cause.source.q2.native == QA_Q2_CAUSE_CLASSIC) {
@@ -224,10 +224,10 @@ static bool describe(void *opaque, const qa_damage_request *request,
     if (live_provider(effects) && effects->kind == APPLICATION_PROVIDER_Q2 &&
         qa_q2_combat_actor_read(effects->state.q2, request->target, &effect_q2))
         defender |= effect_q2.defender_sphere;
-    bool early_team = rules.edition == QA_Q2_CLASSIC &&
+    bool early_team = rules.edition == QA_RULESET_Q2_CLASSIC &&
         (rules.deathmatch || rules.cooperative) && (rules.deathmatch_flags & (64u | 128u));
     int32_t damage_scale = 1, teamplay = 0, armor_protect = 0;
-    if (rules.edition == QA_Q2_RERELEASE &&
+    if (rules.edition == QA_RULESET_Q2_RERELEASE &&
         (!application_native_q2_combat_integer(provider,
             target.monster ? APPLICATION_Q2_COMBAT_AI_DAMAGE_SCALE : APPLICATION_Q2_COMBAT_DAMAGE_SCALE, &damage_scale, error) ||
          !application_native_q2_combat_integer(provider, APPLICATION_Q2_COMBAT_TEAMPLAY, &teamplay, error) ||
@@ -243,10 +243,10 @@ static bool describe(void *opaque, const qa_damage_request *request,
             .attacker_player = attacker.player,
             .has_enemy = target_q2.character ? target_q2.has_enemy : qa_actor_reference_present(physical.enemy) != 0,
             .easy_skill = rules.skill == 0, .deathmatch = rules.deathmatch,
-            .rerelease = rules.edition == QA_Q2_RERELEASE,
+            .rerelease = rules.edition == QA_RULESET_Q2_RERELEASE,
             .defender_sphere = defender, .team_damage_enabled = early_team,
             .friendly_fire = (rules.deathmatch_flags & 256u) == 0,
-            .nuke = (rules.edition == QA_Q2_RERELEASE || rules.product == QA_Q2_ROGUE) &&
+            .nuke = (rules.edition == QA_RULESET_Q2_RERELEASE || rules.product == QA_Q2_ROGUE) &&
                 request->attack.cause.kind == QA_CAUSE_Q2 &&
                 (((uint32_t)request->attack.cause.source.q2.means_of_death &
                     ~UINT32_C(0x08000000)) == 47),
@@ -256,11 +256,11 @@ static bool describe(void *opaque, const qa_damage_request *request,
             .movable = physical.motion != QA_PHYSICS_STATIONARY &&
                 physical.motion != QA_PHYSICS_BOUNCE && physical.motion != QA_PHYSICS_PUSH &&
                 physical.motion != QA_PHYSICS_STOP,
-            .reject_team_damage = rules.edition == QA_Q2_CLASSIC && same &&
+            .reject_team_damage = rules.edition == QA_RULESET_Q2_CLASSIC && same &&
                 (ctf || (lmctf && !railgun)),
-            .team_armor_protect = rules.edition == QA_Q2_RERELEASE && same &&
+            .team_armor_protect = rules.edition == QA_RULESET_Q2_RERELEASE && same &&
                 (ctf || (lmctf && !railgun) || teamplay != 0) && armor_protect != 0,
-            .reject_friendly_damage = rules.edition == QA_Q2_RERELEASE &&
+            .reject_friendly_damage = rules.edition == QA_RULESET_Q2_RERELEASE &&
                 (rules.deathmatch_flags & 256u) != 0 && target.player && attacker.player &&
                 !qa_actor_id_equal(request->target, request->attack.attacker) &&
                 (rules.cooperative || ((ctf || (lmctf && !railgun) || teamplay != 0) && same)),
@@ -295,7 +295,7 @@ static bool source_effect(void *opaque, qa_combat *combat, qa_damage_effect_stag
     qa_q2_combat_rules rules;
     if (!source_rules(provider, &rules, error) || combat != provider->application->combat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 damage effect lost its selected source");
-    if (rules.edition != QA_Q2_RERELEASE) return true;
+    if (rules.edition != QA_RULESET_Q2_RERELEASE) return true;
     if (stage == QA_DAMAGE_LETHAL_HEALTH) {
         qa_builtin_actor_traits victim;
         qa_q2_combat_actor victim_q2;
@@ -339,7 +339,7 @@ static bool hit_marker_client(application_provider *provider, qa_actor_id actor,
     if (!live_provider(provider) || provider->kind != APPLICATION_PROVIDER_Q2) return true;
     qa_q2_combat_rules rules;
     if (!source_rules(provider, &rules, error)) return false;
-    if (rules.edition != QA_Q2_RERELEASE) return true;
+    if (rules.edition != QA_RULESET_Q2_RERELEASE) return true;
     return qa_q2_player_hit_marker_add(provider->state.q2, actor, damage, found, error);
 }
 
@@ -396,13 +396,13 @@ static bool source_feedback(void *opaque, qa_combat *combat,
         qa_builtin_actor_traits victim;
         qa_q2_combat_actor victim_q2;
         if (!character_traits(app, request->target, &victim, &victim_q2, error)) return false;
-        if (rules.edition == QA_Q2_RERELEASE && victim_q2.no_damage_effects) return true;
+        if (rules.edition == QA_RULESET_Q2_RERELEASE && victim_q2.no_damage_effects) return true;
         qa_combat_state target;
         if (!qa_combat_read(combat, request->target, &target, error)) return false;
         if (!qa_actors_get(qa_session_actors(app->session), request->target)) return true;
         uint32_t mod = request->attack.cause.kind == QA_CAUSE_Q2 ?
             (uint32_t)request->attack.cause.source.q2.means_of_death & ~UINT32_C(0x08000000) : UINT32_MAX;
-        if (rules.edition == QA_Q2_RERELEASE && target.health > 0 && mod != 30 &&
+        if (rules.edition == QA_RULESET_Q2_RERELEASE && target.health > 0 && mod != 30 &&
             !qa_actor_id_equal(request->target, request->attack.attacker)) {
             qa_actor_collision collision;
             qa_error read_error = {0};
@@ -436,10 +436,10 @@ static bool source_feedback(void *opaque, qa_combat *combat,
             }
         }
         if (feedback->blood == 0) return true;
-        bool mission_effects = rules.edition == QA_Q2_RERELEASE || rules.product == QA_Q2_ROGUE;
+        bool mission_effects = rules.edition == QA_RULESET_Q2_RERELEASE || rules.product == QA_Q2_ROGUE;
         if (mission_effects && victim_q2.mechanical) effect = QA_Q2_DAMAGE_ELECTRIC_SPARKS;
         else if (victim.player || victim.monster) {
-            if ((rules.edition == QA_Q2_RERELEASE || rules.product == QA_Q2_XATRIX) && victim_q2.gekk)
+            if ((rules.edition == QA_RULESET_Q2_RERELEASE || rules.product == QA_Q2_XATRIX) && victim_q2.gekk)
                 effect = QA_Q2_DAMAGE_GREEN_BLOOD;
             else if (mission_effects && mod == 40) effect = QA_Q2_DAMAGE_MORE_BLOOD;
             else effect = QA_Q2_DAMAGE_BLOOD;
@@ -448,7 +448,7 @@ static bool source_feedback(void *opaque, qa_combat *combat,
     }
     }
     qa_vec3 point, normal;
-    if (!application_native_q2_feedback_geometry(rules.edition == QA_Q2_RERELEASE,
+    if (!application_native_q2_feedback_geometry(rules.edition == QA_RULESET_Q2_RERELEASE,
             (uint8_t)effect, request->point, request->normal, &point, &normal, error)) return false;
     return application_emit(app, &(qa_builtin_event){.kind = QA_BUILTIN_PARTICLES,
         .family = QA_GAME_Q2, .provider = provider->owner, .actor = request->target,

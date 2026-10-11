@@ -407,7 +407,7 @@ static bool step(qa_q2_game *g, q2_actor *a, const qa_q2_hand_grenade_input *inp
                                 .definition = &g->definitions[QA_Q2_GRENADES],
                                 .now_ns = now,
                                 .frame_ns = frame,
-                                .rerelease = g->options.edition == QA_Q2_RERELEASE},
+                                .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE},
                        .input = input,
                        .next = a->hand_grenade,
                        .lifecycle = input->lifecycle};

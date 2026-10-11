@@ -83,12 +83,12 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     s->volume = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_VOLUME], 0);
     s->attenuation = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ATTENUATION], 0);
     s->visual = (qa_entity_visual){.scale = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SCALE],
-            g->options.edition == QA_Q2_RERELEASE ? 0 : 1),
+            g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1),
                                .alpha = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ALPHA], 1),
                                .old_frame = -1};
     s->visual.models[0] = q2_field_id(s, g->field_keys[QA_TARGET_KEY_MODEL]);
     s->visual.skin = integer(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SKINNUM], 0));
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         const char *color = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_RGBA]);
         if (!*color)
             color = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY__COLOR]);
@@ -121,7 +121,7 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     }
     if (!a->physics_bound) {
         a->physics = qa_physics_properties_default(QA_GAME_Q2);
-        a->physics.q2_rerelease = g->options.edition == QA_Q2_RERELEASE;
+        a->physics.q2_rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     }
     if (!q2_entity_bind(g, a, e))
         return false;
@@ -133,11 +133,11 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
         return false;
     if (!q2_actor_live(g, id) || *handled)
         return true;
-    if (g->options.edition == QA_Q2_RERELEASE && !q2_q64_spawn(g, a, handled, e))
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE && !q2_q64_spawn(g, a, handled, e))
         return false;
     if (!q2_actor_live(g, id) || *handled)
         return true;
-    if (g->options.edition == QA_Q2_RERELEASE && !q2_rerelease_entity_spawn(g, a, handled, e))
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE && !q2_rerelease_entity_spawn(g, a, handled, e))
         return false;
     if (!q2_actor_live(g, id) || *handled)
         return true;
@@ -176,7 +176,7 @@ static bool entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_acto
     if (a->entity->kind == Q2E_CAMERA)
         return q2_q64_use(g, a, activator, e);
     bool handled;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         if (!q2_rerelease_entity_use(g, a, other, activator, &handled, e))
             return false;
         if (handled || !q2_actor_live(g, id))
@@ -242,7 +242,7 @@ bool q2_entity_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (think >= Q2ET_MOVE_BEGIN && think <= Q2ET_MOVE_ACCEL)
         return q2_move_tick(g, a, think, e);
     bool handled;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         if (!q2_rerelease_entity_think(g, a, think, &handled, e))
             return false;
         if (handled || !q2_actor_live(g, a->id))
@@ -271,7 +271,7 @@ bool q2_entity_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e
         a->physics.solid == QA_PHYSICS_NOT_SOLID)
         return true;
     bool handled;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         if (!q2_rerelease_entity_touch(g, a, contact, &handled, e))
             return false;
         if (handled || !q2_actor_live(g, a->id))
@@ -289,7 +289,7 @@ bool q2_entity_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e
 }
 bool qa_q2_entity_blocked(qa_q2_game *g, qa_actor_id id, qa_actor_id obstacle, qa_error *e) {
     q2_actor *a = q2_ent(g, id);
-    if (a && g->options.edition == QA_Q2_CLASSIC) {
+    if (a && g->options.rules == QA_RULESET_Q2_CLASSIC) {
         qa_actor_id root = qa_actor_reference_present(a->entity->team_master) ? qa_actor_reference_resolve(qa_session_actors(g->services.session), a->entity->team_master) : id;
         size_t count = 0;
         for (q2_actor *part = q2_ent(g, root); part; part = q2_ent(g, qa_actor_reference_resolve(qa_session_actors(g->services.session), part->entity->team_next))) {
@@ -349,11 +349,11 @@ bool q2_entity_before_remove(void *context, qa_actor_id id, qa_error *e) {
     qa_q2_game *g = context;
     q2_actor *a = q2_ent(g, id);
     (void)e;
-    if (!a || (g->options.edition != QA_Q2_RERELEASE && g->options.product != QA_Q2_ROGUE))
+    if (!a || (g->options.rules != QA_RULESET_Q2_RERELEASE && g->options.product != QA_Q2_ROGUE))
         return true;
     if (a->physics.flags & QA_PHYSICS_TEAM_SLAVE) {
         q2_entity_team_unlink(g, a);
-    } else if (g->options.edition == QA_Q2_RERELEASE && a->entity->team) {
+    } else if (g->options.rules == QA_RULESET_Q2_RERELEASE && a->entity->team) {
         const qa_actor_registry *actors = qa_session_actors(g->services.session);
         if (!qa_actor_id_equal(qa_actor_reference_resolve(actors, a->entity->team_master), id))
             return true;
@@ -435,7 +435,7 @@ bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
             member->physics.flags |= QA_PHYSICS_TEAM_SLAVE;
             last = member;
         }
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             for (size_t i = first; i < end; ++i) {
                 q2_actor *train = members[i].actor;
                 if (train->entity->kind != Q2E_TRAIN || !(train->entity->spawnflags & 8) ||

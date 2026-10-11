@@ -6,7 +6,7 @@ bool q2_player_trace(qa_q2_game *g, qa_actor_id pass, qa_vec3 start, qa_vec3 end
                         .end = end,
                         .pass_actor = pass,
                         .shape = {.kind = bounds ? QA_SHAPE_BOX : QA_SHAPE_POINT},
-                        .policy = {.behavior = &qa_trace_behaviors[(g->options.edition == QA_Q2_RERELEASE) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
+                        .policy = {.behavior = &qa_trace_behaviors[g->options.rules],
                                    .contents_mask = qa_collision_contents_mask(mask, QA_GAME_Q2)}};
     if (bounds)
         q.shape.bounds = *bounds;
@@ -172,7 +172,7 @@ static bool single_spawn(qa_q2_game *g, qa_string_id target, bool rr, qa_actor_i
 }
 static bool select_deathmatch(qa_q2_game *g, q2_actor *a, qa_bounds bounds, qa_actor_id *out,
                               qa_error *e) {
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     size_t count = 0;
     qa_actor_id id = {0};
     qa_targets *targets = g->entity_runtime->services.targets;
@@ -348,7 +348,7 @@ static bool coop_trace(qa_q2_game *g, qa_actor_id player, qa_vec3 origin, qa_bou
                             .end = origin,
                             .pass_actor = player,
                             .shape = {.kind = QA_SHAPE_BOX, .bounds = bounds},
-                            .policy = {.behavior = &qa_trace_behaviors[(true) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
+                            .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_RERELEASE],
                                        .contents_mask = qa_collision_contents_mask(excluded ? 0x2010003 : 0x42010003, QA_GAME_Q2)}};
     return excluded ? qa_world_trace_excluding(g->services.world, &query, excluded->ids,
                                                excluded->count, hit, e)
@@ -371,7 +371,7 @@ static bool lava_spawn(qa_q2_game *g, qa_actor_id *out, qa_error *e) {
             body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
         if (!qa_world_point_contents(g->services.world,
                                      &(qa_point_query){.point = center,
-                                                       .policy = {.behavior = &qa_trace_behaviors[(true) ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC],
+                                                       .policy = {.behavior = &qa_trace_behaviors[QA_RULESET_Q2_RERELEASE],
                                                                   .contents_mask = qa_collision_contents_mask(UINT32_MAX, QA_GAME_Q2)}},
                                      &contents, e))
             return false;
@@ -470,7 +470,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
                             qa_error *e) {
     q2_players *p = g->player_runtime;
     q2_client_state *s = a->client;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     *found = false;
     if (s->rule.squad_spawn) {
         s->rule.squad_spawn = false;

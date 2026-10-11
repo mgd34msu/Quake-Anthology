@@ -116,8 +116,7 @@ static bool mode_damage_prepare(void *opaque, qa_mode_id mode,
                 "Mode damage has no actual Q2 cause profile producer");
         if (!qa_q2_combat_rules_read(source->state.q2, &rules) ||
             rules.owner != source->owner ||
-            clock.frame.kind != (rules.edition == QA_Q2_CLASSIC
-                ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE))
+            clock.frame.kind != rules.edition)
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Mode damage lost its actual Q2 GAME rules");
         if (!qa_q2_bot_clock_read(source->state.q2, &now, &intermission, &started, error))

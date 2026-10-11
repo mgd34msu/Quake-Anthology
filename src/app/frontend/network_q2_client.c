@@ -127,7 +127,7 @@ static bool namespace_prepare(void *context,const qa_launch_instance *descriptor
     input.script=false;
     const qa_product *profile=qa_catalog_product(domain->catalog,domain->product);
     if (!profile) return false;
-    input.dialect=profile->edition==QA_EDITION_RERELEASE ? QA_RULESET_Q2_RERELEASE : QA_RULESET_Q2_CLASSIC;
+    input.dialect=qa_product_ruleset(profile,QA_GAME_Q2);
     if (!qa_application_client_provider_command(f->application,owner->receiver,input.seat,&input,
         &domain->command_context,&domain->configuration_generation,error)) return false;
     owner->domain=*domain;

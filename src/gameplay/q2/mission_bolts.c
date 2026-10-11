@@ -27,10 +27,10 @@ bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
         green_radius_context context = {.game = g, .direct = contact->other, .hurt = hurt};
         qa_builtin_radius radius = {
             .attack =
-                q2_projectile_attack(g, id, &p, 0, g->options.edition == QA_Q2_RERELEASE ? 5u : 1u),
+                q2_projectile_attack(g, id, &p, 0, g->options.rules == QA_RULESET_Q2_RERELEASE ? 5u : 1u),
             .origin = body.origin,
             .radius = p.radius,
-            .damage = p.damage * (g->options.edition == QA_Q2_RERELEASE ? 2 : 3),
+            .damage = p.damage * (g->options.rules == QA_RULESET_Q2_RERELEASE ? 2 : 3),
             .distance_scale = 0.5f,
             .self_scale = 1,
             .knockback_scale = 1,
@@ -73,7 +73,7 @@ static bool fire_actor_bolt(qa_q2_game *g, qa_actor_id source, qa_actor_id credi
                            .state = &a->weapon,
                            .now_ns = g->now_ns,
                            .frame_ns = g->frame_ns,
-                           .rerelease = g->options.edition == QA_Q2_RERELEASE,
+                           .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE,
                            .input = {.gravity = 800, .players_collide = true},
                            .has_attack_owner = true,
                            .attack_owner = credited_owner,
@@ -114,7 +114,7 @@ bool q2_fire_actor_rocket(qa_q2_game *g, qa_actor_id source, qa_actor_id credite
                            .now_ns = g->now_ns,
                            .frame_ns = g->frame_ns,
                            .definition = &g->definitions[QA_Q2_ROCKETLAUNCHER],
-                           .rerelease = g->options.edition == QA_Q2_RERELEASE,
+                           .rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE,
                            .input = {.gravity = 800, .players_collide = true},
                            .has_attack_owner = true,
                            .attack_owner = credited_owner,
@@ -149,7 +149,7 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
         return false;
     qa_vec3 forward;
     qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     float nearest = 0, old_dot = 1;
     qa_actor_id best = {0};
     qa_vec3 target_origin = {0};

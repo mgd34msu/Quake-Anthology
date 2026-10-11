@@ -39,7 +39,7 @@ bool q2m_summon_initialize(q2m_context *context, qa_error *error) {
         return q2m_widow_slots(context, error);
     bool source_medic =
         species == Q2M_MEDIC_COMMANDER ||
-        (species == Q2M_MEDIC && (context->game->options.edition == QA_Q2_RERELEASE ||
+        (species == Q2M_MEDIC && (context->game->options.rules == QA_RULESET_Q2_RERELEASE ||
                                   context->game->options.product == QA_Q2_ROGUE));
     if (!source_medic)
         return true;
@@ -147,7 +147,7 @@ static q2m_reinforcement entry_at(const q2m_summon_state *state, size_t index) {
 }
 
 bool q2m_medic_summon_initialize(q2m_context *context, q2m_summon_state *state, qa_error *error) {
-    if (context->game->options.edition == QA_Q2_CLASSIC) {
+    if (context->game->options.rules == QA_RULESET_Q2_CLASSIC) {
         context->monster->monster_slots = context->game->options.skill == 0   ? 3
                                           : context->game->options.skill == 1 ? 4
                                                                               : 6;
@@ -171,7 +171,7 @@ bool q2m_medic_summon_initialize(q2m_context *context, q2m_summon_state *state, 
 static bool choose_squad(q2m_context *context, q2m_summon_state *state, qa_error *error) {
     qa_q2_game *game = context->game;
     state->chosen_count = 0;
-    if (game->options.edition == QA_Q2_CLASSIC) {
+    if (game->options.rules == QA_RULESET_Q2_CLASSIC) {
         float luck = q2m_random(game);
         int strength = game->options.skill + (luck < .05f   ? -3
                                               : luck < .15f ? -2
@@ -523,7 +523,7 @@ typedef enum medic_spawn_stage { MEDIC_DETERMINE, MEDIC_GROW, MEDIC_FINISH } med
 
 static bool medic_positions_pass(q2m_context *context, q2m_summon_state *state, bool behind,
                                  medic_spawn_stage stage, bool *success, qa_error *error) {
-    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
     *success = false;
     for (size_t i = 0; q2m_alive(context) && i < state->chosen_count; ++i) {
         if (!q2m_refresh(context, error))

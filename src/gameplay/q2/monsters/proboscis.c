@@ -355,7 +355,7 @@ static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec
         .expire_ns = UINT64_MAX, .render_flags = segment ? 128 : 0,
         .attack = {.attacker = owner, .weapon_provider = game->options.owner,
                     .combat_provider = game->options.owner,
-                    .cause = qa_q2_damage_cause(game->options.edition, game->options.product, 0, 0)}};
+                    .cause = qa_q2_damage_cause(game->options.rules, game->options.product, 0, 0)}};
     actor->character_no_damage_effects = !segment;
     actor->physics_bound = true;
     actor->physics = qa_physics_properties_default(QA_GAME_Q2);
@@ -435,7 +435,7 @@ bool q2m_parasite_charge(q2m_context *context, float distance, qa_error *error) 
 
 bool q2m_parasite_callback(q2m_context *context, q2m_callback_id name, bool *handled, qa_error *error) {
     *handled = false;
-    if (context->game->options.edition != QA_Q2_RERELEASE ||
+    if (context->game->options.rules != QA_RULESET_Q2_RERELEASE ||
         context->monster->definition->species != Q2M_PARASITE)
         return true;
     *handled = true;

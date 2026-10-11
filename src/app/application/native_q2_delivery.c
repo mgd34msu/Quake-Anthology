@@ -157,15 +157,13 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
     qa_clock_state clock;
     qa_q2_combat_rules rules;
     uint64_t now=0,started; bool intermission;
-    qa_ruleset_id source_kind=original ?
-        (engine->profile==QA_NATIVE_Q2_GAME_API3?QA_RULESET_Q2_CLASSIC:QA_RULESET_Q2_RERELEASE) :
-        source->launch->selection.clock.kind;
+    qa_ruleset_id source_kind=source->component.clock.kind;
     if (!source_current(app,source,world,roster,physical,publication,revision,geometry,routing,preparing) ||
         !geometry || !qa_session_clock(app->session,source->owner,&clock) ||
         clock.frame.provider!=source->owner ||
         clock.frame.kind!=source_kind ||
         (!original && (!qa_q2_combat_rules_read(source->state.q2,&rules) || rules.owner!=source->owner ||
-            source_kind!=(rules.edition==QA_Q2_CLASSIC?QA_RULESET_Q2_CLASSIC:QA_RULESET_Q2_RERELEASE) ||
+            source_kind!=rules.edition ||
             !qa_q2_bot_clock_read(source->state.q2,&now,&intermission,&started,error) ||
             now!=clock.frame.time_ns)) ||
         (original && clock.frame.number &&
@@ -180,7 +178,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         if (physical==source) physical_rules=rules;
         else if (!qa_q2_combat_rules_read(physical->state.q2,&physical_rules))
             return application_fail(error,QA_ERROR_ARGUMENT,"Q2 rail recipient lost its actual physical edition");
-        physical_rerelease=physical_rules.edition==QA_Q2_RERELEASE;
+        physical_rerelease=physical_rules.edition==QA_RULESET_Q2_RERELEASE;
     }
     qa_collision_leaf from={0};
     if (positioned && !qa_collision_point_leaf(geometry,origin, QA_LEAF_COLLISION,&from,error)) return false;

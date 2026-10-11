@@ -24,7 +24,7 @@ static bool fire(qa_q2_game *g, q2_actor *a, q2_actor *driver, const qa_body_sta
                    qa_vec_scale(up, s->muzzle.z)));
     float damage = truncf(100 + q2_random(g) * 50), speed = (float)(550 + 50 * g->options.skill);
     float rocket_scale = 0;
-    bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
     if (rerelease) {
         q2_actor *root = q2_ent(g, qa_actor_reference_resolve(qa_session_actors(g->services.session),
             a->entity->team_master));
@@ -177,7 +177,7 @@ bool q2_turret_think(qa_q2_game *g, q2_actor *a, q2_entity_think think, qa_error
         }
         q2_actor *root = master(g, a);
         root->entity->damage = s->damage;
-        if (g->options.edition == QA_Q2_RERELEASE && root->entity->turret)
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE && root->entity->turret)
             root->entity->turret->rocket_scale = t->rocket_scale;
         return breach_tick(g, a, e);
     }
@@ -224,7 +224,7 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     if (s->kind == Q2E_TURRET_DRIVER && g->options.deathmatch)
         return qa_session_release(g->services.session, a->id, e);
     s->team_master = qa_actor_reference_from_actor(actors, g->options.owner, a->id);
-    if (s->kind != Q2E_TURRET_BASE || g->options.edition == QA_Q2_RERELEASE) {
+    if (s->kind != Q2E_TURRET_BASE || g->options.rules == QA_RULESET_Q2_RERELEASE) {
         s->turret = calloc(1, sizeof(*s->turret));
         if (!s->turret) {
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 turret");
@@ -251,7 +251,7 @@ bool q2_turret_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         if (!qa_world_body_read(g->services.world, a->id, &body, e))
             return false;
         q2_turret *t = s->turret;
-        if (g->options.edition == QA_Q2_RERELEASE) {
+        if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
             t->rocket_scale = s->visual.scale;
             s->visual.scale = 0;
         }

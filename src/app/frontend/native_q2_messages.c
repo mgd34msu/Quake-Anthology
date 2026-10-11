@@ -59,8 +59,7 @@ bool frontend_native_q2_messages(qa_frontend *frontend, qa_error *error)
                     .time_ns = projected.presentation_time_ns, .origin = origin, .code = source->flash,
                     .flags = source->silenced ? 128u : 0u};
                 if (!frontend_native_q2_muzzle_sound(frontend, record, &audience, &event,
-                    source->monster, delivery->profile == QA_NATIVE_Q2_GAME_API3 ?
-                        QA_Q2_CLASSIC : QA_Q2_RERELEASE, error)) return false;
+                    source->monster, qa_ruleset_q2_from_tag(delivery->profile != QA_NATIVE_Q2_GAME_API3), error)) return false;
             } else {
                 const qa_unified_q2_temporary *source = &presentation->value.q2_temporary;
                 qa_q2_temp_entity effect = {.type = source->type, .field_count = source->field_count};

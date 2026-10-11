@@ -4,7 +4,7 @@
 
 static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     q2_client_state *s = a->client;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     bool head = q2_random(g) < .5f;
     s->rule.visual.models[0] = g->runtime_names[head ? Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_HEAD2_TRIS_MD2
                                   : Q2_NAME_RESOURCE_MODELS_OBJECTS_GIBS_SKULL_TRIS_MD2];
@@ -65,7 +65,7 @@ static bool drop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     bool quad = (g->options.deathmatch_flags & 16384) &&
                 powers.quad_until_ns > q2_deadline(g->now_ns, Q2_NS);
     bool quadfire = powers.quad_fire_until_ns > q2_deadline(g->now_ns, Q2_NS);
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE) {
         qa_actor_id id = a->id;
         float no_drop;
         if (!qa_q2_source_value(g, QA_Q2_SOURCE_NO_QUADFIRE_DROP, 0, &no_drop, e)) return false;
@@ -93,7 +93,7 @@ static bool drop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                           .yaw_offset = spread,
                                           .expires_ns = expires[i],
                                           .immediate_touch =
-                                              i == 1 || g->options.edition == QA_Q2_RERELEASE},
+                                              i == 1 || g->options.rules == QA_RULESET_Q2_RERELEASE},
                     0, &dropped, e))
                 return false;
         }
@@ -134,7 +134,7 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!corpse)
         return false;
     p->corpse_index = (p->corpse_index + 1) % 8;
-    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     qa_body_state body;
     qa_combat_state combat, player;
     if (!qa_world_body_read(g->services.world, a->id, &body, e) ||
@@ -263,7 +263,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         !qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
     float damage = outcome->request.amount;
-    bool rr = g->options.edition == QA_Q2_RERELEASE, first = !s->info.dead;
+    bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE, first = !s->info.dead;
     int means = outcome->request.attack.cause.kind == QA_CAUSE_Q2
                     ? outcome->request.attack.cause.source.q2.means_of_death & ~0x8000000
                     : 0;

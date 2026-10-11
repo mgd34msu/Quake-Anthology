@@ -48,7 +48,7 @@ bool frontend_remote_q2_effects_monster_beam(frontend_remote_q2_effects *o, qa_a
     q2fx_source_beam value={0};
     frontend_q2_beam_recipe recipe;
     frontend_q2_beam_recipe_read(QA_Q2_TE_PARASITE_ATTACK,(qa_vec3){0},0,false,&recipe);
-    frontend_q2_beam_retain(&value.beam,1,o->source.profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,
+    frontend_q2_beam_retain(&value.beam,1,o->source.rules==QA_RULESET_Q2_RERELEASE,
         &recipe,actor,(qa_actor_id){0},start,end,time);
     return beam_set(o,&value,e);
 }
