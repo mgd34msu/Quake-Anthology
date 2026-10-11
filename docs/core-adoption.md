@@ -510,6 +510,17 @@ Normal production build and seven core suites pass:
 `/tmp/qa-ta3196-event-tags-20261011-{build,core}.log`. Named Q1/Q2 effect and
 beam recipes in finding 8 still need migration; no installed/live proof is claimed.
 
+Names finding 8, Q1 typed effect slice: the Unified Q1 builtin adapter carries
+its original temporary-entity code and typed muzzle/pickup/blood operation,
+beam index, power index and CTF side directly. The downstream shared Q1 effect
+state consumes those values; manufacturing and comparing fixed effect/beam/
+power/team strings and the redundant name-validation tables are deleted.
+Persistent operation tags compare the application's session IDs. The unreachable
+private Q1_CLIENT event branch is deleted; client observations still come from
+the typed frame roster. Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-q1-typed-effects-20261011-{build,core}.log`. Q2 named recipes and
+color-setting reads in finding 8 remain. No new live/client-session proof.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's
