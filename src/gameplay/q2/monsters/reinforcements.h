@@ -17,7 +17,7 @@ typedef struct q2m_summon_state {
     bool configured;
 } q2m_summon_state;
 
-bool q2m_create_reinforcement(q2m_context *, const char *, qa_vec3, qa_actor_id *, qa_error *);
+bool q2m_create_reinforcement(q2m_context *, const q2m_definition *, qa_vec3, qa_actor_id *, qa_error *);
 bool q2m_widow_slots(q2m_context *, qa_error *);
 bool q2m_widow_summon(q2m_context *, bool second, bool grow, qa_error *);
 bool q2m_widow_attack_move(q2m_context *, bool second, float distance, q2m_move_id *, qa_error *);

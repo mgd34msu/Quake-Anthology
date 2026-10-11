@@ -1161,7 +1161,8 @@ static qa_bounds monster_bounds(const qa_q2_game *game, const q2m_definition *de
   return bounds;
 }
 bool qa_q2_monster_shape(qa_q2_game *game, const char *classname, qa_bounds *bounds, uint32_t *flags) {
-  const q2m_definition *definition = q2m_definition_for(game, classname);
+  const q2m_definition *definition = q2m_definition_for(game, qa_strings_find(qa_session_strings(game->services.session),
+          (qa_bytes){(const uint8_t *)classname, strlen(classname)}));
   if (!definition || !bounds || !flags) return false;
   *bounds = monster_bounds(game, definition);
   *flags = definition->locomotion == Q2M_FLY ? QA_PHYSICS_FLYING :
@@ -1558,7 +1559,8 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     return false;
   }
   const q2m_definition *definition =
-      q2m_definition_for(game, options->classname);
+      q2m_definition_for(game, qa_strings_find(qa_session_strings(game->services.session),
+          (qa_bytes){(const uint8_t *)options->classname, strlen(options->classname)}));
   if (definition == NULL) {
     qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Unknown native Q2 monster %s",
                  options->classname);

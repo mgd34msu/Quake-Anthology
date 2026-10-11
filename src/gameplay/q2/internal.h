@@ -12,6 +12,13 @@
 #include <string.h>
 
 #define Q2_RUNTIME_NAME_LIST(X) \
+    X(MONSTER_FLYER, "monster_flyer") \
+    X(MONSTER_KAMIKAZE, "monster_kamikaze") \
+    X(MONSTER_STALKER, "monster_stalker") \
+    X(PARASITE_PROBOSCIS, "parasite_proboscis") \
+    X(PARASITE_PROBOSCIS_SEGMENT, "parasite_proboscis_segment") \
+    X(PROBOSCIS_TIP_MODEL, "models/monsters/parasite/tip/tris.md2") \
+    X(PROBOSCIS_SEGMENT_MODEL, "models/monsters/parasite/segment/tris.md2") \
     X(RESOURCE_MODELS_CTF_BANNER_SMALL_MD2, "models/ctf/banner/small.md2") \
     X(RESOURCE_MODELS_CTF_BANNER_TRIS_MD2, "models/ctf/banner/tris.md2") \
     X(RESOURCE_MODELS_DEADBODS_DUDE_TRIS_MD2, "models/deadbods/dude/tris.md2") \
@@ -475,6 +482,9 @@ typedef struct q2_push_frame {
 } q2_push_frame;
 struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
+    struct q2m_definition *monster_definitions;
+    size_t monster_definition_count;
+    const struct q2m_definition *medic_definitions[7];
     qa_builtin_services services;
     const qa_string_id *runtime_names;
     qa_string_id lightstyle_bytes[256];

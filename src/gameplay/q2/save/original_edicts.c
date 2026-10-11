@@ -555,8 +555,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
         combat.can_take_damage = damage != 0; combat.invulnerable = (flags & 16u) != 0;
         combat.no_knockback = (flags & 2048u) != 0;
         const qa_actor_record *record = qa_actors_get(qa_session_actors(game->services.session), actor->id);
-        const char *classname = record ? qa_strings_cstr(qa_session_strings(game->services.session), record->definition) : NULL;
-        bool monster = classname && q2m_definition_for(game, classname);
+        bool monster = record && q2m_definition_for(game, record->definition);
         if ((has_combat || damage || actor->monster || monster) &&
             !(has_combat ? (qa_combat_set_health(game->services.combat, actor->id, combat.health, error) &&
                 qa_combat_set_traits(game->services.combat, actor->id, &combat, error)) :

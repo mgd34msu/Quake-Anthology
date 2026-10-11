@@ -29,13 +29,7 @@ bool q2m_summon_has_slots(const struct qa_q2_monster *monster, uint64_t required
            (uint64_t)monster->monster_slots - (uint64_t)monster->monster_used >= required;
 }
 
-static const struct {
-    const char *classname;
-    int strength;
-} medic_defaults[] = {{"monster_soldier_light", 1}, {"monster_soldier", 2},
-                      {"monster_soldier_ss", 2},    {"monster_infantry", 3},
-                      {"monster_gunner", 4},        {"monster_medic", 5},
-                      {"monster_gladiator", 6}};
+static const int medic_strengths[7] = {1, 2, 2, 3, 4, 5, 6};
 static const qa_vec3 medic_positions[] = {
     {80, 0, 0}, {40, 60, 0}, {40, -60, 0}, {0, 80, 0}, {0, -80, 0}};
 
@@ -81,7 +75,7 @@ static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *e
         context->actor->entity ? q2_field_id(context->actor->entity, game->field_keys[QA_TARGET_KEY_REINFORCEMENTS]) : 0;
     const char *text =
         authored ? qa_strings_cstr(qa_session_strings(game->services.session), authored) : NULL;
-    size_t count = authored ? 0 : sizeof(medic_defaults) / sizeof(*medic_defaults);
+    size_t count = authored ? 0 : sizeof(game->medic_definitions) / sizeof(*game->medic_definitions);
     if (text && *text) {
         count = 1;
         for (const char *p = text; *p; ++p)
@@ -100,8 +94,8 @@ static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *e
     for (size_t i = 0; i < count; ++i) {
         if (!authored) {
             const q2m_definition *definition =
-                q2m_definition_for(game, medic_defaults[i].classname);
-            entries[i] = (q2m_reinforcement){definition, medic_defaults[i].strength,
+                game->medic_definitions[i];
+            entries[i] = (q2m_reinforcement){definition, medic_strengths[i],
                                             definition->bounds};
             continue;
         }
@@ -115,7 +109,8 @@ static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *e
             goto invalid;
         memcpy(classname, cursor, length);
         classname[length] = 0;
-        const q2m_definition *definition = q2m_definition_for(game, classname);
+        const q2m_definition *definition = q2m_definition_for(game, qa_strings_find(qa_session_strings(game->services.session),
+                    (qa_bytes){(const uint8_t *)classname, strlen(classname)}));
         if (!definition)
             goto invalid;
         cursor += length;
@@ -194,7 +189,7 @@ static bool choose_squad(q2m_context *context, q2m_summon_state *state, qa_error
         for (size_t i = 0; i < count; ++i) {
             int index = strength - (int)i - (int)(i % 2);
             const q2m_definition *definition =
-                q2m_definition_for(game, medic_defaults[index].classname);
+                game->medic_definitions[index];
             qa_bounds bounds = index == 6 ? (qa_bounds){{-32, -32, -24}, {32, 32, 64}}
                                           : (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
             state->chosen[state->chosen_count++] = (q2m_reinforcement){definition, 1, bounds};
@@ -244,25 +239,23 @@ static bool child_context(qa_q2_game *game, qa_actor_id id, q2m_context *child, 
     return ok || !q2m_alive(child);
 }
 
-bool q2m_create_reinforcement(q2m_context *context, const char *classname, qa_vec3 origin,
+bool q2m_create_reinforcement(q2m_context *context, const q2m_definition *definition, qa_vec3 origin,
                               qa_actor_id *out, qa_error *error) {
     *out = (qa_actor_id){0};
     if (!q2m_alive(context))
         return true;
     qa_q2_game *game = context->game;
-    qa_actor_definition definition;
-    if (!qa_builtin_resource(&game->services, classname, &definition, error))
-        return false;
+    if (!definition) return false;
     if (!q2m_alive(context))
         return true;
     qa_builtin_spawn spawn = {.owner = game->options.owner,
-                              .definition = definition,
+                              .definition = definition->classname_id,
                               .body = {.origin = origin, .angles = context->body.angles}};
     qa_actor_id child;
     if (!qa_builtin_spawn_actor(&game->services, &spawn, &child, error))
         return false;
     qa_q2_monster_spawn_options options = {
-        .classname = classname, .health_multiplier = 1, .summoned = true};
+        .classname = definition->classname, .health_multiplier = 1, .summoned = true};
     if (!qa_q2_monster_spawn(game, child, &options, error)) {
         qa_error ignored = {0};
         (void)qa_session_release(game->services.session, child, &ignored);
@@ -501,7 +494,8 @@ bool q2m_widow_summon(q2m_context *context, bool second, bool grow, qa_error *er
         if (!valid)
             continue;
         qa_actor_id id;
-        if (!q2m_create_reinforcement(context, "monster_stalker", point, &id, error))
+        if (!q2m_create_reinforcement(context, q2m_definition_for(context->game,
+                context->game->runtime_names[Q2_NAME_MONSTER_STALKER]), point, &id, error))
             return false;
         if (!q2m_alive(context))
             return true;
@@ -595,7 +589,7 @@ static bool medic_positions_pass(q2m_context *context, q2m_summon_state *state, 
             continue;
         }
         qa_actor_id id;
-        if (!q2m_create_reinforcement(context, reinforcement.definition->classname, point, &id,
+        if (!q2m_create_reinforcement(context, reinforcement.definition, point, &id,
                                       error))
             return false;
         if (!q2m_alive(context))

@@ -109,10 +109,8 @@ static bool heavy_spike(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 
                              error))
         return false;
     (*out)->state.projectile.kind = Q1_HEAVY_SPIKE;
-    if (qa_builtin_resource(&g->services, "knightspike", &(*out)->classname, error))
-        return true;
-    q1_remove(g, *out, NULL);
-    return false;
+    (*out)->classname = g->runtime_names[Q1_NAME_KNIGHTSPIKE];
+    return true;
 }
 static bool shambler_shot(qa_q1_game *g, q1_actor *e, float y, float z, qa_vec3 offset, bool hands,
                           qa_error *error) {
@@ -589,9 +587,9 @@ bool q1_heavy_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float damag
     qa_q1_target traits;
     if (damage >= health && q1_target(g, attacker, &traits) && traits.player) {
         q1_player *player = q1_player_get(g, attacker);
-        const char *achievements[2] = {
-            player && player->arsenal && player->weapon == QA_Q1_AXE ? "ACH_CLOSE_SHAVE" : NULL,
-            m->source.heavy.lightning_count == 0 ? "ACH_SHAMBLER_DANCE" : NULL};
+        qa_string_id achievements[2] = {
+            player && player->arsenal && player->weapon == QA_Q1_AXE ? g->runtime_names[Q1_NAME_ACH_CLOSE_SHAVE] : QA_STRING_NONE,
+            m->source.heavy.lightning_count == 0 ? g->runtime_names[Q1_NAME_ACH_SHAMBLER_DANCE] : QA_STRING_NONE};
         for (unsigned i = 0; i < 2; ++i)
             if (achievements[i]) {
                 qa_builtin_event event = {.kind = QA_BUILTIN_ACHIEVEMENT,
@@ -599,8 +597,8 @@ bool q1_heavy_pain(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, float damag
                                           .provider = g->options.provider,
                                           .actor = attacker,
                                           .time_ns = g->time_ns};
-                if (!qa_builtin_resource(&g->services, achievements[i], &event.text, error) ||
-                    !qa_builtin_emit(&g->services, &event, error))
+                event.text = achievements[i];
+                if (!qa_builtin_emit(&g->services, &event, error))
                     return false;
             }
     }

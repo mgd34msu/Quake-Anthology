@@ -331,10 +331,8 @@ bool q2_proboscis_tick(qa_q2_game *game, q2_actor *actor, qa_error *error) {
 static bool create_part(q2m_context *context, bool segment, qa_vec3 from, qa_vec3 direction,
                          qa_actor_id owner, q2_actor **out, qa_error *error) {
     qa_q2_game *game = context->game;
-    qa_string_id classname, model;
-    if (!qa_builtin_resource(&game->services, segment ? "parasite_proboscis_segment" : "parasite_proboscis", &classname, error) ||
-        !qa_builtin_resource(&game->services, segment ? "models/monsters/parasite/segment/tris.md2" : "models/monsters/parasite/tip/tris.md2", &model, error))
-        return false;
+    qa_string_id classname = game->runtime_names[segment ? Q2_NAME_PARASITE_PROBOSCIS_SEGMENT : Q2_NAME_PARASITE_PROBOSCIS];
+    qa_string_id model = game->runtime_names[segment ? Q2_NAME_PROBOSCIS_SEGMENT_MODEL : Q2_NAME_PROBOSCIS_TIP_MODEL];
     qa_actor_reference owner_reference = qa_actor_reference_from_actor(qa_session_actors(game->services.session), game->options.owner, owner);
     qa_actor_collision collision = {.family = QA_GAME_Q2, .shape = QA_SHAPE_BOX,
                                     .contents = qa_collision_q2_source_contents(2, 128, true), .owner = owner_reference, .role = QA_COLLISION_SOLID};

@@ -1611,9 +1611,10 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
           ? context->game->now_ns - context->monster->timestamp_ns
           : 0;
   unsigned phase = (unsigned)((elapsed + Q2M_TENTH) / (5 * Q2M_TENTH));
-  const char *classname = phase == 2 ? "monster_kamikaze" : "monster_flyer";
+  const q2m_definition *definition = q2m_definition_for(context->game,
+      context->game->runtime_names[phase == 2 ? Q2_NAME_MONSTER_KAMIKAZE : Q2_NAME_MONSTER_FLYER]);
   qa_actor_id child;
-  if (!q2m_create_reinforcement(context, classname, point, &child, error))
+  if (!q2m_create_reinforcement(context, definition, point, &child, error))
     return false;
   if (!q2m_alive(context))
     return true;

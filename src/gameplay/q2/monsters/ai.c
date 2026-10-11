@@ -147,6 +147,7 @@ bool q2_monsters_init(qa_q2_game *game, qa_error *error) {
                  "Unable to allocate Q2 monster perception runtime");
     return false;
   }
+  if (!q2m_definitions_bind(game, error)) return false;
   game->monster_runtime->services = (qa_q2_monster_services){
       .context = game, .count = campaign_count};
   return true;
@@ -158,6 +159,8 @@ void q2_monsters_close(qa_q2_game *game) {
   q2_monsters_reclaim(game);
   free(game->monster_runtime->trails);
   free(game->monster_runtime->alerts);
+  free(game->monster_definitions);
+  game->monster_definitions = NULL; game->monster_definition_count = 0;
   free(game->monster_runtime);
   game->monster_runtime = NULL;
 }

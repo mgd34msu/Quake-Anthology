@@ -668,7 +668,8 @@ static bool reinforcement_record(qa_q2_game *game, q2_original_record_io *io,
         !q2_original_scalar(io, "maxs", Q2_ORIGINAL_VECTOR, 65535, 65535, 65535, &entry->bounds.maxs))
         return false;
     if (io->reading) {
-        entry->definition = q2m_definition_for(game, classname);
+        entry->definition = q2m_definition_for(game, qa_strings_find(qa_session_strings(game->services.session),
+                (qa_bytes){(const uint8_t *)classname, strlen(classname)}));
         if (!entry->definition)
             return monster_error(io, "monsterinfo.reinforcements", "Unknown original reinforcement classname");
     }
@@ -710,14 +711,10 @@ static bool summons_record(qa_q2_game *game, q2_original_record_io *io,
         state->classic_strength = strength;
         /* Original Rogue stores the selection as plat2flags, not an array.
          * Expand that saved selection without rolling RNG or spawning actors. */
-        static const char *const classes[] = {
-            "monster_soldier_light", "monster_soldier", "monster_soldier_ss", "monster_infantry",
-            "monster_gunner", "monster_medic", "monster_gladiator"
-        };
         state->chosen_count = strength ? (size_t)(strength - 1 + strength % 2) : 1;
         for (size_t i = 0; i < state->chosen_count; ++i) {
             int index = strength - (int)i - (int)(i % 2);
-            const q2m_definition *definition = q2m_definition_for(game, classes[index]);
+            const q2m_definition *definition = game->medic_definitions[index];
             if (!definition)
                 return monster_error(io, "plat2flags", "Original medic choice lacks its native definition");
             qa_bounds bounds = index == 6 ? (qa_bounds){{-32, -32, -24}, {32, 32, 64}} :
@@ -966,15 +963,13 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Original Q2 monster requires its actual Source actor");
         return false;
     }
-    const char *classname = actor->monster && actor->monster->definition ?
-        actor->monster->definition->classname : actor->entity ?
-        qa_strings_cstr(qa_session_strings(game->services.session), actor->entity->classname) : NULL;
-    const q2m_definition *definition = q2m_definition_for(game, classname);
+    const q2m_definition *definition = actor->monster ? actor->monster->definition :
+        actor->entity ? q2m_definition_for(game, actor->entity->classname) : NULL;
     if (!definition) return true;
     bool projectile = false;
     if (!monster_projectile_owner(game, io, actor, &projectile)) return false;
     if (projectile) return true;
-    const char *const *bindings = callbacks_for(game, classname);
+    const char *const *bindings = callbacks_for(game, definition->classname);
     if (!bindings) return monster_error(io, "classname", "Monster has no exact Source callback bindings");
     struct qa_q2_monster *m = actor->monster;
     bool created = false;

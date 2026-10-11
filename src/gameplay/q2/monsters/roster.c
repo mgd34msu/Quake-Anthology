@@ -504,32 +504,37 @@ static const q2m_definition rerelease_soldier_laser =
                       70, Q2M_ATTACK_BEAM, 1, 1000);
 #undef RERELEASE_SOLDIERH
 
-static const q2m_definition *find_definition(const char *classname) {
-  for (size_t i = 0; i < sizeof(definitions) / sizeof(definitions[0]); ++i)
-    if (strcmp(definitions[i].classname, classname) == 0)
-      return &definitions[i];
-  return NULL;
+bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
+  size_t count = sizeof(definitions) / sizeof(definitions[0]);
+  game->monster_definitions = calloc(count, sizeof(*game->monster_definitions));
+  if (!game->monster_definitions) {
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "Loading Q2 monster definitions");
+    return false;
+  }
+  const q2m_definition *const rerelease[] = {&rerelease_soldier_ripper,
+      &rerelease_soldier_hyper, &rerelease_soldier_laser, &rerelease_jorg,
+      &rerelease_gunner, &rerelease_gladb};
+  memcpy(game->monster_definitions, definitions, sizeof(definitions));
+  game->monster_definition_count = count;
+  for (size_t i = 0; i < count; ++i) {
+    q2m_definition *row = game->monster_definitions + i;
+    if (game->options.edition == QA_Q2_RERELEASE)
+      for (size_t j = 0; j < sizeof(rerelease) / sizeof(*rerelease); ++j)
+        if (!strcmp(row->classname, rerelease[j]->classname)) { *row = *rerelease[j]; break; }
+    if (!qa_builtin_resource(&game->services, row->classname, &row->classname_id, error)) return false;
+    static const q2m_species medic_species[7] = {Q2M_SOLDIER_LIGHT, Q2M_SOLDIER,
+        Q2M_SOLDIER_SS, Q2M_INFANTRY, Q2M_GUNNER, Q2M_MEDIC, Q2M_GLADIATOR};
+    for (size_t j = 0; j < 7; ++j)
+      if (row->species == medic_species[j]) game->medic_definitions[j] = row;
+  }
+  return true;
 }
 
-const q2m_definition *q2m_definition_for(const qa_q2_game *game,
-                                         const char *classname) {
-  if (game == NULL || classname == NULL)
-    return NULL;
-  if (game->options.edition == QA_Q2_RERELEASE) {
-    if (strcmp(classname, "monster_soldier_ripper") == 0)
-      return &rerelease_soldier_ripper;
-    if (strcmp(classname, "monster_soldier_hypergun") == 0)
-      return &rerelease_soldier_hyper;
-    if (strcmp(classname, "monster_soldier_lasergun") == 0)
-      return &rerelease_soldier_laser;
-    if (strcmp(classname, "monster_jorg") == 0)
-      return &rerelease_jorg;
-    if (strcmp(classname, "monster_gunner") == 0)
-      return &rerelease_gunner;
-    if (strcmp(classname, "monster_gladb") == 0)
-      return &rerelease_gladb;
-  }
-  return find_definition(classname);
+const q2m_definition *q2m_definition_for(const qa_q2_game *game, qa_string_id classname) {
+  if (!game || !classname) return NULL;
+  for (size_t i = 0; i < game->monster_definition_count; ++i)
+    if (game->monster_definitions[i].classname_id == classname) return game->monster_definitions + i;
+  return NULL;
 }
 
 static const char *base_move_set(const qa_q2_game *game, q2m_species species) {
