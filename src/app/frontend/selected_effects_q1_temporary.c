@@ -2,18 +2,11 @@
 #include <math.h>
 #include <string.h>
 
-bool frontend_fx_q1_resources_bind(qa_strings *strings, frontend_fx_q1_resources *out, qa_error *error)
-{
-    static const char *const sounds[FRONTEND_FX_Q1_SOUND_COUNT]={NULL,
-        "weapons/r_exp3.wav", "weapons/tink1.wav", "weapons/ric1.wav",
-        "weapons/ric2.wav", "weapons/ric3.wav", "wizard/hit.wav", "hknight/hit.wav"};
-    static const uint8_t beams[]={5,6,9,13};
-    for (size_t i=1;i<FRONTEND_FX_Q1_SOUND_COUNT;++i)
-        if (!qa_strings_intern_cstr(strings,sounds[i],out->sounds+i,error)) return false;
-    for (size_t i=0;i<4;++i)
-        if (!qa_strings_intern_cstr(strings,frontend_fx_q1_beam_model(beams[i]),out->beams+i,error)) return false;
-    return true;
-}
+const uint8_t frontend_fx_q1_beam_types[QA_Q1_BEAM_MODELS] = {
+#define Q1_BEAM_TYPE(index, type, path) [index] = type,
+    QA_Q1_BEAM_NAMES(Q1_BEAM_TYPE)
+#undef Q1_BEAM_TYPE
+};
 
 void frontend_fx_q1_state_initialize(frontend_fx_q1_state *state, size_t lights, size_t beams)
 {
@@ -177,17 +170,17 @@ bool frontend_fx_q1_entity_light(qa_builtin_random *random, qa_vec3 origin, qa_v
 
 int frontend_fx_q1_beam_index(uint8_t type)
 {
-    switch (type) {
-    case 5: return 0;
-    case 6: return 1;
-    case 9: return 2;
-    case 13: return 3;
-    default: return -1;
-    }
+    for (size_t i=0;i<QA_Q1_BEAM_MODELS;++i)
+        if (frontend_fx_q1_beam_types[i]==type) return (int)i;
+    return -1;
 }
 const char *frontend_fx_q1_beam_model(uint8_t type)
 {
-    static const char *const models[]={"progs/bolt.mdl","progs/bolt2.mdl","progs/bolt3.mdl","progs/beam.mdl"};
+    static const char *const models[QA_Q1_BEAM_MODELS]={
+#define Q1_BEAM_PATH(index, type, path) [index] = path,
+        QA_Q1_BEAM_NAMES(Q1_BEAM_PATH)
+#undef Q1_BEAM_PATH
+    };
     int index=frontend_fx_q1_beam_index(type);
     return index<0?NULL:models[index];
 }

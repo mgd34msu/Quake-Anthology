@@ -24,7 +24,6 @@
 #include <string.h>
 
 enum { Q1_LIGHTS=64, Q1_BEAMS=32, Q1_POWERS=9, Q1_PROMPT_CHOICES=65536 };
-static const uint8_t q1_beam_types[]={5,6,9,13};
 typedef enum q1_event_kind {
     Q1_PARTICLES,Q1_EFFECT,Q1_COLORS,Q1_BEAM,Q1_STYLE,Q1_STATIC,Q1_WEAPON,
     Q1_POWER,Q1_MESSAGE,Q1_STOP,Q1_AMBIENT,Q1_SOUND,Q1_CTF_STATUS,Q1_CTF_CAPTURE,
@@ -95,7 +94,6 @@ typedef struct q1_group {
     char language[64];
     frontend_fx_q1_state effects;
     qa_scene_image *particle_image;
-    frontend_fx_q1_resources resources;
     q1_static *statics;
     q1_ambient *ambient;
     const char *styles[256];
@@ -330,7 +328,6 @@ static bool group(frontend_unified_q1 *o,qa_string_id name,q1_activation *owner,
     g->content=qa_strings_cstr(o->replica->strings,g->content_name);
     if(!g->content || !frontend_unified_media_files(o->media,name,&files,&g->product,e) || g->product->family!=QA_GAME_Q1 ||
         !frontend_unified_media_bank(o->media,g->content_name,&g->images,&g->materials,&fonts,&g->sounds,e)) {free(g);return false;}
-    if (!frontend_fx_q1_resources_bind(o->replica->strings,&g->resources,e)) {free(g);return false;}
     g->parent=o;g->files=files;g->activation=owner;frontend_fx_q1_state_initialize(&g->effects,Q1_LIGHTS,Q1_BEAMS);q1_group **tail=&o->groups;while(*tail) tail=&(*tail)->next;*tail=g;*out=g;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     frontend_q1_help_bind_source(o->frontend->seats+domain->physical_seat,g->images);return true;
@@ -385,7 +382,7 @@ static qa_scene_image_options model_options(void)
 static bool effect_sound(frontend_unified_q1 *o,q1_group *g,const q1_event *p,frontend_fx_q1_sound sound,qa_error *e)
 {
     if(!o->events)return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q1 effect sound lost its actual CLIENT event/audio owner");
-    return frontend_unified_events_sound_name(o->events,g->content_name,g->resources.sounds[sound],
+    return frontend_unified_events_sound_name(o->events,g->content_name,qa_application_ui_names_read(o->frontend->application)->q1_temp_sounds[sound],
         (qa_actor_id){0},p->origin,p->seconds*1000,0,1,1,0,e);
 }
 static bool pose_angles(frontend_unified_q1 *o,qa_actor_id actor,qa_vec3 *angles,bool *found,qa_error *e)
@@ -623,7 +620,7 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         if(ok && p.kind==Q1_EFFECT && p.effect==Q1_FX_PICKUP && owns(o,&p,e))o->bonus_until=p.seconds+.5;
         break;}
     case Q1_BEAM: {
-        qa_q1_temp beam={.kind=QA_Q1_TEMP_BEAM,.type=q1_beam_types[p.index],
+        qa_q1_temp beam={.kind=QA_Q1_TEMP_BEAM,.type=frontend_fx_q1_beam_types[p.index],
             .origin={p.origin.x,p.origin.y,p.origin.z},.end={p.end.x,p.end.y,p.end.z}};
         (void)frontend_fx_q1_state_beam(&g->effects,p.actor,false,&beam,p.seconds,
             qa_builtin_random_integer(&o->random));
@@ -866,7 +863,7 @@ bool frontend_unified_q1_world_models(frontend_unified_q1 *o,const qa_scene_worl
         }
         for(size_t i=0;ok && i<Q1_BEAMS;++i) {frontend_fx_q1_beam *b=g->effects.beams+i;if(b->die<=world->seconds)continue;qa_actor_id actual;
             ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),b->actor,false,&actual,e);if(!ok)break;
-            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content_name,g->resources.beams[frontend_fx_q1_beam_index(b->type)],QA_GAME_Q1,&images,&model,e);if(!ok)break;
+            frontend_unified_model model;qa_scene_image_options images=model_options();ok=frontend_unified_media_model(o->media,g->content_name,qa_application_ui_names_read(o->frontend->application)->q1_beam_models[frontend_fx_q1_beam_index(b->type)],QA_GAME_Q1,&images,&model,e);if(!ok)break;
             frontend_fx_q1_beam_cursor cursor;frontend_fx_q1_beam_begin(&cursor,b->start,b->end);
             qa_builtin_random roll;qa_builtin_random_seed(&roll,b->roll_seed);
             qa_model_transform placement;

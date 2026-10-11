@@ -31,7 +31,7 @@ struct frontend_remote_q1_effects {
     frontend_received_music *music;
     bool music_retiring;
     frontend_fx_q1_state state;
-    frontend_fx_q1_resources resources;
+    remote_q1_model *beam_models[QA_Q1_BEAM_MODELS];
     qa_builtin_random random;
     qa_scene_image *image;
     remote_ambient *ambient;
@@ -51,6 +51,7 @@ static void reset(frontend_remote_q1_effects *fx)
     frontend_fx_q1_state_initialize(&fx->state, LIGHTS, BEAMS);
     qa_builtin_random_seed(&fx->random,1);
     fx->image=NULL;fx->audio=NULL;fx->ambient_count=fx->trail_count=0;
+    memset(fx->beam_models,0,sizeof(fx->beam_models));
     memset(fx->scene_lights,0,sizeof(fx->scene_lights));fx->sample=0;
     fx->sampled_seconds=fx->previous_sample=fx->bonus_until=0;fx->sampled=false;
 }
@@ -60,8 +61,7 @@ bool remote_q1_effects_prepare(frontend_remote_q1 *row, qa_error *error)
     frontend_remote_q1_effects *fx = calloc(1, sizeof(*fx));
     if (!fx) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining received Q1 effects");
     size_t ambient_bytes=EFFECT_RECORDS*sizeof(*fx->ambient),trail_bytes=EFFECT_RECORDS*sizeof(*fx->trails);
-    bool okay=frontend_fx_q1_resources_bind(qa_session_strings(qa_application_session(row->frontend->application)),&fx->resources,error) &&
-        qa_arena_reserve(&fx->storage,ambient_bytes+trail_bytes+256,error);
+    bool okay=qa_arena_reserve(&fx->storage,ambient_bytes+trail_bytes+256,error);
     if (okay) {
         fx->ambient=qa_arena_alloc(&fx->storage,ambient_bytes,_Alignof(remote_ambient),error);
         fx->trails=qa_arena_alloc(&fx->storage,trail_bytes,_Alignof(remote_trail),error);
@@ -71,6 +71,21 @@ bool remote_q1_effects_prepare(frontend_remote_q1 *row, qa_error *error)
     qa_arena_seal(&fx->storage);fx->ambient_capacity=fx->trail_capacity=EFFECT_RECORDS;
     reset(fx);
     row->effects = fx;
+    return true;
+}
+bool remote_q1_effects_media_prepare(frontend_remote_q1 *row, qa_error *error)
+{
+    const qa_application_ui_names *names=qa_application_ui_names_read(row->frontend->application);
+    qa_strings *strings=qa_session_strings(qa_application_session(row->frontend->application));
+    for (size_t i=0;i<QA_Q1_BEAM_MODELS;++i) {
+        qa_error missing={0};
+        const char *path=qa_strings_cstr(strings,names->q1_beam_models[i]);
+        if (!remote_q1_model_read(row,&(frontend_remote_q1_entity_view){.model=path},
+                row->effects->beam_models+i,&missing) && missing.code!=QA_ERROR_NOT_FOUND) {
+            if (error) *error=missing;
+            return false;
+        }
+    }
     return true;
 }
 static qa_vec3 vector(const float value[3]) { return qa_v3(value[0], value[1], value[2]); }
@@ -193,7 +208,7 @@ bool remote_q1_event_present(frontend_remote_q1 *row, const qa_nq_message *messa
                 &message->data.temporary, (qa_actor_id){0}, true,
                 qa_q1_is_qw(row->protocol), row->seconds, &sound_kind))
             return remote_q1_fail(error, QA_ERROR_FORMAT, "Unsupported received Q1 temporary effect");
-        return !sound_kind || sound(row, row->effects->resources.sounds[sound_kind], 0, vector(message->data.temporary.origin),
+        return !sound_kind || sound(row, qa_application_ui_names_read(row->frontend->application)->q1_temp_sounds[sound_kind], 0, vector(message->data.temporary.origin),
             0, 1, 1, false, false, error);
     }
     case QA_NQ_BONUSFLASH:
@@ -359,10 +374,10 @@ bool remote_q1_effects_scene(frontend_remote_q1 *row,double seconds,
 static bool beam(frontend_remote_q1 *row,const frontend_fx_q1_beam *value,const qa_scene_view *view,
     const qa_scene_world_input *world,qa_vec3 viewer_origin,qa_error *error)
 {
-    const char *path=frontend_fx_q1_beam_model(value->type);
-    if(!path) return remote_q1_fail(error,QA_ERROR_FORMAT,"Q1 beam has no Source model");
-    remote_q1_model *model;
-    if(!remote_q1_model_read(row,&(frontend_remote_q1_entity_view){.model=path},&model,error)) return false;
+    int index=frontend_fx_q1_beam_index(value->type);
+    remote_q1_model *model=index<0?NULL:row->effects->beam_models[index];
+    if (!model) return true;
+    const char *path=model->path;
     qa_vec3 start=value->start;
     if(value->source_entity==row->view_entity) start=viewer_origin;
     frontend_fx_q1_beam_cursor cursor;

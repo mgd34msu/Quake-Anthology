@@ -1,19 +1,9 @@
 #ifndef QA_FRONTEND_SELECTED_EFFECTS_Q1_TEMPORARY_H
 #define QA_FRONTEND_SELECTED_EFFECTS_Q1_TEMPORARY_H
 #include "selected_effects_particles.h"
-#include "qa/strings.h"
+#include "qa/application_ui_names.h"
 
-typedef enum frontend_fx_q1_sound {
-    FRONTEND_FX_Q1_SOUND_NONE, FRONTEND_FX_Q1_SOUND_EXPLOSION,
-    FRONTEND_FX_Q1_SOUND_TINK, FRONTEND_FX_Q1_SOUND_RIC1,
-    FRONTEND_FX_Q1_SOUND_RIC2, FRONTEND_FX_Q1_SOUND_RIC3,
-    FRONTEND_FX_Q1_SOUND_WIZARD, FRONTEND_FX_Q1_SOUND_KNIGHT,
-    FRONTEND_FX_Q1_SOUND_COUNT
-} frontend_fx_q1_sound;
-typedef struct frontend_fx_q1_resources {
-    qa_string_id sounds[FRONTEND_FX_Q1_SOUND_COUNT], beams[4];
-} frontend_fx_q1_resources;
-bool frontend_fx_q1_resources_bind(qa_strings *, frontend_fx_q1_resources *, qa_error *);
+extern const uint8_t frontend_fx_q1_beam_types[QA_Q1_BEAM_MODELS];
 
 typedef struct frontend_fx_q1_light_recipe {
     float radius, decay, minimum;

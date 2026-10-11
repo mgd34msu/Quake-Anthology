@@ -1,5 +1,6 @@
 #include "remote_q1_private.h"
 #include "remote_q1_prediction.h"
+#include "remote_q1_effects.h"
 #include "internal.h"
 #include "shared_resource_policy.h"
 #include "visual_access.h"
@@ -66,7 +67,7 @@ bool remote_q1_media_prepare(frontend_remote_q1 *row, qa_error *error)
         qa_audio_asset_release(asset);
     }
     frontend_q1_help_bind_source(row->frontend->seats+row->options.domain.physical_seat,row->images);
-    return true;
+    return remote_q1_effects_media_prepare(row,error);
 }
 bool remote_q1_sky_load(frontend_remote_q1 *row, qa_error *error)
 {

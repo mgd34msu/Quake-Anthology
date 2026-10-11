@@ -4,6 +4,7 @@
 
 typedef struct frontend_remote_q1_effects frontend_remote_q1_effects;
 bool remote_q1_effects_prepare(frontend_remote_q1 *,qa_error *);
+bool remote_q1_effects_media_prepare(frontend_remote_q1 *,qa_error *);
 bool remote_q1_effects_destroy(frontend_remote_q1 *,qa_error *);
 bool remote_q1_event_present(frontend_remote_q1 *, const qa_nq_message *, qa_error *);
 bool remote_q1_effects_clear(frontend_remote_q1 *, qa_error *);

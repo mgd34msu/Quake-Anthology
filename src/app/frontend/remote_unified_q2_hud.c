@@ -3,6 +3,7 @@
 #include "remote_unified_save.h"
 #include "save_private.h"
 #include "qa/hud.h"
+#include "qa/application_ui_names.h"
 #include "qa/ui_preferences.h"
 #include "qa/caption_save.h"
 #include "qa/text.h"
@@ -61,7 +62,6 @@ struct frontend_unified_q2_rr_hud {
     frontend_remote_unified *replica;
     frontend_unified_media *media;
     frontend_unified_events *events;
-    qa_string_id talk_sound;
     qa_localization_pool *localizations;
     qa_arena storage;
     qa_pool text_pages, bar_records;
@@ -400,7 +400,7 @@ static bool objective_apply(frontend_unified_q2_rr_hud *o, rr_record *r, qa_erro
         o->pending_printed=true;
     }
     if (!o->pending_sound && pending->value.objective.talk) {
-        if (!frontend_unified_events_sound_name(o->events,pending->content_name,o->talk_sound,(qa_actor_id){0},
+        if (!frontend_unified_events_sound_name(o->events,pending->content_name,qa_application_ui_names_read(o->frontend->application)->talk_sound,(qa_actor_id){0},
             qa_v3(0,0,0),pending->seconds*1000,0,1,0,0,e)) return false;
         o->pending_sound=true;
     }
@@ -507,8 +507,7 @@ bool frontend_unified_q2_rr_create(qa_frontend *f, frontend_remote_unified *repl
     frontend_unified_q2_rr_hud *o=calloc(1,sizeof(*o));
     if (!o) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Creating actual received RR HUD owner");
     qa_arena_init(&o->storage,0);
-    if (!qa_strings_intern_cstr(replica->strings,"misc/talk.wav",&o->talk_sound,e) ||
-        !qa_pool_prepare(&o->text_pages,&o->storage,4096,4096,_Alignof(max_align_t),e) ||
+    if (!qa_pool_prepare(&o->text_pages,&o->storage,4096,4096,_Alignof(max_align_t),e) ||
         !qa_pool_prepare(&o->bar_records,&o->storage,
             qa_actors_capacity(frontend_remote_unified_registry(replica)),sizeof(rr_bar),_Alignof(rr_bar),e)) {
         qa_arena_destroy(&o->storage); free(o); return false;

@@ -159,8 +159,16 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
     qa_application_ui_names *names = &app->ui_names;
     qa_strings *strings = qa_session_strings(app->session);
     if (!qa_application_content_names_bind(app,app->catalog,error) || !q2_effect_names_prepare(app,error)) return false;
+#define Q1_SOUND_BIND(name, path) \
+    if (!qa_strings_intern_cstr(strings,path,&names->q1_temp_sounds[FRONTEND_FX_Q1_SOUND_##name],error)) return false;
+    QA_Q1_TEMP_SOUND_NAMES(Q1_SOUND_BIND)
+#undef Q1_SOUND_BIND
+#define Q1_BEAM_BIND(index, type, path) \
+    if (!qa_strings_intern_cstr(strings,path,&names->q1_beam_models[index],error)) return false;
+    QA_Q1_BEAM_NAMES(Q1_BEAM_BIND)
+#undef Q1_BEAM_BIND
     const struct { const char *text; qa_string_id *id; } events[] = {
-        {"music", &names->music}, {"q1:fog", &names->fog},
+        {"music", &names->music}, {"q1:fog", &names->fog}, {"misc/talk.wav", &names->talk_sound},
         {"misc/flare.tga", &names->flare_image}, {"default", &names->material_default}, {"ladder", &names->material_ladder},
         {"debug-bounds", &names->debug_bounds}, {"colored-explosion", &names->colored_explosion},
         {"developer-message", &names->developer_message}, {"cutscene", &names->cutscene},

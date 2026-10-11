@@ -661,19 +661,23 @@ bool frontend_unified_events_audio_actor(frontend_unified_events *o,qa_actor_id 
         return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Unified audio actor is outside its private received ledger");
     return o->options.audio_actor(o->options.context,actor_id,id,e);
 }
+static bool resolve_sound_asset(frontend_unified_events *o,qa_string_id content_name,qa_string_id path,
+    qa_audio_asset **asset,qa_error *e)
+{
+    qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
+    qa_vfs *files; const qa_product *product;
+    if (!frontend_unified_media_files(o->media,content_name,&files,&product,e) ||
+        !frontend_unified_media_bank(o->media,content_name,&images,&materials,&fonts,&bank,e)) return false;
+    qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
+    return qa_audio_bank_register_id(bank,path,family,asset,e);
+}
 bool frontend_unified_events_sound_name(frontend_unified_events *o,qa_string_id content_name,qa_string_id path,
     qa_actor_id actor_id,qa_vec3 origin,double ms,int32_t channel,float volume,float attenuation,double delay,qa_error *e)
 {
     if (!o || !content_name || !path || !isfinite(ms) || !isfinite(delay) || !execution_current(o,e)) return false;
-    qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
-    qa_vfs *files; const qa_product *product;
-    if (
-        !frontend_unified_media_files(o->media,content_name,&files,&product,e) ||
-        !frontend_unified_media_bank(o->media,content_name,&images,&materials,&fonts,&bank,e)) return false;
-    qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_audio_asset *asset=NULL;
-    if (!qa_audio_bank_register_id(bank,path,family,&asset,e)) return false;
-    if (!asset) return true; /* Retains the genuine bank's optional-miss policy. */
+    if (!resolve_sound_asset(o,content_name,path,&asset,e)) return false;
+    if (!asset) return true;
     bool okay = frontend_unified_events_sound_asset(o, asset, actor_id, origin, ms,
         channel, volume, attenuation, delay, e);
     qa_audio_asset_release(asset); return okay;
@@ -765,14 +769,8 @@ bool frontend_unified_events_sound_loop_name(frontend_unified_events *o,qa_strin
 {
     if (!o || !content_name || !path || !isfinite(ms) || !qa_vec_finite(origin) || !qa_vec_finite(velocity) ||
         !isfinite(volume) || !isfinite(attenuation) || !execution_current(o,e)) return false;
-    qa_scene_resources *images; qa_material_library *materials; qa_font_library *fonts; qa_audio_bank *bank;
-    qa_vfs *files; const qa_product *product;
-    if (
-        !frontend_unified_media_files(o->media,content_name,&files,&product,e) ||
-        !frontend_unified_media_bank(o->media,content_name,&images,&materials,&fonts,&bank,e)) return false;
-    qa_game_family family=product->family==QA_GAME_Q1?QA_GAME_Q1:product->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
     qa_audio_asset *asset=NULL;
-    if (!qa_audio_bank_register_id(bank,path,family,&asset,e)) return false;
+    if (!resolve_sound_asset(o,content_name,path,&asset,e)) return false;
     if (!asset) return true;
     bool okay=frontend_unified_events_sound_loop_asset(o,asset,actor_id,origin,velocity,ms,
         channel,volume,attenuation,frame_number,persistent,e);
