@@ -19,6 +19,7 @@ typedef struct application_q3_scene_command {
     const char *text;
     bool addressed;
     const qa_command_tokens *arguments;
+    const struct qa_unified_q3_event *output;
 } application_q3_scene_command;
 typedef struct application_q3_scene_context {
     uint64_t generation;
@@ -55,6 +56,8 @@ typedef struct application_q3_scene_options {
     bool (*finish_output)(void *,bool,qa_error *);
 } application_q3_scene_options;
 
+bool application_q3_scene_command_tokens(const application_q3_scene_command *, qa_command_tokens *,
+    void *(*allocate)(void *, size_t, size_t, qa_error *), void *, qa_error *);
 bool application_q3_scene_create(const application_q3_scene_options *,
     application_q3_scene **, qa_error *);
 bool application_q3_scene_initialize(application_q3_scene *, qa_error *);

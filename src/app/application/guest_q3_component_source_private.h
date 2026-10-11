@@ -13,7 +13,6 @@ typedef struct component_source_entity {
     qa_q3_host_visibility visibility;
 } component_source_entity;
 typedef struct component_source_client { qa_actor_id actor; uint32_t slot; qa_q3_player state; } component_source_client;
-typedef struct component_source_command { int32_t sequence; qa_actor_id recipient; char *text; } component_source_command;
 typedef struct component_source_publication {
     int64_t revision,game_state_revision;
     int32_t time_ms,command_sequence;
@@ -22,8 +21,6 @@ typedef struct component_source_publication {
     size_t entity_count;
     component_source_client *clients;
     size_t client_count;
-    component_source_command *commands;
-    size_t command_count;
 } component_source_publication;
 typedef struct component_source_borrow {
     struct component_source_borrow *next;
@@ -32,7 +29,9 @@ typedef struct component_source_borrow {
     qa_q3_snapshot snapshot;
     qa_q3_visible_entities visible;
     application_q3_scene_actor *actors;
-    application_q3_scene_command *commands;
+    application_q3_scene_command commands[64];
+    size_t command_count;
+    uint64_t command_next;
 } component_source_borrow;
 struct application_q3_component_source {
     application_q3_component_source_options options;
@@ -41,9 +40,8 @@ struct application_q3_component_source {
     qa_q3_gamestate *game_state;
     int64_t game_state_revision,revision;
     int32_t time_ms,command_sequence;
-    component_source_command commands[64];
     component_source_publication current,baseline;
     component_source_borrow *borrows;
-    bool dirty;
+    bool dirty,restored;
 };
 #endif

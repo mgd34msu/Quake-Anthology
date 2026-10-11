@@ -1,5 +1,6 @@
 #include "guest_q3_components_private.h"
 #include "guest_q3_component_private.h"
+#include "guest_q3_component_source_private.h"
 #include "unified_q3_events.h"
 #include "qa/json.h"
 #include "qa/application_q3_components.h"
@@ -147,6 +148,8 @@ bool application_q3_components_scene_prepare(application_q3_components *owner,si
         row->event_cursor=qa_application_events_local_first(owner->options.application);
         row->next=game->scenes; game->scenes=row;
         row->view=(application_q3_component_view){.source=publication.source,.viewer=viewer,
+            .command_cursor=publication.source->restored?qa_application_events_next(owner->options.application):
+                qa_application_events_local_first(owner->options.application),
             .weapon_presented=owner->options.weapon_presented,.weapon_context=owner->options.weapon_context};
         row->source=application_q3_component_view_services(&row->view);
     } else if(!row->initialized) return application_fail(e,QA_ERROR_ARGUMENT,"Component scene retains a failed physical constructor");
@@ -181,8 +184,9 @@ bool application_q3_components_scene_advance(application_q3_components *owner,si
             }
             ++row->event_cursor;
         }
-        application_events_retire(app);
         if(!application_q3_scene_advance(*scene,sequence,e)) return false;
+        row->view.command_cursor=row->view.command_next;
+        application_events_retire(app);
         row->sequence=sequence; row->advanced=true;
     } else if(sequence!=row->sequence) return application_fail(e,QA_ERROR_ARGUMENT,"Component advance sequence moved backwards");
     return row->frontend.completed(row->frontend.owner,sequence,frame,e);
@@ -391,13 +395,14 @@ bool application_q3_components_video_abort(application_q3_components_video **slo
 uint64_t application_q3_components_events_first(const application_q3_components *owner)
 {
     uint64_t first=UINT64_MAX;
-    for(;owner;owner=owner->retired)
-        for(size_t i=0;i<owner->count;++i) {
-            const component_game_row *game=owner->rows[i];
-            if(!game) continue;
-            for(const component_scene_row *row=game->scenes;row;row=row->next)
-                if(row->initialized && row->profile && row->profile->player_events && row->event_cursor<first)
-                    first=row->event_cursor;
+    if(owner && !owner->closing) for(size_t i=0;i<owner->count;++i) {
+        component_game_row *game=owner->rows[i];
+        if(!game || !game->attached || !q3components_current(game)) continue;
+        for(const component_scene_row *row=game->scenes;row;row=row->next) {
+            if(!row->initialized || !row->profile) continue;
+            if(row->profile->player_events && row->event_cursor<first) first=row->event_cursor;
+            if(row->view.command_cursor<first) first=row->view.command_cursor;
         }
+    }
     return first;
 }

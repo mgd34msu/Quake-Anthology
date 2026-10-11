@@ -1,11 +1,29 @@
 #include "guest_q3_scene_private.h"
+#include "qa/unified_frame_events.h"
 
 static qa_command_result declared_command(void *,const qa_command_invocation *,qa_error *);
 #include "qa/builtin.h"
 #include <limits.h>
+#include <stdio.h>
 
 static void *command_allocate(void *context, size_t size, size_t alignment, qa_error *error)
 { return qa_unified_frame_lease_alloc(context, size, 1, alignment, error); }
+
+bool application_q3_scene_command_tokens(const application_q3_scene_command *command,
+    qa_command_tokens *out, void *(*allocate)(void *, size_t, size_t, qa_error *),
+    void *context, qa_error *error)
+{
+    if(command->addressed && command->output && command->output->kind==QA_UNIFIED_Q3_CONFIGSTRING) {
+        char index[16]; snprintf(index,sizeof(index),"%u",command->output->index);
+        char *values[]={"cs",index,(char *)command->text};
+        qa_command_tokens arguments={.count=3,.values=values,.args_text=""};
+        return qa_command_tokens_copy(&arguments,out,allocate,context,error);
+    }
+    if(command->addressed && command->arguments)
+        return qa_command_tokens_copy(command->arguments,out,allocate,context,error);
+    return qa_command_tokenize(command->addressed?command->text:"",QA_RULESET_Q3,false,
+        out,allocate,context,error);
+}
 
 bool q3scene_fail(qa_error *e, qa_status code, const char *text)
 { qa_error_set(e, code, 0, "%s", text); return false; }
@@ -325,10 +343,7 @@ static bool accept(application_q3_scene *s, bool baseline, bool *changed, qa_err
         qa_unified_frame_lease *lease=qa_unified_frame_lease_acquire(s->command_storage,e);
         if (!lease) return false;
         qa_command_tokens t={0};
-        bool okay;
-        if (command->addressed&&command->arguments) {
-            okay=qa_command_tokens_copy(command->arguments,&t,command_allocate,lease,e);
-        } else okay=qa_command_tokenize(command->addressed?command->text:"",QA_RULESET_Q3,false,&t,command_allocate,lease,e);
+        bool okay=application_q3_scene_command_tokens(command,&t,command_allocate,lease,e);
         if (!okay) { qa_unified_frame_lease_release(lease); return false; }
         qa_command_tokens_free(&row->tokens); qa_unified_frame_lease_release(row->lease);
         *row=(q3scene_command){.sequence=command->sequence,.addressed=command->addressed,.tokens=t,.lease=lease};

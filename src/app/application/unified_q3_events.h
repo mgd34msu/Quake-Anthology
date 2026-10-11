@@ -19,8 +19,7 @@ struct application_q3_component_publication;
 struct application_q3_scene_player_event;
 bool application_unified_q3_component_player(qa_application *,
     qa_actor_owner, const struct application_q3_scene_player_event *,qa_error *);
-bool application_unified_q3_component_command(qa_application *,
-    const struct application_q3_component_publication *, qa_actor_id recipient,
-    const char *text, int32_t source_time_ms, qa_error *);
+bool application_unified_q3_component_output(qa_application *, qa_actor_owner,
+    const qa_unified_q3_event *, qa_actor_id, int32_t source_time_ms, qa_error *);
 
 #endif

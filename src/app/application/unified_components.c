@@ -47,6 +47,9 @@ static bool native_prepare(application_unified_component_capture *v, bool *chang
     return true;
 }
 
+static void *command_allocate(void *lease,size_t bytes,size_t alignment,qa_error *error)
+{ return qa_unified_frame_lease_alloc(lease,bytes,1,alignment,error); }
+
 static bool commands(application_unified_component_capture *capture,qa_unified_component_q3 *target,
     const application_q3_scene_context *context,int32_t base,int32_t through,qa_error *e)
 {
@@ -60,17 +63,13 @@ static bool commands(application_unified_component_capture *capture,qa_unified_c
         if (source->sequence<=base) continue;
         if (previous==INT32_MAX || source->sequence!=previous+1 || source->sequence>through)
             return application_fail(e,QA_ERROR_FORMAT,"Component reliable commands exceeded their retained window");
-        qa_q3_tokens tokens={0};
-        if (source->addressed && !qa_q3_tokenize(source->text,&tokens,e)) return false;
-        if (tokens.truncated || tokens.count>128)
+        qa_command_tokens tokens={0};
+        if (!application_q3_scene_command_tokens(source,&tokens,command_allocate,capture->lease,e)) return false;
+        if (tokens.count>128)
             return application_fail(e,QA_ERROR_FORMAT,"Component command exceeds its authentic argument extent");
         qa_module_server_command *row=target->commands+target->command_count++;
-        row->sequence=source->sequence; row->arguments.count=tokens.count;
-        row->arguments.values=qa_unified_frame_lease_alloc(capture->lease,tokens.count,
-            sizeof(*row->arguments.values),_Alignof(char *),e);
-        if (tokens.count && !row->arguments.values) return false;
-        for (size_t k=0;k<tokens.count;++k)
-            if (!application_unified_frame_string(capture->lease,row->arguments.values+k,qa_q3_token(&tokens,k),e)) return false;
+        row->sequence=source->sequence;
+        row->arguments=(qa_unified_control_arguments){.count=tokens.count,.values=tokens.values};
         previous=source->sequence;
     }
     return previous==through || application_fail(e,QA_ERROR_FORMAT,"Component reliable command tail is not retained");

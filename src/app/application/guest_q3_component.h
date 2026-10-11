@@ -45,7 +45,6 @@ typedef struct application_q3_component_options {
     application_q3_mod_operation_services operations[Q3_MOD_OPERATION_COUNT];
     application_q3_mod_operations *actor_operations;
     bool (*damage_context)(void *,qa_damage_request *,qa_error *);
-    bool (*source_command_event)(void *,qa_actor_id,const char *,int32_t,qa_error *);
 } application_q3_component_options;
 
 bool application_q3_component_create(const application_q3_component_options *,bool restoring,

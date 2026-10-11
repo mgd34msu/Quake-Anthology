@@ -8,19 +8,10 @@ static bool source_set_config(void *context,uint32_t index,const char *text,qa_e
     application_q3_component *c=context;
     return application_q3_component_source_set_configstring(c->source,index,text,e);
 }
-static bool find_client(application_q3_component *,uint32_t,qa_actor_id *,bool *,qa_error *);
 static bool source_command(void *context,int32_t slot,const char *text,qa_error *e)
 {
     application_q3_component *c=context;
-    qa_actor_id recipient={0};
-    if(slot!=-1) {
-        bool found=false;
-        if(slot<0) return true;
-        if(!find_client(c,(uint32_t)slot,&recipient,&found,e)) return false;
-        if(!found) return true;
-    }
-    return application_q3_component_source_command(c->source,slot,text,e)&&
-        c->options.source_command_event&&c->options.source_command_event(c->options.context,recipient,text,c->milliseconds,e);
+    return application_q3_component_source_command(c->source,slot,text,e);
 }
 static bool find_client(application_q3_component *c,uint32_t slot,qa_actor_id *actor,bool *found,qa_error *e)
 {

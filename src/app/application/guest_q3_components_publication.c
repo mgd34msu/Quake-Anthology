@@ -17,6 +17,7 @@ bool application_q3_components_publication_borrow(application_q3_components *own
     if(!lease) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual per-viewer component publication");
     lease->owner=owner->rows[index];
     lease->view=(application_q3_component_view){.source=publication.source,.viewer=actor,.origin=*origin,
+        .command_cursor=qa_application_events_first(owner->options.application),
         .axis={axis[0],axis[1],axis[2]},.time_ms=time,.frame_ms=elapsed,
         .weapon_presented=owner->options.weapon_presented,.weapon_context=owner->options.weapon_context};
     lease->source=application_q3_component_view_services(&lease->view);

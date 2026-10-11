@@ -94,7 +94,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
     if(!qa_json_parse(application_q3_mod_declaration(c->profile),&declaration,e)) return false;
     c->scene=qa_json_string_equal(declaration,qa_json_get(declaration,qa_json_get(declaration,qa_json_root(declaration),"presentation"),"runtime"),"qvm-scene");
     qa_json_destroy(declaration);
-    application_q3_component_source_options source={.session=o->host.session,.owner=o->host.owner,.generation=o->generation,.image=o->image,.abi=o->abi,.context=c,.current=publication_current,.information=information,.visibility=o->visibility,.scene=c->scene};
+    application_q3_component_source_options source={.session=o->host.session,.application=o->application,.owner=o->host.owner,.generation=o->generation,.image=o->image,.abi=o->abi,.context=c,.current=publication_current,.information=information,.visibility=o->visibility,.scene=c->scene};
     if(!application_q3_component_source_create(&source,&c->source,e)||!q3component_services(c,e)) return false;
     c->lower=qa_q3_host_qvm_options(c->host,QA_QVM_INTERPRETED);
     qa_qvm_options vm=c->lower; vm.context=c;

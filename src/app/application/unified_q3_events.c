@@ -73,13 +73,12 @@ bool application_unified_q3_component_player(qa_application *app, qa_actor_owner
     return component_emit(app, p, &value, (qa_actor_id){0}, event->time_ms, e);
 }
 
-bool application_unified_q3_component_command(qa_application *app,
-    const application_q3_component_publication *p, qa_actor_id recipient, const char *value,
-    int32_t time, qa_error *e)
+bool application_unified_q3_component_output(qa_application *app, qa_actor_owner owner,
+    const qa_unified_q3_event *event, qa_actor_id recipient, int32_t time, qa_error *e)
 {
-    if (!value) return application_fail(e, QA_ERROR_ARGUMENT, "Q3 component command lost its actual lexical client/text");
-    qa_unified_q3_event event = {.kind = QA_UNIFIED_Q3_SERVER_COMMAND, .client = -1, .text = (char *)value};
-    return component_emit(app, p, &event, recipient, time, e);
+    application_q3_component_publication source;
+    return application_q3_components_event_source_read(app, owner, &source, e) &&
+        component_emit(app, &source, event, recipient, time, e);
 }
 
 bool application_unified_q3_text(application_provider *p, application_unified_q3_text_kind kind,

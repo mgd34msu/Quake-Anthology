@@ -79,11 +79,6 @@ static bool damage_context(void *context,qa_damage_request *request,qa_error *e)
     request->attack.movement_provider=movement?movement->owner:0;
     return true;
 }
-static bool source_event(void *context,qa_actor_id recipient,const char *text,int32_t time,qa_error *e)
-{
-    component_game_row *row=context;
-    return application_unified_q3_component_command(row->roster->options.application,&row->publication,recipient,text,time,e);
-}
 bool q3components_create_game(component_game_row *row,qa_error *e)
 {
     application_q3_components_options *options=&row->roster->options;
@@ -114,7 +109,7 @@ bool q3components_create_game(component_game_row *row,qa_error *e)
         .visibility={.context=row,.point=point,.area_bits=areas,.areas_connected=connected,.cluster_visible=visible},
         .generation=row->publication.generation,.context=row,.current=q3components_current,.storage_current=q3components_storage,
         .match_read=match_read,.match_write=match_write,.clients=options->clients,
-        .actor_operations=options->application->mod_operations,.damage_context=damage_context,.source_command_event=source_event};
+        .actor_operations=options->application->mod_operations,.damage_context=damage_context};
     qa_catalog *catalog=row->publication.catalog;
     qa_product_id product=row->publication.descriptor->selection.product;
     if(qa_catalog_product_write_root(catalog,product)&&

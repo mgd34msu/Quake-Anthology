@@ -2,10 +2,12 @@
 #define QA_APPLICATION_GUEST_Q3_COMPONENT_SOURCE_H
 
 #include "guest_q3_scene.h"
+#include "qa/application.h"
 
 typedef struct application_q3_component_source application_q3_component_source;
 typedef struct application_q3_component_source_options {
     qa_session *session;
+    qa_application *application;
     qa_actor_owner owner;
     uint64_t generation;
     qa_qvm *vm;
@@ -23,6 +25,7 @@ typedef struct application_q3_component_view {
     qa_actor_id viewer;
     qa_vec3 origin, axis[3];
     int32_t time_ms, frame_ms;
+    uint64_t command_cursor, command_next;
     bool (*weapon_presented)(void *,qa_actor_id,bool *,qa_error *);
     void *weapon_context;
 } application_q3_component_view;

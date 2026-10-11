@@ -29,10 +29,13 @@ static bool gamestate(qa_source_save_io *io,qa_qvm_abi abi,qa_q3_gamestate *stat
 }
 static bool actor(qa_source_save_io *io,application_q3_scene_actor *row)
 { return qa_source_save_u32(io,&row->slot)&&row->slot<1022&&qa_source_save_actor(io,&row->actor)&&row->actor.registry&&qa_source_save_bool(io,&row->owned); }
-static bool command(qa_source_save_io *io,component_source_command *row)
+/* Earlier checkpoints included presentation command text. Consume it only on import. */
+static bool discard_command(qa_source_save_io *io)
 {
-    return qa_source_save_i32(io,&row->sequence)&&row->sequence>0&&
-        qa_source_save_actor(io,&row->recipient)&&qa_source_save_owned_text(io,&row->text)&&row->text;
+    int32_t sequence=0; qa_actor_id recipient={0}; char *text=NULL;
+    bool ok=qa_source_save_i32(io,&sequence) && qa_source_save_actor(io,&recipient) &&
+        qa_source_save_owned_text(io,&text);
+    free(text); return ok;
 }
 static bool entity(qa_source_save_io *io,qa_qvm_abi abi,component_source_entity *row)
 {
@@ -64,6 +67,7 @@ static bool client(qa_source_save_io *io,qa_qvm_abi abi,component_source_client 
 static bool publication(qa_source_save_io *io,application_q3_component_source *s,component_source_publication *p)
 {
     bool present=p->game_state!=NULL;
+    int32_t commands=0; size_t command_count=0;
     if(!qa_source_save_bool(io,&present)||!present) return !io->failed;
     if(io->direction==QA_SOURCE_SAVE_READ) {
         p->game_state=calloc(1,sizeof(*p->game_state)); if(!p->game_state) return fail(io,"Retaining actual saved component publication");
@@ -71,14 +75,13 @@ static bool publication(qa_source_save_io *io,application_q3_component_source *s
     if(!qa_source_save_i64(io,&p->revision)||p->revision<=0||p->revision>s->revision||
         !qa_source_save_i64(io,&p->game_state_revision)||p->game_state_revision<0||p->game_state_revision>s->game_state_revision||
         !qa_source_save_i32(io,&p->time_ms)||p->time_ms<0||p->time_ms>s->time_ms||
-        !qa_source_save_i32(io,&p->command_sequence)||p->command_sequence<0||p->command_sequence>s->command_sequence||
+        !qa_source_save_i32(io,&commands)||commands<0||
         !gamestate(io,s->options.abi,p->game_state)||!qa_source_save_count(io,&p->entity_count,1022)||
-        !qa_source_save_count(io,&p->client_count,64)||!qa_source_save_count(io,&p->command_count,64)) return false;
+        !qa_source_save_count(io,&p->client_count,64)||!qa_source_save_count(io,&command_count,64)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) {
         p->entities=p->entity_count?calloc(p->entity_count,sizeof(*p->entities)):NULL;
         p->clients=p->client_count?calloc(p->client_count,sizeof(*p->clients)):NULL;
-        p->commands=p->command_count?calloc(p->command_count,sizeof(*p->commands)):NULL;
-        if((p->entity_count&&!p->entities)||(p->client_count&&!p->clients)||(p->command_count&&!p->commands)) return fail(io,"Retaining actual source publication rows");
+        if((p->entity_count&&!p->entities)||(p->client_count&&!p->clients)) return fail(io,"Retaining actual source publication rows");
     }
     for(size_t i=0;i<p->entity_count;++i) {
         if(!entity(io,s->options.abi,p->entities+i)) return false;
@@ -91,19 +94,19 @@ static bool publication(qa_source_save_io *io,application_q3_component_source *s
         if(!found) return fail(io,"Saved source client lacks its actual published entity");
         for(size_t j=0;j<i;++j) if(p->clients[j].slot==p->clients[i].slot) return fail(io,"Saved source publication duplicates a client");
     }
-    int32_t first=p->command_sequence>64?p->command_sequence-63:1;
-    if(p->command_count!=(size_t)(p->command_sequence-first+1)) return fail(io,"Saved source command window has a gap");
-    for(size_t i=0;i<p->command_count;++i) if(!command(io,p->commands+i)||p->commands[i].sequence!=(int32_t)((int64_t)first+(int64_t)i)) return fail(io,"Saved source publication has an unordered command");
+    for(size_t i=0;i<command_count;++i) if(!discard_command(io)) return false;
+    if(io->direction==QA_SOURCE_SAVE_READ) p->command_sequence=0;
     return true;
 }
 static bool fields(qa_source_save_io *io,application_q3_component_source *s)
 {
     uint8_t magic[4]={'Q','G','C','S'},expected[4]={'Q','G','C','S'};
     uint64_t owner=s->options.owner,generation=s->options.generation;
+    int32_t commands=0;
     if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,expected,4)||
         !qa_source_save_u64(io,&owner)||owner!=s->options.owner||!qa_source_save_u64(io,&generation)||generation!=s->options.generation||
         !qa_source_save_i64(io,&s->revision)||s->revision<0||!qa_source_save_i64(io,&s->game_state_revision)||s->game_state_revision<0||
-        !qa_source_save_i32(io,&s->time_ms)||s->time_ms<0||!qa_source_save_i32(io,&s->command_sequence)||s->command_sequence<0||
+        !qa_source_save_i32(io,&s->time_ms)||s->time_ms<0||!qa_source_save_i32(io,&commands)||commands<0||
         !qa_source_save_bool(io,&s->dirty)||!gamestate(io,s->options.abi,s->game_state)||!qa_source_save_count(io,&s->actor_count,1022)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ) { s->actors=s->actor_count?calloc(s->actor_count,sizeof(*s->actors)):NULL; if(s->actor_count&&!s->actors) return fail(io,"Retaining saved component source bindings"); }
     for(size_t i=0;i<s->actor_count;++i) {
@@ -113,9 +116,11 @@ static bool fields(qa_source_save_io *io,application_q3_component_source *s)
             (s->actors[i].client&&(s->actors[i].row.owned||s->actors[i].row.slot>=64))) return fail(io,"Saved source binding lost its real owner or client");
         for(size_t j=0;j<i;++j) if(s->actors[j].row.slot==s->actors[i].row.slot||qa_actor_id_equal(s->actors[j].row.actor,s->actors[i].row.actor)) return fail(io,"Saved source bindings duplicate physical identity");
     }
-    int32_t first=s->command_sequence>64?s->command_sequence-63:1;
-    for(int64_t n=first;n<=s->command_sequence;++n) { component_source_command *row=s->commands+(uint32_t)n%64; if(!command(io,row)||row->sequence!=(int32_t)n) return fail(io,"Saved component command ring is incomplete"); }
-    return publication(io,s,&s->current)&&publication(io,s,&s->baseline);
+    int32_t first=commands>64?commands-63:1;
+    for(int64_t n=first;n<=commands;++n) if(!discard_command(io)) return false;
+    bool ok=publication(io,s,&s->current)&&publication(io,s,&s->baseline);
+    if(ok && io->direction==QA_SOURCE_SAVE_READ) { s->command_sequence=0; s->restored=true; }
+    return ok;
 }
 bool application_q3_component_source_checkpoint(application_q3_component_source *s,qa_buffer *out,qa_error *e)
 {
