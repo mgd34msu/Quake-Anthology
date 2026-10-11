@@ -937,10 +937,10 @@ bool frontend_unified_q1_world_dlights(frontend_unified_q1 *o,const qa_scene_wor
         frontend_legacy_render_policy policy;qa_vec4 blend={0};
         if(count){const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
             ok=world->legacy_policy.present && world->legacy_policy.source_family==QA_GAME_Q1?
-                frontend_legacy_render_policy_read_controls(domain->cvars,&o->replica->legacy_cvars,g->product,&policy,e):
+                frontend_legacy_render_policy_read_controls(domain->cvars,&o->replica->legacy_cvars,g->product, g->product ? qa_product_ruleset(g->product, g->product->family) : QA_RULESET_NETQUAKE,&policy,e):
                 frontend_legacy_render_policy_read(o->frontend,g->product,&policy,e);
             if(ok && policy.flashblend)ok=qa_scene_legacy_dlights(frame,&world->view,QA_GAME_Q1,
-                policy.quakeworld,lights,count,&blend,e);}
+                policy.rules == QA_RULESET_QUAKEWORLD,lights,count,&blend,e);}
         if(ok && blend.w>0){float alpha=overlay->w+(1-overlay->w)*blend.w,weight=blend.w/alpha;
             *overlay=(qa_vec4){overlay->x*(1-weight)+blend.x*weight,overlay->y*(1-weight)+blend.y*weight,
                 overlay->z*(1-weight)+blend.z*weight,alpha};}

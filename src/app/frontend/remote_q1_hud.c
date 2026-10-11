@@ -79,7 +79,7 @@ bool frontend_remote_q1_hud_read(frontend_remote_q1 *row,const qa_hud_frame *fra
     if (!frame->source_status_native &&
         !frontend_q1_hud_read(row->materials, data, product, row->options.domain.cvars,
             &row->legacy_cvars.hud, row->frontend->view_settings,
-            qa_q1_is_qw(row->options.domain.protocol), row->view_motion.seconds, face, &out->q1, error)) return false;
+            row->rules, row->view_motion.seconds, face, &out->q1, error)) return false;
     out->q1.intermission = row->intermission;
     out->q1.level = row->level_name;
     out->q1.total_secrets = row->stats[11]; out->q1.total_monsters = row->stats[12];

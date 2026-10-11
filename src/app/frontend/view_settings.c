@@ -192,8 +192,9 @@ static const struct { const char *name, *initial; bool offset; } motion_declarat
     {"scr_ofsx", "0", true}, {"scr_ofsy", "0", true}, {"scr_ofsz", "0", true}
 };
 bool frontend_view_settings_q1_motion_register(qa_cvars *registry, uint64_t owner,
-    bool quakeworld, qa_error *error)
+    qa_ruleset_id rules, qa_error *error)
 {
+    bool quakeworld = rules == QA_RULESET_QUAKEWORLD;
     for (size_t i = 0; i < sizeof(motion_declarations) / sizeof(*motion_declarations); ++i) {
         if (quakeworld && motion_declarations[i].offset) continue;
         if (!qa_cvars_register(registry, motion_declarations[i].name, motion_declarations[i].initial,
@@ -201,8 +202,9 @@ bool frontend_view_settings_q1_motion_register(qa_cvars *registry, uint64_t owne
     }
     return !quakeworld || qa_cvars_register(registry, "v_contentblend", "1", 0, owner, "", error);
 }
-bool frontend_view_settings_q1_motion_owns(const char *name, bool quakeworld)
+bool frontend_view_settings_q1_motion_owns(const char *name, qa_ruleset_id rules)
 {
+    bool quakeworld = rules == QA_RULESET_QUAKEWORLD;
     if (quakeworld && !strcmp(name, "v_contentblend")) return true;
     for (size_t i = 0; i < sizeof(motion_declarations) / sizeof(*motion_declarations); ++i)
         if ((!quakeworld || !motion_declarations[i].offset) && !strcmp(name, motion_declarations[i].name)) return true;
@@ -236,9 +238,10 @@ static bool motion_setting(const frontend_q1_motion_refs *refs, qa_cvar_handle h
         return fail(error, "Q1 view motion lost its actual finite CLIENT setting");
     *out = (float)row->number; return true;
 }
-bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *refs, bool quakeworld,
+bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *refs, qa_ruleset_id rules,
     frontend_q1_motion_settings *out, qa_error *error)
 {
+    bool quakeworld = rules == QA_RULESET_QUAKEWORLD;
     frontend_q1_motion_settings value = {.contents_blend=true};
     if (!refs || !refs->registry || !out) return fail(error, "Q1 view motion requires its actual registry and output");
     if (!motion_setting(refs, refs->bob, &value.bob, error) ||
@@ -347,8 +350,9 @@ bool frontend_view_q1_local_bonus(qa_frontend *f, qa_actor_id actor, qa_error *e
 bool frontend_view_q1_local_bonus_commands(qa_frontend *f, qa_actor_id actor, const char *commands, qa_error *error)
 { return local_bonus(f, actor, commands, error); }
 qa_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *settings,
-    const frontend_q1_view_motion *state, int32_t contents, bool quakeworld, uint32_t items)
+    const frontend_q1_view_motion *state, int32_t contents, qa_ruleset_id rules, uint32_t items)
 {
+    bool quakeworld = rules == QA_RULESET_QUAKEWORLD;
     qa_vec3 colors[4] = {{0,0,0}, state->damage_color, {215,186,69}, {0,0,0}};
     int32_t percents[4] = {0, state->damage_percent, state->bonus_percent, 0};
     if (items & 4194304u) { colors[3] = qa_v3(0,0,255); percents[3] = 30; }
@@ -409,9 +413,9 @@ bool frontend_view_q1_local_damage(qa_frontend *f, qa_actor_id actor, uint8_t ar
         if (!qa_application_control_camera(f->application, actor, &camera))
             return fail(error, "Q1 damage lost its actual selected player camera");
         if (!camera.has_character || camera.character_family != QA_GAME_Q1) return true;
-        bool qw = source.product->edition == QA_EDITION_QUAKEWORLD;
+        bool qw = source.rules == QA_RULESET_QUAKEWORLD;
         frontend_q1_motion_settings settings;
-        if (!frontend_view_settings_q1_motion_sample(source.motion, qw, &settings, error)) return false;
+        if (!frontend_view_settings_q1_motion_sample(source.motion, source.rules, &settings, error)) return false;
         frontend_seat *seat = f->seats + physical;
         if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
             seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
@@ -459,6 +463,7 @@ bool frontend_view_q1_chase(const frontend_q1_view_settings *settings, qa_collis
 void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     const frontend_q1_motion_input *input, frontend_q1_view_motion *state, frontend_q1_view_pose *out)
 {
+    bool quakeworld = input->rules == QA_RULESET_QUAKEWORLD;
     if (state->initialized && input->seconds < state->seconds)
         *state = (frontend_q1_view_motion){0};
     if (!state->initialized) state->old_z = input->origin.z;
@@ -479,10 +484,10 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
         return;
     }
     float bob = state->bob;
-    if (input->quakeworld && input->spectator) bob = 0;
-    else if (!input->quakeworld || input->grounded) {
-        if (input->quakeworld) state->bob_seconds += elapsed;
-        double seconds = input->quakeworld ? state->bob_seconds : input->seconds;
+    if (quakeworld && input->spectator) bob = 0;
+    else if (!quakeworld || input->grounded) {
+        if (quakeworld) state->bob_seconds += elapsed;
+        double seconds = quakeworld ? state->bob_seconds : input->seconds;
         float periods = (float)trunc(seconds / settings->bob_cycle);
         float cycle = (float)(seconds - periods * settings->bob_cycle);
         cycle /= settings->bob_cycle;
@@ -494,7 +499,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
         if (bob > 4) bob = 4; else if (bob < -7) bob = -7;
         state->bob = bob;
     }
-    qa_vec3 axes[3]; qa_angle_axis(input->quakeworld ? input->angles : input->entity_angles, axes,QA_ANGLE_FLOAT_MATH);
+    qa_vec3 axes[3]; qa_angle_axis(quakeworld ? input->angles : input->entity_angles, axes,QA_ANGLE_FLOAT_MATH);
     float side = -qa_vec_dot(input->velocity, axes[1]);
     float sign = side < 0 ? -1 : 1;
     side = fabsf(side);
@@ -503,25 +508,25 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
     qa_vec3 camera_angles = input->angles;
     camera_angles.z += side * sign;
     camera_angles = qa_vec_add(camera_angles,feedback);
-    if (!input->quakeworld && input->dead) camera_angles.z = 80;
+    if (!quakeworld && input->dead) camera_angles.z = 80;
     camera_angles.x = (float)(camera_angles.x + idle[0]);
     camera_angles.y = (float)(camera_angles.y + idle[1]);
     camera_angles.z = (float)(camera_angles.z + idle[2]);
-    float bias = input->quakeworld ? 1.0f / 16 : 1.0f / 32;
+    float bias = quakeworld ? 1.0f / 16 : 1.0f / 32;
     qa_vec3 origin = input->origin;
-    origin.z += input->quakeworld ? bob : input->view_height + bob;
+    origin.z += quakeworld ? bob : input->view_height + bob;
     origin.x += bias; origin.y += bias; origin.z += bias;
-    if (input->quakeworld) origin.z += input->view_height;
+    if (quakeworld) origin.z += input->view_height;
     qa_vec3 aim = input->angles;
-    if (!input->quakeworld) aim.z = input->entity_angles.z;
+    if (!quakeworld) aim.z = input->entity_angles.z;
     qa_angle_axis(aim, axes,QA_ANGLE_FLOAT_MATH);
-    if (!input->quakeworld) {
+    if (!quakeworld) {
         origin = qa_vec_add(origin,qa_axis_from_local(qa_v3(settings->offset.x,-settings->offset.y,settings->offset.z),axes));
         origin.x = fmaxf(input->origin.x - 14, fminf(input->origin.x + 14, origin.x));
         origin.y = fmaxf(input->origin.y - 14, fminf(input->origin.y + 14, origin.y));
         origin.z = fmaxf(input->origin.z - 22, fminf(input->origin.z + 30, origin.z));
     } else if (input->dead) camera_angles.z = 80;
-    qa_vec3 gun = input->origin; gun.z += input->quakeworld ? 22 : input->view_height;
+    qa_vec3 gun = input->origin; gun.z += quakeworld ? 22 : input->view_height;
     gun.x = (float)(gun.x + axes[0].x * bob * .4);
     gun.y = (float)(gun.y + axes[0].y * bob * .4);
     gun.z = (float)(gun.z + axes[0].z * bob * .4);
@@ -533,7 +538,7 @@ void frontend_view_q1_motion(const frontend_q1_motion_settings *settings,
      * zero. Convert its backward model pitch to the shared geometric axes. */
     qa_vec3 gun_angles = qa_v3((float)(camera_angles.x + idle[0]),
         (float)(camera_angles.y - idle[1]), (float)(input->angles.z - idle[2]));
-    if (input->quakeworld) camera_angles.x += input->punch.x;
+    if (quakeworld) camera_angles.x += input->punch.x;
     else camera_angles = qa_vec_add(camera_angles, input->punch);
     if (input->grounded && input->origin.z - state->old_z > 0) {
         state->old_z += (float)elapsed * 80;

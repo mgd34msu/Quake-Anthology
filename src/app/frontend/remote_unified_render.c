@@ -75,7 +75,7 @@ bool frontend_unified_render_feedback(frontend_unified_render *r,const qa_player
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r->replica);
     if(!domain) return true;
     frontend_q1_motion_settings settings;
-    if(!frontend_view_settings_q1_motion_sample(&r->replica->legacy_cvars.motion,false,&settings,error)) return false;
+    if(!frontend_view_settings_q1_motion_sample(&r->replica->legacy_cvars.motion,QA_RULESET_NETQUAKE,&settings,error)) return false;
     qa_vec3 from;
     if(!frontend_view_q1_damage_origin(feedback->origin,&from,error)) return false;
     frontend_view_q1_damage(&settings,r->origin,r->angles,
@@ -186,7 +186,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
 {
     m->source=source;
     m->flat_beam=source->family==QA_GAME_Q2 && (source->visual.render_flags&128u) && source->path && !qa_strings_text(r->replica->strings, source->path).size;
-    qa_game_family kind=source->family==QA_GAME_Q1?QA_GAME_Q1:source->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3;
+    qa_game_family kind=source->family;
     m->source_client=source->render_source!=NULL;
     if(m->source_client) {
         m->source_provider=source->render_source->provider;
@@ -247,7 +247,7 @@ static bool q1_team_face_prepare(frontend_unified_render *r,const qa_unified_pla
         frontend_q1_team_face_read(images,materials,value->colors,(int32_t)value->frags,&r->team_face,e);
 }
 static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_player_ui *ui,
-    const qa_product *product, qa_error *e)
+    const qa_product *product, qa_ruleset_id rules, qa_error *e)
 {
     if (!product || product->family != QA_GAME_Q1) return true;
     const qa_application_ui_names *names = qa_application_ui_names_read(r->frontend->application);
@@ -300,7 +300,7 @@ static bool q1_status_prepare(frontend_unified_render *r, const qa_unified_playe
     if (!frontend_q1_face_read(materials, frontend_view_q1_face(client.health, client.items, r->seconds, motion),
             &face, e) || !frontend_q1_hud_read(materials, &client, product, domain->cvars,
             &r->replica->legacy_cvars.hud, r->frontend->view_settings,
-            product->edition == QA_EDITION_QUAKEWORLD, r->seconds, face, &r->q1, e)) return false;
+            rules, r->seconds, face, &r->q1, e)) return false;
     const qa_unified_frame_metadata *metadata = frontend_remote_unified_metadata(r->replica);
     if (metadata && metadata->q1) {
         r->q1.level = metadata->q1->level; r->q1.total_secrets = metadata->q1->total_secrets;
@@ -347,7 +347,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     const qa_product *hud_product=okay?qa_catalog_product(qa_launch_instance_catalog(hud_source.descriptor),
         hud_source.descriptor->selection.product):NULL;
     if (okay) okay=qa_ui_preferences_read(qa_application_cvars(f->application),qa_application_ui_preference_handles(f->application),
-        hud_domain->physical_seat,&r->preferences,e) && q1_team_face_prepare(r,ui,e) && q1_status_prepare(r,ui,hud_product,e);
+        hud_domain->physical_seat,&r->preferences,e) && q1_team_face_prepare(r,ui,e) && q1_status_prepare(r,ui,hud_product,hud_source.descriptor->selection.clock.kind,e);
     r->origin=view->origin; r->angles=view->angles; r->height=view->view_height;
     r->source_view_offset=view->has_client_view_offset_delta; r->kick=view->kick_angles;
     r->explicit_fov=view->has_field_of_view; r->field_of_view=view->field_of_view;
@@ -513,7 +513,7 @@ static bool unified_scene_policy(void *context,const qa_product *product,fronten
     unified_scene_context *c=context;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(c->renderer->replica);
     return domain && unified_scene_current(c) &&
-        frontend_legacy_render_policy_read_controls(domain->cvars,&c->renderer->replica->legacy_cvars,product,out,e) && unified_scene_current(c);
+        frontend_legacy_render_policy_read_controls(domain->cvars,&c->renderer->replica->legacy_cvars,product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE,out,e) && unified_scene_current(c);
 }
 static bool unified_sky_environment(frontend_unified_render *r,const qa_scene_world_input *world,
     qa_scene_q1_sky_environment *out,qa_error *e)
@@ -596,11 +596,11 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     if (r->feedback_seen) {
         if (r->feedback_cycle != r->frontend->frame.sequence) {
             frontend_q1_motion_settings settings;
-            if (!frontend_view_settings_q1_motion_sample(&r->replica->legacy_cvars.motion,false,&settings,e)) return false;
+            if (!frontend_view_settings_q1_motion_sample(&r->replica->legacy_cvars.motion,QA_RULESET_NETQUAKE,&settings,e)) return false;
             frontend_seat *seat=r->frontend->seats+d->physical_seat;
             r->feedback_kick=frontend_view_q1_feedback_step(&settings,
                 (double)seat->client_frame_ns/1e9,has_view,&seat->q1_view_motion);
-            r->feedback_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,-1,false,0);
+            r->feedback_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,-1,QA_RULESET_NETQUAKE,0);
             r->feedback_cycle=r->frontend->frame.sequence;
         }
         if (!has_view) angles=qa_vec_add(angles,r->feedback_kick);
@@ -687,7 +687,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
             unified_scene_current(&context);
     if (okay && r->feedback_blend.w>0 && !r->preferences.reduced_flashes) {
         frontend_legacy_render_policy policy;
-        okay=frontend_legacy_render_policy_read_controls(d->cvars,&r->replica->legacy_cvars,product,&policy,e);
+        okay=frontend_legacy_render_policy_read_controls(d->cvars,&r->replica->legacy_cvars,product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE,&policy,e);
         if (okay && policy.lighting.polyblend)
             okay=qa_scene_frame_picture(&r->frontend->frame,qa_scene_white(r->frontend->ui_images),
                 view.viewport,view.viewport,(qa_vec4){0,0,1,1},r->feedback_blend,e);

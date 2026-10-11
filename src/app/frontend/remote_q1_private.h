@@ -59,6 +59,7 @@ struct frontend_remote_q1 {
     qa_frontend *frontend;
     frontend_remote_q1_options options;
     qa_net_protocol_id protocol;
+    qa_ruleset_id rules;
     frontend_remote_q1_content content;
     qa_resource *map;
     qa_vfs_acquisition map_opening;

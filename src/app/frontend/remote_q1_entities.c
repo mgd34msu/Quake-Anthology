@@ -17,7 +17,7 @@ static qa_q1_entity sampled(const frontend_remote_q1 *row, qa_q1_entity value)
 }
 bool remote_q1_view_damage(frontend_remote_q1 *row, const qa_nq_message *message, qa_error *error)
 {
-    bool qw = qa_q1_is_qw(row->options.domain.protocol);
+    bool qw = row->rules == QA_RULESET_QUAKEWORLD;
     qa_vec3 origin, angles;
     if (row->view_entity_pose_number == row->view_entity && row->view_entity) {
         origin = row->view_entity_origin; angles = row->view_entity_angles;
@@ -48,7 +48,7 @@ bool remote_q1_view_damage(frontend_remote_q1 *row, const qa_nq_message *message
         angles = qa_v3(entity->angles[0], entity->angles[1], entity->angles[2]);
     }
     frontend_q1_motion_settings settings;
-    if (!frontend_view_settings_q1_motion_sample(&row->motion_refs, qw, &settings, error)) return false;
+    if (!frontend_view_settings_q1_motion_sample(&row->motion_refs, row->rules, &settings, error)) return false;
     frontend_view_q1_damage(&settings, origin, angles, message->data.damage.armor, message->data.damage.blood,
         qa_v3(message->data.damage.origin[0], message->data.damage.origin[1], message->data.damage.origin[2]),
         row->view_motion.initialized ? row->view_motion.seconds : row->seconds, &row->view_motion);
@@ -60,12 +60,12 @@ bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
     frontend_remote_q1_player_view player; bool present;
     if (!frontend_remote_q1_player_read(row, &player, &present, error)) return false;
     if (!present) return true;
-    bool qw = qa_q1_is_qw(row->options.domain.protocol);
+    bool qw = row->rules == QA_RULESET_QUAKEWORLD;
     frontend_q1_motion_settings settings;
     frontend_q1_view_settings view;
-    if (!frontend_view_settings_q1_motion_sample(&row->motion_refs, qw, &settings, error) ||
+    if (!frontend_view_settings_q1_motion_sample(&row->motion_refs, row->rules, &settings, error) ||
         !frontend_view_settings_q1_sample(row->frontend->view_settings,
-            qw ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE, &view, error)) return false;
+            row->rules, &view, error)) return false;
     qa_vec3 entity_angles = player.angles;
     for (size_t i = 0; i < row->current.count; ++i) if (row->current.rows[i].number == row->view_entity) {
         qa_q1_entity entity = sampled(row, row->current.rows[i]);
@@ -83,7 +83,7 @@ bool remote_q1_view_sample(frontend_remote_q1 *row, qa_error *error)
         .seconds = row->previous_seconds + (row->seconds - row->previous_seconds) * row->fraction,
         .frame_seconds = (double)row->frontend->seats[row->options.domain.physical_seat].client_frame_ns / 1000000000.0,
         .view_height = player.view_height, .view_size = (float)view.size,
-        .quakeworld = qw, .grounded = player.grounded, .spectator = qw && row->qw.spectator,
+        .rules = row->rules, .grounded = player.grounded, .spectator = qw && row->qw.spectator,
         .dead = row->data.health <= 0, .intermission = player.intermission};
     if (!qw && player.intermission) input.angles = entity_angles;
     frontend_view_q1_motion(&settings, &input, &row->view_motion, &row->view_pose);

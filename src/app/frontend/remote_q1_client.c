@@ -298,6 +298,7 @@ bool frontend_remote_q1_create(qa_frontend *f, const frontend_remote_q1_options 
     frontend_remote_q1 *row = calloc(1, sizeof(*row));
     if (!row) return remote_q1_fail(error, QA_ERROR_MEMORY, "Retaining remote Q1 presentation");
     row->frontend = f; row->options = *options; row->protocol = d->protocol;
+    row->rules = qa_q1_is_qw(d->protocol) ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE;
     frontend_view_settings_q1_motion_bind(d->cvars,&row->motion_refs);
     frontend_legacy_cvars_bind(d->cvars,&row->legacy_cvars);
     row->hightrack = qa_cvars_resolve(d->cvars, "cl_hightrack");
@@ -580,7 +581,7 @@ bool frontend_remote_q1_metadata_read(const frontend_remote_q1 *row, frontend_re
         row->previous_seconds + (row->seconds - row->previous_seconds) * row->fraction, row->fraction,
         row->view_entity, row->max_clients, viewer, row->view_angles, row->has_data ? &row->data : NULL,
         row->skybox ? row->skybox : "", row->bound, row->loaded, row->retired, row->map, &row->map_opening,
-        row->images, row->materials, row->world, row->protocol, row->published, row->level_name, row->stats}; return true;
+        row->images, row->materials, row->world, row->protocol, row->published, row->level_name, row->stats, row->rules}; return true;
 }
 bool frontend_remote_q1_read(const frontend_remote_q1 *row, frontend_remote_q1_view *out, qa_error *error)
 { return remote_q1_live(row, error) && frontend_remote_q1_metadata_read(row, out, error); }

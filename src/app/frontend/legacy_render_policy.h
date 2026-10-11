@@ -13,7 +13,8 @@ qa_vec3 frontend_legacy_entity_angles(qa_game_family, qa_product_edition,
 
 typedef struct frontend_legacy_render_policy {
     qa_game_family family;
-    bool quakeworld, flashblend, double_eyes, planar_shadows, texture_sort;
+    qa_ruleset_id rules;
+    bool flashblend, double_eyes, planar_shadows, texture_sort;
     float mirror_alpha;
     qa_scene_legacy_policy lighting;
 } frontend_legacy_render_policy;
@@ -40,7 +41,7 @@ typedef struct frontend_legacy_cvar_handles {
 
 void frontend_legacy_cvars_bind(const qa_cvars *, frontend_legacy_cvar_handles *);
 bool frontend_legacy_render_policy_read_controls(const qa_cvars *,
-    const frontend_legacy_cvar_handles *, const qa_product *,
+    const frontend_legacy_cvar_handles *, const qa_product *, qa_ruleset_id,
     frontend_legacy_render_policy *, qa_error *);
 bool frontend_legacy_local_policy_read(const qa_frontend *, uint32_t physical_seat,
     const qa_product *, frontend_legacy_render_policy *, qa_error *);

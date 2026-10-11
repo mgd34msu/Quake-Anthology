@@ -331,8 +331,7 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
         ok=row->source_icon.data!=NULL;
         if(ok){row->source_icon.size=view->source_icon.size;memcpy(row->source_icon.data,view->source_icon.data,view->source_icon.size);}
         else frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source icon declaration");}
-    row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family==QA_GAME_Q1?QA_GAME_Q1:
-        view->family==QA_GAME_Q2?QA_GAME_Q2:QA_GAME_Q3};
+    row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family};
     if(ok)row->owner.mounts=qa_vfs_clone(view->view_content,error);
     if(ok)row->owner.images=row->owner.mounts?qa_scene_resources_create(row->owner.mounts,error):NULL;
     if(ok)ok=row->owner.images&&frontend_image_policy_initialize(f,row->owner.images,error);
@@ -554,7 +553,7 @@ static const qa_scene_image *q1_hud_picture_read(void *context, const char *lump
 bool frontend_q1_hud_read(qa_material_library *materials, const qa_q1_clientdata *client,
     const qa_product *product, const qa_cvars *registry, const qa_hud_cvar_handles *refs,
     frontend_view_settings *settings,
-    bool quakeworld, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
+    qa_ruleset_id rules, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
 {
     const qa_cvar_view *deathmatch = qa_cvars_read(registry, refs->deathmatch),
         *swap = qa_cvars_read(registry, refs->swap);
@@ -562,14 +561,14 @@ bool frontend_q1_hud_read(qa_material_library *materials, const qa_q1_clientdata
         !isfinite(seconds))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 stock HUD lost its actual Source values, settings or media");
     frontend_q1_view_settings view;
-    if (!frontend_view_settings_q1_sample(settings, quakeworld ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
+    if (!frontend_view_settings_q1_sample(settings, rules,
         &view, error)) return false;
     *out = (qa_hud_q1_status){.picture_context = materials, .picture = q1_hud_picture_read, .face = face,
         .health = client->health, .armor = client->armor, .items = client->items,
         .active_weapon = client->weapon, .ammo_count = client->ammo,
         .ammunition = {client->shells, client->nails, client->rockets, client->cells},
         .seconds = seconds, .view_size = view.size, .variant = frontend_q1_hud_variant(product),
-        .present = true, .deathmatch = deathmatch && deathmatch->number != 0, .quakeworld = quakeworld,
+        .present = true, .deathmatch = deathmatch && deathmatch->number != 0, .quakeworld = rules == QA_RULESET_QUAKEWORLD,
         .overlay_status = view.overlay_status, .hud_swap = swap && swap->number != 0};
     return true;
 }
@@ -595,12 +594,12 @@ bool frontend_equipment_media_q1_hud_prepare(qa_frontend *f, qa_actor_owner prov
 bool frontend_equipment_media_q1_hud_read(qa_frontend *f, qa_actor_owner provider,
     const qa_q1_clientdata *client, const qa_product *product, const qa_cvars *registry,
     const qa_hud_cvar_handles *refs,
-    bool quakeworld, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
+    qa_ruleset_id rules, double seconds, const qa_scene_image *face, qa_hud_q1_status *out, qa_error *error)
 {
     frontend_visual_owner_view media;
     return frontend_visual_media_read(f, provider, QA_GAME_Q1, &media, error) &&
         frontend_q1_hud_read(media.materials, client, product, registry, refs, f->view_settings,
-            quakeworld, seconds, face, out, error);
+            rules, seconds, face, out, error);
 }
 bool frontend_equipment_media_q1_face_read(qa_frontend *f, qa_actor_owner provider,
     const char *lump, const qa_scene_image **out, qa_error *error)

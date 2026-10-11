@@ -459,7 +459,7 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_ruleset_id *source,
         if (row->validation!=ANY && !qa_cvars_bind(cvars,row->name,&(qa_cvar_binding){
             .owner=QA_FRONTEND_COMMAND_OWNER,.user=(void *)row,.validate=validate},error)) return false;
     }
-    return frontend_view_settings_q1_motion_register(cvars,QA_FRONTEND_COMMAND_OWNER,false,error) &&
+    return frontend_view_settings_q1_motion_register(cvars,QA_FRONTEND_COMMAND_OWNER,QA_RULESET_NETQUAKE,error) &&
         qa_input_settings_register(cvars,QA_RULESET_NETQUAKE,error) &&
         qa_input_device_settings_register(cvars,error) &&
         qa_ui_preferences_register(cvars,QA_FRONTEND_COMMAND_OWNER,error);

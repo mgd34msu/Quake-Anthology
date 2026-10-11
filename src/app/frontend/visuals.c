@@ -973,8 +973,7 @@ static bool live_owner(qa_frontend *frontend, qa_actor_owner provider,
     qa_application_visual_view request = {.provider = provider, .family = family};
     frontend_visual_owner *owner;
     if (!visual_owner(frontend, &request, &owner, error)) return false;
-    qa_game_family expected = family == QA_GAME_Q1 ? QA_GAME_Q1
-        : family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
+    qa_game_family expected = family;
     if (owner->family != expected)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission differs from its appearance owner");
     *out = owner; return true;
@@ -998,8 +997,7 @@ bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner prov
         !qa_application_provider_instance(frontend->application, provider))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read requires its actual selected provider");
     const qa_vfs *files = qa_application_provider_files(frontend->application, provider);
-    qa_game_family expected = family == QA_GAME_Q1 ? QA_GAME_Q1 :
-        family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
+    qa_game_family expected = family;
     for (const frontend_visual_owner *owner = frontend->visuals; owner; owner = owner->next) {
         if (owner->owner != provider || owner->family != expected || !files ||
             !qa_vfs_lookup_equal(files, owner->mounts)) continue;
@@ -1173,7 +1171,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Q1 view weapon lost its retained draw settings");
         frontend_q1_view_settings settings;
         if (!frontend_view_settings_q1_sample(frontend->view_settings,
-            source.product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
+            source.rules,
             &settings, error)) return false;
         if (gun->number == 0 || entities->number == 0 || settings.chase) return true;
         if (recipient->q1_view_ready && qa_actor_id_equal(actor, recipient->q1_view_actor)) {
@@ -1215,7 +1213,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     uint32_t model_frame=q2_client_view_ready ? q2_client_view.gun_frame : weapon.frame>=0 ? (uint32_t)weapon.frame : 0;
     qa_scene_model_input input = {.view = world->view, .transform = placement,
         .previous_origin = origin, .color = {1, 1, 1, 1},
-        .family = weapon.family == QA_GAME_Q1 ? QA_GAME_Q1 : QA_GAME_Q2,
+        .family = weapon.family,
         .view_model = true, .flags = weapon.family == QA_GAME_Q2 ? 1 | 4 | 16 : 0,
         .frame=model_frame,.old_frame=q2_client_view_ready ? old_gun_frame : model_frame,
         .back_lerp=q2_back_lerp,

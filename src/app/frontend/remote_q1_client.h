@@ -83,6 +83,7 @@ typedef struct frontend_remote_q1_view {
     bool published;
     const char *level_name;
     const int32_t *stats;
+    qa_ruleset_id rules;
 } frontend_remote_q1_view;
 typedef struct frontend_remote_q1_entity_view {
     qa_actor_id actor;

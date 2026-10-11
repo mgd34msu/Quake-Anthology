@@ -101,33 +101,31 @@ bool frontend_legacy_render_policy_read(const qa_frontend *frontend, const qa_pr
     if (!frontend || !frontend->application || !product || !out)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy rendering requires its actual selected product");
     const qa_cvars *registry = qa_application_cvars(frontend->application);
-    return frontend_legacy_render_policy_read_controls(registry, &frontend->engine_cvars.legacy, product, out, error);
+    return frontend_legacy_render_policy_read_controls(registry, &frontend->engine_cvars.legacy, product, qa_product_ruleset(product, product->family), out, error);
 }
 
 bool frontend_legacy_render_policy_read_controls(const qa_cvars *registry,
-    const frontend_legacy_cvar_handles *refs, const qa_product *product,
+    const frontend_legacy_cvar_handles *refs, const qa_product *product, qa_ruleset_id rules,
     frontend_legacy_render_policy *out, qa_error *error)
 {
     if (!registry || !product || !out)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Legacy policy requires its actual cvar owner and product");
-    frontend_legacy_render_policy value = {.family = product->family == QA_GAME_Q1 ? QA_GAME_Q1 :
-        product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3, .mirror_alpha = 1};
+    frontend_legacy_render_policy value = {.family = product->family, .rules = rules, .mirror_alpha = 1};
+    bool quakeworld = rules == QA_RULESET_QUAKEWORLD;
     if (value.family != QA_GAME_Q3) {
-        value.quakeworld = product->edition == QA_EDITION_QUAKEWORLD ||
-            (value.family == QA_GAME_Q1 && qa_cvars_dialect(registry) == QA_RULESET_QUAKEWORLD);
         float flash = 0, eyes = 1, shadows, mirror = 1, texture_sort = 0;
         if (!number(registry, value.family == QA_GAME_Q1 ? refs->r_shadows : refs->gl_shadows,
             value.family == QA_GAME_Q1 ? "r_shadows" : "gl_shadows", &shadows, error)) return false;
         if (!number(registry, refs->gl_flashblend, "gl_flashblend", &flash, error)) return false;
         if (value.family == QA_GAME_Q1 &&
-            ((!value.quakeworld && !number(registry, refs->gl_doubleeys, "gl_doubleeys", &eyes, error)) ||
+            ((!quakeworld && !number(registry, refs->gl_doubleeys, "gl_doubleeys", &eyes, error)) ||
              !number(registry, refs->r_mirroralpha, "r_mirroralpha", &mirror, error) ||
              !number(registry, refs->gl_texsort, "gl_texsort", &texture_sort, error))) return false;
         value.flashblend = flash != 0;
-        value.double_eyes = value.family == QA_GAME_Q1 && (value.quakeworld || eyes != 0);
+        value.double_eyes = value.family == QA_GAME_Q1 && (quakeworld || eyes != 0);
         value.planar_shadows = shadows != 0;
         value.texture_sort = value.family == QA_GAME_Q1 && texture_sort != 0;
-        value.mirror_alpha = value.family == QA_GAME_Q1 && !value.quakeworld ? mirror : 1;
+        value.mirror_alpha = value.family == QA_GAME_Q1 && !quakeworld ? mirror : 1;
         float fullbright, lightmap, dynamic, polyblend, cull, clear;
         if (!number(registry, refs->r_fullbright, "r_fullbright", &fullbright, error) ||
             !number(registry, value.family == QA_GAME_Q1 ? refs->r_lightmap : refs->gl_lightmap,
@@ -137,8 +135,8 @@ bool frontend_legacy_render_policy_read_controls(const qa_cvars *registry,
             !number(registry, refs->gl_polyblend, "gl_polyblend", &polyblend, error) ||
             !number(registry, refs->gl_cull, "gl_cull", &cull, error) || !number(registry, refs->gl_clear, "gl_clear", &clear, error)) return false;
         value.lighting = (qa_scene_legacy_policy){.source_family = value.family, .present = true,
-            .fullbright = !value.quakeworld && fullbright != 0,
-            .lightmap = !value.quakeworld && lightmap != 0, .dynamic = dynamic != 0,
+            .fullbright = !quakeworld && fullbright != 0,
+            .lightmap = !quakeworld && lightmap != 0, .dynamic = dynamic != 0,
             .polyblend = polyblend != 0, .cull = cull != 0, .clear = clear != 0,
             .planar_shadows = value.planar_shadows, .double_eyes = value.double_eyes,
             .flares = true, .modulate = 1, .monolightmap = '0'};
@@ -185,7 +183,7 @@ bool frontend_legacy_source_register(qa_cvars *registry, qa_ruleset_id dialect,
         if (!qa_cvars_register(registry, shared[i].name, shared[i].value, shared[i].flags,
             owner, "", error)) return false;
     if (q1) {
-        if (!frontend_view_settings_q1_motion_register(registry, owner, dialect == QA_RULESET_QUAKEWORLD, error)) return false;
+        if (!frontend_view_settings_q1_motion_register(registry, owner, dialect, error)) return false;
         for (size_t i = 0; i < sizeof(quake) / sizeof(*quake); ++i)
             if (!qa_cvars_register(registry, quake[i].name, quake[i].value, quake[i].flags,
                 owner, "", error)) return false;
@@ -209,7 +207,7 @@ bool frontend_legacy_source_owns(const qa_cvars *registry, const char *name)
     if (!q1 && !q2) return false;
     const qa_cvar_view *row = qa_cvars_find(registry, name);
     if (!row || !row->owner || row->console_created) return false;
-    if (q1 && frontend_view_settings_q1_motion_owns(name,dialect == QA_RULESET_QUAKEWORLD)) return true;
+    if (q1 && frontend_view_settings_q1_motion_owns(name,dialect)) return true;
     const char *shared[] = {"r_fullbright", "gl_polyblend", "gl_cull", "gl_clear"};
     const char *quake[] = {"r_lightmap", "r_dynamic", "r_shadows", "r_mirroralpha", "gl_texsort", "gl_flashblend", "gl_doubleeys", "r_drawviewmodel"};
     const char *quake2[] = {"gl_lightmap", "gl_dynamic", "gl_shadows", "gl_modulate", "gl_monolightmap", "gl_saturatelighting", "cl_flares", "gl_flashblend"};
@@ -297,7 +295,7 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
         (opaque.q1_sky && !qa_scene_world_q1_sky_finish(opaque.q1_sky, frame, error)) ||
         (opaque.boxed_sky && !qa_scene_world_boxed_sky_finish(opaque.boxed_sky, frame, error))) return false;
     if (policy->flashblend && !qa_scene_legacy_dlights(frame, &input->view, policy->family,
-        policy->quakeworld, input->lights, input->light_count, blend, error)) return false;
+        policy->rules == QA_RULESET_QUAKEWORLD, input->lights, input->light_count, blend, error)) return false;
     if (services->dlights && (!scene_current(services, error) ||
         !services->dlights(services->context, input, frame, blend, error))) return false;
     if (!scene_current(services, error) || !services->particles(services->context, input, frame, error) ||
@@ -346,16 +344,15 @@ static bool local_policy(const qa_frontend *frontend, const qa_product *product,
     if (actual_source) {
         if (!frontend_config_store_primary_legacy_current(frontend->config_store, actual_source) ||
             !product || !frontend_legacy_render_policy_read_controls(actual_source->registry, actual_source->legacy,
-                actual_source->product, out, error)) return false;
+                actual_source->product, actual_source->rules, out, error)) return false;
         /* The explicit WORLD presentation selects the sky/water traversal;
          * the entered Source owns its scalar renderer settings. */
-        out->family = product->family == QA_GAME_Q1 ? QA_GAME_Q1 :
-            product->family == QA_GAME_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
-        out->quakeworld = out->family == QA_GAME_Q1 &&
-            (product->edition == QA_EDITION_QUAKEWORLD || qa_cvars_dialect(actual_source->registry) == QA_RULESET_QUAKEWORLD);
+        out->family = product->family;
+        out->rules = qa_ruleset_read(actual_source->rules)->family == out->family ?
+            actual_source->rules : qa_product_ruleset(product, product->family);
         if (out->family != QA_GAME_Q1 || out->lighting.source_family != QA_GAME_Q1) out->texture_sort = false;
-        if (!out->texture_sort || out->quakeworld) out->mirror_alpha = 1;
-        if (out->quakeworld) out->lighting.fullbright = out->lighting.lightmap = false;
+        if (!out->texture_sort || out->rules == QA_RULESET_QUAKEWORLD) out->mirror_alpha = 1;
+        if (out->rules == QA_RULESET_QUAKEWORLD) out->lighting.fullbright = out->lighting.lightmap = false;
         return frontend_config_store_primary_legacy_current(frontend->config_store, actual_source);
     }
     return frontend_legacy_render_policy_read(frontend, product, out, error);
@@ -396,7 +393,7 @@ bool frontend_remote_unified_initial_clear(qa_frontend *frontend, uint32_t seat,
     const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(selected);
     frontend_legacy_render_policy policy;
     if (!domain || frontend_unified_media_recipe(children.media) != recipe ||
-        !frontend_legacy_render_policy_read_controls(domain->cvars, &selected->legacy_cvars, product, &policy, error) ||
+        !frontend_legacy_render_policy_read_controls(domain->cvars, &selected->legacy_cvars, product, product ? qa_product_ruleset(product, product->family) : QA_RULESET_NETQUAKE, &policy, error) ||
         !frontend_remote_unified_current(selected, error)) return false;
     if (policy.lighting.present) { *active = true; *clear = policy.lighting.clear; }
     return true;

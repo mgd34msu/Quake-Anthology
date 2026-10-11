@@ -430,7 +430,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         }
         if (!source.source_hud && !frame->source_status_native) {
             if (!frontend_equipment_media_q1_hud_read(seat->frontend,provider,&client,legacy.product,
-                legacy.registry,&legacy.legacy->hud,legacy.product->edition==QA_EDITION_QUAKEWORLD,seat->q1_view_motion.seconds,
+                legacy.registry,&legacy.legacy->hud,legacy.rules,seat->q1_view_motion.seconds,
                 out->health_icon,&out->q1,error)) return false;
             qa_application_network_q1_world world;
             if (!qa_application_network_q1_world_read(seat->frontend->application,provider,&world,error)) return false;

@@ -1220,7 +1220,7 @@ bool frontend_config_store_primary_legacy_read(const frontend_config_store *mana
         !current_command(source,&command,error) ||
         !qa_cvars_observer_idle(registry))
         return fail(error,QA_ERROR_ARGUMENT,"Legacy policy lost its returned physical CLIENT declarations");
-    *out=(frontend_config_legacy_view){source,selected,product,registry,logical,command.generation,&source->seats[ordinal].q1_motion,&source->seats[ordinal].legacy}; *present=true; return true;
+    *out=(frontend_config_legacy_view){source,selected,product,registry,logical,command.generation,&source->seats[ordinal].q1_motion,&source->seats[ordinal].legacy,selected->selection.clock.kind}; *present=true; return true;
 }
 bool frontend_config_store_primary_legacy_current(const frontend_config_store *manager,
     const frontend_config_legacy_view *view)

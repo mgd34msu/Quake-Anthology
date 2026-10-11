@@ -134,7 +134,7 @@ static bool remote_q1_present(qa_frontend *f,unsigned seat,const qa_scene_view *
     (void)explicit_override;
     frontend_q1_view_settings settings;
     if (!frontend_view_settings_q1_sample(f->view_settings,
-        qa_q1_is_qw(source.protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE,&settings,error)) return false;
+        source.rules,&settings,error)) return false;
     qa_scene_view view=*fallback;
     frontend_q1_view_pose pose;
     if (!frontend_remote_q1_view_pose_read(selected, &pose, error)) return false;
@@ -222,7 +222,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         if (!qa_application_qc_selected_player_ui_read(f->application, actor, QA_ROLE_CHARACTER, &character, error)) return false;
         items = character.items;
     }
-    bool qw = source.product->edition == QA_EDITION_QUAKEWORLD;
+    bool qw = source.rules == QA_RULESET_QUAKEWORLD;
     double seconds;
     if (qw) {
         qa_application_network_qw_source clock;
@@ -234,7 +234,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         seconds = clock.seconds;
     }
     frontend_q1_motion_settings settings;
-    if (!frontend_view_settings_q1_motion_sample(source.motion, qw, &settings, error)) return false;
+    if (!frontend_view_settings_q1_motion_sample(source.motion, source.rules, &settings, error)) return false;
     if (!qa_actor_id_equal(seat->q1_view_actor, actor)) {
         seat->q1_view_motion = (frontend_q1_view_motion){0}; seat->q1_view_actor = actor;
     }
@@ -243,7 +243,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
         .entity_angles = qa_v3(-angles.x, angles.y, body.angles.z),
         .velocity = body.velocity, .punch = equipment.kick_angles, .seconds = seconds,
         .frame_seconds = (double)seat->client_frame_ns / 1000000000.0,
-        .view_height = camera->view_height, .view_size = (float)view->size, .quakeworld = qw,
+        .view_height = camera->view_height, .view_size = (float)view->size, .rules = source.rules,
         .grounded = control.ground.hit != QA_TRACE_HIT_NONE,
         .dead = combat.health <= 0, .intermission = camera->cutscene};
     frontend_view_q1_motion(&settings, &input, &seat->q1_view_motion, &seat->q1_view_pose);
@@ -265,7 +265,7 @@ static bool local_q1_view(qa_frontend *f, unsigned physical, qa_actor_id actor,
     if (!qa_collision_point_leaf(qa_world_geometry(qa_application_world(f->application)),
         scene->origin,QA_LEAF_Q1,&leaf,error)) return false;
     int32_t contents=qa_collision_contents_export(leaf.contents,QA_GAME_Q1,leaf.q1_opaque_token);
-    seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,qw,items);
+    seat->q1_blend=frontend_view_q1_blend(&settings,&seat->q1_view_motion,contents,source.rules,items);
     return true;
 }
 static bool local_q3_damage(qa_frontend *f,frontend_seat *seat,qa_actor_id actor,
@@ -424,7 +424,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if (local_product && local_product->family == QA_GAME_Q1) {
             frontend_q1_view_settings settings;
             if (!frontend_view_settings_q1_sample(frontend->view_settings,
-                local_product->edition == QA_EDITION_QUAKEWORLD ? QA_RULESET_QUAKEWORLD : QA_RULESET_NETQUAKE,
+                qa_product_ruleset(local_product, QA_GAME_Q1),
                 &settings, error)) return false;
             if (!local_q1_view(frontend, i, actor, &camera, &settings, &view, error)) return false;
             view.viewport = q1_view_rectangle(rect, &settings, camera.cutscene, preferences.hud_scale);
@@ -479,7 +479,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
                 qa_catalog_product(qa_application_catalog(frontend->application),native_map.presentation):NULL;
             if (okay && product && (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2))
                 okay=frontend_source_companion_legacy_prepare(frontend,i,actor,frontend->scene_world,
-                    product->family==QA_GAME_Q1?QA_GAME_Q1:QA_GAME_Q2,&world,&companion,error);
+                    product->family,&world,&companion,error);
             if (okay) okay=frontend_legacy_scene_submit(frontend,i,0,&world,&frontend->frame,error);
             if (okay) okay=frontend_source_companion_legacy_submit(&companion,&frontend->frame,error);
             if (!okay) return false;

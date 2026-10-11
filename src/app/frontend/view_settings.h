@@ -38,12 +38,13 @@ typedef struct frontend_q1_motion_input {
     qa_vec3 origin, angles, entity_angles, velocity, punch;
     double seconds, frame_seconds;
     float view_height, view_size;
-    bool quakeworld, grounded, spectator, dead, intermission;
+    qa_ruleset_id rules;
+    bool grounded, spectator, dead, intermission;
 } frontend_q1_motion_input;
-bool frontend_view_settings_q1_motion_register(qa_cvars *,uint64_t owner,bool quakeworld,qa_error *);
-bool frontend_view_settings_q1_motion_owns(const char *,bool quakeworld);
+bool frontend_view_settings_q1_motion_register(qa_cvars *,uint64_t owner,qa_ruleset_id rules,qa_error *);
+bool frontend_view_settings_q1_motion_owns(const char *,qa_ruleset_id rules);
 void frontend_view_settings_q1_motion_bind(const qa_cvars *,frontend_q1_motion_refs *);
-bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *,bool quakeworld,
+bool frontend_view_settings_q1_motion_sample(const frontend_q1_motion_refs *,qa_ruleset_id rules,
     frontend_q1_motion_settings *,qa_error *);
 void frontend_view_q1_damage(const frontend_q1_motion_settings *,qa_vec3 origin,qa_vec3 angles,
     uint8_t armor,uint8_t blood,qa_vec3 from,double seconds,frontend_q1_view_motion *);
@@ -54,7 +55,7 @@ bool frontend_view_q1_bonus_commands(frontend_q1_view_motion *,const char *,qa_a
 bool frontend_view_q1_local_bonus(qa_frontend *,qa_actor_id,qa_error *);
 bool frontend_view_q1_local_bonus_commands(qa_frontend *,qa_actor_id,const char *,qa_error *);
 qa_vec4 frontend_view_q1_blend(const frontend_q1_motion_settings *,
-    const frontend_q1_view_motion *,int32_t contents,bool quakeworld,uint32_t items);
+    const frontend_q1_view_motion *,int32_t contents,qa_ruleset_id rules,uint32_t items);
 const char *frontend_view_q1_face(int32_t health,uint32_t items,double seconds,
     const frontend_q1_view_motion *);
 bool frontend_view_q1_damage_origin(const double from[3],qa_vec3 *,qa_error *);
