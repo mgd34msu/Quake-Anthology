@@ -2,7 +2,7 @@
 
 enum { TAG_REST, TAG_PLACE, TAG_FOLLOW, TAG_FALL, TAG_RESPAWN };
 
-static bool announce(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *text,
+static bool announce(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_string_id text,
                      qa_error *e) {
     if (!m->options.hooks.event)
         return true;
@@ -11,9 +11,8 @@ static bool announce(qa_modes *m, mode_instance *v, qa_actor_id actor, const cha
                            .actor = actor,
                            .object = v->tag,
                            .time_ns = v->value.time_ns,
-                           .detail = !strcmp(text, "$qc_got_quad")};
-    if (!qa_builtin_resource(&m->options.services, text, &event.text, e))
-        return false;
+                           .text = text,
+                           .detail = text == m->runtime_names[MODE_NAME_QC_GOT_QUAD]};
     return MODE_CALLBACK(m, m->options.hooks.event(m->options.hooks.context, &event, e));
 }
 static bool floor_token(qa_modes *m, mode_object *o, bool *landed, qa_error *e) {
@@ -84,11 +83,11 @@ bool mode_rogue_tag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_acto
         !mode_sound(m, v, o->actor, m->runtime_names[MODE_NAME_SOUND_RUNES_END1_WAV], 1, e))
         return false;
     *accepted = true;
-    return announce(m, v, actor, "$qc_got_token", e);
+    return announce(m, v, actor, m->runtime_names[MODE_NAME_QC_GOT_TOKEN], e);
 }
 bool mode_rogue_tag_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e) {
     qa_actor_id owner = o->value.carrier;
-    if (owner.registry && !announce(m, v, owner, "$qc_lost_token", e))
+    if (owner.registry && !announce(m, v, owner, m->runtime_names[MODE_NAME_QC_LOST_TOKEN], e))
         return false;
     if (mode_live(m, owner) && !mode_object_count(m, v, o, owner, 0, e))
         return false;
@@ -112,7 +111,7 @@ bool mode_rogue_tag_frame(qa_modes *m, mode_instance *v, mode_object *o, qa_erro
             return mode_rogue_tag_drop(m, v, o, e);
         if (o->animation_ns < v->value.time_ns) {
             o->animation_ns = v->value.time_ns + 30 * MODE_SECOND;
-            if (!announce(m, v, owner, "$qc_has_token", e))
+            if (!announce(m, v, owner, m->runtime_names[MODE_NAME_QC_HAS_TOKEN], e))
                 return false;
         }
         qa_body_state player, token;
@@ -157,13 +156,14 @@ static bool score(qa_modes *m, mode_instance *v, qa_actor_id victim, qa_actor_id
         if (v->tag_count == 5) {
             if (!m->options.hooks.give_quad)
                 return mode_fail(e, "Rogue Tag needs selected timed-power provider");
-            if (!announce(m, v, attacker, "$qc_got_quad", e))
+            if (!announce(m, v, attacker, m->runtime_names[MODE_NAME_QC_GOT_QUAD], e))
                 return false;
             return m->options.hooks.give_quad(m->options.hooks.context, v->id, attacker, QA_GAME_Q1,
                                               30 * MODE_SECOND, e);
         }
         if (v->tag_count == 10)
-            return announce(m, v, attacker, "$qc_lost_token", e) && respawn(m, v, o, e);
+            return announce(m, v, attacker, m->runtime_names[MODE_NAME_QC_LOST_TOKEN], e) &&
+                   respawn(m, v, o, e);
     } else if (qa_actor_id_equal(victim, v->tag_owner)) {
         *points = 5;
         if (!mode_sound(m, v, victim, m->runtime_names[MODE_NAME_SOUND_RUNES_END1_WAV], 1, e))

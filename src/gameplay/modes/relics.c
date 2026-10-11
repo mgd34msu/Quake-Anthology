@@ -11,12 +11,11 @@ static qa_vec3 rogue_velocity(qa_modes *m, mode_instance *v) {
     return qa_v3(x, y, 300);
 }
 static bool rogue_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
-                            const char *text, qa_error *e) {
+                            qa_string_id text, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .family = QA_GAME_Q1,
         .provider = m->options.owner, .actor = actor, .time_ns = v->value.time_ns,
-        .flags = 1};
-    return qa_builtin_resource(&m->options.services, text, &event.text, e) &&
-           MODE_CALLBACK(m, m->options.hooks.emit
+        .flags = 1, .text = text};
+    return MODE_CALLBACK(m, m->options.hooks.emit
                ? m->options.hooks.emit(m->options.hooks.context, v->id, &event, e)
                : qa_builtin_emit(&m->options.services, &event, e));
 }
@@ -234,14 +233,15 @@ bool mode_relic_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id
         if (p->rogue_rune) {
             bool notice = p->notice_ns < v->value.time_ns;
             p->notice_ns = v->value.time_ns + 5 * MODE_SECOND;
-            return !notice || rogue_message(m, v, actor, "$qc_already_have_rune", e);
+            return !notice || rogue_message(m, v, actor,
+                m->runtime_names[MODE_NAME_QC_ALREADY_HAVE_RUNE], e);
         }
         if (o->spec.relic > QA_RELIC_REGENERATION) return true;
         p->rogue_rune = UINT32_C(1) << o->spec.relic;
         qa_actor_id rune = o->actor;
-        static const char *messages[] = {"$qc_rune_resistance", "$qc_rune_strength",
-                                        "$qc_rune_haste", "$qc_rune_regeneration"};
-        const char *message = messages[o->spec.relic];
+        static const mode_name messages[] = {MODE_NAME_QC_RUNE_RESISTANCE,
+            MODE_NAME_QC_RUNE_STRENGTH, MODE_NAME_QC_RUNE_HASTE, MODE_NAME_QC_RUNE_REGENERATION};
+        qa_string_id message = m->runtime_names[messages[o->spec.relic]];
         *accepted = true;
         if (!mode_sound(m, v, actor, m->runtime_names[MODE_NAME_SOUND_WEAPONS_PKUP_WAV], 1, e) ||
             !rogue_message(m, v, actor, message, e)) return false;
@@ -457,12 +457,9 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
                                   fminf(maximum + 25, state.health + (float)(heart / 3)), e))
             return false;
         if (armor.kind == QA_ARMOR_NONE || armor.points == 0) {
-            qa_item_id jacket;
-            if (!qa_builtin_resource(&m->options.services, "q2:item_armor_jacket", &jacket, e))
-                return false;
             armor = (qa_regular_armor){.kind = QA_ARMOR_Q2,
                                        .points = (float)(heart / 4),
-                                       .item = jacket,
+                                       .item = m->runtime_names[MODE_NAME_Q2_ITEM_ARMOR_JACKET],
                                        .protection.q2 = {.normal = .3f, .energy = 0}};
         } else
             armor.points = fminf(200, (float)armor.points + (float)(heart / 3));
