@@ -496,8 +496,11 @@ bool windows_msvc_invoke(windows_service *service, const qa_native_value *args,
     case M_LOCINFO_CTOR: {
         uint16_t *name = NULL; size_t length;
         if (!b) return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "MSVC null locale is not implemented");
-        if (!windows_string(owner, b, false, &name, &length, error)) return false;
-        bool supported = !length || (length == 1 && name[0] == 'C'); free(name);
+        qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+        if (!windows_string(owner, b, false, &scratch, &name, &length, error)) {
+            qa_arena_destroy(&scratch); return false;
+        }
+        bool supported = !length || (length == 1 && name[0] == 'C'); qa_arena_destroy(&scratch);
         if (!supported) return guest_fail(error, QA_ERROR_UNSUPPORTED, b, "non-C MSVC locale is not implemented");
         if (!windows_zero(owner, object, 104, error) || !locale_lock(owner, object, 0, false, error)) return false;
         const uint8_t narrow[] = {'C',0}, wide[] = {'C',0,0,0};

@@ -479,7 +479,7 @@ bool application_q2_combat_armor_read(application_q2_combat_actor *a, qa_armor *
     if (out->powered.kind != QA_POWER_NONE) {
         out->powered.source_kind = QA_POWER_SOURCE_Q2;
         out->powered.source_owner = p->engine->provider->owner;
-        out->powered.source_edition = p->kex ? QA_Q2_POWER_ARMOR_RERELEASE : QA_Q2_POWER_ARMOR_CLASSIC;
+        out->powered.source_edition = p->kex ? QA_Q2_CAUSE_RERELEASE : QA_Q2_CAUSE_CLASSIC;
     }
     return qa_armor_validate(out, error);
 }

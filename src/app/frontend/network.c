@@ -6272,7 +6272,7 @@ bool frontend_network_receive_ready(const qa_frontend *f)
     const qa_frontend_network *n=f?f->network:NULL;
     return !n || qa_network_receive_ready(n->runtime);
 }
-bool frontend_network_event_ready(const qa_frontend *f, const qa_sys_event *event)
+bool frontend_network_event_ready(const qa_frontend *f, const qa_sys_event *event,qa_bytes bytes)
 {
     const qa_frontend_network *n = f ? f->network : NULL;
     if (!n || event->data.packet.source_id != n->input_serial || event->data.packet.destination == 1) return true;
@@ -6282,8 +6282,12 @@ bool frontend_network_event_ready(const qa_frontend *f, const qa_sys_event *even
         if (physical >= f->options.seats || !n->local_clients[physical].runtime) return true;
         runtime = n->local_clients[physical].runtime;
     }
+    qa_net_transport_event input;uint64_t source_id;
+    qa_network_event_packet(event,bytes,&source_id,&input);
+    const qa_net_transport_event *physical=input.packet.kind==QA_NET_POLL_EMPTY ? NULL : &input;
     return qa_network_receive_ready(runtime) &&
         (runtime != n->runtime || (!n->round && frontend_nq_idle(n->nq_host) && frontend_qw_idle(n->qw_host))) &&
+        qa_net_transport_dispatch_ready(qa_network_transport(runtime),physical) &&
         (event->data.packet.result != QA_NET_POLL_PACKET ||
          qa_net_transport_send_ready(qa_network_transport(runtime), &event->data.packet.from));
 }
@@ -6291,6 +6295,36 @@ bool frontend_network_local_input_owned(const qa_frontend *f, uint32_t physical)
 {
     return f && f->network && physical < f->options.seats &&
         f->network->local_clients[physical].runtime != NULL;
+}
+static bool network_dispatch(qa_frontend_network *n,qa_network_runtime *runtime,
+    const qa_net_transport_event *physical,bool *present,qa_error *error)
+{
+    qa_net_datagram packet;
+    bool ok=qa_net_transport_dispatch(qa_network_transport(runtime),physical,&packet,present,error);
+    if(ok && *present) {
+        bool control = runtime == n->runtime && (n->nq_host || n->qw_host || n->q3_admission) &&
+            packet.kind == QA_NET_POLL_PACKET && packet.payload.size >= 4 &&
+            (qa_load_u32le(packet.payload.data) == UINT32_MAX ||
+             (n->nq_host && packet.payload.data[0] == 128 && packet.payload.data[1] == 0));
+        ok = control ? connectionless(n, runtime, &packet, error) : qa_network_receive(runtime, &packet, error);
+    }
+    return ok;
+}
+bool frontend_network_logical_drain(qa_frontend *f,qa_error *error)
+{
+    qa_frontend_network *n=f->network;
+    if(!n) return true;
+    ++n->busy;
+    bool ok=true;
+    for(uint32_t i=0;ok && i<=f->options.seats;++i) {
+        qa_network_runtime *runtime=i ? n->local_clients[i-1].runtime : n->runtime;
+        if(!runtime || !qa_network_receive_ready(runtime)) continue;
+        if(runtime==n->runtime && (n->round || !frontend_nq_idle(n->nq_host) || !frontend_qw_idle(n->qw_host))) continue;
+        bool present;
+        ok=network_dispatch(n,runtime,NULL,&present,error);
+    }
+    --n->busy;
+    return ok;
 }
 bool frontend_network_receive(qa_frontend *f,const qa_sys_event *event,qa_bytes bytes,
     bool *consumed,qa_error *error)
@@ -6314,17 +6348,10 @@ bool frontend_network_receive(qa_frontend *f,const qa_sys_event *event,qa_bytes 
             runtime = seat < f->options.seats ? n->local_clients[seat].runtime : NULL;
         }
         if (!runtime) { --n->busy; return true; }
-        qa_net_datagram packet; bool present;
-        ok=qa_net_transport_dispatch(qa_network_transport(runtime),physical,&packet,&present,error);
-        if(ok && present) {
-            bool control = runtime == n->runtime && (n->nq_host || n->qw_host || n->q3_admission) &&
-                packet.kind == QA_NET_POLL_PACKET && packet.payload.size >= 4 &&
-                (qa_load_u32le(packet.payload.data) == UINT32_MAX ||
-                 (n->nq_host && packet.payload.data[0] == 128 && packet.payload.data[1] == 0));
-            ok = control ? connectionless(n, runtime, &packet, error) : qa_network_receive(runtime, &packet, error);
-            /* Keep the boundary until all saved logical deliveries have run. */
-            if(!physical) *consumed=false;
-        }
+        bool present;
+        ok=network_dispatch(n,runtime,physical,&present,error);
+        /* Keep the boundary until all saved logical deliveries have run. */
+        if(ok && present && !physical) *consumed=false;
     }
     --n->busy;
     return ok;

@@ -5,33 +5,45 @@ bool bot_nav_fail(qa_error *e, const char *message) {
     return false;
 }
 bool bot_nav_scratch(qa_bot_navigation *n, size_t count, qa_error *e) {
-    if (count <= n->capacity)
+    if (count <= n->capacity && n->crossing_capacity)
         return true;
-    if (count > SIZE_MAX / sizeof(qa_nav_adjacency_cursor))
+    size_t stride = 6 * sizeof(uint32_t) + sizeof(qa_nav_adjacency_cursor) + sizeof(qa_aas_crossing);
+    size_t padding = 8 * _Alignof(qa_nav_adjacency_cursor) + sizeof(qa_aas_crossing);
+    if (count > (SIZE_MAX - padding) / stride)
         return bot_nav_fail(e, "bot navigation workspace exceeds address range");
-    uint32_t *areas = malloc(count * sizeof(*areas)), *stack = malloc(count * sizeof(*stack));
-    uint32_t *starts = malloc(count * sizeof(*starts)), *goals = malloc(count * sizeof(*goals));
-    uint32_t *next = malloc(count * sizeof(*next));
-    uint32_t *visited = malloc(count * sizeof(*visited));
-    qa_nav_adjacency_cursor *adjacency = malloc(count * sizeof(*adjacency));
-    if (!areas || !stack || !starts || !goals || !visited || !next || !adjacency) {
-        free(areas); free(stack); free(starts); free(goals); free(visited); free(next);
-        free(adjacency);
-        qa_error_set(e, QA_ERROR_MEMORY, count, "allocating bot navigation query workspace");
+    qa_arena storage = {0};
+    if (!qa_arena_reserve(&storage, padding + count * stride, e))
         return false;
-    }
-    free(n->areas); free(n->stack); free(n->start_times); free(n->goal_times); free(n->visited.marks);
-    free(n->next_neighbor);
-    free(n->adjacency);
-    n->areas = areas;
-    n->stack = stack;
-    n->start_times = starts;
-    n->goal_times = goals;
-    qa_stamp_set_init(&n->visited, visited, count);
-    n->next_neighbor = next;
-    n->adjacency = adjacency;
-    n->capacity = count;
+    qa_bot_navigation prepared = *n;
+    prepared.query_storage = storage;
+#define QUERY_SPAN(field, type) do { \
+    prepared.field = count ? qa_arena_alloc(&prepared.query_storage, \
+        count * sizeof(*prepared.field), _Alignof(type), e) : NULL; \
+    if (count && !prepared.field) goto allocation; \
+} while (0)
+    QUERY_SPAN(areas, uint32_t);
+    QUERY_SPAN(stack, uint32_t);
+    QUERY_SPAN(start_times, uint32_t);
+    QUERY_SPAN(goal_times, uint32_t);
+    QUERY_SPAN(next_neighbor, uint32_t);
+    QUERY_SPAN(adjacency, qa_nav_adjacency_cursor);
+#undef QUERY_SPAN
+    uint32_t *visited = count ? qa_arena_alloc(&prepared.query_storage,
+        count * sizeof(*visited), _Alignof(uint32_t), e) : NULL;
+    prepared.crossings = qa_arena_alloc(&prepared.query_storage,
+        (count + 1) * sizeof(*prepared.crossings), _Alignof(qa_aas_crossing), e);
+    if ((count && !visited) || !prepared.crossings)
+        goto allocation;
+    qa_stamp_set_init(&prepared.visited, visited, count);
+    prepared.capacity = count;
+    prepared.crossing_capacity = count + 1;
+    qa_arena_seal(&prepared.query_storage);
+    qa_arena_destroy(&n->query_storage);
+    *n = prepared;
     return true;
+allocation:
+    qa_arena_destroy(&prepared.query_storage);
+    return false;
 }
 bool qa_bot_navigation_create(qa_navigation *runtime, qa_world *world, qa_actor_id actor,
                               const qa_bot_navigation_observations *observations,
@@ -58,10 +70,7 @@ void qa_bot_navigation_destroy(qa_bot_navigation *n) {
     qa_nav_workspace_destroy(n->workspace);
     qa_nav_route_free(&n->trajectory);
     qa_nav_prediction_result_free(&n->prediction);
-    free(n->crossings);
-    free(n->areas); free(n->stack); free(n->start_times); free(n->goal_times); free(n->visited.marks);
-    free(n->next_neighbor);
-    free(n->adjacency);
+    qa_arena_destroy(&n->query_storage);
     free(n);
 }
 bool qa_bot_navigation_create_restored(qa_navigation *runtime, qa_world *world, qa_actor_id actor,
@@ -90,7 +99,8 @@ bool qa_bot_navigation_bind(qa_bot_navigation *n, qa_navigation *runtime, qa_act
     for (size_t i = 0; i < graph->edge_count; ++i)
         if (graph->edges[i].id > INT32_MAX - offset)
             return bot_nav_fail(e, "navigation reachability exceeds source signed range");
-    if (!bot_nav_scratch(n, graph->node_count, e))
+    if (!qa_nav_workspace_prepare(n->workspace, qa_nav_workspace_limits_read(graph), e) ||
+        !bot_nav_scratch(n, graph->node_count, e))
         return false;
     n->runtime = runtime;
     n->actor = actor;

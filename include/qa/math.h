@@ -58,6 +58,11 @@ float qa_angle_mod(float angle,qa_angle_word_rule);
 float qa_angle_wrap(float angle);
 float qa_angle_subtract(float first,float second);
 float qa_angle_delta(float target,float current);
+static inline float qa_angle_lerp(float from,float to,float fraction) {
+    if (to-from>180) to-=360;
+    if (to-from< -180) to+=360;
+    return from+fraction*(to-from);
+}
 
 static inline qa_vec3 qa_v3(float x, float y, float z) { return (qa_vec3){x, y, z}; }
 static inline qa_vec3 qa_vec_add(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x+b.x, a.y+b.y, a.z+b.z); }

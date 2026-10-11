@@ -253,14 +253,9 @@ static bool primary_visibility(qa_application *app, qa_actor_id actor,
     }
     if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine) {
         struct application_native_q2 *engine = source->state.native.q2_engine;
-        uint32_t slot = 0;
-        for (uint32_t i = 1; i < 257; ++i) {
-            const application_native_q2_client *client = engine->clients + i;
-            if (!client->connected || !client->begun || client->disconnect_started ||
-                !qa_actor_id_equal(client->actor, actor)) continue;
-            if (slot) return application_fail(error, QA_ERROR_FORMAT, "Gear visibility repeats a primary Q2 client");
-            slot = i;
-        }
+        uint32_t slot = application_native_q2_client_slot(engine, actor);
+        if (slot && (!engine->clients[slot].connected || !engine->clients[slot].begun ||
+            engine->clients[slot].disconnect_started)) slot = 0;
         bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
         if (!slot || !application_native_q2_idle(source) || !engine->initialized || !engine->map_ready ||
             engine->shutting_down || (!classic && engine->profile != QA_NATIVE_Q2_GAME_API2023))

@@ -18,6 +18,197 @@
 #define Q1_SOURCE_INITIAL_TIME_NS UINT64_C(1000000000)
 
 #define Q1_RUNTIME_NAME_LIST(X) \
+    X(RESOURCE_SELL_SCREEN, "sell-screen") \
+    X(RESOURCE_CUTSCENE, "cutscene") \
+    X(RESOURCE_ACTOR_EFFECTS, "actor-effects") \
+    X(RESOURCE_DEBUG_BOUNDS, "debug-bounds") \
+    X(RESOURCE_RUNE_COLLECTED, "rune-collected") \
+    X(RESOURCE_MONSTER_COUNT, "monster-count") \
+    X(RESOURCE_PROGS_V_STAR_MDL, "progs/v_star.mdl") \
+    X(ACH_SURVIVE_DISCHARGE, "ACH_SURVIVE_DISCHARGE") \
+    X(KEY_GOLD, "q1:key/gold") \
+    X(KEY_SILVER, "q1:key/silver") \
+    X(CRUSH, "crush") \
+    X(OBITUARY_QC_TELEFRAGGED, "$qc_telefragged") \
+    X(OBITUARY_QC_SATANS_POWER, "$qc_satans_power") \
+    X(OBITUARY_QC_DISCHARGE_WATER, "$qc_discharge_water") \
+    X(OBITUARY_QC_DISCHARGE_SLIME, "$qc_discharge_slime") \
+    X(OBITUARY_QC_DISCHARGE_LAVA, "$qc_discharge_lava") \
+    X(OBITUARY_QC_SUICIDE_PIN, "$qc_suicide_pin") \
+    X(OBITUARY_QC_SUICIDE_BORED, "$qc_suicide_bored") \
+    X(OBITUARY_QC_SUICIDE_LOADED, "$qc_suicide_loaded") \
+    X(OBITUARY_QC_FF_TEAMMATE, "$qc_ff_teammate") \
+    X(OBITUARY_QC_FF_GLASSES, "$qc_ff_glasses") \
+    X(OBITUARY_QC_FF_OTHERTEAM, "$qc_ff_otherteam") \
+    X(OBITUARY_QC_FF_FRIEND, "$qc_ff_friend") \
+    X(OBITUARY_QC_DEATH_AX, "$qc_death_ax") \
+    X(OBITUARY_QC_DEATH_SG, "$qc_death_sg") \
+    X(OBITUARY_QC_DEATH_DBL, "$qc_death_dbl") \
+    X(OBITUARY_QC_DEATH_NAIL, "$qc_death_nail") \
+    X(OBITUARY_QC_DEATH_SNG, "$qc_death_sng") \
+    X(OBITUARY_QC_DEATH_GL1, "$qc_death_gl1") \
+    X(OBITUARY_QC_DEATH_GL2, "$qc_death_gl2") \
+    X(OBITUARY_QC_DEATH_RL2, "$qc_death_rl2") \
+    X(OBITUARY_QC_DEATH_RL3, "$qc_death_rl3") \
+    X(OBITUARY_QC_DEATH_LG1, "$qc_death_lg1") \
+    X(OBITUARY_QC_DEATH_LG2, "$qc_death_lg2") \
+    X(OBITUARY_QC_DEATH_DROWN1, "$qc_death_drown1") \
+    X(OBITUARY_QC_DEATH_DROWN2, "$qc_death_drown2") \
+    X(OBITUARY_QC_DEATH_SLIME1, "$qc_death_slime1") \
+    X(OBITUARY_QC_DEATH_SLIME2, "$qc_death_slime2") \
+    X(OBITUARY_QC_DEATH_LAVA1, "$qc_death_lava1") \
+    X(OBITUARY_QC_DEATH_LAVA2, "$qc_death_lava2") \
+    X(OBITUARY_QC_DEATH_LAVA3, "$qc_death_lava3") \
+    X(OBITUARY_QC_DEATH_SQUISH, "$qc_death_squish") \
+    X(OBITUARY_QC_DEATH_FALL, "$qc_death_fall") \
+    X(OBITUARY_QC_DEATH_DIED, "$qc_death_died") \
+    X(OBITUARY_QC_DEATH_EMPATHY1, "$qc_death_empathy1") \
+    X(OBITUARY_QC_DEATH_EMPATHY2, "$qc_death_empathy2") \
+    X(OBITUARY_QC_DEATH_BOMB1, "$qc_death_bomb1") \
+    X(OBITUARY_QC_DEATH_BOMB2, "$qc_death_bomb2") \
+    X(OBITUARY_QC_DEATH_LASER1, "$qc_death_laser1") \
+    X(OBITUARY_QC_DEATH_LASER2, "$qc_death_laser2") \
+    X(OBITUARY_QC_DEATH_HAMMER, "$qc_death_hammer") \
+    X(OBITUARY_QC_DEATH_GRAPPLED, "$qc_death_grappled") \
+    X(OBITUARY_QC_DEATH_BURNED, "$qc_death_burned") \
+    X(OBITUARY_QC_DEATH_FUSED, "$qc_death_fused") \
+    X(OBITUARY_QC_DEATH_BLASTED, "$qc_death_blasted") \
+    X(OBITUARY_QC_DEATH_VENGEANCE, "$qc_death_vengeance") \
+    X(OBITUARY_QC_DEATH_SMASHED, "$qc_death_smashed") \
+    X(OBITUARY_QC_CHANGED_TEAMS, "$qc_changed_teams") \
+    X(OBITUARY_QC_TRIED_CHANGE_TEAMS, "$qc_tried_change_teams") \
+    X(OBITUARY_QC_KS_DRAGON1, "$qc_ks_dragon1") \
+    X(OBITUARY_QC_KS_DRAGON2, "$qc_ks_dragon2") \
+    X(OBITUARY_QC_KS_EEL, "$qc_ks_eel") \
+    X(OBITUARY_QC_KS_WRATH, "$qc_ks_wrath") \
+    X(OBITUARY_QC_KS_OVERLORD, "$qc_ks_overlord") \
+    X(OBITUARY_QC_KS_SWORDSMAN, "$qc_ks_swordsman") \
+    X(OBITUARY_QC_KS_HEPHAESTUS, "$qc_ks_hephaestus") \
+    X(OBITUARY_QC_KS_GUARDIAN, "$qc_ks_guardian") \
+    X(OBITUARY_QC_KS_MUMMY, "$qc_ks_mummy") \
+    X(OBITUARY_QC_KS_GREMLIN, "$qc_ks_gremlin") \
+    X(OBITUARY_QC_KS_CENTROID, "$qc_ks_centroid") \
+    X(OBITUARY_QC_KS_ARMAGON, "$qc_ks_armagon") \
+    X(OBITUARY_QC_KS_BLEW_UP, "$qc_ks_blew_up") \
+    X(OBITUARY_QC_KS_SPIKED, "$qc_ks_spiked") \
+    X(OBITUARY_QC_KS_LAVABALL, "$qc_ks_lavaball") \
+    X(OBITUARY_QC_KS_TRIED_LEAVE, "$qc_ks_tried_leave") \
+    X(OBITUARY_QC_KS_RODE_LIGHTNING, "$qc_ks_rode_lightning") \
+    X(OBITUARY_QC_KS_CLEAVED, "$qc_ks_cleaved") \
+    X(OBITUARY_QC_KS_SLICED, "$qc_ks_sliced") \
+    X(OBITUARY_QC_KS_PLASMA, "$qc_ks_plasma") \
+    X(OBITUARY_QC_ENTERED, "$qc_entered") \
+    X(OBITUARY_QC_LEFT_GAME, "$qc_left_game") \
+    X(OBITUARY_QC_SUICIDES, "$qc_suicides") \
+    X(OBITUARY_QC_EXITED, "$qc_exited") \
+    X(OBITUARY_QC_KS_GRUNT, "$qc_ks_grunt") \
+    X(OBITUARY_QC_KS_FIEND, "$qc_ks_fiend") \
+    X(OBITUARY_QC_KS_ROTTWEILER, "$qc_ks_rottweiler") \
+    X(OBITUARY_QC_KS_DRAGON, "$qc_ks_dragon") \
+    X(OBITUARY_QC_KS_ENFORCER, "$qc_ks_enforcer") \
+    X(OBITUARY_QC_KS_ROTFISH, "$qc_ks_rotfish") \
+    X(OBITUARY_QC_KS_DEATHKNIGHT, "$qc_ks_deathknight") \
+    X(OBITUARY_QC_KS_KNIGHT, "$qc_ks_knight") \
+    X(OBITUARY_QC_KS_OGRE, "$qc_ks_ogre") \
+    X(OBITUARY_QC_KS_SHUB, "$qc_ks_shub") \
+    X(OBITUARY_QC_KS_VORE, "$qc_ks_vore") \
+    X(OBITUARY_QC_KS_SHAMBLER, "$qc_ks_shambler") \
+    X(OBITUARY_QC_KS_SPAWN, "$qc_ks_spawn") \
+    X(OBITUARY_QC_KS_VOMITUS, "$qc_ks_vomitus") \
+    X(OBITUARY_QC_KS_SCRAG, "$qc_ks_scrag") \
+    X(OBITUARY_QC_KS_ZOMBIE, "$qc_ks_zombie") \
+    X(OBITUARY_QC_DEATH_RL_QUAD1, "$qc_death_rl_quad1") \
+    X(OBITUARY_QC_DEATH_RL_QUAD2, "$qc_death_rl_quad2") \
+    X(OBITUARY_QC_DEATH_RL1, "$qc_death_rl1") \
+    X(OBITUARY_TEXT_TELEFRAGGED, "{0} was telefragged by {1}\n") \
+    X(OBITUARY_TEXT_SATANS_POWER, "Satan's power deflects {0}'s telefrag\n") \
+    X(OBITUARY_TEXT_DISCHARGE_WATER, "{0} discharges into the water.\n") \
+    X(OBITUARY_TEXT_SUICIDE_PIN, "{0} tries to put the pin back in\n") \
+    X(OBITUARY_TEXT_SUICIDE_BORED, "{0} becomes bored with life\n") \
+    X(OBITUARY_TEXT_FF_TEAMMATE, "{0} mows down a teammate\n") \
+    X(OBITUARY_TEXT_FF_GLASSES, "{0} checks his glasses\n") \
+    X(OBITUARY_TEXT_FF_OTHERTEAM, "{0} gets a frag for the other team\n") \
+    X(OBITUARY_TEXT_FF_FRIEND, "{0} loses another friend\n") \
+    X(OBITUARY_TEXT_DEATH_AX, "{0} was ax-murdered by {1}\n") \
+    X(OBITUARY_TEXT_DEATH_SG, "{0} chewed on {1}'s boomstick\n") \
+    X(OBITUARY_TEXT_DEATH_DBL, "{0} ate 2 loads of {1}'s buckshot\n") \
+    X(OBITUARY_TEXT_DEATH_NAIL, "{0} was nailed by {1}\n") \
+    X(OBITUARY_TEXT_DEATH_SNG, "{0} was punctured by {1}\n") \
+    X(OBITUARY_TEXT_DEATH_GL1, "{0} was gibbed by {1}'s grenade\n") \
+    X(OBITUARY_TEXT_DEATH_GL2, "{0} eats {1}'s pineapple\n") \
+    X(OBITUARY_TEXT_DEATH_RL2, "{0} was gibbed by {1}'s rocket\n") \
+    X(OBITUARY_TEXT_DEATH_RL3, "{0} rides {1}'s rocket\n") \
+    X(OBITUARY_TEXT_DEATH_LG1, "{0} accepts {1}'s discharge\n") \
+    X(OBITUARY_TEXT_DEATH_LG2, "{0} accepts {1}'s shaft\n") \
+    X(OBITUARY_TEXT_DEATH_DROWN1, "{0} sleeps with the fishes\n") \
+    X(OBITUARY_TEXT_DEATH_DROWN2, "{0} sucks it down\n") \
+    X(OBITUARY_TEXT_DEATH_SLIME1, "{0} gulped a load of slime\n") \
+    X(OBITUARY_TEXT_DEATH_SLIME2, "{0} can't exist on slime alone\n") \
+    X(OBITUARY_TEXT_DEATH_LAVA1, "{0} burst into flames\n") \
+    X(OBITUARY_TEXT_DEATH_LAVA2, "{0} turned into hot slag\n") \
+    X(OBITUARY_TEXT_DEATH_LAVA3, "{0} visits the Volcano God\n") \
+    X(OBITUARY_TEXT_DEATH_SQUISH, "{0} was squished\n") \
+    X(OBITUARY_TEXT_DEATH_FALL, "{0} fell to his death\n") \
+    X(OBITUARY_TEXT_DEATH_DIED, "{0} died\n") \
+    X(OBITUARY_TEXT_DEATH_EMPATHY1, "{0} shares {1}'s pain\n") \
+    X(OBITUARY_TEXT_DEATH_EMPATHY2, "{0} feels {1}'s pain\n") \
+    X(OBITUARY_TEXT_DEATH_BOMB1, "{0} got too friendly with {1}'s bomb\n") \
+    X(OBITUARY_TEXT_DEATH_BOMB2, "{0} did the rhumba with {1}'s bomb\n") \
+    X(OBITUARY_TEXT_DEATH_LASER1, "{0} was toasted by {1}'s laser\n") \
+    X(OBITUARY_TEXT_DEATH_LASER2, "{0} was radiated by {1}'s laser\n") \
+    X(OBITUARY_TEXT_DEATH_HAMMER, "{0} was slammed by {1}'s hammer\n") \
+    X(OBITUARY_TEXT_DEATH_GRAPPLED, "{0} was grappled by {1}\n") \
+    X(OBITUARY_TEXT_DEATH_BURNED, "{0} was burned by {1}\n") \
+    X(OBITUARY_TEXT_DEATH_FUSED, "{0} was fused by {1}\n") \
+    X(OBITUARY_TEXT_DEATH_BLASTED, "{0} was blasted to bits by {1}\n") \
+    X(OBITUARY_TEXT_DEATH_VENGEANCE, "{0} was purged by the Vengeance Sphere\n") \
+    X(OBITUARY_TEXT_DEATH_SMASHED, "{0} was smashed by {1}\n") \
+    X(OBITUARY_TEXT_CHANGED_TEAMS, "{0} changed teams\n") \
+    X(OBITUARY_TEXT_TRIED_CHANGE_TEAMS, "{0} tried to change teams\n") \
+    X(OBITUARY_TEXT_KS_DRAGON1, "{0} was annihilated by the Dragon\n") \
+    X(OBITUARY_TEXT_KS_DRAGON2, "{0} was squashed by the Dragon\n") \
+    X(OBITUARY_TEXT_KS_EEL, "{0} was electrified by an Eel\n") \
+    X(OBITUARY_TEXT_KS_WRATH, "{0} was disintegrated by a Wrath\n") \
+    X(OBITUARY_TEXT_KS_OVERLORD, "{0} was obliterated by an Overlord\n") \
+    X(OBITUARY_TEXT_KS_SWORDSMAN, "{0} was slit open by a Phantom Swordsman\n") \
+    X(OBITUARY_TEXT_KS_HEPHAESTUS, "{0} fries in Hephaestus' fury\n") \
+    X(OBITUARY_TEXT_KS_GUARDIAN, "{0} was crushed by a Guardian\n") \
+    X(OBITUARY_TEXT_KS_MUMMY, "{0} was Mummified\n") \
+    X(OBITUARY_TEXT_KS_GREMLIN, "{0} was outsmarted by a Gremlin\n") \
+    X(OBITUARY_TEXT_KS_CENTROID, "{0} was stung by a Centroid\n") \
+    X(OBITUARY_TEXT_KS_ARMAGON, "{0} was outgunned by Armagon\n") \
+    X(OBITUARY_TEXT_KS_BLEW_UP, "{0} blew up\n") \
+    X(OBITUARY_TEXT_KS_SPIKED, "{0} was spiked\n") \
+    X(OBITUARY_TEXT_KS_LAVABALL, "{0} ate a lavaball\n") \
+    X(OBITUARY_TEXT_KS_TRIED_LEAVE, "{0} tried to leave\n") \
+    X(OBITUARY_TEXT_KS_RODE_LIGHTNING, "{0} rode the lightning\n") \
+    X(OBITUARY_TEXT_KS_CLEAVED, "{0} was cleaved in two\n") \
+    X(OBITUARY_TEXT_KS_SLICED, "{0} was sliced to pieces\n") \
+    X(OBITUARY_TEXT_KS_PLASMA, "{0} was turned to plasma\n") \
+    X(OBITUARY_TEXT_ENTERED, "{0} entered the game\n") \
+    X(OBITUARY_TEXT_LEFT_GAME, "{0} left the game with {1} frags\n") \
+    X(OBITUARY_TEXT_SUICIDES, "{0} suicides\n") \
+    X(OBITUARY_TEXT_EXITED, "{0} exited the level\n") \
+    X(OBITUARY_TEXT_KS_GRUNT, "{0} was shot by a Grunt\n") \
+    X(OBITUARY_TEXT_KS_FIEND, "{0} was eviscerated by a Fiend\n") \
+    X(OBITUARY_TEXT_KS_ROTTWEILER, "{0} was mauled by a Rottweiler\n") \
+    X(OBITUARY_TEXT_KS_DRAGON, "{0} was fried by a Dragon\n") \
+    X(OBITUARY_TEXT_KS_ENFORCER, "{0} was blasted by an Enforcer\n") \
+    X(OBITUARY_TEXT_KS_ROTFISH, "{0} was fed to the Rotfish\n") \
+    X(OBITUARY_TEXT_KS_DEATHKNIGHT, "{0} was slain by a Death Knight\n") \
+    X(OBITUARY_TEXT_KS_KNIGHT, "{0} was slashed by a Knight\n") \
+    X(OBITUARY_TEXT_KS_OGRE, "{0} was destroyed by an Ogre\n") \
+    X(OBITUARY_TEXT_KS_SHUB, "{0} became one with Shub-Niggurath\n") \
+    X(OBITUARY_TEXT_KS_VORE, "{0} was exploded by a Vore\n") \
+    X(OBITUARY_TEXT_KS_SHAMBLER, "{0} was smashed by a Shambler\n") \
+    X(OBITUARY_TEXT_KS_SPAWN, "{0} was slimed by a Spawn\n") \
+    X(OBITUARY_TEXT_KS_VOMITUS, "{0} was vomited on by a Vomitus\n") \
+    X(OBITUARY_TEXT_KS_SCRAG, "{0} was scragged by a Scrag\n") \
+    X(OBITUARY_TEXT_KS_ZOMBIE, "{0} joins the Zombies\n") \
+    X(OBITUARY_TEXT_CHECK_LOADED, "{0} checks if his weapon is loaded\n") \
+    X(OBITUARY_TEXT_ACTOR, "{0}") \
+    X(OBITUARY_TEXT_AUTHORED_KILL, "{0} {1}\n") \
+    X(OBITUARY_CLASSIC_MONSTER, "classic-monster") \
     X(RESOURCE_AMBIENCE_FIRE1_WAV, "ambience/fire1.wav") \
     X(MONSTER_TEAM, "q1:monsters") \
     X(KNIGHTSPIKE, "knightspike") \

@@ -11,7 +11,7 @@ struct application_q3_combat_profile {
     qa_qvm_abi abi;
     char *path;
     application_q3_combat_definition definition;
-    application_q3_combat_team *teams;
+    qa_team_source_value *teams;
     application_q3_combat_mode *modes;
     application_q3_combat_tier *tiers;
 };

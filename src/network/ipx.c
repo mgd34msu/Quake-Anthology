@@ -156,6 +156,13 @@ static bool ipx_tunnel_collect(void *opaque, uint64_t now_ns, qa_net_transport_e
     return true;
 }
 
+static bool ipx_tunnel_dispatch_ready(const void *opaque,const qa_net_transport_event *event)
+{
+    const qa_net_ipx_tunnel *tunnel=opaque;
+    qa_net_transport_event child=*event;
+    child.source>>=2;
+    return qa_net_transport_dispatch_ready(tunnel->udp,&child);
+}
 static bool ipx_tunnel_dispatch(void *opaque, const qa_net_transport_event *event,
     qa_net_datagram *out, bool *present, qa_error *error) {
     qa_net_ipx_tunnel *tunnel = opaque;
@@ -237,7 +244,7 @@ bool qa_net_ipx_tunnel_create(qa_net_transport *udp, const qa_net_address *local
     const qa_net_transport_ops ops = {
         .send = ipx_tunnel_send, .collect = ipx_tunnel_collect, .dispatch = ipx_tunnel_dispatch,
         .maintenance = ipx_tunnel_maintenance, .close = ipx_tunnel_close,
-        .ready = ipx_tunnel_ready
+        .ready = ipx_tunnel_ready, .dispatch_ready = ipx_tunnel_dispatch_ready
     };
     if (!qa_net_transport_create(local, (qa_net_limits){tunnel->payload_limit, 256},
                                  &ops, tunnel, &tunnel->transport, error)) {
@@ -323,6 +330,13 @@ static bool ipx_game_collect(void *opaque, uint64_t now_ns, qa_net_transport_eve
     return true;
 }
 
+static bool ipx_game_dispatch_ready(const void *opaque,const qa_net_transport_event *event)
+{
+    const ipx_game *game=opaque;
+    qa_net_transport_event child=*event;
+    child.source>>=2;
+    return qa_net_transport_dispatch_ready(game->raw,&child);
+}
 static bool ipx_game_dispatch(void *opaque, const qa_net_transport_event *event,
     qa_net_datagram *out, bool *present, qa_error *error) {
     ipx_game *game = opaque;
@@ -383,7 +397,7 @@ bool qa_net_ipx_game_wrap(qa_net_transport *raw, bool quake_sequence,
     const qa_net_transport_ops ops = {
         .send = ipx_game_send, .collect = ipx_game_collect, .dispatch = ipx_game_dispatch,
         .maintenance = ipx_game_maintenance, .close = ipx_game_close,
-        .ready = ipx_game_ready
+        .ready = ipx_game_ready, .dispatch_ready = ipx_game_dispatch_ready
     };
     if (!qa_net_transport_create(address, (qa_net_limits){limit - 4, 256}, &ops, game, out, error)) {
         free(game->send_buffer);

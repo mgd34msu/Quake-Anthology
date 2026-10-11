@@ -428,7 +428,13 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
         case QA_PLATFORM_EVENT_PACKET: {
             int32_t destination = event.data.packet.destination;
             bool tracked = destination >= 0 && (size_t)destination < sizeof(packets_blocked) / sizeof(*packets_blocked);
-            if ((tracked && packets_blocked[destination]) || !frontend_network_event_ready(frontend,&event)) {
+            if(tracked && packets_blocked[destination]) continue;
+            bool packet_ready=frontend_network_event_ready(frontend,&event,payload);
+            if(!packet_ready) {
+                if(!frontend_network_logical_drain(frontend,error)) return false;
+                packet_ready=frontend_network_event_ready(frontend,&event,payload);
+            }
+            if (!packet_ready) {
                 if (tracked) packets_blocked[destination] = true;
                 continue;
             }

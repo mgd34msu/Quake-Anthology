@@ -344,6 +344,12 @@ bool qa_net_transport_collect(qa_net_transport *transport, uint64_t now_ns,
     *out=(qa_net_transport_event){0};
     return transport->ops.collect(transport->state,now_ns,out,error);
 }
+bool qa_net_transport_dispatch_ready(const qa_net_transport *transport,
+    const qa_net_transport_event *event)
+{
+    return !transport || !event || !transport->ops.dispatch_ready ||
+        transport->ops.dispatch_ready(transport->state,event);
+}
 bool qa_net_transport_dispatch(qa_net_transport *transport, const qa_net_transport_event *event,
     qa_net_datagram *out, bool *present, qa_error *error)
 {
@@ -416,6 +422,14 @@ static bool host_collect(void *context, uint64_t now_ns, qa_net_transport_event 
     return true;
 }
 
+static bool host_dispatch_ready(const void *context,const qa_net_transport_event *event)
+{
+    const host_state *state=context;
+    qa_net_transport_event child=*event;
+    unsigned branch=child.route&1u;
+    child.route>>=1;
+    return qa_net_transport_dispatch_ready(state->children[branch],&child);
+}
 static bool host_dispatch(void *context, const qa_net_transport_event *event,
     qa_net_datagram *out, bool *present, qa_error *error)
 {
@@ -481,7 +495,7 @@ bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *
     const qa_net_transport_ops ops = {.send = host_send, .collect = host_collect,
         .dispatch = host_dispatch, .maintenance = host_maintenance,
         .ready = host_ready, .close = host_close, .reliable_receipt = host_reliable_receipt,
-        .send_ready = host_send_ready};
+        .send_ready = host_send_ready, .dispatch_ready = host_dispatch_ready};
     if (!qa_net_transport_create(external ? &external->address : &local->address,
         limits, &ops, state, out, error)) {
         free(state);

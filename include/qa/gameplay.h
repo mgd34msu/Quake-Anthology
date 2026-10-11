@@ -9,6 +9,8 @@ typedef uint32_t qa_item_id;
 /* Session-interned identity; zero is unteamed. Original protocol team numbers
  * are translated by their adapters, never used as private shared-world IDs. */
 typedef uint32_t qa_team_id;
+typedef struct qa_team_source_value { int32_t value; qa_team_id team; } qa_team_source_value;
+typedef struct qa_team_source_scalar { double value; qa_string_id team; } qa_team_source_scalar;
 typedef struct qa_operation qa_operation;
 typedef struct qa_combat qa_combat;
 typedef struct qa_inventory qa_inventory;
@@ -65,9 +67,6 @@ typedef struct qa_regular_armor {
     union { float q1_absorption; struct { double normal, energy; } q2; float q3_protection; } protection;
 } qa_regular_armor;
 typedef enum qa_power_kind { QA_POWER_NONE, QA_POWER_SCREEN, QA_POWER_SHIELD } qa_power_kind;
-typedef enum qa_q2_power_armor_edition {
-    QA_Q2_POWER_ARMOR_NONE, QA_Q2_POWER_ARMOR_CLASSIC, QA_Q2_POWER_ARMOR_RERELEASE
-} qa_q2_power_armor_edition;
 typedef enum qa_power_armor_source {
     QA_POWER_SOURCE_Q2, QA_POWER_SOURCE_GENERIC
 } qa_power_armor_source;
@@ -75,7 +74,7 @@ typedef struct qa_powered_armor {
     qa_power_kind kind;
     double cells;
     qa_actor_owner source_owner;
-    qa_q2_power_armor_edition source_edition;
+    qa_q2_native_edition source_edition;
     /* Generic storage requires an actual owner-bound absorption lease.
      * Q2 storage retains its separate original edition qualification. */
     qa_power_armor_source source_kind;

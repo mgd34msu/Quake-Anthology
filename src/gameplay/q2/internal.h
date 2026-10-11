@@ -13,6 +13,7 @@
 
 #define Q2_RUNTIME_NAME_LIST(X) \
     X(MONSTER_FLYER, "monster_flyer") \
+    X(MONSTER_JORG, "monster_jorg") \
     X(MONSTER_KAMIKAZE, "monster_kamikaze") \
     X(MONSTER_STALKER, "monster_stalker") \
     X(PARASITE_PROBOSCIS, "parasite_proboscis") \
@@ -484,12 +485,6 @@ typedef struct q2_shadow_slot {
     qa_actor_id actor;
     uint32_t source_slot;
 } q2_shadow_slot;
-typedef struct q2_push_frame {
-    struct q2_push_frame *next;
-    qa_physics_push *parts;
-    size_t capacity;
-    bool active;
-} q2_push_frame;
 struct qa_q2_game {
     q2_monsters_runtime *monster_runtime;
     struct q2m_definition *monster_definitions;
@@ -549,7 +544,8 @@ struct qa_q2_game {
     qa_lightstyles wire_lightstyles;
     q2_shadow_slot wire_shadows[256];
     uint32_t wire_shadow_count;
-    q2_push_frame *push_frames;
+    qa_arena push_storage;
+    qa_pool push_teams;
 };
 typedef struct q2_weapon_call {
     qa_q2_game *game;
@@ -747,6 +743,7 @@ bool q2_entity_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_entity_prethink(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_actor_think(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_actor_physics(qa_q2_game *, q2_actor *, qa_error *);
+bool q2_push_storage_prepare(qa_q2_game *, qa_error *);
 bool q2_item_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);
 bool q2_item_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
 bool q2_item_traits(qa_q2_game *, qa_actor_id, qa_builtin_actor_traits *);

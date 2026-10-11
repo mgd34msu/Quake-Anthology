@@ -1052,7 +1052,7 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
     qa_bot_runtime *runtime=NULL;
     if (!qa_bot_runtime_create(&options,&services,&runtime,error)) return false;
     for (application_bot_graph *graph=bots->graphs;graph;graph=graph->next)
-        if (!qa_bot_runtime_prepare_navigation(runtime,qa_nav_graph_read(graph->graph)->edge_count,error)) {
+        if (!qa_bot_runtime_prepare_navigation(runtime,qa_nav_graph_read(graph->graph),error)) {
             (void)qa_bot_runtime_destroy(runtime,NULL);return false;
         }
     *out=runtime;return true;

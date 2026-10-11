@@ -3,6 +3,7 @@
 
 #include "qa/bot_navigation.h"
 #include "qa/stamp.h"
+#include "qa/arena.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,7 @@ struct qa_bot_navigation {
     qa_actor_id actor;
     qa_bot_navigation_observations observations;
     qa_nav_workspace *workspace;
+    qa_arena query_storage;
     qa_nav_route trajectory;
     qa_nav_prediction_result prediction;
     qa_aas_crossing *crossings;

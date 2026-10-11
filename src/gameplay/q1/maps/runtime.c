@@ -14,16 +14,16 @@ bool q1_map_present_intermission(qa_q1_game *g, qa_actor_id source, uint32_t sta
     if (result->kind == QA_Q1_INTERMISSION_SELL) {
         qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
                                   .provider = g->options.provider, .time_ns = g->time_ns};
-        return qa_builtin_resource(&g->services, "sell-screen", &event.resource, error) &&
-               qa_builtin_emit(&g->services, &event, error);
+        event.resource = g->runtime_names[Q1_NAME_RESOURCE_SELL_SCREEN];
+        return qa_builtin_emit(&g->services, &event, error);
     }
     if (result->kind != QA_Q1_INTERMISSION_FINALE)
         return true;
     qa_builtin_event music = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
                               .provider = g->options.provider, .time_ns = g->time_ns,
                               .code = result->track, .count = 3};
-    if (!qa_builtin_resource(&g->services, "music", &music.resource, error) ||
-        !qa_builtin_emit(&g->services, &music, error))
+    music.resource = g->runtime_names[Q1_NAME_MUSIC];
+    if (!qa_builtin_emit(&g->services, &music, error))
         return false;
     if (!q1_alive(g, source))
         return true;

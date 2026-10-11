@@ -34,15 +34,10 @@ bool application_q2_guest_equipment_read(application_provider *provider, qa_acto
     if (!out || !admitted(provider, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 equipment requires its idle selected source owner");
     struct application_native_q2 *engine = provider->state.native.q2_engine;
-    uint32_t slot = 0;
-    for (uint32_t i = 1; i < 257; ++i) {
-        const application_native_q2_client *client = engine->clients + i;
-        if (!client->connected || !client->begun || client->disconnect_started ||
-            !qa_actor_id_equal(client->actor, actor)) continue;
-        if (slot) return application_fail(error, QA_ERROR_FORMAT, "Native Q2 equipment repeats a physical client actor");
-        slot = i;
-    }
-    if (!slot) return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 equipment has no begun physical client");
+    uint32_t slot = application_native_q2_client_slot(engine, actor);
+    if (!slot || !engine->clients[slot].connected || !engine->clients[slot].begun ||
+        engine->clients[slot].disconnect_started)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 equipment has no begun physical client");
     qa_native_slot_binding binding;
     qa_native_instance *instance = qa_native_host_instance(provider->state.native.host);
     if (!qa_native_slot(instance, slot, &binding, error)) return false;

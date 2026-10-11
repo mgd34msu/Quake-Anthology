@@ -321,12 +321,6 @@ static bool remote_valid(const q3n_frame *f,const q3n_remote_entity *source,qa_e
         q3n_media_assets(f->media)==f->assets && q3n_media_remote_current(f->media,&f->remote->source,error)) return true;
     qa_error_set(error,QA_ERROR_ARGUMENT,0,"Remote packet lacks its actual reached entity receipt"); return false;
 }
-static float lerp_angle(float from,float to,float fraction) {
-    float delta=(to + -from);
-    if(delta>180) to=(to + -360);
-    if(delta< -180) to=(to + 360);
-    return (from + (fraction * (to + -from)));
-}
 static bool predict(const q3n_frame *f,qa_q3_player *p,qa_q3_entity *s,q3n_entity *entity,qa_error *error) {
     s->number=p->clientNum; s->eType=p->pmType==2 || p->pmType==5 || p->stats[0]<=-40 ? 10 : 1;
     s->pos.type=1; memcpy(s->pos.base,p->origin,sizeof(s->pos.base)); memcpy(s->pos.delta,p->velocity,sizeof(s->pos.delta));
@@ -386,7 +380,7 @@ static bool lerp(const q3n_frame *f,const packet_source *source,const q3n_packet
         entity->lerp_origin=qa_vec_add(a,qa_vec_scale(qa_vec_add(b,qa_vec_scale(a,-1)),fraction));
         if(!q3n_trajectory(&s->apos,snapshot->server_time,&a,error) ||
             !q3n_trajectory(&next_state->apos,next->server_time,&b,error)) return false;
-        entity->lerp_angles=qa_v3(lerp_angle(a.x,b.x,fraction),lerp_angle(a.y,b.y,fraction),lerp_angle(a.z,b.z,fraction));
+        entity->lerp_angles=qa_v3(qa_angle_lerp(a.x,b.x,fraction),qa_angle_lerp(a.y,b.y,fraction),qa_angle_lerp(a.z,b.z,fraction));
         return true;
     }
     if(!q3n_trajectory(&pos,f->time,&entity->lerp_origin,error) ||

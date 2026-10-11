@@ -10,6 +10,7 @@ typedef enum qa_inventory_count_policy { QA_COUNT_STACK, QA_COUNT_SOURCE_FLOAT, 
  * stores round to native float; this is not a selectable arithmetic backend. */
 typedef struct qa_inventory_entry { qa_item_id item; double count, capacity; qa_inventory_count_policy policy; } qa_inventory_entry;
 typedef struct qa_item_bit { qa_item_id item; uint32_t mask; } qa_item_bit;
+typedef struct qa_item_source_value { int32_t value; qa_item_id item; } qa_item_source_value;
 typedef struct qa_inventory_binding {
     void *context;
     size_t (*count)(void *);

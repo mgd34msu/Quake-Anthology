@@ -39,15 +39,16 @@ float frontend_legacy_lightstyle_sample(qa_game_family family,const char *patter
     return family==QA_GAME_Q1?(float)(value*22):(float)value/12.0f;
 }
 
-qa_vec3 frontend_legacy_entity_angles(qa_game_family family, qa_product_edition edition,
+qa_vec3 frontend_legacy_entity_angles(qa_ruleset_id rules,
     const qa_model *model, uint64_t effects, qa_vec3 angles, double seconds, int64_t milliseconds)
 {
-    if (family == QA_GAME_Q1 && model && model->format == QA_MODEL_MDL && (model->flags & 8))
+    const qa_ruleset_descriptor *descriptor = qa_ruleset_read(rules);
+    if (descriptor && descriptor->family == QA_GAME_Q1 && model && model->format == QA_MODEL_MDL && (model->flags & 8))
         angles.y = qa_angle_mod((float)(100 * seconds),QA_ANGLE_WORD_PRECISE);
-    else if (family == QA_GAME_Q2 && (effects & 1)) {
+    else if (descriptor && descriptor->family == QA_GAME_Q2 && (effects & 1)) {
         uint32_t bits = (uint32_t)milliseconds;
         int32_t time; memcpy(&time, &bits, sizeof(time));
-        float yaw = edition == QA_EDITION_RERELEASE ? (float)time * .1f : (float)(time / 10);
+        float yaw = rules == QA_RULESET_Q2_RERELEASE ? (float)time * .1f : (float)(time / 10);
         angles = qa_v3(0, qa_angle_mod(yaw,QA_ANGLE_WORD_PRECISE), 0);
     }
     return angles;

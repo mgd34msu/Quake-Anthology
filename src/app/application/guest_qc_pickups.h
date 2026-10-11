@@ -3,6 +3,8 @@
 #include "guest_qc_profile.h"
 bool application_qc_pickups_qualify(application_provider *,const qa_json_document *,qa_json_id,qa_error *);
 void application_qc_pickups_profile_free(struct application_qc_pickups *);
+bool application_qc_pickups_create(struct application_qc_state *,qa_error *);
+void application_qc_pickups_destroy(struct application_qc_state *);
 bool application_qc_pickups_admit(struct application_qc_state *,qa_actor_id,qa_error *);
 bool application_qc_pickups_release(struct application_qc_state *,qa_actor_id,qa_error *);
 bool application_qc_pickups_close(struct application_qc_state *,qa_error *);

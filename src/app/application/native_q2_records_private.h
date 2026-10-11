@@ -13,7 +13,6 @@
 typedef enum nqr_kind { NQR_HEALTH,NQR_COUNT,NQR_CAPACITY,NQR_TEAM,NQR_SCORE,
     NQR_BODY,NQR_LINK,NQR_ADDRESS,
     NQR_CONSTANT,NQR_VECTOR,NQR_PRIVATE } nqr_kind;
-typedef struct nqr_team { double value; qa_string_id team; } nqr_team;
 typedef struct nqr_field {
     nqr_kind kind;
     qa_native_value_type encoding;
@@ -22,7 +21,7 @@ typedef struct nqr_field {
     size_t target;
     qa_json_id address;
     uint8_t initial[12];
-    nqr_team *teams;
+    qa_team_source_scalar *teams;
     size_t team_count;
     bool writable,body_output,separate;
 } nqr_field;

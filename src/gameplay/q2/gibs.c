@@ -388,13 +388,41 @@ bool q2_spawn_growth(qa_q2_game *g, qa_vec3 origin, unsigned size, qa_error *e) 
                                            : g->runtime_names[Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO_TRIS_MD2],
                                0, origin, body.angles, e);
 }
-static bool trap_capture_run(qa_q2_game *g, q2_actor *trap,
-                             const qa_builtin_actor_snapshot *snapshot, qa_error *e) {
+static int trap_gib_order(void *context, qa_actor_id left, qa_actor_id right) {
+    qa_q2_game *g = context;
+    uint64_t first = g->actors[left.slot]->source_order;
+    uint64_t second = g->actors[right.slot]->source_order;
+    return first < second ? -1 : first > second ? 1 : left.slot < right.slot ? -1 : left.slot > right.slot;
+}
+static bool trap_gib_include(void *context, qa_actor_id id) {
+    qa_q2_game *g = context;
+    q2_actor *a = id.slot < g->capacity ? g->actors[id.slot] : NULL;
+    qa_builtin_actor_traits traits;
+    return q2_actor_live(g, id) && a && qa_actor_id_equal(a->id, id) && a->physics_bound &&
+        qa_q2_actor_traits(g, id, &traits) && traits.classname == g->runtime_names[Q2_NAME_GIB];
+}
+bool q2_trap_capture_gibs(qa_q2_game *g, q2_actor *trap, qa_error *e) {
     qa_body_state own;
     if (!qa_world_body_read(g->services.world, trap->id, &own, e))
         return false;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id id = snapshot->ids[i];
+    qa_world_actor_snapshot nearby;
+    qa_world_radius_query query = {.origin = own.origin, .radius = 128,
+        .metric = QA_WORLD_RADIUS_ORIGIN, .include = trap_gib_include, .context = g,
+        .read_policy = QA_WORLD_RADIUS_READ_REQUIRED};
+    if (!qa_world_radius_snapshot_capture(g->services.world, &query, &nearby, e))
+        return false;
+    size_t count = 0;
+    for (size_t i = 0; i < nearby.count; ++i) {
+        qa_actor_id id = nearby.actors[i];
+        q2_actor *a = id.slot < g->capacity ? g->actors[id.slot] : NULL;
+        if (q2_actor_live(g, id) && a && qa_actor_id_equal(a->id, id))
+            nearby.actors[count++] = id;
+    }
+    nearby.count = count;
+    qa_world_snapshot_sort(&nearby, trap_gib_order, g);
+    bool okay = false;
+    for (size_t i = 0; i < nearby.count; ++i) {
+        qa_actor_id id = nearby.actors[i];
         if (!q2_actor_live(g, id))
             continue;
         qa_builtin_actor_traits traits;
@@ -404,36 +432,24 @@ static bool trap_capture_run(qa_q2_game *g, q2_actor *trap,
             continue;
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, id, &body, e))
-            return false;
+            goto out;
+        if (!q2_actor_live(g, id)) continue;
         if (qa_vec_length(qa_vec_sub(body.origin, own.origin)) > 128)
             continue;
         q2_actor *a = q2_actor_get(g, id, false, e);
         if (a == NULL)
-            return false;
+            goto out;
         uint32_t number;
-        if (!qa_q2_wire_entity_number(g, trap->id, &number, e)) return false;
+        if (!qa_q2_wire_entity_number(g, trap->id, &number, e)) goto out;
         a->projectile.kind = Q2_TRAP_ORBIT_GIB;
         a->projectile.owner = qa_actor_reference_source(g->options.owner, number);
         a->projectile.next_ns = g->now_ns;
         a->physics.motion = QA_PHYSICS_STATIONARY;
         if (!q2_gib_think(g, a, e))
-            return false;
+            goto out;
     }
-    return true;
-}
-bool q2_trap_capture_gibs(qa_q2_game *g, q2_actor *trap, qa_error *e) {
-    qa_builtin_snapshot_frame *scratch = q2_scratch_acquire(g, e);
-    if (scratch == NULL)
-        return false;
-    if (!qa_builtin_snapshot_reserve(&scratch->snapshot, g->capacity, e)) {
-        qa_builtin_snapshot_release(scratch);
-        return false;
-    }
-    scratch->snapshot.count = 0;
-    for (q2_actor *a = g->first_actor; a != NULL; a = a->live_next)
-        if (a->physics_bound)
-            scratch->snapshot.ids[scratch->snapshot.count++] = a->id;
-    bool ok = trap_capture_run(g, trap, &scratch->snapshot, e);
-    qa_builtin_snapshot_release(scratch);
-    return ok;
+    okay = true;
+out:
+    qa_world_snapshot_release(&nearby);
+    return okay;
 }

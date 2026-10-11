@@ -576,10 +576,10 @@ static bool armor_fields(qa_source_save_io *io, qa_armor *value) {
     if (!qa_source_save_u32(io, &powered) || powered > QA_POWER_SHIELD ||
         !qa_source_save_f64(io, &value->powered.cells) ||
         !qa_source_save_string(io, &value->powered.source_owner) ||
-        !qa_source_save_u32(io, &edition) || edition > QA_Q2_POWER_ARMOR_RERELEASE ||
+        !qa_source_save_u32(io, &edition) || edition > QA_Q2_CAUSE_RERELEASE ||
         !qa_source_save_u32(io, &source_kind) || source_kind > QA_POWER_SOURCE_GENERIC) return false;
     value->powered.kind = (qa_power_kind)powered;
-    value->powered.source_edition = (qa_q2_power_armor_edition)edition;
+    value->powered.source_edition = (qa_q2_native_edition)edition;
     value->powered.source_kind = (qa_power_armor_source)source_kind;
     return true;
 }

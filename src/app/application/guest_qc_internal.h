@@ -73,9 +73,9 @@ struct application_qc_state {
     struct application_qc_items *items;
     struct application_qc_combat *combat;
     struct application_qc_protection *protection;
-    struct application_qc_item_weapon_actor *item_weapon_actors;
+    struct application_qc_item_weapon_store *item_weapon_store;
     struct application_qc_item_store *item_store;
-    struct application_qc_pickup_actor *pickup_actors;
+    struct application_qc_pickup_store *pickup_store;
     application_provider *provider;
     const qa_qc_game_fields *field_bindings;
     const qa_qc_engine_globals *global_bindings;

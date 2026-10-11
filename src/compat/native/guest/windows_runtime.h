@@ -167,7 +167,7 @@ struct guest_windows {
 bool windows_read(guest_windows *, uint64_t, size_t, uint64_t *, qa_error *);
 bool windows_write(guest_windows *, uint64_t, size_t, uint64_t, qa_error *);
 bool windows_zero(guest_windows *, uint64_t, size_t, qa_error *);
-bool windows_string(guest_windows *, uint64_t, bool, uint16_t **, size_t *, qa_error *);
+bool windows_string(guest_windows *, uint64_t, bool, qa_arena *, uint16_t **, size_t *, qa_error *);
 bool windows_store_string(guest_windows *, const uint16_t *, size_t, bool, uint64_t *, qa_error *);
 bool windows_storage(guest_windows *, size_t, uint64_t *, qa_error *);
 bool windows_allocate(guest_windows *, size_t, uint64_t, uint64_t *, qa_error *);

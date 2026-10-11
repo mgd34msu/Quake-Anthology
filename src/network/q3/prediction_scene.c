@@ -312,12 +312,6 @@ bool qa_q3_prediction_scene_current(const qa_q3_prediction_scene *s, const qa_q3
         v->processed_snapshot == now.processed_snapshot && v->this_frame_teleport == now.this_frame_teleport &&
         v->next_frame_teleport == now.next_frame_teleport && v->revision == now.revision;
 }
-static float angle(float from, float to, float fraction)
-{
-    if (to - from > 180) to -= 360;
-    if (to - from < -180) to += 360;
-    return from + fraction * (to - from);
-}
 static bool adjust_mover(const qa_q3_prediction_scene *s, qa_vec3 origin, int32_t mover,
     int32_t from, int32_t to, qa_vec3 *out, qa_error *error)
 {
@@ -350,7 +344,7 @@ static bool pose(qa_q3_prediction_scene *s, prediction_entity *e, bool smooth, q
         e->origin = qa_vec_lerp(a, b, fraction);
         if (!position(&e->current.apos, s->snap.value.server_time, &a, error) ||
             !position(&e->next.apos, s->next.value.server_time, &b, error)) return false;
-        e->angles = qa_v3(angle(a.x, b.x, fraction), angle(a.y, b.y, fraction), angle(a.z, b.z, fraction));
+        e->angles = qa_v3(qa_angle_lerp(a.x, b.x, fraction), qa_angle_lerp(a.y, b.y, fraction), qa_angle_lerp(a.z, b.z, fraction));
         return true;
     }
     if (!position(&e->current.pos, s->time, &e->origin, error) ||

@@ -35,7 +35,7 @@ bool qa_q2_monster_holds_healthbar(const qa_q2_game *game, qa_actor_id id) {
   return actor != NULL && qa_actor_id_equal(actor->id, id) &&
          actor->projectile.kind == Q2_PROJECTILE_NONE &&
          actor->monster != NULL && actor->monster->definition != NULL &&
-         strcmp(actor->monster->definition->classname, "monster_jorg") == 0;
+         actor->monster->definition->classname_id == game->runtime_names[Q2_NAME_MONSTER_JORG];
 }
 
 bool q2m_refresh(q2m_context *context, qa_error *error) {

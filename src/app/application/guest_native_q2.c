@@ -279,9 +279,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 owner");
     provider->state.native.q2_engine = engine;
     engine->provider = provider; engine->world = world;
-    engine->client_actor_capacity = qa_actors_capacity(qa_session_actors(app->session));
-    engine->client_slots = calloc(engine->client_actor_capacity, sizeof(*engine->client_slots));
-    if (!engine->client_slots) return application_fail(error, QA_ERROR_MEMORY, "Allocating native client indices");
+    if (!qa_actor_index_create(&engine->client_index, qa_session_actors(app->session), error)) return false;
     bool cgame = (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_HUD)) &&
         !(provider->launch->roles & (QA_ROLE_BIT(QA_ROLE_ENTITIES) |
           QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL)));
@@ -833,7 +831,8 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     qa_q2_messages_destroy(engine->event_decoder);
     qa_id_index_destroy(&engine->media_probes);
     qa_hud_q2_names_destroy(&engine->hud_names);
-    free(engine->config_changes.slots); free(engine->entity_text); free(engine->client_slots); free(engine);
+    qa_actor_index_destroy(&engine->client_index);
+    free(engine->config_changes.slots); free(engine->entity_text); free(engine);
     provider->state.native.q2_engine = NULL;
     if (!ok && error) *error = first;
     return ok;

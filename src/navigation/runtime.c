@@ -64,6 +64,19 @@ bool qa_navigation_create(qa_nav_graph *g, const qa_navigation_services *s, qa_n
             return false;
         }
     qa_arena_seal(&n->prediction_storage);
+    if (nodes) {
+        if (nodes > SIZE_MAX / sizeof(nav_nearest_candidate)) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation nearest workspace exceeds addressable storage");
+            qa_navigation_destroy(n);
+            return false;
+        }
+        if (!qa_pool_reserve_pages(&n->nearest_candidates, &n->nearest_storage,
+                n->prediction_results.capacity + 1, nodes * sizeof(nav_nearest_candidate),
+                _Alignof(nav_nearest_candidate), e)) {
+            qa_navigation_destroy(n);
+            return false;
+        }
+    }
     n->world_revision = s->revision == NULL ? 0 : s->revision(s->context);
     *out = n;
     return true;
@@ -79,6 +92,7 @@ void qa_navigation_destroy(qa_navigation *n) {
     for (size_t i = 0; i < n->prediction_results.capacity; ++i)
         qa_movement_result_free(qa_pool_at(&n->prediction_results, i));
     qa_arena_destroy(&n->prediction_storage);
+    qa_arena_destroy(&n->nearest_storage);
     qa_nav_graph_release(n->graph);
     free(n->enabled);
     free(n->blocked);
@@ -223,86 +237,88 @@ void qa_nav_workspace_destroy(qa_nav_workspace *w) {
     if (w == NULL)
         return;
     qa_aas_query_destroy(w->aas);
-    free(w->costs);
-    free(w->parents);
-    free(w->path);
-    free(w->repair);
-    free(w->queue_positions);
-    free(w->grounded);
-    free(w->waiting);
-    free(w->grounded_valid.marks);
-    free(w->waiting_valid.marks);
-    free(w->rejected.marks);
-    free(w->queue);
-    free(w->crossings);
+    qa_arena_destroy(&w->storage);
     free(w);
 }
-bool nav_workspace_prepare(qa_nav_workspace *w, const qa_nav_graph *g, qa_error *e) {
-    size_t n = g->view.node_count, m = g->view.edge_count;
-    if (w->node_capacity < n) {
-        if (n > SIZE_MAX / sizeof(float) || n > SIZE_MAX / sizeof(uint32_t) ||
-            n > SIZE_MAX / sizeof(size_t))
-            goto memory;
-        float *costs = malloc(n * sizeof(*costs));
-        uint32_t *parents = malloc(n * sizeof(*parents)), *path = malloc(n * sizeof(*path)),
-                 *repair = malloc(n * sizeof(*repair));
-        size_t *positions = malloc(n * sizeof(*positions));
-        bool *grounded = malloc(n * sizeof(*grounded)), *waiting = malloc(n * sizeof(*waiting));
-        uint32_t *grounded_marks = malloc(n * sizeof(*grounded_marks)),
-                 *waiting_marks = malloc(n * sizeof(*waiting_marks));
-        if (costs == NULL || parents == NULL || path == NULL || repair == NULL || positions == NULL ||
-            grounded == NULL || waiting == NULL || grounded_marks == NULL || waiting_marks == NULL) {
-            free(costs);
-            free(parents);
-            free(path);
-            free(repair);
-            free(positions);
-            free(grounded);
-            free(waiting);
-            free(grounded_marks);
-            free(waiting_marks);
-            goto memory;
-        }
-        for (size_t i = 0; i < n; ++i)
-            positions[i] = SIZE_MAX;
-        for (size_t i = 0; i < w->queue_count; ++i)
-            positions[w->queue[i].node] = i;
-        free(w->costs);
-        free(w->parents);
-        free(w->path);
-        free(w->repair);
-        free(w->queue_positions);
-        free(w->grounded);
-        free(w->waiting);
-        free(w->grounded_valid.marks);
-        free(w->waiting_valid.marks);
-        w->costs = costs;
-        w->parents = parents;
-        w->path = path;
-        w->repair = repair;
-        w->queue_positions = positions;
-        w->grounded = grounded;
-        w->waiting = waiting;
-        qa_stamp_set_init(&w->grounded_valid, grounded_marks, n);
-        qa_stamp_set_init(&w->waiting_valid, waiting_marks, n);
-        w->node_capacity = n;
-    }
-    if (w->edge_capacity < m) {
-        if (m > SIZE_MAX / sizeof(*w->rejected.marks)) goto memory;
-        uint32_t *rejected = realloc(w->rejected.marks, m * sizeof(*rejected));
-        if (rejected == NULL)
-            goto memory;
-        qa_stamp_set_init(&w->rejected, rejected, m);
-        w->edge_capacity = m;
+qa_nav_workspace_limits qa_nav_workspace_limits_read(const qa_nav_graph_view *graph) {
+    const qa_aas_view *aas = graph ? qa_nav_asset_aas(graph->asset) : NULL;
+    return (qa_nav_workspace_limits){
+        .nodes = graph ? graph->node_count : 0,
+        .edges = graph ? graph->edge_count : 0,
+        .aas_nodes = aas ? aas->count[QA_AAS_NODES] : 0,
+        .aas_areas = aas ? aas->count[QA_AAS_AREAS] : 0};
+}
+bool qa_nav_workspace_prepare(qa_nav_workspace *w, qa_nav_workspace_limits limits, qa_error *e) {
+    size_t nodes = limits.nodes > w->node_capacity ? limits.nodes : w->node_capacity;
+    size_t edges = limits.edges > w->edge_capacity ? limits.edges : w->edge_capacity;
+    if (!qa_aas_query_prepare(w->aas, limits.aas_nodes, limits.aas_areas, e))
+        return false;
+    if (nodes == w->node_capacity && edges == w->edge_capacity)
+        return true;
+    size_t node_stride = sizeof(float) + 5 * sizeof(uint32_t) + sizeof(size_t) +
+        2 * sizeof(bool) + sizeof(nav_queue_entry) + sizeof(nav_crossing);
+    size_t padding = 11 * _Alignof(size_t);
+    if (edges > (SIZE_MAX - padding) / sizeof(uint32_t) ||
+        nodes > (SIZE_MAX - padding - edges * sizeof(uint32_t)) / node_stride)
+        goto memory;
+    qa_arena storage = {0};
+    if (!qa_arena_reserve(&storage, padding + nodes * node_stride +
+            edges * sizeof(uint32_t), e))
+        return false;
+    qa_nav_workspace prepared = *w;
+    prepared.storage = storage;
+#define NODE_SPAN(field, type) do { \
+    prepared.field = nodes ? qa_arena_alloc(&prepared.storage, \
+        nodes * sizeof(*prepared.field), _Alignof(type), e) : NULL; \
+    if (nodes && !prepared.field) goto allocation; \
+} while (0)
+    NODE_SPAN(costs, float);
+    NODE_SPAN(parents, uint32_t);
+    NODE_SPAN(path, uint32_t);
+    NODE_SPAN(repair, uint32_t);
+    NODE_SPAN(queue_positions, size_t);
+    NODE_SPAN(grounded, bool);
+    NODE_SPAN(waiting, bool);
+    NODE_SPAN(queue, nav_queue_entry);
+    NODE_SPAN(crossings, nav_crossing);
+#undef NODE_SPAN
+    uint32_t *grounded_marks = nodes ? qa_arena_alloc(&prepared.storage,
+        nodes * sizeof(*grounded_marks), _Alignof(uint32_t), e) : NULL;
+    uint32_t *waiting_marks = nodes ? qa_arena_alloc(&prepared.storage,
+        nodes * sizeof(*waiting_marks), _Alignof(uint32_t), e) : NULL;
+    uint32_t *rejected = edges ? qa_arena_alloc(&prepared.storage,
+        edges * sizeof(*rejected), _Alignof(uint32_t), e) : NULL;
+    if ((nodes && (!grounded_marks || !waiting_marks)) || (edges && !rejected))
+        goto allocation;
+    for (size_t i = 0; i < nodes; ++i)
+        prepared.queue_positions[i] = SIZE_MAX;
+    qa_stamp_set_init(&prepared.grounded_valid, grounded_marks, nodes);
+    qa_stamp_set_init(&prepared.waiting_valid, waiting_marks, nodes);
+    qa_stamp_set_init(&prepared.rejected, rejected, edges);
+    prepared.node_capacity = prepared.queue_capacity = prepared.crossing_capacity = nodes;
+    prepared.edge_capacity = edges;
+    prepared.queue_count = 0;
+    qa_arena_seal(&prepared.storage);
+    qa_arena_destroy(&w->storage);
+    *w = prepared;
+    return true;
+allocation:
+    qa_arena_destroy(&prepared.storage);
+    return false;
+memory:
+    qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation workspace exceeds addressable storage");
+    return false;
+}
+bool nav_workspace_reset(qa_nav_workspace *w, const qa_nav_graph *g, qa_error *e) {
+    if (g->view.node_count > w->node_capacity || g->view.edge_count > w->edge_capacity) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation workspace was not sized for its graph");
+        return false;
     }
     qa_stamp_set_begin(&w->grounded_valid);
     qa_stamp_set_begin(&w->waiting_valid);
     qa_stamp_set_begin(&w->rejected);
     nav_queue_clear(w);
     return true;
-memory:
-    qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating retained navigation search state");
-    return false;
 }
 void nav_queue_clear(qa_nav_workspace *w) {
     for(size_t i=0;i<w->queue_count;++i)
@@ -334,8 +350,10 @@ static void queue_assign(qa_nav_workspace *w,size_t index,nav_queue_entry entry)
 bool nav_queue_push(qa_nav_workspace *w, nav_queue_entry entry, qa_error *e) {
     size_t index=w->queue_positions[entry.node];
     if(index==SIZE_MAX) {
-        if(!nav_reserve((void **)&w->queue,&w->queue_capacity,w->queue_count+1,sizeof(*w->queue),e))
+        if (w->queue_count == w->queue_capacity) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation queue storage is full");
             return false;
+        }
         index=w->queue_count++;
     }
     queue_assign(w,index,entry);return true;

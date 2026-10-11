@@ -145,14 +145,18 @@ bool windows_crt_initialize(guest_windows *owner, qa_error *error)
     return qa_native_guest_write(owner->guest, crt->locale + width * 10, (qa_bytes){fields, sizeof(fields)}, error);
 }
 
-static bool text(guest_windows *owner, uint64_t address, char **out, qa_error *error)
+static bool text(guest_windows *owner, uint64_t address, qa_arena *scratch,
+    char **out, qa_error *error)
 {
+    qa_arena temporary; qa_arena_init_pool(&temporary, &owner->guest->scratch_pages);
     uint16_t *units = NULL; size_t count;
-    if (!windows_string(owner, address, false, &units, &count, error)) return false;
-    char *value = malloc(count + 1);
-    if (!value) { free(units); return guest_fail(error, QA_ERROR_MEMORY, 0, "reading CRT string"); }
+    if (!windows_string(owner, address, false, &temporary, &units, &count, error)) {
+        qa_arena_destroy(&temporary); return false;
+    }
+    char *value = qa_arena_alloc(scratch, count + 1, 1, error);
+    if (!value) { qa_arena_destroy(&temporary); return false; }
     for (size_t i = 0; i <= count; ++i) value[i] = (char)units[i];
-    free(units); *out = value; return true;
+    qa_arena_destroy(&temporary); *out = value; return true;
 }
 
 static bool extent(uint64_t value, size_t *out, qa_error *error)
@@ -167,11 +171,12 @@ static bool extent(uint64_t value, size_t *out, qa_error *error)
 static bool move(guest_windows *owner, uint64_t destination, uint64_t source, size_t bytes, qa_error *error)
 {
     if (!bytes) return true;
-    uint8_t *data = malloc(bytes);
-    if (!data) return guest_fail(error, QA_ERROR_MEMORY, 0, "staging CRT memory move");
+    qa_arena scratch; qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+    uint8_t *data = qa_arena_alloc(&scratch, bytes, 1, error);
+    if (!data) { qa_arena_destroy(&scratch); return false; }
     bool okay = qa_native_guest_read(owner->guest, source, data, bytes, error) &&
         qa_native_guest_write(owner->guest, destination, (qa_bytes){data, bytes}, error);
-    free(data); return okay;
+    qa_arena_destroy(&scratch); return okay;
 }
 
 static bool onexit_register(guest_windows *owner, uint64_t table, uint64_t callback,
@@ -232,7 +237,10 @@ bool windows_crt_finalize_image(guest_windows *owner, uint64_t base, uint64_t by
     return true;
 }
 
-typedef struct sort_context { guest_windows *owner; uint64_t base, comparator; size_t bytes; } sort_context;
+typedef struct sort_context {
+    guest_windows *owner; uint64_t base, comparator; size_t bytes;
+    uint8_t *first, *second;
+} sort_context;
 
 static bool sort_compare(sort_context *sort, size_t left, size_t right, int32_t *out, qa_error *error)
 {
@@ -246,13 +254,11 @@ static bool sort_compare(sort_context *sort, size_t left, size_t right, int32_t 
 
 static bool sort_swap(sort_context *sort, size_t left, size_t right, qa_error *error)
 {
-    uint8_t *bytes = malloc(sort->bytes);
-    if (!bytes) return guest_fail(error, QA_ERROR_MEMORY, 0, "staging CRT qsort swap");
     uint64_t a = sort->base + left * sort->bytes, b = sort->base + right * sort->bytes;
-    bool okay = qa_native_guest_read(sort->owner->guest, a, bytes, sort->bytes, error) &&
-        move(sort->owner, a, b, sort->bytes, error) &&
-        qa_native_guest_write(sort->owner->guest, b, (qa_bytes){bytes, sort->bytes}, error);
-    free(bytes); return okay;
+    return qa_native_guest_read(sort->owner->guest, a, sort->first, sort->bytes, error) &&
+        qa_native_guest_read(sort->owner->guest, b, sort->second, sort->bytes, error) &&
+        qa_native_guest_write(sort->owner->guest, a, (qa_bytes){sort->second, sort->bytes}, error) &&
+        qa_native_guest_write(sort->owner->guest, b, (qa_bytes){sort->first, sort->bytes}, error);
 }
 
 static bool sort_sift(sort_context *sort, size_t root, size_t end, qa_error *error)
@@ -271,11 +277,11 @@ static bool sort_sift(sort_context *sort, size_t root, size_t end, qa_error *err
     return true;
 }
 
-static bool printf_service(guest_windows *, const qa_native_value *, qa_native_value *, qa_error *);
+static bool printf_service(guest_windows *, const qa_native_value *, qa_arena *, qa_native_value *, qa_error *);
 static bool scanf_service(guest_windows *, const qa_native_value *, qa_native_value *, qa_error *);
 
-bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
-    size_t count, qa_native_value *out, qa_error *error)
+static bool crt_invoke(windows_service *service, const qa_native_value *args,
+    size_t count, qa_arena *scratch, qa_native_value *out, qa_error *error)
 {
     guest_windows *owner = service->owner; guest_windows_crt *crt = owner->crt;
     uint32_t operation = service->operation; size_t width = owner->target.pointer_bytes;
@@ -358,31 +364,38 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
         if (!extent(integer(args + 2), &bytes, error)) return false;
         if (operation == C_COPY) { if (!move(owner, a, b, bytes, error)) return false; result(out, type, a); return true; }
         if (operation == C_FILL) {
-            if (bytes && !guest_range(owner->guest,a,bytes,QA_NATIVE_GUEST_WRITE,error)) return false;
-            uint8_t data[4096]; memset(data, (uint8_t)b, sizeof(data)); size_t left = bytes; uint64_t at = a;
-            while (left) { size_t part = left < sizeof(data) ? left : sizeof(data); if (!qa_native_guest_write(owner->guest, at, (qa_bytes){data, part}, error)) return false; left -= part; at += part; }
+            if (bytes) {
+                if (!guest_range(owner->guest,a,bytes,QA_NATIVE_GUEST_WRITE,error)) return false;
+                uint8_t *data = qa_arena_alloc(scratch, bytes, 1, error);
+                if (!data) return false;
+                memset(data, (uint8_t)b, bytes);
+                if (!qa_native_guest_write(owner->guest, a, (qa_bytes){data, bytes}, error)) return false;
+            }
             result(out, type, a); return true;
         }
         if (bytes && (!guest_range(owner->guest,a,bytes,QA_NATIVE_GUEST_READ,error) ||
             (operation == C_COMPARE && !guest_range(owner->guest,b,bytes,QA_NATIVE_GUEST_READ,error)))) return false;
+        if (!bytes) return true;
+        uint8_t *first = qa_arena_alloc(scratch, bytes, 1, error);
+        if (!first || !qa_native_guest_read(owner->guest, a, first, bytes, error)) return false;
+        uint8_t *second = operation == C_COMPARE ? qa_arena_alloc(scratch, bytes, 1, error) : NULL;
+        if (operation == C_COMPARE && (!second || !qa_native_guest_read(owner->guest, b, second, bytes, error))) return false;
         for (size_t i = 0; i < bytes; ++i) {
-            uint64_t left, right;
-            if (!windows_read(owner, a + i, 1, &left, error)) return false;
-            if (operation == C_FIND) { if (left == (b & 255)) { result(out, type, a + i); return true; } }
-            else { if (!windows_read(owner, b + i, 1, &right, error)) return false; if (left != right) { result(out, type, left - right); return true; } }
+            if (operation == C_FIND) { if (first[i] == (b & 255)) { result(out, type, a + i); return true; } }
+            else if (first[i] != second[i]) { result(out, type, (uint64_t)((int)first[i] - (int)second[i])); return true; }
         }
         return true;
     }
     case C_LENGTH: case C_STRCHR: case C_STRSTR: {
         char *source = NULL, *search = NULL;
-        if (!text(owner, a, &source, error)) return false;
+        if (!text(owner, a, scratch, &source, error)) return false;
         if (operation == C_LENGTH) value = strlen(source);
         else if (operation == C_STRCHR) { char *found = strchr(source, (uint8_t)b); value = found ? a + (size_t)(found - source) : 0; }
         else {
-            if (!text(owner, b, &search, error)) { free(source); return false; }
+            if (!text(owner, b, scratch, &search, error)) return false;
             char *found = strstr(source, search); value = found ? a + (size_t)(found - source) : 0;
         }
-        free(source); free(search); result(out, type, value); return true;
+        result(out, type, value); return true;
     }
     case C_STRCMP: case C_STRNCMP: {
         size_t maximum = 1048576;
@@ -428,7 +441,9 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
         if (length < 2) return true;
         if (!bytes || length > 0x10000000 / bytes) return guest_fail(error, QA_ERROR_ARGUMENT, a, "invalid CRT qsort extent");
         if (!guest_range(owner->guest, a, length * bytes, QA_NATIVE_GUEST_WRITE, error)) return false;
-        sort_context sort = {owner, a, integer(args + 3), bytes};
+        uint8_t *snapshots = qa_arena_alloc(scratch, bytes * 2, 1, error);
+        if (!snapshots) return false;
+        sort_context sort = {owner, a, integer(args + 3), bytes, snapshots, snapshots + bytes};
         for (size_t start = length / 2; start; ) { --start; if (!sort_sift(&sort, start, length, error)) return false; }
         for (size_t end = length - 1; end; --end)
             if (!sort_swap(&sort, 0, end, error) || !sort_sift(&sort, 0, end, error)) return false;
@@ -437,9 +452,9 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
     case C_ERRNO: result(out, type, crt->error_number); return true;
     case C_STRTOUL: {
         char *source = NULL;
-        if (!text(owner, a, &source, error)) return false;
+        if (!text(owner, a, scratch, &source, error)) return false;
         int base = args[2].as.i32; size_t at = 0, stop = 0; uint32_t number = 0; bool overflowed = false;
-        if (base != 0 && (base < 2 || base > 36)) { if (!windows_write(owner, crt->error_number, 4, 22, error)) { free(source); return false; } }
+        if (base != 0 && (base < 2 || base > 36)) { if (!windows_write(owner, crt->error_number, 4, 22, error)) return false; }
         else {
             while (source[at] && strchr(" \t\n\r\f\v", source[at])) ++at;
             bool negative = source[at] == '-'; if (negative || source[at] == '+') ++at;
@@ -459,15 +474,14 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
                 ++at;
             }
             if (at != first) { stop = at; if (negative && !overflowed) number = 0u - number; }
-            if (overflowed && !windows_write(owner, crt->error_number, 4, 34, error)) { free(source); return false; }
+            if (overflowed && !windows_write(owner, crt->error_number, 4, 34, error)) return false;
         }
-        free(source);
         if (b && !windows_write(owner, b, width, a + stop, error)) return false;
         result(out, type, number); return true;
     }
     case C_ATOI: case C_ATOLL: case C_ATOF: {
         char *source = NULL;
-        if (!text(owner, a, &source, error)) return false;
+        if (!text(owner, a, scratch, &source, error)) return false;
         if (operation == C_ATOF) {
             char *start = source; while (*start && qa_unicode_whitespace((uint8_t)*start)) ++start;
             char *at = start; if (*at == '+' || *at == '-') ++at;
@@ -488,11 +502,11 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
                     fenv_t saved; bool held = feholdexcept(&saved) == 0;
                     if (!held || fesetround(FE_TONEAREST) != 0) {
                         if (held) fesetenv(&saved);
-                        free(source); return guest_fail(error,QA_ERROR_UNSUPPORTED,0,"host cannot provide nearest decimal conversion");
+                        return guest_fail(error,QA_ERROR_UNSUPPORTED,0,"host cannot provide nearest decimal conversion");
                     }
                     bool okay = qa_parse_atof(start,&out->as.f64,error);
                     if (fesetenv(&saved) != 0) okay = guest_fail(error,QA_ERROR_UNSUPPORTED,0,"host decimal conversion environment restore failed");
-                    if (!okay) { free(source); return false; }
+                    if (!okay) return false;
                 }
             }
         } else {
@@ -502,7 +516,7 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
             if (negative) value = UINT64_C(0) - value;
             result(out, type, value);
         }
-        free(source); return true;
+        return true;
     }
     case C_LOCALTIME: {
         if (!windows_read(owner, a, 8, &value, error)) return false;
@@ -514,10 +528,19 @@ bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
         result(out, type, crt->time_buffer); return true;
     }
     case C_LOCALE: result(out, type, crt->locale); return true;
-    case C_PRINTF: return printf_service(owner, args, out, error);
+    case C_PRINTF: return printf_service(owner, args, scratch, out, error);
     case C_SCANF: return scanf_service(owner, args, out, error);
     default: return guest_fail(error, QA_ERROR_ARGUMENT, operation, "invalid Windows CRT descriptor");
     }
+}
+
+bool windows_crt_invoke(windows_service *service, const qa_native_value *args,
+    size_t count, qa_native_value *out, qa_error *error)
+{
+    qa_arena scratch; qa_arena_init_pool(&scratch, &service->owner->guest->scratch_pages);
+    bool okay = crt_invoke(service, args, count, &scratch, out, error);
+    qa_arena_destroy(&scratch);
+    return okay;
 }
 
 typedef struct printf_token {
@@ -545,7 +568,7 @@ static bool format_number(const char *format, size_t *at, int32_t *out, uint32_t
     *out = (int32_t)number; return true;
 }
 
-static bool printf_parse(const char *format, printf_token **out, size_t *count,
+static bool printf_parse(const char *format, qa_arena *scratch, printf_token **out, size_t *count,
     uint32_t *failure, qa_error *error)
 {
     size_t at = 0, capacity = 0; printf_token *tokens = NULL;
@@ -583,12 +606,18 @@ static bool printf_parse(const char *format, printf_token **out, size_t *count,
                 ++at;
             }
         }
-        if (!guest_grow((void **)&tokens, &capacity, *count + 1, sizeof(*tokens), error)) { free(tokens); return false; }
+        if (*count == capacity) {
+            size_t next = capacity ? capacity * 2 : 1;
+            printf_token *grown = qa_arena_grow(scratch, tokens, capacity * sizeof(*tokens),
+                next * sizeof(*tokens), _Alignof(printf_token), error);
+            if (!grown) return false;
+            tokens = grown; capacity = next;
+        }
         tokens[(*count)++] = token;
     }
     *out = tokens; return true;
 failed:
-    free(tokens); *count = 0; return true;
+    *count = 0; return true;
 }
 
 static bool printf_append(printf_output *output, const char *bytes, size_t count, qa_error *error)
@@ -664,17 +693,17 @@ static bool round_up(unsigned mode, bool sign, unsigned first, bool rest, unsign
 }
 
 static char *decimal_scaled(const decimal_integer *number, int scale, int places,
-    unsigned mode, bool sign, qa_error *error)
+    unsigned mode, bool sign, qa_arena *scratch, qa_error *error)
 {
     if (number->count == 1 && number->digits[0] == 0) {
-        char *zero = malloc(2);
+        char *zero = qa_arena_alloc(scratch, 2, 1, error);
         if (!zero) { guest_fail(error, QA_ERROR_MEMORY, 0, "formatting Windows decimal zero"); return NULL; }
         zero[0] = '0'; zero[1] = 0; return zero;
     }
     int drop = scale - places; size_t length;
     if (drop <= 0) length = number->count + (size_t)(-drop);
     else length = (size_t)drop < number->count ? number->count - (size_t)drop : 1;
-    char *out = malloc(length + 2);
+    char *out = qa_arena_alloc(scratch, length + 2, 1, error);
     if (!out) { guest_fail(error, QA_ERROR_MEMORY, 0, "formatting exact Windows decimal"); return NULL; }
     if (drop <= 0) {
         for (size_t i = 0; i < number->count; ++i) out[i] = (char)('0' + number->digits[number->count - i - 1]);
@@ -696,11 +725,12 @@ static char *decimal_scaled(const decimal_integer *number, int scale, int places
     out[length] = 0; return out;
 }
 
-static char *fixed_decimal(const char *digits, size_t places, bool point, qa_error *error)
+static char *fixed_decimal(const char *digits, size_t places, bool point,
+    qa_arena *scratch, qa_error *error)
 {
     size_t count = strlen(digits), whole = count > places ? count - places : 1;
     size_t bytes = whole + places + (places || point ? 1 : 0);
-    char *out = malloc(bytes + 1);
+    char *out = qa_arena_alloc(scratch, bytes + 1, 1, error);
     if (!out) { guest_fail(error, QA_ERROR_MEMORY, 0, "formatting Windows decimal point"); return NULL; }
     size_t at = 0;
     if (count > places) { memcpy(out, digits, whole); at = whole; } else out[at++] = '0';
@@ -715,7 +745,7 @@ static char *fixed_decimal(const char *digits, size_t places, bool point, qa_err
 }
 
 static char *float_body(uint64_t bits, char code, int precision, bool alternate,
-    unsigned mode, unsigned exponent_digits, qa_error *error)
+    unsigned mode, unsigned exponent_digits, qa_arena *scratch, qa_error *error)
 {
     bool sign = (bits >> 63) != 0; unsigned encoded = (unsigned)((bits >> 52) & 2047);
     uint64_t coefficient = bits & UINT64_C(0xfffffffffffff); char lower = (char)tolower((unsigned char)code);
@@ -723,7 +753,7 @@ static char *float_body(uint64_t bits, char code, int precision, bool alternate,
     if (encoded == 2047) {
         const char *word = !coefficient ? "inf" : !(coefficient & UINT64_C(0x8000000000000)) ? "nan(snan)" :
             sign && coefficient == UINT64_C(0x8000000000000) ? "nan(ind)" : "nan";
-        out = malloc(strlen(word) + 1); if (out) strcpy(out, word);
+        out = qa_arena_alloc(scratch, strlen(word) + 1, 1, error); if (out) strcpy(out, word);
     } else {
         int exponent = encoded ? (int)encoded - 1023 - 52 : -1074;
         if (encoded) coefficient |= UINT64_C(0x10000000000000);
@@ -741,7 +771,7 @@ static char *float_body(uint64_t bits, char code, int precision, bool alternate,
             }
             size_t natural = places < 13 ? places : 13;
             char suffix[32]; snprintf(suffix, sizeof(suffix), "p%c%d", exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
-            out = malloc(places + strlen(suffix) + 6);
+            out = qa_arena_alloc(scratch, places + strlen(suffix) + 6, 1, error);
             if (out) {
                 size_t at = 0; out[at++] = '0'; out[at++] = 'x';
                 out[at++] = "0123456789abcdef"[(rounded >> (natural * 4)) & 15];
@@ -756,39 +786,38 @@ static char *float_body(uint64_t bits, char code, int precision, bool alternate,
             else { scale = -exponent; for (int i = 0; i < scale; ++i) decimal_multiply(&exact, 5); }
             int places = precision < 0 ? 6 : precision;
             if (lower == 'f') {
-                char *digits = decimal_scaled(&exact, scale, places, mode, sign, error);
+                char *digits = decimal_scaled(&exact, scale, places, mode, sign, scratch, error);
                 if (!digits) return NULL;
-                out = fixed_decimal(digits, (size_t)places, alternate, error); free(digits);
+                out = fixed_decimal(digits, (size_t)places, alternate, scratch, error);
             } else {
                 int count = lower == 'e' ? places + 1 : places < 1 ? 1 : places;
                 int exp = coefficient ? (int)exact.count - 1 - scale : 0;
-                char *digits = decimal_scaled(&exact, scale, count - 1 - exp, mode, sign, error);
+                char *digits = decimal_scaled(&exact, scale, count - 1 - exp, mode, sign, scratch, error);
                 if (!digits) return NULL;
                 size_t length = strlen(digits);
                 if (length > (size_t)count) { ++exp; digits[count] = 0; }
                 else if (length < (size_t)count) {
-                    char *padded = malloc((size_t)count + 1);
-                    if (!padded) { free(digits); guest_fail(error, QA_ERROR_MEMORY, 0, "padding Windows significant digits"); return NULL; }
+                    char *padded = qa_arena_alloc(scratch, (size_t)count + 1, 1, error);
+                    if (!padded) { guest_fail(error, QA_ERROR_MEMORY, 0, "padding Windows significant digits"); return NULL; }
                     memset(padded, '0', (size_t)count - length);
-                    memcpy(padded + count - length, digits, length + 1); free(digits); digits = padded;
+                    memcpy(padded + count - length, digits, length + 1); digits = padded;
                 }
                 if (lower == 'e' || exp < -4 || exp >= count) {
                     size_t tail = strlen(digits) - 1;
                     if (lower == 'g' && !alternate) while (tail && digits[tail] == '0') --tail;
                     char suffix[32]; snprintf(suffix, sizeof(suffix), "e%c%0*u", exp < 0 ? '-' : '+', (int)exponent_digits, (unsigned)(exp < 0 ? -exp : exp));
-                    out = malloc(tail + strlen(suffix) + 3);
+                    out = qa_arena_alloc(scratch, tail + strlen(suffix) + 3, 1, error);
                     if (out) {
                         size_t at = 0; out[at++] = digits[0];
                         if (tail || alternate) out[at++] = '.';
                         memcpy(out + at, digits + 1, tail); at += tail; strcpy(out + at, suffix);
                     }
                 } else {
-                    out = fixed_decimal(digits, (size_t)(count - 1 - exp), alternate, error);
+                    out = fixed_decimal(digits, (size_t)(count - 1 - exp), alternate, scratch, error);
                     if (out && !alternate && strchr(out, '.')) {
                         size_t end = strlen(out); while (end && out[end - 1] == '0') --end; if (end && out[end - 1] == '.') --end; out[end] = 0;
                     }
                 }
-                free(digits);
             }
         }
     }
@@ -807,7 +836,7 @@ static unsigned integer_bits(const printf_token *token, size_t width)
     return 32;
 }
 
-static bool printf_service(guest_windows *owner, const qa_native_value *args,
+static bool printf_service(guest_windows *owner, const qa_native_value *args, qa_arena *scratch,
     qa_native_value *out, qa_error *error)
 {
     uint64_t options = integer(args), buffer = integer(args + 1), capacity = integer(args + 2), format = integer(args + 3), cursor = integer(args + 5);
@@ -819,9 +848,10 @@ static bool printf_service(guest_windows *owner, const qa_native_value *args,
     }
     char *source = NULL; printf_token *tokens = NULL; size_t token_count = 0;
     printf_output output = {.owner = owner, .address = buffer, .capacity = capacity, .options = options};
-    if (!text(owner, format, &source, error) || !printf_parse(source, &tokens, &token_count, &output.format_error, error)) { free(source); return false; }
+    if (!text(owner, format, scratch, &source, error) || !printf_parse(source, scratch, &tokens, &token_count, &output.format_error, error)) return false;
     unsigned mode = 4;
-    if (options & 32) { qa_native_guest_cpu cpu; if (!qa_native_guest_cpu_read(owner->guest, &cpu, error)) { free(source); free(tokens); return false; } mode = (cpu.mxcsr >> 13) & 3; }
+    if (options & 32) { qa_native_guest_cpu cpu; if (!qa_native_guest_cpu_read(owner->guest, &cpu, error)) return false; mode = (cpu.mxcsr >> 13) & 3; }
+    qa_arena body_storage; qa_arena_init_pool(&body_storage, &owner->guest->scratch_pages);
     bool okay = true; size_t width = owner->target.pointer_bytes;
     for (size_t i = 0; okay && i < token_count && !output.full && !output.format_error; ++i) {
         printf_token token = tokens[i];
@@ -836,7 +866,7 @@ static bool printf_service(guest_windows *owner, const qa_native_value *args,
         bool floating = strchr("fFeEgGaA", token.code) != NULL;
         unsigned bits = integer_bits(&token, width); size_t bytes = floating || (!strchr("sSpncC", token.code) && bits == 64) ? 8 : strchr("sSpn", token.code) ? width : 4;
         if (!va_next(owner, &cursor, bytes, &argument, error)) { okay = false; break; }
-        char prefix[4] = {0}, small[80] = {0}, *body = small, *allocated = NULL; size_t body_count = 0;
+        char prefix[4] = {0}, small[80] = {0}, *body = small; size_t body_count = 0;
         bool zero = (token.flags & PRINT_ZERO) && !left; uint64_t leading_zeros = 0;
         if (strchr("diouxX", token.code)) {
             bool signed_value = token.code == 'd' || token.code == 'i';
@@ -853,9 +883,9 @@ static bool printf_service(guest_windows *owner, const qa_native_value *args,
             else if ((token.flags & PRINT_ALT) && radix == 8 && !leading_zeros && (!digits || small[0] != '0')) prefix[0] = '0';
             if (precision >= 0) zero = false;
         } else if (floating) {
-            allocated = float_body(argument, token.code, precision, (token.flags & PRINT_ALT) != 0, mode, options & 16 ? 3 : 2, error);
-            if (!allocated) { okay = false; break; }
-            body = allocated; prefix[0] = (argument >> 63) ? '-' : (token.flags & PRINT_PLUS) ? '+' : (token.flags & PRINT_BLANK) ? ' ' : 0;
+            body = float_body(argument, token.code, precision, (token.flags & PRINT_ALT) != 0, mode, options & 16 ? 3 : 2, &body_storage, error);
+            if (!body) { okay = false; break; }
+            prefix[0] = (argument >> 63) ? '-' : (token.flags & PRINT_PLUS) ? '+' : (token.flags & PRINT_BLANK) ? ' ' : 0;
             if (((argument >> 52) & 2047) == 2047) zero = false;
             if (body[0] == '0' && (body[1] == 'x' || body[1] == 'X')) {
                 size_t at = strlen(prefix); prefix[at] = '0'; prefix[at + 1] = body[1]; body += 2;
@@ -869,8 +899,8 @@ static bool printf_service(guest_windows *owner, const qa_native_value *args,
             if (!argument) { body = "(null)"; body_count = precision >= 0 && precision < 6 ? (size_t)precision : 6; }
             else {
                 size_t maximum = precision < 0 ? 1048576 : (size_t)precision;
-                allocated = malloc(maximum + 1); if (!allocated) { okay = guest_fail(error, QA_ERROR_MEMORY, 0, "formatting Windows printf string"); break; }
-                body = allocated;
+                body = qa_arena_alloc(&body_storage, maximum + 1, 1, error);
+                if (!body) { okay = false; break; }
                 for (; body_count < maximum; ++body_count) {
                     uint64_t c;
                     if (!windows_read(owner, argument + body_count * (wide ? 2 : 1), wide ? 2 : 1, &c, error)) { okay = false; break; }
@@ -896,9 +926,9 @@ static bool printf_service(guest_windows *owner, const qa_native_value *args,
             if (okay) okay = printf_append(&output, body, body_count, error);
             if (okay && left) okay = printf_repeat(&output, ' ', padding, error);
         }
-        free(allocated);
+        qa_arena_reset(&body_storage);
     }
-    free(source); free(tokens);
+    qa_arena_destroy(&body_storage);
     if (!okay) return false;
     int32_t returned = output.format_error ? -1 : (int32_t)output.total;
     if (buffer) {

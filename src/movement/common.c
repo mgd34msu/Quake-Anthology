@@ -18,11 +18,6 @@ static bool valid_origin(const qa_movement_state *state) {
     }
     return qa_vec_finite(qa_movement_origin(state));
 }
-static qa_game_family family(qa_ruleset_id kind) {
-    return kind <= QA_RULESET_QUAKEWORLD ? QA_GAME_Q1 :
-        kind == QA_RULESET_Q3 ? QA_GAME_Q3 : QA_GAME_Q2;
-}
-
 float qa_move_component(qa_vec3 v, unsigned axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; }
 void qa_move_set_component(qa_vec3 *v, unsigned axis, float x) {
     if (axis == 0) v->x = x; else if (axis == 1) v->y = x; else v->z = x;
@@ -98,7 +93,9 @@ qa_movement_input qa_movement_input_default(qa_ruleset_id kind, qa_actor_id acto
     in.invulnerability_bounds=(qa_bounds){qa_v3(-42,-42,-42),qa_v3(42,42,42)};
     in.shape=(qa_trace_shape){QA_SHAPE_BOX,in.standing.bounds};
     in.current_bounds=in.shape.bounds;
-    in.trace_policy=qa_collision_default_policy(family(kind));
+    const qa_ruleset_descriptor *rules = qa_ruleset_read(kind);
+    in.trace_policy=qa_collision_default_policy(rules ? rules->family :
+        kind <= QA_RULESET_QUAKEWORLD ? QA_GAME_Q1 : QA_GAME_Q2);
     return in;
 }
 qa_vec3 qa_movement_origin(const qa_movement_state *s) {
@@ -161,7 +158,7 @@ bool qa_move_same_ground(qa_movement_ground a, qa_movement_ground b) {
         (a.hit==QA_TRACE_HIT_WORLD?a.model==b.model:qa_actor_id_equal(a.actor,b.actor)));
 }
 static qa_trace_policy policy(qa_move_context *c, qa_collision_bits mask) {
-    qa_game_family f=family(c->state->kind);
+    qa_game_family f=qa_ruleset_read(c->state->kind)->family;
     qa_trace_policy p=c->input->has_trace_policy?c->input->trace_policy:qa_collision_default_policy(f);
     p.behavior=&qa_trace_behaviors[c->state->kind]; p.contents_mask=mask;
     return p;
@@ -189,7 +186,7 @@ bool qa_move_trace_q1(qa_move_context *c, qa_vec3 start, qa_vec3 end, qa_trace_s
 bool qa_move_contents(qa_move_context *c, qa_vec3 point, int32_t *out) {
     if (c->failed||c->removed) return false;
     qa_point_query q={.point=point,
-        .policy=policy(c,qa_collision_contents_mask(UINT32_MAX,family(c->state->kind))),.pass_actor=c->input->actor};
+        .policy=policy(c,qa_collision_contents_mask(UINT32_MAX,qa_ruleset_read(c->state->kind)->family)),.pass_actor=c->input->actor};
     qa_point_contents result;
     if (!c->services->point_contents(c->services->context,&q,&result,c->error)) { c->failed=true; return false; }
     if (result.family!=q.policy.behavior->contents_format) return fail(c,"Movement contents returned another collision family");

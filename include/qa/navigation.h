@@ -159,6 +159,9 @@ typedef struct qa_nav_graph_view {
     const qa_nav_rejection *rejected;
     size_t rejected_count;
 } qa_nav_graph_view;
+typedef struct qa_nav_workspace_limits {
+    size_t nodes, edges, aas_nodes, aas_areas;
+} qa_nav_workspace_limits;
 typedef struct qa_nav_connection {
     uint32_t id, source_travel_type;
     qa_nav_travel mode;
@@ -193,6 +196,9 @@ bool qa_navigation_create(qa_nav_graph *, const qa_navigation_services *, qa_nav
                           qa_error *);
 void qa_navigation_destroy(qa_navigation *);
 bool qa_nav_workspace_create(qa_nav_workspace **, qa_error *);
+qa_nav_workspace_limits qa_nav_workspace_limits_read(const qa_nav_graph_view *);
+/* Cold graph binding; retained maxima contain no borrowed graph pointers. */
+bool qa_nav_workspace_prepare(qa_nav_workspace *, qa_nav_workspace_limits, qa_error *);
 void qa_nav_workspace_destroy(qa_nav_workspace *);
 bool qa_navigation_enable(qa_navigation *, uint32_t area, bool enabled, bool *previous, qa_error *);
 bool qa_navigation_enabled(const qa_navigation *, uint32_t area, bool *enabled, bool *overridden);

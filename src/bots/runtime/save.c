@@ -292,7 +292,7 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         runtime->map = map ? *map : (qa_bot_runtime_map){0}; runtime->map.name = runtime->map_name;
         if (runtime->map.navigation)
             ok=qa_bot_runtime_prepare_navigation(runtime,
-                qa_navigation_graph(qa_bot_navigation_runtime(runtime->map.navigation))->edge_count,error);
+                qa_navigation_graph(qa_bot_navigation_runtime(runtime->map.navigation)),error);
         if (state.library) {
             qa_bot_library_reload(runtime->library, state.reload);
             ok = ok && qa_bot_library_variables_restore(runtime->library, parts[VARIABLES], error) &&

@@ -501,7 +501,8 @@ bool frontend_replay_frame(qa_frontend *,const frontend_replay_timing *,qa_error
 bool frontend_network_prepare(qa_frontend *, qa_error *);
 bool frontend_network_intake(qa_frontend *, qa_platform_events *, uint64_t now_ns, qa_error *);
 bool frontend_network_receive_ready(const qa_frontend *);
-bool frontend_network_event_ready(const qa_frontend *, const qa_sys_event *);
+bool frontend_network_event_ready(const qa_frontend *, const qa_sys_event *,qa_bytes);
+bool frontend_network_logical_drain(qa_frontend *,qa_error *);
 bool frontend_network_local_input_owned(const qa_frontend *, uint32_t physical);
 bool frontend_network_q3_input_owned(const qa_frontend *, uint32_t physical);
 bool frontend_network_local_seat(const qa_frontend *, const qa_net_address *,

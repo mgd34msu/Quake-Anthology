@@ -33,14 +33,14 @@ bool qa_armor_validate(const qa_armor *armor, qa_error *error) {
     if (armor->regular.kind != QA_ARMOR_NONE && !isfinite(armor->regular.points)) goto invalid;
     if (armor->powered.kind != QA_POWER_NONE && !isfinite(armor->powered.cells)) goto invalid;
     if (armor->powered.source_kind < QA_POWER_SOURCE_Q2 || armor->powered.source_kind > QA_POWER_SOURCE_GENERIC ||
-        armor->powered.source_edition < QA_Q2_POWER_ARMOR_NONE ||
-        armor->powered.source_edition > QA_Q2_POWER_ARMOR_RERELEASE ||
+        armor->powered.source_edition < QA_Q2_CAUSE_NONE ||
+        armor->powered.source_edition > QA_Q2_CAUSE_RERELEASE ||
         (armor->powered.kind == QA_POWER_NONE ?
-            armor->powered.source_owner != 0 || armor->powered.source_edition != QA_Q2_POWER_ARMOR_NONE ||
+            armor->powered.source_owner != 0 || armor->powered.source_edition != QA_Q2_CAUSE_NONE ||
                 armor->powered.source_kind != QA_POWER_SOURCE_Q2 :
             !armor->powered.source_owner || (armor->powered.source_kind == QA_POWER_SOURCE_Q2 ?
-                armor->powered.source_edition == QA_Q2_POWER_ARMOR_NONE :
-                armor->powered.source_edition != QA_Q2_POWER_ARMOR_NONE))) goto invalid;
+                armor->powered.source_edition == QA_Q2_CAUSE_NONE :
+                armor->powered.source_edition != QA_Q2_CAUSE_NONE))) goto invalid;
     switch (armor->regular.kind) {
     case QA_ARMOR_Q1: if (!isfinite(armor->regular.protection.q1_absorption)) goto invalid; break;
     case QA_ARMOR_Q2: if (!isfinite(armor->regular.protection.q2.normal) || !isfinite(armor->regular.protection.q2.energy)) goto invalid; break;

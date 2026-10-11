@@ -72,18 +72,29 @@ bool windows_storage(guest_windows *owner, size_t bytes, uint64_t *out, qa_error
     QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, WINDOWS_STORAGE_TAG, out, error); }
 
 bool windows_string(guest_windows *owner, uint64_t address, bool wide,
-    uint16_t **out, size_t *length, qa_error *error)
+    qa_arena *scratch, uint16_t **out, size_t *length, qa_error *error)
 {
     if (!address || !out || *out || !length) return guest_fail(error, QA_ERROR_ARGUMENT, address, "Windows string requires real storage and empty output");
     size_t count = 0, capacity = 0; uint16_t *text = NULL;
     for (; count < 1048576; ++count) {
         uint64_t value;
-        if (!windows_read(owner, address + count * (wide ? 2 : 1), wide ? 2 : 1, &value, error) ||
-            !guest_grow((void **)&text, &capacity, count + 1, sizeof(*text), error)) { free(text); return false; }
+        if (!windows_read(owner, address + count * (wide ? 2 : 1), wide ? 2 : 1, &value, error)) {
+            if (!scratch) free(text);
+            return false;
+        }
+        if (scratch && count == capacity) {
+            size_t next = capacity ? capacity * 2 : 1;
+            uint16_t *grown = qa_arena_grow(scratch, text, capacity * sizeof(*text),
+                next * sizeof(*text), _Alignof(uint16_t), error);
+            if (!grown) return false;
+            text = grown; capacity = next;
+        } else if (!scratch && !guest_grow((void **)&text, &capacity,
+            count + 1, sizeof(*text), error)) { free(text); return false; }
         text[count] = (uint16_t)value;
         if (!value) { *out = text; *length = count; return true; }
     }
-    free(text); return guest_fail(error, QA_ERROR_FORMAT, address, "Windows string exceeds source read limit");
+    if (!scratch) free(text);
+    return guest_fail(error, QA_ERROR_FORMAT, address, "Windows string exceeds source read limit");
 }
 
 bool windows_store_string(guest_windows *owner, const uint16_t *text, size_t length,
@@ -92,13 +103,16 @@ bool windows_store_string(guest_windows *owner, const uint16_t *text, size_t len
     size_t unit = wide ? 2 : 1;
     if (length > SIZE_MAX / unit - 1 || (length && !text)) return guest_fail(error, QA_ERROR_ARGUMENT, 0, "Windows stored string extent is invalid");
     size_t bytes = (length + 1) * unit;
-    uint8_t *data = calloc(1, bytes);
-    if (!data) return guest_fail(error, QA_ERROR_MEMORY, 0, "encoding Windows process string");
+    qa_arena scratch;
+    qa_arena_init_pool(&scratch, &owner->guest->scratch_pages);
+    uint8_t *data = qa_arena_alloc(&scratch, bytes, 1, error);
+    if (!data) { qa_arena_destroy(&scratch); return false; }
+    memset(data, 0, bytes);
     for (size_t i = 0; i < length; ++i) {
         if (wide) qa_store_u16le(data + i * 2, text[i]); else data[i] = (uint8_t)text[i];
     }
     bool okay = windows_storage(owner, bytes, out, error) && qa_native_guest_write(owner->guest, *out, (qa_bytes){data, bytes}, error);
-    free(data); return okay;
+    qa_arena_destroy(&scratch); return okay;
 }
 
 bool windows_last_error(guest_windows *owner, uint32_t value, qa_error *error)

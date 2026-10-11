@@ -293,28 +293,34 @@ void qa_world_snapshot_release(qa_world_actor_snapshot *snapshot)
     }
 }
 
-static void snapshot_actor_sift(qa_actor_id *actors,size_t root,size_t count)
+static void snapshot_actor_sift(qa_actor_id *actors,size_t root,size_t count,
+    qa_world_snapshot_compare_fn compare,void *context)
 {
     while(root<count/2) {
         size_t child=root*2+1;
-        if(child+1<count && actors[child].slot<actors[child+1].slot) ++child;
-        if(actors[root].slot>=actors[child].slot) return;
+        if(child+1<count && compare(context,actors[child],actors[child+1])<0) ++child;
+        if(compare(context,actors[root],actors[child])>=0) return;
         qa_actor_id temporary=actors[root]; actors[root]=actors[child]; actors[child]=temporary;
         root=child;
     }
 }
 
-static void snapshot_actor_order(qa_actor_id *actors,size_t count)
+void qa_world_snapshot_sort(qa_world_actor_snapshot *snapshot,
+    qa_world_snapshot_compare_fn compare,void *context)
 {
-    for(size_t root=count/2;root;--root) snapshot_actor_sift(actors,root-1,count);
+    qa_actor_id *actors=snapshot->actors;
+    size_t count=snapshot->count;
+    for(size_t root=count/2;root;--root) snapshot_actor_sift(actors,root-1,count,compare,context);
     for(size_t end=count;end>1;--end) {
         qa_actor_id temporary=actors[0]; actors[0]=actors[end-1]; actors[end-1]=temporary;
-        snapshot_actor_sift(actors,0,end-1);
+        snapshot_actor_sift(actors,0,end-1,compare,context);
     }
 }
 
-bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_role role,
-                               qa_world_snapshot_order order,qa_world_actor_snapshot *out,qa_error *error)
+static int snapshot_actor_compare(void *context,qa_actor_id left,qa_actor_id right)
+{ (void)context; return left.slot<right.slot?-1:left.slot>right.slot; }
+
+static void snapshot_begin(qa_world *world,qa_world_actor_snapshot *out,qa_error *error)
 {
     out->actors=out->local;
     out->count=0;
@@ -323,6 +329,12 @@ bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_rol
     out->frame=NULL;
     out->error=error;
     out->failed=false;
+}
+
+bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_role role,
+                               qa_world_snapshot_order order,qa_world_actor_snapshot *out,qa_error *error)
+{
+    snapshot_begin(world,out,error);
     bool ok=role==QA_COLLISION_BOTH?
         qa_spatial_visit_raw(world,bounds,snapshot_slot,out,error):
         qa_world_visit(world,bounds,role,snapshot_current,out,error);
@@ -331,7 +343,45 @@ bool qa_world_snapshot_capture(qa_world *world,qa_bounds bounds,qa_collision_rol
         return false;
     }
     if(order==QA_WORLD_ORDER_ACTOR_SLOT && out->count>1)
-        snapshot_actor_order(out->actors,out->count);
+        qa_world_snapshot_sort(out,snapshot_actor_compare,NULL);
+    return true;
+}
+
+bool qa_world_radius_snapshot_capture(qa_world *world,const qa_world_radius_query *query,
+    qa_world_actor_snapshot *out,qa_error *error)
+{
+    snapshot_begin(world,out,error);
+    uint32_t cursor=0;
+    const qa_actor_record *record;
+    while(qa_actors_next(world->actors,&cursor,&record)) {
+        if(snapshot_actor(out,record->id)==QA_SPATIAL_STOP) {
+            qa_world_snapshot_release(out);
+            return false;
+        }
+    }
+    size_t accepted=0;
+    for(size_t i=0;i<out->count;++i) {
+        qa_actor_id actor=out->actors[i];
+        if(qa_actors_get(world->actors,actor)==NULL) continue;
+        if(query->include!=NULL && !query->include(query->context,actor)) continue;
+        qa_body_state body;
+        qa_error read_error={0};
+        if(!qa_world_body_read(world,actor,&body,&read_error)) {
+            if(query->read_policy==QA_WORLD_RADIUS_SKIP_FAILED ||
+                (query->read_policy==QA_WORLD_RADIUS_SKIP_MISSING && read_error.code==QA_ERROR_NOT_FOUND)) continue;
+            if(error!=NULL) *error=read_error;
+            qa_world_snapshot_release(out);
+            out->count=0;
+            return false;
+        }
+        if(qa_actors_get(world->actors,actor)==NULL) continue;
+        qa_vec3 point=body.origin;
+        if(query->metric==QA_WORLD_RADIUS_BOUNDS_CENTER)
+            point=qa_vec_add(point,qa_vec_scale(qa_vec_add(body.bounds.mins,body.bounds.maxs),0.5f));
+        if(qa_vec_length(qa_vec_sub(point,query->origin))<=query->radius)
+            out->actors[accepted++]=actor;
+    }
+    out->count=accepted;
     return true;
 }
 

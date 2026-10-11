@@ -164,8 +164,8 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
                               .code = (int32_t)bits,
                               .flags = (uint32_t)g->options.program,
                               .time_ns = g->time_ns};
-    if (!qa_builtin_resource(&g->services, "rune-collected", &event.resource, error) ||
-        !qa_builtin_emit(&g->services, &event, error))
+    event.resource = g->runtime_names[Q1_NAME_RESOURCE_RUNE_COLLECTED];
+    if (!qa_builtin_emit(&g->services, &event, error))
         return false;
     e = campaign_actor(g, id);
     return !e || q1_map_targets(g, e, other, error);
@@ -186,8 +186,7 @@ bool q1_map_addon_campaign_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     case Q1_MAP_COOP_POINT:
         if (!g->options.coop)
             return q1_remove(g, e, error);
-        if (!qa_builtin_resource(&g->services, "info_player_coop", &e->map->netname, error))
-            return false;
+        e->map->netname = g->runtime_names[Q1_NAME_INFO_PLAYER_COOP];
         if (!e->targetname || (e->spawnflags & 1u))
             e->map->field_state = Q1_COOP_SPAWN_ACTIVE;
         return true;
@@ -237,10 +236,8 @@ bool q1_map_addon_campaign_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator
             qa_authored_target fields;
             if (!qa_targets_read(g->maps->options.targets, actor, &fields))
                 continue;
-            const char *classname = qa_strings_cstr(qa_session_strings(g->services.session),
-                                                    fields.classname);
-            if (!campaign_actor(g, id) || !q1_alive(g, actor) || !classname ||
-                strcmp(classname, "func_door"))
+            if (!campaign_actor(g, id) || !q1_alive(g, actor) ||
+                fields.classname != g->runtime_names[Q1_NAME_FUNC_DOOR])
                 continue;
             q1_actor *door = campaign_actor(g, actor);
             if (door && door->native && door->map->kind == Q1_MAP_DOOR)

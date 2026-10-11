@@ -206,7 +206,7 @@ static bool graph_cache(qa_navigation *n, qa_nav_workspace *w, uint32_t goal, ui
         return true;
     }
     const qa_nav_graph *g = n->graph;
-    if (!nav_workspace_prepare(w, g, e))
+    if (!nav_workspace_reset(w, g, e))
         return false;
     c = cache_new(n, ESTIMATE_GRAPH, 0, goal, flags, g->view.node_count, e);
     if (c == NULL)

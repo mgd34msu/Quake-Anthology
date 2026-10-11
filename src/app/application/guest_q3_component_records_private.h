@@ -12,7 +12,6 @@ typedef enum component_field_kind {
     COMPONENT_BODY,
     COMPONENT_RECORD,COMPONENT_CONSTANT,COMPONENT_VECTOR,COMPONENT_PRIVATE
 } component_field_kind;
-typedef struct component_team { double value; qa_string_id team; } component_team;
 typedef struct component_field {
     component_field_kind kind;
     uint32_t offset,length;
@@ -20,7 +19,7 @@ typedef struct component_field {
     union { qa_item_id item; qa_body_vector_kind body; };
     size_t target;
     uint8_t initial[12];
-    component_team *teams;
+    qa_team_source_scalar *teams;
     size_t team_count;
 } component_field;
 typedef struct component_record {

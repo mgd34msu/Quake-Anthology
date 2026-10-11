@@ -120,6 +120,14 @@ static bool observer_door(qa_q1_game *game, q1_actor *door, qa_body_state *body,
     return true;
 }
 
+static bool observer_geometry_include(void *context, qa_actor_id actor) {
+    qa_q1_game *game = context;
+    const q1_actor *entity = q1_entity_const(game, actor);
+    return entity && entity->active && entity->native && entity->kind == Q1_MAP &&
+        entity->map && q1_alive(game, actor) &&
+        (q1_classnamed(game, actor, game->runtime_names[Q1_NAME_FUNC_DOOR]) ||
+         q1_classnamed(game, actor, game->runtime_names[Q1_NAME_TRIGGER_TELEPORT]));
+}
 bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1_input *input,
     qa_body_state *projected_body, qa_body_state *out, bool *passage_written,
     bool *teleported, qa_vec3 *view_angles, double *until, qa_error *error) {
@@ -156,24 +164,34 @@ bool qa_q1_source_observer_body(qa_q1_game *game, qa_actor_id actor, const qa_q1
     *until = input->teleport_until;
     q1_actor *near = NULL;
     uint32_t ordinal = 0;
-    for (uint32_t i = 0; i < game->capacity; ++i) {
-        q1_actor *entity = game->actors[i];
-        if (!entity || !entity->active || !entity->native || entity->kind != Q1_MAP ||
-            !entity->map || !q1_alive(game, entity->id) ||
-            (!q1_classnamed(game, entity->id, game->runtime_names[Q1_NAME_FUNC_DOOR]) &&
-             !q1_classnamed(game, entity->id, game->runtime_names[Q1_NAME_TRIGGER_TELEPORT]))) continue;
+    qa_world_actor_snapshot nearby;
+    qa_world_radius_query query = {.origin = body.origin, .radius = 75,
+        .metric = QA_WORLD_RADIUS_BOUNDS_CENTER, .include = observer_geometry_include,
+        .context = game, .read_policy = QA_WORLD_RADIUS_READ_REQUIRED};
+    if (!qa_world_radius_snapshot_capture(game->services.world, &query, &nearby, error))
+        return false;
+    for (size_t i = 0; i < nearby.count; ++i) {
+        qa_actor_id candidate = nearby.actors[i];
+        q1_actor *entity = q1_entity(game, candidate);
+        if (!observer_geometry_include(game, candidate)) continue;
         qa_body_state target;
-        if (!qa_world_body_read(game->services.world, entity->id, &target, error)) return false;
+        if (!qa_world_body_read(game->services.world, entity->id, &target, error)) {
+            qa_world_snapshot_release(&nearby);
+            return false;
+        }
+        if (!q1_alive(game, candidate)) continue;
         qa_vec3 center = qa_vec_add(target.origin,
             qa_vec_scale(qa_vec_add(target.bounds.mins, target.bounds.maxs), .5f));
         if (qa_vec_length(qa_vec_sub(center, body.origin)) > 75) continue;
         const qa_actor_record *record = qa_actors_get(qa_session_actors(game->services.session), entity->id);
         if (!record || !record->has_source || record->owner != game->options.provider) {
             qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot, "Observer geometry lost its source ordinal");
+            qa_world_snapshot_release(&nearby);
             return false;
         }
         if (!near || record->source_slot < ordinal) { near = entity; ordinal = record->source_slot; }
     }
+    qa_world_snapshot_release(&nearby);
     if (near && q1_classnamed(game, near->id, game->runtime_names[Q1_NAME_FUNC_DOOR])) {
         if (!observer_door(game, near, &body, passage_written, error)) return false;
     } else if (near) {

@@ -388,10 +388,10 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         for (uint32_t i=0;ok && i<engine->hud_names.layout.max_configs;++i)
             ok=qa_hud_q2_names_set(&engine->hud_names,i,config[i],NULL,error);
         memcpy(engine->clients, clients, sizeof(engine->clients));
-        memset(engine->client_slots, 0, engine->client_actor_capacity * sizeof(*engine->client_slots));
+        qa_actor_index_clear(&engine->client_index);
         for (uint32_t slot = 1; slot < 257; ++slot)
             if (engine->clients[slot].actor.registry)
-                engine->client_slots[engine->clients[slot].actor.slot] = (uint16_t)slot;
+                qa_actor_index_put(&engine->client_index, engine->clients[slot].actor, slot);
         engine->world_actor = world; engine->frame = frame; engine->map_name = map_id; engine->spawn_point = spawn_id;
         engine->initialized = initialized != 0; engine->map_ready = engine->provider->map_bound = map_ready != 0;
         qa_cvars_set_server_active(engine->cvars, engine->map_ready);
