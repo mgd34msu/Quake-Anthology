@@ -254,7 +254,8 @@ static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_err
             frontend->events->step_random[i] = 1812433253u * (prior ^ (prior >> 30)) + i;
         }
         frontend->events->step_cursor = 624;
-        qa_application_events_audio_consume(frontend->application, qa_application_events_local_first(frontend->application));
+        if (frontend->audio && !frontend->options.dedicated)
+            qa_application_events_audio_consume(frontend->application, qa_application_events_local_first(frontend->application));
     }
     *out = frontend->events; return true;
 }
@@ -350,7 +351,8 @@ void frontend_event_reset_round(qa_frontend *frontend)
     if (frontend->capture || frontend->resource_inventory) return;
     frontend_event_state *state = frontend->events;
     if (!state) return;
-    qa_application_events_audio_consume(frontend->application, qa_application_events_next(frontend->application));
+    if (qa_application_events_audio_first(frontend->application) != UINT64_MAX)
+        qa_application_events_audio_consume(frontend->application, qa_application_events_next(frontend->application));
     while (state->sounds) {
         frontend_retained_sound *entry = state->sounds; state->sounds = entry->next;
         qa_audio_asset_release(entry->loop.sound.asset); qa_pool_release(&state->sound_records, entry->slot);
@@ -1092,12 +1094,14 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
 }
 static bool audio_events_read(qa_frontend *frontend, frontend_event_state *state, qa_error *error)
 {
-    if (frontend->round) return true;
+    uint64_t next = qa_application_events_next(frontend->application);
     bool listeners = false;
     for (unsigned i = 0; i < frontend->options.seats; ++i)
         listeners = listeners || qa_audio_engine_seat_mixer(frontend->audio, i) != NULL;
-    if (!listeners) return true;
-    uint64_t next = qa_application_events_next(frontend->application);
+    if (frontend_round_audio_pending(frontend) || !listeners) {
+        qa_application_events_audio_consume(frontend->application, next);
+        return true;
+    }
     state->audio_reading = true;
     bool ok = true;
     for (uint64_t id = qa_application_events_audio_first(frontend->application); id < next; ++id) {
@@ -1125,7 +1129,7 @@ bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
     frontend_event_state *state = frontend->events;
     if (!state || !frontend->audio) return true;
     if (!audio_events_read(frontend, state, error)) return false;
-    if (frontend->round) return true;
+    if (frontend_round_audio_pending(frontend)) return true;
     frontend_retained_sound **link = &state->sounds;
     while (*link) {
         frontend_retained_sound *entry = *link;

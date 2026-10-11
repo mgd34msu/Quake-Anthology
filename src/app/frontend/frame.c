@@ -1021,6 +1021,8 @@ static bool frontend_step(qa_frontend *frontend,
         }
     }
     frontend->stepping=false;
+    if (ok && replay && qa_application_events_audio_first(frontend->application) != UINT64_MAX)
+        qa_application_events_audio_consume(frontend->application, qa_application_events_next(frontend->application));
     if(ok) {
         if(replay) frontend->frame_number=replay->frame_after;
         else ++frontend->frame_number;
