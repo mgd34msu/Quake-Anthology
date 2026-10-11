@@ -381,6 +381,19 @@ unchanged. Normal build and seven core suites pass:
 `/tmp/qa-ta3196-authored-target-ids-20261011-{build,core}.log`. The bot-goal
 classname selector is the remaining listed site in names finding 3.
 
+Names finding 3, bot-goal completion: the application supplies its session string
+table through the existing bot goal services. The goal owner retains info-camp
+and target-location IDs at construction; the botlib load boundary resolves raw
+BSP classname bytes in that table and selects by ID. It preserves the original
+127-byte/C-string boundary semantics and creates no second name table. The old
+buffered classname strcmp selector is deleted. Normal build and seven core
+suites pass: `/tmp/qa-ta3196-bot-goal-names-20261011-{build,core}.log`.
+
+All listed sites in names finding 3 are now migrated. Names findings 1-3 and
+events findings 1-4 are complete by source migration and normal build/core
+checks. Names findings 4-17 and the other audit kinds remain open; this does
+not claim complete foundation adoption or live gameplay qualification.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

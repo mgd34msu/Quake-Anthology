@@ -1022,7 +1022,8 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
     qa_bot_random_source random={bots,random_word};
     qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
         .diagnostic=bot_diagnostic,.log=application_bots_log_services(bots),
-        .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
+        .goals={.context=bots,.strings=qa_session_strings(bots->application->session),
+            .navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
             .pickup=pickup,.owns_item=owns_item},
         .movement={.context=bots,.navigation=bot_source_navigation,.actor=application_bot_actor,
             .source_action_client=bot_source_action_client,

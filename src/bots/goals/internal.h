@@ -47,6 +47,7 @@ struct qa_bot_goals {
     qa_bot_items *items;
     qa_bot_goal_options options;
     qa_bot_goal_services services;
+    qa_string_id info_camp, target_location;
     bot_goal_slot *states;
     bot_goal_weights *weights;
     qa_bot_memory *memory;

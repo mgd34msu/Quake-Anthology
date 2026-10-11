@@ -3,6 +3,7 @@
 
 #include "qa/bot_library.h"
 #include "qa/bot_navigation.h"
+#include "qa/strings.h"
 
 #define QA_BOT_GOAL_STACK 8
 #define QA_BOT_AVOID_GOALS 256
@@ -40,6 +41,7 @@ typedef struct qa_bot_pickup_goal {
 } qa_bot_pickup_goal;
 typedef struct qa_bot_goal_services {
     void *context;
+    qa_strings *strings; /* Borrowed session name table. */
     qa_bot_navigation *(*navigation)(void *, int32_t client);
     /* Views follow ascending source entity order and remain borrowed until the
      * paired end. A snapshot may contain retired entities for visibility age. */

@@ -306,7 +306,8 @@ static bool developer(void *context) {
 }
 static bool debug(void *context) { return ((qa_bot_runtime *)context)->options.debug; }
 qa_bot_goal_services bot_runtime_goal_services(qa_bot_runtime *r) {
-    return (qa_bot_goal_services){.context = r, .navigation = navigation,
+    return (qa_bot_goal_services){.context = r, .strings = r->services.goals.strings,
+        .navigation = navigation,
         .entities = entities, .entities_end = entities_end, .entity = entity,
         .dropped_weight = dropped_weight, .maximum_level_items = maximum_level_items,
         .pickups = r->services.goals.pickups ? pickups : NULL,

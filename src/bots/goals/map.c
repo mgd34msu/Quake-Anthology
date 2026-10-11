@@ -249,10 +249,14 @@ bool bot_goal_map_info_load(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) 
     if (!bot_goal_info_free(g, e)) return false;
     size_t location_count = 0, camp_count = 0;
     for (int32_t id = qa_bot_bsp_next(g->entities, 0); id; id = qa_bot_bsp_next(g->entities, id)) {
-        char classname[128];
-        text(g->entities, id, "classname", classname, sizeof(classname));
-        bool camp = strcmp(classname, "info_camp") == 0;
-        if (!camp && strcmp(classname, "target_location") != 0) continue;
+        qa_bytes name;
+        if (!qa_bot_bsp_value(g->entities, id, "classname", &name)) continue;
+        if (name.size > 127) name.size = 127;
+        const uint8_t *zero = name.size ? memchr(name.data, 0, name.size) : NULL;
+        if (zero) name.size = (size_t)(zero - name.data);
+        qa_string_id classname = qa_strings_find(g->services.strings, name);
+        bool camp = classname == g->info_camp;
+        if (!camp && classname != g->target_location) continue;
         if (!g->next_info || g->next_info > UINT32_MAX) return bot_goal_fail(e, "Goal info pointer IDs exhausted");
         if (g->info_count == g->info_capacity) {
             size_t capacity = g->info_capacity ? g->info_capacity * 2 : 16;

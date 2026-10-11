@@ -116,6 +116,11 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
     g->next_pointer=1;
     g->next_info=1;
     qa_bot_items_retain(items);
+    if (!qa_strings_intern_cstr(services->strings, "info_camp", &g->info_camp, e) ||
+        !qa_strings_intern_cstr(services->strings, "target_location", &g->target_location, e)) {
+        qa_bot_goals_destroy(g);
+        return false;
+    }
     if (!qa_bot_memory_create(NULL,&g->memory,e) || !qa_bot_weight_workspace_create(&g->workspace, e)) {
         qa_bot_goals_destroy(g);
         return false;
