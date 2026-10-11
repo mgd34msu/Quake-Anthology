@@ -536,7 +536,7 @@ static const qa_unified_record_layout qa_entity_flare_layout = QA_UNIFIED_LAYOUT
 
 static const qa_unified_field qa_unified_source_identity_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_source_identity, provider, QA_UNIFIED_FIELD_U32),
-    QA_UNIFIED_FIELD(qa_unified_source_identity, instance, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_source_identity, instance, QA_UNIFIED_FIELD_NAME),
 };
 static const qa_unified_record_layout qa_unified_source_identity_layout = QA_UNIFIED_LAYOUT(qa_unified_source_identity, qa_unified_source_identity_fields);
 

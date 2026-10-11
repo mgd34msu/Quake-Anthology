@@ -608,12 +608,6 @@ static bool view(qa_unified_player_view *out, player_observation *o, qa_error *e
     return current(o, e);
 }
 
-static bool presentation_owner(qa_unified_source_identity *out,
-    player_observation *o, const qa_application_qc_client_presentation *frame, qa_error *e)
-{
-    out->provider = frame->source.provider;
-    return application_unified_frame_string(o->lease, &out->instance, frame->source.descriptor->selection.instance, e);
-}
 static bool client_presentation(qa_unified_frame_player *out, player_observation *o, qa_error *e)
 {
     const application_unified_player_external *external = o->external;
@@ -624,7 +618,8 @@ static bool client_presentation(qa_unified_frame_player *out, player_observation
     const qa_application_qc_client_presentation *v = external->declared_vitals;
     if (v) {
         if (!qa_actor_id_equal(v->recipient, o->player->actor) || !v->vitals ||
-            !qa_application_qc_client_presentation_current(o->app, v) || !presentation_owner(&p->hud_source, o, v, e)) return false;
+            !qa_application_qc_client_presentation_current(o->app, v)) return false;
+        p->hud_source=(qa_unified_source_identity){v->source.provider,v->source.provider};
         p->has_hud = true; p->health = v->health; p->armor = v->armor;
     }
     const qa_application_camera_view *camera = external->declared_camera;
@@ -632,7 +627,8 @@ static bool client_presentation(qa_unified_frame_player *out, player_observation
         const qa_application_qc_client_presentation *source = external->declared_view;
         if (!source || !source->view || !qa_actor_id_equal(camera->actor, o->player->actor) ||
             !qa_actor_id_equal(source->recipient, o->player->actor) ||
-            !qa_application_qc_client_presentation_current(o->app, source) || !presentation_owner(&p->view_source, o, source, e)) return false;
+            !qa_application_qc_client_presentation_current(o->app, source)) return false;
+        p->view_source=(qa_unified_source_identity){source->source.provider,source->source.provider};
         p->has_view = true; p->origin = qa_vec_add(camera->origin, qa_v3(camera->view_offset.x, camera->view_offset.y, 0));
         p->angles = camera->angles; p->view_height = camera->view_offset.z;
     }

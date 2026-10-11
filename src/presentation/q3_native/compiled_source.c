@@ -16,7 +16,7 @@ static bool fail(qa_error *e, const char *text)
 { qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", text); return false; }
 static bool shape_fields(const q3n_compiled_source_basis *b)
 {
-    return b->registry && b->provider && b->receiver && b->instance && *b->instance &&
+    return b->registry && b->provider && b->receiver && b->instance &&
         b->content && b->assets && b->publication && b->serial &&
         b->viewer.registry==qa_actors_identity(b->registry) &&
         (b->product == QA_Q3_ARENA || b->product == QA_Q3_TEAM_ARENA) &&
@@ -30,7 +30,7 @@ static bool identity(const q3n_compiled_source_basis *a, const q3n_compiled_sour
 {
     return a->application == b->application && a->session == b->session && a->registry == b->registry &&
         a->provider == b->provider && a->receiver == b->receiver &&
-        !strcmp(a->instance, b->instance) && a->content == b->content && a->assets == b->assets &&
+        a->instance==b->instance && a->content == b->content && a->assets == b->assets &&
         a->product == b->product && a->publication == b->publication && a->map_revision == b->map_revision &&
         qa_actor_id_equal(a->viewer, b->viewer) && a->seat == b->seat && a->physical_seat == b->physical_seat &&
         a->client_number == b->client_number && a->initial_command==b->initial_command && a->snapshot_bit==b->snapshot_bit;

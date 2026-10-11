@@ -9,7 +9,8 @@ bool frontend_unified_render_pending_current(const frontend_unified_render *);
 typedef struct frontend_unified_render_equipment {
     qa_actor_id actor;
     uint32_t provider;
-    const char *instance,*content,*path;
+    qa_string_id instance;
+    qa_string_id content,path;
     bool slot,visible;
     frontend_unified_model binding;
     const qa_scene_model_input *input;
@@ -33,13 +34,13 @@ typedef struct frontend_unified_render_children {
     bool (*camera)(void *,qa_scene_view *,float *source_fov,bool *owned,qa_error *);
     bool (*status_replacement)(void *,bool *,qa_error *);
     void (*q1_status)(void *,qa_hud_q1_status *);
-    bool (*source_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool *owned,qa_error *);
-    bool (*equipment_model)(void *,qa_actor_id,uint32_t provider,const char *instance,bool slot,bool *owned,qa_error *);
+    bool (*source_model)(void *,qa_actor_id,uint32_t provider,qa_string_id instance,bool *owned,qa_error *);
+    bool (*equipment_model)(void *,qa_actor_id,uint32_t provider,qa_string_id instance,bool slot,bool *owned,qa_error *);
     bool (*selected_weapon)(void *,const qa_unified_model_state *,const qa_scene_world_input *,
         qa_scene_frame *,bool *submitted,qa_error *);
     bool (*view_origin)(void *,qa_actor_id,qa_vec3,float player_fov,qa_error *);
     bool (*entity_effects)(void *,const frontend_unified_render_entity_effects *,double,qa_error *);
-    bool (*entity_beam)(void *,const char *,const qa_scene_view *,qa_vec3,qa_vec3,
+    bool (*entity_beam)(void *,qa_string_id,const qa_scene_view *,qa_vec3,qa_vec3,
         uint32_t,int32_t,qa_scene_frame *,qa_error *);
     bool (*world_input)(void *, qa_scene_world_input *, qa_error *);
     bool (*lights)(void *, const qa_scene_view *, const qa_scene_world_input *,
@@ -54,8 +55,8 @@ typedef struct frontend_unified_render_children {
     bool (*player_blend)(void *,qa_actor_id,bool,const qa_vec4 *,bool,const qa_vec4 *,
         qa_scene_rect,qa_scene_frame *,qa_error *);
     bool (*hud)(void *, qa_ui *, qa_scene_rect, qa_scene_frame *, qa_error *);
-    bool (*model)(void *, qa_actor_id, const char *content, const char *path, qa_scene_model_input *, qa_error *);
-    bool (*model_after)(void *, qa_actor_id, const char *content, const char *path,
+    bool (*model)(void *, qa_actor_id, qa_string_id content, qa_string_id path, qa_scene_model_input *, qa_error *);
+    bool (*model_after)(void *, qa_actor_id, qa_string_id content, qa_string_id path,
         const qa_scene_model_input *, qa_scene_frame *, qa_error *);
 } frontend_unified_render_children;
 /* Retains one actually received immutable frame, borrowing its names and area

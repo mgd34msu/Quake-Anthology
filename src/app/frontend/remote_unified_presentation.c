@@ -1150,20 +1150,20 @@ static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame
     }
     return frontend_unified_events_draw(p->events,viewport,source_center_owned,frame,error);
 }
-static bool entity_beam(void *context,const char *content,const qa_scene_view *view,
+static bool entity_beam(void *context,qa_string_id content,const qa_scene_view *view,
     qa_vec3 start,qa_vec3 end,uint32_t colors,int32_t width,qa_scene_frame *frame,qa_error *error)
 {
     return frontend_unified_q2_entity_beam(((unified_presentation *)context)->q2,
         content,view,start,end,colors,width,frame,error);
 }
-static bool model(void *context, qa_actor_id actor, const char *content, const char *path,
+static bool model(void *context, qa_actor_id actor, qa_string_id content, qa_string_id path,
     qa_scene_model_input *input, qa_error *error)
 {
     unified_presentation *p=context;
     return frontend_unified_q1_model(p->q1,actor,content,path,input,error) &&
         frontend_unified_q2_model(p->q2,actor,content,path,input,error);
 }
-static bool source_model(void *context,qa_actor_id actor,uint32_t provider,const char *instance,
+static bool source_model(void *context,qa_actor_id actor,uint32_t provider,qa_string_id instance,
     bool *owned,qa_error *error)
 {
     unified_presentation *p=context;
@@ -1173,17 +1173,17 @@ static bool source_model(void *context,qa_actor_id actor,uint32_t provider,const
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         frontend_unified_q3_source_view source;
         if (!q3_row_source(row,false,&source,error)) return false;
-        if (source.provider->source_owner!=provider || strcmp(qa_strings_cstr(p->replica->strings,source.instance),instance)) continue;
+        if (source.provider->source_owner!=provider || source.instance!=instance) continue;
         frontend_unified_q3_runtime_scene_owner receipt; bool present=false;
         if (!row->cg_prepared || !frontend_unified_q3_runtime_factory_scene_actor(row->factory,actor,&receipt,&present,error)) return false;
-        if (present && (receipt.provider!=provider || !receipt.instance || strcmp(receipt.instance,instance) ||
+        if (present && (receipt.provider!=provider || !receipt.instance || receipt.instance!=instance ||
             !qa_actor_id_equal(receipt.actor,actor)))
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Source model admission changed its full actor or rendering namespace");
         *owned=present; return true;
     }
     return true;
 }
-static bool equipment_model(void *context,qa_actor_id actor,uint32_t provider,const char *instance,
+static bool equipment_model(void *context,qa_actor_id actor,uint32_t provider,qa_string_id instance,
     bool slot,bool *owned,qa_error *error)
 {
     unified_presentation *p=context;
@@ -1194,11 +1194,11 @@ static bool equipment_model(void *context,qa_actor_id actor,uint32_t provider,co
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         frontend_unified_q3_source_view source;
         if (!q3_row_source(row,false,&source,error)) return false;
-        if (source.provider->source_owner!=provider || strcmp(qa_strings_cstr(p->replica->strings,source.instance),instance)) continue;
+        if (source.provider->source_owner!=provider || source.instance!=instance) continue;
         if (!row->cg_prepared) return true;
         frontend_unified_q3_runtime_scene_owner receipt; bool present=false;
         if (!frontend_unified_q3_runtime_factory_scene_view_weapon(row->factory,actor,&receipt,&present,error)) return false;
-        if (present && (receipt.provider!=provider || !receipt.instance || strcmp(receipt.instance,instance) ||
+        if (present && (receipt.provider!=provider || !receipt.instance || receipt.instance!=instance ||
             receipt.publication!=source.publication || receipt.map_revision!=source.map_revision ||
             !qa_actor_id_equal(receipt.actor,actor)))
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Native viewgun admission changed its actual equipment namespace");
@@ -1206,7 +1206,7 @@ static bool equipment_model(void *context,qa_actor_id actor,uint32_t provider,co
     }
     return true;
 }
-static bool model_after(void *context,qa_actor_id actor,const char *content,const char *path,
+static bool model_after(void *context,qa_actor_id actor,qa_string_id content,qa_string_id path,
     const qa_scene_model_input *input_value,qa_scene_frame *frame_value,qa_error *error)
 {
     return frontend_unified_q2_model_after(((unified_presentation *)context)->q2,actor,content,path,

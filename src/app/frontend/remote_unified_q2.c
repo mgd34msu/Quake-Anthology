@@ -46,7 +46,9 @@ typedef struct q2_visual {
     qa_actor_id actor;
     q2_activation *activation;
     qa_string_id content_name;
-    const char *content, *path, *source_provider;
+    qa_string_id path;
+    const char *content;
+    qa_string_id source_provider;
     const qa_unified_presentation_event *model;
     qa_unified_document *model_document;
     uint64_t effects;
@@ -86,7 +88,7 @@ typedef struct q2_bank {
     double frame_milliseconds;
     const qa_scene_light *sampled_lights;
     size_t sampled_light_count;
-    char *source_provider;
+    qa_string_id source_provider;
     q2_model *models;
     q2_native_picture *native_pictures;
     const qa_font *native_font;
@@ -155,7 +157,8 @@ struct frontend_unified_q2 {
     size_t score_count;
     q2_activation *inventory_owner,*score_owner;
     q2_activation *view_owner;
-    const char *view_content,*view_provider;
+    qa_string_id view_content;
+    qa_string_id view_provider;
     qa_arena pose_storage,text_storage,help_storage[2];
     frontend_remote_q2_effects_pose *effect_poses;
     size_t effect_pose_capacity;
@@ -268,11 +271,12 @@ static bool visual_prepare(frontend_unified_q2 *o,const qa_unified_presentation_
     }
     if (v->activation!=owner) {
         qa_unified_document_destroy(v->model_document);v->model_document=NULL;v->model=NULL;
-        v->path=NULL;v->effects=0;v->event=0;v->event_frame=0;v->visible=true;
+        v->path=QA_STRING_NONE;v->effects=0;v->event=0;v->event_frame=0;v->visible=true;
     }
     v->activation=owner;*out=v;return true;
 }
 static bool bank(frontend_unified_q2 *,const char *,q2_activation *,const char *,frontend_remote_q2_effects_profile,bool,q2_bank **,qa_error *);
+static bool bank_name(frontend_unified_q2 *,qa_string_id,q2_activation *,qa_string_id,frontend_remote_q2_effects_profile,bool,q2_bank **,qa_error *);
 static bool source_bank(frontend_unified_q2 *,const qa_unified_presentation_event *,bool,q2_bank **,qa_error *);
 static bool model(void *,const char *,bool,qa_scene_model **,qa_error *);
 static bool model_name(q2_bank *,qa_string_id,bool,qa_scene_model **,qa_error *);
@@ -311,14 +315,15 @@ static bool visual_apply(frontend_unified_q2 *o,const qa_unified_presentation_ev
     }
     if (row->q2_profile && !source_bank(o,row,true,&b,e)) return false;
     const char *content,*provider;
-    const char *path=is_model?qa_strings_cstr(o->replica->strings,m->path):NULL;
+    qa_string_id path=is_model?m->path:QA_STRING_NONE;
     if (!record_name(o,row->content,&content,e) || !record_name(o,row->q2_profile?row->provider:NULL,&provider,e)) return false;
+    qa_string_id provider_name=provider?qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)provider,strlen(provider)}):QA_STRING_NONE;
     if (is_model && !qa_unified_document_retain(frontend_unified_events_document(o->events),&document,e)) return false;
-    if (v->source_provider!=provider || v->content!=content) {
-        qa_unified_document_destroy(v->model_document);v->model_document=NULL;v->model=NULL;v->path=NULL;
+    if (v->source_provider!=provider_name || v->content!=content) {
+        qa_unified_document_destroy(v->model_document);v->model_document=NULL;v->model=NULL;v->path=QA_STRING_NONE;
         v->effects=0;v->event=0;v->event_frame=0;v->visible=true;
     }
-    v->content=content;v->source_provider=provider;
+    v->content=content;v->source_provider=provider_name;
     v->content_name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
     if (is_model) {
         qa_unified_document_destroy(v->model_document);v->model_document=document;
@@ -355,7 +360,7 @@ bool frontend_unified_q2_owner_retire(frontend_unified_q2 *o,const qa_unified_pr
     if (o->story_owner==a) { qa_unified_document_destroy(o->story_document);o->story_document=NULL;o->story=NULL;o->story_owner=NULL; }
     if (o->sky_owner==a) sky_clear(o);
     if (o->fog_owner==a) { o->fog_received=false;o->fog_owner=NULL;o->fog_start=(qa_scene_fog){0};o->fog_target=(qa_scene_fog){0};o->fog_started_ms=0;o->fog_duration_ms=0; }
-    if (o->view_owner==a) { o->view_content=NULL;o->view_provider=NULL;
+    if (o->view_owner==a) { o->view_content=QA_STRING_NONE;o->view_provider=QA_STRING_NONE;
         o->view_owner=NULL;o->view_profile=0;o->view_layouts=0;o->view_gun_offset=qa_v3(0,0,0);o->view_actor=(qa_actor_id){0};
         o->view_blend_present=false;o->view_damage_present=false;o->view_blend=(qa_vec4){0};o->view_damage_blend=(qa_vec4){0}; }
     for (q2_bank *b=o->banks;b;b=b->next) if (b->activation==a) {
@@ -594,30 +599,26 @@ static frontend_remote_q2_effects_source source(q2_bank *b)
         .current=source_current,.actor=pose,.actor_pose=full_pose,.actor_live=actor_live,.viewer=viewer,.model=model,.sound=sound,.hit_marker=hit,
         .controls=controls,.frame_milliseconds=frame_milliseconds,.render_clock=render_clock,.trace=trace,.footstep=footstep};
 }
-static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activation_owner,const char *source_provider,
+static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activation *activation_owner,qa_string_id source_provider,
     frontend_remote_q2_effects_profile profile,bool effects,q2_bank **out,qa_error *e)
 {
+    const char *content=qa_strings_cstr(o->replica->strings,content_name);
     q2_bank *b=o->banks;
-    while (b && (strcmp(b->content,content) || b->activation!=activation_owner ||
-        (b->source_provider!=NULL)!=(source_provider!=NULL) ||
-        (source_provider && strcmp(b->source_provider,source_provider)))) b=b->next;
+    while (b && (b->content_name!=content_name || b->activation!=activation_owner ||
+        b->source_provider!=source_provider)) b=b->next;
     if (!b) {
         b=calloc(1,sizeof(*b));
         if (!b) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining actual Q2 CLIENT content");
         b->owner=o; b->activation=activation_owner; b->profile=profile;
         qa_builtin_random_seed(&b->entity_random,1);
-        if (!qa_strings_intern_cstr(o->replica->strings,content,&b->content_name,e)) {free(b);return false;}
+        b->content_name=content_name;
         b->content=qa_strings_cstr(o->replica->strings,b->content_name);
-        if (source_provider) {
-            b->source_provider=malloc(strlen(source_provider)+1);
-            if (!b->source_provider) { free(b); return false; }
-            strcpy(b->source_provider,source_provider);
-        }
+        b->source_provider=source_provider;
         qa_font_library *fonts; qa_audio_bank *sounds;
         bool okay=qa_executable_recipe_content(frontend_remote_unified_recipe(o->replica),content,&b->files,&b->product,e) &&
             b->product->family==QA_GAME_Q2 && frontend_unified_media_bank(o->media,b->content_name,&b->images,&b->materials,&fonts,&sounds,e);
         if (okay) b->sounds=sounds;
-        if (!okay) { free(b->source_provider); free(b); return false; }
+        if (!okay) { free(b); return false; }
         q2_bank **tail=&o->banks;
         while (*tail) tail=&(*tail)->next;
         *tail=b;
@@ -640,6 +641,13 @@ static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *activ
         if (!frontend_remote_q2_effects_create(&s,&b->effects,e)) return false;
     }
     *out=b; return true;
+}
+static bool bank(frontend_unified_q2 *o,const char *content,q2_activation *owner,const char *provider,
+    frontend_remote_q2_effects_profile profile,bool effects,q2_bank **out,qa_error *e)
+{
+    qa_string_id name=qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)content,strlen(content)});
+    qa_string_id provider_name=provider?qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)provider,strlen(provider)}):QA_STRING_NONE;
+    return bank_name(o,name,owner,provider_name,profile,effects,out,e);
 }
 static bool source_bank(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool effects,q2_bank **out,qa_error *e)
 {
@@ -1122,10 +1130,10 @@ static bool viewer_matches(frontend_unified_q2 *o,qa_actor_id source,bool *match
     if (!source_actor(o,source,&a,e) || !frontend_remote_unified_player(o->replica,&viewer,&number_id))return false;
     *matches=!a.registry || qa_actor_id_equal(a,viewer);return true;
 }
-static bool selected_view_provider(frontend_unified_q2 *o,const char *provider)
+static bool selected_view_provider(frontend_unified_q2 *o,qa_string_id provider)
 {
     const qa_recipe_provider *character=frontend_remote_unified_provider(o->replica,QA_ROLE_CHARACTER,"");
-    return character && provider && !strcmp(character->selection.instance,provider);
+    return character && provider && character->instance_name==provider;
 }
 static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_event *row,qa_error *e)
 {
@@ -1135,15 +1143,16 @@ static bool player_overlay(frontend_unified_q2 *o,const qa_unified_presentation_
         if (!matches)return true;
     if (!source_actor(o,event->actor,&a,e) || !activation(o,&row->owner,&owner,e) || (owner && owner->retired))return false;
     if (event->kind==QA_Q2_PLAYER_VIEW){const qa_q2_player_view *view=&event->view;
-        if (!selected_view_provider(o,row->provider)) return true;
+        qa_string_id selected=row->provider?qa_strings_find(o->replica->strings,(qa_bytes){(const uint8_t *)row->provider,strlen(row->provider)}):QA_STRING_NONE;
+        if (!selected_view_provider(o,selected)) return true;
         if (!(view->layouts&2))inventory_clear(o);
         else o->selected_item=view->selected_item;
         if (!(view->layouts&1)){o->help_visible=false;o->score_visible=false;}
         qa_string_id content,provider=QA_STRING_NONE;
         if(!qa_strings_intern_cstr(o->replica->strings,row->content,&content,e) ||
             (row->q2_profile && !qa_strings_intern_cstr(o->replica->strings,row->provider,&provider,e))) return false;
-        o->view_content=qa_strings_cstr(o->replica->strings,content);
-        o->view_provider=qa_strings_cstr(o->replica->strings,provider);
+        o->view_content=content;
+        o->view_provider=provider;
         o->view_profile=(frontend_remote_q2_effects_profile)row->q2_profile;o->view_owner=owner;o->view_layouts=(uint32_t)view->layouts;
         o->view_gun_offset=view->gun_offset;o->view_actor=a;o->view_blend_present=true;o->view_damage_present=false;
         o->view_blend=(qa_vec4){view->blend.x,view->blend.y,view->blend.z,view->blend.w};o->view_damage_blend=(qa_vec4){0};
@@ -1285,7 +1294,8 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
         qa_console_emit(domain->console,&domain->command_context,print);*mirrored=true;return true;}
     case QA_Q2_MAP_SCREEN_BLEND:{bool matches;
         if (!viewer_matches(o,v->recipient,&matches,e) || !activation(o,&row->owner,&owner,e))return false;
-        if (matches && o->view_provider && row->provider && !strcmp(o->view_provider,row->provider) && o->view_owner==owner){
+        if (matches && o->view_provider && row->provider && o->view_provider==qa_strings_find(o->replica->strings,
+            (qa_bytes){(const uint8_t *)row->provider,strlen(row->provider)}) && o->view_owner==owner){
             o->view_blend=(qa_vec4){v->color.x,v->color.y,v->color.z,v->alpha};o->view_blend_present=true;}return true;}
     case QA_Q2_MAP_DYNAMIC_LIGHT:{qa_actor_id a;if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
         frontend_remote_q2_effects_shadow_light light={.actor=a,.origin=v->origin,.color=v->color,.radius=v->radius,.intensity=v->intensity,
@@ -1512,28 +1522,28 @@ void frontend_unified_q2_frame_abort(frontend_unified_q2 *o)
         qa_unified_document_destroy(o->prepared_status_metadata);o->prepared_status_metadata=NULL;
     }
 }
-bool frontend_unified_q2_entity_beam(frontend_unified_q2 *o,const char *content,
+bool frontend_unified_q2_entity_beam(frontend_unified_q2 *o,qa_string_id content,
     const qa_scene_view *view,qa_vec3 start,qa_vec3 end,uint32_t colors,int32_t width,
     qa_scene_frame *frame,qa_error *e)
 {
     if (!o || o->busy || !current(o,e)) return false;
     q2_bank *b=NULL; qa_bytes palette={0};
-    if (!bank(o,content,NULL,NULL,0,false,&b,e) ||
+    if (!bank_name(o,content,NULL,QA_STRING_NONE,0,false,&b,e) ||
         !qa_scene_resources_palette(b->images,QA_GAME_Q2,&palette,e)) return false;
     ++o->busy;
     bool okay=frontend_q2_entity_beam(&b->entity_random,palette,qa_scene_white(b->images),
         view,start,end,colors,width,frame,e);
     --o->busy; return okay && current(o,e);
 }
-bool frontend_unified_q2_model(frontend_unified_q2 *o,qa_actor_id a,const char *content,const char *path,
+bool frontend_unified_q2_model(frontend_unified_q2 *o,qa_actor_id a,qa_string_id content,qa_string_id path,
     qa_scene_model_input *input,qa_error *e)
 {
     if (!o || !input || !content || !path || !current(o,e)) return false;
     if (input->family!=QA_GAME_Q2 || input->view_model) return true;
     q2_visual *v=visual_read(o,a);
-    if (!v || !v->content || strcmp(v->content,content)) return true;
+    if (!v || !v->content || v->content_name!=content) return true;
     if (!v->visible) { input->color.w=0; return true; }
-    if (!v->model || !v->path || strcmp(v->path,path)) return true;
+    if (!v->model || !v->path || v->path!=path) return true;
     const qa_unified_model_state *model_state=&v->model->payload.value.model;
     input->frame=(uint32_t)model_state->visual.frame;input->old_frame=(uint32_t)model_state->visual.old_frame;
     input->skin=(uint32_t)model_state->visual.skin;input->flags=model_state->visual.render_flags;
@@ -1541,7 +1551,7 @@ bool frontend_unified_q2_model(frontend_unified_q2 *o,qa_actor_id a,const char *
     for (size_t i=0;i<3;++i)input->transform.scale[i]=scale;
     return true;
 }
-bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,const char *content,const char *path,
+bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,qa_string_id content,qa_string_id path,
     const qa_scene_model_input *input,qa_scene_frame *frame,qa_error *e)
 {
     if (!o || !content || !path || !input || !frame || !current(o,e)) return false;
@@ -1553,15 +1563,15 @@ bool frontend_unified_q2_model_after(frontend_unified_q2 *o,qa_actor_id a,const 
         ++o->busy; bool okay=true;
         for (q2_bank *b=o->banks;okay && b;b=b->next)
             if (b->effects && o->view_content && o->view_provider &&
-                !strcmp(o->view_content,content) && !strcmp(b->content,content) &&
-                b->source_provider && !strcmp(b->source_provider,o->view_provider) &&
+                o->view_content==content && b->content_name==content &&
+                b->source_provider==o->view_provider &&
                 b->profile==o->view_profile && b->activation==o->view_owner)
                 okay=frontend_remote_q2_effects_weapon_draw(b->effects,viewer_actor,input,frame,e);
         --o->busy; return okay;
     }
     q2_visual *v=visual_read(o,a);
-    if (!v || !v->visible || !v->model || !v->content || strcmp(v->content,content) || !v->path || strcmp(v->path,path)) return true;
-    q2_bank *b=NULL; if (!bank(o,content,NULL,NULL,0,false,&b,e)) return false;
+    if (!v || !v->visible || !v->model || !v->content || v->content_name!=content || !v->path || v->path!=path) return true;
+    q2_bank *b=NULL; if (!bank_name(o,content,NULL,QA_STRING_NONE,0,false,&b,e)) return false;
     const qa_unified_model_state *model_state=&v->model->payload.value.model;
     for (size_t i=0;i<model_state->attachment_count;++i) {
         const char *name=model_state->attachments[i].path;qa_scene_model *scene=NULL;
@@ -1589,7 +1599,7 @@ static bool sample_entities(q2_bank *b,frontend_remote_q2_effects_pose **out,siz
         okay=frontend_remote_unified_source_actor(o->replica,frame,row->actor,false,&a,e); if (!okay) break;
         q2_visual *v=visual_read(o,a);
         if (!v || !v->visible || v->activation!=b->activation || !v->source_provider ||
-            !b->source_provider || strcmp(v->source_provider,b->source_provider)) continue;
+            v->source_provider!=b->source_provider) continue;
         bool duplicate=false;
         for (size_t k=0;k<used;++k) if (qa_actor_id_equal(rows[k].actor,a)) { duplicate=true; break; }
         if (duplicate) continue;
@@ -1933,7 +1943,7 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
         while (b->models) { q2_model *m=b->models; b->models=m->next; free(m); }
         q2_native_picture *picture=b->native_pictures;
         while (picture){q2_native_picture *next=picture->next;qa_scene_image_release(picture->image);free(picture->name);free(picture);picture=next;}
-        o->banks=b->next; free(b->aliases); free(b->source_provider); free(b);
+        o->banks=b->next; free(b->aliases); free(b);
     }
     qa_unified_document_destroy(o->frame); qa_unified_document_destroy(o->prepared_frame);
     qa_unified_document_destroy(o->status_metadata); qa_unified_document_destroy(o->prepared_status_metadata);

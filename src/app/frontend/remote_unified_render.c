@@ -34,12 +34,12 @@ typedef struct unified_render_model {
     bool visible, has_previous_origin,native_held_weapon;
     bool source_client,submitted,flat_beam;
     uint32_t source_provider;
-    const char *source_instance;
+    qa_string_id source_instance;
     uint64_t submitted_cycle, effects;
     uint32_t q1_effects;
     bool equipment,equipment_slot;
     uint32_t equipment_provider;
-    const char *equipment_instance;
+    qa_string_id equipment_instance;
 } unified_render_model;
 struct frontend_unified_render {
     qa_frontend *frontend;
@@ -71,7 +71,7 @@ static bool presentation_source(const frontend_unified_render *r,const qa_unifie
     for(size_t i=0;i<qa_executable_recipe_provider_count(recipe);++i) {
         const qa_recipe_provider *row=qa_executable_recipe_provider(recipe,i);
         if(row->source_owner==source->provider && row->selection.runtime==QA_PROGRAM_QUAKEC && row->declaration &&
-            !strcmp(source->instance,row->selection.instance))return true;
+            source->instance==row->instance_name)return true;
     }
     return frontend_unified_fail(e,QA_ERROR_FORMAT,"Declared QC output lacks its admitted Source identity");
 }
@@ -420,7 +420,7 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
         if (m->flat_beam) {
             if (!children || !children->entity_beam)
                 return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 entity beam has no entered renderer");
-            okay=children->entity_beam(children->context,m->product->identity,&world->view,
+            okay=children->entity_beam(children->context,m->source->content,&world->view,
                 position,previous,m->input.skin,(int32_t)m->input.frame,frame,e);
         }
         else if (m->media.brush_world) okay=qa_scene_world_submit_model(m->media.brush_world,m->media.inline_model,
@@ -430,10 +430,10 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
                 &input.ambient,&input.directed,&input.light_direction,e) &&
                 frontend_legacy_model_input(frontend_unified_media_world(r->media),world,&input,e);
             if (okay && children && children->model)
-                okay=children->model(children->context,m->actor,m->product->identity,m->path,&input,e);
+                okay=children->model(children->context,m->actor,m->source->content,m->source->path,&input,e);
             if (okay) okay=qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);
             if (okay && children && children->model_after)
-                okay=children->model_after(children->context,m->actor,m->product->identity,m->path,&input,&r->frontend->frame,e);
+                okay=children->model_after(children->context,m->actor,m->source->content,m->source->path,&input,&r->frontend->frame,e);
         }
         if (okay && input.view_model && !reflected) {
             m->submitted=true; m->submitted_cycle=frame->sequence;
@@ -717,12 +717,12 @@ bool frontend_unified_render_equipment_read(const frontend_unified_render *r,qa_
             model.world==selected->media.brush_world && model.family==selected->input.family &&
             bank.product==selected->product && bank.materials==(selected->media.scene?
                 qa_scene_model_material_owner(selected->media.scene):qa_scene_world_material_owner(selected->media.brush_world)) &&
-            !strcmp(model.path,selected->path)) { registered=true; break; }
+            model.path==selected->source->path) { registered=true; break; }
     }
     if (!registered)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Equipment receipt lost its registered immutable resource tuple");
     *out=(frontend_unified_render_equipment){.actor=actor,.provider=selected->equipment_provider,
-        .instance=selected->equipment_instance,.content=selected->product->identity,.path=selected->path,
+        .instance=selected->equipment_instance,.content=selected->source->content,.path=selected->source->path,
         .slot=selected->equipment_slot,.visible=selected->visible && selected->input.color.w>0 &&
             (selected->scale!=0 || selected->input.family==QA_GAME_Q2),
         .binding=selected->media,.input=&selected->input,.source_frame=r->replica->frame_number,

@@ -35,7 +35,7 @@ bool frontend_unified_q1_world_input(frontend_unified_q1 *,qa_scene_world_input 
 bool frontend_unified_q1_audio_detach(frontend_unified_q1 *,qa_error *);
 void frontend_unified_q1_hud_status(const frontend_unified_q1 *,qa_hud_q1_status *);
 bool frontend_unified_q1_hud(frontend_unified_q1 *,qa_ui *,qa_scene_rect,qa_scene_frame *,qa_error *);
-bool frontend_unified_q1_model(frontend_unified_q1 *,qa_actor_id,const char *,const char *,qa_scene_model_input *,qa_error *);
+bool frontend_unified_q1_model(frontend_unified_q1 *,qa_actor_id,qa_string_id,qa_string_id,qa_scene_model_input *,qa_error *);
 bool frontend_unified_q1_current(const frontend_unified_q1 *);
 bool frontend_unified_q1_idle(const frontend_unified_q1 *);
 bool frontend_unified_q1_destroy(frontend_unified_q1 **,qa_error *);

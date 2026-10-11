@@ -299,7 +299,7 @@ bool frontend_unified_media_model_read(const frontend_unified_media *owner,size_
     size_t ordinal=0;
     for (const unified_media_bank *bank_row=owner->banks;bank_row;bank_row=bank_row->next,++ordinal)
         if (bank_row==row->bank) {
-            *out=(frontend_unified_model_view){ordinal,qa_strings_cstr(qa_session_strings(qa_application_session(owner->frontend->application)),row->path),row->family,&row->options,row->resource,&row->opening,
+            *out=(frontend_unified_model_view){ordinal,row->path,row->family,&row->options,row->resource,&row->opening,
                 row->world||row->saved_world?NULL:(row->source?row->source:row->scene?&row->decoded:NULL),row->scene,row->world};
             return true;
         }

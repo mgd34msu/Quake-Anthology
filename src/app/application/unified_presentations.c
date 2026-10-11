@@ -35,7 +35,7 @@ static bool stable(qa_application *app, const application_unified_source *source
 static bool model(qa_unified_frame *frame, size_t *capacity,
     const qa_application_visual_view *v, qa_string_id path, qa_string_id content,
     const application_provider *render_source, bool view_weapon,
-    const qa_application_equipment_view *equipment, const qa_launch_instance *equipment_source,
+    const qa_application_equipment_view *equipment, qa_string_id equipment_instance,
     qa_error *error)
 {
     qa_unified_frame_visuals *out = frame->visuals;
@@ -63,13 +63,13 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
         row->render_source = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->render_source), error);
         if (!row->render_source) return application_fail(error, QA_ERROR_MEMORY, "Retaining model Source identity");
         row->render_source->provider = render_source->owner;
-        if (!application_unified_frame_string(frame->lease, &row->render_source->instance, render_source->launch->selection.instance, error)) return false;
+        row->render_source->instance=render_source->owner;
     }
     if (equipment) {
         row->render_equipment = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->render_equipment), error);
         if (!row->render_equipment) return application_fail(error, QA_ERROR_MEMORY, "Retaining equipment Source identity");
         row->render_equipment->provider = equipment->provider; row->equipment_slot = equipment->equipment_slot;
-        if (!application_unified_frame_string(frame->lease, &row->render_equipment->instance, equipment_source->selection.instance, error)) return false;
+        row->render_equipment->instance=equipment_instance;
     }
     if (v->has_flare) {
         const qa_entity_flare *f = &v->flare;
@@ -149,7 +149,7 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
             !qa_trajectory_position(&angular, time, 800, &v.body.angles, error) ||
             !stable(app, source, actors, error)) return false;
         for (unsigned i = 0; i < 2; ++i)
-            if (qa_strings_text(qa_session_strings(app->session), paths[i]).size && !model(frame, capacity, &v, paths[i], provider->content_name, provider, false,NULL,NULL,error)) return false;
+            if (qa_strings_text(qa_session_strings(app->session), paths[i]).size && !model(frame, capacity, &v, paths[i], provider->content_name, provider, false,NULL,QA_STRING_NONE,error)) return false;
     }
     int32_t after; uint32_t extent;
     return (stable(app, source, actors, error) && provider->constructed && provider->attached &&
@@ -206,6 +206,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
     const qa_launch_instance *equipment_source=gear_selected?gear.source.descriptor:provider->launch;
     if(!equipment_source || !equipment_source->selection.instance)
         return application_fail(error,QA_ERROR_NOT_FOUND,"Unified view weapon lost its actual selected descriptor");
+    qa_string_id equipment_instance=gear_selected?gear.source.selected_owner:provider->owner;
     qa_application_camera_view camera;
     if (!qa_application_control_camera(app, actor, &camera))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Unified view weapon lost its actual player camera");
@@ -237,7 +238,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
             !qa_world_body_read(source->world, actor, &body, error))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Unified Q3 weapon lost its actual command or motion owner");
         bool firing = (control.buttons & 1u) != 0 && combat.health > 0;
-        if (!model(frame, capacity, &v, e.view_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), NULL, true, &e, equipment_source, error)) return false;
+        if (!model(frame, capacity, &v, e.view_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), NULL, true, &e, equipment_instance, error)) return false;
         qa_unified_model_state *row = out->models + out->model_count - 1;
         row->q3_weapon = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->q3_weapon), error);
         if (!row->q3_weapon) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual Q3 weapon presentation");
@@ -272,7 +273,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
         return true;
     }
 
-    return model(frame, capacity, &v, e.view_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), NULL, true,&e,equipment_source,error);
+    return model(frame, capacity, &v, e.view_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), product->id), NULL, true,&e,equipment_instance,error);
 }
 
 bool application_unified_presentations_build(qa_application *app, const application_unified_source *source,
@@ -359,14 +360,14 @@ bool application_unified_presentations_build(qa_application *app, const applicat
                 qa_application_map_view map;
                 if (!qa_application_map_read(app, &map)) { ok = false; break; }
                 if (v.family == QA_GAME_Q2 && (v.visual.render_flags & 128u) && !v.model_beam)
-                    ok = model(frame, &model_capacity, &v, app->ui_names.empty_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), content->id), NULL, false,NULL,NULL,error);
+                    ok = model(frame, &model_capacity, &v, app->ui_names.empty_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), content->id), NULL, false,NULL,QA_STRING_NONE,error);
                 else for (unsigned i = 0; ok && i < 4; ++i) {
                     const char *path = qa_strings_cstr(qa_session_strings(app->session), v.visual.models[i]);
                     if (path && *path && strcmp(path, qa_resource_path(map.resource)))
-                        ok = model(frame, &model_capacity, &v, v.visual.models[i], qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), content->id), NULL, false,NULL,NULL,error);
+                        ok = model(frame, &model_capacity, &v, v.visual.models[i], qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), content->id), NULL, false,NULL,QA_STRING_NONE,error);
                 }
                 if (ok && v.has_flare)
-                    ok = model(frame, &model_capacity, &v, app->ui_names.empty_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), content->id), NULL, false,NULL,NULL,error);
+                    ok = model(frame, &model_capacity, &v, app->ui_names.empty_model, qa_application_content_name(app, qa_launch_snapshot_catalog(source->launch), content->id), NULL, false,NULL,QA_STRING_NONE,error);
             }
         }
         if (ok && admitted) ok = equipment(app, source, id, player->actor, frame, &model_capacity, error);

@@ -32,7 +32,7 @@ typedef struct frontend_unified_bank_view {
 } frontend_unified_bank_view;
 typedef struct frontend_unified_model_view {
     size_t bank;
-    const char *path;
+    qa_string_id path;
     qa_game_family family;
     const qa_scene_image_options *options;
     const qa_resource *resource;

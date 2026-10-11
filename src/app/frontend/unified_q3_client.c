@@ -350,7 +350,7 @@ static bool source_basis(frontend_unified_q3_client *c,const frontend_unified_q3
     int32_t max_clients = source_integer(value);
     *out = (q3n_compiled_source_basis){.application=c->domain->application,
         .registry=frontend_remote_unified_registry(c->replica),.provider=v->provider->source_owner,.receiver=c->receiver,
-        .instance=qa_strings_cstr(c->strings,c->instance),.content=v->files,.assets=v->assets,.product=v->product,
+        .instance=c->instance,.content=v->files,.assets=v->assets,.product=v->product,
         .publication=v->publication,.map_revision=v->map_revision,.serial=revision,.viewer=v->viewer,
         .seat=c->domain->seat.index,.physical_seat=c->domain->physical_seat,.client_number=(int32_t)v->client_number,
         .time=h->time,.game_type=game_type,.max_clients=max_clients,.level_start_time=source_integer(qa_q3_configstring(&h->reached->value,21)),

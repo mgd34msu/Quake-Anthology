@@ -41,6 +41,7 @@ typedef struct q1_event {
     const qa_unified_presentation_event *row;
 } q1_event;
 typedef struct q1_continuation {
+    qa_string_id content, path;
     const qa_unified_presentation_event *row;
     qa_unified_document *document;
 } q1_continuation;
@@ -670,7 +671,8 @@ bool frontend_unified_q1_presentation(frontend_unified_q1 *o,const qa_unified_pr
         ok=s && qa_strings_intern(o->replica->strings,p.text,&path,e) && frontend_unified_media_model(o->media,g->content_name,path,QA_GAME_Q1,&images,&s->model,e);
         if(ok) {s->path=(char *)p.text.data;p.text=(qa_bytes){0};s->origin=p.origin;s->angles=p.angles;s->frame=(uint32_t)p.a;s->skin=(uint32_t)p.b;
             q1_static **tail=&g->statics;while(*tail) tail=&(*tail)->next;*tail=s;}else free(s);break;}
-    case Q1_WEAPON: {q1_continuation next={0};ok=retain_row(o,row,&next,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}break;}
+    case Q1_WEAPON: {q1_continuation next={0};ok=retain_row(o,row,&next,e) &&
+        qa_strings_intern(o->replica->strings,p.content,&next.content,e) && qa_strings_intern(o->replica->strings,p.text,&next.path,e);if(ok) {continuation_replace(&o->weapon,&next);o->weapon_activation=owner;}else continuation_clear(&next);break;}
     case Q1_POWER:for(size_t i=0;i<Q1_POWERS;++i) if(!strcmp((char *)p.name.data,powers[i])) {o->powers[i]=p.a;o->power_activations[i]=owner;}break;
     case Q1_MESSAGE: {qa_buffer message={0};ok=localized(o,g,&p,&message,e);
         if(ok) ok=p.flag?qa_hud_center_print(o->hud,(char *)message.data,ns(p.seconds),UINT64_C(3000000000),(qa_hud_center_policy){.instant=true,.character_ns=0,.columns=40},e):qa_hud_notify(o->hud,(char *)message.data,false,ns(p.seconds),UINT64_C(3000000000),e);
@@ -870,13 +872,13 @@ bool frontend_unified_q1_audio_detach(frontend_unified_q1 *o,qa_error *e)
     for(q1_group *g=o->groups;g;g=g->next)for(q1_ambient *a=g->ambient;a;a=a->next)if(a->mixer){qa_audio_mixer_remove_static(a->mixer,a->identity);a->mixer=NULL;}
     return true;
 }
-bool frontend_unified_q1_model(frontend_unified_q1 *o,qa_actor_id actor,const char *content,const char *path,qa_scene_model_input *input,qa_error *e)
+bool frontend_unified_q1_model(frontend_unified_q1 *o,qa_actor_id actor,qa_string_id content,qa_string_id path,qa_scene_model_input *input,qa_error *e)
 {
     if(!o || !content || !path || !input || !mutable(o,e))return false;
     if(!o->weapon.row || !input->view_model || input->family!=QA_GAME_Q1)return true;
     q1_event p={0};bool ok=parse(o,o->weapon.row,&p,e);qa_actor_id received;
     if(ok)ok=frontend_remote_unified_source_actor(o->replica,qa_unified_document_frame(frontend_remote_unified_frame(o->replica)),p.actor,false,&received,e);
-    if(ok && qa_actor_id_equal(actor,received) && !strcmp(content,(char *)p.content.data) && !strcmp(path,(char *)p.text.data))input->frame=(uint32_t)p.a;
+    if(ok && qa_actor_id_equal(actor,received) && content==o->weapon.content && path==o->weapon.path)input->frame=(uint32_t)p.a;
     return ok;
 }
 static void transform(qa_model_transform *out,qa_vec3 origin,qa_vec3 angles)

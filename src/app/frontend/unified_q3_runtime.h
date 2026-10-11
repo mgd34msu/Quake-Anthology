@@ -104,7 +104,7 @@ bool frontend_unified_q3_runtime_scene_lights(const frontend_unified_q3_runtime 
     const qa_scene_light **,size_t *,qa_error *);
 typedef struct frontend_unified_q3_runtime_scene_owner {
     qa_actor_owner provider;
-    const char *instance;
+    qa_string_id instance;
     uint64_t publication,map_revision;
     qa_actor_id actor;
     uint32_t number;

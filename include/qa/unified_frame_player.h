@@ -8,7 +8,7 @@
 
 typedef struct qa_unified_source_identity {
     qa_actor_owner provider;
-    char *instance;
+    qa_string_id instance;
 } qa_unified_source_identity;
 typedef struct qa_unified_player_view {
     qa_vec3 origin, angles, kick_angles, client_view_offset_delta;

@@ -246,8 +246,8 @@ reads and 82,507 comparisons; the new path makes none and does no interning.
 All three engine builds and seven core checks per configuration pass. This is
 bounded ID-adoption evidence, not a frame-time claim.
 
-The named Unified media content/path cache bypasses have been migrated below.
-Source-instance rendering callbacks still require their final ID migration.
+The named Unified media content/path cache and source-instance rendering
+bypasses have been migrated below.
 Broader primitive/event adoption is queued under TA-3196; this section does not
 claim whole-tree adoption.
 Ordinary provider routing already caches the resolved actor/provider in
@@ -379,7 +379,43 @@ recipe content-name resolution are deleted. Family adapters borrow text views
 for their existing external services; typed steady-state callers pass IDs.
 The normal build and seven core suites pass
 (`/tmp/qa-ta3192-media-content-20261011-{build,core}.log`). Source-instance render
-callbacks remain open. No installed gameplay or timing claim is made.
+callbacks are completed by the following slice. No installed gameplay or timing
+claim is made.
+
+### TA-3192 final adoption
+
+The one name implementation remains `src/core/strings.c`; these callers carry
+IDs from its retained session namespace. Source instances already have that ID
+as the admitted provider owner. Rendering passes it directly, including Q3
+compiled-source and scene-owner receipts. Q1 weapon continuations bind their
+names at receipt; Q2 model/effect continuations and Q3 banks compare retained
+IDs. Their instance, content and path string comparisons, private instance/provider
+copies, and per-frame source-instance frame-string copies are deleted.
+
+| Capability | Shared implementation and migrated callers |
+| --- | --- |
+| Point-leaf query | `src/world/collision/geometry.c:483`; render lighting and visibility in `src/render/scene/world.c:807` and `:985` use it. The renderer's separate walk is deleted. |
+| Command-context equality | `src/console/text.c:8`; console, input, configuration, native/QVM services and protocol client bindings use it. Copied field comparisons are deleted. |
+| Provider names | `src/app/application/unified_output.c:43`; Unified output/player publication, prediction and Q3 character-source routing carry the admitted IDs. |
+| Render model and source names | `src/app/application/unified_presentations.c:35`, `src/network/unified/frame_layout.c:537`; Unified render, Q1/Q2 continuations, Q3 compiled-source and presentation callbacks consume the same IDs. |
+| Media cache names | `src/app/frontend/remote_unified_media.c:293`; model reads and equipment receipts retain path IDs instead of resolving and comparing text. Content banks share catalog admission into the session table. |
+| Local presentation names | `src/app/application/visuals.c` and `src/render/scene/models.c:149`; visual model paths and skin/mesh surface selection use admitted IDs. |
+| Character selection | `src/app/application/character_selection.c:408`, `src/app/application/native_q3_remote_character.c:61`; retained constructor choices and IDs replace repeated text comparisons. |
+| HUD item names | `include/qa/application_ui_names.h`; application creation/restore admits one bundle and Unified publication/HUD consumers retain its item IDs. |
+
+The final normal production build and all seven existing core suites pass:
+`/tmp/qa-ta3192-render-identity-final-20261011-build.log` and
+`/tmp/qa-ta3192-render-identity-final-20261011-core.log`. NAME fields retain the
+existing nullable UTF-8 encoding; legacy protocol codecs are unchanged by this
+slice. These checks do not establish live mod, combined-mode or protocol-session
+behaviour, and make no performance claim.
+
+Remaining boundaries include received event text, Q2 attachment/effects resource
+names (`src/app/frontend/remote_unified_q2.c:388` and `:1576`), recipe/configuration
+admission, and file-format parsing. The model extension checks in Unified media
+are format dispatch, not admitted identity. Character provider lookup resolves
+text only after constructor choices change. Whole-tree primitive and event
+bypasses are queued under TA-3196 and are not closed by this scoped report.
 
 `include/qa/ruleset.h` / `src/core/ruleset.c` replace the three former identical
 movement/console/clock enums and 47 bridges. Each role retains its independent

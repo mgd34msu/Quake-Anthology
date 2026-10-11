@@ -15,7 +15,7 @@ typedef struct q3n_compiled_source_basis {
     qa_actor_registry *registry;
     qa_actor_owner provider;
     uint64_t receiver;
-    const char *instance;
+    qa_string_id instance;
     qa_vfs *content;
     qa_q3_presentation_assets *assets;
     qa_q3_product product;
