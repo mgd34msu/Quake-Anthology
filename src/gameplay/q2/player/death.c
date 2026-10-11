@@ -344,7 +344,7 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         if (killer.registry && !qa_actor_id_equal(killer, a->id) && q2_actor_live(g, killer)) {
             if (!qa_world_body_read(g->services.world, killer, &target, e))
                 goto fail;
-            s->rule.killer_yaw = qa_builtin_angle_mod(
+            s->rule.killer_yaw = qa_angle_wrap(
                 atan2f(target.origin.y - body.origin.y, target.origin.x - body.origin.x) *
                 57.29577951308232f);
         } else

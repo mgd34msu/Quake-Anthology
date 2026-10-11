@@ -668,7 +668,7 @@ bool q2_player_source_motion_rules(qa_q2_game *g, q2_actor *a,
         else {
             const float angles[] = {delta.x, delta.y, delta.z};
             for (unsigned i = 0; i < 3; ++i) {
-                uint16_t bits = qa_angle_to_word(angles[i]);
+                uint16_t bits = qa_angle_to_word(angles[i],QA_ANGLE_WORD_NATIVE);
                 memcpy(&rules->delta.words[i], &bits, sizeof(bits));
             }
         }

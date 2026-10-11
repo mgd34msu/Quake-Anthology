@@ -561,8 +561,8 @@ bool q3_kamikaze_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
             if (!qa_world_body_write(game->options.services.world, target, &player_body, error))
                 return false;
         }
-        int32_t yaw = (int32_t)((angles.y - previous.y) * 65536 / 360) & 65535;
-        int32_t pitch = (int32_t)((angles.x - previous.x) * 65536 / 360) & 65535;
+        int32_t yaw = qa_angle_to_word(angles.y-previous.y,QA_ANGLE_WORD_NATIVE);
+        int32_t pitch = qa_angle_to_word(angles.x-previous.x,QA_ANGLE_WORD_NATIVE);
         candidate = q3_actor_get(game, target);
         if (candidate && candidate->kind == Q3_ACTOR_PLAYER) {
             qa_q3_player_motion motion;

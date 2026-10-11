@@ -10,8 +10,8 @@ static qa_vec3 enemy_origin(qa_q1_game *g, q1_actor *e) {
                : qa_v3(0, 0, 0);
 }
 qa_vec3 q1_boss_angles(qa_vec3 v) {
-    return qa_v3(qa_builtin_angle_mod(atan2f(v.z, hypotf(v.x, v.y)) * 57.29577951308232f),
-                 qa_builtin_angle_mod(atan2f(v.y, v.x) * 57.29577951308232f), 0);
+    return qa_v3(qa_angle_wrap(atan2f(v.z, hypotf(v.x, v.y)) * 57.29577951308232f),
+                 qa_angle_wrap(atan2f(v.y, v.x) * 57.29577951308232f), 0);
 }
 bool q1_boss_first_player(qa_q1_game *g, q1_ref *out, qa_error *error) {
     qa_builtin_snapshot_frame *snapshot;

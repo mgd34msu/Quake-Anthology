@@ -69,7 +69,7 @@ static bool turn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     qa_vec3 delta = qa_vec_sub(target.origin, body.origin);
-    float yaw = qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+    float yaw = qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
     if (fabsf(body.angles.y - yaw) > 10)
         return q1_monster_face(g, entity, error);
     entity->state.monster.next_frame = (Q1_FRAME_scourge_run1);

@@ -352,8 +352,8 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (c->kind == Q2_DOPPLEGANGER)
         return true;
     if (c->kind == Q2_DOPPLEGANGER_BODY) {
-        float yaw = qa_builtin_angle_mod(body.angles.y),
-              delta = qa_builtin_angle_delta(c->goal.y, yaw);
+        float yaw = qa_angle_wrap(body.angles.y),
+              delta = qa_angle_delta(c->goal.y, yaw);
         if (fabsf(delta) < 2) {
             if (c->turn_ns < g->now_ns && q2_random(g) < .1f) {
                 c->goal.y = q2_random(g) * 350;
@@ -362,7 +362,7 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         } else {
             float speed = g->options.edition == QA_Q2_RERELEASE ?
                 30 * (float)((double)g->frame_ns / (double)(100 * Q2_MS)) : 30;
-            body.angles.y = qa_builtin_angle_mod(yaw + fmaxf(-speed, fminf(speed, delta)));
+            body.angles.y = qa_angle_wrap(yaw + fmaxf(-speed, fminf(speed, delta)));
         }
         if (g->options.edition != QA_Q2_RERELEASE || g->now_ns >= c->attack_ns) {
             a->item->visual.frame = (a->item->visual.frame + 1) % 40;
@@ -465,9 +465,9 @@ bool q2_companion_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         }
         body.velocity = qa_vec_scale(qa_vec_sub(destination, body.origin), 5);
         if (c->kind == Q2_SPHERE_HUNTER)
-            body.angles.y = qa_builtin_angle_mod(
+            body.angles.y = qa_angle_wrap(
                 body.angles.y +
-                fmaxf(-40, fminf(40, qa_builtin_angle_delta(owner.angles.y, body.angles.y))));
+                fmaxf(-40, fminf(40, qa_angle_delta(owner.angles.y, body.angles.y))));
     }
     if (!set_body(g, a, &body, e))
         return false;

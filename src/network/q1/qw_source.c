@@ -158,7 +158,7 @@ static bool command(qa_net_writer *writer, const qa_qw_command *value)
     qa_net_write_u8(writer, (uint8_t)bits);
     for (size_t i = 0; i < 3; ++i)
         if (value->angles[i] != 0)
-            short_word(writer, qa_angle_to_word(value->angles[i]));
+            short_word(writer, qa_angle_to_word(value->angles[i],QA_ANGLE_WORD_NATIVE));
     if (bits & 4) qa_net_write_i16(writer, value->forward);
     if (bits & 8) qa_net_write_i16(writer, value->side);
     if (bits & 16) qa_net_write_i16(writer, value->up);

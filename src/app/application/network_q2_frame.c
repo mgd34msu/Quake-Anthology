@@ -60,7 +60,7 @@ static void player_profile(qa_application_network_q2 *owner, qa_q2_player *state
     if (owner->host.source.edition != QA_Q2_RERELEASE || kex_fields(owner)) return;
     if (state->pmove.float_delta_angles) {
         for (unsigned i = 0; i < 3; ++i) {
-            uint16_t bits = qa_angle_to_word(state->pmove.delta_angles_f[i]);
+            uint16_t bits = qa_angle_to_word(state->pmove.delta_angles_f[i],QA_ANGLE_WORD_NATIVE);
             memcpy(&state->pmove.delta_angles[i], &bits, sizeof(bits));
         }
         state->pmove.float_delta_angles = false;

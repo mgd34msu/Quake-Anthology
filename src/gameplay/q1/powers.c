@@ -344,8 +344,8 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
                 return false;
             qa_vec3 delta = qa_vec_sub(incoming.origin, body.origin), forward;
             qa_angle_vectors(body.angles, &forward, NULL, NULL,QA_ANGLE_FLOAT_MATH);
-            float angle = qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f) -
-                          qa_builtin_angle_mod(atan2f(forward.y, forward.x) * 57.29577951308232f);
+            float angle = qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f) -
+                          qa_angle_wrap(atan2f(forward.y, forward.x) * 57.29577951308232f);
             if (!(angle > 90 && angle < 270) && !(angle < -90 && angle > -270)) {
                 effect->amount *=
                     q1_classnamed(g, request->attack.inflictor, g->runtime_names[Q1_NAME_LAVA_SPIKE]) ? 0.7f : 0.3f;

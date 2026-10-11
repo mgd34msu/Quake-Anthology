@@ -89,7 +89,7 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
         .origin = origin,
         .velocity = velocity,
         .angles = {atan2f(velocity.z, hypotf(velocity.x, velocity.y)) * 57.29577951308232f,
-                   qa_builtin_angle_mod(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0}};
+                   qa_angle_wrap(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0}};
     if (!q1_model(g, entity, g->runtime_names[models[kind]], error) ||
         !qa_world_body_write(g->services.world, entity->id, &body, error) ||
         !q1_link(g, entity, error))

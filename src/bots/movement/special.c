@@ -254,8 +254,8 @@ static bool weapon_jump(bot_travel *t, const bot_reach *r, bool airborne, qa_bot
         out->ideal_view_angles = bot_vector_angles(direction);
         out->ideal_view_angles.x = 90;
         if (distance < 5 &&
-            fabsf(qa_bot_angle_difference(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 5 &&
-            fabsf(qa_bot_angle_difference(out->ideal_view_angles.y, bot_move_vector(s,BM_VIEW_ANGLES).y)) < 5) {
+            fabsf(qa_angle_subtract(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 5 &&
+            fabsf(qa_angle_subtract(out->ideal_view_angles.y, bot_move_vector(s,BM_VIEW_ANGLES).y)) < 5) {
             direction = qa_vec_normalize(bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->end));
             if (!bot_jump_action(t, false, e) || !bot_flag_action(t, QA_BOT_ATTACK, e) ||
                 !bot_move_action(t, direction, 800, e))
@@ -383,8 +383,8 @@ static bool grapple(bot_travel *t, const bot_reach *r, qa_bot_move_result *out, 
     out->ideal_view_angles = bot_vector_angles(qa_vec_sub(r->end, eye));
     out->flags |= QA_BOT_MOVE_VIEW;
     if (distance < 5 &&
-        fabsf(qa_bot_angle_difference(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 2 &&
-        fabsf(qa_bot_angle_difference(out->ideal_view_angles.y, bot_move_vector(s,BM_VIEW_ANGLES).y)) < 2) {
+        fabsf(qa_angle_subtract(out->ideal_view_angles.x, bot_move_vector(s,BM_VIEW_ANGLES).x)) < 2 &&
+        fabsf(qa_angle_subtract(out->ideal_view_angles.y, bot_move_vector(s,BM_VIEW_ANGLES).y)) < 2) {
         qa_trace_result trace;
         if (!bot_trace(t, eye, r->end, NULL, bot_move_integer(s,BM_ENTITY), 1, &trace, e))
             return false;

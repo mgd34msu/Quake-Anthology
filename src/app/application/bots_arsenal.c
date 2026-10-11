@@ -17,7 +17,7 @@ static float q2_spread(float endpoint,float range,float degrees) {
     return (angular+degrees)/6;
 }
 static float input_pitch(float angle) {
-    float pitch=qa_builtin_angle_delta(angle,0);
+    float pitch=qa_angle_delta(angle,0);
     return pitch==180?-180:pitch;
 }
 static qa_vec3 q1_launch_velocity(const qa_bot_weapon_knowledge *knowledge,qa_vec3 angles) {

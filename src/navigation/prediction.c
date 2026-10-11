@@ -137,7 +137,7 @@ static bool command_vector(nav_prediction *p, qa_vec3 move, uint32_t millisecond
     float yaw = atan2f(move.y, move.x) * 57.29577951308232f,
           horizontal = fminf(400, hypotf(move.x, move.y));
     float up = fmaxf(-400, fminf(400, move.z));
-    int32_t word = (int32_t)floorf(yaw * (65536.0f / 360.0f) + 0.5f) & 65535;
+    int32_t word = qa_angle_to_word(yaw,QA_ANGLE_WORD_ROUNDED);
     input->elapsed_ns = elapsed;
     input->time_ns += input->elapsed_ns;
     qa_usercmd c = {.kind = input->profile.kind,

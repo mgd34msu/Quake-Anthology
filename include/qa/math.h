@@ -33,10 +33,15 @@ extern const qa_vec3 qa_byte_normals[QA_BYTE_NORMAL_COUNT];
 bool qa_byte_normal(uint8_t index, qa_vec3 *out);
 bool qa_normal_byte(qa_vec3 normal, uint8_t *out);
 
-/* Native ANGLE2SHORT uses float multiplication and division. AngleMod uses
- * the original double ratio before narrowing the float angle to one turn. */
-uint16_t qa_angle_to_word(float angle);
-float qa_angle_mod(float angle);
+typedef enum qa_angle_word_rule {
+    QA_ANGLE_WORD_NATIVE, QA_ANGLE_WORD_VM, QA_ANGLE_WORD_PRECISE, QA_ANGLE_WORD_ROUNDED
+} qa_angle_word_rule;
+/* Preserve the source's multiplication order and rounding at the boundary. */
+uint16_t qa_angle_to_word(float angle,qa_angle_word_rule);
+float qa_angle_mod(float angle,qa_angle_word_rule);
+float qa_angle_wrap(float angle);
+float qa_angle_subtract(float first,float second);
+float qa_angle_delta(float target,float current);
 
 static inline qa_vec3 qa_v3(float x, float y, float z) { return (qa_vec3){x, y, z}; }
 static inline qa_vec3 qa_vec_add(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x+b.x, a.y+b.y, a.z+b.z); }

@@ -116,7 +116,7 @@ bool qa_input_command_sample(qa_input_command_builder *builder, const qa_input_c
             return false;
         }
         if (q1)
-            yaw = qa_angle_mod(yaw);
+            yaw = qa_angle_mod(yaw,QA_ANGLE_WORD_PRECISE);
     }
     if (klook && !q3) {
         pitch -= angle_speed * v->pitch_speed * fraction(s, QA_INPUT_FORWARD);
@@ -352,9 +352,9 @@ void qa_input_command_convert(const qa_usercmd *source, const qa_input_move_inte
             wide = value * 360.0 / 65536.0; absolute = (float)wide;
         } else {
             absolute = from->relative ? degrees[i] + from_delta[i] : degrees[i];
-            wide = absolute; word = qa_angle_to_word(absolute);
+            wide = absolute; word = qa_angle_to_word(absolute,QA_ANGLE_WORD_NATIVE);
         }
-        if (from->repack_words) word = qa_angle_to_word(absolute);
+        if (from->repack_words) word = qa_angle_to_word(absolute,QA_ANGLE_WORD_NATIVE);
         if (to->words) {
             word -= to->relative ? (uint32_t)to->delta_words[i] : 0;
             if (to->wrap_words) word &= 65535u;

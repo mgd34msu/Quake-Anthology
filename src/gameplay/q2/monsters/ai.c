@@ -2632,7 +2632,7 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   float delta =
-      fabsf(qa_builtin_angle_delta(monster->ideal_yaw, context->body.angles.y));
+      fabsf(qa_angle_delta(monster->ideal_yaw, context->body.angles.y));
   if (delta > 45)
     return true;
   bool melee = monster->attack_state == Q2M_MELEE;
@@ -3109,7 +3109,7 @@ static bool chase_goal(q2m_context *context, qa_vec3 goal, float distance,
                        bool *moved, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   float old = truncf(monster->ideal_yaw / 45.0f) * 45.0f;
-  float turnaround = qa_builtin_angle_mod(old - 180.0f);
+  float turnaround = qa_angle_wrap(old - 180.0f);
   qa_vec3 delta = qa_vec_sub(goal, context->body.origin);
   float x = delta.x > 10.0f ? 0.0f : delta.x < -10.0f ? 180.0f : -1.0f;
   float y = delta.y < -10.0f ? 270.0f : delta.y > 10.0f ? 90.0f : -1.0f;

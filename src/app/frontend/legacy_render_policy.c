@@ -42,12 +42,12 @@ qa_vec3 frontend_legacy_entity_angles(qa_game_family family, qa_product_edition 
     const qa_model *model, uint64_t effects, qa_vec3 angles, double seconds, int64_t milliseconds)
 {
     if (family == QA_GAME_Q1 && model && model->format == QA_MODEL_MDL && (model->flags & 8))
-        angles.y = qa_angle_mod((float)(100 * seconds));
+        angles.y = qa_angle_mod((float)(100 * seconds),QA_ANGLE_WORD_PRECISE);
     else if (family == QA_GAME_Q2 && (effects & 1)) {
         uint32_t bits = (uint32_t)milliseconds;
         int32_t time; memcpy(&time, &bits, sizeof(time));
         float yaw = edition == QA_EDITION_RERELEASE ? (float)time * .1f : (float)(time / 10);
-        angles = qa_v3(0, qa_angle_mod(yaw), 0);
+        angles = qa_v3(0, qa_angle_mod(yaw,QA_ANGLE_WORD_PRECISE), 0);
     }
     return angles;
 }

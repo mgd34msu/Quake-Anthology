@@ -891,7 +891,7 @@ static bool component_input_set(application_control_mod_input *scope, applicatio
                 return application_fail(error, QA_ERROR_ARGUMENT, "Component aim exceeds its command fields");
         } else {
             for (unsigned i = 0; i < 3; ++i) {
-                uint32_t wrapped = (uint32_t)qa_source_float_to_i32((float)difference[i] * 65536.0f / 360.0f);
+                uint32_t wrapped = qa_angle_to_word((float)difference[i],QA_ANGLE_WORD_NATIVE);
                 wrapped += (uint32_t)next.angle_words[i];
                 memcpy(&next.angle_words[i], &wrapped, sizeof(wrapped));
             }
@@ -4047,7 +4047,7 @@ static void force_state_view(qa_movement_state *state, qa_vec3 view,
         break;
     case QA_RULESET_Q2_CLASSIC:
         for (size_t i = 0; i < 3; ++i) {
-            uint32_t bits = qa_angle_to_word(angles[i]);
+            uint32_t bits = qa_angle_to_word(angles[i],QA_ANGLE_WORD_NATIVE);
             state->data.q2.delta_angle_shorts[i] =
                 (int16_t)(bits < UINT32_C(32768) ? (int32_t)bits : (int32_t)bits - 65536);
         }
@@ -4059,8 +4059,8 @@ static void force_state_view(qa_movement_state *state, qa_vec3 view,
         float target[3] = {command_view.x, command_view.y, command_view.z};
         float base[3] = {command.x, command.y, command.z};
         for (size_t i = 0; i < 3; ++i) {
-            uint32_t bits = (uint32_t)qa_angle_to_word(target[i]) -
-                (source_words ? (uint32_t)source_words[i] : (uint32_t)qa_angle_to_word(base[i]));
+            uint32_t bits = (uint32_t)qa_angle_to_word(target[i],QA_ANGLE_WORD_NATIVE) -
+                (source_words ? (uint32_t)source_words[i] : (uint32_t)qa_angle_to_word(base[i],QA_ANGLE_WORD_NATIVE));
             memcpy(&state->data.q3.delta_angle_words[i], &bits, sizeof(bits));
         }
         state->data.q3.view_angles = view;

@@ -236,7 +236,7 @@ bool qa_qw_write_delta_command(qa_net_writer *w, const qa_qw_command *from, cons
     if (c->buttons != from->buttons) bits |= 32;
     if (c->impulse != from->impulse) bits |= 64;
     qa_net_write_u8(w,(uint8_t)bits);
-    for (unsigned i=0;i<3;++i) if (bits & angle_bits[i]) qa_net_write_u16(w,qa_angle_to_word(c->angles[i]));
+    for (unsigned i=0;i<3;++i) if (bits & angle_bits[i]) qa_net_write_u16(w,qa_angle_to_word(c->angles[i],QA_ANGLE_WORD_NATIVE));
     if (bits & 4) qa_net_write_i16(w,c->forward);
     if (bits & 8) qa_net_write_i16(w,c->side);
     if (bits & 16) qa_net_write_i16(w,c->up);

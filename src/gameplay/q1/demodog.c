@@ -89,7 +89,7 @@ static bool grenade(qa_q1_game *g, q1_actor *entity, bool vertical, qa_error *er
         .origin = body.origin,
         .velocity = velocity,
         .angles = {atan2f(velocity.z, hypotf(velocity.x, velocity.y)) * 57.29577951308232f,
-                   qa_builtin_angle_mod(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0}};
+                   qa_angle_wrap(atan2f(velocity.y, velocity.x) * 57.29577951308232f), 0}};
     if (!q1_model(g, shot, g->runtime_names[Q1_NAME_RESOURCE_PROGS_GRENADE_MDL], error) ||
         !qa_world_body_write(g->services.world, shot->id, &launch, error) ||
         !q1_link(g, shot, error) ||

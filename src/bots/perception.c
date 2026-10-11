@@ -1,13 +1,12 @@
 #include "qa/bot_perception.h"
 
 static float clamp(float value,float minimum,float maximum) { return fmaxf(minimum,fminf(value,maximum)); }
-static float angle_mod(float value) { value=fmodf(value,360); return value<0 ? value+360 : value; }
-static float angle_delta(float from,float to) { float value=angle_mod(to-from); return value>180 ? value-360 : value; }
+static float angle_delta(float from,float to) { float value=qa_angle_wrap(to-from); return value>180 ? value-360 : value; }
 static qa_vec3 view_angles(qa_vec3 direction)
 {
     if (direction.x==0 && direction.y==0) return qa_v3(direction.z>0 ? -90 : 90,0,0);
     return qa_v3(-atan2f(direction.z,hypotf(direction.x,direction.y))*57.29577951308232f,
-        angle_mod(atan2f(direction.y,direction.x)*57.29577951308232f),0);
+        qa_angle_wrap(atan2f(direction.y,direction.x)*57.29577951308232f),0);
 }
 qa_bot_awareness qa_bot_awareness_new(qa_actor_id actor,double now,qa_vec3 origin)
 {
@@ -73,7 +72,7 @@ void qa_bot_aim_step(qa_bot_aim_state *state,qa_vec3 direction,const qa_bot_aimi
     advance(&state->yaw,&state->yaw_velocity,yaw_error,stiffness,damping,max_speed,h,steps);
     float clamped=clamp(state->pitch,-80,80);
     if (state->pitch!=clamped) { state->pitch=clamped; state->pitch_velocity=0; }
-    state->yaw=angle_mod(state->yaw);
+    state->yaw=qa_angle_wrap(state->yaw);
 }
 float qa_bot_aim_error(const qa_bot_aim_state *state,qa_vec3 direction)
 {

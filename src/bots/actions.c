@@ -311,39 +311,26 @@ bool qa_bot_actions_text(qa_bot_actions *actions, int32_t client, qa_bot_text_ac
     --actions->operations;return ok;
 }
 
-static float angle_mod(float angle) {
-    return (float)((uint32_t)qa_source_float_to_i32(angle * (65536.0f / 360.0f)) & 65535u) *
-           (360.0f / 65536.0f);
-}
-float qa_bot_angle_difference(float angle, float ideal) {
-    float difference = angle - ideal;
-    if (angle > ideal) {
-        if (difference > 180)
-            difference -= 360;
-    } else if (difference < -180)
-        difference += 360;
-    return difference;
-}
 bool qa_bot_field_of_vision(qa_vec3 view,float degrees,qa_vec3 target) {
     float from[2]={view.x,view.y},to[2]={target.x,target.y};
     for(uint32_t i=0;i<2;++i) {
-        float angle=angle_mod(from[i]),ideal=angle_mod(to[i]);
-        float difference=qa_bot_angle_difference(ideal,angle);
+        float angle=qa_angle_mod(from[i],QA_ANGLE_WORD_VM),ideal=qa_angle_mod(to[i],QA_ANGLE_WORD_VM);
+        float difference=qa_angle_subtract(ideal,angle);
         if(difference>degrees*.5f || difference<-degrees*.5f) return false;
     }
     return true;
 }
 float qa_bot_change_angle(float angle, float ideal, float speed) {
-    angle = angle_mod(angle);
-    ideal = angle_mod(ideal);
+    angle = qa_angle_mod(angle,QA_ANGLE_WORD_VM);
+    ideal = qa_angle_mod(ideal,QA_ANGLE_WORD_VM);
     if (angle == ideal)
         return angle;
-    float move = -qa_bot_angle_difference(angle, ideal);
+    float move = -qa_angle_subtract(angle, ideal);
     if (move > speed)
         move = speed;
     else if (move < -speed)
         move = -speed;
-    return angle_mod(angle + move);
+    return qa_angle_mod(angle + move,QA_ANGLE_WORD_VM);
 }
 void qa_bot_change_view(qa_bot_view_state *state, float factor, float maximum, float elapsed,
                         bool challenge) {
@@ -359,14 +346,14 @@ void qa_bot_change_view(qa_bot_view_state *state, float factor, float maximum, f
     float velocity[2] = {state->velocity.x, state->velocity.y};
     for (unsigned i = 0; i < 2; ++i) {
         if (challenge) {
-            int32_t integer = qa_source_float_to_i32(qa_bot_angle_difference(angles[i], ideals[i]));
+            int32_t integer = qa_source_float_to_i32(qa_angle_subtract(angles[i], ideals[i]));
             float difference = integer == INT32_MIN ? (float)INT32_MIN : (float)abs(integer);
             float speed = difference * factor;
             angles[i] = qa_bot_change_angle(angles[i], ideals[i], speed > maximum ? maximum : speed);
         } else {
-            angles[i] = angle_mod(angles[i]);
-            ideals[i] = angle_mod(ideals[i]);
-            float desired = qa_bot_angle_difference(angles[i], ideals[i]) * factor;
+            angles[i] = qa_angle_mod(angles[i],QA_ANGLE_WORD_VM);
+            ideals[i] = qa_angle_mod(ideals[i],QA_ANGLE_WORD_VM);
+            float desired = qa_angle_subtract(angles[i], ideals[i]) * factor;
             velocity[i] += velocity[i] - desired;
             if (velocity[i] > 180)
                 velocity[i] = maximum;
@@ -374,7 +361,7 @@ void qa_bot_change_view(qa_bot_view_state *state, float factor, float maximum, f
                 velocity[i] = -maximum;
             float speed = velocity[i] > maximum ? maximum :
                           velocity[i] < -maximum ? -maximum : velocity[i];
-            angles[i] = angle_mod(angles[i] + speed);
+            angles[i] = qa_angle_mod(angles[i] + speed,QA_ANGLE_WORD_VM);
             velocity[i] *= .45f * (1 - factor);
         }
     }
@@ -389,9 +376,9 @@ void qa_bot_view_delta(qa_bot_view_state *state, const int32_t delta[3], bool ad
     if (!state || !delta)
         return;
     float sign = add ? 1 : -1;
-    state->angles.x = angle_mod(state->angles.x + sign * (float)delta[0] * (360.0f / 65536.0f));
-    state->angles.y = angle_mod(state->angles.y + sign * (float)delta[1] * (360.0f / 65536.0f));
-    state->angles.z = angle_mod(state->angles.z + sign * (float)delta[2] * (360.0f / 65536.0f));
+    state->angles.x = qa_angle_mod(state->angles.x + sign * (float)delta[0] * (360.0f / 65536.0f),QA_ANGLE_WORD_VM);
+    state->angles.y = qa_angle_mod(state->angles.y + sign * (float)delta[1] * (360.0f / 65536.0f),QA_ANGLE_WORD_VM);
+    state->angles.z = qa_angle_mod(state->angles.z + sign * (float)delta[2] * (360.0f / 65536.0f),QA_ANGLE_WORD_VM);
 }
 void qa_bot_input_intent(const qa_bot_input *input, qa_input_command_intent *out) {
     uint32_t flags = input->action_flags;

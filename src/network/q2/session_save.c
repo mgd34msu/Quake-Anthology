@@ -335,7 +335,7 @@ static bool command_angles(qa_source_save_io *io, qa_q2_usercmd *command)
         if (!qa_source_save_f32(io, angles + i)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) {
             command->angles_f[i] = angles[i];
-            command->angles[i] = (int16_t)qa_angle_to_word(angles[i]);
+            command->angles[i] = (int16_t)qa_angle_to_word(angles[i],QA_ANGLE_WORD_NATIVE);
         }
     }
     if (io->direction == QA_SOURCE_SAVE_READ) command->float_angles = true;

@@ -410,8 +410,6 @@ typedef struct qa_builtin_projectile_step {
 bool qa_builtin_projectile_move(const qa_builtin_services *, const qa_builtin_projectile_step *,
                                 qa_trace_result *, qa_error *);
 
-float qa_builtin_angle_mod(float);
-float qa_builtin_angle_delta(float target, float current);
 
 typedef struct qa_builtin_random {
     uint32_t words[31];

@@ -132,6 +132,20 @@ static void test_shared_vector_geometry(void)
     CHECK(fabsf(qa_inverse_sqrt(4)-.5f)<.001f);
     CHECK(fabsf(qa_vec_length(qa_vec_fast_normalize(qa_v3(3,4,0)))-1)<.002f);
 }
+static void test_shared_angle_wrapping(void)
+{
+    for(int rule=QA_ANGLE_WORD_NATIVE;rule<=QA_ANGLE_WORD_ROUNDED;++rule) {
+        CHECK(qa_angle_to_word(90,(qa_angle_word_rule)rule)==16384);
+        CHECK(qa_angle_to_word(-90,(qa_angle_word_rule)rule)==49152);
+        CHECK(qa_angle_mod(720,(qa_angle_word_rule)rule)==0);
+    }
+    CHECK(qa_angle_to_word(.75f*(360.f/65536),QA_ANGLE_WORD_NATIVE)==0);
+    CHECK(qa_angle_to_word(.75f*(360.f/65536),QA_ANGLE_WORD_ROUNDED)==1);
+    CHECK(qa_angle_wrap(-450)==270);
+    CHECK(qa_angle_subtract(1,359)==2 && qa_angle_subtract(359,1)==-2);
+    CHECK(qa_angle_subtract(180,0)==180 && qa_angle_subtract(-180,0)==-180);
+    CHECK(qa_angle_delta(719,1)==-2);
+}
 static void test_source_text(void)
 {
     uint8_t source[256],roundtrip[257];char utf8[513];size_t size,restored;qa_error error={0};
@@ -2345,6 +2359,7 @@ int main(int argc, char **argv)
     test_shared_angle_basis();
     test_shared_bounds_and_transform();
     test_shared_vector_geometry();
+    test_shared_angle_wrapping();
     test_native_import_slot_identity();
     test_q2_weapon_names();
     test_q2_player_media();

@@ -180,7 +180,7 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
   if (has_target) {
     qa_vec3 difference = qa_vec_sub(target.origin, resumed.body.origin);
     qa_vec3 direction = qa_vec_normalize(difference);
-    resumed.body.angles.y = qa_builtin_angle_mod(
+    resumed.body.angles.y = qa_angle_wrap(
         atan2f(difference.y, difference.x) * 57.29577951308232f);
     resumed.body.velocity = qa_vec_scale(direction, 400.0f);
     resumed.body.velocity.z = 200.0f;
@@ -1702,7 +1702,7 @@ static bool carrier_spawn_callbacks(q2m_context *context, q2m_callback_id callba
       int phase = (int)(elapsed / (5 * Q2M_TENTH));
       if (phase >= 0 && phase <= 2) {
         qa_vec3 direction = qa_vec_sub(enemy.origin, context->body.origin);
-        monster->ideal_yaw = qa_builtin_angle_mod(
+        monster->ideal_yaw = qa_angle_wrap(
             atan2f(direction.y, direction.x) * 57.29577951308232f +
             (float)(phase - 1) * 30.0f);
       }
@@ -1714,7 +1714,7 @@ static bool carrier_spawn_callbacks(q2m_context *context, q2m_callback_id callba
       return false;
     if (!q2m_alive(context))
       return true;
-    float current = qa_builtin_angle_mod(context->body.angles.y);
+    float current = qa_angle_wrap(context->body.angles.y);
     float delta = fabsf(current - monster->ideal_yaw);
     if (delta > 180.0f)
       delta = 360.0f - delta;
@@ -3914,12 +3914,12 @@ static bool turret_aim(q2m_context *context, qa_error *error) {
   if (move >= 90) move -= 360;
   while (move <= -360) move += 360;
   if (move <= -90) move += 360;
-  context->body.angles.x = qa_builtin_angle_mod(context->body.angles.x +
+  context->body.angles.x = qa_angle_wrap(context->body.angles.x +
                                                fminf(speed, fmaxf(-speed, move)));
   move = ideal.y - context->body.angles.y;
   if (move >= 180) move -= 360;
   if (move <= -180) move += 360;
-  context->body.angles.y = qa_builtin_angle_mod(context->body.angles.y +
+  context->body.angles.y = qa_angle_wrap(context->body.angles.y +
                                                fminf(speed, fmaxf(-speed, move)));
   return q2m_write_body(context, false, error) &&
       (!q2m_alive(context) || q2m_turret_lasersight(context, error));

@@ -75,7 +75,7 @@ static bool read_player(qa_q2_codec *c,qa_net_reader *r,const qa_q2_player *f,qa
         t->pmove.float_delta_angles=true;
         for(unsigned i=0;i<3;i++){
             t->pmove.delta_angles_f[i]=q2_read_float(r);
-            uint16_t a=qa_angle_to_word(t->pmove.delta_angles_f[i]);
+            uint16_t a=qa_angle_to_word(t->pmove.delta_angles_f[i],QA_ANGLE_WORD_NATIVE);
             t->pmove.delta_angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
         }
     }
@@ -197,7 +197,7 @@ static bool read_usercmd(qa_q2_codec *c,qa_net_reader *r,const qa_q2_usercmd *f,
     t->angles_f[0]=base.x;t->angles_f[1]=base.y;t->angles_f[2]=base.z;t->float_angles=true;
     for(unsigned i=0;i<3;i++)if(b&(1u<<i)){
         t->angles_f[i]=q2_read_float(r);
-        uint16_t a=qa_angle_to_word(t->angles_f[i]);t->angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
+        uint16_t a=qa_angle_to_word(t->angles_f[i],QA_ANGLE_WORD_NATIVE);t->angles[i]=(int16_t)(a<32768u?(int32_t)a:(int32_t)a-65536);
     }
     if(b&8u)t->forwardmove=q2_read_float(r);
     if(b&16u)t->sidemove=q2_read_float(r);

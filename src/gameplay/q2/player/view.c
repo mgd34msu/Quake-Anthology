@@ -16,7 +16,7 @@ static float kick_ratio(uint64_t until, uint64_t now, float duration, float slac
                                                 : remaining / duration;
 }
 static float angle_difference(float old, float current) {
-    return q2_clamp(qa_builtin_angle_delta(old, current), -45, 45);
+    return q2_clamp(qa_angle_delta(old, current), -45, 45);
 }
 static bool feedback(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                      const qa_q2_powerups *powers, int *flashes, qa_error *e) {

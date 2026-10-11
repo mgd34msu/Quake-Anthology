@@ -130,7 +130,7 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
             return false;
         qa_vec3 delta = qa_vec_sub(other.origin, self.origin);
         entity->physics.ideal_yaw =
-            qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+            qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
     }
     qa_monster_mission mission;
     if (q1_monster_mission(g, entity->id, &mission)) {
@@ -664,7 +664,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
                 return false;
             qa_vec3 delta = qa_vec_sub(target.origin, self.origin);
             entity->physics.ideal_yaw =
-                qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+                qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
             if (!qa_physics_walk_move(g->services.physics, entity->id,
                                       entity->physics.ideal_yaw + offset, distance,
                                       (float)g->elapsed, true, true, &moved, error))
@@ -683,7 +683,7 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
         if (m->attack_state) {
             if (!q1_monster_face(g, entity, error) || !body(g, entity, &self, error))
                 return false;
-            float delta = fabsf(qa_builtin_angle_delta(self.angles.y, entity->physics.ideal_yaw));
+            float delta = fabsf(qa_angle_delta(self.angles.y, entity->physics.ideal_yaw));
             if (delta <= 45) {
                 uint8_t state = m->attack_state;
                 m->attack_state = 0;
@@ -1149,7 +1149,7 @@ bool q1_become_decoy(qa_q1_game *g, qa_vec3 origin, qa_string_id target,
             goto failed;
         qa_vec3 delta = qa_vec_sub(destination.origin, origin);
         decoy->physics.ideal_yaw =
-            qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+            qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
     }
     if (goal.registry && q1_classnamed(g, goal, g->runtime_names[Q1_NAME_PATH_CORNER])) {
         if (!q1_monster_play(g, decoy, Q1_FRAME_decoy_walk1, error))
@@ -1271,7 +1271,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 return false;
             qa_vec3 delta = qa_vec_sub(state.origin, self.origin);
             entity->physics.ideal_yaw =
-                qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+                qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
         }
         bool path = goal.registry && q1_classnamed(g, goal, g->runtime_names[Q1_NAME_PATH_CORNER]);
         m->addon.path_wait = path && (entity->spawnflags & 4096);

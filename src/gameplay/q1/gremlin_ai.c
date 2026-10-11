@@ -287,9 +287,9 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
                 if (range < 160) {
                     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(body.origin, target.origin));
                     qa_vec3 angles = qa_v3(
-                        qa_builtin_angle_mod(atan2f(direction.z, hypotf(direction.x, direction.y)) *
+                        qa_angle_wrap(atan2f(direction.z, hypotf(direction.x, direction.y)) *
                                              57.29577951308232f),
-                        qa_builtin_angle_mod(atan2f(direction.y, direction.x) * 57.29577951308232f),
+                        qa_angle_wrap(atan2f(direction.y, direction.x) * 57.29577951308232f),
                         0);
                     qa_vec3 end = target.origin;
                     for (unsigned i = 0; i < 10; ++i) {
@@ -304,7 +304,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
                                 return false;
                             clear = trace.fraction == 1;
                         }
-                        angles.y = qa_builtin_angle_mod(angles.y + 36);
+                        angles.y = qa_angle_wrap(angles.y + 36);
                         if (clear)
                             break;
                     }
@@ -315,7 +315,7 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
                 entity->physics.goal = q1_ref_from(g, goal->id);
                 qa_vec3 delta = qa_vec_sub(destination.origin, body.origin);
                 entity->physics.ideal_yaw =
-                    qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
+                    qa_angle_wrap(atan2f(delta.y, delta.x) * 57.29577951308232f);
                 return qa_physics_change_yaw(g->services.physics, entity->id, (float)g->elapsed,
                                              error) &&
                        qa_physics_q1_move_to_goal(g->services.physics, entity->id, goal->id,

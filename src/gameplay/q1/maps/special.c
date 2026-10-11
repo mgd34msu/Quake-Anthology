@@ -322,7 +322,7 @@ static bool fireball_fly(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state missile = {.origin = body.origin,
                              .velocity = velocity,
                              .angles = {atan2f(z, hypotf(x, y)) * 57.29577951308232f,
-                                        qa_builtin_angle_mod(atan2f(y, x) * 57.29577951308232f),
+                                        qa_angle_wrap(atan2f(y, x) * 57.29577951308232f),
                                         0}};
     if (!q1_model(g, ball, g->runtime_names[Q1_NAME_RESOURCE_PROGS_LAVABALL_MDL], error) ||
         !qa_world_body_write(g->services.world, ball->id, &missile, error) ||

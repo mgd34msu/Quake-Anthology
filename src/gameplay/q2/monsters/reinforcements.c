@@ -637,7 +637,7 @@ bool q2m_medic_determine_summons(q2m_context *context, q2m_summon_state *state, 
             return true;
         if (success) {
             context->monster->manual_steering = true;
-            context->monster->ideal_yaw = qa_angle_mod(context->body.angles.y) + 180;
+            context->monster->ideal_yaw = qa_angle_mod(context->body.angles.y,QA_ANGLE_WORD_PRECISE) + 180;
             if (context->monster->ideal_yaw > 360)
                 context->monster->ideal_yaw -= 360;
         }
@@ -649,7 +649,7 @@ bool q2m_medic_determine_summons(q2m_context *context, q2m_summon_state *state, 
 
 bool q2m_medic_grow_summons(q2m_context *context, q2m_summon_state *state, qa_error *error) {
     if (context->monster->manual_steering) {
-        if (fabsf(qa_angle_mod(context->body.angles.y) - context->monster->ideal_yaw) > .1f) {
+        if (fabsf(qa_angle_mod(context->body.angles.y,QA_ANGLE_WORD_PRECISE) - context->monster->ideal_yaw) > .1f) {
             context->monster->hold_frame = true;
             return true;
         }

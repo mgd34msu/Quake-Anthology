@@ -460,7 +460,7 @@ void qa_movement_q3_jump_pad(qa_movement_state *state, qa_actor_id pad, qa_vec3 
     if (changed) {
         float pitch=velocity.x==0&&velocity.y==0?(velocity.z>0?-90.0f:-270.0f):
             -atan2f(velocity.z,hypotf(velocity.x,velocity.y))*57.29577951308232f;
-        pitch=qa_angle_mod(pitch);
+        pitch=qa_angle_mod(pitch,QA_ANGLE_WORD_PRECISE);
         pitch=fabsf(pitch>180?pitch-360:pitch);
         s->event_sequence++;
         if (event) *event=13;

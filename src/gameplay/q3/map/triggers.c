@@ -251,8 +251,7 @@ static double jump_pad_pitch(qa_vec3 velocity) {
         if (pitch < 0)
             pitch = (pitch + 360.0f);
     }
-    int32_t turns = isfinite(pitch) ? (int32_t)(-(double)pitch * (65536.0 / 360.0)) : 0;
-    double normalized = (360.0 / 65536.0) * ((uint32_t)turns & 65535u);
+    double normalized=qa_angle_mod(-pitch,QA_ANGLE_WORD_PRECISE);
     return fabs(normalized > 180 ? normalized - 360 : normalized);
 }
 

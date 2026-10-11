@@ -11,9 +11,9 @@ static qa_vec3 target(qa_q1_game *g, q1_actor *e) {
                : qa_v3(0, 0, 0);
 }
 static qa_vec3 angles(qa_vec3 direction) {
-    return qa_v3(qa_builtin_angle_mod(atan2f(direction.z, hypotf(direction.x, direction.y)) *
+    return qa_v3(qa_angle_wrap(atan2f(direction.z, hypotf(direction.x, direction.y)) *
                                       57.29577951308232f),
-                 qa_builtin_angle_mod(atan2f(direction.y, direction.x) * 57.29577951308232f), 0);
+                 qa_angle_wrap(atan2f(direction.y, direction.x) * 57.29577951308232f), 0);
 }
 static float signed_random(qa_q1_game *g) { return 2 * q1_random(g) - 1; }
 static bool bloody(qa_q1_game *g) { return (qa_q1_game_campaign_flags(g) & 64) != 0; }

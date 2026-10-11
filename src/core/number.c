@@ -56,15 +56,33 @@ int32_t qa_source_float_to_i32(float value) {
         ? (int32_t)value : INT32_MIN;
 }
 
-uint16_t qa_angle_to_word(float angle) {
-    return (uint16_t)(uint32_t)qa_source_float_to_i32(angle * 65536.0f / 360.0f);
+uint16_t qa_angle_to_word(float angle,qa_angle_word_rule rule) {
+    double scaled;
+    switch(rule) {
+    case QA_ANGLE_WORD_PRECISE: scaled=(double)angle*(65536.0/360.0);break;
+    case QA_ANGLE_WORD_VM: scaled=angle*(65536.0f/360.0f);break;
+    case QA_ANGLE_WORD_ROUNDED: scaled=floorf(angle*(65536.0f/360.0f)+.5f);break;
+    default: scaled=angle*65536.0f/360.0f;break;
+    }
+    int32_t integer=scaled>=INT32_MIN && scaled<2147483648.0?(int32_t)scaled:INT32_MIN;
+    return (uint16_t)(uint32_t)integer;
 }
 
-float qa_angle_mod(float angle) {
-    double scaled = (double)angle * (65536.0 / 360.0);
-    int32_t integer = scaled >= INT32_MIN && scaled < 2147483648.0 ?
-        (int32_t)scaled : INT32_MIN;
-    return (float)((360.0 / 65536.0) * (uint16_t)(uint32_t)integer);
+float qa_angle_mod(float angle,qa_angle_word_rule rule) {
+    return (float)qa_angle_to_word(angle,rule)*(360.0f/65536.0f);
+}
+float qa_angle_wrap(float angle) {
+    float result=fmodf(angle,360);
+    return result<0?result+360:result;
+}
+float qa_angle_subtract(float first,float second) {
+    float result=first-second;
+    while(result>180) result-=360;
+    while(result< -180) result+=360;
+    return result;
+}
+float qa_angle_delta(float target,float current) {
+    return qa_angle_subtract(qa_angle_wrap(target),qa_angle_wrap(current));
 }
 
 bool qa_format_quake_float(float value, char out[64], qa_error *error) {

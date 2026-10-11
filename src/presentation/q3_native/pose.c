@@ -78,36 +78,26 @@ bool q3n_lerp_run(const qa_player_animation_config *config, q3n_lerp_frame *stat
     return true;
 }
 
-static float angle_mod(float angle) {
-    return ((float)((uint32_t)integer((angle * (65536.0f / 360.0f))) & 65535u) * (360.0f / 65536.0f));
-}
-static float angle_subtract(float first, float second) {
-    float angle = (first + -second);
-    while (angle > 180) angle = (angle + -360);
-    while (angle < -180) angle = (angle + 360);
-    return angle;
-}
-
 static void swing(float destination, float tolerance, float clamp, float speed,
     int32_t milliseconds, float *angle, bool *swinging) {
     if (!*swinging) {
-        float delta = angle_subtract(*angle, destination);
+        float delta = qa_angle_subtract(*angle, destination);
         if (delta > tolerance || delta < -tolerance) *swinging = true;
     }
     if (!*swinging) return;
-    float delta = angle_subtract(destination, *angle), distance = fabsf(delta);
+    float delta = qa_angle_subtract(destination, *angle), distance = fabsf(delta);
     float scale = distance < (tolerance * 0.5f) ? 0.5f : distance < tolerance ? 1 : 2;
     float move = (((float)milliseconds * scale) * (delta >= 0 ? speed : -speed));
     if ((delta >= 0 && move >= delta) || (delta < 0 && move <= delta)) {
         move = delta; *swinging = false;
     }
-    *angle = angle_mod((*angle + move));
-    delta = angle_subtract(destination, *angle);
-    if (delta > clamp) *angle = angle_mod((destination + -(clamp + -1)));
-    else if (delta < -clamp) *angle = angle_mod((destination + (clamp + -1)));
+    *angle = qa_angle_mod((*angle + move),QA_ANGLE_WORD_VM);
+    delta = qa_angle_subtract(destination, *angle);
+    if (delta > clamp) *angle = qa_angle_mod((destination + -(clamp + -1)),QA_ANGLE_WORD_VM);
+    else if (delta < -clamp) *angle = qa_angle_mod((destination + (clamp + -1)),QA_ANGLE_WORD_VM);
 }
 static qa_vec3 subtract_angles(qa_vec3 a, qa_vec3 b) {
-    return qa_v3(angle_subtract(a.x, b.x), angle_subtract(a.y, b.y), angle_subtract(a.z, b.z));
+    return qa_v3(qa_angle_subtract(a.x, b.x), qa_angle_subtract(a.y, b.y), qa_angle_subtract(a.z, b.z));
 }
 bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_config *config,
     const q3n_pose_entity *entity, qa_vec3 angles, int32_t time, int32_t milliseconds,
@@ -118,7 +108,7 @@ bool q3n_player_angles_pose(q3n_player_pose *state, const qa_player_animation_co
     static const float offsets[8] = {0, 22, 45, -22, 0, 22, -45, -22};
     int32_t direction = entity->flags & 1 ? 0 : entity->movement_direction;
     if (direction < 0 || direction >= 8) return fail(error, "Bad player movement angle");
-    qa_vec3 head = qa_v3(angles.x, angle_mod(angles.y), angles.z), legs = {0}, torso = {0};
+    qa_vec3 head = qa_v3(angles.x, qa_angle_mod(angles.y,QA_ANGLE_WORD_VM), angles.z), legs = {0}, torso = {0};
     if ((entity->legs_animation & ~128) != 22 || (entity->torso_animation & ~128) != 11) {
         state->torso.yawing = state->torso.pitching = state->legs.yawing = true;
     }

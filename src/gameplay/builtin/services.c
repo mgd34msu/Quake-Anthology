@@ -287,20 +287,6 @@ bool qa_builtin_players(const qa_builtin_services *s, qa_builtin_actor_snapshot 
 
 
 
-float qa_builtin_angle_mod(float angle) {
-    float result = fmodf(angle, 360.0f);
-    return result < 0 ? result + 360.0f : result;
-}
-
-float qa_builtin_angle_delta(float target, float current) {
-    float delta = qa_builtin_angle_mod(target) - qa_builtin_angle_mod(current);
-    if (delta > 180.0f)
-        delta -= 360.0f;
-    if (delta < -180.0f)
-        delta += 360.0f;
-    return delta;
-}
-
 static bool apply_trajectory(const qa_builtin_services *s, qa_actor_id actor,
                              const qa_builtin_trajectory_update *update, qa_error *error) {
     if (!qa_actors_get(qa_session_actors(s->session), actor))

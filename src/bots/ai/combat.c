@@ -52,8 +52,8 @@ qa_vec3 bot_ai_angles(qa_vec3 direction) {
 }
 static bool in_view(qa_vec3 angles, qa_vec3 direction, float fov) {
     qa_vec3 target = bot_ai_angles(direction);
-    return fabsf(qa_builtin_angle_delta(target.x, angles.x)) <= fov*.5f &&
-           fabsf(qa_builtin_angle_delta(target.y, angles.y)) <= fov*.5f;
+    return fabsf(qa_angle_delta(target.x, angles.x)) <= fov*.5f &&
+           fabsf(qa_angle_delta(target.y, angles.y)) <= fov*.5f;
 }
 static qa_bot_navigation *navigation(qa_bots *b, bot_ai_state *s) {
     return qa_bot_runtime_navigation(b->runtime, (int32_t)s->view.client);
@@ -794,9 +794,9 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         (void)qa_bot_weapon_launch_aim(&selected,muzzle,noisy,&ideal,&flight);
     }
     if(!bot_ai_random(b,&random,e)) return false;
-    ideal.x=qa_builtin_angle_mod(ideal.x+6*selected.weapon.vertical_spread*(random*2-1)*(1-accuracy));
+    ideal.x=qa_angle_wrap(ideal.x+6*selected.weapon.vertical_spread*(random*2-1)*(1-accuracy));
     if(!bot_ai_random(b,&random,e)) return false;
-    ideal.y=qa_builtin_angle_mod(ideal.y+6*selected.weapon.horizontal_spread*(random*2-1)*(1-accuracy));
+    ideal.y=qa_angle_wrap(ideal.y+6*selected.weapon.horizontal_spread*(random*2-1)*(1-accuracy));
     bot_ai_view_ideal_set(s,ideal);
     if(b->controls.challenge && accuracy>.9f && bot_ai_enemy_sight_time(s)<b->time-1) {
         bot_ai_view_prepare(s);
@@ -1141,10 +1141,10 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
     bot_ai_view_ideal_set(s,ideal);
     SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));
     float pitch=bot_ai_view_ideal(s).x+((6*selected.weapon.vertical_spread)*(random*2-1))*(1-accuracy);
-    bot_ai_view_ideal_axis_set(s,0,qa_builtin_angle_mod(pitch));
+    bot_ai_view_ideal_axis_set(s,0,qa_angle_wrap(pitch));
     SOURCE_ATTACK_CALL(bot_ai_random(b,&random,e));
     float yaw=bot_ai_view_ideal(s).y+((6*selected.weapon.horizontal_spread)*(random*2-1))*(1-accuracy);
-    bot_ai_view_ideal_axis_set(s,1,qa_builtin_angle_mod(yaw));
+    bot_ai_view_ideal_axis_set(s,1,qa_angle_wrap(yaw));
     if(b->source_match.cvars[BOT_SOURCE_CHALLENGE].integer_value && accuracy>.9f &&
        bot_ai_enemy_sight_time(s)<b->time-1) {
         bot_ai_view_prepare(s);bot_ai_view_angles_set(s,bot_ai_view_ideal(s));

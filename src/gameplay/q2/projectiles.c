@@ -1366,7 +1366,7 @@ bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 qa_v3(-atan2f(body.velocity.z, hypotf(body.velocity.x, body.velocity.y)) *
                           57.29577951308232f,
                       atan2f(body.velocity.y, body.velocity.x) * 57.29577951308232f, 0);
-            body.angles.x += qa_builtin_angle_delta(angles.x, body.angles.x) * fraction;
+            body.angles.x += qa_angle_delta(angles.x, body.angles.x) * fraction;
             body.angles.y = angles.y;
             body.angles.z += (float)((double)g->frame_ns / 1e9) * 360 * fraction;
             if (!qa_world_body_write(g->services.world, id, &body, e))

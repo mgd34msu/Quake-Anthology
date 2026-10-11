@@ -224,8 +224,8 @@ bool qa_q2_mvd_write_player(const qa_q2_mvd_profile *p, qa_net_writer *w, uint8_
     if (to->pmove.type!=f->pmove.type) bits|=MP_TYPE;
     for (unsigned i=0;i<3;i++) if (p->rerelease?to->pmove.origin_f[i]!=f->pmove.origin_f[i]:to->pmove.origin[i]!=f->pmove.origin[i]) bits|=i==2?MP_ORIGIN_Z:MP_ORIGIN;
     if (mvd_diff(to->viewoffset,f->viewoffset,3)) bits|=MP_VIEWOFFSET;
-    if (qa_angle_to_word(to->viewangles[0])!=qa_angle_to_word(f->viewangles[0]) || qa_angle_to_word(to->viewangles[1])!=qa_angle_to_word(f->viewangles[1])) bits|=MP_VIEWANGLES;
-    if (qa_angle_to_word(to->viewangles[2])!=qa_angle_to_word(f->viewangles[2])) bits|=MP_VIEWANGLE_Z;
+    if (qa_angle_to_word(to->viewangles[0],QA_ANGLE_WORD_NATIVE)!=qa_angle_to_word(f->viewangles[0],QA_ANGLE_WORD_NATIVE) || qa_angle_to_word(to->viewangles[1],QA_ANGLE_WORD_NATIVE)!=qa_angle_to_word(f->viewangles[1],QA_ANGLE_WORD_NATIVE)) bits|=MP_VIEWANGLES;
+    if (qa_angle_to_word(to->viewangles[2],QA_ANGLE_WORD_NATIVE)!=qa_angle_to_word(f->viewangles[2],QA_ANGLE_WORD_NATIVE)) bits|=MP_VIEWANGLE_Z;
     if (mvd_diff(to->kick_angles,f->kick_angles,3)) bits|=MP_KICK;
     if (to->gunindex!=f->gunindex || (p->extended && to->gunskin!=f->gunskin)) bits|=MP_GUNINDEX;
     if (to->gunframe!=f->gunframe) bits|=MP_GUNFRAME;

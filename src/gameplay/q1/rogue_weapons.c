@@ -103,9 +103,9 @@ static bool rocket_acquire(qa_q1_game *g, q1_actor *rocket, qa_error *error) {
         return rocket_home(g, rocket, error);
     }
     rocket->state.projectile.launch_angles = qa_v3(
-        qa_builtin_angle_mod(atan2f(body.velocity.z, hypotf(body.velocity.x, body.velocity.y)) *
+        qa_angle_wrap(atan2f(body.velocity.z, hypotf(body.velocity.x, body.velocity.y)) *
                              57.29577951308232f),
-        qa_builtin_angle_mod(atan2f(body.velocity.y, body.velocity.x) * 57.29577951308232f), 0);
+        qa_angle_wrap(atan2f(body.velocity.y, body.velocity.x) * 57.29577951308232f), 0);
     return q1_schedule(g, rocket, 0.2, Q1_THINK_MULTI_ACQUIRE, error);
 }
 static bool split_grenade(qa_q1_game *g, q1_actor *grenade, qa_error *error) {

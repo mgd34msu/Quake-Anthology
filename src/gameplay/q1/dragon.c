@@ -78,12 +78,12 @@ static bool move(qa_q1_game *g, q1_actor *entity, float distance, qa_error *erro
     if (!m->source.dragon.attacking)
         m->enemy = q1_ref_from(g, goal);
     qa_vec3 direction = qa_vec_sub(target.origin, body.origin);
-    float desired = qa_builtin_angle_mod(atan2f(direction.y, direction.x) * 57.29577951308232f);
+    float desired = qa_angle_wrap(atan2f(direction.y, direction.x) * 57.29577951308232f);
     float yaw = body.angles.y, roll = body.angles.z;
     if (yaw != desired) {
         float offset = 180 - yaw;
-        float left = qa_builtin_angle_mod(desired + offset) - 180,
-              right = 180 - qa_builtin_angle_mod(desired + offset);
+        float left = qa_angle_wrap(desired + offset) - 180,
+              right = 180 - qa_angle_wrap(desired + offset);
         if (left < 0)
             left = 360;
         else if (right < 0)

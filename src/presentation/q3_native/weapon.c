@@ -215,7 +215,7 @@ static float barrel_spin(int32_t time,int32_t *previous_time,float *previous_ang
     }
     if (*spinning!=firing) {
         *previous_time=time;
-        *previous_angle=((float)((uint32_t)integer((angle * (65536.0f/360.0f)))&65535u) * (360.0f/65536.0f));
+        *previous_angle=qa_angle_mod(angle,QA_ANGLE_WORD_VM);
         *spinning=firing;
     }
     return angle;

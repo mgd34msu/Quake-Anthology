@@ -299,20 +299,16 @@ static bool mission(player_fx *p,const qa_q3_ref_entity *torso,qa_error *e)
     }
     return true;
 }
-static float angle_subtract(float a,float b)
-{ float d=(a + -b); while(d>180)d=(d + -360); while(d< -180)d=(d + 360); return d; }
-static float angle_mod(float a)
-{ return ((float)((uint32_t)q3ne_int((a * (65536.0f/360.0f)))&65535u) * (360.0f/65536.0f)); }
 static void flag_swing(q3n_player_fx_state *s,float destination,int32_t milliseconds)
 {
-    if(!s->flag_yawing && fabsf(angle_subtract(s->flag_yaw,destination))>25)s->flag_yawing=true;
+    if(!s->flag_yawing && fabsf(qa_angle_subtract(s->flag_yaw,destination))>25)s->flag_yawing=true;
     if(!s->flag_yawing)return;
-    float d=angle_subtract(destination,s->flag_yaw),distance=fabsf(d),scale=distance<12.5f?0.5f:distance<25?1:2;
+    float d=qa_angle_subtract(destination,s->flag_yaw),distance=fabsf(d),scale=distance<12.5f?0.5f:distance<25?1:2;
     float move=(((float)milliseconds * scale) * (d>=0?0.15f:-0.15f));
     if((d>=0 && move>=d) || (d<0 && move<=d)) { move=d; s->flag_yawing=false; }
-    s->flag_yaw=angle_mod((s->flag_yaw + move)); d=angle_subtract(destination,s->flag_yaw);
-    if(d>90)s->flag_yaw=angle_mod((destination + -89));
-    else if(d< -90)s->flag_yaw=angle_mod((destination + 89));
+    s->flag_yaw=qa_angle_mod((s->flag_yaw + move),QA_ANGLE_WORD_VM); d=qa_angle_subtract(destination,s->flag_yaw);
+    if(d>90)s->flag_yaw=qa_angle_mod((destination + -89),QA_ANGLE_WORD_VM);
+    else if(d< -90)s->flag_yaw=qa_angle_mod((destination + 89),QA_ANGLE_WORD_VM);
 }
 static bool flag(player_fx *p,int32_t skin,const qa_q3_ref_entity *torso,qa_error *e)
 {

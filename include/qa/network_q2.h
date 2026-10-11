@@ -47,7 +47,7 @@ static inline void qa_q2_usercmd_angles_from_engine(qa_q2_usercmd *out, const qa
     const float values[] = {command->angles.x, command->angles.y, command->angles.z};
     for (size_t i = 0; i < 3; ++i) {
         out->angles_f[i] = values[i];
-        out->angles[i] = out->float_angles ? (int16_t)qa_angle_to_word(values[i]) :
+        out->angles[i] = out->float_angles ? (int16_t)qa_angle_to_word(values[i],QA_ANGLE_WORD_NATIVE) :
             (int16_t)command->angle_words[i];
     }
 }
