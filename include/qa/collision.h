@@ -114,6 +114,7 @@ bool qa_collision_bind_resource(qa_collision_geometry *, struct qa_resource *, q
 const struct qa_resource *qa_collision_resource(const qa_collision_geometry *);
 const qa_bsp_view *qa_collision_bsp(const qa_collision_geometry *);
 qa_game_family qa_collision_geometry_family(const qa_collision_geometry *);
+uint32_t qa_collision_map_checksum(const qa_collision_geometry *);
 uint64_t qa_collision_map_identity(const qa_collision_geometry *);
 size_t qa_collision_model_count(const qa_collision_geometry *);
 bool qa_collision_model_bounds(const qa_collision_geometry *, uint32_t model, qa_bounds *, qa_error *);

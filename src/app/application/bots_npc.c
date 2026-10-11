@@ -282,7 +282,7 @@ bool application_npc_graph_rebuild(application_bots_npc *owner,npc_graph *graph,
     qa_navigation_services services=application_npc_services(owner);
     services.topology_geometry_only=true;
     if(graph->asset) {
-        uint32_t word=qa_block_checksum(owner->geometry.source);int32_t checksum;
+        uint32_t word=qa_collision_map_checksum(owner->source->application->geometry);int32_t checksum;
         memcpy(&checksum,&word,sizeof(checksum));
         qa_nav_asset *asset=NULL;
         bool okay=qa_nav_asset_read(qa_resource_bytes(graph->asset),&checksum,&asset,error);

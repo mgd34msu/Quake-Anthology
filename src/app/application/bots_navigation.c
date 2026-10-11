@@ -592,7 +592,7 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
     bool ok;
     if(graph->asset_resource) {
         qa_nav_asset *asset=NULL;
-        uint32_t checksum_word=qa_block_checksum(bots->geometry.source);int32_t checksum;
+        uint32_t checksum_word=qa_collision_map_checksum(bots->application->geometry);int32_t checksum;
         memcpy(&checksum,&checksum_word,sizeof(checksum));
         ok=qa_nav_asset_read(qa_resource_bytes(graph->asset_resource),&checksum,&asset,error);
         if(ok) ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,&graph->graph,error);

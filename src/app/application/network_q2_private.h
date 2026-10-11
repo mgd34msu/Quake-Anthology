@@ -91,6 +91,9 @@ struct qa_application_network_q2 {
     int32_t server_count;
     uint32_t config_count, item_base, skin_base, light_base;
     uint32_t checksum_index, clients_index, air_index, n64_index;
+    uint64_t observed_map_revision;
+    uint32_t observed_client_slots;
+    bool map_configs_ready;
     qa_string_id *configs;
     qa_hud_q2_stat_references status_references;
     qa_arena layout_scratch;

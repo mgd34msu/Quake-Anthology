@@ -691,8 +691,16 @@ bool application_network_q2_observe(qa_application_network_q2 *owner, qa_error *
             owner->layouts[slot] = (application_q2_layout_receipt){0};
         }
     }
-    if (!config_number(owner, owner->checksum_index, qa_block_checksum(qa_resource_bytes(owner->app->map_resource)), error) ||
-        !config_number(owner, owner->clients_index, owner->host.client_slots, error)) return false;
+    if (!owner->map_configs_ready || owner->observed_map_revision != owner->app->map_revision) {
+        if (!config_number(owner, owner->checksum_index,
+            qa_collision_map_checksum(owner->app->geometry), error)) return false;
+        owner->observed_map_revision = owner->app->map_revision;
+    }
+    if (!owner->map_configs_ready || owner->observed_client_slots != owner->host.client_slots) {
+        if (!config_number(owner, owner->clients_index, owner->host.client_slots, error)) return false;
+        owner->observed_client_slots = owner->host.client_slots;
+    }
+    owner->map_configs_ready = true;
     const qa_cvar_view *air = qa_cvars_read(owner->host.cvars, owner->sv_airaccelerate);
     if (!air || !application_network_q2_config(owner, owner->air_index, air->value, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 observation lost its physical Source air acceleration");

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/binary.h"
 #include "qa/vfs.h"
+#include "qa/hash.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -43,6 +44,7 @@ struct qa_collision_geometry {
     geometry_portal *portals;
     bool no_areas;
     uint64_t map_identity;
+    uint32_t protocol_checksum;
 };
 
 static bool load_visibility_rows(qa_collision_geometry *, qa_error *);
@@ -328,6 +330,7 @@ bool qa_collision_create(const qa_bsp_view *bsp, qa_collision_geometry **out, qa
     if (geometry == NULL) return geometry_fail(error, QA_ERROR_MEMORY, "Cannot allocate collision geometry");
     geometry->references = 1;
     geometry->bsp = *bsp;
+    geometry->protocol_checksum = qa_block_checksum(bsp->source);
     geometry->family = bsp->family == QA_BSP_Q1 ? QA_GAME_Q1 : bsp->family == QA_BSP_Q2 ? QA_GAME_Q2 : QA_GAME_Q3;
     geometry->map_identity = UINT64_C(14695981039346656037);
     for (size_t i = 0; i < bsp->source.size; ++i) {
@@ -356,6 +359,11 @@ const qa_bsp_view *qa_collision_bsp(const qa_collision_geometry *geometry)
 qa_game_family qa_collision_geometry_family(const qa_collision_geometry *geometry)
 {
     return geometry == NULL ? ((qa_game_family)-1) : geometry->family;
+}
+
+uint32_t qa_collision_map_checksum(const qa_collision_geometry *geometry)
+{
+    return geometry ? geometry->protocol_checksum : 0;
 }
 
 uint64_t qa_collision_map_identity(const qa_collision_geometry *geometry)
