@@ -252,6 +252,7 @@ typedef struct application_content_names {
 } application_content_names;
 
 struct qa_application {
+    int64_t utc_ms;
     struct qa_application_client_preparation *client_preparation;
     application_publication *failed_publications;
     struct application_startup_flow *startup_flow;
@@ -618,6 +619,7 @@ bool application_console_create(qa_application *, qa_error *);
 void application_console_print(void *,const qa_command_context *,const char *);
 bool application_emit(void *, const qa_builtin_event *, qa_error *);
 bool application_source_log(application_provider *, const char *, bool console, qa_error *);
+int32_t application_q3_calendar(const qa_application *, qa_q3_host_calendar *);
 bool application_q1_music_cue(qa_application *, bool fresh, qa_error *);
 bool application_record_motion_change(qa_application *, qa_actor_id,
                                       const qa_builtin_motion_change *,

@@ -1523,7 +1523,7 @@ static void test_platform_event_retirement(void)
             ++packets;
             CHECK(bytes.size == sizeof(packet) && !memcmp(bytes.data, packet, sizeof(packet)));
         } else if (event.kind == QA_PLATFORM_EVENT_KEY) ++releases;
-        else if (event.kind == QA_PLATFORM_EVENT_TIME) { ++clocks; CHECK(event.time_ns == 9); }
+        else if (event.kind == QA_PLATFORM_EVENT_TIME) { ++clocks; CHECK(event.time_ns == 9); CHECK(event.data.time.utc_ms > 0); }
         qa_platform_events_consume(events, &cursor);
     }
     CHECK(packets && releases == 1 && clocks == 1);

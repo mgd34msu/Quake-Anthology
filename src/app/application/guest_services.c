@@ -96,20 +96,28 @@ static uint32_t guest_milliseconds(void *context)
     return (uint32_t)(time / UINT64_C(1000000));
 }
 
-static int32_t guest_calendar(void *context, qa_q3_host_calendar *out)
+void qa_application_real_time(qa_application *application, int64_t utc_ms)
+{ application->utc_ms = utc_ms; }
+
+int32_t application_q3_calendar(const qa_application *application, qa_q3_host_calendar *out)
 {
-    (void)context;
-    qa_platform_timespec now;
     qa_platform_calendar_fields date;
-    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
-        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&date,NULL)) {
-        if (out) *out=(qa_q3_host_calendar){0};
+    if (!qa_platform_calendar(application->utc_ms, true, &date, NULL)) {
+        if (out) *out = (qa_q3_host_calendar){0};
         return -1;
     }
-    if (out) *out=(qa_q3_host_calendar){date.second,date.minute,date.hour,date.day,
-        date.month-1,date.year-1900,date.weekday,date.yearday,date.daylight};
-    uint32_t bits=(uint32_t)now.seconds; int32_t result;
-    memcpy(&result,&bits,sizeof(result)); return result;
+    if (out) *out = (qa_q3_host_calendar){date.second, date.minute, date.hour,
+        date.day, date.month - 1, date.year - 1900, date.weekday, date.yearday, date.daylight};
+    uint32_t bits = (uint32_t)date.unix_seconds;
+    int32_t result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
+static int32_t guest_calendar(void *context, qa_q3_host_calendar *out)
+{
+    application_provider *provider = context;
+    return application_q3_calendar(provider->application, out);
 }
 
 static qa_collision_geometry *guest_geometry(void *context)

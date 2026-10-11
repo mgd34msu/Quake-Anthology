@@ -42,6 +42,7 @@ typedef struct qa_sys_event {
     uint64_t time_ns;
     qa_sys_event_kind kind;
     union {
+        struct { int64_t utc_ms; } time;
         struct { uint32_t window, code; int32_t symbol; uint16_t modifiers; bool down, repeat; } key;
         struct { uint32_t window; } character;
         struct { uint32_t window, device, buttons; qa_sys_mouse_action action;

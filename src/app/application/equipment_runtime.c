@@ -527,18 +527,8 @@ bool application_equipment_runtime_saved(qa_session *session, const qa_save_imag
 
 static int32_t calendar(void *context, qa_q3_host_calendar *out)
 {
-    (void)context;
-    qa_platform_timespec now;
-    qa_platform_calendar_fields date;
-    if (!qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME,&now,NULL) ||
-        !qa_platform_calendar(now.seconds*INT64_C(1000),true,&date,NULL)) {
-        if (out) *out=(qa_q3_host_calendar){0};
-        return -1;
-    }
-    if (out) *out=(qa_q3_host_calendar){date.second,date.minute,date.hour,date.day,
-        date.month-1,date.year-1900,date.weekday,date.yearday,date.daylight};
-    uint32_t bits=(uint32_t)now.seconds; int32_t result;
-    memcpy(&result,&bits,sizeof(result)); return result;
+    equipment_source *source = context;
+    return application_q3_calendar(source->runtime->options.application, out);
 }
 static bool names(equipment_source *source, const saved_source *saved, qa_error *error)
 {

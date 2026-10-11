@@ -416,6 +416,7 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
         bool ok=true,consumed=true;
         switch (event.kind) {
         case QA_PLATFORM_EVENT_TIME:
+            qa_application_real_time(frontend->application, event.data.time.utc_ms);
             if (event.time_ns>frontend->wall_time_ns) {
                 frontend->pending_frame_ns+=event.time_ns-frontend->wall_time_ns;
                 frontend->wall_time_ns=event.time_ns;

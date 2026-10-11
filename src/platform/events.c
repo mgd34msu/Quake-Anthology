@@ -165,7 +165,11 @@ void qa_platform_events_consume(qa_platform_events *events, qa_platform_event_cu
 
 qa_platform_event_result qa_platform_events_frame(qa_platform_events *events, uint64_t time_ns)
 {
-    return qa_platform_events_push(events, &(qa_sys_event){.kind = QA_PLATFORM_EVENT_TIME, .time_ns = time_ns},
+    qa_platform_timespec utc = {0};
+    qa_platform_clock_read(QA_PLATFORM_CLOCK_REALTIME, &utc, NULL);
+    qa_sys_event event = {.kind = QA_PLATFORM_EVENT_TIME, .time_ns = time_ns,
+        .data.time.utc_ms = utc.seconds * INT64_C(1000) + utc.nanoseconds / 1000000};
+    return qa_platform_events_push(events, &event,
         (qa_bytes){0}, (qa_bytes){0});
 }
 

@@ -193,6 +193,7 @@ static bool create_application(const qa_application_options *options,
     application->state = QA_APPLICATION_READY;
     application->command_generation = current_unit ? current_unit->command_generation : 1;
     if (current_unit) {
+        application->utc_ms = current_unit->utc_ms;
         application->publication_generation = current_unit->publication_generation;
         application->frame_revision = current_unit->frame_revision;
     }

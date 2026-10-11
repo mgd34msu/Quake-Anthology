@@ -667,5 +667,7 @@ size_t qa_application_player_count(const qa_application *);
 /* Elapsed monotonic duration is supplied by the outer platform loop or replay.
  * The application never reads a hidden wall clock for simulation. */
 bool qa_application_advance(qa_application *, uint64_t elapsed_ns, qa_error *);
+/* Wall time is observed at platform TIME intake, separate from simulation. */
+void qa_application_real_time(qa_application *, int64_t utc_ms);
 
 #endif
