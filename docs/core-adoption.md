@@ -650,8 +650,16 @@ MD3 defaults keep the existing Source fallback. Normal build and seven core
 suites pass:
 `/tmp/qa-ta3196-model-material-bindings-20261011-build.log` and
 `/tmp/qa-ta3196-model-material-bindings-20261011-core.log`.
-The Unified model skin binding is the remaining item-12 slice. This records
-source/build/core checks only.
+The Unified model skin binding retains its selected skin path ID and material
+on the existing media-model binding. An unchanged skin reads that pointer;
+a changed path selects the retained bank entry or registers it once. The
+model's admitted image options and bank remain its binding key; inline brush
+models preserve their existing bank lookup. Normal build and seven core
+suites pass:
+`/tmp/qa-ta3196-unified-skin-binding-20261011-build.log` and
+`/tmp/qa-ta3196-unified-skin-binding-20261011-core.log`.
+Names findings 1-12 are migrated at the listed sites; 13-17 and the other
+adoption kinds remain open. This records source/build/core checks only.
 
 ## Scalar numeric callers
 

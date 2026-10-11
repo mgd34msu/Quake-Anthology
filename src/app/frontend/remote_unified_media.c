@@ -194,13 +194,18 @@ qa_material_library *frontend_unified_model_materials(const qa_scene_model *mode
     const qa_scene_image_options *options = qa_scene_model_image_options(model);
     return options && options->family == QA_GAME_Q3 ? qa_scene_model_material_owner(model) : NULL;
 }
-bool frontend_unified_media_skin(frontend_unified_media *owner, qa_string_id content,
+bool frontend_unified_media_skin(frontend_unified_media *owner, const frontend_unified_model *model, qa_string_id content,
     qa_string_id path, const qa_scene_image_options *options, const qa_material **out, qa_error *error)
 {
-    unified_media_bank *files;
-    if (!bank(owner, content, &files, error)) return false;
+    unified_media_model *binding = model->binding;
+    if (binding && binding->skin_path == path) { *out = binding->skin_material; return true; }
+    unified_media_bank *files = binding ? binding->bank : NULL;
+    if (!files && !bank(owner, content, &files, error)) return false;
     for (unified_media_skin *row = files->skins; row; row = row->next)
-        if (row->path == path && same_options(&row->options, options)) { *out = row->material; return true; }
+        if (row->path == path && same_options(&row->options, options)) {
+            if (binding) { binding->skin_path = path; binding->skin_material = row->material; }
+            *out = row->material; return true;
+        }
     if (options->palette_rgb.size > SIZE_MAX - sizeof(unified_media_skin) ||
         options->translation.size > SIZE_MAX - sizeof(unified_media_skin) - options->palette_rgb.size)
         return frontend_unified_fail(error, QA_ERROR_MEMORY, "Skin binding exceeds storage extent");
@@ -220,6 +225,7 @@ bool frontend_unified_media_skin(frontend_unified_media *owner, qa_string_id con
         &row->options, false, &row->material, error);
     owner->busy = false;
     if (!okay) { free(row); return false; }
+    if (binding) { binding->skin_path = path; binding->skin_material = row->material; }
     row->next = files->skins; files->skins = row; *out = row->material; return true;
 }
 bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id content_name,
@@ -248,7 +254,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
     if (!bank(owner, content_name, &files, error)) return false;
     for (unified_media_model *row = owner->models; row; row = row->next)
         if (row->bank == files && row->family == family && row->path == path_name && same_options(&row->options, options)) {
-            *out = (frontend_unified_model){.resource=row->resource,.opening=&row->opening,
+            *out = (frontend_unified_model){.binding=row,.resource=row->resource,.opening=&row->opening,
                 .model=row->world?NULL:(row->source?row->source:&row->decoded),.scene=row->scene,.brush_world=row->world}; return true;
         }
     if (owner->frontend->resource_inventory)
@@ -294,7 +300,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
         free(row->palette); free(row->translation); free(row); return false;
     }
     row->next = owner->models; owner->models = row;
-    *out = (frontend_unified_model){.resource=row->resource,.opening=&row->opening,
+    *out = (frontend_unified_model){.binding=row,.resource=row->resource,.opening=&row->opening,
         .model=row->world?NULL:&row->decoded,.scene=row->scene,.brush_world=row->world}; return true;
 }
 size_t frontend_unified_media_bank_count(const frontend_unified_media *owner)

@@ -8,6 +8,7 @@
 
 typedef struct frontend_unified_media frontend_unified_media;
 typedef struct frontend_unified_model {
+    struct unified_media_model *binding;
     const qa_resource *resource;
     const qa_vfs_acquisition *opening;
     const qa_model *model;
@@ -65,8 +66,8 @@ bool frontend_unified_media_q3_assets_read(const frontend_unified_media *, const
 bool frontend_unified_media_model(frontend_unified_media *, qa_string_id content,
     qa_string_id path, qa_game_family, const qa_scene_image_options *,
     frontend_unified_model *, qa_error *);
-bool frontend_unified_media_skin(frontend_unified_media *, qa_string_id content,
-    qa_string_id path, const qa_scene_image_options *, const qa_material **, qa_error *);
+bool frontend_unified_media_skin(frontend_unified_media *, const frontend_unified_model *,
+    qa_string_id content, qa_string_id path, const qa_scene_image_options *, const qa_material **, qa_error *);
 qa_material_library *frontend_unified_model_materials(const qa_scene_model *);
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *);
 void frontend_unified_media_world_scratch(const frontend_unified_media *, qa_scene_world_input *);

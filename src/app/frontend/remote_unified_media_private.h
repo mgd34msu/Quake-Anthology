@@ -33,6 +33,8 @@ typedef struct unified_media_model {
     struct unified_media_model *next;
     unified_media_bank *bank;
     qa_string_id path;
+    qa_string_id skin_path;
+    const qa_material *skin_material;
     qa_game_family family;
     qa_scene_image_options options;
     uint8_t *palette, *translation;

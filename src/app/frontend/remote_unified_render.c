@@ -204,7 +204,7 @@ static bool model_read(frontend_unified_render *r,const qa_unified_model_state *
         m->input.has_milliseconds=true; m->input.milliseconds=r->milliseconds;
         m->input.view_model=source->view_weapon; m->native_held_weapon=source->native_held_weapon; m->previous_origin=source->previous_origin;
         m->has_previous_origin=source->has_previous_origin; m->input.back_lerp=source->back_lerp;
-        if (source->skin_path) okay=frontend_unified_media_skin(r->media,source->content,
+        if (source->skin_path) okay=frontend_unified_media_skin(r->media,&m->media,source->content,
             source->skin_path,&images,&m->input.custom_material,e);
         if (okay) okay=model_beam_read(m,e);
     }
