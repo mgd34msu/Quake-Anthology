@@ -1,4 +1,5 @@
 #include "equipment_events.h"
+#include "qa/application_ui_names.h"
 #include <stdio.h>
 
 struct frontend_equipment_events {
@@ -48,9 +49,13 @@ static bool command(frontend_equipment_events *owner, const qa_application_equip
         qa_arena_alloc_callback, &owner->frontend->frame.storage, error)) return false;
     bool okay = true;
     if (tokens.count >= 2) {
-        const char *name = tokens.values[0], *text = tokens.values[1];
-        bool center = !strcmp(name, "cp"), chat = !strcmp(name, "chat") || !strcmp(name, "tchat");
-        bool print = chat || !strcmp(name, "print");
+        const char *text = tokens.values[1];
+        qa_string_id name = qa_strings_find(qa_session_strings(
+            qa_application_session(owner->frontend->application)),
+            (qa_bytes){(const uint8_t *)tokens.values[0], strlen(tokens.values[0])});
+        const qa_application_ui_names *names = qa_application_ui_names_read(owner->frontend->application);
+        bool center = name == names->cp, chat = name == names->chat || name == names->tchat;
+        bool print = chat || name == names->print;
         for (uint32_t ordinal = 0; okay && (center || print) && !owner->frontend->options.dedicated &&
             ordinal < owner->frontend->options.seats; ++ordinal) {
             if (!destination(owner, event, ordinal)) continue;

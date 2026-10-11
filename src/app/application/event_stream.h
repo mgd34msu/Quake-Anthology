@@ -78,7 +78,7 @@ struct application_provider;
 bool application_q1_multicast_receives(struct application_provider *, const qa_application_protocol_event *,
     qa_actor_id, uint32_t source_slot, bool *, qa_error *);
 const application_event_envelope *application_event_stream_at(const qa_application *, uint64_t);
-bool application_unified_persistent_prepare(qa_application *, application_event_envelope *, qa_error *);
+bool application_unified_persistent_prepare(qa_application *, application_event_envelope *);
 void application_unified_persistent_publish(qa_application *, application_event_envelope *);
 
 #endif

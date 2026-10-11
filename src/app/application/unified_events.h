@@ -71,8 +71,8 @@ typedef struct application_unified_persistent_event {
     qa_event_lease *lease;
 } application_unified_persistent_event;
 
-bool application_unified_persistent_key(qa_application *,
-    const application_unified_event_record *, application_persistent_key *, bool *remove, qa_error *);
+void application_unified_persistent_key(qa_application *,
+    const application_unified_event_record *, application_persistent_key *, bool *remove);
 bool application_unified_persistent_key_equal(const application_persistent_key *,
     const application_persistent_key *);
 void application_unified_persistent_dispose(qa_application *);

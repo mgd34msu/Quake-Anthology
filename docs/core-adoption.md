@@ -496,6 +496,20 @@ Normal production build and seven core suites pass:
 `/tmp/qa-ta3196-control-kind-20261011-{build,core}.log`. Effect, beam and
 persistence-name selectors in finding 8 remain; this is not a full-item closure.
 
+
+Names finding 8, persistence/local-consumer slice: the existing
+`application_ui_names_prepare` binding now admits fixed event tags into the
+same session string table at application creation/restore. Persistent event
+classification and audience selection compare those IDs; looping-sound keys
+retain the event's resource ID directly. The text round trip, re-intern and
+associated fallible key-selection API are deleted. Local music/fog/bounds,
+Q2 muzzle/entity sounds and equipment-command presentation use the same bundle.
+Equipment command text resolves once at its lexical boundary before seat delivery.
+
+Normal production build and seven core suites pass:
+`/tmp/qa-ta3196-event-tags-20261011-{build,core}.log`. Named Q1/Q2 effect and
+beam recipes in finding 8 still need migration; no installed/live proof is claimed.
+
 ## Scalar numeric callers
 
 TA-3192 removes the bot action and inventory float-to-integer copies, Q3's

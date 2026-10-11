@@ -11,6 +11,7 @@
 #include "legacy_render_policy.h"
 #include "qa/application_selected_effects.h"
 #include "qa/application_players.h"
+#include "qa/application_ui_names.h"
 #include "resource_bindings.h"
 #include "shared_resource_policy.h"
 #include "q1_sky.h"
@@ -523,6 +524,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     frontend_event_state *state;
     if (!state_read(frontend, &state, error)) return false;
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+    const qa_application_ui_names *names = qa_application_ui_names_read(frontend->application);
     for (unsigned seat = 0; seat < frontend->options.seats; ++seat)
         if (!frontend_network_local_input_owned(frontend,seat) &&
             !q1_fog_initialize(frontend, seat, &state->views[seat].q1_fog, error)) return false;
@@ -545,13 +547,12 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         if (!frontend_qc_rerelease_event(frontend,&event,&handled,error)) return false;
         if (handled) continue;
         if (event.family == QA_GAME_Q1 && event.kind == QA_BUILTIN_EFFECT) {
-            const char *resource = qa_strings_cstr(strings, event.resource);
-            if (resource && !strcmp(resource, "music")) {
+            if (event.resource == names->music) {
                 if (!frontend_music_sources_world_cd(frontend->music_sources,
                     (uint8_t)(uint32_t)event.code, error)) return false;
                 continue;
             }
-            if (resource && !strcmp(resource, "q1:fog")) {
+            if (event.resource == names->fog) {
                 if (!qa_vec_finite(event.origin) || !isfinite(event.value) || !isfinite(event.end.x) || event.end.x < 0)
                     return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid authored Q1 fog");
                 qa_clock_state clock;
@@ -568,7 +569,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                     fog->sky_factor = 0;
                 }
             }
-            if (resource && !strcmp(resource, "debug-bounds")) {
+            if (event.resource == names->debug_bounds) {
                 if (!qa_vec_finite(event.origin) || !qa_vec_finite(event.end) || event.code < 0 || event.code > 255 ||
                     !isfinite(event.value) || event.value < 0 || event.value > (double)(UINT64_MAX - event.time_ns) / 1e9)
                     return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid builtin debug bounds");
@@ -1036,9 +1037,7 @@ bool frontend_native_q2_muzzle_sound(qa_frontend *frontend,
 static bool builtin_muzzle(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
 {
     if (frontend_network_client_only(frontend)) return true;
-    const char *resource=event->resource?qa_strings_cstr(
-        qa_session_strings(qa_application_session(frontend->application)),event->resource):NULL;
-    bool monster=resource && !strcmp(resource,"q2:monster-muzzle");
+    bool monster=event->resource==qa_application_ui_names_read(frontend->application)->monster_muzzle;
     if (event->resource && !monster) return true;
     qa_q2_edition edition;
     bool found;
@@ -1091,8 +1090,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
         return builtin_muzzle(frontend,event,error);
     if (event->kind == QA_BUILTIN_EFFECT && event->family == QA_GAME_Q2 &&
         (event->code == 2 || event->code == 8 || event->code == 9)) {
-        const char *resource = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
-        if (resource && !strcmp(resource, "q2:entity-event")) {
+        if (event->resource == qa_application_ui_names_read(frontend->application)->entity_event) {
             frontend_event_state *state;
             return state_read(frontend, &state, error) && entity_footstep(frontend, state, event, error);
         }

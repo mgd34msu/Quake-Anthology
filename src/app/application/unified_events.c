@@ -584,45 +584,45 @@ bool application_unified_event_append(qa_application *app,
 }
 
 typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE } persistent_domain;
-bool application_unified_persistent_key(qa_application *app, const application_unified_event_record *row,
-    application_persistent_key *out, bool *remove, qa_error *e)
+void application_unified_persistent_key(qa_application *app, const application_unified_event_record *row,
+    application_persistent_key *out, bool *remove)
 {
     *out = (application_persistent_key){0}; *remove = false;
-    if (!row->presentation) return true;
-    application_persistent_key key = {0}; const char *path = NULL;
+    if (!row->presentation) return;
+    application_persistent_key key = {0};
     const qa_unified_presentation_payload *p = row->presentation;
     if (p->kind == QA_UNIFIED_PRESENTATION_BUILTIN) {
         const qa_builtin_event *v = &p->value.builtin;
-        const char *resource = event_alias(app, v->resource);
+        qa_string_id resource = v->resource;
+        const qa_application_ui_names *names = &app->ui_names;
         if (v->family == QA_GAME_Q1 && ((v->kind == QA_BUILTIN_SOUND && (v->flags & 1u)) ||
             (v->kind == QA_BUILTIN_EFFECT && !v->actor.registry && !(v->flags & UINT32_C(0x80000000)) &&
-                resource && strcmp(resource, "colored-explosion") && strcmp(resource, "developer-message") &&
-                strcmp(resource, "music") && strcmp(resource, "cutscene") && strcmp(resource, "sell-screen")))) {
+                resource && resource != names->colored_explosion && resource != names->developer_message &&
+                resource != names->music && resource != names->cutscene && resource != names->sell_screen))) {
             key.domain = PERSIST_UNIQUE; key.selector = row->presentation_sequence;
         } else if (v->family == QA_GAME_Q2 && (v->kind == QA_BUILTIN_STOP_SOUND ||
             (v->kind == QA_BUILTIN_SOUND && (v->flags & 1u)))) {
-            key.domain = PERSIST_SOUND; path = resource;
+            key.domain = PERSIST_SOUND; key.resource = resource;
             key.actor_registry = v->actor.registry; key.actor_generation = v->actor.generation;
             key.actor_slot = v->actor.slot; key.channel = v->channel;
             *remove = v->kind == QA_BUILTIN_STOP_SOUND;
         } else if (v->kind == QA_BUILTIN_LIGHT) {
             key.domain = PERSIST_STYLE; key.selector = (uint32_t)v->code;
         } else if (v->family == QA_GAME_Q1 && v->kind == QA_BUILTIN_EFFECT) {
-            if (resource && !strcmp(resource, "music")) key.domain = PERSIST_MUSIC;
+            if (resource == names->music) key.domain = PERSIST_MUSIC;
             else if ((v->flags & UINT32_C(0x80000000)) ||
-                (resource && (!strcmp(resource, "cutscene") || !strcmp(resource, "sell-screen")))) key.domain = PERSIST_FINALE;
+                (resource == names->cutscene || resource == names->sell_screen)) key.domain = PERSIST_FINALE;
         }
     } else if (p->kind == QA_UNIFIED_PRESENTATION_Q2_MAP) {
         const qa_q2_map_event *v = &p->value.q2_map;
         if (v->kind == QA_Q2_MAP_LIGHTSTYLE) { key.domain = PERSIST_STYLE; key.selector = (uint32_t)v->style; }
         else if (v->kind == QA_Q2_MAP_MUSIC) key.domain = PERSIST_MUSIC;
     }
-    if (!key.domain) return true;
+    if (!key.domain) return;
     key.provider = row->owner_generation ? row->provider : 0; key.generation = row->owner_generation;
     key.recipient_registry = row->recipient.registry; key.recipient_generation = row->recipient.generation;
     key.recipient_slot = row->recipient.slot;
-    if (path && !qa_strings_intern_cstr(qa_session_strings(app->session), path, &key.resource, e)) return false;
-    *out = key; return true;
+    *out = key; return;
 }
 bool application_unified_persistent_key_equal(const application_persistent_key *a,
     const application_persistent_key *b)
@@ -665,11 +665,11 @@ bool application_unified_persistent_retire(qa_application *app, qa_actor_owner o
     ++app->unified_persistent_revision; return true;
 }
 bool application_unified_persistent_prepare(qa_application *app,
-    application_event_envelope *envelope, qa_error *error)
+    application_event_envelope *envelope)
 {
     for (application_event_view *view = envelope->views; view; view = view->next) {
-        if (!application_unified_persistent_key(app, &view->event, &view->persistent_key,
-            &view->persistent_remove, error)) return false;
+        application_unified_persistent_key(app, &view->event, &view->persistent_key,
+            &view->persistent_remove);
     }
     for (application_event_view *view = envelope->views; view; view = view->next) {
         if (!view->persistent_key.domain) continue;
@@ -801,7 +801,7 @@ static bool unified_capacity(qa_application *app, const application_event_write 
             QA_APPLICATION_OUTPUT_UNIFIED, error);
     application_persistent_key key;
     bool remove;
-    if (!application_unified_persistent_key(app, event, &key, &remove, error)) return false;
+    application_unified_persistent_key(app, event, &key, &remove);
     return application_event_stream_close_subscribers(app, write, QA_APPLICATION_OUTPUT_UNIFIED, key.domain != 0, error);
 }
 
@@ -944,7 +944,7 @@ bool application_unified_events_restore_finish(qa_application *app, qa_error *er
         record->payload_checkpoint = false;
         record->recipient_saved = record->simulation_recipient_saved = (qa_saved_actor_id){0};
         bool remove;
-        if (!application_unified_persistent_key(app, record, &slot->key, &remove, error)) return false;
+        application_unified_persistent_key(app, record, &slot->key, &remove);
     }
     return true;
 }
@@ -1001,7 +1001,7 @@ static bool presentation_for(qa_application *app, const application_unified_even
     if (p->kind == QA_UNIFIED_PRESENTATION_BUILTIN) {
         const qa_builtin_event *v = &p->value.builtin;
         if (v->family == QA_GAME_Q1) {
-            if (v->kind == QA_BUILTIN_SOURCE_LOG || (v->kind == QA_BUILTIN_EFFECT && v->resource && !strcmp(event_alias(app, v->resource), "developer-message"))) return false;
+            if (v->kind == QA_BUILTIN_SOURCE_LOG || (v->kind == QA_BUILTIN_EFFECT && v->resource == app->ui_names.developer_message)) return false;
             if (v->kind == QA_BUILTIN_MESSAGE || v->kind == QA_BUILTIN_CENTERPRINT || v->kind == QA_BUILTIN_ANIMATION ||
                 v->kind == QA_BUILTIN_ACHIEVEMENT || v->kind == QA_BUILTIN_Q1_POWERUP || v->kind == QA_BUILTIN_CTF_STATUS ||
                 v->kind == QA_BUILTIN_SOURCE_PROMPT || v->kind == QA_BUILTIN_CLEAR_PROMPT) return own(v->actor, player);

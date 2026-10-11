@@ -209,7 +209,7 @@ bool application_event_stream_commit(qa_application *app, application_event_writ
     qa_error *error)
 {
     if (write->transaction.blocked ||
-        !application_unified_persistent_prepare(app, write->envelope, error)) {
+        !application_unified_persistent_prepare(app, write->envelope)) {
         application_event_stream_abort(app, write, error);
         return false;
     }
@@ -683,7 +683,7 @@ static bool builtin_capacity(qa_application *app, const qa_builtin_event *event,
             .value.builtin = *event};
         application_unified_event_record row = {.presentation = &payload};
         application_persistent_key key; bool remove;
-        if (!application_unified_persistent_key(app, &row, &key, &remove, error)) return false;
+        application_unified_persistent_key(app, &row, &key, &remove);
         return application_event_stream_close_subscribers(app, write, UINT16_MAX, key.domain != 0, error);
     }
     }
@@ -757,7 +757,7 @@ bool application_q1_music_cue(qa_application *application, bool fresh, qa_error 
             !payload || payload->kind != QA_UNIFIED_PRESENTATION_BUILTIN) continue;
         const qa_builtin_event *event = &payload->value.builtin;
         if (event->family == QA_GAME_Q1 && event->kind == QA_BUILTIN_EFFECT &&
-            event->resource && !strcmp(qa_strings_cstr(qa_session_strings(application->session), event->resource), "music")) return true;
+            event->resource == application->ui_names.music) return true;
     }
     uint8_t cd_track;
     if (source->kind == APPLICATION_PROVIDER_Q1) {

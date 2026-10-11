@@ -10,6 +10,9 @@ typedef struct qa_application_ui_names {
     qa_item_id q1_powers[QA_Q1_POWER_COUNT];
     qa_item_id q2_weapons[QA_Q2_WEAPON_COUNT], q2_ammo[QA_Q2_WEAPON_COUNT], q2_powers[7];
     qa_item_id q3_powers[6], q3_invulnerability;
+    qa_string_id music, fog, debug_bounds, colored_explosion, developer_message;
+    qa_string_id cutscene, sell_screen, monster_muzzle, entity_event;
+    qa_string_id cp, chat, tchat, print;
 } qa_application_ui_names;
 typedef struct qa_application qa_application;
 /* IDs belong to the application's retained session table. */

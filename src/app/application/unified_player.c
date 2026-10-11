@@ -57,6 +57,16 @@ bool application_ui_names_prepare(qa_application *app, qa_error *error)
     qa_application_ui_names *names = &app->ui_names;
     qa_strings *strings = qa_session_strings(app->session);
     if (!qa_application_content_names_bind(app,app->catalog,error)) return false;
+    const struct { const char *text; qa_string_id *id; } events[] = {
+        {"music", &names->music}, {"q1:fog", &names->fog},
+        {"debug-bounds", &names->debug_bounds}, {"colored-explosion", &names->colored_explosion},
+        {"developer-message", &names->developer_message}, {"cutscene", &names->cutscene},
+        {"sell-screen", &names->sell_screen}, {"q2:monster-muzzle", &names->monster_muzzle},
+        {"q2:entity-event", &names->entity_event}, {"cp", &names->cp},
+        {"chat", &names->chat}, {"tchat", &names->tchat}, {"print", &names->print}
+    };
+    for (size_t i = 0; i < sizeof(events) / sizeof(*events); ++i)
+        if (!qa_strings_intern_cstr(strings, events[i].text, events[i].id, error)) return false;
     for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
         if (!qa_strings_intern_cstr(strings, qa_q1_weapon_identity((qa_q1_weapon)i),
                 &names->q1_weapons[i], error)) return false;

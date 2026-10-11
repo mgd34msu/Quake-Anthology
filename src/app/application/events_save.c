@@ -309,8 +309,8 @@ static bool persistent_import(qa_source_save_io *io, event_store *store,
     application_event_view *view = write.envelope->views;
     bool remove = false;
     application_persistent_key key = {0};
-    if (!application_unified_persistent_key(staging, &view->event, &key, &remove, io->error) ||
-        !key.domain || remove) {
+    application_unified_persistent_key(staging, &view->event, &key, &remove);
+    if (!key.domain || remove) {
         application_event_stream_abort(staging, &write, io->error);
         return event_fail(io, QA_ERROR_FORMAT, "Saved presentation has no persistent state domain");
     }
