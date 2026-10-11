@@ -206,6 +206,8 @@ typedef struct frontend_seat {
     qa_hud_score *q2_scores;
     char *q2_score_names;
     size_t q2_score_count;
+    uint32_t q2_hit_marker_count;
+    uint64_t q2_hit_marker_ns;
     bool q2_view_ready, q2_help, q2_inventory;
     bool chat_team;
 } frontend_seat;
@@ -218,6 +220,7 @@ typedef struct frontend_engine_cvar_handles {
     qa_cvar_handle gl_farclip, r_gamma, con_notifytime, r_drawentities;
     qa_cvar_handle filterban, public_server, dedicated;
     qa_hud_cvar_handles hud;
+    qa_hud_q2_marker_cvars q2_marker;
     qa_cvar_handle cg_gunX, cg_gunY, cg_gunZ, cg_gun_frame;
     qa_cvar_handle r_maxpolys, r_maxpolyverts, r_textureMode, r_drawBuffer;
     qa_cvar_handle r_nobind, r_uifullscreen, r_detailtextures, r_vertexLight;

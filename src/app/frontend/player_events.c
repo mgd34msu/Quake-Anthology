@@ -59,6 +59,7 @@ void frontend_player_retire(frontend_seat *seat)
     for (unsigned i = 0; i < 2; ++i) { free(seat->q2_help_text[i]); seat->q2_help_text[i] = NULL; seat->q2_help_lines[i] = ""; }
     seat->q2_actor = (qa_actor_id){0}; seat->q2_view = (qa_q2_player_view){0};
     seat->q2_view_ready = seat->q2_inventory = seat->q2_help = false;
+    seat->q2_hit_marker_count = 0; seat->q2_hit_marker_ns = 0;
 }
 bool frontend_player_events(qa_frontend *frontend, qa_error *error)
 {
@@ -114,11 +115,8 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 if (!character || character != observed.provider) break;
                 seat->q2_view = event->view; seat->q2_view_ready = true;
                 if (event->view.hit_marker_damage > 0) {
-                    const uint64_t duration = UINT64_C(150000000);
-                    if (observed.time_ns > UINT64_MAX - duration)
-                        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 hit-marker deadline overflow");
-                    qa_hud_hit_marker(seat->hud, (float)event->view.hit_marker_damage,
-                        observed.time_ns + duration);
+                    if (seat->q2_hit_marker_count < UINT32_MAX) ++seat->q2_hit_marker_count;
+                    seat->q2_hit_marker_ns = observed.time_ns;
                 }
                 break;
             }

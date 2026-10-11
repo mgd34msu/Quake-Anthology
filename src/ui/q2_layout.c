@@ -995,10 +995,30 @@ bool qa_hud_q2_draw(const qa_hud_q2_options *options, const qa_hud_q2_frame *fra
 
 static double marker_value(const qa_cvar_view *view,double fallback)
 { return view && isfinite(view->number)?view->number:fallback; }
+qa_hud_q2_marker_cvars qa_hud_q2_marker_bind(const qa_cvars *registry)
+{
+    return (qa_hud_q2_marker_cvars){
+        .mode=qa_cvars_resolve(registry,"cl_hit_markers"),
+        .crosshair=qa_cvars_resolve(registry,"crosshair"),
+        .duration=qa_cvars_resolve(registry,"scr_hit_marker_time"),
+        .scale=qa_cvars_resolve(registry,"ch_scale"),
+        .alpha=qa_cvars_resolve(registry,"ch_alpha"),
+        .x=qa_cvars_resolve(registry,"ch_x"), .y=qa_cvars_resolve(registry,"ch_y")};
+}
+void qa_hud_q2_marker_settings(const qa_cvars *registry, const qa_hud_q2_marker_cvars *handles,
+    qa_hud_q2_marker *marker)
+{
+    marker->mode=qa_cvars_read(registry,handles->mode);
+    marker->crosshair=qa_cvars_read(registry,handles->crosshair);
+    marker->duration=qa_cvars_read(registry,handles->duration);
+    marker->scale=qa_cvars_read(registry,handles->scale);
+    marker->alpha=qa_cvars_read(registry,handles->alpha);
+    marker->x=qa_cvars_read(registry,handles->x); marker->y=qa_cvars_read(registry,handles->y);
+}
 bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *marker,uint32_t *count,
     qa_scene_rect viewport,qa_scene_frame *frame,qa_error *error)
 {
-    if (!*count || marker_value(marker->crosshair,0)==0 || (marker->layout_flags&(4|32))) return true;
+    if (!*count || marker_value(marker->mode,0)<=0 || marker_value(marker->crosshair,0)==0 || (marker->layout_flags&(4|32))) return true;
     double elapsed=marker->now_ns>=marker->started_ns?(double)(marker->now_ns-marker->started_ns)/1e6:0;
     double limit=trunc(marker_value(marker->duration,0));
     const qa_scene_image *image=marker->image;

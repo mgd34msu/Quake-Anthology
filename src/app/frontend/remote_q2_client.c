@@ -182,23 +182,17 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
     if (row->cvar_handles.registry==registry) return;
     qa_input_settings_bind(registry,registry,&row->input_tuning);
     row->cvar_handles=(remote_q2_cvar_handles){.registry=registry,
-        .ch_alpha=qa_cvars_resolve(registry,"ch_alpha"),
-        .ch_scale=qa_cvars_resolve(registry,"ch_scale"),
-        .ch_x=qa_cvars_resolve(registry,"ch_x"),
-        .ch_y=qa_cvars_resolve(registry,"ch_y"),
         .cl_blend=qa_cvars_resolve(registry,"cl_blend"),
         .cl_entities=qa_cvars_resolve(registry,"cl_entities"),
-        .cl_hit_markers=qa_cvars_resolve(registry,"cl_hit_markers"),
         .cl_lights=qa_cvars_resolve(registry,"cl_lights"),
         .cl_particles=qa_cvars_resolve(registry,"cl_particles"),
         .cl_vwep=qa_cvars_resolve(registry,"cl_vwep"),
         .cl_noskins=qa_cvars_resolve(registry,"cl_noskins"),
-        .crosshair=qa_cvars_resolve(registry,"crosshair"),
         .gl_damageblend_frac=qa_cvars_resolve(registry,"gl_damageblend_frac"),
         .paused=qa_cvars_resolve(registry,"paused"),
-        .scr_hit_marker_time=qa_cvars_resolve(registry,"scr_hit_marker_time"),
         .scr_centertime=qa_cvars_resolve(registry,"scr_centertime"),
     };
+    row->cvar_handles.marker=qa_hud_q2_marker_bind(registry);
     frontend_legacy_cvars_bind(registry,&row->cvar_handles.legacy);
     frontend_remote_q2_effects_cvars_bind(registry,&row->cvar_handles.effects);
 }

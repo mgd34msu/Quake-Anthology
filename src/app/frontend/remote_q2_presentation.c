@@ -250,10 +250,8 @@ static bool hit_marker_draw(frontend_remote_q2 *row, const qa_q2_player *player,
     const qa_cvars *cvars=row->options.domain.cvars;
     qa_hud_q2_marker marker={.image=remote_q2_picture_read(row,row->hud_pictures.marker,error),
         .now_ns=row->sample_ns,.started_ns=row->hit_marker_ns,.layout_flags=(uint32_t)player->stats[13],
-        .crosshair=qa_cvars_read(cvars,row->cvar_handles.crosshair),
-        .duration=qa_cvars_read(cvars,row->cvar_handles.scr_hit_marker_time),
-        .scale=qa_cvars_read(cvars,row->cvar_handles.ch_scale),.alpha=qa_cvars_read(cvars,row->cvar_handles.ch_alpha),
-        .x=qa_cvars_read(cvars,row->cvar_handles.ch_x),.y=qa_cvars_read(cvars,row->cvar_handles.ch_y)};
+    };
+    qa_hud_q2_marker_settings(cvars,&row->cvar_handles.marker,&marker);
     return qa_hud_q2_marker_draw(&marker,&row->hit_marker_count,viewport,&row->frontend->frame,error);
 }
 static const char *hud_config(void *context, int32_t index)

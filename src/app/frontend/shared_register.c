@@ -430,6 +430,7 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
         .cg_gunZ=qa_cvars_resolve(registry,"cg_gunZ"),
         .cg_gun_frame=qa_cvars_resolve(registry,"cg_gun_frame")};
     qa_hud_cvars_bind(registry,QA_HUD_CVAR_DRAW_GUN,&frontend->engine_cvars.hud);
+    frontend->engine_cvars.q2_marker=qa_hud_q2_marker_bind(registry);
     frontend_legacy_cvars_bind(registry,&frontend->engine_cvars.legacy);
     frontend_render_cvars_bind(frontend);
     frontend_shared_resource_policy_cvars_bind(frontend);

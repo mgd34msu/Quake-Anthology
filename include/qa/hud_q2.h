@@ -56,12 +56,17 @@ bool qa_hud_q2_program_create(qa_strings *, qa_hud_q2_program **, qa_error *);
 bool qa_hud_q2_program_update(qa_hud_q2_program *, const char *, bool rerelease, qa_error *);
 void qa_hud_q2_program_clear(qa_hud_q2_program *);
 void qa_hud_q2_program_destroy(qa_hud_q2_program *);
+typedef struct qa_hud_q2_marker_cvars {
+    qa_cvar_handle mode, crosshair, duration, scale, alpha, x, y;
+} qa_hud_q2_marker_cvars;
+qa_hud_q2_marker_cvars qa_hud_q2_marker_bind(const qa_cvars *);
 typedef struct qa_hud_q2_marker {
     const qa_scene_image *image;
     uint64_t now_ns, started_ns;
     uint32_t layout_flags;
-    const qa_cvar_view *crosshair, *duration, *scale, *alpha, *x, *y;
+    const qa_cvar_view *mode, *crosshair, *duration, *scale, *alpha, *x, *y;
 } qa_hud_q2_marker;
+void qa_hud_q2_marker_settings(const qa_cvars *, const qa_hud_q2_marker_cvars *, qa_hud_q2_marker *);
 bool qa_hud_q2_marker_draw(const qa_hud_q2_marker *, uint32_t *, qa_scene_rect, qa_scene_frame *, qa_error *);
 typedef struct qa_hud_q2_frame {
     qa_net_protocol_id protocol;

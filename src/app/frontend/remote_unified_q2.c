@@ -117,9 +117,6 @@ typedef struct q2_native {
     bool hud,replace_status,camera;
     const qa_font *font;
 } q2_native;
-typedef struct q2_marker_cvars {
-    qa_cvar_handle mode, crosshair, duration, scale, alpha, x, y;
-} q2_marker_cvars;
 struct frontend_unified_q2 {
     qa_frontend *frontend;
     frontend_remote_unified *replica;
@@ -172,7 +169,7 @@ struct frontend_unified_q2 {
     uint32_t marker_count;
     bool marker_set;
     q2_bank *marker_bank;
-    q2_marker_cvars marker_cvars;
+    qa_hud_q2_marker_cvars marker_cvars;
     uint64_t effects_wall_ns;
     float effects_frame_seconds;
     qa_vec3 viewer_origin;
@@ -786,14 +783,7 @@ bool frontend_unified_q2_create(qa_frontend *f,frontend_remote_unified *r,fronte
     o->effects_wall_ns=f->wall_time_ns;
     o->localizations=qa_localization_pool_create(e);
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(r);
-    o->marker_cvars=(q2_marker_cvars){
-        .mode=qa_cvars_resolve(domain->cvars,"cl_hit_markers"),
-        .crosshair=qa_cvars_resolve(domain->cvars,"crosshair"),
-        .duration=qa_cvars_resolve(domain->cvars,"scr_hit_marker_time"),
-        .scale=qa_cvars_resolve(domain->cvars,"ch_scale"),
-        .alpha=qa_cvars_resolve(domain->cvars,"ch_alpha"),
-        .x=qa_cvars_resolve(domain->cvars,"ch_x"),
-        .y=qa_cvars_resolve(domain->cvars,"ch_y")};
+    o->marker_cvars=qa_hud_q2_marker_bind(domain->cvars);
     o->hud=f->seats[domain->physical_seat].hud;
     if (!o->localizations || !current(o,e) ||
         !frontend_unified_q2_rr_create(f,r,media,events,&o->rr_hud,e)) {
@@ -1836,9 +1826,8 @@ static bool marker_draw(frontend_unified_q2 *o,qa_scene_rect viewport,qa_scene_f
     qa_hud_q2_marker marker={.image=qa_scene_q2_picture_read(b->images,o->replica->strings,b->picture_names.marker,
         b->profile==FRONTEND_REMOTE_Q2_EFFECTS_RERELEASE,QA_SCENE_LINEAR_MIPMAP_LINEAR,e),
         .now_ns=nanoseconds(o->seconds),.started_ns=o->marker_ns,.layout_flags=(uint32_t)o->view_layouts,
-        .crosshair=qa_cvars_read(registry,o->marker_cvars.crosshair),.duration=qa_cvars_read(registry,o->marker_cvars.duration),
-        .scale=qa_cvars_read(registry,o->marker_cvars.scale),.alpha=qa_cvars_read(registry,o->marker_cvars.alpha),
-        .x=qa_cvars_read(registry,o->marker_cvars.x),.y=qa_cvars_read(registry,o->marker_cvars.y)};
+    };
+    qa_hud_q2_marker_settings(registry,&o->marker_cvars,&marker);
     return qa_hud_q2_marker_draw(&marker,&o->marker_count,viewport,frame,e);
 }
 static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_native_hud *state,

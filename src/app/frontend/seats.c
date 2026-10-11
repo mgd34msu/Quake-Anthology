@@ -273,7 +273,13 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         .inventory_count = sizeof(source->inventory) / sizeof(source->inventory[0]), .layout = seat->q2_hud_layout,
         .player_number = source->player_number, .server_frame = source->server_frame,
         .time_ns = source->time_ns, .frame_ns = source->frame_ns};
-    return qa_hud_q2_draw(&options, &received, false, scene, error);
+    if (!qa_hud_q2_draw(&options, &received, false, scene, error)) return false;
+    if (!seat->q2_hit_marker_count) return true;
+    qa_hud_q2_marker marker={.image=local_q2_picture(&hud,seat->q2_hud_pictures.marker,error),
+        .now_ns=source->time_ns,.started_ns=seat->q2_hit_marker_ns,.layout_flags=(uint32_t)source->stats[13]};
+    qa_hud_q2_marker_settings(qa_application_cvars(seat->frontend->application),
+        &seat->frontend->engine_cvars.q2_marker,&marker);
+    return qa_hud_q2_marker_draw(&marker,&seat->q2_hit_marker_count,frame->safe_area,scene,error);
 }
 static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_hud_data *out,
     bool native_status, bool aggregate, bool *source_slot, qa_error *error)

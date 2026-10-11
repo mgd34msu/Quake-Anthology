@@ -187,7 +187,7 @@ static bool hit_marker(void *context, int32_t damage, qa_error *error)
     row->hit_marker_set = true; row->hit_marker_frame = row->frame.server_frame;
     row->hit_marker_ns = client->received_ns > row->sample_ns ? client->received_ns : row->sample_ns;
     if (row->hit_marker_count < UINT32_MAX) ++row->hit_marker_count;
-    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_hit_markers);
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.marker.mode);
     if (setting && setting->number > 1) {
         qa_vec3 position = qa_v3(0, 0, 0); uint32_t index;
         if (!frontend_remote_q2_wire_seat(row, &index, error)) return false;
@@ -232,7 +232,7 @@ bool remote_q2_hit_marker_sample(frontend_remote_q2 *row, qa_error *error)
 {
     if (!row || !remote_q2_live(row, error)) return false;
     if (!remote_q2_rerelease_presentation(row) || !row->media_ready || !row->frame.valid) return true;
-    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.cl_hit_markers);
+    const qa_cvar_view *setting = qa_cvars_read(row->options.domain.cvars, row->cvar_handles.marker.mode);
     if (!setting || !setting->integer) return true;
     uint32_t seat;
     if (!frontend_remote_q2_wire_seat(row, &seat, error) || seat >= row->frame.player_count) return false;

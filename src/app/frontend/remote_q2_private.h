@@ -51,20 +51,14 @@ typedef struct remote_q2_cvar_handles {
     qa_cvars *registry;
     frontend_legacy_cvar_handles legacy;
     frontend_remote_q2_effects_cvars effects;
-    qa_cvar_handle ch_alpha;
-    qa_cvar_handle ch_scale;
-    qa_cvar_handle ch_x;
-    qa_cvar_handle ch_y;
+    qa_hud_q2_marker_cvars marker;
     qa_cvar_handle cl_blend;
     qa_cvar_handle cl_entities;
-    qa_cvar_handle cl_hit_markers;
     qa_cvar_handle cl_lights;
     qa_cvar_handle cl_particles;
     qa_cvar_handle cl_vwep, cl_noskins;
-    qa_cvar_handle crosshair;
     qa_cvar_handle gl_damageblend_frac;
     qa_cvar_handle paused;
-    qa_cvar_handle scr_hit_marker_time;
     qa_cvar_handle scr_centertime;
 } remote_q2_cvar_handles;
 struct frontend_remote_q2 {
